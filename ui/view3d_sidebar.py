@@ -407,6 +407,52 @@ class HOME_BUILDER_PT_room_layout(bpy.types.Panel):
         hb_scene = context.scene.home_builder
 
 
+def draw_wall_settings(layout, context):
+    """Wall defaults -- height, thickness and material for the current
+    wall type -- plus the buttons that push each onto walls already in
+    the scene.
+
+    Module-level so the viewport tool palette can open the identical
+    form off the Draw Walls button. These are that tool's settings, and
+    they are wanted at the moment of drawing rather than several
+    sidebar panels away.
+    """
+    hb_scene = context.scene.home_builder
+    col = layout.column()
+    col.use_property_split = True
+    col.use_property_decorate = False
+    
+    if hb_scene.wall_type == 'Exterior':
+        row = col.row()
+        row.prop(hb_scene, 'ceiling_height', text="Ceiling Height")
+        row.operator('home_builder_walls.update_wall_height', text="", icon='FILE_REFRESH', emboss=False)
+        row = col.row()
+        row.prop(hb_scene, 'exterior_wall_thickness', text="Wall Thickness")
+        row.operator('home_builder_walls.update_wall_thickness', text="", icon='FILE_REFRESH', emboss=False)
+    elif hb_scene.wall_type == 'Interior':
+        row = col.row()
+        row.prop(hb_scene, 'ceiling_height', text="Ceiling Height")
+        row.operator('home_builder_walls.update_wall_height', text="", icon='FILE_REFRESH', emboss=False)
+        row = col.row()
+        row.prop(hb_scene, 'interior_wall_thickness', text="Wall Thickness")
+        row.operator('home_builder_walls.update_wall_thickness', text="", icon='FILE_REFRESH', emboss=False)
+    elif hb_scene.wall_type == 'Half':
+        row = col.row()
+        row.prop(hb_scene, 'half_wall_height', text="Half Wall Height")
+        row.operator('home_builder_walls.update_wall_height', text="", icon='FILE_REFRESH', emboss=False)
+        row = col.row()
+        row.prop(hb_scene, 'interior_wall_thickness', text="Wall Thickness")
+        row.operator('home_builder_walls.update_wall_thickness', text="", icon='FILE_REFRESH', emboss=False)
+    elif hb_scene.wall_type == 'Fake':
+        row = col.row()
+        row.prop(hb_scene, 'fake_wall_height', text="Wall Height")
+        row.operator('home_builder_walls.update_wall_height', text="", icon='FILE_REFRESH', emboss=False)
+    
+    row = col.row()
+    row.prop(hb_scene, 'wall_material', text="Wall Material")
+    row.operator('home_builder_walls.apply_wall_material', text="", icon='FILE_REFRESH', emboss=False)
+
+
 # SUBPANEL: Walls
 class HOME_BUILDER_PT_room_layout_walls(bpy.types.Panel):
     bl_label = "Walls"
@@ -425,39 +471,55 @@ class HOME_BUILDER_PT_room_layout_walls(bpy.types.Panel):
         row.operator('home_builder_walls.draw_walls', text="Draw Walls", icon='GREASEPENCIL')
         row.prop(hb_scene, 'wall_type', text="")
         
-        col = layout.column()
-        col.use_property_split = True
-        col.use_property_decorate = False
-        
-        if hb_scene.wall_type == 'Exterior':
-            row = col.row()
-            row.prop(hb_scene, 'ceiling_height', text="Ceiling Height")
-            row.operator('home_builder_walls.update_wall_height', text="", icon='FILE_REFRESH', emboss=False)
-            row = col.row()
-            row.prop(hb_scene, 'exterior_wall_thickness', text="Wall Thickness")
-            row.operator('home_builder_walls.update_wall_thickness', text="", icon='FILE_REFRESH', emboss=False)
-        elif hb_scene.wall_type == 'Interior':
-            row = col.row()
-            row.prop(hb_scene, 'ceiling_height', text="Ceiling Height")
-            row.operator('home_builder_walls.update_wall_height', text="", icon='FILE_REFRESH', emboss=False)
-            row = col.row()
-            row.prop(hb_scene, 'interior_wall_thickness', text="Wall Thickness")
-            row.operator('home_builder_walls.update_wall_thickness', text="", icon='FILE_REFRESH', emboss=False)
-        elif hb_scene.wall_type == 'Half':
-            row = col.row()
-            row.prop(hb_scene, 'half_wall_height', text="Half Wall Height")
-            row.operator('home_builder_walls.update_wall_height', text="", icon='FILE_REFRESH', emboss=False)
-            row = col.row()
-            row.prop(hb_scene, 'interior_wall_thickness', text="Wall Thickness")
-            row.operator('home_builder_walls.update_wall_thickness', text="", icon='FILE_REFRESH', emboss=False)
-        elif hb_scene.wall_type == 'Fake':
-            row = col.row()
-            row.prop(hb_scene, 'fake_wall_height', text="Wall Height")
-            row.operator('home_builder_walls.update_wall_height', text="", icon='FILE_REFRESH', emboss=False)
-        
-        row = col.row()
-        row.prop(hb_scene, 'wall_material', text="Wall Material")
-        row.operator('home_builder_walls.apply_wall_material', text="", icon='FILE_REFRESH', emboss=False)
+        draw_wall_settings(layout, context)
+
+
+def draw_door_window_defaults(layout, context):
+    """Sizes and presets used for the next door or window placed.
+
+    Module-level for the same reason as draw_wall_settings: the viewport
+    palette opens this form off the door and window buttons, where the
+    numbers are actually wanted.
+    """
+    hb_scene = context.scene.home_builder
+    col = layout.column(align=True)
+    
+    box = col.box()
+    box.label(text="Door Defaults", icon='MESH_CUBE')
+    row = box.row(align=True)
+    row.label(text="Single Width:")
+    row.prop(hb_scene, 'door_single_width', text="")
+    row = box.row(align=True)
+    row.label(text="Double Width:")
+    row.prop(hb_scene, 'door_double_width', text="")
+    row = box.row(align=True)
+    row.label(text="Height:")
+    row.prop(hb_scene, 'door_height', text="")
+    row = box.row(align=True)
+    row.label(text="Preset:")
+    row.prop(hb_scene, 'entry_door_style', text="")
+
+    box = col.box()
+    box.label(text="Window Defaults", icon='MESH_PLANE')
+    row = box.row(align=True)
+    row.label(text="Width:")
+    row.prop(hb_scene, 'window_width', text="")
+    row = box.row(align=True)
+    row.label(text="Height:")
+    row.prop(hb_scene, 'window_height', text="")
+    row = box.row(align=True)
+    row.label(text="Height From Floor:")
+    row.prop(hb_scene, 'window_height_from_floor', text="")
+    row = box.row(align=True)
+    row.label(text="Preset:")
+    row.prop(hb_scene, 'window_style', text="")
+
+    row = col.row(align=True)
+    row.operator('home_builder_doors_windows.install_handle_pack',
+                 text="Install Handle Pack", icon='IMPORT')
+    row.operator('home_builder_doors_windows.open_handle_folder',
+                 text="", icon='FILE_FOLDER')
+
 
 
 # SUBPANEL: Doors & Windows
@@ -486,44 +548,7 @@ class HOME_BUILDER_PT_room_layout_doors_windows(bpy.types.Panel):
         row.scale_y = 1.2
         row.operator('home_builder_doors_windows.place_window', text="Window", icon='MESH_PLANE')
         
-        col = layout.column(align=True)
-        
-        box = col.box()
-        box.label(text="Door Defaults", icon='MESH_CUBE')
-        row = box.row(align=True)
-        row.label(text="Single Width:")
-        row.prop(hb_scene, 'door_single_width', text="")
-        row = box.row(align=True)
-        row.label(text="Double Width:")
-        row.prop(hb_scene, 'door_double_width', text="")
-        row = box.row(align=True)
-        row.label(text="Height:")
-        row.prop(hb_scene, 'door_height', text="")
-        row = box.row(align=True)
-        row.label(text="Preset:")
-        row.prop(hb_scene, 'entry_door_style', text="")
-
-        box = col.box()
-        box.label(text="Window Defaults", icon='MESH_PLANE')
-        row = box.row(align=True)
-        row.label(text="Width:")
-        row.prop(hb_scene, 'window_width', text="")
-        row = box.row(align=True)
-        row.label(text="Height:")
-        row.prop(hb_scene, 'window_height', text="")
-        row = box.row(align=True)
-        row.label(text="Height From Floor:")
-        row.prop(hb_scene, 'window_height_from_floor', text="")
-        row = box.row(align=True)
-        row.label(text="Preset:")
-        row.prop(hb_scene, 'window_style', text="")
-
-        row = col.row(align=True)
-        row.operator('home_builder_doors_windows.install_handle_pack',
-                     text="Install Handle Pack", icon='IMPORT')
-        row.operator('home_builder_doors_windows.open_handle_folder',
-                     text="", icon='FILE_FOLDER')
-
+        draw_door_window_defaults(layout, context)
 
 # SUBPANEL: Floor & Ceiling
 class HOME_BUILDER_PT_room_layout_floor(bpy.types.Panel):

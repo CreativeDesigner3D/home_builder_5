@@ -15,6 +15,9 @@ from .operators import ops_obstacles
 from .operators import export
 from .operators import ops_stairs
 from .operators import scene_navigator
+from .operators import room_palette
+from .operators import library_panel
+from .operators import styles_panel
 from .operators import layout_lock
 from .operators import viewport_hud
 from .operators import room_dim_overlay
@@ -119,6 +122,16 @@ class Home_Builder_AddonPreferences(bpy.types.AddonPreferences):
         name="Viewport Controls",
         description="Draw the scene navigator and selection mode controls "
                     "in the 3D viewport instead of the sidebar",
+        default=False,
+        update=_update_use_viewport_hud,
+    ) # type: ignore
+
+    use_room_palette: bpy.props.BoolProperty(
+        name="Room Tool Palette",
+        description="Show the room tools - draw walls, hang doors and "
+                    "windows, add a floor or ceiling - as a glyph strip "
+                    "in the 3D viewport. The sidebar buttons keep working "
+                    "either way",
         default=False,
         update=_update_use_viewport_hud,
     ) # type: ignore
@@ -254,8 +267,16 @@ class Home_Builder_AddonPreferences(bpy.types.AddonPreferences):
         layout = self.layout
 
         layout.prop(self, "sidebar_tab_first")
-        layout.prop(self, "use_viewport_hud")
         layout.prop(self, "hide_2d_drawing_panels")
+
+        # Viewport interface. Every one of these is off by default:
+        # they add controls painted into the 3D viewport, and the
+        # sidebar keeps working exactly the same either way.
+        box = layout.box()
+        box.label(text="Viewport Interface", icon='WINDOW')
+        col = box.column(align=True)
+        col.prop(self, "use_viewport_hud")
+        col.prop(self, "use_room_palette")
         
         # Layout view defaults
         box = layout.box()
@@ -310,6 +331,9 @@ def register():
     layout_lock.register()
     scene_navigator.register()
     viewport_hud.register()
+    room_palette.register()
+    library_panel.register()
+    styles_panel.register()
     room_dim_overlay.register()
     ops_general.register()
     ops.register()
@@ -352,6 +376,9 @@ def unregister():
     details.unregister()
     doors_windows.unregister()
     export.unregister()
+    styles_panel.unregister()
+    library_panel.unregister()
+    room_palette.unregister()
     scene_navigator.unregister()
     viewport_hud.unregister()
     layout_lock.unregister()

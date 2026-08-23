@@ -28,6 +28,26 @@ from ..hb_gpu_draw import (
     vcenter_baseline as _vcenter_baseline,
     point_in_rect as _point_in_rect,
 )
+# Widget layer: UI scale, text fitting, the glyph set, the panel/button
+# paint idioms and the scrolling-list arithmetic. Everything here that is
+# not about SCENES lives there, so the next viewport panel starts from it
+# instead of copying this file.
+from ..hb_gpu_ui import (
+    Theme,
+    paint_button as _paint_button,
+    draw_centered_text as _draw_centered_text,
+    ScrollList,
+    scale as _s,
+    text_width as _text_w,
+    fit_text as _fit_text,
+    panel_box as _panel_box,
+    paint_frame as _paint_frame,
+    glyph_rename as _draw_rename_glyph,
+    glyph_delete as _draw_delete_glyph,
+    glyph_plus as _draw_plus_glyph,
+    glyph_pin as _draw_pin_glyph,
+    glyph_chevron as _draw_chevron,
+)
 
 
 # ---- Layout constants -------------------------------------------------------
@@ -36,8 +56,8 @@ from ..hb_gpu_draw import (
 
 PANEL_TOP_MARGIN      = 12      # distance from top of visible window region
 PANEL_BOTTOM_MARGIN   = 12      # the panel never reaches closer to the bottom
-PANEL_MIN_WIDTH       = 250     # width grows with the longest name up to MAX
-PANEL_MAX_WIDTH       = 440
+PANEL_MIN_WIDTH       = 250     # floor for the fixed width (see panel_width)
+PANEL_MAX_WIDTH       = 440     # ceiling, so a wide tab can't take the viewport
 PANEL_PADDING_X       = 10
 PANEL_PADDING_Y       = 8
 
@@ -57,6 +77,7 @@ SCROLLBAR_WIDTH       = 4
 SCROLLBAR_PAD         = 4
 
 PANEL_HEADER_HEIGHT   = 26
+
 ACTION_BTN_SIZE       = 18
 ACTION_BTN_GAP        = 4
 ACTION_BTN_RIGHT_PAD  = 5
@@ -73,31 +94,33 @@ COLOR_ROOMS    = (0.59, 0.77, 0.35)
 COLOR_LAYOUTS  = (0.52, 0.72, 0.92)
 COLOR_DETAILS  = (0.94, 0.62, 0.15)
 
-PANEL_BG       = (0.08, 0.08, 0.08, 0.93)
-PANEL_BORDER   = (1.0, 1.0, 1.0, 0.10)
+# Panel chrome comes from the shared palette; only the three section
+# accents above are this panel's own.
+PANEL_BG       = Theme.PANEL_BG
+PANEL_BORDER   = Theme.PANEL_BORDER
 
-ROW_HOVER_BG   = (1.0, 1.0, 1.0, 0.06)
+ROW_HOVER_BG   = Theme.ROW_HOVER_BG
 
-TEXT_PRIMARY   = (0.95, 0.95, 0.95, 1.0)
-TEXT_NORMAL    = (0.78, 0.78, 0.78, 1.0)
-TEXT_DIM       = (0.45, 0.45, 0.45, 1.0)
-HEADER_TEXT    = (0.55, 0.55, 0.55, 1.0)
+TEXT_PRIMARY   = Theme.TEXT_PRIMARY
+TEXT_NORMAL    = Theme.TEXT_NORMAL
+TEXT_DIM       = Theme.TEXT_DIM
+HEADER_TEXT    = Theme.TEXT_HEADER
 
-ACTION_BG              = (1.0, 1.0, 1.0, 0.07)
-ACTION_HOVER_BG        = (1.0, 1.0, 1.0, 0.16)
-ACTION_DELETE_HOVER_BG = (0.80, 0.22, 0.20, 0.65)
-ACTION_GLYPH           = (0.78, 0.78, 0.78, 1.0)
-ACTION_GLYPH_HOVER     = (1.0, 1.0, 1.0, 1.0)
-NEW_ROOM_BG            = (0.18, 0.18, 0.20, 1.0)
-NEW_ROOM_HOVER_BG      = (0.20, 0.43, 0.70, 1.0)
-SEPARATOR_COLOR        = (1.0, 1.0, 1.0, 0.10)
+ACTION_BG              = Theme.ACTION_BG
+ACTION_HOVER_BG        = Theme.ACTION_HOVER_BG
+ACTION_DELETE_HOVER_BG = Theme.ACTION_DANGER_BG
+ACTION_GLYPH           = Theme.GLYPH
+ACTION_GLYPH_HOVER     = Theme.GLYPH_HOVER
+NEW_ROOM_BG            = Theme.NEUTRAL_BG
+NEW_ROOM_HOVER_BG      = Theme.ACCENT_BG
+SEPARATOR_COLOR        = Theme.SEPARATOR
 
-PIN_GLYPH              = (0.78, 0.78, 0.78, 1.0)
-PIN_GLYPH_ACTIVE       = (1.0, 1.0, 1.0, 1.0)
-PIN_ACTIVE_BG          = (0.20, 0.43, 0.70, 1.0)
+PIN_GLYPH              = Theme.GLYPH
+PIN_GLYPH_ACTIVE       = Theme.GLYPH_HOVER
+PIN_ACTIVE_BG          = Theme.ACCENT_BG
 
-SCROLLBAR_TRACK        = (1.0, 1.0, 1.0, 0.06)
-SCROLLBAR_THUMB        = (1.0, 1.0, 1.0, 0.28)
+SCROLLBAR_TRACK        = Theme.SCROLLBAR_TRACK
+SCROLLBAR_THUMB        = Theme.SCROLLBAR_THUMB
 
 
 # ---- Module state -----------------------------------------------------------
@@ -107,30 +130,91 @@ SCROLLBAR_THUMB        = (1.0, 1.0, 1.0, 0.28)
 # Sticky for the session -- a module global, intentionally not per-instance.
 _pinned = False
 
-# List scroll offset in scaled px (0 = top). Clamped by _build_layout, which
-# also nudges it so the current scene's row is in view whenever the current
+# Whether the panel is showing at all. Pinning is a separate question:
+# an OPEN panel is usable -- browse the library, pick a style -- but any
+# action that does something to the scene closes it again, the way a
+# menu does. PINNED means it survives those actions and stays up while
+# you work. Both states are painted by the persistent HUD; neither runs
+# a modal, so autosave keeps working (see viewport_hud).
+_open = False
+
+# Inline rename: the scene being renamed and the text so far. A room is
+# renamed in place in the list rather than through a dialog -- the name
+# is right there, and a modal popping over the viewport to change one
+# string is a lot of ceremony. Held here so the painter can draw the
+# field and the caret; the modal operator below owns the keystrokes.
+_editing = None
+_edit_text = ''
+
+# The section list's scroll state + scrollbar geometry. Sticky for the
+# session, the way a real scrollbar behaves. _build_layout clamps it and
+# nudges it so the current scene's row is in view whenever the current
 # scene changes -- otherwise the user's own scrolling wins.
-_scroll = 0.0
+_list = ScrollList(bar_width=SCROLLBAR_WIDTH, bar_pad=SCROLLBAR_PAD,
+                   min_rows=LIST_MIN_ROWS)
 _last_current = None
 
 # Section labels the user has collapsed (sticky for the session). Switching
 # into a scene re-expands the section that contains it.
 _collapsed = set()
 
+# ---- Tabs -------------------------------------------------------------------
+# The panel is a shell: it owns the frame, the header, the pin and the tab
+# strip, and hands its body to whichever tab is active. Only one body is
+# ever built or painted, so an inactive tab costs nothing.
+#
+# A provider is a module exposing:
+#     build(content_rect, context) -> entries      (its own tuple shapes)
+#     paint(entries, mx, my)
+#     hit(context, mx, my, entries) -> bool        True = click consumed
+#     scroll(mx, my, entries, rows) -> bool        True = wheel consumed
+# ROOMS is built inline below; the other two delegate.
+
+TAB_ROOMS = 'ROOMS'
+TAB_LIBRARY = 'LIBRARY'
+TAB_STYLES = 'STYLES'
+TABS = (TAB_ROOMS, TAB_LIBRARY, TAB_STYLES)
+
+_active_tab = TAB_ROOMS
+_providers = {}          # tab key -> provider module
+
+
+def register_provider(tab, module):
+    """Wire a body provider for a tab. Called at addon registration so
+    this module needs no import of (and no dependency on) the panels it
+    hosts."""
+    _providers[tab] = module
+
+
+def panel_width(s=1.0):
+    """The panel's width, in pixels at UI scale `s`.
+
+    One width for every tab, on purpose. Sizing each tab to its own
+    content made the panel jump wider or narrower as you switched, and
+    the tool palette -- which sits to its right -- jumped with it. A
+    constant width keeps both still, so the tabs feel like pages of one
+    panel rather than three panels sharing a corner.
+
+    The number is still derived rather than picked: the widest thing
+    any tab asks for, floored at the panel minimum.
+    """
+    want = [PANEL_MIN_WIDTH]
+    for provider in _providers.values():
+        want.append(getattr(provider, 'PREFERRED_WIDTH', PANEL_MIN_WIDTH))
+    return max(want) * s
+
+
+def active_tab():
+    return _active_tab
+
+
+def set_active_tab(tab):
+    global _active_tab
+    if tab in TABS:
+        _active_tab = tab
+
 
 # ---- Scale ------------------------------------------------------------------
-
-def _s():
-    """Global UI scale (Resolution Scale x DPI). This panel is GPU-drawn in
-    raw pixels, so every dimension and font size is multiplied by this to
-    track Blender's UI -- otherwise it stays device-pixel sized and reads
-    as a postage stamp on high-DPI / scaled displays. Same helper the
-    viewport HUD uses."""
-    try:
-        return bpy.context.preferences.system.ui_scale
-    except AttributeError:
-        return 1.0
-
 
 # ---- Scene helpers ----------------------------------------------------------
 
@@ -188,85 +272,6 @@ def _collect_groups():
     ]
     return [g for g in raw if g[2]]
 
-# ---- Glyph helpers ----------------------------------------------------------
-
-def _draw_rename_glyph(shader, rect, color):
-    """A small text-field box with a cursor bar -- the rename affordance."""
-    rx, ry, rw, rh = rect
-    s = _s()
-    pad = 4 * s
-    bx, by = rx + pad, ry + pad
-    bw, bh = rw - pad * 2, rh - pad * 2
-    _draw_rect_outline(shader, bx, by, bw, bh, color)
-    cx = bx + bw / 3.0
-    _draw_rect(shader, cx, by + 2 * s, 1.5 * s, bh - 4 * s, color)
-
-
-def _draw_delete_glyph(shader, rect, color):
-    """An X -- the delete affordance."""
-    rx, ry, rw, rh = rect
-    pad = 5 * _s()
-    x0, y0 = rx + pad, ry + pad
-    x1, y1 = rx + rw - pad, ry + rh - pad
-    _draw_lines(shader, [(x0, y0), (x1, y1), (x0, y1), (x1, y0)], color)
-
-
-def _draw_plus_glyph(shader, cx, cy, size, color):
-    """A plus sign centered at (cx, cy). ``size`` arrives pre-scaled."""
-    half = size / 2.0
-    thick = 1.5 * _s()
-    _draw_rect(shader, cx - half, cy - thick / 2.0, size, thick, color)
-    _draw_rect(shader, cx - thick / 2.0, cy - half, thick, size, color)
-
-
-def _draw_pin_glyph(shader, rect, color):
-    """A small thumbtack -- the pin toggle affordance: a flat head with a
-    short needle dropping from it."""
-    rx, ry, rw, rh = rect
-    s = _s()
-    cx = rx + rw / 2.0
-    head_w, head_h = 9 * s, 4 * s
-    head_y = ry + rh - 5 * s - head_h
-    _draw_rect(shader, cx - head_w / 2.0, head_y, head_w, head_h, color)
-    _draw_lines(shader, [(cx, head_y), (cx, ry + 4 * s)], color)
-
-
-def _draw_chevron(shader, cx, cy, size, collapsed, color):
-    """Section disclosure chevron centered at (cx, cy): points right when
-    the section is collapsed, down when expanded. ``size`` is pre-scaled."""
-    h = size / 2.0
-    if collapsed:
-        pts = [(cx - h / 2.0, cy + h), (cx + h / 2.0, cy),
-               (cx + h / 2.0, cy), (cx - h / 2.0, cy - h)]
-    else:
-        pts = [(cx - h, cy + h / 2.0), (cx, cy - h / 2.0),
-               (cx, cy - h / 2.0), (cx + h, cy + h / 2.0)]
-    _draw_lines(shader, pts, color)
-
-
-# ---- Text fitting -----------------------------------------------------------
-
-def _text_w(font_id, size, text):
-    blf.size(font_id, size)
-    return blf.dimensions(font_id, text)[0]
-
-
-def _fit_text(font_id, size, text, max_w):
-    """Return ``text`` if it fits in ``max_w`` px at ``size``, else the
-    longest prefix that fits with a trailing ellipsis."""
-    if _text_w(font_id, size, text) <= max_w:
-        return text
-    ell = "…"
-    lo, hi = 0, len(text)
-    while lo < hi:
-        mid = (lo + hi + 1) // 2
-        if _text_w(font_id, size, text[:mid].rstrip() + ell) <= max_w:
-            lo = mid
-        else:
-            hi = mid - 1
-    return (text[:lo].rstrip() + ell) if lo > 0 else ell
-
-
 # ---- Layout computation -----------------------------------------------------
 
 def _build_layout(region, area, current_scene_name,
@@ -289,7 +294,7 @@ def _build_layout(region, area, current_scene_name,
         ('new_room', rect)
     Room rows carry rename/delete sub-rects; other rows carry None.
     """
-    global _scroll, _last_current
+    global _last_current
     groups = _collect_groups()
 
     s = _s()
@@ -345,39 +350,40 @@ def _build_layout(region, area, current_scene_name,
     list_h_full = sum(it[2] for it in items)
 
     # ---- Panel geometry --------------------------------------------------
-    x_min, x_max, y_min, y_max = _get_visible_window_bounds(area)
-    panel_top = anchor_top if anchor_top >= 0.0 else y_max - PANEL_TOP_MARGIN * s
+    bounds = _get_visible_window_bounds(area)
+    y_min, y_max = bounds[2], bounds[3]
+    margin = PANEL_TOP_MARGIN * s
+    panel_top = anchor_top if anchor_top >= 0.0 else y_max - margin
 
     fixed_h = (pad_y * 2 + panel_hdr_h + section_gap
                + new_room_gap + new_room_h)
-    max_list_h = (panel_top - (y_min + PANEL_BOTTOM_MARGIN * s)) - fixed_h
-    list_h = list_h_full
-    scrollable = list_h_full > max_list_h
-    sb_reserve = (SCROLLBAR_WIDTH + SCROLLBAR_PAD) * s if scrollable else 0.0
-    if scrollable:
-        list_h = max(max_list_h, row_h * LIST_MIN_ROWS)
-    panel_h = fixed_h + list_h
-    panel_y = panel_top - panel_h
+    is_rooms = _active_tab == TAB_ROOMS
+    avail_h = panel_top - (y_min + PANEL_BOTTOM_MARGIN * s)
+    if is_rooms:
+        max_list_h = avail_h - fixed_h
+        list_h, scrollable, sb_reserve = _list.measure(
+            list_h_full, max_list_h, row_h)
+        panel_h = fixed_h + list_h
+    else:
+        # A hosted body takes the height it can get; the provider scrolls
+        # its own content inside the rect it is handed.
+        list_h, scrollable, sb_reserve = 0.0, False, 0.0
+        panel_h = avail_h
 
     hdr_needed = (_text_w(font_id, hdr_font, "CURRENT") + 8 * s
                   + _text_w(font_id, row_font, current_scene_name)
                   + 8 * s + btn + btn_right_pad)
-    needed_w = max([hdr_needed]
-                   + [it[3] + sb_reserve for it in items]) + pad_x * 2
-    avail_w = (x_max - x_min) - PANEL_TOP_MARGIN * s * 2
-    panel_w = max(PANEL_MIN_WIDTH * s,
-                  min(needed_w, PANEL_MAX_WIDTH * s, avail_w))
-    visible_w = max(x_max - x_min, panel_w)
-
-    if anchor_top >= 0.0:
-        # Anchored under a specific button (the viewport HUD trigger);
-        # clamp so a wide panel stays on screen.
-        panel_x = min(max(anchor_x, x_min), x_max - panel_w)
-    else:
-        # Center horizontally within the visible window area; anchor to top.
-        panel_x = x_min + (visible_w - panel_w) / 2.0
-
-    panel_rect = (panel_x, panel_y, panel_w, panel_h)
+    # Fixed width, whichever tab is showing -- see panel_width().
+    # hdr_needed and the per-row widths still drive text fitting; they
+    # just no longer drive the panel's size.
+    _ = hdr_needed
+    needed_w = panel_width(s)
+    # Anchored under a specific button (the viewport HUD trigger) or
+    # centred in the visible window area; either way clamped on screen.
+    panel_rect = _panel_box(bounds, needed_w, panel_h,
+                            PANEL_MIN_WIDTH * s, PANEL_MAX_WIDTH * s,
+                            margin, anchor_x, anchor_top)
+    panel_x, panel_y, panel_w, _panel_h = panel_rect
     content_x = panel_x + pad_x
     content_w = panel_w - pad_x * 2
     entries = []
@@ -391,42 +397,49 @@ def _build_layout(region, area, current_scene_name,
     entries.append(('panel_header', current_scene_name, ph_rect, pin_rect))
     cursor_y -= panel_hdr_h + section_gap
 
+
+    if not is_rooms:
+        # Hosted tab: hand the remaining space to its provider and let
+        # it own everything below the strip -- its own scroll, its own
+        # entry shapes, its own hit-testing.
+        body_rect = (content_x, panel_y + pad_y, content_w,
+                     cursor_y - (panel_y + pad_y))
+        provider = _providers.get(_active_tab)
+        if provider is not None:
+            entries.append(('body', _active_tab, body_rect))
+            try:
+                entries.extend(provider.build(body_rect, bpy.context))
+            except Exception as ex:      # a broken tab must not kill the panel
+                print('Home Builder: %s tab failed to build: %s'
+                      % (_active_tab, ex))
+        return panel_rect, entries
     # ---- Scrolling list --------------------------------------------------
     list_top = cursor_y
     list_bottom = list_top - list_h
     row_w = content_w - sb_reserve
     track_rect = thumb_rect = None
     if scrollable:
-        sb_w = SCROLLBAR_WIDTH * s
-        max_scroll = list_h_full - list_h
         # Bring the current scene's row into view on a scene switch.
         if current_changed:
             off = 0.0
             for kind, payload, h, _w in items:
                 if kind == 'row' and payload[0].name == current_scene_name:
-                    if off < _scroll:
-                        _scroll = off
-                    elif off + h > _scroll + list_h:
-                        _scroll = off + h - list_h
+                    _list.scroll_into_view(off, h, list_h)
                     break
                 off += h
-        _scroll = min(max(_scroll, 0.0), max_scroll)
-        track_rect = (content_x + content_w - sb_w, list_bottom, sb_w, list_h)
-        thumb_h = max(list_h * (list_h / list_h_full), row_h)
-        thumb_y = (list_top - thumb_h
-                   - (list_h - thumb_h) * (_scroll / max_scroll))
-        thumb_rect = (track_rect[0], thumb_y, sb_w, thumb_h)
+        _list.clamp(list_h_full, list_h)
+        track_rect, thumb_rect = _list.bar_rects(
+            content_x, content_w, list_top, list_h, list_h_full, row_h)
     else:
-        _scroll = 0.0
+        _list.offset = 0.0
     clip_rect = (content_x, list_bottom, content_w, list_h)
     entries.append(('list', clip_rect, track_rect, thumb_rect))
 
-    y = list_top + _scroll          # top edge of the first item
-    for kind, payload, h, _w in items:
-        item_top, item_bot = y, y - h
-        y -= h
-        if kind == 'gap' or item_bot >= list_top or item_top <= list_bottom:
-            continue                # entirely outside the clip -> skip
+    for item, item_top, item_bot in _list.visible(
+            items, list_top, list_bottom, lambda it: it[2]):
+        kind, payload, h, _w = item
+        if kind == 'gap':
+            continue
         if kind == 'header':
             label, color, collapsed, count = payload
             entries.append(('header', label, color,
@@ -466,8 +479,7 @@ def _list_clip(entries):
 def scroll_by(rows):
     """Scroll the list by ``rows`` row-heights (positive = down). The next
     _build_layout clamps it."""
-    global _scroll
-    _scroll += rows * ROW_HEIGHT * _s()
+    _list.scroll_by(rows, ROW_HEIGHT * _s())
 
 
 def is_scrollable(entries):
@@ -492,6 +504,7 @@ def hit_test(mx, my, entries):
     clip = _list_clip(entries)
     for entry in entries or ():
         kind = entry[0]
+
         if kind == 'panel_header':
             if _point_in_rect(mx, my, entry[3]):
                 return ('pin', None)
@@ -515,6 +528,61 @@ def hit_test(mx, my, entries):
             if _point_in_rect(mx, my, entry[1]):
                 return ('new_room', None)
     return None
+
+
+def editing_scene():
+    return _editing
+
+
+def begin_rename(scene):
+    global _editing, _edit_text
+    _editing = scene.name
+    _edit_text = scene.name
+
+
+def cancel_rename():
+    global _editing, _edit_text
+    _editing = None
+    _edit_text = ''
+
+
+def edit_text():
+    return _edit_text
+
+
+def edit_key(event):
+    """Feed one key event to the inline field. Returns 'COMMIT',
+    'CANCEL' or None (still editing)."""
+    global _edit_text
+    if event.value != 'PRESS':
+        return None
+    if event.type in {'RET', 'NUMPAD_ENTER'}:
+        return 'COMMIT'
+    if event.type == 'ESC':
+        return 'CANCEL'
+    if event.type == 'BACK_SPACE':
+        _edit_text = _edit_text[:-1]
+        return None
+    if event.ascii and event.ascii.isprintable():
+        _edit_text += event.ascii
+    return None
+
+
+def commit_rename():
+    """Apply the typed name. Returns the scene renamed, or None."""
+    global _editing, _edit_text
+    scene = bpy.data.scenes.get(_editing) if _editing else None
+    name = _edit_text.strip()
+    _editing = None
+    _edit_text = ''
+    if scene is None or not name or name == scene.name:
+        return None
+    try:
+        bpy.ops.home_builder.rename_room(scene_name=scene.name,
+                                         new_name=name)
+    except Exception:
+        scene.name = name
+    return scene
 
 
 def toggle_section(label):
@@ -578,6 +646,22 @@ def _draw_row(shader, font_id, entry, mx, my):
     text_x = rx + ROW_TEXT_LEFT_PAD * s
     name_color = TEXT_PRIMARY if is_current else TEXT_NORMAL
     baseline = _vcenter_baseline(rect, font_id, row_font)
+
+    # Being renamed: the row becomes the field. A caret marks the
+    # end of the text so it reads as editable rather than selected.
+    if _editing == scene.name:
+        field_w = rx + rw - ROW_TEXT_RIGHT_PAD * s - text_x
+        _draw_rect(shader, text_x - 3 * s, ry + 3 * s,
+                   field_w + 6 * s, rh - 6 * s, (0.0, 0.0, 0.0, 0.55))
+        _draw_rect_outline(shader, text_x - 3 * s, ry + 3 * s,
+                           field_w + 6 * s, rh - 6 * s, PIN_ACTIVE_BG)
+        shown = _fit_text(font_id, row_font, _edit_text, field_w - 6 * s)
+        _draw_text(font_id, text_x, baseline, row_font,
+                   TEXT_PRIMARY, shown)
+        caret_x = text_x + _text_w(font_id, row_font, shown) + 1 * s
+        _draw_rect(shader, caret_x, ry + 5 * s, 1.5 * s, rh - 10 * s,
+                   TEXT_PRIMARY)
+        return
 
     # Text must stop short of the action buttons (room rows) or the row's
     # right edge; the parent prefix is dropped first, then the name is
@@ -660,8 +744,7 @@ def paint_navigator(panel_rect, entries, mx, my):
     shader.bind()
 
     px, py, pw, ph = panel_rect
-    _draw_rect(shader, px, py, pw, ph, PANEL_BG)
-    _draw_rect_outline(shader, px, py, pw, ph, PANEL_BORDER)
+    _paint_frame(shader, panel_rect, PANEL_BG, PANEL_BORDER)
 
     font_id = 0
     s = _s()
@@ -714,6 +797,16 @@ def paint_navigator(panel_rect, entries, mx, my):
 
     for entry in entries:
         kind = entry[0]
+
+        if kind == 'body':
+            provider = _providers.get(entry[1])
+            if provider is not None:
+                try:
+                    provider.paint(entries, mx, my)
+                except Exception as ex:
+                    print('Home Builder: %s tab failed to paint: %s'
+                          % (entry[1], ex))
+            break            # the provider owns everything below the strip
         if kind == 'panel_header':
             _draw_panel_header(shader, font_id, entry[2], entry[1],
                                entry[3], mx, my)
@@ -747,18 +840,43 @@ def is_pinned():
     return _pinned
 
 
+def panel_open():
+    return _open or _pinned
+
+
+def open_panel(anchor_x=-1.0, anchor_top=-1.0):
+    global _open
+    _open = True
+
+
+def close_panel():
+    """Hide the panel. Leaves the pin alone -- re-opening returns to
+    whatever the user had pinned before."""
+    global _open
+    _open = False
+
+
+def dismiss_after_action():
+    """Close an unpinned panel once it has done something. Pinned
+    panels stay: that is what the pin is for."""
+    if not _pinned:
+        close_panel()
+
+
 def set_pinned(value):
-    global _pinned
+    global _pinned, _open
     _pinned = bool(value)
+    if _pinned:
+        _open = True
 
 
 def build_pinned_layout(context, area, region, anchor_x=-1.0, anchor_top=-1.0):
-    """Return (panel_rect, entries) for the pinned navigator, else None.
+    """Return (panel_rect, entries) for the HUD-hosted panel, else None.
 
-    None when not pinned or the geometry can't be built. Anchored under the
-    HUD nav button via anchor_x / anchor_top, matching the modal drop-down.
+    None when the panel is closed or the geometry can't be built.
+    Anchored under the active tab button via anchor_x / anchor_top.
     """
-    if not _pinned or region is None or area is None:
+    if not panel_open() or region is None or area is None:
         return None
     return _build_layout(region, area, context.scene.name, anchor_x, anchor_top)
 
@@ -774,17 +892,21 @@ def handle_navigator_click(context, mx, my, entries):
     global _pinned
     hit = hit_test(mx, my, entries)
     if hit is None:
-        return False
+        # Not a shell element. On a hosted tab the body owns the rest of
+        # the panel, so give it the click before passing anything through.
+        return _delegate_click(context, mx, my, entries)
     kind, scene = hit
+
     try:
         if kind == 'pin':
-            _pinned = False          # pin glyph un-pins (hides the panel)
+            # The glyph toggles the pin now; it no longer hides the
+            # panel. Dismissing is the tab button's job.
+            set_pinned(not _pinned)
         elif kind == 'section':
             toggle_section(scene)
         elif kind == 'rename':
-            with context.temp_override(scene=scene):
-                bpy.ops.home_builder.rename_room(
-                    'INVOKE_DEFAULT', scene_name=scene.name)
+            begin_rename(scene)
+            bpy.ops.home_builder.navigator_rename('INVOKE_DEFAULT')
         elif kind == 'delete':
             bpy.ops.home_builder.delete_room(
                 'INVOKE_DEFAULT', scene_name=scene.name)
@@ -792,6 +914,13 @@ def handle_navigator_click(context, mx, my, entries):
             if scene.name != context.scene.name:
                 bpy.ops.home_builder_layouts.go_to_layout_view(
                     scene_name=scene.name)
+                dismiss_after_action()
+            elif _is_room(scene):
+                # Already here: clicking your own room's name
+                # edits it, since switching would do nothing.
+                begin_rename(scene)
+                bpy.ops.home_builder.navigator_rename(
+                    'INVOKE_DEFAULT')
         elif kind == 'new_room':
             bpy.ops.home_builder.create_room('INVOKE_DEFAULT')
     except Exception:
@@ -799,9 +928,43 @@ def handle_navigator_click(context, mx, my, entries):
     return True
 
 
+def _body_entry(entries):
+    for entry in entries or ():
+        if entry[0] == 'body':
+            return entry
+    return None
+
+
+def _delegate_click(context, mx, my, entries):
+    """Offer a click to the active tab's provider. True = consumed."""
+    body = _body_entry(entries)
+    if body is None:
+        return False
+    provider = _providers.get(body[1])
+    if provider is None:
+        return False
+    try:
+        if provider.hit(context, mx, my, entries):
+            return True
+    except Exception as ex:
+        print('Home Builder: %s tab failed on click: %s' % (body[1], ex))
+    # Clicks anywhere over a hosted body are still swallowed -- letting
+    # them through would select or place through the panel.
+    return _point_in_rect(mx, my, body[2])
+
+
 def handle_navigator_scroll(context, mx, my, entries, rows):
     """Wheel over the pinned navigator: scroll its list. Returns True when
     consumed (cursor over a scrollable list), False to pass through."""
+    body = _body_entry(entries)
+    if body is not None:
+        provider = _providers.get(body[1])
+        if provider is not None:
+            try:
+                return bool(provider.scroll(mx, my, entries, rows))
+            except Exception:
+                return False
+        return False
     if not is_scrollable(entries):
         return False
     clip = _list_clip(entries)
@@ -999,10 +1162,59 @@ class home_builder_OT_scene_navigator(bpy.types.Operator):
         return {'RUNNING_MODAL'}
 
 
+class home_builder_OT_navigator_rename(bpy.types.Operator):
+    """Rename the room in place in the navigator list.
+
+    A modal only for as long as the user is typing -- it ends on Enter
+    or Esc. That is the transient shape the panel itself used to have;
+    what must never happen is a modal that outlives the interaction,
+    because Blender skips autosave while one is live.
+    """
+    bl_idname = "home_builder.navigator_rename"
+    bl_label = "Rename Room"
+    bl_options = {'INTERNAL'}
+
+    @classmethod
+    def poll(cls, context):
+        return editing_scene() is not None
+
+    def invoke(self, context, event):
+        context.window_manager.modal_handler_add(self)
+        _tag_redraw()
+        return {'RUNNING_MODAL'}
+
+    def modal(self, context, event):
+        result = edit_key(event)
+        if result == 'COMMIT':
+            commit_rename()
+            _tag_redraw()
+            return {'FINISHED'}
+        if result == 'CANCEL':
+            cancel_rename()
+            _tag_redraw()
+            return {'CANCELLED'}
+        # A click anywhere ends the edit, committing what was typed --
+        # the same thing a field in a form does when it loses focus.
+        if event.type in {'LEFTMOUSE', 'RIGHTMOUSE'} and event.value == 'PRESS':
+            commit_rename()
+            _tag_redraw()
+            return {'FINISHED'}
+        _tag_redraw()
+        return {'RUNNING_MODAL'}
+
+
+def _tag_redraw():
+    for window in bpy.context.window_manager.windows:
+        for area in window.screen.areas:
+            if area.type == 'VIEW_3D':
+                area.tag_redraw()
+
+
 # ---- Registration -----------------------------------------------------------
 
 classes = (
     home_builder_OT_scene_navigator,
+    home_builder_OT_navigator_rename,
 )
 
 

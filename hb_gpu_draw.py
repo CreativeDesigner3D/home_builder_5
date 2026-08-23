@@ -5,8 +5,13 @@ navigator overlay and the viewport HUD. Kept here so both draw paths share
 one implementation rather than carrying private copies that can drift.
 """
 
+import bpy
 import blf
 from gpu_extras.batch import batch_for_shader
+
+
+# Zoom, pan, camera and the perspective/ortho toggle.
+_NAV_MINI_BUTTONS = 4
 
 
 def get_visible_window_bounds(area):
@@ -82,6 +87,71 @@ def draw_rect_outline(shader, x, y, w, h, color):
         (x + w, y + h), (x, y + h),
         (x, y + h), (x, y),
     ]
+    batch_for_shader(shader, 'LINES', {"pos": verts}).draw(shader)
+
+
+def navigation_gizmo_reserve(area):
+    """(width, height) of the top-right block Blender's navigation
+    gizmo occupies, in WINDOW-local pixels. (0, 0) when it is hidden.
+
+    get_visible_window_bounds handles overlapping REGIONS, but the
+    navigate gizmo is not a region -- it is drawn into the WINDOW
+    region itself, so nothing reports it and an overlay anchored to the
+    top-right corner lands straight on top of it.
+
+    Blender does not expose the cluster's extent either, so this is
+    derived from what it does draw: the axis ball is
+    ``gizmo_size_navigate_v3d`` across, and beneath it sits a column of
+    mini buttons (zoom, pan, camera, and the perspective/ortho toggle)
+    each a little under half the ball's size. Erring large is the safe
+    direction -- overlapping the gizmo is worse than leaving a gap.
+    """
+    space = getattr(area, 'spaces', None)
+    space = getattr(space, 'active', None) if space else None
+    if space is None or space.type != 'VIEW_3D':
+        return (0.0, 0.0)
+    if not (getattr(space, 'show_gizmo', False)
+            and getattr(space, 'show_gizmo_navigate', False)):
+        return (0.0, 0.0)
+    try:
+        prefs = bpy.context.preferences
+        ball = prefs.view.gizmo_size_navigate_v3d * prefs.system.ui_scale
+    except AttributeError:
+        ball = 80.0
+    mini = ball * 0.42
+    return (ball + mini * 0.5, ball + mini * _NAV_MINI_BUTTONS + mini * 0.5)
+
+
+def draw_rects(shader, rects, color):
+    """Fill many rectangles in ONE batch.
+
+    Each batch_for_shader call builds a GPU buffer, so a grid that
+    fills its tiles one at a time pays per tile: the library panel
+    measured 4.5 ms for 33 tiles across 99 batches, and collapsing the
+    chrome to two batches took most of that back. Use this whenever the
+    rectangle count scales with the data.
+    """
+    verts = []
+    for x, y, w, h in rects:
+        verts.extend(((x, y), (x + w, y), (x + w, y + h),
+                      (x, y), (x + w, y + h), (x, y + h)))
+    if not verts:
+        return
+    shader.uniform_float("color", color)
+    batch_for_shader(shader, 'TRIS', {"pos": verts}).draw(shader)
+
+
+def draw_rect_outlines(shader, rects, color):
+    """Outline many rectangles in ONE batch (see draw_rects)."""
+    verts = []
+    for x, y, w, h in rects:
+        verts.extend(((x, y), (x + w, y),
+                      (x + w, y), (x + w, y + h),
+                      (x + w, y + h), (x, y + h),
+                      (x, y + h), (x, y)))
+    if not verts:
+        return
+    shader.uniform_float("color", color)
     batch_for_shader(shader, 'LINES', {"pos": verts}).draw(shader)
 
 

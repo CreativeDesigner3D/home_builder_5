@@ -26,6 +26,35 @@ def _placeholder_path():
     return os.path.join(_thumbs_dir(), 'no_thumbnail.png')
 
 
+def thumbnail_path(thumbnail_filename='', item_id='', placeholder=True):
+    """Resolve a catalog entry to a thumbnail file on disk, or None.
+
+    Same resolution order get_icon_id uses -- explicit override, then
+    the renderer's ``{item_id}.png`` convention, then the placeholder.
+    Split out because the GPU-drawn library panel uploads the PNG to a
+    texture itself: preview icon_ids only work in layout.template_icon,
+    they cannot be blitted from a draw handler. Both callers must agree
+    on which file belongs to an item, so the rule lives in one place.
+
+    ``placeholder=False`` returns None instead of the fallback, for a
+    caller that would rather draw its own empty state.
+    """
+    candidates = []
+    if thumbnail_filename:
+        candidates.append(thumbnail_filename)
+    if item_id:
+        candidates.append(f'{item_id}.png')
+    for fname in candidates:
+        full = os.path.join(_thumbs_dir(), fname)
+        if os.path.isfile(full):
+            return full
+    if placeholder:
+        full = _placeholder_path()
+        if os.path.isfile(full):
+            return full
+    return None
+
+
 def get_icon_id(thumbnail_filename='', item_id=''):
     """Return a Blender icon_id for the given thumbnail.
 

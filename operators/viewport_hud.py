@@ -29,6 +29,9 @@ from ..hb_gpu_draw import (
     draw_text,
     point_in_rect,
 )
+# Shared widget layer -- the same UI scale and palette the scene
+# navigator draws with, so the two surfaces cannot drift apart.
+from ..hb_gpu_ui import Theme, scale as _s
 # Sibling module -- safe to import at load (scene_navigator imports viewport_hud
 # only lazily, inside its pin-toggle handler, so there's no import cycle).
 from . import scene_navigator
@@ -62,11 +65,11 @@ MODE_BTN_WIDTH  = 78
 GROUP_GAP       = 24
 FONT_SIZE       = 11
 
-BTN_BG          = (0.13, 0.13, 0.14, 0.95)
-BTN_HOVER_BG    = (0.25, 0.25, 0.27, 0.96)
-BTN_ACTIVE_BG   = (0.20, 0.43, 0.70, 0.98)
-BTN_BORDER      = (1.0, 1.0, 1.0, 0.14)
-GLYPH_COLOR     = (0.92, 0.92, 0.92, 1.0)
+BTN_BG          = Theme.BTN_BG
+BTN_HOVER_BG    = Theme.BTN_HOVER_BG
+BTN_ACTIVE_BG   = Theme.BTN_ACTIVE_BG
+BTN_BORDER      = Theme.BTN_BORDER
+GLYPH_COLOR     = Theme.GLYPH_STRONG
 TEXT_NORMAL     = (0.90, 0.90, 0.90, 1.0)
 TEXT_ACTIVE     = (1.0, 1.0, 1.0, 1.0)
 
@@ -83,16 +86,6 @@ def _get_prefs():
 def _hud_enabled():
     p = _get_prefs()
     return bool(p and getattr(p, "use_viewport_hud", False))
-
-
-def _s():
-    """Global UI scale (Resolution Scale x DPI). The GPU-drawn HUD is in raw
-    pixels, so every dimension is multiplied by this to track Blender's UI
-    instead of staying fixed-size on high-DPI / scaled setups."""
-    try:
-        return bpy.context.preferences.system.ui_scale
-    except AttributeError:
-        return 1.0
 
 
 def _product_ui_visible(context, product_tab):
@@ -145,66 +138,63 @@ def _draw_centered_text(font_id, rect, size, color, text):
               size, color, text)
 
 
-class _NavButton:
-    """Shows the active scene and opens the scene navigator. Always visible."""
+class _PanelTabButton:
+    """One of the ROOMS / LIBRARY / STYLES tabs at the top-left.
+
+    These replace the old single button that showed the scene name. That
+    button told you where you were but hid where you could go: the
+    library and the styles were a click and a tab away, behind a label
+    that looked like a status readout. Three tabs say what is there.
+
+    Clicking a tab opens the panel on it. Clicking the tab that is
+    already showing closes the panel again, so the same button both
+    opens and dismisses -- and the panel can still be pinned from its
+    own header once open.
+    """
+
+    def __init__(self, tab):
+        self.tab = tab
 
     @property
     def width(self):
-        # Sized to the current scene name so it doubles as a status display.
         s = _s()
         blf.size(0, FONT_SIZE * s)
-        text_w = blf.dimensions(0, bpy.context.scene.name)[0]
-        return int((NAV_TEXT_LEFT + NAV_PAD_RIGHT) * s + text_w)
+        return int(blf.dimensions(0, self.tab)[0] + 22 * s)
 
     def visible(self, context):
         return True
+
+    def _showing(self):
+        """True when the panel is open on this tab."""
+        return (scene_navigator.panel_open()
+                and scene_navigator.active_tab() == self.tab)
 
     def draw(self, shader, font_id, rect, context, mouse):
         rx, ry, rw, rh = rect
         s = _s()
         hovered = point_in_rect(mouse[0], mouse[1], rect)
-        draw_rect(shader, rx, ry, rw, rh,
-                  BTN_HOVER_BG if hovered else BTN_BG)
+        active = self._showing()
+        bg = (BTN_ACTIVE_BG if active
+              else (BTN_HOVER_BG if hovered else BTN_BG))
+        draw_rect(shader, rx, ry, rw, rh, bg)
         draw_rect_outline(shader, rx, ry, rw, rh, BTN_BORDER)
-        # Hamburger glyph -- three stacked bars, left-aligned. blf can't
-        # render Blender's icon set in a GPU pass, so it's drawn by hand.
-        bar_w = 12 * s
-        bar_h = 2 * s
-        gap = 3 * s
-        gx = rx + 9 * s
-        total = bar_h * 3 + gap * 2
-        gy = ry + (rh - total) / 2.0
-        for i in range(3):
-            draw_rect(shader, gx, gy + i * (bar_h + gap), bar_w, bar_h,
-                      GLYPH_COLOR)
-        # Current scene name -- shows the active scene at a glance and is
-        # itself the target that opens the navigator.
-        name = context.scene.name
         font_sz = FONT_SIZE * s
         blf.size(font_id, font_sz)
-        label_h = blf.dimensions(font_id, name)[1]
-        draw_text(font_id, rx + NAV_TEXT_LEFT * s, ry + (rh - label_h) / 2.0,
-                  font_sz, TEXT_NORMAL, name)
+        tw, th = blf.dimensions(font_id, self.tab)
+        draw_text(font_id, rx + (rw - tw) / 2.0, ry + (rh - th) / 2.0,
+                  font_sz, TEXT_ACTIVE if active else TEXT_NORMAL, self.tab)
 
     def on_click(self, context, area, region):
-        # When pinned, the persistent HUD already draws the navigator panel,
-        # so the button is a no-op (the header pin glyph un-pins). Otherwise
-        # open the transient drop-down modal anchored just below this button.
-        if scene_navigator.is_pinned():
+        if self._showing():
+            # Clicking the showing tab dismisses the panel, pinned or not.
+            scene_navigator.set_pinned(False)
+            scene_navigator.close_panel()
             return
-        anchor_x = anchor_top = -1.0
-        for widget, rect in compute_layout(context, area):
-            if widget is self:
-                anchor_x = rect[0]
-                anchor_top = rect[1] - 6 * _s()
-                break
-        try:
-            with context.temp_override(area=area, region=region):
-                bpy.ops.home_builder.scene_navigator(
-                    'INVOKE_DEFAULT', anchor_x=anchor_x, anchor_top=anchor_top)
-        except Exception:
-            pass
-
+        scene_navigator.set_active_tab(self.tab)
+        if scene_navigator.panel_open():
+            return                      # already up; just switched tabs
+        anchor_x, anchor_top = _nav_anchor(context, area)
+        scene_navigator.open_panel(anchor_x, anchor_top)
 
 class _ModeButton:
     """One selection-mode pick. Sets the scene enum on click; the enum's
@@ -349,7 +339,7 @@ class _ModalToggleButton:
 
 # Widget instances. Mode values must match the EnumProperty items on
 # Face_Frame_Scene_Props.face_frame_selection_mode.
-_NAV_BUTTON = _NavButton()
+_TAB_BUTTONS = tuple(_PanelTabButton(t) for t in scene_navigator.TABS)
 # Face frame (6 modes), frameless (5 -- no Face Frame), and closets (4)
 # buttons share one group. Each self-gates on its product tab via visible(), so compute_layout
 # renders only the active product's set; the tabs are mutually exclusive so
@@ -511,18 +501,19 @@ def compute_layout(context, area):
     placed = []
     top_y = y_max - margin_y - btn_h
 
-    # The scene-navigator button is left-anchored just past the toolbar,
-    # not part of the centered rows -- a fixed spot makes it easy to find
-    # and its panel opens directly below it. When the viewport's overlay
-    # text is on that corner belongs to Blender, so the button yields and
-    # joins the first centered row as its leftmost group instead.
+    # The panel tabs are left-anchored just past the toolbar, not part of
+    # the centered rows -- a fixed spot makes them easy to find and the
+    # panel opens directly below them. When the viewport's overlay text is
+    # on, that corner belongs to Blender, so they yield and join the first
+    # centered row as its leftmost group instead.
     rows = _rows()
-    if _NAV_BUTTON.visible(context):
-        if _corner_has_overlay_text(area):
-            rows = [[[_NAV_BUTTON]] + rows[0]] + rows[1:]
-        else:
-            placed.append((_NAV_BUTTON, (x_min + margin_x, top_y,
-                                         _NAV_BUTTON.width, btn_h)))
+    if _corner_has_overlay_text(area):
+        rows = [[list(_TAB_BUTTONS)] + rows[0]] + rows[1:]
+    else:
+        tab_x = x_min + margin_x
+        for tab_btn in _TAB_BUTTONS:
+            placed.append((tab_btn, (tab_x, top_y, tab_btn.width, btn_h)))
+            tab_x += tab_btn.width + btn_gap
 
     cursor_y = top_y
     for row in rows:
@@ -616,7 +607,7 @@ def click_hits_widget(context, area, region_x, region_y):
             return True
     # The pinned navigator panel is HUD surface too, so external modals
     # (grab / placement) pass its clicks through rather than consuming them.
-    if scene_navigator.is_pinned():
+    if scene_navigator.panel_open():
         region = next((r for r in area.regions if r.type == 'WINDOW'), None)
         if region is not None:
             ax, atop = _nav_anchor(context, area)
@@ -627,13 +618,43 @@ def click_hits_widget(context, area, region_x, region_y):
     return False
 
 
+def pinned_panel_rect(context, area):
+    """The pinned scene navigator's panel rect, or None when nothing is
+    pinned there.
+
+    The navigator is HUD surface: it hangs off the nav button at the
+    top-left and stays put while the user works. Anything else that
+    anchors to that corner -- the room and draft tool palettes -- has to
+    ask where it is and step aside, because a GPU overlay has no layout
+    engine to do it for them.
+    """
+    if area is None or _hud_shutdown or not _hud_enabled():
+        return None
+    if not scene_navigator.panel_open():
+        return None
+    region = next((r for r in area.regions if r.type == 'WINDOW'), None)
+    if region is None:
+        return None
+    ax, atop = _nav_anchor(context, area)
+    layout = scene_navigator.build_pinned_layout(context, area, region,
+                                                 ax, atop)
+    return layout[0] if layout else None
+
+
 # ---- Draw handler -----------------------------------------------------------
 
 def _nav_anchor(context, area):
-    """(x, top) just under the HUD nav button, for placing the pinned
-    navigator panel. (-1, -1) when the nav button isn't currently laid out."""
+    """(x, top) just under the tab strip, for placing the panel.
+
+    Anchored to the FIRST tab, not the active one. Hanging it under
+    whichever tab was selected slid the whole panel sideways as you
+    switched, and dragged the tool palette along with it. The strip is
+    one control; the panel belongs under its left edge.
+
+    (-1, -1) when the tabs are not currently laid out.
+    """
     for widget, rect in compute_layout(context, area):
-        if isinstance(widget, _NavButton):
+        if isinstance(widget, _PanelTabButton):
             return rect[0], rect[1] - 6
     return -1.0, -1.0
 
@@ -669,10 +690,10 @@ def _draw_hud():
     # Pinned scene navigator: drawn by THIS permanent handler (not the
     # transient modal) so it persists while the user designs. Anchored under
     # the nav button using the layout we just computed.
-    if scene_navigator.is_pinned():
+    if scene_navigator.panel_open():
         ax = atop = -1.0
         for widget, rect in placed:
-            if isinstance(widget, _NavButton):
+            if isinstance(widget, _PanelTabButton):
                 ax, atop = rect[0], rect[1] - 6
                 break
         layout = scene_navigator.build_pinned_layout(
@@ -721,9 +742,9 @@ class home_builder_OT_hud_click(bpy.types.Operator):
         region = context.region
         mx, my = event.mouse_region_x, event.mouse_region_y
 
-        # Pinned navigator panel gets first crack at the press; a hit
-        # inside its rect is consumed, a miss falls through to widgets.
-        if scene_navigator.is_pinned():
+        # The panel gets first crack at the press; a hit inside its rect
+        # is consumed, a miss falls through to the widgets below.
+        if scene_navigator.panel_open():
             ax, atop = _nav_anchor(context, area)
             layout = scene_navigator.build_pinned_layout(
                 context, area, region, ax, atop)
@@ -732,6 +753,17 @@ class home_builder_OT_hud_click(bpy.types.Operator):
                     context, mx, my, layout[1])
                 area.tag_redraw()
                 return {'FINISHED'}
+            # Clicked away. An unpinned panel behaves like a menu and
+            # closes, but the click still reaches the viewport -- so the
+            # same press that dismisses it can also select something.
+            if layout and not scene_navigator.is_pinned():
+                on_tab = any(
+                    point_in_rect(mx, my, rect)
+                    for widget, rect in compute_layout(context, area)
+                    if isinstance(widget, _PanelTabButton))
+                if not on_tab:
+                    scene_navigator.close_panel()
+                    area.tag_redraw()
 
         for widget, rect in compute_layout(context, area):
             if point_in_rect(mx, my, rect):
@@ -752,7 +784,7 @@ class home_builder_OT_hud_scroll(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return _hud_event_poll(context) and scene_navigator.is_pinned()
+        return _hud_event_poll(context) and scene_navigator.panel_open()
 
     def invoke(self, context, event):
         area = context.area
@@ -792,7 +824,7 @@ class home_builder_OT_hud_hover(bpy.types.Operator):
             if point_in_rect(_mouse[0], _mouse[1], rect):
                 hover_key = i
                 break
-        if hover_key != _last_hover_key or scene_navigator.is_pinned():
+        if hover_key != _last_hover_key or scene_navigator.panel_open():
             _last_hover_key = hover_key
             context.area.tag_redraw()
         return {'PASS_THROUGH'}

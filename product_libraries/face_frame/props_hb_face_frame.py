@@ -124,17 +124,12 @@ def load_cabinet_thumbnail(name):
     pcoll = get_cabinet_previews()
     if name in pcoll:
         return pcoll[name].icon_id
-
-    # Primary: face frame thumbnails
-    primary = os.path.join(get_cabinet_thumbnail_path(), f"{name}.png")
-    if os.path.exists(primary):
-        return pcoll.load(name, primary, 'IMAGE').icon_id
-
-    # Fallback: frameless thumbnails
-    fallback = os.path.join(get_frameless_thumbnail_fallback_path(), f"{name}.png")
-    if os.path.exists(fallback):
-        return pcoll.load(name, fallback, 'IMAGE').icon_id
-
+    # One resolver, shared with the viewport library panel -- which
+    # uploads the same file to a GPU texture instead of a preview icon.
+    from . import library_catalog
+    path = library_catalog.thumbnail_path(name)
+    if path:
+        return pcoll.load(name, path, 'IMAGE').icon_id
     return 0
 
 
@@ -10038,123 +10033,47 @@ class Face_Frame_Scene_Props(PropertyGroup):
                 op.cabinet_name = cab
 
     # =====================================================================
-    # UI: standard cabinet library
+    # UI: product sections
     # =====================================================================
+    # The products themselves live in library_catalog. They used to be
+    # written out inline here, which meant the library could only be
+    # read by drawing it -- no search, no category filter, no second
+    # view of it anywhere. These render the shared data; the viewport
+    # library panel reads the very same rows.
+
+    def _draw_library_section(self, layout, section_key):
+        """Draw one catalog section from the shared product data."""
+        from . import library_catalog
+        section = library_catalog.section_by_key(section_key)
+        if section is None:
+            return
+        for row_label, items in section['rows']:
+            self._draw_catalog_labeled_row(layout, row_label, items)
+
     def draw_cabinet_library_ui(self, layout, context):
-        # One row, short labels (the section header already says
-        # "Standard Cabinets", so no per-row label is needed).
-        self._draw_catalog_labeled_row(layout, "", [
-            ("Base", "Base"), ("Tall", "Tall"), ("Upper", "Upper"),
-            ("Lap", "Lap Drawer"), ("Stacked", "Upper Stacked"),
-        ])
+        self._draw_library_section(layout, 'standard')
         layout.prop(self, 'auto_join_cabinets')
 
-    # =====================================================================
-    # UI: corner cabinet library
-    # =====================================================================
     def draw_corner_cabinet_library_ui(self, layout, context):
-        # Sizes moved to Cabinet Sizes. Grouped by corner type, one
-        # labeled row each: Pie Cut (Base/Drawer/Upper), Diagonal
-        # (Base/Tall/Upper).
-        self._draw_catalog_labeled_row(layout, "Pie Cut", [
-            ("Base", "Pie Cut Base"), ("Drawer", "Pie Cut Drawer"),
-            ("Upper", "Pie Cut Upper"),
-        ])
-        self._draw_catalog_labeled_row(layout, "Diagonal", [
-            ("Base", "Diagonal Base"), ("Tall", "Diagonal Tall"),
-            ("Upper", "Diagonal Upper"),
-        ])
+        self._draw_library_section(layout, 'corner')
 
-    # =====================================================================
-    # UI: appliance products library
-    # =====================================================================
     def draw_appliance_library_ui(self, layout, context):
-        # Sizes (heights + widths) moved to Cabinet Sizes. Grouped into
-        # two labeled rows: freestanding appliances vs appliance cabinets.
-        # NOTE: there is no dedicated "Oven" product, so the Oven button
-        # maps to "Built in Tall" (the built-in tall oven tower).
-        self._draw_catalog_labeled_row(layout, "Cabinet", [
-            ("Sink", "Sink"), ("Refrigerator", "Refrigerator Cabinet"),
-            ("Oven", "Built in Tall"),
-        ])
-        self._draw_catalog_labeled_row(layout, "Standalone", [
-            ("Dishwasher", "Dishwasher"), ("Range", "Range"),
-            ("Hood", "Range Hood"),
-            ("Refrigerator", "Standalone Refrigerator"),
-        ])
-        # Generic under-counter appliance (beverage center, wine fridge,
-        # ice maker) - relabel it after placing via right-click Set Label.
-        self._draw_catalog_labeled_row(layout, "", [
-            ("Under Counter", "Under Counter Appliance"),
-        ])
+        self._draw_library_section(layout, 'appliance')
 
-    # =====================================================================
-    # UI: vanities library
-    # =====================================================================
     def draw_vanity_library_ui(self, layout, context):
-        self._draw_catalog_labeled_row(layout, "Vanity", [
-            ("Special", "Special"), ("Combination", "Combination"),
-            ("Deluxe", "Deluxe"),
-        ])
+        self._draw_library_section(layout, 'vanity')
 
-    # =====================================================================
-    # UI: parts library
-    # =====================================================================
     def draw_part_library_ui(self, layout, context):
-        # Vanity parts hidden for now -- re-add when the Vanity part
-        # products are created:
-        # self._draw_catalog_labeled_row(layout, "Vanity", [
-        #     ("End Leg", "Vanity End Leg Assembly"),
-        #     ("Support Leg", "Vanity Support Leg"),
-        #     ("Fixed Shelf", "Vanity Fixed Shelf"),
-        # ])
-        # Split into two rows of three; blank labels keep the rows unlabeled.
-        self._draw_catalog_labeled_row(layout, "", [
-            ("Panel", "Panel"), ("Leg", "Leg Product"), ("Door", "Door"),
-        ])
-        self._draw_catalog_labeled_row(layout, "", [
-            ("Misc", "Misc Part"), ("Floating Shelf", "Floating Shelves"),
-            ("Valance", "Valance"),
-        ])
-        self._draw_catalog_labeled_row(layout, "", [
-            ("Wood Top", "Wood Top"), ("Mantle", "Mantle"),
-        ])
+        self._draw_library_section(layout, 'parts')
 
-    # =====================================================================
-    # UI: specialty bath library
-    # =====================================================================
     def draw_specialty_bath_library_ui(self, layout, context):
-        self._draw_catalog_labeled_row(layout, "Medicine", [
-            ("Recessed", "Standard Recessed Medicine Cabinet"),
-            ("Standard", "Medicine Cabinet"),
-            ("Tri-View", "Tri-View Medicine Cabinet"),
-        ])
-        self._draw_catalog_labeled_row(layout, "Other", [
-            ("Overstool", "Overstool Cabinet"), ("Mirror", "Mirror Frame"),
-            ("Tub Skirt", "Tub Skirt"),
-        ])
+        self._draw_library_section(layout, 'bath')
 
-    # =====================================================================
-    # UI: specialty bedroom & bookcases library
-    # =====================================================================
     def draw_bedroom_bookcase_library_ui(self, layout, context):
-        # Bookcase Corner / Bookcase Corner Upper dropped -- not in the
-        # catalog dispatch (dead buttons).
-        self._draw_catalog_labeled_row(layout, "Bookcase", [
-            ("Base", "Bookcase"), ("Storage", "Bookcase Storage Unit"),
-            ("Upper", "Bookcase Upper"),
-        ])
-        self._draw_catalog_labeled_row(layout, "Dresser", [
-            ("5 Drawer", "5 Drawer Dresser"),
-            ("6 Drawer", "6 Drawer Dresser"),
-        ])
-        self._draw_catalog_labeled_row(layout, "Night Stand", [
-            ("Standard", "Night Stand"),
-            ("3 Drawer", "3 Drawer Night Stand"),
-        ])
-        self._draw_catalog_labeled_row(layout, "Other", [
-            ("Hutch", "Hutch Upper"), ("Window Seat", "Window Seat"),
-        ])
+        self._draw_library_section(layout, 'bedroom')
+
+    def draw_misc_library_ui(self, layout, context):
+        self._draw_library_section(layout, 'misc')
 
     # =====================================================================
     # UI: angled library
@@ -10164,18 +10083,6 @@ class Face_Frame_Scene_Props(PropertyGroup):
             "Angled Ends with Doors", "Double Angled Ends",
             "Angled Finished Ends",
         ], columns=2)
-
-    # =====================================================================
-    # UI: misc library
-    # =====================================================================
-    def draw_misc_library_ui(self, layout, context):
-        # One row, short labels (matches the other categories). X-Frame Ends
-        # hidden for now -- re-add when that product has a builder:
-        #     ("X-Frame", "X-Frame Ends"),
-        self._draw_catalog_labeled_row(layout, "", [
-            ("Half Wall", "Half Wall"), ("Support", "Support Frame"),
-            ("FF & Doors", "Face Frame and Doors"),
-        ])
 
     # =====================================================================
     # UI: user library
