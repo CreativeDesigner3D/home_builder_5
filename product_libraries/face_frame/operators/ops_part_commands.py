@@ -2045,6 +2045,10 @@ _DOOR_SHAPE_ITEMS = [
 ]
 
 _DOOR_SHAPE_HAND_ITEMS = [
+    ('AUTO', "By Swing",
+     "Each door's own pull side runs full height - the stile opposite "
+     "its hinges. On a pair that puts the two arcs at the meeting "
+     "stiles, so a multi-door selection comes out handed correctly"),
     ('LEFT', "Left", "The left stile runs full height"),
     ('RIGHT', "Right", "The right stile runs full height"),
 ]
@@ -2139,7 +2143,14 @@ def _apply_door_shape(op, context):
                     del store[key]
         else:
             store[k_shape] = op.shape
-            store[k_hand] = op.hand
+            # AUTO stores no hand: front_round_top then resolves each
+            # door's tall side from its own swing, so one dialog over a
+            # pair (or a whole run) hands every door individually.
+            if op.hand == 'AUTO':
+                if k_hand in store:
+                    del store[k_hand]
+            else:
+                store[k_hand] = op.hand
             store[k_radius] = op.radius_mode
         _reapply_front_style(front)
         root = types_face_frame.find_cabinet_root(front)
@@ -2186,8 +2197,7 @@ class hb_face_frame_OT_set_door_shape(bpy.types.Operator):
         store = _frame_store(front)
         k_shape, k_hand, k_radius = _props.front_round_top_keys(front, store)
         self.shape = store.get(k_shape) or 'SQUARE'
-        self.hand = (store.get(k_hand)
-                     or _props.front_default_round_hand(front, store))
+        self.hand = store.get(k_hand) or 'AUTO'
         self.radius_mode = store.get(k_radius) or 'OUTSIDE'
         return context.window_manager.invoke_props_dialog(self, width=320)
 
