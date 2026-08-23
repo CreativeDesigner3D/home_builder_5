@@ -11,45 +11,84 @@ from gpu_extras.batch import batch_for_shader
 from .. import hb_types, hb_snap, hb_placement, hb_utils, units
 
 # Wall Miter Angle Calculation
+def _solve_miter_shear_angles(a_rot, a_thickness, b_rot, b_thickness):
+    """
+    Given wall A ending where wall B starts (sharing the same inner corner
+    point), solve for the Right Angle (on A) and Left Angle (on B) such that
+    the OUTER (thickness-offset) corners of both walls land on the same
+    point.
+
+    The geometry-node wall shears its outer-face corner along its own travel
+    direction by tan(angle) * this_wall's_thickness. A simple symmetric
+    bisector (turn/2 each side) only lands both walls' outer corners on the
+    same point when both walls share the same thickness. When thickness
+    differs, that assumption breaks and the outer corner opens up into a
+    gap/overlap. This solves the real corner-intersection instead:
+
+        C + tA*nA + shearA*dirA == C + tB*nB + shearB*dirB
+
+    for shearA, shearB (a 2x2 linear solve), then converts each shear back
+    to an angle via atan(shear / own_thickness).
+    """
+    import math
+    from mathutils import Vector, Matrix
+
+    turn = b_rot - a_rot
+    while turn > math.pi: turn -= 2 * math.pi
+    while turn < -math.pi: turn += 2 * math.pi
+
+    if abs(turn) < 1e-6:
+        return 0.0, 0.0
+
+    dirA = Vector((math.cos(a_rot), math.sin(a_rot)))
+    dirB = Vector((math.cos(b_rot), math.sin(b_rot)))
+    nA = Vector((-dirA.y, dirA.x))
+    nB = Vector((-dirB.y, dirB.x))
+
+    rhs = b_thickness * nB - a_thickness * nA
+    M = Matrix(((dirA.x, -dirB.x), (dirA.y, -dirB.y)))
+
+    det = M.determinant()
+    if abs(det) < 1e-9:
+        # Directions parallel/degenerate - fall back to the old symmetric split.
+        return -turn / 2, turn / 2
+
+    shear_a, shear_b = M.inverted() @ rhs
+
+    right_angle_a = math.atan2(shear_a, a_thickness) if a_thickness else 0.0
+    left_angle_b = math.atan2(shear_b, b_thickness) if b_thickness else 0.0
+    return right_angle_a, left_angle_b
+
+
 def calculate_wall_miter_angles(wall_obj):
     """
     Calculate and set the miter angles for a wall based on connected walls.
     Uses the GeoNodeWall.get_connected_wall() method to find connections.
-    
-    The miter angle formula:
-    - turn_angle = connected_wall_rotation - this_wall_rotation (normalized to -180° to 180°)
-    - For the RIGHT end (end of wall): right_angle = -turn_angle / 2
-    - For the LEFT end (start of wall): left_angle = turn_angle / 2
+
+    Accounts for the connected walls' thicknesses (not just the turn angle)
+    so the outer corner is properly closed even when the two walls have
+    different thickness - see _solve_miter_shear_angles.
     """
-    import math
-    
     wall = hb_types.GeoNodeWall(wall_obj)
     this_rot = wall_obj.rotation_euler.z
-    
+    this_thickness = wall.get_input('Thickness')
+
     # Get connected wall on the left (at our START)
     left_wall = wall.get_connected_wall('left')
     if left_wall:
         prev_rot = left_wall.obj.rotation_euler.z
-        turn = this_rot - prev_rot
-        # Normalize turn angle to -pi to pi
-        while turn > math.pi: turn -= 2 * math.pi
-        while turn < -math.pi: turn += 2 * math.pi
-        
-        left_angle = turn / 2
+        prev_thickness = left_wall.get_input('Thickness')
+        _right_a, left_angle = _solve_miter_shear_angles(prev_rot, prev_thickness, this_rot, this_thickness)
         wall.set_input('Left Angle', left_angle)
     else:
         wall.set_input('Left Angle', 0)
-    
+
     # Get connected wall on the right (at our END)
     right_wall = wall.get_connected_wall('right')
     if right_wall:
         next_rot = right_wall.obj.rotation_euler.z
-        turn = next_rot - this_rot
-        # Normalize turn angle to -pi to pi
-        while turn > math.pi: turn -= 2 * math.pi
-        while turn < -math.pi: turn += 2 * math.pi
-        
-        right_angle = -turn / 2
+        next_thickness = right_wall.get_input('Thickness')
+        right_angle, _left_b = _solve_miter_shear_angles(this_rot, this_thickness, next_rot, next_thickness)
         wall.set_input('Right Angle', right_angle)
     else:
         wall.set_input('Right Angle', 0)
@@ -272,14 +311,17 @@ def get_wall_chain_info(wall_obj):
 
 def _miter_between(a_obj, b_obj):
     """Set the miter angles at the corner where a_obj.end meets b_obj.start.
-    Writes Right Angle on a_obj and Left Angle on b_obj, using the normalized
-    turn angle between their rotations."""
-    import math
-    turn = b_obj.rotation_euler.z - a_obj.rotation_euler.z
-    while turn >  math.pi: turn -= 2 * math.pi
-    while turn < -math.pi: turn += 2 * math.pi
-    hb_types.GeoNodeWall(a_obj).set_input('Right Angle', -turn / 2)
-    hb_types.GeoNodeWall(b_obj).set_input('Left Angle',   turn / 2)
+    Writes Right Angle on a_obj and Left Angle on b_obj, using
+    _solve_miter_shear_angles so the outer corner closes correctly even when
+    a_obj and b_obj have different thickness."""
+    wa = hb_types.GeoNodeWall(a_obj)
+    wb = hb_types.GeoNodeWall(b_obj)
+    right_angle, left_angle = _solve_miter_shear_angles(
+        a_obj.rotation_euler.z, wa.get_input('Thickness'),
+        b_obj.rotation_euler.z, wb.get_input('Thickness'),
+    )
+    wa.set_input('Right Angle', right_angle)
+    wb.set_input('Left Angle', left_angle)
 
 
 def _update_chain_miters(chain, is_closed):
