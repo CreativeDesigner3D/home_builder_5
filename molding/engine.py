@@ -1069,6 +1069,23 @@ def _island_perimeter_spans(members, facts):
     return spans
 
 
+def _stands_on_wall(obj):
+    """True when this cabinet hangs off a wall.
+
+    The whole parent chain is walked, not just obj.parent: a
+    free-standing run gets collected under a group cage, and a cabinet
+    parented to that cage is still free-standing. Testing the immediate
+    parent alone reads a grouped island as wall-hung and costs it the
+    perimeter walk below.
+    """
+    node = obj
+    while node is not None:
+        if node.get('IS_WALL_BP'):
+            return True
+        node = node.parent
+    return False
+
+
 def kick_sweep_segments(chain, facts, x_off, include_recessed):
     """[(world_points, cyclic)] base-molding segments for one run.
     Free-standing runs wrap as island perimeters; on-wall runs follow
@@ -1084,7 +1101,7 @@ def kick_sweep_segments(chain, facts, x_off, include_recessed):
             if right.dot(fn) < 0:
                 chain = list(reversed(chain))
 
-    if chain and all(c.parent is None for c in chain):
+    if chain and not any(_stands_on_wall(c) for c in chain):
         perimeter = _island_perimeter_spans(chain, facts)
         if perimeter is not None:
             return _stretch_segments(perimeter, include_recessed, x_off,
