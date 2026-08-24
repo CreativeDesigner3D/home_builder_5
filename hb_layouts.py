@@ -74,6 +74,17 @@ LINEART_CAMERA_TAG = 'IS_HB_LINEART_CAMERA'
 # strokes still lie on the real geometry, so the drawing is unaffected.
 LINEART_CAMERA_JITTER_DEG = 0.05
 
+# Freestyle rates every edge by quantitative invisibility (QI): the number
+# of surfaces between it and the camera, so QI 0 means nothing is in front
+# of it. The default visibility test demands QI 0 exactly, but coplanar or
+# zero-gap parts (a door, its stile and an applied panel sharing a plane;
+# two cabinet sides butted flush) make that count tie, and an edge that is
+# plainly visible comes back QI 1 and is dropped. Views whose depth
+# complexity is low enough to absorb the extra level accept a range
+# instead -- see LayoutView.solid_qi_end. Freestyle's own upper bound for
+# a QI range, used as the open end of the dashed pass.
+FREESTYLE_QI_MAX = 100
+
 # Paper-space line sizes in inches, converted to world units per drawing
 # scale by update_line_art_sizes. Chosen to match the Freestyle look
 # (solid 1.5px / dashed 1.0px at the 150dpi base).
@@ -1115,7 +1126,13 @@ class LayoutView:
     paper_size: str = 'LETTER'
     landscape: bool = True
     dpi: int = DEFAULT_DPI
-    
+    # Highest QI level the Solid pass still draws (see FREESTYLE_QI_MAX).
+    # None keeps Freestyle's strict "visible only" test. Subclasses widen
+    # this only where a deeper level cannot mean "genuinely behind
+    # something": on an elevation or a 3D view a QI of 1 is usually an
+    # interior part reading through its own front, so those stay strict.
+    solid_qi_end: int = None
+
     def __init__(self, scene=None):
         if scene:
             self.scene = scene
@@ -1293,7 +1310,14 @@ class LayoutView:
         solid_lineset.select_by_collection = True
         solid_lineset.collection = self.freestyle_solid
         solid_lineset.collection_negation = 'INCLUSIVE'
-        
+        solid_lineset.select_by_visibility = True
+        if self.solid_qi_end is None:
+            solid_lineset.visibility = 'VISIBLE'
+        else:
+            solid_lineset.visibility = 'RANGE'
+            solid_lineset.qi_start = 0
+            solid_lineset.qi_end = self.solid_qi_end
+
         # Configure solid line style
         if solid_lineset.linestyle:
             solid_lineset.linestyle.color = (0, 0, 0)  # Black
@@ -1309,8 +1333,15 @@ class LayoutView:
         dashed_lineset.collection = self.freestyle_dashed
         dashed_lineset.collection_negation = 'INCLUSIVE'
         dashed_lineset.select_by_visibility = True
-        dashed_lineset.visibility = 'HIDDEN'
-        
+        if self.solid_qi_end is None:
+            dashed_lineset.visibility = 'HIDDEN'
+        else:
+            # Start one level above whatever the solid pass took, or the
+            # same edge draws solid and dashed on top of each other.
+            dashed_lineset.visibility = 'RANGE'
+            dashed_lineset.qi_start = self.solid_qi_end + 1
+            dashed_lineset.qi_end = FREESTYLE_QI_MAX
+
         # Configure dashed line style
         if dashed_lineset.linestyle:
             dashed_lineset.linestyle.color = (0, 0, 0)  # Black
@@ -1808,10 +1839,15 @@ class ElevationView(LayoutView):
 
 class PlanView(LayoutView):
     """Plan view - top-down orthographic projection."""
-    
+
     content_collection: bpy.types.Collection = None
     collection_instance: bpy.types.Object = None
-    
+    # Looking straight down, one level of depth behind a cabinet's top
+    # surface is almost always a flush-joint tie rather than a part that
+    # is genuinely hidden -- finished ends and butted cabinet sides drop
+    # out of the drawing without this.
+    solid_qi_end: int = 1
+
     def __init__(self, scene=None):
         super().__init__(scene)
         if scene:
