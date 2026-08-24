@@ -20,6 +20,7 @@ helpers take an already-scaled size.
 import math
 import bpy
 import blf
+import gpu
 
 from .hb_gpu_draw import (
     draw_rect,
@@ -215,6 +216,39 @@ def glyph_chevron(shader, cx, cy, size, collapsed, color):
 
 
 # ---- Paint idioms -----------------------------------------------------------
+
+# ---- Clipping ---------------------------------------------------------------
+
+def begin_clip(rect):
+    """Restrict drawing to `rect`, returning the box to give end_clip.
+
+    Rounds the box OUTWARD, which is the whole point of having this in
+    one place. Panel geometry lands on half pixels, and a box truncated
+    inward loses the pixel column that the rect's own right-hand border
+    is drawn in -- so a bordered button sized flush with a panel's
+    content width came out with no right edge at all. Rounding out puts
+    the slack inside the panel's padding, where nothing else draws.
+
+    `rect` is region-local; gpu scissor coords are framebuffer-relative,
+    so it is offset by whatever box is already current (the region's own)
+    and that box is what gets restored.
+    """
+    prev = gpu.state.scissor_get()
+    x, y, w, h = rect
+    x0 = int(math.floor(prev[0] + x))
+    y0 = int(math.floor(prev[1] + y))
+    x1 = int(math.ceil(prev[0] + x + w))
+    y1 = int(math.ceil(prev[1] + y + h))
+    gpu.state.scissor_test_set(True)
+    gpu.state.scissor_set(x0, y0, max(x1 - x0, 0), max(y1 - y0, 0))
+    return prev
+
+
+def end_clip(prev):
+    """Undo begin_clip. Always pair them in a finally."""
+    gpu.state.scissor_set(*prev)
+    gpu.state.scissor_test_set(False)
+
 
 def paint_frame(shader, rect, bg=Theme.PANEL_BG, border=Theme.PANEL_BORDER):
     """Filled panel background plus its 1px border."""

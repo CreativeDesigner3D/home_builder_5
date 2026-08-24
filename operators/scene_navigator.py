@@ -46,6 +46,8 @@ from ..hb_gpu_ui import (
     glyph_plus as _draw_plus_glyph,
     glyph_pin as _draw_pin_glyph,
     glyph_chevron as _draw_chevron,
+    begin_clip as _begin_clip,
+    end_clip as _end_clip,
 )
 
 
@@ -883,18 +885,9 @@ def paint_navigator(panel_rect, entries, mx, my):
     font_id = 0
     s = _s()
     # The list is scissor-clipped so partially scrolled rows cut off cleanly
-    # at the list edges. gpu scissor coords are framebuffer-relative, so
-    # offset our region-local clip rect by whatever scissor is current
-    # (the region's own), and restore it afterwards.
+    # at the list edges.
     clip = _list_clip(entries)
-    saved_scissor = None
-    if clip is not None:
-        saved_scissor = gpu.state.scissor_get()
-        ox, oy = saved_scissor[0], saved_scissor[1]
-        cx, cy, cw, ch = clip
-        gpu.state.scissor_test_set(True)
-        gpu.state.scissor_set(int(ox + cx), int(oy + cy),
-                              int(cw) + 1, int(ch) + 1)
+    saved_scissor = _begin_clip(clip) if clip is not None else None
 
     # Hover inside the list only counts on the visible part of the clip.
     if clip is not None and not _point_in_rect(mx, my, clip):
@@ -926,8 +919,7 @@ def paint_navigator(panel_rect, entries, mx, my):
             _draw_row(shader, font_id, entry, lmx, lmy)
 
     if saved_scissor is not None:
-        gpu.state.scissor_set(*saved_scissor)
-        gpu.state.scissor_test_set(False)
+        _end_clip(saved_scissor)
 
     for entry in entries:
         kind = entry[0]

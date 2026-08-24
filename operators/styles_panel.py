@@ -31,6 +31,8 @@ from ..hb_gpu_draw import (
 )
 from ..hb_gpu_ui import (
     Theme,
+    begin_clip,
+    end_clip,
     ScrollList,
     scale,
     text_width,
@@ -203,15 +205,8 @@ def paint(entries, mx, my):
         draw_rect(shader, *clip[2], Theme.SCROLLBAR_TRACK)
         draw_rect(shader, *clip[3], Theme.SCROLLBAR_THUMB)
 
-    # scissor_set only sets the BOX; the test has to be switched on
-    # or the box is ignored and rows draw outside the panel.
-    prev = gpu.state.scissor_get()
     clipped = clip is not None
-    if clipped:
-        cx, cy, cw, ch = clip[1]
-        gpu.state.scissor_test_set(True)
-        gpu.state.scissor_set(int(prev[0] + cx), int(prev[1] + cy),
-                              max(int(cw), 0), max(int(ch), 0))
+    prev = begin_clip(clip[1]) if clipped else None
     try:
         for entry in entries:
             kind = entry[0]
@@ -276,8 +271,7 @@ def paint(entries, mx, my):
                               7 * s, True, Theme.GLYPH)
     finally:
         if clipped:
-            gpu.state.scissor_set(*prev)
-            gpu.state.scissor_test_set(False)
+            end_clip(prev)
     gpu.state.blend_set('NONE')
 
 

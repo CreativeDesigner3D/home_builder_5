@@ -539,14 +539,7 @@ def _paint_grid(layout, mx, my):
         return
 
     # Scissor the grid so a partly scrolled row cuts off cleanly.
-    # scissor_set only sets the BOX -- without scissor_test_set the
-    # box is ignored entirely, which is how tiles were being drawn
-    # outside the panel while scrolling.
-    prev = gpu.state.scissor_get()
-    cx, cy, cw, ch = clip_rect
-    gpu.state.scissor_test_set(True)
-    gpu.state.scissor_set(int(prev[0] + cx), int(prev[1] + cy),
-                          max(int(cw), 0), max(int(ch), 0))
+    prev = begin_clip(clip_rect)
     try:
         # Section headers: a chevron, the name, and the count. Clicking
         # one folds the section away.
@@ -591,8 +584,7 @@ def _paint_grid(layout, mx, my):
                                if product['cabinet_name'] == hover
                                else Theme.TEXT_NORMAL, label)
     finally:
-        gpu.state.scissor_set(*prev)
-        gpu.state.scissor_test_set(False)
+        end_clip(prev)
 
     # Footer: the hovered product's full name, which the tile label
     # usually had to truncate.
