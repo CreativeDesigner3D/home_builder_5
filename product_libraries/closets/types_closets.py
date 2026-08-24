@@ -2500,14 +2500,17 @@ class ClosetStarter(GeoNodeCage):
                 else:
                     rule = 'BASE'
             if door_v is not None:
-                # The typed figure is measured off the door itself, from
-                # the edge the convention works from - the top on a base
-                # door, the bottom on the other two. A tall door given a
-                # figure of its own is held off its own bottom edge
-                # rather than off the floor: that is what the box asks
-                # for and what gets measured on the floor.
-                y = ((height - door_v - half) if rule == 'BASE'
-                     else door_v + half)
+                # A figure the opening typed in is read the same way the
+                # room's is for whichever convention the door landed on:
+                # down from the top on BASE, off the floor on TALL, up
+                # from the bottom on UPPER. The box says which, so the
+                # number means one thing.
+                if rule == 'BASE':
+                    y = height - door_v - half
+                elif rule == 'TALL':
+                    y = (door_v - bottom_w) + half
+                else:
+                    y = door_v + half
             elif rule == 'BASE':
                 y = height - v_base - half
             elif rule == 'TALL':

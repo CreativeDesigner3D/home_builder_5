@@ -1265,15 +1265,14 @@ class Closet_Opening_Props(PropertyGroup):
         default='AUTO')  # type: ignore
     unlock_door_pull_vertical: BoolProperty(
         name="From Top/Bottom",
-        description="Set how far in from the door's top or bottom edge "
-                    "this opening's door pulls sit, instead of following "
-                    "the room. Which edge it is measured from is the "
-                    "convention above: Base from the top, Tall and Upper "
-                    "from the bottom",
+        description="Set how high this opening's door pulls sit, instead "
+                    "of following the room. Read the way the convention "
+                    "above reads it: Base down from the door top, Upper "
+                    "up from the door bottom, Tall off the floor",
         default=False)  # type: ignore
     door_pull_vertical_location: FloatProperty(
         name="Door Pull Vertical Location",
-        description="Door edge to the near end of the pull",
+        description="To the near end of the pull",
         default=const.DOOR_PULL_VERTICAL_LOCATION,
         min=0.0, unit='LENGTH', precision=4)  # type: ignore
     unlock_door_pull_edge: BoolProperty(

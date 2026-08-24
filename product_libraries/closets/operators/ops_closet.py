@@ -6403,15 +6403,14 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
         default='AUTO')  # type: ignore
     unlock_door_pull_vertical: bpy.props.BoolProperty(
         name="From Top/Bottom",
-        description="Set how far in from the door's top or bottom edge "
-                    "this opening's door pulls sit, instead of following "
-                    "the room. Which edge it is measured from is the "
-                    "convention above: Base from the top, Tall and Upper "
-                    "from the bottom",
+        description="Set how high this opening's door pulls sit, instead "
+                    "of following the room. Read the way the convention "
+                    "above reads it: Base down from the door top, Upper "
+                    "up from the door bottom, Tall off the floor",
         default=False)  # type: ignore
     door_pull_vertical_location: bpy.props.FloatProperty(
         name="Door Pull Vertical Location",
-        description="Door edge to the near end of the pull",
+        description="To the near end of the pull",
         default=const.DOOR_PULL_VERTICAL_LOCATION,
         min=0.0, unit='LENGTH', precision=4)  # type: ignore
     unlock_door_pull_edge: bpy.props.BoolProperty(
@@ -6651,68 +6650,72 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
         cp = context.scene.hb_closets
         box = layout.box()
         box.label(text="Pulls", icon='MOD_SCREW')
-        col = box.column(align=True)
-        col.prop(self, 'no_pulls')
-        col = box.column(align=True)
-        col.enabled = not self.no_pulls
+        box.prop(self, 'no_pulls')
+        body = box.column()
+        body.enabled = not self.no_pulls
+
+        def as_length(value):
+            return units.unit_to_string(context.scene.unit_settings, value)
+
+        def unlock_row(parent, flag, figure, label, locked, enabled=True):
+            """A figure the opening can take over: the tick is the label,
+            and until it is ticked the box beside it reads back what the
+            room is doing, so there is something to measure against."""
+            row = parent.row(align=True)
+            row.enabled = enabled
+            row.prop(self, flag, text=label)
+            sub = row.row(align=True)
+            if getattr(self, flag):
+                sub.prop(self, figure, text="")
+            else:
+                sub.label(text=locked)
+
+        # Doors and drawer fronts are hung differently and have nothing
+        # to say about each other, so they are kept apart - one stack of
+        # near-identical rows reads as one setting with six boxes.
+        dbox = body.box()
+        dbox.label(text="Doors")
+        col = dbox.column(align=True)
+        col.prop(self, 'door_pull_location', text="Location")
+        rule = self.door_pull_location
+        if rule == 'BASE':
+            v_label = "From Top"
+            v_locked = as_length(cp.pull_vertical_location_base)
+        elif rule == 'TALL':
+            v_label = "Off The Floor"
+            v_locked = as_length(cp.pull_vertical_location_tall)
+        elif rule == 'UPPER':
+            v_label = "From Bottom"
+            v_locked = as_length(cp.pull_vertical_location_upper)
+        else:
+            # On Auto the door has not been stood up yet, so there is no
+            # one edge for a figure to be read from. Naming a convention
+            # is what makes the box mean something.
+            v_label, v_locked = "From Top/Bottom", "Follows the door"
+        unlock_row(col, 'unlock_door_pull_vertical',
+                   'door_pull_vertical_location', v_label, v_locked,
+                   enabled=rule != 'AUTO')
+        unlock_row(col, 'unlock_door_pull_edge',
+                   'door_pull_horizontal_offset', "From Edge",
+                   as_length(cp.pull_horizontal_offset))
+
+        wbox = body.box()
+        wbox.label(text="Drawer Fronts")
+        col = wbox.column(align=True)
         row = col.row(align=True)
-        row.prop(self, 'unlock_center_pull')
+        row.prop(self, 'unlock_center_pull', text="Centered")
         sub = row.row(align=True)
         if self.unlock_center_pull:
             sub.prop(self, 'center_pull_on_front', text="On Front")
         else:
             sub.label(text="Centered" if cp.center_pulls_on_drawer_front
                       else "Measured")
-        row = col.row(align=True)
-        row.enabled = not (self.center_pull_on_front
-                           if self.unlock_center_pull
-                           else cp.center_pulls_on_drawer_front)
-        row.prop(self, 'unlock_pull_location')
-        sub = row.row(align=True)
-        if self.unlock_pull_location:
-            sub.prop(self, 'drawer_pull_vertical_location', text="")
-        else:
-            sub.label(text=units.unit_to_string(
-                context.scene.unit_settings,
-                cp.pull_vertical_location_drawers))
-        col.separator()
-        # Doors carry their own rule; the drawer settings above say
-        # nothing about where a door's pull lands. Under it, the two
-        # figures the room otherwise supplies - which edge the vertical
-        # one is read from is the rule's business, so the label says
-        # which one it will be.
-        col.prop(self, 'door_pull_location', text="Doors")
-        rule = self.door_pull_location
-        if rule == 'AUTO':
-            v_label, v_room = "From Top/Bottom", None
-        elif rule == 'BASE':
-            v_label, v_room = "From Top", cp.pull_vertical_location_base
-        elif rule == 'TALL':
-            v_label, v_room = "From Bottom", None
-        else:
-            v_label, v_room = "From Bottom", cp.pull_vertical_location_upper
-        row = col.row(align=True)
-        row.prop(self, 'unlock_door_pull_vertical', text=v_label)
-        sub = row.row(align=True)
-        if self.unlock_door_pull_vertical:
-            sub.prop(self, 'door_pull_vertical_location', text="")
-        elif v_room is None:
-            # Auto has not picked yet, and Tall is a height off the
-            # floor rather than a figure off an edge - neither has one
-            # number to show until a door is actually stood up.
-            sub.label(text="Room")
-        else:
-            sub.label(text=units.unit_to_string(
-                context.scene.unit_settings, v_room))
-        row = col.row(align=True)
-        row.prop(self, 'unlock_door_pull_edge', text="From Edge")
-        sub = row.row(align=True)
-        if self.unlock_door_pull_edge:
-            sub.prop(self, 'door_pull_horizontal_offset', text="")
-        else:
-            sub.label(text=units.unit_to_string(
-                context.scene.unit_settings, cp.pull_horizontal_offset))
-        col.separator()
+        centered = (self.center_pull_on_front if self.unlock_center_pull
+                    else cp.center_pulls_on_drawer_front)
+        unlock_row(col, 'unlock_pull_location',
+                   'drawer_pull_vertical_location', "From Top",
+                   as_length(cp.pull_vertical_location_drawers),
+                   enabled=not centered)
         row = col.row(align=True)
         row.prop(self, 'double_pull_on_front', text="Two Per Front")
         sub = row.row(align=True)
