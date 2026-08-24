@@ -41,6 +41,7 @@ from ..hb_gpu_ui import (
     paint_button,
     glyph_plus,
     glyph_chevron,
+    InlineEdit,
 )
 
 PREFERRED_WIDTH = 300       # unscaled
@@ -48,26 +49,34 @@ PREFERRED_WIDTH = 300       # unscaled
 # ---- Layout (unscaled px) --------------------------------------------------
 ROW_H = 22
 ROW_GAP = 2
-SECTION_H = 18
+SECTION_H = 20          # tall enough to carry a button on the right
+NEW_BTN_H = 16          # the + NEW chip inside a section header
+NEW_BTN_PAD = 6         # its gap from the header text and the edge
 GROUP_GAP = 8
 BTN = 18
 PAD = 4
 FONT = 10
 ACCENT_W = 3
 GEAR = 18           # the per-style settings button on a row
+PLUS_SPAN = 8       # full width of the plus mark, not half
+PLUS_GAP = 4        # plus mark to the word NEW
 
 # Commands that act on the active style. Drawn as buttons rather than
 # hidden in a popup: these are the things you DO with a style, and the
-# painting ones especially want to be one click from the list.
+# painting ones want to be one click from the list.
+#
+# Three, not the sidebar's seven. Assign, Update and Reset stay in the
+# sidebar, which still has all of them; the style's own settings are
+# behind the menu glyph on its row, so a button for them here would be
+# a second door onto the same thing. What is left is the three brushes,
+# named for what each one paints: the whole cabinet, one part's finish,
+# one part's interior.
 ACTIONS = (
-    (("Assign", "hb_face_frame.assign_style_to_selected_cabinets", None, None),
-     ("Paint", "hb_face_frame.paint_assign_cabinet_style", None, None),
-     ("Update", "hb_face_frame.update_cabinets_from_style", None, None)),
-    # Part paint stamps the style's finish or interior onto one part;
-    # Reset returns it to the material its role implies.
-    (("Finish", "hb_face_frame.paint_part_material", "brush", "FINISH"),
-     ("Interior", "hb_face_frame.paint_part_material", "brush", "INTERIOR"),
-     ("Reset", "hb_face_frame.paint_part_material", "brush", "RESET")),
+    (("Paint Cabinet", "hb_face_frame.paint_assign_cabinet_style",
+      None, None),
+     ("Paint Part", "hb_face_frame.paint_part_material", "brush", "FINISH"),
+     ("Paint Interior", "hb_face_frame.paint_part_material",
+      "brush", "INTERIOR")),
 )
 
 # The five form-shaped sections, as (label, draw-method name).
@@ -81,6 +90,9 @@ FORM_SECTIONS = (
 )
 
 _list = ScrollList(bar_width=4, bar_pad=4, min_rows=3)
+# Inline rename, keyed by style index -- the same field the scene
+# navigator renames rooms with, so the two lists behave alike.
+_edit = InlineEdit()
 
 
 # ---- Data ------------------------------------------------------------------
@@ -110,9 +122,8 @@ def active_style_index(context):
 def build(rect, context):
     """Rows inside `rect`. Entries:
 
-        ('styles_head', label, rect)
+        ('styles_head', label, rect, add_rect)   add_rect None on most
         ('style_row', index, name, rect, is_active)
-        ('styles_add', rect)
         ('form_row', label, method_name, rect)
         ('styles_clip', clip_rect, track, thumb)
     """
@@ -126,14 +137,16 @@ def build(rect, context):
     active = active_style_index(context)
 
     blocks = []
-    blocks.append(('head', "Cabinet Styles"))
+    # The header carries New rather than a full-width row of its own: it
+    # is the one command that makes a list item, so it belongs to the
+    # list's caption, not to the stack of commands that act on a style.
+    blocks.append(('head', ("Cabinet Styles", True)))
     for i, style in enumerate(styles):
         blocks.append(('style', (i, style.name, i == active)))
-    blocks.append(('add', None))
     for row in ACTIONS:
         blocks.append(('actions', row))
     blocks.append(('gap', None))
-    blocks.append(('head', "Options"))
+    blocks.append(('head', ("Options", False)))
     for label, method in FORM_SECTIONS:
         blocks.append(('form', (label, method)))
 
@@ -158,8 +171,16 @@ def build(rect, context):
         if kind == 'gap':
             continue
         if kind == 'head':
-            entries.append(('styles_head', payload,
-                            (x, block_top - sect_h, row_w, sect_h)))
+            label, with_add = payload
+            head_rect = (x, block_top - sect_h, row_w, sect_h)
+            add_rect = None
+            if with_add:
+                bw = (NEW_BTN_PAD * s + PLUS_SPAN * s + PLUS_GAP * s
+                      + text_width(0, FONT * s, "NEW") + NEW_BTN_PAD * s)
+                bh = NEW_BTN_H * s
+                add_rect = (x + row_w - bw, block_top - sect_h + (sect_h - bh) / 2.0,
+                            bw, bh)
+            entries.append(('styles_head', label, head_rect, add_rect))
         elif kind == 'style':
             i, name, is_active = payload
             rect = (x, block_top - row_h, row_w, row_h)
@@ -168,9 +189,6 @@ def build(rect, context):
                          block_top - row_h + (row_h - gear) / 2.0, gear, gear)
             entries.append(('style_row', i, name, rect, is_active,
                             gear_rect))
-        elif kind == 'add':
-            entries.append(('styles_add',
-                            (x, block_top - row_h, row_w, row_h)))
         elif kind == 'actions':
             n = len(payload)
             bw = (row_w - gap * (n - 1)) / n
@@ -211,26 +229,58 @@ def paint(entries, mx, my):
         for entry in entries:
             kind = entry[0]
             if kind == 'styles_head':
-                _, label, rect = entry
+                _, label, rect, add_rect = entry
                 rx, ry, rw, rh = rect
-                draw_text(font_id, rx, ry + rh * 0.3, FONT * s,
+                draw_text(font_id, rx, ry + rh * 0.32, FONT * s,
                           Theme.TEXT_HEADER, label.upper())
-                draw_rects(shader, [(rx, ry, rw, 1 * s)], Theme.SEPARATOR)
+                # The rule stops short of the button rather than running
+                # under it -- a line crossing a control reads as a
+                # mistake.
+                rule_w = rw if add_rect is None else add_rect[0] - rx - PAD * s
+                draw_rects(shader, [(rx, ry, max(rule_w, 0.0), 1 * s)],
+                           Theme.SEPARATOR)
+                if add_rect is not None:
+                    hot = point_in_rect(mx, my, add_rect)
+                    paint_button(shader, add_rect, hovered=hot)
+                    ax, ay, aw, ah = add_rect
+                    # glyph_plus takes the FULL span, not a half -- half
+                    # of it renders as a blob rather than a plus.
+                    glyph_plus(shader,
+                               ax + (NEW_BTN_PAD + PLUS_SPAN / 2.0) * s,
+                               ay + ah / 2.0, PLUS_SPAN * s,
+                               Theme.GLYPH_HOVER if hot else Theme.GLYPH)
+                    draw_text(font_id,
+                              ax + (NEW_BTN_PAD + PLUS_SPAN + PLUS_GAP) * s,
+                              ay + ah * 0.26, FONT * s,
+                              Theme.TEXT_PRIMARY if hot else Theme.TEXT_NORMAL,
+                              "NEW")
             elif kind == 'style_row':
                 _, _i, name, rect, is_active, gear_rect = entry
                 hovered = point_in_rect(mx, my, rect)
                 rx, ry, rw, rh = rect
-                if hovered:
+                renaming = _edit.editing(_i)
+                if hovered and not renaming:
                     draw_rects(shader, [rect], Theme.ROW_HOVER_BG)
                 if is_active:
                     draw_rects(shader, [(rx, ry + 2 * s, ACCENT_W * s,
                                          rh - 4 * s)], Theme.ACCENT_BG)
-                draw_text(font_id, rx + (ACCENT_W + 8) * s,
-                          ry + rh * 0.28, FONT * s,
-                          Theme.TEXT_PRIMARY if is_active
-                          else Theme.TEXT_NORMAL,
-                          fit_text(font_id, FONT * s, name,
-                                   rw - GEAR * s - 16 * s))
+                text_x = rx + (ACCENT_W + 8) * s
+                if renaming:
+                    # The row becomes the field. A caret marks the end of
+                    # the text so it reads as editable rather than
+                    # selected -- the navigator's rename looks the same.
+                    field_w = rw - GEAR * s - 12 * s - (text_x - rx)
+                    draw_rects(shader, [(text_x - 3 * s, ry + 3 * s,
+                                         field_w + 6 * s, rh - 6 * s)],
+                               (0.0, 0.0, 0.0, 0.55))
+                    shown = fit_text(font_id, FONT * s, _edit.text + "|",
+                                     field_w)
+                else:
+                    shown = fit_text(font_id, FONT * s, name,
+                                     rw - GEAR * s - 16 * s)
+                draw_text(font_id, text_x, ry + rh * 0.28, FONT * s,
+                          Theme.TEXT_PRIMARY if (is_active or renaming)
+                          else Theme.TEXT_NORMAL, shown)
                 # Settings glyph: three bars, matching the library's.
                 gx, gy, gw, gh = gear_rect
                 g_hot = point_in_rect(mx, my, gear_rect)
@@ -241,15 +291,6 @@ def paint(entries, mx, my):
                                          gy + gh * (0.32 + k * 0.18),
                                          gw - 8 * s, 1.4 * s)],
                                Theme.GLYPH_HOVER if g_hot else Theme.GLYPH)
-            elif kind == 'styles_add':
-                _, rect = entry
-                hovered = point_in_rect(mx, my, rect)
-                paint_button(shader, rect, hovered=hovered)
-                rx, ry, rw, rh = rect
-                glyph_plus(shader, rx + 12 * s, ry + rh / 2.0, 8 * s,
-                           Theme.GLYPH)
-                draw_text(font_id, rx + 24 * s, ry + rh * 0.28, FONT * s,
-                          Theme.TEXT_NORMAL, "New Cabinet Style")
             elif kind == 'action_btn':
                 _, label, _op, _prop, _val, rect = entry
                 hovered = point_in_rect(mx, my, rect)
@@ -290,17 +331,24 @@ def hit(context, mx, my, entries):
                 return True
             if point_in_rect(mx, my, entry[3]):
                 sp = _style_props(context)
-                if sp is not None:
-                    sp.active_cabinet_style_index = entry[1]
+                index = entry[1]
+                if sp is not None and sp.active_cabinet_style_index != index:
+                    sp.active_cabinet_style_index = index
+                elif sp is not None:
+                    # Clicking the style you are already on renames it,
+                    # the same second click that renames a room.
+                    _edit.begin(index, entry[2])
+                    bpy.ops.home_builder.style_rename('INVOKE_DEFAULT')
                 _tag()
                 return True
-        if kind == 'styles_add' and point_in_rect(mx, my, entry[1]):
-            try:
-                bpy.ops.hb_face_frame.add_cabinet_style()
-            except Exception:
-                pass
-            _tag()
-            return True
+        if kind == 'styles_head' and entry[3] is not None:
+            if point_in_rect(mx, my, entry[3]):
+                try:
+                    bpy.ops.hb_face_frame.add_cabinet_style()
+                except Exception:
+                    pass
+                _tag()
+                return True
         if kind == 'action_btn' and point_in_rect(mx, my, entry[5]):
             mod, name = entry[2].split('.', 1)
             kwargs = {entry[3]: entry[4]} if entry[3] else {}
@@ -363,6 +411,67 @@ class home_builder_OT_style_options_popup(bpy.types.Operator):
         return {'FINISHED'}
 
 
+def commit_rename(context):
+    """Apply the typed name to the style being edited.
+
+    Assignment is the whole commit: the name property's update callback
+    de-duplicates against the other styles AND re-tags every cabinet
+    carrying the old STYLE_NAME, so an assigned cabinet keeps resolving
+    after a rename.
+    """
+    index, name = _edit.take()
+    if index is None or not name:
+        return None
+    styles = cabinet_styles(context)
+    if not 0 <= index < len(styles):
+        return None
+    style = styles[index]
+    if name != style.name:
+        style.name = name
+    return style
+
+
+class home_builder_OT_style_rename(bpy.types.Operator):
+    """Rename the cabinet style in place in the list.
+
+    A modal only for as long as the user is typing -- it ends on Enter,
+    Esc, or a click anywhere. What must never happen is a modal that
+    outlives the interaction, because Blender skips autosave while one
+    is live.
+    """
+    bl_idname = "home_builder.style_rename"
+    bl_label = "Rename Cabinet Style"
+    bl_options = {'INTERNAL'}
+
+    @classmethod
+    def poll(cls, context):
+        return _edit.active
+
+    def invoke(self, context, event):
+        context.window_manager.modal_handler_add(self)
+        _tag()
+        return {'RUNNING_MODAL'}
+
+    def modal(self, context, event):
+        result = _edit.feed(event)
+        if result == 'COMMIT':
+            commit_rename(context)
+            _tag()
+            return {'FINISHED'}
+        if result == 'CANCEL':
+            _edit.cancel()
+            _tag()
+            return {'CANCELLED'}
+        # A click anywhere ends the edit, committing what was typed --
+        # what a field in a form does when it loses focus.
+        if event.type in {'LEFTMOUSE', 'RIGHTMOUSE'} and event.value == 'PRESS':
+            commit_rename(context)
+            _tag()
+            return {'FINISHED'}
+        _tag()
+        return {'RUNNING_MODAL'}
+
+
 class home_builder_OT_cabinet_style_settings(bpy.types.Operator):
     """Settings for this cabinet style: name, wood, finish, overlay,
     fronts and edge profiles"""
@@ -376,8 +485,15 @@ class home_builder_OT_cabinet_style_settings(bpy.types.Operator):
         styles = getattr(sp, 'cabinet_styles', None) if sp else None
         if not styles:
             return None
-        i = self.index if 0 <= self.index < len(styles) else 0
-        return styles[i]
+        if 0 <= self.index < len(styles):
+            return styles[self.index]
+        # No usable index: the active style, which is the one the panel
+        # is showing. Falling back to the first would open a different
+        # style from the highlighted one whenever Show Settings is used.
+        active = active_style_index(context)
+        if not 0 <= active < len(styles):
+            active = 0
+        return styles[active]
 
     def invoke(self, context, event):
         return context.window_manager.invoke_props_dialog(self, width=460)
@@ -397,7 +513,8 @@ class home_builder_OT_cabinet_style_settings(bpy.types.Operator):
 
 
 classes = (home_builder_OT_style_options_popup,
-           home_builder_OT_cabinet_style_settings,)
+           home_builder_OT_cabinet_style_settings,
+           home_builder_OT_style_rename,)
 
 
 def register():

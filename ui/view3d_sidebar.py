@@ -407,20 +407,29 @@ class HOME_BUILDER_PT_room_layout(bpy.types.Panel):
         hb_scene = context.scene.home_builder
 
 
-def draw_wall_settings(layout, context):
-    """Wall defaults -- height, thickness and material for the current
-    wall type -- plus the buttons that push each onto walls already in
-    the scene.
+def draw_wall_settings(layout, context, include_type=True):
+    """Wall defaults -- the type being drawn, then the height, thickness
+    and material for it -- plus the buttons that push each onto walls
+    already in the scene.
 
     Module-level so the viewport tool palette can open the identical
     form off the Draw Walls button. These are that tool's settings, and
     they are wanted at the moment of drawing rather than several
     sidebar panels away.
+
+    `include_type` is off for the sidebar, which draws the type inline
+    beside its Draw Walls button so the two sit on one row. Everywhere
+    else the type belongs IN the settings: it is the first thing you
+    decide, and every other field below it means something different
+    depending on the answer.
     """
     hb_scene = context.scene.home_builder
     col = layout.column()
     col.use_property_split = True
     col.use_property_decorate = False
+    if include_type:
+        col.prop(hb_scene, 'wall_type', text="Wall Type")
+        col.separator()
     
     if hb_scene.wall_type == 'Exterior':
         row = col.row()
@@ -471,17 +480,26 @@ class HOME_BUILDER_PT_room_layout_walls(bpy.types.Panel):
         row.operator('home_builder_walls.draw_walls', text="Draw Walls", icon='GREASEPENCIL')
         row.prop(hb_scene, 'wall_type', text="")
         
-        draw_wall_settings(layout, context)
+        # The type is already on the row above, so the form leaves it out
+        # here rather than showing the same dropdown twice.
+        draw_wall_settings(layout, context, include_type=False)
 
 
-def draw_door_window_defaults(layout, context):
+def draw_door_window_defaults(layout, context, include_cages=True):
     """Sizes and presets used for the next door or window placed.
 
     Module-level for the same reason as draw_wall_settings: the viewport
     palette opens this form off the door and window buttons, where the
     numbers are actually wanted.
+
+    `include_cages` is off for the sidebar, which draws that toggle in a
+    box of its own above the placement buttons.
     """
     hb_scene = context.scene.home_builder
+    if include_cages:
+        box = layout.box()
+        box.prop(hb_scene, 'show_entry_door_and_window_cages',
+                 text="Show Entry Door and Window Cages")
     col = layout.column(align=True)
     
     box = col.box()
@@ -548,7 +566,8 @@ class HOME_BUILDER_PT_room_layout_doors_windows(bpy.types.Panel):
         row.scale_y = 1.2
         row.operator('home_builder_doors_windows.place_window', text="Window", icon='MESH_PLANE')
         
-        draw_door_window_defaults(layout, context)
+        # The cage toggle is in the box above, so the form leaves it out.
+        draw_door_window_defaults(layout, context, include_cages=False)
 
 # SUBPANEL: Floor & Ceiling
 class HOME_BUILDER_PT_room_layout_floor(bpy.types.Panel):

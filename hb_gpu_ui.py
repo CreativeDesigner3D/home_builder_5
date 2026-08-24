@@ -26,6 +26,7 @@ from .hb_gpu_draw import (
     draw_rect,
     draw_rect_outline,
     draw_lines,
+    draw_glyphs,
 )
 
 
@@ -113,7 +114,7 @@ def draw_centered_text(font_id, rect, size, color, text):
     blf.color(font_id, *color)
     tw, th = blf.dimensions(font_id, text)
     blf.position(font_id, rx + (rw - tw) / 2.0, ry + (rh - th) / 2.0, 0)
-    blf.draw(font_id, text)
+    draw_glyphs(font_id, text)
 
 
 # ---- Vector helpers ---------------------------------------------------------
@@ -237,8 +238,13 @@ def begin_clip(rect):
     x, y, w, h = rect
     x0 = int(math.floor(prev[0] + x))
     y0 = int(math.floor(prev[1] + y))
-    x1 = int(math.ceil(prev[0] + x + w))
-    y1 = int(math.ceil(prev[1] + y + h))
+    # floor + 1, not ceil. A far edge on a whole pixel -- which is what a
+    # button sized to the content width gives -- draws its border line IN
+    # that pixel, and ceil() of a whole number lands one short of it. The
+    # tab strip happened to sit on half pixels, which is why it looked
+    # fixed and the panel rows did not.
+    x1 = int(math.floor(prev[0] + x + w)) + 1
+    y1 = int(math.floor(prev[1] + y + h)) + 1
     gpu.state.scissor_test_set(True)
     gpu.state.scissor_set(x0, y0, max(x1 - x0, 0), max(y1 - y0, 0))
     return prev
@@ -309,6 +315,63 @@ def panel_box(bounds, needed_w, panel_h, min_w, max_w, margin,
 
 # ---- Scrolling list ---------------------------------------------------------
 
+class InlineEdit:
+    """A one-line text field for a row of a GPU panel.
+
+    Owns the buffer and the keystroke grammar; the caller owns what is
+    being edited and what committing means. `key` is whatever the caller
+    recognises a row by -- a scene name, a list index -- and is handed
+    back on commit so it does not have to remember separately.
+
+    Lifted here when the second panel needed it. The typing grammar is
+    small but it is exactly the kind of thing that drifts: one copy
+    handling Backspace and another not is how two lists that look
+    identical stop behaving identically.
+    """
+
+    def __init__(self):
+        self.key = None
+        self.text = ''
+
+    def begin(self, key, text=''):
+        self.key = key
+        self.text = text
+
+    def cancel(self):
+        self.key = None
+        self.text = ''
+
+    @property
+    def active(self):
+        return self.key is not None
+
+    def editing(self, key):
+        """Whether THIS row is the one being edited."""
+        return self.key is not None and self.key == key
+
+    def feed(self, event):
+        """Take one key event. Returns 'COMMIT', 'CANCEL', or None while
+        the user is still typing."""
+        if event.value != 'PRESS':
+            return None
+        if event.type in {'RET', 'NUMPAD_ENTER'}:
+            return 'COMMIT'
+        if event.type == 'ESC':
+            return 'CANCEL'
+        if event.type == 'BACK_SPACE':
+            self.text = self.text[:-1]
+            return None
+        if event.ascii and event.ascii.isprintable():
+            self.text += event.ascii
+        return None
+
+    def take(self):
+        """(key, stripped text), with the edit cleared."""
+        key, text = self.key, self.text.strip()
+        self.cancel()
+        return key, text
+
+
 class ScrollList:
     """Geometry and scroll state for a vertically scrolling list.
 
@@ -323,11 +386,16 @@ class ScrollList:
     across rebuilds, the same way a real scrollbar behaves.
     """
 
-    def __init__(self, bar_width=4, bar_pad=4, min_rows=3):
+    def __init__(self, bar_width=4, bar_pad=4, min_rows=3, show_bar=True):
         self.offset = 0.0
         self.bar_width = bar_width      # unscaled
         self.bar_pad = bar_pad          # unscaled
         self.min_rows = min_rows
+        # A list can scroll without advertising it. One flag covers both
+        # halves of that: no bar drawn AND no width reserved for one --
+        # reserving space for something invisible just narrows the
+        # content for no reason.
+        self.show_bar = show_bar
 
     # -- measurement ----------------------------------------------------
 
@@ -343,7 +411,8 @@ class ScrollList:
         if not scrollable:
             return content_h, False, 0.0
         list_h = max(max_h, row_h * self.min_rows)
-        reserve = (self.bar_width + self.bar_pad) * s
+        reserve = ((self.bar_width + self.bar_pad) * s
+                   if self.show_bar else 0.0)
         return list_h, True, reserve
 
     def clamp(self, content_h, list_h):
@@ -370,8 +439,9 @@ class ScrollList:
     def bar_rects(self, content_x, content_w, list_top, list_h,
                   content_h, row_h):
         """(track_rect, thumb_rect) for the scrollbar, or (None, None)
-        when the content fits. Assumes the offset is already clamped."""
-        if content_h <= list_h:
+        when the content fits or the bar is hidden. Assumes the offset is
+        already clamped."""
+        if content_h <= list_h or not self.show_bar:
             return None, None
         s = scale()
         bar_w = self.bar_width * s

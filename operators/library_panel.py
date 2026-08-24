@@ -55,6 +55,8 @@ from ..hb_gpu_draw import (
 from ..hb_gpu_ui import (
     Theme,
     ScrollList,
+    begin_clip,
+    end_clip,
     scale,
     text_width,
     fit_text,
@@ -98,7 +100,10 @@ SCROLL_STEP_ROWS = 1
 # ---- Module state ----------------------------------------------------------
 _shutdown = False
 _collapsed = set()       # section keys the user folded away
-_list = ScrollList(bar_width=4, bar_pad=4, min_rows=2)
+# No scrollbar: the grid is a wall of thumbnails and a bar down its edge
+# is one more line in a busy panel. A part-height row at the bottom edge
+# already says there is more, and the wheel scrolls it either way.
+_list = ScrollList(bar_width=4, bar_pad=4, min_rows=2, show_bar=False)
 
 _textures = {}           # cabinet_name -> GPUTexture, or None if it failed
 _wanted = []             # names the draw pass asked for, most recent first
@@ -556,15 +561,15 @@ def _paint_grid(layout, mx, my):
                       '%s  (%d)' % (label, count))
             draw_rects(shader, [(hx, hy, hw, 1 * s)], Theme.SEPARATOR)
 
-        # Tile chrome goes out in two batches rather than two per tile
-        # -- see draw_rects. No outline: a border around every tile
-        # drew a white grid over the thumbnails and competed with the
-        # renders themselves. The fill alone separates them, and
-        # hover is the only state that needs to stand out.
-        plain = [r for p, r, _i in tiles if p['cabinet_name'] != hover]
+        # Only the hovered tile gets a chip behind it. A fill under
+        # every thumbnail tiled the panel with light grey boxes, and the
+        # boxes read louder than the renders inside them -- the grid
+        # looked like a grid of buttons rather than a shelf of products.
+        # The thumbnails sit on the panel and separate themselves; the
+        # chip becomes what it should have been, the hover state.
+        # Still one batch rather than one draw per tile (see draw_rects),
+        # which matters at 48 products and would matter more at 500.
         lit = [r for p, r, _i in tiles if p['cabinet_name'] == hover]
-        if plain:
-            draw_rects(shader, plain, Theme.BTN_BG)
         if lit:
             draw_rects(shader, lit, Theme.BTN_HOVER_BG)
         for product, _tile_rect, img_rect in tiles:

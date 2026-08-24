@@ -48,6 +48,7 @@ from ..hb_gpu_ui import (
     glyph_chevron as _draw_chevron,
     begin_clip as _begin_clip,
     end_clip as _end_clip,
+    InlineEdit as _InlineEdit,
 )
 
 
@@ -145,8 +146,10 @@ _open = False
 # is right there, and a modal popping over the viewport to change one
 # string is a lot of ceremony. Held here so the painter can draw the
 # field and the caret; the modal operator below owns the keystrokes.
-_editing = None
-_edit_text = ''
+# The inline rename field. The buffer and typing grammar live in the
+# widget layer now; what stays here is which scene is being renamed and
+# what renaming one means.
+_edit = _InlineEdit()
 
 # The section list's scroll state + scrollbar geometry. Sticky for the
 # session, the way a real scrollbar behaves. _build_layout clamps it and
@@ -672,50 +675,31 @@ def hit_test(mx, my, entries):
 
 
 def editing_scene():
-    return _editing
+    return _edit.key
 
 
 def begin_rename(scene):
-    global _editing, _edit_text
-    _editing = scene.name
-    _edit_text = scene.name
+    _edit.begin(scene.name, scene.name)
 
 
 def cancel_rename():
-    global _editing, _edit_text
-    _editing = None
-    _edit_text = ''
+    _edit.cancel()
 
 
 def edit_text():
-    return _edit_text
+    return _edit.text
 
 
 def edit_key(event):
     """Feed one key event to the inline field. Returns 'COMMIT',
     'CANCEL' or None (still editing)."""
-    global _edit_text
-    if event.value != 'PRESS':
-        return None
-    if event.type in {'RET', 'NUMPAD_ENTER'}:
-        return 'COMMIT'
-    if event.type == 'ESC':
-        return 'CANCEL'
-    if event.type == 'BACK_SPACE':
-        _edit_text = _edit_text[:-1]
-        return None
-    if event.ascii and event.ascii.isprintable():
-        _edit_text += event.ascii
-    return None
+    return _edit.feed(event)
 
 
 def commit_rename():
     """Apply the typed name. Returns the scene renamed, or None."""
-    global _editing, _edit_text
-    scene = bpy.data.scenes.get(_editing) if _editing else None
-    name = _edit_text.strip()
-    _editing = None
-    _edit_text = ''
+    key, name = _edit.take()
+    scene = bpy.data.scenes.get(key) if key else None
     if scene is None or not name or name == scene.name:
         return None
     try:
@@ -792,13 +776,13 @@ def _draw_row(shader, font_id, entry, mx, my):
 
     # Being renamed: the row becomes the field. A caret marks the
     # end of the text so it reads as editable rather than selected.
-    if _editing == scene.name:
+    if _edit.editing(scene.name):
         field_w = rx + rw - ROW_TEXT_RIGHT_PAD * s - text_x
         _draw_rect(shader, text_x - 3 * s, ry + 3 * s,
                    field_w + 6 * s, rh - 6 * s, (0.0, 0.0, 0.0, 0.55))
         _draw_rect_outline(shader, text_x - 3 * s, ry + 3 * s,
                            field_w + 6 * s, rh - 6 * s, PIN_ACTIVE_BG)
-        shown = _fit_text(font_id, row_font, _edit_text, field_w - 6 * s)
+        shown = _fit_text(font_id, row_font, _edit.text, field_w - 6 * s)
         _draw_text(font_id, text_x, baseline, row_font,
                    TEXT_PRIMARY, shown)
         caret_x = text_x + _text_w(font_id, row_font, shown) + 1 * s

@@ -31,6 +31,7 @@ from ..hb_gpu_draw import (
 )
 from ..hb_gpu_ui import (
     Theme,
+    glyph_chevron,
     scale,
     text_width,
     draw_centered_text,
@@ -50,7 +51,12 @@ BTN_GAP = 3
 GROUP_GAP = 10
 LABEL_GAP = 8
 LABEL_PAD_X = 6
-LABEL_TEXT_GAP = 4      # glyph to its name, on a labelled strip
+LABEL_TEXT_GAP = 4      # glyph to its name, on an expanded strip
+HEADER_H = 15           # group caption row
+HEADER_GAP = 3          # caption to the first tool under it
+SETTINGS_H = 20         # a settings row is shorter than a tool button
+CHEVRON_PAD = 9         # chevron inset from a settings row's right edge
+FONT_HEADER = 9
 LABEL_HEIGHT = 18
 FONT_SIZE = 11
 GLYPH_INSET = 6
@@ -62,6 +68,8 @@ _addon_keymaps = []
 _mouse_region = None
 _hover = None
 _hover_caret = False     # cursor is on the options corner, not the tool
+_hover_settings = None   # options name of the settings row under the cursor
+_hover_toggle = False    # cursor is on the compact/expanded toggle
 
 
 # ---- Glyphs ----------------------------------------------------------------
@@ -167,6 +175,29 @@ BUILTIN_TOOLS = (
     ("home_builder_walls.add_ceiling", "Add Ceiling", _g_ceiling, 2, None, None),
 )
 
+# Group captions, shown only in expanded mode. A group is just an int on
+# a tool -- it controls the gap in compact mode and needs a name to head
+# it in expanded mode. A contributor that owns a group can name it;
+# unnamed groups head with nothing rather than a number.
+_group_labels = {
+    0: "Walls",
+    1: "Doors & Windows",
+    2: "Room",
+}
+
+
+def register_group_label(group, label):
+    _group_labels[group] = label
+
+
+def unregister_group_label(group):
+    _group_labels.pop(group, None)
+
+
+def group_label(group):
+    return _group_labels.get(group)
+
+
 # Contributed tools. A downstream add-on may have room commands that
 # belong on this strip, and this module must not depend on any of them.
 # `supersedes` lets a contribution REPLACE a built-in rather than sit
@@ -231,6 +262,23 @@ CARET = 11              # unscaled; corner affordance on tools with options.
                         # only way in.
 
 
+def _g_expand(shader, box, color):
+    """A double chevron: pointing right to open the strip out, left to
+    fold it back. The direction is the direction the strip will move."""
+    x, y, w, h = box
+    opening = not expanded()
+    cy = y + h / 2.0
+    span = w * 0.30
+    for i in (0, 1):
+        ox = x + w * (0.22 + i * 0.34)
+        if opening:
+            draw_polyline(shader, [(ox, cy + span), (ox + span, cy),
+                                   (ox, cy - span)], color)
+        else:
+            draw_polyline(shader, [(ox + span, cy + span), (ox, cy),
+                                   (ox + span, cy - span)], color)
+
+
 # ---- Gating ----------------------------------------------------------------
 
 def _get_prefs():
@@ -245,15 +293,39 @@ def palette_enabled():
     return bool(p and getattr(p, "use_room_palette", False))
 
 
-def show_labels():
-    """Whether tools are named on the strip rather than only on hover.
+def expanded():
+    """Whether the strip is in expanded mode.
 
-    A glyph strip is fast once the marks are learned and opaque before
-    then, which is the whole of a new user's first week. Labelling is a
-    preference rather than a guess about who is looking.
+    Compact is a column of glyphs: fast once the marks are learned, and
+    opaque before then -- which is the whole of a new user's first week.
+    Expanded names every tool, heads each group with a caption, and
+    gives a tool's settings a row of their own instead of an 11px
+    corner nobody can hit on purpose. Which one suits is about who is
+    looking, so it is a preference rather than a guess.
     """
     p = _get_prefs()
-    return bool(p and getattr(p, "palette_show_labels", False))
+    return bool(p and getattr(p, "palette_expanded", False))
+
+
+
+def set_expanded(value):
+    """Write the expanded preference. Used by the strip's own toggle, so
+    the mode can be changed from the thing it changes rather than only
+    from the add-on preferences.
+
+    Guarded: this runs from a click handler, and a preferences class
+    without the property (an add-on mid-upgrade, a reload that has not
+    re-registered yet) must leave the click harmless rather than raise
+    into the event loop.
+    """
+    p = _get_prefs()
+    if p is None:
+        return False
+    try:
+        p.palette_expanded = bool(value)
+    except AttributeError:
+        return False
+    return True
 
 
 def is_room_scene(scene):
@@ -290,51 +362,152 @@ def _clear_of_panel(area, x, gap):
     return max(x, nav[0] + nav[2] + gap)
 
 
-def button_width(s, labelled=None):
-    """Button width: square for glyphs alone, or wide enough for the
-    longest tool name when the strip is labelled.
+def _group_settings(group_tools):
+    """[(options_name, options_label)] for a group, one per distinct form.
 
-    One width for every button, not each to its own label -- a ragged
-    column of buttons reads as a list of unrelated things rather than
-    one strip.
+    The four door and window tools share a single settings form, so a
+    Settings button on each of their rows would be the same button four
+    times. Distinct forms are what the group actually offers, and each
+    gets one row at the foot of the group.
+    """
+    seen, out = set(), []
+    for _op, _label, _glyph, _grp, options, olabel in group_tools:
+        if options and options not in seen:
+            seen.add(options)
+            out.append((options, olabel or "Settings"))
+    return out
+
+
+def button_width(s, is_expanded=None):
+    """Strip width: square for glyphs alone, or wide enough for the
+    longest thing the expanded strip has to write.
+
+    One width for the whole strip, not each row to its own label -- a
+    ragged column reads as a list of unrelated things rather than one
+    tool set.
     """
     btn = BTN * s
-    if labelled is None:
-        labelled = show_labels()
-    if not labelled:
+    if is_expanded is None:
+        is_expanded = expanded()
+    if not is_expanded:
         return btn
+    now = tools()
     widest = 0.0
-    for tool in tools():
+    for tool in now:
         widest = max(widest, text_width(0, FONT_SIZE * s, tool[1]))
-    return btn + LABEL_TEXT_GAP * s + widest + LABEL_PAD_X * s
+    for group in {t[3] for t in now}:
+        for _name, label in _group_settings([t for t in now if t[3] == group]):
+            widest = max(widest, text_width(0, FONT_SIZE * s, label))
+        caption = group_label(group)
+        if caption:
+            widest = max(widest, text_width(0, FONT_HEADER * s, caption))
+    # Room for the chevron a settings row ends with, so the longest
+    # label cannot run into it.
+    return (btn + LABEL_TEXT_GAP * s + widest
+            + (LABEL_PAD_X + CHEVRON_PAD) * s)
 
 
 def compute_layout(area):
-    """[(tool_index, rect)] top-down, in WINDOW-local pixels."""
+    """Rows top-down, in WINDOW-local pixels.
+
+    [(kind, payload, rect)] where kind is:
+        'tool'     payload = index into tools()
+        'settings' payload = (options_name, options_label)
+        'header'   payload = the group caption (never hit-tested)
+
+    Compact mode emits only 'tool' rows, so its geometry is exactly what
+    it was.
+    """
     s = scale()
     x_min, _x_max, _y_min, y_max = get_visible_window_bounds(area)
     x = x_min + MARGIN_X * s
     y_top = y_max - TOP_OFFSET * s
     btn = BTN * s
-    width = button_width(s)
+    is_expanded = expanded()
+    width = button_width(s, is_expanded)
 
     x = _clear_of_panel(area, x, MARGIN_X * s)
 
-    y = y_top
+    now = tools()
     out = []
+    y = y_top
+
+    # The mode toggle heads the strip. It is the one control that is
+    # about the tool bar rather than about the room, so it sits apart
+    # from the groups, above all of them.
+    y -= btn
+    out.append(('toggle', is_expanded, (x, y, width, btn)))
+    y -= GROUP_GAP * s
+
     last_group = None
-    for i, (_op, _label, _glyph, group, _opts, _olbl) in enumerate(tools()):
+    for i, tool in enumerate(now):
+        group = tool[3]
+        new_group = group != last_group
         if last_group is not None:
-            y -= (GROUP_GAP if group != last_group else BTN_GAP) * s
+            y -= (GROUP_GAP if new_group else BTN_GAP) * s
+        if is_expanded and new_group:
+            # The settings for the group that just ended sit under it,
+            # so they read as belonging to those tools.
+            for entry in _group_settings([t for t in now
+                                          if t[3] == last_group]):
+                y -= SETTINGS_H * s
+                out.append(('settings', entry, (x, y, width,
+                                                SETTINGS_H * s)))
+                y -= BTN_GAP * s
+            caption = group_label(group)
+            if caption:
+                y -= HEADER_H * s
+                out.append(('header', caption, (x, y, width, HEADER_H * s)))
+                y -= HEADER_GAP * s
         last_group = group
         y -= btn
-        out.append((i, (x, y, width, btn)))
+        out.append(('tool', i, (x, y, width, btn)))
+
+    if is_expanded and last_group is not None:
+        for entry in _group_settings([t for t in now if t[3] == last_group]):
+            y -= BTN_GAP * s + SETTINGS_H * s
+            out.append(('settings', entry, (x, y, width, SETTINGS_H * s)))
     return out
 
+
+def _hit_toggle(mx, my, layout):
+    for kind, _payload, rect in layout:
+        if kind == 'toggle' and point_in_rect(mx, my, rect):
+            return True
+    return False
+
+
+def _rows(layout, kind):
+    return [(payload, rect) for k, payload, rect in layout if k == kind]
+
+
 def _hit(mx, my, layout):
-    for index, rect in layout:
-        if point_in_rect(mx, my, rect):
-            return index
+    """Index of the tool under the cursor, or None."""
+    for kind, payload, rect in layout:
+        if kind == 'tool' and point_in_rect(mx, my, rect):
+            return payload
+    return None
+
+
+def _hit_settings(mx, my, layout):
+    """(options_name, options_label) under the cursor, or None.
+
+    Covers the expanded strip's settings rows AND the compact strip's
+    caret corner, so the click operator has one question to ask.
+    """
+    for kind, payload, rect in layout:
+        if kind == 'settings' and point_in_rect(mx, my, rect):
+            return payload
+    if expanded():
+        return None
+    for kind, payload, rect in layout:
+        if kind != 'tool':
+            continue
+        tool = tools()[payload]
+        if tool[4] is None:
+            continue
+        if point_in_rect(mx, my, _caret_rect(rect)):
+            return (tool[4], tool[5])
     return None
 
 
@@ -344,16 +517,6 @@ def _caret_rect(rect):
     c = CARET * s
     x, y, w, _h = rect
     return (x + w - c, y, c, c)
-
-
-def _hit_caret(mx, my, layout):
-    """Index of the tool whose caret was clicked, or None."""
-    for index, rect in layout:
-        if tools()[index][4] is None:
-            continue
-        if point_in_rect(mx, my, _caret_rect(rect)):
-            return index
-    return None
 
 
 # ---- Draw ------------------------------------------------------------------
@@ -378,44 +541,93 @@ def _draw():
     # Snapshot once: the list is rebuilt from the registry on every
     # call, and the indices in `layout` refer to this ordering.
     TOOLS_NOW = tools()
-    labelled = show_labels()
+    is_expanded = expanded()
     inset = GLYPH_INSET * s
     btn = BTN * s
-    for index, rect in layout:
+    hover_rect = None
+
+    for kind, payload, rect in layout:
+        x, y, w, h = rect
+        if kind == 'toggle':
+            hovered = _hover_toggle
+            paint_button(shader, rect, hovered=hovered,
+                         border=Theme.BTN_BORDER)
+            _g_expand(shader,
+                      (x + inset, y + inset, btn - inset * 2, h - inset * 2),
+                      Theme.GLYPH_HOVER if hovered else Theme.GLYPH)
+            if payload:
+                draw_text(font_id, x + btn + LABEL_TEXT_GAP * s,
+                          y + h * 0.30, FONT_SIZE * s,
+                          Theme.TEXT_PRIMARY if hovered else Theme.TEXT_DIM,
+                          "Collapse")
+            if hovered:
+                hover_rect = rect
+            continue
+        if kind == 'header':
+            # A caption, not a control: no frame, and dimmer than the
+            # tools, so the eye goes to what it can actually press.
+            draw_text(font_id, x + 2 * s, y + h * 0.25, FONT_HEADER * s,
+                      Theme.TEXT_HEADER, payload.upper())
+            continue
+
+        if kind == 'settings':
+            hovered = _hover_settings == payload[0]
+            paint_button(shader, rect, hovered=hovered,
+                         border=Theme.BTN_BORDER)
+            draw_text(font_id, x + btn + LABEL_TEXT_GAP * s,
+                      y + h * 0.28, FONT_SIZE * s,
+                      Theme.TEXT_PRIMARY if hovered else Theme.TEXT_NORMAL,
+                      payload[1])
+            # A chevron, not the compact strip's corner mark: the mark
+            # is a corner of the button it sits in, and on a row that IS
+            # the settings there is no button for it to be the corner
+            # of -- it just collided with the end of the label.
+            glyph_chevron(shader, x + w - CHEVRON_PAD * s, y + h / 2.0,
+                          6 * s, True,
+                          Theme.GLYPH_HOVER if hovered else Theme.GLYPH)
+            if hovered:
+                hover_rect = rect
+            continue
+
+        index = payload
         hovered = index == hover
         # Brighter edge: this strip floats on the viewport, not
         # inside a panel, so it should announce itself.
         paint_button(shader, rect, hovered=hovered,
                      border=Theme.BTN_BORDER)
-        x, y, w, h = rect
         # The glyph keeps its square regardless of how wide the button
-        # grew, so a labelled strip and a bare one show the same marks.
+        # grew, so both modes show the same marks in the same place.
         TOOLS_NOW[index][2](
             shader, (x + inset, y + inset, btn - inset * 2, h - inset * 2),
             Theme.GLYPH_HOVER if hovered else Theme.GLYPH)
-        if labelled:
+        if is_expanded:
             draw_text(font_id, x + btn + LABEL_TEXT_GAP * s,
                       y + h * 0.30, FONT_SIZE * s,
                       Theme.TEXT_PRIMARY if hovered else Theme.TEXT_NORMAL,
                       TOOLS_NOW[index][1])
-        if TOOLS_NOW[index][4] is not None:
-            # A small filled corner: this tool has settings behind it.
+        elif TOOLS_NOW[index][4] is not None:
+            # Compact only: a small filled corner saying this tool has
+            # settings behind it. Expanded gives them a row instead.
             cx, cy, cw, ch = _caret_rect(rect)
             draw_polyline(shader,
                           [(cx + cw, cy), (cx + cw, cy + ch), (cx, cy)],
                           Theme.GLYPH_HOVER if hovered else Theme.TEXT_DIM,
                           closed=True)
+        if hovered:
+            hover_rect = rect
 
-    # Name what is under the cursor, not what the button is: the corner
-    # opens settings, so it should say so. On a labelled strip the tool's
-    # own name is already written on it, so only the corner still has
-    # something to add.
+    # The hover chip names what is under the cursor. Expanded mode has
+    # written every name on the strip already, so it needs no chip;
+    # compact needs one for the tool, and for the corner, which opens
+    # something different from the button it sits in.
     label = None
-    if hover is not None:
-        caret_label = TOOLS_NOW[hover][5] if _hover_caret else None
-        label = caret_label or (None if labelled else TOOLS_NOW[hover][1])
-    if label:
-        _, (bx, by, bw, bh) = layout[hover]
+    if not is_expanded and _hover_toggle:
+        label = "Expand Tool Bar"
+    elif not is_expanded and hover is not None:
+        label = (TOOLS_NOW[hover][5] if (_hover_caret and TOOLS_NOW[hover][5])
+                 else TOOLS_NOW[hover][1])
+    if label and hover_rect is not None:
+        bx, by, bw, bh = hover_rect
         lw = text_width(font_id, FONT_SIZE * s, label) + LABEL_PAD_X * s * 2
         lh = LABEL_HEIGHT * s
         lrect = (bx + bw + LABEL_GAP * s, by + (bh - lh) / 2.0, lw, lh)
@@ -442,17 +654,25 @@ class home_builder_OT_room_palette_click(bpy.types.Operator):
     def invoke(self, context, event):
         layout = compute_layout(context.area)
         mx, my = event.mouse_region_x, event.mouse_region_y
-        # The caret is checked first: it sits inside the button, so a
-        # hit there must not also fire the tool.
-        index = _hit_caret(mx, my, layout)
-        if index is None and event.type == 'RIGHTMOUSE':
-            index = _hit(mx, my, layout)
-            if index is not None and tools()[index][4] is None:
+        # Settings first: in compact mode the caret sits INSIDE a tool
+        # button, so a hit there must not also fire the tool.
+        if _hit_toggle(mx, my, layout):
+            if event.type == 'RIGHTMOUSE':
                 return {'PASS_THROUGH'}
-        if index is not None:
+            set_expanded(not expanded())
+            context.area.tag_redraw()
+            return {'FINISHED'}
+        settings = _hit_settings(mx, my, layout)
+        if settings is None and event.type == 'RIGHTMOUSE':
+            # Right-clicking a tool still opens its settings, which is
+            # the forgiving way in when the strip is compact and the
+            # corner is an 11px target.
+            index = _hit(mx, my, layout)
+            if index is not None and tools()[index][4] is not None:
+                settings = (tools()[index][4], tools()[index][5])
+        if settings is not None:
             bpy.ops.home_builder.tool_options(
-                'INVOKE_DEFAULT', section=tools()[index][4],
-                title=tools()[index][5])
+                'INVOKE_DEFAULT', section=settings[0], title=settings[1])
             return {'FINISHED'}
         if event.type == 'RIGHTMOUSE':
             return {'PASS_THROUGH'}
@@ -479,14 +699,22 @@ class home_builder_OT_room_palette_hover(bpy.types.Operator):
         return _palette_active(context)
 
     def invoke(self, context, event):
-        global _mouse_region, _hover, _hover_caret
+        global _mouse_region, _hover, _hover_caret, _hover_settings
+        global _hover_toggle
         _mouse_region = context.region
         mx, my = event.mouse_region_x, event.mouse_region_y
         layout = compute_layout(context.area)
         hit = _hit(mx, my, layout)
-        on_caret = _hit_caret(mx, my, layout) is not None
-        if hit != _hover or on_caret != _hover_caret:
-            _hover, _hover_caret = hit, on_caret
+        settings = _hit_settings(mx, my, layout)
+        toggle = _hit_toggle(mx, my, layout)
+        # A settings hit that is also over a tool is the compact caret;
+        # one on its own is an expanded settings row.
+        on_caret = settings is not None and hit is not None
+        name = settings[0] if settings is not None else None
+        if ((hit, on_caret, name, toggle)
+                != (_hover, _hover_caret, _hover_settings, _hover_toggle)):
+            (_hover, _hover_caret, _hover_settings,
+             _hover_toggle) = hit, on_caret, name, toggle
             context.area.tag_redraw()
         return {'PASS_THROUGH'}
 

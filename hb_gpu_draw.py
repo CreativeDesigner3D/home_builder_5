@@ -7,6 +7,7 @@ one implementation rather than carrying private copies that can drift.
 
 import bpy
 import blf
+import gpu
 from gpu_extras.batch import batch_for_shader
 
 
@@ -155,12 +156,29 @@ def draw_rect_outlines(shader, rects, color):
     batch_for_shader(shader, 'LINES', {"pos": verts}).draw(shader)
 
 
+def draw_glyphs(font_id, text):
+    """blf.draw, with the GPU blend state put back the way it was.
+
+    blf sets its own blend mode and does NOT restore it, so everything
+    drawn after a label in the same callback loses alpha: a border at 14%
+    white came out solid white, a 95% panel fill came out opaque. It read
+    as the first item in a strip being styled differently from the rest,
+    because the first one is the only one drawn before any text.
+
+    Every label in this UI goes through here so no caller has to know
+    that.
+    """
+    previous = gpu.state.blend_get()
+    blf.draw(font_id, text)
+    gpu.state.blend_set(previous)
+
+
 def draw_text(font_id, x, y, size, color, text):
     """Draw a single line of text at a baseline position."""
     blf.size(font_id, size)
     blf.color(font_id, *color)
     blf.position(font_id, x, y, 0)
-    blf.draw(font_id, text)
+    draw_glyphs(font_id, text)
 
 
 def vcenter_baseline(rect, font_id, size):
