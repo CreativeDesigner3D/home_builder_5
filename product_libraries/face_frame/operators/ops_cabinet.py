@@ -378,12 +378,17 @@ class hb_face_frame_OT_equalize_bays(bpy.types.Operator):
     single cabinet too (its bays equalize within its current width).
     Intended cleanup after breaking a run apart: any bay widths the
     break sequence locked or skewed come back out equal.
+
+    Picking two or more bays of one cabinet narrows the scope to those
+    bays: they split the width they already occupy between them and
+    nothing else in the cabinet moves.
     """
     bl_idname = "hb_face_frame.equalize_bays"
     bl_label = "Equalize Bays"
     bl_description = (
         "Resize the selected cabinets so every bay across them is the "
-        "same width (cabinets stay abutted; the total run is unchanged)"
+        "same width (cabinets stay abutted; the total run is unchanged). "
+        "Select two or more bays of one cabinet to equalize just those"
     )
     bl_options = {'REGISTER', 'UNDO'}
 
@@ -391,7 +396,44 @@ class hb_face_frame_OT_equalize_bays(bpy.types.Operator):
     def poll(cls, context):
         return types_face_frame.find_cabinet_root(context.active_object) is not None
 
+    def _equalize_picked_bays(self, bays):
+        """Split the width the picked bays already occupy evenly between
+        them. The cabinet's own width, its stiles and every bay outside
+        the selection stay put - the pool is conserved, so unlocked bays
+        elsewhere in the cabinet keep their share too.
+        """
+        total = sum(b.face_frame_bay.width for b in bays)
+        share = total / len(bays)
+        if share <= 0:
+            self.report({'ERROR'}, "Not enough width for the bays")
+            return {'CANCELLED'}
+        with types_face_frame.suspend_recalc():
+            for b in bays:
+                bp = b.face_frame_bay
+                bp.unlock_width = True
+                bp.width = share
+        self.report(
+            {'INFO'},
+            f"Equalized {len(bays)} selected bay(s) at "
+            f"{meter_to_inch(share):.2f}\"")
+        return {'FINISHED'}
+
     def execute(self, context):
+        # A multi-bay pick out of one cabinet means "make these equal",
+        # not "make the whole cabinet equal" - honor the selection.
+        picked = []
+        picked_names = set()
+        for obj in context.selected_objects:
+            if (obj.get(types_face_frame.TAG_BAY_CAGE)
+                    and obj.name not in picked_names):
+                picked_names.add(obj.name)
+                picked.append(obj)
+        if len(picked) > 1:
+            owners = {types_face_frame.find_cabinet_root(b) for b in picked}
+            owners.discard(None)
+            if len(owners) == 1 and len(picked) < _bay_count(owners.pop()):
+                return self._equalize_picked_bays(picked)
+
         roots = []
         seen = set()
         for obj in context.selected_objects:
@@ -4692,11 +4734,14 @@ class hb_face_frame_OT_delete_bay(bpy.types.Operator):
 
 
 class hb_face_frame_OT_set_equal_door_width(bpy.types.Operator):
-    """Equalize visible door widths across the cabinets containing
-    every selected bay. Selection picks the cabinets; every bay in
-    those cabinets contributes to the calculation. Each cabinet's
-    own width floats to the new bay total + stiles so the cross-
-    cabinet target can actually be honored.
+    """Equalize visible door widths across the selected bays.
+
+    Selection sets the scope. Pick two or more bays and only those bays
+    share their combined width - every other bay in the cabinet holds
+    the width it has. Pick a single bay (the right-click case) and the
+    whole cabinet containing it is balanced, which is the original
+    behavior. Each cabinet's own width floats by the change in its bay
+    total so a cross-cabinet target can still be honored.
 
     Bay door count rule: a bay contributes 2 doors and one
     DOUBLE_DOOR_REVEAL gap if any opening reached from the bay tree
@@ -4707,8 +4752,9 @@ class hb_face_frame_OT_set_equal_door_width(bpy.types.Operator):
     bl_idname = "hb_face_frame.set_equal_door_width"
     bl_label = "Set Equal Door Width"
     bl_description = (
-        "Make all door widths equal across the cabinets containing the "
-        "selected bay(s). Every bay in those cabinets is recalculated"
+        "Make the selected bays' door widths equal. Select two or more "
+        "bays to leave the rest of the cabinet alone; select one bay to "
+        "balance its whole cabinet"
     )
     bl_options = {'REGISTER', 'UNDO'}
 
@@ -4752,17 +4798,20 @@ class hb_face_frame_OT_set_equal_door_width(bpy.types.Operator):
         return walk(roots[0])
 
     def execute(self, context):
-        # Collect cabinet roots from any selected bay (and the active
-        # object - right-click usually activates without selecting).
+        # Collect the picked bays and their cabinet roots (the active
+        # object counts too - right-click usually activates without
+        # selecting).
         candidates = list(context.selected_objects)
         if (context.active_object is not None
                 and context.active_object not in candidates):
             candidates.append(context.active_object)
+        picked_names = set()
         roots = []
         seen = set()
         for obj in candidates:
             if not obj.get(types_face_frame.TAG_BAY_CAGE):
                 continue
+            picked_names.add(obj.name)
             root = types_face_frame.find_cabinet_root(obj)
             if root is not None and root.name not in seen:
                 roots.append(root)
@@ -4770,6 +4819,12 @@ class hb_face_frame_OT_set_equal_door_width(bpy.types.Operator):
         if not roots:
             self.report({'WARNING'}, "Select at least one face frame bay")
             return {'CANCELLED'}
+
+        # Two or more bays picked -> the selection IS the scope: those
+        # bays pool only their own width, so the pool is conserved and
+        # bays outside it neither get resized nor drift when the cabinet
+        # redistributes. One bay picked keeps the cabinet-wide behavior.
+        subset = len(picked_names) > 1
 
         # Per-bay info: (bay_obj, root, is_double_door_bay). Bay width
         # == face frame opening width on every construction, scribed
@@ -4786,6 +4841,8 @@ class hb_face_frame_OT_set_equal_door_width(bpy.types.Operator):
                 key=lambda c: c.get('hb_bay_index', 0),
             )
             for bay in bays:
+                if subset and bay.name not in picked_names:
+                    continue
                 all_bays.append((bay, root,
                                  self._bay_has_full_width_double_door(bay)))
 
@@ -4850,6 +4907,11 @@ class hb_face_frame_OT_set_equal_door_width(bpy.types.Operator):
                 if abs(delta) > 1e-9:
                     cp.width = cp.width + delta
 
+        if subset:
+            self.report(
+                {'INFO'},
+                f"Equalized {len(all_bays)} selected bay(s); the rest of "
+                f"the cabinet was left alone")
         return {'FINISHED'}
 
 
