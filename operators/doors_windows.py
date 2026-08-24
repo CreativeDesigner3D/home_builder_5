@@ -1012,7 +1012,13 @@ class _PlaceWallObjectBase(bpy.types.Operator, WallObjectPlacementMixin):
                 if self.placed_obj.obj in self.placement_objects:
                     self.placement_objects.remove(self.placed_obj.obj)
                 self.delete_placement_dimensions()
-                self.cut_wall(self.selected_wall, self.placed_obj.obj)
+                cutting_obj = self.placed_obj.obj
+                if self.BUILD_GEO:
+                    # Shaped separately from the cage so the reveal can be
+                    # splayed without baking that into the cage's own
+                    # GeoNodes asset - see door_window_geo.update_reveal_cutter.
+                    cutting_obj = door_window_geo.update_reveal_cutter(self.placed_obj.obj)
+                self.cut_wall(self.selected_wall, cutting_obj)
                 if self.BUILD_GEO:
                     door_window_geo.apply_scene_style_and_build(
                         self.placed_obj.obj, context)
@@ -1240,6 +1246,55 @@ class home_builder_doors_windows_OT_door_prompts(bpy.types.Operator):
     sidelite_left: bpy.props.FloatProperty(name="Left Sidelite", unit='LENGTH', precision=5, min=0)  # type: ignore
     sidelite_right: bpy.props.FloatProperty(name="Right Sidelite", unit='LENGTH', precision=5, min=0)  # type: ignore
     transom_height: bpy.props.FloatProperty(name="Transom Height", unit='LENGTH', precision=5, min=0)  # type: ignore
+    reveal_ext_on: bpy.props.BoolProperty(
+        name="Exterior Reveal",
+        description="Carve a reveal in from this wall's y=0 face "
+                    "(independent of the interior reveal below); off "
+                    "means the frame/casing simply reaches this face")  # type: ignore
+    reveal_ext_clearance_amount: bpy.props.FloatProperty(
+        name="Clearance Amount", unit='LENGTH', precision=5, min=0,
+        description="An instant 90-degree step outward (not a taper) "
+                    "right at this face, before the clearance run "
+                    "begins")  # type: ignore
+    reveal_ext_clearance_depth: bpy.props.FloatProperty(
+        name="Clearance Depth", unit='LENGTH', precision=5, min=0,
+        description="A bare straight run (at the stepped-out width) "
+                    "from this face, before the splay begins - no frame "
+                    "material here")  # type: ignore
+    reveal_ext_splay_amount: bpy.props.FloatProperty(
+        name="Splay Amount", unit='LENGTH', precision=5, min=0,
+        description="How far the opening widens outward beyond the "
+                    "clearance run (e.g. 0.10 for 10cm)")  # type: ignore
+    reveal_ext_splay_depth: bpy.props.FloatProperty(
+        name="Splay Depth", unit='LENGTH', precision=5, min=0,
+        description="How much wall depth the splay taper covers; any "
+                    "leftover depth before reaching the middle/other "
+                    "reveal stays straight at the splayed-out size")  # type: ignore
+    reveal_int_on: bpy.props.BoolProperty(
+        name="Interior Reveal",
+        description="Carve a reveal in from this wall's y=thickness "
+                    "face (independent of the exterior reveal above); "
+                    "off means the frame/casing simply reaches this "
+                    "face")  # type: ignore
+    reveal_int_clearance_amount: bpy.props.FloatProperty(
+        name="Clearance Amount", unit='LENGTH', precision=5, min=0,
+        description="An instant 90-degree step outward (not a taper) "
+                    "right at this face, before the clearance run "
+                    "begins")  # type: ignore
+    reveal_int_clearance_depth: bpy.props.FloatProperty(
+        name="Clearance Depth", unit='LENGTH', precision=5, min=0,
+        description="A bare straight run (at the stepped-out width) "
+                    "from this face, before the splay begins - no frame "
+                    "material here")  # type: ignore
+    reveal_int_splay_amount: bpy.props.FloatProperty(
+        name="Splay Amount", unit='LENGTH', precision=5, min=0,
+        description="How far the opening widens outward beyond the "
+                    "clearance run (e.g. 0.10 for 10cm)")  # type: ignore
+    reveal_int_splay_depth: bpy.props.FloatProperty(
+        name="Splay Depth", unit='LENGTH', precision=5, min=0,
+        description="How much wall depth the splay taper covers; any "
+                    "leftover depth before reaching the middle/other "
+                    "reveal stays straight at the splayed-out size")  # type: ignore
 
     door = None
 
@@ -1401,6 +1456,38 @@ class home_builder_doors_windows_OT_door_prompts(bpy.types.Operator):
             row.label(text="Back Rotation:")
             row.prop(self, 'handle_rot_back', text="")
 
+        box = layout.box()
+        box.prop(self, 'reveal_ext_on')
+        if self.reveal_ext_on:
+            row = box.row()
+            row.label(text="Clearance Amount:")
+            row.prop(self, 'reveal_ext_clearance_amount', text="")
+            row = box.row()
+            row.label(text="Clearance Depth:")
+            row.prop(self, 'reveal_ext_clearance_depth', text="")
+            row = box.row()
+            row.label(text="Splay Amount:")
+            row.prop(self, 'reveal_ext_splay_amount', text="")
+            row = box.row()
+            row.label(text="Splay Depth:")
+            row.prop(self, 'reveal_ext_splay_depth', text="")
+
+        box = layout.box()
+        box.prop(self, 'reveal_int_on')
+        if self.reveal_int_on:
+            row = box.row()
+            row.label(text="Clearance Amount:")
+            row.prop(self, 'reveal_int_clearance_amount', text="")
+            row = box.row()
+            row.label(text="Clearance Depth:")
+            row.prop(self, 'reveal_int_clearance_depth', text="")
+            row = box.row()
+            row.label(text="Splay Amount:")
+            row.prop(self, 'reveal_int_splay_amount', text="")
+            row = box.row()
+            row.label(text="Splay Depth:")
+            row.prop(self, 'reveal_int_splay_depth', text="")
+
 
 class home_builder_doors_windows_OT_window_prompts(bpy.types.Operator):
     bl_idname = "home_builder_doors_windows.window_prompts"
@@ -1437,6 +1524,55 @@ class home_builder_doors_windows_OT_window_prompts(bpy.types.Operator):
     casing_width: bpy.props.FloatProperty(name="Casing Width", unit='LENGTH', precision=5)  # type: ignore
     include_sill: bpy.props.BoolProperty(name="Exterior Sill")  # type: ignore
     include_stool: bpy.props.BoolProperty(name="Interior Stool")  # type: ignore
+    reveal_ext_on: bpy.props.BoolProperty(
+        name="Exterior Reveal",
+        description="Carve a reveal in from this wall's y=0 face "
+                    "(independent of the interior reveal below); off "
+                    "means the frame/casing simply reaches this face")  # type: ignore
+    reveal_ext_clearance_amount: bpy.props.FloatProperty(
+        name="Clearance Amount", unit='LENGTH', precision=5, min=0,
+        description="An instant 90-degree step outward (not a taper) "
+                    "right at this face, before the clearance run "
+                    "begins")  # type: ignore
+    reveal_ext_clearance_depth: bpy.props.FloatProperty(
+        name="Clearance Depth", unit='LENGTH', precision=5, min=0,
+        description="A bare straight run (at the stepped-out width) "
+                    "from this face, before the splay begins - no frame "
+                    "material here")  # type: ignore
+    reveal_ext_splay_amount: bpy.props.FloatProperty(
+        name="Splay Amount", unit='LENGTH', precision=5, min=0,
+        description="How far the opening widens outward beyond the "
+                    "clearance run (e.g. 0.10 for 10cm)")  # type: ignore
+    reveal_ext_splay_depth: bpy.props.FloatProperty(
+        name="Splay Depth", unit='LENGTH', precision=5, min=0,
+        description="How much wall depth the splay taper covers; any "
+                    "leftover depth before reaching the middle/other "
+                    "reveal stays straight at the splayed-out size")  # type: ignore
+    reveal_int_on: bpy.props.BoolProperty(
+        name="Interior Reveal",
+        description="Carve a reveal in from this wall's y=thickness "
+                    "face (independent of the exterior reveal above); "
+                    "off means the frame/casing simply reaches this "
+                    "face")  # type: ignore
+    reveal_int_clearance_amount: bpy.props.FloatProperty(
+        name="Clearance Amount", unit='LENGTH', precision=5, min=0,
+        description="An instant 90-degree step outward (not a taper) "
+                    "right at this face, before the clearance run "
+                    "begins")  # type: ignore
+    reveal_int_clearance_depth: bpy.props.FloatProperty(
+        name="Clearance Depth", unit='LENGTH', precision=5, min=0,
+        description="A bare straight run (at the stepped-out width) "
+                    "from this face, before the splay begins - no frame "
+                    "material here")  # type: ignore
+    reveal_int_splay_amount: bpy.props.FloatProperty(
+        name="Splay Amount", unit='LENGTH', precision=5, min=0,
+        description="How far the opening widens outward beyond the "
+                    "clearance run (e.g. 0.10 for 10cm)")  # type: ignore
+    reveal_int_splay_depth: bpy.props.FloatProperty(
+        name="Splay Depth", unit='LENGTH', precision=5, min=0,
+        description="How much wall depth the splay taper covers; any "
+                    "leftover depth before reaching the middle/other "
+                    "reveal stays straight at the splayed-out size")  # type: ignore
 
     window = None
 
@@ -1539,6 +1675,38 @@ class home_builder_doors_windows_OT_window_prompts(bpy.types.Operator):
         row = box.row(align=True)
         row.prop(self, 'include_sill')
         row.prop(self, 'include_stool')
+
+        box = layout.box()
+        box.prop(self, 'reveal_ext_on')
+        if self.reveal_ext_on:
+            row = box.row()
+            row.label(text="Clearance Amount:")
+            row.prop(self, 'reveal_ext_clearance_amount', text="")
+            row = box.row()
+            row.label(text="Clearance Depth:")
+            row.prop(self, 'reveal_ext_clearance_depth', text="")
+            row = box.row()
+            row.label(text="Splay Amount:")
+            row.prop(self, 'reveal_ext_splay_amount', text="")
+            row = box.row()
+            row.label(text="Splay Depth:")
+            row.prop(self, 'reveal_ext_splay_depth', text="")
+
+        box = layout.box()
+        box.prop(self, 'reveal_int_on')
+        if self.reveal_int_on:
+            row = box.row()
+            row.label(text="Clearance Amount:")
+            row.prop(self, 'reveal_int_clearance_amount', text="")
+            row = box.row()
+            row.label(text="Clearance Depth:")
+            row.prop(self, 'reveal_int_clearance_depth', text="")
+            row = box.row()
+            row.label(text="Splay Amount:")
+            row.prop(self, 'reveal_int_splay_amount', text="")
+            row = box.row()
+            row.label(text="Splay Depth:")
+            row.prop(self, 'reveal_int_splay_depth', text="")
 
 
 class home_builder_doors_windows_OT_flip_door_swing(bpy.types.Operator):
