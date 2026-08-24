@@ -479,6 +479,24 @@ def snap_system_height(value):
     return SYSTEM_HEIGHT_BASE + max(0, int(n)) * SYSTEM_PITCH
 
 
+# Float error on a height that is already on the lattice must not cost
+# it a whole 32mm step on the way down.
+_SYSTEM_HEIGHT_TOL = millimeter(0.05)
+
+
+def snap_system_height_down(value):
+    """Tallest 32mm-system height (19 + n*32 mm) that is no taller than
+    `value`.
+
+    A height someone TYPES comes down to the system rather than up: the
+    number they typed is the space they have, and a run that came back
+    taller than it would not fit. Dragging still snaps to the nearest
+    step - a drag is aiming at a size, not stating a limit."""
+    n = int((value - SYSTEM_HEIGHT_BASE + _SYSTEM_HEIGHT_TOL)
+            // SYSTEM_PITCH)
+    return SYSTEM_HEIGHT_BASE + max(0, n) * SYSTEM_PITCH
+
+
 def snap_system_hole(value):
     """Nearest system hole (12.95 + n*32 mm from the interior bottom)."""
     n = round((value - SYSTEM_HOLE_BASE) / SYSTEM_PITCH)
