@@ -4003,6 +4003,42 @@ def bay_openings(layout, bay_index):
     return {'leaves': leaves, 'splitters': splitters, 'backings': backings}
 
 
+def opening_ff_sizes(cabinet_obj):
+    """{opening object name: (width, height)} of the CLEAR FACE FRAME
+    opening -- what you could pass through the front of the cabinet.
+
+    Not the same as the opening cage, which spans the carcass cavity and
+    runs behind the stiles and rails: a 10" bay hands back an 11-1/2"
+    cage. Anything asking whether something FITS -- an accessory against
+    its minimum opening width, a report, a checker -- wants this number,
+    and getting it means building the layout, which is why it is worth
+    having in one place rather than in each caller.
+
+    Builds one FaceFrameLayout for the whole cabinet, so ask once per
+    cabinet and read the map, rather than calling this per opening.
+    Returns {} for anything that is not a face frame cabinet.
+    """
+    sizes = {}
+    try:
+        layout = FaceFrameLayout(cabinet_obj)
+    except Exception:
+        return sizes
+    for bay_index in range(len(layout.bays)):
+        try:
+            leaves = bay_openings(layout, bay_index).get('leaves', [])
+        except Exception:
+            continue
+        for leaf in leaves:
+            name = leaf.get('obj_name')
+            if not name:
+                continue
+            sizes[name] = (
+                leaf['cage_dim_x'] - leaf['reveal_left'] - leaf['reveal_right'],
+                leaf['cage_dim_z'] - leaf['reveal_top'] - leaf['reveal_bottom'],
+            )
+    return sizes
+
+
 # ---------------------------------------------------------------------------
 # Compatibility wrappers - thin shims that route through bay_openings.
 # Kept so existing callers (and any external tools) don't break; new
