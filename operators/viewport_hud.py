@@ -35,7 +35,7 @@ from ..hb_gpu_draw import (
 # Shared widget layer -- the same UI scale and palette the scene
 # navigator draws with, so the two surfaces cannot drift apart.
 from ..hb_gpu_ui import (Theme, scale as _s, draw_arrow_head,
-                         arc_points, draw_polyline)
+                         arc_points, draw_polyline, fit_text)
 # Sibling module -- safe to import at load (scene_navigator imports viewport_hud
 # only lazily, inside its pin-toggle handler, so there's no import cycle).
 from . import scene_navigator
@@ -54,6 +54,7 @@ _mouse = (-1, -1)          # last cursor pos, region-local
 _mouse_region = None       # region _mouse was measured in (hover is per-region)
 _last_hover_key = None     # layout index of the widget under the cursor
 _addon_keymaps = []        # [(keymap, keymap_item), ...] for cleanup
+_last_room = None          # name of the last room scene the HUD drew in
 
 
 # ---- Layout + style ---------------------------------------------------------
@@ -170,6 +171,98 @@ def _draw_centered_text(font_id, rect, size, color, text):
     tw, th = blf.dimensions(font_id, text)
     draw_text(font_id, rx + (rw - tw) / 2.0, ry + (rh - th) / 2.0,
               size, color, text)
+
+
+def _remember_room(scene):
+    """Note the room we are in, so leaving it can be undone.
+
+    Recorded from compute_layout rather than from a scene-change
+    handler: the HUD is laid out every time a viewport draws, so by the
+    time anything can take you out of a room, the room you were in has
+    already been seen. No handler to register, nothing to keep in sync.
+    """
+    global _last_room
+    if scene_navigator.is_room(scene):
+        _last_room = scene.name
+
+
+def _room_to_return_to(context):
+    """The room scene a Back press should go to, or None when there is
+    nothing to go back to (we are in a room already, or the file has no
+    rooms at all).
+
+    Falls back to the first room in navigator order when nothing has
+    been remembered -- opening a file straight onto a detail card is the
+    case, and naming a room on the button beats offering no way out.
+    """
+    scene = context.scene
+    if scene is None or scene_navigator.is_room(scene):
+        return None
+    remembered = bpy.data.scenes.get(_last_room) if _last_room else None
+    if scene_navigator.is_room(remembered):
+        return remembered
+    rooms = [s for s in bpy.data.scenes if scene_navigator.is_room(s)]
+    rooms.sort(key=scene_navigator.sort_key)
+    return rooms[0] if rooms else None
+
+
+class _BackToRoomButton:
+    """Leave a detail card or a layout sheet for the room you came from.
+
+    Getting into a detail is one click from the toolbar; getting out was
+    a trip through the Rooms tab to find a scene you never chose to
+    leave. This is the way back, at the top left where a way back
+    belongs, and it names the room so it is a destination rather than a
+    guess.
+    """
+
+    MAX_LABEL = 108        # unscaled; a long room name is elided, not obeyed
+
+    def _label(self, context):
+        room = _room_to_return_to(context)
+        return room.name if room is not None else ""
+
+    @property
+    def width(self):
+        s = _s()
+        blf.size(0, FONT_SIZE * s)
+        text = fit_text(0, FONT_SIZE * s, self._label(bpy.context),
+                        self.MAX_LABEL * s)
+        return int(blf.dimensions(0, text)[0] + 34 * s)   # arrow + padding
+
+    def visible(self, context):
+        return _room_to_return_to(context) is not None
+
+    def draw(self, shader, font_id, rect, context, mouse):
+        rx, ry, rw, rh = rect
+        s = _s()
+        hovered = point_in_rect(mouse[0], mouse[1], rect)
+        draw_rect(shader, rx, ry, rw, rh, BTN_HOVER_BG if hovered else BTN_BG)
+        draw_rect_outline(shader, rx, ry, rw, rh, BTN_BORDER)
+        color = TEXT_ACTIVE if hovered else TEXT_NORMAL
+        # Arrow first, then the room name: the mark says what the button
+        # does, the name says where it lands.
+        cy = ry + rh / 2.0
+        ax = rx + 9 * s
+        arm = 7 * s
+        draw_lines(shader, [(ax, cy), (ax + arm * 1.6, cy)], color)
+        draw_arrow_head(shader, (ax, cy), (-1.0, 0.0), arm * 0.75, color)
+        size = FONT_SIZE * s
+        blf.size(font_id, size)
+        text = fit_text(font_id, size, self._label(context),
+                        self.MAX_LABEL * s)
+        th = blf.dimensions(font_id, text)[1]
+        draw_text(font_id, ax + arm * 1.6 + 7 * s, cy - th / 2.0,
+                  size, color, text)
+
+    def on_click(self, context, area, region):
+        room = _room_to_return_to(context)
+        if room is None:
+            return
+        context.window.scene = room
+
+
+_BACK_BUTTON = _BackToRoomButton()
 
 
 class _PanelTabButton:
@@ -731,11 +824,19 @@ def compute_layout(context, area):
     # panel opens directly below them. When the viewport's overlay text is
     # on, that corner belongs to Blender, so they yield and join the first
     # centered row as its leftmost group instead.
+    _remember_room(context.scene)
     rows = _rows()
     # The centered rows filter on visible(); this left-anchored strip
     # has to do it too, or a tab that does not apply here still gets a
     # button.
     tab_buttons = [b for b in _tab_buttons() if b.visible(context)]
+    # Back leads the strip, ahead of the tabs: it is only there when you
+    # are somewhere you did not choose to be, and it belongs in the
+    # corner a way back is looked for. Joining the strip rather than
+    # sitting on its own means it follows the tabs into the centered row
+    # when the viewport corner is taken by Blender's overlay text.
+    if _BACK_BUTTON.visible(context):
+        tab_buttons = [_BACK_BUTTON] + tab_buttons
     if _corner_has_overlay_text(area):
         rows = [[tab_buttons] + rows[0]] + rows[1:]
     else:

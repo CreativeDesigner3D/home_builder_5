@@ -345,6 +345,17 @@ def set_active_tab(tab):
 def _is_room(scene):
     return not scene.get('IS_LAYOUT_VIEW') and not scene.get('IS_DETAIL_VIEW')
 
+def is_room(scene):
+    """A 3D room scene -- not a 2D layout sheet, not a detail card.
+
+    The public form of the test this module groups scenes by, so a
+    caller that needs to ask the same question (the HUD's Back button,
+    say) agrees with the navigator by construction rather than by
+    keeping its own copy of the two flags.
+    """
+    return scene is not None and _is_room(scene)
+
+
 def _is_layout(scene):
     return bool(scene.get('IS_LAYOUT_VIEW'))
 
@@ -356,6 +367,11 @@ def _sort_key(scene):
     if hasattr(scene, 'home_builder'):
         so = getattr(scene.home_builder, 'sort_order', 0) or 0
     return (so, scene.name.lower())
+
+def sort_key(scene):
+    """Public form of the order the navigator lists scenes in."""
+    return _sort_key(scene)
+
 
 def _parent_room_name(scene):
     """Resolve a layout view's source wall back to the room scene that owns it.
