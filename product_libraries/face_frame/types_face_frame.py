@@ -1394,6 +1394,77 @@ def _clone_bay_tree_node(src_node, new_parent, opening_counter):
 
 
 # ---------------------------------------------------------------------------
+# Bay width budget
+# ---------------------------------------------------------------------------
+def bay_width_budget(cabinet_obj):
+    """(bays, consumed, available) for one cabinet's row of bays.
+
+    `bays` are its bay cages in index order, `consumed` is the width the
+    stiles take out of the face frame, and `available` is the face-frame
+    length the stiles and bays divide up between them. Those are the
+    three numbers a bay width has to agree with, so they live in one
+    place: _distribute_bay_widths divides them, locked_bay_slack checks
+    them, and anything wanting to report on a cabinet can ask.
+    """
+    cab_props = cabinet_obj.face_frame_cabinet
+    bays = sorted(
+        [c for c in cabinet_obj.children if c.get(TAG_BAY_CAGE)],
+        key=lambda c: c.get('hb_bay_index', 0),
+    )
+    if not bays:
+        return [], 0.0, 0.0
+
+    # Space taken by stiles
+    consumed = cab_props.left_stile_width + cab_props.right_stile_width
+    for i in range(min(len(bays) - 1, len(cab_props.mid_stile_widths))):
+        consumed += cab_props.mid_stile_widths[i].width
+
+    # In angled mode the face frame becomes the hypotenuse, so rails
+    # and openings need to size against that length, not the cabinet's
+    # world X width. Layout's face_frame_length helper would do this
+    # but isn't built yet at this point in recalc, so reproduce the
+    # same condition + math directly from cab_props.
+    is_angled_single_bay = (
+        cab_props.corner_type == 'NONE'
+        and len(bays) == 1
+        and (cab_props.unlock_left_depth or cab_props.unlock_right_depth)
+    )
+    if is_angled_single_bay:
+        ld = (cab_props.left_depth if cab_props.unlock_left_depth
+              else cab_props.depth)
+        rd = (cab_props.right_depth if cab_props.unlock_right_depth
+              else cab_props.depth)
+        available_width = math.hypot(cab_props.width, ld - rd)
+    else:
+        # Same FF-plane insets FaceFrameLayout uses (blind offset +
+        # decorative corner post) so the bay share matches the FF
+        # area the solver will actually build.
+        inset_left, inset_right = solver.face_frame_insets(cab_props)
+        available_width = cab_props.width - inset_left - inset_right
+
+    return bays, consumed, available_width
+
+
+def locked_bay_slack(cabinet_obj):
+    """Width left over when EVERY bay in the cabinet has had its width
+    set by hand: the available face frame, less the stiles, less the set
+    bay widths. Positive means the bays fall short of the cabinet,
+    negative means they overrun it, zero means they add up.
+
+    None when at least one bay is still calculated -- that bay takes
+    whatever is left over, so there is nothing there to be wrong. This
+    is the one arrangement the distributor cannot fix for you, which is
+    why it is worth asking about.
+    """
+    bays, consumed, available = bay_width_budget(cabinet_obj)
+    if not bays:
+        return None
+    if any(not b.face_frame_bay.unlock_width for b in bays):
+        return None
+    return available - consumed - sum(b.face_frame_bay.width for b in bays)
+
+
+# ---------------------------------------------------------------------------
 # Base cabinet class
 # ---------------------------------------------------------------------------
 class FaceFrameCabinet(GeoNodeCage):
@@ -2120,19 +2191,9 @@ class FaceFrameCabinet(GeoNodeCage):
         System writes during this method are bracketed by _DISTRIBUTING_WIDTHS
         so the bay-width update callback knows not to auto-lock.
         """
-        cab_props = self.obj.face_frame_cabinet
-
-        bays = sorted(
-            [c for c in self.obj.children if c.get(TAG_BAY_CAGE)],
-            key=lambda c: c.get('hb_bay_index', 0),
-        )
+        bays, consumed, available_width = bay_width_budget(self.obj)
         if not bays:
             return
-
-        # Space taken by stiles
-        consumed = cab_props.left_stile_width + cab_props.right_stile_width
-        for i in range(min(len(bays) - 1, len(cab_props.mid_stile_widths))):
-            consumed += cab_props.mid_stile_widths[i].width
 
         # Sum of locked bay widths
         locked_total = 0.0
@@ -2146,29 +2207,6 @@ class FaceFrameCabinet(GeoNodeCage):
 
         if not unlocked_bays:
             return  # all bays locked, nothing to redistribute
-
-        # In angled mode the face frame becomes the hypotenuse, so rails
-        # and openings need to size against that length, not the cabinet's
-        # world X width. Layout's face_frame_length helper would do this
-        # but isn't built yet at this point in recalc, so reproduce the
-        # same condition + math directly from cab_props.
-        is_angled_single_bay = (
-            cab_props.corner_type == 'NONE'
-            and len(bays) == 1
-            and (cab_props.unlock_left_depth or cab_props.unlock_right_depth)
-        )
-        if is_angled_single_bay:
-            ld = (cab_props.left_depth if cab_props.unlock_left_depth
-                  else cab_props.depth)
-            rd = (cab_props.right_depth if cab_props.unlock_right_depth
-                  else cab_props.depth)
-            available_width = math.hypot(cab_props.width, ld - rd)
-        else:
-            # Same FF-plane insets FaceFrameLayout uses (blind offset +
-            # decorative corner post) so the bay share matches the FF
-            # area the solver will actually build.
-            inset_left, inset_right = solver.face_frame_insets(cab_props)
-            available_width = cab_props.width - inset_left - inset_right
 
         remainder = available_width - consumed - locked_total
         share = remainder / len(unlocked_bays)
