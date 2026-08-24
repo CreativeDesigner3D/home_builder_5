@@ -140,6 +140,30 @@ def _measured_kick_setback(cage, ffc):
     return max(depth + best, 0.0)
 
 
+def _finished_back_offset(obj):
+    """How far a finished back stands proud of the cage's back plane.
+
+    A finished back is built as a SEPARATE 3/4 panel layered behind the
+    carcass (the carcass back keeps its own thickness), so an island's
+    base molding has to wrap the panel's face - on the cage plane it
+    ends up buried inside it. Measured off the built part; 0 when there
+    isn't one.
+    """
+    inv = obj.matrix_world.inverted()
+    best = 0.0
+    for child in obj.children_recursive:
+        if child.get('hb_part_role') != 'FINISHED_BACK':
+            continue
+        corners = [inv @ (child.matrix_world @ mathutils.Vector(c))
+                   for c in child.bound_box]
+        if (max(c.z for c in corners) - min(c.z for c in corners) < 0.01
+                or max(c.x for c in corners) - min(c.x for c in corners)
+                < 0.01):
+            continue  # dormant zero-size part
+        best = max(best, max(c.y for c in corners))
+    return best
+
+
 def _rail_bays(cage):
     """Per-zone light-rail data for an upper: sorted (x0, x1, dz)
     zones partitioning the cabinet width. dz is the zone's bottom line
@@ -375,6 +399,7 @@ def build_facts(scene, members):
             facts[id(obj)] = {'role': 'CABINET', 'corner': corner,
                               'kick': kick,
                               'crown_mount': crown_mount,
+                              'back_off': _finished_back_offset(obj),
                               'finished_left': fin_l,
                               'finished_right': fin_r}
             if ffc.cabinet_type == 'UPPER':
@@ -394,6 +419,7 @@ def build_facts(scene, members):
         kick = {'skip': False, 'setback': setback}
         facts[id(obj)] = {
             'role': 'CABINET', 'corner': corner, 'kick': kick,
+            'back_off': _finished_back_offset(obj),
             'finished_left': _frameless_end_finished(obj, 'left',
                                                      wall_bounds),
             'finished_right': _frameless_end_finished(obj, 'right',

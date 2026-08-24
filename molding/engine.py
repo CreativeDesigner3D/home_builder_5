@@ -832,6 +832,37 @@ def _assemble_kick_spans(chain, facts):
     return spans, terminals
 
 
+def _seam_open_loop(loop):
+    """Re-cut a closed perimeter as an OPEN run seamed mid-edge.
+
+    A CYCLIC 2D curve is bevelled on the INSIDE of the loop whichever
+    way it winds - reversing the points changes nothing - which lays an
+    island's base molding under the cabinets instead of against them.
+    An OPEN spline bevels to the RIGHT of travel, the outward side
+    every on-wall run already relies on. Seaming at the midpoint of the
+    longest edge keeps the joint between two collinear ends, where it
+    butts invisibly; ties go to the LAST such edge, which lands it on
+    the back rather than the front (the span walk lays the kick faces
+    down first and the back late).
+    """
+    n = len(loop)
+    if n < 3:
+        return loop
+    cut, longest = 0, -1.0
+    for i in range(n):
+        span = (loop[(i + 1) % n] - loop[i]).length
+        # Within a hair counts as a tie: an island's front kick and its
+        # back are nominally the same length, and the transform to
+        # world leaves float noise on them.
+        if span > longest - 1e-4:
+            cut, longest = i, max(span, longest)
+    seam = (loop[cut] + loop[(cut + 1) % n]) * 0.5
+    out = [seam]
+    out.extend(loop[(cut + 1 + k) % n] for k in range(n))
+    out.append(seam)
+    return out
+
+
 def _stretch_segments(spans, include_recessed, x_off,
                       facts=None, terminals=None, island=False):
     """Offset path segments from a span list. Kept spans (FRONT and
@@ -851,7 +882,9 @@ def _stretch_segments(spans, include_recessed, x_off,
         for pts, _kind in spans:
             loop.extend(pts)
         loop = offset_polygon_right(loop, x_off)
-        return [(loop, True)] if len(loop) >= 3 else []
+        if len(loop) < 3:
+            return []
+        return [(_seam_open_loop(loop), False)]
 
     order = list(range(n))
     if island:
@@ -1001,17 +1034,39 @@ def _island_perimeter_spans(members, facts):
         fp = footprint_xy(m)
         return sum(fp, mathutils.Vector((0.0, 0.0))) / 4.0
 
-    def _front_corners(m):
+    def _end_front(m, direction):
+        """Where an island's end run stops at the front, on the end
+        facing `direction`.
+
+        The molding only reaches the cabinet front where a STILE is
+        extended to the floor - that case carries its own wrap span.
+        Otherwise the end run dies on the recessed kick's plane: the
+        few inches of end panel standing in front of the kick are toe
+        space, and carrying the run out around them leaves a return
+        hanging in mid-air whenever the recessed kick is left out.
+        """
         w, d, _ = cage_dims(m)
+        kick = facts[id(m)].get('kick') or {}
         mw = m.matrix_world
-        return (_xy(mw @ mathutils.Vector((0.0, -d, 0.0))),
-                _xy(mw @ mathutils.Vector((w, -d, 0.0))))
+        xdir = mw.to_3x3() @ mathutils.Vector((1.0, 0.0, 0.0))
+        at_right = mathutils.Vector((xdir.x, xdir.y)).dot(direction) > 0.0
+        stile = (kick.get('stile_right') if at_right
+                 else kick.get('stile_left'))
+        stile_w = (kick.get('stile_right_w', 0.0) if at_right
+                   else kick.get('stile_left_w', 0.0))
+        y = (-d if stile and stile_w > 1e-5
+             else -d + kick.get('setback', 0.0))
+        return _xy(mw @ mathutils.Vector((w if at_right else 0.0, y, 0.0)))
 
     def _back_corners(m):
+        # A finished back is a separate 3/4 panel layered behind the
+        # carcass, so the molding wraps ITS face - on the cage plane
+        # the back run ends up buried inside the panel.
         w, _d, _ = cage_dims(m)
+        b = facts[id(m)].get('back_off', 0.0)
         mw = m.matrix_world
-        return (_xy(mw @ mathutils.Vector((0.0, 0.0, 0.0))),
-                _xy(mw @ mathutils.Vector((w, 0.0, 0.0))))
+        return (_xy(mw @ mathutils.Vector((0.0, b, 0.0))),
+                _xy(mw @ mathutils.Vector((w, b, 0.0))))
 
     def _corner_toward(corners, direction):
         a, b = corners
@@ -1042,18 +1097,18 @@ def _island_perimeter_spans(members, facts):
 
     if len(row_list) == 2:
         spans_b, ordered_b, _t_b = _row_spans(row_list[1])
-        far_a = _corner_toward(_front_corners(ordered_a[-1]), t_a)
-        far_b = _corner_toward(_front_corners(ordered_b[0]), t_a)
-        near_b = _corner_toward(_front_corners(ordered_b[-1]), -t_a)
-        near_a = _corner_toward(_front_corners(ordered_a[0]), -t_a)
+        far_a = _end_front(ordered_a[-1], t_a)
+        far_b = _end_front(ordered_b[0], t_a)
+        near_b = _end_front(ordered_b[-1], -t_a)
+        near_a = _end_front(ordered_a[0], -t_a)
         spans.append(([far_a, far_b], 'FRONT'))
         spans.extend(spans_b)
         spans.append(([near_b, near_a], 'FRONT'))
     else:
-        far_f = _corner_toward(_front_corners(ordered_a[-1]), t_a)
+        far_f = _end_front(ordered_a[-1], t_a)
         far_b = _corner_toward(_back_corners(ordered_a[-1]), t_a)
         near_b = _corner_toward(_back_corners(ordered_a[0]), -t_a)
-        near_f = _corner_toward(_front_corners(ordered_a[0]), -t_a)
+        near_f = _end_front(ordered_a[0], -t_a)
         spans.append(([far_f, far_b], 'FRONT'))
         back_pts = [far_b]
         for m in reversed(ordered_a):
