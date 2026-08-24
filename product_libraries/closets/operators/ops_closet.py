@@ -6398,10 +6398,32 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
     door_pull_location: bpy.props.EnumProperty(
         name="Door Pull Location",
         description="Which convention holds the pulls on this opening's "
-                    "doors. Every door is held up from its bottom edge "
-                    "unless another convention is named",
+                    "doors. Auto reads it off where the door sits",
         items=const.DOOR_PULL_LOCATION_ITEMS,
-        default='UPPER')  # type: ignore
+        default='AUTO')  # type: ignore
+    unlock_door_pull_vertical: bpy.props.BoolProperty(
+        name="From Top/Bottom",
+        description="Set how far in from the door's top or bottom edge "
+                    "this opening's door pulls sit, instead of following "
+                    "the room. Which edge it is measured from is the "
+                    "convention above: Base from the top, Tall and Upper "
+                    "from the bottom",
+        default=False)  # type: ignore
+    door_pull_vertical_location: bpy.props.FloatProperty(
+        name="Door Pull Vertical Location",
+        description="Door edge to the near end of the pull",
+        default=const.DOOR_PULL_VERTICAL_LOCATION,
+        min=0.0, unit='LENGTH', precision=4)  # type: ignore
+    unlock_door_pull_edge: bpy.props.BoolProperty(
+        name="From Edge",
+        description="Set how far in from the latch edge this opening's "
+                    "door pulls sit, instead of following the room",
+        default=False)  # type: ignore
+    door_pull_horizontal_offset: bpy.props.FloatProperty(
+        name="Door Pull From Edge",
+        description="Latch edge of the door to the pull center",
+        default=const.DOOR_PULL_FROM_EDGE,
+        min=0.0, unit='LENGTH', precision=4)  # type: ignore
     double_pull_on_front: bpy.props.BoolProperty(
         name="Double Pull On Front",
         description="Put two pulls on each of this opening's drawer "
@@ -6488,12 +6510,17 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
                     float(getattr(op, '%s_overlay' % side)))
         for name in ('no_pulls', 'unlock_center_pull',
                      'center_pull_on_front', 'unlock_pull_location',
-                     'double_pull_on_front'):
+                     'double_pull_on_front', 'unlock_door_pull_vertical',
+                     'unlock_door_pull_edge'):
             setattr(self, name, bool(getattr(op, name)))
         self.drawer_pull_vertical_location = float(
             op.drawer_pull_vertical_location)
         self.distance_between_pulls = float(op.distance_between_pulls)
         self.door_pull_location = op.door_pull_location
+        self.door_pull_vertical_location = float(
+            op.door_pull_vertical_location)
+        self.door_pull_horizontal_offset = float(
+            op.door_pull_horizontal_offset)
         return context.window_manager.invoke_props_dialog(self, width=380)
 
     def _draw_interior(self, box, context):
@@ -6650,8 +6677,41 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
                 cp.pull_vertical_location_drawers))
         col.separator()
         # Doors carry their own rule; the drawer settings above say
-        # nothing about where a door's pull lands.
+        # nothing about where a door's pull lands. Under it, the two
+        # figures the room otherwise supplies - which edge the vertical
+        # one is read from is the rule's business, so the label says
+        # which one it will be.
         col.prop(self, 'door_pull_location', text="Doors")
+        rule = self.door_pull_location
+        if rule == 'AUTO':
+            v_label, v_room = "From Top/Bottom", None
+        elif rule == 'BASE':
+            v_label, v_room = "From Top", cp.pull_vertical_location_base
+        elif rule == 'TALL':
+            v_label, v_room = "From Bottom", None
+        else:
+            v_label, v_room = "From Bottom", cp.pull_vertical_location_upper
+        row = col.row(align=True)
+        row.prop(self, 'unlock_door_pull_vertical', text=v_label)
+        sub = row.row(align=True)
+        if self.unlock_door_pull_vertical:
+            sub.prop(self, 'door_pull_vertical_location', text="")
+        elif v_room is None:
+            # Auto has not picked yet, and Tall is a height off the
+            # floor rather than a figure off an edge - neither has one
+            # number to show until a door is actually stood up.
+            sub.label(text="Room")
+        else:
+            sub.label(text=units.unit_to_string(
+                context.scene.unit_settings, v_room))
+        row = col.row(align=True)
+        row.prop(self, 'unlock_door_pull_edge', text="From Edge")
+        sub = row.row(align=True)
+        if self.unlock_door_pull_edge:
+            sub.prop(self, 'door_pull_horizontal_offset', text="")
+        else:
+            sub.label(text=units.unit_to_string(
+                context.scene.unit_settings, cp.pull_horizontal_offset))
         col.separator()
         row = col.row(align=True)
         row.prop(self, 'double_pull_on_front', text="Two Per Front")
@@ -6784,6 +6844,10 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
         _op.double_pull_on_front = self.double_pull_on_front
         _op.distance_between_pulls = self.distance_between_pulls
         _op.door_pull_location = self.door_pull_location
+        _op.unlock_door_pull_vertical = self.unlock_door_pull_vertical
+        _op.door_pull_vertical_location = self.door_pull_vertical_location
+        _op.unlock_door_pull_edge = self.unlock_door_pull_edge
+        _op.door_pull_horizontal_offset = self.door_pull_horizontal_offset
         _op.add_back = self.add_back
         _op.back_inset = self.back_inset
         _op.back_notch_left = self.back_notch_left

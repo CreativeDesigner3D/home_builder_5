@@ -2370,11 +2370,11 @@ class ClosetStarter(GeoNodeCage):
         using the face_frame pull assets and scene defaults (shared
         hardware across libraries). Closet front local space: X = width
         across, Y = height up, front face at Z = thickness. Doors get a
-        vertical bar a fixed distance in from the latch edge and up from
-        the bottom edge - the same place on every door in a room,
-        whatever its size and whether it is slab or five-piece; drawers
-        a centered horizontal bar; hampers a horizontal bar near the
-        top. BACK-side island fronts are pending (mirrored mounting).
+        vertical bar the same distance in from the latch edge whether
+        they are slab or five-piece, held at the height the door's own
+        convention calls for (Base / Tall / Upper); drawers a centered
+        horizontal bar; hampers a horizontal bar near the top. BACK-side
+        island fronts are pending (mirrored mounting).
 
         An opening can say how the pulls on its own fronts sit, or that
         it wants none at all; anything it has not taken over follows the
@@ -2400,12 +2400,22 @@ class ClosetStarter(GeoNodeCage):
         # math working when the scene props are not registered.
         cp = bpy.context.scene.hb_closets
         v_base = getattr(cp, 'pull_vertical_location_base',
-                         units.inch(1.5))
+                         units.inch(2.0))
         v_tall = getattr(cp, 'pull_vertical_location_tall',
                          units.inch(45.0))
         v_upper = getattr(cp, 'pull_vertical_location_upper',
                           units.inch(2.0))
         h_edge = getattr(cp, 'pull_horizontal_offset', units.inch(1.5))
+        # Door figures an opening has taken over from the room. The
+        # vertical one replaces whichever convention the door lands on,
+        # since each is measured from the edge that convention works
+        # from - there is one number to type, not three.
+        if op is not None and getattr(op, 'unlock_door_pull_edge', False):
+            h_edge = float(op.door_pull_horizontal_offset)
+        door_v = None
+        if op is not None and getattr(op, 'unlock_door_pull_vertical',
+                                      False):
+            door_v = float(op.door_pull_vertical_location)
         # Drawer-front settings: the opening's own where it has taken
         # them over, the room's otherwise. A pair of pulls and their
         # spacing are the opening's alone - a whole run rarely wants
@@ -2456,41 +2466,54 @@ class ClosetStarter(GeoNodeCage):
             # slab or five-piece. Five-piece doors used to center the
             # pull on the latch stile instead, which put a slab door and
             # a five-piece door beside each other at different distances
-            # from their edges and moved with the stile width. One
-            # figure holds them together, and set in far enough it sits
-            # on the stile clear of the rail miter.
+            # from their edges and moved the figure with the stile
+            # width. One figure holds them together, and set in far
+            # enough it sits on the stile clear of the rail miter.
             offset = h_edge
             if hinge == 'LEFT':
                 x = width - offset
             else:
                 x = offset
-            # Every door is held up from its own bottom edge, so a
-            # short door and a tall one in the same room carry the pull
-            # at the same place. An opening can name one of the older
-            # conventions instead: BASE holds the pull down from the top
-            # edge, TALL holds it at a height off the floor whatever the
-            # door is doing, and AUTO reads the door's place in the run
-            # and picks between the three. All of them are clamped to
+            # Base / Tall / Upper, each measured from somewhere
+            # different: BASE holds the pull down from the TOP edge,
+            # UPPER holds it up from the BOTTOM edge, TALL holds it at a
+            # height off the floor whatever the door is doing. On Auto
+            # the rule is read off the door: hold it at the TALL height;
+            # when the door bottom is already above that height use
+            # UPPER; when the tall height would land past the door top
+            # use BASE. Naming one instead holds the door to it.
+            # An opening that has taken the vertical figure over feeds
+            # it to whichever of the three the door lands on, so the one
+            # number reads from the right edge either way. Clamped to
             # stay on the front.
             bottom_w = split_preview._world_matrix(front).translation.z
             if length_up:
                 # A length-up front carries its origin at the top
                 # edge, so the bottom is a door height below it.
                 bottom_w -= height
-            tall_target = v_tall
-            rule = (op.door_pull_location if op is not None else 'UPPER')
-            base_y = height - v_base - half
-            if rule == 'BASE':
-                y = base_y
-            elif rule == 'UPPER':
-                y = v_upper + half
+            rule = (op.door_pull_location if op is not None else 'AUTO')
+            if rule == 'AUTO':
+                if bottom_w >= v_tall:
+                    rule = 'UPPER'
+                elif (v_tall - bottom_w) + half <= height - v_base - half:
+                    rule = 'TALL'
+                else:
+                    rule = 'BASE'
+            if door_v is not None:
+                # The typed figure is measured off the door itself, from
+                # the edge the convention works from - the top on a base
+                # door, the bottom on the other two. A tall door given a
+                # figure of its own is held off its own bottom edge
+                # rather than off the floor: that is what the box asks
+                # for and what gets measured on the floor.
+                y = ((height - door_v - half) if rule == 'BASE'
+                     else door_v + half)
+            elif rule == 'BASE':
+                y = height - v_base - half
             elif rule == 'TALL':
-                y = (tall_target - bottom_w) + half
-            elif bottom_w >= tall_target:
+                y = (v_tall - bottom_w) + half
+            else:                                   # UPPER
                 y = v_upper + half
-            else:
-                tall_y = (tall_target - bottom_w) + half
-                y = tall_y if tall_y <= base_y else base_y
             y = min(max(y, half), max(height - half, half))
             rot = (math.radians(-90.0), 0.0, math.radians(90.0))
 
@@ -6670,7 +6693,11 @@ def serialize_opening(opening):
             float(opening.hb_closet_opening.drawer_pull_vertical_location),
             int(opening.hb_closet_opening.double_pull_on_front),
             float(opening.hb_closet_opening.distance_between_pulls),
-            opening.hb_closet_opening.door_pull_location],
+            opening.hb_closet_opening.door_pull_location,
+            int(opening.hb_closet_opening.unlock_door_pull_vertical),
+            float(opening.hb_closet_opening.door_pull_vertical_location),
+            int(opening.hb_closet_opening.unlock_door_pull_edge),
+            float(opening.hb_closet_opening.door_pull_horizontal_offset)],
         # Whether this opening is closed at the back, and how, so a
         # copy is backed the way the original was.
         'back': [int(opening.hb_closet_opening.add_back),
@@ -6755,9 +6782,16 @@ def apply_opening_data(opening, data, recalc=True):
         _op.drawer_pull_vertical_location = float(pulls[4])
         _op.double_pull_on_front = bool(pulls[5])
         _op.distance_between_pulls = float(pulls[6])
-        # Copies taken before the door rule was a setting carry six.
+        # Copies taken before the door rule was a setting carry seven,
+        # and ones taken before the door figures could be taken over
+        # carry eight.
         if len(pulls) > 7:
             _op.door_pull_location = str(pulls[7])
+        if len(pulls) > 11:
+            _op.unlock_door_pull_vertical = bool(pulls[8])
+            _op.door_pull_vertical_location = float(pulls[9])
+            _op.unlock_door_pull_edge = bool(pulls[10])
+            _op.door_pull_horizontal_offset = float(pulls[11])
     if data.get('door_swing'):
         # A copy taken before the tilt-out hamper became a front of its
         # own carries the old flag, so it reads back as that front.
