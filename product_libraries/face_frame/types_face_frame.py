@@ -34,6 +34,7 @@ from ..frameless.types_products import HalfWall as _FramelessHalfWall
 from ..frameless.types_products import SupportFrame as _FramelessSupportFrame
 from . import solver_face_frame as solver
 from . import shelf_nosing
+from . import wood_top_edge
 from . import decorative_corner
 from . import cabinet_column
 from . import bar_storage
@@ -14751,11 +14752,16 @@ class WoodTopPart(CabinetPart):
         Z 0..thickness with the nosing top flush to the board top
         (extra-height styles drop below).
         """
-        nose_d = shelf_nosing.NOSE_STOCK_DEPTH
         h = (max(t, wt.nosing_height)
              if wt.nosing_style in shelf_nosing.EXTRA_HEIGHT_STYLES
              else t)
-        outline = shelf_nosing.nosing_outline(wt.nosing_style, t, h)
+        outline = wood_top_edge.edge_outline(wt.nosing_style, t, h)
+        if not outline:
+            return
+        # Band depth follows the profile: a shallow one keeps the stock
+        # depth and leaves a flat behind it, a deep one grows the band
+        # instead of poking out past the top's outer face.
+        nose_d = wood_top_edge.stock_depth(outline)
         nosed = set(nosed_sides)
         # Prism cross-section in (d, z): d grows outward from the core
         # face (0) to the board's outer face (nose_d) -- the outline's

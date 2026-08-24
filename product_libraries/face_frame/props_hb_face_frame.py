@@ -24,6 +24,7 @@ from bpy.props import (
 from ... import units
 from ... import hb_utils
 from . import finish_colors, wood_materials, style_options, shelf_nosing
+from . import wood_top_edge
 from . import decorative_corner
 from . import cabinet_column
 
@@ -11103,8 +11104,10 @@ class Face_Frame_Wood_Top_Props(PropertyGroup):
     # edges are milled -- typically the exposed sides (not against a
     # wall); sides meeting at a corner miter into each other.
     nosing_style: EnumProperty(
-        name="Nosing",
-        items=shelf_nosing.NOSING_STYLE_ITEMS, default='NONE',
+        name="Edge Profile",
+        description="Profile milled on the top's edge, whether cut into "
+                    "the slab or into an applied hardwood band",
+        items=wood_top_edge.EDGE_STYLE_ITEMS, default='NONE',
         update=_update_wood_top_nosing_style,
     )  # type: ignore
     nosing_height: FloatProperty(
