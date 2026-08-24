@@ -17,6 +17,8 @@ the HUD contributes presentation and hit-testing only, never selection
 logic.
 """
 
+import math
+
 import bpy
 import gpu
 import blf
@@ -32,7 +34,8 @@ from ..hb_gpu_draw import (
 )
 # Shared widget layer -- the same UI scale and palette the scene
 # navigator draws with, so the two surfaces cannot drift apart.
-from ..hb_gpu_ui import Theme, scale as _s, draw_arrow_head
+from ..hb_gpu_ui import (Theme, scale as _s, draw_arrow_head,
+                         arc_points, draw_polyline)
 # Sibling module -- safe to import at load (scene_navigator imports viewport_hud
 # only lazily, inside its pin-toggle handler, so there's no import cycle).
 from . import scene_navigator
@@ -130,6 +133,36 @@ _CL_SELECTION = _SelectionWiring(
 
 
 # ---- Widgets ----------------------------------------------------------------
+
+def _glyph_open_door(shader, rect, color):
+    """A door swung open on its hinge, with the arc it travels.
+
+    The plan door symbol, which is how a swing is drawn everywhere else
+    on a drawing. The leaf is a panel rather than a single line -- at
+    this size a line plus an arc reads as a wedge, not a door -- and it
+    is left part way open rather than at the ninety degrees the room
+    palette's Door tool uses, so the two marks stay distinguishable.
+    """
+    rx, ry, rw, rh = rect
+    r = min(rw, rh) * 0.56
+    # Hinge at the low-left of the mark; everything sweeps up and right
+    # from it, so centring the r-square centres the symbol.
+    hx = rx + (rw - r) / 2.0
+    hy = ry + (rh - r) / 2.0
+    # The opening the door sits in: closed, the leaf would lie along this.
+    draw_lines(shader, [(hx, hy), (hx + r, hy)], color)
+    ang = math.radians(58.0)
+    ca, sa = math.cos(ang), math.sin(ang)
+    leaf = r * 0.94
+    thick = r * 0.17
+    tip = (hx + leaf * ca, hy + leaf * sa)
+    nx, ny = -sa * thick, ca * thick
+    draw_polyline(shader,
+                  [(hx, hy), tip, (tip[0] + nx, tip[1] + ny),
+                   (hx + nx, hy + ny)],
+                  color, closed=True)
+    draw_polyline(shader, arc_points(hx, hy, leaf, ang, 0.0, 10), color)
+
 
 def _draw_centered_text(font_id, rect, size, color, text):
     rx, ry, rw, rh = rect
@@ -281,13 +314,21 @@ class _ModalToggleButton:
     to commit and exit via request_exit_active_modal (Disable path).
     Width is sized to the longer of the two labels so the button
     geometry doesn't jitter when state changes.
+
+    Pass a `glyph` to draw it as a square icon instead. A toggle that
+    rides in the selection-mode row has to earn its width there, and a
+    state you leave on is a mark, not a sentence -- the same reasoning
+    the Grab pill follows. The Enable / Disable wording is not lost: it
+    becomes the hover label.
     """
 
-    def __init__(self, op_idname, mode_value, enable_label, disable_label):
+    def __init__(self, op_idname, mode_value, enable_label, disable_label,
+                 glyph=None):
         self.op_idname = op_idname  # e.g. "hb_face_frame.grab_cabinet"
         self.mode_value = mode_value
         self.enable_label = enable_label
         self.disable_label = disable_label
+        self.glyph = glyph
 
     # ---- internal helpers ----
 
@@ -298,10 +339,16 @@ class _ModalToggleButton:
         return (self.disable_label if self._is_my_modal_active()
                 else self.enable_label)
 
+    def hover_label(self):
+        """What the icon would say if it had the room to say it."""
+        return self._label() if self.glyph is not None else None
+
     # ---- widget protocol ----
 
     @property
     def width(self):
+        if self.glyph is not None:
+            return int(BTN_HEIGHT * _s())      # square
         # Size to the longer of the two possible labels so the rect
         # doesn't shift width when state flips.
         s = _s()
@@ -334,7 +381,11 @@ class _ModalToggleButton:
         draw_rect(shader, rx, ry, rw, rh, bg)
         draw_rect_outline(shader, rx, ry, rw, rh, BTN_BORDER)
         color = TEXT_ACTIVE if active else TEXT_NORMAL
-        _draw_centered_text(font_id, rect, FONT_SIZE * _s(), color, self._label())
+        if self.glyph is not None:
+            self.glyph(shader, rect, color)
+            return
+        _draw_centered_text(font_id, rect, FONT_SIZE * _s(), color,
+                            self._label())
 
     def on_click(self, context, area, region):
         if active_modal_idname() == self.op_idname:
@@ -402,6 +453,9 @@ class _GrabPill:
     @property
     def width(self):
         return int(BTN_HEIGHT * _s())        # square
+
+    def hover_label(self):
+        return "Stop Moving" if self._active() else "Move"
 
     def visible(self, context):
         if not _face_frame_ui_visible(context):
@@ -512,10 +566,8 @@ _OPEN_DOOR_BUTTON = _ModalToggleButton(
     'hb_face_frame.open_mode', 'Parts',
     enable_label="Enable Open Door Mode",
     disable_label="Disable Open Door Mode",
+    glyph=_glyph_open_door,
 )
-_MODAL_TOGGLE_BUTTONS = [
-    _OPEN_DOOR_BUTTON,
-]
 
 
 class _SceneToggleButton:
@@ -629,15 +681,19 @@ def _rows():
     The scene-navigator button is NOT in these rows -- compute_layout places
     it separately, left-anchored just past the toolbar.
 
-    The first row holds the selection-mode picker; the second holds the grab
-    toggles; the third holds the sheet controls, which show only on a
-    layout view (where the first two rows are empty, so it draws at the
-    top). The toggles' visible() checks gate on selection mode and
-    modal-active state, so that row contains at most one rendered button at a
-    time (or zero, in which case compute_layout skips the row entirely)."""
+    The first row holds the selection-mode picker and, in a group of its
+    own, the controls that modify what the current mode does: Move, Open
+    Doors and the Sizes scope. Open Doors had a row to itself, which put
+    a lone button under the picker; it belongs beside the other two
+    because it is the same kind of thing -- a way of working on what the
+    mode has selected. Each self-gates on selection mode and
+    modal-active state via visible(), so the group is usually one or two
+    buttons wide.
+
+    The second row holds the sheet controls, which show only on a layout
+    view (where the first row is empty, so it draws at the top)."""
     return [
-        [_MODE_BUTTONS, [_GRAB_PILL, _SIZES_BUTTON]],
-        [_MODAL_TOGGLE_BUTTONS],
+        [_MODE_BUTTONS, [_GRAB_PILL, _OPEN_DOOR_BUTTON, _SIZES_BUTTON]],
         [_layout_view_buttons()],
     ]
 
@@ -832,6 +888,32 @@ def _nav_anchor(context, area):
     return -1.0, -1.0
 
 
+def _draw_hover_chip(shader, font_id, rect, area, text):
+    """Name the icon button under the cursor.
+
+    A word costs a button its place in a row; an icon costs the user a
+    guess. The chip pays for the icon by naming it on hover, drawn
+    below the button so it never covers the row it belongs to.
+    """
+    s = _s()
+    size = FONT_SIZE * s
+    blf.size(font_id, size)
+    tw, th = blf.dimensions(font_id, text)
+    pad_x, pad_y = 7 * s, 4 * s
+    cw = tw + pad_x * 2
+    ch = th + pad_y * 2
+    rx, ry, rw, _rh = rect
+    cx = rx + (rw - cw) / 2.0
+    # Clamped, so a chip on the button at the end of a row does not hang
+    # half off the side of the viewport.
+    x_min, x_max, _y_min, _y_max = get_visible_window_bounds(area)
+    cx = max(x_min + 4 * s, min(cx, x_max - cw - 4 * s))
+    cy = ry - ch - 5 * s
+    draw_rect(shader, cx, cy, cw, ch, Theme.PANEL_BG)
+    draw_rect_outline(shader, cx, cy, cw, ch, BTN_BORDER)
+    draw_text(font_id, cx + pad_x, cy + pad_y, size, TEXT_ACTIVE, text)
+
+
 def _draw_hud():
     """Permanent POST_PIXEL callback -- runs once per 3D viewport WINDOW
     region. Cheap no-op when the HUD preference is off."""
@@ -858,6 +940,16 @@ def _draw_hud():
     font_id = 0
     for widget, rect in placed:
         widget.draw(shader, font_id, rect, context, mouse)
+    # After the row, so the chip sits over its neighbours rather than
+    # under whichever button is drawn next.
+    for widget, rect in placed:
+        fn = getattr(widget, 'hover_label', None)
+        if fn is None or not point_in_rect(mouse[0], mouse[1], rect):
+            continue
+        text = fn()
+        if text:
+            _draw_hover_chip(shader, font_id, rect, area, text)
+        break
     gpu.state.blend_set('NONE')
 
     # Pinned scene navigator: drawn by THIS permanent handler (not the
