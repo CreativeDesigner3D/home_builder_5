@@ -203,9 +203,13 @@ def paint(entries, mx, my):
         draw_rect(shader, *clip[2], Theme.SCROLLBAR_TRACK)
         draw_rect(shader, *clip[3], Theme.SCROLLBAR_THUMB)
 
+    # scissor_set only sets the BOX; the test has to be switched on
+    # or the box is ignored and rows draw outside the panel.
     prev = gpu.state.scissor_get()
-    if clip is not None:
+    clipped = clip is not None
+    if clipped:
         cx, cy, cw, ch = clip[1]
+        gpu.state.scissor_test_set(True)
         gpu.state.scissor_set(int(prev[0] + cx), int(prev[1] + cy),
                               max(int(cw), 0), max(int(ch), 0))
     try:
@@ -271,7 +275,9 @@ def paint(entries, mx, my):
                 glyph_chevron(shader, rx + rw - 12 * s, ry + rh / 2.0,
                               7 * s, True, Theme.GLYPH)
     finally:
-        gpu.state.scissor_set(*prev)
+        if clipped:
+            gpu.state.scissor_set(*prev)
+            gpu.state.scissor_test_set(False)
     gpu.state.blend_set('NONE')
 
 

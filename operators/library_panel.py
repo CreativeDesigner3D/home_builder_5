@@ -87,10 +87,12 @@ PAD_Y = 8
 HEADER_H = 22
 HDR_BTN = 20        # the Auto Join pill and the sizes button
 FILTER_H = 20
-SECTION_H = 18
+SECTION_H = 21      # taller, to carry FONT_SECTION
 FOOTER_H = 18
 FONT_TITLE = 11
 FONT_LABEL = 9
+FONT_SECTION = 11   # category headers: they organise the whole grid,
+                    # so they should not be smaller than the tile labels
 SCROLL_STEP_ROWS = 1
 
 # ---- Module state ----------------------------------------------------------
@@ -537,8 +539,12 @@ def _paint_grid(layout, mx, my):
         return
 
     # Scissor the grid so a partly scrolled row cuts off cleanly.
+    # scissor_set only sets the BOX -- without scissor_test_set the
+    # box is ignored entirely, which is how tiles were being drawn
+    # outside the panel while scrolling.
     prev = gpu.state.scissor_get()
     cx, cy, cw, ch = clip_rect
+    gpu.state.scissor_test_set(True)
     gpu.state.scissor_set(int(prev[0] + cx), int(prev[1] + cy),
                           max(int(cw), 0), max(int(ch), 0))
     try:
@@ -552,8 +558,8 @@ def _paint_grid(layout, mx, my):
             glyph_chevron(shader, hx + 6 * s, hy + hh / 2.0, 7 * s,
                           collapsed, Theme.GLYPH)
             draw_text(font_id, hx + 16 * s,
-                      hy + (hh - FONT_LABEL * s) / 2.0 + 1 * s,
-                      FONT_LABEL * s, Theme.TEXT_NORMAL,
+                      hy + (hh - FONT_SECTION * s) / 2.0 + 1 * s,
+                      FONT_SECTION * s, Theme.TEXT_PRIMARY,
                       '%s  (%d)' % (label, count))
             draw_rects(shader, [(hx, hy, hw, 1 * s)], Theme.SEPARATOR)
 
@@ -586,6 +592,7 @@ def _paint_grid(layout, mx, my):
                                else Theme.TEXT_NORMAL, label)
     finally:
         gpu.state.scissor_set(*prev)
+        gpu.state.scissor_test_set(False)
 
     # Footer: the hovered product's full name, which the tile label
     # usually had to truncate.

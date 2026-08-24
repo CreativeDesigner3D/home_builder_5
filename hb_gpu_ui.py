@@ -226,11 +226,17 @@ def paint_frame(shader, rect, bg=Theme.PANEL_BG, border=Theme.PANEL_BORDER):
 
 def paint_button(shader, rect, hovered=False, active=False,
                  bg=Theme.BTN_BG, hover_bg=Theme.BTN_HOVER_BG,
-                 active_bg=Theme.BTN_ACTIVE_BG, border=Theme.BTN_BORDER):
+                 active_bg=Theme.BTN_ACTIVE_BG, border=Theme.PANEL_BORDER):
     """The fill-then-border button idiom, with active winning over hover.
 
     Returns the fill colour used, so a caller can pick a matching glyph
     or label colour without repeating the same three-way choice.
+
+    The border defaults to the PANEL edge, not the louder button edge.
+    A button sitting ON a dark viewport wants to announce itself; a row
+    of them inside a panel does not, and at panel density the brighter
+    edge reads as a grid of white boxes. The HUD passes BTN_BORDER
+    explicitly for the buttons that do float on the viewport.
     """
     x, y, w, h = rect
     fill = active_bg if active else (hover_bg if hovered else bg)

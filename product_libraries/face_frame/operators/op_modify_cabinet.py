@@ -1928,7 +1928,8 @@ class hb_face_frame_OT_grab_opening(_GrabBaseMixin, bpy.types.Operator):
     bl_description = (
         "Click and drag mid rails to shift height between the two "
         "adjacent openings. Click a lock icon to unlock. Enter to "
-        "confirm, Esc to cancel"
+        "confirm, Esc to cancel. Selecting and right-clicking keep "
+        "working while it is on"
     )
     bl_options = {'REGISTER', 'UNDO'}
     BOUNDARY_COLLECTOR = staticmethod(_opening_height_boundaries)
@@ -2017,7 +2018,117 @@ class hb_face_frame_OT_grab_cabinet_group(_GrabBaseMixin, bpy.types.Operator):
         return _collect_group_boundaries(self._scope_group)
 
 
+# Which boundaries each selection mode can grab. One grab covers all of
+# them: the mode you are already in says what you are working on, so it
+# should decide what is draggable too, rather than making the user pick
+# a matching grab from a row of four and keep the two in step by hand.
+_MODE_COLLECTORS = {
+    'Cabinets': solver.editable_boundaries_cabinet,
+    'Bays': _bay_only_boundaries,
+    'Openings': _opening_height_boundaries,
+    'Face Frame': solver.editable_boundaries_v1,
+}
+
+
+def current_mode(scene):
+    props = getattr(scene, 'hb_face_frame', None)
+    return getattr(props, 'face_frame_selection_mode', None) if props else None
+
+
+def collector_for_mode(scene):
+    """Boundary collector for the scene's current selection mode, or
+    None when that mode has nothing to grab."""
+    return _MODE_COLLECTORS.get(current_mode(scene))
+
+
+def mode_is_grabbable(scene):
+    return collector_for_mode(scene) is not None
+
+
+class hb_face_frame_OT_grab(_GrabBaseMixin, bpy.types.Operator):
+    """Modal: grab whatever the current selection mode works on.
+
+    Cabinets gives outer edges and bay edges, Bays gives bay
+    boundaries, Openings gives mid rails, Face Frame gives rails and
+    stiles. Switching selection mode while this is running changes what
+    is draggable, because the collector is resolved per collection
+    rather than fixed when the operator starts."""
+    bl_idname = "hb_face_frame.grab"
+    bl_label = "Grab"
+    bl_description = (
+        "Drag the edges the current selection mode owns: cabinet outer "
+        "edges, bay boundaries, opening mid rails, or face frame "
+        "members. Switch mode to change what is draggable. Enter to "
+        "confirm, Esc to cancel"
+    )
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return (mode_is_grabbable(context.scene)
+                and _GrabBaseMixin.poll.__func__(cls, context))
+
+    _last_mode = None
+
+    def invoke(self, context, event):
+        self._last_mode = current_mode(context.scene)
+        return super().invoke(context, event)
+
+    def _over_a_handle(self, context, event):
+        """True when the cursor is on something this grab owns -- a
+        boundary or a lock icon. Everything else is not ours."""
+        if self._pick_boundary(context, event) is not None:
+            return True
+        targets = self._lock_targets or []
+        if not targets:
+            return False
+        try:
+            ui_s = bpy.context.preferences.system.ui_scale
+        except AttributeError:
+            ui_s = 1.0
+        tol2 = (self.LOCK_ICON_HIT_TOL * ui_s) ** 2
+        mx, my = event.mouse_region_x, event.mouse_region_y
+        return any((mx - t['cx']) ** 2 + (my - t['cy']) ** 2 <= tol2
+                   for t in targets)
+
+    def modal(self, context, event):
+        # The boundary list is cached and only refreshed on the events
+        # that invalidate it, so a mode change has to say so -- without
+        # this the grab keeps offering the previous mode's handles and
+        # looks broken until it is toggled off and on again.
+        mode = current_mode(context.scene)
+        if mode != self._last_mode:
+            self._last_mode = mode
+            self._boundaries = self._collect()
+            self._hover_boundary = None
+            if context.area:
+                context.area.tag_redraw()
+
+        # Grab is a mode you leave switched on, so it may only claim
+        # the events it actually needs. Anything that is not a drag
+        # goes straight through: selecting a bay, right-clicking it
+        # for its properties, swapping its configuration -- all of
+        # that has to keep working while grab is live, or the mode is
+        # unusable for anything except dragging.
+        if not self._drag_active:
+            if event.type == 'RIGHTMOUSE':
+                return {'PASS_THROUGH'}
+            if (event.type == 'LEFTMOUSE'
+                    and event.value in ('PRESS', 'RELEASE')
+                    and not self._over_a_handle(context, event)):
+                return {'PASS_THROUGH'}
+
+        return super().modal(context, event)
+
+    def _collect(self):
+        collector = collector_for_mode(bpy.context.scene)
+        if collector is None:
+            return []
+        return _collect_boundaries(bpy.context.scene, collector)
+
+
 classes = (
+    hb_face_frame_OT_grab,
     hb_face_frame_OT_grab_opening,
     hb_face_frame_OT_grab_bay,
     hb_face_frame_OT_grab_face_frame,

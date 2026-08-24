@@ -26,12 +26,13 @@ from ..hb_gpu_draw import (
     get_visible_window_bounds,
     draw_rect,
     draw_rect_outline,
+    draw_lines,
     draw_text,
     point_in_rect,
 )
 # Shared widget layer -- the same UI scale and palette the scene
 # navigator draws with, so the two surfaces cannot drift apart.
-from ..hb_gpu_ui import Theme, scale as _s
+from ..hb_gpu_ui import Theme, scale as _s, draw_arrow_head
 # Sibling module -- safe to import at load (scene_navigator imports viewport_hud
 # only lazily, inside its pin-toggle handler, so there's no import cycle).
 from . import scene_navigator
@@ -162,7 +163,9 @@ class _PanelTabButton:
         return int(blf.dimensions(0, self.tab)[0] + 22 * s)
 
     def visible(self, context):
-        return True
+        # A tab that means nothing here is not shown at all -- better
+        # than a tab that opens to a panel with nothing to do.
+        return scene_navigator.tab_available(self.tab, context.scene)
 
     def _showing(self):
         """True when the panel is open on this tab."""
@@ -362,59 +365,176 @@ _MODE_BUTTONS = [
     _ModeButton(_CL_SELECTION, 'Parts', "Parts"),
 ]
 
-_GRAB_CABINET_BUTTON = _ModalToggleButton(
-    'hb_face_frame.grab_cabinet', 'Cabinets',
-    enable_label="Enable Grab Cabinet",
-    disable_label="Disable Grab Cabinet",
-)
-_GRAB_FACE_FRAME_BUTTON = _ModalToggleButton(
-    'hb_face_frame.grab_face_frame', 'Face Frame',
-    enable_label="Enable Grab Face Frame",
-    disable_label="Disable Grab Face Frame",
-)
-_GRAB_BAY_BUTTON = _ModalToggleButton(
-    'hb_face_frame.grab_bay', 'Bays',
-    enable_label="Enable Grab Bays",
-    disable_label="Disable Grab Bays",
-)
-_GRAB_OPENING_BUTTON = _ModalToggleButton(
-    'hb_face_frame.grab_opening', 'Openings',
-    enable_label="Enable Grab Openings",
-    disable_label="Disable Grab Openings",
-)
+class _GrabPill:
+    """One Grab toggle for every face-frame selection mode.
+
+    There were four of these, one per mode, and the user had to keep
+    the grab they started matched to the mode they were in. The mode
+    already says what you are working on, so it can say what is
+    draggable: this starts a single grab whose boundaries follow the
+    mode, and it sits at the end of the mode row because that is what
+    it modifies.
+
+    Drawn as a square icon rather than a word: it is a state you
+    leave on, not a command you fire, and a four-way arrow says
+    "drag things" without spending the width of a label.
+    """
+
+    OP = 'hb_face_frame.grab'
+
+    @property
+    def width(self):
+        return int(BTN_HEIGHT * _s())        # square
+
+    def visible(self, context):
+        if not _face_frame_ui_visible(context):
+            return False
+        if active_modal_idname() == self.OP:
+            return True          # always offer the way out
+        try:
+            from ..product_libraries.face_frame.operators import (
+                op_modify_cabinet)
+            return op_modify_cabinet.mode_is_grabbable(context.scene)
+        except Exception:
+            return False
+
+    def _active(self):
+        return active_modal_idname() == self.OP
+
+    def draw(self, shader, font_id, rect, context, mouse):
+        rx, ry, rw, rh = rect
+        s = _s()
+        active = self._active()
+        hovered = point_in_rect(mouse[0], mouse[1], rect)
+        bg = (BTN_ACTIVE_BG if active
+              else (BTN_HOVER_BG if hovered else BTN_BG))
+        draw_rect(shader, rx, ry, rw, rh, bg)
+        draw_rect_outline(shader, rx, ry, rw, rh, BTN_BORDER)
+        # Four-way arrow: the mark for 'this drags things'.
+        col = TEXT_ACTIVE if active else TEXT_NORMAL
+        cx, cy = rx + rw / 2.0, ry + rh / 2.0
+        arm = min(rw, rh) * 0.30
+        head = arm * 0.55
+        draw_lines(shader, [(cx - arm, cy), (cx + arm, cy),
+                            (cx, cy - arm), (cx, cy + arm)], col)
+        for tip, direction in (((cx + arm, cy), (1.0, 0.0)),
+                               ((cx - arm, cy), (-1.0, 0.0)),
+                               ((cx, cy + arm), (0.0, 1.0)),
+                               ((cx, cy - arm), (0.0, -1.0))):
+            draw_arrow_head(shader, tip, direction, head, col)
+
+    def on_click(self, context, area, region):
+        if self._active():
+            request_exit_active_modal(context)
+            return
+        try:
+            with context.temp_override(area=area, region=region):
+                bpy.ops.hb_face_frame.grab('INVOKE_DEFAULT')
+        except Exception:
+            pass
+
+
+class _SizesButton:
+    """Cycles the dimension-label scope: All -> Selected -> Off.
+
+    It used to draw itself, in the overlay module, from a private copy
+    of this file's layout constants and a guess at which HUD row was
+    free. That guess went stale the moment the grab buttons left row
+    two. It is a HUD widget now, sitting beside Grab because both
+    modify what the selection mode shows you.
+    """
+
+    SCOPES = ('ALL', 'SELECTED', 'OFF')
+
+    def _scope(self, context):
+        props = getattr(context.scene, 'hb_face_frame', None)
+        return getattr(props, 'selection_mode_sizes_scope', 'OFF') if props else 'OFF'
+
+    def _label(self, context):
+        scope = self._scope(context)
+        if scope == 'ALL':
+            return 'Sizes: All'
+        if scope == 'SELECTED':
+            return 'Sizes: Sel'
+        return 'Sizes'
+
+    @property
+    def width(self):
+        s = _s()
+        blf.size(0, FONT_SIZE * s)
+        # Sized to the longest label so the row does not jitter as the
+        # scope cycles.
+        return int(blf.dimensions(0, 'Sizes: Sel')[0] + 24 * s)
+
+    def visible(self, context):
+        return _face_frame_ui_visible(context)
+
+    def draw(self, shader, font_id, rect, context, mouse):
+        rx, ry, rw, rh = rect
+        on = self._scope(context) != 'OFF'
+        hovered = point_in_rect(mouse[0], mouse[1], rect)
+        bg = (BTN_ACTIVE_BG if on else (BTN_HOVER_BG if hovered else BTN_BG))
+        draw_rect(shader, rx, ry, rw, rh, bg)
+        draw_rect_outline(shader, rx, ry, rw, rh, BTN_BORDER)
+        _draw_centered_text(font_id, rect, FONT_SIZE * _s(),
+                            TEXT_ACTIVE if on else TEXT_NORMAL,
+                            self._label(context))
+
+    def on_click(self, context, area, region):
+        props = getattr(context.scene, 'hb_face_frame', None)
+        if props is None:
+            return
+        nxt = {'ALL': 'SELECTED', 'SELECTED': 'OFF'}.get(
+            self._scope(context), 'ALL')
+        props.selection_mode_sizes_scope = nxt
+
+
+_SIZES_BUTTON = _SizesButton()
+_GRAB_PILL = _GrabPill()
 _OPEN_DOOR_BUTTON = _ModalToggleButton(
     'hb_face_frame.open_mode', 'Parts',
     enable_label="Enable Open Door Mode",
     disable_label="Disable Open Door Mode",
 )
 _MODAL_TOGGLE_BUTTONS = [
-    _GRAB_CABINET_BUTTON, _GRAB_FACE_FRAME_BUTTON, _GRAB_BAY_BUTTON,
-    _GRAB_OPENING_BUTTON, _OPEN_DOOR_BUTTON,
+    _OPEN_DOOR_BUTTON,
 ]
 
 
 class _SceneToggleButton:
-    """HUD button bound to a boolean Scene property.
+    """HUD button bound to a boolean property.
 
     Reads and writes the property directly, so its update callback owns
     the real work and the HUD stays presentation-only -- the same split
     the selection-mode picker uses. ``ui_visible`` gates which scenes show
-    it; ``width_chars`` sizes the button to its label so a row of these
-    does not jitter as state changes.
+    it; ``width_px`` sizes the button so a row of these does not jitter
+    as state changes.
+
+    ``owner`` picks what the property hangs off. Scene is the default,
+    but a toggle that is a way of LOOKING rather than part of the job
+    generally lives on the WindowManager, and the HUD should be able to
+    show either without caring which.
     """
 
-    def __init__(self, prop_name, label, ui_visible, width_px=112):
+    def __init__(self, prop_name, label, ui_visible, width_px=112,
+                 owner='SCENE'):
         self.prop_name = prop_name
         self.label = label
         self.ui_visible = ui_visible
         self.width_px = width_px
+        self.owner = owner
+
+    def _host(self, context):
+        if self.owner == 'WINDOW_MANAGER':
+            return context.window_manager
+        return context.scene
 
     @property
     def width(self):
         return int(self.width_px * _s())
 
     def _is_active(self, context):
-        return bool(getattr(context.scene, self.prop_name, False))
+        return bool(getattr(self._host(context), self.prop_name, False))
 
     def visible(self, context):
         return self.ui_visible(context)
@@ -436,9 +556,9 @@ class _SceneToggleButton:
                             self.label)
 
     def on_click(self, context, area, region):
-        scene = context.scene
-        setattr(scene, self.prop_name,
-                not getattr(scene, self.prop_name, False))
+        host = self._host(context)
+        setattr(host, self.prop_name,
+                not getattr(host, self.prop_name, False))
 
 
 def _layout_view_visible(context):
@@ -446,10 +566,42 @@ def _layout_view_visible(context):
     return bool(context.scene and context.scene.get('IS_LAYOUT_VIEW'))
 
 
-# Sheet controls. Only one so far; the row is built to take more.
+# Sheet controls, shown only on a layout view.
 _LOCK_MODEL_BUTTON = _SceneToggleButton(
     layout_lock.LOCK_PROP, "Lock 3D Model", _layout_view_visible)
-_LAYOUT_VIEW_BUTTONS = [_LOCK_MODEL_BUTTON]
+_BUILTIN_SHEET_BUTTONS = [(0, "lock_model", _LOCK_MODEL_BUTTON)]
+
+# Contributed sheet toggles. Whoever owns a sheet-level option can add
+# it beside the built-in ones without this module depending on them;
+# with nothing registered the row is exactly as it was.
+_extra_sheet_buttons = []      # (order, key, widget)
+
+
+def register_sheet_toggle(key, prop_name, label, owner="SCENE",
+                          width_px=112, order=100):
+    """Add a boolean toggle to the layout-view HUD row.
+
+    `owner` is SCENE or WINDOW_MANAGER -- whichever the property
+    actually hangs off. Re-registering a key replaces it, so a
+    reloaded add-on cannot stack duplicates.
+    """
+    unregister_sheet_toggle(key)
+    widget = _SceneToggleButton(prop_name, label, _layout_view_visible,
+                                width_px=width_px, owner=owner)
+    _extra_sheet_buttons.append((order, key, widget))
+    _extra_sheet_buttons.sort(key=lambda b: (b[0], b[1]))
+
+
+def unregister_sheet_toggle(key):
+    for i, entry in enumerate(list(_extra_sheet_buttons)):
+        if entry[1] == key:
+            del _extra_sheet_buttons[i]
+            return
+
+
+def _layout_view_buttons():
+    rows = _BUILTIN_SHEET_BUTTONS + _extra_sheet_buttons
+    return [b[2] for b in sorted(rows, key=lambda b: (b[0], b[1]))]
 
 
 def _rows():
@@ -467,9 +619,9 @@ def _rows():
     modal-active state, so that row contains at most one rendered button at a
     time (or zero, in which case compute_layout skips the row entirely)."""
     return [
-        [_MODE_BUTTONS],
+        [_MODE_BUTTONS, [_GRAB_PILL, _SIZES_BUTTON]],
         [_MODAL_TOGGLE_BUTTONS],
-        [_LAYOUT_VIEW_BUTTONS],
+        [_layout_view_buttons()],
     ]
 
 
@@ -507,11 +659,15 @@ def compute_layout(context, area):
     # on, that corner belongs to Blender, so they yield and join the first
     # centered row as its leftmost group instead.
     rows = _rows()
+    # The centered rows filter on visible(); this left-anchored strip
+    # has to do it too, or a tab that does not apply here still gets a
+    # button.
+    tab_buttons = [b for b in _TAB_BUTTONS if b.visible(context)]
     if _corner_has_overlay_text(area):
-        rows = [[list(_TAB_BUTTONS)] + rows[0]] + rows[1:]
+        rows = [[tab_buttons] + rows[0]] + rows[1:]
     else:
         tab_x = x_min + margin_x
-        for tab_btn in _TAB_BUTTONS:
+        for tab_btn in tab_buttons:
             placed.append((tab_btn, (tab_x, top_y, tab_btn.width, btn_h)))
             tab_x += tab_btn.width + btn_gap
 

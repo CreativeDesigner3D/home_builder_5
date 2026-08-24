@@ -150,7 +150,7 @@ def _g_ceiling(shader, box, color):
 #              badly, and several tools share one form, so the name
 #              has to describe the form and not the button.
 
-TOOLS = (
+BUILTIN_TOOLS = (
     ("home_builder_walls.draw_walls", "Draw Walls", _g_wall, 0,
      'draw_wall_settings', "Wall Settings"),
     ("home_builder_doors_windows.place_door", "Single Door", _g_door, 1,
@@ -164,6 +164,64 @@ TOOLS = (
     ("home_builder_walls.add_floor", "Add Floor", _g_floor, 2, None, None),
     ("home_builder_walls.add_ceiling", "Add Ceiling", _g_ceiling, 2, None, None),
 )
+
+# Contributed tools. A downstream add-on may have room commands that
+# belong on this strip, and this module must not depend on any of them.
+# `supersedes` lets a contribution REPLACE a built-in rather than sit
+# next to it -- otherwise a richer version of a command (a floor that
+# also gets a material, say) would show up as a second button doing
+# almost the same thing.
+_extra_tools = []        # (order, key, entry, supersedes)
+
+
+# Option forms contributed alongside a tool. `options` on a tool is a
+# NAME, not a function, because it has to survive as an operator
+# property -- so a contributor registers the draw function here under
+# that name. Built-in tools name a function on the sidebar module
+# instead; the popup checks this registry first.
+_option_forms = {}       # name -> draw(layout, context)
+
+
+def register_tool_options(name, draw_fn):
+    _option_forms[name] = draw_fn
+
+
+def unregister_tool_options(name):
+    _option_forms.pop(name, None)
+
+
+def register_tool(key, label, glyph, operator, group=3, options=None,
+                  options_label=None, order=100, supersedes=None):
+    """Add a tool button. `glyph` is a callable (shader, box, color).
+    Re-registering a key replaces it."""
+    unregister_tool(key)
+    entry = (operator, label, glyph, group, options, options_label)
+    _extra_tools.append((order, key, entry, supersedes))
+    _extra_tools.sort(key=lambda t: (t[0], t[2][1]))
+
+
+def unregister_tool(key):
+    for i, tool in enumerate(list(_extra_tools)):
+        if tool[1] == key:
+            del _extra_tools[i]
+            return
+
+
+def tools():
+    """The effective tool list: built-ins, minus anything a
+    contribution supersedes, plus the contributions.
+
+    Sorted by (group, order) so a contribution can land WHERE it
+    belongs rather than merely after everything. Built-ins take an
+    implicit order from their position, spaced so a contribution
+    can be slotted between two of them.
+    """
+    replaced = {t[3] for t in _extra_tools if t[3]}
+    out = [(t[3], i * 10, t) for i, t in enumerate(BUILTIN_TOOLS)
+           if t[0] not in replaced]
+    out.extend((t[2][3], t[0], t[2]) for t in _extra_tools)
+    out.sort(key=lambda row: (row[0], row[1]))
+    return tuple(row[2] for row in out)
 
 CARET = 11              # unscaled; corner affordance on tools with options.
                         # Small, but the whole button also opens options
@@ -232,7 +290,7 @@ def compute_layout(area):
     y = y_top
     out = []
     last_group = None
-    for i, (_op, _label, _glyph, group, _opts, _olbl) in enumerate(TOOLS):
+    for i, (_op, _label, _glyph, group, _opts, _olbl) in enumerate(tools()):
         if last_group is not None:
             y -= (GROUP_GAP if group != last_group else BTN_GAP) * s
         last_group = group
@@ -258,7 +316,7 @@ def _caret_rect(rect):
 def _hit_caret(mx, my, layout):
     """Index of the tool whose caret was clicked, or None."""
     for index, rect in layout:
-        if TOOLS[index][4] is None:
+        if tools()[index][4] is None:
             continue
         if point_in_rect(mx, my, _caret_rect(rect)):
             return index
@@ -284,15 +342,21 @@ def _draw():
     shader.bind()
 
     layout = compute_layout(context.area)
+    # Snapshot once: the list is rebuilt from the registry on every
+    # call, and the indices in `layout` refer to this ordering.
+    TOOLS_NOW = tools()
     inset = GLYPH_INSET * s
     for index, rect in layout:
         hovered = index == hover
-        paint_button(shader, rect, hovered=hovered)
+        # Brighter edge: this strip floats on the viewport, not
+        # inside a panel, so it should announce itself.
+        paint_button(shader, rect, hovered=hovered,
+                     border=Theme.BTN_BORDER)
         x, y, w, h = rect
-        TOOLS[index][2](
+        TOOLS_NOW[index][2](
             shader, (x + inset, y + inset, w - inset * 2, h - inset * 2),
             Theme.GLYPH_HOVER if hovered else Theme.GLYPH)
-        if TOOLS[index][4] is not None:
+        if TOOLS_NOW[index][4] is not None:
             # A small filled corner: this tool has settings behind it.
             cx, cy, cw, ch = _caret_rect(rect)
             draw_polyline(shader,
@@ -303,8 +367,8 @@ def _draw():
     if hover is not None:
         # Name what is under the cursor, not what the button is: the
         # corner opens settings, so it should say so.
-        label = (TOOLS[hover][5] if (_hover_caret and TOOLS[hover][5])
-                 else TOOLS[hover][1])
+        label = (TOOLS_NOW[hover][5] if (_hover_caret and TOOLS_NOW[hover][5])
+                 else TOOLS_NOW[hover][1])
         _, (bx, by, bw, bh) = layout[hover]
         lw = text_width(font_id, FONT_SIZE * s, label) + LABEL_PAD_X * s * 2
         lh = LABEL_HEIGHT * s
@@ -337,19 +401,19 @@ class home_builder_OT_room_palette_click(bpy.types.Operator):
         index = _hit_caret(mx, my, layout)
         if index is None and event.type == 'RIGHTMOUSE':
             index = _hit(mx, my, layout)
-            if index is not None and TOOLS[index][4] is None:
+            if index is not None and tools()[index][4] is None:
                 return {'PASS_THROUGH'}
         if index is not None:
             bpy.ops.home_builder.tool_options(
-                'INVOKE_DEFAULT', section=TOOLS[index][4],
-                title=TOOLS[index][5])
+                'INVOKE_DEFAULT', section=tools()[index][4],
+                title=tools()[index][5])
             return {'FINISHED'}
         if event.type == 'RIGHTMOUSE':
             return {'PASS_THROUGH'}
         index = _hit(mx, my, layout)
         if index is None:
             return {'PASS_THROUGH'}
-        mod, name = TOOLS[index][0].split(".", 1)
+        mod, name = tools()[index][0].split(".", 1)
         try:
             getattr(getattr(bpy.ops, mod), name)('INVOKE_DEFAULT')
         except Exception as ex:
@@ -395,8 +459,10 @@ class home_builder_OT_tool_options(bpy.types.Operator):
     def draw(self, context):
         layout = self.layout
         layout.label(text=self.title)
-        from ..ui import view3d_sidebar
-        fn = getattr(view3d_sidebar, self.section, None)
+        fn = _option_forms.get(self.section)
+        if fn is None:
+            from ..ui import view3d_sidebar
+            fn = getattr(view3d_sidebar, self.section, None)
         if fn is None:
             layout.label(text="These settings are unavailable.", icon='ERROR')
             return

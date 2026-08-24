@@ -42,7 +42,6 @@ from ..hb_gpu_ui import (
     fit_text as _fit_text,
     panel_box as _panel_box,
     paint_frame as _paint_frame,
-    glyph_rename as _draw_rename_glyph,
     glyph_delete as _draw_delete_glyph,
     glyph_plus as _draw_plus_glyph,
     glyph_pin as _draw_pin_glyph,
@@ -79,6 +78,7 @@ SCROLLBAR_PAD         = 4
 PANEL_HEADER_HEIGHT   = 26
 
 ACTION_BTN_SIZE       = 18
+PIN_BTN_WIDTH         = 30      # fits the word PIN
 ACTION_BTN_GAP        = 4
 ACTION_BTN_RIGHT_PAD  = 5
 NEW_ROOM_BTN_HEIGHT   = 26
@@ -176,7 +176,63 @@ TAB_STYLES = 'STYLES'
 TABS = (TAB_ROOMS, TAB_LIBRARY, TAB_STYLES)
 
 _active_tab = TAB_ROOMS
+
+
+def tab_available(tab, scene=None):
+    """Whether a tab makes sense for this scene.
+
+    The library places cabinets, which a 2D sheet cannot do, so it is
+    hidden there rather than offering a grid whose every click would
+    be a no-op.
+    """
+    if scene is None:
+        scene = bpy.context.scene
+    if tab == TAB_LIBRARY:
+        return not (scene and scene.get('IS_LAYOUT_VIEW'))
+    return True
+
+
+def available_tabs(scene=None):
+    return tuple(t for t in TABS if tab_available(t, scene))
+
+
+def resolve_active_tab(scene=None):
+    """The active tab, falling back when it is not available here.
+
+    Called on every layout and paint, so switching to a sheet while the
+    library is showing lands on Rooms instead of a blank panel.
+    """
+    global _active_tab
+    if not tab_available(_active_tab, scene):
+        _active_tab = TAB_ROOMS
+    return _active_tab
 _providers = {}          # tab key -> provider module
+
+
+# Room actions: extra buttons on the ROOMS tab, contributed by whoever
+# owns the command. Downstream add-ons have room-level commands worth
+# reaching from here, and this module must not depend on any of them.
+# They register themselves at startup; nothing here learns their names.
+_room_actions = []       # (order, key, label, operator, kwargs)
+
+
+def register_room_action(key, label, operator, kwargs=None, order=100):
+    """Add a button to the ROOMS tab. Re-registering a key replaces it,
+    so a reloaded add-on does not stack duplicates."""
+    unregister_room_action(key)
+    _room_actions.append((order, key, label, operator, dict(kwargs or {})))
+    _room_actions.sort(key=lambda a: (a[0], a[2]))
+
+
+def unregister_room_action(key):
+    for i, action in enumerate(list(_room_actions)):
+        if action[1] == key:
+            del _room_actions[i]
+            return
+
+
+def room_actions():
+    return tuple(_room_actions)
 
 
 def register_provider(tab, module):
@@ -205,7 +261,7 @@ def panel_width(s=1.0):
 
 
 def active_tab():
-    return _active_tab
+    return resolve_active_tab()
 
 
 def set_active_tab(tab):
@@ -290,7 +346,7 @@ def _build_layout(region, area, current_scene_name,
         ('list', clip_rect, track_rect_or_None, thumb_rect_or_None)
         ('header', label, color, rect, collapsed, count)
         ('row', scene, parent, color, is_current, rect,
-                rename_rect_or_None, delete_rect_or_None)
+                delete_rect_or_None)
         ('new_room', rect)
     Room rows carry rename/delete sub-rects; other rows carry None.
     """
@@ -324,7 +380,7 @@ def _build_layout(region, area, current_scene_name,
 
     # ---- Flatten the list into items + measure the widest row ----------
     # items: (kind, payload, height, needed_w) in display order.
-    room_reserve = btn_right_pad + btn * 2 + btn_gap + 6 * s
+    room_reserve = btn_right_pad + btn + 6 * s
     plain_reserve = ROW_TEXT_RIGHT_PAD * s
     text_left = ROW_TEXT_LEFT_PAD * s
     items = []
@@ -355,9 +411,13 @@ def _build_layout(region, area, current_scene_name,
     margin = PANEL_TOP_MARGIN * s
     panel_top = anchor_top if anchor_top >= 0.0 else y_max - margin
 
+    action_rows = (len(_room_actions) + 2) // 3     # three per row
+    actions_h = action_rows * (new_room_h + 3 * s)
     fixed_h = (pad_y * 2 + panel_hdr_h + section_gap
+               + actions_h
                + new_room_gap + new_room_h)
-    is_rooms = _active_tab == TAB_ROOMS
+    tab = resolve_active_tab()
+    is_rooms = tab == TAB_ROOMS
     avail_h = panel_top - (y_min + PANEL_BOTTOM_MARGIN * s)
     if is_rooms:
         max_list_h = avail_h - fixed_h
@@ -391,9 +451,10 @@ def _build_layout(region, area, current_scene_name,
     # ---- Panel header ----------------------------------------------------
     cursor_y = panel_top - pad_y
     ph_rect = (content_x, cursor_y - panel_hdr_h, content_w, panel_hdr_h)
+    pin_w = PIN_BTN_WIDTH * s
     pin_y = ph_rect[1] + (panel_hdr_h - btn) / 2.0
-    pin_x = content_x + content_w - btn_right_pad - btn
-    pin_rect = (pin_x, pin_y, btn, btn)
+    pin_x = content_x + content_w - btn_right_pad - pin_w
+    pin_rect = (pin_x, pin_y, pin_w, btn)
     entries.append(('panel_header', current_scene_name, ph_rect, pin_rect))
     cursor_y -= panel_hdr_h + section_gap
 
@@ -404,14 +465,14 @@ def _build_layout(region, area, current_scene_name,
         # entry shapes, its own hit-testing.
         body_rect = (content_x, panel_y + pad_y, content_w,
                      cursor_y - (panel_y + pad_y))
-        provider = _providers.get(_active_tab)
+        provider = _providers.get(tab)
         if provider is not None:
-            entries.append(('body', _active_tab, body_rect))
+            entries.append(('body', tab, body_rect))
             try:
                 entries.extend(provider.build(body_rect, bpy.context))
             except Exception as ex:      # a broken tab must not kill the panel
                 print('Home Builder: %s tab failed to build: %s'
-                      % (_active_tab, ex))
+                      % (tab, ex))
         return panel_rect, entries
     # ---- Scrolling list --------------------------------------------------
     list_top = cursor_y
@@ -448,21 +509,32 @@ def _build_layout(region, area, current_scene_name,
         else:
             sc, parent, color = payload
             row_rect = (content_x, item_bot, row_w, h)
-            rename_rect = delete_rect = None
+            delete_rect = None
             if _is_room(sc):
+                # No rename button: clicking the name renames it, so a
+                # separate control would be a second way to do one thing.
                 by = item_bot + (h - btn) / 2.0
                 dx = content_x + row_w - btn_right_pad - btn
-                rnx = dx - btn_gap - btn
                 delete_rect = (dx, by, btn, btn)
-                rename_rect = (rnx, by, btn, btn)
             entries.append((
                 'row', sc, parent, color,
                 sc.name == current_scene_name, row_rect,
-                rename_rect, delete_rect,
+                delete_rect,
             ))
 
-    # ---- New Room button -------------------------------------------------
+    # ---- Room actions + New Room ------------------------------------------
     cursor_y = list_bottom - new_room_gap
+    if _room_actions:
+        gap_x = 3 * s
+        for start in range(0, len(_room_actions), 3):
+            row = _room_actions[start:start + 3]
+            bw = (content_w - gap_x * (len(row) - 1)) / len(row)
+            for j, (_o, key, label, operator, kwargs) in enumerate(row):
+                entries.append((
+                    'room_action', key, label, operator, kwargs,
+                    (content_x + j * (bw + gap_x), cursor_y - new_room_h,
+                     bw, new_room_h)))
+            cursor_y -= new_room_h + gap_x
     new_room_rect = (content_x, cursor_y - new_room_h, content_w, new_room_h)
     entries.append(('new_room', new_room_rect))
 
@@ -495,7 +567,7 @@ def hit_test(mx, my, entries):
     Returns (kind, payload) or None:
         ('pin', None)          panel-header pin toggle
         ('section', label)     section header (collapse / expand)
-        ('rename', scene) / ('delete', scene) / ('row', scene)
+        ('delete', scene) / ('row', scene)
         ('new_room', None)
     List entries scrolled partly out of the clip rect only hit on their
     visible part. Shared by the modal and the pinned/HUD click path so the
@@ -517,13 +589,17 @@ def hit_test(mx, my, entries):
             if clip and not _point_in_rect(mx, my, clip):
                 continue
             (_, scene, _parent, _color, _is_current, rect,
-             rename_rect, delete_rect) = entry
-            if rename_rect and _point_in_rect(mx, my, rename_rect):
-                return ('rename', scene)
+             delete_rect) = entry
             if delete_rect and _point_in_rect(mx, my, delete_rect):
                 return ('delete', scene)
             if _point_in_rect(mx, my, rect):
                 return ('row', scene)
+        elif kind == 'room_action':
+            if _point_in_rect(mx, my, entry[5]):
+                return ('room_action', entry)
+        elif kind == 'room_action':
+            if _point_in_rect(mx, my, entry[5]):
+                return ('room_action', entry)
         elif kind == 'new_room':
             if _point_in_rect(mx, my, entry[1]):
                 return ('new_room', None)
@@ -620,13 +696,15 @@ def _draw_panel_header(shader, font_id, rect, current_name, pin_rect, mx, my):
     else:
         bg = ACTION_BG
     _draw_rect(shader, px, py, pw, ph, bg)
-    glyph = PIN_GLYPH_ACTIVE if (_pinned or hovered) else PIN_GLYPH
-    _draw_pin_glyph(shader, pin_rect, glyph)
+    # A word, not a thumbtack. At this size a drawn pin is a smudge,
+    # and PIN is unambiguous where an icon has to be learned.
+    _draw_centered_text(font_id, pin_rect, HEADER_FONT_SIZE * s,
+                        TEXT_PRIMARY if (_pinned or hovered)
+                        else TEXT_NORMAL, 'PIN')
 
 
 def _draw_row(shader, font_id, entry, mx, my):
-    (_, scene, parent, color, is_current, rect,
-     rename_rect, delete_rect) = entry
+    (_, scene, parent, color, is_current, rect, delete_rect) = entry
     rx, ry, rw, rh = rect
     hovered = _point_in_rect(mx, my, rect)
 
@@ -666,8 +744,8 @@ def _draw_row(shader, font_id, entry, mx, my):
     # Text must stop short of the action buttons (room rows) or the row's
     # right edge; the parent prefix is dropped first, then the name is
     # ellipsized, so long names never run under the buttons or the border.
-    if rename_rect is not None:
-        avail = rename_rect[0] - 6 * s - text_x
+    if delete_rect is not None:
+        avail = delete_rect[0] - 6 * s - text_x
     else:
         avail = rx + rw - ROW_TEXT_RIGHT_PAD * s - text_x
 
@@ -691,13 +769,6 @@ def _draw_row(shader, font_id, entry, mx, my):
         name = _fit_text(font_id, row_font, scene.name, avail)
         _draw_text(font_id, text_x, baseline, row_font, name_color, name)
 
-    if rename_rect is not None:
-        r_hover = _point_in_rect(mx, my, rename_rect)
-        brx, bry, brw, brh = rename_rect
-        _draw_rect(shader, brx, bry, brw, brh,
-                   ACTION_HOVER_BG if r_hover else ACTION_BG)
-        _draw_rename_glyph(shader, rename_rect,
-                           ACTION_GLYPH_HOVER if r_hover else ACTION_GLYPH)
     if delete_rect is not None:
         d_hover = _point_in_rect(mx, my, delete_rect)
         bdx, bdy, bdw, bdh = delete_rect
@@ -815,6 +886,11 @@ def paint_navigator(panel_rect, entries, mx, my):
             if track is not None:
                 _draw_rect(shader, *track, SCROLLBAR_TRACK)
                 _draw_rect(shader, *thumb, SCROLLBAR_THUMB)
+        elif kind == 'room_action':
+            _paint_button(shader, entry[5],
+                          hovered=_point_in_rect(mx, my, entry[5]))
+            _draw_centered_text(font_id, entry[5], HEADER_FONT_SIZE * s,
+                                TEXT_NORMAL, entry[2])
         elif kind == 'new_room':
             _draw_new_room_button(shader, font_id, entry[1], mx, my)
 
@@ -904,9 +980,7 @@ def handle_navigator_click(context, mx, my, entries):
             set_pinned(not _pinned)
         elif kind == 'section':
             toggle_section(scene)
-        elif kind == 'rename':
-            begin_rename(scene)
-            bpy.ops.home_builder.navigator_rename('INVOKE_DEFAULT')
+
         elif kind == 'delete':
             bpy.ops.home_builder.delete_room(
                 'INVOKE_DEFAULT', scene_name=scene.name)
@@ -921,6 +995,16 @@ def handle_navigator_click(context, mx, my, entries):
                 begin_rename(scene)
                 bpy.ops.home_builder.navigator_rename(
                     'INVOKE_DEFAULT')
+        elif kind == 'room_action':
+            _, _key, _label, operator, kwargs, _rect = scene
+            mod, name = operator.split('.', 1)
+            try:
+                getattr(getattr(bpy.ops, mod), name)('INVOKE_DEFAULT',
+                                                     **kwargs)
+            except Exception as ex:
+                print('Home Builder: room action %s failed: %s'
+                      % (operator, ex))
+            dismiss_after_action()
         elif kind == 'new_room':
             bpy.ops.home_builder.create_room('INVOKE_DEFAULT')
     except Exception:
@@ -1125,10 +1209,7 @@ class home_builder_OT_scene_navigator(bpy.types.Operator):
                 if context.area:
                     context.area.tag_redraw()
                 return {'RUNNING_MODAL'}
-            if kind == 'rename':
-                self._cleanup(context)
-                self._rename_room(context, scene)
-                return {'FINISHED'}
+
             if kind == 'delete':
                 self._cleanup(context)
                 self._delete_room(context, scene)

@@ -157,49 +157,10 @@ def _selected_label_names(context):
     return names
 
 
-# ---- Sizes toggle pill ----------------------------------------------------
-# Drawn in the slot the HUD's second row occupies for the grab toggles in
-# other modes (that row is empty in Bays / Openings, so nothing collides).
-# In Face Frame mode the grab toggle DOES occupy row two, so the pill
-# drops one more row there.
-# Constants mirror operators/viewport_hud.py so the pill sits flush with
-# the HUD without importing its layout.
-
-_HUD_MARGIN_Y = 12
-_HUD_BTN_H = 24
-_HUD_ROW_GAP = 6
-def _toggle_label(context):
-    """Pill text reflects the scope cycle (All -> Selected -> Off)."""
-    scope = _sizes_scope(context)
-    if scope == 'ALL':
-        return "Sizes: All"
-    if scope == 'SELECTED':
-        return "Sizes: Sel"
-    return "Sizes"
-
-
-def _toggle_rect(context, area):
-    """Region-local rect for the Sizes pill: centered, one HUD row
-    below the selection-mode picker (two below in the modes where a
-    grab toggle owns row two - all of them, now that Bays and Openings
-    have grab commands; kept mode-driven so a future toggle-less mode
-    reclaims the row)."""
-    s = 1.0
-    try:
-        s = bpy.context.preferences.system.ui_scale
-    except AttributeError:
-        pass
-    x_min, x_max, _y_min, y_max = get_visible_window_bounds(area)
-    blf.size(0, FONT_SIZE * s)
-    w = blf.dimensions(0, _toggle_label(context))[0] + 24 * s
-    h = _HUD_BTN_H * s
-    row1_y = y_max - _HUD_MARGIN_Y * s - h
-    rows_down = (2 if _active_mode(bpy.context)
-                 in ('Cabinets', 'Bays', 'Openings', 'Face Frame') else 1)
-    y = row1_y - rows_down * (h + _HUD_ROW_GAP * s)
-    x = x_min + ((x_max - x_min) - w) / 2.0
-    return (x, y, w, h)
-
+# The Sizes scope control lives in the viewport HUD (see
+# operators/viewport_hud._SizesButton). It used to be drawn here from a
+# private copy of the HUD's layout constants plus a guess at which row
+# was free -- a guess that went stale as soon as the HUD's rows changed.
 
 # ---- Label collection ----------------------------------------------------
 
@@ -516,21 +477,6 @@ def _draw_label_rect(shader, rect, bg):
         shader, 'LINE_LOOP', {"pos": verts}).draw(shader)
 
 
-def _draw_toggle_pill(shader, context, area, font_sz, s):
-    """The Sizes show/hide pill -- HUD-styled, active blue while labels
-    are shown."""
-    rect = _toggle_rect(context, area)
-    on = _sizes_shown(context)
-    label = _toggle_label(context)
-    _draw_label_rect(shader, rect, EDIT_BG if on else LABEL_BG)
-    blf.size(0, font_sz)
-    blf.color(0, *(EDIT_TEXT_COLOR if on else TEXT_COLOR))
-    tw, th = blf.dimensions(0, label)
-    blf.position(0, rect[0] + (rect[2] - tw) / 2.0,
-                 rect[1] + (rect[3] - th) / 2.0, 0)
-    blf.draw(0, label)
-
-
 def _draw():
     """Permanent POST_PIXEL callback; cheap no-op outside the two modes."""
     if _shutdown:
@@ -555,7 +501,6 @@ def _draw():
     gpu.state.blend_set('ALPHA')
     shader = gpu.shader.from_builtin('UNIFORM_COLOR')
     shader.bind()
-    _draw_toggle_pill(shader, context, area, font_sz, s)
     for name, kind, editable, _locked, rect, text in labels:
         editing = (_edit is not None and _edit['name'] == name
                    and _edit['kind'] == kind)
@@ -830,15 +775,6 @@ class hb_face_frame_OT_dim_label_click(bpy.types.Operator):
         except Exception:
             pass
         mx, my = event.mouse_region_x, event.mouse_region_y
-        # Sizes pill first -- it stays clickable while labels are hidden.
-        tx, ty, tw, th = _toggle_rect(context, context.area)
-        if tx <= mx <= tx + tw and ty <= my <= ty + th:
-            ff = context.scene.hb_face_frame
-            ff.selection_mode_sizes_scope = {
-                'ALL': 'SELECTED', 'SELECTED': 'OFF'}.get(
-                    ff.selection_mode_sizes_scope, 'ALL')
-            context.area.tag_redraw()
-            return {'FINISHED'}
         for name, kind, editable, _locked, rect, _text in compute_labels(
                 context, context.region, context.region_data):
             x, y, w, h = rect
