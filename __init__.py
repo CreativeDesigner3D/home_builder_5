@@ -136,6 +136,15 @@ class Home_Builder_AddonPreferences(bpy.types.AddonPreferences):
         update=_update_use_viewport_hud,
     ) # type: ignore
 
+    palette_show_labels: bpy.props.BoolProperty(
+        name="Label the Palette Tools",
+        description="Write each tool's name beside its glyph instead of "
+                    "only on hover. Costs some viewport width, and is "
+                    "worth it while the marks are still unfamiliar",
+        default=False,
+        update=_update_use_viewport_hud,
+    ) # type: ignore
+
     hide_2d_drawing_panels: bpy.props.BoolProperty(
         name="Hide 2D Drawing Panels",
         description="Hide the Layout Views, 2D Details, and Annotations ",
@@ -277,6 +286,9 @@ class Home_Builder_AddonPreferences(bpy.types.AddonPreferences):
         col = box.column(align=True)
         col.prop(self, "use_viewport_hud")
         col.prop(self, "use_room_palette")
+        sub = col.column(align=True)
+        sub.enabled = self.use_room_palette
+        sub.prop(self, "palette_show_labels")
         
         # Layout view defaults
         box = layout.box()

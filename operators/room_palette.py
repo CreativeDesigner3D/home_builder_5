@@ -26,6 +26,7 @@ from ..hb_gpu_draw import (
     draw_rect,
     draw_rect_outline,
     draw_lines,
+    draw_text,
     point_in_rect,
 )
 from ..hb_gpu_ui import (
@@ -49,6 +50,7 @@ BTN_GAP = 3
 GROUP_GAP = 10
 LABEL_GAP = 8
 LABEL_PAD_X = 6
+LABEL_TEXT_GAP = 4      # glyph to its name, on a labelled strip
 LABEL_HEIGHT = 18
 FONT_SIZE = 11
 GLYPH_INSET = 6
@@ -243,6 +245,17 @@ def palette_enabled():
     return bool(p and getattr(p, "use_room_palette", False))
 
 
+def show_labels():
+    """Whether tools are named on the strip rather than only on hover.
+
+    A glyph strip is fast once the marks are learned and opaque before
+    then, which is the whole of a new user's first week. Labelling is a
+    preference rather than a guess about who is looking.
+    """
+    p = _get_prefs()
+    return bool(p and getattr(p, "palette_show_labels", False))
+
+
 def is_room_scene(scene):
     """A 3D room scene -- not a 2D layout sheet or a detail card. Same
     test the scene navigator groups by."""
@@ -277,6 +290,25 @@ def _clear_of_panel(area, x, gap):
     return max(x, nav[0] + nav[2] + gap)
 
 
+def button_width(s, labelled=None):
+    """Button width: square for glyphs alone, or wide enough for the
+    longest tool name when the strip is labelled.
+
+    One width for every button, not each to its own label -- a ragged
+    column of buttons reads as a list of unrelated things rather than
+    one strip.
+    """
+    btn = BTN * s
+    if labelled is None:
+        labelled = show_labels()
+    if not labelled:
+        return btn
+    widest = 0.0
+    for tool in tools():
+        widest = max(widest, text_width(0, FONT_SIZE * s, tool[1]))
+    return btn + LABEL_TEXT_GAP * s + widest + LABEL_PAD_X * s
+
+
 def compute_layout(area):
     """[(tool_index, rect)] top-down, in WINDOW-local pixels."""
     s = scale()
@@ -284,6 +316,7 @@ def compute_layout(area):
     x = x_min + MARGIN_X * s
     y_top = y_max - TOP_OFFSET * s
     btn = BTN * s
+    width = button_width(s)
 
     x = _clear_of_panel(area, x, MARGIN_X * s)
 
@@ -295,7 +328,7 @@ def compute_layout(area):
             y -= (GROUP_GAP if group != last_group else BTN_GAP) * s
         last_group = group
         y -= btn
-        out.append((i, (x, y, btn, btn)))
+        out.append((i, (x, y, width, btn)))
     return out
 
 def _hit(mx, my, layout):
@@ -345,7 +378,9 @@ def _draw():
     # Snapshot once: the list is rebuilt from the registry on every
     # call, and the indices in `layout` refer to this ordering.
     TOOLS_NOW = tools()
+    labelled = show_labels()
     inset = GLYPH_INSET * s
+    btn = BTN * s
     for index, rect in layout:
         hovered = index == hover
         # Brighter edge: this strip floats on the viewport, not
@@ -353,9 +388,16 @@ def _draw():
         paint_button(shader, rect, hovered=hovered,
                      border=Theme.BTN_BORDER)
         x, y, w, h = rect
+        # The glyph keeps its square regardless of how wide the button
+        # grew, so a labelled strip and a bare one show the same marks.
         TOOLS_NOW[index][2](
-            shader, (x + inset, y + inset, w - inset * 2, h - inset * 2),
+            shader, (x + inset, y + inset, btn - inset * 2, h - inset * 2),
             Theme.GLYPH_HOVER if hovered else Theme.GLYPH)
+        if labelled:
+            draw_text(font_id, x + btn + LABEL_TEXT_GAP * s,
+                      y + h * 0.30, FONT_SIZE * s,
+                      Theme.TEXT_PRIMARY if hovered else Theme.TEXT_NORMAL,
+                      TOOLS_NOW[index][1])
         if TOOLS_NOW[index][4] is not None:
             # A small filled corner: this tool has settings behind it.
             cx, cy, cw, ch = _caret_rect(rect)
@@ -364,11 +406,15 @@ def _draw():
                           Theme.GLYPH_HOVER if hovered else Theme.TEXT_DIM,
                           closed=True)
 
+    # Name what is under the cursor, not what the button is: the corner
+    # opens settings, so it should say so. On a labelled strip the tool's
+    # own name is already written on it, so only the corner still has
+    # something to add.
+    label = None
     if hover is not None:
-        # Name what is under the cursor, not what the button is: the
-        # corner opens settings, so it should say so.
-        label = (TOOLS_NOW[hover][5] if (_hover_caret and TOOLS_NOW[hover][5])
-                 else TOOLS_NOW[hover][1])
+        caret_label = TOOLS_NOW[hover][5] if _hover_caret else None
+        label = caret_label or (None if labelled else TOOLS_NOW[hover][1])
+    if label:
         _, (bx, by, bw, bh) = layout[hover]
         lw = text_width(font_id, FONT_SIZE * s, label) + LABEL_PAD_X * s * 2
         lh = LABEL_HEIGHT * s
