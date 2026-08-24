@@ -173,9 +173,61 @@ _collapsed = set()
 TAB_ROOMS = 'ROOMS'
 TAB_LIBRARY = 'LIBRARY'
 TAB_STYLES = 'STYLES'
-TABS = (TAB_ROOMS, TAB_LIBRARY, TAB_STYLES)
+TABS = (TAB_ROOMS, TAB_LIBRARY, TAB_STYLES)     # the built-in tabs
 
 _active_tab = TAB_ROOMS
+
+# Contributed tabs. An add-on built on this one may have a whole area of
+# its own -- a job, a report, a set of documents -- that belongs beside
+# these rather than crammed into one of them. It registers a tab here and
+# supplies the provider that draws the body, so this module hosts it
+# without knowing what it is. With nothing registered the panel is
+# exactly the three tabs it was.
+_extra_tabs = []         # (order, key, label, available_fn)
+
+
+def register_tab(key, module, label=None, order=100, available=None):
+    """Add a tab and the provider that draws it.
+
+    `label` is what the tab button says (the key, if omitted) -- a key
+    has to be stable and unique, and those make poor button text.
+    `available` is an optional callable(scene) deciding where the tab
+    applies, the same judgement `tab_available` makes for the built-ins.
+    Sorted by (order, key); built-ins take an implicit order from their
+    position, spaced so a contribution can land between two of them.
+    Re-registering a key replaces it, so a reloaded add-on cannot stack
+    duplicates.
+    """
+    unregister_tab(key)
+    _extra_tabs.append((order, key, label or key, available))
+    _extra_tabs.sort(key=lambda t: (t[0], t[1]))
+    _providers[key] = module
+
+
+def unregister_tab(key):
+    global _active_tab
+    for i, tab in enumerate(list(_extra_tabs)):
+        if tab[1] == key:
+            del _extra_tabs[i]
+            _providers.pop(key, None)
+            if _active_tab == key:
+                _active_tab = TAB_ROOMS
+            return
+
+
+def tabs():
+    """Every tab, built-in and contributed, in display order."""
+    rows = [(i * 10, t) for i, t in enumerate(TABS)]
+    rows.extend((t[0], t[1]) for t in _extra_tabs)
+    rows.sort(key=lambda row: (row[0], row[1]))
+    return tuple(row[1] for row in rows)
+
+
+def tab_label(tab):
+    for _order, key, label, _available in _extra_tabs:
+        if key == tab:
+            return label
+    return tab
 
 
 def tab_available(tab, scene=None):
@@ -183,27 +235,38 @@ def tab_available(tab, scene=None):
 
     The library places cabinets, which a 2D sheet cannot do, so it is
     hidden there rather than offering a grid whose every click would
-    be a no-op.
+    be a no-op. A contributed tab answers for itself.
     """
     if scene is None:
         scene = bpy.context.scene
+    for _order, key, _label, available in _extra_tabs:
+        if key == tab:
+            if available is None:
+                return True
+            try:
+                return bool(available(scene))
+            except Exception:
+                return False        # never let a contribution break the HUD
     if tab == TAB_LIBRARY:
         return not (scene and scene.get('IS_LAYOUT_VIEW'))
     return True
 
 
 def available_tabs(scene=None):
-    return tuple(t for t in TABS if tab_available(t, scene))
+    return tuple(t for t in tabs() if tab_available(t, scene))
 
 
 def resolve_active_tab(scene=None):
     """The active tab, falling back when it is not available here.
 
     Called on every layout and paint, so switching to a sheet while the
-    library is showing lands on Rooms instead of a blank panel.
+    library is showing lands on Rooms instead of a blank panel. The
+    membership test covers a contributed tab that has since gone away
+    with its add-on -- otherwise the panel would open on a tab that no
+    longer has a provider, and draw nothing at all.
     """
     global _active_tab
-    if not tab_available(_active_tab, scene):
+    if _active_tab not in tabs() or not tab_available(_active_tab, scene):
         _active_tab = TAB_ROOMS
     return _active_tab
 _providers = {}          # tab key -> provider module
@@ -266,7 +329,7 @@ def active_tab():
 
 def set_active_tab(tab):
     global _active_tab
-    if tab in TABS:
+    if tab in tabs():
         _active_tab = tab
 
 

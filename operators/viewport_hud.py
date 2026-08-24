@@ -140,7 +140,8 @@ def _draw_centered_text(font_id, rect, size, color, text):
 
 
 class _PanelTabButton:
-    """One of the ROOMS / LIBRARY / STYLES tabs at the top-left.
+    """One of the panel tabs at the top-left -- the built-in ROOMS /
+    LIBRARY / STYLES, or one an add-on contributed.
 
     These replace the old single button that showed the scene name. That
     button told you where you were but hid where you could go: the
@@ -157,10 +158,17 @@ class _PanelTabButton:
         self.tab = tab
 
     @property
+    def label(self):
+        """What the button says. A tab key has to be stable and unique;
+        that makes it a poor caption, so a contributed tab supplies its
+        own. Built-in keys read fine as their own labels."""
+        return scene_navigator.tab_label(self.tab)
+
+    @property
     def width(self):
         s = _s()
         blf.size(0, FONT_SIZE * s)
-        return int(blf.dimensions(0, self.tab)[0] + 22 * s)
+        return int(blf.dimensions(0, self.label)[0] + 22 * s)
 
     def visible(self, context):
         # A tab that means nothing here is not shown at all -- better
@@ -183,9 +191,10 @@ class _PanelTabButton:
         draw_rect_outline(shader, rx, ry, rw, rh, BTN_BORDER)
         font_sz = FONT_SIZE * s
         blf.size(font_id, font_sz)
-        tw, th = blf.dimensions(font_id, self.tab)
+        label = self.label
+        tw, th = blf.dimensions(font_id, label)
         draw_text(font_id, rx + (rw - tw) / 2.0, ry + (rh - th) / 2.0,
-                  font_sz, TEXT_ACTIVE if active else TEXT_NORMAL, self.tab)
+                  font_sz, TEXT_ACTIVE if active else TEXT_NORMAL, label)
 
     def on_click(self, context, area, region):
         if self._showing():
@@ -342,7 +351,15 @@ class _ModalToggleButton:
 
 # Widget instances. Mode values must match the EnumProperty items on
 # Face_Frame_Scene_Props.face_frame_selection_mode.
-_TAB_BUTTONS = tuple(_PanelTabButton(t) for t in scene_navigator.TABS)
+def _tab_buttons():
+    """The tab strip, rebuilt from the navigator's current tab list.
+
+    Not a module constant: a tab may be registered by another add-on
+    after this module is imported, and a tuple built at import time
+    would never show it. The widgets are stateless -- hover is tracked
+    by layout index, not identity -- so rebuilding them costs nothing.
+    """
+    return tuple(_PanelTabButton(t) for t in scene_navigator.tabs())
 # Face frame (6 modes), frameless (5 -- no Face Frame), and closets (4)
 # buttons share one group. Each self-gates on its product tab via visible(), so compute_layout
 # renders only the active product's set; the tabs are mutually exclusive so
@@ -662,7 +679,7 @@ def compute_layout(context, area):
     # The centered rows filter on visible(); this left-anchored strip
     # has to do it too, or a tab that does not apply here still gets a
     # button.
-    tab_buttons = [b for b in _TAB_BUTTONS if b.visible(context)]
+    tab_buttons = [b for b in _tab_buttons() if b.visible(context)]
     if _corner_has_overlay_text(area):
         rows = [[tab_buttons] + rows[0]] + rows[1:]
     else:
