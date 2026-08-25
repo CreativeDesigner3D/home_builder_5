@@ -61,6 +61,10 @@ GEO_CHILD_FLAG = "IS_APPLIANCE_GEO"
 
 SUPPORTED_TYPES = {'REFRIGERATOR', 'RANGE', 'DISHWASHER', 'UNDER_COUNTER'}
 
+# Appliances that can wear cabinet door panels instead of their own
+# front. Matches what the appliance-panels product accepts.
+PANEL_TYPES = {'REFRIGERATOR', 'DISHWASHER', 'UNDER_COUNTER'}
+
 # Shared construction constants: the numbers that must NOT scale with
 # the appliance. A wider fridge gets wider doors, not a thicker door or
 # a fatter handle.
@@ -84,6 +88,13 @@ BACKGUARD_T = inch(1.0)
 # ---------------------------------------------------------------------------
 # Options
 # ---------------------------------------------------------------------------
+
+FRONT_STYLE_ITEMS = [
+    ('APPLIANCE', "Appliance", "The appliance's own front, in its finish"),
+    ('CABINET', "Cabinet Door Style",
+     "Panel ready: door-style panels in the room's cabinet style, built by "
+     "the appliance panels"),
+]
 
 MODEL_STYLE_ITEMS = [
     ('NONE', "None", "Wireframe cage only -- no 3D model"),
@@ -233,6 +244,73 @@ def is_panel_ready(cage_obj):
     """Panel Ready is a cage property owned by the appliance panels, not
     one of ours -- read it there so the two never disagree."""
     return bool(cage_obj.get('Panel Ready'))
+
+
+def _panels_module():
+    """Lazy, guarded import: appliances live in the shared 'common'
+    library and must not hard-depend on the face-frame product."""
+    try:
+        from ..face_frame import appliance_panels
+        return appliance_panels
+    except Exception:
+        return None
+
+
+def supports_panels(cage_obj):
+    """True when this appliance can carry cabinet door panels."""
+    return (appliance_type(cage_obj) in PANEL_TYPES
+            and _panels_module() is not None)
+
+
+# The model's own door configuration, mapped to the panel layout that
+# matches it -- switching a french-door fridge to cabinet fronts should
+# seed french-door panels, not a single slab.
+_PANEL_CONFIG_FOR_FRIDGE = {
+    'FRENCH': 'FRENCH_DOOR_BOTTOM_FREEZER',
+    'SINGLE': 'BOTTOM_FREEZER',
+    'SIDE_BY_SIDE': 'FRENCH_DOOR',
+    'TOP_FREEZER': 'TOP_FREEZER',
+}
+
+
+def _panel_config_for(cage_obj, panels):
+    """The panel preset to seed, taken from the model's own layout where
+    the two line up, else the first preset this appliance offers."""
+    opts = merged_opts(cage_obj)
+    appl = appliance_type(cage_obj)
+    if appl == 'REFRIGERATOR':
+        config = opts.get('fridge_config', 'FRENCH')
+        if (config == 'SINGLE'
+                and int(opts.get('freezer_drawers', 1)) > 1):
+            return 'BOTTOM_FREEZER_2DRAWER'
+        return _PANEL_CONFIG_FOR_FRIDGE.get(config, 'SINGLE')
+    items = panels.CONFIG_ITEMS.get(appl, panels.DEFAULT_CONFIG_ITEMS)
+    return items[0][0] if items else 'SINGLE'
+
+
+def set_front_style(cage_obj, style):
+    """Switch an appliance between its own front and cabinet door panels.
+
+    Turning panels on seeds a layout only the first time; the section
+    model survives being turned off, so toggling back and forth keeps
+    whatever layout was set up. Returns True when the appliance ended up
+    panelled.
+    """
+    panels = _panels_module()
+    if panels is None or appliance_type(cage_obj) not in PANEL_TYPES:
+        return False
+    if style != 'CABINET':
+        panels.remove(cage_obj)
+        return False
+    props = cage_obj.appliance_panels
+    panels.seed_from_legacy(cage_obj)
+    if not props.sections:
+        config = (props.config or cage_obj.get('APPLIANCE_PANEL_CONFIG')
+                  or _panel_config_for(cage_obj, panels))
+        panels.seed_preset(cage_obj, config, keep_options=False)
+    # rebuild stamps the cage, Panel Ready included.
+    panels.rebuild(cage_obj)
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -1023,6 +1101,8 @@ class HOME_BUILDER_OT_appliance_prompts(bpy.types.Operator):
 
     model_style: EnumProperty(name="Model", items=MODEL_STYLE_ITEMS,
                               default='NONE')  # type: ignore
+    front_style: EnumProperty(name="Front", items=FRONT_STYLE_ITEMS,
+                              default='APPLIANCE')  # type: ignore
     finish: EnumProperty(name="Finish", items=FINISH_ITEMS,
                          default='STAINLESS')  # type: ignore
     handle_style: EnumProperty(name="Handles", items=HANDLE_ITEMS,
@@ -1108,6 +1188,8 @@ class HOME_BUILDER_OT_appliance_prompts(bpy.types.Operator):
         self.appliance_width = cage.get_input('Dim X')
         self.appliance_height = cage.get_input('Dim Z')
         self.appliance_depth = cage.get_input('Dim Y')
+        self.front_style = ('CABINET' if is_panel_ready(self.appliance)
+                            else 'APPLIANCE')
         for key, value in merged_opts(self.appliance).items():
             if hasattr(self, key):
                 try:
@@ -1130,13 +1212,25 @@ class HOME_BUILDER_OT_appliance_prompts(bpy.types.Operator):
         cage.set_input('Dim Z', self.appliance_height)
         cage.set_input('Dim Y', self.appliance_depth)
 
+        # Cabinet door panels are solved from the cage rather than
+        # driven, so they have to be re-solved against the size just
+        # pushed. rebuild only tears parts down on a structural change,
+        # so it is safe to call this often.
+        panels = _panels_module() if supports_panels(self.appliance) else None
+        if panels is not None:
+            want = self.front_style == 'CABINET'
+            if want != is_panel_ready(self.appliance):
+                set_front_style(self.appliance, self.front_style)
+            elif want:
+                panels.rebuild(self.appliance)
+
         # The model itself is another matter. check() fires on every
         # dialog interaction, and each rebuild removes and recreates part
         # objects; doing that on every mouse move destabilizes the draw
         # cache -- the same crash wood_hoods guards against -- so only
         # rebuild when the options actually changed.
         opts = self._opts_dict()
-        key = repr(sorted(opts.items()))
+        key = repr(sorted(opts.items())) + '|' + self.front_style
         if getattr(self, '_applied_key', None) == key:
             return
         self._applied_key = key
@@ -1177,10 +1271,20 @@ class HOME_BUILDER_OT_appliance_prompts(bpy.types.Operator):
         col.prop(self, 'finish')
         col.prop(self, 'handle_style')
 
-        if is_panel_ready(self.appliance):
+        if supports_panels(self.appliance):
             box = layout.box()
-            box.label(text="Panel Ready: the fronts come from the "
-                           "appliance panels.", icon='INFO')
+            col = box.column(align=True)
+            col.label(text="Front:")
+            col.row(align=True).prop(self, 'front_style', expand=True)
+            if self.front_style == 'CABINET':
+                col.separator()
+                col.operator("hb_face_frame.add_appliance_panels",
+                             text="Edit Panels...", icon='MOD_SOLIDIFY')
+
+        if self.front_style == 'CABINET' and supports_panels(self.appliance):
+            box = layout.box()
+            box.label(text="The appliance builds its box only; the fronts "
+                           "are cabinet panels.", icon='INFO')
             return
 
         box = layout.box()

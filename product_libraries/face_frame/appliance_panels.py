@@ -661,6 +661,41 @@ def rebuild(appliance_obj):
     _stamp(appliance_obj, props, key, faces, backers, rails)
 
 
+def remove(appliance_obj):
+    """Tear the built panels off an appliance and clear the stamp that
+    tells downstream consumers it is panelled.
+
+    The section model on the appliance is deliberately left alone, so
+    turning panels back on comes back to the same layout rather than a
+    fresh preset. Returns the number of parts removed.
+    """
+    removed = 0
+    meshes = []
+    for child in list(appliance_obj.children):
+        if not (child.get(TAG_FRONT) or child.get(TAG_BACKER)
+                or child.get(TAG_RAIL)):
+            continue
+        for sub in list(child.children):
+            meshes.append(sub.data)
+            bpy.data.objects.remove(sub, do_unlink=True)
+            removed += 1
+        meshes.append(child.data)
+        bpy.data.objects.remove(child, do_unlink=True)
+        removed += 1
+    for mesh in meshes:
+        if isinstance(mesh, bpy.types.Mesh) and mesh.users == 0:
+            bpy.data.meshes.remove(mesh)
+    for key in ('APPLIANCE_PANEL_STRUCTURE', 'APPLIANCE_PANEL_CONFIG',
+                'APPLIANCE_PANEL_TYPE', 'APPLIANCE_PANEL_LAYOUT',
+                'APPLIANCE_PANEL_RAILS', 'APPLIANCE_PANEL_RAIL_WIDTH',
+                'APPLIANCE_PANEL_RAIL_COUNT'):
+        if key in appliance_obj:
+            del appliance_obj[key]
+    if 'Panel Ready' in appliance_obj:
+        appliance_obj['Panel Ready'] = False
+    return removed
+
+
 def _stamp(appliance_obj, props, key, faces, backers, rails):
     appliance_obj['APPLIANCE_PANEL_STRUCTURE'] = key
     appliance_obj['APPLIANCE_PANEL_CONFIG'] = props.config
