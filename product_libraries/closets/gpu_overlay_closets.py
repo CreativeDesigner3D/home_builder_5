@@ -628,7 +628,11 @@ def _commit(obj, kind, value):
         obj.hb_closet_starter.width = value
         return True
     if kind == 'STARTER_H':
-        obj.hb_closet_starter.height = value
+        # A typed height comes DOWN to the 32mm system: the number is
+        # the space there is, so a run must not come back taller than
+        # it. The Custom Height field in the starter's properties is
+        # where an off-system height is asked for on purpose.
+        obj.hb_closet_starter.height = const.snap_system_height_down(value)
         return True
     if kind == 'STARTER_D':
         obj.hb_closet_starter.depth = value

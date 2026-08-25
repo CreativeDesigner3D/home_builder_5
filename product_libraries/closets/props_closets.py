@@ -1263,6 +1263,28 @@ class Closet_Opening_Props(PropertyGroup):
                     "doors. Auto reads it off where the door sits",
         items=const.DOOR_PULL_LOCATION_ITEMS,
         default='AUTO')  # type: ignore
+    unlock_door_pull_vertical: BoolProperty(
+        name="From Top/Bottom",
+        description="Set how high this opening's door pulls sit, instead "
+                    "of following the room. Read the way the convention "
+                    "above reads it: Base down from the door top, Upper "
+                    "up from the door bottom, Tall off the floor",
+        default=False)  # type: ignore
+    door_pull_vertical_location: FloatProperty(
+        name="Door Pull Vertical Location",
+        description="To the near end of the pull",
+        default=const.DOOR_PULL_VERTICAL_LOCATION,
+        min=0.0, unit='LENGTH', precision=4)  # type: ignore
+    unlock_door_pull_edge: BoolProperty(
+        name="From Edge",
+        description="Set how far in from the latch edge this opening's "
+                    "door pulls sit, instead of following the room",
+        default=False)  # type: ignore
+    door_pull_horizontal_offset: FloatProperty(
+        name="Door Pull From Edge",
+        description="Latch edge of the door to the pull center",
+        default=const.DOOR_PULL_FROM_EDGE,
+        min=0.0, unit='LENGTH', precision=4)  # type: ignore
     double_pull_on_front: BoolProperty(
         name="Double Pull On Front",
         description="Put two pulls on each of this opening's drawer "
@@ -1544,23 +1566,24 @@ class Closets_Scene_Props(PropertyGroup):
         update=pulls_closets.update_room)  # type: ignore
     pull_horizontal_offset: FloatProperty(
         name="From Edge",
-        description="Door edge to pull center",
-        default=units.inch(2.0), unit='LENGTH',
+        description="Latch edge of the door to the pull center, on every "
+                    "door - slab and five-piece alike",
+        default=units.inch(1.5), unit='LENGTH',
         update=pulls_closets.update_room)  # type: ignore
     pull_vertical_location_base: FloatProperty(
         name="Base",
-        description="Top of base door to top of pull",
-        default=units.inch(1.5), unit='LENGTH',
+        description="Top of a base door to the top of the pull",
+        default=units.inch(2.0), unit='LENGTH',
         update=pulls_closets.update_room)  # type: ignore
     pull_vertical_location_tall: FloatProperty(
         name="Tall",
-        description="Pull height off the floor on tall doors",
+        description="Pull height off the floor on a tall door",
         default=units.inch(45.0), unit='LENGTH',
         update=pulls_closets.update_room)  # type: ignore
     pull_vertical_location_upper: FloatProperty(
         name="Upper",
-        description="Bottom of upper door to bottom of pull",
-        default=units.inch(1.5), unit='LENGTH',
+        description="Bottom of an upper door to the bottom of the pull",
+        default=units.inch(2.0), unit='LENGTH',
         update=pulls_closets.update_room)  # type: ignore
     center_pulls_on_drawer_front: BoolProperty(
         name="Center Pulls on Drawer Fronts",
@@ -1609,6 +1632,16 @@ class Closets_Scene_Props(PropertyGroup):
                     "empty. Turn this off to add a door and nothing "
                     "else, the way the prior library did",
         default=True)  # type: ignore
+
+    closet_door_edgeband: EnumProperty(
+        name="Door Edgebanding",
+        description="How thick the fronts' edgebanding is bought - "
+                    "the room-wide choice the prior library offered. "
+                    "Companion systems read it for what a front's "
+                    "edges cost and how long they take to run",
+        items=[('1MM', "1mm", "Standard 1mm edgebanding"),
+               ('3MM', "3mm", "Heavy 3mm edgebanding")],
+        default='1MM')  # type: ignore
 
     closet_crown_profile: EnumProperty(
         name="Crown Profile",
@@ -1799,6 +1832,7 @@ class Closets_Scene_Props(PropertyGroup):
         col = layout.column(align=True)
         col.prop(self, 'closet_front_style', text="Front Style")
         col.prop(self, 'closet_panel_type', text="Door Panel")
+        col.prop(self, 'closet_door_edgeband', text="Edgebanding")
 
         col.separator()
         col.prop(self, 'closet_seed_door_shelves',

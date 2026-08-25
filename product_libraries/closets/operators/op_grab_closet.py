@@ -1306,7 +1306,13 @@ class hb_closets_OT_grab_drag(bpy.types.Operator):
                                  + self._end_shift_vector(root, shift))
             sp.width = max(MIN_STARTER_WIDTH, value)
         elif b['kind'] == 'TOP':
-            self._set_run_top(root, max(MIN_STARTER_HEIGHT, value))
+            # Typed mid-drag, the number is a height someone means to
+            # have, so it comes DOWN to the 32mm system the same way a
+            # height typed on the label does.
+            from .. import const_closets as const
+            self._set_run_top(
+                root,
+                max(MIN_STARTER_HEIGHT, const.snap_system_height_down(value)))
         elif b['kind'] == 'L_BOTTOM':
             # Typing sets the height, as it does on a bay bottom; the
             # top stays put and the mounting follows from where that

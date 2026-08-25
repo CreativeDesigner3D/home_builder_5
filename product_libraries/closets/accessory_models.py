@@ -378,6 +378,30 @@ def build_hamper_synergy(w_in=24, d_in=14):
     return b.done('Pull Out Hamper Synergy %d' % w_in)
 
 
+def build_tilt_hamper(w_in=24, d_in=14):
+    """The tilt-out hamper: pivot brackets at each side, a top board
+    the unit swings on, and the hamper bags hanging below - one wide
+    bag at 18, two beyond, the way the bought ones came."""
+    w, d = w_in * _IN, d_in * _IN
+    b = _Build()
+    hw = w / 2.0
+    for x in (-hw + 0.018, hw - 0.048):
+        b.box(0.030, 0.194, 0.176, x, 0.0, -0.178)
+    tw = w - 0.045
+    b.box(tw, d - 0.047, 0.009, -tw / 2.0, 0.027, -0.042, _board())
+    bags = 1 if w_in <= 18 else 2
+    bag_w = (tw - 0.024 - (bags - 1) * 0.012) / bags
+    x0 = -tw / 2.0 + 0.012
+    for i in range(bags):
+        x = x0 + i * (bag_w + 0.012)
+        for bx in (x, x + bag_w - 0.008):
+            b.box(0.008, d - 0.013, 0.060, bx, 0.010, -0.063)
+        b.open_box(bag_w, d - 0.073, 0.496, x, 0.040, -0.549,
+                   0.006, _fabric())
+        b.box(bag_w, 0.004, 0.495, x, d - 0.044, -0.548, _fabric())
+    return b.done('Tilt Out Hamper %d' % w_in)
+
+
 def build_shoe_organizer(w_in=24, d_in=14):
     w, d = w_in * _IN, d_in * _IN
     b = _Build()
@@ -636,6 +660,8 @@ for _w in (18, 24, 30, 36):
         _sized(build_shoe_organizer, w_in=_w)
     MODELS['Pull Out Pants Rack %d.blend' % _w] = \
         _sized(build_pants_rack, w_in=_w)
+    MODELS['Tilt Out Hamper %d.blend' % _w] = \
+        _sized(build_tilt_hamper, w_in=_w)
 for _w in (15, 18, 24):
     MODELS['Storage Box %d x 14.blend' % _w] = \
         _sized(build_storage_box, w_in=_w)
@@ -768,6 +794,11 @@ BUILTIN_ITEMS = [
      'sizes': _width_sizes('Pull Out Hamper Engage %d x 14.blend'),
      'description': "Fabric hamper bags hanging from a pull-out "
                     "frame"},
+    {'code': 'TILT_OUT_HAMPER', 'name': "Tilt Out Hamper",
+     'family': 'OPENING', 'band_axis': 'WIDTH', 'depth': 0.3556,
+     'space_above': 0.01, 'space_below': 0.57, 'ready': True,
+     'sizes': _width_sizes('Tilt Out Hamper %d.blend'),
+     'description': "Hamper bags on a tilt-out board"},
     {'code': 'SHOE_ORGANIZER', 'name': "Shoe Organizer",
      'family': 'OPENING', 'band_axis': 'WIDTH', 'depth': 0.3556,
      'space_above': 0.216, 'space_below': 0.152, 'ready': True,

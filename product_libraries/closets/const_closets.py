@@ -237,13 +237,14 @@ ROD_FROM_FRONT = inch(2.0)
 # How much shorter than its opening a rod is cut so it drops into the
 # cups at each end.
 ROD_WIDTH_DEDUCTION = inch(0.25)
-# Double hang: the opening left above the top fixed shelf. A top shelf
-# leaves a shallow storage opening over the two hangs; a mid shelf hangs
-# a storage band under the upper hang, and the upper hang is what this
-# measures. Both are the sizes the prior library built to.
+# Double hang: the room the upper hang takes, in every one of the
+# double-hang configurations. 40 3/4" on the standard ladder of opening
+# heights (1036.95 mm), which is where a double hang is set out.
+DOUBLE_HANG_TOP_OPENING = inch(40.8248)
+# The shallow storage opening a top shelf leaves over the two hangs.
+# A mid shelf needs no figure of its own: it sits where the upper
+# hang's room finishes.
 TOP_SHELF_OPENING_HEIGHT = inch(10.5866)
-MID_SHELF_OPENING_HEIGHT = inch(40.8248)
-MID_SHELF_BAND_HEIGHT = inch(12.0)
 # Fronts (doors / drawer fronts / hampers). Half-overlay convention from
 # the prior closet library: each front overlays a shared panel/shelf by
 # (thickness - gap) / 2 so neighboring fronts split the reveal.
@@ -275,12 +276,21 @@ DEFAULT_OVERLAY = (FRONT_THICKNESS - FRONT_GAP) / 2.0
 # library had them and what gets measured on the floor, so it is kept.
 DRAWER_PULL_VERTICAL_LOCATION = inch(1.5)
 DISTANCE_BETWEEN_PULLS = inch(6.0)
+# Where a door's pull sits, for an opening that has taken the figures
+# over from the room. The same numbers the room starts on: 2" from the
+# door edge the convention measures from to the near end of the pull,
+# and 1-1/2" in from the latch edge to the pull's center.
+DOOR_PULL_VERTICAL_LOCATION = inch(2.0)
+DOOR_PULL_FROM_EDGE = inch(1.5)
 # Where a door's pull sits on it. Three conventions, each measured from
-# somewhere different: Base holds the pull down from the top edge of the
-# door, Upper holds it up from the bottom edge, and Tall holds it at a
+# somewhere different: Base holds the pull down from the TOP edge of the
+# door, Upper holds it up from the BOTTOM edge, and Tall holds it at a
 # height off the floor whatever the door is doing. Auto reads the door's
 # own place in the run and picks the one that suits it, which is what an
 # opening starts on; naming one holds the door to it.
+# Whichever one a door lands on, it is set the same distance in from the
+# latch edge - slab and five-piece alike - so a run of mixed fronts reads
+# as a set and the pull sits on the stile clear of the rail miter.
 DOOR_PULL_LOCATION_ITEMS = [
     ('AUTO', "Auto",
      "Pick the convention from where the door sits in the run"),
@@ -346,10 +356,18 @@ L_BACK_STRIP_WIDTH = inch(6.0)      # back partition width at the corner
 # corner - which is what the prior library did, and what the hardware
 # allows. It stands this far off the wall it does not run along, and
 # clear of the one it does.
-# A locked shelf reads orange in the viewport, the way the prior
-# library marked them, so a stack of shelves says at a glance which
-# of them is holding the unit square.
-L_LOCK_SHELF_COLOR = (1.0, 0.7, 0.5, 1.0)
+# The parts worth spotting across a room read orange in the viewport:
+# a shelf that is fixed rather than on clips, the way the prior library
+# marked its lock shelves, so a stack says at a glance which of them is
+# holding the unit square - and a panel that finishes an end, so a run
+# says where its finished ends are without a prompt being opened to
+# ask.
+# Strong rather than pale: the marking has to carry across a room at
+# the zoom a run is actually looked at, and the soft peach the prior
+# library used washed out against melamine under the viewport's light.
+LOCK_SHELF_COLOR = (1.0, 0.35, 0.05, 1.0)
+# The colour everything else takes.
+PLAIN_PART_COLOR = (1.0, 1.0, 1.0, 1.0)
 
 # The filler that closes an inside corner: two boards standing on
 # edge, one lapping the other, and a top laid over both. The widths
@@ -459,6 +477,24 @@ def snap_system_height(value):
     """Nearest 32mm-system panel/bay height (19 + n*32 mm)."""
     n = round((value - SYSTEM_HEIGHT_BASE) / SYSTEM_PITCH)
     return SYSTEM_HEIGHT_BASE + max(0, int(n)) * SYSTEM_PITCH
+
+
+# Float error on a height that is already on the lattice must not cost
+# it a whole 32mm step on the way down.
+_SYSTEM_HEIGHT_TOL = millimeter(0.05)
+
+
+def snap_system_height_down(value):
+    """Tallest 32mm-system height (19 + n*32 mm) that is no taller than
+    `value`.
+
+    A height someone TYPES comes down to the system rather than up: the
+    number they typed is the space they have, and a run that came back
+    taller than it would not fit. Dragging still snaps to the nearest
+    step - a drag is aiming at a size, not stating a limit."""
+    n = int((value - SYSTEM_HEIGHT_BASE + _SYSTEM_HEIGHT_TOL)
+            // SYSTEM_PITCH)
+    return SYSTEM_HEIGHT_BASE + max(0, n) * SYSTEM_PITCH
 
 
 def snap_system_hole(value):
