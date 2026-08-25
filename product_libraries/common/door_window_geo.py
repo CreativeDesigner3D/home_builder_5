@@ -121,6 +121,34 @@ DOOR_DEFAULTS = {
     'sidelite_left': 0.0,
     'sidelite_right': 0.0,
     'transom_height': 0.0,
+    # Splayed reveal: two INDEPENDENT reveals, one carved in from each
+    # wall face (reveal_ext_* from the y=0 face, reveal_int_* from the
+    # y=thickness face - "ext"/"int" just name the wall's own two faces,
+    # not a verified real-world exterior/interior). Each, when its _on
+    # flag is set, is a sequence measured in from its own face:
+    # 1. An instant 90-degree step outward by `_clearance_amount` (not a
+    #    taper), then straight for `_clearance_depth` (bare reveal, no
+    #    frame material).
+    # 2. Widened further outward by `_splay_amount` (a distance, not an
+    #    angle) as a taper over `_splay_depth`.
+    # Any depth left over after a side's stages (before reaching the
+    # opposite face or the other side's own reveal) stays straight at
+    # that side's final widened size.
+    #
+    # The frame/casing material only ever occupies the middle span NOT
+    # claimed by an active reveal - i.e. wall_thickness minus each active
+    # side's (clearance_depth + splay_depth). Both reveals off keeps the
+    # old plain straight-through cut, frame filling the full thickness.
+    'reveal_ext_on': False,
+    'reveal_ext_clearance_amount': 0.0,
+    'reveal_ext_clearance_depth': 0.0,
+    'reveal_ext_splay_amount': 0.0,
+    'reveal_ext_splay_depth': 0.0,
+    'reveal_int_on': False,
+    'reveal_int_clearance_amount': 0.0,
+    'reveal_int_clearance_depth': 0.0,
+    'reveal_int_splay_amount': 0.0,
+    'reveal_int_splay_depth': 0.0,
 }
 
 WINDOW_DEFAULTS = {
@@ -146,6 +174,34 @@ WINDOW_DEFAULTS = {
     'sill_projection': inch(1.0),
     'sill_horn': inch(1.0),
     'include_stool': True,
+    # Splayed reveal: two INDEPENDENT reveals, one carved in from each
+    # wall face (reveal_ext_* from the y=0 face, reveal_int_* from the
+    # y=thickness face - "ext"/"int" just name the wall's own two faces,
+    # not a verified real-world exterior/interior). Each, when its _on
+    # flag is set, is a sequence measured in from its own face:
+    # 1. An instant 90-degree step outward by `_clearance_amount` (not a
+    #    taper), then straight for `_clearance_depth` (bare reveal, no
+    #    frame material).
+    # 2. Widened further outward by `_splay_amount` (a distance, not an
+    #    angle) as a taper over `_splay_depth`.
+    # Any depth left over after a side's stages (before reaching the
+    # opposite face or the other side's own reveal) stays straight at
+    # that side's final widened size.
+    #
+    # The frame/casing material only ever occupies the middle span NOT
+    # claimed by an active reveal - i.e. wall_thickness minus each active
+    # side's (clearance_depth + splay_depth). Both reveals off keeps the
+    # old plain straight-through cut, frame filling the full thickness.
+    'reveal_ext_on': False,
+    'reveal_ext_clearance_amount': 0.0,
+    'reveal_ext_clearance_depth': 0.0,
+    'reveal_ext_splay_amount': 0.0,
+    'reveal_ext_splay_depth': 0.0,
+    'reveal_int_on': False,
+    'reveal_int_clearance_amount': 0.0,
+    'reveal_int_clearance_depth': 0.0,
+    'reveal_int_splay_amount': 0.0,
+    'reveal_int_splay_depth': 0.0,
 }
 
 def _category_for(cage_obj):
@@ -701,6 +757,189 @@ def remove_geometry(cage_obj, restore_annotations=False):
         _ensure_annotation_text(cage_obj, True)
 
 
+REVEAL_CUTTER_FLAG = "IS_REVEAL_CUTTER"
+
+
+def _reveal_cutter_child(cage_obj):
+    for child in cage_obj.children:
+        if child.get(REVEAL_CUTTER_FLAG):
+            return child
+    return None
+
+
+def _reveal_side_consumed(opts, side, thickness):
+    """(clearance_depth + splay_depth) actually used by one side's reveal
+    (0.0 if that side is off), clamped to the wall thickness."""
+    if not opts.get(f'reveal_{side}_on', False):
+        return 0.0
+    used = (max(0.0, opts.get(f'reveal_{side}_clearance_depth', 0.0))
+            + max(0.0, opts.get(f'reveal_{side}_splay_depth', 0.0)))
+    return min(used, thickness)
+
+
+def reveal_frame_span(opts, thickness):
+    """(fy0, fy1): the Y-range the frame/casing material may occupy -
+    whatever's left of the wall thickness after each active reveal's own
+    consumed depth (see _reveal_side_consumed). Both reveals off spans
+    the full thickness (the old plain straight-through behavior)."""
+    ext_used = _reveal_side_consumed(opts, 'ext', thickness)
+    int_used = _reveal_side_consumed(opts, 'int', thickness)
+    if ext_used + int_used > thickness:
+        # Both sides claim more than the wall has - scale back
+        # proportionally so they meet in the middle instead of crossing.
+        scale = thickness / (ext_used + int_used)
+        ext_used *= scale
+        int_used *= scale
+    return ext_used, thickness - int_used
+
+
+def _build_reveal_cutter_mesh(mesh, width, height, thickness, opts):
+    """Fill `mesh` with a cutter volume spanning the same local box as the
+    cage (X: 0..width, Y: 0..thickness, Z: 0..height). Shaped from two
+    INDEPENDENT reveals, one carved in from each wall face - see the
+    reveal_ext_* / reveal_int_* comment on DOOR_DEFAULTS/WINDOW_DEFAULTS.
+
+    Each active side is WIDEST right at its own wall face (the visible
+    flare) and narrows inward: splay tapers from (clearance_amount +
+    splay_amount) down to just clearance_amount over splay_depth, then a
+    straight clearance run holds that width for clearance_depth, then an
+    instant 90-degree step drops straight to 0 (the rough-opening width)
+    right where the frame/casing begins - see reveal_frame_span, which
+    this uses so the cutter and the frame always agree on that boundary
+    (the frame is built at the plain rough-opening width, so the cutter
+    must return to 0 there too, or the frame floats disconnected from
+    the wall). Both reveals off reproduces the original plain
+    straight-through cut."""
+    import bmesh
+
+    bm = bmesh.new()
+
+    fy0, fy1 = reveal_frame_span(opts, thickness)
+
+    def side_stations(on, ca, cd, sa, sd, face_y, sign, frame_edge):
+        """Stations from `face_y` (direction `sign`, +1 for the y=0 face,
+        -1 for y=thickness) in to `frame_edge`, the shared, already-
+        clamped boundary with the frame (fy0 for ext, fy1 for int - see
+        reveal_frame_span). Widest at the face, stepping down to 0 right
+        at frame_edge."""
+        span = abs(frame_edge - face_y)
+        if not on or span < 1e-9:
+            return [(face_y, 0.0), (frame_edge, 0.0)]
+        ca = max(0.0, ca)
+        sa = max(0.0, sa)
+        # cd/sd are just a ratio here - reveal_frame_span already clamped
+        # the total (cd+sd) to fit the wall, so rescale both to land
+        # exactly on frame_edge rather than reclamping independently
+        # (which could disagree with reveal_frame_span's own clamp when
+        # both sides are active and over budget).
+        raw_total = max(0.0, cd) + max(0.0, sd)
+        if raw_total < 1e-9:
+            sd_scaled, cd_scaled = span, 0.0
+        else:
+            scale = span / raw_total
+            sd_scaled = max(0.0, sd) * scale
+            cd_scaled = max(0.0, cd) * scale
+        pts = [(face_y, ca + sa)]
+        y = face_y
+        if sd_scaled > 1e-6:
+            y += sign * sd_scaled
+            pts.append((y, ca))
+        if cd_scaled > 1e-6:
+            y += sign * cd_scaled
+            pts.append((y, ca))
+        pts.append((frame_edge, 0.0))
+        return pts
+
+    ext_pts = side_stations(
+        opts.get('reveal_ext_on', False),
+        opts.get('reveal_ext_clearance_amount', 0.0),
+        opts.get('reveal_ext_clearance_depth', 0.0),
+        opts.get('reveal_ext_splay_amount', 0.0),
+        opts.get('reveal_ext_splay_depth', 0.0),
+        0.0, 1, fy0)
+    int_pts = side_stations(
+        opts.get('reveal_int_on', False),
+        opts.get('reveal_int_clearance_amount', 0.0),
+        opts.get('reveal_int_clearance_depth', 0.0),
+        opts.get('reveal_int_splay_amount', 0.0),
+        opts.get('reveal_int_splay_depth', 0.0),
+        thickness, -1, fy1)
+    int_pts = list(reversed(int_pts))
+
+    stations = list(ext_pts) + int_pts
+
+    def ring(y, expand):
+        x0, x1 = -expand, width + expand
+        z0, z1 = -expand, height + expand
+        return [bm.verts.new(co) for co in (
+            (x0, y, z0), (x1, y, z0), (x1, y, z1), (x0, y, z1))]
+
+    rings = [ring(*stations[0])]
+    for y, expand in stations[1:]:
+        py, pe = rings[-1][0].co.y, (rings[-1][1].co.x - rings[-1][0].co.x - width) / 2.0
+        if abs(y - py) < 1e-6 and abs(expand - pe) < 1e-6:
+            continue
+        rings.append(ring(y, expand))
+
+    for a, b in zip(rings, rings[1:]):
+        for i in range(4):
+            j = (i + 1) % 4
+            bm.faces.new((a[i], a[j], b[j], b[i]))
+    bm.faces.new(rings[0])
+    bm.faces.new(rings[-1])
+
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    bm.to_mesh(mesh)
+    bm.free()
+
+
+def update_reveal_cutter(cage_obj):
+    """Create/refresh the boolean-cutter child used to cut the wall
+    opening, shaped from the cage's current Dim X/Y/Z plus the
+    reveal_ext_* / reveal_int_* options (falling back to the kind's
+    defaults when no options are stored yet, e.g. right after placement).
+    Returns the cutter object - callers pass this to cut_wall instead of
+    the cage itself so the reveal doesn't have to be baked into the
+    cage's own GeoNodes asset."""
+    cage = hb_types.GeoNodeCage(cage_obj)
+    if not cage.has_modifier():
+        return cage_obj
+
+    category = _category_for(cage_obj)
+    opts = merged_opts(cage_obj) or (dict(_defaults_for(category)) if category else {})
+
+    W = cage.get_input('Dim X')
+    T = cage.get_input('Dim Y')
+    H = cage.get_input('Dim Z')
+
+    cutter = _reveal_cutter_child(cage_obj)
+    if cutter is None:
+        mesh = bpy.data.meshes.new(f"{cage_obj.name}_reveal_cutter")
+        cutter = bpy.data.objects.new(f"{cage_obj.name}_reveal_cutter", mesh)
+        cutter[REVEAL_CUTTER_FLAG] = True
+        cutter.parent = cage_obj
+        cutter.matrix_local = Matrix.Identity(4)
+        cutter.hide_render = True
+        cutter.hide_select = True
+        cutter.display_type = 'WIRE'
+        bpy.context.collection.objects.link(cutter)
+
+    _build_reveal_cutter_mesh(cutter.data, W, H, T, opts)
+
+    # Retrofit doors/windows placed before the reveal-cutter system
+    # existed: their wall's boolean modifier still targets the cage
+    # directly, so the reveal never actually cuts the wall even though
+    # the cutter (visible as its wire outline) is shaped correctly.
+    # Repoint any such modifier to the cutter instead.
+    wall_obj = cage_obj.parent
+    if wall_obj is not None:
+        for mod in wall_obj.modifiers:
+            if mod.type == 'BOOLEAN' and mod.object == cage_obj:
+                mod.object = cutter
+
+    return cutter
+
+
 def _text_children(cage_obj):
     return [c for c in cage_obj.children if c.type == 'FONT']
 
@@ -988,33 +1227,45 @@ def build_door_geometry(cage_obj):
 
     verts, faces, slots = [], [], []
 
+    # Past an active reveal (reveal_ext_on / reveal_int_on) the actual cut
+    # opens wider than the door's own footprint on that side. Rather than
+    # building the frame/casing against the wall's real thickness T, the
+    # frame only spans whatever's left after each active reveal's own
+    # consumed depth - see reveal_frame_span - so the door sits and trims
+    # exactly like it would in a wall of that (possibly narrower, possibly
+    # off-center) thickness, with the reveals left as bare cut beyond it.
+    fy0, fy1 = reveal_frame_span(opts, T)
+    T_eff = max(fy1 - fy0, inch(0.5))
+    fy1 = fy0 + T_eff
+
     # The cage's Dim X / Dim Z are the OVERALL unit including casing:
     # the casing band sits inside the footprint and the opening
-    # shrinks inward by it. Full-depth filler boxes close the wall cut
-    # behind the band (the cage still cuts its full rectangle).
+    # shrinks inward by it. Filler boxes (frame-depth only, see above)
+    # close the wall cut behind the band (the cage still cuts its full
+    # rectangle, splay included).
     any_casing = (opts['include_exterior_casing']
                   or opts['include_interior_casing'])
     band = min(cw, W / 4.0, H / 4.0) if any_casing else 0.0
     ox0, ox1, oz1 = band, W - band, H - band
 
     if band > 0.0:
-        _box(verts, faces, slots, 0.0, band, 0.0, T, 0.0, H)
-        _box(verts, faces, slots, W - band, W, 0.0, T, 0.0, H)
-        _box(verts, faces, slots, band, W - band, 0.0, T, oz1, H)
+        _box(verts, faces, slots, 0.0, band, fy0, fy1, 0.0, H)
+        _box(verts, faces, slots, W - band, W, fy0, fy1, 0.0, H)
+        _box(verts, faces, slots, band, W - band, fy0, fy1, oz1, H)
 
-    # Jamb lining the opening, full wall depth.
-    _box(verts, faces, slots, ox0, ox0 + jw, 0.0, T, 0.0, oz1)
-    _box(verts, faces, slots, ox1 - jw, ox1, 0.0, T, 0.0, oz1)
-    _box(verts, faces, slots, ox0 + jw, ox1 - jw, 0.0, T,
+    # Jamb lining the opening, frame depth only (see above).
+    _box(verts, faces, slots, ox0, ox0 + jw, fy0, fy1, 0.0, oz1)
+    _box(verts, faces, slots, ox1 - jw, ox1, fy0, fy1, 0.0, oz1)
+    _box(verts, faces, slots, ox0 + jw, ox1 - jw, fy0, fy1,
          oz1 - jw, oz1)
     if th_h > 0.0:
-        _box(verts, faces, slots, ox0 + jw, ox1 - jw, 0.0, T, 0.0, th_h)
+        _box(verts, faces, slots, ox0 + jw, ox1 - jw, fy0, fy1, 0.0, th_h)
 
-    # Casing (sides + head, butt joints, no bottom) proud of each
-    # wall face, within the reserved band.
+    # Casing (sides + head, butt joints, no bottom) proud of each face
+    # of the T_eff virtual wall (see above), within the reserved band.
     if band > 0.0:
-        for on, y0, y1 in ((opts['include_exterior_casing'], T, T + ct),
-                           (opts['include_interior_casing'], -ct, 0.0)):
+        for on, y0, y1 in ((opts['include_exterior_casing'], fy1, fy1 + ct),
+                           (opts['include_interior_casing'], fy0 - ct, fy0)):
             if not on:
                 continue
             _box(verts, faces, slots, 0.0, band, y0, y1, 0.0, oz1)
@@ -1049,7 +1300,10 @@ def build_door_geometry(cage_obj):
         if sl_r < inch(3.0):
             sl_r = 0.0
 
-    y_center_front = (T - st) / 2.0
+    # Centered within the frame band (near the flush face), not the full
+    # wall thickness - keeps the slab sitting close to the flush face
+    # instead of the middle of a splayed reveal.
+    y_center_front = fy0 + max(0.0, (T_eff - st) / 2.0)
 
     if transom_h > 0.0:
         zt0 = z_top - transom_h
@@ -1172,10 +1426,16 @@ def build_window_geometry(cage_obj):
 
     verts, faces, slots = [], [], []
 
+    # Frame only spans whatever's left after each active reveal's own
+    # consumed depth - see build_door_geometry's matching comment.
+    fy0, fy1 = reveal_frame_span(opts, T)
+    T_eff = max(fy1 - fy0, inch(0.5))
+    fy1 = fy0 + T_eff
+
     # The cage's Dim X / Dim Z are the OVERALL unit including casing,
     # sill and stool: the trim sits inside the footprint and the frame
-    # shrinks inward by the reserved bands. Full-depth filler boxes
-    # close the wall cut behind the bands.
+    # shrinks inward by the reserved bands. Filler boxes (T_eff deep
+    # only, see above) close the wall cut behind the bands.
     any_casing = (opts['include_exterior_casing']
                   or opts['include_interior_casing'])
     sill_on = bool(opts['include_sill'])
@@ -1190,28 +1450,32 @@ def build_window_geometry(cage_obj):
     fz0, fz1 = bot_b, H - top_b
 
     if side_b > 0.0:
-        _box(verts, faces, slots, 0.0, side_b, 0.0, T, 0.0, H)
-        _box(verts, faces, slots, W - side_b, W, 0.0, T, 0.0, H)
+        _box(verts, faces, slots, 0.0, side_b, fy0, fy1, 0.0, H)
+        _box(verts, faces, slots, W - side_b, W, fy0, fy1, 0.0, H)
     if top_b > 0.0:
-        _box(verts, faces, slots, fx0, fx1, 0.0, T, fz1, H)
+        _box(verts, faces, slots, fx0, fx1, fy0, fy1, fz1, H)
     if bot_b > 0.0:
-        _box(verts, faces, slots, fx0, fx1, 0.0, T, 0.0, fz0)
+        _box(verts, faces, slots, fx0, fx1, fy0, fy1, 0.0, fz0)
 
-    # Frame lining the opening, full wall depth.
-    _box(verts, faces, slots, fx0, fx0 + fw, 0.0, T, fz0, fz1)
-    _box(verts, faces, slots, fx1 - fw, fx1, 0.0, T, fz0, fz1)
-    _box(verts, faces, slots, fx0 + fw, fx1 - fw, 0.0, T, fz0, fz0 + fw)
-    _box(verts, faces, slots, fx0 + fw, fx1 - fw, 0.0, T, fz1 - fw, fz1)
+    # Frame lining the opening, frame depth only (see above).
+    _box(verts, faces, slots, fx0, fx0 + fw, fy0, fy1, fz0, fz1)
+    _box(verts, faces, slots, fx1 - fw, fx1, fy0, fy1, fz0, fz1)
+    _box(verts, faces, slots, fx0 + fw, fx1 - fw, fy0, fy1, fz0, fz0 + fw)
+    _box(verts, faces, slots, fx0 + fw, fx1 - fw, fy0, fy1, fz1 - fw, fz1)
 
     ox0, ox1 = fx0 + fw, fx1 - fw
     oz0, oz1 = fz0 + fw, fz1 - fw
     ow, oh = ox1 - ox0, oz1 - oz0
 
-    # Sash depth planes: exterior sashes sit behind the wall middle,
-    # interior sashes in front of it (front face toward the room).
-    y_ext_front = T / 2.0
-    y_int_front = T / 2.0 - st
-    y_center_front = (T - st) / 2.0
+    # Sash depth planes: exterior sashes sit behind the T_eff-wall
+    # middle, interior sashes in front of it (front face toward the
+    # room). Anchored to the T_eff virtual wall (near the flush face),
+    # not the full wall thickness - see build_door_geometry's matching
+    # comment.
+    frame_mid = fy0 + T_eff / 2.0
+    y_ext_front = frame_mid
+    y_int_front = frame_mid - st
+    y_center_front = fy0 + max(0.0, (T_eff - st) / 2.0)
 
     wtype = opts['window_type']
     check = max(opts['check_rail_width'], inch(0.5))
@@ -1248,18 +1512,20 @@ def build_window_geometry(cage_obj):
         sash("Sash", ow, oh, ox0, y_center_front, oz0)
 
     # Exterior sill: a projecting board under the frame (rectangular
-    # stand-in for the sloped sill), full unit width.
+    # stand-in for the sloped sill), full unit width. Proud of fy1 (the
+    # reveal-adjusted exterior casing face), not the wall's true
+    # thickness T, or it stays behind when a reveal shifts the casing.
     if sill_on:
         sp = max(opts['sill_projection'], 0.0)
-        _box(verts, faces, slots, 0.0, W, T, T + ct + sp,
+        _box(verts, faces, slots, 0.0, W, fy1, fy1 + ct + sp,
              fz0 - sh, fz0)
 
     # Casing per face (sides + head + bottom leg, butt joints) within
     # the reserved bands; the exterior skips its bottom leg for the
     # sill, the interior for the stool.
     for on, y0, y1, skip_bottom in (
-            (opts['include_exterior_casing'], T, T + ct, sill_on),
-            (opts['include_interior_casing'], -ct, 0.0, stool_on)):
+            (opts['include_exterior_casing'], fy1, fy1 + ct, sill_on),
+            (opts['include_interior_casing'], fy0 - ct, fy0, stool_on)):
         if not on or side_b <= 0.0:
             continue
         z_side0 = fz0 if skip_bottom else max(fz0 - side_b, 0.0)
@@ -1271,11 +1537,13 @@ def build_window_geometry(cage_obj):
                  max(fz0 - side_b, 0.0), fz0)
 
     # Interior stool: top flush with the frame bottom, projecting into
-    # the room, with an apron strip below.
+    # the room, with an apron strip below. Proud of fy0 (the reveal-
+    # adjusted interior casing face), not y=0, or it stays behind when a
+    # reveal shifts the casing.
     if stool_on:
-        _box(verts, faces, slots, 0.0, W, -ct - inch(1.0), 0.0,
+        _box(verts, faces, slots, 0.0, W, fy0 - ct - inch(1.0), fy0,
              fz0 - inch(0.75), fz0)
-        _box(verts, faces, slots, 0.0, W, -ct, 0.0,
+        _box(verts, faces, slots, 0.0, W, fy0 - ct, fy0,
              max(fz0 - inch(0.75) - cw, 0.0), fz0 - inch(0.75))
 
     frame = _new_child(cage_obj, "Window Frame")
@@ -1291,6 +1559,7 @@ def build_geometry(cage_obj):
     """Rebuild the cage's generated geometry from its stored options.
     No stored options -> any stale children are removed and nothing is
     built (cage-only display)."""
+    update_reveal_cutter(cage_obj)
     if cage_obj.get('IS_WINDOW_BP'):
         build_window_geometry(cage_obj)
     elif cage_obj.get('IS_ENTRY_DOOR_BP'):
