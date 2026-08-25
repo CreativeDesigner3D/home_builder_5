@@ -28,6 +28,7 @@ from .product_libraries import face_frame
 from .product_libraries import frameless
 from .product_libraries.common import wood_hoods
 from .product_libraries.common import door_window_geo
+from .product_libraries.common import appliance_geo
 from . import molding
 # Catalog browser - intentionally disabled. The package lives at
 # home_builder_5/catalog/ for future revisit. Re-enable by uncommenting
@@ -371,6 +372,7 @@ def register():
     frameless.register()
     wood_hoods.register()
     door_window_geo.register()
+    appliance_geo.register()
     molding.register()
     # catalog.register()
 
@@ -416,6 +418,7 @@ def unregister():
     # catalog.unregister()
     closets.unregister()
     molding.unregister()
+    appliance_geo.unregister()
     door_window_geo.unregister()
     wood_hoods.unregister()
     face_frame.unregister()

@@ -1,5 +1,6 @@
 import bpy
 from ... import hb_utils
+from ..common import appliance_geo
 
 class HOME_BUILDER_MT_applied_ends(bpy.types.Menu):
     bl_label = "Applied Ends"
@@ -366,6 +367,9 @@ class HOME_BUILDER_MT_appliance_commands(bpy.types.Menu):
                             text="Wood Hood Prompts", icon='MOD_BEVEL')
         else:
             layout.operator("hb_frameless.appliance_prompts", text="Appliance Prompts")
+        if obj is not None and appliance_geo.supports(obj):
+            layout.operator("home_builder.appliance_model_prompts",
+                            text="Appliance Model...", icon='SHADING_SOLID')
         if obj is not None and obj.get('APPLIANCE_TYPE') in {'DISHWASHER', 'REFRIGERATOR',
                                                             'UNDER_COUNTER'}:
             layout.operator("hb_face_frame.add_appliance_panels", text="Appliance Panels", icon='MOD_SOLIDIFY')
