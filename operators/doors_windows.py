@@ -1198,11 +1198,62 @@ def _seed_operator_from_opts(op, cage_obj, defaults, items_fn, context):
     return style
 
 
+def _draw_reveal_side(layout, op, side, label):
+    """One reveal's fields, folded away behind its own switch.
+
+    The two sides carry the same four figures and read the same way, so
+    doors and windows both draw them from here rather than each keeping
+    its own copy of the block."""
+    box = layout.box()
+    box.prop(op, 'reveal_%s_on' % side, text=label)
+    if not getattr(op, 'reveal_%s_on' % side):
+        return
+    col = box.column(align=True)
+    for prop, text in (('clearance_amount', "Clearance Amount:"),
+                       ('clearance_depth', "Clearance Depth:"),
+                       ('splay_amount', "Splay Amount:"),
+                       ('splay_depth', "Splay Depth:")):
+        row = col.row()
+        row.label(text=text)
+        row.prop(op, 'reveal_%s_%s' % (side, prop), text="")
+
+
+def _draw_reveals_tab(layout, op):
+    """Both reveals, exterior face first - the order they are met going
+    through the wall."""
+    layout.label(text="Carved in from each wall face", icon='INFO')
+    _draw_reveal_side(layout, op, 'ext', "Exterior Reveal")
+    _draw_reveal_side(layout, op, 'int', "Interior Reveal")
+
+
+def _labelled_row(layout, op, prop, text):
+    """The label-left / field-right row these dialogs are built from."""
+    row = layout.row()
+    row.label(text=text)
+    row.prop(op, prop, text="")
+    return row
+
+
 class home_builder_doors_windows_OT_door_prompts(bpy.types.Operator):
     bl_idname = "home_builder_doors_windows.door_prompts"
     bl_label = "Door Prompts"
     bl_description = "Edit door properties"
     bl_options = {'UNDO'}
+
+    # Which page of the dialog is showing. It lives on the operator so
+    # it survives the redraw every edit triggers, and - like any
+    # operator property - is remembered for the next door opened, which
+    # is what you want when the same setting is being changed down a
+    # row of them.
+    ui_tab: bpy.props.EnumProperty(
+        name="Tab",
+        items=[
+            ('DOOR', "Door", "Panel layout, stiles and rails, swing"),
+            ('UNIT', "Unit", "Sidelites and transom"),
+            ('TRIM', "Trim", "Casing, threshold, handle"),
+            ('REVEALS', "Reveals", "Splayed reveals through the wall"),
+        ],
+        default='DOOR')  # type: ignore
 
     door_width: bpy.props.FloatProperty(name="Width", unit='LENGTH', precision=5)  # type: ignore
     door_height: bpy.props.FloatProperty(name="Height", unit='LENGTH', precision=5)  # type: ignore
@@ -1368,130 +1419,83 @@ class home_builder_doors_windows_OT_door_prompts(bpy.types.Operator):
         self.handle_rot_back = tuple(
             opts['handle_rot_back_%s' % axis] for axis in 'xyz')
         wm = context.window_manager
-        return wm.invoke_props_dialog(self, width=350)
+        return wm.invoke_props_dialog(self, width=380)
 
     def execute(self, context):
         return {'FINISHED'}
 
     def draw(self, context):
+        """Size and preset stay in view; everything else is behind a
+        tab. The two at the top are what every door needs and what the
+        rest is read against, so they are not worth hiding - and with
+        no preset there is nothing else to show anyway."""
         layout = self.layout
         box = layout.box()
-        row = box.row()
-        row.label(text="Width:")
-        row.prop(self, 'door_width', text="")
-        row = box.row()
-        row.label(text="Height:")
-        row.prop(self, 'door_height', text="")
+        _labelled_row(box, self, 'door_width', "Width:")
+        _labelled_row(box, self, 'door_height', "Height:")
         row = box.row()
         row.label(text="Location X:")
         row.prop(self.door.obj, 'location', index=0, text="")
+        _labelled_row(box, self, 'style', "Preset:")
 
-        box = layout.box()
-        row = box.row()
-        row.label(text="Preset:")
-        row.prop(self, 'style', text="")
         if self.style == 'NONE':
             return
-        row = box.row()
-        row.label(text="Panel Layout:")
-        row.prop(self, 'door_style', text="")
+
+        layout.separator()
+        # expand=True renders the enum as a row of toggle buttons
+        # rather than a dropdown.
+        row = layout.row(align=True)
+        row.prop(self, 'ui_tab', expand=True)
+        getattr(self, '_draw_' + self.ui_tab.lower())(layout.box())
+
+    def _draw_door(self, box):
+        _labelled_row(box, self, 'door_style', "Panel Layout:")
         if self.door_style == 'LITE_FULL':
             row = box.row(align=True)
             row.prop(self, 'glass_grid_cols')
             row.prop(self, 'glass_grid_rows')
-            row = box.row()
-            row.label(text="Grille Bar:")
-            row.prop(self, 'grille_bar_width', text="")
+            _labelled_row(box, self, 'grille_bar_width', "Grille Bar:")
         elif self.door_style.startswith('LITE_'):
-            row = box.row()
-            row.label(text="Lock Rail:")
-            row.prop(self, 'lock_rail_width', text="")
+            _labelled_row(box, self, 'lock_rail_width', "Lock Rail:")
         if not self.door_style.startswith('LITE_') \
                 and self.door_style != 'FLUSH':
-            row = box.row()
-            row.prop(self, 'panel_raise')
-        row = box.row()
-        row.label(text="Open Angle:")
-        row.prop(self, 'open_angle', text="")
+            box.prop(self, 'panel_raise')
+        _labelled_row(box, self, 'open_angle', "Open Angle:")
 
-        box = layout.box()
+        box.separator()
         box.label(text="Construction")
-        row = box.row()
-        row.label(text="Stile Width:")
-        row.prop(self, 'stile_width', text="")
-        row = box.row()
-        row.label(text="Top Rail:")
-        row.prop(self, 'top_rail_width', text="")
-        row = box.row()
-        row.label(text="Bottom Rail:")
-        row.prop(self, 'bottom_rail_width', text="")
+        col = box.column(align=True)
+        _labelled_row(col, self, 'stile_width', "Stile Width:")
+        _labelled_row(col, self, 'top_rail_width', "Top Rail:")
+        _labelled_row(col, self, 'bottom_rail_width', "Bottom Rail:")
 
-        box = layout.box()
-        box.label(text="Unit")
-        row = box.row()
-        row.label(text="Left Sidelite:")
-        row.prop(self, 'sidelite_left', text="")
-        row = box.row()
-        row.label(text="Right Sidelite:")
-        row.prop(self, 'sidelite_right', text="")
-        row = box.row()
-        row.label(text="Transom Height:")
-        row.prop(self, 'transom_height', text="")
+    def _draw_unit(self, box):
+        box.label(text="Sidelites and a transom widen and heighten the "
+                       "opening", icon='INFO')
+        col = box.column(align=True)
+        _labelled_row(col, self, 'sidelite_left', "Left Sidelite:")
+        _labelled_row(col, self, 'sidelite_right', "Right Sidelite:")
+        _labelled_row(col, self, 'transom_height', "Transom Height:")
 
-        box = layout.box()
-        box.label(text="Trim")
+    def _draw_trim(self, box):
         row = box.row(align=True)
         row.prop(self, 'include_interior_casing')
         row.prop(self, 'include_exterior_casing')
-        row = box.row()
-        row.label(text="Casing Width:")
-        row.prop(self, 'casing_width', text="")
-        row = box.row()
-        row.label(text="Threshold Height:")
-        row.prop(self, 'threshold_height', text="")
+        _labelled_row(box, self, 'casing_width', "Casing Width:")
+        _labelled_row(box, self, 'threshold_height', "Threshold Height:")
+
+        box.separator()
         row = box.row()
         row.prop(self, 'include_knob')
         if self.include_knob:
             row.prop(self, 'handle', text="")
         if self.include_knob and self.handle != 'DEFAULT':
-            row = box.row()
-            row.label(text="Front Rotation:")
-            row.prop(self, 'handle_rot_front', text="")
-            row = box.row()
-            row.label(text="Back Rotation:")
-            row.prop(self, 'handle_rot_back', text="")
+            col = box.column(align=True)
+            _labelled_row(col, self, 'handle_rot_front', "Front Rotation:")
+            _labelled_row(col, self, 'handle_rot_back', "Back Rotation:")
 
-        box = layout.box()
-        box.prop(self, 'reveal_ext_on')
-        if self.reveal_ext_on:
-            row = box.row()
-            row.label(text="Clearance Amount:")
-            row.prop(self, 'reveal_ext_clearance_amount', text="")
-            row = box.row()
-            row.label(text="Clearance Depth:")
-            row.prop(self, 'reveal_ext_clearance_depth', text="")
-            row = box.row()
-            row.label(text="Splay Amount:")
-            row.prop(self, 'reveal_ext_splay_amount', text="")
-            row = box.row()
-            row.label(text="Splay Depth:")
-            row.prop(self, 'reveal_ext_splay_depth', text="")
-
-        box = layout.box()
-        box.prop(self, 'reveal_int_on')
-        if self.reveal_int_on:
-            row = box.row()
-            row.label(text="Clearance Amount:")
-            row.prop(self, 'reveal_int_clearance_amount', text="")
-            row = box.row()
-            row.label(text="Clearance Depth:")
-            row.prop(self, 'reveal_int_clearance_depth', text="")
-            row = box.row()
-            row.label(text="Splay Amount:")
-            row.prop(self, 'reveal_int_splay_amount', text="")
-            row = box.row()
-            row.label(text="Splay Depth:")
-            row.prop(self, 'reveal_int_splay_depth', text="")
+    def _draw_reveals(self, box):
+        _draw_reveals_tab(box, self)
 
 
 class home_builder_doors_windows_OT_window_prompts(bpy.types.Operator):
@@ -1499,6 +1503,18 @@ class home_builder_doors_windows_OT_window_prompts(bpy.types.Operator):
     bl_label = "Window Prompts"
     bl_description = "Edit window properties"
     bl_options = {'UNDO'}
+
+    # See the door prompts: the showing page lives on the operator, so
+    # it survives a redraw and is remembered for the next window.
+    ui_tab: bpy.props.EnumProperty(
+        name="Tab",
+        items=[
+            ('WINDOW', "Window", "Window type, sashes, frame"),
+            ('GRILLE', "Grille", "Grille pattern and bars"),
+            ('TRIM', "Trim", "Casing, sill, stool"),
+            ('REVEALS', "Reveals", "Splayed reveals through the wall"),
+        ],
+        default='WINDOW')  # type: ignore
 
     window_width: bpy.props.FloatProperty(name="Width", unit='LENGTH', precision=5)  # type: ignore
     window_height: bpy.props.FloatProperty(name="Height", unit='LENGTH', precision=5)  # type: ignore
@@ -1616,105 +1632,71 @@ class home_builder_doors_windows_OT_window_prompts(bpy.types.Operator):
             _window_style_preset_items, context)
         self._applied_style = self.style
         wm = context.window_manager
-        return wm.invoke_props_dialog(self, width=350)
+        return wm.invoke_props_dialog(self, width=380)
 
     def execute(self, context):
         return {'FINISHED'}
 
     def draw(self, context):
+        """See the door prompts: size and preset stay in view, the rest
+        goes behind a tab."""
         layout = self.layout
         box = layout.box()
-        row = box.row()
-        row.label(text="Width:")
-        row.prop(self, 'window_width', text="")
-        row = box.row()
-        row.label(text="Height:")
-        row.prop(self, 'window_height', text="")
-        row = box.row()
-        row.label(text="Height From Floor:")
-        row.prop(self, 'height_from_floor', text="")
+        _labelled_row(box, self, 'window_width', "Width:")
+        _labelled_row(box, self, 'window_height', "Height:")
+        _labelled_row(box, self, 'height_from_floor', "Height From Floor:")
         row = box.row()
         row.label(text="Location X:")
         row.prop(self.window.obj, 'location', index=0, text="")
+        _labelled_row(box, self, 'style', "Preset:")
 
-        box = layout.box()
-        row = box.row()
-        row.label(text="Preset:")
-        row.prop(self, 'style', text="")
         if self.style == 'NONE':
             return
-        row = box.row()
-        row.label(text="Window Type:")
-        row.prop(self, 'window_type', text="")
-        if self.window_type == 'HUNG':
-            row = box.row()
-            row.prop(self, 'sash_split')
-        elif self.window_type in ('CASEMENT', 'SLIDER'):
-            row = box.row()
-            row.prop(self, 'panes')
 
-        box = layout.box()
-        box.label(text="Grille")
+        layout.separator()
+        row = layout.row(align=True)
+        row.prop(self, 'ui_tab', expand=True)
+        getattr(self, '_draw_' + self.ui_tab.lower())(layout.box())
+
+    def _draw_window(self, box):
+        _labelled_row(box, self, 'window_type', "Window Type:")
+        if self.window_type == 'HUNG':
+            box.prop(self, 'sash_split')
+            # The rail the two sashes meet on. It has always been built
+            # to; it just had nowhere to be set from.
+            _labelled_row(box, self, 'check_rail_width', "Check Rail:")
+        elif self.window_type in ('CASEMENT', 'SLIDER'):
+            box.prop(self, 'panes')
+
+        box.separator()
+        box.label(text="Frame")
+        col = box.column(align=True)
+        _labelled_row(col, self, 'frame_width', "Frame Width:")
+        _labelled_row(col, self, 'sash_face_width', "Sash Width:")
+
+    def _draw_grille(self, box):
         row = box.row()
         row.prop(self, 'grille_pattern', expand=True)
+        if self.grille_pattern == 'NONE':
+            return
         if self.grille_pattern == 'COLONIAL':
             row = box.row(align=True)
             row.prop(self, 'grille_cols')
             row.prop(self, 'grille_rows')
-        if self.grille_pattern != 'NONE':
-            row = box.row()
-            row.label(text="Grille Bar:")
-            row.prop(self, 'grille_bar_width', text="")
+        _labelled_row(box, self, 'grille_bar_width', "Grille Bar:")
 
-        box = layout.box()
-        box.label(text="Frame & Trim")
-        row = box.row()
-        row.label(text="Frame Width:")
-        row.prop(self, 'frame_width', text="")
-        row = box.row()
-        row.label(text="Sash Width:")
-        row.prop(self, 'sash_face_width', text="")
+    def _draw_trim(self, box):
         row = box.row(align=True)
         row.prop(self, 'include_interior_casing')
         row.prop(self, 'include_exterior_casing')
-        row = box.row()
-        row.label(text="Casing Width:")
-        row.prop(self, 'casing_width', text="")
+        _labelled_row(box, self, 'casing_width', "Casing Width:")
+        box.separator()
         row = box.row(align=True)
         row.prop(self, 'include_sill')
         row.prop(self, 'include_stool')
 
-        box = layout.box()
-        box.prop(self, 'reveal_ext_on')
-        if self.reveal_ext_on:
-            row = box.row()
-            row.label(text="Clearance Amount:")
-            row.prop(self, 'reveal_ext_clearance_amount', text="")
-            row = box.row()
-            row.label(text="Clearance Depth:")
-            row.prop(self, 'reveal_ext_clearance_depth', text="")
-            row = box.row()
-            row.label(text="Splay Amount:")
-            row.prop(self, 'reveal_ext_splay_amount', text="")
-            row = box.row()
-            row.label(text="Splay Depth:")
-            row.prop(self, 'reveal_ext_splay_depth', text="")
-
-        box = layout.box()
-        box.prop(self, 'reveal_int_on')
-        if self.reveal_int_on:
-            row = box.row()
-            row.label(text="Clearance Amount:")
-            row.prop(self, 'reveal_int_clearance_amount', text="")
-            row = box.row()
-            row.label(text="Clearance Depth:")
-            row.prop(self, 'reveal_int_clearance_depth', text="")
-            row = box.row()
-            row.label(text="Splay Amount:")
-            row.prop(self, 'reveal_int_splay_amount', text="")
-            row = box.row()
-            row.label(text="Splay Depth:")
-            row.prop(self, 'reveal_int_splay_depth', text="")
+    def _draw_reveals(self, box):
+        _draw_reveals_tab(box, self)
 
 
 class home_builder_doors_windows_OT_flip_door_swing(bpy.types.Operator):
