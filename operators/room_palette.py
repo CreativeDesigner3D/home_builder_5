@@ -31,7 +31,6 @@ from ..hb_gpu_draw import (
 )
 from ..hb_gpu_ui import (
     Theme,
-    glyph_chevron,
     scale,
     text_width,
     draw_centered_text,
@@ -54,8 +53,8 @@ LABEL_PAD_X = 6
 LABEL_TEXT_GAP = 4      # glyph to its name, on an expanded strip
 HEADER_H = 15           # group caption row
 HEADER_GAP = 3          # caption to the first tool under it
-SETTINGS_H = 20         # a settings row is shorter than a tool button
-CHEVRON_PAD = 9         # chevron inset from a settings row's right edge
+SETTINGS_MARK = 14      # settings affordance at the end of a tool row
+SETTINGS_PAD = 7        # its inset from the row's right edge
 FONT_HEADER = 9
 LABEL_HEIGHT = 18
 FONT_SIZE = 11
@@ -68,7 +67,7 @@ _addon_keymaps = []
 _mouse_region = None
 _hover = None
 _hover_caret = False     # cursor is on the options corner, not the tool
-_hover_settings = None   # options name of the settings row under the cursor
+_hover_settings = None   # options form under the cursor, if any
 _hover_toggle = False    # cursor is on the compact/expanded toggle
 
 
@@ -262,6 +261,22 @@ CARET = 11              # unscaled; corner affordance on tools with options.
                         # only way in.
 
 
+def _g_settings(shader, box, color):
+    """Two sliders -- the mark for "there are settings behind this".
+
+    Sliders rather than a gear: a gear is teeth around a ring, and at
+    fourteen pixels the teeth close up into a blob. Two rules with a
+    knob on each survive the size, and say adjustable besides.
+    """
+    x, y, w, h = box
+    for row, knob in ((0.34, 0.62), (0.66, 0.34)):
+        ly = y + h * row
+        draw_lines(shader, [(x, ly), (x + w, ly)], color)
+        kx = x + w * knob
+        draw_rect(shader, kx - w * 0.09, ly - h * 0.13,
+                  w * 0.18, h * 0.26, color)
+
+
 def _g_expand(shader, box, color):
     """A double chevron: pointing right to open the strip out, left to
     fold it back. The direction is the direction the strip will move."""
@@ -362,22 +377,6 @@ def _clear_of_panel(area, x, gap):
     return max(x, nav[0] + nav[2] + gap)
 
 
-def _group_settings(group_tools):
-    """[(options_name, options_label)] for a group, one per distinct form.
-
-    The four door and window tools share a single settings form, so a
-    Settings button on each of their rows would be the same button four
-    times. Distinct forms are what the group actually offers, and each
-    gets one row at the foot of the group.
-    """
-    seen, out = set(), []
-    for _op, _label, _glyph, _grp, options, olabel in group_tools:
-        if options and options not in seen:
-            seen.add(options)
-            out.append((options, olabel or "Settings"))
-    return out
-
-
 def button_width(s, is_expanded=None):
     """Strip width: square for glyphs alone, or wide enough for the
     longest thing the expanded strip has to write.
@@ -396,15 +395,13 @@ def button_width(s, is_expanded=None):
     for tool in now:
         widest = max(widest, text_width(0, FONT_SIZE * s, tool[1]))
     for group in {t[3] for t in now}:
-        for _name, label in _group_settings([t for t in now if t[3] == group]):
-            widest = max(widest, text_width(0, FONT_SIZE * s, label))
         caption = group_label(group)
         if caption:
             widest = max(widest, text_width(0, FONT_HEADER * s, caption))
-    # Room for the chevron a settings row ends with, so the longest
-    # label cannot run into it.
+    # Room at the end for the settings mark, so the longest label cannot
+    # run into it.
     return (btn + LABEL_TEXT_GAP * s + widest
-            + (LABEL_PAD_X + CHEVRON_PAD) * s)
+            + (LABEL_PAD_X + SETTINGS_MARK + SETTINGS_PAD) * s)
 
 
 def compute_layout(area):
@@ -412,11 +409,11 @@ def compute_layout(area):
 
     [(kind, payload, rect)] where kind is:
         'tool'     payload = index into tools()
-        'settings' payload = (options_name, options_label)
         'header'   payload = the group caption (never hit-tested)
 
-    Compact mode emits only 'tool' rows, so its geometry is exactly what
-    it was.
+    Settings have no row of their own in either mode -- they are a mark
+    inside the row of the tool they belong to (see _settings_rect), so
+    the strip is a list of tools and nothing else.
     """
     s = scale()
     x_min, _x_max, _y_min, y_max = get_visible_window_bounds(area)
@@ -446,14 +443,6 @@ def compute_layout(area):
         if last_group is not None:
             y -= (GROUP_GAP if new_group else BTN_GAP) * s
         if is_expanded and new_group:
-            # The settings for the group that just ended sit under it,
-            # so they read as belonging to those tools.
-            for entry in _group_settings([t for t in now
-                                          if t[3] == last_group]):
-                y -= SETTINGS_H * s
-                out.append(('settings', entry, (x, y, width,
-                                                SETTINGS_H * s)))
-                y -= BTN_GAP * s
             caption = group_label(group)
             if caption:
                 y -= HEADER_H * s
@@ -462,11 +451,6 @@ def compute_layout(area):
         last_group = group
         y -= btn
         out.append(('tool', i, (x, y, width, btn)))
-
-    if is_expanded and last_group is not None:
-        for entry in _group_settings([t for t in now if t[3] == last_group]):
-            y -= BTN_GAP * s + SETTINGS_H * s
-            out.append(('settings', entry, (x, y, width, SETTINGS_H * s)))
     return out
 
 
@@ -492,31 +476,36 @@ def _hit(mx, my, layout):
 def _hit_settings(mx, my, layout):
     """(options_name, options_label) under the cursor, or None.
 
-    Covers the expanded strip's settings rows AND the compact strip's
-    caret corner, so the click operator has one question to ask.
+    One question for the click operator to ask, in either mode: the
+    affordance always lives inside a tool row, so this walks the tool
+    rows and asks each one where its mark is.
     """
-    for kind, payload, rect in layout:
-        if kind == 'settings' and point_in_rect(mx, my, rect):
-            return payload
-    if expanded():
-        return None
     for kind, payload, rect in layout:
         if kind != 'tool':
             continue
         tool = tools()[payload]
         if tool[4] is None:
             continue
-        if point_in_rect(mx, my, _caret_rect(rect)):
+        if point_in_rect(mx, my, _settings_rect(rect)):
             return (tool[4], tool[5])
     return None
 
 
-def _caret_rect(rect):
-    """Bottom-right corner of a button: the options affordance."""
+def _settings_rect(rect):
+    """Where a tool row keeps its settings affordance.
+
+    Compact has only the button's own square to work with, so the mark
+    is a corner of it. Expanded has a row, so the mark sits at the end
+    of it, clear of the label and big enough to hit.
+    """
     s = scale()
-    c = CARET * s
-    x, y, w, _h = rect
-    return (x + w - c, y, c, c)
+    x, y, w, h = rect
+    if not expanded():
+        c = CARET * s
+        return (x + w - c, y, c, c)
+    m = SETTINGS_MARK * s
+    return (x + w - m - SETTINGS_PAD * s, y + (h - m) / 2.0, m, m)
+
 
 
 # ---- Draw ------------------------------------------------------------------
@@ -570,25 +559,6 @@ def _draw():
                       Theme.TEXT_HEADER, payload.upper())
             continue
 
-        if kind == 'settings':
-            hovered = _hover_settings == payload[0]
-            paint_button(shader, rect, hovered=hovered,
-                         border=Theme.BTN_BORDER)
-            draw_text(font_id, x + btn + LABEL_TEXT_GAP * s,
-                      y + h * 0.28, FONT_SIZE * s,
-                      Theme.TEXT_PRIMARY if hovered else Theme.TEXT_NORMAL,
-                      payload[1])
-            # A chevron, not the compact strip's corner mark: the mark
-            # is a corner of the button it sits in, and on a row that IS
-            # the settings there is no button for it to be the corner
-            # of -- it just collided with the end of the label.
-            glyph_chevron(shader, x + w - CHEVRON_PAD * s, y + h / 2.0,
-                          6 * s, True,
-                          Theme.GLYPH_HOVER if hovered else Theme.GLYPH)
-            if hovered:
-                hover_rect = rect
-            continue
-
         index = payload
         hovered = index == hover
         # Brighter edge: this strip floats on the viewport, not
@@ -605,27 +575,39 @@ def _draw():
                       y + h * 0.30, FONT_SIZE * s,
                       Theme.TEXT_PRIMARY if hovered else Theme.TEXT_NORMAL,
                       TOOLS_NOW[index][1])
-        elif TOOLS_NOW[index][4] is not None:
-            # Compact only: a small filled corner saying this tool has
-            # settings behind it. Expanded gives them a row instead.
-            cx, cy, cw, ch = _caret_rect(rect)
-            draw_polyline(shader,
-                          [(cx + cw, cy), (cx + cw, cy + ch), (cx, cy)],
-                          Theme.GLYPH_HOVER if hovered else Theme.TEXT_DIM,
-                          closed=True)
+        if TOOLS_NOW[index][4] is not None:
+            # Settings live on the tool's own row in both modes. Groups
+            # that share one form (the four door and window tools) show
+            # the mark on each of them: it is the same form four times,
+            # but it is where the tool is, which is where it is looked
+            # for -- and the two modes then behave alike.
+            on_mark = hovered and _hover_caret
+            mark = Theme.GLYPH_HOVER if on_mark else (
+                Theme.GLYPH if hovered else Theme.TEXT_DIM)
+            mx_, my_, mw_, mh_ = _settings_rect(rect)
+            if is_expanded:
+                _g_settings(shader, (mx_, my_, mw_, mh_), mark)
+            else:
+                # Compact: a filled corner of the button, because there
+                # is no room beside the glyph for anything more.
+                draw_polyline(shader,
+                              [(mx_ + mw_, my_), (mx_ + mw_, my_ + mh_),
+                               (mx_, my_)], mark, closed=True)
         if hovered:
             hover_rect = rect
 
     # The hover chip names what is under the cursor. Expanded mode has
-    # written every name on the strip already, so it needs no chip;
-    # compact needs one for the tool, and for the corner, which opens
-    # something different from the button it sits in.
+    # written every tool name on the strip already, so it needs a chip
+    # only over the settings mark -- which opens something the row does
+    # not name. Compact needs one for the tool as well.
     label = None
+    on_mark = hover is not None and _hover_caret and TOOLS_NOW[hover][5]
     if not is_expanded and _hover_toggle:
         label = "Expand Tool Bar"
+    elif on_mark:
+        label = TOOLS_NOW[hover][5]
     elif not is_expanded and hover is not None:
-        label = (TOOLS_NOW[hover][5] if (_hover_caret and TOOLS_NOW[hover][5])
-                 else TOOLS_NOW[hover][1])
+        label = TOOLS_NOW[hover][1]
     if label and hover_rect is not None:
         bx, by, bw, bh = hover_rect
         lw = text_width(font_id, FONT_SIZE * s, label) + LABEL_PAD_X * s * 2
@@ -707,8 +689,9 @@ class home_builder_OT_room_palette_hover(bpy.types.Operator):
         hit = _hit(mx, my, layout)
         settings = _hit_settings(mx, my, layout)
         toggle = _hit_toggle(mx, my, layout)
-        # A settings hit that is also over a tool is the compact caret;
-        # one on its own is an expanded settings row.
+        # The settings mark always sits inside a tool row, so a
+        # settings hit means the cursor is on the mark rather than on
+        # the rest of the button.
         on_caret = settings is not None and hit is not None
         name = settings[0] if settings is not None else None
         if ((hit, on_caret, name, toggle)
