@@ -145,6 +145,24 @@ def _g_ceiling(shader, box, color):
         draw_lines(shader, [(fx, y + h * 0.85), (fx - w * 0.12, y + h)], color)
 
 
+def _g_stairs(shader, box, color):
+    """A flight in section: three risers and their treads.
+
+    The stepped line is the whole mark. Three steps rather than a truer
+    count because at this size the treads have to stay wide enough to
+    read as treads -- more of them closes the line into a diagonal.
+    """
+    x, y, w, h = box
+    steps = 3
+    tread = w / float(steps)
+    rise = h / float(steps)
+    pts = [(x, y)]
+    for i in range(steps):
+        pts.append((x + tread * i, y + rise * (i + 1)))
+        pts.append((x + tread * (i + 1), y + rise * (i + 1)))
+    draw_polyline(shader, pts, color)
+
+
 # ---- Tool table ------------------------------------------------------------
 # (operator, label, glyph, group, options, options_label)
 #   group   -- only controls the gap between runs of buttons
@@ -172,6 +190,7 @@ BUILTIN_TOOLS = (
      'draw_door_window_defaults', "Door & Window Settings"),
     ("home_builder_walls.add_floor", "Add Floor", _g_floor, 2, None, None),
     ("home_builder_walls.add_ceiling", "Add Ceiling", _g_ceiling, 2, None, None),
+    ("home_builder_stairs.place_stairs", "Add Stairs", _g_stairs, 2, None, None),
 )
 
 # Group captions, shown only in expanded mode. A group is just an int on
