@@ -24,7 +24,6 @@ import gpu
 from ..hb_gpu_draw import (
     get_visible_window_bounds,
     draw_rect,
-    draw_rect_outline,
     draw_lines,
     draw_text,
     point_in_rect,
@@ -95,25 +94,48 @@ def _g_door(shader, box, color):
 
 
 def _g_double_door(shader, box, color):
-    """Two leaves meeting in the middle, swinging opposite ways."""
-    import math
+    """Two leaves side by side, seen face on.
+
+    The only mark here drawn in elevation rather than plan, and
+    deliberately. In plan a double door is two quarter arcs, and at this
+    size two arcs side by side are two humps: the mark read as the letter
+    M however the leaves were sized or the wall was drawn. Tried and
+    rejected: matched leaf and radius, hinges brought inboard onto a
+    length of wall, leaves swung to 58 degrees, leaves folded into a
+    cased opening. All of them stayed a pair of bumps.
+
+    What separates this tool from Single Door is not the swing -- both
+    swing -- it is that there are two leaves, so the mark shows the two
+    leaves. Same reasoning as the other marks on this strip: draw what
+    the tool makes.
+    """
     x, y, w, h = box
-    half = w / 2.0
-    draw_lines(shader, [(x, y), (x, y + h * 0.7)], color)
-    draw_lines(shader, [(x + w, y), (x + w, y + h * 0.7)], color)
-    draw_polyline(shader, arc_points(x, y, half, math.pi / 2.0, 0.0, 6), color)
-    draw_polyline(shader, arc_points(x + w, y, half, math.pi / 2.0,
-                                     math.pi, 6), color)
+    draw_polyline(shader, [(x, y), (x + w, y), (x + w, y + h), (x, y + h)],
+                  color, closed=True)
+    cx = x + w / 2.0
+    draw_lines(shader, [(cx, y), (cx, y + h)], color)
+    k = max(1.0, w * 0.09)
+    draw_rect(shader, cx - w * 0.20 - k / 2.0, y + h * 0.46, k, k, color)
+    draw_rect(shader, cx + w * 0.20 - k / 2.0, y + h * 0.46, k, k, color)
 
 
 def _g_open_door(shader, box, color):
-    """A cased opening: jambs, no leaf."""
+    """A cased opening: the wall broken, jambs returned, no leaf.
+
+    What makes an opening an opening is the ABSENCE of a swing, so the
+    wall has to be legible for the gap in it to mean anything. Two bare
+    jamb lines -- which is what this was -- carry no wall, and read as
+    two unrelated strokes.
+    """
     x, y, w, h = box
-    t = h * 0.22
-    draw_lines(shader, [(x, y), (x, y + h), (x + w, y), (x + w, y + h)], color)
-    draw_lines(shader, [(x, y + t), (x, y + t)], color)
-    draw_rect(shader, x, y + h * 0.45, w * 0.16, t * 0.5, color)
-    draw_rect(shader, x + w - w * 0.16, y + h * 0.45, w * 0.16, t * 0.5, color)
+    mid = y + h * 0.5
+    t = h * 0.17                        # half the wall thickness
+    gap0, gap1 = x + w * 0.34, x + w * 0.66
+    for x0, x1 in ((x, gap0), (gap1, x + w)):
+        draw_lines(shader, [(x0, mid - t), (x1, mid - t),
+                            (x0, mid + t), (x1, mid + t)], color)
+    draw_lines(shader, [(gap0, mid - t), (gap0, mid + t),
+                        (gap1, mid - t), (gap1, mid + t)], color)
 
 
 def _g_window(shader, box, color):
@@ -127,22 +149,48 @@ def _g_window(shader, box, color):
     draw_lines(shader, [(x, bot), (x, top), (x + w, bot), (x + w, top)], color)
 
 
-def _g_floor(shader, box, color):
-    """A slab seen in plan, with a hatched near edge."""
+# Floor and ceiling are the same thing at opposite ends of a room, and
+# the marks used to say so too literally: one box hatched along its
+# bottom edge, one hatched along its top, indistinguishable at a glance
+# and neither reading as a horizontal surface. They are now a plane in
+# perspective -- and the two differ twice over, in where the plane sits
+# in the button and in which way the trapezoid tapers, because a floor is
+# seen from above and a ceiling from below.
+
+# Floor and ceiling are one slab drawn twice, and the pair has to be
+# told apart at a glance. They used to be a box hatched along its bottom
+# edge and the same box hatched along its top -- indistinguishable, and
+# neither reading as a surface. A slab in section does read: a band with
+# structure hatched off the far side of it, low and hatched below for a
+# floor, high and hatched above for a ceiling. Two cues, not one.
+#
+# Also tried: the slab as a plane in perspective. A floor seen from above
+# and a ceiling seen from below recede the same way, so the shape came
+# out identical and only position separated them; adding walls to say
+# which side the room was on made a cluttered blob of one and a table of
+# the other.
+
+def _slab(shader, box, low, up, color):
+    """A slab band with structure hatched off one face."""
     x, y, w, h = box
-    draw_rect_outline(shader, x, y + h * 0.15, w, h * 0.7, color)
-    for i in range(1, 4):
-        fx = x + w * (i / 4.0)
-        draw_lines(shader, [(fx, y + h * 0.15), (fx - w * 0.12, y)], color)
+    lo = y + h * low
+    hi = lo + h * 0.20
+    draw_lines(shader, [(x, lo), (x + w, lo), (x, hi), (x + w, hi)], color)
+    face = hi if up else lo
+    step = h * 0.26 * (1.0 if up else -1.0)
+    for i in range(4):
+        fx = x + w * (0.10 + 0.25 * i)
+        draw_lines(shader, [(fx, face), (fx - w * 0.16, face + step)], color)
+
+
+def _g_floor(shader, box, color):
+    """A floor slab in section, hatched below."""
+    _slab(shader, box, 0.34, False, color)
 
 
 def _g_ceiling(shader, box, color):
-    """The same slab, hatched upward -- the ceiling above."""
-    x, y, w, h = box
-    draw_rect_outline(shader, x, y + h * 0.15, w, h * 0.7, color)
-    for i in range(1, 4):
-        fx = x + w * (i / 4.0)
-        draw_lines(shader, [(fx, y + h * 0.85), (fx - w * 0.12, y + h)], color)
+    """The same slab high in the button, hatched above."""
+    _slab(shader, box, 0.46, True, color)
 
 
 def _g_measure(shader, box, color):
