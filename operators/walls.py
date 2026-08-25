@@ -11,6 +11,13 @@ from gpu_extras.batch import batch_for_shader
 from .. import hb_types, hb_snap, hb_placement, hb_utils, units
 
 # Wall Miter Angle Calculation
+# How much a wall end may be sheared to close an outer corner, as a
+# multiple of that wall's own thickness. A square corner needs one
+# thickness; the sharpest corners worth building need a few. Beyond
+# this the corner is not really a corner - see _solve_miter_shear_angles.
+MAX_MITER_SHEAR_RATIO = 8.0
+
+
 def _solve_miter_shear_angles(a_rot, a_thickness, b_rot, b_thickness):
     """
     Given wall A ending where wall B starts (sharing the same inner corner
@@ -54,6 +61,19 @@ def _solve_miter_shear_angles(a_rot, a_thickness, b_rot, b_thickness):
         return -turn / 2, turn / 2
 
     shear_a, shear_b = M.inverted() @ rhs
+
+    # Two walls that only just turn away from each other really do meet
+    # their outer faces a long way off, and the solve says so: the shear
+    # runs away as the turn goes to zero. That answer is geometrically
+    # right and useless to build - it shears the wall end into a spike
+    # far longer than the wall. Past what a miter can sensibly carry
+    # (about 83 degrees of shear), take the symmetric split instead and
+    # leave the small step at the outer face, which is what a nearly
+    # straight run looked like before any of this.
+    max_shear = MAX_MITER_SHEAR_RATIO
+    if (abs(shear_a) > max_shear * a_thickness
+            or abs(shear_b) > max_shear * b_thickness):
+        return -turn / 2, turn / 2
 
     right_angle_a = math.atan2(shear_a, a_thickness) if a_thickness else 0.0
     left_angle_b = math.atan2(shear_b, b_thickness) if b_thickness else 0.0
@@ -4516,6 +4536,14 @@ class home_builder_walls_OT_update_wall_thickness(bpy.types.Operator):
             obj.update_tag()
             count += 1
 
+        if count:
+            # A miter angle is worked out from BOTH walls' thickness, so
+            # changing thickness on one type of wall leaves every corner
+            # it makes with another type mitered for the old figure. The
+            # whole scene is re-mitered rather than just the walls that
+            # changed: the wall on the other side of each corner did not
+            # change and still needs its own angle worked out again.
+            update_all_wall_miters()
         if count and context.area is not None:
             context.area.tag_redraw()
         self.report({'INFO'}, f"Updated thickness on {count} {wall_type} wall(s)")
