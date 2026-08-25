@@ -844,7 +844,12 @@ def _build_dishwasher(cage_obj, opts):
 
 def _under_counter_interior(cg, opts, kind, dark, z0, depth):
     """Shelves or wine slats in the cavity behind a glass door. Their
-    spacing is driven, so they stay evenly divided as the box grows."""
+    spacing is driven, so they stay evenly divided as the box grows.
+
+    Anchored at the BACK of the cavity: a part's width runs toward the
+    front (Mirror Y), so starting one at the door face would build it out
+    through the glass.
+    """
     if kind == 'ICE':
         return
     if kind == 'WINE':
@@ -855,10 +860,10 @@ def _under_counter_interior(cg, opts, kind, dark, z0, depth):
         count = max(1, int(opts.get('shelf_count', 3)))
         thickness = inch(0.5)
         name = "Shelf"
+    y_back = '-dim_y + %f' % (UNDER_COUNTER_DOOR_T + depth)
     for i in range(count):
         fraction = (i + 1.0) / (count + 1.0)
-        _flat(cg, "%s %d" % (name, i + 1), LINER_T,
-              '-dim_y + %f' % UNDER_COUNTER_DOOR_T,
+        _flat(cg, "%s %d" % (name, i + 1), LINER_T, y_back,
               '%f + (dim_z - %f) * %f' % (z0, z0, fraction),
               'dim_x - %f' % (2.0 * LINER_T), depth - inch(0.25),
               thickness, dark)
@@ -866,17 +871,23 @@ def _under_counter_interior(cg, opts, kind, dark, z0, depth):
 
 def _under_counter_liner(cg, dark, z0, depth):
     """Line the cavity so the recess reads as a box rather than a hole
-    with open sides."""
-    y_front = '-dim_y + %f' % UNDER_COUNTER_DOOR_T
+    with open sides. Anchored at the back of the cavity, for the reason
+    in _under_counter_interior."""
+    y_back = '-dim_y + %f' % (UNDER_COUNTER_DOOR_T + depth)
     height = 'dim_z - %f' % z0
-    _side(cg, "Liner Left", 0.0, y_front, z0, height, depth, LINER_T, dark,
+    _side(cg, "Liner Left", 0.0, y_back, z0, height, depth, LINER_T, dark,
           plus_x=True)
-    _side(cg, "Liner Right", 'dim_x', y_front, z0, height, depth, LINER_T,
+    _side(cg, "Liner Right", 'dim_x', y_back, z0, height, depth, LINER_T,
           dark, plus_x=False)
-    _flat(cg, "Liner Bottom", LINER_T, y_front, z0,
+    _flat(cg, "Liner Bottom", LINER_T, y_back, z0,
           'dim_x - %f' % (2.0 * LINER_T), depth, LINER_T, dark)
-    _flat(cg, "Liner Top", LINER_T, y_front, 'dim_z',
+    _flat(cg, "Liner Top", LINER_T, y_back, 'dim_z',
           'dim_x - %f' % (2.0 * LINER_T), depth, LINER_T, dark, down=True)
+    # The cabinet keeps its finish on the outside, so the cavity needs
+    # its own dark back rather than showing the case face through the
+    # glass.
+    _front(cg, "Liner Back", 0.0, z0, 'dim_x', height, LINER_T, dark,
+           y=y_back, proud=True)
 
 
 def _glass_door(cg, opts, mat, glass, metal, z0, height, door_t):
@@ -912,7 +923,7 @@ def _build_under_counter(cage_obj, opts):
 
     _flat(cg, "Under Counter Case", 0.0, 0.0, 0.0, 'dim_x',
           'dim_y - %f' % (door_t + interior), 'dim_z',
-          dark if (panel_ready or glass_door) else mat)
+          dark if panel_ready else mat)
 
     if kick_h > 0.0:
         _front(cg, "Under Counter Grille", 0.0, 0.0, 'dim_x', kick_h,
