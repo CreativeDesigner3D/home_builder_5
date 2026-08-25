@@ -1314,7 +1314,11 @@ def _draw_interior_items_section(layout, target_props, target_name=""):
         elif item.kind == 'ACCESSORY':
             sub.prop(item, 'accessory_label', text="Label")
             sub.prop(item, 'accessory_qty', text="Qty")
-            draw_drawer_insert_settings(sub, item, show_hint=False)
+            # Show the not-modeled note here: this list is where someone
+            # goes looking after adding an accessory and seeing nothing
+            # appear inside the cabinet, so it is the one place the
+            # answer has to be.
+            draw_drawer_insert_settings(sub, item)
         elif item.kind == 'CLOSET_ROD':
             sub.prop(item, 'rod_distance_from_top', text="Distance From Top")
         elif item.kind in bar_storage.KINDS:

@@ -8001,8 +8001,8 @@ class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
     INTERIOR_KIND_ITEMS = [
         ('ADJUSTABLE_SHELF', "Adjustable Shelves", "Set of evenly-spaced shelves on shelf pins"),
         ('GLASS_SHELF',      "Glass Shelves",      "Adjustable shelves with a glass material override"),
-        ('PULLOUT_SHELF',    "Pullout Shelves",    "Stack of flat shelves on slide hardware"),
-        ('ROLLOUT',          "Rollouts",           "Stack of drawer boxes on slide hardware"),
+        ('PULLOUT_SHELF',    "Roll-out Shelves",   "Stack of flat shelves on slide hardware"),
+        ('ROLLOUT',          "Roll-outs",          "Stack of drawer boxes on slide hardware"),
         ('TRAY_DIVIDERS',    "Tray Dividers",      "Vertical dividers for trays / cookie sheets, optionally with a locked shelf above"),
         ('VANITY_SHELVES',   "Vanity Shelves",     "Pair of L/R shelves on corbel supports, around plumbing"),
         ('ACCESSORY',        "Accessory",          "Free-text accessory label rendered inside the opening"),

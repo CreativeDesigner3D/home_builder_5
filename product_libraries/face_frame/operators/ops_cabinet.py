@@ -3061,16 +3061,19 @@ class hb_face_frame_OT_show_interior_add_menu(bpy.types.Operator):
 
             layout.separator()
 
-            # Pullouts / rollouts / tray dividers
+            # Pullouts / rollouts / tray dividers. Named the way the
+            # trade names them on a spec sheet: a roll-out shelf is a
+            # flat shelf on slides, a roll-out is a drawer box on
+            # slides. Same wording as the Kind dropdown and the legend.
             op = layout.operator(
-                "hb_face_frame.add_interior_item", text="Pullout",
+                "hb_face_frame.add_interior_item", text="Roll-out Shelf",
             )
             op.kind = 'PULLOUT_SHELF'
             op.half_depth = False
             op.target_name = target_name
 
             op = layout.operator(
-                "hb_face_frame.add_interior_item", text="Rollout",
+                "hb_face_frame.add_interior_item", text="Roll-out",
             )
             op.kind = 'ROLLOUT'
             op.half_depth = False
@@ -3979,6 +3982,17 @@ class hb_face_frame_OT_add_accessory(bpy.types.Operator):
             box.label(text="No accessory selected")
             return
         box.label(text="Accessory: %s" % item.get('name', self.product))
+        # An accessory is an ORDER line first: it is what goes on the
+        # drawings, the legend and the report. Most of them are not
+        # modelled, and picking one expecting the shelves to appear is
+        # an easy mistake to make -- so say which this one is, and where
+        # to go if the 3D was the point.
+        if not is_pullout and not types_face_frame.render_hint_kind(
+                (item.get('render') or '').upper()):
+            box.label(text="Called out on the drawings; not shown in 3D",
+                      icon='INFO')
+            box.label(text="To see it, add the matching interior item "
+                           "(Roll-outs, Shelves, ...) as well")
         if region_pullout:
             box.label(text="Adds the pullout inside this divider region "
                            "(front unchanged)", icon='INFO')
