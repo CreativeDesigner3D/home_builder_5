@@ -432,6 +432,25 @@ def set_top_down_view():
     return False
 
 
+def set_plan_view(distance=8.0):
+    """Set the 3D viewport to a plan view centered on the origin.
+
+    Unlike set_top_down_view this also resets the pan and zoom, for
+    scenes that start out empty and so have nothing to frame.
+    """
+    for area in bpy.context.screen.areas:
+        if area.type == 'VIEW_3D':
+            for space in area.spaces:
+                if space.type == 'VIEW_3D':
+                    r3d = space.region_3d
+                    r3d.view_perspective = 'ORTHO'
+                    r3d.view_rotation = Euler((0, 0, 0)).to_quaternion()
+                    r3d.view_location = (0.0, 0.0, 0.0)
+                    r3d.view_distance = distance
+                    return True
+    return False
+
+
 def set_layout_shading():
     """Set the 3D viewport to solid shading for 2D layout and detail scenes."""
     for area in bpy.context.screen.areas:

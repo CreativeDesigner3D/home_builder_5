@@ -86,6 +86,14 @@ class home_builder_OT_create_room(bpy.types.Operator):
         new_tool_settings.use_snap_align_rotation = use_snap_align_rotation
         new_tool_settings.use_snap_backface_culling = use_snap_backface_culling
         
+        # A new room opens looking straight down. The plan is the first
+        # thing drawn in it and the empty scene has nothing to frame, so
+        # carrying over the previous room's angle and zoom is never
+        # useful. Save it as the room's view state so leaving and coming
+        # back lands on the plan again.
+        hb_utils.set_plan_view()
+        hb_utils.save_view_state(new_scene)
+
         # Mark original scene as room if not already marked and not a layout
         if not original_scene.get('IS_LAYOUT_VIEW') and not original_scene.get('IS_ROOM_SCENE'):
             original_scene['IS_ROOM_SCENE'] = True
