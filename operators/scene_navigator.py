@@ -681,9 +681,6 @@ def hit_test(mx, my, entries):
         elif kind == 'room_action':
             if _point_in_rect(mx, my, entry[5]):
                 return ('room_action', entry)
-        elif kind == 'room_action':
-            if _point_in_rect(mx, my, entry[5]):
-                return ('room_action', entry)
         elif kind == 'new_room':
             if _point_in_rect(mx, my, entry[1]):
                 return ('new_room', None)
@@ -1357,8 +1354,19 @@ classes = (
 def register():
     for cls in classes:
         bpy.utils.register_class(cls)
+    # Linking another room's geometry into this one, and the options for
+    # how: which of its walls / lights / products come across, what
+    # colour it draws in, whether it shows at all. A form -- there is a
+    # colour picker in it -- so it opens as a native dialog showing the
+    # sidebar's own block rather than being drawn again in GPU.
+    register_room_action('linked_rooms', "Linked Rooms",
+                         'home_builder.tool_options',
+                         {'section': 'draw_linked_rooms',
+                          'title': "Linked Rooms"},
+                         order=10)
 
 
 def unregister():
+    unregister_room_action('linked_rooms')
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)

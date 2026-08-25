@@ -496,6 +496,111 @@ def organize_room_collections(scene):
     return collections
 
 
+LINKED_CATEGORY_MAP = {
+    'walls': ('LINKED_INCLUDE_WALLS', "Walls"),
+    'lights': ('LINKED_INCLUDE_LIGHTS', "Lights"),
+    'products': ('LINKED_INCLUDE_PRODUCTS', "Products"),
+}
+
+
+def _hide_link_collection(source_scene, link_col):
+    """A link collection is scaffolding for the rooms borrowing this one;
+    it should not draw a second copy of the room in the room itself."""
+    for view_layer in source_scene.view_layers:
+        for layer_col in view_layer.layer_collection.children:
+            if layer_col.name == link_col.name:
+                layer_col.exclude = True
+
+
+def refresh_linked_room(linked_obj):
+    """Re-sort the source room and bring the instance back in step.
+
+    Every object a product builds is linked to the scene's own root
+    collection (see hb_types), so a cabinet rebuilt after the room was
+    linked drops its new parts outside '<Room> - Products' -- the
+    borrowing room then shows the cabinet with pieces missing. Sorting
+    the room again picks up those parts, along with any product placed
+    since, and re-linking each category the instance is set to include
+    covers a sub-collection that went missing in between.
+
+    Returns (True, message) or (False, message).
+    """
+    room_name = linked_obj.get('LINKED_ROOM_SOURCE', '')
+    source_scene = bpy.data.scenes.get(room_name)
+    if source_scene is None:
+        return False, f"Source room '{room_name}' no longer exists"
+
+    sub_collections = organize_room_collections(source_scene)
+
+    link_col = linked_obj.instance_collection
+    if link_col is None:
+        link_col_name = f"{room_name} - Link"
+        link_col = bpy.data.collections.get(link_col_name)
+        if link_col is None:
+            link_col = bpy.data.collections.new(link_col_name)
+        linked_obj.instance_collection = link_col
+
+    if link_col.name not in source_scene.collection.children:
+        source_scene.collection.children.link(link_col)
+    _hide_link_collection(source_scene, link_col)
+
+    for cat_key, (prop_key, _label) in LINKED_CATEGORY_MAP.items():
+        sub_col = sub_collections[cat_key]
+        included = linked_obj.get(prop_key, True)
+        if included and sub_col.name not in link_col.children:
+            link_col.children.link(sub_col)
+        elif not included and sub_col.name in link_col.children:
+            link_col.children.unlink(sub_col)
+
+    return True, f"Refreshed '{room_name}'"
+
+
+class home_builder_OT_refresh_linked_rooms(bpy.types.Operator):
+    bl_idname = "home_builder.refresh_linked_rooms"
+    bl_label = "Refresh Linked Rooms"
+    bl_description = ("Bring the linked rooms up to date with any cabinets "
+                      "added or changed since they were linked")
+    bl_options = {'UNDO'}
+
+    object_name: bpy.props.StringProperty(
+        name="Object Name",
+        description="Linked room to refresh; empty refreshes every linked "
+                    "room in this scene",
+        default=""
+    )  # type: ignore
+
+    def execute(self, context):
+        if self.object_name:
+            obj = context.scene.objects.get(self.object_name)
+            targets = [obj] if obj and obj.get('IS_LINKED_ROOM') else []
+        else:
+            targets = [obj for obj in context.scene.objects
+                       if obj.get('IS_LINKED_ROOM')]
+
+        if not targets:
+            self.report({'WARNING'}, "No linked rooms in this room")
+            return {'CANCELLED'}
+
+        refreshed = 0
+        problems = []
+        for obj in targets:
+            ok, message = refresh_linked_room(obj)
+            if ok:
+                refreshed += 1
+            else:
+                problems.append(message)
+
+        context.view_layer.update()
+
+        for message in problems:
+            self.report({'WARNING'}, message)
+        if refreshed:
+            self.report({'INFO'}, f"Refreshed {refreshed} linked room(s)")
+        elif not problems:
+            self.report({'INFO'}, "Nothing to refresh")
+        return {'FINISHED'}
+
+
 class home_builder_OT_toggle_link_room(bpy.types.Operator):
     bl_idname = "home_builder.toggle_link_room"
     bl_label = "Toggle Link Room"
@@ -594,17 +699,11 @@ class home_builder_OT_toggle_linked_room_category(bpy.types.Operator):
             self.report({'WARNING'}, "Link collection not found")
             return {'CANCELLED'}
         
-        # Map category to property key and collection name
-        cat_map = {
-            'walls': ('LINKED_INCLUDE_WALLS', f"{room_name} - Walls"),
-            'lights': ('LINKED_INCLUDE_LIGHTS', f"{room_name} - Lights"),
-            'products': ('LINKED_INCLUDE_PRODUCTS', f"{room_name} - Products"),
-        }
-        
-        if self.category not in cat_map:
+        if self.category not in LINKED_CATEGORY_MAP:
             return {'CANCELLED'}
-        
-        prop_key, col_name = cat_map[self.category]
+
+        prop_key, label = LINKED_CATEGORY_MAP[self.category]
+        col_name = f"{room_name} - {label}"
         sub_col = bpy.data.collections.get(col_name)
         if not sub_col:
             self.report({'WARNING'}, f"Collection '{col_name}' not found")
@@ -680,6 +779,7 @@ classes = (
     home_builder_OT_move_room_scene,
     home_builder_OT_toggle_link_room,
     home_builder_OT_toggle_linked_room_category,
+    home_builder_OT_refresh_linked_rooms,
     home_builder_OT_unlink_room,
 )
 
