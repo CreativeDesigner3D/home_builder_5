@@ -267,7 +267,7 @@ _BACK_BUTTON = _BackToRoomButton()
 
 class _PanelTabButton:
     """One of the panel tabs at the top-left -- the built-in ROOMS /
-    LIBRARY / STYLES, or one an add-on contributed.
+    LIBRARY / OPTIONS, or one an add-on contributed.
 
     These replace the old single button that showed the scene name. That
     button told you where you were but hid where you could go: the
@@ -324,8 +324,8 @@ class _PanelTabButton:
 
     def on_click(self, context, area, region):
         if self._showing():
-            # Clicking the showing tab dismisses the panel, pinned or not.
-            scene_navigator.set_pinned(False)
+            # The tab that opened the panel is what closes it again --
+            # nothing the panel itself does dismisses it.
             scene_navigator.close_panel()
             return
         scene_navigator.set_active_tab(self.tab)
@@ -941,7 +941,7 @@ def click_hits_widget(context, area, region_x, region_y):
         region = next((r for r in area.regions if r.type == 'WINDOW'), None)
         if region is not None:
             ax, atop = _nav_anchor(context, area)
-            layout = scene_navigator.build_pinned_layout(
+            layout = scene_navigator.build_hosted_layout(
                 context, area, region, ax, atop)
             if layout and point_in_rect(region_x, region_y, layout[0]):
                 return True
@@ -966,7 +966,7 @@ def pinned_panel_rect(context, area):
     if region is None:
         return None
     ax, atop = _nav_anchor(context, area)
-    layout = scene_navigator.build_pinned_layout(context, area, region,
+    layout = scene_navigator.build_hosted_layout(context, area, region,
                                                  ax, atop)
     return layout[0] if layout else None
 
@@ -1062,7 +1062,7 @@ def _draw_hud():
             if isinstance(widget, _PanelTabButton):
                 ax, atop = rect[0], rect[1] - 6
                 break
-        layout = scene_navigator.build_pinned_layout(
+        layout = scene_navigator.build_hosted_layout(
             context, area, region, ax, atop)
         if layout:
             scene_navigator.paint_navigator(
@@ -1112,24 +1112,15 @@ class home_builder_OT_hud_click(bpy.types.Operator):
         # is consumed, a miss falls through to the widgets below.
         if scene_navigator.panel_open():
             ax, atop = _nav_anchor(context, area)
-            layout = scene_navigator.build_pinned_layout(
+            layout = scene_navigator.build_hosted_layout(
                 context, area, region, ax, atop)
             if layout and point_in_rect(mx, my, layout[0]):
                 scene_navigator.handle_navigator_click(
                     context, mx, my, layout[1])
                 area.tag_redraw()
                 return {'FINISHED'}
-            # Clicked away. An unpinned panel behaves like a menu and
-            # closes, but the click still reaches the viewport -- so the
-            # same press that dismisses it can also select something.
-            if layout and not scene_navigator.is_pinned():
-                on_tab = any(
-                    point_in_rect(mx, my, rect)
-                    for widget, rect in compute_layout(context, area)
-                    if isinstance(widget, _PanelTabButton))
-                if not on_tab:
-                    scene_navigator.close_panel()
-                    area.tag_redraw()
+            # Clicked away: the panel stays up and the press carries on
+            # to the viewport, so designing never has to reopen it.
 
         for widget, rect in compute_layout(context, area):
             if point_in_rect(mx, my, rect):
@@ -1155,7 +1146,7 @@ class home_builder_OT_hud_scroll(bpy.types.Operator):
     def invoke(self, context, event):
         area = context.area
         ax, atop = _nav_anchor(context, area)
-        layout = scene_navigator.build_pinned_layout(
+        layout = scene_navigator.build_hosted_layout(
             context, area, context.region, ax, atop)
         if layout and scene_navigator.handle_navigator_scroll(
                 context, event.mouse_region_x, event.mouse_region_y,

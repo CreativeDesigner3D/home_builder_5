@@ -1,13 +1,22 @@
 """GPU-drawn library browser for the 3D viewport.
 
-A scrolling thumbnail grid of the face-frame product library, painted
-down the right of the viewport, so placing a cabinet does not mean crossing to the sidebar and
-back. Clicking a tile runs ``hb_face_frame.draw_cabinet`` -- the same operator
-the sidebar's library buttons fire -- so there is no per-product logic
-here and the sidebar keeps working unchanged.
+A scrolling thumbnail grid of the product library the scene is set to,
+painted down the right of the viewport, so placing a cabinet does not
+mean crossing to the sidebar and back. Clicking a tile asks that library
+to place the product -- the same operator the sidebar's library buttons
+fire -- so there is no per-product logic here and the sidebar keeps
+working unchanged.
 
-Products come from ``library_catalog``, the same data the sidebar
-renders, so the two browsers cannot drift. Category and search are this
+Which library is showing is the scene's own setting; the picker at the
+top of the panel is another way to set it. The HUD's mode row already
+follows that setting, so the browser had to as well, or the two would
+disagree about what you are building. A library becomes browsable by
+registering a catalog module (see register_catalog); one that has not
+is still offered in the picker and says so, which beats quietly showing
+another library's cabinets.
+
+Products come from that catalog, the same data the sidebar renders, so
+the two browsers cannot drift. Category and search are this
 panel's own (the sidebar has neither); both are buttons that open a
 native popup, because a GPU panel is the wrong place to reimplement a
 text field.
@@ -64,7 +73,6 @@ from ..hb_gpu_ui import (
     paint_button,
     glyph_chevron,
 )
-from ..product_libraries.face_frame import library_catalog
 
 _ADDON_PKG = __package__.rsplit(".", 1)[0]
 
@@ -89,6 +97,7 @@ PAD_Y = 8
 HEADER_H = 22
 HDR_BTN = 20        # the Auto Join pill and the sizes button
 FILTER_H = 20
+LIB_H = 20          # the library picker row
 SECTION_H = 21      # taller, to carry FONT_SECTION
 FOOTER_H = 18
 FONT_TITLE = 11
@@ -105,12 +114,61 @@ _collapsed = set()       # section keys the user folded away
 # already says there is more, and the wheel scrolls it either way.
 _list = ScrollList(bar_width=4, bar_pad=4, min_rows=2, show_bar=False)
 
-_textures = {}           # cabinet_name -> GPUTexture, or None if it failed
+_textures = {}           # (library, product key) -> GPUTexture or None
 _wanted = []             # names the draw pass asked for, most recent first
 _timer_running = False
 
 
 # ---- Catalog filtering -----------------------------------------------------
+
+# ---- Which library is being browsed ----------------------------------------
+# The scene picks the library (scene.home_builder.product_tab) and a
+# catalog registered for that tab is what the grid draws. The contract a
+# catalog fulfils is written down on face_frame/library_catalog.py:
+# SECTIONS, section_by_key, category_items, search_products,
+# thumbnail_path, place(), PROPS_GROUP, and the optional AUTO_JOIN /
+# SIZES_FORM / OPTION_FORMS
+# header controls. Products are dicts carrying at least 'key', 'label'
+# and 'section'.
+_CATALOGS = {}
+
+# (tab, what the picker segment says, what the panel is called).
+# The segment names the KIND of library, which is what you pick by; the
+# title names the library itself, which is what you are looking at.
+LIBRARY_TABS = (('FRAMELESS', "Frameless", "Sample"),
+                ('FACE FRAME', "Face Frame", "Custom Wood Products"),
+                ('CLOSET', "Closets", "Pulito"))
+
+
+def library_title(context=None):
+    """What the panel calls the library the scene is set to."""
+    tab = active_tab(context)
+    for ident, _segment, title in LIBRARY_TABS:
+        if ident == tab:
+            return title
+    return "Library"
+
+
+def register_catalog(product_tab, module):
+    """Make a product library browsable in the viewport."""
+    _CATALOGS[product_tab] = module
+
+
+def unregister_catalog(product_tab):
+    _CATALOGS.pop(product_tab, None)
+
+
+def active_tab(context=None):
+    scene = (context or bpy.context).scene
+    hb = getattr(scene, 'home_builder', None)
+    return getattr(hb, 'product_tab', 'FRAMELESS')
+
+
+def active_catalog(context=None):
+    """The catalog for the library the scene is set to, or None when that
+    library has not been made browsable yet."""
+    return _CATALOGS.get(active_tab(context))
+
 
 def _wm():
     return bpy.context.window_manager
@@ -124,41 +182,89 @@ def current_category():
     return getattr(_wm(), 'hb_library_category', 'ALL') or 'ALL'
 
 
-def face_frame_props(context):
-    """The scene's face-frame settings, or None."""
-    return getattr(context.scene, 'hb_face_frame', None)
+def library_props(context=None):
+    """The scene property group the active library keeps its settings
+    on, or None. Every form a catalog names is a method on it."""
+    cat = active_catalog(context)
+    group_name = getattr(cat, 'PROPS_GROUP', None) if cat else None
+    if not group_name:
+        return None
+    scene = (context or bpy.context).scene
+    return getattr(scene, group_name, None)
+
+
+def library_form(name, context=None):
+    """One of the active library's draw methods by name, or None -- the
+    sidebar's own UI, which is what a dialog shows rather than a second
+    copy of it."""
+    props = library_props(context)
+    fn = getattr(props, name, None) if props is not None else None
+    return fn if callable(fn) else None
+
+
+def _auto_join_prop(context):
+    """(property group, property name) for the active library's Auto Join
+    mode, or None where it has none."""
+    cat = active_catalog(context)
+    name = getattr(cat, 'AUTO_JOIN', None) if cat else None
+    props = library_props(context)
+    return (props, name) if (name and props is not None) else None
+
+
+def _sizes_form(context):
+    """The active library's default-sizes draw method, or None."""
+    cat = active_catalog(context)
+    name = getattr(cat, 'SIZES_FORM', None) if cat else None
+    return library_form(name, context) if name else None
 
 
 def auto_join_on(context):
-    props = face_frame_props(context)
-    return bool(getattr(props, 'auto_join_cabinets', False)) if props else False
+    prop = _auto_join_prop(context)
+    return bool(getattr(prop[0], prop[1], False)) if prop else False
 
 
 def visible_products():
-    """Products passing the category + search filters."""
-    return library_catalog.search_products(current_query(), current_category())
+    """Products passing the category + search filters. Empty when the
+    scene's library has no catalog registered."""
+    cat = active_catalog()
+    if cat is None:
+        return []
+    return cat.search_products(current_query(), current_category())
 
 
 def category_label():
+    cat = active_catalog()
+    if cat is None:
+        return "All Categories"
     key = current_category()
-    for ident, label, _desc in library_catalog.category_items():
+    for ident, label, _desc in cat.category_items():
         if ident == key:
             return label
     return "All Categories"
 
 # ---- Texture cache ---------------------------------------------------------
 
-def _want(cabinet_name):
+def _cache_key(product, context=None):
+    """Thumbnails cache per (library, product): two libraries may hold a
+    product of the same name and must not show each other's picture."""
+    return (active_tab(context), product['key'])
+
+
+def _want(cache_key):
     """Note that a tile wanted this thumbnail. Called from draw, so it
     must not touch bpy.data -- the timer does the loading."""
-    if cabinet_name in _textures or cabinet_name in _wanted:
+    if cache_key in _textures or cache_key in _wanted:
         return
-    _wanted.append(cabinet_name)
+    _wanted.append(cache_key)
 
 
-def _load_one(cabinet_name):
+def _load_one(cache_key):
     """Decode a product thumbnail into a GPUTexture, or None."""
-    path = library_catalog.thumbnail_path(cabinet_name)
+    tab, product_key = cache_key
+    cat = _CATALOGS.get(tab)
+    if cat is None:
+        return None
+    path = cat.thumbnail_path(product_key)
     if not path:
         return None
     img = None
@@ -243,9 +349,11 @@ def compute_layout(context, rect):
     s = scale()
     panel_x, bottom, panel_w, panel_h = rect
     top = bottom + panel_h
-    if panel_h < (HEADER_H + FILTER_H + FOOTER_H + MIN_TILE) * s:
+    if panel_h < (HEADER_H + LIB_H + FILTER_H + FOOTER_H
+                  + MIN_TILE) * s:
         return None
 
+    cat = active_catalog(context)
     items = visible_products()
     # The scrollbar is reserved unconditionally in _tile_metrics:
     # letting it come and go would re-size every tile as a filter
@@ -258,7 +366,7 @@ def compute_layout(context, rect):
     # section to its header; searching leaves the headers in place so it
     # stays obvious WHERE the matches came from.
     blocks = []          # ('header', section) | ('row', [products])
-    order = [sec['key'] for sec in library_catalog.SECTIONS]
+    order = [sec['key'] for sec in cat.SECTIONS] if cat else []
     by_section = {}
     for product in items:
         by_section.setdefault(product['section'], []).append(product)
@@ -266,8 +374,8 @@ def compute_layout(context, rect):
         group = by_section.get(key)
         if not group:
             continue
-        section = library_catalog.section_by_key(key)
-        blocks.append(('header', (key, section['label'], len(group))))
+        section = cat.section_by_key(key)
+        blocks.append(('header', (key, section['label'])))
         if key in _collapsed:
             continue
         for i in range(0, len(group), COLS):
@@ -293,7 +401,16 @@ def compute_layout(context, rect):
     # buttons that open a native popup -- a GPU panel is the wrong place
     # to reimplement a text field, and Blender's own popup already does
     # keyboard, undo and paste properly.
-    fy = header_rect[1] - 2 * s - FILTER_H * s
+    # Library picker, above the filters because it scopes them: switching
+    # library changes what the categories even are.
+    ly = header_rect[1] - 2 * s - LIB_H * s
+    seg_gap = 2 * s
+    seg_w = (content_w - seg_gap * (len(LIBRARY_TABS) - 1)) / len(LIBRARY_TABS)
+    lib_rects = [(ident, segment,
+                  (content_x + i * (seg_w + seg_gap), ly, seg_w, LIB_H * s))
+                 for i, (ident, segment, _title) in enumerate(LIBRARY_TABS)]
+
+    fy = ly - 2 * s - FILTER_H * s
     cat_w = content_w * 0.56
     cat_rect = (content_x, fy, cat_w, FILTER_H * s)
     search_rect = (content_x + cat_w + 4 * s, fy,
@@ -309,13 +426,13 @@ def compute_layout(context, rect):
                                    content_h, cell_h)
 
     tiles = []
-    headers = []         # (key, label, count, rect)
+    headers = []         # (key, label, rect)
     for block, block_top, _block_bottom in _list.visible(
             blocks, list_top, list_bottom, _block_h):
         kind, payload = block
         if kind == 'header':
-            key, label, count = payload
-            headers.append((key, label, count,
+            key, label = payload
+            headers.append((key, label,
                             (content_x, block_top - sect_h,
                              content_w, sect_h)))
             continue
@@ -326,7 +443,8 @@ def compute_layout(context, rect):
                                     tile + LABEL_H * s), (tx, ty, tile, tile)))
     panel_rect = rect
     return (panel_rect, header_rect,
-            (cat_rect, search_rect, autojoin_rect, sizes_rect), clip_rect,
+            (cat_rect, search_rect, autojoin_rect, sizes_rect, lib_rects),
+            clip_rect,
             tiles, track, thumb, len(items), headers)
 
 def _hit_section(mx, my, layout):
@@ -335,7 +453,7 @@ def _hit_section(mx, my, layout):
         return None
     if not point_in_rect(mx, my, layout[3]):
         return None
-    for key, _label, _count, rect in layout[8]:
+    for key, _label, rect in layout[8]:
         if point_in_rect(mx, my, rect):
             return key
     return None
@@ -354,10 +472,14 @@ def _hit_tile(mx, my, layout):
 
 
 def _hit_filter(mx, my, layout):
-    """'CATEGORY' / 'SEARCH' / None."""
+    """'CATEGORY' / 'SEARCH' / 'AUTOJOIN' / 'SIZES' / 'LIB:<tab>' / None."""
     if layout is None:
         return None
-    cat_rect, search_rect, autojoin_rect, sizes_rect = layout[2]
+    (cat_rect, search_rect, autojoin_rect, sizes_rect,
+     lib_rects) = layout[2]
+    for ident, _label, rect in lib_rects:
+        if point_in_rect(mx, my, rect):
+            return 'LIB:%s' % ident
     if point_in_rect(mx, my, cat_rect):
         return 'CATEGORY'
     if point_in_rect(mx, my, search_rect):
@@ -370,18 +492,18 @@ def _hit_filter(mx, my, layout):
 
 # ---- Draw ------------------------------------------------------------------
 
-_labels = {}        # (cabinet_name, display, width, size) -> fitted text
+_labels = {}        # (key, label, width, size) -> fitted text
 
 
 def _label_for(product, font_id, size, max_w):
     """fit_text is a binary search over blf.dimensions; the answer is
     the same every frame, so it is worth remembering. Keyed on width
     and size too, so a resize or a UI-scale change re-fits."""
-    key = (product['cabinet_name'], product['display'],
+    key = (product['key'], product['label'],
            round(max_w, 1), round(size, 1))
     text = _labels.get(key)
     if text is None:
-        text = fit_text(font_id, size, product['display'], max_w)
+        text = fit_text(font_id, size, product['label'], max_w)
         _labels[key] = text
     return text
 
@@ -433,6 +555,16 @@ def hit(context, mx, my, entries):
     if layout is None:
         return False
     which = _hit_filter(mx, my, layout)
+    if which and which.startswith('LIB:'):
+        # The SCENE owns which library is current -- the whole HUD reads
+        # it, not just this panel -- so the picker sets that and lets
+        # everything else follow.
+        hb = getattr(context.scene, 'home_builder', None)
+        want = which[4:]
+        if hb is not None and hb.product_tab != want:
+            hb.product_tab = want
+        tag_redraw()
+        return True
     if which == 'CATEGORY':
         bpy.ops.wm.call_menu(name=HB_MT_library_category.bl_idname)
         return True
@@ -440,9 +572,9 @@ def hit(context, mx, my, entries):
         bpy.ops.home_builder.library_search('INVOKE_DEFAULT')
         return True
     if which == 'AUTOJOIN':
-        props = face_frame_props(context)
-        if props is not None:
-            props.auto_join_cabinets = not props.auto_join_cabinets
+        prop = _auto_join_prop(context)
+        if prop is not None:
+            setattr(prop[0], prop[1], not getattr(prop[0], prop[1]))
         tag_redraw()
         return True
     if which == 'SIZES':
@@ -458,12 +590,11 @@ def hit(context, mx, my, entries):
         return True
     product = _hit_tile(mx, my, layout)
     if product is not None:
-        # Close first: unpinned, the panel is a menu, and the
-        # drop modal that follows wants the viewport to itself.
-        from . import scene_navigator
-        scene_navigator.dismiss_after_action()
-        bpy.ops.hb_face_frame.draw_cabinet(
-            'INVOKE_DEFAULT', cabinet_name=product['cabinet_name'])
+        # The panel stays up: picking from it does not dismiss it, so a
+        # second cabinet is one click away rather than a reopen.
+        cat = active_catalog(context)
+        if cat is not None:
+            cat.place(context, product)
         return True
     return False
 
@@ -478,16 +609,29 @@ def scroll(mx, my, entries, rows):
     return True
 
 
+def _paint_sizes_button(shader, sizes_rect, hovered, s):
+    paint_button(shader, sizes_rect, hovered=hovered)
+    # Three stacked bars with a mark against them -- a size chart.
+    sx, sy, sw, sh = sizes_rect
+    for i in range(3):
+        by = sy + sh * (0.32 + i * 0.18)
+        draw_rects(shader, [(sx + 5 * s, by, sw - 12 * s, 1.4 * s)],
+                   Theme.GLYPH)
+    draw_rects(shader, [(sx + sw - 6 * s, sy + sh * 0.3, 1.4 * s, sh * 0.42)],
+               Theme.GLYPH)
+
+
 def _paint_grid(layout, mx, my):
     context = bpy.context
     (panel_rect, header_rect,
-     (cat_rect, search_rect, autojoin_rect, sizes_rect), clip_rect,
-     tiles, track, thumb, total, headers) = layout
+     (cat_rect, search_rect, autojoin_rect, sizes_rect, lib_rects),
+     clip_rect,
+     tiles, track, thumb, _total, headers) = layout
 
     # Hover comes from the cursor the shell hands us, so this module
     # needs no listener of its own.
     _p = _hit_tile(mx, my, layout)
-    hover = _p['cabinet_name'] if _p else None
+    hover = _p['key'] if _p else None
     hover_ui = _hit_filter(mx, my, layout)
     hover_section = _hit_section(mx, my, layout)
 
@@ -499,24 +643,32 @@ def _paint_grid(layout, mx, my):
 
     tx, ty, _tw, th = header_rect
     draw_text(font_id, tx + 2 * s, ty + (th - FONT_TITLE * s) / 2.0 + 1 * s,
-              FONT_TITLE * s, Theme.TEXT_PRIMARY, 'Library  (%d)' % total)
+              FONT_TITLE * s, Theme.TEXT_PRIMARY, library_title(context))
 
-    aj = auto_join_on(context)
-    paint_button(shader, autojoin_rect, hovered=hover_ui == 'AUTOJOIN',
-                 active=aj)
-    draw_centered_text(font_id, autojoin_rect, FONT_LABEL * s,
-                       Theme.TEXT_PRIMARY if aj else Theme.TEXT_DIM,
-                       'Auto Join')
-    paint_button(shader, sizes_rect, hovered=hover_ui == 'SIZES')
-    # Three stacked bars with a mark against them -- a size chart.
-    sx, sy, sw, sh = sizes_rect
-    for i in range(3):
-        by = sy + sh * (0.32 + i * 0.18)
-        draw_rects(shader, [(sx + 5 * s, by, sw - 12 * s, 1.4 * s)],
-                   Theme.GLYPH)
-    draw_rects(shader, [(sx + sw - 6 * s, sy + sh * 0.3, 1.4 * s, sh * 0.42)],
-               Theme.GLYPH)
+    # A library switch is one click, and the picker says which one you
+    # are looking at even when you are not switching.
+    current = active_tab(context)
+    for ident, label, rect in lib_rects:
+        on = ident == current
+        paint_button(shader, rect, hovered=hover_ui == 'LIB:%s' % ident,
+                     active=on)
+        draw_centered_text(font_id, rect, FONT_LABEL * s,
+                           Theme.TEXT_PRIMARY if on else Theme.TEXT_DIM,
+                           fit_text(font_id, FONT_LABEL * s, label,
+                                    rect[2] - 4 * s))
 
+    # The header controls belong to the library, not to this panel: a
+    # library that has no Auto Join mode simply shows no button for one.
+    if _auto_join_prop(context) is not None:
+        aj = auto_join_on(context)
+        paint_button(shader, autojoin_rect, hovered=hover_ui == 'AUTOJOIN',
+                     active=aj)
+        draw_centered_text(font_id, autojoin_rect, FONT_LABEL * s,
+                           Theme.TEXT_PRIMARY if aj else Theme.TEXT_DIM,
+                           'Auto Join')
+
+    if _sizes_form(context):
+        _paint_sizes_button(shader, sizes_rect, hover_ui == 'SIZES', s)
     # Filter bar. The search box shows the live query so it is obvious
     # when a filter is hiding things.
     query = current_query()
@@ -538,17 +690,19 @@ def _paint_grid(layout, mx, my):
         draw_rect(shader, *thumb, Theme.SCROLLBAR_THUMB)
 
     if not tiles and not headers:
-        draw_centered_text(font_id, clip_rect, FONT_LABEL * s,
-                           Theme.TEXT_DIM, 'No products match')
+        draw_centered_text(
+            font_id, clip_rect, FONT_LABEL * s, Theme.TEXT_DIM,
+            'No products match' if active_catalog(context)
+            else 'This library is not browsable here yet')
         gpu.state.blend_set('NONE')
         return
 
     # Scissor the grid so a partly scrolled row cuts off cleanly.
     prev = begin_clip(clip_rect)
     try:
-        # Section headers: a chevron, the name, and the count. Clicking
-        # one folds the section away.
-        for key, label, count, rect in headers:
+        # Section headers: a chevron and the name. Clicking one folds
+        # the section away.
+        for key, label, rect in headers:
             hx, hy, hw, hh = rect
             if key == hover_section:
                 draw_rects(shader, [rect], Theme.ROW_HOVER_BG)
@@ -557,8 +711,7 @@ def _paint_grid(layout, mx, my):
                           collapsed, Theme.GLYPH)
             draw_text(font_id, hx + 16 * s,
                       hy + (hh - FONT_SECTION * s) / 2.0 + 1 * s,
-                      FONT_SECTION * s, Theme.TEXT_PRIMARY,
-                      '%s  (%d)' % (label, count))
+                      FONT_SECTION * s, Theme.TEXT_PRIMARY, label)
             draw_rects(shader, [(hx, hy, hw, 1 * s)], Theme.SEPARATOR)
 
         # Only the hovered tile gets a chip behind it. A fill under
@@ -569,13 +722,14 @@ def _paint_grid(layout, mx, my):
         # chip becomes what it should have been, the hover state.
         # Still one batch rather than one draw per tile (see draw_rects),
         # which matters at 48 products and would matter more at 500.
-        lit = [r for p, r, _i in tiles if p['cabinet_name'] == hover]
+        lit = [r for p, r, _i in tiles if p['key'] == hover]
         if lit:
             draw_rects(shader, lit, Theme.BTN_HOVER_BG)
         for product, _tile_rect, img_rect in tiles:
-            tex = _textures.get(product['cabinet_name'])
+            ck = _cache_key(product)
+            tex = _textures.get(ck)
             if tex is None:
-                _want(product['cabinet_name'])
+                _want(ck)
                 continue
             gpu.state.blend_set('ALPHA')
             _draw_thumb(tex, img_rect)
@@ -586,7 +740,7 @@ def _paint_grid(layout, mx, my):
             draw_centered_text(font_id, (lx, ly, lw, LABEL_H * s),
                                FONT_LABEL * s,
                                Theme.TEXT_PRIMARY
-                               if product['cabinet_name'] == hover
+                               if product['key'] == hover
                                else Theme.TEXT_NORMAL, label)
     finally:
         end_clip(prev)
@@ -650,7 +804,8 @@ class HB_MT_library_category(bpy.types.Menu):
     def draw(self, context):
         layout = self.layout
         current = current_category()
-        for ident, label, _desc in library_catalog.category_items():
+        cat = active_catalog(context)
+        for ident, label, _desc in (cat.category_items() if cat else ()):
             row = layout.row()
             op = row.operator('home_builder.library_set_category',
                               text=label,
@@ -667,12 +822,14 @@ class home_builder_OT_cabinet_sizes(bpy.types.Operator):
 
     def draw(self, context):
         layout = self.layout
-        props = face_frame_props(context)
-        if props is None:
+        # Whichever library is active draws its own sizes form here --
+        # the catalog names it, so this operator has no library in it.
+        form = _sizes_form(context)
+        if form is None:
             layout.label(text="Unavailable in this scene.", icon='ERROR')
             return
-        # The sidebar's own Cabinet Sizes form, verbatim.
-        props.draw_cabinet_sizes_ui(layout, context)
+        # The sidebar's own sizes form, verbatim.
+        form(layout, context)
 
     def execute(self, context):
         return {'FINISHED'}
@@ -709,6 +866,12 @@ def register():
     from . import scene_navigator
     scene_navigator.register_provider(scene_navigator.TAB_LIBRARY,
                                       sys.modules[__name__])
+    from ..product_libraries.face_frame import library_catalog as ff_catalog
+    from ..product_libraries.frameless import library_catalog as fl_catalog
+    from ..product_libraries.closets import library_catalog as cl_catalog
+    register_catalog('FACE FRAME', ff_catalog)
+    register_catalog('FRAMELESS', fl_catalog)
+    register_catalog('CLOSET', cl_catalog)
 
 
 def unregister():
@@ -716,6 +879,8 @@ def unregister():
     _shutdown = True
     _timer_running = False
     _drop_textures()
+    for tab in ('FACE FRAME', 'FRAMELESS', 'CLOSET'):
+        unregister_catalog(tab)
     for cls in reversed(classes):
         try:
             bpy.utils.unregister_class(cls)

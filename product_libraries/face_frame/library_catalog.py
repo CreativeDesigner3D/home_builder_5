@@ -37,6 +37,8 @@ keep their own draw methods.
 
 import os
 
+import bpy
+
 
 SECTIONS = (
     {
@@ -173,6 +175,12 @@ def products(section_key=None):
         for row_label, items in section['rows']:
             for display, cabinet_name in items:
                 out.append({
+                    # 'key' and 'label' are what a product browser reads;
+                    # 'display' / 'cabinet_name' are this library's own
+                    # names for the same two things, kept because the
+                    # sidebar has always used them.
+                    'key': cabinet_name,
+                    'label': display,
                     'display': display,
                     'cabinet_name': cabinet_name,
                     'section': section['key'],
@@ -237,3 +245,43 @@ def thumbnail_path(cabinet_name):
         if os.path.isfile(path):
             return path
     return None
+
+
+# ---- Viewport browser contract ---------------------------------------------
+# What the HUD's library panel needs from a product library, so it can
+# browse this one without knowing anything about face frames. Another
+# library becomes browsable by exposing the same names and registering
+# itself (see operators/library_panel.register_catalog).
+
+# The scene property group this library keeps its settings on. Every
+# form named below is a method on it, so they name only the method.
+PROPS_GROUP = 'hb_face_frame'
+
+# A bool the browser offers in its header, or None where the library has
+# no such mode.
+AUTO_JOIN = 'auto_join_cabinets'
+
+# The form behind the browser's sizes button.
+SIZES_FORM = 'draw_cabinet_sizes_ui'
+
+# The library's settings, as the OPTIONS tab lists them: (label, the
+# method that draws that form). Each opens as a dialog showing the
+# sidebar's own UI -- these are property sheets, and a GPU panel has no
+# business reimplementing a unit field. Cabinet Styles is missing on
+# purpose: it is a named pool you pick from mid-design, so the tab draws
+# it as a real list above these.
+OPTION_FORMS = (
+    ("Door & Drawer Front Styles", 'draw_door_styles_ui'),
+    ("Finished Ends and Backs", 'draw_finished_ends_ui'),
+    ("Pulls", 'draw_pulls_ui'),
+    ("Drawer Boxes", 'draw_drawer_box_ui'),
+    ("Countertops", 'draw_countertop_ui'),
+    ("Molding", 'draw_molding_ui'),
+)
+
+
+def place(context, product):
+    """Put one product in the scene -- the same operator the sidebar's
+    library buttons fire, so there is no second placement path."""
+    bpy.ops.hb_face_frame.draw_cabinet(
+        'INVOKE_DEFAULT', cabinet_name=product['key'])

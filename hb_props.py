@@ -28,8 +28,13 @@ def update_main_tab(self,context):
 
 
 def update_product_tab(self,context):
-    # TODO: Load the correct library based on the product_tab
-    print("update_product_tab")
+    """Switching library changes what the whole viewport offers -- the
+    selection-mode row, the library browser -- so every 3D view is asked
+    to redraw rather than waiting for the next mouse move."""
+    for window in context.window_manager.windows:
+        for area in window.screen.areas:
+            if area.type == 'VIEW_3D':
+                area.tag_redraw()
 
 
 def update_line_thickness(self, context):

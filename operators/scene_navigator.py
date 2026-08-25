@@ -2,10 +2,11 @@
 Scene Navigator -- GPU-drawn quick scene picker for Home Builder 5.
 
 A modal overlay listing project scenes grouped by Rooms / Layout Views /
-Details. The panel header shows the current scene and carries a pin
-toggle; clicking a row switches scenes. When pinned, the navigator stays
-open after a switch so several scenes can be picked in a row -- otherwise
-it closes on the first pick. Room rows carry rename and delete buttons,
+Details. The panel header shows the current scene; clicking a row
+switches scenes. Hosted in the viewport HUD the panel stays up while you
+work -- picking a scene, running a room action or clicking away all
+leave it open, and the tab button that opened it closes it again.
+Room rows carry rename and delete buttons,
 and a New Room button sits at the bottom -- each of those closes the
 navigator and opens the corresponding operator dialog. Click outside /
 Esc / RMB dismisses.
@@ -44,7 +45,6 @@ from ..hb_gpu_ui import (
     paint_frame as _paint_frame,
     glyph_delete as _draw_delete_glyph,
     glyph_plus as _draw_plus_glyph,
-    glyph_pin as _draw_pin_glyph,
     glyph_chevron as _draw_chevron,
     begin_clip as _begin_clip,
     end_clip as _end_clip,
@@ -81,7 +81,6 @@ SCROLLBAR_PAD         = 4
 PANEL_HEADER_HEIGHT   = 26
 
 ACTION_BTN_SIZE       = 18
-PIN_BTN_WIDTH         = 30      # fits the word PIN
 ACTION_BTN_GAP        = 4
 ACTION_BTN_RIGHT_PAD  = 5
 NEW_ROOM_BTN_HEIGHT   = 26
@@ -118,9 +117,7 @@ NEW_ROOM_BG            = Theme.NEUTRAL_BG
 NEW_ROOM_HOVER_BG      = Theme.ACCENT_BG
 SEPARATOR_COLOR        = Theme.SEPARATOR
 
-PIN_GLYPH              = Theme.GLYPH
-PIN_GLYPH_ACTIVE       = Theme.GLYPH_HOVER
-PIN_ACTIVE_BG          = Theme.ACCENT_BG
+FIELD_ACTIVE_BG        = Theme.ACCENT_BG
 
 SCROLLBAR_TRACK        = Theme.SCROLLBAR_TRACK
 SCROLLBAR_THUMB        = Theme.SCROLLBAR_THUMB
@@ -128,17 +125,11 @@ SCROLLBAR_THUMB        = Theme.SCROLLBAR_THUMB
 
 # ---- Module state -----------------------------------------------------------
 
-# When pinned, the navigator stays open after a scene is picked so several
-# scenes can be switched in a row. Clicking away (or Esc) still closes it.
-# Sticky for the session -- a module global, intentionally not per-instance.
-_pinned = False
-
-# Whether the panel is showing at all. Pinning is a separate question:
-# an OPEN panel is usable -- browse the library, pick a style -- but any
-# action that does something to the scene closes it again, the way a
-# menu does. PINNED means it survives those actions and stays up while
-# you work. Both states are painted by the persistent HUD; neither runs
-# a modal, so autosave keeps working (see viewport_hud).
+# Whether the panel is showing. It is the only state there is: an open
+# panel stays open while you work -- an action does not dismiss it and
+# neither does a click elsewhere in the viewport -- until the tab button
+# that opened it is clicked again. Painted by the persistent HUD, which
+# runs no modal, so autosave keeps working (see viewport_hud).
 _open = False
 
 # Inline rename: the scene being renamed and the text so far. A room is
@@ -177,8 +168,8 @@ _collapsed = set()
 
 TAB_ROOMS = 'ROOMS'
 TAB_LIBRARY = 'LIBRARY'
-TAB_STYLES = 'STYLES'
-TABS = (TAB_ROOMS, TAB_LIBRARY, TAB_STYLES)     # the built-in tabs
+TAB_OPTIONS = 'OPTIONS'
+TABS = (TAB_ROOMS, TAB_LIBRARY, TAB_OPTIONS)    # the built-in tabs
 
 _active_tab = TAB_ROOMS
 
@@ -426,7 +417,7 @@ def _build_layout(region, area, current_scene_name,
 
     Returns (panel_rect, entries). panel_rect is (x, y, w, h) in region px
     (y is the bottom edge). entries is a list of tuples:
-        ('panel_header', current_scene_name, rect, pin_rect)
+        ('panel_header', current_scene_name, rect)
         ('list', clip_rect, track_rect_or_None, thumb_rect_or_None)
         ('header', label, color, rect, collapsed, count)
         ('row', scene, parent, color, is_current, rect,
@@ -535,11 +526,7 @@ def _build_layout(region, area, current_scene_name,
     # ---- Panel header ----------------------------------------------------
     cursor_y = panel_top - pad_y
     ph_rect = (content_x, cursor_y - panel_hdr_h, content_w, panel_hdr_h)
-    pin_w = PIN_BTN_WIDTH * s
-    pin_y = ph_rect[1] + (panel_hdr_h - btn) / 2.0
-    pin_x = content_x + content_w - btn_right_pad - pin_w
-    pin_rect = (pin_x, pin_y, pin_w, btn)
-    entries.append(('panel_header', current_scene_name, ph_rect, pin_rect))
+    entries.append(('panel_header', current_scene_name, ph_rect))
     cursor_y -= panel_hdr_h + section_gap
 
 
@@ -649,22 +636,18 @@ def hit_test(mx, my, entries):
     """Resolve a point against navigator entries.
 
     Returns (kind, payload) or None:
-        ('pin', None)          panel-header pin toggle
         ('section', label)     section header (collapse / expand)
         ('delete', scene) / ('row', scene)
         ('new_room', None)
     List entries scrolled partly out of the clip rect only hit on their
-    visible part. Shared by the modal and the pinned/HUD click path so the
+    visible part. Shared by the modal and the HUD click path so the
     two can't disagree.
     """
     clip = _list_clip(entries)
     for entry in entries or ():
         kind = entry[0]
 
-        if kind == 'panel_header':
-            if _point_in_rect(mx, my, entry[3]):
-                return ('pin', None)
-        elif kind == 'header':
+        if kind == 'header':
             if clip and not _point_in_rect(mx, my, clip):
                 continue
             if _point_in_rect(mx, my, entry[3]):
@@ -732,7 +715,7 @@ def toggle_section(label):
 
 # ---- Draw helpers -----------------------------------------------------------
 
-def _draw_panel_header(shader, font_id, rect, current_name, pin_rect, mx, my):
+def _draw_panel_header(shader, font_id, rect, current_name):
     rx, ry, rw, rh = rect
     s = _s()
     hdr_font = HEADER_FONT_SIZE * s
@@ -743,26 +726,11 @@ def _draw_panel_header(shader, font_id, rect, current_name, pin_rect, mx, my):
     baseline = _vcenter_baseline(rect, font_id, row_font)
     _draw_text(font_id, rx, baseline, hdr_font, HEADER_TEXT, label)
     name_x = rx + label_w + 8 * s
-    name_w = pin_rect[0] - 8 * s - name_x
+    name_w = rx + rw - name_x
     _draw_text(font_id, name_x, baseline, row_font, TEXT_PRIMARY,
                _fit_text(font_id, row_font, current_name, name_w))
     # separator line at the bottom of the header rect
     _draw_rect(shader, rx, ry, rw, max(1.0, s), SEPARATOR_COLOR)
-    # pin toggle -- when lit, the navigator stays open across scene picks
-    px, py, pw, ph = pin_rect
-    hovered = _point_in_rect(mx, my, pin_rect)
-    if _pinned:
-        bg = PIN_ACTIVE_BG
-    elif hovered:
-        bg = ACTION_HOVER_BG
-    else:
-        bg = ACTION_BG
-    _draw_rect(shader, px, py, pw, ph, bg)
-    # A word, not a thumbtack. At this size a drawn pin is a smudge,
-    # and PIN is unambiguous where an icon has to be learned.
-    _draw_centered_text(font_id, pin_rect, HEADER_FONT_SIZE * s,
-                        TEXT_PRIMARY if (_pinned or hovered)
-                        else TEXT_NORMAL, 'PIN')
 
 
 def _draw_row(shader, font_id, entry, mx, my):
@@ -794,7 +762,7 @@ def _draw_row(shader, font_id, entry, mx, my):
         _draw_rect(shader, text_x - 3 * s, ry + 3 * s,
                    field_w + 6 * s, rh - 6 * s, (0.0, 0.0, 0.0, 0.55))
         _draw_rect_outline(shader, text_x - 3 * s, ry + 3 * s,
-                           field_w + 6 * s, rh - 6 * s, PIN_ACTIVE_BG)
+                           field_w + 6 * s, rh - 6 * s, FIELD_ACTIVE_BG)
         shown = _fit_text(font_id, row_font, _edit.text, field_w - 6 * s)
         _draw_text(font_id, text_x, baseline, row_font,
                    TEXT_PRIMARY, shown)
@@ -868,9 +836,8 @@ def paint_navigator(panel_rect, entries, mx, my):
     """Stateless GPU paint of the navigator panel.
 
     Factored out of the modal draw callback so the persistent viewport HUD
-    can render the SAME panel when the navigator is pinned -- the HUD owns a
-    permanent draw handler that survives designing, where the modal's own
-    handler does not.
+    can render the SAME panel -- the HUD owns a permanent draw handler
+    that survives designing, where the modal's own handler does not.
     """
     gpu.state.blend_set('ALPHA')
     shader = gpu.shader.from_builtin('UNIFORM_COLOR')
@@ -931,8 +898,7 @@ def paint_navigator(panel_rect, entries, mx, my):
                           % (entry[1], ex))
             break            # the provider owns everything below the strip
         if kind == 'panel_header':
-            _draw_panel_header(shader, font_id, entry[2], entry[1],
-                               entry[3], mx, my)
+            _draw_panel_header(shader, font_id, entry[2], entry[1])
         elif kind == 'list':
             _, _clip, track, thumb = entry
             if track is not None:
@@ -950,7 +916,7 @@ def paint_navigator(panel_rect, entries, mx, my):
 
 
 def draw_scene_navigator(op):
-    """GPU draw callback for the transient (unpinned) scene-navigator modal."""
+    """GPU draw callback for the transient scene-navigator modal."""
     if op.region is None or op.entries is None:
         return
     # Only draw in the region this modal was bound to (skip other 3D views)
@@ -960,16 +926,12 @@ def draw_scene_navigator(op):
 
 
 # ---- Persistent-HUD interface ----------------------------------------------
-# Let the always-on viewport HUD host the navigator while it's pinned, instead
-# of the transient modal below. The HUD calls build_pinned_layout() +
+# Let the always-on viewport HUD host the navigator, instead of the
+# transient modal below. The HUD calls build_hosted_layout() +
 # paint_navigator() each redraw, and handle_navigator_click() on a press.
 
-def is_pinned():
-    return _pinned
-
-
 def panel_open():
-    return _open or _pinned
+    return _open
 
 
 def open_panel(anchor_x=-1.0, anchor_top=-1.0):
@@ -978,27 +940,13 @@ def open_panel(anchor_x=-1.0, anchor_top=-1.0):
 
 
 def close_panel():
-    """Hide the panel. Leaves the pin alone -- re-opening returns to
-    whatever the user had pinned before."""
+    """Hide the panel. Only the tab button that opened it does this --
+    nothing the panel itself does closes it."""
     global _open
     _open = False
 
 
-def dismiss_after_action():
-    """Close an unpinned panel once it has done something. Pinned
-    panels stay: that is what the pin is for."""
-    if not _pinned:
-        close_panel()
-
-
-def set_pinned(value):
-    global _pinned, _open
-    _pinned = bool(value)
-    if _pinned:
-        _open = True
-
-
-def build_pinned_layout(context, area, region, anchor_x=-1.0, anchor_top=-1.0):
+def build_hosted_layout(context, area, region, anchor_x=-1.0, anchor_top=-1.0):
     """Return (panel_rect, entries) for the HUD-hosted panel, else None.
 
     None when the panel is closed or the geometry can't be built.
@@ -1010,14 +958,13 @@ def build_pinned_layout(context, area, region, anchor_x=-1.0, anchor_top=-1.0):
 
 
 def handle_navigator_click(context, mx, my, entries):
-    """Dispatch a left-press against pinned-navigator entries.
+    """Dispatch a left-press against the hosted panel's entries.
 
     Stateless mirror of the modal's hit-testing. Returns True if a navigator
     element was hit (caller consumes the click), False on a miss (caller
-    passes it through so the viewport stays interactive while pinned). Hits
-    never close the panel -- it's pinned; only the header pin glyph un-pins.
+    passes it through so the viewport stays interactive). Hits never close
+    the panel; the tab button that opened it is what closes it.
     """
-    global _pinned
     hit = hit_test(mx, my, entries)
     if hit is None:
         # Not a shell element. On a hosted tab the body owns the rest of
@@ -1026,11 +973,7 @@ def handle_navigator_click(context, mx, my, entries):
     kind, scene = hit
 
     try:
-        if kind == 'pin':
-            # The glyph toggles the pin now; it no longer hides the
-            # panel. Dismissing is the tab button's job.
-            set_pinned(not _pinned)
-        elif kind == 'section':
+        if kind == 'section':
             toggle_section(scene)
 
         elif kind == 'delete':
@@ -1040,7 +983,6 @@ def handle_navigator_click(context, mx, my, entries):
             if scene.name != context.scene.name:
                 bpy.ops.home_builder_layouts.go_to_layout_view(
                     scene_name=scene.name)
-                dismiss_after_action()
             elif _is_room(scene):
                 # Already here: clicking your own room's name
                 # edits it, since switching would do nothing.
@@ -1056,7 +998,6 @@ def handle_navigator_click(context, mx, my, entries):
             except Exception as ex:
                 print('Home Builder: room action %s failed: %s'
                       % (operator, ex))
-            dismiss_after_action()
         elif kind == 'new_room':
             bpy.ops.home_builder.create_room('INVOKE_DEFAULT')
     except Exception:
@@ -1090,7 +1031,7 @@ def _delegate_click(context, mx, my, entries):
 
 
 def handle_navigator_scroll(context, mx, my, entries, rows):
-    """Wheel over the pinned navigator: scroll its list. Returns True when
+    """Wheel over the hosted navigator: scroll its list. Returns True when
     consumed (cursor over a scrollable list), False to pass through."""
     body = _body_entry(entries)
     if body is not None:
@@ -1208,7 +1149,6 @@ class home_builder_OT_scene_navigator(bpy.types.Operator):
             self.report({'WARNING'}, f"Could not delete {scene.name}: {e}")
 
     def modal(self, context, event):
-        global _pinned
         if event.type == 'INBETWEEN_MOUSEMOVE':
             return {'RUNNING_MODAL'}
 
@@ -1238,23 +1178,6 @@ class home_builder_OT_scene_navigator(bpy.types.Operator):
                 self._cleanup(context)
                 return {'CANCELLED'}
             kind, scene = hit
-            if kind == 'pin':
-                _pinned = not _pinned
-                if _pinned:
-                    # Hand the navigator to the persistent viewport HUD,
-                    # which draws + routes it while you design. Close this
-                    # transient modal so it isn't drawn twice. If the HUD is
-                    # disabled there's nothing to hand off to -- fall back
-                    # to the old in-modal pinned behavior (stay open across
-                    # picks).
-                    from . import viewport_hud
-                    if viewport_hud._hud_enabled():
-                        self._cleanup(context)
-                        return {'FINISHED'}
-                self._rebuild_layout(context)
-                if context.area:
-                    context.area.tag_redraw()
-                return {'RUNNING_MODAL'}
             if kind == 'section':
                 toggle_section(scene)
                 self._rebuild_layout(context)
@@ -1267,16 +1190,9 @@ class home_builder_OT_scene_navigator(bpy.types.Operator):
                 self._delete_room(context, scene)
                 return {'FINISHED'}
             if kind == 'row':
-                # Pinned: switch but keep the navigator open so the user
-                # can pick another scene. Unpinned: switch and close --
-                # the original behavior.
-                if _pinned:
-                    if scene.name != context.scene.name:
-                        self._switch_to(context, scene.name)
-                        self._rebuild_layout(context)
-                        if context.area:
-                            context.area.tag_redraw()
-                    return {'RUNNING_MODAL'}
+                # This popup is transient by nature -- it is summoned for
+                # one pick and goes. The panel that stays up is the one
+                # the viewport HUD hosts.
                 self._cleanup(context)
                 if scene.name != context.scene.name:
                     self._switch_to(context, scene.name)

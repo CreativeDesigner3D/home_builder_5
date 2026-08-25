@@ -192,17 +192,6 @@ def glyph_plus(shader, cx, cy, size, color):
     draw_rect(shader, cx - thick / 2.0, cy - half, thick, size, color)
 
 
-def glyph_pin(shader, rect, color):
-    """A thumbtack -- flat head with a short needle dropping from it."""
-    rx, ry, rw, rh = rect
-    s = scale()
-    cx = rx + rw / 2.0
-    head_w, head_h = 9 * s, 4 * s
-    head_y = ry + rh - 5 * s - head_h
-    draw_rect(shader, cx - head_w / 2.0, head_y, head_w, head_h, color)
-    draw_lines(shader, [(cx, head_y), (cx, ry + 4 * s)], color)
-
-
 def glyph_chevron(shader, cx, cy, size, collapsed, color):
     """Disclosure chevron centred at (cx, cy): points right when
     collapsed, down when expanded. `size` is pre-scaled."""

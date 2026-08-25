@@ -418,6 +418,30 @@ def load_cabinet_thumbnail(name):
     
     return 0  # Return 0 if no thumbnail
 
+def draw_library_section(layout, key, columns=4):
+    """Render one catalog section's products as the sidebar's thumbnail
+    grid. The products come from library_catalog so this and the
+    viewport browser cannot drift -- see that module."""
+    from . import library_catalog
+    section = library_catalog.section_by_key(key)
+    if section is None:
+        return
+    for row_label, items in section['rows']:
+        if row_label:
+            layout.label(text="%s:" % row_label)
+        flow = layout.grid_flow(row_major=True, columns=columns,
+                                even_columns=True, even_rows=True,
+                                align=True)
+        for display_name, cabinet_name, thumb_name in items:
+            box = flow.box()
+            box.scale_y = 0.9
+            icon_id = load_cabinet_thumbnail(thumb_name)
+            if icon_id:
+                box.template_icon(icon_value=icon_id, scale=4.0)
+            op = box.operator('hb_frameless.draw_cabinet', text=display_name)
+            op.cabinet_name = cabinet_name
+
+
 def clear_library_previews():
     """Clear all loaded previews."""
     if "library_previews" in preview_collections:
@@ -1888,52 +1912,7 @@ class Frameless_Scene_Props(PropertyGroup):
                 op.filepath = item['filepath']
 
     def draw_cabinet_library_ui(self,layout,context):
-        # Cabinet definitions: (display_name, cabinet_name, thumbnail_name)
-        base_cabinets = [
-            ("Door", "Base Door", "Base Door"),
-            ("Door Drw", "Base Door Drw", "Base Door Drw"),
-            ("Drawer", "Base Drawer", "Base Drw"),
-            ("Lap Drawer", "Lap Drawer", "Lap Drw"),
-        ]
-        
-        upper_and_tall_cabinets = [
-            ("Upper", "Upper", "Upper"),
-            ("Upper Stacked", "Upper Stacked", "Upper Stacked"),
-            ("Tall", "Tall", "Tall"),
-            ("Tall Stacked", "Tall Stacked", "Tall Stacked"),
-        ]
-        
-        # Base cabinets
-        layout.label(text="Base Cabinets:")
-        flow = layout.grid_flow(row_major=True, columns=4, even_columns=True, even_rows=True, align=True)
-        for display_name, cabinet_name, thumb_name in base_cabinets:
-            box = flow.box()
-            box.scale_y = 0.9
-            
-            # Show thumbnail
-            icon_id = load_cabinet_thumbnail(thumb_name)
-            if icon_id:
-                box.template_icon(icon_value=icon_id, scale=4.0)
-            
-            # Button
-            op = box.operator('hb_frameless.draw_cabinet', text=display_name)
-            op.cabinet_name = cabinet_name
-        
-        # Upper and Tall cabinets combined on one line
-        layout.label(text="Upper & Tall Cabinets:")
-        flow = layout.grid_flow(row_major=True, columns=4, even_columns=True, even_rows=True, align=True)
-        for display_name, cabinet_name, thumb_name in upper_and_tall_cabinets:
-            box = flow.box()
-            box.scale_y = 0.9
-            
-            # Show thumbnail
-            icon_id = load_cabinet_thumbnail(thumb_name)
-            if icon_id:
-                box.template_icon(icon_value=icon_id, scale=4.0)
-            
-            # Button
-            op = box.operator('hb_frameless.draw_cabinet', text=display_name)
-            op.cabinet_name = cabinet_name
+        draw_library_section(layout, 'cabinets')
 
     def draw_corner_cabinet_library_ui(self,layout,context):
         row = layout.row()
@@ -1965,27 +1944,7 @@ class Frameless_Scene_Props(PropertyGroup):
         #     op = cab_box.operator('hb_frameless.draw_cabinet', text=display_name)
         #     op.cabinet_name = cabinet_name
 
-        # Pie cut corner cabinet definitions
-        layout.label(text="Pie Cut Corner")
-        piecut_cabinets = [
-            ("Base", "Pie Cut Corner Base", "Frameless Base Corner"),
-            ("Tall", "Pie Cut Corner Tall", "Frameless Tall Corner"),
-            ("Upper", "Pie Cut Corner Upper", "Frameless Upper Corner"),
-        ]
-        
-        flow = layout.grid_flow(row_major=True, columns=3, even_columns=True, even_rows=True, align=True)
-        for display_name, cabinet_name, thumb_name in piecut_cabinets:
-            cab_box = flow.box()
-            cab_box.scale_y = 0.9
-            
-            # Show thumbnail
-            icon_id = load_cabinet_thumbnail(thumb_name)
-            if icon_id:
-                cab_box.template_icon(icon_value=icon_id, scale=4.0)
-            
-            # Button
-            op = cab_box.operator('hb_frameless.draw_cabinet', text=display_name)
-            op.cabinet_name = cabinet_name
+        draw_library_section(layout, 'corner', columns=3)
     
     def draw_appliance_library_ui(self,layout,context):
         row = layout.row()
@@ -1999,58 +1958,10 @@ class Frameless_Scene_Props(PropertyGroup):
         row.prop(self,'dishwasher_width',text="Dishwasher")
         row.prop(self,'range_width',text="Range")       
 
-        # Appliance cabinets: (display_name, cabinet_name, thumbnail_name)
-        appliance_cabinets = [
-            ("Fridge Cabinet", "Refrigerator Cabinet", "Refrigerator Frameless Cabinet"),
-            # ("Base Built-In", "Base Built-In", "Base Built-In"),
-            # ("Tall Built-In", "Tall Built-In", "Tall Built-In"),
-            ("Dishwasher", "Dishwasher", "Dishwasher"),
-            ("Refrigerator", "Refrigerator", "Refrigerator"),
-            ("Range", "Range", "Range"),
-            ("Range Hood", "Range Hood", "Range Hood"),
-        ]
-        
-        flow = layout.grid_flow(row_major=True, columns=4, even_columns=True, even_rows=True, align=True)
-        for display_name, cabinet_name, thumb_name in appliance_cabinets:
-            app_box = flow.box()
-            app_box.scale_y = 0.9
-            
-            # Show thumbnail
-            icon_id = load_cabinet_thumbnail(thumb_name)
-            if icon_id:
-                app_box.template_icon(icon_value=icon_id, scale=4.0)
-            
-            # Button
-            op = app_box.operator('hb_frameless.draw_cabinet', text=display_name)
-            op.cabinet_name = cabinet_name  
+        draw_library_section(layout, 'appliance')
     
     def draw_part_library_ui(self,layout,context):
-        # Parts definitions: (display_name, cabinet_name, thumbnail_name)
-        parts = [
-            ("Floating Shelves", "Floating Shelves", "Floating Shelves"),
-            ("Valance", "Valance", "Valance"),
-            ("Support Frame", "Support Frame", "Support Frame"),
-            ("Half Wall", "Half Wall", "Half Wall"),
-            ("Misc Part", "Misc Part", "Misc Part"),
-            ("Leg", "Leg", "Leg"),
-            ("Tall Leg", "Tall Leg", "Leg"),
-            ("Upper Leg", "Upper Leg", "Leg"),
-            ("Panel", "Panel", "Panel"),
-        ]
-        
-        flow = layout.grid_flow(row_major=True, columns=4, even_columns=True, even_rows=True, align=True)
-        for display_name, cabinet_name, thumb_name in parts:
-            part_box = flow.box()
-            part_box.scale_y = 0.9
-            
-            # Show thumbnail
-            icon_id = load_cabinet_thumbnail(thumb_name)
-            if icon_id:
-                part_box.template_icon(icon_value=icon_id, scale=4.0)
-            
-            # Button
-            op = part_box.operator('hb_frameless.draw_cabinet', text=display_name)
-            op.cabinet_name = cabinet_name
+        draw_library_section(layout, 'parts')
 
     def draw_cabinet_options_general(self,layout,context):
         unit_settings = context.scene.unit_settings

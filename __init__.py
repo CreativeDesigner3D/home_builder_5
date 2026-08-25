@@ -17,7 +17,7 @@ from .operators import ops_stairs
 from .operators import scene_navigator
 from .operators import room_palette
 from .operators import library_panel
-from .operators import styles_panel
+from .operators import options_panel
 from .operators import layout_lock
 from .operators import viewport_hud
 from .operators import room_dim_overlay
@@ -346,7 +346,7 @@ def register():
     viewport_hud.register()
     room_palette.register()
     library_panel.register()
-    styles_panel.register()
+    options_panel.register()
     room_dim_overlay.register()
     ops_general.register()
     ops.register()
@@ -389,7 +389,7 @@ def unregister():
     details.unregister()
     doors_windows.unregister()
     export.unregister()
-    styles_panel.unregister()
+    options_panel.unregister()
     library_panel.unregister()
     room_palette.unregister()
     scene_navigator.unregister()

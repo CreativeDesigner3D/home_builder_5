@@ -1,24 +1,27 @@
-"""STYLES tab for the viewport panel -- the Face Frame library's Options.
+"""OPTIONS tab for the viewport panel -- the active library's settings.
 
-The Options tab holds seven sections, and they are two different shapes:
+Every product library keeps its settings as ``draw_*_ui(layout,
+context)`` methods on its own scene property group, and each names the
+ones worth reaching for as ``OPTION_FORMS`` on its catalog. This tab
+lists whichever library the scene is set to, so switching library
+switches what the tab offers -- the same way the browser beside it
+switches what it places.
 
-* **Lists** -- Cabinet Styles and Door & Drawer Front Styles are named
-  collections you pick from, add to and assign. A GPU panel is good at
-  those: rows, hover, a click that means something.
-* **Forms** -- Finished Ends, Pulls, Drawer Boxes, Countertops and
-  Molding are property sheets: enums, unit fields, checkboxes. A GPU
-  panel is *bad* at those. Reimplementing a slider means reimplementing
-  drag, type-in, unit parsing, tooltips and undo, and getting all five
-  slightly wrong.
+The sections are two different shapes:
 
-So the forms are not reimplemented. Each is a row that opens a native
-popup which calls the sidebar's own ``draw_*_ui(layout, context)``
-method -- the identical UI, with every property behaving exactly as it
-does in the sidebar, and no second copy to maintain. Those methods
-already take a layout, so this costs nothing.
+* **Forms** -- pulls, drawer boxes, countertops, molding and the rest
+  are property sheets: enums, unit fields, checkboxes. A GPU panel is
+  *bad* at those. Reimplementing a slider means reimplementing drag,
+  type-in, unit parsing, tooltips and undo, and getting all five
+  slightly wrong. So each is a row opening a native popup that calls the
+  library's own draw method -- the identical UI, no second copy.
+* **Lists** -- a named pool you pick from, add to and assign. A GPU
+  panel is good at those: rows, hover, a click that means something.
 
-Cabinet Styles is drawn here as a real list because it is the one you
-reach for mid-design: pick a style, assign it to what is selected.
+Only the face frame library has its pool drawn as a list, because it is
+the one reached for mid-design. The frameless library has a pool too but
+opens it as a form like the rest; a list for it is worth building only
+if it turns out to be reached for as often.
 """
 
 import bpy
@@ -80,14 +83,21 @@ ACTIONS = (
 )
 
 # The five form-shaped sections, as (label, draw-method name).
-FORM_SECTIONS = (
-    ("Door & Drawer Front Styles", 'draw_door_styles_ui'),
-    ("Finished Ends and Backs", 'draw_finished_ends_ui'),
-    ("Pulls", 'draw_pulls_ui'),
-    ("Drawer Boxes", 'draw_drawer_box_ui'),
-    ("Countertops", 'draw_countertop_ui'),
-    ("Molding", 'draw_molding_ui'),
-)
+def form_sections(context):
+    """((label, draw method name), ...) for the library the scene is set
+    to -- the catalog's OPTION_FORMS, empty for a library that names
+    none."""
+    from . import library_panel
+    cat = library_panel.active_catalog(context)
+    return tuple(getattr(cat, 'OPTION_FORMS', ()) or ()) if cat else ()
+
+
+def has_style_list(context):
+    """Whether this library's style pool is drawn here as a list. Only
+    the face frame library's is; the others reach theirs through a form
+    row like any other setting."""
+    from . import library_panel
+    return library_panel.active_tab(context) == 'FACE FRAME'
 
 _list = ScrollList(bar_width=4, bar_pad=4, min_rows=3)
 # Inline rename, keyed by style index -- the same field the scene
@@ -137,17 +147,19 @@ def build(rect, context):
     active = active_style_index(context)
 
     blocks = []
-    # The header carries New rather than a full-width row of its own: it
-    # is the one command that makes a list item, so it belongs to the
-    # list's caption, not to the stack of commands that act on a style.
-    blocks.append(('head', ("Cabinet Styles", True)))
-    for i, style in enumerate(styles):
-        blocks.append(('style', (i, style.name, i == active)))
-    for row in ACTIONS:
-        blocks.append(('actions', row))
-    blocks.append(('gap', None))
+    if has_style_list(context):
+        # The header carries New rather than a full-width row of its own:
+        # it is the one command that makes a list item, so it belongs to
+        # the list's caption, not to the stack of commands that act on a
+        # style.
+        blocks.append(('head', ("Cabinet Styles", True)))
+        for i, style in enumerate(styles):
+            blocks.append(('style', (i, style.name, i == active)))
+        for row in ACTIONS:
+            blocks.append(('actions', row))
+        blocks.append(('gap', None))
     blocks.append(('head', ("Options", False)))
-    for label, method in FORM_SECTIONS:
+    for label, method in form_sections(context):
         blocks.append(('form', (label, method)))
 
     def _h(block):
@@ -385,9 +397,9 @@ def _tag():
 # ---- The popup that reuses the sidebar's own UI ----------------------------
 
 class home_builder_OT_style_options_popup(bpy.types.Operator):
-    """Open one of the Face Frame library's Options sections"""
+    """Open one of the active library's Options sections"""
     bl_idname = "home_builder.style_options_popup"
-    bl_label = "Style Options"
+    bl_label = "Options"
 
     section: bpy.props.StringProperty()  # type: ignore
     title: bpy.props.StringProperty()  # type: ignore
@@ -398,8 +410,8 @@ class home_builder_OT_style_options_popup(bpy.types.Operator):
     def draw(self, context):
         layout = self.layout
         layout.label(text=self.title)
-        props = getattr(context.scene, 'hb_face_frame', None)
-        method = getattr(props, self.section, None) if props else None
+        from . import library_panel
+        method = library_panel.library_form(self.section, context)
         if method is None:
             layout.label(text="This section is unavailable.", icon='ERROR')
             return
@@ -522,7 +534,7 @@ def register():
     for cls in classes:
         bpy.utils.register_class(cls)
     from . import scene_navigator
-    scene_navigator.register_provider(scene_navigator.TAB_STYLES,
+    scene_navigator.register_provider(scene_navigator.TAB_OPTIONS,
                                       sys.modules[__name__])
 
 

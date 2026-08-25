@@ -746,7 +746,7 @@ class home_builder_OT_tool_options(bpy.types.Operator):
         if fn is None:
             layout.label(text="These settings are unavailable.", icon='ERROR')
             return
-        # The sidebar's own form, called verbatim -- see styles_panel for
+        # The sidebar's own form, called verbatim -- see options_panel for
         # why a GPU panel should not be reimplementing property rows.
         fn(layout, context)
 
