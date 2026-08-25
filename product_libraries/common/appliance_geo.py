@@ -59,13 +59,14 @@ from ...units import inch
 GEO_OPTS_PROP = "APPLIANCE_GEO_OPTS"
 GEO_CHILD_FLAG = "IS_APPLIANCE_GEO"
 
-SUPPORTED_TYPES = {'REFRIGERATOR', 'RANGE'}
+SUPPORTED_TYPES = {'REFRIGERATOR', 'RANGE', 'DISHWASHER'}
 
 # Shared construction constants: the numbers that must NOT scale with
 # the appliance. A wider fridge gets wider doors, not a thicker door or
 # a fatter handle.
 FRIDGE_DOOR_T = inch(2.0)
 RANGE_DOOR_T = inch(1.75)
+DISHWASHER_DOOR_T = inch(1.5)
 COOKTOP_T = inch(0.5)
 GAP = inch(0.125)
 HANDLE_SECTION = inch(1.125)
@@ -102,6 +103,12 @@ FRIDGE_CONFIG_ITEMS = [
     ('TOP_FREEZER', "Top Freezer", "Freezer door above the fridge door"),
 ]
 
+CONTROL_STYLE_ITEMS = [
+    ('TOP', "Top / Hidden", "Controls on the top edge of the door, so the "
+                            "front is a clean panel"),
+    ('FRONT', "Front", "Control panel across the front above the door"),
+]
+
 BURNER_STYLE_ITEMS = [
     ('GAS', "Gas", "Grates over sealed burners"),
     ('ELECTRIC', "Electric", "Coil elements"),
@@ -136,9 +143,16 @@ _RANGE_DEFAULTS = dict(_COMMON_DEFAULTS, **{
     'drawer_height': 0.0,
 })
 
+_DISHWASHER_DEFAULTS = dict(_COMMON_DEFAULTS, **{
+    'control_style': 'TOP',
+    'control_height': inch(2.5),
+    'kick_height': inch(4.0),
+})
+
 _DEFAULTS_BY_TYPE = {
     'REFRIGERATOR': _FRIDGE_DEFAULTS,
     'RANGE': _RANGE_DEFAULTS,
+    'DISHWASHER': _DISHWASHER_DEFAULTS,
 }
 
 
@@ -712,12 +726,57 @@ def _build_range(cage_obj, opts):
 
 
 # ---------------------------------------------------------------------------
+# Dishwasher
+# ---------------------------------------------------------------------------
+
+def _build_dishwasher(cage_obj, opts):
+    cg = _Cage(cage_obj)
+    mat = _finish_material(opts)
+    dark = _dark_material()
+    metal = _metal_material()
+    door_t = DISHWASHER_DOOR_T
+    kick_h = float(opts.get('kick_height', inch(4.0)))
+    # Top controls sit on the door's top edge, so the front carries no
+    # control panel at all and the door runs to the top of the box.
+    front_controls = opts.get('control_style', 'TOP') == 'FRONT'
+    control_h = (float(opts.get('control_height', inch(2.5)))
+                 if front_controls else 0.0)
+    panel_ready = is_panel_ready(cage_obj)
+
+    _flat(cg, "Dishwasher Case", 0.0, 0.0, 0.0, 'dim_x',
+          'dim_y - %f' % door_t, 'dim_z', dark if panel_ready else mat)
+
+    # Lower access panel. It stays on a panel-ready machine: the
+    # appliance panels cover the door opening, not the toe.
+    if kick_h > 0.0:
+        _front(cg, "Dishwasher Access Panel", 0.0, 0.0, 'dim_x', kick_h,
+               door_t, dark if panel_ready else mat)
+
+    if panel_ready:
+        # The door front comes from the appliance panels on this cage.
+        return
+
+    if control_h > 0.0:
+        _front(cg, "Dishwasher Controls", 0.0, 'dim_z - %f' % control_h,
+               'dim_x', control_h, door_t, dark)
+
+    door_z = kick_h + (GAP if kick_h > 0.0 else 0.0)
+    door_h = 'dim_z - %f' % (door_z + control_h
+                             + (GAP if control_h > 0.0 else 0.0))
+    _front(cg, "Dishwasher Door", 0.0, door_z, 'dim_x', door_h, door_t, mat)
+    _bar_handle(cg, "Dishwasher Handle", opts, metal, inch(2.0),
+                _sub(_add(door_z, door_h), inch(3.0)),
+                'dim_x - %f' % inch(4.0), False)
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
 _BUILDERS = {
     'REFRIGERATOR': _build_refrigerator,
     'RANGE': _build_range,
+    'DISHWASHER': _build_dishwasher,
 }
 
 
@@ -800,6 +859,14 @@ class HOME_BUILDER_OT_appliance_prompts(bpy.types.Operator):
     dispenser: BoolProperty(
         name="Water / Ice Dispenser",
         description="Recessed dispenser panel in the door")  # type: ignore
+
+    # Range
+    # Dishwasher
+    control_style: EnumProperty(name="Controls", items=CONTROL_STYLE_ITEMS,
+                                default='TOP')  # type: ignore
+    kick_height: FloatProperty(
+        name="Access Panel", unit='LENGTH', precision=5, min=0.0,
+        description="Height of the panel below the door")  # type: ignore
 
     # Range
     burner_style: EnumProperty(name="Cooktop", items=BURNER_STYLE_ITEMS,
@@ -927,6 +994,11 @@ class HOME_BUILDER_OT_appliance_prompts(bpy.types.Operator):
                     col.prop(self, 'freezer_drawers')
             col.prop(self, 'grille_height')
             col.prop(self, 'dispenser')
+        elif appl == 'DISHWASHER':
+            col.prop(self, 'control_style')
+            if self.control_style == 'FRONT':
+                col.prop(self, 'control_height')
+            col.prop(self, 'kick_height')
         elif appl == 'RANGE':
             col.prop(self, 'burner_style')
             col.prop(self, 'burner_count')
