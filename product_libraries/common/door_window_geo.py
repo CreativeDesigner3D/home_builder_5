@@ -767,6 +767,33 @@ def _reveal_cutter_child(cage_obj):
     return None
 
 
+def _hide_reveal_cutter(cutter):
+    """Keep the cutter out of sight everywhere it would otherwise be drawn.
+
+    'Display As: Wire' only applies to solid/wireframe shading -- in
+    material preview and rendered shading the cutter is drawn as the
+    solid box it is, right on top of the door slab or window sash, so
+    the opening reads as a blank filled panel. hide_render covers the
+    final render but not those viewport shading modes, so the cutter
+    also has to be disabled in the viewport. The boolean is unaffected:
+    the modifier evaluates its operand whether or not the object is
+    drawn."""
+    cutter.hide_render = True
+    cutter.hide_viewport = True
+    cutter.hide_select = True
+    cutter.display_type = 'WIRE'
+
+
+def hide_reveal_cutters():
+    """Re-apply the above to every cutter in the file. Cutters built
+    before this were left visible in the viewport, and a saved scene
+    only picks up the fix when something rebuilds it -- so this runs on
+    file load as well."""
+    for obj in bpy.data.objects:
+        if obj.get(REVEAL_CUTTER_FLAG):
+            _hide_reveal_cutter(obj)
+
+
 def _reveal_side_consumed(opts, side, thickness):
     """(clearance_depth + splay_depth) actually used by one side's reveal
     (0.0 if that side is off), clamped to the wall thickness."""
@@ -919,9 +946,6 @@ def update_reveal_cutter(cage_obj):
         cutter[REVEAL_CUTTER_FLAG] = True
         cutter.parent = cage_obj
         cutter.matrix_local = Matrix.Identity(4)
-        cutter.hide_render = True
-        cutter.hide_select = True
-        cutter.display_type = 'WIRE'
         # Wherever the cage is linked, the same as any other child the
         # cage grows (see _new_child). The active collection is not it:
         # a rebuild can be run from anywhere - a prompts dialog, the
@@ -932,6 +956,10 @@ def update_reveal_cutter(cage_obj):
             bpy.context.scene.collection]
         for coll in colls:
             coll.objects.link(cutter)
+
+    # Every call, not just on creation: cutters saved before the
+    # viewport flag was added get fixed the next time they rebuild.
+    _hide_reveal_cutter(cutter)
 
     _build_reveal_cutter_mesh(cutter.data, W, H, T, opts)
 

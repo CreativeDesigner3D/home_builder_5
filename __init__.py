@@ -72,6 +72,11 @@ def load_file_post(scene):
     from .operators import viewport_hud
     viewport_hud.ensure_listener()
 
+    # Door/window boolean cutters saved while still visible in the
+    # viewport would cover their own opening in rendered shading.
+    from .product_libraries.common import door_window_geo
+    door_window_geo.hide_reveal_cutters()
+
 
 def _update_use_viewport_hud(self, context):
     """Flipping the HUD preference: redraw every 3D viewport so the change
