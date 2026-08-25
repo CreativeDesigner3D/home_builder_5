@@ -757,14 +757,21 @@ def rebuild_all(scene=None):
 # Prompts
 # ---------------------------------------------------------------------------
 
-class HOME_BUILDER_OT_appliance_model_prompts(bpy.types.Operator):
-    """Build and edit the 3D model on the selected appliance"""
+class HOME_BUILDER_OT_appliance_prompts(bpy.types.Operator):
+    """Edit the size and the 3D model of the selected appliance"""
 
-    bl_idname = "home_builder.appliance_model_prompts"
-    bl_label = "Appliance Model"
-    bl_description = ("Build a 3D model on the selected appliance and edit "
-                      "its options. The model resizes with the appliance")
+    bl_idname = "home_builder.appliance_prompts"
+    bl_label = "Appliance Prompts"
+    bl_description = ("Edit the size of the selected appliance and the "
+                      "options of its 3D model")
     bl_options = {'REGISTER', 'UNDO'}
+
+    appliance_width: FloatProperty(
+        name="Width", unit='LENGTH', precision=5)  # type: ignore
+    appliance_height: FloatProperty(
+        name="Height", unit='LENGTH', precision=5)  # type: ignore
+    appliance_depth: FloatProperty(
+        name="Depth", unit='LENGTH', precision=5)  # type: ignore
 
     model_style: EnumProperty(name="Model", items=MODEL_STYLE_ITEMS,
                               default='NONE')  # type: ignore
@@ -829,6 +836,10 @@ class HOME_BUILDER_OT_appliance_model_prompts(bpy.types.Operator):
 
     def invoke(self, context, event):
         self.appliance = hb_utils.get_appliance_bp(context.object)
+        cage = _CageWrap(self.appliance)
+        self.appliance_width = cage.get_input('Dim X')
+        self.appliance_height = cage.get_input('Dim Z')
+        self.appliance_depth = cage.get_input('Dim Y')
         for key, value in merged_opts(self.appliance).items():
             if hasattr(self, key):
                 try:
@@ -844,10 +855,18 @@ class HOME_BUILDER_OT_appliance_model_prompts(bpy.types.Operator):
         return {key: getattr(self, key) for key in keys if hasattr(self, key)}
 
     def _apply(self):
-        # check() fires on every dialog interaction. Each apply removes
-        # and recreates part objects, and doing that on every mouse move
-        # destabilizes the draw cache -- the same crash wood_hoods
-        # guards against -- so only rebuild when something changed.
+        # Size is pushed on every interaction: the parts are driven, so
+        # this restretches the model without touching an object.
+        cage = _CageWrap(self.appliance)
+        cage.set_input('Dim X', self.appliance_width)
+        cage.set_input('Dim Z', self.appliance_height)
+        cage.set_input('Dim Y', self.appliance_depth)
+
+        # The model itself is another matter. check() fires on every
+        # dialog interaction, and each rebuild removes and recreates part
+        # objects; doing that on every mouse move destabilizes the draw
+        # cache -- the same crash wood_hoods guards against -- so only
+        # rebuild when the options actually changed.
         opts = self._opts_dict()
         key = repr(sorted(opts.items()))
         if getattr(self, '_applied_key', None) == key:
@@ -865,15 +884,20 @@ class HOME_BUILDER_OT_appliance_model_prompts(bpy.types.Operator):
 
     def execute(self, context):
         self._apply()
-        if self.model_style == 'NONE':
-            self.report({'INFO'}, "Appliance model removed")
-        else:
-            self.report({'INFO'}, "Appliance model built")
         return {'FINISHED'}
 
     def draw(self, context):
         layout = self.layout
         appl = appliance_type(self.appliance)
+
+        box = layout.box()
+        col = box.column(align=True)
+        for label, prop in (("Width:", 'appliance_width'),
+                            ("Height:", 'appliance_height'),
+                            ("Depth:", 'appliance_depth')):
+            row = col.row(align=True)
+            row.label(text=label)
+            row.prop(self, prop, text="")
 
         box = layout.box()
         col = box.column(align=True)
@@ -916,7 +940,7 @@ class HOME_BUILDER_OT_appliance_model_prompts(bpy.types.Operator):
 
 
 _CLASSES = (
-    HOME_BUILDER_OT_appliance_model_prompts,
+    HOME_BUILDER_OT_appliance_prompts,
 )
 
 
