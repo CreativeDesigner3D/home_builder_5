@@ -78,6 +78,29 @@ def get_cabinet_bp(obj):
     return None
 
 
+# A placed product sits ON a wall -- it is parented to one -- but it is
+# not part of the wall. Anything walking a wall's children has to know
+# where the wall stops and the things standing against it begin, or a
+# cabinet gets treated as wall geometry. Two callers ask this now: the
+# room dimension overlay (so selecting a cabinet does not label its wall)
+# and the room collection sorter (so hiding a linked room's walls does
+# not take its cabinets with them).
+PRODUCT_ROOT_TAGS = (
+    'IS_FACE_FRAME_CABINET_CAGE',
+    'IS_FRAMELESS_CABINET_CAGE',
+    'IS_CLOSET_STARTER_CAGE',
+    'IS_APPLIANCE',
+)
+
+
+def is_product_root(obj, extra_tags=()):
+    """True where ``obj`` is the root of a placed product."""
+    if obj is None:
+        return False
+    return any(obj.get(tag) for tag in PRODUCT_ROOT_TAGS) or \
+        any(obj.get(tag) for tag in extra_tags)
+
+
 def get_product_bp(obj):
     """Walk up the parent hierarchy to find the part base point object.
     

@@ -360,6 +360,15 @@ class home_builder_OT_move_room_scene(bpy.types.Operator):
 # ROOM LINKING
 # =============================================================================
 
+# Beyond the shared product roots, these also stand in a room in their
+# own right rather than as part of a wall or a cabinet.
+_EXTRA_PRODUCT_TAGS = (
+    'IS_FRAMELESS_PRODUCT_CAGE',
+    'IS_FACE_FRAME_PRODUCT_CAGE',
+    'IS_OBSTACLE',
+)
+
+
 def organize_room_collections(scene):
     """
     Organize a room scene's objects into sub-collections by type.
@@ -398,27 +407,42 @@ def organize_room_collections(scene):
             wall_roots.add(obj)
         elif obj.get('IS_ROOM_LIGHT'):
             light_objects.add(obj)
-        elif obj.get('IS_FRAMELESS_CABINET_CAGE'):
+        elif hb_utils.is_product_root(obj, _EXTRA_PRODUCT_TAGS):
             product_roots.add(obj)
         elif obj.get('IS_FLOOR_BP'):
             floor_objects.add(obj)
         elif obj.get('IS_ENTRY_DOOR_BP') or obj.get('IS_WINDOW_BP'):
             # Doors/windows on walls - treat as wall category
             wall_roots.add(obj)
-        elif obj.get('IS_OBSTACLE'):
-            product_roots.add(obj)
     
-    def get_all_children(obj):
-        """Recursively get all children of an object."""
+    def get_all_children(obj, stop_at_products=False):
+        """Recursively get all children of an object.
+
+        ``stop_at_products`` cuts the walk where a placed product begins.
+        A cabinet is PARENTED to the wall it stands against, so a plain
+        walk of a wall's children swallows every cabinet on it -- which
+        is why switching a linked room's walls off used to take its
+        cabinets with them."""
         children = set()
         for child in obj.children:
+            if stop_at_products and hb_utils.is_product_root(
+                    child, _EXTRA_PRODUCT_TAGS):
+                continue
             children.add(child)
-            children.update(get_all_children(child))
+            children.update(get_all_children(child, stop_at_products))
         return children
     
     def move_to_collection(objects, target_col):
-        """Move objects to target collection, removing from others."""
+        """Move objects to target collection, removing from the others.
+
+        An object left linked in a category it no longer belongs to keeps
+        showing when that category is switched off; unlinking here also
+        repairs rooms organised before products were sorted correctly."""
+        managed = [c for c in collections.values() if c is not target_col]
         for obj in objects:
+            for col in managed:
+                if obj.name in col.objects:
+                    col.objects.unlink(obj)
             # Skip if already in target
             if obj.name in target_col.objects:
                 continue
@@ -429,10 +453,12 @@ def organize_room_collections(scene):
                 scene.collection.objects.unlink(obj)
     
     # Move walls + their children (exclude GeoNodeCage objects)
+    # The walk stops at any product standing on the wall; those are
+    # gathered below into their own category.
     wall_objects = set()
     for root in wall_roots:
         wall_objects.add(root)
-        wall_objects.update(get_all_children(root))
+        wall_objects.update(get_all_children(root, stop_at_products=True))
     wall_objects = {obj for obj in wall_objects if not obj.get('IS_GEONODE_CAGE')}
     move_to_collection(wall_objects, collections['walls'])
     

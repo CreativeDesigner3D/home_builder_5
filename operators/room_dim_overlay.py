@@ -30,7 +30,7 @@ import gpu
 from mathutils import Vector
 from bpy_extras import view3d_utils
 
-from .. import hb_placement, hb_types, units
+from .. import hb_placement, hb_types, hb_utils, units
 from ..units import inch
 from ..product_libraries.common import door_window_geo
 
@@ -82,13 +82,9 @@ def parse_distance(text):
 # Product roots that sit on (are parented to) walls. A selection inside
 # one of these belongs to the product, not the wall -- without this
 # check, selecting any cabinet placed on a wall walked up to the wall
-# BP and painted the wall's length/height labels.
-_PRODUCT_ROOT_TAGS = (
-    'IS_FACE_FRAME_CABINET_CAGE',
-    'IS_FRAMELESS_CABINET_CAGE',
-    'IS_CLOSET_STARTER_CAGE',
-    'IS_APPLIANCE',
-)
+# BP and painted the wall's length/height labels. Shared, because the
+# room collection sorter has to draw the same line.
+_PRODUCT_ROOT_TAGS = hb_utils.PRODUCT_ROOT_TAGS
 
 
 def _resolve_target(obj):
