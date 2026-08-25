@@ -5,7 +5,7 @@ from .... import hb_project
 
 
 class hb_face_frame_OT_update_cabinet_sizes(bpy.types.Operator):
-    """Push the current scene tall_cabinet_height and upper_cabinet_height
+    """Push this room's tall_cabinet_height and upper_cabinet_height
     onto every face frame cabinet in this scene. Resyncs cabinet sizes
     after a top cabinet clearance / wall cabinet location / ceiling
     height change.
@@ -21,14 +21,16 @@ class hb_face_frame_OT_update_cabinet_sizes(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        # Source values come from the main scene (matches frameless's
-        # pattern - handles cases where the user is in a viewport scene
-        # different from the data scene).
-        main_scene = hb_project.get_main_scene()
-        if not hasattr(main_scene, 'hb_face_frame'):
+        # Source values come from the room being updated, not from the
+        # main scene: the derived heights are the room's own ceiling
+        # height less its clearances, so reading them off another room
+        # sizes these cabinets for that room's walls. Layout and detail
+        # scenes fall back to the main scene (see get_settings_scene).
+        settings_scene = hb_project.get_settings_scene(context)
+        if not hasattr(settings_scene, 'hb_face_frame'):
             self.report({'WARNING'}, "Face frame scene props not registered")
             return {'CANCELLED'}
-        ff_props = main_scene.hb_face_frame
+        ff_props = settings_scene.hb_face_frame
 
         updated = 0
         for obj in context.scene.objects:

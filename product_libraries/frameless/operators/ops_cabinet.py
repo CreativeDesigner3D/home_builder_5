@@ -159,9 +159,9 @@ class hb_frameless_OT_drop_cabinet_to_countertop(bpy.types.Operator):
             self.report({'WARNING'}, "Cabinet has been flattened (modifier applied) and can no longer be edited parametrically.")
             return {'CANCELLED'}
 
-        main_scene = hb_project.get_main_scene()
-        props = main_scene.hb_frameless
-        
+        # Per-room sizes: read them off the room this cabinet is in.
+        props = hb_project.get_settings_scene(context).hb_frameless
+
         countertop_top = props.base_cabinet_height + props.countertop_thickness
         current_height = cabinet.get_input('Dim Z')
         current_top = cabinet_bp.location.z + current_height

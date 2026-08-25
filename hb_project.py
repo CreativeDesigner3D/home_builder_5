@@ -271,6 +271,29 @@ def is_room_scene(scene):
     return True
 
 
+def get_settings_scene(context=None):
+    """The scene whose per-room defaults apply to the objects being
+    worked on right now.
+
+    Ceiling height, and every size derived from it (top cabinet
+    clearance, wall cabinet location, the tall and upper cabinet
+    heights those produce), belong to the room, not the project: a 108"
+    kitchen and a 156" first floor carry different values in the same
+    file. Anything acting on the current scene's objects has to read
+    that scene's own defaults, or it pushes another room's sizes onto
+    them. Layout and detail scenes own no room, so they fall back to
+    the main scene.
+
+    Project-global data -- styles, pricing, project properties -- is a
+    different question and keeps using get_main_scene().
+    """
+    ctx = context or bpy.context
+    scene = getattr(ctx, 'scene', None)
+    if scene is not None and is_room_scene(scene):
+        return scene
+    return get_main_scene(ctx)
+
+
 def get_room_scenes():
     """Get all room scenes (excluding layout and detail scenes), sorted by sort_order."""
     rooms = [s for s in bpy.data.scenes if is_room_scene(s)]

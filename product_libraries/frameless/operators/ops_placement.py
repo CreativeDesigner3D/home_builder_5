@@ -510,9 +510,10 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         """Get the height for an appliance, handling special cases like hoods."""
         
         if self.appliance_type == 'HOOD':
-            # Hood extends from its Z location to the ceiling
-            main_scene = hb_project.get_main_scene()
-            hb_props = main_scene.home_builder
+            # Hood extends from its Z location to the ceiling -- this
+            # room's ceiling, which is not the main scene's when the
+            # rooms have different wall heights.
+            hb_props = hb_project.get_settings_scene(context).home_builder
             ceiling_height = hb_props.ceiling_height
             hood_z = self.get_cabinet_z_location(context)
             return ceiling_height - hood_z

@@ -117,11 +117,14 @@ class hb_frameless_OT_update_cabinet_sizes(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        
-        # Get props from main scene
-        main_scene = hb_project.get_main_scene()
-        props = main_scene.hb_frameless
-        
+
+        # Sizes are per room -- the tall and upper heights are this
+        # room's ceiling height less its clearances, so they have to
+        # come from the scene holding the cabinets being updated, not
+        # from the main scene (see hb_project.get_settings_scene).
+        settings_scene = hb_project.get_settings_scene(context)
+        props = settings_scene.hb_frameless
+
         updated_count = 0
         
         # Find all cabinets in the current scene
