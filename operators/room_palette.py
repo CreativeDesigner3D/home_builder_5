@@ -188,9 +188,13 @@ BUILTIN_TOOLS = (
      _g_open_door, 1, 'draw_door_window_defaults', "Door & Window Settings"),
     ("home_builder_doors_windows.place_window", "Window", _g_window, 1,
      'draw_door_window_defaults', "Door & Window Settings"),
-    ("home_builder_walls.add_floor", "Add Floor", _g_floor, 2, None, None),
-    ("home_builder_walls.add_ceiling", "Add Ceiling", _g_ceiling, 2, None, None),
-    ("home_builder_stairs.place_stairs", "Add Stairs", _g_stairs, 2, None, None),
+    # Named for the thing, not the act: every button on the strip adds
+    # something, so "Add" on three of them is a word the eye has to read
+    # past to get to what differs. The group reads Floor / Ceiling /
+    # Stairs down the column.
+    ("home_builder_walls.add_floor", "Floor", _g_floor, 2, None, None),
+    ("home_builder_walls.add_ceiling", "Ceiling", _g_ceiling, 2, None, None),
+    ("home_builder_stairs.place_stairs", "Stairs", _g_stairs, 2, None, None),
 )
 
 # Group captions, shown only in expanded mode. A group is just an int on
