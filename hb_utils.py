@@ -436,12 +436,15 @@ def set_plan_view(distance=8.0):
     """Set the 3D viewport to a plan view centered on the origin.
 
     Unlike set_top_down_view this also resets the pan and zoom, for
-    scenes that start out empty and so have nothing to frame.
+    scenes that start out empty and so have nothing to frame, and drops
+    back to solid shading to draw against. The solid color type is left
+    alone - it is a scene setup preference.
     """
     for area in bpy.context.screen.areas:
         if area.type == 'VIEW_3D':
             for space in area.spaces:
                 if space.type == 'VIEW_3D':
+                    space.shading.type = 'SOLID'
                     r3d = space.region_3d
                     r3d.view_perspective = 'ORTHO'
                     r3d.view_rotation = Euler((0, 0, 0)).to_quaternion()
