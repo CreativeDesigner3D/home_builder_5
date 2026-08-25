@@ -2,6 +2,7 @@ import bpy
 from .. import hb_project
 from .. import hb_layouts
 from .. import hb_details
+from . import menus
 
 CATEGORY_NAME = "Home Builder"
 
@@ -1449,17 +1450,9 @@ class HOME_BUILDER_PT_room_layout_reference_image(bpy.types.Panel):
             col.operator("home_builder.set_scale_with_two_points", 
                         text="Set Image Scale", icon='FIXED_SIZE')
             
-            col = layout.column(align=True)
-            col.use_property_split = True
-            col.use_property_decorate = False
-            col.prop(obj, "empty_display_size", text="Display Size")
-            col.prop(obj, "empty_image_offset", text="Offset")
-            col.separator()
-            col.prop(obj, "show_empty_image_orthographic", text="Show in Ortho")
-            col.prop(obj, "show_empty_image_perspective", text="Show in Perspective")
-            col.prop(obj, "use_empty_image_alpha", text="Use Alpha")
-            if obj.use_empty_image_alpha:
-                col.prop(obj, "color", index=3, text="Opacity", slider=True)
+            # Same block the right-click dialog draws, so the two
+            # cannot drift apart.
+            menus.draw_reference_image_settings(layout, obj)
         else:
             layout.label(text="To add a reference image.",icon='INFO')
             layout.label(text="Drag an image into the 3D viewport.", icon='BLANK1')

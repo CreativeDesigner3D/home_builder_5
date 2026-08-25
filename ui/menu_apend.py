@@ -17,6 +17,14 @@ def draw_object_mode_right_click_menu(self, context):
     if not menu_id and menus.is_annotation_text(obj):
         menu_id = "HOME_BUILDER_MT_text_commands"
 
+    # A reference image is Blender's own object -- it arrives by being
+    # dragged into the viewport, so nothing of ours ever gets to stamp a
+    # MENU_ID on it. Matched on the object for the same reason, which
+    # also picks up images in projects saved before these commands
+    # existed.
+    if not menu_id and menus.is_reference_image(obj):
+        menu_id = "HOME_BUILDER_MT_reference_image_commands"
+
     if menu_id and hasattr(bpy.types, menu_id):
         layout.menu(menu_id)
         layout.separator()

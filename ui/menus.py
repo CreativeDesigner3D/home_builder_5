@@ -666,6 +666,33 @@ class HOME_BUILDER_MT_dimension_commands(bpy.types.Menu):
         layout.operator("object.delete", text="Delete Dimension", icon='X')
 
 
+def is_reference_image(obj):
+    """True for a reference image dropped into the viewport to trace."""
+    return bool(obj and obj.type == 'EMPTY'
+                and obj.empty_display_type == 'IMAGE')
+
+
+def draw_reference_image_settings(layout, obj):
+    """The reference image's own settings.
+
+    Shared by the sidebar panel and the right-click dialog so the two
+    cannot drift: a reference image is adjusted from wherever you happen
+    to be looking at it, and both places have to offer the same handful
+    of controls.
+    """
+    col = layout.column(align=True)
+    col.use_property_split = True
+    col.use_property_decorate = False
+    col.prop(obj, "empty_display_size", text="Display Size")
+    col.prop(obj, "empty_image_offset", text="Offset")
+    col.separator()
+    col.prop(obj, "show_empty_image_orthographic", text="Show in Ortho")
+    col.prop(obj, "show_empty_image_perspective", text="Show in Perspective")
+    col.prop(obj, "use_empty_image_alpha", text="Use Alpha")
+    if obj.use_empty_image_alpha:
+        col.prop(obj, "color", index=3, text="Opacity", slider=True)
+
+
 def is_annotation_text(obj):
     """True for a 2D annotation text object the drafter placed."""
     return bool(obj and obj.type == 'FONT'
@@ -739,6 +766,54 @@ class HOME_BUILDER_MT_text_commands(bpy.types.Menu):
         layout.operator("object.delete", text="Delete Text", icon='X')
 
 
+class HOME_BUILDER_OT_show_reference_image_properties(bpy.types.Operator):
+    """Show the reference image's display settings"""
+    bl_idname = "home_builder.reference_image_options"
+    bl_label = "Image Properties"
+    bl_description = "Display size, offset and visibility for this reference image"
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return is_reference_image(context.object)
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self, width=320)
+
+    def draw(self, context):
+        # Straight onto the object: these are Blender's own empty-image
+        # properties, so there is nothing to copy in and write back --
+        # and editing them live is what makes the dialog worth opening,
+        # because you watch the image move while you drag.
+        obj = context.object
+        if is_reference_image(obj):
+            draw_reference_image_settings(self.layout, obj)
+        else:
+            self.layout.label(text="No reference image selected", icon='INFO')
+
+    def execute(self, context):
+        return {'FINISHED'}
+
+
+class HOME_BUILDER_MT_reference_image_commands(bpy.types.Menu):
+    """Right-click commands for a reference image.
+
+    A dropped image carries no MENU_ID -- Blender makes the object, not
+    us -- so ui/menu_apend falls back to this menu for any image empty.
+    An image already traced against in a saved project gets the commands
+    the same way."""
+
+    bl_label = "Reference Image Commands"
+
+    def draw(self, context):
+        layout = self.layout
+        layout.operator_context = 'INVOKE_DEFAULT'
+        layout.operator("home_builder.set_scale_with_two_points",
+                        text="Set Image Scale", icon='FIXED_SIZE')
+        layout.operator("home_builder.reference_image_options",
+                        text="Show Image Properties", icon='IMAGE_DATA')
+
+
 def draw_home_builder_menu(self, context):
     self.layout.menu("HOME_BUILDER_MT_main_menu")
 
@@ -760,6 +835,8 @@ classes = (
     HOME_BUILDER_MT_dimension_commands,
     HOME_BUILDER_OT_set_text_alignment,
     HOME_BUILDER_MT_text_commands,
+    HOME_BUILDER_OT_show_reference_image_properties,
+    HOME_BUILDER_MT_reference_image_commands,
 )
 
 
