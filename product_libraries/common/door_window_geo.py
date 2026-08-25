@@ -922,7 +922,16 @@ def update_reveal_cutter(cage_obj):
         cutter.hide_render = True
         cutter.hide_select = True
         cutter.display_type = 'WIRE'
-        bpy.context.collection.objects.link(cutter)
+        # Wherever the cage is linked, the same as any other child the
+        # cage grows (see _new_child). The active collection is not it:
+        # a rebuild can be run from anywhere - a prompts dialog, the
+        # dimension overlay - and the cutter would land in whatever
+        # collection happened to be active at the time, away from the
+        # door it belongs to.
+        colls = list(cage_obj.users_collection) or [
+            bpy.context.scene.collection]
+        for coll in colls:
+            coll.objects.link(cutter)
 
     _build_reveal_cutter_mesh(cutter.data, W, H, T, opts)
 
@@ -938,6 +947,29 @@ def update_reveal_cutter(cage_obj):
                 mod.object = cutter
 
     return cutter
+
+
+def remove_reveal_cutter(cage_obj):
+    """Take the cutter away and give the wall back to the cage.
+
+    An opening with no stored options carries no reveal, and the cage
+    cuts its own plain rectangle perfectly well. Keeping a cutter for it
+    would only be a second mesh to hold in step: the cage resizes live
+    with Dim X/Z, a cutter mesh is rebuilt when something remembers to
+    rebuild it, and the hole stops matching the opening the moment one
+    is resized without the other."""
+    cutter = _reveal_cutter_child(cage_obj)
+    if cutter is None:
+        return
+    wall_obj = cage_obj.parent
+    if wall_obj is not None:
+        for mod in wall_obj.modifiers:
+            if mod.type == 'BOOLEAN' and mod.object == cutter:
+                mod.object = cage_obj
+    me = cutter.data
+    bpy.data.objects.remove(cutter, do_unlink=True)
+    if me is not None and me.users == 0:
+        bpy.data.meshes.remove(me)
 
 
 def _text_children(cage_obj):
@@ -1559,7 +1591,12 @@ def build_geometry(cage_obj):
     """Rebuild the cage's generated geometry from its stored options.
     No stored options -> any stale children are removed and nothing is
     built (cage-only display)."""
-    update_reveal_cutter(cage_obj)
+    # Cage-only display goes back to cutting with the cage, so a plain
+    # opening keeps resizing its hole live the way it always did.
+    if stored_opts(cage_obj) is None:
+        remove_reveal_cutter(cage_obj)
+    else:
+        update_reveal_cutter(cage_obj)
     if cage_obj.get('IS_WINDOW_BP'):
         build_window_geometry(cage_obj)
     elif cage_obj.get('IS_ENTRY_DOOR_BP'):

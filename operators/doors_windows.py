@@ -1317,6 +1317,11 @@ class home_builder_doors_windows_OT_door_prompts(bpy.types.Operator):
             door_window_geo.remove_geometry(self.door.obj,
                                             restore_annotations=True)
             door_window_geo.clear_opts(self.door.obj)
+            # Back to cage-only: the cage cuts the wall again, so the
+            # hole follows the width and height being typed here
+            # instead of staying at whatever the cutter was last built
+            # to.
+            door_window_geo.remove_reveal_cutter(self.door.obj)
         else:
             # A preset that adds or removes sidelites / a transom
             # resizes the OPENING by the difference, so the door slab
@@ -1589,6 +1594,9 @@ class home_builder_doors_windows_OT_window_prompts(bpy.types.Operator):
             door_window_geo.remove_geometry(self.window.obj,
                                             restore_annotations=True)
             door_window_geo.clear_opts(self.window.obj)
+            # See the door prompts: cage-only cuts with the cage, so the
+            # hole follows the size being typed here.
+            door_window_geo.remove_reveal_cutter(self.window.obj)
         else:
             _apply_preset_if_changed(self, door_window_geo.WINDOW_CATEGORY)
             door_window_geo.set_opts(
@@ -1815,9 +1823,19 @@ class home_builder_doors_windows_OT_delete_door_window(bpy.types.Operator):
         
         # Remove the boolean modifier from the wall if present
         if wall and 'IS_WALL_BP' in wall:
-            # Find and remove the boolean modifier for this door/window
+            # Find and remove the boolean modifier for this door/window.
+            # What cuts the wall is the cage itself on a plain opening,
+            # but the reveal cutter hanging under it once the opening
+            # has geometry (see door_window_geo.update_reveal_cutter),
+            # so a modifier pointed at either one belongs to this
+            # door/window. Matching only the cage left the modifier
+            # behind on the wall, holding a reference to nothing once
+            # the children below were removed.
+            cutters = {obj}
+            cutters.update(c for c in obj.children
+                           if c.get(door_window_geo.REVEAL_CUTTER_FLAG))
             for mod in wall.modifiers:
-                if mod.type == 'BOOLEAN' and mod.object == obj:
+                if mod.type == 'BOOLEAN' and mod.object in cutters:
                     wall.modifiers.remove(mod)
                     break
         
