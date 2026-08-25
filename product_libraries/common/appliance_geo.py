@@ -59,7 +59,7 @@ from ...units import inch
 GEO_OPTS_PROP = "APPLIANCE_GEO_OPTS"
 GEO_CHILD_FLAG = "IS_APPLIANCE_GEO"
 
-SUPPORTED_TYPES = {'REFRIGERATOR', 'RANGE', 'DISHWASHER'}
+SUPPORTED_TYPES = {'REFRIGERATOR', 'RANGE', 'DISHWASHER', 'UNDER_COUNTER'}
 
 # Shared construction constants: the numbers that must NOT scale with
 # the appliance. A wider fridge gets wider doors, not a thicker door or
@@ -67,6 +67,12 @@ SUPPORTED_TYPES = {'REFRIGERATOR', 'RANGE', 'DISHWASHER'}
 FRIDGE_DOOR_T = inch(2.0)
 RANGE_DOOR_T = inch(1.75)
 DISHWASHER_DOOR_T = inch(1.5)
+UNDER_COUNTER_DOOR_T = inch(1.5)
+# Glass-door stile / rail width, and how far the cabinet face sets back
+# behind the door so there is a cavity to see shelves in.
+UNDER_COUNTER_FRAME_W = inch(1.75)
+UNDER_COUNTER_INTERIOR_D = inch(3.5)
+LINER_T = inch(0.5)
 COOKTOP_T = inch(0.5)
 GAP = inch(0.125)
 HANDLE_SECTION = inch(1.125)
@@ -101,6 +107,18 @@ FRIDGE_CONFIG_ITEMS = [
     ('SINGLE', "Single Door", "One door over a freezer drawer"),
     ('SIDE_BY_SIDE', "Side by Side", "Full-height freezer beside the fridge"),
     ('TOP_FREEZER', "Top Freezer", "Freezer door above the fridge door"),
+]
+
+UNDER_COUNTER_KIND_ITEMS = [
+    ('BEVERAGE', "Beverage Center", "Shelves behind the door"),
+    ('WINE', "Wine Fridge", "Wine rack slats behind the door"),
+    ('ICE', "Ice Maker", "No interior behind the door"),
+]
+
+DOOR_STYLE_ITEMS = [
+    ('SOLID', "Solid", "Solid door panel"),
+    ('GLASS', "Glass", "Glass panel in a stile and rail frame, with the "
+                       "interior visible behind it"),
 ]
 
 CONTROL_STYLE_ITEMS = [
@@ -149,10 +167,19 @@ _DISHWASHER_DEFAULTS = dict(_COMMON_DEFAULTS, **{
     'kick_height': inch(4.0),
 })
 
+_UNDER_COUNTER_DEFAULTS = dict(_COMMON_DEFAULTS, **{
+    'uc_kind': 'BEVERAGE',
+    'door_style': 'GLASS',
+    'shelf_count': 3,
+    'wine_rows': 5,
+    'kick_height': inch(3.5),
+})
+
 _DEFAULTS_BY_TYPE = {
     'REFRIGERATOR': _FRIDGE_DEFAULTS,
     'RANGE': _RANGE_DEFAULTS,
     'DISHWASHER': _DISHWASHER_DEFAULTS,
+    'UNDER_COUNTER': _UNDER_COUNTER_DEFAULTS,
 }
 
 
@@ -272,6 +299,31 @@ def _finish_material(opts):
 def _dark_material():
     """Grilles, control strips, cooktop glass, oven windows."""
     return _material('Appliance Dark', (0.045, 0.045, 0.05), 0.0, 0.30)
+
+
+def _glass_material():
+    """Door glass. Same recipe as the entry-door glazing, under its own
+    name so the two can be tuned apart."""
+    name = 'Appliance Glass'
+    mat = bpy.data.materials.get(name)
+    if mat is not None:
+        return mat
+    mat = _material(name, (0.60, 0.75, 0.80), 0.0, 0.05)
+    bsdf = next((n for n in mat.node_tree.nodes
+                 if n.type == 'BSDF_PRINCIPLED'), None)
+    if bsdf is not None:
+        if 'Alpha' in bsdf.inputs:
+            bsdf.inputs['Alpha'].default_value = 0.25
+        if 'Transmission Weight' in bsdf.inputs:
+            bsdf.inputs['Transmission Weight'].default_value = 1.0
+    if hasattr(mat, 'surface_render_method'):
+        mat.surface_render_method = 'BLENDED'
+    elif hasattr(mat, 'blend_method'):
+        mat.blend_method = 'BLEND'
+    # Alpha in the solid-mode display color too, so it reads as glass in
+    # the workbench viewport.
+    mat.diffuse_color = (0.55, 0.70, 0.75, 0.25)
+    return mat
 
 
 def _metal_material():
@@ -403,6 +455,23 @@ def _front(cg, name, x, z, width, height, thickness, mat=None,
     _size(cg, part, 'Width', height)
     _size(cg, part, 'Thickness', thickness)
     part.set_input('Mirror Z', not proud)
+    return part
+
+
+def _side(cg, name, x, y, z, height, depth, thickness, mat=None,
+          plus_x=True):
+    """Vertical panel in the YZ plane: height up Z from z, depth back
+    from y, thickness across X (toward +X unless plus_x is False)."""
+    part = _part(cg, name, mat)
+    _place(cg, part, 'x', x)
+    _place(cg, part, 'y', y)
+    _place(cg, part, 'z', z)
+    part.obj.rotation_euler.y = math.radians(-90)
+    _size(cg, part, 'Length', height)
+    _size(cg, part, 'Width', depth)
+    _size(cg, part, 'Thickness', thickness)
+    part.set_input('Mirror Y', True)
+    part.set_input('Mirror Z', plus_x)
     return part
 
 
@@ -770,6 +839,114 @@ def _build_dishwasher(cage_obj, opts):
 
 
 # ---------------------------------------------------------------------------
+# Under-counter appliance (beverage center, wine fridge, ice maker)
+# ---------------------------------------------------------------------------
+
+def _under_counter_interior(cg, opts, kind, dark, z0, depth):
+    """Shelves or wine slats in the cavity behind a glass door. Their
+    spacing is driven, so they stay evenly divided as the box grows."""
+    if kind == 'ICE':
+        return
+    if kind == 'WINE':
+        count = max(1, int(opts.get('wine_rows', 5)))
+        thickness = inch(0.375)
+        name = "Wine Slat"
+    else:
+        count = max(1, int(opts.get('shelf_count', 3)))
+        thickness = inch(0.5)
+        name = "Shelf"
+    for i in range(count):
+        fraction = (i + 1.0) / (count + 1.0)
+        _flat(cg, "%s %d" % (name, i + 1), LINER_T,
+              '-dim_y + %f' % UNDER_COUNTER_DOOR_T,
+              '%f + (dim_z - %f) * %f' % (z0, z0, fraction),
+              'dim_x - %f' % (2.0 * LINER_T), depth - inch(0.25),
+              thickness, dark)
+
+
+def _under_counter_liner(cg, dark, z0, depth):
+    """Line the cavity so the recess reads as a box rather than a hole
+    with open sides."""
+    y_front = '-dim_y + %f' % UNDER_COUNTER_DOOR_T
+    height = 'dim_z - %f' % z0
+    _side(cg, "Liner Left", 0.0, y_front, z0, height, depth, LINER_T, dark,
+          plus_x=True)
+    _side(cg, "Liner Right", 'dim_x', y_front, z0, height, depth, LINER_T,
+          dark, plus_x=False)
+    _flat(cg, "Liner Bottom", LINER_T, y_front, z0,
+          'dim_x - %f' % (2.0 * LINER_T), depth, LINER_T, dark)
+    _flat(cg, "Liner Top", LINER_T, y_front, 'dim_z',
+          'dim_x - %f' % (2.0 * LINER_T), depth, LINER_T, dark, down=True)
+
+
+def _glass_door(cg, opts, mat, glass, metal, z0, height, door_t):
+    """Stile and rail frame with a glass panel, built on the door face."""
+    frame = UNDER_COUNTER_FRAME_W
+    _front(cg, "Door Stile L", 0.0, z0, frame, height, door_t, mat)
+    _front(cg, "Door Stile R", 'dim_x - %f' % frame, z0, frame, height,
+           door_t, mat)
+    rail_w = 'dim_x - %f' % (2.0 * frame)
+    _front(cg, "Door Rail Bottom", frame, z0, rail_w, frame, door_t, mat)
+    _front(cg, "Door Rail Top", frame,
+           _sub(_add(z0, height), frame), rail_w, frame, door_t, mat)
+    # The pane sits in the middle of the frame's thickness.
+    _front(cg, "Door Glass", frame, _add(z0, frame), rail_w,
+           _sub(height, 2.0 * frame), inch(0.25), glass,
+           y='-dim_y + %f' % (door_t * 0.5))
+
+
+def _build_under_counter(cage_obj, opts):
+    cg = _Cage(cage_obj)
+    mat = _finish_material(opts)
+    dark = _dark_material()
+    metal = _metal_material()
+    door_t = UNDER_COUNTER_DOOR_T
+    kick_h = float(opts.get('kick_height', inch(3.5)))
+    kind = opts.get('uc_kind', 'BEVERAGE')
+    panel_ready = is_panel_ready(cage_obj)
+    glass_door = (opts.get('door_style', 'GLASS') == 'GLASS'
+                  and not panel_ready)
+    # A solid door hides everything behind it, so only a glass one pays
+    # for a cavity, a liner and shelves.
+    interior = UNDER_COUNTER_INTERIOR_D if glass_door else 0.0
+
+    _flat(cg, "Under Counter Case", 0.0, 0.0, 0.0, 'dim_x',
+          'dim_y - %f' % (door_t + interior), 'dim_z',
+          dark if (panel_ready or glass_door) else mat)
+
+    if kick_h > 0.0:
+        _front(cg, "Under Counter Grille", 0.0, 0.0, 'dim_x', kick_h,
+               door_t, dark)
+
+    if panel_ready:
+        # The door front comes from the appliance panels on this cage.
+        return
+
+    door_z = kick_h + (GAP if kick_h > 0.0 else 0.0)
+    door_h = 'dim_z - %f' % door_z
+
+    if glass_door:
+        _under_counter_liner(cg, dark, door_z, interior)
+        _under_counter_interior(cg, opts, kind, dark, door_z, interior)
+        _glass_door(cg, opts, mat, _glass_material(), metal, door_z, door_h,
+                    door_t)
+    else:
+        _front(cg, "Under Counter Door", 0.0, door_z, 'dim_x', door_h,
+               door_t, mat)
+
+    # Vertical bar handle inside the right-hand edge, the way an
+    # under-counter unit is normally pulled. On a glass door it centers
+    # on the stile -- mounting it over the pane would be nonsense.
+    if glass_door:
+        handle_inset = (UNDER_COUNTER_FRAME_W + HANDLE_SECTION) * 0.5
+    else:
+        handle_inset = inch(2.5) + HANDLE_SECTION
+    _bar_handle(cg, "Under Counter Handle", opts, metal,
+                'dim_x - %f' % handle_inset,
+                _add(door_z, inch(4.0)), _sub(door_h, inch(8.0)), True)
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -777,6 +954,7 @@ _BUILDERS = {
     'REFRIGERATOR': _build_refrigerator,
     'RANGE': _build_range,
     'DISHWASHER': _build_dishwasher,
+    'UNDER_COUNTER': _build_under_counter,
 }
 
 
@@ -861,6 +1039,18 @@ class HOME_BUILDER_OT_appliance_prompts(bpy.types.Operator):
         description="Recessed dispenser panel in the door")  # type: ignore
 
     # Range
+    # Under counter
+    uc_kind: EnumProperty(name="Type", items=UNDER_COUNTER_KIND_ITEMS,
+                          default='BEVERAGE')  # type: ignore
+    door_style: EnumProperty(name="Door", items=DOOR_STYLE_ITEMS,
+                             default='GLASS')  # type: ignore
+    shelf_count: IntProperty(
+        name="Shelves", min=1, max=8,
+        description="Shelves visible behind a glass door")  # type: ignore
+    wine_rows: IntProperty(
+        name="Rack Rows", min=1, max=12,
+        description="Wine rack slats visible behind a glass door")  # type: ignore
+
     # Dishwasher
     control_style: EnumProperty(name="Controls", items=CONTROL_STYLE_ITEMS,
                                 default='TOP')  # type: ignore
@@ -994,6 +1184,15 @@ class HOME_BUILDER_OT_appliance_prompts(bpy.types.Operator):
                     col.prop(self, 'freezer_drawers')
             col.prop(self, 'grille_height')
             col.prop(self, 'dispenser')
+        elif appl == 'UNDER_COUNTER':
+            col.prop(self, 'uc_kind')
+            col.prop(self, 'door_style')
+            if self.door_style == 'GLASS':
+                if self.uc_kind == 'WINE':
+                    col.prop(self, 'wine_rows')
+                elif self.uc_kind == 'BEVERAGE':
+                    col.prop(self, 'shelf_count')
+            col.prop(self, 'kick_height')
         elif appl == 'DISHWASHER':
             col.prop(self, 'control_style')
             if self.control_style == 'FRONT':
