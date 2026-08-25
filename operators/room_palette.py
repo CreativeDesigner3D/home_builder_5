@@ -145,6 +145,31 @@ def _g_ceiling(shader, box, color):
         draw_lines(shader, [(fx, y + h * 0.85), (fx - w * 0.12, y + h)], color)
 
 
+def _g_measure(shader, box, color):
+    """A dimension line: what the tool leaves on screen.
+
+    Not a tape-measure case -- a curled tape needs a spiral and a body to
+    be recognisable, and both turn to mush at this size, the same way the
+    gear's teeth did. Two witness lines and an arrowed span between them
+    survive the shrink and say the same thing.
+    """
+    x, y, w, h = box
+    top = y + h
+    mid = y + h * 0.42
+    # Witness lines run down past the span and stop, the way an extension
+    # line crosses a dimension line on a drawing.
+    draw_lines(shader, [(x, mid - h * 0.14), (x, top),
+                        (x + w, mid - h * 0.14), (x + w, top)], color)
+    draw_lines(shader, [(x, mid), (x + w, mid)], color)
+    # Slashes, not arrowheads. A two-line barb collapses into a pair of
+    # stray pixels at the size this is actually drawn -- and a tick is
+    # how the add-on dimensions a drawing anyway.
+    tick = min(w, h) * 0.22
+    for cx in (x, x + w):
+        draw_lines(shader, [(cx - tick, mid - tick), (cx + tick, mid + tick)],
+                   color)
+
+
 def _g_stairs(shader, box, color):
     """A flight in section: three risers and their treads.
 
@@ -195,6 +220,11 @@ BUILTIN_TOOLS = (
     ("home_builder_walls.add_floor", "Floor", _g_floor, 2, None, None),
     ("home_builder_walls.add_ceiling", "Ceiling", _g_ceiling, 2, None, None),
     ("home_builder_stairs.place_stairs", "Stairs", _g_stairs, 2, None, None),
+    # Group 4, not 3: a downstream add-on has claimed 3 for its own run,
+    # and measuring belongs at the end of the strip anyway -- it is the
+    # one tool here that adds nothing to the room.
+    ("home_builder.measure", "Measure", _g_measure, 4,
+     'measure_options', "Measure Settings"),
 )
 
 # Group captions, shown only in expanded mode. A group is just an int on
@@ -205,6 +235,7 @@ _group_labels = {
     0: "Walls",
     1: "Doors & Windows",
     2: "Room",
+    4: "Measure",
 }
 
 
@@ -243,6 +274,33 @@ def register_tool_options(name, draw_fn):
 
 def unregister_tool_options(name):
     _option_forms.pop(name, None)
+
+
+# Count badges. A tool whose command leaves something behind needs to say
+# so while it is NOT running -- otherwise the only evidence sits in the
+# viewport with no clue as to what put it there or how to be rid of it.
+# The provider is a callable taking the scene and returning a count; zero
+# or None draws nothing.
+_tool_badges = {}        # operator -> callable(scene) -> int | None
+
+
+def register_tool_badge(operator, count_fn):
+    _tool_badges[operator] = count_fn
+
+
+def unregister_tool_badge(operator):
+    _tool_badges.pop(operator, None)
+
+
+def tool_badge(operator, scene):
+    provider = _tool_badges.get(operator)
+    if provider is None:
+        return None
+    try:
+        count = provider(scene)
+    except Exception:
+        return None
+    return count if count else None
 
 
 def register_tool(key, label, glyph, operator, group=3, options=None,
@@ -514,6 +572,28 @@ def _hit_settings(mx, my, layout):
     return None
 
 
+BADGE_H = 13            # unscaled; count plate on a tool that left something
+BADGE_FONT = 9
+
+
+def _draw_badge(shader, font_id, rect, count, s):
+    """Count plate on the top-right of a button.
+
+    Top-right because the settings affordance already owns the bottom-right
+    corner in compact mode, and the two must never land on each other.
+    """
+    x, y, w, h = rect
+    text = str(count) if count < 100 else "99+"
+    size = BADGE_FONT * s
+    bh = BADGE_H * s
+    bw = max(bh, text_width(font_id, size, text) + 6 * s)
+    bx = x + w - bw * 0.6
+    by = y + h - bh * 0.6
+    draw_rect(shader, bx, by, bw, bh, Theme.ACCENT_BG)
+    draw_centered_text(font_id, (bx, by, bw, bh), size,
+                       Theme.TEXT_PRIMARY, text)
+
+
 def _settings_rect(rect):
     """Where a tool row keeps its settings affordance.
 
@@ -616,6 +696,9 @@ def _draw():
                 draw_polyline(shader,
                               [(mx_ + mw_, my_), (mx_ + mw_, my_ + mh_),
                                (mx_, my_)], mark, closed=True)
+        badge = tool_badge(TOOLS_NOW[index][0], context.scene)
+        if badge is not None:
+            _draw_badge(shader, font_id, rect, badge, s)
         if hovered:
             hover_rect = rect
 

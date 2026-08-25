@@ -16,6 +16,7 @@ from .operators import export
 from .operators import ops_stairs
 from .operators import scene_navigator
 from .operators import room_palette
+from .operators import measure_tool
 from .operators import library_panel
 from .operators import options_panel
 from .operators import layout_lock
@@ -352,6 +353,7 @@ def register():
     scene_navigator.register()
     viewport_hud.register()
     room_palette.register()
+    measure_tool.register()      # after the palette: it fills its registries
     library_panel.register()
     options_panel.register()
     room_dim_overlay.register()
@@ -399,6 +401,7 @@ def unregister():
     export.unregister()
     options_panel.unregister()
     library_panel.unregister()
+    measure_tool.unregister()    # before the palette, to empty its registries
     room_palette.unregister()
     scene_navigator.unregister()
     viewport_hud.unregister()
