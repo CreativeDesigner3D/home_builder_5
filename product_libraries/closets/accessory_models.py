@@ -837,6 +837,7 @@ BUILTIN_ITEMS = [
      'description': "A knob on the panel to hang a hanger from"},
     {'code': 'HOOKS', 'name': "Hooks", 'family': 'PANEL',
      'band_axis': 'STYLE', 'sizes': _hook_sizes(), 'depth': 0.046,
+     'center_depth': True,
      'ready': True, 'description': "A hook on the panel face"},
     {'code': 'IRONING_BOARD', 'name': "Ironing Board",
      'family': 'PANEL', 'band_axis': 'STYLE', 'depth': 0.351,

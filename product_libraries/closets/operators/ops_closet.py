@@ -3512,6 +3512,16 @@ class hb_closets_OT_place_misc_part(bpy.types.Operator,
         top = z > interior_h - units.inch(5.0)
         if top or z < units.inch(10.0):
             z = 0.0
+        else:
+            # Between the two bands it lands on a system hole, the same
+            # lattice a shelf lands on: a cleat is drilled to the panel
+            # like anything else, and a height read straight off the
+            # cursor changes with every pixel the mouse moves - which
+            # solved the whole run again for a part that had not
+            # visibly moved.
+            seg_bottom = self._opening.get('hb_seg_bottom', 0.0)
+            z = max(0.0, min(const.snap_system_hole(seg_bottom + z)
+                             - seg_bottom, interior_h))
         return z, top
 
     def _part_band(self, context, z, top, interior_h):
@@ -6688,13 +6698,13 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
             v_label = "From Bottom"
             v_locked = as_length(cp.pull_vertical_location_upper)
         else:
-            # On Auto the door has not been stood up yet, so there is no
-            # one edge for a figure to be read from. Naming a convention
-            # is what makes the box mean something.
+            # On Auto the convention is not settled until the door is
+            # stood up, so the figure is read from whichever edge the
+            # door turns out to work from - the same one number, read
+            # the way that convention reads it.
             v_label, v_locked = "From Top/Bottom", "Follows the door"
         unlock_row(col, 'unlock_door_pull_vertical',
-                   'door_pull_vertical_location', v_label, v_locked,
-                   enabled=rule != 'AUTO')
+                   'door_pull_vertical_location', v_label, v_locked)
         unlock_row(col, 'unlock_door_pull_edge',
                    'door_pull_horizontal_offset', "From Edge",
                    as_length(cp.pull_horizontal_offset))
