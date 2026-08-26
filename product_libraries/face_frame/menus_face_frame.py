@@ -463,6 +463,24 @@ class HOME_BUILDER_MT_face_frame_part_commands(bpy.types.Menu):
             layout.operator("hb_face_frame.remove_mid_rail",
                             text="Remove Mid Rail", icon='X')
 
+        # The carcass backing behind a splitter comes and goes on its own:
+        # a drawer bank is rails with no floors between the boxes, while a
+        # stacked-door cabinet wants the shelf. Offered on the member and
+        # on the backing part itself, so a shelf already in the way can be
+        # clicked and dropped.
+        if role in ops_part_commands._BACKING_HOST_ROLES:
+            is_stile_side = role in (types_face_frame.PART_ROLE_BAY_MID_STILE,
+                                     types_face_frame.PART_ROLE_BAY_DIVISION)
+            noun = "Division" if is_stile_side else "Shelf"
+            behind = ("Behind Mid Stile" if is_stile_side
+                      else "Behind Mid Rail")
+            removed = ops_part_commands.backing_removed(obj)
+            op = layout.operator(
+                "hb_face_frame.toggle_splitter_backing",
+                text=f"{'Add' if removed else 'Remove'} {noun} {behind}",
+                icon=('ADD' if removed else 'X'))
+            op.remove = not removed
+
         # Mid stiles keep their deeper properties popup (extend up /
         # down) as an additional item.
         if role == types_face_frame.PART_ROLE_MID_STILE:

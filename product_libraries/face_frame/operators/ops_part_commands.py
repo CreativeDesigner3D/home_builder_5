@@ -2606,6 +2606,87 @@ class hb_face_frame_OT_remove_mid_rail(bpy.types.Operator):
         return {'FINISHED'}
 
 
+_BACKING_HOST_ROLES = frozenset({
+    types_face_frame.PART_ROLE_BAY_MID_RAIL,
+    types_face_frame.PART_ROLE_BAY_MID_STILE,
+    types_face_frame.PART_ROLE_BAY_SHELF,
+    types_face_frame.PART_ROLE_BAY_DIVISION,
+})
+
+
+def backing_removed(part_obj):
+    """True when the splitter this part belongs to has its carcass
+    backing dropped. Reads the same per-splitter entry the operator
+    writes, so the menu label matches what is built."""
+    split = _find_owning_split_node(part_obj)
+    if split is None:
+        return False
+    idx = part_obj.get('hb_splitter_index', 0)
+    coll = split.face_frame_split.splitter_widths
+    return idx < len(coll) and bool(coll[idx].remove_backing)
+
+
+class hb_face_frame_OT_toggle_splitter_backing(bpy.types.Operator):
+    """Add or remove the carcass backing behind one splitter - the shelf
+    behind a mid rail, the division behind a mid stile. Only that member's
+    backing changes; the face frame member and the neighbouring splitters
+    are untouched.
+
+    Stored as remove_backing on the owning split node's per-splitter entry
+    (keyed by hb_splitter_index) so it survives recalc, which is what lets
+    a shelf come back after it has been dropped.
+    """
+    bl_idname = "hb_face_frame.toggle_splitter_backing"
+    bl_label = "Toggle Backing Behind Splitter"
+    bl_description = (
+        "Add or remove the shelf behind this mid rail (the division behind "
+        "a mid stile). The face frame member stays either way"
+    )
+    bl_options = {'UNDO'}
+
+    remove: bpy.props.BoolProperty(
+        name="Remove",
+        description="Drop the backing when on, restore it when off",
+        default=True,
+    )  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (obj is not None
+                and obj.get('hb_part_role') in _BACKING_HOST_ROLES)
+
+    def execute(self, context):
+        obj = context.active_object
+        split = _find_owning_split_node(obj)
+        if split is None:
+            self.report({'WARNING'}, "No split node found for this part")
+            return {'CANCELLED'}
+        sp = split.face_frame_split
+        idx = obj.get('hb_splitter_index', 0)
+        # Lazily grow the per-splitter collection to cover this index, then
+        # set remove_backing (its update callback fires the cabinet recalc).
+        coll = sp.splitter_widths
+        while len(coll) <= idx:
+            coll.add()
+        # A split whose backing was never switched on has nothing to
+        # restore, so putting one back has to flip the node flag too.
+        # Every OTHER member is then pinned off first, or flipping the
+        # node flag would grow shelves the user never asked for.
+        if not self.remove and not sp.add_backing:
+            n_children = len([c for c in split.children
+                              if c.get(types_face_frame.TAG_OPENING_CAGE)
+                              or c.get(types_face_frame.TAG_SPLIT_NODE)])
+            while len(coll) < max(0, n_children - 1):
+                coll.add()
+            for i, entry in enumerate(coll):
+                if i != idx:
+                    entry.remove_backing = True
+            sp.add_backing = True
+        coll[idx].remove_backing = self.remove
+        return {'FINISHED'}
+
+
 _SIDE_PANEL_ROLES = frozenset({
     types_face_frame.PART_ROLE_LEFT_SIDE,
     types_face_frame.PART_ROLE_RIGHT_SIDE,
@@ -3472,6 +3553,7 @@ classes = (
     hb_face_frame_OT_remove_bottom_rail,
     hb_face_frame_OT_toggle_flush_bottom_rail,
     hb_face_frame_OT_remove_mid_rail,
+    hb_face_frame_OT_toggle_splitter_backing,
     hb_face_frame_OT_set_misc_part_dimensions,
     hb_face_frame_OT_set_door_part_dimensions,
     hb_face_frame_OT_assign_active_door_style,

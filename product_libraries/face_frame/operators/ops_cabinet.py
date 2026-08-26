@@ -3168,6 +3168,26 @@ def _wipe_bay_children(bay_obj):
             bpy.data.objects.remove(child, do_unlink=True)
 
 
+# Opening presets whose front is a drawer box or a fixed panel in front
+# of one - the fronts that need no carcass shelf behind their mid rail.
+_DRAWER_STACK_CONFIGS = frozenset({'DRAWER', 'FALSE_FRONT', 'PULLOUT'})
+
+
+def _recipe_is_drawer_stack(recipe):
+    """True when every front under this recipe node is drawer-like, so
+    the stack is a drawer bank rather than a mixed door / appliance
+    cabinet. Recurses through nested splits (a row of two drawers side
+    by side still counts)."""
+    kind = recipe[0]
+    if kind == 'leaf':
+        return recipe[1] in _DRAWER_STACK_CONFIGS
+    if kind == 'split':
+        children = recipe[2]
+        return bool(children) and all(
+            _recipe_is_drawer_stack(c) for c in children)
+    return False
+
+
 def _build_recipe_into(recipe, parent_obj, child_index,
                        opening_idx_counter, cab_props):
     """Materialize a bay_presets recipe tree as objects under parent_obj.
@@ -3276,6 +3296,12 @@ def _build_recipe_into(recipe, parent_obj, child_index,
         sp.axis = axis
         sp.splitter_width = (cab_props.bay_mid_rail_width if axis == 'H'
                              else cab_props.bay_mid_stile_width)
+        # A drawer bank is mid rails only - the boxes ride on the sides,
+        # so there is no floor behind each rail. Anything else (doors or
+        # an appliance in the stack) keeps the shelf; the right-click
+        # Add / Remove Shelf Behind Mid Rail covers the rest per member.
+        if axis == 'H' and _recipe_is_drawer_stack(('split', axis, children)):
+            sp.add_backing = False
         apply_size_role(sp)
         for i, child_recipe in enumerate(children):
             _build_recipe_into(child_recipe, split_obj, i,

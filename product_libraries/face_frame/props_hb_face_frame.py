@@ -8891,6 +8891,17 @@ class Face_Frame_Splitter_Width(PropertyGroup):
         update=_update_cabinet_dim,
     )  # type: ignore
 
+    remove_backing: BoolProperty(
+        name="Remove Backing",
+        description=(
+            "Drop only this splitter's carcass backing (the shelf behind a "
+            "mid rail, the division behind a mid stile). The face-frame "
+            "member stays"
+        ),
+        default=False,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
 
 class Face_Frame_Split_Props(PropertyGroup):
     """Per-split-node state. Attached to each split node Empty as

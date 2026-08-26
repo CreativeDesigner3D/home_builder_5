@@ -385,6 +385,15 @@ class FaceFrameLayout:
                 (ov[i].remove_member if i < len(ov) else False)
                 for i in range(n_split)
             ]
+            # Per-splitter backing removal. Unlike remove_member this
+            # keeps the face-frame member and drops only the carcass
+            # backing behind it (the shelf behind a mid rail / the
+            # division behind a mid stile), which is how a drawer bank
+            # is built - rails, no floors between the boxes.
+            splitter_backing_removes = [
+                (ov[i].remove_backing if i < len(ov) else False)
+                for i in range(n_split)
+            ]
             return {
                 'kind':            'split',
                 'obj_name':        obj.name,
@@ -395,6 +404,7 @@ class FaceFrameLayout:
                 'splitter_width':  sp.splitter_width,
                 'splitter_widths': splitter_widths,
                 'splitter_removes': splitter_removes,
+                'splitter_backing_removes': splitter_backing_removes,
                 'add_backing':     sp.add_backing,
                 'children':        [self._read_tree_node(c) for c in children],
             }
@@ -3655,6 +3665,14 @@ _AXIS_TO_BACKING_ROLE = {
 }
 
 
+def _backing_removed(node, splitter_index):
+    """True when this one splitter's carcass backing was dropped from
+    the right-click menu. Per-member, so a single shelf can come out of
+    a stack without disturbing its siblings."""
+    flags = node.get('splitter_backing_removes') or ()
+    return 0 <= splitter_index < len(flags) and bool(flags[splitter_index])
+
+
 def _backing_thickness_for_role(layout, role):
     """Material thickness for a carcass backing. Divisions match the
     cabinet's standard carcass material thickness; shelves are fixed at
@@ -3701,6 +3719,8 @@ def _emit_h_splitter(node, cage_x, cage_z, cage_dim_x, cage_dim_y, cage_dim_z,
     })
     if not node.get('add_backing', False):
         return
+    if _backing_removed(node, splitter_index):
+        return
     role = _AXIS_TO_BACKING_ROLE['H']
     bt_thickness = _backing_thickness_for_role(layout, role)
     # cage_dim_y comes in as a parameter (bay-uniform); was previously
@@ -3746,6 +3766,8 @@ def _emit_v_splitter(node, cage_x, cage_z, cage_dim_x, cage_dim_y, cage_dim_z,
         'thickness':       layout.fft,
     })
     if not node.get('add_backing', False):
+        return
+    if _backing_removed(node, splitter_index):
         return
     role = _AXIS_TO_BACKING_ROLE['V']
     bt_thickness = _backing_thickness_for_role(layout, role)
