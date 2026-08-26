@@ -1721,7 +1721,13 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
             'wall_stile':  (1.5, 1.5, 1.5),
             'mid_stile':   (1.5, 1.5, 1.5),
             'end_stile':   (1.5, 1.5, 1.5),
-            'blind_stile': (3.75, 3.75, 2.75),
+            # EXPOSED width, same as the 90-degree inside corner row it
+            # is measured from (the 0.75" tuck behind the adjacent face
+            # is added in code). The old 3.75/2.75 row was the inside
+            # corner width with the tuck already baked in, so the void
+            # side of a corner came out 0.75" wider than the cabinet
+            # placed against it.
+            'blind_stile': (3.0, 3.0, 2.0),
             'butt_stile':      (1.25, 1.25, 1.25),
             'inside_90_stile': (3.0, 3.0, 2.0),
             'angle_stile':     (1.5, 1.5, 1.5),
@@ -1748,7 +1754,8 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
             'wall_stile':  (1.5, 1.5, 1.5),
             'mid_stile':   (1.5, 1.5, 1.5),
             'end_stile':   (1.5, 1.5, 1.5),
-            'blind_stile': (3.75, 3.75, 2.75),
+            # EXPOSED width - see the note on the TRANSITIONAL row.
+            'blind_stile': (2.5, 2.5, 1.5),
             'butt_stile':      (1.25, 1.25, 1.25),
             'inside_90_stile': (2.5, 2.5, 1.5),
             'angle_stile':     (1.5, 1.5, 1.5),
@@ -1760,7 +1767,8 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
             'wall_stile':  (1.5, 1.5, 1.5),
             'mid_stile':   (1.5, 1.5, 1.5),
             'end_stile':   (1.5, 1.5, 1.5),
-            'blind_stile': (3.75, 3.75, 2.75),
+            # EXPOSED width - see the note on the TRANSITIONAL row.
+            'blind_stile': (2.5, 2.5, 1.5),
             'butt_stile':      (1.25, 1.25, 1.25),
             'inside_90_stile': (2.5, 2.5, 1.5),
             'angle_stile':     (1.5, 1.5, 1.5),
