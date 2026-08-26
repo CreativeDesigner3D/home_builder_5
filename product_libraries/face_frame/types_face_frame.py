@@ -855,7 +855,9 @@ WEDGE_CUT_PART_ROLES = frozenset({
 PART_ROLE_PIPE_CHASE_CUTTER = 'PIPE_CHASE_CUTTER'
 PART_ROLE_PIPE_CHASE_PANEL = 'PIPE_CHASE_PANEL'
 PIPE_CHASE_CUT_MOD_NAME = 'Pipe Chase'
-PIPE_CHASE_PANEL_THICKNESS = inch(0.75)
+# Chase covers are 1/2" stock, not the 3/4" the carcass runs at - the
+# panels only close the void, nothing hangs off them.
+PIPE_CHASE_PANEL_THICKNESS = inch(0.5)
 PIPE_CHASE_CUT_PART_ROLES = frozenset({
     PART_ROLE_BACK, PART_ROLE_FINISHED_BACK,
     PART_ROLE_BOTTOM, PART_ROLE_TOP,
