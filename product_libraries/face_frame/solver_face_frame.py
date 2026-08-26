@@ -942,6 +942,22 @@ def kick_rear_beam_clearance(layout):
     return KICK_REAR_BEAM_CLEARANCE
 
 
+def kick_beam_width(layout, bay_index):
+    """Height of a sub-base beam (kick subfront / rear beam).
+
+    The beams carry the carcass bottom, so they run from the floor up
+    to that panel's UNDERSIDE - not just to the top of the kick recess.
+    The bay floor sits a bottom rail width above the bay bottom (which
+    is itself the kick height) and the panel hangs its own thickness
+    below that, so the beam stands kick_height + bottom_rail_width - mt
+    tall. Cutting them off at kick_height leaves the panel unsupported
+    over a gap the width of the bottom rail.
+    """
+    bay = layout.bays[bay_index]
+    width = bay['kick_height'] + bay['bottom_rail_width'] - layout.mt
+    return max(width, 0.0)
+
+
 def kick_subrear_segments(layout):
     """Rear kick beam segments - the second beam of the sub-base, run
     parallel to the subfront near the back of the cabinet to carry the
@@ -984,7 +1000,7 @@ def kick_subrear_segments(layout):
             'y':          beam_back_y,
             'z':          0.0,
             'length':     right_x - left_x,
-            'width':      first_bay['kick_height'],
+            'width':      kick_beam_width(layout, start),
             'thickness':  layout.tkt,
         })
     return segments
@@ -1005,6 +1021,13 @@ def _kick_subfront_passthrough(layout, gap_index):
     if layout.mid_stiles[gap_index].get('to_floor'):
         return False
     if not _epsilon_eq(bay_a['kick_height'], bay_b['kick_height']):
+        return False
+    # The sub-base beams rise to the carcass bottom, so a change in
+    # bottom rail width moves their top edge and breaks the run too.
+    # (The finish kick shares this passthrough and doesn't care - it
+    # only ever spans one kick height - but a matching break there is
+    # harmless and keeps it lined up with the subfront behind it.)
+    if not _epsilon_eq(bay_a['bottom_rail_width'], bay_b['bottom_rail_width']):
         return False
     if (bay_a.get('remove_bottom') or bay_b.get('remove_bottom')
             or bay_a.get('remove_carcass') or bay_b.get('remove_carcass')):
@@ -1061,7 +1084,7 @@ def kick_subfront_segments(layout):
                     'y':          wy,
                     'z':          wz,
                     'length':     (b - a) / math.cos(theta),
-                    'width':      first_bay['kick_height'],
+                    'width':      kick_beam_width(layout, start),
                     'thickness':  layout.tkt,
                 })
             continue
@@ -1082,7 +1105,7 @@ def kick_subfront_segments(layout):
             'y':          wy,
             'z':          wz,
             'length':     ff_world_x_span_to_length(layout, right_x - left_x),
-            'width':      first_bay['kick_height'],
+            'width':      kick_beam_width(layout, start),
             'thickness':  layout.tkt,
         })
     return segments
