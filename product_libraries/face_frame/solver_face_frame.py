@@ -230,7 +230,7 @@ class FaceFrameLayout:
         self.default_bottom_rail_width = cab.bottom_rail_width
         # Stretcher dimensions for stretcher-based top construction
         self.stretcher_w = getattr(cab, 'stretcher_width', None) or 0.0889
-        self.stretcher_t = getattr(cab, 'stretcher_thickness', None) or 0.0127
+        self.stretcher_t = getattr(cab, 'stretcher_thickness', None) or 0.01905
 
         # Bay-level mid rail / mid stile widths (face frame members
         # created by H/V splits inside a bay). Cabinet-level defaults

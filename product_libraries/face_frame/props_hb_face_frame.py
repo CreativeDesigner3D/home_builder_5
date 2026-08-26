@@ -6785,8 +6785,8 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
     )  # type: ignore
     stretcher_thickness: FloatProperty(
         name="Stretcher Thickness",
-        description="Vertical thickness of the top stretchers (typical 1/2 in)",
-        default=units.inch(0.5), unit='LENGTH', precision=4,
+        description="Vertical thickness of the top stretchers (typical 3/4 in)",
+        default=units.inch(0.75), unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
     )  # type: ignore
     bottom_rail_width: FloatProperty(
