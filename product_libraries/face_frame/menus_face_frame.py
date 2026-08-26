@@ -33,6 +33,30 @@ def _draw_drawer_box_construction_menu(layout):
                 text="Drawer Box Construction", icon='SNAP_VOLUME')
 
 
+def _draw_cutout_items(layout, obj):
+    """Add / Edit / Remove entries for machining cutouts (hole or route) on a
+    parametric cutpart - sides, backs, panels, doors, hood parts. Editing
+    reopens the Add dialog on an existing cut, so a wrong size or position is
+    corrected in place instead of removed and re-added. A single cutout gets
+    flat entries; several move into a submenu so the parent menu stays short."""
+    if not ops_part_commands._is_cutpart(obj):
+        return
+    layout.separator()
+    layout.operator("hb_face_frame.add_part_cutout",
+                    text="Add Cutout...", icon='MOD_BOOLEAN')
+    mods = ops_part_commands._user_cutout_mods(obj)
+    if len(mods) == 1:
+        props = layout.operator("hb_face_frame.add_part_cutout",
+                                text="Edit Cutout...", icon='WINDOW')
+        props.mod_name = mods[0].name
+        props = layout.operator("hb_face_frame.remove_part_cutout",
+                                text="Remove Cutout", icon='X')
+        props.mod_name = mods[0].name
+    elif len(mods) > 1:
+        layout.menu("HOME_BUILDER_MT_face_frame_cutouts",
+                    text="Cutouts", icon='MOD_BOOLEAN')
+
+
 def _has_drawer_slides_options():
     """Whether the host application offers drawer slide hardware. HB5
     ships none, so the submenu simply doesn't appear on its own."""
@@ -488,16 +512,9 @@ class HOME_BUILDER_MT_face_frame_part_commands(bpy.types.Menu):
             layout.operator("hb_face_frame.mid_stile_prompts",
                             text="Mid Stile Properties...", icon='WINDOW')
 
-        # Machining cutout (hole / route) - available on any parametric cutpart
-        # (sides, backs, panels, doors, hood parts). Shows in 3D and in the 2D
-        # copy, so no detail view is needed. Operator lives in ops_part_commands.
-        if ops_part_commands._is_cutpart(obj):
-            layout.separator()
-            layout.operator("hb_face_frame.add_part_cutout",
-                            text="Add Cutout...", icon='MOD_BOOLEAN')
-            if ops_part_commands._user_cutout_mods(obj):
-                layout.operator("hb_face_frame.remove_part_cutout",
-                                text="Remove Cutout", icon='X')
+        # Machining cutouts (hole / route). Shows in 3D and in the 2D copy, so
+        # no detail view is needed. Operators live in ops_part_commands.
+        _draw_cutout_items(layout, obj)
 
         # Make Editable / Revert to Parametric. Applying a part's GeoNode(s)
         # turns it into real, hand-editable mesh that the recalc then leaves
@@ -894,6 +911,27 @@ class HOME_BUILDER_MT_face_frame_mantle_commands(bpy.types.Menu):
                         text="Delete Mantle", icon='X')
 
 
+class HOME_BUILDER_MT_face_frame_cutouts(bpy.types.Menu):
+    """Edit / Remove picker for a part carrying more than one machining
+    cutout. Numbered in the order they were added, which is the order they
+    sit in the modifier stack."""
+    bl_label = "Cutouts"
+
+    def draw(self, context):
+        layout = self.layout
+        mods = ops_part_commands._user_cutout_mods(context.active_object)
+        for i, mod in enumerate(mods):
+            props = layout.operator("hb_face_frame.add_part_cutout",
+                                    text=f"Edit Cutout {i + 1}...",
+                                    icon='WINDOW')
+            props.mod_name = mod.name
+        layout.separator()
+        for i, mod in enumerate(mods):
+            props = layout.operator("hb_face_frame.remove_part_cutout",
+                                    text=f"Remove Cutout {i + 1}", icon='X')
+            props.mod_name = mod.name
+
+
 class HOME_BUILDER_MT_face_frame_misc_part_commands(bpy.types.Menu):
     """Right-click menu for a Misc Part - a bare GeoNodeCutpart with no
     cabinet cage. The cabinet / part-role menus don't apply, so this is
@@ -912,15 +950,9 @@ class HOME_BUILDER_MT_face_frame_misc_part_commands(bpy.types.Menu):
         if ops_part_commands._is_cutpart(obj):
             layout.operator("hb_face_frame.set_misc_part_dimensions",
                             text="Part Properties...", icon='WINDOW')
-            # Machining cutout - same entries as the cabinet-part menu; a
-            # Misc Part is itself a parametric cutpart so the operators
-            # apply unchanged.
-            layout.separator()
-            layout.operator("hb_face_frame.add_part_cutout",
-                            text="Add Cutout...", icon='MOD_BOOLEAN')
-            if ops_part_commands._user_cutout_mods(obj):
-                layout.operator("hb_face_frame.remove_part_cutout",
-                                text="Remove Cutout", icon='X')
+            # Machining cutouts - same entries as the cabinet-part menu; a
+            # Misc Part is itself a parametric cutpart so they apply unchanged.
+            _draw_cutout_items(layout, obj)
 
         # Make Editable / Revert. A Misc Part has no cabinet recalc, so
         # Revert restores its stashed Length / Width / Thickness directly
@@ -1010,6 +1042,7 @@ classes = (
     HOME_BUILDER_MT_face_frame_add_appliance,
     HOME_BUILDER_MT_face_frame_wood_top_commands,
     HOME_BUILDER_MT_face_frame_bottom_rail_profile,
+    HOME_BUILDER_MT_face_frame_cutouts,
 )
 
 

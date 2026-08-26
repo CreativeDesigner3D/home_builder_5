@@ -17,6 +17,7 @@ dispatches by the active part's hb_part_role to the appropriate prop:
 Width writes also flip the matching unlock flag so a later style apply
 doesn't reset the user's value.
 """
+import json
 import os
 
 import bpy
@@ -2917,6 +2918,35 @@ def _unique_cutout_name(obj):
     return f"{_CUTOUT_NAME}.{i:03d}"
 
 
+def _cutout_mod_inputs(obj, mod):
+    """Read a cutout modifier's stored geometry back out, or None when it can't
+    be read. Edit reopens the dialog on these values, and Cancel puts them back."""
+    cpm = CabinetPartModifier(obj)
+    cpm.mod = mod
+    try:
+        return {'x': float(cpm.get_input('X')),
+                'end_x': float(cpm.get_input('End X')),
+                'y': float(cpm.get_input('Y')),
+                'end_y': float(cpm.get_input('End Y')),
+                'depth': float(cpm.get_input('Route Depth')),
+                'flip_z': bool(cpm.get_input('Flip Z'))}
+    except Exception:
+        return None
+
+
+def _write_cutout_inputs(obj, mod, state):
+    """Write a _cutout_mod_inputs() snapshot straight back to the modifier."""
+    cpm = CabinetPartModifier(obj)
+    cpm.mod = mod
+    cpm.set_input('X', state['x'])
+    cpm.set_input('End X', state['end_x'])
+    cpm.set_input('Y', state['y'])
+    cpm.set_input('End Y', state['end_y'])
+    cpm.set_input('Route Depth', state['depth'])
+    cpm.set_input('Flip Z', state['flip_z'])
+    obj.update_tag()
+
+
 def _cutout_part_for_dialog(op):
     """The part a live Add-Cutout dialog is editing (resolved by name each tick;
     None while source_obj_name is unset - see the Misc / Door Part dialogs)."""
@@ -2977,8 +3007,13 @@ class hb_face_frame_OT_add_part_cutout(bpy.types.Operator):
     """Cut a rectangular hole or route into this part - a fan / liner opening,
     a light route, an outlet cutout. The cut shows in 3D and in the 2D drawing
     (a rotated copy of the part reveals it), so no detail view is needed. The
-    cutout is built immediately and updates LIVE as the dialog fields change;
-    Cancel leaves it in place (drop it with Remove Cutout)."""
+    cutout is built immediately and updates LIVE as the dialog fields change.
+
+    The same operator ADDS and EDITS: called with mod_name set to an existing
+    Cutout modifier it reopens on that cut's values instead of building a new
+    one, so a cutout can be corrected in place rather than removed and re-added.
+    Cancel on an edit restores the values it opened with; Cancel on an add
+    leaves the new cutout in place (drop it with Remove Cutout)."""
     bl_idname = "hb_face_frame.add_part_cutout"
     bl_label = "Add Cutout"
     bl_description = ("Cut a rectangular hole or route into this part "
@@ -2989,7 +3024,12 @@ class hb_face_frame_OT_add_part_cutout(bpy.types.Operator):
     # fans straight to its CPM_CUTOUT inputs (same pattern as the Misc / Door
     # Part dimension dialogs). Target resolved by name each tick.
     source_obj_name: StringProperty(default='', options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+    # Empty adds a new cutout; set to an existing Cutout modifier's name (what
+    # the Edit entries pass) reopens the dialog on that one. SKIP_SAVE keeps an
+    # edit from leaking into the next plain Add.
     mod_name: StringProperty(default='', options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+    # JSON snapshot of the values an edit opened on, for Cancel. Empty on an add.
+    restore_state: StringProperty(default='', options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
 
     cutout_length: FloatProperty(name="Length", unit='LENGTH', precision=4,
                                  min=0.0, default=units.inch(4.0),
@@ -3017,6 +3057,39 @@ class hb_face_frame_OT_add_part_cutout(bpy.types.Operator):
     def poll(cls, context):
         return _is_cutpart(context.active_object)
 
+    @classmethod
+    def description(cls, context, properties):
+        if getattr(properties, 'mod_name', ''):
+            return "Reopen this cutout and change its size, position or depth"
+        return cls.bl_description
+
+    def _seed_new(self, length, width, thickness):
+        self.cutout_length = min(units.inch(4.0), length)
+        self.cutout_width = min(units.inch(4.0), width)
+        self.center = True
+        self.offset_length = 0.0
+        self.offset_width = 0.0
+        self.through = True
+        self.route_depth = min(units.inch(0.25), thickness)
+        self.back_face = False
+
+    def _seed_from_state(self, state, length, width, thickness):
+        """Fill the dialog from an existing cutout's stored inputs."""
+        cl = max(state['end_x'] - state['x'], 0.0)
+        cw = max(state['end_y'] - state['y'], 0.0)
+        self.cutout_length = cl
+        self.cutout_width = cw
+        self.offset_length = state['x']
+        self.offset_width = state['y']
+        # Centred and through aren't stored flags - they're how the cut was
+        # placed - so infer them, or a centred cutout reopens with the box clear.
+        eps = units.inch(0.001)
+        self.center = (abs(state['x'] - (length - cl) / 2.0) < eps
+                       and abs(state['y'] - (width - cw) / 2.0) < eps)
+        self.through = state['depth'] >= thickness - eps
+        self.route_depth = min(state['depth'], thickness)
+        self.back_face = state['flip_z']
+
     def invoke(self, context, event):
         obj = context.active_object
         part = GeoNodeCutpart(obj)
@@ -3027,28 +3100,54 @@ class hb_face_frame_OT_add_part_cutout(bpy.types.Operator):
         except Exception:
             self.report({'ERROR'}, "Part has no cutpart geometry to cut")
             return {'CANCELLED'}
-        # Seed the fields BEFORE source_obj_name / mod_name are set: the update
-        # callbacks bail while those are empty, so seeding can't fan back.
-        self.cutout_length = min(units.inch(4.0), length)
-        self.cutout_width = min(units.inch(4.0), width)
-        self.center = True
-        self.offset_length = 0.0
-        self.offset_width = 0.0
-        self.through = True
-        self.route_depth = min(units.inch(0.25), thickness)
-        self.back_face = False
-        # Build the live cutout now so it previews as the dialog opens.
-        name = _unique_cutout_name(obj)
-        cpm = part.add_part_modifier(_CUTOUT_TOKEN, name)
-        cpm.mod.show_viewport = True
-        cpm.mod.show_render = True
+        # mod_name arrives set from an Edit entry and empty from Add. Park it in
+        # a local and blank the property while the fields are seeded: the update
+        # callbacks bail on an empty mod_name, so seeding can't fan back over
+        # values still being read (the same ordering the add path relies on).
+        target = self.mod_name
+        self.mod_name = ''
+        self.restore_state = ''
+        editing = bool(target) and obj.modifiers.get(target) is not None
+        if editing:
+            state = _cutout_mod_inputs(obj, obj.modifiers[target])
+            if state is None:
+                self.report({'ERROR'}, "This cutout could not be read")
+                return {'CANCELLED'}
+            self.restore_state = json.dumps(state)
+            self._seed_from_state(state, length, width, thickness)
+        else:
+            self._seed_new(length, width, thickness)
+            # Build the live cutout now so it previews as the dialog opens.
+            target = _unique_cutout_name(obj)
+            cpm = part.add_part_modifier(_CUTOUT_TOKEN, target)
+            cpm.mod.show_viewport = True
+            cpm.mod.show_render = True
         self.source_obj_name = obj.name
-        self.mod_name = name
+        self.mod_name = target
         _apply_cutout_live(self)
-        return context.window_manager.invoke_props_dialog(self, width=280)
+        title = "Edit Cutout" if editing else "Add Cutout"
+        try:
+            return context.window_manager.invoke_props_dialog(
+                self, width=280, title=title)
+        except TypeError:
+            # Dialog signature with no title argument.
+            return context.window_manager.invoke_props_dialog(self, width=280)
 
     def draw(self, context):
         col = self.layout.column(align=True)
+        # The part's own Length x Width, in the same order as the two fields
+        # under it. Length is the part's long edge, which is not always the
+        # direction the user expects - the usual source of "it cut the wrong way".
+        obj = _cutout_part_for_dialog(self)
+        if obj is not None:
+            try:
+                part = GeoNodeCutpart(obj)
+                unit = context.scene.unit_settings
+                col.label(text="Part: %s x %s" % (
+                    units.unit_to_string(unit, part.get_input('Length')),
+                    units.unit_to_string(unit, part.get_input('Width'))))
+            except Exception:
+                pass
         col.prop(self, 'cutout_length')
         col.prop(self, 'cutout_width')
         col.prop(self, 'center')
@@ -3066,13 +3165,34 @@ class hb_face_frame_OT_add_part_cutout(bpy.types.Operator):
         # exists, so OK just commits it.
         return {'FINISHED'}
 
+    def cancel(self, context):
+        """Dismissing an EDIT puts the cut back the way it was found. An add has
+        no snapshot, so its new cutout stays (drop it with Remove Cutout)."""
+        if not self.restore_state:
+            return
+        obj = _cutout_part_for_dialog(self)
+        if obj is None or not self.mod_name:
+            return
+        mod = obj.modifiers.get(self.mod_name)
+        if mod is None:
+            return
+        try:
+            state = json.loads(self.restore_state)
+        except ValueError:
+            return
+        _write_cutout_inputs(obj, mod, state)
+
 
 class hb_face_frame_OT_remove_part_cutout(bpy.types.Operator):
-    """Remove the most recently added machining cutout from this part."""
+    """Remove a machining cutout from this part. With mod_name set (what the
+    Remove entries pass) it drops that one; with no name it drops the most
+    recently added, which is what a part carrying a single cutout wants."""
     bl_idname = "hb_face_frame.remove_part_cutout"
     bl_label = "Remove Cutout"
-    bl_description = "Remove the last machining cutout added to this part"
+    bl_description = "Remove this machining cutout from the part"
     bl_options = {'REGISTER', 'UNDO'}
+
+    mod_name: StringProperty(default='', options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
 
     @classmethod
     def poll(cls, context):
@@ -3084,7 +3204,8 @@ class hb_face_frame_OT_remove_part_cutout(bpy.types.Operator):
         if not mods:
             self.report({'WARNING'}, "No cutout to remove")
             return {'CANCELLED'}
-        obj.modifiers.remove(mods[-1])
+        named = [m for m in mods if m.name == self.mod_name]
+        obj.modifiers.remove(named[0] if named else mods[-1])
         obj.update_tag()
         return {'FINISHED'}
 
