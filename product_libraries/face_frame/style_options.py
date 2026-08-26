@@ -5304,11 +5304,17 @@ PANEL_KINDS = {
     'Interloken Mullion': {'kind': 'GLASS', 'mullion': 'INTERLOKEN'},
     'X-Mullion': {'kind': 'GLASS', 'mullion': 'X'},
     '3/8" MDF Reverse Panel': {'kind': 'FLAT', 'thickness': 0.375},
-    'MDF Beadboard': {'kind': 'GROOVED', 'style': 'BEAD', 'spacing': 1.6},
+    # Bead spacing is the board face width from the product spec:
+    # MDF boards run 1-1/2" standard / 3" wide, solid wood 1-5/8"
+    # standard / 3-1/4" wide. The MDF panels stay on the default
+    # recessed thickness so a series override still applies; a solid
+    # wood panel replaces that panel with 5/16" stock, so it carries
+    # its own thickness.
+    'MDF Beadboard': {'kind': 'GROOVED', 'style': 'BEAD', 'spacing': 1.5},
     'Solid Wood Beadboard': {'kind': 'GROOVED', 'style': 'BEAD',
-                             'spacing': 1.6},
+                             'spacing': 1.625, 'thickness': 0.3125},
     'Solid Wood Beadboard (Wide)': {'kind': 'GROOVED', 'style': 'BEAD',
-                                    'spacing': 3.0},
+                                    'spacing': 3.25, 'thickness': 0.3125},
     'Beadboard MDF Panel (Wide)': {'kind': 'GROOVED', 'style': 'BEAD',
                                    'spacing': 3.0},
     'Grooved Veneer (2"Kerf)': {'kind': 'GROOVED', 'style': 'KERF',
