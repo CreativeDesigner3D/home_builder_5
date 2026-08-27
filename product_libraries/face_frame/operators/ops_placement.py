@@ -4086,6 +4086,14 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
                 o.select_set(False)
             cab_obj.select_set(True)
             context.view_layer.objects.active = cab_obj
+            # Product cages (Support Frame, Half Wall) are the selection
+            # target in Cabinets mode, but this branch returns before the
+            # cabinet path's mode refresh below - so a fresh drop stayed in
+            # its default state, unreachable, until the user left the mode
+            # and came back. Direct call rather than the toggle_mode
+            # operator: that one deselects everything, and the selection
+            # just made is what the properties panel reads.
+            ops_cabinet.apply_face_frame_selection_mode(context, cab_obj)
             hb_placement.clear_header_text(context)
             self.report({'INFO'},
                         f"Placed {self.cabinet_name} "
