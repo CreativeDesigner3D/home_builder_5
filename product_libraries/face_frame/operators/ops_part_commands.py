@@ -669,12 +669,24 @@ class hb_face_frame_OT_set_panel_seam(bpy.types.Operator):
         cab = root.face_frame_cabinet
         attr = ('left_side_seam_height' if side == 'LEFT'
                 else 'right_side_seam_height')
+        none_attr = ('left_side_no_seam' if side == 'LEFT'
+                     else 'right_side_no_seam')
+        no_seam = getattr(cab, none_attr, False)
         col = self.layout.column(align=True)
         col.label(text=f"{side.title()} Finished End", icon='MOD_SOLIDIFY')
-        col.prop(cab, attr, text="Seam Height")
+        col.prop(cab, none_attr, text="No Seam")
+        # Greyed rather than hidden, so the height that was typed is
+        # still visible while the end is being built in one piece.
+        row = col.row(align=True)
+        row.enabled = not no_seam
+        row.prop(cab, attr, text="Seam Height")
         col.separator()
-        col.label(text="Measured up from the cabinet bottom.", icon='INFO')
-        col.label(text="0 leaves the panel in one piece.")
+        if no_seam:
+            col.label(text="Built in one piece, whatever its length.",
+                      icon='INFO')
+        else:
+            col.label(text="Measured up from the cabinet bottom.", icon='INFO')
+            col.label(text="0 leaves the panel in one piece.")
 
     def execute(self, context):
         return {'FINISHED'}
@@ -697,9 +709,13 @@ class hb_face_frame_OT_remove_panel_seam(bpy.types.Operator):
         root = types_face_frame.find_cabinet_root(obj)
         if side is None or root is None:
             return {'CANCELLED'}
-        attr = ('left_side_seam_height' if side == 'LEFT'
-                else 'right_side_seam_height')
-        setattr(root.face_frame_cabinet, attr, 0.0)
+        cab = root.face_frame_cabinet
+        setattr(cab, 'left_side_seam_height' if side == 'LEFT'
+                else 'right_side_seam_height', 0.0)
+        # Clearing a seam puts the end back to being measured -- the
+        # No Seam exemption is a separate answer, given deliberately.
+        setattr(cab, 'left_side_no_seam' if side == 'LEFT'
+                else 'right_side_no_seam', False)
         return {'FINISHED'}
 
 

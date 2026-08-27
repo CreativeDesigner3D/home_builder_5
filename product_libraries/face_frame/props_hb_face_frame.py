@@ -6371,6 +6371,26 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
     # datum the drafter reads off the elevation. 0 = no seam, the panel
     # is one board. Only FINISHED ends can carry one - see
     # Face_Frame_Cabinet._side_seam_blocked.
+    # "This end is one piece" said out loud. A finished end long enough
+    # to need a seam is flagged for the designer; ticking this is the
+    # answer "no it isn't", which both keeps the panel whole and stops
+    # the flag coming back. Distinct from a seam height of 0, which only
+    # means nobody has looked at it yet.
+    left_side_no_seam: BoolProperty(
+        name="No Seam",
+        description="Build the left finished end as one piece, however "
+                    "long it is, and stop flagging it",
+        default=False,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    right_side_no_seam: BoolProperty(
+        name="No Seam",
+        description="Build the right finished end as one piece, however "
+                    "long it is, and stop flagging it",
+        default=False,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
     left_side_seam_height: FloatProperty(
         name="Left Seam Height",
         description="Height above the cabinet bottom where the left finished "

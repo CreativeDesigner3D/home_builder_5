@@ -5759,9 +5759,18 @@ class FaceFrameCabinet(GeoNodeCage):
 
     def _side_seam_height(self, cab, side):
         """The joint height the user set for `side`, measured from the
-        cabinet bottom. 0 (the default) means no seam."""
+        cabinet bottom. 0 means the panel builds whole -- either because
+        nobody has placed a seam yet, or because the No Seam flag says
+        the end is one piece however long it is."""
+        if self._side_no_seam(cab, side):
+            return 0.0
         key = 'left_side_seam_height' if side == 'LEFT' else 'right_side_seam_height'
         return max(getattr(cab, key, 0.0) or 0.0, 0.0)
+
+    def _side_no_seam(self, cab, side):
+        """True when this end is deliberately built in one piece."""
+        key = 'left_side_no_seam' if side == 'LEFT' else 'right_side_no_seam'
+        return bool(getattr(cab, key, False))
 
     def _side_seam_blocked(self, cab, layout, side):
         """Why this side cannot carry a seam, or None when it can.

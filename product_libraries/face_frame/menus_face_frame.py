@@ -461,10 +461,15 @@ class HOME_BUILDER_MT_face_frame_part_commands(bpy.types.Menu):
         if ops_part_commands.seam_available(obj):
             root = types_face_frame.find_cabinet_root(obj)
             side = ops_part_commands.seam_side_for(obj)
-            seam = getattr(root.face_frame_cabinet,
-                           'left_side_seam_height' if side == 'LEFT'
+            cab = root.face_frame_cabinet
+            seam = getattr(cab, 'left_side_seam_height' if side == 'LEFT'
                            else 'right_side_seam_height', 0.0)
-            if seam > 0:
+            no_seam = getattr(cab, 'left_side_no_seam' if side == 'LEFT'
+                              else 'right_side_no_seam', False)
+            if no_seam:
+                seam = 0.0
+                seam_text = "Set Panel Seam: None"
+            elif seam > 0:
                 seam_text = "Set Panel Seam: %s" % units.unit_to_string(
                     context.scene.unit_settings, seam)
             else:
