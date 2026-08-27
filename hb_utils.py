@@ -1,3 +1,5 @@
+import math
+
 import bpy
 from mathutils import Quaternion, Euler
 
@@ -331,6 +333,37 @@ def add_driver_variables(driver,variables):
 # VIEW MANAGEMENT FUNCTIONS
 # =============================================================================
 
+def _mark_axis_view(r3d):
+    """Tag an axis-aligned orthographic view as a real side view.
+
+    Assigning view_rotation directly never sets this flag, so a scripted
+    plan view used to stay locked in orthographic when orbited. With the
+    flag set, leaving the view behaves like leaving a numpad view: the
+    Auto Perspective preference (on by default) swaps to perspective.
+    """
+    try:
+        r3d.is_orthographic_side_view = True
+    except Exception:
+        pass
+
+
+# The six principal axis views, for recognizing a restored view that
+# should behave like one (quaternion and its negation are the same
+# rotation, so matches compare by |dot|).
+_AXIS_VIEW_QUATS = tuple(
+    Euler(angles).to_quaternion()
+    for angles in ((0.0, 0.0, 0.0),
+                   (math.pi, 0.0, 0.0),
+                   (math.pi / 2, 0.0, 0.0),
+                   (math.pi / 2, 0.0, math.pi),
+                   (math.pi / 2, 0.0, math.pi / 2),
+                   (math.pi / 2, 0.0, -math.pi / 2)))
+
+
+def _is_axis_aligned(quat):
+    return any(abs(quat.dot(ref)) > 0.99995 for ref in _AXIS_VIEW_QUATS)
+
+
 def save_view_state(scene):
     """Save the current 3D view state to a scene's custom properties."""
     for area in bpy.context.screen.areas:
@@ -398,6 +431,16 @@ def restore_view_state(scene):
                     # Restore view perspective
                     r3d.view_perspective = scene.get('VIEW_PERSPECTIVE', 'PERSP')
 
+                    # A room coming back in an axis-aligned ortho view
+                    # (its untouched plan view, typically) keeps acting
+                    # like a real top view -- orbiting swaps to
+                    # perspective. 2D layout and detail pages are left
+                    # alone; they are meant to stay orthographic.
+                    if (is_room_scene(scene)
+                            and r3d.view_perspective == 'ORTHO'
+                            and _is_axis_aligned(r3d.view_rotation)):
+                        _mark_axis_view(r3d)
+
                     # Restore viewport shading if it was saved
                     if 'VIEW_SHADING_TYPE' in scene:
                         space.shading.type = scene['VIEW_SHADING_TYPE']
@@ -450,6 +493,10 @@ def set_plan_view(distance=8.0):
                     r3d.view_rotation = Euler((0, 0, 0)).to_quaternion()
                     r3d.view_location = (0.0, 0.0, 0.0)
                     r3d.view_distance = distance
+                    # A plan is a real top view: orbiting out of it swaps
+                    # to perspective (per Auto Perspective) instead of
+                    # leaving the room stuck in orthographic.
+                    _mark_axis_view(r3d)
                     return True
     return False
 
