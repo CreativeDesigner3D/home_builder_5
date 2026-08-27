@@ -116,9 +116,9 @@ _KICK_FACE_ROLES = ('FINISH_TOE_KICK', 'LOOSE_KICK_FRONT',
 def _measured_kick_setback(cage, ffc):
     """Setback from the CAGE front to the face the base molding mounts
     on, read from the front-most built kick-face part. The
-    toe_kick_setback prop measures to the subfront from the CARCASS
-    front, so using it directly leaves the molding proud of the
-    finished kick by the face frame overhang minus the finish skin.
+    toe_kick_setback prop measures to the subfront from the cage
+    front too, but a finish skin over the subfront moves the mounting
+    face forward, so the built part is the one to read.
     Falls back to the prop when no kick-face part is built."""
     inv = cage.matrix_world.inverted()
     best = None

@@ -8031,15 +8031,17 @@ class FaceFrameCabinet(GeoNodeCage):
             0 <= bay_index < len(layout.bays)
             and bool(layout.bays[bay_index].get('floating_bay'))
         )
+        notch_depth = solver.kick_notch_depth(layout)
         active = (layout.has_toe_kick
                   and layout.toe_kick_type == 'NOTCH'
                   and not stile_to_floor
                   and not has_inset
                   and not bay_floating
+                  and notch_depth > 1e-6
                   and 0 <= bay_index < len(layout.bays))
         if active:
             kick = layout.bays[bay_index]['kick_height']
-            setback = self.obj.face_frame_cabinet.toe_kick_setback
+            setback = notch_depth
             route = thickness
         else:
             kick = setback = route = 0.0
@@ -8943,9 +8945,11 @@ class FaceFrameCabinet(GeoNodeCage):
             mod = cpm.mod
         if mod.node_group is None:
             return
+        notch_depth = solver.kick_notch_depth(layout)
         active = (skin is not None
                   and layout.has_toe_kick
                   and layout.toe_kick_type == 'NOTCH'
+                  and notch_depth > 1e-6
                   and gap_index < len(layout.mid_stiles)
                   and not bool(layout.mid_stiles[gap_index].get('to_floor')))
         if active:
@@ -8955,7 +8959,7 @@ class FaceFrameCabinet(GeoNodeCage):
             neighbor_idx = (gap_index + 1
                             if bool(bay_a.get('floating_bay')) else gap_index)
             kick = layout.bays[neighbor_idx]['kick_height']
-            setback = self.obj.face_frame_cabinet.toe_kick_setback
+            setback = notch_depth
             route = skin['thickness']
         else:
             kick = setback = route = 0.0
@@ -8990,8 +8994,10 @@ class FaceFrameCabinet(GeoNodeCage):
         if mod.node_group is None:
             return
         active, kick = solver.mid_division_floor_notch(layout, gap_index)
+        notch_depth = solver.kick_notch_depth(layout)
+        active = active and notch_depth > 1e-6
         if active:
-            setback = self.obj.face_frame_cabinet.toe_kick_setback
+            setback = notch_depth
             route = panel['thickness']
         else:
             kick = setback = route = 0.0
@@ -9656,7 +9662,6 @@ class FaceFrameCabinet(GeoNodeCage):
         modifier lazily so cabinets built before NOTCH support are
         upgraded in place on the next recalc.
         """
-        cab_props = self.obj.face_frame_cabinet
         mod = side_obj.modifiers.get('Notch Front Bottom')
         if mod is None:
             wrapper = GeoNodeCutpart(side_obj)
@@ -9686,16 +9691,20 @@ class FaceFrameCabinet(GeoNodeCage):
         # Side already floats by kick_height when there's an inset on
         # this side, so the notch (which only existed to clear the
         # recess in a floor-anchored side) becomes redundant.
+        # A setback inside the face-frame band leaves nothing behind
+        # the frame to cut, and the kick reads flush.
+        notch_depth = solver.kick_notch_depth(layout)
         active = (layout.has_toe_kick
                   and layout.toe_kick_type == 'NOTCH'
                   and not stile_to_floor
                   and not has_inset
                   and not bay_floating
+                  and notch_depth > 1e-6
                   and 0 <= bay_index < len(layout.bays))
         if active:
             bay = layout.bays[bay_index]
             kick = bay['kick_height']
-            setback = cab_props.toe_kick_setback
+            setback = notch_depth
             # Route Depth must cut through the FULL side thickness, not
             # just the cabinet's material_thickness default. FINISHED
             # sides are 3/4" thick (vs 1/2" default), and a notch that

@@ -1109,9 +1109,9 @@ def kick_subfront_segments(layout):
             # stretches by 1/cos.
             for s, e, a, b, theta in _split_ff_x_spans(
                     layout, start, end, left_x, right_x,
-                    perp=layout.tks + layout.tkt):
+                    perp=layout.tks):
                 wx, wy, wz = ff_perpendicular_offset_at_world_x(
-                    layout, a, layout.tks + layout.tkt, 0.0
+                    layout, a, layout.tks, 0.0
                 )
                 segments.append({
                     'start_bay':  s,
@@ -1125,15 +1125,16 @@ def kick_subfront_segments(layout):
                 })
             continue
         wx, wy, wz = ff_perpendicular_offset_at_world_x(
-            layout, left_x, layout.tks + layout.tkt, 0.0
+            layout, left_x, layout.tks, 0.0
         )
         segments.append({
             'start_bay':  start,
             'end_bay':    end,
             'x':          wx,
-            # Y sits at the notch's back wall: tks back from the cabinet
-            # front, plus tkt so the kick's FRONT face is flush with the
-            # notch back. The kick is captured between the side panels
+            # Y sits at the notch's back wall: the setback back from
+            # the face frame's outer face, which is where the side
+            # notch now stops too, so the kick's FRONT face is flush
+            # with it. The kick is captured between the side panels
             # at world X = left_x and right_x, so we anchor at world X
             # (not FF-x). Length is along the kick's own +X axis (FF-
             # aligned after rotation), which spans 1/cos farther than
@@ -1145,6 +1146,20 @@ def kick_subfront_segments(layout):
             'thickness':  layout.tkt,
         })
     return segments
+
+
+def kick_notch_depth(layout):
+    """Depth of the front-bottom toe-kick notch cut into a carcass side,
+    a mid division, a partition skin or a finished-end band.
+
+    ``toe_kick_setback`` is measured from the face frame's outer face -
+    the same datum the leg product, the loose kick ladder and the
+    applied panels already set their kick back from - but every part
+    this notch is cut into starts one face-frame thickness behind that
+    plane, so the cut it takes is that much shallower. A setback inside
+    the face-frame band leaves nothing to notch and returns 0.
+    """
+    return max(0.0, layout.tks - layout.fft)
 
 
 def has_finish_kick(layout):
@@ -1218,10 +1233,10 @@ def finish_kick_segments(layout):
             # it, at the finish kick's own perpendicular offset.
             for s, e, a, b, theta in _split_ff_x_spans(
                     layout, start, end, left_x, right_x,
-                    perp=layout.tks + layout.tkt - finish_t):
+                    perp=layout.tks - finish_t):
                 wx, wy, wz = ff_perpendicular_offset_at_world_x(
                     layout, a,
-                    layout.tks + layout.tkt - finish_t,
+                    layout.tks - finish_t,
                     0.0,
                 )
                 segments.append({
@@ -1237,7 +1252,7 @@ def finish_kick_segments(layout):
             continue
         wx, wy, wz = ff_perpendicular_offset_at_world_x(
             layout, left_x,
-            layout.tks + layout.tkt - finish_t,
+            layout.tks - finish_t,
             0.0,
         )
         segments.append({
@@ -1300,8 +1315,8 @@ def left_corner_finish_kick_dims(layout):
     """
     length = layout.lsw - carcass_inner_left_x(layout)
     width = layout.bays[0]['kick_height']
-    thickness = (layout.tks + layout.tkt
-                 - layout.finish_kick_thickness - layout.fft)
+    thickness = (layout.tks - layout.finish_kick_thickness
+                 - layout.fft)
     return (length, width, thickness)
 
 
@@ -1320,8 +1335,8 @@ def right_corner_finish_kick_dims(layout):
     """
     length = carcass_inner_right_x(layout) - (layout.dim_x - layout.rsw)
     width = layout.bays[layout.bay_count - 1]['kick_height']
-    thickness = (layout.tks + layout.tkt
-                 - layout.finish_kick_thickness - layout.fft)
+    thickness = (layout.tks - layout.finish_kick_thickness
+                 - layout.fft)
     return (length, width, thickness)
 
 
@@ -1398,8 +1413,8 @@ def mid_finish_kick_dims(layout, gap_index, side):
         return None
     bay_idx = gap_index if side == 'LEFT' else gap_index + 1
     width = layout.bays[bay_idx]['kick_height']
-    thickness = (layout.tks + layout.tkt
-                 - layout.finish_kick_thickness - layout.fft)
+    thickness = (layout.tks - layout.finish_kick_thickness
+                 - layout.fft)
     return (length, width, thickness)
 
 
@@ -1432,7 +1447,7 @@ def left_kick_return_dims(layout):
     """Length spans from cabinet back to main kick front. Width is bay
     0's kick height. Thickness is the toe kick board thickness.
     """
-    length = layout.dim_y - layout.tks - layout.tkt
+    length = layout.dim_y - layout.tks
     width = layout.bays[0]['kick_height']
     thickness = layout.tkt
     return (length, width, thickness)
@@ -1448,7 +1463,7 @@ def right_kick_return_position(layout):
 
 def right_kick_return_dims(layout):
     """Mirror of left_kick_return_dims; uses the LAST bay's kick height."""
-    length = layout.dim_y - layout.tks - layout.tkt
+    length = layout.dim_y - layout.tks
     width = layout.bays[layout.bay_count - 1]['kick_height']
     thickness = layout.tkt
     return (length, width, thickness)
@@ -1967,7 +1982,7 @@ def _angled_multi_cuts(layout, start, end, perp=0.0):
     one is taken.
 
     `perp` is the member's perpendicular offset from the FF outer plane
-    (0 for rails, tks + tkt for the kick subfront). Offset planes
+    (0 for rails, tks for the kick subfront). Offset planes
     meeting at an angle intersect NOT at the outer-plane bend X, so
     each cut is computed as the intersection of the two ADJACENT
     regions' offset lines (y = m*x + b): angled-left vs square, square
