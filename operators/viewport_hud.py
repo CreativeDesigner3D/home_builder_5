@@ -722,6 +722,56 @@ class _SceneToggleButton:
                 not getattr(host, self.prop_name, False))
 
 
+class _SheetCommandButton:
+    """HUD button on the sheet row that fires an operator.
+
+    Same box as the toggles beside it, but it has no on state: it is
+    pressed, it does its thing. ``available`` is the owner's own test
+    for whether the command applies right now -- it is called every
+    draw, so it must be cheap, and anything it raises hides the button
+    rather than breaking the row.
+    """
+
+    def __init__(self, op_idname, label, ui_visible, available=None,
+                 width_px=112):
+        self.op_idname = op_idname
+        self.label = label
+        self.ui_visible = ui_visible
+        self.available = available
+        self.width_px = width_px
+
+    @property
+    def width(self):
+        return int(self.width_px * _s())
+
+    def visible(self, context):
+        if not self.ui_visible(context):
+            return False
+        if self.available is None:
+            return True
+        try:
+            return bool(self.available(context))
+        except Exception:
+            return False
+
+    def draw(self, shader, font_id, rect, context, mouse):
+        rx, ry, rw, rh = rect
+        hovered = point_in_rect(mouse[0], mouse[1], rect)
+        draw_rect(shader, rx, ry, rw, rh, BTN_HOVER_BG if hovered else BTN_BG)
+        draw_rect_outline(shader, rx, ry, rw, rh, BTN_BORDER)
+        _draw_centered_text(font_id, rect, FONT_SIZE * _s(),
+                            TEXT_ACTIVE if hovered else TEXT_NORMAL,
+                            self.label)
+
+    def on_click(self, context, area, region):
+        ns, name = self.op_idname.split('.')
+        try:
+            with context.temp_override(area=area, region=region):
+                getattr(getattr(bpy.ops, ns), name)('INVOKE_DEFAULT')
+        except Exception:
+            pass
+
+
 def _layout_view_visible(context):
     """Sheet-only widgets: the mirror image of _product_ui_visible."""
     return bool(context.scene and context.scene.get('IS_LAYOUT_VIEW'))
@@ -746,14 +796,45 @@ def register_sheet_toggle(key, prop_name, label, owner="SCENE",
     actually hangs off. Re-registering a key replaces it, so a
     reloaded add-on cannot stack duplicates.
     """
-    unregister_sheet_toggle(key)
+    _drop_sheet_button(key)
     widget = _SceneToggleButton(prop_name, label, _layout_view_visible,
                                 width_px=width_px, owner=owner)
+    _add_sheet_button(order, key, widget)
+
+
+def register_sheet_command(key, label, op_idname, available=None,
+                           width_px=112, order=100):
+    """Add an operator button to the layout-view HUD row.
+
+    The row's other entries are toggles -- state you leave on. A
+    command is the other kind of thing a sheet needs: it opens or does
+    something. `available` is an optional callable(context) the owner
+    supplies to hide the button when it would have nothing to show, so
+    the row never carries one that opens an empty list.
+
+    Shares the toggle registry, so the two kinds order among each
+    other and one key means one button whichever it is.
+    """
+    _drop_sheet_button(key)
+    widget = _SheetCommandButton(op_idname, label, _layout_view_visible,
+                                 available=available, width_px=width_px)
+    _add_sheet_button(order, key, widget)
+
+
+def unregister_sheet_toggle(key):
+    _drop_sheet_button(key)
+
+
+def unregister_sheet_command(key):
+    _drop_sheet_button(key)
+
+
+def _add_sheet_button(order, key, widget):
     _extra_sheet_buttons.append((order, key, widget))
     _extra_sheet_buttons.sort(key=lambda b: (b[0], b[1]))
 
 
-def unregister_sheet_toggle(key):
+def _drop_sheet_button(key):
     for i, entry in enumerate(list(_extra_sheet_buttons)):
         if entry[1] == key:
             del _extra_sheet_buttons[i]
