@@ -54,6 +54,16 @@ _END_STILE_ROLES = frozenset({
     types_face_frame.PART_ROLE_RIGHT_STILE,
 })
 
+# Side panels that can be seamed, and the side each one means. Both
+# pieces of an already-seamed panel are here so the joint can be moved
+# or removed by clicking either board.
+_SEAMABLE_SIDE_ROLES = {
+    types_face_frame.PART_ROLE_LEFT_SIDE: 'LEFT',
+    types_face_frame.PART_ROLE_RIGHT_SIDE: 'RIGHT',
+    types_face_frame.PART_ROLE_LEFT_SIDE_SEAM: 'LEFT',
+    types_face_frame.PART_ROLE_RIGHT_SIDE_SEAM: 'RIGHT',
+}
+
 
 # ---------------------------------------------------------------------------
 # Lookup helpers
@@ -599,6 +609,97 @@ class hb_face_frame_OT_set_part_scribe(bpy.types.Operator):
         col.prop(cab, attr, text=label)
 
     def execute(self, context):
+        return {'FINISHED'}
+
+
+def seam_side_for(obj):
+    """'LEFT' / 'RIGHT' when obj is a side panel that could be seamed,
+    else None. Used by the menu so the item only shows on a panel the
+    seam actually applies to."""
+    if obj is None:
+        return None
+    return _SEAMABLE_SIDE_ROLES.get(obj.get('hb_part_role'))
+
+
+def seam_available(obj):
+    """True when the clicked side panel can carry a panel seam -- a
+    FINISHED end on a square (non-angled, non-back-extended) cabinet.
+    Everything else gets its finish from a separate part or is a splayed
+    trapezoid, neither of which is the single board a seam divides."""
+    side = seam_side_for(obj)
+    if side is None:
+        return False
+    root = types_face_frame.find_cabinet_root(obj)
+    if root is None:
+        return False
+    try:
+        return types_face_frame.FaceFrameCabinet(root).side_seam_available(side)
+    except Exception:
+        return False
+
+
+class hb_face_frame_OT_set_panel_seam(bpy.types.Operator):
+    """Set the joint height of a seamed finished end.
+
+    A finished end taller than the stock it is cut from has to be made
+    from two boards. The height is measured from the cabinet bottom --
+    the floor, on a floor-standing cabinet -- because that is the datum
+    the shop reads off the elevation. Live-bound to the cabinet prop, so
+    the panel splits as the number is typed; 0 puts it back to one piece.
+    """
+    bl_idname = "hb_face_frame.set_panel_seam"
+    bl_label = "Set Panel Seam"
+    bl_description = "Set the height this finished end is seamed at"
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return seam_available(context.active_object)
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self, width=300)
+
+    def draw(self, context):
+        obj = context.active_object
+        side = seam_side_for(obj)
+        root = types_face_frame.find_cabinet_root(obj)
+        if side is None or root is None:
+            self.layout.label(text="No side panel selected", icon='INFO')
+            return
+        cab = root.face_frame_cabinet
+        attr = ('left_side_seam_height' if side == 'LEFT'
+                else 'right_side_seam_height')
+        col = self.layout.column(align=True)
+        col.label(text=f"{side.title()} Finished End", icon='MOD_SOLIDIFY')
+        col.prop(cab, attr, text="Seam Height")
+        col.separator()
+        col.label(text="Measured up from the cabinet bottom.", icon='INFO')
+        col.label(text="0 leaves the panel in one piece.")
+
+    def execute(self, context):
+        return {'FINISHED'}
+
+
+class hb_face_frame_OT_remove_panel_seam(bpy.types.Operator):
+    """Put a seamed finished end back to one board."""
+    bl_idname = "hb_face_frame.remove_panel_seam"
+    bl_label = "Remove Panel Seam"
+    bl_description = "Build this finished end as a single panel again"
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return seam_available(context.active_object)
+
+    def execute(self, context):
+        obj = context.active_object
+        side = seam_side_for(obj)
+        root = types_face_frame.find_cabinet_root(obj)
+        if side is None or root is None:
+            return {'CANCELLED'}
+        attr = ('left_side_seam_height' if side == 'LEFT'
+                else 'right_side_seam_height')
+        setattr(root.face_frame_cabinet, attr, 0.0)
         return {'FINISHED'}
 
 
@@ -3669,6 +3770,8 @@ classes = (
     hb_face_frame_OT_set_finished_end_condition,
     hb_face_frame_OT_apply_finished_end_to_other_side,
     hb_face_frame_OT_set_part_scribe,
+    hb_face_frame_OT_set_panel_seam,
+    hb_face_frame_OT_remove_panel_seam,
     hb_face_frame_OT_toggle_stile_to_floor,
     hb_face_frame_OT_set_cabinet_column,
     hb_face_frame_OT_remove_bottom_rail,

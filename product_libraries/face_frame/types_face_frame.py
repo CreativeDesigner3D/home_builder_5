@@ -116,6 +116,23 @@ def suspend_recalc():
 # Single string-enum role for parts.
 PART_ROLE_LEFT_SIDE = 'LEFT_SIDE'
 PART_ROLE_RIGHT_SIDE = 'RIGHT_SIDE'
+# Upper half of a side panel that has been seamed. A finished end past
+# the length stock comes in has to be made from two boards; the user
+# picks the joint height and the side builds as two parts, the base
+# role carrying the piece below the seam and this one the piece above.
+# Own roles rather than a second LEFT_SIDE so the many
+# next(child with role == LEFT_SIDE) lookups keep finding the one part
+# they mean; every pass that has to see both lists them together.
+PART_ROLE_LEFT_SIDE_SEAM = 'LEFT_SIDE_SEAM'
+PART_ROLE_RIGHT_SIDE_SEAM = 'RIGHT_SIDE_SEAM'
+SIDE_SEAM_ROLE_FOR = {
+    PART_ROLE_LEFT_SIDE: PART_ROLE_LEFT_SIDE_SEAM,
+    PART_ROLE_RIGHT_SIDE: PART_ROLE_RIGHT_SIDE_SEAM,
+}
+# Shortest piece worth making on either side of a seam. A joint closer
+# than this to an end is a sliver the shop would not cut, so the seam is
+# ignored rather than built.
+MIN_SEAM_PIECE = inch(3.0)
 PART_ROLE_TOP = 'TOP'  # solid top panel for Upper / Tall (Base / Lap use stretchers)
 PART_ROLE_FRONT_STRETCHER = 'FRONT_STRETCHER'
 PART_ROLE_REAR_STRETCHER = 'REAR_STRETCHER'
@@ -1924,6 +1941,12 @@ class FaceFrameCabinet(GeoNodeCage):
             r_notch.mod.show_viewport = False
             r_notch.mod.show_render = False
 
+            # Seam pieces: the top half of a side panel that has been
+            # split at a joint height. Hidden until a seam is set.
+            for seam_role in (PART_ROLE_LEFT_SIDE_SEAM,
+                              PART_ROLE_RIGHT_SIDE_SEAM):
+                self._ensure_side_seam_part(seam_role)
+
         # Bottom is segment-keyed; created lazily by _reconcile_carcass_bottoms.
 
         # Top is segment-keyed; created lazily by _reconcile_carcass_tops.
@@ -3181,6 +3204,14 @@ class FaceFrameCabinet(GeoNodeCage):
         # Over-stool side-front profile: cut the decorative leg profile into
         # the bottom-front of each extended side. No-op + cleanup when off.
         self._apply_overstool_profile(layout)
+
+        # Seamed side panels: split a finished end into two boards at
+        # the height the user picked. After every pass that sizes or
+        # moves a side (back extension, extend-back, overstool profile)
+        # so the piece above the joint inherits the finished panel, and
+        # before the notch / boolean passes below so a full-height cut
+        # reaches both pieces.
+        self._reconcile_side_seams(layout)
 
         # Bottom-rail decorative profile (valance): cut the chosen profile
         # into the bottom rail(s). No-op + cleanup when off.
@@ -5722,6 +5753,144 @@ class FaceFrameCabinet(GeoNodeCage):
                 if mesh is not None and mesh.users == 0:
                     bpy.data.meshes.remove(mesh)
 
+    # ------------------------------------------------------------------
+    # Seamed side panels
+    # ------------------------------------------------------------------
+
+    def _side_seam_height(self, cab, side):
+        """The joint height the user set for `side`, measured from the
+        cabinet bottom. 0 (the default) means no seam."""
+        key = 'left_side_seam_height' if side == 'LEFT' else 'right_side_seam_height'
+        return max(getattr(cab, key, 0.0) or 0.0, 0.0)
+
+    def _side_seam_blocked(self, cab, layout, side):
+        """Why this side cannot carry a seam, or None when it can.
+
+        The seam only makes sense where the carcass side panel IS the
+        finished face -- a paneled / applied-frame end gets its finish
+        from a separate part, and those are built from members that are
+        never one oversize board. Angled and back-extended sides are out
+        because the panel there is a splayed trapezoid reshaped by later
+        passes, not the square board this pass cuts in two.
+        """
+        condition = layout.l_fin_end if side == 'LEFT' else layout.r_fin_end
+        if condition != 'FINISHED':
+            return 'condition'
+        if layout.is_angled:
+            return 'angled'
+        extend = (getattr(cab, 'extend_back_left', 0.0) if side == 'LEFT'
+                  else getattr(cab, 'extend_back_right', 0.0))
+        if extend:
+            return 'extended'
+        return None
+
+    def side_seam_available(self, side):
+        """True when `side` ('LEFT' / 'RIGHT') could take a panel seam.
+        Public so the menu / operator can ask without rebuilding a
+        layout."""
+        try:
+            cab = self.obj.face_frame_cabinet
+            layout = solver.FaceFrameLayout(self.obj)
+        except Exception:
+            return False
+        return self._side_seam_blocked(cab, layout, side) is None
+
+    _SIDE_SEAM_SPEC = {
+        PART_ROLE_LEFT_SIDE_SEAM: ('Left Side Seam', True),
+        PART_ROLE_RIGHT_SIDE_SEAM: ('Right Side Seam', False),
+    }
+
+    def _ensure_side_seam_part(self, seam_role):
+        """The seam piece for a side, created if this cabinet predates
+        seams. Same rotation and mirror flags as the side it belongs to,
+        so the piece reads as the same board carried on. No front-bottom
+        notch: the kick cut belongs to the piece that reaches the floor.
+        """
+        existing = self._side_part_by_role(seam_role)
+        if existing is not None:
+            return existing
+        name, mirror_z = self._SIDE_SEAM_SPEC[seam_role]
+        seam = CabinetPart()
+        seam.create(name)
+        seam.obj.parent = self.obj
+        seam.obj['hb_part_role'] = seam_role
+        seam.obj['CABINET_PART'] = True
+        seam.obj.rotation_euler.y = math.radians(-90)
+        seam.set_input('Mirror Y', True)
+        seam.set_input('Mirror Z', mirror_z)
+        seam.obj.hide_viewport = True
+        seam.obj.hide_render = True
+        return seam.obj
+
+    def _reconcile_side_seams(self, layout):
+        """Split a finished side panel into two boards at the user's seam
+        height, or put it back together when there is no seam.
+
+        Runs late, after every pass that resizes or moves a side panel
+        (back extension, finished extend-back, the overstool profile),
+        so the piece above the seam can simply inherit the side's final
+        depth and Y and take the length left over. The base role keeps
+        the piece BELOW the joint -- it owns the origin, the kick notch,
+        and every lookup that means "the side" -- and the seam role
+        carries the piece above it, one board length higher.
+
+        The back rabbet is re-driven on both pieces: it spans whatever
+        length its part ends up with, so the piece below has to be told
+        it is shorter now and the piece above needs its own.
+        """
+        if not self._has_carcass():
+            return
+        cab = self.obj.face_frame_cabinet
+        for side, base_role in (('LEFT', PART_ROLE_LEFT_SIDE),
+                                ('RIGHT', PART_ROLE_RIGHT_SIDE)):
+            seam_role = SIDE_SEAM_ROLE_FOR[base_role]
+            base_obj = self._side_part_by_role(base_role)
+            seam_obj = self._side_part_by_role(seam_role)
+            if seam_obj is None:
+                # Built before seams existed. Only pay for the part when
+                # a seam is actually wanted, so an untouched old cabinet
+                # recalcs exactly as it did.
+                if self._side_seam_height(cab, side) <= 0.0:
+                    continue
+                seam_obj = self._ensure_side_seam_part(seam_role)
+            bay_index = 0 if side == 'LEFT' else layout.bay_count - 1
+
+            blocked = self._side_seam_blocked(cab, layout, side)
+            base_part = GeoNodeCutpart(base_obj) if base_obj is not None else None
+            full = None
+            if base_part is not None:
+                # The part loop has already written the square length for
+                # this recalc, so this is the whole board every time --
+                # the split never compounds.
+                full = base_part.get_input('Length')
+            cut = self._side_seam_height(cab, side) - solver.side_bottom_z(
+                layout, bay_index, side)
+
+            active = (blocked is None
+                      and base_obj is not None
+                      and not base_obj.hide_viewport
+                      and full is not None
+                      and MIN_SEAM_PIECE <= cut <= full - MIN_SEAM_PIECE)
+            if not active:
+                seam_obj.hide_viewport = True
+                seam_obj.hide_render = True
+                continue
+
+            base_part.set_input('Length', cut)
+            self._update_side_back_notch(base_obj, layout, bay_index)
+
+            seam_part = GeoNodeCutpart(seam_obj)
+            seam_part.set_input('Length', full - cut)
+            seam_part.set_input('Width', base_part.get_input('Width'))
+            seam_part.set_input('Thickness', base_part.get_input('Thickness'))
+            seam_obj.location = (base_obj.location.x,
+                                 base_obj.location.y,
+                                 base_obj.location.z + cut)
+            seam_obj.rotation_euler = base_obj.rotation_euler.copy()
+            seam_obj.hide_viewport = False
+            seam_obj.hide_render = False
+            self._update_side_back_notch(seam_obj, layout, bay_index)
+
     # =====================================================================
     # Over-stool side-front profile cut (decorative leg foot)
     # =====================================================================
@@ -6814,12 +6983,12 @@ class FaceFrameCabinet(GeoNodeCage):
         chase with the optional side notch on. Parts outside the chase
         footprint are unaffected by the boolean, so over-targeting is
         harmless. Mirrors _iter_wedge_cut_targets."""
-        side_role = None
+        side_roles = ()
         if getattr(cab, 'chase_notch_side', False):
             if cab.chase_location == 'LEFT_BACK':
-                side_role = PART_ROLE_LEFT_SIDE
+                side_roles = (PART_ROLE_LEFT_SIDE, PART_ROLE_LEFT_SIDE_SEAM)
             elif cab.chase_location == 'RIGHT_BACK':
-                side_role = PART_ROLE_RIGHT_SIDE
+                side_roles = (PART_ROLE_RIGHT_SIDE, PART_ROLE_RIGHT_SIDE_SEAM)
         yield self.obj
         stack = list(self.obj.children)
         while stack:
@@ -6828,15 +6997,17 @@ class FaceFrameCabinet(GeoNodeCage):
             if role in (PART_ROLE_PIPE_CHASE_CUTTER,
                         PART_ROLE_PIPE_CHASE_PANEL):
                 continue
-            # side_role is None when no side notch applies; guard it so
+            # side_roles is empty when no side notch applies, so
             # roleless objects (split nodes, cages - role None) never
-            # match. A None target crashes modifiers.new on an EMPTY.
+            # match. A None target crashes modifiers.new on an EMPTY. A
+            # seamed side is two parts and the chase runs full height,
+            # so both pieces are named.
             # Drawer and rollout boxes join only when their opening opted
             # into NOTCH (stamped by _create_drawer_box_for_front /
             # _create_rollout_box) -- that's the U-shaped box around a
             # sink chase.
             if (role in PIPE_CHASE_CUT_PART_ROLES
-                    or (side_role is not None and role == side_role)
+                    or (role is not None and role in side_roles)
                     or (role in (PART_ROLE_DRAWER_BOX, PART_ROLE_ROLLOUT_BOX)
                         and obj.get('HB_CHASE_FIT') == 'NOTCH')):
                 yield obj
@@ -9733,7 +9904,9 @@ class FaceFrameCabinet(GeoNodeCage):
     # on both. Flip Z = the side's Mirror Z would enter from that outer
     # face - a visible route down the show side of a finished end.
     _BACK_NOTCH_FLIP_Z = {PART_ROLE_LEFT_SIDE: False,
-                          PART_ROLE_RIGHT_SIDE: True}
+                          PART_ROLE_RIGHT_SIDE: True,
+                          PART_ROLE_LEFT_SIDE_SEAM: False,
+                          PART_ROLE_RIGHT_SIDE_SEAM: True}
 
     def _update_side_back_notch(self, side_obj, layout, bay_index):
         """Drive the side's 'Back Notch' modifier - the rabbet a FINISHED
@@ -9762,7 +9935,8 @@ class FaceFrameCabinet(GeoNodeCage):
             mod = cpm.mod
         if mod.node_group is None:
             return
-        side = 'LEFT' if role == PART_ROLE_LEFT_SIDE else 'RIGHT'
+        side = ('LEFT' if role in (PART_ROLE_LEFT_SIDE, PART_ROLE_LEFT_SIDE_SEAM)
+                else 'RIGHT')
         depth = solver.back_notch_depth(layout, side)
         splayed = bool(layout.is_angled
                        or getattr(cab, 'extend_back_left', 0.0)

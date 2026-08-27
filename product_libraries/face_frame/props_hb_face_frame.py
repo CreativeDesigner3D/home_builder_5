@@ -2448,7 +2448,7 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
             # face frame / against neighbors. Non-FINISHED sides are
             # interior throughout; the visible exterior comes from a
             # separate covering part (FLUSH_X / BEADBOARD / etc.).
-            if role == 'LEFT_SIDE':
+            if role in ('LEFT_SIDE', 'LEFT_SIDE_SEAM'):
                 if left_side_finished:
                     self._set_part_surfaces_split(
                         child,
@@ -2459,7 +2459,7 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                 else:
                     self._set_part_surfaces(child, interior_mat, interior_mat_rotated)
                 continue
-            if role == 'RIGHT_SIDE':
+            if role in ('RIGHT_SIDE', 'RIGHT_SIDE_SEAM'):
                 if right_side_finished:
                     self._set_part_surfaces_split(
                         child,
@@ -6343,6 +6343,27 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
     back_finished_end_condition: EnumProperty(
         name="Back Finished End", items=FIN_END_ITEMS, default='UNFINISHED',
         update=_on_back_finish_end_user_set,
+    )  # type: ignore
+
+    # Panel seam: where a finished side panel is joined when it is
+    # longer than the stock it is cut from. Measured from the CABINET
+    # BOTTOM (the floor, on a floor-standing cabinet), which is the
+    # datum the drafter reads off the elevation. 0 = no seam, the panel
+    # is one board. Only FINISHED ends can carry one - see
+    # Face_Frame_Cabinet._side_seam_blocked.
+    left_side_seam_height: FloatProperty(
+        name="Left Seam Height",
+        description="Height above the cabinet bottom where the left finished "
+                    "end is seamed. 0 = one piece",
+        default=0.0, min=0.0, unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    right_side_seam_height: FloatProperty(
+        name="Right Seam Height",
+        description="Height above the cabinet bottom where the right finished "
+                    "end is seamed. 0 = one piece",
+        default=0.0, min=0.0, unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
     )  # type: ignore
 
     # Shiplap course width for SHIPLAP finished ends (all shiplap sides

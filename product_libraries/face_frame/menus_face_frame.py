@@ -453,6 +453,28 @@ class HOME_BUILDER_MT_face_frame_part_commands(bpy.types.Menu):
                             text="Set Finished End Condition...",
                             icon='MOD_SOLIDIFY')
 
+        # Panel seam: a finished end taller than the board it is cut
+        # from is made in two pieces joined at a height the user picks.
+        # Offered on either piece of an already-seamed panel, so the
+        # joint can be moved or taken out from whichever board is
+        # clicked. Only on FINISHED ends - see ops_part_commands.
+        if ops_part_commands.seam_available(obj):
+            root = types_face_frame.find_cabinet_root(obj)
+            side = ops_part_commands.seam_side_for(obj)
+            seam = getattr(root.face_frame_cabinet,
+                           'left_side_seam_height' if side == 'LEFT'
+                           else 'right_side_seam_height', 0.0)
+            if seam > 0:
+                seam_text = "Set Panel Seam: %s" % units.unit_to_string(
+                    context.scene.unit_settings, seam)
+            else:
+                seam_text = "Set Panel Seam..."
+            layout.operator("hb_face_frame.set_panel_seam",
+                            text=seam_text, icon='MOD_BEVEL')
+            if seam > 0:
+                layout.operator("hb_face_frame.remove_panel_seam",
+                                text="Remove Panel Seam", icon='X')
+
         # Bottom rail can be removed. The rail spans the bays in its
         # segment; the operator sets Remove Bottom across that whole span
         # so the rail the user clicked goes away as one piece.

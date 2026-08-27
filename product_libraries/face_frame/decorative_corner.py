@@ -135,6 +135,9 @@ _SHAFT = 'SHAFT'
 CUT_PART_ROLES = frozenset({
     # Carcass
     'LEFT_SIDE', 'RIGHT_SIDE', 'TOP', 'BOTTOM',
+    # A seamed side is two boards; the post notch runs the
+    # full corner, so both of them get cut.
+    'LEFT_SIDE_SEAM', 'RIGHT_SIDE_SEAM',
     'BACK', 'FINISHED_BACK',
     'FRONT_STRETCHER', 'REAR_STRETCHER',
     # Applied end skins and blind ends
