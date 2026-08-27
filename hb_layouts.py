@@ -971,6 +971,54 @@ def is_helper_object(obj) -> bool:
     return bool(obj.get('obj_x') or 'Overlay Prompt Obj' in obj.name)
 
 
+# Product dropped on the FAR face of a wall is parented with a 180 degree Z
+# rotation (see the front/back hysteresis in the placement operators), so a
+# layout built from the wall's own frame ends up looking at the blank side of
+# the wall. These two helpers give layout code the frame to draw FROM.
+
+WALL_PRODUCT_CAGE_KEYS = (
+    'IS_FRAMELESS_CABINET_CAGE',
+    'IS_FACE_FRAME_CABINET_CAGE',
+    'IS_FRAMELESS_PRODUCT_CAGE',
+    'IS_FACE_FRAME_PRODUCT_CAGE',
+    'IS_CLOSET_STARTER_CAGE',
+)
+
+
+def wall_content_is_back_side(wall_obj) -> bool:
+    """True when every product on wall_obj sits on the wall's back face.
+
+    Reported only when the wall agrees with itself: a wall carrying product
+    on both faces keeps its own frame, since one view cannot face both.
+    """
+    front = back = 0
+    for child in wall_obj.children:
+        if not any(child.get(key) for key in WALL_PRODUCT_CAGE_KEYS):
+            continue
+        if abs(abs(child.rotation_euler.z) - math.pi) < 0.1:
+            back += 1
+        else:
+            front += 1
+    return back > 0 and front == 0
+
+
+def wall_view_frame(wall_obj, wall_length: float, wall_thickness: float):
+    """Matrix of the frame a wall's 2D views should be built in.
+
+    Normally the wall's own matrix_world. For a wall whose product is all on
+    the back face the frame is spun end-for-end, so that x still runs
+    0..length left-to-right as the camera sees it, y = 0 is the face the
+    product hangs on and -y is the viewing side. That is the same contract
+    front-facing walls already satisfy, so callers need no other change.
+    """
+    frame = wall_obj.matrix_world.copy()
+    if wall_content_is_back_side(wall_obj):
+        frame = frame @ (
+            Matrix.Translation(Vector((wall_length, wall_thickness, 0.0)))
+            @ Matrix.Rotation(math.pi, 4, 'Z'))
+    return frame
+
+
 # =============================================================================
 # TITLE BLOCK
 # =============================================================================
@@ -2501,9 +2549,17 @@ class MultiView(LayoutView):
             wall = hb_types.GeoNodeWall(wall_obj)
             wall_length = wall.get_input('Length')
             wall_height = wall.get_input('Height')
+            wall_thickness = wall.get_input('Thickness')
             
-            # Recursive bbox in wall-local frame — includes cabinet protrusion.
-            bb_min, bb_max = self._compute_recursive_bbox(wall_obj)
+            # Frame every view is taken from. The wall's own matrix,
+            # unless the wall's product hangs on its back face -- then
+            # the frame is spun end-for-end so the camera faces the
+            # cabinets instead of the blank side of the wall.
+            W = wall_view_frame(wall_obj, wall_length, wall_thickness)
+            
+            # Recursive bbox in that frame -- includes cabinet protrusion.
+            bb_min, bb_max = self._compute_recursive_bbox(
+                wall_obj, frame_matrix=W)
         finally:
             if (source_scene is not None and bpy.context.window
                     and bpy.context.window.scene is not prev_window_scene
@@ -2617,7 +2673,6 @@ class MultiView(LayoutView):
         #   M_E = W @ M_local @ W^-1
         # For M_local = identity (elevation), M_E = identity.
         # ----------------------------------------------------------------
-        W = wall_obj.matrix_world.copy()
         W_inv = W.inverted()
         
         M_elev_local = Matrix.Identity(4)
@@ -2823,9 +2878,12 @@ class MultiView(LayoutView):
         self.dashed_instances.append(d)
         return d
 
-    def _compute_recursive_bbox(self, source_obj):
+    def _compute_recursive_bbox(self, source_obj, frame_matrix=None):
         """Compute bbox of source_obj plus renderable descendants in
         source_obj's local coords. Cage and helper objects are skipped.
+
+        frame_matrix overrides the frame the bbox is measured in; it
+        defaults to source_obj's own evaluated matrix.
         
         Uses the evaluated depsgraph so matrix_world reads reflect any
         drivers / constraints / geometry-node updates, not the raw stored
@@ -2835,7 +2893,9 @@ class MultiView(LayoutView):
         """
         depsgraph = bpy.context.evaluated_depsgraph_get()
         source_eval = source_obj.evaluated_get(depsgraph)
-        obj_matrix_inv = source_eval.matrix_world.inverted()
+        frame = (frame_matrix if frame_matrix is not None
+                 else source_eval.matrix_world)
+        obj_matrix_inv = frame.inverted()
         mn = [float('inf')] * 3
         mx = [float('-inf')] * 3
         
