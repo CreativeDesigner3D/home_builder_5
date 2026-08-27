@@ -140,7 +140,7 @@ class Home_Builder_AddonPreferences(bpy.types.AddonPreferences):
                     "windows, add a floor or ceiling - as a glyph strip "
                     "in the 3D viewport. The sidebar buttons keep working "
                     "either way",
-        default=False,
+        default=True,
         update=_update_use_viewport_hud,
     ) # type: ignore
 
