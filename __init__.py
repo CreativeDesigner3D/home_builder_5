@@ -37,6 +37,7 @@ from . import molding
 from . import hb_layouts
 from . import hb_assets
 from . import hb_snap_engine
+from . import semantic_lines
 
 from bpy.app.handlers import persistent
 
@@ -341,6 +342,7 @@ def register():
     hb_props.register()
     hb_project.register()
     hb_snap_engine.register()
+    semantic_lines.register()
     hb_props_obstacles.register()
     ops_obstacles.register()
     walls.register()
@@ -393,6 +395,7 @@ def unregister():
     hb_props.unregister()
     hb_project.unregister()
     hb_snap_engine.unregister()
+    semantic_lines.unregister()
     hb_props_obstacles.unregister()
     ops_obstacles.unregister()
     walls.unregister()
