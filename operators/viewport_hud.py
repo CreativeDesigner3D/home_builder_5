@@ -55,6 +55,8 @@ _mouse_region = None       # region _mouse was measured in (hover is per-region)
 _last_hover_key = None     # layout index of the widget under the cursor
 _addon_keymaps = []        # [(keymap, keymap_item), ...] for cleanup
 _last_room = None          # name of the last room scene the HUD drew in
+_room_views = {}           # room name -> how that room was last being looked at
+_room_views_file = None    # the file _room_views was filled from
 
 
 # ---- Layout + style ---------------------------------------------------------
@@ -173,17 +175,67 @@ def _draw_centered_text(font_id, rect, size, color, text):
               size, color, text)
 
 
-def _remember_room(scene):
-    """Note the room we are in, so leaving it can be undone.
+def _region_3d(area):
+    """The orbit state of a 3D area's main region, or None."""
+    space = area.spaces.active if area is not None else None
+    return getattr(space, "region_3d", None)
+
+
+def _remember_room(scene, area):
+    """Note the room we are in and how it is being looked at, so leaving
+    it can be undone.
 
     Recorded from compute_layout rather than from a scene-change
     handler: the HUD is laid out every time a viewport draws, so by the
     time anything can take you out of a room, the room you were in has
     already been seen. No handler to register, nothing to keep in sync.
+
+    The view is kept alongside the name because orbit state belongs to
+    the VIEWPORT, not the scene, so it does not travel with a scene
+    switch. Without it, going back to a room leaves you looking from
+    wherever the sheet or card you just left had put the view.
     """
-    global _last_room
-    if scene_navigator.is_room(scene):
-        _last_room = scene.name
+    global _last_room, _room_views_file
+    # Views are remembered by room NAME, and names repeat across files, so
+    # a cache carried into another file would restore a view from the
+    # wrong one. Dropping it here needs no load handler for the same
+    # reason the rest of this does: a viewport draws before anything can
+    # be clicked, so the cache is always current by the time it is read.
+    if _room_views_file != bpy.data.filepath:
+        _room_views.clear()
+        _room_views_file = bpy.data.filepath
+    if not scene_navigator.is_room(scene):
+        return
+    _last_room = scene.name
+    rv3d = _region_3d(area)
+    if rv3d is not None:
+        _room_views[scene.name] = (
+            tuple(rv3d.view_location),
+            tuple(rv3d.view_rotation),
+            float(rv3d.view_distance),
+            rv3d.view_perspective,
+        )
+
+
+def _restore_room_view(room, area):
+    """Put the viewport back the way this room was left.
+
+    A no-op for a room the HUD has not drawn in yet -- opening a file
+    straight onto a sheet is the case -- which leaves the view alone
+    rather than guessing at one.
+    """
+    view = _room_views.get(room.name)
+    rv3d = _region_3d(area)
+    if view is None or rv3d is None:
+        return
+    loc, rot, dist, persp = view
+    # Projection first: a camera view locks the orbit fields, so there is
+    # nothing to push into them.
+    rv3d.view_perspective = persp
+    if persp != 'CAMERA':
+        rv3d.view_location = loc
+        rv3d.view_rotation = rot
+        rv3d.view_distance = dist
 
 
 def _room_to_return_to(context):
@@ -259,6 +311,7 @@ class _BackToRoomButton:
         if room is None:
             return
         context.window.scene = room
+        _restore_room_view(room, area)
 
 
 _BACK_BUTTON = _BackToRoomButton()
@@ -904,7 +957,7 @@ def compute_layout(context, area):
     # panel opens directly below them. When the viewport's overlay text is
     # on, that corner belongs to Blender, so they yield and join the first
     # centered row as its leftmost group instead.
-    _remember_room(context.scene)
+    _remember_room(context.scene, area)
     rows = _rows()
     # The centered rows filter on visible(); this left-anchored strip
     # has to do it too, or a tab that does not apply here still gets a
