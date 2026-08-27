@@ -1494,6 +1494,7 @@ def _front_frame_values(front):
             'add_mid': bool(stamp.get('add_mid_rail', False)),
             'center_mid': bool(stamp.get('mid_center', True)),
             'mid_w': stamp.get('mid_rail_width', 0.0),
+            'mid_stile_w': stamp.get('mid_stile_width', 0.0),
             'mid_loc': stamp.get('mid_loc', 0.0),
         }
     mod = _door_style_mod(front)
@@ -1511,6 +1512,8 @@ def _front_frame_values(front):
         'add_mid': bool(_mod_input_get(mod, "Add Mid Rail", False)),
         'center_mid': bool(_mod_input_get(mod, "Center Mid Rail", True)),
         'mid_w': _mod_input_get(mod, "Mid Rail Width", 0.0),
+        # The GN door has no mid stile member -- 0 seeds from the stile.
+        'mid_stile_w': 0.0,
         'mid_loc': _mod_input_get(mod, "Mid Rail Location", 0.0),
     }
 
@@ -1680,6 +1683,19 @@ def _on_df_mid_loc(self, context):
             _reapply_frame_store(store, front)
 
 
+def _on_df_mid_widths(self, context):
+    """Shared update for the mid rail / mid stile member widths. Both
+    size members the door style has no field for (it carries a single
+    mid rail width, and a mid stile has always followed the outer
+    stile), so they only exist as per-front overrides."""
+    front = _door_frame_for_dialog(self)
+    if front is not None:
+        store = _frame_store(front)
+        store['HB_FRAME_OVR_MID_RAIL_WIDTH'] = self.mid_rail_width
+        store['HB_FRAME_OVR_MID_STILE_WIDTH'] = self.mid_stile_width
+        _reapply_frame_store(store, front)
+
+
 def _on_df_grid(self, context):
     """Shared update for the mid-member grid fields (rail / stile counts
     and their row / column weight strings)."""
@@ -1757,6 +1773,8 @@ def _on_df_lock(self, context):
         store['HB_FRAME_OVR_BOTTOM_RAIL'] = self.bottom_rail
         store['HB_FRAME_OVR_MID_RAIL_MODE'] = self.mid_rail_mode
         store['HB_FRAME_OVR_MID_RAIL_LOCATION'] = self.mid_rail_location
+        store['HB_FRAME_OVR_MID_RAIL_WIDTH'] = self.mid_rail_width
+        store['HB_FRAME_OVR_MID_STILE_WIDTH'] = self.mid_stile_width
         store['HB_FRAME_OVR_MID_RAIL_COUNT'] = self.mid_rails
         store['HB_FRAME_OVR_MID_STILE_COUNT'] = self.mid_stiles
         store['HB_FRAME_OVR_ROW_RATIOS'] = self.row_ratios
@@ -1818,6 +1836,12 @@ class hb_face_frame_OT_set_door_frame(bpy.types.Operator):
         update=_on_df_mid_mode)  # type: ignore
     mid_rail_location: FloatProperty(name="Location", unit='LENGTH', precision=4, min=0.0,
                                      update=_on_df_mid_loc)  # type: ignore
+    mid_rail_width: FloatProperty(name="Mid Rail Width", unit='LENGTH', precision=4, min=0.0,
+                                  description="Width of the mid rail(s) on this front",
+                                  update=_on_df_mid_widths)  # type: ignore
+    mid_stile_width: FloatProperty(name="Mid Stile Width", unit='LENGTH', precision=4, min=0.0,
+                                   description="Width of the mid stile(s) on this front",
+                                   update=_on_df_mid_widths)  # type: ignore
 
     # Mid-member GRID: N mid rails x N mid stiles dividing the field
     # into panel cells (six-panel-door construction: rails run full
@@ -1906,6 +1930,13 @@ class hb_face_frame_OT_set_door_frame(bpy.types.Operator):
             self.mid_rail_location = store['HB_FRAME_OVR_MID_RAIL_LOCATION']
         else:
             self.mid_rail_location = vals.get('mid_loc', 0.0)
+        # Mid-member widths. Seed at what the front renders today so an
+        # untouched door keeps its look: the stamped widths, then the
+        # matching outer member for a front stamped before these existed.
+        self.mid_rail_width = (seed('HB_FRAME_OVR_MID_RAIL_WIDTH', 'mid_w')
+                               or vals.get('mid_w', 0.0) or self.top_rail)
+        self.mid_stile_width = (seed('HB_FRAME_OVR_MID_STILE_WIDTH', 'mid_stile_w')
+                                or vals.get('mid_stile_w', 0.0) or self.left_stile)
         # Grid overrides live only on the store (no style-driven grid).
         if locked:
             self.mid_rails = int(store.get('HB_FRAME_OVR_MID_RAIL_COUNT', 0) or 0)
@@ -1951,6 +1982,9 @@ class hb_face_frame_OT_set_door_frame(bpy.types.Operator):
         loc_label = {'TOP_PANEL': "Top Panel Height",
                      'BOTTOM_PANEL': "Bottom Panel Height"}.get(self.mid_rail_mode, "Location")
         row.prop(self, 'mid_rail_location', text=loc_label)
+        # Mid rail width applies to the single rail and to grid rails, so
+        # it sits outside the mode column (which greys out under a grid).
+        body.prop(self, 'mid_rail_width')
 
         body.separator()
         grid = body.column(align=True)
@@ -1964,6 +1998,9 @@ class hb_face_frame_OT_set_door_frame(bpy.types.Operator):
         row = grid.row()
         row.enabled = self.mid_stiles > 0
         row.prop(self, 'col_ratios', text="Col Widths")
+        row = grid.row()
+        row.enabled = self.mid_stiles > 0
+        row.prop(self, 'mid_stile_width', text="Stile Width")
 
         # Wood Mullion lite counts -- only shown when the front's style
         # actually renders a GRID mullion panel.

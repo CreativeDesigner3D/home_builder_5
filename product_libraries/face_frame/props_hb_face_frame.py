@@ -3348,6 +3348,7 @@ def front_frame_info(front_obj):
                 top_rail_width=top,
                 bottom_rail_width=stamp.get('bottom_rail', 0.0),
                 mid_rail_width=mid_w,
+                mid_stile_width=(stamp.get('mid_stile_width', 0.0) or None),
                 add_mid_rail=False,
                 mid_rail_z=(((0.5, 0.0) if stamp.get('mid_center', True)
                              else (0.0, stamp.get('mid_loc', 0.0)))
@@ -4352,6 +4353,18 @@ class Face_Frame_Door_Style(PropertyGroup):
             eff_top_rail    = front_obj.get('HB_FRAME_OVR_TOP_RAIL',    self.rail_width)
             eff_bottom_rail = front_obj.get('HB_FRAME_OVR_BOTTOM_RAIL', self.rail_width)
 
+        # Mid-member widths. The style carries one mid rail width and no
+        # mid stile width at all (a mid stile follows the outer stile), so
+        # both are overridable per front from the same locked store - a
+        # stored 0 / missing key means "follow the style".
+        eff_mid_rail = self.mid_rail_width
+        eff_mid_stile = getattr(self, 'mid_stile_width', 0.0) or self.stile_width
+        if frame_locked:
+            eff_mid_rail = (frame_store.get('HB_FRAME_OVR_MID_RAIL_WIDTH', 0.0)
+                            or eff_mid_rail)
+            eff_mid_stile = (frame_store.get('HB_FRAME_OVR_MID_STILE_WIDTH', 0.0)
+                             or eff_mid_stile)
+
         # Mitered series: the member cross-section IS the profile; its
         # width becomes the frame width on all four sides (mitred
         # corners need equal members) and per-side overrides don't
@@ -4392,7 +4405,7 @@ class Face_Frame_Door_Style(PropertyGroup):
             if door_rail is not None and door_rail > eff_top_rail:
                 need = door_rail * 2.0 + units.inch(1)
                 if ovr_mid_mode != 'NONE' and (self.add_mid_rail or needs_auto_mid_rail):
-                    need += self.mid_rail_width
+                    need += eff_mid_rail
                 if front_length >= need:
                     eff_top_rail = eff_bottom_rail = door_rail
                     rail_matched = True
@@ -4414,7 +4427,7 @@ class Face_Frame_Door_Style(PropertyGroup):
         if member_sec is None and round_top is None:
             shape_k = style_options.shape_kind(self.front_shape)
         if shape_k is not None:
-            _msw = getattr(self, 'mid_stile_width', 0.0) or self.stile_width
+            _msw = eff_mid_stile
             _n_ms = 1 if shape_k.get('twin') else 0
             if shape_k.get('curve'):
                 _cell_w = (front_width - eff_left_stile - eff_right_stile
@@ -4430,13 +4443,13 @@ class Face_Frame_Door_Style(PropertyGroup):
 
         min_width = eff_left_stile + eff_right_stile + units.inch(1)
         if ovr_grid_stiles:
-            _grid_msw = getattr(self, 'mid_stile_width', 0.0) or self.stile_width
+            _grid_msw = eff_mid_stile
             min_width += ovr_grid_stiles * _grid_msw
         min_height = eff_top_rail + eff_bottom_rail + units.inch(1)
         if ovr_grid_rails:
-            min_height += ovr_grid_rails * self.mid_rail_width
+            min_height += ovr_grid_rails * eff_mid_rail
         elif ovr_mid_mode != 'NONE' and (self.add_mid_rail or needs_auto_mid_rail):
-            min_height += self.mid_rail_width
+            min_height += eff_mid_rail
 
         # Too small for the frame -> the front renders as a slab, which
         # still carries the cabinet-level edge profile. The message
@@ -4494,7 +4507,7 @@ class Face_Frame_Door_Style(PropertyGroup):
                 mid_center = False
                 stored = frame_store.get('HB_FRAME_OVR_MID_RAIL_LOCATION',
                                          self.mid_rail_location)
-                half_rm = self.mid_rail_width / 2.0
+                half_rm = eff_mid_rail / 2.0
                 if ovr_mid_mode == 'BOTTOM_PANEL':
                     loc = eff_bottom_rail + stored + half_rm
                 elif ovr_mid_mode == 'TOP_PANEL':
@@ -4538,6 +4551,12 @@ class Face_Frame_Door_Style(PropertyGroup):
                 mid_rail_z=(((0.5, 0.0) if mid_center else (0.0, mid_loc))
                             if mid_on else None),
             )
+            # Locked mid-member widths: the style has one mid rail width
+            # and no mid stile width, so a pinned front takes both off its
+            # own store (unlocked, door_style_info's values already stand).
+            if frame_locked:
+                info['mid_rail_width'] = eff_mid_rail
+                info['mid_stile_width'] = eff_mid_stile
             # Mid-member grid override: counts + optional row / column
             # weights (door_layout divides the field; weight strings are
             # parsed leniently, blank / invalid = equal cells). Mitered
@@ -4634,7 +4653,8 @@ class Face_Frame_Door_Style(PropertyGroup):
                 'add_mid_rail': mid_on,
                 'mid_center': mid_center,
                 'mid_loc': mid_loc,
-                'mid_rail_width': self.mid_rail_width,
+                'mid_rail_width': eff_mid_rail,
+                'mid_stile_width': eff_mid_stile,
             }
         else:
             # GN fallback: find or add the 'Door Style' CPM_5PIECEDOOR
@@ -4667,7 +4687,7 @@ class Face_Frame_Door_Style(PropertyGroup):
             try:
                 door_style_mod.set_input("Add Mid Rail", mid_on)
                 if mid_on:
-                    door_style_mod.set_input("Mid Rail Width", self.mid_rail_width)
+                    door_style_mod.set_input("Mid Rail Width", eff_mid_rail)
                     door_style_mod.set_input("Center Mid Rail", mid_center)
                     if not mid_center:
                         door_style_mod.set_input("Mid Rail Location", mid_loc)
