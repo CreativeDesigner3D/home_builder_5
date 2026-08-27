@@ -211,9 +211,8 @@ class _BackToRoomButton:
 
     Getting into a detail is one click from the toolbar; getting out was
     a trip through the Rooms tab to find a scene you never chose to
-    leave. This is the way back, at the top left where a way back
-    belongs, and it names the room so it is a destination rather than a
-    guess.
+    leave. This is the way back, sitting after the panel tabs, and it
+    names the room so it is a destination rather than a guess.
     """
 
     MAX_LABEL = 108        # unscaled; a long room name is elided, not obeyed
@@ -830,13 +829,15 @@ def compute_layout(context, area):
     # has to do it too, or a tab that does not apply here still gets a
     # button.
     tab_buttons = [b for b in _tab_buttons() if b.visible(context)]
-    # Back leads the strip, ahead of the tabs: it is only there when you
-    # are somewhere you did not choose to be, and it belongs in the
-    # corner a way back is looked for. Joining the strip rather than
-    # sitting on its own means it follows the tabs into the centered row
-    # when the viewport corner is taken by Blender's overlay text.
+    # Back TRAILS the tabs. It comes and goes with where you are, and
+    # leading the strip meant every tab slid sideways as it appeared --
+    # the one part of the interface that should hold still while you move
+    # around. Behind the tabs it costs the tabs nothing. Joining the strip
+    # rather than sitting on its own means it follows the tabs into the
+    # centered row when the viewport corner is taken by Blender's overlay
+    # text.
     if _BACK_BUTTON.visible(context):
-        tab_buttons = [_BACK_BUTTON] + tab_buttons
+        tab_buttons = tab_buttons + [_BACK_BUTTON]
     if _corner_has_overlay_text(area):
         rows = [[tab_buttons] + rows[0]] + rows[1:]
     else:
