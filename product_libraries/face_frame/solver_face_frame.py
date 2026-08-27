@@ -571,6 +571,32 @@ def back_thickness(layout):
     return layout.bt
 
 
+def back_notch_depth(layout, side):
+    """Depth of the rabbet run down a FINISHED side's back edge for the
+    carcass back to land in.
+
+    A finished end is the visible outer face, so the back is not butted
+    against it - the back sits in a notch cut halfway through the side,
+    and the back panel widens to reach into the notch on each end. Only
+    FINISHED sides get it: thinner unfinished sides butt the back as
+    before, FALSE_FF / WORKING_FF have no carcass side at all, and a
+    WORKING_FF back means there is no carcass back to land.
+    """
+    if layout.b_fin_end == 'WORKING_FF':
+        return 0.0
+    if side == 'LEFT':
+        if layout.l_fin_end != 'FINISHED':
+            return 0.0
+        thickness = left_side_thickness(layout)
+    else:
+        if layout.r_fin_end != 'FINISHED':
+            return 0.0
+        thickness = right_side_thickness(layout)
+    if thickness <= 0.0:
+        return 0.0
+    return thickness / 2.0
+
+
 def carcass_inner_left_x(layout):
     """X of the left side panel's inner face - the left bound of the
     cabinet's interior cavity. Outer face sits at left_scribe_offset;
@@ -2742,6 +2768,14 @@ def carcass_back_segments(layout):
         if first_bay.get('remove_carcass'):
             continue
         left_x, right_x = _segment_x_bounds(layout, start, end)
+        # A FINISHED end is notched for the back (back_notch_depth), so
+        # the outermost segments run PAST the side's inner face into the
+        # notch instead of stopping at it. Only the segment that reaches
+        # a cabinet end widens, and only on that end.
+        if start == 0:
+            left_x -= back_notch_depth(layout, 'LEFT')
+        if end == layout.bay_count - 1:
+            right_x += back_notch_depth(layout, 'RIGHT')
         if first_bay.get('remove_bottom'):
             # No bottom panel here. On a floor-standing carcass (NOTCH /
             # FLUSH base) the back wraps the missing bottom and toe-kick

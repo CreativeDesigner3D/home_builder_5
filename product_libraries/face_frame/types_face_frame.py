@@ -2637,6 +2637,7 @@ class FaceFrameCabinet(GeoNodeCage):
                 part.set_input('Width', width)
                 part.set_input('Thickness', thickness)
                 self._update_side_corner_notch(child, layout, 0)
+                self._update_side_back_notch(child, layout, 0)
 
             elif role == PART_ROLE_RIGHT_SIDE:
                 last = layout.bay_count - 1
@@ -2657,6 +2658,7 @@ class FaceFrameCabinet(GeoNodeCage):
                 part.set_input('Width', width)
                 part.set_input('Thickness', thickness)
                 self._update_side_corner_notch(child, layout, last)
+                self._update_side_back_notch(child, layout, last)
 
             elif role == PART_ROLE_BOTTOM:
                 seg = carc_bot_by_start.get(child.get('hb_segment_start_bay'))
@@ -9707,6 +9709,83 @@ class FaceFrameCabinet(GeoNodeCage):
             ('X', kick),
             ('Y', setback),
             ('Route Depth', thickness),
+        ):
+            node_input = ng.interface.items_tree.get(input_name)
+            if node_input is not None:
+                hb_utils.set_gn_input(mod, node_input.identifier, value)
+        mod.show_viewport = active
+        mod.show_render = active
+
+    # Flip Z on a CPM_CUTOUT is read in the part's PRE-MIRROR frame, so
+    # the value that routes the INNER face is not the same on both sides:
+    # the left side builds Mirror Z = True and the right Mirror Z = False
+    # (see _build_carcass_parts), which puts each panel's material on the
+    # opposite side of local z = 0 while local z = 0 stays the OUTER face
+    # on both. Flip Z = the side's Mirror Z would enter from that outer
+    # face - a visible route down the show side of a finished end.
+    _BACK_NOTCH_FLIP_Z = {PART_ROLE_LEFT_SIDE: False,
+                          PART_ROLE_RIGHT_SIDE: True}
+
+    def _update_side_back_notch(self, side_obj, layout, bay_index):
+        """Drive the side's 'Back Notch' modifier - the rabbet a FINISHED
+        end carries down its back edge for the carcass back to land in
+        (solver.back_notch_depth; the back widens into it in
+        carcass_back_segments).
+
+        Runs the full length of the side, one back thickness wide off the
+        back edge. Added lazily so cabinets built before back notching
+        are upgraded in place on their next recalc, and inactive (rather
+        than absent) on every other condition so flipping a side back to
+        FINISHED re-cuts it.
+
+        Skipped on angled / back-extended cabinets: there the back is
+        trapezoidal and the side splays off the cabinet back plane, so a
+        square rabbet taken off local Y would not line up with it. Those
+        keep the butted back they have today.
+        """
+        cab = self.obj.face_frame_cabinet
+        role = side_obj.get('hb_part_role')
+        mod = side_obj.modifiers.get('Back Notch')
+        if mod is None:
+            wrapper = GeoNodeCutpart(side_obj)
+            cpm = wrapper.add_part_modifier('CPM_CUTOUT', 'Back Notch')
+            cpm.set_input('Flip Z', self._BACK_NOTCH_FLIP_Z.get(role, False))
+            mod = cpm.mod
+        if mod.node_group is None:
+            return
+        side = 'LEFT' if role == PART_ROLE_LEFT_SIDE else 'RIGHT'
+        depth = solver.back_notch_depth(layout, side)
+        splayed = bool(layout.is_angled
+                       or getattr(cab, 'extend_back_left', 0.0)
+                       or getattr(cab, 'extend_back_right', 0.0))
+        active = depth > 0.0 and not splayed
+        if active:
+            part = GeoNodeCutpart(side_obj)
+            length = part.get_input('Length')
+            width = part.get_input('Width')
+            # Y is measured from the panel's FRONT edge, not from its
+            # origin: the sides build Mirror Y = True and the cutout
+            # reads Y in the pre-mirror frame (the same reason Flip Z
+            # differs per side). The back edge is therefore at Y =
+            # Width, and the notch is the last back_thickness of it.
+            # Square anchoring already puts the side's Y origin on this
+            # bay's back plane, so the offset is 0; it is non-zero only
+            # if the two ever diverge.
+            in_range = 0 <= bay_index < len(layout.bays)
+            bay = layout.bays[bay_index] if in_range else layout.bays[0]
+            back_y = -layout.dim_y + bay['depth']
+            offset = max(0.0, side_obj.location.y - back_y)
+            y1 = max(0.0, width - offset)
+            y0 = max(0.0, y1 - solver.back_thickness(layout))
+        else:
+            length = y0 = y1 = depth = 0.0
+        ng = mod.node_group
+        for input_name, value in (
+            ('X', 0.0),
+            ('End X', length),
+            ('Y', y0),
+            ('End Y', y1),
+            ('Route Depth', depth),
         ):
             node_input = ng.interface.items_tree.get(input_name)
             if node_input is not None:
