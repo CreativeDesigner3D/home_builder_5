@@ -3,8 +3,10 @@
 When the `use_viewport_hud` addon preference is enabled, draws controls
 along the top of every 3D viewport: a left-anchored scene-navigator
 trigger (just past the toolbar; it moves into the centered row when the
-viewport's overlay text occupies that corner) and a centered
-selection-mode picker for the active product library.
+viewport's overlay text occupies that corner), a centered
+selection-mode picker for the active product library, and a
+right-anchored strip of Blender's own viewport controls -- box select,
+move, rotate and View All -- beside the navigation gizmo.
 A permanent draw handler renders the strip; addon keymap entries route
 clicks and hover moves on widget rects to their actions while passing
 every other event through. No persistent modal operator is used --
@@ -26,6 +28,7 @@ from collections import namedtuple
 
 from ..hb_gpu_draw import (
     get_visible_window_bounds,
+    navigation_gizmo_reserve,
     draw_rect,
     draw_rect_outline,
     draw_lines,
@@ -165,6 +168,88 @@ def _glyph_open_door(shader, rect, color):
                    (hx + nx, hy + ny)],
                   color, closed=True)
     draw_polyline(shader, arc_points(hx, hy, leaf, ang, 0.0, 10), color)
+
+
+def _dashes(pts, ax, ay, bx, by, count):
+    """Append `count` dashes spanning (ax, ay) -> (bx, by) into `pts`."""
+    steps = count * 2 - 1
+    dx = (bx - ax) / steps
+    dy = (by - ay) / steps
+    for i in range(0, steps, 2):
+        pts.append((ax + dx * i, ay + dy * i))
+        pts.append((ax + dx * (i + 1), ay + dy * (i + 1)))
+
+
+def _glyph_select_box(shader, rect, color):
+    """A dashed rectangle -- the mark Blender itself puts on this tool,
+    so the button looks like the thing it switches to."""
+    rx, ry, rw, rh = rect
+    w, h = rw * 0.46, rh * 0.46
+    x0 = rx + (rw - w) / 2.0
+    y0 = ry + (rh - h) / 2.0
+    x1, y1 = x0 + w, y0 + h
+    pts = []
+    _dashes(pts, x0, y0, x1, y0, 3)
+    _dashes(pts, x0, y1, x1, y1, 3)
+    _dashes(pts, x0, y0, x0, y1, 3)
+    _dashes(pts, x1, y0, x1, y1, 3)
+    draw_lines(shader, pts, color)
+
+
+def _glyph_move(shader, rect, color):
+    """Two arrows off one corner -- one up, one right.
+
+    Not the four-way cross: the Move pill on the selection row already
+    wears that, and two buttons meaning different things must not carry
+    the same mark. This is the move gizmo's own shape, an axis pair,
+    which says translate just as plainly.
+    """
+    rx, ry, rw, rh = rect
+    arm = min(rw, rh) * 0.30
+    head = arm * 0.52
+    # The mark spans two arms from its corner, so the corner sits one
+    # arm below and left of centre for the whole of it to be centred.
+    ox = rx + rw / 2.0 - arm
+    oy = ry + rh / 2.0 - arm
+    right = (ox + arm * 2.0, oy)
+    up = (ox, oy + arm * 2.0)
+    draw_lines(shader, [(ox, oy), right, (ox, oy), up], color)
+    draw_arrow_head(shader, right, (1.0, 0.0), head, color)
+    draw_arrow_head(shader, up, (0.0, 1.0), head, color)
+
+
+def _glyph_rotate(shader, rect, color):
+    """An arc with a head on it -- a turn, part way through."""
+    rx, ry, rw, rh = rect
+    r = min(rw, rh) * 0.28
+    cx, cy = rx + rw / 2.0, ry + rh / 2.0
+    start, end = math.radians(-45.0), math.radians(225.0)
+    pts = arc_points(cx, cy, r, start, end, 16)
+    draw_polyline(shader, pts, color)
+    # Head at the far end, swung along the tangent so it reads as travel
+    # around the circle rather than away from it.
+    draw_arrow_head(shader, pts[-1],
+                    (-math.sin(end), math.cos(end)), r * 0.62, color)
+
+
+def _glyph_view_all(shader, rect, color):
+    """Four corner brackets -- a frame being fitted around everything.
+
+    A viewfinder rather than an arrow: this button changes where you are
+    looking, and every arrow in this strip already means move something.
+    """
+    rx, ry, rw, rh = rect
+    w, h = rw * 0.52, rh * 0.52
+    x0 = rx + (rw - w) / 2.0
+    y0 = ry + (rh - h) / 2.0
+    x1, y1 = x0 + w, y0 + h
+    arm = min(w, h) * 0.34
+    pts = []
+    for cx, cy, sx, sy in ((x0, y0, 1, 1), (x1, y0, -1, 1),
+                           (x0, y1, 1, -1), (x1, y1, -1, -1)):
+        pts += [(cx, cy), (cx + arm * sx, cy),
+                (cx, cy), (cx, cy + arm * sy)]
+    draw_lines(shader, pts, color)
 
 
 def _draw_centered_text(font_id, rect, size, color, text):
@@ -715,6 +800,137 @@ _OPEN_DOOR_BUTTON = _ModalToggleButton(
 )
 
 
+# ---- View strip -------------------------------------------------------------
+# Blender's own viewport controls, kept apart from everything else the
+# HUD draws. The centred rows are about the product: what is selected,
+# what a drag moves, what the sizes show. Box select, move, rotate and
+# View All are about the viewport -- how you point at the model and
+# where you are looking from. They are also not tools in the sense the
+# room palette uses the word, where every button makes something; these
+# make nothing.
+#
+# So they get a strip of their own at the top right, beside the
+# navigation gizmo, which is the other control of the same kind. Being
+# anchored to that corner they hold still while the centred rows grow
+# and shrink under the selection mode.
+
+
+def _active_tool_id(context):
+    """idname of the workspace tool in force here, or None.
+
+    The active tool is per space type AND mode, so it has to be asked
+    for by mode rather than read off the workspace.
+    """
+    try:
+        ref = context.workspace.tools.from_space_view3d_mode(
+            context.mode, create=False)
+    except Exception:
+        return None
+    return getattr(ref, 'idname', None)
+
+
+class _ViewportToolButton:
+    """One of Blender's viewport tools as a HUD button.
+
+    Sets the active tool on click and highlights while that tool is the
+    one in force, so the three of them read as the radio group they are.
+    Switching is all it does -- the tool itself is Blender's.
+    """
+
+    def __init__(self, tool_id, label, glyph):
+        self.tool_id = tool_id
+        self.label = label
+        self.glyph = glyph
+
+    @property
+    def width(self):
+        return int(BTN_HEIGHT * _s())        # square
+
+    def hover_label(self):
+        return self.label
+
+    def visible(self, context):
+        # Always: every scene the HUD draws in is a viewport. The
+        # product rows come and go with what a scene is for; these do
+        # not, and a control that moves house is a control you hunt for.
+        return True
+
+    def draw(self, shader, font_id, rect, context, mouse):
+        rx, ry, rw, rh = rect
+        active = _active_tool_id(context) == self.tool_id
+        hovered = point_in_rect(mouse[0], mouse[1], rect)
+        bg = (BTN_ACTIVE_BG if active
+              else (BTN_HOVER_BG if hovered else BTN_BG))
+        draw_rect(shader, rx, ry, rw, rh, bg)
+        draw_rect_outline(shader, rx, ry, rw, rh, BTN_BORDER)
+        self.glyph(shader, rect, TEXT_ACTIVE if active else TEXT_NORMAL)
+
+    def on_click(self, context, area, region):
+        try:
+            with context.temp_override(area=area, region=region):
+                bpy.ops.wm.tool_set_by_id(name=self.tool_id)
+        except Exception:
+            pass
+
+
+class _IconCommandButton:
+    """Square glyph button that fires an operator and is done.
+
+    The sheet row's command button is this with a word on it; on a strip
+    where every button is an icon the name arrives on hover instead.
+    """
+
+    def __init__(self, op_idname, label, glyph):
+        self.op_idname = op_idname
+        self.label = label
+        self.glyph = glyph
+
+    @property
+    def width(self):
+        return int(BTN_HEIGHT * _s())
+
+    def hover_label(self):
+        return self.label
+
+    def visible(self, context):
+        return True
+
+    def draw(self, shader, font_id, rect, context, mouse):
+        rx, ry, rw, rh = rect
+        hovered = point_in_rect(mouse[0], mouse[1], rect)
+        draw_rect(shader, rx, ry, rw, rh, BTN_HOVER_BG if hovered else BTN_BG)
+        draw_rect_outline(shader, rx, ry, rw, rh, BTN_BORDER)
+        self.glyph(shader, rect, TEXT_ACTIVE if hovered else TEXT_NORMAL)
+
+    def on_click(self, context, area, region):
+        ns, name = self.op_idname.split('.')
+        try:
+            with context.temp_override(area=area, region=region):
+                getattr(getattr(bpy.ops, ns), name)('INVOKE_DEFAULT')
+        except Exception:
+            pass
+
+
+_VIEW_TOOL_BUTTONS = [
+    _ViewportToolButton('builtin.select_box', "Box Select",
+                        _glyph_select_box),
+    _ViewportToolButton('builtin.move', "Move", _glyph_move),
+    _ViewportToolButton('builtin.rotate', "Rotate", _glyph_rotate),
+]
+# What the Home key does, on a button. Framing the model back up is the
+# navigation move that is hardest to do by hand, and the keyboard is a
+# long way from a mouse that is already on the model.
+_VIEW_ALL_BUTTON = _IconCommandButton(
+    'view3d.view_all', "View All", _glyph_view_all)
+
+
+def _view_strip():
+    """The right-anchored groups: what a drag does, then where you are
+    looking. Two groups rather than one -- the tools are a state you
+    leave set, View All is a button you press and it is over."""
+    return [_VIEW_TOOL_BUTTONS, [_VIEW_ALL_BUTTON]]
+
+
 class _SceneToggleButton:
     """HUD button bound to a boolean property.
 
@@ -979,6 +1195,28 @@ def compute_layout(context, area):
         for tab_btn in tab_buttons:
             placed.append((tab_btn, (tab_x, top_y, tab_btn.width, btn_h)))
             tab_x += tab_btn.width + btn_gap
+
+    # Blender's own viewport controls, right-anchored on that same top
+    # row. Inset past the navigation gizmo: the gizmo is drawn INTO the
+    # window region rather than being a region of its own, so nothing
+    # reports its extent and a strip in that corner would land on it.
+    strip_groups = [[w for w in g if w.visible(context)]
+                    for g in _view_strip()]
+    strip_groups = [g for g in strip_groups if g]
+    if strip_groups:
+        strip_w = group_gap * (len(strip_groups) - 1)
+        for g in strip_groups:
+            strip_w += sum(w.width for w in g) + btn_gap * (len(g) - 1)
+        strip_x = (x_max - margin_x
+                   - navigation_gizmo_reserve(area)[0] - strip_w)
+        for gi, group in enumerate(strip_groups):
+            if gi > 0:
+                strip_x += group_gap
+            for wi, w in enumerate(group):
+                if wi > 0:
+                    strip_x += btn_gap
+                placed.append((w, (strip_x, top_y, w.width, btn_h)))
+                strip_x += w.width
 
     cursor_y = top_y
     for row in rows:
