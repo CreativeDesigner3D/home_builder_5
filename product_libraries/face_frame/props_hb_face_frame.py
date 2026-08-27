@@ -1499,7 +1499,7 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
             ('Beveled', 'Beveled', ''),
             ('Chamfer', 'Chamfer', ''),
             ('Classic Cut', 'Classic Cut', ''),
-            ('Drop Radius', 'Drop Radius', ''),
+            ('Drop Radius', '3/8" Drop Radius', ''),
             ('Eclipse', 'Eclipse', ''),
             ('Estate', 'Estate', ''),
             ('New Cut', 'New Cut', ''),
@@ -1508,8 +1508,8 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
             ('1/4" Radius', '1/4" Radius', ''),
             ('3/8" Radius', '3/8" Radius', ''),
             ('3/8" Inset 1/8" Radius', '3/8" Inset 1/8" Radius', ''),
-            ('3/8" Inset Radius', '3/8" Inset Radius', ''),
-            ('3/8" Inset square', '3/8" Inset square', ''),
+            ('3/8" Inset Radius', '3/8" Inset 3/8" Radius', ''),
+            ('3/8" Inset square', '3/8" Inset Square', ''),
         ],
         default='None',
         update=_propagate_cabinet_style,
@@ -4322,9 +4322,13 @@ class Face_Frame_Door_Style(PropertyGroup):
             front_thickness = units.inch(0.75)
 
         # Auto-add a centered mid rail above 45.5" so tall doors are
-        # split. Matches the frameless convention.
+        # split. Matches the frameless convention. Series with no
+        # divisible center panel opt out (see auto_mid_rail_allowed) --
+        # they only get a rail the user asks for.
         auto_mid_rail_threshold = units.inch(45.5)
-        needs_auto_mid_rail = front_length > auto_mid_rail_threshold
+        needs_auto_mid_rail = (
+            front_length > auto_mid_rail_threshold
+            and style_options.auto_mid_rail_allowed(self.front_series))
 
         # Per-side frame-width overrides, visual-true (eff_left renders on
         # the viewer's left). Two sources:

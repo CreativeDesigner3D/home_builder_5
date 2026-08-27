@@ -21,6 +21,7 @@ import bpy
 from ... import hb_types
 from ... import hb_utils
 from ... import units
+from . import style_options
 from . import types_face_frame
 
 
@@ -1236,6 +1237,9 @@ def _detect_door_mid_rails(cab_obj, source_bay_obj, panel_bay_obj):
     mid_rail_width = door_style.mid_rail_width
     if mid_rail_width <= 0:
         return []
+    # Series that never auto-add a rail on a tall door: the panel has to
+    # match its neighbouring doors, so it doesn't derive one either.
+    auto_allowed = style_options.auto_mid_rail_allowed(door_style.front_series)
 
     found = {}  # rounded z_cab key -> rail dict
     for door_obj in source_bay_obj.children_recursive:
@@ -1246,7 +1250,7 @@ def _detect_door_mid_rails(cab_obj, source_bay_obj, panel_bay_obj):
         if length is None or length <= 0:
             continue
 
-        auto = length > _AUTO_MID_RAIL_DOOR_HEIGHT
+        auto = auto_allowed and length > _AUTO_MID_RAIL_DOOR_HEIGHT
         if not (auto or door_style.add_mid_rail):
             continue
 

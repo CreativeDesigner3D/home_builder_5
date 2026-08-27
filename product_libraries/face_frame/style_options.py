@@ -5113,6 +5113,20 @@ SERIES_SHAPE_FRAME = {
     },
 }
 
+# Series whose doors never take an automatic mid rail. A tall 5-piece
+# door normally splits with a centered rail, but on these the face is a
+# mitered flat frame with no divisible center panel, so the rail has
+# nothing to divide and does not belong there at any height. A rail the
+# user asks for explicitly (the style's Add Mid Rail, or a per-door
+# override) is still honored.
+SERIES_NO_AUTO_MID_RAIL = {'Konza'}
+
+
+def auto_mid_rail_allowed(series):
+    """False for series that never auto-add a mid rail on a tall door."""
+    return series not in SERIES_NO_AUTO_MID_RAIL
+
+
 # Glass / Speaker Cloth enhanced panels on shape-width series add an inner
 # hardwood trim frame inside the opening; the catalog specs the TOTAL
 # frame width (outer member + trim): 2-1/4" for the narrow Konza shapes,
