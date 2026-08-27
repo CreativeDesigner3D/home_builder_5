@@ -57,6 +57,11 @@ def get_font(font_name='Calibri Regular'):
 # lines regardless of what the preference currently says.
 LINE_ENGINE_FREESTYLE = 'FREESTYLE'
 LINE_ENGINE_LINEART = 'LINEART'
+# Semantic vector engine: the scene is set up exactly like a FREESTYLE
+# view (linesets, routing collections, render toggles), and only the
+# stamp differs so an export-time consumer can generate vector line work
+# from the model edges instead of using the Freestyle raster pass.
+LINE_ENGINE_SEMANTIC = 'SEMANTIC'
 LINE_ENGINE_PROP = 'HB_LINE_ENGINE'
 
 # Tag on the per-scene Grease Pencil object that carries the Line Art
@@ -1295,7 +1300,13 @@ class LayoutView:
 
             # Set up Freestyle line sets
             self._setup_freestyle_linesets()
-            self.scene[LINE_ENGINE_PROP] = LINE_ENGINE_FREESTYLE
+            # SEMANTIC views keep the full Freestyle setup and differ only
+            # by their stamp, which exporters read to branch to vector
+            # line generation once a consumer supports the view type.
+            if get_default_line_engine() == LINE_ENGINE_SEMANTIC:
+                self.scene[LINE_ENGINE_PROP] = LINE_ENGINE_SEMANTIC
+            else:
+                self.scene[LINE_ENGINE_PROP] = LINE_ENGINE_FREESTYLE
     
     def _create_freestyle_collections(self):
         """Create the three Freestyle control collections for this layout."""

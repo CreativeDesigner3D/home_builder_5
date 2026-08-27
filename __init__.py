@@ -223,6 +223,10 @@ class Home_Builder_AddonPreferences(bpy.types.AddonPreferences):
             ('LINEART', 'Grease Pencil Line Art',
              'Grease Pencil Line Art strokes. Visible live in the viewport '
              'and much faster to render'),
+            ('SEMANTIC', 'Vector Edges (Experimental)',
+             'Export-time vector line generation from the model\'s own edges. '
+             'Views render with Freestyle until an exporter consumes the '
+             'vector line data'),
         ],
         default='FREESTYLE'
     )# type: ignore
