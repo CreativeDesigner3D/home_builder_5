@@ -713,6 +713,128 @@ def toggle_section(label):
         _collapsed.add(label)
 
 
+# ---- Row drag-reorder -------------------------------------------------------
+# A held press on a row picks it up; moving past a small threshold turns
+# the press into a drag, and releasing drops the row at the indicated
+# spot. Order is persisted in scene.home_builder.sort_order -- the same
+# property the sidebar's move operators and _sort_key already use -- so
+# every list that sorts by it agrees. Rows only reorder within their own
+# section (a room cannot become a layout view by dragging).
+#
+# The HUD's click operator owns the mouse while a drag is live (a modal
+# that exists only between press and release); this module holds the
+# state so the painter can dim the picked-up row and draw the insertion
+# line without the operator threading anything through.
+
+DRAG_THRESHOLD = 5      # unscaled px of vertical travel before a drag starts
+
+
+def _group_label(scene):
+    if _is_layout(scene):
+        return 'LAYOUT VIEWS'
+    if _is_detail(scene):
+        return 'DETAILS'
+    return 'ROOMS'
+
+
+class _DragState:
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.scene_key = None    # name of the row picked up
+        self.group = None        # its section label
+        self.active = False      # movement passed the threshold
+        self.press_y = 0.0
+        self.target_name = None  # row the drop lands against
+        self.place = 'above'     # 'above' or 'below' the target row
+
+
+_drag = _DragState()
+
+
+def press_row(scene, my):
+    """Arm a potential drag from a press on ``scene``'s row."""
+    _drag.reset()
+    _drag.scene_key = scene.name
+    _drag.group = _group_label(scene)
+    _drag.press_y = my
+
+
+def drag_active():
+    return _drag.active
+
+
+def drag_state():
+    """(dragged scene name, target scene name, place) while a drag is
+    live, else None. What the painter keys its feedback from."""
+    if not _drag.active or _drag.scene_key is None:
+        return None
+    return _drag.scene_key, _drag.target_name, _drag.place
+
+
+def drag_update(my, entries):
+    """Track the held press at height ``my`` against the current layout.
+    Returns True once the press has become a drag."""
+    d = _drag
+    if d.scene_key is None:
+        return False
+    if not d.active and abs(my - d.press_y) < DRAG_THRESHOLD * _s():
+        return False
+    d.active = True
+    rows = [e for e in entries or ()
+            if e[0] == 'row' and e[1].name != d.scene_key
+            and _group_label(e[1]) == d.group]
+    if not rows:
+        d.target_name = None
+        return True
+    # Rows come in display order, top down. The drop goes above the first
+    # row whose center the cursor sits above; past the last center it
+    # goes below the section's last row.
+    d.target_name, d.place = rows[-1][1].name, 'below'
+    for e in rows:
+        rect = e[5]
+        if my > rect[1] + rect[3] / 2.0:
+            d.target_name, d.place = e[1].name, 'above'
+            break
+    return True
+
+
+def cancel_drag():
+    _drag.reset()
+
+
+def commit_drag():
+    """Drop the dragged row: rewrite the section's sort_order sequence in
+    the new display order. Returns True when an order changed."""
+    d = _drag
+    try:
+        if not d.active or d.scene_key is None or d.target_name is None:
+            return False
+        scene = bpy.data.scenes.get(d.scene_key)
+        target = bpy.data.scenes.get(d.target_name)
+        if scene is None or target is None or scene == target:
+            return False
+        group = [s for s in bpy.data.scenes
+                 if _group_label(s) == d.group]
+        group.sort(key=_sort_key)
+        if scene not in group or target not in group:
+            return False
+        group.remove(scene)
+        idx = group.index(target) + (1 if d.place == 'below' else 0)
+        group.insert(idx, scene)
+        changed = False
+        for i, s in enumerate(group):
+            if not hasattr(s, 'home_builder'):
+                continue
+            if s.home_builder.sort_order != i:
+                s.home_builder.sort_order = i
+                changed = True
+        return changed
+    finally:
+        d.reset()
+
+
 # ---- Draw helpers -----------------------------------------------------------
 
 def _draw_panel_header(shader, font_id, rect, current_name):
@@ -807,6 +929,11 @@ def _draw_row(shader, font_id, entry, mx, my):
         _draw_delete_glyph(shader, delete_rect,
                            ACTION_GLYPH_HOVER if d_hover else ACTION_GLYPH)
 
+    # Picked up by a drag: dimmed in place, so the insertion line reads
+    # as where it is going rather than where it was.
+    if _drag.active and scene.name == _drag.scene_key:
+        _draw_rect(shader, rx, ry, rw, rh, (*PANEL_BG[:3], 0.6))
+
 
 def _draw_new_room_button(shader, font_id, rect, mx, my):
     rx, ry, rw, rh = rect
@@ -881,6 +1008,20 @@ def paint_navigator(panel_rect, entries, mx, my):
                            TEXT_DIM, f"  {count}")
         elif kind == 'row':
             _draw_row(shader, font_id, entry, lmx, lmy)
+
+    # Insertion line for a live row drag, on top of the rows and inside
+    # the same clip.
+    drag = drag_state()
+    if drag is not None and drag[1] is not None:
+        _key, target_name, place = drag
+        for entry in entries:
+            if entry[0] == 'row' and entry[1].name == target_name:
+                rx, ry, rw, rh = entry[5]
+                line_y = ry + rh if place == 'above' else ry
+                color = entry[3]
+                _draw_rect(shader, rx, line_y - 1 * s, rw, 2 * s,
+                           (*color, 0.95))
+                break
 
     if saved_scissor is not None:
         _end_clip(saved_scissor)

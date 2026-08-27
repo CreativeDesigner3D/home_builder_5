@@ -1115,6 +1115,20 @@ class home_builder_OT_hud_click(bpy.types.Operator):
             layout = scene_navigator.build_hosted_layout(
                 context, area, region, ax, atop)
             if layout and point_in_rect(mx, my, layout[0]):
+                hit = scene_navigator.hit_test(mx, my, layout[1])
+                if hit is not None and hit[0] == 'row':
+                    # A row press holds the mouse: released in place it
+                    # is the ordinary click (switch / rename), dragged
+                    # past the threshold it picks the row up to reorder
+                    # its section. The modal lives only press-to-release,
+                    # so nothing persistent is added to the handler list.
+                    self._area = area
+                    self._region = region
+                    self._anchor = (ax, atop)
+                    self._press = (mx, my)
+                    scene_navigator.press_row(hit[1], my)
+                    context.window_manager.modal_handler_add(self)
+                    return {'RUNNING_MODAL'}
                 scene_navigator.handle_navigator_click(
                     context, mx, my, layout[1])
                 area.tag_redraw()
@@ -1128,6 +1142,53 @@ class home_builder_OT_hud_click(bpy.types.Operator):
                 area.tag_redraw()
                 return {'FINISHED'}
         return {'PASS_THROUGH'}
+
+    def _entries(self, context):
+        layout = scene_navigator.build_hosted_layout(
+            context, self._area, self._region,
+            self._anchor[0], self._anchor[1])
+        return layout[1] if layout else None
+
+    def modal(self, context, event):
+        mx, my = event.mouse_region_x, event.mouse_region_y
+
+        if event.type == 'MOUSEMOVE':
+            entries = self._entries(context)
+            if entries is not None:
+                scene_navigator.drag_update(my, entries)
+            self._area.tag_redraw()
+            return {'RUNNING_MODAL'}
+
+        if event.type in {'WHEELUPMOUSE', 'WHEELDOWNMOUSE'}:
+            # The list keeps scrolling under a held row, so a long
+            # section can be reordered end to end.
+            step = scene_navigator.SCROLL_STEP_ROWS
+            scene_navigator.scroll_by(
+                -step if event.type == 'WHEELUPMOUSE' else step)
+            entries = self._entries(context)
+            if entries is not None:
+                scene_navigator.drag_update(my, entries)
+            self._area.tag_redraw()
+            return {'RUNNING_MODAL'}
+
+        if event.type == 'LEFTMOUSE' and event.value == 'RELEASE':
+            if scene_navigator.drag_active():
+                scene_navigator.commit_drag()
+            else:
+                scene_navigator.cancel_drag()
+                entries = self._entries(context)
+                if entries is not None:
+                    scene_navigator.handle_navigator_click(
+                        context, mx, my, entries)
+            self._area.tag_redraw()
+            return {'FINISHED'}
+
+        if event.type in {'RIGHTMOUSE', 'ESC'} and event.value == 'PRESS':
+            scene_navigator.cancel_drag()
+            self._area.tag_redraw()
+            return {'CANCELLED'}
+
+        return {'RUNNING_MODAL'}
 
 
 class home_builder_OT_hud_scroll(bpy.types.Operator):
