@@ -636,10 +636,18 @@ class HOME_BUILDER_MT_face_frame_interior_part_commands(bpy.types.Menu):
                 _draw_drawer_box_construction_menu(layout)
             if _has_drawer_slides_options():
                 _draw_drawer_slides_menu(layout)
-        layout.operator("hb_face_frame.finish_opening_prompts",
-                        text="Finish Opening...", icon='SHADING_RENDERED')
+        # The owning opening's three dialogs, in the order the opening
+        # cage's own menu offers them - clicking a shelf and clicking
+        # the opening it sits in should reach the same places the same
+        # way. Interior Options is where the shelf itself is edited, so
+        # it has to be here above all.
+        layout.separator()
         layout.operator("hb_face_frame.opening_prompts",
                         text="Opening Properties...", icon='WINDOW')
+        layout.operator("hb_face_frame.finish_opening_prompts",
+                        text="Finish Opening...", icon='SHADING_RENDERED')
+        layout.operator("hb_face_frame.interior_options",
+                        text="Interior Options...", icon='MESH_GRID')
 
 
 class HOME_BUILDER_MT_face_frame_drawer_box_construction(bpy.types.Menu):
@@ -717,10 +725,16 @@ class HOME_BUILDER_MT_face_frame_drawer_box_commands(bpy.types.Menu):
             _draw_drawer_box_construction_menu(layout)
         if _has_drawer_slides_options():
             _draw_drawer_slides_menu(layout)
-        layout.operator("hb_face_frame.finish_opening_prompts",
-                        text="Finish Opening...", icon='SHADING_RENDERED')
+        # Same trailing group as every other interior surface. Drawer
+        # Interior keeps its row at the top: this menu is about the box,
+        # and that is the dialog it is opened for.
+        layout.separator()
         layout.operator("hb_face_frame.opening_prompts",
                         text="Opening Properties...", icon='WINDOW')
+        layout.operator("hb_face_frame.finish_opening_prompts",
+                        text="Finish Opening...", icon='SHADING_RENDERED')
+        layout.operator("hb_face_frame.interior_options",
+                        text="Interior Options...", icon='MESH_GRID')
 
 
 class HOME_BUILDER_MT_face_frame_opening_commands(bpy.types.Menu):
