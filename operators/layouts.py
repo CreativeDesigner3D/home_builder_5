@@ -503,7 +503,12 @@ class home_builder_layouts_OT_delete_layout_view(bpy.types.Operator):
     bl_options = {'UNDO'}
     
     scene_name: bpy.props.StringProperty(name="Scene Name")  # type: ignore
-    
+
+    def invoke(self, context, event):
+        # Destructive, and every way in is a small button in a tight
+        # list -- the scene navigator's row X included. Confirm first.
+        return context.window_manager.invoke_confirm(self, event)
+
     def execute(self, context):
         if self.scene_name and self.scene_name in bpy.data.scenes:
             scene = bpy.data.scenes[self.scene_name]

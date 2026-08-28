@@ -294,6 +294,64 @@ def room_actions():
     return tuple(_room_actions)
 
 
+# Row delete buttons. A room row has always carried one; a layout view
+# row now does too -- a page could be made from this panel but only
+# unmade from the sidebar, which is a one-way door.
+#
+# The operator behind the button is looked up rather than hard coded:
+# whoever builds a page owns tearing it down, and a page built by a
+# downstream add-on can own more than its scene (its own collections,
+# its own annotations). They replace the entry for their kind and the
+# button reaches their teardown instead of the built-in one.
+_DEFAULT_DELETE_OPS = {
+    'room': 'home_builder.delete_room',
+    'layout': 'home_builder_layouts.delete_layout_view',
+}
+_delete_ops = dict(_DEFAULT_DELETE_OPS)
+
+
+def _row_kind(scene):
+    return 'layout' if _is_layout(scene) else 'room'
+
+
+def has_delete_button(scene):
+    """Whether this row gets a delete button. Detail cards do not: they
+    are not built from here and nothing in this module knows how to take
+    one apart."""
+    return not _is_detail(scene)
+
+
+def register_delete_operator(kind, op_idname):
+    """Point a row kind's delete button at another operator.
+
+    `kind` is 'room' or 'layout'. The operator is called with
+    scene_name=<row's scene> and should confirm before it destroys
+    anything -- this is a single click in a list.
+    """
+    _delete_ops[kind] = op_idname
+
+
+def unregister_delete_operator(kind):
+    _delete_ops[kind] = _DEFAULT_DELETE_OPS.get(kind)
+
+
+def run_row_delete(scene):
+    """Invoke the delete operator for this row. Shared by the modal and
+    the hosted panel so the two can't disagree about what a click on the
+    X does."""
+    op_idname = _delete_ops.get(_row_kind(scene))
+    if not op_idname:
+        return False
+    mod, name = op_idname.split('.', 1)
+    try:
+        getattr(getattr(bpy.ops, mod), name)('INVOKE_DEFAULT',
+                                             scene_name=scene.name)
+    except Exception as ex:
+        print('Home Builder: could not delete %s: %s' % (scene.name, ex))
+        return False
+    return True
+
+
 def register_provider(tab, module):
     """Wire a body provider for a tab. Called at addon registration so
     this module needs no import of (and no dependency on) the panels it
@@ -423,7 +481,8 @@ def _build_layout(region, area, current_scene_name,
         ('row', scene, parent, color, is_current, rect,
                 delete_rect_or_None)
         ('new_room', rect)
-    Room rows carry rename/delete sub-rects; other rows carry None.
+    Room and layout-view rows carry a delete sub-rect; detail rows
+    carry None.
     """
     global _last_current
     groups = _collect_groups()
@@ -475,7 +534,8 @@ def _build_layout(region, area, current_scene_name,
             tw = _text_w(font_id, row_font, sc.name)
             if parent:
                 tw += _text_w(font_id, parent_font, parent + "  ·  ")
-            reserve = room_reserve if _is_room(sc) else plain_reserve
+            reserve = (room_reserve if has_delete_button(sc)
+                       else plain_reserve)
             items.append(('row', (sc, parent, color), row_h,
                           text_left + tw + reserve))
     list_h_full = sum(it[2] for it in items)
@@ -581,7 +641,7 @@ def _build_layout(region, area, current_scene_name,
             sc, parent, color = payload
             row_rect = (content_x, item_bot, row_w, h)
             delete_rect = None
-            if _is_room(sc):
+            if has_delete_button(sc):
                 # No rename button: clicking the name renames it, so a
                 # separate control would be a second way to do one thing.
                 by = item_bot + (h - btn) / 2.0
@@ -1118,8 +1178,7 @@ def handle_navigator_click(context, mx, my, entries):
             toggle_section(scene)
 
         elif kind == 'delete':
-            bpy.ops.home_builder.delete_room(
-                'INVOKE_DEFAULT', scene_name=scene.name)
+            run_row_delete(scene)
         elif kind == 'row':
             if scene.name != context.scene.name:
                 bpy.ops.home_builder_layouts.go_to_layout_view(
@@ -1282,12 +1341,9 @@ class home_builder_OT_scene_navigator(bpy.types.Operator):
         except Exception as e:
             self.report({'WARNING'}, f"Could not rename {scene.name}: {e}")
 
-    def _delete_room(self, context, scene):
-        try:
-            bpy.ops.home_builder.delete_room(
-                'INVOKE_DEFAULT', scene_name=scene.name)
-        except Exception as e:
-            self.report({'WARNING'}, f"Could not delete {scene.name}: {e}")
+    def _delete_row(self, context, scene):
+        if not run_row_delete(scene):
+            self.report({'WARNING'}, f"Could not delete {scene.name}")
 
     def modal(self, context, event):
         if event.type == 'INBETWEEN_MOUSEMOVE':
@@ -1328,7 +1384,7 @@ class home_builder_OT_scene_navigator(bpy.types.Operator):
 
             if kind == 'delete':
                 self._cleanup(context)
-                self._delete_room(context, scene)
+                self._delete_row(context, scene)
                 return {'FINISHED'}
             if kind == 'row':
                 # This popup is transient by nature -- it is summoned for
