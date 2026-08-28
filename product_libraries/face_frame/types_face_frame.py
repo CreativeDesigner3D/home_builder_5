@@ -8742,23 +8742,35 @@ class FaceFrameCabinet(GeoNodeCage):
             ceiling_z     = region.get('vert_top_z')
             vert_top_z    = top_z if ceiling_z is None else ceiling_z
             vert_height   = vert_top_z - vert_bottom_z
+            # How the box goes together: the back is one full-width
+            # sheet and the sides butt into its front face, the way it
+            # is built. Cut to the cavity they shared the same quarter
+            # inch at both back corners. The ceiling butts the same way,
+            # and is already held between the sides in X.
+            #
+            # No liner back (a finished BAY, where the carcass back is
+            # finish stock already) and the sides run the full depth to
+            # butt that panel instead.
+            back_t     = t if want_back else 0.0
+            side_y     = cavity_back_y - back_t
+            side_depth = max(cage_dim_y - back_t, 0.0)
             specs = [
                 ('LEFT',  dict(rot=(0.0, math.radians(-90), 0.0),
                                mirror_y=True, mirror_z=True,
-                               loc=(left_x, cavity_back_y, vert_bottom_z),
-                               length=vert_height, width=cage_dim_y)),
+                               loc=(left_x, side_y, vert_bottom_z),
+                               length=vert_height, width=side_depth)),
                 ('RIGHT', dict(rot=(0.0, math.radians(-90), 0.0),
                                mirror_y=True, mirror_z=False,
-                               loc=(right_x, cavity_back_y, vert_bottom_z),
-                               length=vert_height, width=cage_dim_y)),
+                               loc=(right_x, side_y, vert_bottom_z),
+                               length=vert_height, width=side_depth)),
             ]
             if want_top:
                 specs.append(
                     ('TOP',   dict(rot=(0.0, 0.0, 0.0),
                                    mirror_y=True, mirror_z=True,
-                                   loc=(left_x + t, cavity_back_y, top_z),
+                                   loc=(left_x + t, side_y, top_z),
                                    length=max(cage_dim_x - 2 * t, 0.0),
-                                   width=cage_dim_y)))
+                                   width=side_depth)))
             if want_back:
                 specs.append(
                     ('BACK', dict(rot=(math.radians(90), math.radians(-90), 0.0),
