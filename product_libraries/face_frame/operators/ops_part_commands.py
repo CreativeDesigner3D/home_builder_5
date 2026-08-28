@@ -3475,17 +3475,33 @@ def _set_pull_items(self, context):
 
 
 class hb_face_frame_OT_set_front_pull(bpy.types.Operator):
-    """Set the pull on the selected door / drawer fronts. The choice is
-    stored on each front's owning opening (fronts are rebuilt every
-    recalc), so it sticks: Scene Default returns the front to the
-    scene-wide selection, No Pull removes the pull from the front, and
-    a specific pull overrides just these fronts."""
+    """Set the pull on the selected door / drawer fronts, or on every
+    door and drawer front in the room. Per front the choice is stored on
+    the owning opening (fronts are rebuilt every recalc), so it sticks:
+    Scene Default returns the front to the scene-wide selection, No Pull
+    removes the pull, and a specific pull overrides just these fronts.
+    Room-wide it becomes the pull each zone uses. The finish shown here
+    is the scene's own - one material across every pull."""
     bl_idname = "hb_face_frame.set_front_pull"
     bl_label = "Set Pull"
     bl_description = ("Set the pull used by the selected fronts "
                       "(stored per opening)")
     bl_options = {'UNDO'}
 
+    scope: bpy.props.EnumProperty(
+        name="Apply To",
+        items=[
+            ('SELECTED', "Selected Fronts",
+             "Only the fronts selected right now (stored per opening)"),
+            ('ALL', "All Doors and Drawer Fronts",
+             "Every door and drawer front in the room: this pull becomes "
+             "the one each zone uses, and per-front choices that would "
+             "shadow it are cleared"),
+        ],
+        # SKIP_SAVE: the dialog always opens on Selected Fronts. Blender
+        # would otherwise remember the last choice, and a room-wide
+        # rewrite is not something to inherit from an earlier press.
+        default='SELECTED', options={'SKIP_SAVE'})  # type: ignore
     category: bpy.props.EnumProperty(
         name="Category", items=_set_pull_category_items)  # type: ignore
     pull: bpy.props.EnumProperty(
@@ -3512,6 +3528,48 @@ class hb_face_frame_OT_set_front_pull(bpy.types.Operator):
                 continue
             openings[opening.name] = opening
         return list(openings.values()), skipped
+
+    def _apply_everywhere(self, context, override, override_cat):
+        """Make this pull the one every door and drawer front uses.
+
+        Writes it to all four zone assignments, then takes the
+        per-opening overrides out of the way - without that a front
+        somebody had set by hand would keep shadowing the new pull, and
+        "all fronts" would quietly not mean all.
+
+        A false front is left alone unless it already carries a pull:
+        it has none by default (a sink front reads as dead), and this
+        command is about which model is used, not about handing dead
+        fronts a pull they were never given.
+        """
+        scene_props = context.scene.hb_face_frame
+        for zone in ('base', 'tall', 'upper', 'drawers'):
+            setattr(scene_props, 'pull_assign_' + zone, override)
+            setattr(scene_props, 'pull_assign_' + zone + '_category',
+                    override_cat)
+        cleared = retargeted = 0
+        with types_face_frame.suspend_recalc():
+            for obj in context.scene.objects:
+                if not obj.get(types_face_frame.TAG_OPENING_CAGE):
+                    continue
+                op_props = obj.face_frame_opening
+                if op_props.front_type == 'FALSE_FRONT':
+                    if not op_props.false_front_pull:
+                        continue
+                    op_props.pull_override_category = override_cat
+                    op_props.pull_override = override
+                    _sync_false_front_pull(op_props, override)
+                    retargeted += 1
+                elif op_props.pull_override or op_props.pull_override_category:
+                    op_props.pull_override_category = ''
+                    op_props.pull_override = ''
+                    cleared += 1
+            # Zone strings carry no update callback - rebuild here, the
+            # same way the pull library's Assign buttons do.
+            for obj in context.scene.objects:
+                if obj.get(types_face_frame.TAG_CABINET_CAGE):
+                    types_face_frame.recalculate_face_frame_cabinet(obj)
+        return cleared, retargeted
 
     def invoke(self, context, event):
         # Seed from the active front's current override so reopening
@@ -3551,11 +3609,24 @@ class hb_face_frame_OT_set_front_pull(bpy.types.Operator):
                     self.pull, real_cat)
                 if icon_id:
                     col.template_icon(icon_value=icon_id, scale=4.0)
+        # Scene Default is a per-front instruction ("follow the zone"),
+        # so there is nothing to send everywhere.
+        scope = col.column(align=True)
+        scope.enabled = self.category != 'DEFAULT'
+        scope.separator()
+        scope.prop(self, 'scope', text="Apply To")
+        # The finish is one material across every pull in the scene, not
+        # a per-front choice - said plainly so nobody reads it as one.
+        col.separator()
+        fin = col.column(align=True)
+        fin.label(text="Finish (every pull in the room):")
+        fin.prop(context.scene.hb_face_frame, 'pull_finish', text="")
 
     def execute(self, context):
         from .. import pulls
+        room_wide = self.scope == 'ALL' and self.category != 'DEFAULT'
         openings, skipped = self._target_openings(context)
-        if not openings:
+        if not openings and not room_wide:
             self.report({'WARNING'},
                         "No fronts with openings selected"
                         + (" (corner cabinet doors use the scene pull)"
@@ -3575,16 +3646,26 @@ class hb_face_frame_OT_set_front_pull(bpy.types.Operator):
                 if cat_id == self.category:
                     override_cat = label
                     break
+        stem = ("scene default" if self.category == 'DEFAULT'
+                else "no pull" if self.category == 'NO_PULL'
+                else os.path.splitext(override)[0])
+        if room_wide:
+            cleared, retargeted = self._apply_everywhere(
+                context, override, override_cat)
+            msg = f"Every door and drawer front set to {stem}"
+            if cleared:
+                msg += f"; {cleared} per-front choice(s) cleared"
+            if retargeted:
+                msg += f"; {retargeted} false front(s) followed"
+            self.report({'INFO'}, msg)
+            return {'FINISHED'}
         with types_face_frame.suspend_recalc():
             for opening in openings:
                 op_props = opening.face_frame_opening
                 op_props.pull_override_category = override_cat
                 op_props.pull_override = override
                 _sync_false_front_pull(op_props, override)
-        msg = (f"{len(openings)} opening(s) set to "
-               + ("scene default" if self.category == 'DEFAULT'
-                  else "no pull" if self.category == 'NO_PULL'
-                  else os.path.splitext(override)[0]))
+        msg = f"{len(openings)} opening(s) set to {stem}"
         if skipped:
             msg += f"; {skipped} corner front(s) skipped"
         self.report({'INFO'}, msg)
