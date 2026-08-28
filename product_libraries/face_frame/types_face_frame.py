@@ -742,6 +742,29 @@ def _finger_scoop_profile():
     return half + [(-x, d) for x, d in reversed(half)]
 
 
+def _seed_cutter_material(cutter, box_obj):
+    """Put the box's own material on a drawer / rollout box cutter.
+
+    The cut faces read the CUTTER's material, so a cutter with none
+    leaves them on an empty slot -- unshaded white in material view. The
+    cabinet material walk sets this properly from the style, but it only
+    runs on a cabinet that has one; seeding from the box means an
+    unstyled cabinet still cuts in the box's own material rather than in
+    nothing.
+    """
+    try:
+        from ... import hb_types
+        mat = hb_types.GeoNodeObject(box_obj).get_input('Material')
+    except Exception:
+        mat = None
+    if mat is None:
+        return
+    if cutter.data.materials:
+        cutter.data.materials[0] = mat
+    else:
+        cutter.data.materials.append(mat)
+
+
 def rollout_item_props(opening_obj, item_index):
     """The interior item behind a rollout box object, or None when the
     index no longer resolves. Same contract as rollout_box_props."""
@@ -11652,8 +11675,13 @@ class FaceFrameCabinet(GeoNodeCage):
             v.co.z = -margin if v.co.z < 0.0 else box_dz + margin
         bm.to_mesh(mesh)
         bm.free()
+        _seed_cutter_material(cutter, box_obj)
         mod = box_obj.modifiers.new(name='Sink Duo Notch', type='BOOLEAN')
         mod.operation = 'DIFFERENCE'
+        # Cut faces read the cutter's material (the material walk keeps
+        # the cutter on the box's interior finish); without this they
+        # come through unshaded in material view.
+        mod.material_mode = 'TRANSFER'
         # MANIFOLD, not EXACT: the drawer box mesh is several closed
         # box islands, and EXACT degenerates on it (drops faces without
         # cutting). Every input here is a closed solid, which is what
@@ -11721,8 +11749,13 @@ class FaceFrameCabinet(GeoNodeCage):
         bm.to_mesh(mesh)
         bm.free()
 
+        _seed_cutter_material(cutter, box_obj)
         mod = box_obj.modifiers.new(name='Finger Scoop', type='BOOLEAN')
         mod.operation = 'DIFFERENCE'
+        # Cut faces read the cutter's material, as the profile and
+        # corner-treatment cuts do -- the material walk puts the box's
+        # interior finish on the cutter for exactly this.
+        mod.material_mode = 'TRANSFER'
         # MANIFOLD for the same reason the sink duo notch uses it: the
         # box is several closed islands and EXACT drops faces on it.
         mod.solver = 'MANIFOLD'

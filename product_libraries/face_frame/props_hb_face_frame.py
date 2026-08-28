@@ -2400,7 +2400,13 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                                  'DECORATIVE_CORNER_CUTTER',
                                  'BOX_MITER_CUTTER'):
                     slot_mat = finish_mat
-                elif slot_role in ('DRAWER_DIVIDER', 'DRAWER_INSERT'):
+                elif slot_role in ('DRAWER_DIVIDER', 'DRAWER_INSERT',
+                                   # Drawer / rollout box cutters (finger
+                                   # scoop, U-notch): their material is
+                                   # what the cut faces transfer, so they
+                                   # follow the box rather than the
+                                   # exterior finish the other cutters take.
+                                   'DRAWER_BOX_CUTTER'):
                     slot_mat = interior_mat or finish_mat
                 if slot_mat is not None:
                     if child.data.materials:
