@@ -1921,6 +1921,57 @@ class hb_face_frame_OT_opening_prompts(bpy.types.Operator):
         ui_face_frame.draw_opening_properties(self.layout, opening_obj)
 
 
+class hb_face_frame_OT_finish_opening_prompts(bpy.types.Operator):
+    """Finish the inside of one opening, straight from the right-click
+    menu: the same controls the sidebar's Finish Options box carries,
+    without going through the whole opening properties dialog.
+
+    Same walk-up as opening_prompts, so it opens from the opening cage,
+    a front, or an interior part. The props live-bind, and the opening
+    is resolved by cached name because switching the finish on rebuilds
+    the parts the click came from - including, often, the clicked part.
+    """
+    bl_idname = "hb_face_frame.finish_opening_prompts"
+    bl_label = "Finish Opening"
+    bl_description = ("Finish the inside of this opening so the exterior "
+                      "finish reads within it")
+    bl_options = {'UNDO'}
+
+    opening_name: bpy.props.StringProperty(
+        default='', options={'HIDDEN', 'SKIP_SAVE'},
+    )  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        return _find_owning_opening(context.active_object) is not None
+
+    def _resolve_opening(self, context):
+        if self.opening_name:
+            obj = bpy.data.objects.get(self.opening_name)
+            if obj is not None and obj.get(types_face_frame.TAG_OPENING_CAGE):
+                return obj
+        return _find_owning_opening(context.active_object)
+
+    def invoke(self, context, event):
+        opening_obj = _find_owning_opening(context.active_object)
+        if opening_obj is None:
+            self.report({'WARNING'}, "No opening selected")
+            return {'CANCELLED'}
+        self.opening_name = opening_obj.name
+        return context.window_manager.invoke_props_dialog(self, width=300)
+
+    def execute(self, context):
+        return {'FINISHED'}
+
+    def draw(self, context):
+        from .. import ui_face_frame
+        opening_obj = self._resolve_opening(context)
+        if opening_obj is None:
+            self.layout.label(text="No opening selected", icon='INFO')
+            return
+        ui_face_frame.draw_opening_finish_options(self.layout, opening_obj)
+
+
 class hb_face_frame_OT_drawer_box_prompts(bpy.types.Operator):
     """Edit the size of the drawer box behind a drawer / pullout front.
 
@@ -6363,6 +6414,7 @@ classes = (
     hb_face_frame_OT_adjust_floating_shelves,
     hb_face_frame_OT_bay_prompts,
     hb_face_frame_OT_opening_prompts,
+    hb_face_frame_OT_finish_opening_prompts,
     hb_face_frame_OT_drawer_box_prompts,
     hb_face_frame_OT_sink_duo_drawer_prompts,
     hb_face_frame_OT_sink_duo_rollout_prompts,

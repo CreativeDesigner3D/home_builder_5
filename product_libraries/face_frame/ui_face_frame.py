@@ -981,6 +981,24 @@ def _root_opening_size(opening_obj):
     return None
 
 
+def draw_opening_finish_options(layout, opening_obj):
+    """The finish controls for one opening: whether the exterior finish
+    reads inside it, in which material, and whether it lines the cavity
+    or sits as a flush band around the FF opening.
+
+    Shared by the sidebar's Finish Options box and the right-click
+    Finish Opening dialog, so the two always offer the same list.
+    """
+    op = opening_obj.face_frame_opening
+    col = layout.column(align=True)
+    col.prop(op, 'finish_opening', text="Finish Opening")
+    if op.finish_opening:
+        col.prop(op, 'finish_opening_material', text="Finish Color")
+        col.prop(op, 'finish_opening_flush', text="Finish Flush")
+        if op.finish_opening_flush:
+            col.prop(op, 'finish_opening_flush_depth', text="Flush Depth")
+
+
 def draw_opening_properties(layout, opening_obj):
     """All editable properties of a single opening: front type, hinge
     side, and the four per-side overlays. Each overlay row has an
@@ -1095,13 +1113,7 @@ def draw_opening_properties(layout, opening_obj):
     nbox.prop(op, 'show_finish', text="Finish Options",
               icon='TRIA_DOWN' if op.show_finish else 'TRIA_RIGHT', emboss=False)
     if op.show_finish:
-        ncol = nbox.column(align=True)
-        ncol.prop(op, 'finish_opening', text="Finish Opening")
-        if op.finish_opening:
-            ncol.prop(op, 'finish_opening_material', text="Finish Color")
-            ncol.prop(op, 'finish_opening_flush', text="Finish Flush")
-            if op.finish_opening_flush:
-                ncol.prop(op, 'finish_opening_flush_depth', text="Flush Depth")
+        draw_opening_finish_options(nbox, opening_obj)
 
     # Overlays: collapsible.
     obox = layout.box()

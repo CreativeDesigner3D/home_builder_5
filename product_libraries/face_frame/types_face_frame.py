@@ -8450,7 +8450,10 @@ class FaceFrameCabinet(GeoNodeCage):
         the back and the bay floor get no applied part; the carcass BACK /
         BOTTOM panels behind the region are cut from finish stock instead
         (solver's finish_carcass flag splits those segments so unfinished
-        neighbouring bays keep interior panels). FLUSH finish lines the FF
+        neighbouring bays keep interior panels). A finished OPENING adds
+        no ceiling part either - the panel over it is a real part
+        already - so a FULL opening finish is its two sides (plus a back
+        when the bay around it is unfinished). FLUSH finish lines the FF
         opening with a band flush to the FF front face, running
         finish_*_flush_depth back (0 = full depth) on all four sides with
         no BACK panel (open behind for an appliance). A removed bay bottom
@@ -8546,7 +8549,8 @@ class FaceFrameCabinet(GeoNodeCage):
                     specs = self._finish_region_specs(
                         layout, region, bool(op.finish_opening_flush),
                         op.finish_opening_flush_depth, op_to_floor, t,
-                        want_back=not bay.get('finish_carcass'))
+                        want_back=not bay.get('finish_carcass'),
+                        want_top=False)
                     for face, spec in specs:
                         self._emit_bay_finish_panel(bi, oi, face, spec, t, existing)
                         wanted.add((bi, oi, face))
@@ -8601,8 +8605,14 @@ class FaceFrameCabinet(GeoNodeCage):
                 return
 
     def _finish_region_specs(self, layout, region, flush, raw_depth, to_floor,
-                             t, want_back=False):
+                             t, want_back=False, want_top=True):
         """Build the (face, spec) list for one finished region.
+
+        `want_top` covers the ceiling of a FULL finish. A finished
+        OPENING passes False: the panel over it is a real part already,
+        so an applied 1/4 ceiling is a part the shop does not build.
+        Only a FLUSH finish tops the region, and there the top is part
+        of the band that wraps the FF opening.
 
         `region` is cabinet-local: left_x / right_x / bottom_z / top_z, the
         cavity depth cage_dim_y, and the four reveals (cage edge -> FF
@@ -8674,12 +8684,14 @@ class FaceFrameCabinet(GeoNodeCage):
                                mirror_y=True, mirror_z=False,
                                loc=(right_x, cavity_back_y, vert_bottom_z),
                                length=vert_height, width=cage_dim_y)),
-                ('TOP',   dict(rot=(0.0, 0.0, 0.0),
-                               mirror_y=True, mirror_z=True,
-                               loc=(left_x + t, cavity_back_y, top_z),
-                               length=max(cage_dim_x - 2 * t, 0.0),
-                               width=cage_dim_y)),
             ]
+            if want_top:
+                specs.append(
+                    ('TOP',   dict(rot=(0.0, 0.0, 0.0),
+                                   mirror_y=True, mirror_z=True,
+                                   loc=(left_x + t, cavity_back_y, top_z),
+                                   length=max(cage_dim_x - 2 * t, 0.0),
+                                   width=cage_dim_y)))
             if want_back:
                 specs.append(
                     ('BACK', dict(rot=(math.radians(90), math.radians(-90), 0.0),

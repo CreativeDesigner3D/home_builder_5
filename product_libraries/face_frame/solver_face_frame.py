@@ -5526,13 +5526,17 @@ def finish_liner_insets(opening_obj, layout, rect):
     """(left, right, top) clearance an opening's interior parts owe to
     the applied finish liners around it, in opening-local X / Z.
 
-    A finished region carries 1/4 liner panels on its LEFT / RIGHT / TOP
-    faces (see types._finish_region_specs), so anything living inside it
-    - shelves, dividers, rollouts, interior frames - has to stop at the
+    A finished region carries 1/4 liner panels on its LEFT / RIGHT faces
+    (see types._finish_region_specs), so anything living inside it -
+    shelves, dividers, rollouts, interior frames - has to stop at the
     liner face rather than the bare cavity wall. There is no bottom or
     back inset: those faces get no liner (the carcass panels are cut
     from finish stock instead), so interior parts keep their normal
     clearance to them.
+
+    The TOP is a bay-only inset. A finished OPENING applies no ceiling
+    part unless it is FLUSH, so its interior parts keep their normal
+    clearance to the panel above.
 
     A liner only borders an opening on the sides where the opening
     actually reaches the finished region's edge. A bay-level finish
@@ -5571,7 +5575,7 @@ def finish_liner_insets(opening_obj, layout, rect):
 
     op = opening_obj.face_frame_opening
     if op.finish_opening and not op.finish_opening_flush:
-        return (t, t, t)
+        return (t, t, 0.0)
     return zero
 
 

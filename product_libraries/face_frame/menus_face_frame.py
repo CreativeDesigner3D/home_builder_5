@@ -552,6 +552,17 @@ class HOME_BUILDER_MT_face_frame_part_commands(bpy.types.Menu):
 
         # Machining cutouts (hole / route). Shows in 3D and in the 2D copy, so
         # no detail view is needed. Operators live in ops_part_commands.
+        # Finish Opening - the clicked part's own opening, reachable
+        # without going by way of the opening properties dialog. Only
+        # where there is an opening to finish: a carcass panel hangs off
+        # the cabinet, not an opening, and has none.
+        from .operators import ops_cabinet
+        if (obj is not None
+                and ops_cabinet._find_owning_opening(obj) is not None):
+            layout.operator("hb_face_frame.finish_opening_prompts",
+                            text="Finish Opening...",
+                            icon='SHADING_RENDERED')
+
         _draw_cutout_items(layout, obj)
 
         # Make Editable / Revert to Parametric. Applying a part's GeoNode(s)
@@ -613,6 +624,8 @@ class HOME_BUILDER_MT_face_frame_interior_part_commands(bpy.types.Menu):
                 _draw_drawer_box_construction_menu(layout)
             if _has_drawer_slides_options():
                 _draw_drawer_slides_menu(layout)
+        layout.operator("hb_face_frame.finish_opening_prompts",
+                        text="Finish Opening...", icon='SHADING_RENDERED')
         layout.operator("hb_face_frame.opening_prompts",
                         text="Opening Properties...", icon='WINDOW')
 
@@ -692,6 +705,8 @@ class HOME_BUILDER_MT_face_frame_drawer_box_commands(bpy.types.Menu):
             _draw_drawer_box_construction_menu(layout)
         if _has_drawer_slides_options():
             _draw_drawer_slides_menu(layout)
+        layout.operator("hb_face_frame.finish_opening_prompts",
+                        text="Finish Opening...", icon='SHADING_RENDERED')
         layout.operator("hb_face_frame.opening_prompts",
                         text="Opening Properties...", icon='WINDOW')
 
@@ -709,6 +724,8 @@ class HOME_BUILDER_MT_face_frame_opening_commands(bpy.types.Menu):
         if _is_drawer_opening(context.active_object):
             layout.operator("hb_face_frame.drawer_interior",
                             text="Drawer Interior...", icon='MESH_GRID')
+        layout.operator("hb_face_frame.finish_opening_prompts",
+                        text="Finish Opening...", icon='SHADING_RENDERED')
         layout.operator("hb_face_frame.opening_prompts",
                         text="Opening Properties...", icon='WINDOW')
         layout.menu("HOME_BUILDER_MT_face_frame_change_opening",
