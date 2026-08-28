@@ -8238,6 +8238,18 @@ class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
                     "the floor that needs no spacer assembly",
         default=False, update=_update_cabinet_dim,
     )  # type: ignore
+    # Finger scoop, the notch in the front of a rollout box that gives
+    # you somewhere to pull. It is how these are built, so it is ON by
+    # default and an existing job picks it up the next time its cabinet
+    # recalculates - a box drawn square was understating what the shop
+    # was already making.
+    finger_scoop: BoolProperty(
+        name="Finger Scoop",
+        description="Cut the finger scoop into the front of each rollout "
+                    "box (ROLLOUT only). On by default - it is standard "
+                    "construction; turn it off for a square front",
+        default=True, update=_update_cabinet_dim,
+    )  # type: ignore
 
     # TRAY_DIVIDERS
     # Vertical dividers; tray_remove_shelf=False adds a horizontal locked

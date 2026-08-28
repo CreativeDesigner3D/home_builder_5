@@ -687,6 +687,75 @@ TAG_ROLLOUT_ITEM_INDEX = 'hb_rollout_item_index'
 TAG_ROLLOUT_BOX_INDEX = 'hb_rollout_box_index'
 
 
+# Finger scoop: the notch in the front of a rollout box. Traced from the
+# shop's own part -- a 4" wide opening at the top edge narrowing to 3" at
+# 1" deep, straight sides, with 3/8" breaks at all four corners. The
+# breaks are true fillets tangent 3/8" back from each nominal corner,
+# which reproduces the reference part to within 0.01".
+_SCOOP_TOP_WIDTH = 4.0
+_SCOOP_BOTTOM_WIDTH = 3.0
+_SCOOP_DEPTH = 1.0
+_SCOOP_CORNER = 0.375
+_SCOOP_ARC_SEGMENTS = 8
+
+
+def _finger_scoop_profile():
+    """The scoop outline in INCHES as [(x, depth), ...], left to right.
+
+    x runs from the scoop's centre, depth downward from the top edge of
+    the box front. Fixed size -- the caller places it, nothing scales it,
+    because the feature is sized to a hand rather than to the box.
+    """
+    th = _SCOOP_TOP_WIDTH / 2.0
+    bh = _SCOOP_BOTTOM_WIDTH / 2.0
+    c = _SCOOP_CORNER
+    ang = math.atan((th - bh) / _SCOOP_DEPTH)      # side, off vertical
+    ux, ud = math.sin(ang), math.cos(ang)          # unit down the side
+    # A fillet tangent to both lines, c back from the corner along each:
+    # the arcs meet the top edge and the flat bottom square on.
+    r = c * math.tan((math.pi / 2.0 + ang) / 2.0)
+
+    def arc(centre, start, end):
+        cx, cd = centre
+        a0 = math.atan2(start[1] - cd, start[0] - cx)
+        a1 = math.atan2(end[1] - cd, end[0] - cx)
+        # Both arcs turn through well under half a circle, so the short
+        # way round is always the one wanted.
+        while a1 - a0 > math.pi:
+            a1 -= 2.0 * math.pi
+        while a0 - a1 > math.pi:
+            a1 += 2.0 * math.pi
+        return [(cx + math.cos(a0 + (a1 - a0) * i / _SCOOP_ARC_SEGMENTS) * r,
+                 cd + math.sin(a0 + (a1 - a0) * i / _SCOOP_ARC_SEGMENTS) * r)
+                for i in range(1, _SCOOP_ARC_SEGMENTS)]
+
+    top = (-(th + c), 0.0)                         # meets the top edge
+    side_hi = (-th + c * ux, c * ud)               # onto the straight side
+    side_lo = (-bh - c * ux, _SCOOP_DEPTH - c * ud)
+    flat = (-(bh - c), _SCOOP_DEPTH)               # onto the flat bottom
+
+    half = [top]
+    half += arc((top[0], r), top, side_hi)
+    half += [side_hi, side_lo]
+    half += arc((flat[0], _SCOOP_DEPTH - r), side_lo, flat)
+    half.append(flat)
+    return half + [(-x, d) for x, d in reversed(half)]
+
+
+def rollout_item_props(opening_obj, item_index):
+    """The interior item behind a rollout box object, or None when the
+    index no longer resolves. Same contract as rollout_box_props."""
+    if opening_obj is None or item_index < 0:
+        return None
+    op_props = getattr(opening_obj, 'face_frame_opening', None)
+    if op_props is None:
+        return None
+    items = getattr(op_props, 'interior_items', ())
+    if item_index >= len(items):
+        return None
+    return items[item_index]
+
+
 def rollout_box_props(opening_obj, item_index, box_index):
     """The Face_Frame_Rollout_Box entry behind a rollout box object, or
     None when the indices no longer resolve (item deleted, stack
@@ -11595,6 +11664,74 @@ class FaceFrameCabinet(GeoNodeCage):
         box_obj['SINK_DUO_NOTCH_WIDTH'] = notch_w
         box_obj['SINK_DUO_NOTCH_DEPTH'] = notch_d
 
+    @staticmethod
+    def _apply_finger_scoop(box_obj, box_dx, box_dz, thickness):
+        """Cut the finger scoop into the front of a rollout box.
+
+        The scoop is how a rollout is actually built -- a shaped notch
+        centred in the top edge of the box front, there to pull on -- so
+        a box drawn square understated it on every drawing.
+
+        Same idiom as the sink duo notch: a wire cutter child and a
+        boolean, both wiped and rebuilt with the box, and the feature
+        published on the box for drawings and reports. Skipped on a box
+        too small to take it, which leaves the front square rather than
+        cutting most of it away.
+        """
+        if thickness <= 0.0:
+            return False
+        clear_span = box_dx - 2.0 * thickness
+        if clear_span <= inch(_SCOOP_TOP_WIDTH + 2.0 * _SCOOP_CORNER + 0.5):
+            return False
+        if box_dz - inch(_SCOOP_DEPTH) < inch(0.5):
+            return False
+
+        # Through the front only. The back is a box depth away, but the
+        # cutter still stops short of it so nothing else can be nicked.
+        y0 = -inch(0.5)
+        y1 = thickness + inch(0.05)
+        over = inch(0.25)
+        cx, zt = box_dx / 2.0, box_dz
+
+        mesh = bpy.data.meshes.new('Finger Scoop Cutter')
+        cutter = bpy.data.objects.new('Finger Scoop Cutter', mesh)
+        cutter['hb_part_role'] = PART_ROLE_DRAWER_BOX_CUTTER
+        cutter.parent = box_obj
+        cutter.display_type = 'WIRE'
+        cutter.hide_render = True
+        cutter.hide_viewport = True
+        for coll in box_obj.users_collection:
+            coll.objects.link(cutter)
+            break
+
+        # The profile, lidded above the box top so the cut region is a
+        # closed face rather than an open curve.
+        poly = [(cx + inch(px), zt - inch(pd))
+                for px, pd in _finger_scoop_profile()]
+        poly.append((poly[-1][0], zt + over))
+        poly.append((poly[0][0], zt + over))
+
+        bm = bmesh.new()
+        verts = [bm.verts.new((x, y0, z)) for x, z in poly]
+        face = bm.faces.new(verts)
+        ext = bmesh.ops.extrude_face_region(bm, geom=[face])
+        moved = [e for e in ext['geom'] if isinstance(e, bmesh.types.BMVert)]
+        bmesh.ops.translate(bm, vec=(0.0, y1 - y0, 0.0), verts=moved)
+        bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+        bm.to_mesh(mesh)
+        bm.free()
+
+        mod = box_obj.modifiers.new(name='Finger Scoop', type='BOOLEAN')
+        mod.operation = 'DIFFERENCE'
+        # MANIFOLD for the same reason the sink duo notch uses it: the
+        # box is several closed islands and EXACT drops faces on it.
+        mod.solver = 'MANIFOLD'
+        mod.object = cutter
+        box_obj['FINGER_SCOOP'] = True
+        box_obj['FINGER_SCOOP_WIDTH'] = inch(_SCOOP_TOP_WIDTH)
+        box_obj['FINGER_SCOOP_DEPTH'] = inch(_SCOOP_DEPTH)
+        return True
+
     def _update_interior_items_in_opening(self, opening_obj, layout, rect):
         """Rebuild the opening's interior parts (shelves, accessory
         labels, ...). Same wipe-and-recreate strategy as fronts:
@@ -11614,6 +11751,19 @@ class FaceFrameCabinet(GeoNodeCage):
         # quite as cleanly as mesh parts.
         for child in list(opening_obj.children):
             if child.get('hb_part_role') in INTERIOR_PART_ROLES:
+                # A boolean operand has to be an object, so a part's
+                # cutters hang off the PART rather than off the opening
+                # and this loop never sees them. Take them with their
+                # host: removing the host alone leaves them behind as
+                # loose wire objects that nothing ever collects.
+                for sub in list(child.children):
+                    if sub.get('hb_part_role') != PART_ROLE_DRAWER_BOX_CUTTER:
+                        continue
+                    sub_data = sub.data
+                    bpy.data.objects.remove(sub, do_unlink=True)
+                    if (isinstance(sub_data, bpy.types.Mesh)
+                            and sub_data.users == 0):
+                        bpy.data.meshes.remove(sub_data)
                 data = child.data
                 bpy.data.objects.remove(child, do_unlink=True)
                 # Orphaned data (per-part meshes like shelf nosings,
@@ -12197,6 +12347,14 @@ class FaceFrameCabinet(GeoNodeCage):
         box_props = rollout_box_props(opening_obj, item_index, box_index)
         if box_props is not None and getattr(box_props, 'sink_duo', False):
             self._apply_sink_duo_notch(box.obj, dx, dy, dz, box_props)
+        # Finger scoop last, and defaulting ON when the item predates the
+        # option: it is standard construction, so a box that came through
+        # here square was already wrong on the drawing. The U-notch above
+        # cannot collide with it -- that cut comes in from the back.
+        item_props = rollout_item_props(opening_obj, item_index)
+        if item_props is None or getattr(item_props, 'finger_scoop', True):
+            self._apply_finger_scoop(
+                box.obj, dx, dz, box.get_input('Material Thickness'))
         return box
 
     def _has_toe_kick(self):

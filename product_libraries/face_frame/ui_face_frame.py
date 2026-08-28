@@ -1297,6 +1297,9 @@ def _draw_interior_items_section(layout, target_props, target_name=""):
             sub.prop(item, 'rollout_depth', text="Depth (0 = Auto)")
             sub.prop(item, 'hide_rollout_spacers',
                      text="Hide Rollout Spacers")
+            # On by default: the scoop is standard construction, so this
+            # is here to turn it OFF for a square-front box.
+            sub.prop(item, 'finger_scoop', text="Finger Scoop")
             # Spacer width is fixed (ASSEMBLY_SPACER_WIDTH in the
             # solver), so no spacer_height row -- same as pullouts.
         elif item.kind == 'TRAY_DIVIDERS':
