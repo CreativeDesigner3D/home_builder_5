@@ -427,13 +427,24 @@ class HOME_BUILDER_MT_face_frame_part_commands(bpy.types.Menu):
                             icon='MESH_CYLINDER')
 
         # Finished bottom - on the carcass bottom (or the finished
-        # bottom panel itself) of a standard upper. The dialog binds
-        # the cabinet's condition and offers a room-wide apply.
+        # bottom panel itself) of a standard upper, and on any shelf
+        # behind a mid rail. That shelf is the bottom of everything
+        # above it, so where the opening below holds an appliance it is
+        # the underside on show - a refrigerator surround, whose own
+        # carcass bottom is nowhere near the eye. Shelves are not
+        # upper-only for that reason. The dialog binds the cabinet's
+        # condition and offers a room-wide apply.
         _fb_root = types_face_frame.find_cabinet_root(obj)
-        if (role in (types_face_frame.PART_ROLE_BOTTOM,
-                     types_face_frame.PART_ROLE_FINISHED_BOTTOM)
+        # The finish panel itself re-opens the dialog whatever it hangs
+        # from, so a shelf's panel stays reachable on a tall cabinet.
+        _fb_on_shelf = role in (types_face_frame.PART_ROLE_BAY_SHELF,
+                                types_face_frame.PART_ROLE_FINISHED_BOTTOM)
+        _fb_on_bottom = (
+            role == types_face_frame.PART_ROLE_BOTTOM
+            and _fb_root is not None
+            and _fb_root.get('CABINET_TYPE') == 'UPPER')
+        if ((_fb_on_bottom or _fb_on_shelf)
                 and _fb_root is not None
-                and _fb_root.get('CABINET_TYPE') == 'UPPER'
                 and _fb_root.face_frame_cabinet.corner_type == 'NONE'):
             layout.operator("hb_face_frame.set_finished_bottom",
                             text="Set Finished Bottom...",

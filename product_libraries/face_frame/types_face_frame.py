@@ -4830,12 +4830,16 @@ class FaceFrameCabinet(GeoNodeCage):
         mat.diffuse_color = (1.0, 0.956, 0.839, 1.0)
         return mat
 
+    # Recursive: a carcass-bottom panel hangs off the cabinet root, but a
+    # mid-rail shelf's panel is parented to that shelf's split node so it
+    # rides the bay's own transform. Keys are unique across both (segment
+    # keys are bay numbers, shelf keys carry a 'shelf:' prefix).
     def _fb_children(self, role):
-        return [c for c in self.obj.children
+        return [c for c in self.obj.children_recursive
                 if c.get('hb_part_role') == role]
 
     def _fb_child_for_key(self, role, key):
-        for child in self.obj.children:
+        for child in self.obj.children_recursive:
             if (child.get('hb_part_role') == role
                     and child.get('hb_fb_key') == key):
                 return child
@@ -4874,39 +4878,145 @@ class FaceFrameCabinet(GeoNodeCage):
         bm.free()
         mesh.update()
 
+    def _fb_target_from_part(self, src, key, parent, rail_w, thickness,
+                             mirror_y=True):
+        """One finish target, read off the part being finished: where the
+        panel goes, how big it is, and what the flush rule measures
+        against (the face-frame member in front of it, and the finished
+        part's own thickness).
+
+        The finish panel takes the finished part's own Y mirroring so the
+        two share a footprint; `mirror_y` is the fallback for a part whose
+        flag cannot be read (the carcass bottom mirrors, a bay shelf does
+        not).
+        """
+        try:
+            length = self._part_input(src, 'Length')
+            width = self._part_input(src, 'Width')
+        except Exception:
+            return None
+        if not length or not width:
+            return None
+        src_mirror = self._part_input(src, 'Mirror Y')
+        mirror_y = mirror_y if src_mirror is None else bool(src_mirror)
+        y0 = src.location.y
+        return {
+            'key': key,
+            'parent': parent,
+            'mirror_y': mirror_y,
+            'x': src.location.x,
+            'y': y0,
+            # -Y is forward, so the front edge is whichever end of the
+            # part's own Y span sits furthest that way.
+            'front_y': y0 - width if mirror_y else y0,
+            'length': length,
+            'width': width,
+            'underside': src.location.z,
+            'rail_width': rail_w,
+            'thickness': thickness,
+        }
+
+    def _fb_bottom_targets(self, cab):
+        """One target per live carcass-bottom segment, filtered by the
+        cabinet's per-bay scope (empty scope = every segment)."""
+        scope = {s.strip() for s in
+                 getattr(cab, 'finished_bottom_bays', '').split(',')
+                 if s.strip()}
+        targets = []
+        for src in self.obj.children:
+            if (src.get('hb_part_role') != PART_ROLE_BOTTOM
+                    or src.hide_viewport
+                    or src.get('IS_MANUAL_PART')):
+                continue
+            key = str(src.get('hb_segment_start_bay', 0))
+            if scope and key not in scope:
+                continue
+            tgt = self._fb_target_from_part(
+                src, key, self.obj, cab.bottom_rail_width,
+                cab.material_thickness)
+            if tgt is not None:
+                targets.append(tgt)
+        return targets
+
+    @staticmethod
+    def _fb_rail_for_shelf(split, idx):
+        """The face-frame member standing in front of a shelf. A bay whose
+        bottom is removed tags its lowest splitter BOTTOM_RAIL rather than
+        BAY_MID_RAIL - which is exactly the rail over a refrigerator
+        opening - so match on IS_BAY_SPLITTER_RAIL, the flag both carry."""
+        for child in split.children:
+            if (child.get('IS_BAY_SPLITTER_RAIL')
+                    and child.get('hb_splitter_index', 0) == idx):
+                return child
+        return None
+
+    def _fb_shelf_targets(self):
+        """One target per opted-in mid-rail shelf.
+
+        The shelf behind a mid rail is the bottom of everything above it,
+        and when the opening below holds an appliance that underside is
+        the one on show - a refrigerator surround, where the cabinet's own
+        bottom is nowhere near it. Opt-in per shelf (the splitter entry the
+        right-click dialog writes), so a cabinet's other shelves are left
+        alone, and not upper-only: these cabinets are tall.
+        """
+        targets = []
+        for shelf in self.obj.children_recursive:
+            if (shelf.get('hb_part_role') != PART_ROLE_BAY_SHELF
+                    or shelf.hide_viewport
+                    or shelf.get('IS_MANUAL_PART')):
+                continue
+            split = shelf.parent
+            if split is None or not split.get(TAG_SPLIT_NODE):
+                continue
+            idx = shelf.get('hb_splitter_index', 0)
+            coll = split.face_frame_split.splitter_widths
+            if idx >= len(coll) or not coll[idx].finished_bottom:
+                continue
+            # No rail, no finished bottom: the flush rule is measured off
+            # the rail's bottom edge, and a shelf whose member was removed
+            # has nothing to measure against.
+            rail = self._fb_rail_for_shelf(split, idx)
+            if rail is None:
+                continue
+            rail_w = self._part_input(rail, 'Width')
+            t_shelf = self._part_input(shelf, 'Thickness')
+            if not rail_w or not t_shelf:
+                continue
+            tgt = self._fb_target_from_part(
+                shelf, 'shelf:%s:%d' % (split.name, idx), split,
+                rail_w, t_shelf, mirror_y=False)
+            if tgt is not None:
+                targets.append(tgt)
+        return targets
+
     def _apply_finished_bottom(self, layout):
         """Build / position the finished bottom assembly per the
-        cabinet's finished_bottom_type; ensure it's gone when NONE (or
-        not an upper). ONE finish panel per live carcass-bottom
-        segment, mirroring that segment's span and height - so the
-        finish stops inside finished ends exactly like the carcass
-        bottom does, follows a raised / dropped bay's own bottom, and
-        skips bays whose bottom is removed (no segment there). Each
-        panel gets an LED route cut into its underside near the front
-        edge and an optional area light in the route.
+        cabinet's finished_bottom_type; ensure it's gone when NONE.
+
+        Targets are the live carcass-bottom segments of an upper (one
+        panel each, mirroring that segment's span and height - so the
+        finish stops inside finished ends exactly like the carcass bottom
+        does, follows a raised / dropped bay's own bottom, and skips bays
+        whose bottom is removed) plus any mid-rail shelf switched on for
+        it. Each panel gets an LED route cut into its underside near the
+        front edge and an optional area light in the route.
         """
         cab = self.obj.face_frame_cabinet
         spec = self._FINISHED_BOTTOM_SPECS.get(
             getattr(cab, 'finished_bottom_type', 'NONE'))
-        if (spec is None or layout.cabinet_type != 'UPPER'
-                or not self._has_carcass()):
+        if spec is None or not self._has_carcass():
             self._cleanup_finished_bottom()
             return
-        bottoms = [c for c in self.obj.children
-                   if c.get('hb_part_role') == PART_ROLE_BOTTOM
-                   and not c.hide_viewport
-                   and not c.get('IS_MANUAL_PART')]
-        if not bottoms:
+        targets = []
+        if layout.cabinet_type == 'UPPER':
+            targets.extend(self._fb_bottom_targets(cab))
+        targets.extend(self._fb_shelf_targets())
+        if not targets:
             self._cleanup_finished_bottom()
             return
-        # Per-bay scope: only the listed segment keys get a panel;
-        # empty means every segment.
-        scope = {s.strip() for s in
-                 getattr(cab, 'finished_bottom_bays', '').split(',')
-                 if s.strip()}
+
         t_fin, flush = spec
-        brw = cab.bottom_rail_width
-        t = cab.material_thickness
         want_route = getattr(cab, 'finished_bottom_led_route', False)
         want_light = want_route and getattr(
             cab, 'finished_bottom_light', False)
@@ -4920,150 +5030,147 @@ class FaceFrameCabinet(GeoNodeCage):
             max(t_fin - inch(0.0625), inch(0.03125)))
 
         live_keys = set()
-        for src in bottoms:
-            key = str(src.get('hb_segment_start_bay', 0))
-            if scope and key not in scope:
-                continue
-            live_keys.add(key)
-            try:
-                seg_len = self._part_input(src, 'Length')
-                seg_w = self._part_input(src, 'Width')
-            except Exception:
-                continue
-            if not seg_len or not seg_w:
-                continue
-            x0 = src.location.x
-            y0 = src.location.y
-            underside_z = src.location.z
-            # Non-flush: panel top against this segment's carcass
-            # underside. Flush: panel underside at this segment's
-            # bottom-rail bottom (carcass bottom top sits at the rail
-            # top, so the rail bottom is underside - (rail - t)).
-            z_fin = (underside_z - (brw - t) if flush
-                     else underside_z - t_fin)
+        for tgt in targets:
+            live_keys.add(tgt['key'])
+            self._build_fb_target(tgt, t_fin, flush, want_route,
+                                  want_light, route_width, route_inset,
+                                  route_depth)
 
-            panel = self._fb_child_for_key(PART_ROLE_FINISHED_BOTTOM, key)
-            if panel is None:
-                part = CabinetPart()
-                part.create('Finished Bottom')
-                part.obj.parent = self.obj
-                part.obj['hb_part_role'] = PART_ROLE_FINISHED_BOTTOM
-                part.obj['hb_fb_key'] = key
-                part.obj['CABINET_PART'] = True
-                part.set_input('Mirror Y', True)
-                panel = part.obj
-            if not panel.get('IS_MANUAL_PART'):
-                panel.location = (x0, y0, z_fin)
-                gn = GeoNodeCutpart(panel)
-                gn.set_input('Length', seg_len)
-                gn.set_input('Width', seg_w)
-                gn.set_input('Thickness', t_fin)
-
-            # LED route across this segment's width, behind the panel's
-            # front edge by the route inset (Width grows -Y from y0).
-            # Opt-in; size and location come from the cabinet props.
-            front_y = y0 - seg_w
-            route_y0 = front_y + route_inset
-            if want_route:
-                cutter = self._fb_child_for_key(
-                    PART_ROLE_FB_LED_CUTTER, key)
-                if cutter is None:
-                    mesh = bpy.data.meshes.new('FB LED Route Cutter')
-                    cutter = bpy.data.objects.new(
-                        'FB LED Route Cutter', mesh)
-                    for coll in self.obj.users_collection:
-                        coll.objects.link(cutter)
-                    cutter.parent = self.obj
-                    cutter['hb_part_role'] = PART_ROLE_FB_LED_CUTTER
-                    cutter['hb_fb_key'] = key
-                    cutter['IS_CUTTING_OBJ'] = True
-                    cutter.hide_viewport = True
-                    cutter.hide_render = True
-                self._rebuild_box_mesh(
-                    cutter,
-                    x0 - 0.005, x0 + seg_len + 0.005,
-                    route_y0, route_y0 + route_width,
-                    z_fin - 0.003, z_fin + route_depth)
-                mod = panel.modifiers.get(self._FB_CUT_MOD_NAME)
-                if mod is None and not panel.get('IS_MANUAL_PART'):
-                    mod = panel.modifiers.new(
-                        name=self._FB_CUT_MOD_NAME, type='BOOLEAN')
-                    mod.operation = 'DIFFERENCE'
-                    mod.solver = 'EXACT'
-                if mod is not None:
-                    # Route walls show the finish carried on the cutter.
-                    mod.material_mode = 'TRANSFER'
-                    if mod.object is not cutter:
-                        mod.object = cutter
-            else:
-                mod = panel.modifiers.get(self._FB_CUT_MOD_NAME)
-                if mod is not None:
-                    panel.modifiers.remove(mod)
-
-            # Optional area light in this segment's route for renders.
-            if want_light:
-                light_obj = self._fb_child_for_key(PART_ROLE_FB_LIGHT, key)
-                if light_obj is None or light_obj.type != 'LIGHT':
-                    light_data = bpy.data.lights.new('FB LED Light', 'AREA')
-                    light_obj = bpy.data.objects.new(
-                        'FB LED Light', light_data)
-                    for coll in self.obj.users_collection:
-                        coll.objects.link(light_obj)
-                    light_obj.parent = self.obj
-                    light_obj['hb_part_role'] = PART_ROLE_FB_LIGHT
-                    light_obj['hb_fb_key'] = key
-                    light_obj['IS_2D_ANNOTATION'] = True
-                    light_obj.data.energy = 10.0
-                light = light_obj.data
-                light.shape = 'RECTANGLE'
-                light.size = max(seg_len - inch(2.0), inch(1.0))
-                light.size_y = route_width * 0.8
-                light_obj.location = (
-                    x0 + seg_len / 2.0,
-                    route_y0 + route_width / 2.0,
-                    z_fin - 0.002)
-
-                # Visible diffuser: a thin emissive strip up inside the
-                # route (the area light renders as nothing, so this is
-                # what reads as the light source from below). Sits in
-                # the top half of the groove, held a hair off the route
-                # ceiling and side walls.
-                strip = self._fb_child_for_key(PART_ROLE_FB_LED_STRIP, key)
-                if strip is None:
-                    mesh = bpy.data.meshes.new('FB LED Strip')
-                    strip = bpy.data.objects.new('FB LED Strip', mesh)
-                    for coll in self.obj.users_collection:
-                        coll.objects.link(strip)
-                    strip.parent = self.obj
-                    strip['hb_part_role'] = PART_ROLE_FB_LED_STRIP
-                    strip['hb_fb_key'] = key
-                    strip['IS_2D_ANNOTATION'] = True
-                end_margin = (inch(1.0) if seg_len > inch(3.0)
-                              else seg_len * 0.1)
-                strip_top = z_fin + route_depth - 0.0005
-                strip_bottom = max(strip_top - inch(0.0625),
-                                   z_fin + 0.001)
-                self._rebuild_box_mesh(
-                    strip,
-                    x0 + end_margin, x0 + seg_len - end_margin,
-                    route_y0 + route_width * 0.1,
-                    route_y0 + route_width * 0.9,
-                    strip_bottom, strip_top)
-                mat = self._led_strip_material()
-                if strip.data.materials:
-                    strip.data.materials[0] = mat
-                else:
-                    strip.data.materials.append(mat)
-
-        # Stale segments (bay merged away, bottom newly removed); with
-        # the route off every cutter goes, and with the light off (or
-        # the route off) every light.
+        # Stale targets (bay merged away, bottom newly removed, shelf
+        # switched back off); with the route off every cutter goes, and
+        # with the light off (or the route off) every light.
         self._cleanup_finished_bottom(keep_keys=live_keys)
         if not want_route:
             self._cleanup_finished_bottom(roles=(PART_ROLE_FB_LED_CUTTER,))
         if not want_light:
             self._cleanup_finished_bottom(
                 roles=(PART_ROLE_FB_LIGHT, PART_ROLE_FB_LED_STRIP))
+
+    def _build_fb_target(self, tgt, t_fin, flush, want_route, want_light,
+                         route_width, route_inset, route_depth):
+        """Panel + LED route + optional light for one finish target."""
+        key = tgt['key']
+        parent = tgt['parent']
+        x0 = tgt['x']
+        y0 = tgt['y']
+        seg_len = tgt['length']
+        seg_w = tgt['width']
+        underside_z = tgt['underside']
+        # Non-flush: panel top against the finished part's underside.
+        # Flush: panel underside at the bottom edge of the face-frame
+        # member in front of it (the part's top sits at the member's top,
+        # so the member's bottom is underside - (member - part thickness)).
+        z_fin = (underside_z - (tgt['rail_width'] - tgt['thickness'])
+                 if flush else underside_z - t_fin)
+
+        panel = self._fb_child_for_key(PART_ROLE_FINISHED_BOTTOM, key)
+        if panel is None:
+            part = CabinetPart()
+            part.create('Finished Bottom')
+            part.obj.parent = parent
+            part.obj['hb_part_role'] = PART_ROLE_FINISHED_BOTTOM
+            part.obj['hb_fb_key'] = key
+            part.obj['CABINET_PART'] = True
+            part.set_input('Mirror Y', tgt['mirror_y'])
+            panel = part.obj
+        if not panel.get('IS_MANUAL_PART'):
+            panel.location = (x0, y0, z_fin)
+            gn = GeoNodeCutpart(panel)
+            gn.set_input('Length', seg_len)
+            gn.set_input('Width', seg_w)
+            gn.set_input('Thickness', t_fin)
+
+        # LED route across this target's width, behind the panel's front
+        # edge by the route inset. Opt-in; size and location come from the
+        # cabinet props.
+        route_y0 = tgt['front_y'] + route_inset
+        if want_route:
+            cutter = self._fb_child_for_key(PART_ROLE_FB_LED_CUTTER, key)
+            if cutter is None:
+                mesh = bpy.data.meshes.new('FB LED Route Cutter')
+                cutter = bpy.data.objects.new('FB LED Route Cutter', mesh)
+                for coll in self.obj.users_collection:
+                    coll.objects.link(cutter)
+                cutter.parent = parent
+                cutter['hb_part_role'] = PART_ROLE_FB_LED_CUTTER
+                cutter['hb_fb_key'] = key
+                cutter['IS_CUTTING_OBJ'] = True
+                cutter.hide_viewport = True
+                cutter.hide_render = True
+            self._rebuild_box_mesh(
+                cutter,
+                x0 - 0.005, x0 + seg_len + 0.005,
+                route_y0, route_y0 + route_width,
+                z_fin - 0.003, z_fin + route_depth)
+            mod = panel.modifiers.get(self._FB_CUT_MOD_NAME)
+            if mod is None and not panel.get('IS_MANUAL_PART'):
+                mod = panel.modifiers.new(
+                    name=self._FB_CUT_MOD_NAME, type='BOOLEAN')
+                mod.operation = 'DIFFERENCE'
+                mod.solver = 'EXACT'
+            if mod is not None:
+                # Route walls show the finish carried on the cutter.
+                mod.material_mode = 'TRANSFER'
+                if mod.object is not cutter:
+                    mod.object = cutter
+        else:
+            mod = panel.modifiers.get(self._FB_CUT_MOD_NAME)
+            if mod is not None:
+                panel.modifiers.remove(mod)
+
+        # Optional area light in this target's route for renders.
+        if want_light:
+            light_obj = self._fb_child_for_key(PART_ROLE_FB_LIGHT, key)
+            if light_obj is None or light_obj.type != 'LIGHT':
+                light_data = bpy.data.lights.new('FB LED Light', 'AREA')
+                light_obj = bpy.data.objects.new('FB LED Light', light_data)
+                for coll in self.obj.users_collection:
+                    coll.objects.link(light_obj)
+                light_obj.parent = parent
+                light_obj['hb_part_role'] = PART_ROLE_FB_LIGHT
+                light_obj['hb_fb_key'] = key
+                light_obj['IS_2D_ANNOTATION'] = True
+                light_obj.data.energy = 10.0
+            light = light_obj.data
+            light.shape = 'RECTANGLE'
+            light.size = max(seg_len - inch(2.0), inch(1.0))
+            light.size_y = route_width * 0.8
+            light_obj.location = (
+                x0 + seg_len / 2.0,
+                route_y0 + route_width / 2.0,
+                z_fin - 0.002)
+
+            # Visible diffuser: a thin emissive strip up inside the
+            # route (the area light renders as nothing, so this is
+            # what reads as the light source from below). Sits in
+            # the top half of the groove, held a hair off the route
+            # ceiling and side walls.
+            strip = self._fb_child_for_key(PART_ROLE_FB_LED_STRIP, key)
+            if strip is None:
+                mesh = bpy.data.meshes.new('FB LED Strip')
+                strip = bpy.data.objects.new('FB LED Strip', mesh)
+                for coll in self.obj.users_collection:
+                    coll.objects.link(strip)
+                strip.parent = parent
+                strip['hb_part_role'] = PART_ROLE_FB_LED_STRIP
+                strip['hb_fb_key'] = key
+                strip['IS_2D_ANNOTATION'] = True
+            end_margin = (inch(1.0) if seg_len > inch(3.0)
+                          else seg_len * 0.1)
+            strip_top = z_fin + route_depth - 0.0005
+            strip_bottom = max(strip_top - inch(0.0625),
+                               z_fin + 0.001)
+            self._rebuild_box_mesh(
+                strip,
+                x0 + end_margin, x0 + seg_len - end_margin,
+                route_y0 + route_width * 0.1,
+                route_y0 + route_width * 0.9,
+                strip_bottom, strip_top)
+            mat = self._led_strip_material()
+            if strip.data.materials:
+                strip.data.materials[0] = mat
+            else:
+                strip.data.materials.append(mat)
 
     # =====================================================================
     # Under-cabinet appliances (uppers)

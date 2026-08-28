@@ -22,7 +22,7 @@ import os
 
 import bpy
 from bpy.props import (BoolProperty, BoolVectorProperty, EnumProperty,
-                       FloatProperty, StringProperty)
+                       FloatProperty, IntProperty, StringProperty)
 
 from .. import types_face_frame
 from .. import types_face_frame_corner
@@ -3657,6 +3657,10 @@ def _fb_bays_changed(self, context):
     the panels rebuild live like the other options."""
     if getattr(self, '_fb_init', False):
         return
+    # The shelf dialog never draws these, and with no segment keys behind
+    # them they would write an empty scope over the cabinet's own.
+    if getattr(self, 'shelf_split', ''):
+        return
     root = bpy.data.objects.get(self.cabinet_name)
     if root is None:
         return
@@ -3668,23 +3672,71 @@ def _fb_bays_changed(self, context):
         cab.finished_bottom_bays = value
 
 
+def _fb_shelf_from_part(obj):
+    """(split node, splitter index) for the mid-rail shelf a clicked part
+    stands for, or None when the click was not about a shelf.
+
+    Either the shelf itself, or the finish panel hanging under it - that
+    panel is parented to the shelf's split node and carries the shelf's
+    index in its hb_fb_key, so re-opening the dialog from the panel lands
+    back on the same shelf.
+    """
+    if obj is None:
+        return None
+    role = obj.get('hb_part_role')
+    if role == types_face_frame.PART_ROLE_BAY_SHELF:
+        split = obj.parent
+        if split is None or not split.get(types_face_frame.TAG_SPLIT_NODE):
+            return None
+        return split, obj.get('hb_splitter_index', 0)
+    if role == types_face_frame.PART_ROLE_FINISHED_BOTTOM:
+        key = obj.get('hb_fb_key') or ''
+        if not key.startswith('shelf:'):
+            return None
+        split = obj.parent
+        if split is None or not split.get(types_face_frame.TAG_SPLIT_NODE):
+            return None
+        try:
+            return split, int(key.rsplit(':', 1)[1])
+        except ValueError:
+            return None
+    return None
+
+
+def _fb_splitter_entry(split, idx):
+    """The per-splitter entry at `idx`, growing the collection to reach
+    it. Same lazy growth the backing toggle uses."""
+    coll = split.face_frame_split.splitter_widths
+    while len(coll) <= idx:
+        coll.add()
+    return coll[idx]
+
+
 class hb_face_frame_OT_set_finished_bottom(bpy.types.Operator):
-    """Set the finished bottom condition on the clicked upper cabinet.
+    """Set the finished bottom condition on the clicked cabinet.
     Live-bound to the cabinet's props (the finish panel, LED route,
     and optional render light rebuild as options change); with multiple
     bottom segments (raised / dropped bays) each gets its own toggle.
-    The room button copies this cabinet's condition to every standard
-    upper in the scene."""
+    Opened from a shelf behind a mid rail it finishes that shelf instead
+    - the underside on show over an appliance opening. The room button
+    copies this cabinet's condition to every standard upper in the
+    scene."""
     bl_idname = "hb_face_frame.set_finished_bottom"
     bl_label = "Set Finished Bottom"
-    bl_description = ("Set this upper cabinet's finished bottom "
-                      "condition (finish panel + LED route)")
+    bl_description = ("Set the finished bottom condition for this "
+                      "cabinet bottom or shelf (finish panel + LED route)")
     bl_options = {'UNDO'}
 
     cabinet_name: StringProperty(
         default='', options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
     segment_keys: StringProperty(
         default='', options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+    # Set when the dialog was opened from a mid-rail shelf: the split
+    # node that owns it and the shelf's splitter index.
+    shelf_split: StringProperty(
+        default='', options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+    shelf_index: IntProperty(
+        default=0, options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
     bay_flags: BoolVectorProperty(
         name="Bottoms", size=16, options={'SKIP_SAVE'},
         update=_fb_bays_changed)  # type: ignore
@@ -3695,15 +3747,30 @@ class hb_face_frame_OT_set_finished_bottom(bpy.types.Operator):
         if obj is None:
             return False
         root = types_face_frame.find_cabinet_root(obj)
-        return (root is not None
-                and root.get('CABINET_TYPE') == 'UPPER'
-                and root.face_frame_cabinet.corner_type == 'NONE')
+        if root is None or root.face_frame_cabinet.corner_type != 'NONE':
+            return False
+        # A mid-rail shelf offers the condition on any cabinet type; the
+        # carcass bottom stays an upper's business.
+        return (root.get('CABINET_TYPE') == 'UPPER'
+                or _fb_shelf_from_part(obj) is not None)
 
     def invoke(self, context, event):
-        root = types_face_frame.find_cabinet_root(context.active_object)
+        obj = context.active_object
+        root = types_face_frame.find_cabinet_root(obj)
         if root is None:
             return {'CANCELLED'}
         self.cabinet_name = root.name
+        shelf = _fb_shelf_from_part(obj)
+        if shelf is not None:
+            # Clicking the command on a shelf IS the ask, so switch that
+            # shelf on. Unchecking it in the dialog takes it back off,
+            # and the cabinet's own condition is left alone.
+            split, idx = shelf
+            self.shelf_split = split.name
+            self.shelf_index = idx
+            _fb_splitter_entry(split, idx).finished_bottom = True
+            return context.window_manager.invoke_props_dialog(self, width=280)
+        self.shelf_split = ''
         # One toggle per live carcass-bottom segment (same filter the
         # builder uses), seeded from the cabinet's current scope.
         bottoms = [c for c in root.children
@@ -3734,17 +3801,29 @@ class hb_face_frame_OT_set_finished_bottom(bpy.types.Operator):
         cab = root.face_frame_cabinet
         col = layout.column(align=True)
         col.prop(cab, 'finished_bottom_type', text="Condition")
-        keys = [k for k in self.segment_keys.split(',') if k]
-        if len(keys) > 1:
-            bays = col.column(align=True)
-            bays.enabled = cab.finished_bottom_type != 'NONE'
-            bays.label(text="Apply To:")
-            for i, k in enumerate(keys):
-                try:
-                    label = f"Bay {int(k) + 1}"
-                except ValueError:
-                    label = f"Bay {k}"
-                bays.prop(self, 'bay_flags', index=i, text=label)
+        split = (bpy.data.objects.get(self.shelf_split)
+                 if self.shelf_split else None)
+        if split is not None:
+            # Shelf dialog: the target is the shelf that was clicked, so
+            # the bay toggles (which are about the carcass bottom) and
+            # the room apply (uppers only) have nothing to say here.
+            entry = _fb_splitter_entry(split, self.shelf_index)
+            shelf_col = col.column(align=True)
+            shelf_col.enabled = cab.finished_bottom_type != 'NONE'
+            shelf_col.prop(entry, 'finished_bottom',
+                           text="Finish This Shelf")
+        else:
+            keys = [k for k in self.segment_keys.split(',') if k]
+            if len(keys) > 1:
+                bays = col.column(align=True)
+                bays.enabled = cab.finished_bottom_type != 'NONE'
+                bays.label(text="Apply To:")
+                for i, k in enumerate(keys):
+                    try:
+                        label = f"Bay {int(k) + 1}"
+                    except ValueError:
+                        label = f"Bay {k}"
+                    bays.prop(self, 'bay_flags', index=i, text=label)
         sub = col.column(align=True)
         sub.enabled = cab.finished_bottom_type != 'NONE'
         sub.prop(cab, 'finished_bottom_led_route', text="LED Route")
@@ -3754,10 +3833,11 @@ class hb_face_frame_OT_set_finished_bottom(bpy.types.Operator):
         route.prop(cab, 'finished_bottom_route_depth', text="Route Depth")
         route.prop(cab, 'finished_bottom_route_inset', text="Route Inset")
         route.prop(cab, 'finished_bottom_light', text="LED Light (Render)")
-        col.separator()
-        col.operator("hb_face_frame.apply_finished_bottom_to_room",
-                     text="Apply to All Uppers in Room",
-                     icon='DUPLICATE').cabinet_name = self.cabinet_name
+        if split is None:
+            col.separator()
+            col.operator("hb_face_frame.apply_finished_bottom_to_room",
+                         text="Apply to All Uppers in Room",
+                         icon='DUPLICATE').cabinet_name = self.cabinet_name
 
     def execute(self, context):
         # Live-bound via the cabinet props' update callbacks.

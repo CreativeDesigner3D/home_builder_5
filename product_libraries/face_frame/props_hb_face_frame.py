@@ -8985,6 +8985,19 @@ class Face_Frame_Splitter_Width(PropertyGroup):
         update=_update_cabinet_dim,
     )  # type: ignore
 
+    finished_bottom: BoolProperty(
+        name="Finished Bottom",
+        description=(
+            "Hang the cabinet's finished bottom condition under the shelf "
+            "behind this mid rail. For an opening whose exposed underside "
+            "is not the cabinet's own bottom - the shelf over a "
+            "refrigerator opening, say. Per shelf, so the cabinet's other "
+            "shelves are untouched"
+        ),
+        default=False,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
 
 class Face_Frame_Split_Props(PropertyGroup):
     """Per-split-node state. Attached to each split node Empty as
