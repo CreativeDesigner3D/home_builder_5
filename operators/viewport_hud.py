@@ -180,6 +180,25 @@ def _dashes(pts, ax, ay, bx, by, count):
         pts.append((ax + dx * (i + 1), ay + dy * (i + 1)))
 
 
+def _glyph_drawing_lines(shader, rect, color):
+    """A drawn panel with its hidden line: solid outline, dashed middle.
+
+    The mark for a line-work overlay -- the two line kinds a technical
+    drawing is made of, in one square. Default glyph for mode-row
+    toggles registered by a line engine.
+    """
+    rx, ry, rw, rh = rect
+    r = min(rw, rh) * 0.56
+    x0 = rx + (rw - r) / 2.0
+    y0 = ry + (rh - r) / 2.0
+    draw_polyline(shader,
+                  [(x0, y0), (x0 + r, y0), (x0 + r, y0 + r), (x0, y0 + r)],
+                  color, closed=True)
+    pts = []
+    _dashes(pts, x0 + r * 0.14, y0 + r * 0.5, x0 + r * 0.86, y0 + r * 0.5, 3)
+    draw_lines(shader, pts, color)
+
+
 def _glyph_select_box(shader, rect, color):
     """A dashed rectangle -- the mark Blender itself puts on this tool,
     so the button looks like the thing it switches to."""
@@ -991,6 +1010,76 @@ class _SceneToggleButton:
                 not getattr(host, self.prop_name, False))
 
 
+class _GlyphToggleButton:
+    """Square glyph toggle bound to a boolean property.
+
+    The mode-row cousin of _SceneToggleButton: a way of LOOKING that
+    rides beside Move / Open Doors / Sizes, so it draws as an icon (a
+    state you leave on is a mark, not a sentence) with the wording as
+    its hover label. Reads and writes the property directly; the
+    property's update callback owns the real work.
+    """
+
+    def __init__(self, prop_name, glyph, show_label, hide_label,
+                 ui_visible=None, owner='WINDOW_MANAGER'):
+        self.prop_name = prop_name
+        self.glyph = glyph
+        self.show_label = show_label
+        self.hide_label = hide_label
+        self.ui_visible = ui_visible
+        self.owner = owner
+
+    def _host(self, context):
+        if self.owner == 'WINDOW_MANAGER':
+            return context.window_manager
+        return context.scene
+
+    def _is_active(self, context):
+        return bool(getattr(self._host(context), self.prop_name, False))
+
+    @property
+    def width(self):
+        return int(BTN_HEIGHT * _s())          # square
+
+    def hover_label(self):
+        try:
+            active = bool(getattr(self._host(bpy.context), self.prop_name,
+                                  False))
+        except Exception:
+            active = False
+        return self.hide_label if active else self.show_label
+
+    def visible(self, context):
+        if not hasattr(self._host(context), self.prop_name):
+            return False
+        if self.ui_visible is None:
+            return True
+        try:
+            return bool(self.ui_visible(context))
+        except Exception:
+            return False
+
+    def draw(self, shader, font_id, rect, context, mouse):
+        rx, ry, rw, rh = rect
+        is_active = self._is_active(context)
+        hovered = point_in_rect(mouse[0], mouse[1], rect)
+        if is_active:
+            bg = BTN_ACTIVE_BG
+        elif hovered:
+            bg = BTN_HOVER_BG
+        else:
+            bg = BTN_BG
+        draw_rect(shader, rx, ry, rw, rh, bg)
+        draw_rect_outline(shader, rx, ry, rw, rh, BTN_BORDER)
+        color = TEXT_ACTIVE if is_active else TEXT_NORMAL
+        self.glyph(shader, rect, color)
+
+    def on_click(self, context, area, region):
+        host = self._host(context)
+        setattr(host, self.prop_name,
+                not getattr(host, self.prop_name, False))
+
+
 class _SheetCommandButton:
     """HUD button on the sheet row that fires an operator.
 
@@ -1098,6 +1187,41 @@ def unregister_sheet_command(key):
     _drop_sheet_button(key)
 
 
+# Same idea for the selection-mode row's control group (Move / Open
+# Doors / Sizes): other add-ons can put a way-of-looking toggle beside
+# them without this module depending on them.
+_extra_mode_widgets = []       # (order, key, widget)
+
+
+def register_mode_glyph_toggle(key, prop_name, show_label, hide_label,
+                               glyph=None, owner='WINDOW_MANAGER',
+                               ui_visible=None, order=100):
+    """Add a square glyph toggle to the mode row's control group.
+
+    ``glyph`` is a callable(shader, rect, color); None uses the
+    drawing-lines mark. ``ui_visible`` optionally gates which scenes
+    show it. Re-registering a key replaces it, so a reloaded add-on
+    cannot stack duplicates.
+    """
+    unregister_mode_glyph_toggle(key)
+    widget = _GlyphToggleButton(
+        prop_name, glyph or _glyph_drawing_lines, show_label, hide_label,
+        ui_visible=ui_visible, owner=owner)
+    _extra_mode_widgets.append((order, key, widget))
+    _extra_mode_widgets.sort(key=lambda b: (b[0], b[1]))
+
+
+def unregister_mode_glyph_toggle(key):
+    for i, entry in enumerate(list(_extra_mode_widgets)):
+        if entry[1] == key:
+            del _extra_mode_widgets[i]
+            return
+
+
+def _mode_extra_widgets():
+    return [b[2] for b in _extra_mode_widgets]
+
+
 def _add_sheet_button(order, key, widget):
     _extra_sheet_buttons.append((order, key, widget))
     _extra_sheet_buttons.sort(key=lambda b: (b[0], b[1]))
@@ -1135,7 +1259,9 @@ def _rows():
     The second row holds the sheet controls, which show only on a layout
     view (where the first row is empty, so it draws at the top)."""
     return [
-        [_MODE_BUTTONS, [_GRAB_PILL, _OPEN_DOOR_BUTTON, _SIZES_BUTTON]],
+        [_MODE_BUTTONS,
+         [_GRAB_PILL, _OPEN_DOOR_BUTTON, _SIZES_BUTTON]
+         + _mode_extra_widgets()],
         [_layout_view_buttons()],
     ]
 
