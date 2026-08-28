@@ -231,41 +231,48 @@ class HOME_BUILDER_MT_face_frame_bay_commands(bpy.types.Menu):
 
     def draw(self, context):
         layout = self.layout
-        layout.operator("hb_face_frame.bay_prompts",
-                        text="Bay Properties...", icon='WINDOW')
-        # Finishing a bay is a property edit like the rest of that
-        # dialog, so it sits with it rather than down among the
-        # structural edits.
-        layout.operator("hb_face_frame.finish_bay_prompts",
-                        text="Finish Bay...", icon='SHADING_RENDERED')
-
-        # Change Bay submenu (preset swaps) sits right under Properties
-        # so type-changing edits stay grouped with property edits. Hidden
-        # for cabinet types with no presets (currently LAP_DRAWER).
         bay_obj = context.active_object
         cab_root = (types_face_frame.find_cabinet_root(bay_obj)
                     if bay_obj is not None else None)
-        if cab_root is not None:
-            cabinet_type = cab_root.face_frame_cabinet.cabinet_type
-            if cabinet_type in bay_presets.MENU_ENTRIES:
-                layout.menu("HOME_BUILDER_MT_face_frame_change_bay",
-                            text="Change Bay")
-            # Appliance configs (sink / cooktop) are base-bay only.
-            if cabinet_type == 'BASE':
-                layout.menu("HOME_BUILDER_MT_face_frame_add_appliance",
-                            text="Add Appliance to Bay", icon='MOD_FLUIDSIM')
-            # Under-cabinet appliance (uppers only): a microwave or a
-            # short vent hood hanging below the bay.
-            if cabinet_type == 'UPPER':
-                layout.operator(
-                    "hb_face_frame.set_under_cabinet_appliance",
-                    text="Under Cabinet Appliance...", icon='MOD_FLUIDSIM')
-            # Flush toe kick toggle - base / tall only (uppers have no
-            # kick to flush).
-            if cabinet_type in ('BASE', 'TALL'):
-                layout.operator("hb_face_frame.toggle_flush_toe_kick",
-                                text="Toggle Flush Toe Kick",
-                                icon='SNAP_PERPENDICULAR')
+        cabinet_type = (cab_root.face_frame_cabinet.cabinet_type
+                        if cab_root is not None else None)
+
+        layout.operator("hb_face_frame.bay_prompts",
+                        text="Bay Properties...", icon='WINDOW')
+
+        # What the bay carries - its finish, anything hung in or under
+        # it, and the kick treatment. Each entry is gated on the
+        # cabinet type that can hold it, so the group shrinks rather
+        # than showing options that do nothing here.
+        layout.separator()
+        layout.operator("hb_face_frame.finish_bay_prompts",
+                        text="Finish Bay...", icon='SHADING_RENDERED')
+        # Under-cabinet appliance (uppers only): a microwave or a
+        # short vent hood hanging below the bay.
+        if cabinet_type == 'UPPER':
+            layout.operator(
+                "hb_face_frame.set_under_cabinet_appliance",
+                text="Under Cabinet Appliance...", icon='MOD_FLUIDSIM')
+        # Appliance configs (sink / cooktop) are base-bay only.
+        if cabinet_type == 'BASE':
+            layout.menu("HOME_BUILDER_MT_face_frame_add_appliance",
+                        text="Add Appliance to Bay", icon='MOD_FLUIDSIM')
+        # Flush toe kick toggle - base / tall only (uppers have no
+        # kick to flush).
+        if cabinet_type in ('BASE', 'TALL'):
+            layout.operator("hb_face_frame.toggle_flush_toe_kick",
+                            text="Toggle Flush Toe Kick",
+                            icon='SNAP_PERPENDICULAR')
+
+        # Change Bay (preset swaps) gets a group of its own: it
+        # replaces the whole front layout, which is a heavier edit than
+        # the options above and lighter than the structural ones below.
+        # Hidden for cabinet types with no presets (currently
+        # LAP_DRAWER).
+        if cabinet_type in bay_presets.MENU_ENTRIES:
+            layout.separator()
+            layout.menu("HOME_BUILDER_MT_face_frame_change_bay",
+                        text="Change Bay")
 
         # Structural edits live below in their own group. Anchored on
         # the right-clicked bay's index since the bay cage is the active
@@ -301,14 +308,14 @@ class HOME_BUILDER_MT_face_frame_bay_commands(bpy.types.Menu):
                         text="Break Right", icon='TRIA_RIGHT_BAR')
         layout.operator("hb_face_frame.break_cabinet_both",
                         text="Break Both", icon='UNLINKED')
+
+        # The two equalize commands close the menu. Both are bay-scope
+        # by selection but cabinet-scope in their effect (every bay in
+        # the picked cabinets is recalculated), so they sit apart from
+        # the structural edits above.
+        layout.separator()
         layout.operator("hb_face_frame.equalize_bays",
                         text="Equalize Bays", icon='ALIGN_JUSTIFY')
-
-        # Equalize-door-width is bay-scope by selection but cabinet-
-        # scope in its effect (every bay in the picked cabinets is
-        # recalculated). Lives at the bottom of the bay menu so the
-        # structural edits above stay grouped.
-        layout.separator()
         layout.operator("hb_face_frame.set_equal_door_width",
                         text="Set Equal Door Width",
                         icon='ALIGN_JUSTIFY')
@@ -722,31 +729,36 @@ class HOME_BUILDER_MT_face_frame_opening_commands(bpy.types.Menu):
 
     def draw(self, context):
         layout = self.layout
-        layout.operator("hb_face_frame.toggle_front_open",
-                        text="Open / Close", icon='FULLSCREEN_ENTER')
-        # Drawer-style openings get the interior editor (self-polling:
-        # hidden on door / panel openings).
-        if _is_drawer_opening(context.active_object):
-            layout.operator("hb_face_frame.drawer_interior",
-                            text="Drawer Interior...", icon='MESH_GRID')
-        layout.operator("hb_face_frame.finish_opening_prompts",
-                        text="Finish Opening...", icon='SHADING_RENDERED')
         layout.operator("hb_face_frame.opening_prompts",
                         text="Opening Properties...", icon='WINDOW')
-        layout.menu("HOME_BUILDER_MT_face_frame_change_opening",
-                    text="Change Opening")
+
+        # What the opening holds: how its inside is finished, what
+        # lives in it, and the catalog items called out on it. Opening
+        # a front is left to Open Door mode in the viewport.
+        layout.separator()
+        layout.operator("hb_face_frame.finish_opening_prompts",
+                        text="Finish Opening...", icon='SHADING_RENDERED')
+        layout.operator("hb_face_frame.interior_options",
+                        text="Interior Options...", icon='MESH_GRID')
         layout.operator("hb_face_frame.accessory_menu",
                         text="Add Accessory...", icon='ADD')
+
+        layout.separator()
+        layout.menu("HOME_BUILDER_MT_face_frame_change_opening",
+                    text="Change Opening")
+
+        layout.separator()
         layout.operator("hb_face_frame.equalize_opening_heights",
                         text="Equalize Opening Heights",
                         icon='ALIGN_JUSTIFY')
+
         layout.separator()
         op = layout.operator("hb_face_frame.split_opening",
                              text="Split Horizontal", icon='SNAP_EDGE')
         op.axis = 'H'
         op = layout.operator("hb_face_frame.split_opening",
                              text="Split Vertical", icon='PAUSE')
-        op.axis = 'V' 
+        op.axis = 'V'
 
 
 class HOME_BUILDER_MT_face_frame_change_opening(bpy.types.Menu):

@@ -1155,36 +1155,56 @@ def draw_opening_properties(layout, opening_obj):
             lock_icon = 'UNLOCKED' if unlocked else 'LOCKED'
             row.prop(op, f'unlock_{side}_overlay', text="", icon=lock_icon)
 
-    # Interior Items: hidden for panel roots - panels never have
-    # interior objects (no carcass to hold them). Walk up to the root
-    # to read the cabinet_type; opening -> bay -> root.
+    # Interior items have a dialog of their own now, so this one only
+    # points at it - the two together were long enough that the
+    # shelves scrolled off the bottom. Hidden for panel roots, which
+    # have no carcass to hold anything; walk up to the root to read
+    # the cabinet_type (opening -> bay -> root).
     root = types_face_frame.find_cabinet_root(opening_obj)
     if root is not None and root.face_frame_cabinet.cabinet_type == 'PANEL':
         return
+    layout.separator()
+    layout.operator("hb_face_frame.interior_options",
+                    text="Interior Options...", icon='MESH_GRID')
 
-    ibox = layout.box()
-    ibox.prop(op, 'show_interior_items', text="Interior Items",
-              icon='TRIA_DOWN' if op.show_interior_items else 'TRIA_RIGHT',
-              emboss=False)
-    if op.show_interior_items:
-        # When the opening has no tree the user can subdivide it directly,
-        # add items to the flat collection, or both. Once a tree exists,
-        # items live on leaves so the flat add buttons are suppressed; the
-        # tree itself is rendered inline below so the modal popup remains
-        # self-sufficient (no need to leave the popup to edit a region).
-        has_tree = any(
-            c.get(types_face_frame.TAG_INTERIOR_SPLIT_NODE)
-            or c.get(types_face_frame.TAG_INTERIOR_REGION)
-            for c in opening_obj.children
-        )
-        if not has_tree:
-            # Pass the opening's name as target_name so the Add / Remove
-            # operators in the buttons below survive an active-object
-            # change mid-popup (e.g., the shelf the user right-clicked
-            # gets wiped on a kind-change recalc).
-            _draw_interior_items_section(ibox, op, target_name=opening_obj.name)
-        else:
-            _draw_interior_tree_inline(ibox, opening_obj)
+
+def draw_opening_interior_options(layout, opening_obj):
+    """Everything that lives inside one opening: its shelves, roll-outs,
+    dividers and accessories.
+
+    Split out of the properties dialog so the interior is edited on its
+    own. Panel roots never reach here (no carcass to hold anything) -
+    the caller and draw_opening_properties both gate on cabinet_type.
+    """
+    op = opening_obj.face_frame_opening
+    layout.label(text=f"Opening {op.opening_index + 1}", icon='MESH_PLANE')
+
+    # A drawer's inside has a richer editor of its own - box
+    # construction, slides, and where each insert sits in the box - so
+    # point at it instead of laying the same ground out twice.
+    if op.front_type == 'DRAWER_FRONT':
+        layout.operator("hb_face_frame.drawer_interior",
+                        text="Drawer Interior...", icon='MESH_GRID')
+        layout.separator()
+
+    # When the opening has no tree the user can subdivide it directly,
+    # add items to the flat collection, or both. Once a tree exists,
+    # items live on leaves so the flat add buttons are suppressed; the
+    # tree itself is rendered inline below so the modal popup remains
+    # self-sufficient (no need to leave the popup to edit a region).
+    has_tree = any(
+        c.get(types_face_frame.TAG_INTERIOR_SPLIT_NODE)
+        or c.get(types_face_frame.TAG_INTERIOR_REGION)
+        for c in opening_obj.children
+    )
+    if not has_tree:
+        # Pass the opening's name as target_name so the Add / Remove
+        # operators in the buttons below survive an active-object
+        # change mid-popup (e.g., the shelf the user right-clicked
+        # gets wiped on a kind-change recalc).
+        _draw_interior_items_section(layout, op, target_name=opening_obj.name)
+    else:
+        _draw_interior_tree_inline(layout, opening_obj)
 
 
 def draw_drawer_insert_settings(layout, item, show_hint=True):

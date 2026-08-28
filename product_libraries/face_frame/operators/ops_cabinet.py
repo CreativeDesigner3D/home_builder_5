@@ -1921,6 +1921,65 @@ class hb_face_frame_OT_opening_prompts(bpy.types.Operator):
         ui_face_frame.draw_opening_properties(self.layout, opening_obj)
 
 
+class hb_face_frame_OT_interior_options(bpy.types.Operator):
+    """Edit the inside of one opening on its own: the shelves,
+    roll-outs, dividers and accessories it holds.
+
+    Resolved the same way as opening_prompts - the click target can be
+    any descendant of the opening - and held by name, because a kind
+    change wipes and rebuilds every interior part while the dialog is
+    still open.
+    """
+    bl_idname = "hb_face_frame.interior_options"
+    bl_label = "Interior Options"
+    bl_description = ("Add and edit the shelves, roll-outs, dividers and "
+                      "accessories inside this opening")
+    bl_options = {'UNDO'}
+
+    opening_name: bpy.props.StringProperty(
+        default='', options={'HIDDEN', 'SKIP_SAVE'},
+    )  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        opening = _find_owning_opening(context.active_object)
+        if opening is None:
+            return False
+        # Panels carry no carcass, so there is no interior to edit.
+        root = types_face_frame.find_cabinet_root(opening)
+        if root is not None and                 root.face_frame_cabinet.cabinet_type == 'PANEL':
+            return False
+        return True
+
+    def _resolve_opening(self, context):
+        """Prefer the cached opening_name; fall back to the active-object
+        walk-up if it's empty or stale (e.g. cabinet was deleted)."""
+        if self.opening_name:
+            obj = bpy.data.objects.get(self.opening_name)
+            if obj is not None and obj.get(types_face_frame.TAG_OPENING_CAGE):
+                return obj
+        return _find_owning_opening(context.active_object)
+
+    def invoke(self, context, event):
+        opening_obj = _find_owning_opening(context.active_object)
+        if opening_obj is None:
+            self.report({'WARNING'}, "No opening selected")
+            return {'CANCELLED'}
+        self.opening_name = opening_obj.name
+        return context.window_manager.invoke_props_dialog(self, width=340)
+
+    def execute(self, context):
+        return {'FINISHED'}
+
+    def draw(self, context):
+        from .. import ui_face_frame
+        opening_obj = self._resolve_opening(context)
+        if opening_obj is None:
+            self.layout.label(text="No opening selected", icon='INFO')
+            return
+        ui_face_frame.draw_opening_interior_options(self.layout, opening_obj)
+
+
 class hb_face_frame_OT_finish_bay_prompts(bpy.types.Operator):
     """Finish the inside of one bay, straight from the right-click menu:
     the same controls the bay properties dialog carries, without opening
@@ -3922,7 +3981,7 @@ _ALL_ACCESSORY_HOSTS = {
 }
 # Enum item lists must stay alive at module scope (Blender keeps only the
 # char* of each string).
-_accessory_product_items = []
+_accessory_section_items = []
 
 
 def _valid_accessory_hosts(opening_obj):
@@ -3979,40 +4038,125 @@ def _section_has_valid(section, valid):
                if it.get('section') == section)
 
 
-def _group_has_valid(section, group, valid):
-    return any(it.get('host') in valid
-               for it in accessory_registry.group_items(section, group))
-
-
-def _accessory_product_enum(self, context):
-    """Models within the chosen section + group, filtered to the opening's
-    valid hosts."""
-    _accessory_product_items.clear()
+def _accessory_section_enum(self, context):
+    """The catalog sections holding something valid for this opening,
+    behind an All entry. Drives the section dropdown in the Add
+    Accessory dialog, so browsing by category needs no drill-down."""
+    _accessory_section_items.clear()
+    _accessory_section_items.append(
+        ('ALL', "All Sections", "Everything that fits this opening"))
     valid = _valid_accessory_hosts(_accessory_target(self, context))
-    for it in accessory_registry.group_items(self.section, self.group):
-        if it.get('host') not in valid:
-            continue
-        code = it.get('code')
-        if not code:
-            continue
-        name = it.get('name', code)
-        mw = it.get('min_opening_w')
-        label = name if mw is None else "%s  (min %g\")" % (name, mw)
-        _accessory_product_items.append((code, label, name))
-    if not _accessory_product_items:
-        _accessory_product_items.append(('NONE', "(none)", "No models here"))
-    return _accessory_product_items
+    for sec in accessory_registry.sections():
+        if _section_has_valid(sec, valid):
+            _accessory_section_items.append((sec, sec, sec))
+    return _accessory_section_items
+
+
+def _draw_accessory_notes(box, item, code, is_pullout, region_pullout, ow_in):
+    """The note block under a chosen accessory: what it is, whether it
+    is modelled, and how its minimum opening width compares with the
+    opening it is going into.
+
+    An accessory is an ORDER line first: it is what goes on the
+    drawings, the legend and the report. Most are not modelled, and
+    picking one expecting shelves to appear is an easy mistake to make
+    - so say which this one is, and where to go if the 3D was the
+    point.
+    """
+    box.label(text="Accessory: %s" % item.get('name', code))
+    if not is_pullout and not types_face_frame.render_hint_kind(
+            (item.get('render') or '').upper()):
+        box.label(text="Called out on the drawings; not shown in 3D",
+                  icon='INFO')
+        box.label(text="To see it, add the matching interior item "
+                       "(Roll-outs, Shelves, ...) as well")
+    if region_pullout:
+        box.label(text="Adds the pullout inside this divider region "
+                       "(front unchanged)", icon='INFO')
+    elif is_pullout:
+        box.label(text="Adds a pullout front to the opening", icon='INFO')
+    mw = item.get('min_opening_w')
+    if mw is None:
+        box.label(text="Minimum opening width: not specified")
+        return
+    box.label(text="Minimum opening width: %g\"" % mw)
+    if ow_in is not None and ow_in + 1e-6 < mw:
+        box.label(
+            text="Opening width %g\" is below the %g\" minimum" % (ow_in, mw),
+            icon='ERROR')
+
+
+def _apply_accessory_choice(operator, context, target, code, item,
+                            opening_width=0.0):
+    """Put one catalog model on ``target`` and report what happened.
+
+    Shared by the Add Accessory dialog and the group picker so both
+    routes place a model identically. Pull-out / trash hosts convert
+    the opening front and record the model on the dedicated field,
+    mirroring hb_face_frame.add_pullout_accessory - except inside a
+    divider region, where the front belongs to the whole opening and
+    is left alone, the model stored as a data-only item instead. Every
+    other host becomes an ACCESSORY interior item, which drives the 2D
+    legend and the reports and grows geometry only when the catalog
+    entry carries a render hint.
+    """
+    host = item.get('host')
+    name = item.get('name', code)
+
+    def _store_item(props_owner, message):
+        props = _interior_items_target(props_owner)
+        if props is None:
+            operator.report({'WARNING'},
+                            "Select an opening or interior region first")
+            return {'CANCELLED'}
+        new_item = props.interior_items.add()
+        new_item.kind = 'ACCESSORY'
+        new_item.accessory_label = name
+        new_item.accessory_code = code
+        new_item.accessory_render = (item.get('render') or '').upper()
+        props.interior_items_index = len(props.interior_items) - 1
+        root = types_face_frame.find_cabinet_root(props_owner)
+        if root is not None:
+            types_face_frame.recalculate_face_frame_cabinet(root)
+        operator.report({'INFO'}, message)
+        return {'FINISHED'}
+
+    if host == _ACCESSORY_PULLOUT_HOST:
+        if target.get(types_face_frame.TAG_INTERIOR_REGION):
+            return _store_item(
+                target,
+                "Added %s to the divider region (front unchanged)" % name)
+        if not target.get(types_face_frame.TAG_OPENING_CAGE):
+            operator.report(
+                {'WARNING'},
+                "Pull-outs attach to an opening - select the opening cage")
+            return {'CANCELLED'}
+        with types_face_frame.suspend_recalc():
+            op_props = target.face_frame_opening
+            if op_props.front_type != 'PULLOUT':
+                apply_opening_preset(target, 'PULLOUT')
+            op_props.pullout_accessory_code = code
+            bay = _find_bay(target)
+            if bay is not None and opening_width > 0.0                     and getattr(bay, 'face_frame_bay', None) is not None:
+                bay.face_frame_bay.width = opening_width
+            types_face_frame.recalculate_face_frame_cabinet(target)
+        operator.report({'INFO'}, "Set pullout model: %s" % name)
+        return {'FINISHED'}
+
+    return _store_item(target, "Added %s" % name)
 
 
 def _populate_accessory_search(operator, context):
     """Fill ``operator.matches`` with the catalog accessories valid for the
-    opening, narrowed by ``operator.filter_text``. The filter is split into
+    opening, narrowed by ``operator.filter_text`` and - where the operator
+    offers one - its ``section_filter`` pick. The text filter is split into
     space-separated tokens; every token must appear (case-insensitively)
     somewhere in the item's name / section / group / code. Called on invoke
     and on every keystroke (via the operator's ``check``)."""
     operator.matches.clear()
     valid = _valid_accessory_hosts(_accessory_target(operator, context))
     tokens = operator.filter_text.lower().split()
+    section_pick = getattr(operator, 'section_filter', 'ALL')
     for it in accessory_registry.all_items():
         if it.get('host') not in valid:
             continue
@@ -4022,6 +4166,8 @@ def _populate_accessory_search(operator, context):
         name = it.get('name', code)
         sec = it.get('section', '')
         grp = it.get('group', '')
+        if section_pick not in ('', 'ALL') and sec != section_pick:
+            continue
         if tokens:
             hay = (" ".join((name, sec, grp, code))).lower()
             if not all(tok in hay for tok in tokens):
@@ -4039,261 +4185,18 @@ def _populate_accessory_search(operator, context):
                                 max(0, len(operator.matches) - 1))
 
 
-class hb_face_frame_OT_add_accessory(bpy.types.Operator):
-    """Pick the specific model within an accessory group and add it to the
-    opening, showing the model's minimum opening width. Pull-out / trash
-    models convert the opening front to a pullout and set the opening width;
-    every other accessory is stored as a data-only ACCESSORY interior item
-    (drives the 2D legend + reports, no 3D effect)."""
-    bl_idname = "hb_face_frame.add_accessory"
-    bl_label = "Add Accessory"
-    bl_description = (
-        "Pick a model within the accessory group and add it to the opening, "
-        "with a minimum opening width check"
-    )
-    bl_options = {'UNDO'}
-
-    target_name: bpy.props.StringProperty(default="", options={'HIDDEN'})  # type: ignore
-    section: bpy.props.StringProperty(default="", options={'HIDDEN'})  # type: ignore
-    group: bpy.props.StringProperty(default="", options={'HIDDEN'})  # type: ignore
-    code: bpy.props.StringProperty(default="", options={'HIDDEN'})  # type: ignore
-    product: bpy.props.EnumProperty(name="Model", items=_accessory_product_enum)  # type: ignore
-    opening_width: bpy.props.FloatProperty(
-        name="Opening Width", unit='LENGTH', precision=4, min=0.0,
-        description="Clear opening width for a pullout (sets the bay width)",
-    )  # type: ignore
-
-    @classmethod
-    def poll(cls, context):
-        return True
-
-    def _selected(self):
-        """(host, item) for the current product code, or (None, None)."""
-        if self.product in ('NONE', ''):
-            return None, None
-        it = accessory_registry.find(self.product)
-        return (it.get('host') if it else None), it
-
-    def invoke(self, context, event):
-        target = _resolve_interior_target(self, context)
-        # Either an interior-items target (for ACCESSORY adds) or an opening
-        # cage (for a pullout conversion) is required.
-        items_ok = target is not None and _interior_items_target(target) is not None
-        cage_ok = target is not None and target.get(types_face_frame.TAG_OPENING_CAGE)
-        if not items_ok and not cage_ok:
-            self.report({'WARNING'}, "Select an opening or interior region first")
-            return {'CANCELLED'}
-        if target is not None:
-            self.target_name = target.name
-        # Preselect the model the user picked from search (if any).
-        if self.code:
-            try:
-                self.product = self.code
-            except TypeError:
-                pass
-        bay = _find_bay(target) if target is not None else None
-        if bay is not None and getattr(bay, 'face_frame_bay', None) is not None:
-            self.opening_width = bay.face_frame_bay.width
-        return context.window_manager.invoke_props_dialog(self, width=400)
-
-    def draw(self, context):
-        layout = self.layout
-        if self.group:
-            layout.label(text="%s  ›  %s" % (self.section, self.group))
-        layout.prop(self, "product")
-        host, item = self._selected()
-        is_pullout = host == _ACCESSORY_PULLOUT_HOST
-        tgt = _resolve_interior_target(self, context)
-        # A pullout aimed at an interior REGION stays a data-only item
-        # (no front conversion, no bay-width write) -- the width field
-        # would set the BAY width, which is wrong for a divider region.
-        region_pullout = (is_pullout and tgt is not None
-                          and tgt.get(types_face_frame.TAG_INTERIOR_REGION))
-        if is_pullout and not region_pullout:
-            layout.prop(self, "opening_width")
-        box = layout.box()
-        if item is None:
-            box.label(text="No accessory selected")
-            return
-        box.label(text="Accessory: %s" % item.get('name', self.product))
-        # An accessory is an ORDER line first: it is what goes on the
-        # drawings, the legend and the report. Most of them are not
-        # modelled, and picking one expecting the shelves to appear is
-        # an easy mistake to make -- so say which this one is, and where
-        # to go if the 3D was the point.
-        if not is_pullout and not types_face_frame.render_hint_kind(
-                (item.get('render') or '').upper()):
-            box.label(text="Called out on the drawings; not shown in 3D",
-                      icon='INFO')
-            box.label(text="To see it, add the matching interior item "
-                           "(Roll-outs, Shelves, ...) as well")
-        if region_pullout:
-            box.label(text="Adds the pullout inside this divider region "
-                           "(front unchanged)", icon='INFO')
-        elif is_pullout:
-            box.label(text="Adds a pullout front to the opening", icon='INFO')
-        mw = item.get('min_opening_w')
-        if mw is None:
-            box.label(text="Minimum opening width: not specified")
-        else:
-            box.label(text="Minimum opening width: %g\"" % mw)
-            if is_pullout and not region_pullout:
-                ow = meter_to_inch(self.opening_width)
-            else:
-                ow = _opening_width_in(tgt) if tgt is not None else None
-            if ow is not None and ow + 1e-6 < mw:
-                box.label(
-                    text="Opening width %g\" is below the %g\" minimum" % (ow, mw),
-                    icon='ERROR')
-
-    def execute(self, context):
-        host, item = self._selected()
-        if item is None:
-            self.report({'WARNING'}, "No accessory selected")
-            return {'CANCELLED'}
-        name = item.get('name', self.product)
-        target = _resolve_interior_target(self, context)
-        if target is None:
-            self.report({'WARNING'}, "Select an opening or interior region first")
-            return {'CANCELLED'}
-
-        if host == _ACCESSORY_PULLOUT_HOST:
-            # Pull-out / trash on an interior REGION: the divider splits
-            # one opening behind one front (e.g. a trash pullout one side
-            # of a vertical divider, a foil pullout the other), so
-            # converting the whole opening is wrong -- store the model as
-            # a data-only ACCESSORY item on the region instead. Drives
-            # the 2D legend; the opening's front (the door attached to
-            # the pullout) is left alone.
-            if target.get(types_face_frame.TAG_INTERIOR_REGION):
-                region_props = _interior_items_target(target)
-                if region_props is None:
-                    self.report({'WARNING'},
-                                "Select an opening or interior region first")
-                    return {'CANCELLED'}
-                new_item = region_props.interior_items.add()
-                new_item.kind = 'ACCESSORY'
-                new_item.accessory_label = name
-                new_item.accessory_code = self.product
-                new_item.accessory_render = (item.get('render') or '').upper()
-                region_props.interior_items_index = (
-                    len(region_props.interior_items) - 1)
-                root = types_face_frame.find_cabinet_root(target)
-                if root is not None:
-                    types_face_frame.recalculate_face_frame_cabinet(root)
-                self.report({'INFO'},
-                            "Added %s to the divider region (front "
-                            "unchanged)" % name)
-                return {'FINISHED'}
-            # Pull-out / trash: convert the opening front and record the model,
-            # mirroring hb_face_frame.add_pullout_accessory.
-            if not target.get(types_face_frame.TAG_OPENING_CAGE):
-                self.report({'WARNING'},
-                            "Pull-outs attach to an opening - select the opening cage")
-                return {'CANCELLED'}
-            with types_face_frame.suspend_recalc():
-                op_props = target.face_frame_opening
-                if op_props.front_type != 'PULLOUT':
-                    apply_opening_preset(target, 'PULLOUT')
-                op_props.pullout_accessory_code = self.product
-                bay = _find_bay(target)
-                if bay is not None and self.opening_width > 0.0 \
-                        and getattr(bay, 'face_frame_bay', None) is not None:
-                    bay.face_frame_bay.width = self.opening_width
-                types_face_frame.recalculate_face_frame_cabinet(target)
-            self.report({'INFO'}, "Set pullout model: %s" % name)
-            return {'FINISHED'}
-
-        # Every other host: an ACCESSORY interior item (data-only unless
-        # the catalog entry carries a render hint - dividers build real
-        # geometry inside the drawer box).
-        target_props = _interior_items_target(target)
-        if target_props is None:
-            self.report({'WARNING'}, "Select an opening or interior region first")
-            return {'CANCELLED'}
-        new_item = target_props.interior_items.add()
-        new_item.kind = 'ACCESSORY'
-        new_item.accessory_label = name
-        new_item.accessory_code = self.product
-        new_item.accessory_render = (item.get('render') or '').upper()
-        target_props.interior_items_index = len(target_props.interior_items) - 1
-        root = types_face_frame.find_cabinet_root(target)
-        if root is not None:
-            types_face_frame.recalculate_face_frame_cabinet(root)
-        self.report({'INFO'}, "Added %s" % name)
-        return {'FINISHED'}
-
-
 # ---------------------------------------------------------------------------
-# Operator: categorized accessory picker (drill-down popup). Sections at the
-# root, groups within a section; choosing a group opens the model dialog. A
-# fuzzy Search entry sits at the top. Sections/groups are filtered to the
-# selected opening (strict context filter). HB5 stays catalog-agnostic: the
-# section/group/item tree comes from the accessory_registry providers.
+# Operator: accessory picker. One dialog does the whole job - a search box
+# and a section dropdown narrow a single list of everything that fits the
+# selected opening, and the highlighted model's notes sit under the list, so
+# picking an accessory never leaves the window. (It used to walk sections
+# then groups through stacked popups, with a Back button to climb out.)
+# Everything is filtered to the opening's valid hosts (strict context
+# filter). HB5 stays catalog-agnostic: the section/group/item tree comes
+# from the accessory_registry providers.
 # ---------------------------------------------------------------------------
-class hb_face_frame_OT_accessory_menu(bpy.types.Operator):
-    """Browse and add a catalog accessory to the opening, organized by the
-    catalog's sections and groups, filtered to what fits this opening."""
-    bl_idname = "hb_face_frame.accessory_menu"
-    bl_label = "Add Accessory"
-    bl_description = "Browse and add a catalog accessory to the opening"
-
-    target_name: bpy.props.StringProperty(default="", options={'HIDDEN'})  # type: ignore
-    # "" = root (section list); otherwise the section whose groups to show.
-    path: bpy.props.StringProperty(default="", options={'HIDDEN'})  # type: ignore
-
-    @classmethod
-    def poll(cls, context):
-        return True
-
-    def invoke(self, context, event):
-        # Cache the target so deeper levels address the same opening even if
-        # the active object changes between popups.
-        if not self.target_name:
-            tgt = _resolve_interior_target(self, context)
-            if tgt is not None:
-                self.target_name = tgt.name
-        context.window_manager.popup_menu(
-            self._draw_menu, title="Add Accessory", icon='ADD')
-        return {'FINISHED'}
-
-    def _draw_menu(self, menu, context):
-        layout = menu.layout
-        layout.operator_context = 'INVOKE_DEFAULT'
-        valid = _valid_accessory_hosts(_accessory_target(self, context))
-        op = layout.operator("hb_face_frame.search_accessory",
-                             text="Search...", icon='VIEWZOOM')
-        op.target_name = self.target_name
-        layout.separator()
-        if not self.path:
-            shown = 0
-            for sec in accessory_registry.sections():
-                if not _section_has_valid(sec, valid):
-                    continue
-                op = layout.operator("hb_face_frame.accessory_menu", text=sec)
-                op.target_name = self.target_name
-                op.path = sec
-                shown += 1
-            if shown == 0:
-                layout.label(text="No accessories for this opening")
-            return
-        op = layout.operator("hb_face_frame.accessory_menu",
-                             text="Back", icon='BACK')
-        op.target_name = self.target_name
-        op.path = ""
-        layout.separator()
-        layout.label(text=self.path)
-        for grp in accessory_registry.groups(self.path):
-            if not _group_has_valid(self.path, grp, valid):
-                continue
-            op = layout.operator("hb_face_frame.add_accessory", text=grp)
-            op.target_name = self.target_name
-            op.section = self.path
-            op.group = grp
-
-
 class HB_UL_face_frame_accessory_search(bpy.types.UIList):
-    """Result list for the accessory search dialog: model name (with any
+    """Result list for the accessory picker: model name (with any
     minimum-width note) on the left, its catalog section / group on the
     right."""
     def draw_item(self, context, layout, data, item, icon, active_data,
@@ -4307,16 +4210,19 @@ class HB_UL_face_frame_accessory_search(bpy.types.UIList):
 
 
 def _accessory_search_update(self, context):
-    """Live filter as the user types (filter_text uses TEXTEDIT_UPDATE)."""
+    """Live filter as the user types (filter_text uses TEXTEDIT_UPDATE) or
+    picks a different section."""
     _populate_accessory_search(self, context)
 
 
-class hb_face_frame_OT_search_accessory(bpy.types.Operator):
-    """Search the accessory catalog (filtered to the opening) in a wide
-    dialog: type to narrow the list, pick a row, then the model dialog opens
-    for the chosen accessory."""
-    bl_idname = "hb_face_frame.search_accessory"
-    bl_label = "Search Accessory"
+class hb_face_frame_OT_accessory_menu(bpy.types.Operator):
+    """Browse and add a catalog accessory to the opening: one list of
+    everything that fits, narrowed by a search box and a section
+    dropdown."""
+    bl_idname = "hb_face_frame.accessory_menu"
+    bl_label = "Add Accessory"
+    bl_description = "Browse and add a catalog accessory to the opening"
+    bl_options = {'UNDO'}
 
     target_name: bpy.props.StringProperty(default="", options={'HIDDEN'})  # type: ignore
     filter_text: bpy.props.StringProperty(
@@ -4324,50 +4230,108 @@ class hb_face_frame_OT_search_accessory(bpy.types.Operator):
         description="Filter accessories by name, section, group or code",
         options={'TEXTEDIT_UPDATE'}, update=_accessory_search_update,
     )  # type: ignore
+    section_filter: bpy.props.EnumProperty(
+        name="Section", items=_accessory_section_enum,
+        description="Show one catalog section, or all of them",
+        update=_accessory_search_update,
+    )  # type: ignore
     matches: bpy.props.CollectionProperty(type=AccessorySearchRow)  # type: ignore
     active_index: bpy.props.IntProperty(default=0)  # type: ignore
+    opening_width: bpy.props.FloatProperty(
+        name="Opening Width", unit='LENGTH', precision=4, min=0.0,
+        description="Clear opening width for a pullout (sets the bay width)",
+    )  # type: ignore
 
     @classmethod
     def poll(cls, context):
         return True
 
+    def _selected_row(self):
+        """The highlighted result row, or None when the list is empty."""
+        if len(self.matches) == 0:
+            return None
+        return self.matches[max(0, min(self.active_index,
+                                       len(self.matches) - 1))]
+
+    def _selected(self):
+        """(code, catalog item) for the highlighted row, or (None, None)."""
+        row = self._selected_row()
+        if row is None:
+            return None, None
+        return row.code, accessory_registry.find(row.code)
+
     def invoke(self, context, event):
+        # Cache the target so the dialog keeps addressing the same opening
+        # even if the active object changes while it is open.
+        if not self.target_name:
+            tgt = _resolve_interior_target(self, context)
+            if tgt is not None:
+                self.target_name = tgt.name
+        target = _accessory_target(self, context)
+        # Seed the width field from the bay, for the pullout hosts that
+        # write it back.
+        bay = _find_bay(target) if target is not None else None
+        if bay is not None and getattr(bay, 'face_frame_bay', None) is not None:
+            self.opening_width = bay.face_frame_bay.width
+        self.filter_text = ""
         self.active_index = 0
         _populate_accessory_search(self, context)
-        return context.window_manager.invoke_props_dialog(self, width=600)
+        return context.window_manager.invoke_props_dialog(self, width=620)
 
     def check(self, context):
-        # Any edit in the dialog re-runs the filter and forces a redraw so the
-        # result list reflects the current search text.
+        # Any edit in the dialog re-runs the filter and forces a redraw, so
+        # the list follows the search box keystroke by keystroke.
         _populate_accessory_search(self, context)
         return True
 
     def draw(self, context):
         layout = self.layout
-        layout.prop(self, "filter_text", icon='VIEWZOOM')
+        head = layout.row(align=True)
+        head.prop(self, "filter_text", text="", icon='VIEWZOOM')
+        head.prop(self, "section_filter", text="")
         if len(self.matches) == 0:
-            layout.label(text="No accessories match", icon='INFO')
+            layout.label(
+                text=("No accessories fit this opening"
+                      if not self.filter_text and self.section_filter == 'ALL'
+                      else "Nothing matches that search"),
+                icon='INFO')
             return
         layout.template_list(
             "HB_UL_face_frame_accessory_search", "",
             self, "matches",
             self, "active_index",
-            rows=12,
+            rows=10,
         )
+        code, item = self._selected()
+        if item is None:
+            return
+        tgt = _resolve_interior_target(self, context)
+        is_pullout = item.get('host') == _ACCESSORY_PULLOUT_HOST
+        # A pullout aimed at an interior REGION stays a data-only item
+        # (no front conversion, no bay-width write) -- the width field
+        # would set the BAY width, which is wrong for a divider region.
+        region_pullout = (is_pullout and tgt is not None
+                          and tgt.get(types_face_frame.TAG_INTERIOR_REGION))
+        if is_pullout and not region_pullout:
+            layout.prop(self, "opening_width")
+            ow = meter_to_inch(self.opening_width)
+        else:
+            ow = _opening_width_in(tgt) if tgt is not None else None
+        _draw_accessory_notes(layout.box(), item, code, is_pullout,
+                              region_pullout, ow)
 
     def execute(self, context):
-        if len(self.matches) == 0:
+        code, item = self._selected()
+        if item is None:
+            self.report({'WARNING'}, "No accessory selected")
             return {'CANCELLED'}
-        idx = max(0, min(self.active_index, len(self.matches) - 1))
-        row = self.matches[idx]
-        it = accessory_registry.find(row.code)
-        if it is None:
+        target = _resolve_interior_target(self, context)
+        if target is None:
+            self.report({'WARNING'},
+                        "Select an opening or interior region first")
             return {'CANCELLED'}
-        bpy.ops.hb_face_frame.add_accessory(
-            'INVOKE_DEFAULT', target_name=self.target_name,
-            section=it.get('section', ''), group=it.get('group', ''),
-            code=row.code)
-        return {'FINISHED'}
+        return _apply_accessory_choice(self, context, target, code, item,
+                                       self.opening_width)
 
 
 def _apply_bay_prop_overrides(bay_obj, config, reset):
@@ -6471,6 +6435,7 @@ classes = (
     hb_face_frame_OT_adjust_floating_shelves,
     hb_face_frame_OT_bay_prompts,
     hb_face_frame_OT_opening_prompts,
+    hb_face_frame_OT_interior_options,
     hb_face_frame_OT_finish_opening_prompts,
     hb_face_frame_OT_finish_bay_prompts,
     hb_face_frame_OT_drawer_box_prompts,
@@ -6492,10 +6457,8 @@ classes = (
     hb_face_frame_OT_toggle_flush_toe_kick,
     hb_face_frame_OT_add_pullout_accessory,
     hb_face_frame_OT_add_interior_accessory,
-    hb_face_frame_OT_add_accessory,
     hb_face_frame_OT_accessory_menu,
     HB_UL_face_frame_accessory_search,
-    hb_face_frame_OT_search_accessory,
     hb_face_frame_OT_add_appliance_to_bay,
     hb_face_frame_OT_set_under_cabinet_appliance,
     hb_face_frame_OT_remove_appliance_from_bay,
