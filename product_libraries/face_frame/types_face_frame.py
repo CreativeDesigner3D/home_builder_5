@@ -3377,14 +3377,27 @@ class FaceFrameCabinet(GeoNodeCage):
     _ARCH_RAIL_TAG = 'HB_ARCH_FRAME_RAIL'
     _ARCH_RAIL_SEGS = 24
 
-    def _part_local_matrix(self, obj):
+    def _part_local_matrix(self, obj, closed_front=False):
         """obj's transform in this cabinet's space, composed from the
         stored transform channels rather than matrix_world, which is a
-        depsgraph result and is stale mid-recalc."""
+        depsgraph result and is stale mid-recalc.
+
+        With closed_front, a front pivot contributes its position but
+        not its swing, giving the transform the part would have with
+        the door shut. Anything derived from a front's OUTLINE has to
+        read it that way: the pivot carries swing_percent, so a door
+        standing open would otherwise report its arc swung out of the
+        opening, and the member above it would find no curve to follow.
+        """
         m = Matrix.Identity(4)
         node = obj
         while node is not None and node is not self.obj:
-            m = (node.matrix_parent_inverse @ node.matrix_basis) @ m
+            basis = node.matrix_basis
+            is_pivot = node.get('hb_part_role') == PART_ROLE_FRONT_PIVOT
+            if closed_front and is_pivot:
+                basis = (Matrix.Translation(node.location)
+                         @ Matrix.Diagonal(node.scale.to_4d()))
+            m = (node.matrix_parent_inverse @ basis) @ m
             node = node.parent
         return m
 
@@ -3434,7 +3447,9 @@ class FaceFrameCabinet(GeoNodeCage):
                     sign = 1.0
             except Exception:
                 pass
-            mat = self._part_local_matrix(obj)
+            # Closed: the curve belongs to the opening, not to wherever
+            # the door happens to be swung to right now.
+            mat = self._part_local_matrix(obj, closed_front=True)
 
             def to_cab(dx, dz):
                 return mat @ Vector((dz, sign * dx, 0.0))
