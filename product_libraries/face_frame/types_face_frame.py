@@ -10499,6 +10499,10 @@ class FaceFrameCabinet(GeoNodeCage):
         part.obj['CABINET_PART'] = True
         part.obj['hb_split_node_name'] = rect['split_node_name']
         part.obj['hb_splitter_index'] = rect['splitter_index']
+        # Same right-click menu as the splitter it backs. Without this a
+        # backing has no MENU_ID and the part commands never open on it,
+        # which took the shelf entries in that menu out of reach.
+        part.obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_part_commands'
         if rect['axis'] == 'H':
             # Horizontal panel - no rotation, default mirror flags
             part.obj.location = (rect['x'], rect['y'], rect['z'])
