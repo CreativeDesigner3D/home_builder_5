@@ -351,6 +351,58 @@ def get_label_font(scene):
     return None
 
 
+# How font files name their bold cut. Checked against the regular font's
+# own folder, so a bold annotation stays in the same typeface the rest of
+# the drawing is set in.
+_BOLD_FILE_PATTERNS = ('{stem}b{ext}', '{stem}bd{ext}', '{stem}-Bold{ext}',
+                       '{stem}Bold{ext}', '{stem}_Bold{ext}', '{stem}-bd{ext}')
+
+
+def _find_bold_sibling(path):
+    """Locate the bold cut of a font file next to the regular one."""
+    if not path:
+        return None
+    folder, filename = os.path.split(path)
+    stem, ext = os.path.splitext(filename)
+    for pattern in _BOLD_FILE_PATTERNS:
+        candidate = os.path.join(folder, pattern.format(stem=stem, ext=ext))
+        if os.path.exists(candidate):
+            return candidate
+    return None
+
+
+def _find_calibri_bold():
+    """calibrib.ttf in the Windows font directories, or None."""
+    calibri = _find_calibri()
+    return _find_bold_sibling(calibri) if calibri else None
+
+
+def get_label_bold_font(scene):
+    """Resolve the bold companion of the annotation font.
+
+    Blender draws a bold character from the text data's font_bold slot,
+    which starts out holding the built-in Bfont - so bold only reads as
+    bold once a real bold face is loaded into it. The annotation font's
+    own bold file is preferred; Calibri Bold is the fallback, which is
+    what the default (Calibri) annotation text wants anyway. Returns
+    None when the machine has no bold face at all, and the caller leaves
+    the text unbolded rather than swapping in the built-in font.
+    """
+    regular = get_label_font(scene)
+    path = None
+    if regular is not None and regular.filepath:
+        path = _find_bold_sibling(
+            os.path.abspath(bpy.path.abspath(regular.filepath)))
+    if path is None:
+        path = _find_calibri_bold()
+    if path is None:
+        return None
+    try:
+        return bpy.data.fonts.load(path, check_existing=True)
+    except RuntimeError:
+        return None
+
+
 def apply_label_style(text_obj, scene):
     """Apply the resolved annotation font and color to a FONT object.
 

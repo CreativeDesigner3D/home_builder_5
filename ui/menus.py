@@ -1,6 +1,7 @@
 import bpy
 from mathutils import Vector
 
+from .. import hb_details
 from .. import hb_types
 from .. import units
 
@@ -740,6 +741,51 @@ class HOME_BUILDER_OT_set_text_alignment(bpy.types.Operator):
         return {'FINISHED'}
 
 
+def is_text_bold(obj):
+    """True when every character of an annotation text is set bold."""
+    if not is_annotation_text(obj):
+        return False
+    body_format = obj.data.body_format
+    return len(body_format) > 0 and all(c.use_bold for c in body_format)
+
+
+class HOME_BUILDER_OT_toggle_text_bold(bpy.types.Operator):
+    bl_idname = "home_builder.toggle_text_bold"
+    bl_label = "Bold Text"
+    bl_description = "Toggle bold on the selected annotation text"
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return len(get_annotation_text_objects(context)) > 0
+
+    def execute(self, context):
+        objs = get_annotation_text_objects(context)
+        # One state for the whole selection - bold unless every text is
+        # already bold - so the menu entry reads as a single toggle no
+        # matter how mixed the selection is.
+        make_bold = not all(is_text_bold(obj) for obj in objs)
+        bold_font = None
+        if make_bold:
+            bold_font = hb_details.get_label_bold_font(context.scene)
+            if bold_font is None:
+                self.report({'WARNING'},
+                            "No bold version of the annotation font is "
+                            "installed on this machine")
+                return {'CANCELLED'}
+        for obj in objs:
+            text_data = obj.data
+            # Blender takes the glyphs for a bold character from
+            # font_bold; leaving it on the built-in font would draw the
+            # note in a different typeface instead of bolding it.
+            if make_bold:
+                text_data.font_bold = bold_font
+            for char in text_data.body_format:
+                char.use_bold = make_bold
+            text_data.update_tag()
+        return {'FINISHED'}
+
+
 class HOME_BUILDER_MT_text_commands(bpy.types.Menu):
     """Right-click commands for a placed annotation text.
 
@@ -764,6 +810,8 @@ class HOME_BUILDER_MT_text_commands(bpy.types.Menu):
                                     text=label, icon=icon,
                                     depress=(current == value))
             props.alignment = value
+        layout.operator("home_builder.toggle_text_bold", text="Bold",
+                        icon='BOLD', depress=is_text_bold(obj))
         layout.separator()
         layout.operator("object.delete", text="Delete Text", icon='X')
 
@@ -836,6 +884,7 @@ classes = (
     HOME_BUILDER_OT_show_dimension_properties,
     HOME_BUILDER_MT_dimension_commands,
     HOME_BUILDER_OT_set_text_alignment,
+    HOME_BUILDER_OT_toggle_text_bold,
     HOME_BUILDER_MT_text_commands,
     HOME_BUILDER_OT_show_reference_image_properties,
     HOME_BUILDER_MT_reference_image_commands,
