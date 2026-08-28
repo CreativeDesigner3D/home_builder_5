@@ -142,6 +142,12 @@ def _apply_swing(ctx, swing_value):
     """Run the leaf solver with an overridden swing value and write the
     resulting transforms to the existing pivots. No recalc, no part
     rebuild.
+
+    The front's own offset inside the pivot is written too. It does
+    not change with the swing, but it is paired with where the solver
+    puts the pivot - and a file whose fronts were built before that
+    pairing changed would otherwise animate its doors off the pivot
+    they were built against, until something forced a recalc.
     """
     proxy = _SwingOverrideProxy(ctx['op_props'], swing_value)
     leaves = solver.front_leaves(
@@ -150,6 +156,9 @@ def _apply_swing(ctx, swing_value):
     for pivot, leaf in zip(ctx['pivots'], leaves):
         pivot.location = leaf['pivot_position']
         pivot.rotation_euler = leaf['pivot_rotation']
+        for front in pivot.children:
+            if front.get('hb_part_role') in OPENING_FRONT_ROLES:
+                front.location = leaf['part_position']
 
 
 class hb_face_frame_OT_open_mode(bpy.types.Operator):

@@ -4196,7 +4196,17 @@ def front_overlay(rect, cab_props, opening_props, side):
 # Construction constants for visual open state. Cabinet-level
 # customization can come later; for now the values match typical
 # residential hinge / slide hardware.
-DOOR_MAX_SWING_ANGLE = math.radians(100.0)
+#
+# A door stops square. Hinges open further than that on the bench, but
+# a door only reaches it with nothing beside it - and in a run there
+# always is something: the next door, a return wall, an appliance. Past
+# 90 degrees a door leans back across its own hinge line and into that
+# neighbour, which is what made doors swing through walls and through
+# each other. Square is the last angle that is true everywhere, and
+# together with the hinge barrel sitting on the door's front face
+# (_hinge_barrel_pivot) it guarantees no part of a door ever crosses
+# the line it hangs on.
+DOOR_MAX_SWING_ANGLE = math.radians(90.0)
 DOUBLE_DOOR_REVEAL = inch(0.125)
 # Inset doors butt closer than overlay doors where a pair meets.
 INSET_DOUBLE_DOOR_REVEAL = inch(0.0625)   # 1/16"
@@ -4300,6 +4310,32 @@ _FRONT_TYPE_TO_ROLE_NAME = {
 }
 
 
+def _hinge_barrel_pivot(leaf, door_thickness):
+    """Move a swinging leaf's turning axis from the back of the door to
+    its front face, where a hinge barrel actually sits, and slide the
+    door back inside the pivot by the same amount so the CLOSED
+    position is untouched.
+
+    Turning a door about its own back edge is what a drawing program
+    does, not what a hinge does, and the difference shows the moment
+    the door moves: the back corner on the hinge side sweeps OUT, away
+    from the cabinet, straight through whatever is beside it - a return
+    wall, the next door along. Hung on its front face the door rolls
+    off that corner instead, the way it does on a real hinge, and every
+    point on it stays on the door's own side of the hinge line for as
+    far as it opens (see DOOR_MAX_SWING_ANGLE).
+
+    Y is forward here: the pivot moves forward by a thickness, the part
+    moves back by one inside the pivot. Applies to leaves that turn -
+    drawers and pullouts slide instead, and an inset panel never moves.
+    """
+    px, py, pz = leaf['pivot_position']
+    ox, oy, oz = leaf['part_position']
+    leaf['pivot_position'] = (px, py - door_thickness, pz)
+    leaf['part_position'] = (ox, oy + door_thickness, oz)
+    return leaf
+
+
 def _single_door_leaf_pivot(layout, rect, cab_props, opening_props):
     """Pivot position + rotation for a single-leaf door (LEFT / RIGHT /
     TOP / BOTTOM hinge), and the door's offset inside the pivot.
@@ -4324,29 +4360,29 @@ def _single_door_leaf_pivot(layout, rect, cab_props, opening_props):
     hinge = opening_props.hinge_side
 
     if hinge == 'RIGHT':
-        return {
+        return _hinge_barrel_pivot({
             'pivot_position': (base_x + width, base_y, base_z),
             'pivot_rotation': (0.0, 0.0, +angle),
             'part_position':  (-width, 0.0, 0.0),
-        }
+        }, door_thickness)
     if hinge == 'TOP':
-        return {
+        return _hinge_barrel_pivot({
             'pivot_position': (base_x, base_y, base_z + height),
             'pivot_rotation': (-angle, 0.0, 0.0),
             'part_position':  (0.0, 0.0, -height),
-        }
+        }, door_thickness)
     if hinge == 'BOTTOM':
-        return {
+        return _hinge_barrel_pivot({
             'pivot_position': (base_x, base_y, base_z),
             'pivot_rotation': (+angle, 0.0, 0.0),
             'part_position':  (0.0, 0.0, 0.0),
-        }
+        }, door_thickness)
     # LEFT (and DOUBLE doesn't reach here - handled separately)
-    return {
+    return _hinge_barrel_pivot({
         'pivot_position': (base_x, base_y, base_z),
         'pivot_rotation': (0.0, 0.0, -angle),
         'part_position':  (0.0, 0.0, 0.0),
-    }
+    }, door_thickness)
 
 
 def _double_door_leaves(layout, rect, cab_props, opening_props, role):
@@ -4370,20 +4406,20 @@ def _double_door_leaves(layout, rect, cab_props, opening_props, role):
     angle = opening_props.swing_percent * DOOR_MAX_SWING_ANGLE
 
     return [
-        {
+        _hinge_barrel_pivot({
             'role': role, 'name': 'Door (Left)',
             'pivot_position': (base_x, base_y, base_z),
             'pivot_rotation': (0.0, 0.0, -angle),
             'part_position':  (0.0, 0.0, 0.0),
             'part_dims':      (height, leaf_width, door_thickness),
-        },
-        {
+        }, door_thickness),
+        _hinge_barrel_pivot({
             'role': role, 'name': 'Door (Right)',
             'pivot_position': (base_x + width, base_y, base_z),
             'pivot_rotation': (0.0, 0.0, +angle),
             'part_position':  (-leaf_width, 0.0, 0.0),
             'part_dims':      (height, leaf_width, door_thickness),
-        },
+        }, door_thickness),
     ]
 
 
@@ -4511,24 +4547,24 @@ def _triple_door_leaves(layout, rect, cab_props, opening_props, role):
 
     def _right_hinged(name, x_left, ovr):
         # pivot on the leaf's RIGHT edge; part extends back in -X
-        return {
+        return _hinge_barrel_pivot({
             'role': role, 'name': name,
             'pivot_position': (x_left + leaf_width, base_y, base_z),
             'pivot_rotation': (0.0, 0.0, +angle),
             'part_position':  (-leaf_width, 0.0, 0.0),
             'part_dims':      (height, leaf_width, door_thickness),
             'frame_override': ovr,
-        }
+        }, door_thickness)
 
     def _left_hinged(name, x_left, ovr):
-        return {
+        return _hinge_barrel_pivot({
             'role': role, 'name': name,
             'pivot_position': (x_left, base_y, base_z),
             'pivot_rotation': (0.0, 0.0, -angle),
             'part_position':  (0.0, 0.0, 0.0),
             'part_dims':      (height, leaf_width, door_thickness),
             'frame_override': ovr,
-        }
+        }, door_thickness)
 
     rails = {'top_rail': fw, 'bottom_rail': fw}
     # The overrides are visual-true (left_stile = the viewer's left):
