@@ -554,6 +554,7 @@ def _draw_wall_length_dim(op):
     try:
         length = wall.get_input('Length')
         height = wall.get_input('Height')
+        thickness = wall.get_input('Thickness') or 0.0
     except Exception:
         return
 
@@ -589,16 +590,49 @@ def _draw_wall_length_dim(op):
         return
     seg_dir = seg.normalized()
     # Perpendicular in screen space — push dim outward (away from wall body)
-    offset_dir = Vector((-seg_dir.y, seg_dir.x))
+    perp = Vector((-seg_dir.y, seg_dir.x))
 
-    # Flip offset_dir so it points away from the wall's body. Use a sample
-    # point on the wall's centerline to decide which side is "inside".
-    wall_mid_world = Vector((wm[0][3], wm[1][3], wm[2][3] + (height or 0) / 2))
-    wall_mid_screen = view3d_utils.location_3d_to_region_2d(region, rv3d, wall_mid_world)
-    if wall_mid_screen is not None:
-        seg_mid = (s_start + s_end) / 2
-        if (wall_mid_screen - seg_mid).dot(offset_dir) > 0:
-            offset_dir = -offset_dir
+    # Which side of the line the wall body is on, asked of the wall
+    # rather than of the screen. The body runs from the origin line (its
+    # BACK face) to +thickness along local +Y — the convention
+    # _draw_wall_snap_dimensions builds its faces from — so local -Y is
+    # the clear side, whatever the wall is rotated to.
+    #
+    # It used to sample the wall's ORIGIN at half height and ask which
+    # side of the dimension line that fell on. From the middle of the
+    # line the origin lies back along the wall, so the number being
+    # tested was the rounding left over after the along-wall part
+    # cancelled: near zero, and free to change sign on any small move.
+    # Walls get drawn in a top view, where the half-height drop projects
+    # to nothing as well, and rotating one ran that residue back and
+    # forth through zero — the dimension flipping sides as it turned.
+    body_dir = Vector((wm[0][1], wm[1][1], wm[2][1]))
+    if body_dir.length > 1e-6:
+        body_dir.normalize()
+    probe_len = max(thickness, units.inch(4))
+    mid_world = origin_2d + wall_dir * (length / 2.0)
+    s_mid = view3d_utils.location_3d_to_region_2d(region, rv3d, mid_world)
+    s_probe = view3d_utils.location_3d_to_region_2d(
+        region, rv3d, mid_world - body_dir * probe_len)
+
+    # Keep the side we chose for this wall unless the geometry says
+    # otherwise clearly. Edge-on views leave the probe with almost no
+    # length on screen, and a hair either way there is exactly the
+    # flicker this is here to stop.
+    if getattr(op, '_wall_dim_side_for', None) != wall_obj.name:
+        op._wall_dim_side_for = wall_obj.name
+        op._wall_dim_side = 0
+    side = getattr(op, '_wall_dim_side', 0)
+    if s_mid is not None and s_probe is not None:
+        away = s_probe - s_mid
+        if away.length > 1e-3:
+            reading = perp.dot(away.normalized())
+            if abs(reading) > 0.15 or side == 0:
+                side = 1 if reading >= 0 else -1
+    if side == 0:
+        side = 1
+    op._wall_dim_side = side
+    offset_dir = perp * side
 
     offset_px = 20
     tick_half = 5
