@@ -71,6 +71,8 @@ class HOME_BUILDER_MT_wall_commands(bpy.types.Menu):
         layout.operator("home_builder_walls.wall_prompts", text="Wall Prompts")
         layout.operator("home_builder_walls.change_room_size", text="Change Room Size", icon='ARROW_LEFTRIGHT')
         layout.separator()
+        layout.operator("home_builder_walls.update_wall_miters", text="Recalculate Wall Corners", icon='FILE_REFRESH')
+        layout.separator()
         layout.operator("home_builder_walls.hide_wall", text="Hide Wall", icon='HIDE_ON')
         layout.operator("home_builder_walls.isolate_selected_walls", text="Isolate Selected Walls", icon='ZOOM_SELECTED')
         layout.operator("home_builder_walls.show_all_walls", text="Show All Walls", icon='HIDE_OFF')

@@ -115,10 +115,35 @@ def calculate_wall_miter_angles(wall_obj):
 
 
 def update_all_wall_miters():
-    """Update miter angles for all walls in the scene."""
+    """Recompute miter angles on every wall, chain by chain.
+
+    Walks the wall chains instead of each wall's COPY_LOCATION link so the
+    two corners the constraint walk cannot see come out right: a closed
+    room's closure seam (which keeps its miter) and an end whose neighbor
+    has been removed (which goes back to square).
+
+    Every scene is walked, not just the active one: each room is its own
+    scene, and the per-wall constraint pass would flatten the closure seam
+    of every room the user is not currently in.
+    """
+    handled = set()
+    for scene in bpy.data.scenes:
+        for chain in find_wall_chains(scene):
+            handled |= _remiter_chain(chain)
+
     for obj in bpy.data.objects:
-        if 'IS_WALL_BP' in obj:
+        if 'IS_WALL_BP' not in obj or obj.name in handled:
+            continue
+        # A wall the chain finder never saw (no scene of its own, or no
+        # geometry nodes on it yet) still gets the old per-wall pass, and
+        # a broken one is skipped rather than aborting the whole recompute.
+        try:
+            if not hb_types.GeoNodeWall(obj).has_modifier():
+                continue
             calculate_wall_miter_angles(obj)
+            obj.update_tag()
+        except (ValueError, KeyError, AttributeError):
+            continue
 
 
 def update_connected_wall_miters(wall_obj):
@@ -176,14 +201,16 @@ def get_wall_endpoints(wall_obj):
     
     return start.to_2d(), end.to_2d()
 
-def find_wall_chains():
-    """Find connected chains of walls in the current scene, returning list of ordered wall objects.
+def find_wall_chains(scene=None):
+    """Find connected chains of walls in a scene, returning list of ordered wall objects.
     
     Handles both open chains (interior walls) and closed loops (room perimeters).
     Supports junction points where multiple walls share the same start/end location.
     Closed loops are detected first so interior branches don't steal perimeter walls.
+    Defaults to the active scene; pass `scene` to walk another room.
     """
-    walls = [obj for obj in bpy.context.scene.objects if obj.get('IS_WALL_BP')]
+    scene = scene or bpy.context.scene
+    walls = [obj for obj in scene.objects if obj.get('IS_WALL_BP')]
     
     if not walls:
         return []
@@ -358,6 +385,24 @@ def _update_chain_miters(chain, is_closed):
     corners = n if is_closed else n - 1
     for i in range(corners):
         _miter_between(chain[i], chain[(i + 1) % n])
+
+
+def _remiter_chain(chain):
+    """Re-miter one wall chain and tag its walls so the new angles show up
+    without a view move. Returns the names of the walls it touched."""
+    walls = [obj for obj in chain if hb_types.GeoNodeWall(obj).has_modifier()]
+    if not walls:
+        return set()
+    # A chain that lost a wall to the filter is no longer a loop we can
+    # trust, so it is mitered as an open run.
+    is_closed = (len(walls) == len(chain)
+                 and is_closed_loop(get_room_boundary_points(walls)))
+    _update_chain_miters(walls, is_closed)
+    for obj in walls:
+        # Direct modifier writes need an explicit depsgraph tag to show up
+        # without a view move - see update_wall_height.
+        obj.update_tag()
+    return {obj.name for obj in walls}
 
 
 def offset_wall_perpendicular(wall_obj, offset, tolerance_deg=None):
@@ -4552,14 +4597,18 @@ class home_builder_walls_OT_update_wall_thickness(bpy.types.Operator):
 
 
 class home_builder_walls_OT_update_wall_miters(bpy.types.Operator):
-    """Update miter angles for all walls based on their connections"""
+    """Recalculate every wall corner from the walls that are actually there"""
     bl_idname = "home_builder_walls.update_wall_miters"
-    bl_label = "Update Wall Miters"
+    bl_label = "Recalculate Wall Corners"
+    bl_description = ("Recalculate the mitered ends on every wall. Ends that "
+                      "no longer meet another wall go back to square")
     bl_options = {'UNDO'}
 
     def execute(self, context):
         update_all_wall_miters()
-        self.report({'INFO'}, "Updated wall miter angles")
+        if context.area is not None:
+            context.area.tag_redraw()
+        self.report({'INFO'}, "Recalculated wall corners")
         return {'FINISHED'}
 
 
@@ -5101,11 +5150,21 @@ class home_builder_walls_OT_delete_wall(bpy.types.Operator):
                 if nb.obj.name in bpy.data.objects:
                     neighbors_to_remiter.add(nb.obj.name)
 
-        # Update miter angles on surviving neighbors
-        for name in neighbors_to_remiter:
+        # Update miter angles on surviving neighbors. The neighbor's whole
+        # chain is re-mitered rather than just the neighbor itself: taking a
+        # wall out of a closed room opens the loop, and the wall on the far
+        # side of the closure seam is not reachable through the
+        # COPY_LOCATION links the neighbor search follows, so it would
+        # otherwise keep a miter for a corner that no longer exists.
+        remitered = set()
+        for chain in find_wall_chains():
+            if any(obj.name in neighbors_to_remiter for obj in chain):
+                remitered |= _remiter_chain(chain)
+        for name in neighbors_to_remiter - remitered:
             obj = bpy.data.objects.get(name)
             if obj is not None:
                 calculate_wall_miter_angles(obj)
+                obj.update_tag()
 
         if deleted_count == 1:
             self.report({'INFO'}, "Wall deleted")
