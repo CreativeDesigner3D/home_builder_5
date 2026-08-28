@@ -857,6 +857,24 @@ def _draw_locked_rail_row(layout, bp, attr, unlock_attr, text):
     _locked_field(layout, bp, attr, unlock_attr, text)
 
 
+def draw_bay_finish_options(layout, bay_obj):
+    """The finish controls for one bay: whether the exterior finish reads
+    inside it, in which material, and whether it lines the cavity or sits
+    as a flush band around the FF opening.
+
+    Shared by the two bay property draws and the right-click Finish Bay
+    dialog, so all three offer the same list.
+    """
+    bp = bay_obj.face_frame_bay
+    col = layout.column(align=True)
+    col.prop(bp, 'finish_bay', text="Finish")
+    if bp.finish_bay:
+        col.prop(bp, 'finish_bay_material', text="Finish Color")
+        col.prop(bp, 'finish_bay_flush', text="Finish Flush")
+        if bp.finish_bay_flush:
+            col.prop(bp, 'finish_bay_flush_depth', text="Flush Depth")
+
+
 def draw_bay_properties(layout, bay_obj):
     """All editable properties of a single bay. Used by both the
     sidebar Selection sub-panel and the bay_prompts popup. Includes a
@@ -947,12 +965,7 @@ def draw_bay_properties(layout, bay_obj):
     col.prop(bp, 'remove_carcass', text="Remove Carcass")
     if cab_type in ('BASE', 'TALL', 'LAP_DRAWER'):
         col.prop(bp, 'floating_bay', text="Floating")
-    col.prop(bp, 'finish_bay', text="Finish")
-    if bp.finish_bay:
-        col.prop(bp, 'finish_bay_material', text="Finish Color")
-        col.prop(bp, 'finish_bay_flush', text="Finish Flush")
-        if bp.finish_bay_flush:
-            col.prop(bp, 'finish_bay_flush_depth', text="Flush Depth")
+    draw_bay_finish_options(col, bay_obj)
     if cab_type in ('BASE', 'UPPER'):
         col.prop(bp, 'bottom_rail_profile', text="Bottom Rail Profile")
 
@@ -1846,12 +1859,7 @@ def draw_bay_in_prompts(layout, bay_obj):
     col.prop(bp, 'remove_carcass', text="Remove Carcass")
     if cab_type in ('BASE', 'TALL', 'LAP_DRAWER'):
         col.prop(bp, 'floating_bay', text="Floating")
-    col.prop(bp, 'finish_bay', text="Finish")
-    if bp.finish_bay:
-        col.prop(bp, 'finish_bay_material', text="Finish Color")
-        col.prop(bp, 'finish_bay_flush', text="Finish Flush")
-        if bp.finish_bay_flush:
-            col.prop(bp, 'finish_bay_flush_depth', text="Flush Depth")
+    draw_bay_finish_options(col, bay_obj)
     if cab_type in ('BASE', 'UPPER'):
         col.prop(bp, 'bottom_rail_profile', text="Bottom Rail Profile")
 

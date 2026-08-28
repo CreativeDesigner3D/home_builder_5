@@ -1921,6 +1921,63 @@ class hb_face_frame_OT_opening_prompts(bpy.types.Operator):
         ui_face_frame.draw_opening_properties(self.layout, opening_obj)
 
 
+class hb_face_frame_OT_finish_bay_prompts(bpy.types.Operator):
+    """Finish the inside of one bay, straight from the right-click menu:
+    the same controls the bay properties dialog carries, without opening
+    the whole thing.
+
+    The bay is resolved by cached name, because switching the finish on
+    rebuilds the bay's parts - and on a bay cage the click target itself
+    survives, but the liners it grows do not.
+    """
+    bl_idname = "hb_face_frame.finish_bay_prompts"
+    bl_label = "Finish Bay"
+    bl_description = ("Finish the inside of this bay so the exterior "
+                      "finish reads within it")
+    bl_options = {'UNDO'}
+
+    bay_name: bpy.props.StringProperty(
+        default='', options={'HIDDEN', 'SKIP_SAVE'},
+    )  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj is not None and bool(obj.get(types_face_frame.TAG_BAY_CAGE))
+
+    def _resolve_bay(self, context):
+        if self.bay_name:
+            obj = bpy.data.objects.get(self.bay_name)
+            if obj is not None and obj.get(types_face_frame.TAG_BAY_CAGE):
+                return obj
+        obj = context.active_object
+        if obj is not None and obj.get(types_face_frame.TAG_BAY_CAGE):
+            return obj
+        return None
+
+    def invoke(self, context, event):
+        bay_obj = self._resolve_bay(context)
+        if bay_obj is None:
+            self.report({'WARNING'}, "No bay selected")
+            return {'CANCELLED'}
+        self.bay_name = bay_obj.name
+        return context.window_manager.invoke_props_dialog(self, width=300)
+
+    def execute(self, context):
+        return {'FINISHED'}
+
+    def draw(self, context):
+        from .. import ui_face_frame
+        bay_obj = self._resolve_bay(context)
+        if bay_obj is None:
+            self.layout.label(text="No bay selected", icon='INFO')
+            return
+        self.layout.label(
+            text=f"Bay {bay_obj.face_frame_bay.bay_index + 1}",
+            icon='MESH_CUBE')
+        ui_face_frame.draw_bay_finish_options(self.layout, bay_obj)
+
+
 class hb_face_frame_OT_finish_opening_prompts(bpy.types.Operator):
     """Finish the inside of one opening, straight from the right-click
     menu: the same controls the sidebar's Finish Options box carries,
@@ -6415,6 +6472,7 @@ classes = (
     hb_face_frame_OT_bay_prompts,
     hb_face_frame_OT_opening_prompts,
     hb_face_frame_OT_finish_opening_prompts,
+    hb_face_frame_OT_finish_bay_prompts,
     hb_face_frame_OT_drawer_box_prompts,
     hb_face_frame_OT_sink_duo_drawer_prompts,
     hb_face_frame_OT_sink_duo_rollout_prompts,

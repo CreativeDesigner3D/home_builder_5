@@ -233,6 +233,11 @@ class HOME_BUILDER_MT_face_frame_bay_commands(bpy.types.Menu):
         layout = self.layout
         layout.operator("hb_face_frame.bay_prompts",
                         text="Bay Properties...", icon='WINDOW')
+        # Finishing a bay is a property edit like the rest of that
+        # dialog, so it sits with it rather than down among the
+        # structural edits.
+        layout.operator("hb_face_frame.finish_bay_prompts",
+                        text="Finish Bay...", icon='SHADING_RENDERED')
 
         # Change Bay submenu (preset swaps) sits right under Properties
         # so type-changing edits stay grouped with property edits. Hidden
