@@ -57,6 +57,44 @@ def _draw_cutout_items(layout, obj):
                     text="Cutouts", icon='MOD_BOOLEAN')
 
 
+def _draw_make_editable_items(layout, obj):
+    """Make Editable / Revert to Parametric for one part.
+
+    Applying a part's GeoNode(s) turns it into real, hand-editable mesh
+    that the recalc then leaves alone; Revert restores parametric
+    control. Works on structural cutparts AND door / drawer fronts (each
+    has its own apply / revert path - see the operators), and draws
+    nothing for a part that is neither.
+
+    Both gates are self-checking, so any menu can offer this and the
+    rows appear only where they mean something.
+    """
+    if obj is None:
+        return
+    is_manual = bool(obj.get('IS_MANUAL_PART'))
+    can_make_editable = (
+        ops_part_commands._can_make_editable(obj)
+        or ops_part_commands._can_make_front_editable(obj))
+    # Hood parts have no cabinet recalc to re-drive them, so they revert
+    # via their own snapshot path (home_builder.revert_hood_part) which
+    # restores just the clicked part. A hood part made editable before
+    # the snapshot feature has no snapshot - rebuild the hood to restore
+    # it.
+    if is_manual and obj.get('IS_WOOD_HOOD_PART'):
+        if obj.get('HOOD_PARAMETRIC_SNAPSHOT'):
+            layout.separator()
+            layout.operator("home_builder.revert_hood_part",
+                            text="Revert to Parametric", icon='FILE_REFRESH')
+    elif is_manual:
+        layout.separator()
+        layout.operator("hb_face_frame.revert_part_to_parametric",
+                        text="Revert to Parametric", icon='FILE_REFRESH')
+    elif can_make_editable:
+        layout.separator()
+        layout.operator("hb_face_frame.make_part_editable",
+                        text="Make Editable", icon='EDITMODE_HLT')
+
+
 def _has_drawer_slides_options():
     """Whether the host application offers drawer slide hardware. HB5
     ships none, so the submenu simply doesn't appear on its own."""
@@ -577,32 +615,7 @@ class HOME_BUILDER_MT_face_frame_part_commands(bpy.types.Menu):
 
         _draw_cutout_items(layout, obj)
 
-        # Make Editable / Revert to Parametric. Applying a part's GeoNode(s)
-        # turns it into real, hand-editable mesh that the recalc then leaves
-        # alone; Revert restores parametric control. Works on structural
-        # cutparts AND door / drawer fronts (each has its own apply / revert
-        # path - see the operators).
-        is_manual = bool(obj.get('IS_MANUAL_PART')) if obj is not None else False
-        can_make_editable = (
-            ops_part_commands._can_make_editable(obj)
-            or ops_part_commands._can_make_front_editable(obj))
-        # Hood parts have no cabinet recalc to re-drive them, so they revert via
-        # their own snapshot path (home_builder.revert_hood_part) which restores
-        # just the clicked part. A hood part made editable before the snapshot
-        # feature has no snapshot - rebuild the hood to restore it.
-        if is_manual and obj is not None and obj.get('IS_WOOD_HOOD_PART'):
-            if obj.get('HOOD_PARAMETRIC_SNAPSHOT'):
-                layout.separator()
-                layout.operator("home_builder.revert_hood_part",
-                                text="Revert to Parametric", icon='FILE_REFRESH')
-        elif is_manual:
-            layout.separator()
-            layout.operator("hb_face_frame.revert_part_to_parametric",
-                            text="Revert to Parametric", icon='FILE_REFRESH')
-        elif can_make_editable:
-            layout.separator()
-            layout.operator("hb_face_frame.make_part_editable",
-                            text="Make Editable", icon='EDITMODE_HLT')
+        _draw_make_editable_items(layout, obj)
 
 
 class HOME_BUILDER_MT_face_frame_interior_part_commands(bpy.types.Menu):
@@ -648,6 +661,9 @@ class HOME_BUILDER_MT_face_frame_interior_part_commands(bpy.types.Menu):
                         text="Finish Opening...", icon='SHADING_RENDERED')
         layout.operator("hb_face_frame.interior_options",
                         text="Interior Options...", icon='MESH_GRID')
+        # A shelf is as worth hand-editing as any other cutpart, and
+        # this is the only menu it has.
+        _draw_make_editable_items(layout, obj)
 
 
 class HOME_BUILDER_MT_face_frame_drawer_box_construction(bpy.types.Menu):
@@ -735,6 +751,7 @@ class HOME_BUILDER_MT_face_frame_drawer_box_commands(bpy.types.Menu):
                         text="Finish Opening...", icon='SHADING_RENDERED')
         layout.operator("hb_face_frame.interior_options",
                         text="Interior Options...", icon='MESH_GRID')
+        _draw_make_editable_items(layout, context.active_object)
 
 
 class HOME_BUILDER_MT_face_frame_opening_commands(bpy.types.Menu):
