@@ -143,6 +143,12 @@ PART_ROLE_BACK = 'BACK'
 # area light in the route for renders. Managed parts (built / cleaned
 # by _apply_finished_bottom each recalc), not part of any wipe set.
 PART_ROLE_FINISHED_BOTTOM = 'FINISHED_BOTTOM'
+# finished_bottom_bays holds the carcass-bottom segments the condition
+# reaches: a list of segment keys, EMPTY for all of them. A cabinet can
+# also want the condition for a mid-rail shelf and for no bottom at all
+# - a refrigerator surround finishing the shelf over the appliance -
+# and empty cannot say that, so this sentinel does.
+FINISHED_BOTTOM_BAYS_NONE = 'NONE'
 PART_ROLE_FB_LED_CUTTER = 'FINISHED_BOTTOM_LED_CUTTER'
 PART_ROLE_FB_LIGHT = 'FINISHED_BOTTOM_LIGHT'
 # Visible LED diffuser: a thin emissive strip mesh up inside the route,
@@ -4933,10 +4939,13 @@ class FaceFrameCabinet(GeoNodeCage):
 
     def _fb_bottom_targets(self, cab):
         """One target per live carcass-bottom segment, filtered by the
-        cabinet's per-bay scope (empty scope = every segment)."""
+        cabinet's per-bay scope (empty scope = every segment,
+        FINISHED_BOTTOM_BAYS_NONE = none of them)."""
         scope = {s.strip() for s in
                  getattr(cab, 'finished_bottom_bays', '').split(',')
                  if s.strip()}
+        if FINISHED_BOTTOM_BAYS_NONE in scope:
+            return []
         targets = []
         for src in self.obj.children:
             if (src.get('hb_part_role') != PART_ROLE_BOTTOM

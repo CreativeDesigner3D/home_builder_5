@@ -3747,7 +3747,14 @@ def _fb_bays_changed(self, context):
         return
     keys = [k for k in self.segment_keys.split(',') if k]
     selected = [k for i, k in enumerate(keys) if self.bay_flags[i]]
-    value = '' if len(selected) == len(keys) else ','.join(selected)
+    if len(selected) == len(keys):
+        value = ''                                   # all of them
+    elif selected:
+        value = ','.join(selected)
+    else:
+        # Every box cleared. Joining nothing gives '', which reads back
+        # as ALL - the opposite of what was asked for.
+        value = types_face_frame.FINISHED_BOTTOM_BAYS_NONE
     cab = root.face_frame_cabinet
     if cab.finished_bottom_bays != value:
         cab.finished_bottom_bays = value
@@ -3850,6 +3857,17 @@ class hb_face_frame_OT_set_finished_bottom(bpy.types.Operator):
             self.shelf_split = split.name
             self.shelf_index = idx
             _fb_splitter_entry(split, idx).finished_bottom = True
+            # A shelf is not the cabinet's bottom, and asking for one
+            # says nothing about the other. The condition itself is a
+            # cabinet property, so on an upper that had none the moment
+            # this dialog set one every carcass bottom took it up too -
+            # an empty scope means all of them. Say none of them
+            # instead; a cabinet already finishing its bottoms keeps
+            # whatever scope it was given.
+            cab = root.face_frame_cabinet
+            if cab.finished_bottom_type == 'NONE':
+                cab.finished_bottom_bays = \
+                    types_face_frame.FINISHED_BOTTOM_BAYS_NONE
             return context.window_manager.invoke_props_dialog(self, width=280)
         self.shelf_split = ''
         # One toggle per live carcass-bottom segment (same filter the
