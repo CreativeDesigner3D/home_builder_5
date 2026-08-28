@@ -8534,7 +8534,8 @@ class FaceFrameCabinet(GeoNodeCage):
                 # bay_bottom) maps them to cabinet-local. An opening only
                 # reaches the floor when the bay bottom is removed AND it's
                 # the bottom-most leaf (cage_z == 0).
-                for leaf in solver.bay_openings(layout, bi)['leaves']:
+                bay_tree = solver.bay_openings(layout, bi)
+                for leaf in bay_tree['leaves']:
                     op_obj = bpy.data.objects.get(leaf['obj_name'])
                     if op_obj is None:
                         continue
@@ -8554,6 +8555,8 @@ class FaceFrameCabinet(GeoNodeCage):
                                  'right':  leaf['reveal_right'],
                                  'top':    leaf['reveal_top'],
                                  'bottom': leaf['reveal_bottom']},
+                        vert_top_z=self._finish_opening_ceiling_z(
+                            bay_tree, leaf, bay_bottom),
                     )
                     op_to_floor = bay_to_floor and abs(leaf['cage_z']) < 1e-6
                     # A lone finished opening can't split the bay's back
@@ -8618,6 +8621,49 @@ class FaceFrameCabinet(GeoNodeCage):
                     and child.location.x + length >= right - tol):
                 child[TAG_FINISH_FLOOR] = True
                 return
+
+    def _finish_opening_ceiling_z(self, bay_tree, leaf, bay_bottom):
+        """Cabinet-local Z of the underside of the shelf over a finished
+        opening, or None when the opening's own top is the real one.
+
+        An opening's cage stops at the BOTTOM edge of the rail above it,
+        but the shelf behind that rail hangs from the rail's TOP edge -
+        so the cavity carries on past the cage by the rail's width less
+        the shelf's thickness, three quarters of an inch on a 1-1/2"
+        rail. A liner cut to the cage leaves exactly that band of bare
+        carcass side showing above it, which is visible through the
+        opening. The liner has to run up to the shelf.
+
+        The rail and its shelf come out of the same splitter, so they
+        are matched by splitter rather than by hunting for a panel at
+        the right height: a splitter whose bottom edge is this leaf's
+        top edge, then that splitter's own backing. A split with its
+        backing removed pairs with nothing and the liner stays where it
+        was - there is no shelf there to reach.
+        """
+        tol = inch(1.0 / 64.0)
+        leaf_top = leaf['cage_z'] + leaf['cage_dim_z']
+        left = leaf['cage_x']
+        right = left + leaf['cage_dim_x']
+        keys = {(s['split_node_name'], s['splitter_index'])
+                for s in bay_tree['splitters']
+                if abs(s['z'] - leaf_top) <= tol}
+        if not keys:
+            return None
+        for backing in bay_tree['backings']:
+            if backing.get('axis') != 'H':
+                continue
+            if (backing['split_node_name'],
+                    backing['splitter_index']) not in keys:
+                continue
+            # The backing spans its parent cage, which contains this
+            # leaf whenever the splitter is the one directly above it.
+            if (backing['x'] > left + tol
+                    or backing['x'] + backing['length'] < right - tol):
+                continue
+            if backing['z'] > leaf_top + tol:
+                return bay_bottom + backing['z']
+        return None
 
     def _finish_region_specs(self, layout, region, flush, raw_depth, to_floor,
                              t, want_back=False, want_top=True):
@@ -8689,7 +8735,13 @@ class FaceFrameCabinet(GeoNodeCage):
             # bay can't split the bay's back panel horizontally, so it
             # gets a liner there instead.
             vert_bottom_z = 0.0 if to_floor else bottom_z
-            vert_height   = top_z - vert_bottom_z
+            # The sides (and the back) run to the shelf over the region
+            # when that sits above the region's own top - see
+            # _finish_opening_ceiling_z. The ceiling part, where one is
+            # built at all, still caps the region itself.
+            ceiling_z     = region.get('vert_top_z')
+            vert_top_z    = top_z if ceiling_z is None else ceiling_z
+            vert_height   = vert_top_z - vert_bottom_z
             specs = [
                 ('LEFT',  dict(rot=(0.0, math.radians(-90), 0.0),
                                mirror_y=True, mirror_z=True,
