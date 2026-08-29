@@ -848,6 +848,15 @@ def _active_tool_id(context):
     return getattr(ref, 'idname', None)
 
 
+def _with_hotkey(label, hotkey):
+    """Hover text for a button that also answers to a key.
+
+    The keys are the stock ones; a remapped keymap would make the chip
+    lie, so only buttons whose key we ship are given one.
+    """
+    return "%s (%s)" % (label, hotkey) if hotkey else label
+
+
 class _ViewportToolButton:
     """One of Blender's viewport tools as a HUD button.
 
@@ -856,17 +865,18 @@ class _ViewportToolButton:
     Switching is all it does -- the tool itself is Blender's.
     """
 
-    def __init__(self, tool_id, label, glyph):
+    def __init__(self, tool_id, label, glyph, hotkey=None):
         self.tool_id = tool_id
         self.label = label
         self.glyph = glyph
+        self.hotkey = hotkey
 
     @property
     def width(self):
         return int(BTN_HEIGHT * _s())        # square
 
     def hover_label(self):
-        return self.label
+        return _with_hotkey(self.label, self.hotkey)
 
     def visible(self, context):
         # Always: every scene the HUD draws in is a viewport. The
@@ -899,17 +909,18 @@ class _IconCommandButton:
     where every button is an icon the name arrives on hover instead.
     """
 
-    def __init__(self, op_idname, label, glyph):
+    def __init__(self, op_idname, label, glyph, hotkey=None):
         self.op_idname = op_idname
         self.label = label
         self.glyph = glyph
+        self.hotkey = hotkey
 
     @property
     def width(self):
         return int(BTN_HEIGHT * _s())
 
     def hover_label(self):
-        return self.label
+        return _with_hotkey(self.label, self.hotkey)
 
     def visible(self, context):
         return True
@@ -933,14 +944,15 @@ class _IconCommandButton:
 _VIEW_TOOL_BUTTONS = [
     _ViewportToolButton('builtin.select_box', "Box Select",
                         _glyph_select_box),
-    _ViewportToolButton('builtin.move', "Move", _glyph_move),
-    _ViewportToolButton('builtin.rotate', "Rotate", _glyph_rotate),
+    _ViewportToolButton('builtin.move', "Move", _glyph_move, hotkey="G"),
+    _ViewportToolButton('builtin.rotate', "Rotate", _glyph_rotate,
+                        hotkey="R"),
 ]
 # What the Home key does, on a button. Framing the model back up is the
 # navigation move that is hardest to do by hand, and the keyboard is a
 # long way from a mouse that is already on the model.
 _VIEW_ALL_BUTTON = _IconCommandButton(
-    'view3d.view_all', "View All", _glyph_view_all)
+    'view3d.view_all', "View All", _glyph_view_all, hotkey="HOME")
 
 
 def _view_strip():
