@@ -377,6 +377,35 @@ _EXTRA_PRODUCT_TAGS = (
 )
 
 
+def is_2d_annotation(obj):
+    """True for 2D drawing furniture -- dimensions, labels, elevation
+    fills.
+
+    These are created in the room scene and parented to the wall or the
+    cabinet they annotate, so they ride along with any walk of a room's
+    geometry. They belong to the drawings, not to the room, and a room
+    borrowing this one must never receive them: the borrower would draw
+    the source room's dimension lines and labels floating in 3D.
+    """
+    return bool(obj.get('IS_2D_ANNOTATION'))
+
+
+def _under_2d_annotation(obj):
+    """True for an annotation or anything hanging off one.
+
+    The walk that sorts a room skips an annotation's whole subtree, so
+    this is the matching test for objects already sorted into a
+    collection -- a leader line under a dimension carries no tag of its
+    own, and evicting the dimension while leaving its parts behind would
+    keep half the annotation in the room.
+    """
+    while obj is not None:
+        if is_2d_annotation(obj):
+            return True
+        obj = obj.parent
+    return False
+
+
 def organize_room_collections(scene):
     """
     Organize a room scene's objects into sub-collections by type.
@@ -411,6 +440,8 @@ def organize_room_collections(scene):
     floor_objects = set()
     
     for obj in scene.objects:
+        if is_2d_annotation(obj):
+            continue
         if obj.get('IS_WALL_BP'):
             wall_roots.add(obj)
         elif obj.get('IS_ROOM_LIGHT'):
@@ -435,6 +466,12 @@ def organize_room_collections(scene):
         for child in obj.children:
             if stop_at_products and hb_utils.is_product_root(
                     child, _EXTRA_PRODUCT_TAGS):
+                continue
+            # A dimension hangs off the cabinet it measures, so the walk
+            # reaches it the same way it reaches a door. Skip the whole
+            # subtree: anything under an annotation is its own scaffolding
+            # (leader lines, elevation fills), not room geometry.
+            if is_2d_annotation(child):
                 continue
             children.add(child)
             children.update(get_all_children(child, stop_at_products))
@@ -500,7 +537,21 @@ def organize_room_collections(scene):
         product_objects.update(get_all_children(obj))
     product_objects = {obj for obj in product_objects if not obj.get('IS_GEONODE_CAGE')}
     move_to_collection(product_objects, collections['products'])
-    
+
+    # Evict annotations sorted in by earlier versions. move_to_collection
+    # only unlinks what it is moving, so a room organised before the walk
+    # skipped them keeps its dimensions inside Products -- and a room
+    # borrowing that category still gets them. Relink to the scene BEFORE
+    # unlinking: a category collection is often an object's only link,
+    # and unlinking it first would drop the object out of the file.
+    for col in collections.values():
+        for obj in list(col.objects):
+            if not _under_2d_annotation(obj):
+                continue
+            if obj.name not in scene.collection.objects:
+                scene.collection.objects.link(obj)
+            col.objects.unlink(obj)
+
     return collections
 
 
