@@ -257,6 +257,7 @@ class home_builder_OT_rendering_settings(bpy.types.Operator):
         col = box.column(align=True)
         col.prop(view_settings, "view_transform", text="View Transform")
         col.prop(view_settings, "look", text="Look")
+        col.prop(view_settings, "exposure", text="Exposure")
 
 
 
