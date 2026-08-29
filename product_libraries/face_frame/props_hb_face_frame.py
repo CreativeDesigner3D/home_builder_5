@@ -8348,13 +8348,18 @@ class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
         name="Run Front to Back",
         description="Turn the divider(s) to run front-to-back, splitting "
                     "the drawer left / right instead of front / back",
-        default=False, update=_update_cabinet_dim,
+        # On by default: a removable divider is nearly always added to
+        # close off the space beside an insert that didn't fill the
+        # drawer, which is a front-to-back panel.
+        default=True, update=_update_cabinet_dim,
     )  # type: ignore
     divider_offset: FloatProperty(
         name="Position",
         description="Distance from the drawer front (or left side when "
                     "running front to back) to a single divider. 0 "
-                    "spaces the divider(s) evenly",
+                    "puts a front-to-back divider against the accessory "
+                    "before it, or spaces the divider(s) evenly when "
+                    "there is nothing to sit against",
         default=0.0, min=0.0, unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
     )  # type: ignore

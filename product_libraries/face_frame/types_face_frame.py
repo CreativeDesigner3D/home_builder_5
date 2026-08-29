@@ -11318,9 +11318,10 @@ class FaceFrameCabinet(GeoNodeCage):
 
         Inserts that take up drawer floor are packed left to right in
         list order, each one trimmed to what is left; typing a position
-        or a size pins one wherever it belongs. Full-width kinds
-        (removable dividers) span the box and take no space in the
-        pack, so a divider between two inserts still reads correctly.
+        or a size pins one wherever it belongs. A removable divider
+        spans the box rather than taking a slice of it, but it still
+        joins the pack: running front to back it butts the accessory
+        before it and moves the cursor on by its own thickness.
         """
         items = [it for it in getattr(op_props, 'interior_items', ())
                  if it.kind == 'ACCESSORY'
@@ -11345,7 +11346,12 @@ class FaceFrameCabinet(GeoNodeCage):
                 continue
             builder = getattr(self, spec[0])
             if not spec[2]:
-                builder(box_obj, inner, item, params)
+                # Spans the box rather than taking a slice of it, but it
+                # is still handed the cursor: a front-to-back divider
+                # butts the accessory before it and moves the cursor on.
+                moved = builder(box_obj, inner, item, params, cursor)
+                if moved is not None:
+                    cursor = moved
                 continue
             off = getattr(item, 'insert_offset', 0.0)
             if off > 0.0001:
@@ -11421,13 +11427,23 @@ class FaceFrameCabinet(GeoNodeCage):
         return SimpleNamespace(x0=x0, x1=x0 + w, y0=y0, y1=y0 + d,
                                z0=inner.z0, h=h, slots=max(slots, 0))
 
-    def _build_drawer_dividers(self, box_obj, rect, item, params):
+    def _build_drawer_dividers(self, box_obj, rect, item, params,
+                               cursor=None):
         """Removable partitions dropped into the box: full-width (or
-        full-depth) panels, evenly spaced or pinned by position. One
-        object each - they lift out individually."""
+        full-depth) panels. One object each - they lift out
+        individually.
+
+        A front-to-back divider added after another accessory butts
+        against it, which is what it is for: the accessory ahead of it
+        rarely fills the drawer, and the divider closes off what is
+        left. Anything else - the first thing in the drawer, a typed
+        position, a divider running side to side - spaces evenly as
+        before. Returns the packing cursor to carry on from, or None
+        when it took no space.
+        """
         th = self.DRAWER_DIVIDER_TH
         if (rect.x1 - rect.x0 < th * 2) or (rect.y1 - rect.y0 < th * 2):
-            return
+            return None
         z0, z1 = rect.z0, rect.z0 + rect.h
         qty = max(getattr(item, 'accessory_qty', 1), 1)
         lengthwise = getattr(item, 'divider_lengthwise', False)
@@ -11435,7 +11451,17 @@ class FaceFrameCabinet(GeoNodeCage):
         span0, span1 = ((rect.x0, rect.x1) if lengthwise
                         else (rect.y0, rect.y1))
         span = span1 - span0
-        if qty == 1 and off > 0.0001:
+        against = (lengthwise and off <= 0.0001 and cursor is not None
+                   and cursor > rect.x0 + 1e-6
+                   and cursor < rect.x1 - th)
+        if against:
+            centers = [cursor + th / 2.0]
+            # Extras split what is left beyond it, so a quantity still
+            # means something once the first one is spoken for.
+            rest = cursor + th
+            step = (span1 - rest) / qty
+            centers += [rest + step * (i + 1) for i in range(qty - 1)]
+        elif qty == 1 and off > 0.0001:
             # Typed position: divider center that far from the front
             # (or the left side when running front-to-back).
             centers = [span0 + min(max(off, th), span - th)]
@@ -11452,6 +11478,10 @@ class FaceFrameCabinet(GeoNodeCage):
                        z0, z1)
             self._emit_drawer_insert(box_obj, 'Drawer Divider', mb,
                                      role=PART_ROLE_DRAWER_DIVIDER)
+        if not against:
+            return None
+        # Whatever comes next starts clear of the last one placed.
+        return max(centers) + th / 2.0
 
     def _tray_walls(self, mb, rect, th):
         """Bottom panel with four walls standing on it - the shell every
@@ -11526,17 +11556,33 @@ class FaceFrameCabinet(GeoNodeCage):
         cross compartment depth (0 = none), MIDSPLIT = a rail across
         the middle slot that far from the front. Without them the tray
         lays itself out from the drawer size.
+
+        SHELL=0 builds the divider set on its own: no perimeter walls
+        and no bottom, standing straight on the drawer floor. That is
+        how the silverware dividers ship -- the drawer's own sides and
+        back are the ones they are captured by, so modelling a box
+        around them puts a second wall inside the drawer.
         """
         th = self.INSERT_WALL_TH
-        mb = self._build_tray_insert(box_obj, rect, item, params,
-                                     mb=DrawerInsertMesh(), slots=1)
+        shell = params.get('SHELL', 1.0) >= 0.5
         name = self._insert_name(item, 'Cutlery Tray')
-        ix0, ix1 = rect.x0 + th, rect.x1 - th
-        iy0, iy1 = rect.y0 + th, rect.y1 - th
-        zb = rect.z0 + self.INSERT_PANEL_TH
+        if shell:
+            mb = self._build_tray_insert(box_obj, rect, item, params,
+                                         mb=DrawerInsertMesh(), slots=1)
+            ix0, ix1 = rect.x0 + th, rect.x1 - th
+            iy0, iy1 = rect.y0 + th, rect.y1 - th
+            zb = rect.z0 + self.INSERT_PANEL_TH
+        else:
+            mb = DrawerInsertMesh()
+            ix0, ix1 = rect.x0, rect.x1
+            iy0, iy1 = rect.y0, rect.y1
+            zb = rect.z0
         z1 = rect.z0 + rect.h
         if ix1 - ix0 < inch(3.0) or iy1 - iy0 < inch(6.0):
-            self._emit_drawer_insert(box_obj, name, mb)
+            # Too small to lay out: the shell is still a usable tray,
+            # but a shell-less insert would be an empty object.
+            if shell:
+                self._emit_drawer_insert(box_obj, name, mb)
             return
         # Rail across the back, butted between the two side walls; the
         # compartment behind it is the back band, the slot core takes
@@ -11560,8 +11606,11 @@ class FaceFrameCabinet(GeoNodeCage):
         # Partitions bounding the slot core run its full depth. Where
         # the drawer leaves no room for side compartments the core is
         # bounded by the tray's own sides instead.
+        # Without a shell those two partitions ARE the insert's outer
+        # walls, so they are built whatever the drawer leaves either
+        # side of the core.
         kx0, kx1 = ix0, ix1
-        if cx0 - ix0 > inch(1.0) and ix1 - cx1 > inch(1.0):
+        if not shell or (cx0 - ix0 > inch(1.0) and ix1 - cx1 > inch(1.0)):
             mb.box(cx0, cx0 + th, iy0, core_back, zb, z1)
             mb.box(cx1 - th, cx1, iy0, core_back, zb, z1)
             kx0, kx1 = cx0 + th, cx1 - th
