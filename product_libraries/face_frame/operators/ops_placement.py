@@ -3774,12 +3774,7 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
             return None
 
         local_base = Vector((w / 2.0, -d / 2.0, h / 2.0))
-        if cage_obj.parent is not None:
-            m = (cage_obj.parent.matrix_world
-                 @ cage_obj.matrix_parent_inverse
-                 @ cage_obj.matrix_basis)
-        else:
-            m = cage_obj.matrix_basis
+        m = hb_placement.pending_world_matrix(cage_obj)
         base = m @ local_base
         dir_w = m.to_3x3() @ Vector((0.0, -1.0, 0.0))
         dir_w.z = 0.0
@@ -3938,8 +3933,12 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         cabinet_width = self._cabinet_width
         z = cabinet_height + units.inch(4.0)
 
-        s = cage_obj.matrix_world @ Vector((0, 0, z))
-        e = cage_obj.matrix_world @ Vector((cabinet_width, 0, z))
+        # Fresh matrix, not matrix_world: a typed width re-snaps the
+        # cage right before this runs, and the depsgraph-stale
+        # matrix_world would draw the dim over where the cage was.
+        m = hb_placement.pending_world_matrix(cage_obj)
+        s = m @ Vector((0, 0, z))
+        e = m @ Vector((cabinet_width, 0, z))
         snap_color = (
             (0.30, 0.95, 0.40, 1.0) if self._cabinet_snap_side else None
         )
@@ -5043,8 +5042,9 @@ class hb_face_frame_OT_place_appliance(bpy.types.Operator,
     def _build_dim_specs_free(self, context):
         cage_obj = self._preview_cage.obj
         z = self._appliance_height + units.inch(4.0)
-        s = cage_obj.matrix_world @ Vector((0, 0, z))
-        e = cage_obj.matrix_world @ Vector((self._appliance_width, 0, z))
+        m = hb_placement.pending_world_matrix(cage_obj)
+        s = m @ Vector((0, 0, z))
+        e = m @ Vector((self._appliance_width, 0, z))
         snap_color = (
             (0.30, 0.95, 0.40, 1.0) if self._cabinet_snap_side else None
         )
@@ -5555,19 +5555,10 @@ class hb_face_frame_OT_place_corner_cabinet(bpy.types.Operator,
         if local_dir.length < 1e-6:
             local_dir = Vector((1.0, -1.0, 0.0))
 
-        # Compose the world matrix from matrix_basis rather than reading
-        # matrix_world: we get here right after setting rotation_euler /
-        # location, and matrix_world is depsgraph-stale within the same
-        # call (the R-key bug - arrow lagged a frame until a mousemove).
-        # matrix_basis recomputes synchronously from loc/rot/scale; the
-        # parent (wall) matrix is stable, so this is fresh in both free
-        # and on-wall states.
-        if cage_obj.parent is not None:
-            m = (cage_obj.parent.matrix_world
-                 @ cage_obj.matrix_parent_inverse
-                 @ cage_obj.matrix_basis)
-        else:
-            m = cage_obj.matrix_basis
+        # Fresh matrix rather than matrix_world: we get here right after
+        # setting rotation_euler / location (the R-key bug - the arrow
+        # lagged a frame until a mousemove).
+        m = hb_placement.pending_world_matrix(cage_obj)
         base = m @ local_base
         dir_w = m.to_3x3() @ local_dir
         dir_w.z = 0.0
@@ -5647,8 +5638,9 @@ class hb_face_frame_OT_place_corner_cabinet(bpy.types.Operator,
         """Off-wall: a single neutral-color width dim above the cage."""
         cage_obj = self._preview_cage.obj
         z = self._cabinet_height + units.inch(4.0)
-        s = cage_obj.matrix_world @ Vector((0, 0, z))
-        e = cage_obj.matrix_world @ Vector((self._cabinet_width, 0, z))
+        m = hb_placement.pending_world_matrix(cage_obj)
+        s = m @ Vector((0, 0, z))
+        e = m @ Vector((self._cabinet_width, 0, z))
         return [hb_placement.PlacementDimSpec(
             s, e,
             units.unit_to_string(

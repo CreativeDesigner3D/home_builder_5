@@ -20,6 +20,28 @@ PlacementDimSpec = namedtuple(
     defaults=[None],
 )
 
+
+def pending_world_matrix(obj):
+    """World matrix of an object that was just moved this call.
+
+    ``matrix_world`` is only recomputed when the depsgraph evaluates, so
+    an object whose location or rotation was written earlier in the same
+    run still reports where it USED to be. Placement builds its overlays
+    immediately after positioning the cage, so reading matrix_world
+    there leaves the overlay a step behind the cage it annotates -- it
+    catches up on the next mousemove, which makes the lag look like the
+    overlay only tracks the cursor.
+
+    ``matrix_basis`` recomputes synchronously from loc/rot/scale, and
+    the parent (a wall) is not the thing being moved, so composing
+    through it is fresh in both the free and wall-parented states.
+    """
+    if obj.parent is not None:
+        return (obj.parent.matrix_world
+                @ obj.matrix_parent_inverse
+                @ obj.matrix_basis)
+    return obj.matrix_basis
+
 # Free-standing cabinet roots (islands / peninsulas) that can block wall
 # placement even though they aren't wall children. Tag strings rather
 # than library imports - the product libraries import this module, not
