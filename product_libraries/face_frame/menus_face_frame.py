@@ -163,6 +163,14 @@ class HOME_BUILDER_MT_face_frame_cabinet_commands(bpy.types.Menu):
                                  text="Duplicate Mirror", icon='MOD_MIRROR')
             op.source_cabinet_name = _dup_root.name
             op.mirror = True
+            # Place: the same modal on the cabinet itself. Nothing is
+            # copied - it is picked up and dropped again, which is how
+            # you move one onto another wall, into a gap, or let it
+            # fill the run it now belongs to.
+            op = layout.operator("hb_face_frame.place_cabinet",
+                                 text="Place Cabinet", icon='SNAP_ON')
+            op.source_cabinet_name = _dup_root.name
+            op.move_source = True
         layout.separator()
         layout.operator("hb_face_frame.join_cabinets",
                         text="Join Cabinets", icon='AUTOMERGE_ON')

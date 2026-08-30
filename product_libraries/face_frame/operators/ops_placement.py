@@ -1960,10 +1960,20 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         default=False,
     )  # type: ignore
 
+    move_source: bpy.props.BoolProperty(
+        name="Move Source",
+        description="With a source cabinet: place THAT cabinet again "
+                    "rather than a copy of it - the placement tools "
+                    "(wall snap, gap fill, typed width) applied to a "
+                    "cabinet that already exists",
+        default=False,
+    )  # type: ignore
+
     # Live state during modal session. Reset on FINISHED/CANCELLED.
     _preview_cage = None
     _array_modifier = None
     _source_obj = None              # duplicate mode: cabinet root being copied
+    _hidden_source = None           # move mode: [(obj, was_hidden), ...]
     _cabinet_width: float = 0.0     # total cabinet width (m)
     _auto_bay_qty: bool = True      # True until user presses arrow keys
     _place_on_front: bool = True    # which side of the wall
@@ -2005,6 +2015,7 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         # name from its stored class so every class lookup downstream
         # (type, flags, corner math) matches the source cabinet.
         self._source_obj = None
+        self._hidden_source = None
         if self.source_cabinet_name:
             src = bpy.data.objects.get(self.source_cabinet_name)
             if src is None or not src.get(types_face_frame.TAG_CABINET_CAGE):
@@ -2014,6 +2025,12 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
                 return {'CANCELLED'}
             self._source_obj = src
             self.cabinet_name = _dispatch_name_for_source(src)
+            if self.move_source:
+                # The cabinet is being picked up, so it stops drawing
+                # where it stood - otherwise the preview cage and the
+                # cabinet it represents are on screen at once. Cancel
+                # puts it back exactly as it was.
+                self._hide_source()
         if not self.cabinet_name:
             self.report({'WARNING'}, "No cabinet name supplied")
             return {'CANCELLED'}
@@ -2457,9 +2474,13 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
             self._position_from_hit(bpy.context)
 
     def _update_header(self, context):
-        title = (self.cabinet_name if self._source_obj is None
-                 else ("Duplicate Mirror " if self.mirror else "Duplicate ")
-                 + self._source_obj.name)
+        if self._source_obj is None:
+            title = self.cabinet_name
+        elif self.move_source:
+            title = "Place " + self._source_obj.name
+        else:
+            title = (("Duplicate Mirror " if self.mirror else "Duplicate ")
+                     + self._source_obj.name)
         bay_label = f"{self.bay_qty} bay" + ("" if self.bay_qty == 1 else "s")
         mode = "auto" if self._auto_bay_qty else "manual"
         side = ("peninsula" if self._peninsula
@@ -3964,6 +3985,10 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         self._delete_preview()
 
         if self._source_obj is not None:
+            if self.move_source:
+                return self._finalize_move(
+                    context, captured_parent, captured_world,
+                    captured_local_loc, captured_local_rot, captured_width)
             return self._finalize_duplicate(
                 context, captured_parent, captured_world,
                 captured_local_loc, captured_local_rot, captured_width)
@@ -4256,6 +4281,87 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
                     f"{captured_width * 39.37008:.1f}\" wide)")
         return {'FINISHED'}
 
+    def _finalize_move(self, context, captured_parent, captured_world,
+                       captured_local_loc, captured_local_rot,
+                       captured_width):
+        """Commit for move mode: put the SOURCE cabinet where the cage
+        landed. Same commit as a duplicate minus the copy - the cabinet
+        keeps its identity, so its bays, fronts, style, accessories and
+        anything referring to it by name all come along untouched.
+
+        The cabinets it stood between are recalculated too: their facing
+        sides were covered a moment ago and are now open.
+        """
+        src = self._source_obj
+        if src is None or src.name not in bpy.data.objects:
+            self.report({'ERROR'}, "Cabinet no longer exists")
+            self._restore_source()
+            hb_placement.clear_header_text(context)
+            return {'CANCELLED'}
+
+        # Who it is leaving. Read before the move, recalculated after,
+        # or the sides it used to cover stay reading as covered.
+        old_left, old_right = exposure._find_immediate_face_frame_neighbors(src)
+
+        self._restore_source()
+
+        if captured_parent is not None:
+            src.parent = captured_parent
+            src.matrix_parent_inverse.identity()
+            src.location = captured_local_loc
+            src.rotation_euler = captured_local_rot
+        else:
+            src.parent = None
+            src.matrix_world = captured_world
+
+        # Fill-the-gap commit: the same width push a duplicate gets, so
+        # dropping it into a gap stretches the bays to suit.
+        if abs(captured_width - src.face_frame_cabinet.width) > 1e-5:
+            src.face_frame_cabinet.width = captured_width
+
+        exposure.recalc_with_neighbors(src)
+        for old in (old_left, old_right):
+            if old is not None and old is not src and old.name in bpy.data.objects:
+                exposure.recalc_cabinet_exposure(old)
+        _align_base_tall_toe_kick(src)
+
+        for o in context.selected_objects:
+            o.select_set(False)
+        src.select_set(True)
+        context.view_layer.objects.active = src
+
+        # Corner handling is driven by where it landed, exactly as it is
+        # for a fresh placement or a duplicate.
+        corner_match = _detect_blind_corner_neighbor(src)
+        if corner_match is not None:
+            (neighbor, blind_side, corner_kind, interior_deg,
+             placed_corner_end) = corner_match
+            try:
+                if corner_kind == 'ANGLED':
+                    bpy.ops.hb_face_frame.set_angled_corner_void_amount(
+                        'INVOKE_DEFAULT',
+                        angled_cabinet_name=neighbor.name,
+                        current_cabinet_name=src.name,
+                        meeting_side=blind_side,
+                        placed_corner_end=placed_corner_end,
+                        corner_angle_deg=interior_deg,
+                    )
+                else:
+                    bpy.ops.hb_face_frame.set_blind_corner_void_amount(
+                        'INVOKE_DEFAULT',
+                        blind_cabinet_name=neighbor.name,
+                        current_cabinet_name=src.name,
+                        blind_side=blind_side,
+                    )
+            except RuntimeError:
+                pass
+
+        _auto_detect_stile_types(src)
+
+        hb_placement.clear_header_text(context)
+        self.report({'INFO'}, f"Placed {src.name}")
+        return {'FINISHED'}
+
     def _finalize_duplicate(self, context, captured_parent, captured_world,
                             captured_local_loc, captured_local_rot,
                             captured_width):
@@ -4351,8 +4457,32 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
     def _cancel(self, context):
         self.remove_placement_dim_handler()
         self._delete_preview()
+        self._restore_source()
         hb_placement.clear_header_text(context)
         return {'CANCELLED'}
+
+    def _hide_source(self):
+        """Take the cabinet being re-placed off screen for the drag,
+        remembering what was already hidden so the restore doesn't show
+        something the user had hidden themselves."""
+        src = self._source_obj
+        if src is None:
+            return
+        self._hidden_source = []
+        for obj in [src] + list(src.children_recursive):
+            try:
+                self._hidden_source.append((obj, obj.hide_get()))
+                obj.hide_set(True)
+            except RuntimeError:
+                pass        # not in this view layer - nothing to hide
+
+    def _restore_source(self):
+        for obj, was_hidden in (self._hidden_source or ()):
+            try:
+                obj.hide_set(was_hidden)
+            except (RuntimeError, ReferenceError):
+                pass
+        self._hidden_source = None
 
     def _delete_preview(self):
         if self._preview_cage is None:
