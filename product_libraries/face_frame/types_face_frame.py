@@ -13785,14 +13785,24 @@ class LegProductFaceFrameCabinet(FaceFrameCabinet):
         # A finished band covering the front fx_width inches on the
         # side whose panel is NOT the primary finished face. Its
         # "thickness" (set_input Thickness) is the band's X extent.
+        #
+        # The band is a finished end, so it is built only where that
+        # side asks for one, exactly as a cabinet end does: the side's
+        # finished-end condition must BE the flush band. It used to
+        # follow finish_type alone, which grew a pair of 4" finished
+        # bands on every intermediate leg - an unfinished post between
+        # two cabinets - with no setting that could take them off.
         notch_route_ext = inch(0.1)
+        fxl_wanted = cab.left_finished_end_condition == 'FLUSH_X'
+        fxr_wanted = cab.right_finished_end_condition == 'FLUSH_X'
 
-        # Left band: shown for INTERMEDIATE / FINISH_RIGHT.
+        # Left band: on the sides whose panel isn't the finished face.
         fxl_t = (width - mt) if finish == 'FINISH_RIGHT' else (width / 2.0 - mt / 2.0)
         place(FXL, height, fx_width, fxl_t, (0.0, -depth + fft + fx_width, 0.0),
               (0.0, math.radians(-90), 0.0),
               {'Mirror Y': True, 'Mirror Z': True})
-        fxl_vis = finish in ('INTERMEDIATE', 'FINISH_RIGHT') and not only_stile and not left_paneled
+        fxl_vis = (fxl_wanted and not only_stile
+                   and finish in ('INTERMEDIATE', 'FINISH_RIGHT'))
         FXL.hide_viewport = not fxl_vis
         FXL.hide_render = not fxl_vis
         FXL['IS_FINISHED'] = True
@@ -13803,7 +13813,8 @@ class LegProductFaceFrameCabinet(FaceFrameCabinet):
         place(FXR, height, fx_width, fxr_t, (width, -depth + fft + fx_width, 0.0),
               (0.0, math.radians(-90), 0.0),
               {'Mirror Y': True, 'Mirror Z': False})
-        fxr_vis = finish in ('FINISH_LEFT', 'INTERMEDIATE') and not only_stile and not right_paneled
+        fxr_vis = (fxr_wanted and not only_stile
+                   and finish in ('FINISH_LEFT', 'INTERMEDIATE'))
         FXR.hide_viewport = not fxr_vis
         FXR.hide_render = not fxr_vis
         FXR['IS_FINISHED'] = True
