@@ -710,9 +710,9 @@ def draw_leg_product(layout, root):
     row = box.row(align=True)
     row.prop(leg, 'only_stile', text="Only Stile", toggle=True)
     row.prop(leg, 'is_column', text="Column", toggle=True)
-    vrow = box.row(align=True)
-    vrow.prop(leg, 'is_appliance_leg', text="Appliance", toggle=True)
-    vrow.prop(leg, 'is_island_leg', text="Island", toggle=True)
+    # is_appliance_leg / is_island_leg are not drawn: nothing reads
+    # them, so the buttons promised a distinction the leg never made.
+    # The properties stay for files that already carry them.
 
     # Curved support leg: one profiled panel replaces the whole post.
     # Width becomes the panel thickness, so the standard-part options

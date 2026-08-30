@@ -13872,8 +13872,93 @@ class LegProductFaceFrameCabinet(FaceFrameCabinet):
             # sides) gate on these fields, so they must be present.
             is_angled=False,
             angled_multi=False,
+            # A leg has no carcass toe kick for a return to wrap, so
+            # the panel sits at the leg's own bottom. Absent, the
+            # applied-panel pass raised partway through and left the
+            # leg half laid out.
+            kick_inset_left=0.0,
+            kick_inset_right=0.0,
+            # Carcass stock thickness - a working face frame sizes its
+            # rails off it.
+            mt=mt,
         )
         self._reconcile_applied_panels(leg_layout)
+        self._reconcile_leg_textured_panels(
+            cab, width, height, depth - fft,
+            notch=(notch_on, tkh, tks - fft))
+
+    def _reconcile_leg_textured_panels(self, cab, width, height, panel_depth,
+                                       notch=(False, 0.0, 0.0)):
+        """Beadboard / shiplap / v-groove skins on the leg's Left / Right.
+
+        The cabinet pass that builds these reads the bay solver for
+        every dimension it needs, and a leg has no bays - so it gets its
+        own, sized from the post itself. Same part as a cabinet's skin: a
+        carved 1/4" panel applied to the outside of the side, the finish
+        face looking out - notched at the front bottom for the toe kick
+        like the side panel it covers.
+        """
+        thickness = inch(0.25)
+        existing = {
+            child.get(TAG_TEXTURED_PANEL_SIDE): child
+            for child in self.obj.children
+            if child.get(TAG_TEXTURED_PANEL_SIDE) in ('LEFT', 'RIGHT')
+        }
+        try:
+            pitch = float(cab.shiplap_board_width) * 0.0254
+        except (ValueError, AttributeError):
+            pitch = TEXTURED_SHIPLAP_PITCH
+
+        for side in ('LEFT', 'RIGHT'):
+            condition = (cab.left_finished_end_condition if side == 'LEFT'
+                         else cab.right_finished_end_condition)
+            desired_role = TEXTURED_PANEL_ROLES.get(condition)
+            part_obj = existing.get(side)
+            if desired_role is None:
+                if part_obj is not None:
+                    bpy.data.objects.remove(part_obj, do_unlink=True)
+                continue
+            # Condition flips (beadboard <-> shiplap) change the role, and
+            # the role is what the material walk keys off, so rebuild.
+            if (part_obj is not None
+                    and part_obj.get('hb_part_role') != desired_role):
+                bpy.data.objects.remove(part_obj, do_unlink=True)
+                part_obj = None
+            mirror_z = side == 'LEFT'
+            # Outside the post, not over it: the skin adds its thickness
+            # to that end, the same way a cabinet's does.
+            x = -thickness if side == 'LEFT' else width + thickness
+            if part_obj is None:
+                part = CabinetPart()
+                label = {'BEADBOARD': 'Beadboard',
+                         'V_GROOVE': 'V-Groove'}.get(condition, 'Shiplap')
+                part.create(f'Leg {label} {side[0]}')
+                part.obj.parent = self.obj
+                part.obj['hb_part_role'] = desired_role
+                part.obj['CABINET_PART'] = True
+                part.obj['IS_FINISHED'] = True
+                part.obj[TAG_TEXTURED_PANEL_SIDE] = side
+                part.obj.rotation_euler = (0.0, math.radians(-90), 0.0)
+                part.set_input('Mirror Y', True)
+                part.set_input('Mirror Z', mirror_z)
+                cpm = part.add_part_modifier('CPM_CORNERNOTCH', 'Front Notch')
+                cpm.set_input('Flip X', False)
+                cpm.set_input('Flip Y', True)
+                part_obj = part.obj
+            else:
+                part = GeoNodeCutpart(part_obj)
+            part_obj.location = (x, 0.0, 0.0)
+            part.set_input('Length', height)
+            part.set_input('Width', panel_depth)
+            part.set_input('Thickness', thickness)
+            self._textured_panel_mesh(part_obj, height, panel_depth,
+                                      thickness, condition, mirror_z,
+                                      shiplap_pitch=pitch)
+            # The notch cuts the carved mesh - the cutpart's own display
+            # is hidden by now, so the modifier has the static mesh to
+            # work on, same as a cabinet's skin.
+            notch_on, tkh, notch_y = notch
+            self._set_notch(part_obj, notch_on, tkh, notch_y, thickness)
 
 
 class FloatingShelfFaceFrameCabinet(FaceFrameCabinet):
