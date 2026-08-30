@@ -49,6 +49,18 @@ FIN_END_ITEMS = [
 # PANELED side); BEADBOARD / SHIPLAP = a 3/4 part carved with the same
 # texture the textured side/back fields use. Per-member, per-side;
 # default FINISHED.
+# Texture a finished interior can carry. The same three treatments the
+# finished ends and backs offer, on the liner panels that line a
+# finished bay or opening - an open cabinet lined in v-groove is the
+# ordinary case. FLAT is the plain liner, and the default, so a finish
+# that was set before this existed is unchanged.
+INTERIOR_TEXTURE_ITEMS = [
+    ('NONE', "Flat", "Plain finished liner panels"),
+    ('BEADBOARD', "Beadboard", "Liners carved with vertical quirk-bead grooves"),
+    ('SHIPLAP', "Shiplap", "Liners carved with nickel-gap plank reveals"),
+    ('V_GROOVE', "V-Groove", "Liners carved with vertical v-groove cuts"),
+]
+
 RETURN_MEMBER_TYPE_ITEMS = [
     ('FINISHED', "Finished", "Flat 3/4 finished part"),
     ('PANELED', "Paneled", "Applied panel with rails / stiles and an inset panel"),
@@ -2662,8 +2674,19 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
             # owning region resolves through the index tags stamped at
             # emit time, not the parent walk.
             if role == 'BAY_FINISH':
-                if self._liner_material_mode(cabinet_obj,
-                                             child) == 'INTERIOR':
+                lined_interior = self._liner_material_mode(
+                    cabinet_obj, child) == 'INTERIOR'
+                if child.get('HB_STATIC_TEXTURED'):
+                    # A carved liner draws its python mesh, not the
+                    # cutpart, so the colour goes on the mesh slot -
+                    # same as the textured ends above.
+                    slot_mat = interior_mat if lined_interior else finish_mat
+                    if slot_mat is not None:
+                        me = child.data
+                        while len(me.materials) < 1:
+                            me.materials.append(None)
+                        me.materials[0] = slot_mat
+                elif lined_interior:
                     self._set_part_surfaces(
                         child, interior_mat, interior_mat_rotated)
                 else:
@@ -7923,6 +7946,16 @@ class Face_Frame_Bay_Props(PropertyGroup):
         default='FINISH',
         update=_update_cabinet_dim,
     )  # type: ignore
+    # Texture carved into this bay's liner panels. Anything but NONE also
+    # brings a BACK liner in on a finished bay, where the carcass back is
+    # finish stock and would otherwise be the flat surface behind the
+    # texture.
+    finish_bay_texture: EnumProperty(
+        name="Interior Texture",
+        description="Texture carved into the finished interior's panels",
+        items=INTERIOR_TEXTURE_ITEMS, default='NONE',
+        update=_update_cabinet_dim,
+    )  # type: ignore
     # Per-bay bottom-rail profile override. CABINET follows the cabinet-
     # level pick; NONE forces a plain rail on this bay; any profile id
     # cuts just this bay's rail segment -- so split rails can carry e.g.
@@ -8912,6 +8945,14 @@ class Face_Frame_Opening_Props(PropertyGroup):
                ('INTERIOR', "Interior Material",
                 "Liner panels and shelves take the style's interior material")],
         default='FINISH',
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    # Texture carved into this opening's liner panels (see
+    # finish_bay_texture).
+    finish_opening_texture: EnumProperty(
+        name="Interior Texture",
+        description="Texture carved into the finished interior's panels",
+        items=INTERIOR_TEXTURE_ITEMS, default='NONE',
         update=_update_cabinet_dim,
     )  # type: ignore
 

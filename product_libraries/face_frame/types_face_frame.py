@@ -8530,11 +8530,17 @@ class FaceFrameCabinet(GeoNodeCage):
                         cage_dim_y=bay_dim_y,
                         reveals=solver._bay_root_reveals(layout, bi),
                     )
+                    texture = bay.get('finish_bay_texture', 'NONE')
                     specs = self._finish_region_specs(
                         layout, region, bool(bay.get('finish_bay_flush')),
-                        bay.get('finish_bay_flush_depth', 0.0), bay_to_floor, t)
+                        bay.get('finish_bay_flush_depth', 0.0), bay_to_floor, t,
+                        # A textured bay takes a BACK liner to carry the
+                        # texture: the carcass back behind it is finish
+                        # stock, and flat.
+                        want_back=texture not in ('NONE', ''))
                     for face, spec in specs:
-                        self._emit_bay_finish_panel(bi, -1, face, spec, t, existing)
+                        self._emit_bay_finish_panel(bi, -1, face, spec, t,
+                                                    existing, texture)
                         wanted.add((bi, -1, face))
                     continue
 
@@ -8573,13 +8579,16 @@ class FaceFrameCabinet(GeoNodeCage):
                     # the bay reads finished as a whole the carcass back
                     # is already finish stock and the liner would double
                     # up on it.
+                    texture = op.finish_opening_texture
+                    textured = texture not in ('NONE', '')
                     specs = self._finish_region_specs(
                         layout, region, bool(op.finish_opening_flush),
                         op.finish_opening_flush_depth, op_to_floor, t,
-                        want_back=not bay.get('finish_carcass'),
+                        want_back=(not bay.get('finish_carcass')) or textured,
                         want_top=False)
                     for face, spec in specs:
-                        self._emit_bay_finish_panel(bi, oi, face, spec, t, existing)
+                        self._emit_bay_finish_panel(bi, oi, face, spec, t,
+                                                    existing, texture)
                         wanted.add((bi, oi, face))
                     # The floor gets no liner - the part the opening sits
                     # on is finished instead.
@@ -8789,7 +8798,7 @@ class FaceFrameCabinet(GeoNodeCage):
         return specs
 
     def _emit_bay_finish_panel(self, bay_index, opening_index, face, spec,
-                               thickness, existing):
+                               thickness, existing, texture='NONE'):
         """Create or reuse one (bay_index, opening_index, face) finish liner
         and write its transform + cutpart dims from `spec`. opening_index
         is -1 for a whole-bay liner. Reuse-by-key keeps object identity
@@ -8821,6 +8830,46 @@ class FaceFrameCabinet(GeoNodeCage):
         part.set_input('Length',    spec['length'])
         part.set_input('Width',     spec['width'])
         part.set_input('Thickness', thickness)
+        self._texture_finish_panel(strip, spec, thickness, texture)
+
+    def _texture_finish_panel(self, strip, spec, thickness, texture):
+        """Carve a finish liner, or hand it back to its cutpart.
+
+        Same static-mesh treatment the textured ends use, with one turn
+        of the handle: the mesh builder always carves the plane at local
+        z=0 and grows the material away from it, but a liner's visible
+        face is the one AWAY from its cutpart origin -- the origin plane
+        lies against the carcass and the cavity looks at the far face.
+        So carve with the mirror flipped (grooves at z=0, body on the
+        other side) and slide the mesh back by a thickness, which lands
+        the body exactly where the cutpart put it with the grooves on
+        the face the cavity sees. Same trick the misc-board panels use
+        to get their grooves onto the top face.
+        """
+        if texture in ('NONE', ''):
+            if strip.get(TAG_STATIC_TEXTURED):
+                # Back to the live cutpart: drop the carved mesh and let
+                # the modifier draw again.
+                if strip.data is not None:
+                    strip.data.clear_geometry()
+                mod_name = getattr(strip.home_builder, 'mod_name', '')
+                mod = strip.modifiers.get(mod_name) if mod_name else None
+                if mod is not None:
+                    mod.show_viewport = True
+                    mod.show_render = True
+                del strip[TAG_STATIC_TEXTURED]
+            return
+        try:
+            pitch = float(self.obj.face_frame_cabinet.shiplap_board_width) * 0.0254
+        except (ValueError, AttributeError):
+            pitch = TEXTURED_SHIPLAP_PITCH
+        self._textured_panel_mesh(strip, spec['length'], spec['width'],
+                                  thickness, texture,
+                                  mirror_z=not spec['mirror_z'],
+                                  shiplap_pitch=pitch)
+        dz = -thickness if spec['mirror_z'] else thickness
+        strip.data.transform(Matrix.Translation((0.0, 0.0, dz)))
+        strip.data.update()
 
     # =====================================================================
     # Applied textured panels (BEADBOARD / SHIPLAP, 1/4 carved parts)
