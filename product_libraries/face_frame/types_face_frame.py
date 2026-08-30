@@ -13660,7 +13660,8 @@ class LegProductFaceFrameCabinet(FaceFrameCabinet):
         bt = leg.back_thickness
         nt = leg.nailer_thickness
         nw = leg.nailer_width
-        fx_width = leg.flush_x_panel_width
+        fx_width_l = leg.flush_x_panel_width
+        fx_width_r = leg.flush_x_panel_width_right
 
         parts = self._ensure_leg_parts()
         L = parts[PART_ROLE_LEG_PANEL_LEFT]
@@ -13782,8 +13783,10 @@ class LegProductFaceFrameCabinet(FaceFrameCabinet):
         TKFIN['IS_FINISHED'] = True
 
         # --- Finished front bands (Finish-X) -------------------------
-        # A finished band covering the front fx_width inches on the
-        # side whose panel is NOT the primary finished face. Its
+        # A finished band covering the front few inches on the side
+        # whose panel is NOT the primary finished face - each side has
+        # its own depth, since a leg often meets a different neighbour
+        # on either hand. Its
         # "thickness" (set_input Thickness) is the band's X extent.
         #
         # The band is a finished end, so it is built only where that
@@ -13798,7 +13801,8 @@ class LegProductFaceFrameCabinet(FaceFrameCabinet):
 
         # Left band: on the sides whose panel isn't the finished face.
         fxl_t = (width - mt) if finish == 'FINISH_RIGHT' else (width / 2.0 - mt / 2.0)
-        place(FXL, height, fx_width, fxl_t, (0.0, -depth + fft + fx_width, 0.0),
+        place(FXL, height, fx_width_l, fxl_t,
+              (0.0, -depth + fft + fx_width_l, 0.0),
               (0.0, math.radians(-90), 0.0),
               {'Mirror Y': True, 'Mirror Z': True})
         fxl_vis = (fxl_wanted and not only_stile
@@ -13810,7 +13814,8 @@ class LegProductFaceFrameCabinet(FaceFrameCabinet):
 
         # Right band: shown for FINISH_LEFT / INTERMEDIATE.
         fxr_t = (width - mt) if finish == 'FINISH_LEFT' else (width / 2.0 - mt / 2.0)
-        place(FXR, height, fx_width, fxr_t, (width, -depth + fft + fx_width, 0.0),
+        place(FXR, height, fx_width_r, fxr_t,
+              (width, -depth + fft + fx_width_r, 0.0),
               (0.0, math.radians(-90), 0.0),
               {'Mirror Y': True, 'Mirror Z': False})
         fxr_vis = (fxr_wanted and not only_stile

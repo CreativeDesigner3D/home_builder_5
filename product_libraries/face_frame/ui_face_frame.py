@@ -767,7 +767,12 @@ def draw_leg_product(layout, root):
               icon='TRIA_DOWN' if leg.show_finish_x else 'TRIA_RIGHT',
               emboss=False, text="Finish-X Bands")
     if leg.show_finish_x:
-        fbox.prop(leg, 'flush_x_panel_width', text="Band Width")
+        # One band each side, each with its own depth. A band is only
+        # built where that side's finished end IS the flush band (the
+        # Finished Ends box below).
+        fcol = fbox.column(align=True)
+        fcol.prop(leg, 'flush_x_panel_width', text="Left Band Width")
+        fcol.prop(leg, 'flush_x_panel_width_right', text="Right Band Width")
 
     # Applied finished-end panels on the leg's Left / Right sides.
     # Mirrors the cabinet Finished Ends control: choosing Paneled /

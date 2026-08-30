@@ -4854,6 +4854,22 @@ def _update_cabinet_dim(self, context):
     types_face_frame.recalculate_face_frame_cabinet(self.id_data)
 
 
+# Per-side band width. get/set rather than a plain property so an unset
+# right side reads through to the left one - the two were a single value
+# until legs could carry a different band each side.
+_FLUSH_X_RIGHT_KEY = "HB_FLUSH_X_WIDTH_RIGHT"
+
+
+def _get_flush_x_right(self):
+    v = self.get(_FLUSH_X_RIGHT_KEY)
+    return float(v) if v is not None else float(self.flush_x_panel_width)
+
+
+def _set_flush_x_right(self, value):
+    self[_FLUSH_X_RIGHT_KEY] = float(value)
+    _update_cabinet_dim(self, bpy.context)
+
+
 def _update_overstool_accessory(self, context):
     """Accessory change on an over-stool cabinet: sync the leg drop to the
     product spec (face frame 7" less than overall height, 13" with shelf
@@ -10921,9 +10937,18 @@ class Face_Frame_Leg_Props(PropertyGroup):
         unit='LENGTH', precision=4, update=_update_cabinet_dim,
     )  # type: ignore
     # Finished band covering the front X inches on the unfinished side(s).
+    # The left value is also the right one until the right is set, so a
+    # leg built before the sides could differ keeps the band it had.
     flush_x_panel_width: FloatProperty(
         name="Flush X Panel Width", default=units.inch(4.0),
         unit='LENGTH', precision=4, update=_update_cabinet_dim,
+    )  # type: ignore
+    flush_x_panel_width_right: FloatProperty(
+        name="Flush X Panel Width Right", default=units.inch(4.0),
+        unit='LENGTH', precision=4,
+        description="Depth of the finished band on the RIGHT side; "
+                    "follows the left one until you set it",
+        get=_get_flush_x_right, set=_set_flush_x_right,
     )  # type: ignore
     # Placement / labeling metadata variants (no geometry effect today;
     # parity with the reference for downstream routing).
