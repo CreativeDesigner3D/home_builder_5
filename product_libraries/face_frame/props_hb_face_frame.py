@@ -8133,7 +8133,14 @@ class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
         ('ROLLOUT',          "Roll-outs",          "Stack of drawer boxes on slide hardware"),
         ('TRAY_DIVIDERS',    "Tray Dividers",      "Vertical dividers for trays / cookie sheets, optionally with a locked shelf above"),
         ('VANITY_SHELVES',   "Vanity Shelves",     "Pair of L/R shelves on corbel supports, around plumbing"),
-        ('ACCESSORY',        "Accessory",          "Free-text accessory label rendered inside the opening"),
+        # Called "Text" because that is all it does: no geometry, just a
+        # label in the opening and on the drawings. It sat in this list
+        # named "Accessory" next to the items that build something, and
+        # next to the accessory browser that adds real catalog products,
+        # which left designers unsure which one they had reached for.
+        # The identifier stays ACCESSORY - saved files, the drawer
+        # inserts and the legend all key off it.
+        ('ACCESSORY',        "Text",               "A line of text shown inside the opening - a label only, nothing is built"),
         # Tableware & Bar Storage Solutions (catalog printed pages
         # 293-295). All auto-sized from the opening per the catalog
         # charts; geometry lives in bar_storage.py. Appended at the end

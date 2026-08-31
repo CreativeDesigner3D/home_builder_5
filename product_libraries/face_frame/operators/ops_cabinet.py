@@ -3264,7 +3264,8 @@ class hb_face_frame_OT_show_interior_add_menu(bpy.types.Operator):
             op.target_name = target_name
 
             op = layout.operator(
-                "hb_face_frame.add_interior_item", text="Accessory",
+                "hb_face_frame.add_interior_item", text="Text",
+                icon='FONT_DATA',
             )
             op.kind = 'ACCESSORY'
             op.half_depth = False
