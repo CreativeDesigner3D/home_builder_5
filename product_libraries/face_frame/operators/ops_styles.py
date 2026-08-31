@@ -904,8 +904,8 @@ class hb_face_frame_OT_paint_door_hardware(_paint_front_brush, bpy.types.Operato
     letter mark on the drawings is painted here -- hardware lives on
     specific doors, not every door of a style. Esc / right-click
     finishes. Stamps persist on the opening cage (fronts are rebuilt
-    every recalc; a double door's leaves share their opening's stamp)
-    and are read by downstream 2D consumers."""
+    every recalc) keyed per leaf, so clicking one door of a pair leaves
+    its partner alone, and are read by downstream 2D consumers."""
     bl_idname = "hb_face_frame.paint_door_hardware"
     bl_label = "Assign Doors"
     bl_description = ("Click doors in the viewport to add this hardware "
@@ -919,9 +919,6 @@ class hb_face_frame_OT_paint_door_hardware(_paint_front_brush, bpy.types.Operato
         default='TL', options={'HIDDEN'},
     )  # type: ignore
 
-    _KEYS = {'RC': 'HB_DOOR_HW_RC', 'TL': 'HB_DOOR_HW_TL',
-             'FR': 'HB_DOOR_HW_FR'}
-
     def _allowed_roles(self):
         return {'DOOR'}
 
@@ -934,21 +931,20 @@ class hb_face_frame_OT_paint_door_hardware(_paint_front_brush, bpy.types.Operato
                 "Skipped: not a door  |  Esc / RMB to finish")
             return
         from . import ops_part_commands
+        from .. import props_hb_face_frame as _props
         store = ops_part_commands._frame_store(front)
-        key = self._KEYS[self.callout]
-        # Click APPLIES, Ctrl+Click removes -- never a blind toggle: a
-        # double door's two leaves share one opening store, and toggling
-        # would undo the first leaf's stamp when the user paints its
-        # partner (observed as "painted both doors, nothing lettered").
+        # Click APPLIES, Ctrl+Click removes -- never a blind toggle, so
+        # painting a run of doors that are already marked is a no-op
+        # rather than a switch-off.
         state = not event.ctrl
-        if (store.get('HB_DOOR_HW_SET')
-                and bool(store.get(key, False)) == state):
+        hw = _props.front_door_hw(front, store)
+        if hw[self.callout] == state:
             context.workspace.status_text_set(
                 f"{self.callout} already {'ON' if state else 'OFF'}: "
                 f"{front.name}  |  Esc / RMB to finish")
             return
-        store[key] = state
-        store['HB_DOOR_HW_SET'] = True
+        hw[self.callout] = state
+        _props.set_front_door_hw(front, hw, store)
         self._count += 1
         context.workspace.status_text_set(
             f"{self.callout} {'ON' if state else 'OFF'}: {front.name}  |  "

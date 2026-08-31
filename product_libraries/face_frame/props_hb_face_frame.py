@@ -3500,6 +3500,53 @@ def front_default_round_hand(front_obj, store=None):
     return 'LEFT' if getattr(op, 'hinge_side', 'LEFT') == 'RIGHT' else 'RIGHT'
 
 
+# Hardware callouts (restrictor clips / touch latches / finger rout).
+# Like the round tops these belong to ONE door rather than to the
+# opening - a pair is often clipped on a single leaf - so they are
+# stamped per leaf on the opening store. The un-suffixed keys are what
+# an opening stamped before per-leaf existed carries; they still answer
+# for any leaf that has no stamp of its own, so old jobs letter the way
+# they always did until a leaf is set individually.
+DOOR_HW_SET_KEY = 'HB_DOOR_HW_SET'
+DOOR_HW_KEYS = (('RC', 'HB_DOOR_HW_RC'),
+                ('TL', 'HB_DOOR_HW_TL'),
+                ('FR', 'HB_DOOR_HW_FR'))
+
+
+def front_door_hw_keys(front_obj, store=None):
+    """(set_key, {code: key}) naming THIS leaf's hardware stamps."""
+    i = front_leaf_index(front_obj, store)
+    return ('%s_%d' % (DOOR_HW_SET_KEY, i),
+            dict((code, '%s_%d' % (key, i)) for code, key in DOOR_HW_KEYS))
+
+
+def front_door_hw(front_obj, store=None):
+    """{'RC': bool, 'TL': bool, 'FR': bool} for THIS leaf: its own
+    stamps when it has them, else the opening-wide stamps of an older
+    file, else no callouts."""
+    if store is None:
+        store = _front_frame_store(front_obj)
+    set_key, keys = front_door_hw_keys(front_obj, store)
+    if store.get(set_key):
+        return dict((code, bool(store.get(key, False)))
+                    for code, key in keys.items())
+    if store.get(DOOR_HW_SET_KEY):
+        return dict((code, bool(store.get(key, False)))
+                    for code, key in DOOR_HW_KEYS)
+    return dict((code, False) for code, _key in DOOR_HW_KEYS)
+
+
+def set_front_door_hw(front_obj, values, store=None):
+    """Stamp THIS leaf's hardware callouts, values keyed RC / TL / FR.
+    The leaf's partner is untouched - that is the point of the keys."""
+    if store is None:
+        store = _front_frame_store(front_obj)
+    set_key, keys = front_door_hw_keys(front_obj, store)
+    for code, key in keys.items():
+        store[key] = bool(values[code])
+    store[set_key] = True
+
+
 def front_cabinet_style(front_obj):
     """The cabinet style governing a front -- its cabinet root's
     STYLE_NAME resolved against the scene's style list -- or None.

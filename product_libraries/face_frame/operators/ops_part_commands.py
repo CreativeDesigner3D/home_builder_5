@@ -2082,25 +2082,27 @@ class hb_face_frame_OT_set_door_frame(bpy.types.Operator):
 # carries the letter mark is stamped individually -- painted with the
 # style editor's brush buttons (ops_styles.paint_door_hardware) or
 # edited here per door. Stamps live on the front's opening-cage store
-# (fronts are rebuilt every recalc); downstream 2D consumers read them
-# for the letter marks.
+# (fronts are rebuilt every recalc) but are keyed per LEAF, so one door
+# of a pair can be clipped without its partner; downstream 2D consumers
+# read them for the letter marks.
 
 def _on_hw_field(self, context):
     front = _door_frame_for_dialog(self)
     if front is None:
         return
-    store = _frame_store(front)
-    store['HB_DOOR_HW_SET'] = True
-    store['HB_DOOR_HW_RC'] = self.restrictor_clips
-    store['HB_DOOR_HW_TL'] = self.touch_latches
-    store['HB_DOOR_HW_FR'] = self.finger_rout
+    from .. import props_hb_face_frame as _props
+    _props.set_front_door_hw(front, {'RC': self.restrictor_clips,
+                                     'TL': self.touch_latches,
+                                     'FR': self.finger_rout},
+                             _frame_store(front))
 
 
 class hb_face_frame_OT_set_door_hardware(bpy.types.Operator):
     """Hardware callouts for THIS door: exactly the checked boxes mark
-    the door on drawings (all-off = no callouts). Live-bound like the
-    other Set-* dialogs; the style editor's brush buttons paint the
-    same stamps across many doors."""
+    the door on drawings (all-off = no callouts), and one leaf of a pair
+    can differ from the other. Live-bound like the other Set-* dialogs;
+    the style editor's brush buttons paint the same stamps across many
+    doors."""
     bl_idname = "hb_face_frame.set_door_hardware"
     bl_label = "Set Door Hardware"
     bl_description = ("Set this door's hardware callouts (restrictor "
@@ -2123,12 +2125,13 @@ class hb_face_frame_OT_set_door_hardware(bpy.types.Operator):
 
     def invoke(self, context, event):
         obj = context.active_object
-        store = _frame_store(obj)
+        from .. import props_hb_face_frame as _props
+        hw = _props.front_door_hw(obj, _frame_store(obj))
         # Seed BEFORE source_obj_name is set so the callbacks bail and
         # the seed writes don't fan back (same as Set Door Frame).
-        self.restrictor_clips = bool(store.get('HB_DOOR_HW_RC', False))
-        self.touch_latches = bool(store.get('HB_DOOR_HW_TL', False))
-        self.finger_rout = bool(store.get('HB_DOOR_HW_FR', False))
+        self.restrictor_clips = hw['RC']
+        self.touch_latches = hw['TL']
+        self.finger_rout = hw['FR']
         self.source_obj_name = obj.name
         return context.window_manager.invoke_props_dialog(self, width=240)
 
