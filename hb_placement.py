@@ -21,6 +21,24 @@ PlacementDimSpec = namedtuple(
 )
 
 
+def exclusion_set(exclude_obj):
+    """Normalize an exclusion argument into a frozenset of objects.
+
+    Accepts None, a single object, or any iterable of objects. Callers
+    that must keep more than one thing out of the gap scans - the
+    preview cage AND the object it is standing in for, say - can pass
+    them together instead of every scan growing a second parameter.
+    """
+    if exclude_obj is None:
+        return frozenset()
+    if isinstance(exclude_obj, bpy.types.Object):
+        return frozenset((exclude_obj,))
+    try:
+        return frozenset(o for o in exclude_obj if o is not None)
+    except TypeError:
+        return frozenset((exclude_obj,))
+
+
 def pending_world_matrix(obj):
     """World matrix of an object that was just moved this call.
 
@@ -481,17 +499,19 @@ class PlacementMixin:
         
         Args:
             wall_obj: The wall object to search
-            exclude_obj: Optional object to exclude (e.g., the object being placed)
+            exclude_obj: Optional object, or iterable of objects, to
+                exclude (e.g., the object being placed)
         
         Returns list of (x_start, x_end, obj) tuples.
         """
+        excluded = exclusion_set(exclude_obj)
         children = []
         for child in wall_obj.children:
             # Skip helper objects
             if child.get('obj_x'):
                 continue
-            # Skip the object being placed
-            if exclude_obj and child == exclude_obj:
+            # Skip the object(s) being placed
+            if child in excluded:
                 continue
             # Get object bounds on wall
             x_start = child.location.x
@@ -531,7 +551,8 @@ class PlacementMixin:
             wall_obj: The wall object
             cursor_x: Cursor X position in wall's local space
             object_width: Width of the object being placed
-            exclude_obj: Optional object to exclude from collision checks
+            exclude_obj: Optional object, or iterable of objects, to
+                exclude from collision checks
         
         Returns (gap_start, gap_end, snap_x) where snap_x is the suggested
         X position for placement.
@@ -695,7 +716,8 @@ class PlacementMixin:
                                     object_z_start=None,
                                     object_height=None,
                                     object_depth=None,
-                                    place_on_front=True):
+                                    place_on_front=True,
+                                    exclude_obj=None):
         """How far cabinets on a connected wall intrude into this wall.
 
         Walks the connected wall's children matching CABINET_MARKERS,
@@ -710,9 +732,13 @@ class PlacementMixin:
         on the connected wall counts as a potential intrusion).
 
         side is 'left' (the x=0 end) or 'right' (x=wall_length).
+        exclude_obj (object or iterable) is skipped, so a cabinet being
+        re-placed doesn't intrude on the corner it is being lifted off.
         Returns 0.0 if no connected wall or no intruding cabinet.
         """
         from . import hb_types
+
+        excluded = exclusion_set(exclude_obj)
 
         wall = hb_types.GeoNodeWall(wall_obj)
         adj_wall_node = wall.get_connected_wall(direction=side,
@@ -791,6 +817,8 @@ class PlacementMixin:
 
         for child in adj_wall_obj.children:
             if child.get('obj_x') or child.get('IS_2D_ANNOTATION'):
+                continue
+            if child in excluded:
                 continue
             if not any(m in child for m in CABINET_MARKERS):
                 continue
@@ -960,11 +988,17 @@ class PlacementMixin:
         upper above it). If either is None, vertical filtering
         is disabled and every same-side child is an obstacle.
 
+        exclude_obj takes a single object or an iterable of them; every
+        one is invisible to the scan. A cabinet being picked up and
+        dropped again passes itself alongside the preview cage, so the
+        span it currently occupies reads as free.
+
         Returns (gap_start, gap_end, snap_x). On a non-parametric
         wall (no modifier), returns (None, None, None).
         """
         from . import hb_types
 
+        excluded = exclusion_set(exclude_obj)
         wall = hb_types.GeoNodeWall(wall_obj)
         if not wall.has_modifier():
             return None, None, None
@@ -980,7 +1014,7 @@ class PlacementMixin:
         for child in wall_obj.children:
             if child.get('obj_x'):
                 continue
-            if exclude_obj is not None and child == exclude_obj:
+            if child in excluded:
                 continue
             if child.get('IS_2D_ANNOTATION'):
                 continue
@@ -1076,7 +1110,7 @@ class PlacementMixin:
         for obj in bpy.context.scene.objects:
             if obj.parent is not None:
                 continue
-            if exclude_obj is not None and obj == exclude_obj:
+            if obj in excluded:
                 continue
             if not any(obj.get(t) for t in FREE_CABINET_TAGS):
                 continue
@@ -1123,6 +1157,7 @@ class PlacementMixin:
             object_height=object_height,
             object_depth=object_depth,
             place_on_front=place_on_front,
+            exclude_obj=excluded,
         )
         if left_intrusion > 0:
             children.append((0.0, left_intrusion, None))
@@ -1132,6 +1167,7 @@ class PlacementMixin:
             object_height=object_height,
             object_depth=object_depth,
             place_on_front=place_on_front,
+            exclude_obj=excluded,
         )
         if right_intrusion > 0:
             children.append((wall_length - right_intrusion, wall_length, None))

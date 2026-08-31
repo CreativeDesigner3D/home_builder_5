@@ -818,7 +818,7 @@ def _hit_face_of_cabinet(cab_obj, hit_location):
     return candidates[0][0]
 
 
-def _resolve_island_run(seed_obj):
+def _resolve_island_run(seed_obj, exclude_obj=None):
     """Free-standing run containing seed_obj. Returns objects sorted
     left-to-right along the run axis.
 
@@ -828,9 +828,13 @@ def _resolve_island_run(seed_obj):
     Tall and base/upper can co-exist since dishwashers and ranges
     typically sit alongside base cabinets.
 
+    exclude_obj (object or iterable) never joins the run - the object
+    being placed can't be one of its own neighbors.
+
     Empty list (or list containing only the seed) is returned when the
     seed isn't free-standing or when its run can't be resolved.
     """
+    excluded = hb_placement.exclusion_set(exclude_obj)
     if seed_obj is None or seed_obj.parent is not None:
         return [seed_obj] if seed_obj is not None else []
     seed_axis = seed_obj.matrix_world.to_3x3() @ Vector((1.0, 0.0, 0.0))
@@ -846,6 +850,8 @@ def _resolve_island_run(seed_obj):
     found = []
     for obj in bpy.context.scene.objects:
         if obj.parent is not None:
+            continue
+        if obj in excluded:
             continue
         if not (obj.get(types_face_frame.TAG_CABINET_CAGE)
                 or obj.get('IS_APPLIANCE')):
@@ -968,14 +974,17 @@ def _find_back_row_gap(run_origin, run_axis, run_length, world_z,
     perp_target: perpendicular signed offset of the back-snap line
     (object's world translation must sit within 1" of this line in
     the perp direction to count as part of the back row).
+
+    exclude_obj takes a single object or an iterable of them.
     """
+    excluded = hb_placement.exclusion_set(exclude_obj)
     perp_tol = units.inch(1.0)
     cos_tol = math.cos(math.radians(0.5))
     back_axis = -run_axis  # back-row cabinets point this way (run + pi)
 
     occupied = []
     for obj in bpy.context.scene.objects:
-        if obj is exclude_obj:
+        if obj in excluded:
             continue
         if obj.parent is not None:
             continue
@@ -2898,7 +2907,7 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
                 object_z_start=cage_obj.location.z,
                 object_height=cabinet_height,
                 object_depth=cabinet_depth,
-                exclude_obj=cage_obj,
+                exclude_obj=self._placement_exclusions(cage_obj),
             )
         except Exception:
             result = (None, None, None)
@@ -3247,7 +3256,7 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
                 object_z_start=cage_z,
                 object_height=cabinet_height,
                 object_depth=cabinet_width,
-                exclude_obj=cage_obj,
+                exclude_obj=self._placement_exclusions(cage_obj),
             )
         except Exception:
             result = (None, None, None)
@@ -3352,7 +3361,8 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         self._center_snap_state = None
         self._cabinet_snap_side = None
 
-        run = _resolve_island_run(hit_cab)
+        run = _resolve_island_run(
+            hit_cab, exclude_obj=self._placement_exclusions(cage_obj))
         run_geo = _compute_run_back_geometry(run)
         if run_geo is None:
             self._position_free(context)
@@ -3383,7 +3393,7 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
             perp_target=0.0,
             signed_cursor=signed_cursor,
             object_width=cabinet_width,
-            exclude_obj=cage_obj,
+            exclude_obj=self._placement_exclusions(cage_obj),
         )
 
         # Width auto-fits to fill the gap (matches wall-snap behavior).
@@ -4460,6 +4470,19 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         self._restore_source()
         hb_placement.clear_header_text(context)
         return {'CANCELLED'}
+
+    def _placement_exclusions(self, cage_obj):
+        """Objects the gap / collision scans must ignore this frame.
+
+        Always the preview cage. In move mode it also covers the cabinet
+        the cage stands in for: that cabinet is still parented to its
+        wall while the drag runs, so without this it blocks the very
+        span it is being lifted out of - the cabinet reads as its own
+        neighbor and the gap it came from measures as full.
+        """
+        if self.move_source and self._source_obj is not None:
+            return (cage_obj, self._source_obj)
+        return (cage_obj,)
 
     def _hide_source(self):
         """Take the cabinet being re-placed off screen for the drag,
