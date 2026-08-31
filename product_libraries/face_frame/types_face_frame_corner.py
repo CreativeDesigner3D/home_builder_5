@@ -353,7 +353,9 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                      or ladder), FF above the kick.
           LOOSE / LOOSE_FLUSH - float like FLOATING; a separate corner
                      ladder sub-base is built by the per-shape recalc
-                     (recessed for LOOSE, flush for LOOSE_FLUSH). For the
+                     (recessed for LOOSE, flush for LOOSE_FLUSH; the pie
+                     cut closes the front with its two arm rails, the
+                     diagonal with its diagonal kick board). For the
                      carcass / FF / kick-board flags they read as FLOATING.
         Uppers (no kick) collapse to sides-to-floor, no kick parts.
         """
@@ -364,7 +366,9 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
             tk=tk,
             # Front kick boards are shown for NOTCH (recessed subfront)
             # AND LOOSE / LOOSE_FLUSH (they double as the ladder's front
-            # rails along each arm). FLUSH / FLOATING hide them.
+            # rails along each arm). FLUSH / FLOATING hide them. The
+            # diagonal ignores this flag - its front board is the
+            # diagonal kick for both NOTCH and loose.
             front_rails=has_kick and tk in ('NOTCH', 'LOOSE', 'LOOSE_FLUSH'),
             side_notch=has_kick and tk == 'NOTCH',
             sides_to_floor=(not has_kick) or tk in ('NOTCH', 'FLUSH'),
@@ -1586,13 +1590,16 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                                       depth, width, ld, rd, fft,
                                       front_setback, left_scribe, right_scribe,
                                       il, ir, ibl, ibr,
-                                      show_front_rails, ladder_vis):
+                                      show_front_rails, ladder_vis,
+                                      end_left_front_x=None,
+                                      end_right_front_y=None):
         """Position the corner LOOSE / LOOSE_FLUSH toe-kick ladder. Shared
-        by the pie-cut and diagonal recalcs so both build the identical
-        L-perimeter sub-base ("same as the pie cut"): two front kick rails
-        forming an L (front-left at X=fl_x running Y, front-right at Y=fr_y
-        running X), a rear rail down each wall, and a short end board across
-        each arm's outer end. The four toe-kick insets are applied -
+        by the pie-cut and diagonal recalcs: two front kick rails forming
+        an L (front-left at X=fl_x running Y, front-right at Y=fr_y running
+        X), a rear rail down each wall, and a short end board across each
+        arm's outer end. The pie cut takes the whole L; the diagonal takes
+        everything but the front rails, closing its front with the diagonal
+        kick board instead. The four toe-kick insets are applied -
         LEFT/RIGHT pull each arm's outer end inboard (the end board is its
         return closeout); BACK LEFT/RIGHT pull each rear rail off its wall.
 
@@ -1600,10 +1607,13 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         (the pie-cut keeps it in l_scribe/r_scribe with fflo/ffro = 0; the
         diagonal keeps it in fflo/ffro). `show_front_rails` gates the two
         front kicks (the pie-cut shows them for NOTCH too; the diagonal
-        shows a diagonal kick for NOTCH and these only when loose);
-        `ladder_vis` (= loose) gates the rear rails + end boards. Board
-        thickness t extends toward the cabinet interior; Width is the kick
-        height (stands on the floor at z=0).
+        shows a diagonal kick for both NOTCH and loose, so it never shows
+        these); `ladder_vis` (= loose) gates the rear rails + end boards.
+        `end_left_front_x` / `end_right_front_y` move each end board's
+        front end off the L corner - the diagonal passes the ends of its
+        own front rail so the end boards stop against it. Board thickness
+        t extends toward the cabinet interior; Width is the kick height
+        (stands on the floor at z=0).
         """
         fl_x = ld - fft - front_setback     # front-left rail X (left kick)
         fr_y = -rd + fft + front_setback    # front-right rail Y (right kick)
@@ -1664,26 +1674,28 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                     ('Thickness', t),
                 ))
 
+        el_x = fl_x if end_left_front_x is None else end_left_front_x
         end_left = parts.get(PART_ROLE_CORNER_LOOSE_END_LEFT)
         if end_left is not None:
             end_left.hide_viewport = not ladder_vis
             end_left.hide_render = not ladder_vis
             if ladder_vis:
-                end_left.location = (fl_x, LY, 0.0)
+                end_left.location = (el_x, LY, 0.0)
                 _set_mod_inputs(end_left, end_left.home_builder.mod_name, (
-                    ('Length', fl_x - WX),
+                    ('Length', el_x - WX),
                     ('Width', kick_height),
                     ('Thickness', t),
                 ))
 
+        er_y = fr_y if end_right_front_y is None else end_right_front_y
         end_right = parts.get(PART_ROLE_CORNER_LOOSE_END_RIGHT)
         if end_right is not None:
             end_right.hide_viewport = not ladder_vis
             end_right.hide_render = not ladder_vis
             if ladder_vis:
-                end_right.location = (RX, fr_y, 0.0)
+                end_right.location = (RX, er_y, 0.0)
                 _set_mod_inputs(end_right, end_right.home_builder.mod_name, (
-                    ('Length', WY - fr_y),
+                    ('Length', WY - er_y),
                     ('Width', kick_height),
                     ('Thickness', t),
                 ))
@@ -2871,25 +2883,44 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         # scribes the resulting line is parallel to A-B (same angle as
         # the FF); for asymmetric cases the kick angle adapts so it
         # connects cleanly to both notches.
-        # Diagonal kick is the NOTCH recessed subfront on the diagonal
-        # face; LOOSE / LOOSE_FLUSH use the shared L ladder instead
-        # (below), FLUSH / FLOATING have no kick board - so show it for
-        # NOTCH only.
+        # The diagonal face carries the kick board for NOTCH (the
+        # recessed subfront) AND for LOOSE / LOOSE_FLUSH (the ladder
+        # sub-base's front rail). The shared L ladder's two arm rails
+        # meet at a corner that falls in FRONT of the diagonal line, so
+        # a diagonal cabinet gets one diagonal front rail instead and
+        # the arm rails stay hidden. FLUSH / FLOATING have no kick
+        # board at all.
         diag_notch = kf.has_kick and kf.tk == 'NOTCH'
-        kick_setback = cab_props.toe_kick_setback
+        diag_front = diag_notch or kf.loose
+        # Ladder insets: LEFT / RIGHT pull each arm's outer end inboard,
+        # BACK LEFT / RIGHT pull each rear rail off its wall. They apply
+        # to the loose ladder only, and the front rail (diagonal or arm)
+        # sits flush with the cabinet front for LOOSE_FLUSH.
+        front_setback = 0.0 if kf.loose_flush else cab_props.toe_kick_setback
+        il  = cab_props.inset_toe_kick_left       if kf.loose else 0.0
+        ir  = cab_props.inset_toe_kick_right      if kf.loose else 0.0
+        ibl = cab_props.inset_toe_kick_back_left  if kf.loose else 0.0
+        ibr = cab_props.inset_toe_kick_back_right if kf.loose else 0.0
+        kick_setback = front_setback if kf.loose else cab_props.toe_kick_setback
         kick_left_x = ld + fflo - kick_setback
-        kick_left_y = -depth + fflo + t
-        kick_right_x = width - ffro - t
         kick_right_y = -(rd + ffro) + kick_setback
+        if kf.loose:
+            # Ladder: the ends land on the arm end boards (which the
+            # left / right insets pull inboard), not the carcass sides.
+            kick_left_y = -depth + il + t
+            kick_right_x = width - ir - t
+        else:
+            kick_left_y = -depth + fflo + t
+            kick_right_x = width - ffro - t
         kick_dx = kick_right_x - kick_left_x
         kick_dy = kick_right_y - kick_left_y
         kick_length = math.sqrt(kick_dx * kick_dx + kick_dy * kick_dy)
         kick_angle = math.atan2(kick_dy, kick_dx)
         diag_kick = parts.get(PART_ROLE_DIAGONAL_KICK)
         if diag_kick is not None:
-            diag_kick.hide_viewport = not diag_notch
-            diag_kick.hide_render = not diag_notch
-        if diag_kick is not None and diag_notch:
+            diag_kick.hide_viewport = not diag_front
+            diag_kick.hide_render = not diag_front
+        if diag_kick is not None and diag_front:
             diag_kick.location = (kick_left_x, kick_left_y, 0.0)
             diag_kick.rotation_euler.z = kick_angle
             _set_mod_inputs(diag_kick, diag_kick.home_builder.mod_name, (
@@ -2922,22 +2953,19 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                         ('Thickness', diag_ft),
                     ))
 
-        # Loose ladder (LOOSE / LOOSE_FLUSH): the same L sub-base as the
-        # pie cut, inscribed in the diagonal footprint. front_setback
-        # flushes the front rails for LOOSE_FLUSH; the four insets apply
-        # on loose only. The diagonal keeps its per-side scribe in
+        # Loose ladder (LOOSE / LOOSE_FLUSH): the pie cut's rear rails
+        # and arm end boards, inscribed in the diagonal footprint, but
+        # closed across the front by the diagonal kick board above
+        # instead of the two arm rails - so the end boards stop against
+        # the diagonal's ends. The diagonal keeps its per-side scribe in
         # fflo / ffro (the pie-cut keeps it in l_scribe / r_scribe).
-        front_setback = 0.0 if kf.loose_flush else cab_props.toe_kick_setback
-        il  = cab_props.inset_toe_kick_left       if kf.loose else 0.0
-        ir  = cab_props.inset_toe_kick_right      if kf.loose else 0.0
-        ibl = cab_props.inset_toe_kick_back_left  if kf.loose else 0.0
-        ibr = cab_props.inset_toe_kick_back_right if kf.loose else 0.0
         self._position_corner_loose_ladder(
             parts, t=t, kick_height=kick_height, depth=depth, width=width,
             ld=ld, rd=rd, fft=fft, front_setback=front_setback,
             left_scribe=fflo, right_scribe=ffro,
             il=il, ir=ir, ibl=ibl, ibr=ibr,
-            show_front_rails=kf.loose, ladder_vis=kf.loose)
+            show_front_rails=False, ladder_vis=kf.loose,
+            end_left_front_x=kick_left_x, end_right_front_y=kick_right_y)
 
         # ---- Sections: mid rails + per-section content --------------
         # The FF opening between the bottom and top rails is divided into
