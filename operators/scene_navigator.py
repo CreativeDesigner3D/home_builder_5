@@ -182,13 +182,17 @@ _active_tab = TAB_ROOMS
 _extra_tabs = []         # (order, key, label, available_fn)
 
 
-def register_tab(key, module, label=None, order=100, available=None):
+def register_tab(key, module, label=None, order=100, available=None,
+                 prefer=None):
     """Add a tab and the provider that draws it.
 
     `label` is what the tab button says (the key, if omitted) -- a key
     has to be stable and unique, and those make poor button text.
     `available` is an optional callable(scene) deciding where the tab
     applies, the same judgement `tab_available` makes for the built-ins.
+    `prefer` is an optional callable(scene) saying the tab is THE thing
+    to look at on that scene: arriving there switches the panel to it,
+    opening the panel if it was closed (see resolve_active_tab).
     Sorted by (order, key); built-ins take an implicit order from their
     position, spaced so a contribution can land between two of them.
     Re-registering a key replaces it, so a reloaded add-on cannot stack
@@ -198,10 +202,13 @@ def register_tab(key, module, label=None, order=100, available=None):
     _extra_tabs.append((order, key, label or key, available))
     _extra_tabs.sort(key=lambda t: (t[0], t[1]))
     _providers[key] = module
+    if prefer is not None:
+        _preferred[key] = prefer
 
 
 def unregister_tab(key):
     global _active_tab
+    _preferred.pop(key, None)
     for i, tab in enumerate(list(_extra_tabs)):
         if tab[1] == key:
             del _extra_tabs[i]
@@ -243,8 +250,14 @@ def tab_available(tab, scene=None):
                 return bool(available(scene))
             except Exception:
                 return False        # never let a contribution break the HUD
+    if scene is None:
+        return True
     if tab == TAB_LIBRARY:
-        return not (scene and scene.get('IS_LAYOUT_VIEW'))
+        return not (scene.get('IS_LAYOUT_VIEW') or scene.get('IS_DETAIL_VIEW'))
+    if tab == TAB_OPTIONS:
+        # Styles are room work. A detail card documents one thing and
+        # is not the place to change what the room's cabinets look like.
+        return not scene.get('IS_DETAIL_VIEW')
     return True
 
 
@@ -261,11 +274,49 @@ def resolve_active_tab(scene=None):
     with its add-on -- otherwise the panel would open on a tab that no
     longer has a provider, and draw nothing at all.
     """
-    global _active_tab
+    global _active_tab, _seen_scene, _auto_opened_for, _open
+    if scene is None:
+        scene = bpy.context.scene
+    name = scene.name if scene is not None else None
+    if name != _seen_scene:
+        # The scene changed under the panel. A tab that prefers this
+        # scene takes over, opening the panel if it was closed; leaving
+        # such a scene closes a panel that only opened itself for it.
+        _seen_scene = name
+        preferred = _preferred_tab(scene)
+        if preferred is not None:
+            _active_tab = preferred
+            if not _open:
+                _open = True
+                _auto_opened_for = preferred
+        elif _auto_opened_for is not None:
+            _open = False
+            _auto_opened_for = None
     if _active_tab not in tabs() or not tab_available(_active_tab, scene):
         _active_tab = TAB_ROOMS
     return _active_tab
+
+
+def _preferred_tab(scene):
+    """The first tab, in display order, that wants this scene."""
+    if scene is None:
+        return None
+    for tab in tabs():
+        prefer = _preferred.get(tab)
+        if prefer is None:
+            continue
+        try:
+            if prefer(scene) and tab_available(tab, scene):
+                return tab
+        except Exception:
+            continue                # never let a contribution break the HUD
+    return None
+
+
 _providers = {}          # tab key -> provider module
+_preferred = {}          # tab key -> callable(scene) -> bool
+_seen_scene = None       # scene name the last resolve ran on
+_auto_opened_for = None  # tab the panel opened itself for, else None
 
 
 # Room actions: extra buttons on the ROOMS tab, contributed by whoever
@@ -382,9 +433,12 @@ def active_tab():
 
 
 def set_active_tab(tab):
-    global _active_tab
+    global _active_tab, _auto_opened_for
     if tab in tabs():
         _active_tab = tab
+        # A tab picked by hand makes the open panel the user's own; it
+        # no longer closes itself when the scene moves on.
+        _auto_opened_for = None
 
 
 # ---- Scale ------------------------------------------------------------------
@@ -1143,8 +1197,9 @@ def open_panel(anchor_x=-1.0, anchor_top=-1.0):
 def close_panel():
     """Hide the panel. Only the tab button that opened it does this --
     nothing the panel itself does closes it."""
-    global _open
+    global _open, _auto_opened_for
     _open = False
+    _auto_opened_for = None
 
 
 def build_hosted_layout(context, area, region, anchor_x=-1.0, anchor_top=-1.0):
