@@ -972,8 +972,16 @@ def is_cage_object(obj) -> bool:
 
 
 def is_helper_object(obj) -> bool:
-    """True if obj is a helper empty (prompt/anchor object), not visible geometry."""
-    return bool(obj.get('obj_x') or 'Overlay Prompt Obj' in obj.name)
+    """True if obj should be left out of a layout view: a helper empty
+    (prompt / anchor object), or geometry marked render-only.
+
+    Render-only covers scene dressing that belongs in a rendering and
+    not on a drawing -- it is real geometry, so nothing else skips it,
+    but every view walk goes through here and this is the one place
+    that decides what a drawing is made of."""
+    return bool(obj.get('obj_x')
+                or obj.get('IS_RENDER_ONLY')
+                or 'Overlay Prompt Obj' in obj.name)
 
 
 # Product dropped on the FAR face of a wall is parented with a 180 degree Z
