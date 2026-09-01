@@ -145,7 +145,8 @@ class HOME_BUILDER_OT_add_backsplash(bpy.types.Operator):
         return sm.build_surface_material(
             SPLASH_MATERIAL, self.style, base, accent,
             sm.DEFAULT_ROUGHNESS.get(self.style, 0.2),
-            tile_w=tile_w, tile_h=tile_h, running_bond=bond)
+            tile_w=tile_w, tile_h=tile_h, running_bond=bond,
+            grout_size=0.125 * sm.INCH)
 
     def execute(self, context):
         wall_names = None

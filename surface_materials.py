@@ -265,10 +265,7 @@ def build_tile_nodes(mat, base, grout, tile_w, tile_h, roughness,
     tiles.inputs['Color1'].default_value = base
     tiles.inputs['Color2'].default_value = varied
     tiles.inputs['Mortar'].default_value = grout
-    # Mortar Size is a fraction of the tile, not a length, so a joint that
-    # reads right on a 12" tile disappears on a 2" mosaic. Convert from a
-    # real joint width so the grout line stays the same width on the wall.
-    tiles.inputs['Mortar Size'].default_value = _mortar_fraction(
+    tiles.inputs['Mortar Size'].default_value = _mortar_size(
         grout_size, tile_w, tile_h)
     tiles.inputs['Mortar Smooth'].default_value = 0.15
     tiles.inputs['Bias'].default_value = 0.4
@@ -316,12 +313,25 @@ def build_tile_nodes(mat, base, grout, tile_w, tile_h, roughness,
     L.new(bump.outputs['Normal'], bsdf.inputs['Normal'])
 
 
-def _mortar_fraction(grout_size, tile_w, tile_h):
-    """Brick node Mortar Size is a fraction of the tile, not a length.
-    Convert a real joint width into that fraction, clamped so a mosaic
-    does not come out as mostly grout."""
-    smallest = max(min(tile_w, tile_h), 1e-4)
-    return max(0.001, min(0.12, grout_size / smallest))
+def _mortar_size(grout_size, tile_w, tile_h):
+    """Brick node Mortar Size from a real joint width, in metres.
+
+    Mortar Size reads as a fraction of the tile and is not one: it is a
+    HALF-width in the texture's own coordinate units, the same units as
+    Brick Width and Row Height. Since the UVs are world scale and Scale
+    is 1, that unit is the metre, and the joint comes out
+    2 * Mortar Size wide.
+
+    Getting this wrong is not subtle. Treating it as a fraction put
+    0.05 on a 3 x 6 subway, which is a 100 mm joint around a 76 mm
+    tile -- the grout swallowed the tile and the wall rendered as one
+    flat colour with no pattern at all.
+
+    Clamped so a request for a fat joint on a mosaic still leaves tile
+    to look at.
+    """
+    half = grout_size / 2.0
+    return max(0.0002, min(half, min(tile_w, tile_h) * 0.2))
 
 
 def build_stone_nodes(mat, base, vein, roughness):

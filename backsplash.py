@@ -48,9 +48,17 @@ CABINET_CAGE_TAGS = (
 )
 
 # A gap in the base run wider than this reads as two separate runs (a
-# doorway, a walk-through) rather than an appliance. Tile carries across
-# a range or a dishwasher, so anything narrower stays one splash.
+# doorway, a walk-through). Appliances fill their own span, so what is
+# left here is genuinely empty wall.
 RUN_SPLIT_GAP = 36 * INCH
+
+# How far above the base cabinets an appliance may reach and still count
+# as part of the run. A range tops out at the countertop and a
+# dishwasher below it, so both take tile behind them; a refrigerator
+# does not. The same margin above the countertop marks an appliance as
+# overhead, which is how a range hood comes to cap the tile the way an
+# upper cabinet does.
+COUNTER_MARGIN = 4 * INCH
 
 # Fallbacks when the scene has not been told otherwise.
 DEFAULT_THICKNESS = 0.375 * INCH
@@ -115,6 +123,32 @@ def _cabinet_x_range(obj):
     return (obj.location.x, obj.location.x + dim_x)
 
 
+def _cage_dim(obj, key):
+    """One cage dimension, or None if obj has no cage."""
+    try:
+        return hb_types.GeoNodeCage(obj).get_input(key)
+    except Exception:
+        return None
+
+
+def _obj_span(obj):
+    """(x0, x1, bottom Z, top Z) of a wall child's cage, or None."""
+    dim_x = _cage_dim(obj, 'Dim X')
+    dim_z = _cage_dim(obj, 'Dim Z')
+    if dim_x is None or dim_z is None:
+        return None
+    if _is_back_side(obj):
+        x0, x1 = obj.location.x - dim_x, obj.location.x
+    else:
+        x0, x1 = obj.location.x, obj.location.x + dim_x
+    return (x0, x1, obj.location.z, obj.location.z + dim_z)
+
+
+def _appliances_on(wall, is_back):
+    return [c for c in wall.children
+            if c.get('IS_APPLIANCE') and _is_back_side(c) == is_back]
+
+
 def _cabinets_on(wall, is_back, cabinet_type):
     out = []
     for child in wall.children:
@@ -156,12 +190,17 @@ def _countertop_thickness(context):
     return value or DEFAULT_COUNTERTOP_THICKNESS
 
 
-def upper_spans(wall, is_back, x0, x1):
-    """(start, end, underside Z) for the upper cabinets over a run,
-    clipped to it, sorted, and never overlapping.
+def upper_spans(wall, is_back, x0, x1, overhead_z=None):
+    """(start, end, underside Z) for whatever hangs over a run, clipped
+    to it, sorted, and never overlapping.
 
-    Where two uppers overlap in X the lower underside wins: tile has to
-    stop at whichever cabinet it reaches first.
+    Upper cabinets, plus any appliance mounted above `overhead_z` -- a
+    range hood or an over-range microwave caps the tile exactly the way
+    an upper cabinet does, and over a range that is the whole point,
+    since there is no upper there to stop at.
+
+    Where two of them overlap in X the lower underside wins: tile has to
+    stop at whichever it reaches first.
     """
     raw = []
     for cab in _cabinets_on(wall, is_back, 'UPPER'):
@@ -170,6 +209,15 @@ def upper_spans(wall, is_back, x0, x1):
         if cx1 - cx0 < TOL:
             continue
         raw.append((cx0, cx1, cab.location.z))
+    if overhead_z is not None:
+        for app in _appliances_on(wall, is_back):
+            span = _obj_span(app)
+            if span is None or span[2] < overhead_z:
+                continue
+            cx0, cx1 = max(span[0], x0), min(span[1], x1)
+            if cx1 - cx0 < TOL:
+                continue
+            raw.append((cx0, cx1, span[2]))
     raw.sort(key=lambda s: (s[0], s[2]))
 
     spans = []
@@ -208,19 +256,34 @@ def base_runs(context, wall_names=None):
         wall = bpy.data.objects.get(wall_name)
         if wall is None:
             continue
-        spans = sorted(_cabinet_x_range(c) for c in cabs)
-        tops = {}
+
+        cab_spans = []
         for cab in cabs:
             cx0, cx1 = _cabinet_x_range(cab)
-            cage = hb_types.GeoNodeCage(cab)
-            tops[(cx0, cx1)] = cab.location.z + cage.get_input('Dim Z')
+            top = cab.location.z + (_cage_dim(cab, 'Dim Z') or 0.0)
+            cab_spans.append((cx0, cx1, top))
+        base_top = max(c[2] for c in cab_spans)
+
+        # A counter-height appliance is part of the run, not a hole in
+        # it. A range gets no countertop but it does get tile, and
+        # nothing else fills that span, so without this a wide range
+        # reads as a gap and splits the wall into two backsplashes.
+        spans = [(c[0], c[1]) for c in cab_spans]
+        for app in _appliances_on(wall, is_back):
+            span = _obj_span(app)
+            if span is not None and span[3] <= base_top + COUNTER_MARGIN:
+                spans.append((span[0], span[1]))
+        spans.sort()
 
         for group in _split_on_gaps(spans, RUN_SPLIT_GAP):
             x0, x1 = group[0][0], max(s[1] for s in group)
             deck = _countertop_top(wall, x0, x1)
             if deck is None:
-                highest = max(tops.get(s, 0.0) for s in group)
-                deck = highest + ct_thickness
+                # Only the cabinets in THIS run set the deck height --
+                # an appliance has no countertop to measure from.
+                inside = [c[2] for c in cab_spans
+                          if c[1] > x0 + TOL and c[0] < x1 - TOL]
+                deck = (max(inside) if inside else base_top) + ct_thickness
             runs.append({'wall': wall, 'is_back': is_back,
                          'x0': x0, 'x1': x1, 'z0': deck})
     return runs
@@ -258,7 +321,8 @@ def segments_for(wall, is_back, x0, x1, z0, mode, height):
     fallback = z0 + height
     segs = []
     cursor = x0
-    for sx0, sx1, under in upper_spans(wall, is_back, x0, x1):
+    for sx0, sx1, under in upper_spans(wall, is_back, x0, x1,
+                                       overhead_z=z0 + COUNTER_MARGIN):
         if sx0 - cursor > TOL:
             segs.append((cursor, sx0, fallback))
         segs.append((max(sx0, cursor), sx1, max(under, z0 + MIN_HEIGHT)))
