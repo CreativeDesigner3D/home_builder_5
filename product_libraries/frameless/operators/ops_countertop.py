@@ -2,6 +2,7 @@ import bpy
 import bmesh
 import math
 from .... import hb_types, hb_project, units
+from ...common import countertop_islands
 
 
 def get_cabinet_depth(cab_obj):
@@ -557,6 +558,52 @@ def create_group_countertop(context, group_obj, cabinets):
     return obj
 
 
+def gather_island_appliances(context, cabinets):
+    """Under-counter appliances standing in an island.
+
+    A dishwasher between two base cabinets is part of the island and has
+    to be covered; without this the top stops at each cabinet and the
+    dishwasher is left bare.
+    """
+    if not cabinets:
+        return []
+    cabinet_top = max(
+        cab.matrix_world.translation.z
+        + hb_types.GeoNodeCage(cab).get_input('Dim Z')
+        for cab in cabinets)
+    out = []
+    for obj in context.scene.objects:
+        if obj.parent is not None and obj.parent.get('IS_WALL_BP'):
+            continue
+        if countertop_islands.is_under_counter(obj, cabinet_top):
+            out.append(obj)
+    return out
+
+
+def create_island_countertops(context, cabinets, appliances):
+    """One countertop per island, over all of its cabinets and the
+    appliances standing between them."""
+    props = hb_project.get_main_scene().hb_frameless
+    picked = set(cabinets)
+    made = []
+    for group in countertop_islands.group_members(
+            list(cabinets) + list(appliances)):
+        group_cabs = [m for m in group if m in picked]
+        if not group_cabs:
+            continue        # an appliance on its own is not an island
+        ct = countertop_islands.create_group_countertop(
+            context, group,
+            props.countertop_overhang_front,
+            props.countertop_overhang_sides,
+            props.countertop_overhang_back,
+            props.countertop_thickness,
+            'HOME_BUILDER_MT_cabinet_commands',
+            cabinets=group_cabs)
+        if ct:
+            made.append(ct)
+    return made
+
+
 def create_island_countertop(context, cab_obj):
     """Create a countertop for a lone island cabinet (not in a group)."""
     main_scene = hb_project.get_main_scene()
@@ -663,11 +710,11 @@ class hb_frameless_OT_add_countertops(bpy.types.Operator):
             if ct:
                 ct_count += 1
 
-        # Lone island countertops
-        for cab_obj in island_cabinets:
-            ct = create_island_countertop(context, cab_obj)
-            if ct:
-                ct_count += 1
+        # Island countertops -- one slab per island, not per cabinet
+        if island_cabinets:
+            appliances = gather_island_appliances(context, island_cabinets)
+            ct_count += len(create_island_countertops(
+                context, island_cabinets, appliances))
 
         self.report({'INFO'}, f"Created {ct_count} countertop(s)")
         return {'FINISHED'}
