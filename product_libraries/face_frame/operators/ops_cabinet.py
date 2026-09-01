@@ -4434,6 +4434,43 @@ def _apply_flanking_stile_floor(root, bay_obj, config, reset):
         _set_mid_stile(bay_index, bay_index + 1)
 
 
+def apply_bay_recipe(bay_obj, recipe, config=None, reset_bay_props=False):
+    """Wipe `bay_obj`'s contents and rebuild them from a recipe tree.
+
+    The tree has the shape bay_presets builds - ('leaf', config,
+    overrides, size_role) and ('split', axis, children, size_role) - but
+    the caller supplies it, so a bay layout that is read from somewhere
+    else (another program's file, for instance) can be materialized
+    without first having to exist as a named preset.
+
+    `config` is optional and only used to look up the bay-level prop
+    overrides a named preset carries; pass None when the recipe did not
+    come from PRESETS.
+
+    Returns True on success, False if `bay_obj` is not a bay cage or has
+    no cabinet root.
+    """
+    if not bay_obj.get(types_face_frame.TAG_BAY_CAGE):
+        return False
+    root = types_face_frame.find_cabinet_root(bay_obj)
+    if root is None:
+        return False
+    # Wipe + rebuild fires update callbacks on every front_type / overlay /
+    # hinge write, and each one triggers a full cabinet recalc. Suspend so
+    # the explicit final recalc below is the only one that actually runs.
+    with types_face_frame.suspend_recalc():
+        _wipe_bay_children(bay_obj)
+        opening_idx = [0]
+        _build_recipe_into(
+            recipe, bay_obj, 0, opening_idx, root.face_frame_cabinet,
+        )
+        if config is not None:
+            _apply_bay_prop_overrides(bay_obj, config, reset_bay_props)
+            _apply_flanking_stile_floor(root, bay_obj, config, reset_bay_props)
+        types_face_frame.recalculate_face_frame_cabinet(root)
+    return True
+
+
 def apply_bay_preset(bay_obj, config, reset_bay_props=False):
     """Wipe `bay_obj`'s contents and rebuild from a bay preset.
     Programmatic equivalent of hb_face_frame.change_bay's execute body,
@@ -4458,20 +4495,7 @@ def apply_bay_preset(bay_obj, config, reset_bay_props=False):
     presets = bay_presets.PRESETS.get(cabinet_type)
     if not presets or config not in presets:
         return False
-
-    # Wipe + rebuild fires update callbacks on every front_type / overlay /
-    # hinge write, and each one triggers a full cabinet recalc. Suspend so
-    # the explicit final recalc below is the only one that actually runs.
-    with types_face_frame.suspend_recalc():
-        _wipe_bay_children(bay_obj)
-        opening_idx = [0]
-        _build_recipe_into(
-            presets[config], bay_obj, 0, opening_idx, root.face_frame_cabinet,
-        )
-        _apply_bay_prop_overrides(bay_obj, config, reset_bay_props)
-        _apply_flanking_stile_floor(root, bay_obj, config, reset_bay_props)
-        types_face_frame.recalculate_face_frame_cabinet(root)
-    return True
+    return apply_bay_recipe(bay_obj, presets[config], config, reset_bay_props)
 
 
 # ---------------------------------------------------------------------------
