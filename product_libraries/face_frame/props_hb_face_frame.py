@@ -4947,6 +4947,23 @@ def _overall_height_set(self, value):
     self.height = max(value - drop, units.inch(1.0))
 
 
+def _width_axis(root):
+    """The direction the cabinet's width grows in, in parent space.
+
+    Usually the parent's +X, but a cabinet can carry a rotation of its
+    own while still parented to the same wall - one snapped into a
+    corner turns onto the adjacent wall, and cabinets in a run can face
+    another way. Those grow along the rotated axis, so shifting
+    location.x alone slid the whole cabinet sideways instead of holding
+    an edge. Normalized, so a scaled root can't inflate the shift.
+    """
+    from mathutils import Vector
+    axis = root.matrix_basis.to_3x3() @ Vector((1.0, 0.0, 0.0))
+    if axis.length < 1e-9:
+        return Vector((1.0, 0.0, 0.0))
+    return axis.normalized()
+
+
 def _update_cabinet_width(self, context):
     """Width update: honor the cabinet's anchor side, then recalc.
 
@@ -4955,8 +4972,10 @@ def _update_cabinet_width(self, context):
     by the full width delta so the right edge stays put instead;
     anchored CENTER it shifts by half, holding the centreline (the old
     version's anchor left / center / right). Resize without having to
-    move the cabinet after. The previous width is stashed on the object
-    (seeded from the cage's Dim X, which still holds the pre-write
+    move the cabinet after. The shift runs along the cabinet's OWN
+    width axis (_width_axis), not the parent's X. The previous width
+    is stashed on the object (seeded from the cage's Dim X, which
+    still holds the pre-write
     value when the callback fires) so back-to-back writes under a
     suspended recalc compute the right delta. System width writes
     during a group/bay distribution (_DISTRIBUTING_WIDTHS) never
@@ -4977,7 +4996,7 @@ def _update_cabinet_width(self, context):
             and id(root) not in types_face_frame._DISTRIBUTING_WIDTHS):
         delta = self.width - old
         if abs(delta) > 1e-9:
-            root.location.x -= delta * share
+            root.location -= _width_axis(root) * (delta * share)
     root['HB_ANCHOR_LAST_WIDTH'] = self.width
     _update_cabinet_dim(self, context)
 
