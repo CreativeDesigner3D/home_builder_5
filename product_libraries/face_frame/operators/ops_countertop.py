@@ -19,7 +19,7 @@ import bmesh
 import math
 from .... import hb_types, hb_project, units
 from .. import types_face_frame
-from ...common import countertop_islands
+from ...common import countertop_common
 from . import ops_placement as ff_ops_placement
 
 
@@ -434,8 +434,8 @@ def create_wall_countertop(context, wall_obj, cabinets, has_left_conn, has_right
     obj = bpy.data.objects.new('Countertop', mesh)
     obj.parent = wall_obj
     obj['IS_COUNTERTOP'] = True
-    obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_cabinet_commands'
     context.scene.collection.objects.link(obj)
+    countertop_common.finish(obj, 'FACE_FRAME')
     return obj
 
 
@@ -456,7 +456,7 @@ def gather_island_appliances(context, cabinets):
     for obj in context.scene.objects:
         if obj.parent is not None and obj.parent.get('IS_WALL_BP'):
             continue
-        if countertop_islands.is_under_counter(obj, cabinet_top):
+        if countertop_common.is_under_counter(obj, cabinet_top):
             out.append(obj)
     return out
 
@@ -467,18 +467,18 @@ def create_island_countertops(context, cabinets, appliances):
     props = hb_project.get_main_scene().hb_face_frame
     picked = set(cabinets)
     made = []
-    for group in countertop_islands.group_members(
+    for group in countertop_common.group_members(
             list(cabinets) + list(appliances)):
         group_cabs = [m for m in group if m in picked]
         if not group_cabs:
             continue        # an appliance on its own is not an island
-        ct = countertop_islands.create_group_countertop(
+        ct = countertop_common.create_group_countertop(
             context, group,
             props.countertop_overhang_front,
             props.countertop_overhang_sides,
             props.countertop_overhang_back,
             props.countertop_thickness,
-            'HOME_BUILDER_MT_face_frame_cabinet_commands',
+            'FACE_FRAME',
             cabinets=group_cabs)
         if ct:
             made.append(ct)
@@ -539,8 +539,8 @@ def create_island_countertop(context, cab_obj):
     obj = bpy.data.objects.new('Countertop', mesh)
     obj.parent = cab_obj
     obj['IS_COUNTERTOP'] = True
-    obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_cabinet_commands'
     context.scene.collection.objects.link(obj)
+    countertop_common.finish(obj, 'FACE_FRAME')
     return obj
 
 

@@ -1,5 +1,6 @@
 """
-One countertop per island, not one per cabinet.
+Countertop pieces both product libraries share: how an island is grouped
+into one slab, and the finishing every new top needs.
 
 An island is rarely a single cabinet. It is a row of them, usually with a
 second row back to back behind it, and often with a dishwasher or a
@@ -24,6 +25,14 @@ island split by one comes out as two tops, which is correct.
 
 The library's own countertop module owns the overhang and thickness
 settings and passes them in; nothing here reads a property group.
+
+Every top also goes through finish(), which stamps the right-click menu
+and lays down UVs. The UVs matter more than they look: a procedural
+material reads the UV output of a Texture Coordinate node, and a mesh
+with NO uv layer hands that node (0, 0) at every point -- so the whole
+slab samples a single spot of the texture and renders as one flat
+colour. That is why a countertop used to need unwrapping by hand
+before its material would show.
 """
 
 import math
@@ -33,6 +42,8 @@ import bpy
 from mathutils import Vector
 
 from ... import hb_types
+
+MENU_ID = 'HOME_BUILDER_MT_countertop_commands'
 
 # Footprints closer than this count as touching. Wide enough for a
 # filler or a scribe gap, far short of any real separation between two
@@ -111,7 +122,7 @@ def _faces_opposite(a, b):
 
 
 def create_group_countertop(context, members, overhang_front, overhang_sides,
-                            overhang_back, thickness, menu_id,
+                            overhang_back, thickness, library,
                             cabinets=None):
     """One slab over a whole island. Returns the new object, or None.
 
@@ -172,8 +183,60 @@ def create_group_countertop(context, members, overhang_front, overhang_sides,
     obj.parent = anchor
     obj.matrix_parent_inverse.identity()
     obj['IS_COUNTERTOP'] = True
-    obj['MENU_ID'] = menu_id
     context.scene.collection.objects.link(obj)
+    finish(obj, library)
+    return obj
+
+
+def world_matrix(obj):
+    """obj.matrix_world, computed rather than read.
+
+    The cached value is stale for an object parented moments ago, and
+    every top here is exactly that.
+    """
+    if obj.parent is None:
+        return obj.matrix_basis.copy()
+    return obj.parent.matrix_world @ obj.matrix_parent_inverse @ obj.matrix_basis
+
+
+def apply_world_uvs(obj):
+    """Box-project the mesh in world space, 1 UV unit = 1 metre.
+
+    World rather than object space so neighbouring tops share one
+    continuous run of stone or tile instead of each restarting the
+    pattern at its own corner. Each face takes the plane its normal
+    points along, which keeps the top's projection from smearing down
+    the edge band.
+    """
+    mesh = obj.data
+    mw = world_matrix(obj)
+    rot = mw.to_3x3()
+    bm = bmesh.new()
+    bm.from_mesh(mesh)
+    uv_layer = bm.loops.layers.uv.verify()
+    for face in bm.faces:
+        normal = rot @ face.normal
+        axis = max(range(3), key=lambda i: abs(normal[i]))
+        for loop in face.loops:
+            co = mw @ loop.vert.co
+            if axis == 2:
+                loop[uv_layer].uv = (co.x, co.y)
+            elif axis == 0:
+                loop[uv_layer].uv = (co.y, co.z)
+            else:
+                loop[uv_layer].uv = (co.x, co.z)
+    bm.to_mesh(mesh)
+    bm.free()
+    mesh.update()
+
+
+def finish(obj, library):
+    """Everything a freshly built countertop still needs: its own
+    right-click menu, the library that built it (so the menu can offer
+    that library's cut command), and UVs."""
+    obj['MENU_ID'] = MENU_ID
+    obj['HB_COUNTERTOP_LIB'] = library
+    apply_world_uvs(obj)
     return obj
 
 

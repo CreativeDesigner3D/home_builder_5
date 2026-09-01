@@ -796,6 +796,70 @@ class HOME_BUILDER_OT_surface_material(bpy.types.Operator):
 # Right-click menu
 # ---------------------------------------------------------------------------
 
+def _operator_exists(idname):
+    """Is this operator registered?
+
+    Not hasattr: bpy.ops resolves lazily, so getattr succeeds for a
+    module and an operator that do not exist -- hasattr on pure
+    nonsense comes back True. get_rna_type is the call that actually
+    goes and looks.
+    """
+    module, _, name = idname.partition('.')
+    try:
+        getattr(getattr(bpy.ops, module), name).get_rna_type()
+        return True
+    except (AttributeError, KeyError, TypeError):
+        return False
+
+
+class HOME_BUILDER_OT_delete_countertop(bpy.types.Operator):
+    bl_idname = "home_builder.delete_countertop"
+    bl_label = "Delete Countertop"
+    bl_description = "Delete the selected countertops"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return any(o.get('IS_COUNTERTOP') for o in context.selected_objects)
+
+    def execute(self, context):
+        targets = [o for o in context.selected_objects if o.get('IS_COUNTERTOP')]
+        if not targets:
+            self.report({'WARNING'}, "No countertops selected")
+            return {'CANCELLED'}
+        count = len(targets)
+        for obj in targets:
+            bpy.data.objects.remove(obj, do_unlink=True)
+        self.report({'INFO'}, f"Deleted {count} countertop(s)")
+        return {'FINISHED'}
+
+
+class HOME_BUILDER_MT_countertop_commands(bpy.types.Menu):
+    bl_label = "Countertop Commands"
+
+    # Cut Hole belongs to whichever library built the top, so the tops
+    # carry that stamp and the menu offers the matching command. Older
+    # tops predate the stamp and fall back to face frame.
+    _CUT = {
+        'FACE_FRAME': 'hb_face_frame.countertop_boolean_cut',
+        'FRAMELESS': 'hb_frameless.countertop_boolean_cut',
+    }
+
+    def draw(self, context):
+        layout = self.layout
+        layout.operator("home_builder.surface_material",
+                        text="Countertop Material", icon='MATERIAL')
+        layout.separator()
+        obj = context.active_object
+        library = (obj.get('HB_COUNTERTOP_LIB') if obj else None) or 'FACE_FRAME'
+        cut = self._CUT.get(library)
+        if cut and _operator_exists(cut):
+            layout.operator(cut, text="Cut Hole (Select 2)", icon='MOD_BOOLEAN')
+        layout.separator()
+        layout.operator("home_builder.delete_countertop",
+                        text="Delete Countertop", icon='X')
+
+
 class HOME_BUILDER_MT_backsplash_commands(bpy.types.Menu):
     bl_label = "Backsplash Commands"
 
@@ -813,6 +877,8 @@ class HOME_BUILDER_MT_backsplash_commands(bpy.types.Menu):
 
 classes = [
     HOME_BUILDER_OT_add_backsplash,
+    HOME_BUILDER_OT_delete_countertop,
+    HOME_BUILDER_MT_countertop_commands,
     HOME_BUILDER_OT_remove_backsplash,
     HOME_BUILDER_OT_backsplash_prompts,
     HOME_BUILDER_OT_edit_backsplash,
