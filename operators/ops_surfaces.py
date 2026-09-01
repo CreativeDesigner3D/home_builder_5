@@ -275,61 +275,108 @@ class HOME_BUILDER_OT_backsplash_prompts(bpy.types.Operator):
 # Interactive edit
 # ---------------------------------------------------------------------------
 
-HANDLE_PX = 5.0
+GRIP_PX = 4.0
+EDGE_PX = 2.0
+EDGE_HOT_PX = 6.0
 PICK_PX = 14.0
 SNAP_STEP = backsplash.INCH
 
-COL_LINE = (0.15, 0.65, 1.0, 0.9)
-COL_HANDLE = (0.15, 0.65, 1.0, 1.0)
+COL_OUTLINE = (0.15, 0.65, 1.0, 0.5)
+COL_EDGE = (0.15, 0.65, 1.0, 1.0)
 COL_HOT = (1.0, 0.75, 0.15, 1.0)
 COL_TEXT = (1.0, 1.0, 1.0, 1.0)
+COL_LABEL_BG = (0.0, 0.0, 0.0, 0.65)
+
+
+def _thick_line(shader, a, b, width):
+    """A screen-space line as a quad.
+
+    Not gpu.state.line_width_set: a core profile clamps glLineWidth to
+    1.0 on plenty of drivers, so the highlight would simply not thicken
+    on the machines it matters for.
+    """
+    d = b - a
+    if d.length < 1e-6:
+        return
+    n = Vector((-d.y, d.x)).normalized() * (width / 2.0)
+    batch_for_shader(shader, 'TRI_FAN', {"pos": [
+        tuple(a + n), tuple(b + n), tuple(b - n), tuple(a - n)]}).draw(shader)
+
+
+def _quad(shader, x, y, w, h):
+    batch_for_shader(shader, 'TRI_FAN', {"pos": [
+        (x, y), (x + w, y), (x + w, y + h), (x, y + h)]}).draw(shader)
 
 
 def _draw_edit(op):
+    """Draw every edge that can be dragged, and light up the one under
+    the mouse.
+
+    The edge IS the control. Drawing only a grip dot left it unclear
+    what the tool even offered, so all four kinds of edge are painted in
+    full, and hovering thickens one and puts its dimension beside it --
+    before any click, so what a drag is about to change is visible first.
+    """
     # bpy.context, not the context captured at registration: the handler
     # fires once per region and only the live one names the right region.
+    #
+    # `!=`, never `is not`: every access to context.region builds a fresh
+    # Python wrapper around the same C pointer, so identity is false even
+    # for the region we are standing in. RNA's own comparison is what
+    # actually asks "same region".
     context = bpy.context
-    if context.region is not op.region:
+    if context.region != op.region:
         return
     region, rv3d = context.region, context.region_data
-    pts = [view3d_utils.location_3d_to_region_2d(region, rv3d, p)
-           for p in op.outline_world]
-    pts = [p for p in pts if p is not None]
+
+    def to2d(p):
+        return view3d_utils.location_3d_to_region_2d(region, rv3d, p)
+
+    active = op.drag if op.drag is not None else op.hover
+    label = None
+    if op.readout and active is not None and 0 <= active < len(op.handles):
+        pos = to2d(op.handles[active]['world'])
+        if pos is not None:
+            blf.size(0, 13)
+            tw, th = blf.dimensions(0, op.readout)
+            label = (pos.x + 14.0, pos.y + 14.0, tw, th)
 
     gpu.state.blend_set('ALPHA')
     shader = gpu.shader.from_builtin('UNIFORM_COLOR')
     try:
-        if len(pts) > 2:
-            shader.uniform_float("color", COL_LINE)
+        pts = [to2d(p) for p in op.outline_world]
+        if len(pts) > 2 and all(p is not None for p in pts):
+            shader.uniform_float("color", COL_OUTLINE)
             batch_for_shader(shader, 'LINE_LOOP',
                              {"pos": [tuple(p) for p in pts]}).draw(shader)
 
         for i, handle in enumerate(op.handles):
-            pos = view3d_utils.location_3d_to_region_2d(
-                region, rv3d, handle['world'])
-            if pos is None:
+            a, b = to2d(handle['a']), to2d(handle['b'])
+            if a is None or b is None:
                 continue
-            hot = (i == op.hover or (op.drag is not None and i == op.drag))
-            shader.uniform_float("color", COL_HOT if hot else COL_HANDLE)
-            x, y = pos.x, pos.y
-            r = HANDLE_PX * (1.4 if hot else 1.0)
-            batch_for_shader(shader, 'TRI_FAN', {"pos": [
-                (x - r, y - r), (x + r, y - r), (x + r, y + r), (x - r, y + r),
-            ]}).draw(shader)
+            hot = (i == active)
+            shader.uniform_float("color", COL_HOT if hot else COL_EDGE)
+            _thick_line(shader, a, b, EDGE_HOT_PX if hot else EDGE_PX)
+            # A grip at the middle keeps a very short edge -- the end of
+            # a shallow step -- something to aim at.
+            mid = (a + b) / 2.0
+            r = GRIP_PX * (1.6 if hot else 1.0)
+            _quad(shader, mid.x - r, mid.y - r, r * 2.0, r * 2.0)
+
+        if label is not None:
+            x, y, tw, th = label
+            shader.uniform_float("color", COL_LABEL_BG)
+            _quad(shader, x - 5.0, y - 4.0, tw + 10.0, th + 8.0)
     finally:
         gpu.state.blend_set('NONE')
 
-    if op.readout:
-        anchor = op.drag if op.drag is not None else op.hover
-        if anchor is not None and 0 <= anchor < len(op.handles):
-            pos = view3d_utils.location_3d_to_region_2d(
-                region, rv3d, op.handles[anchor]['world'])
-            if pos is not None:
-                blf.size(0, 13)
-                blf.color(0, *COL_TEXT)
-                blf.position(0, pos.x + 12, pos.y + 12, 0)
-                blf.draw(0, op.readout)
-                gpu.state.blend_set('NONE')
+    if label is not None:
+        x, y, _tw, _th = label
+        blf.size(0, 13)
+        blf.color(0, *COL_TEXT)
+        blf.position(0, x, y, 0)
+        blf.draw(0, op.readout)
+        gpu.state.blend_set('NONE')
 
 
 class HOME_BUILDER_OT_edit_backsplash(bpy.types.Operator):
@@ -368,38 +415,82 @@ class HOME_BUILDER_OT_edit_backsplash(bpy.types.Operator):
         def world(x, z):
             return mw @ Vector((x, y_front, z))
 
+        # Each handle is an EDGE (a, b) rather than a point, so the
+        # whole line is the hit target and the highlight.
         self.handles = []
         for i, (x0, x1, top) in enumerate(segs):
             self.handles.append({'kind': 'TOP', 'index': i,
-                                 'world': world((x0 + x1) / 2.0, top)})
+                                 'a': world(x0, top), 'b': world(x1, top)})
         if segs:
             first, last = segs[0], segs[-1]
-            self.handles.append({
-                'kind': 'LEFT', 'index': 0,
-                'world': world(first[0], (z0 + first[2]) / 2.0)})
-            self.handles.append({
-                'kind': 'RIGHT', 'index': len(segs) - 1,
-                'world': world(last[1], (z0 + last[2]) / 2.0)})
-            self.handles.append({
-                'kind': 'BOTTOM', 'index': -1,
-                'world': world((first[0] + last[1]) / 2.0, z0)})
+            self.handles.append({'kind': 'LEFT', 'index': 0,
+                                 'a': world(first[0], z0),
+                                 'b': world(first[0], first[2])})
+            self.handles.append({'kind': 'RIGHT', 'index': len(segs) - 1,
+                                 'a': world(last[1], z0),
+                                 'b': world(last[1], last[2])})
+            self.handles.append({'kind': 'BOTTOM', 'index': -1,
+                                 'a': world(first[0], z0),
+                                 'b': world(last[1], z0)})
+        for handle in self.handles:
+            handle['world'] = (handle['a'] + handle['b']) / 2.0
 
         profile = backsplash.profile_points(segs, z0)
         self.outline_world = [world(x, z) for x, z in profile]
+
+    @staticmethod
+    def _distance_to_edge(p, a, b):
+        """Screen distance from p to the segment ab, not to its ends --
+        so anywhere along a long top edge picks it."""
+        ab = b - a
+        length_sq = ab.length_squared
+        if length_sq < 1e-9:
+            return (p - a).length
+        t = max(0.0, min(1.0, (p - a).dot(ab) / length_sq))
+        return (p - (a + ab * t)).length
 
     def _pick(self, context, event):
         region, rv3d = context.region, context.region_data
         mouse = Vector((event.mouse_region_x, event.mouse_region_y))
         best, best_d = None, PICK_PX
         for i, handle in enumerate(self.handles):
-            pos = view3d_utils.location_3d_to_region_2d(
-                region, rv3d, handle['world'])
-            if pos is None:
+            a = view3d_utils.location_3d_to_region_2d(region, rv3d,
+                                                      handle['a'])
+            b = view3d_utils.location_3d_to_region_2d(region, rv3d,
+                                                      handle['b'])
+            if a is None or b is None:
                 continue
-            d = (pos - mouse).length
+            d = self._distance_to_edge(mouse, a, b)
             if d < best_d:
                 best, best_d = i, d
         return best
+
+    def _readout_for(self, context, index):
+        """What the edge under the mouse currently measures."""
+        if index is None or not (0 <= index < len(self.handles)):
+            return ""
+        segs = backsplash.segments_of(self.obj)
+        if not segs:
+            return ""
+        handle = self.handles[index]
+        z0 = self.obj.get('bs_z0', 0.0)
+        if handle['kind'] == 'TOP':
+            return _length(context, segs[handle['index']][2] - z0)
+        if handle['kind'] == 'BOTTOM':
+            return _length(context, max(s[2] for s in segs) - z0)
+        return _length(context, segs[-1][1] - segs[0][0])
+
+    def _set_cursor(self, context):
+        """Point the cursor the way the edge under it moves."""
+        kind = None
+        if self.hover is not None and 0 <= self.hover < len(self.handles):
+            kind = self.handles[self.hover]['kind']
+        if kind in ('TOP', 'BOTTOM'):
+            context.window.cursor_modal_set('MOVE_Y')
+        elif kind in ('LEFT', 'RIGHT'):
+            context.window.cursor_modal_set('MOVE_X')
+        else:
+            context.window.cursor_modal_set('DEFAULT')
 
     def _local_point(self, context, event):
         """The mouse, projected onto the tile plane, in wall-local space.
@@ -437,22 +528,18 @@ class HOME_BUILDER_OT_edit_backsplash(bpy.types.Operator):
 
         kind, i = handle['kind'], handle['index']
         if kind == 'TOP':
-            top = max(value, z0 + backsplash.MIN_HEIGHT)
-            segs[i] = (segs[i][0], segs[i][1], top)
-            self.readout = _length(context, top - z0)
+            segs[i] = (segs[i][0], segs[i][1],
+                       max(value, z0 + backsplash.MIN_HEIGHT))
         elif kind == 'BOTTOM':
             ceiling = min(s[2] for s in segs) - backsplash.MIN_HEIGHT
-            z0 = min(value, ceiling)
-            obj['bs_z0'] = z0
-            self.readout = _length(context, max(s[2] for s in segs) - z0)
+            obj['bs_z0'] = min(value, ceiling)
         elif kind == 'LEFT':
-            x0 = min(value, segs[0][1] - backsplash.MIN_SPAN)
-            segs[0] = (x0, segs[0][1], segs[0][2])
-            self.readout = _length(context, segs[-1][1] - x0)
+            segs[0] = (min(value, segs[0][1] - backsplash.MIN_SPAN),
+                       segs[0][1], segs[0][2])
         else:
-            x1 = max(value, segs[-1][0] + backsplash.MIN_SPAN)
-            segs[-1] = (segs[-1][0], x1, segs[-1][2])
-            self.readout = _length(context, x1 - segs[0][0])
+            segs[-1] = (segs[-1][0],
+                        max(value, segs[-1][0] + backsplash.MIN_SPAN),
+                        segs[-1][2])
 
         backsplash.set_segments(obj, segs)
         backsplash.rebuild(obj)
@@ -466,6 +553,7 @@ class HOME_BUILDER_OT_edit_backsplash(bpy.types.Operator):
             self.drag = min(self.drag, last)
         if self.hover is not None:
             self.hover = min(self.hover, last)
+        self.readout = self._readout_for(context, self.drag)
 
     # -- modal ---------------------------------------------------------
     def invoke(self, context, event):
@@ -486,8 +574,8 @@ class HOME_BUILDER_OT_edit_backsplash(bpy.types.Operator):
         self._draw_handle = bpy.types.SpaceView3D.draw_handler_add(
             _draw_edit, (self,), 'WINDOW', 'POST_PIXEL')
         context.workspace.status_text_set(
-            "Drag an edge   |   Ctrl: snap to the inch   |   "
-            "Enter: done   |   Esc: cancel")
+            "Hover an edge to highlight it, then drag   |   "
+            "Ctrl: snap to the inch   |   Enter: done   |   Esc: cancel")
         context.window_manager.modal_handler_add(self)
         context.area.tag_redraw()
         return {'RUNNING_MODAL'}
@@ -502,7 +590,8 @@ class HOME_BUILDER_OT_edit_backsplash(bpy.types.Operator):
                 self._apply(context, event)
             else:
                 self.hover = self._pick(context, event)
-                self.readout = ""
+                self.readout = self._readout_for(context, self.hover)
+                self._set_cursor(context)
             context.area.tag_redraw()
             return {'RUNNING_MODAL'}
 
@@ -539,6 +628,7 @@ class HOME_BUILDER_OT_edit_backsplash(bpy.types.Operator):
                 self._draw_handle, 'WINDOW')
             self._draw_handle = None
         context.workspace.status_text_set(None)
+        context.window.cursor_modal_restore()
         if context.area:
             context.area.tag_redraw()
         return {'CANCELLED'} if cancelled else {'FINISHED'}
