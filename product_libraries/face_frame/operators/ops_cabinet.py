@@ -4871,10 +4871,24 @@ class hb_face_frame_OT_set_equal_door_width(bpy.types.Operator):
     )
     bl_options = {'REGISTER', 'UNDO'}
 
-    # 0.125" double-door reveal between leaves. Mirrors
-    # solver_face_frame.DOUBLE_DOOR_REVEAL; not imported to keep this
-    # operator's deps the same as its neighbors.
+    # Reveal between the two leaves of a pair. Mirrors
+    # solver_face_frame.DOUBLE_DOOR_REVEAL / INSET_DOUBLE_DOOR_REVEAL;
+    # not imported to keep this operator's deps the same as its
+    # neighbors. Inset leaves butt closer than overlay leaves, so the
+    # gap has to be read per cabinet (_pair_gap) or a pair on an inset
+    # cabinet comes out 1/32" wider per leaf than the single doors
+    # beside it -- the one thing this command exists to prevent.
     _DOUBLE_DOOR_REVEAL = inch(0.125)
+    _INSET_DOUBLE_DOOR_REVEAL = inch(0.0625)
+
+    @classmethod
+    def _pair_gap(cls, root):
+        """Leaf-to-leaf reveal a double-door bay on this cabinet builds
+        with. Same test the solver uses: a positive door inset amount
+        means the fronts sit in the frame (full or partial inset)."""
+        if root.face_frame_cabinet.default_door_inset_amount > 0:
+            return cls._INSET_DOUBLE_DOOR_REVEAL
+        return cls._DOUBLE_DOOR_REVEAL
 
     @classmethod
     def poll(cls, context):
@@ -4959,9 +4973,9 @@ class hb_face_frame_OT_set_equal_door_width(bpy.types.Operator):
                 all_bays.append((bay, root,
                                  self._bay_has_full_width_double_door(bay)))
 
-        # Pool budget. Each bay's overlay comes from its own cabinet
-        # so cabinets with different ff_door_overlay still balance.
-        DD_GAP = self._DOUBLE_DOOR_REVEAL
+        # Pool budget. Each bay's overlay AND pair gap come from its
+        # own cabinet so cabinets with different ff_door_overlay - or a
+        # mix of overlay and inset - still balance.
         total_bay_widths = sum(b.face_frame_bay.width for b, _, _ in all_bays)
         # Each bay's overlay budget is (left + right) at the cabinet
         # default. Per-opening overlay overrides are not consulted in
@@ -4971,7 +4985,8 @@ class hb_face_frame_OT_set_equal_door_width(bpy.types.Operator):
              + r.face_frame_cabinet.default_right_overlay)
             for _, r, _ in all_bays
         )
-        num_double_bays = sum(1 for _, _, dd in all_bays if dd)
+        total_pair_gap = sum(self._pair_gap(r)
+                             for _, r, dd in all_bays if dd)
         num_doors = sum(2 if dd else 1 for _, _, dd in all_bays)
         if num_doors == 0:
             self.report({'WARNING'}, "No doors to equalize")
@@ -4979,7 +4994,7 @@ class hb_face_frame_OT_set_equal_door_width(bpy.types.Operator):
 
         total_visible = (total_bay_widths
                          + total_overlay_pad
-                         - num_double_bays * DD_GAP)
+                         - total_pair_gap)
         target_door_width = total_visible / num_doors
 
         # Write new bay widths under one suspended recalc, then float
@@ -5004,7 +5019,8 @@ class hb_face_frame_OT_set_equal_door_width(bpy.types.Operator):
                 cp = root.face_frame_cabinet
                 lr_pad = cp.default_left_overlay + cp.default_right_overlay
                 if is_double:
-                    new_w = 2.0 * target_door_width - lr_pad + DD_GAP
+                    new_w = (2.0 * target_door_width - lr_pad
+                             + self._pair_gap(root))
                 else:
                     new_w = target_door_width - lr_pad
                 bp = bay.face_frame_bay
