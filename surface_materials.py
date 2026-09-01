@@ -102,6 +102,30 @@ SURFACE_STYLE_ITEMS = [
      "from the Materials library", 'MATERIAL_DATA', 4),
 ]
 
+# How each stone carries itself: (vein scale, vein width, speckle).
+# Scale is veins per metre, so a bigger number means finer, busier
+# veining; width is the half-thickness of a vein in that field; speckle
+# is the grain that separates a granite from a marble. Marble is a few
+# bold veins over a clean ground, quartz is the reverse.
+STONE_CHARACTER = {
+    'WHITE_QUARTZ':  (3.0, 0.020, 0.055),
+    'CARRARA':       (2.2, 0.035, 0.020),
+    'CALACATTA':     (1.4, 0.050, 0.015),
+    'GRAY_QUARTZ':   (3.5, 0.015, 0.075),
+    'BLACK_GRANITE': (4.2, 0.010, 0.130),
+    'SOAPSTONE':     (2.0, 0.030, 0.030),
+    'CUSTOM':        (2.4, 0.030, 0.035),
+}
+
+
+def stone_character(look):
+    """Vein and speckle settings for one stone look, as keyword
+    arguments for build_surface_material."""
+    scale, width, speckle = STONE_CHARACTER.get(
+        look, STONE_CHARACTER['CUSTOM'])
+    return {'vein_scale': scale, 'vein_width': width, 'speckle': speckle}
+
+
 DEFAULT_LOOK = {'TILE': 'WHITE_GLOSS', 'STONE': 'WHITE_QUARTZ',
                 'WOOD': 'NATURAL', 'SOLID': 'WHITE'}
 DEFAULT_ROUGHNESS = {'TILE': 0.15, 'STONE': 0.18, 'WOOD': 0.45, 'SOLID': 0.6}
@@ -334,62 +358,127 @@ def _mortar_size(grout_size, tile_w, tile_h):
     return max(0.0002, min(half, min(tile_w, tile_h) * 0.2))
 
 
-def build_stone_nodes(mat, base, vein, roughness):
-    """Veined stone: quartz, marble or granite. Coarse veins from a
-    distorted wave, speckle from a fine noise, and a light coat so a
-    polished top catches the room."""
+def build_stone_nodes(mat, base, vein, roughness, vein_scale=2.4,
+                      vein_width=0.030, speckle=0.035):
+    """Veined stone: marble, quartz or granite.
+
+    A vein is drawn as a narrow band either side of one contour of a
+    distorted wave, not as the wave itself. Taking the wave straight is
+    what made the first version read as camouflage: the field spends
+    most of its range far from any contour, so most of the slab came out
+    part-veined and the ground was never clean. Measuring DISTANCE to
+    the contour instead leaves the ground alone and puts colour only
+    where a vein actually runs.
+
+    Two passes -- a bold one and a finer one about a third its width --
+    combined with MAXIMUM, so hairlines branch off the main veins rather
+    than washing over them. The coordinates are squashed on one axis
+    first, which is what makes veins run in a direction instead of
+    pooling.
+    """
     nt, bsdf, uv = clear_nodes(mat)
     n = nt.nodes
     L = nt.links
 
-    # Veining: bands pushed around by their own distortion read as marble;
-    # at low contrast under heavy speckle the same graph reads as quartz.
-    veins = n.new('ShaderNodeTexWave')
-    veins.location = (-800, 200)
-    veins.wave_type = 'BANDS'
-    veins.bands_direction = 'DIAGONAL'
-    veins.inputs['Scale'].default_value = 1.6
-    veins.inputs['Distortion'].default_value = 12.0
-    veins.inputs['Detail'].default_value = 4.0
-    veins.inputs['Detail Scale'].default_value = 3.0
-    veins.inputs['Detail Roughness'].default_value = 0.7
-    L.new(uv.outputs['UV'], veins.inputs['Vector'])
+    # Anisotropy: features stretch along V, so veins run rather than pool.
+    stretch = n.new('ShaderNodeVectorMath')
+    stretch.location = (-1000, 200)
+    stretch.operation = 'MULTIPLY'
+    stretch.inputs[1].default_value = (1.0, 0.26, 1.0)
+    L.new(uv.outputs['UV'], stretch.inputs[0])
 
-    # Narrow the bands into veins rather than stripes.
-    vein_map = n.new('ShaderNodeMapRange')
-    vein_map.location = (-550, 200)
-    vein_map.inputs['From Min'].default_value = 0.42
-    vein_map.inputs['From Max'].default_value = 0.62
-    vein_map.clamp = True
-    L.new(veins.outputs['Fac'], vein_map.inputs['Value'])
+    def vein_pass(scale, width, distortion, detail, strength, y):
+        """One vein layer: distance from the wave's mid contour, mapped
+        so 0 sits on the vein and `width` is clear of it."""
+        wave = n.new('ShaderNodeTexWave')
+        wave.location = (-800, y)
+        wave.wave_type = 'BANDS'
+        wave.bands_direction = 'DIAGONAL'
+        wave.inputs['Scale'].default_value = scale
+        wave.inputs['Distortion'].default_value = distortion
+        wave.inputs['Detail'].default_value = detail
+        wave.inputs['Detail Scale'].default_value = 2.0
+        wave.inputs['Detail Roughness'].default_value = 0.6
+        L.new(stretch.outputs['Vector'], wave.inputs['Vector'])
+
+        centre = n.new('ShaderNodeMath')
+        centre.location = (-600, y)
+        centre.operation = 'SUBTRACT'
+        centre.inputs[1].default_value = 0.5
+        L.new(wave.outputs['Fac'], centre.inputs[0])
+
+        away = n.new('ShaderNodeMath')
+        away.location = (-450, y)
+        away.operation = 'ABSOLUTE'
+        L.new(centre.outputs['Value'], away.inputs[0])
+
+        mask = n.new('ShaderNodeMapRange')
+        mask.location = (-300, y)
+        mask.inputs['From Min'].default_value = 0.0
+        mask.inputs['From Max'].default_value = max(width, 1e-4)
+        mask.inputs['To Min'].default_value = strength
+        mask.inputs['To Max'].default_value = 0.0
+        mask.clamp = True
+        L.new(away.outputs['Value'], mask.inputs['Value'])
+        return mask
+
+    # Distortion kept modest on purpose: crank it and the veins curl
+    # into little loops, which reads as marbled paper rather than
+    # stone. Long and wandering is what a slab actually looks like.
+    bold = vein_pass(vein_scale, vein_width, 9.0, 3.0, 1.0, 320)
+    fine = vein_pass(vein_scale * 2.7, vein_width * 0.35, 12.0, 2.0, 0.55, 40)
+
+    veins = n.new('ShaderNodeMath')
+    veins.location = (-120, 200)
+    veins.operation = 'MAXIMUM'
+    L.new(bold.outputs['Result'], veins.inputs[0])
+    L.new(fine.outputs['Result'], veins.inputs[1])
 
     mix = n.new('ShaderNodeMix')
-    mix.location = (-300, 200)
+    mix.location = (60, 200)
     mix.data_type = 'RGBA'
     mix.inputs[6].default_value = (*base, 1.0)
     mix.inputs[7].default_value = (*vein, 1.0)
-    L.new(vein_map.outputs['Result'], mix.inputs['Factor'])
+    L.new(veins.outputs['Value'], mix.inputs['Factor'])
 
     # Speckle -- the grain that separates quartz and granite from marble.
     speck = n.new('ShaderNodeTexNoise')
-    speck.location = (-800, -220)
-    speck.inputs['Scale'].default_value = 320.0
+    speck.location = (-800, -320)
+    speck.inputs['Scale'].default_value = 380.0
     speck.inputs['Detail'].default_value = 2.0
     speck.inputs['Roughness'].default_value = 0.8
     L.new(uv.outputs['UV'], speck.inputs['Vector'])
     speck_map = n.new('ShaderNodeMapRange')
-    speck_map.location = (-550, -220)
-    speck_map.inputs['To Min'].default_value = 0.93
-    speck_map.inputs['To Max'].default_value = 1.07
+    speck_map.location = (-550, -320)
+    speck_map.inputs['To Min'].default_value = 1.0 - speckle
+    speck_map.inputs['To Max'].default_value = 1.0 + speckle
     L.new(speck.outputs['Fac'], speck_map.inputs['Value'])
 
+    # A slow, very shallow cloud so a big slab is not perfectly even.
+    cloud = n.new('ShaderNodeTexNoise')
+    cloud.location = (-800, -560)
+    cloud.inputs['Scale'].default_value = 2.5
+    cloud.inputs['Detail'].default_value = 3.0
+    L.new(uv.outputs['UV'], cloud.inputs['Vector'])
+    cloud_map = n.new('ShaderNodeMapRange')
+    cloud_map.location = (-550, -560)
+    cloud_map.inputs['To Min'].default_value = 0.97
+    cloud_map.inputs['To Max'].default_value = 1.03
+    L.new(cloud.outputs['Fac'], cloud_map.inputs['Value'])
+
+    grain = n.new('ShaderNodeMath')
+    grain.location = (-350, -440)
+    grain.operation = 'MULTIPLY'
+    L.new(speck_map.outputs['Result'], grain.inputs[0])
+    L.new(cloud_map.outputs['Result'], grain.inputs[1])
+
     tone = n.new('ShaderNodeMix')
-    tone.location = (-50, 100)
+    tone.location = (240, 120)
     tone.data_type = 'RGBA'
     tone.blend_type = 'MULTIPLY'
     tone.inputs['Factor'].default_value = 1.0
     L.new(mix.outputs[2], tone.inputs[6])
-    L.new(speck_map.outputs['Result'], tone.inputs[7])
+    L.new(grain.outputs['Value'], tone.inputs[7])
     L.new(tone.outputs[2], bsdf.inputs['Base Color'])
 
     bsdf.inputs['Roughness'].default_value = roughness
@@ -437,7 +526,8 @@ def _set_if_present(node, name, value):
 
 def build_surface_material(name, style, base_srgb, accent_srgb, roughness,
                            tile_w=0.1524, tile_h=0.0762, running_bond=True,
-                           grout_size=0.004):
+                           grout_size=0.004, vein_scale=2.4,
+                           vein_width=0.030, speckle=0.035):
     """Create or rebuild the named material in this style and return it.
 
     Rebuilding in place is what lets a backsplash be restyled from the
@@ -452,7 +542,8 @@ def build_surface_material(name, style, base_srgb, accent_srgb, roughness,
         build_tile_nodes(mat, base, accent, tile_w, tile_h, roughness,
                          running_bond, grout_size)
     elif style == 'STONE':
-        build_stone_nodes(mat, base, accent, roughness)
+        build_stone_nodes(mat, base, accent, roughness, vein_scale,
+                          vein_width, speckle)
     elif style == 'WOOD':
         build_wood_nodes(mat, base, accent, tile_h, roughness)
     else:

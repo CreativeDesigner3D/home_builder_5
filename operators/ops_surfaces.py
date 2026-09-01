@@ -784,7 +784,8 @@ class HOME_BUILDER_OT_surface_material(bpy.types.Operator):
                 name, self.style, tuple(self.color), tuple(self.accent),
                 self.roughness, tile_w=self.tile_width,
                 tile_h=self.tile_height, running_bond=self.running_bond,
-                grout_size=self.grout_size)
+                grout_size=self.grout_size,
+                **sm.stone_character(self.look))
 
         for obj in targets:
             sm.assign(obj, mat)
