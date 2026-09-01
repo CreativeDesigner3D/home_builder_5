@@ -275,7 +275,7 @@ OPTION_FORMS = (
     ("Finished Ends and Backs", 'draw_finished_ends_ui'),
     ("Pulls", 'draw_pulls_ui'),
     ("Drawer Boxes", 'draw_drawer_box_ui'),
-    ("Countertops", 'draw_countertop_ui'),
+    ("Countertops & Backsplash", 'draw_countertop_ui'),
     ("Molding", 'draw_molding_ui'),
 )
 

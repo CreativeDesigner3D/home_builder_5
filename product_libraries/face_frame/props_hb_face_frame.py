@@ -10832,6 +10832,21 @@ class Face_Frame_Scene_Props(PropertyGroup):
         row.operator('hb_face_frame.countertop_boolean_cut',
                      text="Cut Hole (Select 2)", icon='MOD_BOOLEAN')
 
+        layout.separator()
+        box = layout.box()
+        box.label(text="Backsplash", icon='MESH_GRID')
+        row = box.row(align=True)
+        row.scale_y = 1.3
+        row.operator('home_builder.add_backsplash', text="Add Backsplash",
+                     icon='MESH_GRID')
+        row.operator('home_builder.remove_backsplash', text="", icon='X')
+        row = box.row(align=True)
+        row.scale_y = 1.3
+        row.operator('home_builder.edit_backsplash', text="Edit Edges",
+                     icon='EDITMODE_HLT')
+        row.operator('home_builder.surface_material', text="Material",
+                     icon='MATERIAL')
+
     # =====================================================================
     # Registration
     # =====================================================================

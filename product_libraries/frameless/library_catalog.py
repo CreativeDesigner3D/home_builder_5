@@ -203,7 +203,7 @@ OPTION_FORMS = (
     ("Crown Details", 'draw_crown_details_ui'),
     ("Toe Kick Details", 'draw_toe_kick_details_ui'),
     ("Upper Bottom Details", 'draw_upper_bottom_details_ui'),
-    ("Countertops", 'draw_countertop_ui'),
+    ("Countertops & Backsplash", 'draw_countertop_ui'),
 )
 
 

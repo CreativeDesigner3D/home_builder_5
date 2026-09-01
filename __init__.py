@@ -23,6 +23,7 @@ from .operators import layout_lock
 from .operators import viewport_hud
 from .operators import room_dim_overlay
 from .operators import ops_general
+from .operators import ops_surfaces
 from .product_libraries import closets
 from .product_libraries import face_frame
 from .product_libraries import frameless
@@ -363,6 +364,7 @@ def register():
     options_panel.register()
     room_dim_overlay.register()
     ops_general.register()
+    ops_surfaces.register()
     ops.register()
     view3d_sidebar.register()
     try:
@@ -414,6 +416,7 @@ def unregister():
     layout_lock.unregister()
     room_dim_overlay.unregister()
     ops_stairs.unregister()
+    ops_surfaces.unregister()
     ops_general.unregister()
     ops.unregister()
     view3d_sidebar.unregister()
