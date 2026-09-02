@@ -11601,10 +11601,11 @@ class FaceFrameCabinet(GeoNodeCage):
         tray is trimmed to the drawer it ships in.
 
         A published configuration pins the layout through the hint:
-        CORE = slot core width, BAND = back compartment depth, CROSS =
-        cross compartment depth (0 = none), MIDSPLIT = a rail across
-        the middle slot that far from the front. Without them the tray
-        lays itself out from the drawer size.
+        CORE = slot core width, COREX = the core's offset from the
+        left side (omitted = centred), BAND = back compartment depth,
+        CROSS = cross compartment depth (0 = none), MIDSPLIT = a rail
+        across the middle slot that far from the front. Without them
+        the tray lays itself out from the drawer size.
 
         SHELL=0 builds the divider set on its own: no perimeter walls
         and no bottom, standing straight on the drawer floor. That is
@@ -11650,19 +11651,34 @@ class FaceFrameCabinet(GeoNodeCage):
         if core_w < th:
             core_w = self.CUTLERY_SLOT_PITCH * slots
         core_w = min(core_w, ix1 - ix0)
-        cx0 = (ix0 + ix1) / 2.0 - core_w / 2.0
+        # COREX pins the core that far from the left side -- 0 = flush
+        # left, which is how the configurations with a single side
+        # compartment are drawn. Without it the core is centred and the
+        # slack is shared by a compartment on each side.
+        if 'COREX' in params:
+            cx0 = min(max(ix0 + inch(params['COREX']), ix0), ix1 - core_w)
+        else:
+            cx0 = (ix0 + ix1) / 2.0 - core_w / 2.0
         cx1 = cx0 + core_w
         # Partitions bounding the slot core run its full depth. Where
         # the drawer leaves no room for side compartments the core is
         # bounded by the tray's own sides instead.
         # Without a shell those two partitions ARE the insert's outer
         # walls, so they are built whatever the drawer leaves either
-        # side of the core.
+        # side of the core -- except on a side the core is flush with,
+        # where the drawer's own wall already closes it.
         kx0, kx1 = ix0, ix1
         if not shell or (cx0 - ix0 > inch(1.0) and ix1 - cx1 > inch(1.0)):
-            mb.box(cx0, cx0 + th, iy0, core_back, zb, z1)
-            mb.box(cx1 - th, cx1, iy0, core_back, zb, z1)
-            kx0, kx1 = cx0 + th, cx1 - th
+            if shell or cx0 - ix0 > th:
+                mb.box(cx0, cx0 + th, iy0, core_back, zb, z1)
+                kx0 = cx0 + th
+            else:
+                kx0 = cx0
+            if shell or ix1 - cx1 > th:
+                mb.box(cx1 - th, cx1, iy0, core_back, zb, z1)
+                kx1 = cx1 - th
+            else:
+                kx1 = cx1
         # Cross compartment at the back of the core: its rail butts
         # between whatever bounds the core.
         cross = inch(params['CROSS']) if 'CROSS' in params else \
