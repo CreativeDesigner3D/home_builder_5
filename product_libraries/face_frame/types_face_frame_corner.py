@@ -1338,6 +1338,16 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
             parent_style = self.obj.get('STYLE_NAME')
             if parent_style:
                 panel_obj['STYLE_NAME'] = parent_style
+                # The panel's working / false fronts follow the job's
+                # overlay: write the style's overlay floats + inset
+                # depth onto the panel cabinet. Without this the panel
+                # kept the CLASSIC defaults, so full-inset jobs got
+                # overlay-style fronts on a corner cabinet's arm end.
+                from .props_hb_face_frame import get_style_props
+                for cs in get_style_props().cabinet_styles:
+                    if cs.name == parent_style:
+                        cs.apply_overlay_to_cabinet(panel_obj)
+                        break
 
             location, rotation_z, width, height, thickness = (
                 self._corner_applied_panel_geometry(cab_props, side))
