@@ -43,7 +43,8 @@ _ADDON_PKG = __package__.rsplit(".", 1)[0]
 
 # ---- Layout (unscaled px; multiplied by scale() at use) --------------------
 MARGIN_X = 8            # inset from the visible region's left edge
-TOP_OFFSET = 54         # clears the HUD's scene-navigator button
+TOP_OFFSET = 54         # fallback drop from the top when the HUD has no strip
+STRIP_GAP = 12          # drop below the HUD tab strip's anchor point
 BTN = 26
 BTN_GAP = 3
 GROUP_GAP = 10
@@ -544,10 +545,18 @@ def compute_layout(area):
     inside the row of the tool they belong to (see _settings_rect), so
     the strip is a list of tools and nothing else.
     """
+    from . import viewport_hud
     s = scale()
     x_min, _x_max, _y_min, y_max = get_visible_window_bounds(area)
     x = x_min + MARGIN_X * s
-    y_top = y_max - TOP_OFFSET * s
+    # Hang under the HUD's tab strip wherever it actually is -- it drops
+    # below Blender's overlay text when that is on. TOP_OFFSET is only
+    # the fallback for when the strip is not laid out at all.
+    _ax, anchor_top = viewport_hud.nav_anchor(bpy.context, area)
+    if anchor_top >= 0.0:
+        y_top = anchor_top - STRIP_GAP * s
+    else:
+        y_top = y_max - TOP_OFFSET * s
     btn = BTN * s
     is_expanded = expanded()
     width = button_width(s, is_expanded)

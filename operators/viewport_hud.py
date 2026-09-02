@@ -1552,6 +1552,12 @@ def pinned_panel_rect(context, area):
 
 # ---- Draw handler -----------------------------------------------------------
 
+def nav_anchor(context, area):
+    """Public face of _nav_anchor for the palettes that hang under the
+    tab strip alongside the panel."""
+    return _nav_anchor(context, area)
+
+
 def _nav_anchor(context, area):
     """(x, top) just under the tab strip, for placing the panel.
 
