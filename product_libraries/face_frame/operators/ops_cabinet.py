@@ -3706,6 +3706,13 @@ _pullout_category_items = []
 _pullout_product_items = []
 
 
+def _pullout_catalog_available():
+    """Whether a host application has registered pullout models. Without
+    one the dialog is only about the opening width, so it shows only
+    that -- a Category and Model row reading "(no catalog)" is noise."""
+    return bool(accessory_registry.categories(_PULLOUT_HOST))
+
+
 def _pullout_category_enum(self, context):
     _pullout_category_items.clear()
     for cat in accessory_registry.categories(_PULLOUT_HOST):
@@ -3810,10 +3817,16 @@ class hb_face_frame_OT_add_pullout_accessory(bpy.types.Operator):
         bay = _find_bay(opening_obj)
         if bay is not None and getattr(bay, 'face_frame_bay', None) is not None:
             self.opening_width = bay.face_frame_bay.width
+        if not _pullout_catalog_available():
+            return context.window_manager.invoke_props_dialog(
+                self, width=300, title="Pullout Width")
         return context.window_manager.invoke_props_dialog(self, width=380)
 
     def draw(self, context):
         layout = self.layout
+        if not _pullout_catalog_available():
+            layout.prop(self, "opening_width")
+            return
         layout.prop(self, "category")
         layout.prop(self, "product")
         layout.prop(self, "opening_width")
