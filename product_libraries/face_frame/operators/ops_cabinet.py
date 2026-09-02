@@ -3306,12 +3306,14 @@ class hb_face_frame_OT_show_interior_add_menu(bpy.types.Operator):
             layout.operator_context = 'INVOKE_DEFAULT'
             # One catalog browser for every accessory host (the per-host
             # pickers were consolidated here). The dialog groups by the
-            # catalog's own category and routes by host on apply.
-            op = layout.operator(
-                "hb_face_frame.accessory_menu",
-                text="Add Accessory...",
-            )
-            op.target_name = target_name
+            # catalog's own category and routes by host on apply. Left
+            # out when no host has registered a catalog.
+            if accessory_registry.available(*_ALL_ACCESSORY_HOSTS):
+                op = layout.operator(
+                    "hb_face_frame.accessory_menu",
+                    text="Add Accessory...",
+                )
+                op.target_name = target_name
 
         context.window_manager.popup_menu(
             draw_fn, title="Add Interior", icon='ADD',
@@ -4258,7 +4260,9 @@ class hb_face_frame_OT_accessory_menu(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return True
+        # Nothing to browse without a host catalog; the menus leave the
+        # entry out on the same test, this keeps a stale button honest.
+        return accessory_registry.available(*_ALL_ACCESSORY_HOSTS)
 
     def _selected_row(self):
         """The highlighted result row, or None when the list is empty."""

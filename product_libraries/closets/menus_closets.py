@@ -112,9 +112,13 @@ def _draw_add_part_entries(layout):
     layout.separator()
     layout.menu("HOME_BUILDER_MT_closet_doors_drawers",
                 text="Add Doors & Drawers", icon='SNAP_VOLUME')
-    layout.menu("HOME_BUILDER_MT_closet_accessories",
-                text="Add Accessory",
-                icon='OUTLINER_OB_GROUP_INSTANCE')
+    # The accessory catalog is the host application's; with nothing
+    # registered the submenu would be empty, so it stays out.
+    from . import accessories_closets as acc
+    if acc.registry_items():
+        layout.menu("HOME_BUILDER_MT_closet_accessories",
+                    text="Add Accessory",
+                    icon='OUTLINER_OB_GROUP_INSTANCE')
 
 
 class HOME_BUILDER_MT_closet_accessories(bpy.types.Menu):

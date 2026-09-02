@@ -37,6 +37,14 @@ def get_items(host):
         return []
 
 
+def available(*hosts):
+    """True when at least one of ``hosts`` (every registered host when
+    none are named) has an item to offer. Menus use this to leave out
+    an Add Accessory entry that would open on an empty catalog."""
+    keys = hosts or tuple(_providers)
+    return any(get_items(h) for h in keys)
+
+
 def all_items():
     """Every item from every registered provider, each dict carrying an
     injected ``host`` key (provider-registration order). Lets a caller list
