@@ -1278,16 +1278,84 @@ def _rows():
     ]
 
 
-def _corner_has_overlay_text(area):
-    """True when Blender draws its own text block (General Info,
-    Statistics, Performance) in this viewport's top-left corner -- the spot
-    the nav button normally occupies."""
+def _stats_rows(context):
+    """Rows the Statistics overlay draws, per Blender's ED_info_draw_stats.
+
+    With nothing selected it lists scene totals (five rows) or a lone
+    Objects row for an empty scene; with a selection it is the Objects
+    row plus whatever the active object's type and mode add."""
+    any_objects = len(context.view_layer.objects) > 0
+    any_selected = bool(context.selected_objects)
+    mode = context.mode
+    if not any_selected:
+        if any_objects:
+            return 5
+        return 0 if mode in {'SCULPT', 'SCULPT_CURVES'} else 1
+    rows = 1
+    ob = context.active_object
+    if ob is None:
+        return rows
+    if ob.type == 'GREASEPENCIL':
+        rows += 4
+    elif ob.mode == 'EDIT':
+        rows += {'MESH': 4, 'ARMATURE': 2, 'POINTCLOUD': 1, 'CURVE': 2,
+                 'SURFACE': 2, 'CURVES': 2, 'FONT': 0}.get(ob.type, 1)
+    elif ob.mode == 'SCULPT':
+        rows += 2
+    elif ob.mode == 'SCULPT_CURVES':
+        rows += 1
+    elif ob.mode == 'POSE':
+        rows += 1
+    elif ob.type == 'LIGHT':
+        rows += 1
+    elif ob.mode == 'OBJECT' and ob.type in {'MESH', 'FONT'}:
+        rows += 4
+    return rows
+
+
+def _overlay_text_height(context, area):
+    """Height, in WINDOW pixels down from the top of the visible region,
+    of the text block Blender draws in this viewport's top-left corner
+    (General Info, Performance, Statistics). 0 when nothing is drawn
+    there.
+
+    Mirrors view3d_draw_region_info: the block starts 0.1 widget units
+    down, every line is the widget font size x UI scale x 1.6,
+    Performance leads with a blank line and Statistics with 0.6 of one.
+    General Info is one line each for the view name and the active
+    object, plus the grid unit on an axis-aligned ortho view."""
     space = area.spaces.active if area is not None else None
     overlay = getattr(space, "overlay", None)
     if overlay is None or not overlay.show_overlays:
-        return False
-    return bool(overlay.show_text or overlay.show_stats
-                or getattr(overlay, "show_performance", False))
+        return 0.0
+    prefs = context.preferences
+    ui_scale = _s()
+    try:
+        points = prefs.ui_styles[0].widget.points
+    except (AttributeError, IndexError):
+        points = 11.0
+    line_h = points * ui_scale * 1.6
+    widget_unit = round(18.0 * ui_scale) + 2
+    lines = 0.0
+    if overlay.show_text:
+        view = prefs.view
+        if view.show_view_name or view.show_playback_fps:
+            lines += 1
+        if view.show_object_info:
+            lines += 1
+        rv3d = getattr(space, "region_3d", None)
+        if (rv3d is not None and not rv3d.is_perspective
+                and rv3d.is_orthographic_side_view
+                and (overlay.show_floor or overlay.show_axis_x
+                     or overlay.show_axis_y or overlay.show_axis_z)):
+            lines += 1
+    if getattr(overlay, "show_performance", False):
+        lines += 4
+    if overlay.show_stats:
+        lines += 0.6 + _stats_rows(context)
+    if lines <= 0.0:
+        return 0.0
+    return 0.1 * widget_unit + lines * line_h
 
 
 def compute_layout(context, area):
@@ -1309,8 +1377,9 @@ def compute_layout(context, area):
     # The panel tabs are left-anchored just past the toolbar, not part of
     # the centered rows -- a fixed spot makes them easy to find and the
     # panel opens directly below them. When the viewport's overlay text is
-    # on, that corner belongs to Blender, so they yield and join the first
-    # centered row as its leftmost group instead.
+    # on, the top of that corner belongs to Blender, so the strip keeps
+    # its left edge and drops in under the text block. (It used to join
+    # the centered row instead, which slid the panel to mid-viewport.)
     _remember_room(context.scene, area)
     rows = _rows()
     # The centered rows filter on visible(); this left-anchored strip
@@ -1320,19 +1389,18 @@ def compute_layout(context, area):
     # Back TRAILS the tabs. It comes and goes with where you are, and
     # leading the strip meant every tab slid sideways as it appeared --
     # the one part of the interface that should hold still while you move
-    # around. Behind the tabs it costs the tabs nothing. Joining the strip
-    # rather than sitting on its own means it follows the tabs into the
-    # centered row when the viewport corner is taken by Blender's overlay
-    # text.
+    # around. Behind the tabs it costs the tabs nothing.
     if _BACK_BUTTON.visible(context):
         tab_buttons = tab_buttons + [_BACK_BUTTON]
-    if _corner_has_overlay_text(area):
-        rows = [[tab_buttons] + rows[0]] + rows[1:]
-    else:
-        tab_x = x_min + margin_x
-        for tab_btn in tab_buttons:
-            placed.append((tab_btn, (tab_x, top_y, tab_btn.width, btn_h)))
-            tab_x += tab_btn.width + btn_gap
+    tab_top = top_y
+    text_h = _overlay_text_height(context, area)
+    if text_h > 0.0:
+        # text_h ends at the last baseline; the margin clears descenders.
+        tab_top = min(top_y, y_max - text_h - margin_y - btn_h)
+    tab_x = x_min + margin_x
+    for tab_btn in tab_buttons:
+        placed.append((tab_btn, (tab_x, tab_top, tab_btn.width, btn_h)))
+        tab_x += tab_btn.width + btn_gap
 
     # Blender's own viewport controls, right-anchored on that same top
     # row. Inset past the navigation gizmo: the gizmo is drawn INTO the
