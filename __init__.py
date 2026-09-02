@@ -24,6 +24,7 @@ from .operators import viewport_hud
 from .operators import room_dim_overlay
 from .operators import ops_general
 from .operators import ops_surfaces
+from .operators import ops_room_dressing
 from .product_libraries import closets
 from .product_libraries import face_frame
 from .product_libraries import frameless
@@ -360,6 +361,7 @@ def register():
     viewport_hud.register()
     room_palette.register()
     measure_tool.register()      # after the palette: it fills its registries
+    ops_room_dressing.register()  # same: registers the lights option form
     library_panel.register()
     options_panel.register()
     room_dim_overlay.register()
@@ -409,6 +411,7 @@ def unregister():
     export.unregister()
     options_panel.unregister()
     library_panel.unregister()
+    ops_room_dressing.unregister()
     measure_tool.unregister()    # before the palette, to empty its registries
     room_palette.unregister()
     scene_navigator.unregister()

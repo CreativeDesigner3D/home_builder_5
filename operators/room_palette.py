@@ -18,6 +18,8 @@ being a room, so it is silent on layout and detail scenes -- where the
 drafting palette takes the same strip.
 """
 
+import math
+
 import bpy
 import gpu
 
@@ -37,6 +39,7 @@ from ..hb_gpu_ui import (
     paint_button,
     draw_polyline,
     arc_points,
+    circle_points,
 )
 
 _ADDON_PKG = __package__.rsplit(".", 1)[0]
@@ -194,6 +197,23 @@ def _g_ceiling(shader, box, color):
     _slab(shader, box, 0.46, True, color)
 
 
+def _g_lights(shader, box, color):
+    """A bulb with rays."""
+    x, y, w, h = box
+    cx, cy = x + w / 2.0, y + h * 0.6
+    r = min(w, h) * 0.22
+    draw_polyline(shader, circle_points(cx, cy, r, 12), color, closed=True)
+    draw_lines(shader, [(cx - r * 0.6, y + h * 0.2),
+                        (cx + r * 0.6, y + h * 0.2)], color)
+    for frac in (0.2, 0.5, 0.8):
+        ang = math.pi * (0.15 + frac * 0.7)
+        draw_lines(shader,
+                   [(cx + math.cos(ang) * r * 1.7,
+                     cy + math.sin(ang) * r * 1.7),
+                    (cx + math.cos(ang) * r * 2.4,
+                     cy + math.sin(ang) * r * 2.4)], color)
+
+
 def _g_measure(shader, box, color):
     """A dimension line: what the tool leaves on screen.
 
@@ -265,10 +285,21 @@ BUILTIN_TOOLS = (
     # Named for the thing, not the act: every button on the strip adds
     # something, so "Add" on three of them is a word the eye has to read
     # past to get to what differs. The group reads Floor / Ceiling /
-    # Stairs down the column.
-    ("home_builder_walls.add_floor", "Floor", _g_floor, 2, None, None),
+    # Stairs / Room Lights down the column: the room shell built up in
+    # order, then the light put in it.
+    #
+    # Floor is the dressed one (ops_room_dressing), not the bare Add
+    # Floor: it builds the same slab and also gives it a material, and
+    # can restyle it afterwards. Two buttons doing almost the same thing
+    # is worse than one that does more.
+    ("home_builder.floor", "Floor", _g_floor, 2, None, None),
     ("home_builder_walls.add_ceiling", "Ceiling", _g_ceiling, 2, None, None),
     ("home_builder_stairs.place_stairs", "Stairs", _g_stairs, 2, None, None),
+    # Room Lights carries an options form because adding lights a second
+    # time lays a new set on top of the first, and there was otherwise no
+    # way to hide or clear them without going back to the sidebar.
+    ("home_builder_walls.add_room_lights", "Room Lights", _g_lights, 2,
+     'room_lights_options', "Room Light Settings"),
     # Group 4, not 3: a downstream add-on has claimed 3 for its own run,
     # and measuring belongs at the end of the strip anyway -- it is the
     # one tool here that adds nothing to the room.
