@@ -7,6 +7,9 @@ value labels on it:
 - Door / window: width, height, and the offsets to each end of its
   wall; windows also show the sill height (height from floor).
 - Wall: length and height.
+- Entry door with built 3D geometry: an Open / Close button that swings
+  the leaf, the quick version of the door prompts' Open Angle -- the
+  same idea as Open Door mode for cabinet fronts.
 
 Clicking a label starts a short-lived modal that captures typed input
 (the placement typing grammar: inches, fractions, feet'inches");
@@ -42,10 +45,15 @@ PAD_Y           = 4
 LABEL_BG        = (0.13, 0.13, 0.14, 0.85)
 LABEL_BORDER    = (1.0, 1.0, 1.0, 0.25)
 EDIT_BG         = (0.20, 0.43, 0.70, 0.95)
+ACTION_BG       = (0.20, 0.43, 0.70, 0.75)   # a label that is a button
 TEXT_COLOR      = (0.95, 0.95, 0.95, 1.0)
 EDIT_TEXT_COLOR = (1.0, 1.0, 1.0, 1.0)
 
 _INPUT_CHARS = set("0123456789./-'\" ")
+
+# Label kinds that run a command on click instead of opening for typing.
+_ACTION_KINDS = {'DOOR_OPEN'}
+DOOR_OPEN_DEG = 90.0
 
 # ---- Module state --------------------------------------------------------
 
@@ -141,6 +149,14 @@ def _cage_label_targets(cage_obj):
         ('CAGE_W', w, "W ", Vector((w / 2.0, 0.0, h + inch(3.0)))),
         ('CAGE_H', h, "H ", Vector((inch(3.0), 0.0, h / 2.0))),
     ]
+    # An entry door with a built leaf gets an Open / Close button at
+    # its centre. A cage-only door has nothing to swing, so no button.
+    if cage_obj.get('IS_ENTRY_DOOR_BP'):
+        opts = door_window_geo.merged_opts(cage_obj)
+        if opts is not None:
+            is_open = float(opts.get('open_angle', 0.0)) > 0.0
+            out.append(('DOOR_OPEN', None, "Close" if is_open else "Open",
+                        Vector((w / 2.0, 0.0, h / 2.0))))
     if cage_obj.get('IS_WINDOW_BP') and cage_obj.location.z > inch(0.25):
         out.append(('CAGE_SILL', cage_obj.location.z, "S ",
                     Vector((w / 2.0, 0.0, -cage_obj.location.z / 2.0))))
@@ -227,7 +243,9 @@ def compute_labels(context, region, rv3d):
             pt = view3d_utils.location_3d_to_region_2d(region, rv3d, anchor)
             if pt is None:
                 continue
-            text = prefix + units.unit_to_string(unit_settings, value)
+            # Action labels carry their caption in the prefix and no value.
+            text = prefix if value is None \
+                else prefix + units.unit_to_string(unit_settings, value)
             tw, th = blf.dimensions(0, text)
             w = tw + 2 * PAD_X * s
             h = th + 2 * PAD_Y * s
@@ -289,7 +307,8 @@ def _draw():
             _draw_label_rect(shader, rect, EDIT_BG)
             blf.color(0, *EDIT_TEXT_COLOR)
         else:
-            _draw_label_rect(shader, rect, LABEL_BG)
+            _draw_label_rect(shader, rect,
+                             ACTION_BG if kind in _ACTION_KINDS else LABEL_BG)
             blf.size(0, font_sz)
             blf.color(0, *TEXT_COLOR)
         blf.position(0, rect[0] + PAD_X * s, rect[1] + PAD_Y * s, 0)
@@ -345,6 +364,34 @@ def _commit(obj, kind, value):
         return False
     door_window_geo.build_geometry(obj)
     return True
+
+
+# ---- Door open / close ---------------------------------------------------
+
+class home_builder_OT_toggle_entry_door(bpy.types.Operator):
+    """Swing the entry door open, or close it if it is already open.
+    Writes the door's Open Angle option and rebuilds its geometry, the
+    same path the door prompts use."""
+    bl_idname = "home_builder.toggle_entry_door"
+    bl_label = "Open / Close Entry Door"
+    bl_options = {'INTERNAL', 'UNDO'}
+
+    target_name: bpy.props.StringProperty(options={'HIDDEN'})  # type: ignore
+
+    def execute(self, context):
+        obj = bpy.data.objects.get(self.target_name)
+        if obj is None or not obj.get('IS_ENTRY_DOOR_BP'):
+            return {'CANCELLED'}
+        opts = door_window_geo.merged_opts(obj)
+        if opts is None:
+            return {'CANCELLED'}
+        is_open = float(opts.get('open_angle', 0.0)) > 0.0
+        opts['open_angle'] = 0.0 if is_open else DOOR_OPEN_DEG
+        door_window_geo.set_opts(obj, opts)
+        door_window_geo.build_geometry(obj)
+        if context.area:
+            context.area.tag_redraw()
+        return {'FINISHED'}
 
 
 # ---- Edit modal ----------------------------------------------------------
@@ -477,6 +524,9 @@ class home_builder_OT_room_dim_label_click(bpy.types.Operator):
             x, y, w, h = rect
             if not (x <= mx <= x + w and y <= my <= y + h):
                 continue
+            if kind == 'DOOR_OPEN':
+                bpy.ops.home_builder.toggle_entry_door(target_name=name)
+                return {'FINISHED'}
             bpy.ops.home_builder.edit_room_dim_label(
                 'INVOKE_DEFAULT', target_name=name, kind=kind)
             return {'FINISHED'}
@@ -486,6 +536,7 @@ class home_builder_OT_room_dim_label_click(bpy.types.Operator):
 # ---- Lifecycle -----------------------------------------------------------
 
 classes = (
+    home_builder_OT_toggle_entry_door,
     home_builder_OT_edit_room_dim_label,
     home_builder_OT_room_dim_label_click,
 )
