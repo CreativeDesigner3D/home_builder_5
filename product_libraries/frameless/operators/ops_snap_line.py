@@ -225,8 +225,19 @@ class hb_frameless_OT_place_snap_line(bpy.types.Operator):
             self.cancel_typing()
             return
         
-        value_meters = units.inch(value)
-        
+        # Plain typed numbers are interpreted using the scene's unit
+        # system, matching how other placement operators (doors/windows)
+        # parse typed distances - not hardcoded to inches.
+        unit_settings = context.scene.unit_settings
+        if unit_settings.system == 'IMPERIAL':
+            value_meters = units.inch(value)
+        elif unit_settings.length_unit == 'MILLIMETERS':
+            value_meters = units.millimeter(value)
+        elif unit_settings.length_unit == 'CENTIMETERS':
+            value_meters = units.centimeter(value)
+        else:
+            value_meters = value  # meters
+
         if self.typing_target == 'LEFT':
             self.set_snap_position(value_meters)
         elif self.typing_target == 'RIGHT':
