@@ -64,21 +64,20 @@ class HOME_BUILDER_PT_selection_mode(bpy.types.Panel):
     bl_category = CATEGORY_NAME
     bl_order = 0
 
-    @classmethod
-    def poll(cls, context):
-        # With the viewport HUD on, room navigation and selection mode
-        # are drawn in the 3D view; only the object-color warning is
-        # left for this panel, so hide it entirely when that isn't needed.
-        try:
-            prefs = context.preferences.addons[__package__.rsplit('.', 1)[0]].preferences
-        except (KeyError, AttributeError):
-            return True
-        if not getattr(prefs, 'use_viewport_hud', False):
-            return True
-        return context.space_data.shading.color_type != 'OBJECT'
-
     def draw(self, context):
         layout = self.layout
+
+        # The switch for the viewport controls lives here as well as in
+        # Preferences and the header menu: this panel is what those
+        # controls replace, so someone looking at it is exactly who
+        # would want to turn them on -- and, with them on, this row is
+        # all that is left of the panel, and the way back off.
+        prefs = context.preferences.addons[__package__.rsplit('.', 1)[0]].preferences
+        use_hud = getattr(prefs, 'use_viewport_hud', False)
+        row = layout.row()
+        row.scale_y = 1.2
+        row.prop(prefs, "use_viewport_hud", text="Viewport Controls",
+                 icon='WINDOW', toggle=True)
 
         # Check if Object Color Type is enabled in the viewport shading
         if context.space_data.shading.color_type != 'OBJECT':
@@ -89,9 +88,6 @@ class HOME_BUILDER_PT_selection_mode(bpy.types.Panel):
             box.label(text="Colors will not display correctly.", icon='BLANK1')
             box.operator("home_builder.set_recommended_settings",
                         text="Open Recommended Settings", icon='PREFERENCES')
-
-        prefs = context.preferences.addons[__package__.rsplit('.', 1)[0]].preferences
-        use_hud = getattr(prefs, 'use_viewport_hud', False)
 
         in_layout_view = context.scene.get('IS_LAYOUT_VIEW')
         in_detail_view = context.scene.get('IS_DETAIL_VIEW')
