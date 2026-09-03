@@ -705,6 +705,20 @@ class hb_face_frame_OT_update_fronts_from_door_style(Operator):
         return {'FINISHED'}
 
 
+def _front_kind(front, door_roles, drawer_roles):
+    """'DOOR' / 'DRAWER' / None for a front object. Role-based, except that
+    a false face frame end's fixed fronts stand in for door panels and so
+    count as door fronts (types_face_frame.front_reads_door_pool)."""
+    from .. import types_face_frame
+    role = front.get('hb_part_role')
+    if role in door_roles:
+        return 'DOOR'
+    if role in drawer_roles:
+        return ('DOOR' if types_face_frame.front_reads_door_pool(front)
+                else 'DRAWER')
+    return None
+
+
 class _paint_front_brush:
     """Shared machinery for the viewport paint brushes (front-style assign
     and per-door hardware callouts): region/ray resolution, hover
@@ -716,6 +730,12 @@ class _paint_front_brush:
 
     _DOOR_ROLES = {'DOOR', 'PULLOUT_FRONT'}
     _DRAWER_ROLES = {'DRAWER_FRONT', 'FALSE_FRONT', 'TILT_OUT'}
+
+    def _front_kind(self, front):
+        """'DOOR' / 'DRAWER' / None for a front object. Role-based, except
+        that a false face frame end's fixed fronts count as door fronts so
+        they take the Door Style (types_face_frame.front_reads_door_pool)."""
+        return _front_kind(front, self._DOOR_ROLES, self._DRAWER_ROLES)
 
     def _region_under_mouse(self, context, event):
         """The VIEW_3D WINDOW region + rv3d under the cursor, with region-
@@ -778,11 +798,17 @@ class _paint_front_brush:
         if context.area is not None:
             context.area.tag_redraw()
 
+    def _paints(self, front):
+        """True when this brush would paint the given front. Role-based by
+        default; the front-style brush overrides it to match on front KIND
+        so a false face frame end's fronts take the door brush."""
+        return front.get('hb_part_role') in self._allowed_roles()
+
     def _hover(self, context, event):
-        """Resolve + highlight the matching-role front under the cursor."""
+        """Resolve + highlight the matching front under the cursor."""
         front = self._front_under_cursor(context, event)
-        if front is not None and front.get('hb_part_role') not in self._allowed_roles():
-            front = None  # wrong-role front won't be painted -> don't highlight
+        if front is not None and not self._paints(front):
+            front = None  # a front this brush skips -> don't highlight
         self._set_hover(context, front)
 
     def modal(self, context, event):
@@ -833,8 +859,9 @@ class hb_face_frame_OT_paint_assign_front_style(_paint_front_brush, bpy.types.Op
         options={'HIDDEN'},
     )  # type: ignore
 
-    def _allowed_roles(self):
-        return self._DRAWER_ROLES if self.kind == 'DRAWER' else self._DOOR_ROLES
+
+    def _paints(self, front):
+        return self._front_kind(front) == self.kind
 
     def _active_style(self, ff):
         if self.kind == 'DRAWER':
@@ -851,7 +878,7 @@ class hb_face_frame_OT_paint_assign_front_style(_paint_front_brush, bpy.types.Op
         front = self._front_under_cursor(context, event)
         if front is None:
             return
-        if front.get('hb_part_role') not in self._allowed_roles():
+        if not self._paints(front):
             context.workspace.status_text_set(
                 f"Skipped: not a {self.kind.lower()} front  |  Esc / RMB to finish")
             return
@@ -1001,10 +1028,8 @@ class hb_face_frame_OT_update_fronts_from_style(bpy.types.Operator):
         ff = get_style_props(context)
         if self.kind == 'DRAWER':
             pool, idx = ff.drawer_front_styles, ff.active_drawer_front_style_index
-            roles = self._DRAWER_ROLES
         else:
             pool, idx = ff.door_styles, ff.active_door_style_index
-            roles = self._DOOR_ROLES
         if idx < 0 or idx >= len(pool):
             self.report({'WARNING'}, "No active style")
             return {'CANCELLED'}
@@ -1014,7 +1039,8 @@ class hb_face_frame_OT_update_fronts_from_style(bpy.types.Operator):
         for obj in context.scene.objects:
             if obj.get('DOOR_STYLE_NAME') != target:
                 continue
-            if obj.get('hb_part_role') not in roles:
+            if _front_kind(obj, self._DOOR_ROLES,
+                           self._DRAWER_ROLES) != self.kind:
                 continue
             if ds.assign_style_to_front(obj) is True:
                 applied += 1

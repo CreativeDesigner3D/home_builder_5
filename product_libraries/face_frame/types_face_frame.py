@@ -522,6 +522,21 @@ APPLIED_PANEL_END_TYPES = frozenset({'PANELED', 'FALSE_FF', 'WORKING_FF'})
 # openings' fronts while a same-condition recalc preserves overrides.
 TAG_APPLIED_PANEL_CONDITION = 'hb_applied_panel_condition'
 
+
+def front_reads_door_pool(part_obj):
+    """True when a fixed front resolves its style in the DOOR pool even
+    though its role is a drawer-ish one. A false face frame end stands in
+    for a face frame full of door panels, so its fronts follow the Door
+    Style exactly like a working face frame end's do. A FALSE_FRONT inside
+    a real cabinet bay is a decorative drawer face and keeps the Drawer
+    Front Style."""
+    node = part_obj
+    while node is not None:
+        if node.get(TAG_APPLIED_PANEL_SIDE):
+            return node.get(TAG_APPLIED_PANEL_CONDITION) == 'FALSE_FF'
+        node = node.parent
+    return False
+
 # Stamped on a working face frame panel root: the depth its drawer and
 # pullout boxes may run back into the host cabinet's cavity. The panel
 # itself is only the 3/4 reserve deep, so without this the box depth

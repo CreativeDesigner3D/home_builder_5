@@ -1473,6 +1473,17 @@ _DRAWER_FRONT_ROLES = frozenset({
 })
 
 
+def _style_pool_for(ff, front_obj):
+    """The style pool a front's DOOR_STYLE_NAME resolves in. Role-based,
+    except that a false face frame end's fixed fronts read the door pool
+    (see types_face_frame.front_reads_door_pool)."""
+    role = front_obj.get('hb_part_role')
+    if (role in _DRAWER_FRONT_ROLES
+            and not types_face_frame.front_reads_door_pool(front_obj)):
+        return ff.drawer_front_styles
+    return ff.door_styles
+
+
 def _door_style_mod(obj):
     """The 'Door Style' NODES (CPM_5PIECEDOOR) modifier on a 5-piece front,
     else None. Slab fronts have no such modifier, so they never match."""
@@ -1557,9 +1568,7 @@ def _reapply_front_style(front_obj):
     ff = _props.get_style_props()
     if ff is None:
         return
-    role = front_obj.get('hb_part_role')
-    pool = (ff.drawer_front_styles if role in _DRAWER_FRONT_ROLES
-            else ff.door_styles)
+    pool = _style_pool_for(ff, front_obj)
     for ds in pool:
         if ds.name == name:
             try:
@@ -1739,9 +1748,7 @@ def _front_has_grid_mullion(front_obj):
     ff = _props.get_style_props()
     if ff is None:
         return False
-    role = front_obj.get('hb_part_role')
-    pool = (ff.drawer_front_styles if role in _DRAWER_FRONT_ROLES
-            else ff.door_styles)
+    pool = _style_pool_for(ff, front_obj)
     for ds in pool:
         if ds.name == name:
             pkind = style_options.panel_kind(getattr(ds, 'front_panel', ''))
@@ -2230,9 +2237,7 @@ def _front_door_style(front_obj):
     ff = _props.get_style_props()
     if ff is None:
         return None
-    role = front_obj.get('hb_part_role')
-    pool = (ff.drawer_front_styles if role in _DRAWER_FRONT_ROLES
-            else ff.door_styles)
+    pool = _style_pool_for(ff, front_obj)
     for ds in pool:
         if ds.name == name:
             return ds

@@ -2942,9 +2942,13 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         """Walk every front under cabinet_obj. DOOR-role and PULLOUT_FRONT
         fronts get self.door_style (a pullout is a door on a slide, so it
         reads the door pool, not the drawer-front pool); DRAWER_FRONT /
-        FALSE_FRONT get self.drawer_front_style. Other roles (INSET_PANEL,
-        structural parts, hardware) are skipped.
+        FALSE_FRONT get self.drawer_front_style. The exception is a false
+        face frame end, whose fixed fronts stand in for door panels and so
+        read the door pool (front_reads_door_pool). Other roles
+        (INSET_PANEL, structural parts, hardware) are skipped.
         """
+        from . import types_face_frame as _tff
+
         DOOR_ROLES = {'DOOR', 'PULLOUT_FRONT'}
         DRAWER_ROLES = {'DRAWER_FRONT', 'FALSE_FRONT', 'TILT_OUT',
                         'DRAWER_LOOK_FRONT'}
@@ -2978,12 +2982,14 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
             if child.get('HB_DRAWER_LOOK_CARRIER'):
                 continue
             role = child.get('hb_part_role')
-            if role in DOOR_ROLES:
-                pool, default_ds = ff.door_styles, door_ds
-            elif role in DRAWER_ROLES:
-                pool, default_ds = ff.drawer_front_styles, drawer_ds
-            else:
+            if role not in DOOR_ROLES and role not in DRAWER_ROLES:
                 continue
+            reads_door = (role in DOOR_ROLES
+                          or _tff.front_reads_door_pool(child))
+            if reads_door:
+                pool, default_ds = ff.door_styles, door_ds
+            else:
+                pool, default_ds = ff.drawer_front_styles, drawer_ds
             # The solver wipes and rebuilds every front on each recalc, so an
             # opening-size edit (or any cabinet alteration) lands here. Prefer a
             # per-front override the user explicitly assigned, persisted on the
@@ -2992,8 +2998,8 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
             # front's own tag (same-recalc reapply) and then the cabinet
             # default. Mirrors _reapply_front_style (ops_part_commands.py).
             cage = self._opening_cage_for_part(child)
-            ovr_key = ('hb_front_drawer_style' if role in DRAWER_ROLES
-                       else 'hb_front_door_style')
+            ovr_key = ('hb_front_door_style' if reads_door
+                       else 'hb_front_drawer_style')
             ovr_name = cage.get(ovr_key) if cage is not None else None
             ds = (resolve(ovr_name, pool)
                   or resolve(child.get('DOOR_STYLE_NAME'), pool)
