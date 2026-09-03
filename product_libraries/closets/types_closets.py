@@ -3343,8 +3343,18 @@ class ClosetStarter(GeoNodeCage):
         pg.set_input('Thickness', plat_t)
         # The shelf that caps the compartment. Its underside sits the
         # compartment height above the plate, so raising the plate
-        # thickness raises the shelf with it.
-        cap_z = min(open_h + plat_t, max(interior_h - st, 0.0))
+        # thickness raises the shelf with it - and that is exactly what
+        # walked it off the lattice: the plate is 19.05mm and the holes
+        # run 12.95 + n*32mm up from the interior bottom, so open_h +
+        # plat_t landed between two of them. The shelf rests on pins, so
+        # its underside has to BE a hole. Snap up rather than down, so
+        # the compartment never comes out shorter than it was asked for
+        # and the board still fits.
+        want = open_h + plat_t
+        cap_z = const.snap_system_hole(want)
+        if cap_z + 1e-9 < want:
+            cap_z += const.SYSTEM_PITCH
+        cap_z = min(cap_z, max(interior_h - st, 0.0))
         shelf = self._acc_part(cage, 'Accessory Shelf',
                                PART_ROLE_ACCESSORY_PART, kids)
         shelf.location = (0.0, 0.0, cap_z)
@@ -3359,7 +3369,12 @@ class ClosetStarter(GeoNodeCage):
         found = kids.get(PART_ROLE_DRAWER_FRONT) or ()
         front = found[0] if found else None
         if front is not None:
-            f_h = cap_z + bo
+            # cap_z is the shelf's UNDERSIDE, so a front stopping there
+            # laps nothing and leaves the whole shelf edge showing. It
+            # laps up onto the shelf by the top overlay, the way the
+            # front above laps down onto it, and the two then split the
+            # shelf with VERTICAL_GAP between them.
+            f_h = cap_z + bo + to
             front.location = (-lo, front_y, -bo)
             fg = GeoNodeCutpart(front)
             fg.set_input('Length', width + lo + ro)
