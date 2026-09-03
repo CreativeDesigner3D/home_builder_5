@@ -1132,9 +1132,15 @@ def _swing_child(cage_obj):
 
 
 def _swing_state(cage_obj):
-    """(is_double, hinge_left, swing_inside) read off the swing
-    annotation; single / hinge-left / inswing when there is none (open
-    doorways)."""
+    """(is_double, is_left, swing_inside) read off the swing
+    annotation; single / left / inswing when there is none (open
+    doorways).
+
+    `is_left` is the annotation's handing, which follows the trade
+    convention: viewed from the EXTERIOR (+Y), hinges on your left. In
+    cage space that is the x = width end -- the interior view mirrors
+    it -- and the arc is drawn there. Callers placing a leaf must hinge
+    it at x = width for is_left, not x = 0."""
     child = _swing_child(cage_obj)
     if child is None:
         return False, True, True
@@ -1404,7 +1410,12 @@ def build_door_geometry(cage_obj):
 
     slab_h = z_top - th_h
     slab_zone_w = door_x1 - door_x0
-    is_double, hinge_left, swing_inside = _swing_state(cage_obj)
+    is_double, is_left, swing_inside = _swing_state(cage_obj)
+    # 'L' hinges the slab at x = 0, the LEFT end seen from the interior.
+    # The annotation's "left" is the exterior view (see _swing_state),
+    # so a left-handed door hinges at the 'R' end of the cage. This had
+    # the two reversed, so the leaf opened against its own arc.
+    slab_hinge = 'R' if is_left else 'L'
     open_deg = max(float(opts['open_angle']), 0.0)
     if is_double and slab_zone_w > inch(24):
         half = slab_zone_w / 2.0
@@ -1417,7 +1428,7 @@ def build_door_geometry(cage_obj):
     else:
         _build_slab(cage_obj, "Door Slab", opts, slab_zone_w, slab_h,
                     door_x0, y_center_front,
-                    hinge='L' if hinge_left else 'R',
+                    hinge=slab_hinge,
                     swing_inside=swing_inside, open_deg=open_deg)
 
     frame = _new_child(cage_obj, "Door Frame")
