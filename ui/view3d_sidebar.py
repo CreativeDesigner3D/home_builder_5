@@ -54,6 +54,39 @@ def apply_tab_pin(enabled):
 # =============================================================================
 
 # -----------------------------------------------------------------------------
+# PANEL 0: INTERFACE
+# -----------------------------------------------------------------------------
+class HOME_BUILDER_PT_interface(bpy.types.Panel):
+    """The switches for the viewport controls and the room tool palette,
+    and the one-click recommended setup. First in the stack: the
+    viewport surfaces replace most of what is below, so the choice of
+    whether to use them comes before everything else -- and with them
+    on, this panel is the way back."""
+    bl_label = "Interface"
+    bl_idname = "HOME_BUILDER_PT_interface"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = CATEGORY_NAME
+    bl_order = 0
+
+    def draw(self, context):
+        layout = self.layout
+        prefs = context.preferences.addons[__package__.rsplit('.', 1)[0]].preferences
+        # Two rows, not one: side by side the first label truncates at
+        # the sidebar's default width.
+        col = layout.column(align=True)
+        col.scale_y = 1.2
+        col.prop(prefs, "use_viewport_hud", text="Viewport Controls",
+                 icon='WINDOW', toggle=True)
+        col.prop(prefs, "use_room_palette", text="Room Tool Palette",
+                 icon='TOOL_SETTINGS', toggle=True)
+        # One click for the whole setup: viewport settings, maximized
+        # view, panels away, the controls above turned on.
+        col.operator("home_builder.set_recommended_settings",
+                     text="Recommended Settings", icon='PREFERENCES')
+
+
+# -----------------------------------------------------------------------------
 # PANEL 0: SELECTION MODE
 # -----------------------------------------------------------------------------
 class HOME_BUILDER_PT_selection_mode(bpy.types.Panel):
@@ -64,29 +97,23 @@ class HOME_BUILDER_PT_selection_mode(bpy.types.Panel):
     bl_category = CATEGORY_NAME
     bl_order = 0
 
+    @classmethod
+    def poll(cls, context):
+        # With the viewport HUD on, room navigation and selection mode
+        # are drawn in the 3D view; only the object-color warning is
+        # left for this panel, so hide it entirely when that isn't needed.
+        try:
+            prefs = context.preferences.addons[__package__.rsplit('.', 1)[0]].preferences
+        except (KeyError, AttributeError):
+            return True
+        if not getattr(prefs, 'use_viewport_hud', False):
+            return True
+        return context.space_data.shading.color_type != 'OBJECT'
+
     def draw(self, context):
         layout = self.layout
-
-        # The switches for the viewport controls and the room tool
-        # palette live here as well as in Preferences and the header
-        # menu: this panel is what those controls replace, so someone
-        # looking at it is exactly who would want to turn them on --
-        # and, with them on, this row is all that is left of the panel,
-        # and the way back off.
         prefs = context.preferences.addons[__package__.rsplit('.', 1)[0]].preferences
         use_hud = getattr(prefs, 'use_viewport_hud', False)
-        # Two rows, not one: side by side the first label truncates at
-        # the sidebar's default width.
-        col = layout.column(align=True)
-        col.scale_y = 1.2
-        col.prop(prefs, "use_viewport_hud", text="Viewport Controls",
-                 icon='WINDOW', toggle=True)
-        col.prop(prefs, "use_room_palette", text="Room Tool Palette",
-                 icon='TOOL_SETTINGS', toggle=True)
-        # One click for the whole layout: maximized view, panels away,
-        # the controls above turned on.
-        col.operator("home_builder.set_recommended_interface",
-                     text="Recommended Interface", icon='FULLSCREEN_ENTER')
 
         # Check if Object Color Type is enabled in the viewport shading
         if context.space_data.shading.color_type != 'OBJECT':
@@ -1507,6 +1534,7 @@ class HOME_BUILDER_PT_room_layout_stairs(bpy.types.Panel):
 
 
 classes = (
+    HOME_BUILDER_PT_interface,
     HOME_BUILDER_PT_selection_mode,
     HOME_BUILDER_PT_project,
     HOME_BUILDER_PT_project_info,

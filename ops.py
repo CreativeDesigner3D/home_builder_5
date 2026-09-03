@@ -29,9 +29,16 @@ class home_builder_OT_to_do(bpy.types.Operator):
 
 
 class home_builder_OT_set_recommended_settings(bpy.types.Operator):
+    """Set the viewport settings Home Builder needs and lay out the
+    interface the way it works best: the 3D view maximized, the sidebar,
+    toolbar, tool settings header and General Info overlay hidden, and
+    the viewport controls and room tool palette on to take over from
+    the panels that hides. Every step is a checkbox."""
     bl_idname = "home_builder.set_recommended_settings"
     bl_label = "Set Recommended Settings"
-    bl_description = "This will set the recommended blender settings"
+    bl_description = ("Set the recommended Blender settings and interface "
+                      "layout for Home Builder. Ctrl+Space, N and T bring "
+                      "the maximized view, sidebar and toolbar back")
 
     turn_off_relationship_lines: bpy.props.BoolProperty(name="Turn Off Relationship Lines",
                                                         description="This setting clutters the interface with unneeded relationship lines",
@@ -57,78 +64,7 @@ class home_builder_OT_set_recommended_settings(bpy.types.Operator):
                                                         description="This setting changes the studio lighting to the recommended lighting",
                                                         default=True)# type: ignore
 
-    def check(self, context):
-        return True
-    
-    def get_view3d_space(self, context):
-        """Find the first 3D view space in the current screen"""
-        for area in context.screen.areas:
-            if area.type == 'VIEW_3D':
-                return area.spaces.active
-        return None
-
-    def invoke(self, context, event):
-        # Verify we have a 3D view available
-        if not self.get_view3d_space(context):
-            self.report({'WARNING'}, "No 3D View found")
-            return {'CANCELLED'}
-        wm = context.window_manager
-        return wm.invoke_props_dialog(self, width=350)
-
-    def execute(self, context):
-        view = self.get_view3d_space(context)
-        if not view:
-            self.report({'WARNING'}, "No 3D View found")
-            return {'CANCELLED'}
-        
-        overlay = view.overlay
-        shading = view.shading        
-        tool_settings = context.scene.tool_settings
-        
-        if self.turn_off_relationship_lines:
-            overlay.show_relationship_lines = False
-        if self.turn_on_object_color_type:
-            shading.color_type = 'OBJECT'
-        if self.turn_off_3d_cursor:
-            overlay.show_cursor = False
-        if self.show_wireframes:
-            overlay.show_wireframes = True
-            overlay.wireframe_threshold = 0.0
-            overlay.wireframe_opacity = 0.8
-        if self.change_studio_lighting:
-            try:
-                shading.studio_light = 'paint.sl'
-            except Exception:
-                self.report({'INFO'}, "Studio light 'paint.sl' not available in this Blender build")
-        if self.use_vertex_snapping:
-            tool_settings.snap_elements_base = {'VERTEX'}
-        return {'FINISHED'}
-
-    def draw(self, context):
-        layout = self.layout
-        box = layout.box()
-        box.label(text="These are the required Home Builder settings.")
-        box.prop(self,'turn_on_object_color_type',text="Turn On Object Color Type - REQUIRED")
-        box = layout.box()
-        box.label(text="These are the recommended Home Builder settings.")        
-        box.prop(self,'turn_off_relationship_lines')
-        box.prop(self,'turn_off_3d_cursor')
-        box.prop(self,'show_wireframes')
-        box.prop(self,'change_studio_lighting')
-        box.prop(self,'use_vertex_snapping')
-
-
-class home_builder_OT_set_recommended_interface(bpy.types.Operator):
-    """Lay out the 3D view the way Home Builder works best: the view
-    maximized, the sidebar and toolbar hidden, and the tool settings
-    header off. The viewport controls and room tool palette take over
-    from the panels this hides."""
-    bl_idname = "home_builder.set_recommended_interface"
-    bl_label = "Set Recommended Interface"
-    bl_description = ("Maximize the 3D view and hide the sidebar, toolbar "
-                      "and tool settings header. Ctrl+Space, N and T "
-                      "bring each back")
-
+    # --- Interface layout ---
     maximize_view: bpy.props.BoolProperty(
         name="Maximize 3D View",
         description="Give the 3D view the whole window (Ctrl+Space toggles "
@@ -147,13 +83,24 @@ class home_builder_OT_set_recommended_interface(bpy.types.Operator):
         description="Hide the tool settings header row (right-click the "
                     "header > Show Tool Settings brings it back)",
         default=True)  # type: ignore
+    hide_general_info: bpy.props.BoolProperty(
+        name="Hide General Info Overlay",
+        description="Turn off the General Info text in the viewport's "
+                    "top-left corner (Overlays > General Info brings it "
+                    "back)",
+        default=True)  # type: ignore
     viewport_controls: bpy.props.BoolProperty(
         name="Turn On Viewport Controls",
         description="Enable the viewport controls and room tool palette, "
                     "which replace the sidebar panels this hides",
         default=True)  # type: ignore
 
+    def check(self, context):
+        return True
+
     def _view3d_area(self, context):
+        """The 3D view this runs on: the one under the cursor, else the
+        first in the screen."""
         area = context.area
         if area is not None and area.type == 'VIEW_3D':
             return area
@@ -163,20 +110,12 @@ class home_builder_OT_set_recommended_interface(bpy.types.Operator):
         return None
 
     def invoke(self, context, event):
+        # Verify we have a 3D view available
         if self._view3d_area(context) is None:
             self.report({'WARNING'}, "No 3D View found")
             return {'CANCELLED'}
-        return context.window_manager.invoke_props_dialog(self, width=350)
-
-    def draw(self, context):
-        layout = self.layout
-        box = layout.box()
-        box.label(text="These are the recommended Home Builder interface settings.")
-        box.prop(self, 'maximize_view')
-        box.prop(self, 'hide_sidebar')
-        box.prop(self, 'hide_toolbar')
-        box.prop(self, 'hide_tool_settings')
-        box.prop(self, 'viewport_controls')
+        wm = context.window_manager
+        return wm.invoke_props_dialog(self, width=350)
 
     def _apply_regions(self, space):
         if self.hide_sidebar:
@@ -186,11 +125,38 @@ class home_builder_OT_set_recommended_interface(bpy.types.Operator):
         if self.hide_tool_settings:
             space.show_region_tool_header = False
 
+    def _apply_view_settings(self, context, view):
+        overlay = view.overlay
+        shading = view.shading
+        tool_settings = context.scene.tool_settings
+
+        if self.turn_off_relationship_lines:
+            overlay.show_relationship_lines = False
+        if self.turn_on_object_color_type:
+            shading.color_type = 'OBJECT'
+        if self.turn_off_3d_cursor:
+            overlay.show_cursor = False
+        if self.show_wireframes:
+            overlay.show_wireframes = True
+            overlay.wireframe_threshold = 0.0
+            overlay.wireframe_opacity = 0.8
+        if self.change_studio_lighting:
+            try:
+                shading.studio_light = 'paint.sl'
+            except Exception:
+                self.report({'INFO'}, "Studio light 'paint.sl' not available in this Blender build")
+        if self.use_vertex_snapping:
+            tool_settings.snap_elements_base = {'VERTEX'}
+        if self.hide_general_info:
+            overlay.show_text = False
+
     def execute(self, context):
         area = self._view3d_area(context)
         if area is None:
             self.report({'WARNING'}, "No 3D View found")
             return {'CANCELLED'}
+
+        self._apply_view_settings(context, area.spaces.active)
 
         if self.viewport_controls:
             try:
@@ -219,6 +185,27 @@ class home_builder_OT_set_recommended_interface(bpy.types.Operator):
                 self._apply_regions(scr_area.spaces.active)
                 scr_area.tag_redraw()
         return {'FINISHED'}
+
+    def draw(self, context):
+        layout = self.layout
+        box = layout.box()
+        box.label(text="These are the required Home Builder settings.")
+        box.prop(self,'turn_on_object_color_type',text="Turn On Object Color Type - REQUIRED")
+        box = layout.box()
+        box.label(text="These are the recommended Home Builder settings.")
+        box.prop(self,'turn_off_relationship_lines')
+        box.prop(self,'turn_off_3d_cursor')
+        box.prop(self,'show_wireframes')
+        box.prop(self,'change_studio_lighting')
+        box.prop(self,'use_vertex_snapping')
+        box = layout.box()
+        box.label(text="This is the recommended Home Builder interface.")
+        box.prop(self, 'maximize_view')
+        box.prop(self, 'hide_sidebar')
+        box.prop(self, 'hide_toolbar')
+        box.prop(self, 'hide_tool_settings')
+        box.prop(self, 'hide_general_info')
+        box.prop(self, 'viewport_controls')
 
 
 class home_builder_annotations_OT_apply_settings_to_all(bpy.types.Operator):
@@ -753,7 +740,6 @@ class home_builder_OT_set_scale_with_two_points(bpy.types.Operator):
 classes = (
     home_builder_OT_to_do,
     home_builder_OT_set_recommended_settings,
-    home_builder_OT_set_recommended_interface,
     home_builder_OT_rendering_settings,
     home_builder_OT_create_camera,
     home_builder_annotations_OT_apply_settings_to_all,
