@@ -83,6 +83,10 @@ class HOME_BUILDER_PT_selection_mode(bpy.types.Panel):
                  icon='WINDOW', toggle=True)
         col.prop(prefs, "use_room_palette", text="Room Tool Palette",
                  icon='TOOL_SETTINGS', toggle=True)
+        # One click for the whole layout: maximized view, panels away,
+        # the controls above turned on.
+        col.operator("home_builder.set_recommended_interface",
+                     text="Recommended Interface", icon='FULLSCREEN_ENTER')
 
         # Check if Object Color Type is enabled in the viewport shading
         if context.space_data.shading.color_type != 'OBJECT':

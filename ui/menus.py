@@ -53,8 +53,10 @@ class HOME_BUILDER_MT_main_menu(bpy.types.Menu):
         layout.prop(prefs, "use_viewport_hud")
         layout.prop(prefs, "use_room_palette")
         layout.prop(prefs, "palette_expanded")
-        layout.operator("home_builder.set_recommended_settings", 
+        layout.operator("home_builder.set_recommended_settings",
                        text="Recommended Settings", icon='PREFERENCES')
+        layout.operator("home_builder.set_recommended_interface",
+                       text="Recommended Interface", icon='WINDOW')
         layout.operator("home_builder.rendering_settings",
                        text="Rendering Settings", icon='RENDER_STILL')
         

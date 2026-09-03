@@ -118,6 +118,109 @@ class home_builder_OT_set_recommended_settings(bpy.types.Operator):
         box.prop(self,'use_vertex_snapping')
 
 
+class home_builder_OT_set_recommended_interface(bpy.types.Operator):
+    """Lay out the 3D view the way Home Builder works best: the view
+    maximized, the sidebar and toolbar hidden, and the tool settings
+    header off. The viewport controls and room tool palette take over
+    from the panels this hides."""
+    bl_idname = "home_builder.set_recommended_interface"
+    bl_label = "Set Recommended Interface"
+    bl_description = ("Maximize the 3D view and hide the sidebar, toolbar "
+                      "and tool settings header. Ctrl+Space, N and T "
+                      "bring each back")
+
+    maximize_view: bpy.props.BoolProperty(
+        name="Maximize 3D View",
+        description="Give the 3D view the whole window (Ctrl+Space toggles "
+                    "it back)",
+        default=True)  # type: ignore
+    hide_sidebar: bpy.props.BoolProperty(
+        name="Hide Sidebar",
+        description="Hide the N-panel sidebar (N toggles it back)",
+        default=True)  # type: ignore
+    hide_toolbar: bpy.props.BoolProperty(
+        name="Hide Toolbar",
+        description="Hide the T-panel tool shelf (T toggles it back)",
+        default=True)  # type: ignore
+    hide_tool_settings: bpy.props.BoolProperty(
+        name="Hide Tool Settings",
+        description="Hide the tool settings header row (right-click the "
+                    "header > Show Tool Settings brings it back)",
+        default=True)  # type: ignore
+    viewport_controls: bpy.props.BoolProperty(
+        name="Turn On Viewport Controls",
+        description="Enable the viewport controls and room tool palette, "
+                    "which replace the sidebar panels this hides",
+        default=True)  # type: ignore
+
+    def _view3d_area(self, context):
+        area = context.area
+        if area is not None and area.type == 'VIEW_3D':
+            return area
+        for area in context.screen.areas:
+            if area.type == 'VIEW_3D':
+                return area
+        return None
+
+    def invoke(self, context, event):
+        if self._view3d_area(context) is None:
+            self.report({'WARNING'}, "No 3D View found")
+            return {'CANCELLED'}
+        return context.window_manager.invoke_props_dialog(self, width=350)
+
+    def draw(self, context):
+        layout = self.layout
+        box = layout.box()
+        box.label(text="These are the recommended Home Builder interface settings.")
+        box.prop(self, 'maximize_view')
+        box.prop(self, 'hide_sidebar')
+        box.prop(self, 'hide_toolbar')
+        box.prop(self, 'hide_tool_settings')
+        box.prop(self, 'viewport_controls')
+
+    def _apply_regions(self, space):
+        if self.hide_sidebar:
+            space.show_region_ui = False
+        if self.hide_toolbar:
+            space.show_region_toolbar = False
+        if self.hide_tool_settings:
+            space.show_region_tool_header = False
+
+    def execute(self, context):
+        area = self._view3d_area(context)
+        if area is None:
+            self.report({'WARNING'}, "No 3D View found")
+            return {'CANCELLED'}
+
+        if self.viewport_controls:
+            try:
+                prefs = context.preferences.addons[__package__].preferences
+                prefs.use_viewport_hud = True
+                prefs.use_room_palette = True
+            except (KeyError, AttributeError):
+                pass
+
+        # Region flags first: maximizing copies the space, so they
+        # carry into the maximized view; applied again below in case
+        # they did not.
+        self._apply_regions(area.spaces.active)
+
+        # Ctrl+Space is a toggle, so only maximize when not already.
+        if self.maximize_view and not context.screen.show_fullscreen:
+            region = next((r for r in area.regions if r.type == 'WINDOW'), None)
+            try:
+                with context.temp_override(area=area, region=region):
+                    bpy.ops.screen.screen_full_area()
+            except Exception as ex:
+                self.report({'WARNING'}, f"Could not maximize the 3D view: {ex}")
+
+        for scr_area in context.window.screen.areas:
+            if scr_area.type == 'VIEW_3D':
+                self._apply_regions(scr_area.spaces.active)
+                scr_area.tag_redraw()
+        return {'FINISHED'}
+
+
 class home_builder_annotations_OT_apply_settings_to_all(bpy.types.Operator):
     bl_idname = "home_builder_annotations.apply_settings_to_all"
     bl_label = "Apply Settings to All"
@@ -650,6 +753,7 @@ class home_builder_OT_set_scale_with_two_points(bpy.types.Operator):
 classes = (
     home_builder_OT_to_do,
     home_builder_OT_set_recommended_settings,
+    home_builder_OT_set_recommended_interface,
     home_builder_OT_rendering_settings,
     home_builder_OT_create_camera,
     home_builder_annotations_OT_apply_settings_to_all,
