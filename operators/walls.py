@@ -5,7 +5,7 @@ import os
 import gpu
 import blf
 from mathutils import Vector
-from mathutils.geometry import intersect_line_plane
+from mathutils.geometry import intersect_line_plane, tessellate_polygon
 from bpy_extras import view3d_utils
 from gpu_extras.batch import batch_for_shader
 from .. import hb_types, hb_snap, hb_placement, hb_utils, units
@@ -875,6 +875,139 @@ def _draw_snap_point(x, y, color, radius, cross_size, diamond=False):
     gpu.state.line_width_set(1.0)
 
 
+# ---- Close-room cues ------------------------------------------------------
+# Three things say "this click closes the room", all drawn only once
+# closing is possible (two confirmed walls and a first wall to return
+# to): a ring at the first wall's start so the target is visible before
+# the cursor reaches it, and -- once the close snap engages -- a fill of
+# the room the click would make plus a "Close Room" chip at the cursor.
+# The green diamond and the header tag were there before and stay; they
+# just were not enough on their own.
+
+CLOSE_COLOR = (0.2, 1.0, 0.2, 0.95)
+CLOSE_RING_IDLE = (0.2, 1.0, 0.2, 0.45)
+CLOSE_FILL = (0.2, 1.0, 0.2, 0.12)
+CLOSE_OUTLINE = (0.2, 1.0, 0.2, 0.55)
+CHIP_BG = (0.13, 0.13, 0.14, 0.9)
+CHIP_TEXT = (0.95, 0.95, 0.95, 1.0)
+
+
+def _draw_ring(x, y, radius, color, width=1.5, fill=None):
+    shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+    segments = 40
+    verts = [(x + radius * math.cos(2 * math.pi * i / segments),
+              y + radius * math.sin(2 * math.pi * i / segments))
+             for i in range(segments + 1)]
+    shader.bind()
+    if fill is not None:
+        shader.uniform_float("color", fill)
+        batch_for_shader(shader, 'TRI_FAN',
+                         {"pos": [(x, y)] + verts}).draw(shader)
+    gpu.state.line_width_set(width)
+    shader.uniform_float("color", color)
+    batch_for_shader(shader, 'LINE_STRIP', {"pos": verts}).draw(shader)
+    gpu.state.line_width_set(1.0)
+
+
+def _room_loop_points(op):
+    """World XY corners of the room the current wall would close: the
+    start of every confirmed wall from the first one along the chain,
+    then the current wall's start. None when there are not three.
+
+    Cached on the operator per confirmed-wall count: the chain walk
+    scans every object per step, which is too dear for every redraw."""
+    key = (op.confirmed_wall_count,
+           op.first_wall.obj.name if op.first_wall else None)
+    cache = getattr(op, '_close_loop_cache', None)
+    if cache is not None and cache[0] == key:
+        pts = list(cache[1])
+    else:
+        pts = []
+        visited = set()
+        wall = op.first_wall
+        while wall is not None and wall.obj.name not in visited:
+            if op.current_wall is not None and wall.obj == op.current_wall.obj:
+                break
+            visited.add(wall.obj.name)
+            # matrix_world, not location: every wall after the first
+            # sits where its COPY_LOCATION constraint puts it.
+            loc = wall.obj.matrix_world.translation
+            pts.append((loc.x, loc.y))
+            wall = wall.get_connected_wall('right')
+        op._close_loop_cache = (key, tuple(pts))
+    if op.start_point is not None:
+        sp = (op.start_point.x, op.start_point.y)
+        if not pts or abs(pts[-1][0] - sp[0]) > 1e-4 \
+                or abs(pts[-1][1] - sp[1]) > 1e-4:
+            pts.append(sp)
+    return pts if len(pts) >= 3 else None
+
+
+def _draw_close_target(op, region, context):
+    """The ring at the first wall's start, and -- while the close snap
+    is engaged -- the fill of the room about to be closed."""
+    start_2d = view3d_utils.location_3d_to_region_2d(
+        region, region.data, Vector(op.first_start_point))
+    if start_2d is None:
+        return
+    if op.close_snap_active:
+        pts = _room_loop_points(op)
+        if pts:
+            pts_2d = []
+            for x, y in pts:
+                p = view3d_utils.location_3d_to_region_2d(
+                    region, region.data, Vector((x, y, 0.0)))
+                if p is None:
+                    pts_2d = None
+                    break
+                pts_2d.append((p.x, p.y))
+            if pts_2d:
+                shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+                shader.bind()
+                tris = tessellate_polygon([pts_2d])
+                if tris:
+                    shader.uniform_float("color", CLOSE_FILL)
+                    batch_for_shader(
+                        shader, 'TRIS', {"pos": pts_2d},
+                        indices=[tuple(t) for t in tris]).draw(shader)
+                gpu.state.line_width_set(1.5)
+                shader.uniform_float("color", CLOSE_OUTLINE)
+                batch_for_shader(shader, 'LINE_LOOP',
+                                 {"pos": pts_2d}).draw(shader)
+                gpu.state.line_width_set(1.0)
+        _draw_ring(start_2d.x, start_2d.y, 16, CLOSE_COLOR, 2.0,
+                   fill=(0.2, 1.0, 0.2, 0.30))
+    else:
+        _draw_ring(start_2d.x, start_2d.y, 11, CLOSE_RING_IDLE, 1.5)
+
+
+def _draw_close_chip(context, x, y):
+    """A "Close Room" chip to the right of the snap indicator."""
+    try:
+        s = context.preferences.system.ui_scale
+    except AttributeError:
+        s = 1.0
+    text = "Close Room"
+    blf.size(0, 12 * s)
+    tw, th = blf.dimensions(0, text)
+    pad_x, pad_y = 6 * s, 4 * s
+    w, h = tw + 2 * pad_x, th + 2 * pad_y
+    bx = x + 22 * s
+    by = y - h / 2.0
+    verts = ((bx, by), (bx + w, by), (bx + w, by + h), (bx, by + h))
+    shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+    shader.bind()
+    shader.uniform_float("color", CHIP_BG)
+    batch_for_shader(shader, 'TRI_FAN', {"pos": verts}).draw(shader)
+    gpu.state.line_width_set(1.5)
+    shader.uniform_float("color", CLOSE_COLOR)
+    batch_for_shader(shader, 'LINE_LOOP', {"pos": verts}).draw(shader)
+    gpu.state.line_width_set(1.0)
+    blf.color(0, *CHIP_TEXT)
+    blf.position(0, bx + pad_x, by + pad_y, 0)
+    blf.draw(0, text)
+
+
 def _draw_track_indicators(op, region, context):
     """Draw acquired track points, hover candidate, and active track lines."""
     import time
@@ -1051,10 +1184,18 @@ def draw_wall_snap_indicator(op, context):
             gpu.state.blend_set('NONE')
             return
 
+        # The close-room target: a ring at the first wall's start once
+        # closing is possible, the room fill once the snap engages.
+        if (op.first_start_point is not None
+                and op.confirmed_wall_count >= 2
+                and op.first_wall is not None):
+            _draw_close_target(op, region, context)
+
         if op.close_snap_active:
             # Closing the room - bright green diamond at the start point
-            color = (0.2, 1.0, 0.2, 0.95)
-            _draw_snap_point(end_2d.x, end_2d.y, color, 14, 9, diamond=True)
+            _draw_snap_point(end_2d.x, end_2d.y, CLOSE_COLOR, 14, 9,
+                             diamond=True)
+            _draw_close_chip(context, end_2d.x, end_2d.y)
         elif op.end_snap_wall:
             color = (0.0, 1.0, 0.4, 0.9)
             _draw_snap_point(end_2d.x, end_2d.y, color, 12, 8, diamond=True)
