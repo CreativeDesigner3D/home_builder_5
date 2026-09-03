@@ -72,6 +72,23 @@ class HOME_BUILDER_PT_interface(bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         prefs = context.preferences.addons[__package__.rsplit('.', 1)[0]].preferences
+        # One click for the whole setup: viewport settings, maximized
+        # view, panels away, the controls below turned on. First, since
+        # it is the answer to the warning under it.
+        row = layout.row()
+        row.scale_y = 1.2
+        row.operator("home_builder.set_recommended_settings",
+                     text="Recommended Settings", icon='PREFERENCES')
+
+        # Object color type is what the cabinet colors ride on; without
+        # it the model reads wrong. The button above sets it.
+        if context.space_data.shading.color_type != 'OBJECT':
+            box = layout.box()
+            row = box.row()
+            row.alert = True
+            row.label(text="Object Color Type is not enabled!", icon='ERROR')
+            box.label(text="Colors will not display correctly.", icon='BLANK1')
+
         # Two rows, not one: side by side the first label truncates at
         # the sidebar's default width.
         col = layout.column(align=True)
@@ -80,10 +97,6 @@ class HOME_BUILDER_PT_interface(bpy.types.Panel):
                  icon='WINDOW', toggle=True)
         col.prop(prefs, "use_room_palette", text="Room Tool Palette",
                  icon='TOOL_SETTINGS', toggle=True)
-        # One click for the whole setup: viewport settings, maximized
-        # view, panels away, the controls above turned on.
-        col.operator("home_builder.set_recommended_settings",
-                     text="Recommended Settings", icon='PREFERENCES')
 
 
 # -----------------------------------------------------------------------------
@@ -100,30 +113,17 @@ class HOME_BUILDER_PT_selection_mode(bpy.types.Panel):
     @classmethod
     def poll(cls, context):
         # With the viewport HUD on, room navigation and selection mode
-        # are drawn in the 3D view; only the object-color warning is
-        # left for this panel, so hide it entirely when that isn't needed.
+        # are drawn in the 3D view, so this panel has nothing to show.
         try:
             prefs = context.preferences.addons[__package__.rsplit('.', 1)[0]].preferences
         except (KeyError, AttributeError):
             return True
-        if not getattr(prefs, 'use_viewport_hud', False):
-            return True
-        return context.space_data.shading.color_type != 'OBJECT'
+        return not getattr(prefs, 'use_viewport_hud', False)
 
     def draw(self, context):
         layout = self.layout
         prefs = context.preferences.addons[__package__.rsplit('.', 1)[0]].preferences
         use_hud = getattr(prefs, 'use_viewport_hud', False)
-
-        # Check if Object Color Type is enabled in the viewport shading
-        if context.space_data.shading.color_type != 'OBJECT':
-            box = layout.box()
-            row = box.row()
-            row.alert = True
-            row.label(text="Object Color Type is not enabled!", icon='ERROR')
-            box.label(text="Colors will not display correctly.", icon='BLANK1')
-            box.operator("home_builder.set_recommended_settings",
-                        text="Open Recommended Settings", icon='PREFERENCES')
 
         in_layout_view = context.scene.get('IS_LAYOUT_VIEW')
         in_detail_view = context.scene.get('IS_DETAIL_VIEW')
