@@ -172,6 +172,21 @@ def update_show_entry_door_and_window_cages(self, context):
             obj.show_in_front = True if self.show_entry_door_and_window_cages else False
 
 
+def update_show_door_swings(self, context):
+    """Hide or show every door swing annotation in the room. Per view
+    layer (hide_set), not hide_viewport, so a plan drawing built from
+    this room keeps its swings."""
+    hide = not self.show_door_swings
+    for obj in context.scene.objects:
+        hb = getattr(obj, 'home_builder', None)
+        if hb is None or not (hb.mod_name or '').startswith('GeoNodeDoorSwing'):
+            continue
+        try:
+            obj.hide_set(hide)
+        except RuntimeError:
+            pass  # not in the active view layer
+
+
 def _entry_door_style_items(self, context):
     from .product_libraries.common import door_window_geo
     return door_window_geo.style_enum_items(
@@ -521,6 +536,13 @@ class Home_Builder_Scene_Props(PropertyGroup):
     show_link_objects_from_rooms: BoolProperty(name="Show Link Objects From Rooms", default=False)
 
     show_entry_door_and_window_cages: BoolProperty(name="Show Entry Door and Window Cages", default=True,update=update_show_entry_door_and_window_cages)
+    show_door_swings: BoolProperty(
+        name="Show Door Swings",
+        description="Show the swing arc annotation on entry doors in this "
+                    "room. Off hides them in the viewport only; plan "
+                    "drawings keep them",
+        default=True,
+        update=update_show_door_swings)  # type: ignore
 
     # ---- Room molding packages ----
     # Per-room dropdowns; picking one applies the package to the whole

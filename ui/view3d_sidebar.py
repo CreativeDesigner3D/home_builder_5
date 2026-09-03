@@ -556,6 +556,7 @@ def draw_door_window_defaults(layout, context, include_cages=True):
         box = layout.box()
         box.prop(hb_scene, 'show_entry_door_and_window_cages',
                  text="Show Entry Door and Window Cages")
+        box.prop(hb_scene, 'show_door_swings', text="Show Door Swings")
     col = layout.column(align=True)
     
     box = col.box()
@@ -612,7 +613,8 @@ class HOME_BUILDER_PT_room_layout_doors_windows(bpy.types.Panel):
         
         box = layout.box()
         box.prop(hb_scene, 'show_entry_door_and_window_cages', text="Show Entry Door and Window Cages")
-        
+        box.prop(hb_scene, 'show_door_swings', text="Show Door Swings")
+
         row = layout.row(align=True)
         row.scale_y = 1.2
         row.operator('home_builder_doors_windows.place_door', text="Single Door", icon='MESH_CUBE')

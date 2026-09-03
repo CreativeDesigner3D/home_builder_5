@@ -784,6 +784,12 @@ class _PlaceWallObjectBase(bpy.types.Operator, WallObjectPlacementMixin):
             if self.INITIAL_SWING_INPUTS:
                 for k, v in self.INITIAL_SWING_INPUTS.items():
                     self.swing_obj.set_input(k, v)
+            # A new door follows the room's Show Door Swings setting.
+            if not getattr(props, 'show_door_swings', True):
+                try:
+                    self.swing_obj.obj.hide_set(True)
+                except RuntimeError:
+                    pass  # not yet in the view layer
 
         if self.IS_OPEN_DOORWAY:
             self.placed_obj.obj['IS_OPEN_DOORWAY'] = True
