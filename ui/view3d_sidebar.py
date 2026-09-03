@@ -67,17 +67,22 @@ class HOME_BUILDER_PT_selection_mode(bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
 
-        # The switch for the viewport controls lives here as well as in
-        # Preferences and the header menu: this panel is what those
-        # controls replace, so someone looking at it is exactly who
-        # would want to turn them on -- and, with them on, this row is
-        # all that is left of the panel, and the way back off.
+        # The switches for the viewport controls and the room tool
+        # palette live here as well as in Preferences and the header
+        # menu: this panel is what those controls replace, so someone
+        # looking at it is exactly who would want to turn them on --
+        # and, with them on, this row is all that is left of the panel,
+        # and the way back off.
         prefs = context.preferences.addons[__package__.rsplit('.', 1)[0]].preferences
         use_hud = getattr(prefs, 'use_viewport_hud', False)
-        row = layout.row()
-        row.scale_y = 1.2
-        row.prop(prefs, "use_viewport_hud", text="Viewport Controls",
+        # Two rows, not one: side by side the first label truncates at
+        # the sidebar's default width.
+        col = layout.column(align=True)
+        col.scale_y = 1.2
+        col.prop(prefs, "use_viewport_hud", text="Viewport Controls",
                  icon='WINDOW', toggle=True)
+        col.prop(prefs, "use_room_palette", text="Room Tool Palette",
+                 icon='TOOL_SETTINGS', toggle=True)
 
         # Check if Object Color Type is enabled in the viewport shading
         if context.space_data.shading.color_type != 'OBJECT':
