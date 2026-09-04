@@ -10231,11 +10231,16 @@ class FaceFrameCabinet(GeoNodeCage):
         floor, an inset kick). Added lazily and left inactive rather
         than absent, so separating an end re-squares the panel.
         """
-        kick, setback = island_pair.far_end_notch(
+        kick, setback_raw, far_fft = island_pair.far_end_notch(
             self.obj, 'LEFT'
             if side_obj.get('hb_part_role') in (PART_ROLE_LEFT_SIDE,
                                                 PART_ROLE_LEFT_SIDE_SEAM)
             else 'RIGHT')
+        # Same shallowing as solver.kick_notch_depth, against the FAR
+        # run's frame: the setback is measured off that run's face frame
+        # outer face, and a board running past it starts one frame
+        # thickness behind that plane.
+        setback = max(0.0, setback_raw - far_fft)
         mod = side_obj.modifiers.get('Notch Rear Bottom')
         if mod is None:
             if kick <= 0.0:

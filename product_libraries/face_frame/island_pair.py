@@ -58,7 +58,7 @@ def _key(side, suffix):
 # derived from the far run and cached on this root so the solver and
 # the part loop can read them without resolving the partner.
 _LINK_SUFFIXES = ('PARTNER', 'SIDE', 'ROLE',
-                  'COVER_T', 'FAR_KICK', 'FAR_SETBACK')
+                  'COVER_T', 'FAR_KICK', 'FAR_SETBACK', 'FAR_FFT')
 
 
 def _keys(side):
@@ -188,13 +188,20 @@ def covered_end_side_thickness(root, side):
 
 
 def far_end_notch(root, side):
-    """(kick height, setback) of the toe-kick notch a combined end panel
-    needs at its FAR end, where it passes the other run's face frame.
-    (0, 0) when that end needs none."""
+    """(kick height, kick setback, face frame thickness) of the far run,
+    for the toe-kick notch a combined end needs where it passes that
+    run's face frame. All zero when that end needs no notch.
+
+    The setback is the raw prop, measured off the far run's face frame
+    outer face, because each part cuts a different share of it - see
+    solver.kick_notch_depth for the carcass side and
+    applied_panel_sizing for a panel's rail and stile.
+    """
     if root is None:
-        return (0.0, 0.0)
+        return (0.0, 0.0, 0.0)
     return (float(root.get(_key(side, 'FAR_KICK'), 0.0)),
-            float(root.get(_key(side, 'FAR_SETBACK'), 0.0)))
+            float(root.get(_key(side, 'FAR_SETBACK'), 0.0)),
+            float(root.get(_key(side, 'FAR_FFT'), 0.0)))
 
 
 # ---------------------------------------------------------------------------
@@ -278,32 +285,34 @@ def _end_bay_kick_height(root, side):
     return getattr(bay.face_frame_bay, 'kick_height', 0.0)
 
 
-def _far_end_kick(other, other_side):
-    """(kick height, notch setback) the far run cuts out of a panel
-    running across its end, or (0, 0) when it needs no notch there.
+_NO_FAR_NOTCH = (0.0, 0.0, 0.0)
 
-    Mirrors the gates the run's own side board notch uses: no kick, a
-    flush kick, a stile already carried to the floor, or an inset kick
-    (which grows its own return) all leave the panel square.
+
+def _far_end_kick(other, other_side):
+    """(kick height, raw setback, face frame thickness) the far run cuts
+    out of a member running across its end, or zeros when it needs no
+    notch there.
+
+    Mirrors the gates that run's own end uses: no kick, a flush kick, a
+    stile already carried to the floor, or an inset kick (which grows
+    its own return) all leave the member square. The setback is left
+    raw - each part that crosses it takes a different share.
     """
     cab = other.face_frame_cabinet
     if getattr(cab, 'cabinet_type', '') not in ('BASE', 'TALL', 'LAP_DRAWER'):
-        return (0.0, 0.0)
+        return _NO_FAR_NOTCH
     if getattr(cab, 'toe_kick_type', '') != 'NOTCH':
-        return (0.0, 0.0)
+        return _NO_FAR_NOTCH
     key = other_side.lower()
     if getattr(cab, f'extend_{key}_stile_to_floor', False):
-        return (0.0, 0.0)
+        return _NO_FAR_NOTCH
     if getattr(cab, f'inset_toe_kick_{key}', 0.0) > 0.0:
-        return (0.0, 0.0)
-    # Same shallowing as solver.kick_notch_depth: the setback is
-    # measured off the face frame's outer face, and a panel running
-    # past the frame starts one frame thickness behind that plane.
-    setback = max(0.0, cab.toe_kick_setback - cab.face_frame_thickness)
+        return _NO_FAR_NOTCH
+    setback = cab.toe_kick_setback
     kick = _end_bay_kick_height(other, other_side)
     if setback <= 1e-6 or kick <= 1e-6:
-        return (0.0, 0.0)
-    return (kick, setback)
+        return _NO_FAR_NOTCH
+    return (kick, setback, cab.face_frame_thickness)
 
 
 def _cover_buildup(other, other_side):
@@ -465,9 +474,10 @@ def sync(root):
                 setattr(cab, f'{key}_side_return_width', 0.0)
             # The panel crosses the far run's toe kick as well as this
             # cabinet's, so it needs that run's notch at its far end.
-            far_kick, far_setback = _far_end_kick(other, other_side)
+            far_kick, far_setback, far_fft = _far_end_kick(other, other_side)
             root[_key(side, 'FAR_KICK')] = far_kick
             root[_key(side, 'FAR_SETBACK')] = far_setback
+            root[_key(side, 'FAR_FFT')] = far_fft
         else:
             if getattr(cab, f'{key}_finished_end_condition') != 'UNFINISHED':
                 setattr(cab, f'{key}_finished_end_condition', 'UNFINISHED')

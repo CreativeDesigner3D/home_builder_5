@@ -21,6 +21,7 @@ import bpy
 from ... import hb_types
 from ... import hb_utils
 from ... import units
+from . import island_pair
 from . import style_options
 from . import types_face_frame
 
@@ -595,6 +596,81 @@ def apply_panel_toe_kick_notch(cab_obj, panel_obj, side):
 
     for part_obj, flips, x_val, y_val, part_active in parts:
         _ensure_and_drive_notch(part_obj, part_active, x_val, y_val, flips)
+
+    _apply_panel_far_kick_notch(cab_obj, panel_obj, side,
+                                bottom_rail, facing_role)
+
+
+# The far-end notch removes the same corner at the other end of the
+# panel, so the rail's cut moves to its other end (Flip X inverted from
+# the near table) and the stile's depth is taken the other way along
+# the panel (Flip Y inverted). Same caveat as the near-end table: these
+# pick a corner and were derived rather than eyeballed.
+_FAR_NOTCH_FLIPS_BOTTOM_RAIL = {
+    'LEFT':  (False, False, False),
+    'RIGHT': (True, False, False),
+}
+_FAR_NOTCH_FLIPS_END_STILE = (False, False, False)
+
+_FAR_NOTCH_MOD_NAME = 'Notch Rear Bottom'
+
+
+def _apply_panel_far_kick_notch(cab_obj, panel_obj, side, bottom_rail,
+                                facing_role):
+    """Notch the FAR end of a panel that carries a combined island end.
+
+    A combined end runs past the other run's face frame as well as its
+    own, so it crosses two toe kicks. The near one is the front notch
+    above; this is the other, and it belongs to the far run - its kick
+    height and setback, and its gates. That matters most when the two
+    runs disagree: this cabinet's own stile carried to the floor turns
+    the near notch off, and used to take the far one with it even
+    though the far run still had a recess to clear.
+
+    The far end's stile is the one the front notch does not touch, and
+    the bottom rail is cut at its other end. Left inactive rather than
+    absent so separating an end squares the panel again.
+    """
+    kick, setback, far_fft = island_pair.far_end_notch(cab_obj, side)
+    active = kick > 0.0 and setback > 0.0
+
+    # The panel's far edge stops one face-frame thickness short of the
+    # far run's front, the same way its near edge does of this
+    # cabinet's, so the stile's share of the setback is that much less.
+    stile_depth = max(0.0, setback - far_fft)
+
+    far_role = (types_face_frame.PART_ROLE_LEFT_STILE
+                if facing_role == types_face_frame.PART_ROLE_RIGHT_STILE
+                else types_face_frame.PART_ROLE_RIGHT_STILE)
+    far_stile = None
+    for c in panel_obj.children_recursive:
+        if c.get('hb_part_role') == far_role:
+            far_stile = c
+            break
+
+    panel_props = panel_obj.face_frame_cabinet
+    far_width = (panel_props.left_stile_width
+                 if far_role == types_face_frame.PART_ROLE_LEFT_STILE
+                 else panel_props.right_stile_width)
+
+    if far_stile is not None:
+        _ensure_and_drive_notch(
+            far_stile, active,
+            kick,          # X = height (stile runs up)
+            stile_depth,   # Y = depth along the panel
+            _FAR_NOTCH_FLIPS_END_STILE,
+            name=_FAR_NOTCH_MOD_NAME, create_if_missing=active)
+    if bottom_rail is not None:
+        # The rail starts behind the far stile, so it only clears what
+        # is left of the setback once that stile took its width.
+        rail_run = max(0.0, setback - far_width)
+        _ensure_and_drive_notch(
+            bottom_rail, active and rail_run > 0.0,
+            rail_run,      # X = run along the rail
+            kick,          # Y = height
+            _FAR_NOTCH_FLIPS_BOTTOM_RAIL[side],
+            name=_FAR_NOTCH_MOD_NAME,
+            create_if_missing=active and rail_run > 0.0)
 
 
 # Back-panel end notches ride their own modifiers so each end can be
