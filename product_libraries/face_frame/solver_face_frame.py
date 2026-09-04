@@ -25,6 +25,7 @@ import math
 import bpy
 
 from ...units import inch
+from . import island_pair
 from . import shelf_nosing
 from . import bar_storage
 
@@ -136,6 +137,14 @@ class FaceFrameLayout:
                               if self.has_toe_kick else 'FLOATING')
         self.extend_left_stile_to_floor = cab.extend_left_stile_to_floor
         self.extend_right_stile_to_floor = cab.extend_right_stile_to_floor
+        # Combined island end: the run behind lays its finished end
+        # across this one, so this cabinet's cavity stops at that
+        # covering rather than at a side board of its own. 0.0 on every
+        # end that is not covered. See island_pair.
+        self.l_covered_cover = island_pair.covered_end_cover(
+            cabinet_obj, 'LEFT')
+        self.r_covered_cover = island_pair.covered_end_cover(
+            cabinet_obj, 'RIGHT')
         # Refrigerator cabinet: per-side raise of the carcass side + end
         # stile up to the top of the fridge opening, plus the per-cabinet
         # opening height that datum is built from.
@@ -534,7 +543,15 @@ def left_side_thickness(layout):
     conditions use the cabinet's material_thickness (typically 1/2).
     Tops, bottoms, and dividers stay at material_thickness in all
     cases.
+
+    A combined island end is the same story told from the other side:
+    the run behind carries a board across this end, so this cabinet
+    builds none and its cavity stops at that board's inner face.
+    Reporting the covering's thickness is what keeps every part that
+    lands on this side - stretchers, bottoms, kick beams - off it.
     """
+    if layout.l_covered_cover >= island_pair.SIDE_REPLACING_COVER:
+        return layout.l_covered_cover
     if layout.l_fin_end == 'FINISHED':
         return inch(0.75)
     if layout.l_fin_end in ('FALSE_FF', 'WORKING_FF'):
@@ -554,6 +571,8 @@ def right_scribe_offset(layout):
 
 def right_side_thickness(layout):
     """See left_side_thickness."""
+    if layout.r_covered_cover >= island_pair.SIDE_REPLACING_COVER:
+        return layout.r_covered_cover
     if layout.r_fin_end == 'FINISHED':
         return inch(0.75)
     if layout.r_fin_end in ('FALSE_FF', 'WORKING_FF'):

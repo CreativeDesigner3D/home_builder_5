@@ -50,9 +50,19 @@ _DROPPING = set()
 # Per-end stamp
 # ---------------------------------------------------------------------------
 
+def _key(side, suffix):
+    return f'{_KEY_PREFIX}{side}_{suffix}'
+
+
+# PARTNER / SIDE / ROLE describe the arrangement; the rest are numbers
+# derived from the far run and cached on this root so the solver and
+# the part loop can read them without resolving the partner.
+_LINK_SUFFIXES = ('PARTNER', 'SIDE', 'ROLE',
+                  'COVER_T', 'FAR_KICK', 'FAR_SETBACK')
+
+
 def _keys(side):
-    base = f'{_KEY_PREFIX}{side}_'
-    return (base + 'PARTNER', base + 'SIDE', base + 'ROLE')
+    return (_key(side, 'PARTNER'), _key(side, 'SIDE'), _key(side, 'ROLE'))
 
 
 def _raw_link(root, side):
@@ -79,7 +89,8 @@ def _set_link(root, side, other, other_side, role):
 def _clear_link(root, side):
     if root is None:
         return
-    for key in _keys(side):
+    for suffix in _LINK_SUFFIXES:
+        key = _key(side, suffix)
         if key in root:
             del root[key]
 
@@ -129,19 +140,60 @@ def has_combined_end(root):
 
 
 def end_is_covered(root, side):
-    """True when this end is closed by the partner's panel, so this
-    cabinet builds no side board there.
-
-    Both boards would otherwise land in the same plane - the two runs
-    share the island end, so the carrier's finished end and this
-    cabinet's own side want the same space.
-
-    Reads the stamp only, no geometry: this is called from the part
-    loop of every recalc, and ``sync`` has already run this pass and
-    dropped anything stale.
-    """
+    """True when this end is the covered half of an arrangement."""
     raw = _raw_link(root, side)
     return raw is not None and raw[2] == COVERED
+
+
+# What a carrier's finished end leaves standing in the plane of the
+# island end, per condition. These are solver.left_scribe_offset's
+# values, plus FINISHED, where the 3/4 board itself IS the covering.
+# A 3/4 covering can serve as the covered run's side board; a 1/4
+# textured skin cannot, so that run keeps its own board and is held
+# back far enough for the skin to lie over it.
+_COVER_THICKNESS = {
+    'FINISHED': units.inch(0.75),
+    'PANELED': units.inch(0.75),
+    'FALSE_FF': units.inch(0.75),
+    'WORKING_FF': units.inch(0.75),
+    'BEADBOARD': units.inch(0.25),
+    'SHIPLAP': units.inch(0.25),
+    'V_GROOVE': units.inch(0.25),
+}
+
+# A covering at least this thick stands in for a carcass side board.
+SIDE_REPLACING_COVER = units.inch(0.5)
+
+
+def covered_end_cover(root, side):
+    """Thickness of the covering the run behind lays across this end,
+    or 0.0 when this end is not covered.
+
+    Reads the stamp only, no geometry: this is on the part loop and the
+    solver of every recalc, and ``sync`` has already run this pass and
+    dropped anything stale.
+    """
+    if root is None:
+        return 0.0
+    return float(root.get(_key(side, 'COVER_T'), 0.0))
+
+
+def cover_replaces_side(root, side):
+    """True when the covering across this end is a board in its own
+    right, so this cabinet builds no side there and its cavity runs out
+    to the covering's inner face. Both boards would otherwise land in
+    the same plane - the two runs share the island end."""
+    return covered_end_cover(root, side) >= SIDE_REPLACING_COVER
+
+
+def far_end_notch(root, side):
+    """(kick height, setback) of the toe-kick notch a combined end panel
+    needs at its FAR end, where it passes the other run's face frame.
+    (0, 0) when that end needs none."""
+    if root is None:
+        return (0.0, 0.0)
+    return (float(root.get(_key(side, 'FAR_KICK'), 0.0)),
+            float(root.get(_key(side, 'FAR_SETBACK'), 0.0)))
 
 
 # ---------------------------------------------------------------------------
@@ -212,6 +264,53 @@ def shared_ends(a, b):
     pairs = [(a_side, b_side) for b_side, (a_side, _gap) in claimed.items()]
     pairs.sort()
     return pairs
+
+
+def _end_bay_kick_height(root, side):
+    """Kick height of the bay at one end of a cabinet."""
+    from . import types_face_frame
+    bays = [c for c in root.children if c.get(types_face_frame.TAG_BAY_CAGE)]
+    if not bays:
+        return 0.0
+    bays.sort(key=lambda c: c.get('hb_bay_index', 0))
+    bay = bays[0] if side == 'LEFT' else bays[-1]
+    return getattr(bay.face_frame_bay, 'kick_height', 0.0)
+
+
+def _far_end_kick(other, other_side):
+    """(kick height, notch setback) the far run cuts out of a panel
+    running across its end, or (0, 0) when it needs no notch there.
+
+    Mirrors the gates the run's own side board notch uses: no kick, a
+    flush kick, a stile already carried to the floor, or an inset kick
+    (which grows its own return) all leave the panel square.
+    """
+    cab = other.face_frame_cabinet
+    if getattr(cab, 'cabinet_type', '') not in ('BASE', 'TALL', 'LAP_DRAWER'):
+        return (0.0, 0.0)
+    if getattr(cab, 'toe_kick_type', '') != 'NOTCH':
+        return (0.0, 0.0)
+    key = other_side.lower()
+    if getattr(cab, f'extend_{key}_stile_to_floor', False):
+        return (0.0, 0.0)
+    if getattr(cab, f'inset_toe_kick_{key}', 0.0) > 0.0:
+        return (0.0, 0.0)
+    # Same shallowing as solver.kick_notch_depth: the setback is
+    # measured off the face frame's outer face, and a panel running
+    # past the frame starts one frame thickness behind that plane.
+    setback = max(0.0, cab.toe_kick_setback - cab.face_frame_thickness)
+    kick = _end_bay_kick_height(other, other_side)
+    if setback <= 1e-6 or kick <= 1e-6:
+        return (0.0, 0.0)
+    return (kick, setback)
+
+
+def _cover_thickness(other, other_side):
+    """What the far run's finished end lays across the island end."""
+    cond = getattr(other.face_frame_cabinet,
+                   f'{other_side.lower()}_finished_end_condition',
+                   'UNFINISHED')
+    return _COVER_THICKNESS.get(cond, 0.0)
 
 
 def combined_extend(root, other):
@@ -345,7 +444,7 @@ def sync(root):
             _release(root, side)
             _repick([root])
             continue
-        other, _other_side, role = link
+        other, other_side, role = link
         key = side.lower()
         if role == CARRIER:
             if getattr(cab, f'{key}_finished_end_condition') == 'UNFINISHED':
@@ -362,10 +461,24 @@ def sync(root):
             # there is no corner left to cap.
             if getattr(cab, f'{key}_side_return_width') != 0.0:
                 setattr(cab, f'{key}_side_return_width', 0.0)
+            # The panel crosses the far run's toe kick as well as this
+            # cabinet's, so it needs that run's notch at its far end.
+            far_kick, far_setback = _far_end_kick(other, other_side)
+            root[_key(side, 'FAR_KICK')] = far_kick
+            root[_key(side, 'FAR_SETBACK')] = far_setback
         else:
             if getattr(cab, f'{key}_finished_end_condition') != 'UNFINISHED':
                 setattr(cab, f'{key}_finished_end_condition', 'UNFINISHED')
-            if getattr(cab, f'{key}_scribe') != 0.0:
-                setattr(cab, f'{key}_scribe', 0.0)
             if getattr(cab, f'{key}_side_finished_extend_back') != 0.0:
                 setattr(cab, f'{key}_side_finished_extend_back', 0.0)
+            # How much of this end the other run's covering occupies.
+            # A board thick enough to be the side leaves this cabinet
+            # nothing to build there and its cavity runs out to the
+            # board's inner face (see the solver's side thickness); a
+            # thin skin leaves this run its own board, held back far
+            # enough for the skin to lie over it rather than through it.
+            cover = _cover_thickness(other, other_side)
+            root[_key(side, 'COVER_T')] = cover
+            scribe = 0.0 if cover >= SIDE_REPLACING_COVER else cover
+            if getattr(cab, f'{key}_scribe') != scribe:
+                setattr(cab, f'{key}_scribe', scribe)

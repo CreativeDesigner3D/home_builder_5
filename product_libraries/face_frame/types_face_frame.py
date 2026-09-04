@@ -2757,8 +2757,8 @@ class FaceFrameCabinet(GeoNodeCage):
                 visible = (not layout.bays[0].get('remove_carcass')
                            and layout.l_fin_end not in ('FALSE_FF',
                                                         'WORKING_FF')
-                           and not island_pair.end_is_covered(self.obj,
-                                                              'LEFT'))
+                           and not island_pair.cover_replaces_side(
+                               self.obj, 'LEFT'))
                 child.hide_viewport = not visible
                 child.hide_render = not visible
                 # Refresh the square baseline even when HIDDEN: the back
@@ -2784,6 +2784,7 @@ class FaceFrameCabinet(GeoNodeCage):
                 part.set_input('Width', width)
                 part.set_input('Thickness', thickness)
                 self._update_side_corner_notch(child, layout, 0)
+                self._update_side_far_notch(child, layout)
                 self._update_side_back_notch(child, layout, 0)
 
             elif role == PART_ROLE_RIGHT_SIDE:
@@ -2791,8 +2792,8 @@ class FaceFrameCabinet(GeoNodeCage):
                 visible = (not layout.bays[last].get('remove_carcass')
                            and layout.r_fin_end not in ('FALSE_FF',
                                                         'WORKING_FF')
-                           and not island_pair.end_is_covered(self.obj,
-                                                              'RIGHT'))
+                           and not island_pair.cover_replaces_side(
+                               self.obj, 'RIGHT'))
                 child.hide_viewport = not visible
                 child.hide_render = not visible
                 # Refresh the square baseline even when hidden - see the
@@ -2807,6 +2808,7 @@ class FaceFrameCabinet(GeoNodeCage):
                 part.set_input('Width', width)
                 part.set_input('Thickness', thickness)
                 self._update_side_corner_notch(child, layout, last)
+                self._update_side_far_notch(child, layout)
                 self._update_side_back_notch(child, layout, last)
 
             elif role == PART_ROLE_BOTTOM:
@@ -10207,6 +10209,58 @@ class FaceFrameCabinet(GeoNodeCage):
         else:
             rail.set_input('Mirror Z', True)
         return rail
+
+    def _update_side_far_notch(self, side_obj, layout):
+        """Drive the 'Notch Rear Bottom' modifier - the toe-kick notch a
+        combined island end needs at its FAR end.
+
+        A combined end runs past the other run's face frame as well as
+        its own, so it crosses two toe kicks and has to be notched at
+        both ends. This is the far one; _update_side_corner_notch cuts
+        the near one. Same modifier, mirrored in Y: the notch sits at
+        the part's local Y origin (Flip Y off) instead of at its far
+        edge, and the origin is the end that was extended back.
+
+        The kick it clears belongs to the OTHER run, so its height and
+        setback are read off the numbers island_pair caches when the
+        arrangement is synced - including the gates that leave it
+        square (no kick, a flush kick, a stile already carried to the
+        floor, an inset kick). Added lazily and left inactive rather
+        than absent, so separating an end re-squares the panel.
+        """
+        kick, setback = island_pair.far_end_notch(
+            self.obj, 'LEFT'
+            if side_obj.get('hb_part_role') in (PART_ROLE_LEFT_SIDE,
+                                                PART_ROLE_LEFT_SIDE_SEAM)
+            else 'RIGHT')
+        mod = side_obj.modifiers.get('Notch Rear Bottom')
+        if mod is None:
+            if kick <= 0.0:
+                return          # never combined - no modifier needed
+            wrapper = GeoNodeCutpart(side_obj)
+            cpm = wrapper.add_part_modifier(
+                'CPM_CORNERNOTCH', 'Notch Rear Bottom')
+            cpm.set_input('Flip X', False)
+            cpm.set_input('Flip Y', False)
+            mod = cpm.mod
+        if mod.node_group is None:
+            return
+        role = side_obj.get('hb_part_role')
+        thickness = (solver.left_side_thickness(layout)
+                     if role in (PART_ROLE_LEFT_SIDE, PART_ROLE_LEFT_SIDE_SEAM)
+                     else solver.right_side_thickness(layout))
+        active = kick > 0.0 and setback > 0.0 and thickness > 0.0
+        ng = mod.node_group
+        for input_name, value in (
+            ('X', kick if active else 0.0),
+            ('Y', setback if active else 0.0),
+            ('Route Depth', thickness if active else 0.0),
+        ):
+            node_input = ng.interface.items_tree.get(input_name)
+            if node_input is not None:
+                hb_utils.set_gn_input(mod, node_input.identifier, value)
+        mod.show_viewport = active
+        mod.show_render = active
 
     def _update_side_corner_notch(self, side_obj, layout, bay_index):
         """Drive the side's 'Notch Front Bottom' modifier from the
