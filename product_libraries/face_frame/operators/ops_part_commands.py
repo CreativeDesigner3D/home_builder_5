@@ -2976,6 +2976,211 @@ class hb_face_frame_OT_set_finished_end_condition(bpy.types.Operator):
         return {'FINISHED'}
 
 
+# ---------------------------------------------------------------------------
+# Two sides at one end of a back-to-back island -> one combined end
+# ---------------------------------------------------------------------------
+_CARCASS_SIDE_BY_ROLE = {
+    types_face_frame.PART_ROLE_LEFT_SIDE: 'LEFT',
+    types_face_frame.PART_ROLE_RIGHT_SIDE: 'RIGHT',
+}
+
+
+def _carcass_side_of(obj):
+    """'LEFT' / 'RIGHT' for a plain carcass side part, else None.
+
+    Corner sides are left out: a corner cabinet is not a straight run,
+    so it never forms the back-to-back pair this is about.
+    """
+    if obj is None:
+        return None
+    return _CARCASS_SIDE_BY_ROLE.get(obj.get('hb_part_role'))
+
+
+def combinable_end_parts(context):
+    """(carrier, carrier_side, other, other_side) when exactly two
+    carcass sides are picked, on two runs standing back to back, at an
+    end the two actually share. None otherwise.
+
+    The side that was right-clicked - the active one - is the carrier,
+    so the panel is built on the side the user is pointing at. Picking
+    the other side and running the command again is what moves the
+    panel to the other run; there is nothing separate to swap.
+    """
+    from .. import island_pair
+    active = context.active_object
+    carrier_side = _carcass_side_of(active)
+    if carrier_side is None:
+        return None
+    carrier = types_face_frame.find_cabinet_root(active)
+    if carrier is None:
+        return None
+    # One other cabinet, contributing exactly one side. Two parts of the
+    # same side (a seamed panel) collapse to one entry; anything more
+    # ambiguous than that is not a two-part pick.
+    picks = {}
+    for obj in context.selected_objects:
+        side = _carcass_side_of(obj)
+        if side is None:
+            continue
+        root = types_face_frame.find_cabinet_root(obj)
+        if root is None or root == carrier:
+            continue
+        picks.setdefault(root.name, (root, set()))[1].add(side)
+    if len(picks) != 1:
+        return None
+    other, sides = next(iter(picks.values()))
+    if len(sides) != 1:
+        return None
+    other_side = sides.pop()
+    if (carrier_side, other_side) not in island_pair.shared_ends(carrier,
+                                                                other):
+        return None
+    return (carrier, carrier_side, other, other_side)
+
+
+def combined_end_side(obj):
+    """The side of the clicked part's cabinet that is part of a combined
+    end, when the clicked part is on that side. None otherwise."""
+    from .. import island_pair
+    side = _carcass_side_of(obj)
+    if side is None:
+        return None
+    root = types_face_frame.find_cabinet_root(obj)
+    if root is None:
+        return None
+    return side if island_pair.end_link(root, side) is not None else None
+
+
+# A combined end spans the whole island depth, so the two conditions
+# that cannot span one are left out: UNFINISHED has nothing to build,
+# and FLUSH_X is a strip sized to an appliance gap. Built on first use
+# from the one list in props (this module imports props lazily), and
+# held module-level because Blender keeps no reference to the strings a
+# dynamic enum callback hands back.
+_COMBINED_END_ITEMS = []
+
+
+def _combined_end_items(self=None, context=None):
+    if not _COMBINED_END_ITEMS:
+        from .. import props_hb_face_frame as _props
+        _COMBINED_END_ITEMS.extend(
+            item for item in _props.FIN_END_ITEMS
+            if item[0] not in ('UNFINISHED', 'FLUSH_X'))
+    return _COMBINED_END_ITEMS
+
+
+class hb_face_frame_OT_set_combined_finished_end(bpy.types.Operator):
+    """Finish one end of a back-to-back island as a single panel.
+
+    With a carcass side picked on each of the two runs, the end is built
+    once: the right-clicked side runs back to the other run's face
+    frame, and the other side goes Unfinished so nothing is built or
+    charged twice.
+    """
+    bl_idname = "hb_face_frame.set_combined_finished_end"
+    bl_label = "Set Finished End for 2 Parts"
+    bl_description = (
+        "Finish this end of the island as one panel across both runs, "
+        "built on the side you right-clicked"
+    )
+    bl_options = {'UNDO'}
+
+    # No default: a callback-driven enum takes an index, and the first
+    # item IS Finished. invoke seeds it from what the side already is.
+    condition: EnumProperty(
+        name="Finished End",
+        items=_combined_end_items,
+    )  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        return combinable_end_parts(context) is not None
+
+    def invoke(self, context, event):
+        picked = combinable_end_parts(context)
+        if picked is not None:
+            carrier, carrier_side, _other, _other_side = picked
+            cab = carrier.face_frame_cabinet
+            current = getattr(cab, f'{carrier_side.lower()}'
+                                   '_finished_end_condition')
+            if current in {item[0] for item in _combined_end_items()}:
+                self.condition = current
+        return context.window_manager.invoke_props_dialog(self, width=320)
+
+    def draw(self, context):
+        from .. import island_pair
+        layout = self.layout
+        picked = combinable_end_parts(context)
+        if picked is None:
+            layout.label(text="Pick one side on each run", icon='INFO')
+            return
+        carrier, carrier_side, other, _other_side = picked
+        layout.prop(self, 'condition')
+        # Say which run ends up carrying the panel and how deep it gets,
+        # so the choice is visible before it is made.
+        depth = (carrier.face_frame_cabinet.depth
+                 - carrier.face_frame_cabinet.face_frame_thickness
+                 + island_pair.combined_extend(carrier, other))
+        box = layout.box()
+        col = box.column(align=True)
+        col.label(text=f"Built on: {carrier.name} ({carrier_side.title()})",
+                  icon='CON_SAMEVOL')
+        col.label(text=f"Other side: {other.name} goes unfinished")
+        col.label(text="Panel depth: "
+                       + units.unit_to_string(context.scene.unit_settings,
+                                              depth))
+
+    def execute(self, context):
+        from .. import island_pair
+        picked = combinable_end_parts(context)
+        if picked is None:
+            self.report({'ERROR'},
+                        "Pick one carcass side on each of the two runs")
+            return {'CANCELLED'}
+        carrier, carrier_side, other, other_side = picked
+        with types_face_frame.suspend_recalc():
+            if not island_pair.combine_end(carrier, carrier_side,
+                                           other, other_side,
+                                           condition=self.condition):
+                self.report({'ERROR'},
+                            "These sides are not at the same island end")
+                return {'CANCELLED'}
+        self.report({'INFO'},
+                    f"{carrier_side.title()} end built on {carrier.name}")
+        return {'FINISHED'}
+
+
+class hb_face_frame_OT_separate_combined_end(bpy.types.Operator):
+    """Split a combined island end back into one finished end per run."""
+    bl_idname = "hb_face_frame.separate_combined_end"
+    bl_label = "Separate Combined End"
+    bl_description = (
+        "Split this combined island end back into one finished end per run"
+    )
+    bl_options = {'UNDO'}
+
+    side: EnumProperty(
+        name="Side",
+        items=[('LEFT', "Left", ""), ('RIGHT', "Right", "")],
+        default='LEFT',
+    )  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        return combined_end_side(context.active_object) is not None
+
+    def execute(self, context):
+        from .. import island_pair
+        root = types_face_frame.find_cabinet_root(context.active_object)
+        if root is None:
+            self.report({'ERROR'}, "No face frame cabinet selected")
+            return {'CANCELLED'}
+        with types_face_frame.suspend_recalc():
+            island_pair.separate_end(root, self.side)
+        self.report({'INFO'}, "Combined end separated")
+        return {'FINISHED'}
+
+
 # Everything the Set Finished End Condition dialog can edit for a side,
 # minus the side prefix. Copied verbatim by Apply to Other Side.
 _FIN_END_SIDE_PROPS = (
@@ -4041,6 +4246,8 @@ classes = (
     hb_face_frame_OT_set_part_width,
     hb_face_frame_OT_set_finished_end_condition,
     hb_face_frame_OT_apply_finished_end_to_other_side,
+    hb_face_frame_OT_set_combined_finished_end,
+    hb_face_frame_OT_separate_combined_end,
     hb_face_frame_OT_set_part_scribe,
     hb_face_frame_OT_set_panel_seam,
     hb_face_frame_OT_remove_panel_seam,

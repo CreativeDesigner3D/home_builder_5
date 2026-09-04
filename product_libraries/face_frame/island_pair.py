@@ -2,34 +2,33 @@
 
 An island built as two runs standing back to back meets the room at
 its two ends, and left alone each run finishes its own end. That
-builds the end as two half-depth panels with a seam down the middle
-of the island, and charges for both.
+builds the end as two half-depth panels meeting in a seam down the
+middle of the island, and charges for both.
 
 Combining an end hands it to one cabinet - the CARRIER. Its finished
 end runs back past its own carcass to the far run's face frame, so the
 end reads as one panel across the whole island depth, and the other
 cabinet's end drops to Unfinished so nothing is built twice.
 
-State is a mutual stamp on the two cabinet roots, mirroring the blind
-corner's HB_BLIND_PAIR:
+The link is per END, not per cabinet: a long run can meet a different
+cabinet at each of its two ends, which is the normal case whenever the
+two sides of an island are broken into different cabinet widths. Each
+end that is combined stamps three keys on its own cabinet root:
 
-    HB_ISLAND_PAIR          name of the other cabinet root
-    HB_ISLAND_END_CARRIES   my sides that carry a combined end
-    HB_ISLAND_END_COVERED   my sides covered by the partner's
+    HB_ISLAND_END_<SIDE>_PARTNER   name of the cabinet at the far side
+    HB_ISLAND_END_<SIDE>_SIDE      which of ITS ends that is
+    HB_ISLAND_END_<SIDE>_ROLE      CARRIER (builds it) or COVERED
 
 ``sync`` re-derives the extend amount from the partner's live depth on
 every recalc, so resizing either run keeps the shared panel the right
-length, and it drops the whole arrangement once the two are no longer
-back to back.
+length, and it drops an end once the two are no longer back to back.
 """
 import bpy
 
 from ... import units
 
 
-PAIR_KEY = 'HB_ISLAND_PAIR'
-CARRIES_KEY = 'HB_ISLAND_END_CARRIES'
-COVERED_KEY = 'HB_ISLAND_END_COVERED'
+_KEY_PREFIX = 'HB_ISLAND_END_'
 
 # Lateral slack when deciding two runs terminate at the same island
 # end. Generous on purpose: depending on each run's finish condition
@@ -39,35 +38,94 @@ _END_TOL = units.inch(2.0)
 
 _SIDES = ('LEFT', 'RIGHT')
 
+CARRIER = 'CARRIER'
+COVERED = 'COVERED'
+
+# Guards the re-pick that follows dropping a stale end, so the exposure
+# pass it calls can't come back around into another drop.
+_DROPPING = set()
+
 
 # ---------------------------------------------------------------------------
-# Stamp accessors
+# Per-end stamp
 # ---------------------------------------------------------------------------
 
-def _sides(root, key):
-    """The side list held by one stamp, filtered to valid values."""
+def _keys(side):
+    base = f'{_KEY_PREFIX}{side}_'
+    return (base + 'PARTNER', base + 'SIDE', base + 'ROLE')
+
+
+def _raw_link(root, side):
+    """(partner name, partner side, role) as stamped, without checking
+    that any of it still holds. None when this end is not combined."""
     if root is None:
-        return []
-    raw = str(root.get(key, ''))
-    return [s for s in raw.split(',') if s in _SIDES]
+        return None
+    k_partner, k_side, k_role = _keys(side)
+    name = str(root.get(k_partner, ''))
+    other_side = str(root.get(k_side, ''))
+    role = str(root.get(k_role, ''))
+    if not name or other_side not in _SIDES or role not in (CARRIER, COVERED):
+        return None
+    return (name, other_side, role)
 
 
-def _stamp_sides(root, key, sides):
-    kept = [s for s in _SIDES if s in set(sides)]
-    if kept:
-        root[key] = ','.join(kept)
-    elif key in root:
-        del root[key]
+def _set_link(root, side, other, other_side, role):
+    k_partner, k_side, k_role = _keys(side)
+    root[k_partner] = other.name
+    root[k_side] = other_side
+    root[k_role] = role
+
+
+def _clear_link(root, side):
+    if root is None:
+        return
+    for key in _keys(side):
+        if key in root:
+            del root[key]
+
+
+def end_link(root, side):
+    """(partner object, partner side, role) for one combined end, or
+    None.
+
+    Validates the stamp rather than trusting it: a partner that was
+    deleted, or moved so the two ends no longer meet, is not a partner
+    any more.
+    """
+    raw = _raw_link(root, side)
+    if raw is None:
+        return None
+    name, other_side, role = raw
+    other = bpy.data.objects.get(name)
+    if other is None or other is root:
+        return None
+    if (side, other_side) not in shared_ends(root, other):
+        return None
+    return (other, other_side, role)
+
+
+def _sides_with_role(root, role):
+    out = []
+    for side in _SIDES:
+        raw = _raw_link(root, side)
+        if raw is not None and raw[2] == role:
+            out.append(side)
+    return out
 
 
 def carried_sides(root):
     """Sides of `root` that carry a combined end panel."""
-    return _sides(root, CARRIES_KEY)
+    return _sides_with_role(root, CARRIER)
 
 
 def covered_sides(root):
     """Sides of `root` whose end is covered by the partner's panel."""
-    return _sides(root, COVERED_KEY)
+    return _sides_with_role(root, COVERED)
+
+
+def has_combined_end(root):
+    """True when either end of this cabinet is part of an arrangement."""
+    return any(_raw_link(root, side) is not None for side in _SIDES)
 
 
 # ---------------------------------------------------------------------------
@@ -140,102 +198,6 @@ def shared_ends(a, b):
     return pairs
 
 
-# ---------------------------------------------------------------------------
-# Pair state
-# ---------------------------------------------------------------------------
-
-def partner(root):
-    """The cabinet root this one shares its ends with, or None.
-
-    Validates the stamp rather than trusting it: a partner that was
-    deleted, or moved so the two are no longer back to back, is not a
-    partner any more.
-    """
-    if root is None or PAIR_KEY not in root:
-        return None
-    other = bpy.data.objects.get(str(root.get(PAIR_KEY, '')))
-    if other is None or other is root:
-        return None
-    if not shared_ends(root, other):
-        return None
-    return other
-
-
-def _release(root, sides):
-    """Give a set of sides back to normal handling: no extend, auto
-    finish picking re-armed.
-    """
-    if root is None:
-        return
-    cab = getattr(root, 'face_frame_cabinet', None)
-    if cab is None:
-        return
-    for side in sides:
-        key = side.lower()
-        if getattr(cab, f'{key}_side_finished_extend_back', 0.0) != 0.0:
-            setattr(cab, f'{key}_side_finished_extend_back', 0.0)
-        setattr(cab, f'{key}_finish_end_auto', True)
-
-
-def clear(root):
-    """Drop this cabinet's half of the arrangement. The partner drops
-    its own half on its next sync, so a one-sided stamp never sticks.
-    """
-    if root is None:
-        return
-    _release(root, carried_sides(root) + covered_sides(root))
-    for key in (PAIR_KEY, CARRIES_KEY, COVERED_KEY):
-        if key in root:
-            del root[key]
-
-
-def combine(carrier, other):
-    """Hand every shared island end to `carrier` and stamp the pair.
-
-    Returns the carrier sides that now carry a combined end; empty when
-    the two cabinets do not meet back to back.
-    """
-    pairs = shared_ends(carrier, other)
-    if not pairs:
-        return []
-    clear(carrier)
-    clear(other)
-    # Both ends are back to normal handling now - re-pick them before
-    # stamping, so a carrier that was the COVERED cabinet a moment ago
-    # (Swap, or combining a second time) gets its finish back rather
-    # than carrying a panel that is still set to Unfinished.
-    from . import exposure
-    exposure.recalc_cabinet_exposure(carrier)
-    exposure.recalc_cabinet_exposure(other)
-    carrier[PAIR_KEY] = other.name
-    other[PAIR_KEY] = carrier.name
-    _stamp_sides(carrier, CARRIES_KEY, [a for a, _b in pairs])
-    _stamp_sides(other, COVERED_KEY, [b for _a, b in pairs])
-    sync(carrier)
-    sync(other)
-    return [a for a, _b in pairs]
-
-
-def separate(root):
-    """Undo the arrangement on both cabinets and let each end be picked
-    the normal way again.
-    """
-    if root is None:
-        return
-    other = bpy.data.objects.get(str(root.get(PAIR_KEY, '')))
-    clear(root)
-    if other is not None and other is not root:
-        clear(other)
-    from . import exposure
-    for obj in (root, other):
-        if obj is not None:
-            exposure.recalc_cabinet_exposure(obj)
-
-
-# ---------------------------------------------------------------------------
-# Keeping it right
-# ---------------------------------------------------------------------------
-
 def combined_extend(root, other):
     """How far `root`'s end panel has to run back to reach the far run's
     face frame.
@@ -249,41 +211,145 @@ def combined_extend(root, other):
                + _plane_gap(root, other))
 
 
+# ---------------------------------------------------------------------------
+# Making and unmaking an arrangement
+# ---------------------------------------------------------------------------
+
+def _release(root, side):
+    """Give one end back to normal handling: no extend, auto finish
+    picking re-armed."""
+    cab = getattr(root, 'face_frame_cabinet', None)
+    if cab is None:
+        return
+    key = side.lower()
+    if getattr(cab, f'{key}_side_finished_extend_back', 0.0) != 0.0:
+        setattr(cab, f'{key}_side_finished_extend_back', 0.0)
+    setattr(cab, f'{key}_finish_end_auto', True)
+
+
+def _repick(roots):
+    """Re-run the auto finish pick on cabinets whose ends were just
+    released, so a freed end gets its own finish back instead of
+    sitting at whatever the arrangement left it at."""
+    from . import exposure
+    for root in roots:
+        if root is None or id(root) in _DROPPING:
+            continue
+        _DROPPING.add(id(root))
+        try:
+            exposure.recalc_cabinet_exposure(root)
+        finally:
+            _DROPPING.discard(id(root))
+
+
+def separate_end(root, side):
+    """Undo one combined end. Both cabinets finish their own end again.
+
+    Works from either half of it - the clicked end may be the carrier
+    or the covered one.
+    """
+    link = end_link(root, side)
+    partner_root = partner_side = None
+    if link is not None:
+        partner_root, partner_side, _role = link
+    else:
+        # Stale or one-sided: still clear our half.
+        raw = _raw_link(root, side)
+        if raw is not None:
+            partner_root = bpy.data.objects.get(raw[0])
+            partner_side = raw[1]
+    _clear_link(root, side)
+    _release(root, side)
+    touched = [root]
+    if partner_root is not None and partner_side in _SIDES:
+        _clear_link(partner_root, partner_side)
+        _release(partner_root, partner_side)
+        touched.append(partner_root)
+    _repick(touched)
+
+
+def combine_end(carrier, carrier_side, other, other_side, condition=None):
+    """Hand one island end to `carrier`, optionally setting the finish
+    the combined panel is built in.
+
+    Returns True when the end was combined. Re-running it on an end
+    that is already combined the other way round moves the panel to the
+    cabinet passed as carrier, which is how the panel gets swapped from
+    one run to the other.
+    """
+    if (carrier_side, other_side) not in shared_ends(carrier, other):
+        return False
+
+    # Whatever either of these two ends was part of before, take it
+    # apart first - including the reverse of this very arrangement,
+    # which is what a swap looks like.
+    for root, side in ((carrier, carrier_side), (other, other_side)):
+        if _raw_link(root, side) is not None:
+            separate_end(root, side)
+
+    # After the tear-down, not before: separating re-arms auto finish
+    # picking and re-runs it, which would overwrite a condition written
+    # ahead of this point.
+    if condition is not None:
+        setattr(carrier.face_frame_cabinet,
+                f'{carrier_side.lower()}_finished_end_condition', condition)
+
+    _set_link(carrier, carrier_side, other, other_side, CARRIER)
+    _set_link(other, other_side, carrier, carrier_side, COVERED)
+    sync(carrier)
+    sync(other)
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Keeping it right
+# ---------------------------------------------------------------------------
+
 def sync(root):
-    """Bring one cabinet's ends in line with the arrangement it is in.
+    """Bring one cabinet's ends in line with the arrangements they are
+    in.
 
     Writes only this cabinet's own props, reading the partner's, so
     each of the two fixes itself on its own recalc and neither writes
     into the other.
     """
-    if root is None or PAIR_KEY not in root:
+    if root is None:
         return
-    other = partner(root)
-    if other is None:
-        clear(root)
+    cab = getattr(root, 'face_frame_cabinet', None)
+    if cab is None:
         return
-    cab = root.face_frame_cabinet
-    extend = combined_extend(root, other)
-    for side in carried_sides(root):
-        key = side.lower()
-        if getattr(cab, f'{key}_finished_end_condition') == 'UNFINISHED':
-            # The carrier's own end lost its finish - a user edit, or
-            # something moved against it. Nothing to run back; leave it
-            # be rather than forcing a panel back on.
+    for side in _SIDES:
+        if _raw_link(root, side) is None:
             continue
-        if abs(getattr(cab, f'{key}_side_finished_extend_back')
-               - extend) > 1e-6:
-            setattr(cab, f'{key}_side_finished_extend_back', extend)
-        # A return closeout caps an end panel's exposed back corner. A
-        # combined end dies into the other run's face frame, so there is
-        # no corner left to cap.
-        if getattr(cab, f'{key}_side_return_width') != 0.0:
-            setattr(cab, f'{key}_side_return_width', 0.0)
-    for side in covered_sides(root):
+        link = end_link(root, side)
+        if link is None:
+            # Partner deleted, or the two runs were moved apart. Drop
+            # our half; the partner drops its own on its next sync.
+            _clear_link(root, side)
+            _release(root, side)
+            _repick([root])
+            continue
+        other, _other_side, role = link
         key = side.lower()
-        if getattr(cab, f'{key}_finished_end_condition') != 'UNFINISHED':
-            setattr(cab, f'{key}_finished_end_condition', 'UNFINISHED')
-        if getattr(cab, f'{key}_scribe') != 0.0:
-            setattr(cab, f'{key}_scribe', 0.0)
-        if getattr(cab, f'{key}_side_finished_extend_back') != 0.0:
-            setattr(cab, f'{key}_side_finished_extend_back', 0.0)
+        if role == CARRIER:
+            if getattr(cab, f'{key}_finished_end_condition') == 'UNFINISHED':
+                # The carrier's own end lost its finish - a user edit,
+                # or something moved against it. Nothing to run back;
+                # leave it be rather than forcing a panel back on.
+                continue
+            extend = combined_extend(root, other)
+            if abs(getattr(cab, f'{key}_side_finished_extend_back')
+                   - extend) > 1e-6:
+                setattr(cab, f'{key}_side_finished_extend_back', extend)
+            # A return closeout caps an end panel's exposed back corner.
+            # A combined end dies into the other run's face frame, so
+            # there is no corner left to cap.
+            if getattr(cab, f'{key}_side_return_width') != 0.0:
+                setattr(cab, f'{key}_side_return_width', 0.0)
+        else:
+            if getattr(cab, f'{key}_finished_end_condition') != 'UNFINISHED':
+                setattr(cab, f'{key}_finished_end_condition', 'UNFINISHED')
+            if getattr(cab, f'{key}_scribe') != 0.0:
+                setattr(cab, f'{key}_scribe', 0.0)
+            if getattr(cab, f'{key}_side_finished_extend_back') != 0.0:
+                setattr(cab, f'{key}_side_finished_extend_back', 0.0)
