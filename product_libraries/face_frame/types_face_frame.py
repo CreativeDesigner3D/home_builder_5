@@ -447,6 +447,10 @@ RETURN_SIDE_CONDITIONS = ('FINISHED', 'PANELED', 'BEADBOARD', 'SHIPLAP',
 # applied panel isn't wanted.
 PART_ROLE_FLUSH_X = 'FLUSH_X'
 TAG_FLUSH_X_SIDE = 'hb_flush_x_side'
+# Strip stock thickness. Also the scribe band the carcass side recedes
+# by so the strip's outer face lands on the cabinet's end plane (see
+# solver.left_scribe_offset and the corner arm-end reserve).
+FLUSH_X_THICKNESS = inch(0.25)
 PART_ROLE_FULL_OVERLAY_STILE = 'FULL_OVERLAY_STILE'
 TAG_FO_STILE_SIDE = 'hb_fo_stile_side'
 
@@ -8364,7 +8368,7 @@ class FaceFrameCabinet(GeoNodeCage):
                     bpy.data.objects.remove(strip, do_unlink=True)
                 continue
 
-            thickness = inch(0.25)
+            thickness = FLUSH_X_THICKNESS
             # Run the strip the full height of the cabinet side. For
             # NOTCH / FLUSH toe kicks side_bottom_z is the floor (0.0),
             # so the strip drops to the floor like the carcass side it

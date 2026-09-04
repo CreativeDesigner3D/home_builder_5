@@ -1220,6 +1220,11 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         # panels pick up the receded side positions.
         self._reconcile_corner_applied_panels()
 
+        # Flush-X finished strips on the arm ends. Same placement rule
+        # as the applied panels above: run after the shape recalc so the
+        # strip picks up the receded side positions.
+        self._reconcile_corner_flush_x_strips()
+
         # Ensure every corner part carries a right-click menu. Corner parts
         # are built outside the standard rectangular reconciliation, so they
         # miss the part-commands menu it assigns; without a MENU_ID a part
@@ -1248,6 +1253,20 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
             return inch(0.75)
         return (cab_props.left_scribe if side == 'LEFT'
                 else cab_props.right_scribe)
+
+    def _corner_end_reserve(self, cab_props, side):
+        """Arm-end reserve used by the diagonal recalc. On top of the
+        applied-panel reserve, a FLUSH_X end reserves a 1/4 band
+        outboard of the carcass for its finished strip - overriding the
+        typed scribe exactly as solver.left_scribe_offset does on a
+        straight cabinet, so the strip's outer face lands on the
+        cabinet's nominal end plane.
+        """
+        cond = (cab_props.left_finished_end_condition if side == 'LEFT'
+                else cab_props.right_finished_end_condition)
+        if cond == 'FLUSH_X':
+            return ff.FLUSH_X_THICKNESS
+        return self._corner_panel_reserve(cab_props, side)
 
     def _corner_applied_panel_geometry(self, cab_props, side):
         """Transform + dimensions for an applied panel covering one arm
@@ -1378,6 +1397,125 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                 if part.get('hb_part_role') and not part.get('MENU_ID'):
                     part['MENU_ID'] = (
                         'HOME_BUILDER_MT_face_frame_part_commands')
+
+    # -----------------------------------------------------------------
+    # Flush-X finished strips on the arm ends
+    # -----------------------------------------------------------------
+    def _corner_flush_x_geometry(self, cab_props, side):
+        """Transform + dimensions for the FLUSH_X strip on one arm end.
+        Returns (location, rotation_z, mirror_z, length, width,
+        thickness), or None when the strip has no usable size.
+
+        Same frame as _corner_applied_panel_geometry: the left arm ends
+        on the Y=-depth plane (its front edge at X=left_depth, corner A)
+        and the right arm on the X=width plane (front edge at
+        Y=-right_depth, corner B). The strip is a single 1/4 part
+        running the front *_flush_x_amount of that end face, back toward
+        the wall. Its outer face sits on the nominal end plane - the
+        carcass side receded by the same 1/4 in _corner_end_reserve -
+        and it carries the covering side's rotation / mirror flags so
+        Length runs +Z, Width runs toward the wall and Thickness inboard.
+        Z span matches the side it covers.
+        """
+        amount = (cab_props.left_flush_x_amount if side == 'LEFT'
+                  else cab_props.right_flush_x_amount)
+        if amount <= 0.0:
+            return None
+        kf = self._corner_kick_flags(cab_props)
+        kick_height = cab_props.toe_kick_height if kf.has_kick else 0.0
+        bottom_z = 0.0 if kf.sides_to_floor else kick_height
+        top_scribe = max(cab_props.top_scribe, 0.0)
+        cond = (cab_props.left_finished_end_condition if side == 'LEFT'
+                else cab_props.right_finished_end_condition)
+        top_drop = 0.0 if cond == 'FINISHED' else top_scribe
+        length = cab_props.height - bottom_z - top_drop
+        if length <= 0.0:
+            return None
+        thickness = ff.FLUSH_X_THICKNESS
+        if side == 'LEFT':
+            # Width runs +X, so the origin is the wall-side edge of the
+            # strip and it grows forward to corner A.
+            front_x = cab_props.left_depth
+            amount = min(amount, front_x)
+            return ((front_x - amount, -cab_props.depth, bottom_z),
+                    math.radians(-90), False, length, amount, thickness)
+        # Width runs -Y; the origin is the wall-side edge and it grows
+        # forward (-Y) to corner B.
+        front_y = -cab_props.right_depth
+        amount = min(amount, cab_props.right_depth)
+        return ((cab_props.width, front_y + amount, bottom_z),
+                math.radians(180), True, length, amount, thickness)
+
+    def _reconcile_corner_flush_x_strips(self):
+        """Spawn / resize / remove the FLUSH_X strip on each arm end.
+
+        The corner recalc bypasses the rectangular reconciliation, so
+        FaceFrameCabinet._reconcile_flush_x_strips never runs here and a
+        FLUSH_X arm end used to produce the drawing callout with no part
+        behind it. Diagonal only for now - the pie cut applies its
+        arm-end reserve at the wall plane, so a strip would stand proud
+        of the side there.
+        """
+        cab_props = self.obj.face_frame_cabinet
+        diagonal = cab_props.corner_type == 'DIAGONAL'
+        side_specs = (
+            ('LEFT', cab_props.left_finished_end_condition),
+            ('RIGHT', cab_props.right_finished_end_condition),
+        )
+        existing = {
+            child.get(ff.TAG_FLUSH_X_SIDE): child
+            for child in self.obj.children
+            if child.get('hb_part_role') == ff.PART_ROLE_FLUSH_X
+            and child.get(ff.TAG_FLUSH_X_SIDE) in ('LEFT', 'RIGHT')
+        }
+        kf = self._corner_kick_flags(cab_props)
+
+        for side, condition in side_specs:
+            strip = existing.get(side)
+            geo = (self._corner_flush_x_geometry(cab_props, side)
+                   if (diagonal and condition == 'FLUSH_X') else None)
+            if geo is None:
+                if strip is not None:
+                    bpy.data.objects.remove(strip, do_unlink=True)
+                continue
+            location, rot_z, mirror_z, length, width, thickness = geo
+
+            if strip is None:
+                part = CabinetPart()
+                part.create(f'Flush X {side[0]}')
+                part.obj.parent = self.obj
+                part.obj['hb_part_role'] = ff.PART_ROLE_FLUSH_X
+                part.obj['CABINET_PART'] = True
+                part.obj[ff.TAG_FLUSH_X_SIDE] = side
+                part.obj['MENU_ID'] = (
+                    'HOME_BUILDER_MT_face_frame_part_commands')
+                part.obj.rotation_euler.y = math.radians(-90)
+                part.obj.rotation_euler.z = rot_z
+                if mirror_z:
+                    part.set_input('Mirror Z', True)
+                # Clear the toe-kick recess like the carcass side the
+                # strip covers; hidden unless that side is notched.
+                notch = part.add_part_modifier(
+                    'CPM_CORNERNOTCH', 'Notch Front Bottom')
+                notch.set_input('Flip X', False)
+                notch.set_input('Flip Y', True)
+                strip = part.obj
+
+            strip.location = location
+            _set_mod_inputs(strip, strip.home_builder.mod_name, (
+                ('Length', length),
+                ('Width', width),
+                ('Thickness', thickness),
+            ))
+            _set_mod_inputs(strip, 'Notch Front Bottom', (
+                ('X', cab_props.toe_kick_height),
+                ('Y', cab_props.toe_kick_setback),
+                ('Route Depth', thickness),
+            ))
+            notch_mod = strip.modifiers.get('Notch Front Bottom')
+            if notch_mod is not None:
+                notch_mod.show_viewport = kf.side_notch
+                notch_mod.show_render = kf.side_notch
 
     def _apply_corner_panel_miter(self, cab_props, side, panel_obj):
         """Miter the diagonal FF end stile and the applied panel's
@@ -2694,8 +2832,8 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         # finished-end condition carries an applied panel overrides its
         # typed scribe with a 3/4 reservation for the panel (see
         # _corner_panel_reserve).
-        fflo = self._corner_panel_reserve(cab_props, 'LEFT')
-        ffro = self._corner_panel_reserve(cab_props, 'RIGHT')
+        fflo = self._corner_end_reserve(cab_props, 'LEFT')
+        ffro = self._corner_end_reserve(cab_props, 'RIGHT')
 
         z_back_floor = (kick_height + brw) if has_kick else brw
         if open_base:
