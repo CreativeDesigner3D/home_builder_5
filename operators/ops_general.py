@@ -65,6 +65,41 @@ class HB_GENERAL_OT_menu(bpy.types.Operator):
         return {'FINISHED'}
 
 
+def _delete_selection(context):
+    """The objects a plain delete acts on: the selection, falling back to
+    the active object (a right-click makes an object active without
+    necessarily selecting it)."""
+    objs = list(context.selected_objects)
+    if not objs and context.object is not None:
+        objs = [context.object]
+    return objs
+
+
+def _remove_objects(objs):
+    """Delete objects outright rather than out of the current scene only.
+
+    ``bpy.ops.object.delete`` unlinks an object from the collections of the
+    ACTIVE SCENE and frees the datablock only when nothing else still
+    references it. A layout view links the real part objects into its own
+    content collections, and those hang off a collection instance rather
+    than sitting in a scene's tree, so that sweep never reaches them: the
+    part leaves the model, survives in bpy.data, and keeps drawing on the
+    sheet. It also keeps its parent, so the next content rebuild walks
+    ``children``, finds it, and links it straight back.
+
+    Removing the datablock takes it out of every collection at once --
+    what the cabinet, wall and sub-assembly deletes already do.
+    """
+    removed = 0
+    for obj in objs:
+        try:
+            bpy.data.objects.remove(obj, do_unlink=True)
+            removed += 1
+        except ReferenceError:
+            pass
+    return removed
+
+
 def _delete_object_subtree(obj):
     """Remove ``obj`` and every descendant from bpy.data.
 
@@ -148,7 +183,15 @@ class HB_GENERAL_OT_delete(bpy.types.Operator):
                 else:
                     _delete_object_subtree(obj)
                 return {'FINISHED'}
-            bpy.ops.object.delete(confirm=False)
+            # Only the part-like objects in the selection: a cage caught
+            # up in a multi-select must not come down with them, which is
+            # the "mixed selections delete the active object's kind only"
+            # contract above -- and removing a cage object on its own
+            # would orphan its parts.
+            _remove_objects([o for o in _delete_selection(context)
+                             if (o.get('IS_2D_ANNOTATION')
+                                 or o.get('CABINET_PART')
+                                 or o.get('hb_part_role'))])
             return {'FINISHED'}
 
         # Face frame cabinet: ONLY the cage (the cabinet root) deletes the
@@ -208,9 +251,9 @@ class HB_GENERAL_OT_delete(bpy.types.Operator):
                       or (obj.parent and obj.parent.get('IS_WALL_BP'))):
             bpy.ops.home_builder_walls.delete_wall()
         else:
-            # Not an HB5 asset - stock delete with no confirm popup, matching
+            # Not an HB5 asset - delete with no confirm popup, matching
             # DEL's default behavior (X keeps its own stock confirm binding).
-            bpy.ops.object.delete(confirm=False)
+            _remove_objects(_delete_selection(context))
 
         return {'FINISHED'}
 

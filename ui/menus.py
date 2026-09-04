@@ -666,7 +666,11 @@ class HOME_BUILDER_MT_dimension_commands(bpy.types.Menu):
         layout.operator("home_builder.move_dimension_text", text="Move Text", icon='FONT_DATA')
         layout.operator("home_builder.update_dimensions", text="Update Dimensions", icon='FILE_REFRESH')
         layout.separator()
-        layout.operator("object.delete", text="Delete Dimension", icon='X')
+        # hb_general.delete, not object.delete: the stock operator only
+        # unlinks from the active scene and leaves the datablock alive
+        # wherever a layout view still references it, so a "deleted"
+        # dimension keeps printing.
+        layout.operator("hb_general.delete", text="Delete Dimension", icon='X')
 
 
 def is_reference_image(obj):
@@ -813,7 +817,9 @@ class HOME_BUILDER_MT_text_commands(bpy.types.Menu):
         layout.operator("home_builder.toggle_text_bold", text="Bold",
                         icon='BOLD', depress=is_text_bold(obj))
         layout.separator()
-        layout.operator("object.delete", text="Delete Text", icon='X')
+        # See Delete Dimension above: the stock delete can leave the
+        # note alive in a layout view's content collection.
+        layout.operator("hb_general.delete", text="Delete Text", icon='X')
 
 
 class HOME_BUILDER_OT_show_reference_image_properties(bpy.types.Operator):
