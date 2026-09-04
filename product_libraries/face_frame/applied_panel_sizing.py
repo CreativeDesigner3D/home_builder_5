@@ -558,12 +558,20 @@ def apply_panel_toe_kick_notch(cab_obj, panel_obj, side):
     # cabinet front (the FF edge covers that last 3/4" - see
     # applied_panel_geometry), so the STILE's notch measured from the
     # panel's own front is the setback LESS fft: its notch face lands
-    # exactly on the kick plane. The BOTTOM RAIL behind it cuts fft
-    # DEEPER (its share comes from the full setback), so the panel is
-    # notched behind the finish toe kick stock - the 3/4" kick board
-    # seats in front of the rail's notch face, flush with the stile's.
+    # exactly on the kick plane.
+    #
+    # The BOTTOM RAIL runs BETWEEN the stiles, so it already starts
+    # facing_width behind the panel's front edge: its share is whatever
+    # is left of that same cut once the facing stile has taken its
+    # width, not a fresh cut measured off the panel front. A facing
+    # stile at least as wide as the cut - the usual case, a 2 1/4"
+    # stile against a 3" setback less a 3/4" frame - puts the rail's
+    # front face on the kick plane already and leaves it whole. The
+    # finish kick board stands in front of that face, not in a pocket
+    # behind it.
     fft = cab.face_frame_thickness
     stile_depth = max(0.0, setback - fft)
+    rail_depth = max(0.0, stile_depth - facing_width)
 
     # Axis mapping differs by part because their local rotations
     # differ. Bottom rail: X = depth-into-the-rail, Y = kick height.
@@ -581,9 +589,9 @@ def apply_panel_toe_kick_notch(cab_obj, panel_obj, side):
         parts.append((
             bottom_rail,
             _NOTCH_FLIPS_BOTTOM_RAIL[side],
-            max(0.0, setback - facing_width),  # X = depth
-            kick,                               # Y = height
-            active,
+            rail_depth,   # X = depth
+            kick,         # Y = height
+            active and rail_depth > _NOTCH_EPS,
         ))
     if facing_stile is not None:
         parts.append((
@@ -613,6 +621,12 @@ _FAR_NOTCH_FLIPS_BOTTOM_RAIL = {
 _FAR_NOTCH_FLIPS_END_STILE = (False, False, False)
 
 _FAR_NOTCH_MOD_NAME = 'Notch Rear Bottom'
+
+# A share this small is float noise off two props that cancel - a 2 1/4"
+# stile against a 3" setback less a 3/4" frame lands a couple of
+# nanometres off zero, not on it. Below this the member is left whole
+# rather than carrying a modifier that cuts nothing.
+_NOTCH_EPS = 1e-6
 
 
 def _apply_panel_far_kick_notch(cab_obj, panel_obj, side, bottom_rail,
@@ -673,12 +687,12 @@ def _apply_panel_far_kick_notch(cab_obj, panel_obj, side, bottom_rail,
         # stile is usually wider than the setback less a frame.
         rail_run = max(0.0, stile_depth - far_width)
         _ensure_and_drive_notch(
-            bottom_rail, active and rail_run > 0.0,
+            bottom_rail, active and rail_run > _NOTCH_EPS,
             rail_run,      # X = run along the rail
             kick,          # Y = height
             _FAR_NOTCH_FLIPS_BOTTOM_RAIL[side],
             name=_FAR_NOTCH_MOD_NAME,
-            create_if_missing=active and rail_run > 0.0)
+            create_if_missing=active and rail_run > _NOTCH_EPS)
 
 
 # Back-panel end notches ride their own modifiers so each end can be
@@ -773,12 +787,12 @@ def _apply_back_panel_kick_notches(cab_obj, panel_obj):
             # what is left of the inset once the stile took its width.
             rail_run = max(0.0, inset - stile_width)
             _ensure_and_drive_notch(
-                bottom_rail, active and rail_run > 0.0,
+                bottom_rail, active and rail_run > _NOTCH_EPS,
                 rail_run,                # X = run along the rail
                 kick,                    # Y = height
                 _BACK_NOTCH_FLIPS_BOTTOM_RAIL[end],
                 name=name,
-                create_if_missing=active and rail_run > 0.0)
+                create_if_missing=active and rail_run > _NOTCH_EPS)
 
 
 def _ensure_and_drive_notch(part_obj, active, x_val, y_val, flips,
