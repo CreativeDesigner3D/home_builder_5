@@ -501,9 +501,25 @@ def _is_floating_shelf(obj):
     return root is not None and bool(root.get('IS_FLOATING_SHELF'))
 
 
+def floating_shelf_height_label(root):
+    """What the shelf's Z reads as, given what it hangs off.
+
+    A shelf dropped on a wall parents to the wall, whose origin sits on
+    the floor. A shelf dropped into a cabinet opening parents to that
+    opening's cage, whose origin sits on the inside bottom of the
+    opening -- the same datum the host's re-fit clamps the shelf
+    against, so 0 is the shelf resting on that bottom.
+    """
+    parent = root.parent
+    if (parent is not None
+            and types_face_frame.find_cabinet_root(parent) is not None):
+        return "Height From Cabinet Bottom"
+    return "Height Off Floor"
+
+
 def draw_floating_shelf(layout, root):
-    """Floating shelf prompts: type, dimensions, finished ends, and the
-    Heavy-Duty light groove. Shown in the sidebar
+    """Floating shelf prompts: type, dimensions, mounting height,
+    finished ends, and the Heavy-Duty light groove. Shown in the sidebar
     (HB_FACE_FRAME_PT_floating_shelf) and the right-click popup. Height
     (Dim Z) is the shelf's overall thickness."""
     cab = root.face_frame_cabinet
@@ -515,6 +531,13 @@ def draw_floating_shelf(layout, root):
     col.prop(cab, 'width', text="Width")
     col.prop(cab, 'depth', text="Depth")
     col.prop(cab, 'height', text="Thickness")
+
+    # Where the shelf sits. The root's Z IS the shelf bottom in its
+    # parent's frame, so this is the placement height straight off the
+    # object -- editing it live is the point, and it is the only way to
+    # change the height once the shelf is down.
+    layout.prop(root, 'location', index=2,
+                text=floating_shelf_height_label(root))
 
     box = layout.box()
     box.label(text="Finished Ends")
