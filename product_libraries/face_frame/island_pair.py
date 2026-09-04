@@ -128,6 +128,22 @@ def has_combined_end(root):
     return any(_raw_link(root, side) is not None for side in _SIDES)
 
 
+def end_is_covered(root, side):
+    """True when this end is closed by the partner's panel, so this
+    cabinet builds no side board there.
+
+    Both boards would otherwise land in the same plane - the two runs
+    share the island end, so the carrier's finished end and this
+    cabinet's own side want the same space.
+
+    Reads the stamp only, no geometry: this is called from the part
+    loop of every recalc, and ``sync`` has already run this pass and
+    dropped anything stale.
+    """
+    raw = _raw_link(root, side)
+    return raw is not None and raw[2] == COVERED
+
+
 # ---------------------------------------------------------------------------
 # Geometry
 # ---------------------------------------------------------------------------

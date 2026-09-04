@@ -33,6 +33,7 @@ from ..frameless.types_frameless import CabinetPart
 from ..frameless.types_products import HalfWall as _FramelessHalfWall
 from ..frameless.types_products import SupportFrame as _FramelessSupportFrame
 from . import solver_face_frame as solver
+from . import island_pair
 from . import shelf_nosing
 from . import wood_top_edge
 from . import decorative_corner
@@ -2749,9 +2750,15 @@ class FaceFrameCabinet(GeoNodeCage):
             if role == PART_ROLE_LEFT_SIDE:
                 # FALSE_FF / WORKING_FF: the applied face frame IS the
                 # side - no carcass side panel behind it.
+                # An end combined with the run behind is the same story:
+                # the other run's panel runs the full island depth and
+                # closes this end, and both boards would otherwise sit
+                # in the same plane.
                 visible = (not layout.bays[0].get('remove_carcass')
                            and layout.l_fin_end not in ('FALSE_FF',
-                                                        'WORKING_FF'))
+                                                        'WORKING_FF')
+                           and not island_pair.end_is_covered(self.obj,
+                                                              'LEFT'))
                 child.hide_viewport = not visible
                 child.hide_render = not visible
                 # Refresh the square baseline even when HIDDEN: the back
@@ -2783,7 +2790,9 @@ class FaceFrameCabinet(GeoNodeCage):
                 last = layout.bay_count - 1
                 visible = (not layout.bays[last].get('remove_carcass')
                            and layout.r_fin_end not in ('FALSE_FF',
-                                                        'WORKING_FF'))
+                                                        'WORKING_FF')
+                           and not island_pair.end_is_covered(self.obj,
+                                                              'RIGHT'))
                 child.hide_viewport = not visible
                 child.hide_render = not visible
                 # Refresh the square baseline even when hidden - see the
@@ -16112,7 +16121,6 @@ def recalculate_face_frame_cabinet(obj):
         # the right length. Only this root's own props are written, and
         # the reentrance guard above is already armed, so the writes'
         # update callbacks fall straight back out.
-        from . import island_pair
         island_pair.sync(root)
         cabinet = _wrap_cabinet(root)
         cabinet.recalculate()
