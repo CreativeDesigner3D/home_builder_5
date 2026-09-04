@@ -2985,15 +2985,33 @@ _CARCASS_SIDE_BY_ROLE = {
 }
 
 
-def _carcass_side_of(obj):
-    """'LEFT' / 'RIGHT' for a plain carcass side part, else None.
+def _end_side_of(obj):
+    """(cabinet root, 'LEFT' / 'RIGHT') for a part standing at one end
+    of a cabinet, else (None, None).
+
+    Two ways to be at an end. A bare end is its carcass side, so the
+    part clicked is that board. A paneled, beadboard or shiplap end
+    hides that board behind an applied panel, so the part clicked
+    belongs to the panel instead - find_cabinet_root stops at the panel
+    root, which carries the side it covers and hangs off the cabinet it
+    covers it for. Reading both is what makes the command reachable
+    however the end happens to be built.
 
     Corner sides are left out: a corner cabinet is not a straight run,
     so it never forms the back-to-back pair this is about.
     """
     if obj is None:
-        return None
-    return _CARCASS_SIDE_BY_ROLE.get(obj.get('hb_part_role'))
+        return (None, None)
+    side = _CARCASS_SIDE_BY_ROLE.get(obj.get('hb_part_role'))
+    root = types_face_frame.find_cabinet_root(obj)
+    if side is not None:
+        return (root, side)
+    if root is None:
+        return (None, None)
+    tag = root.get(types_face_frame.TAG_APPLIED_PANEL_SIDE)
+    if tag in ('LEFT', 'RIGHT') and root.parent is not None:
+        return (types_face_frame.find_cabinet_root(root.parent), tag)
+    return (None, None)
 
 
 def combinable_end_parts(context):
@@ -3007,22 +3025,16 @@ def combinable_end_parts(context):
     panel to the other run; there is nothing separate to swap.
     """
     from .. import island_pair
-    active = context.active_object
-    carrier_side = _carcass_side_of(active)
-    if carrier_side is None:
-        return None
-    carrier = types_face_frame.find_cabinet_root(active)
+    carrier, carrier_side = _end_side_of(context.active_object)
     if carrier is None:
         return None
-    # One other cabinet, contributing exactly one side. Two parts of the
-    # same side (a seamed panel) collapse to one entry; anything more
-    # ambiguous than that is not a two-part pick.
+    # One other cabinet, contributing exactly one side. Several parts of
+    # the same end - a seamed board, or the several members of one
+    # panel - collapse to a single entry; anything more ambiguous than
+    # that is not a two-end pick.
     picks = {}
     for obj in context.selected_objects:
-        side = _carcass_side_of(obj)
-        if side is None:
-            continue
-        root = types_face_frame.find_cabinet_root(obj)
+        root, side = _end_side_of(obj)
         if root is None or root == carrier:
             continue
         picks.setdefault(root.name, (root, set()))[1].add(side)
@@ -3040,12 +3052,9 @@ def combinable_end_parts(context):
 
 def combined_end_side(obj):
     """The side of the clicked part's cabinet that is part of a combined
-    end, when the clicked part is on that side. None otherwise."""
+    end, when the clicked part stands at that end. None otherwise."""
     from .. import island_pair
-    side = _carcass_side_of(obj)
-    if side is None:
-        return None
-    root = types_face_frame.find_cabinet_root(obj)
+    root, side = _end_side_of(obj)
     if root is None:
         return None
     return side if island_pair.end_link(root, side) is not None else None

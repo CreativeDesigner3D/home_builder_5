@@ -392,8 +392,12 @@ class HOME_BUILDER_MT_face_frame_part_commands(bpy.types.Menu):
         if panel_root is not None and (
                 panel_root.get(types_face_frame.TAG_APPLIED_PANEL_SIDE)
                 or types_face_frame._is_standalone_panel(panel_root)):
+            # Only a BACK panel is a "panel back" - the side panels are
+            # just panels, and calling them backs reads as the wrong
+            # object entirely.
             ptext = ("Panel Back Properties..."
-                     if panel_root.get(types_face_frame.TAG_APPLIED_PANEL_SIDE)
+                     if panel_root.get(
+                         types_face_frame.TAG_APPLIED_PANEL_SIDE) == 'BACK'
                      else "Panel Properties...")
             layout.operator("hb_face_frame.cabinet_prompts",
                             text=ptext, icon='WINDOW')
