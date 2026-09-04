@@ -1306,7 +1306,7 @@ def _draw_interior_items_section(layout, target_props, target_name=""):
         rm.target_name = target_name
 
         if item.kind in {'ADJUSTABLE_SHELF', 'GLASS_SHELF',
-                         'HALF_DEPTH_SHELF'}:
+                         'HALF_DEPTH_SHELF', 'QUARTER_DEPTH_SHELF'}:
             qty_row = sub.row(align=True)
             field = qty_row.row(align=True)
             # Greyed out when on auto - the recalc owns the value.
@@ -1314,12 +1314,15 @@ def _draw_interior_items_section(layout, target_props, target_name=""):
             field.prop(item, 'shelf_qty', text="Qty")
             lock_icon = 'UNLOCKED' if item.unlock_shelf_qty else 'LOCKED'
             qty_row.prop(item, 'unlock_shelf_qty', text="", icon=lock_icon)
-            if item.kind != 'HALF_DEPTH_SHELF':
-                # Half-depth shelves compute their own setback (half the
-                # cavity depth), so the field only shows where it acts.
+            if item.kind not in {'HALF_DEPTH_SHELF',
+                                 'QUARTER_DEPTH_SHELF'}:
+                # Partial-depth shelves compute their own setback
+                # from the cavity depth, so the field only shows
+                # where it acts.
                 sub.prop(item, 'shelf_setback', text="Setback")
             sub.prop(item, 'bottom_offset', text="From Bottom")
-            if item.kind in {'ADJUSTABLE_SHELF', 'HALF_DEPTH_SHELF'}:
+            if item.kind in {'ADJUSTABLE_SHELF', 'HALF_DEPTH_SHELF',
+                             'QUARTER_DEPTH_SHELF'}:
                 sub.prop(item, 'shelf_nosing_style', text="Nosing")
                 if item.shelf_nosing_style in shelf_nosing.EXTRA_HEIGHT_STYLES:
                     sub.prop(item, 'shelf_nosing_height', text="Nosing Height")

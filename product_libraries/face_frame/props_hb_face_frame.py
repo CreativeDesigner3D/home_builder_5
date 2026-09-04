@@ -5369,7 +5369,8 @@ def _update_front_type(self, context):
     """
     if self.front_type == 'DOOR':
         has_shelves = any(
-            item.kind in ('ADJUSTABLE_SHELF', 'HALF_DEPTH_SHELF')
+            item.kind in ('ADJUSTABLE_SHELF', 'HALF_DEPTH_SHELF',
+                          'QUARTER_DEPTH_SHELF')
             for item in self.interior_items
         )
         if not has_shelves:
@@ -8245,8 +8246,9 @@ class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
         ('CLOSET_ROD',       "Closet Rod",         "CR: hang rod across the opening, set down from the opening top"),
         # Appended at the end (same reason as above): a distinct kind so
         # the dropdown offers it directly. Solver emits ADJUSTABLE_SHELF
-        # parts with the front edge at half the cavity depth.
+        # parts with the front edge at a set fraction of the cavity depth.
         ('HALF_DEPTH_SHELF', "Half Depth Shelves", "Adjustable shelves whose depth is half the opening depth"),
+        ('QUARTER_DEPTH_SHELF', "Quarter Depth Shelves", "Adjustable shelves whose depth is a quarter of the opening depth"),
     ]
     kind: EnumProperty(
         name="Kind", items=INTERIOR_KIND_ITEMS, default='ADJUSTABLE_SHELF',

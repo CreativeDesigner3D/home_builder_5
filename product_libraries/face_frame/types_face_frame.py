@@ -12180,7 +12180,9 @@ class FaceFrameCabinet(GeoNodeCage):
             opening_obj, rect,
         ):
             for item in region_props.interior_items:
-                if (item.kind in ('ADJUSTABLE_SHELF', 'HALF_DEPTH_SHELF')
+                if (item.kind in ('ADJUSTABLE_SHELF',
+                                  'HALF_DEPTH_SHELF',
+                                  'QUARTER_DEPTH_SHELF')
                         and not item.unlock_shelf_qty):
                     # The item's bottom offset shrinks the space the
                     # stack distributes in, so the auto count reads the

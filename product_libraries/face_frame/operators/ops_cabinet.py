@@ -2694,7 +2694,8 @@ class hb_face_frame_OT_apply_shelf_nosing_to_room(bpy.types.Operator):
                 changed = False
                 for item in item_props.interior_items:
                     if item.kind not in {'ADJUSTABLE_SHELF',
-                                         'HALF_DEPTH_SHELF'}:
+                                         'HALF_DEPTH_SHELF',
+                                         'QUARTER_DEPTH_SHELF'}:
                         continue
                     if (item.shelf_nosing_style == style
                             and abs(item.shelf_nosing_height - height) < 1e-9):
@@ -3226,6 +3227,14 @@ class hb_face_frame_OT_show_interior_add_menu(bpy.types.Operator):
             op.half_depth = False
             op.target_name = target_name
 
+            op = layout.operator(
+                "hb_face_frame.add_interior_item",
+                text="Quarter-Depth Shelf",
+            )
+            op.kind = 'QUARTER_DEPTH_SHELF'
+            op.half_depth = False
+            op.target_name = target_name
+
             layout.separator()
 
             # Pullouts / rollouts / tray dividers. Named the way the
@@ -3561,11 +3570,13 @@ def apply_opening_preset(opening_obj, config, **overrides):
     if shelves == 'CLEAR':
         for i in range(len(op_props.interior_items) - 1, -1, -1):
             if op_props.interior_items[i].kind in ('ADJUSTABLE_SHELF',
-                                                   'HALF_DEPTH_SHELF'):
+                                                   'HALF_DEPTH_SHELF',
+                                                   'QUARTER_DEPTH_SHELF'):
                 op_props.interior_items.remove(i)
     elif shelves == 'ENSURE':
         has_shelves = any(
-            item.kind in ('ADJUSTABLE_SHELF', 'HALF_DEPTH_SHELF')
+            item.kind in ('ADJUSTABLE_SHELF', 'HALF_DEPTH_SHELF',
+                          'QUARTER_DEPTH_SHELF')
             for item in op_props.interior_items
         )
         if not has_shelves:
@@ -3601,7 +3612,8 @@ def apply_opening_preset(opening_obj, config, **overrides):
     if overrides.get('no_shelves'):
         for i in range(len(op_props.interior_items) - 1, -1, -1):
             if op_props.interior_items[i].kind in ('ADJUSTABLE_SHELF',
-                                                   'HALF_DEPTH_SHELF'):
+                                                   'HALF_DEPTH_SHELF',
+                                                   'QUARTER_DEPTH_SHELF'):
                 op_props.interior_items.remove(i)
 
     # Apply post-preset overrides. accessory_label targets the most
@@ -5666,6 +5678,7 @@ def _set_opening_interior(op_props, interior):
     items = op_props.interior_items
     for i in range(len(items) - 1, -1, -1):
         if items[i].kind in ('ADJUSTABLE_SHELF', 'HALF_DEPTH_SHELF',
+                             'QUARTER_DEPTH_SHELF',
                              'VANITY_SHELVES'):
             items.remove(i)
     if interior == 'SHELF':

@@ -4703,6 +4703,13 @@ SHELF_X_CLEARANCE = inch(1.0 / 16.0)   # side gap for shelf-pin clearance
 SHELF_FRONT_SETBACK = inch(0.25)       # tucked behind the face frame plane
 SHELF_BACK_SETBACK = inch(0.25)        # finger gap to the back panel
 
+# Interior kinds whose depth is a fraction of the cavity depth rather
+# than a fixed setback, mapped to (depth fraction, part name).
+PARTIAL_DEPTH_SHELF_KINDS = {
+    'HALF_DEPTH_SHELF': (0.5, 'Half-Depth Shelf'),
+    'QUARTER_DEPTH_SHELF': (0.25, 'Quarter-Depth Shelf'),
+}
+
 # Applied finish liner stock. Interior parts in a finished region stop
 # at the liner face, not the cavity wall - see finish_liner_insets.
 FINISH_LINER_THICKNESS = inch(0.25)
@@ -5309,16 +5316,18 @@ def interior_item_descriptors(layout, rect, cab_props, opening_props,
                 getattr(item, 'shelf_nosing_height', 0.0),
                 getattr(item, 'bottom_offset', 0.0),
             )))
-        elif item.kind == 'HALF_DEPTH_SHELF':
-            # Half-depth shelves: the front edge always sits at half the
-            # cavity depth, so the look holds across wall, base, and
-            # tall cabinet depths (a static setback would not). Parts
-            # emit as ADJUSTABLE_SHELF so downstream consumers treat
-            # them like any other adjustable shelf.
+        elif item.kind in PARTIAL_DEPTH_SHELF_KINDS:
+            # Partial-depth shelves: the front edge always sits at a
+            # set fraction of the cavity depth, so the look holds
+            # across wall, base, and tall cabinet depths (a static
+            # setback would not). Parts emit as ADJUSTABLE_SHELF so
+            # downstream consumers treat them like any other
+            # adjustable shelf.
+            depth_frac, depth_name = PARTIAL_DEPTH_SHELF_KINDS[item.kind]
             out.extend(_pocket_shifted(_shelf_stack_descriptors(
                 shelf_rect, cage_dim_y, item.shelf_qty,
-                max(cage_dim_y / 2.0, cl_f),
-                'ADJUSTABLE_SHELF', 'ADJUSTABLE_SHELF', 'Half-Depth Shelf',
+                max(cage_dim_y * (1.0 - depth_frac), cl_f),
+                'ADJUSTABLE_SHELF', 'ADJUSTABLE_SHELF', depth_name,
                 getattr(item, 'shelf_nosing_style', 'NONE'),
                 getattr(item, 'shelf_nosing_height', 0.0),
                 z0=getattr(item, 'bottom_offset', 0.0),
