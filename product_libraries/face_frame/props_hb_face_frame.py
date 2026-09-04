@@ -10144,6 +10144,11 @@ class Face_Frame_Scene_Props(PropertyGroup):
         row.label(text="", icon='BLANK1')
 
         row = layout.row()
+        row.label(text="Hold Off From Ends & Windows:")
+        row.prop(self, 'cabinet_placement_holdoff', text="")
+        row.label(text="", icon='BLANK1')
+
+        row = layout.row()
         row.label(text="Sizes")
         row.label(text="Base")
         row.label(text="Tall")
