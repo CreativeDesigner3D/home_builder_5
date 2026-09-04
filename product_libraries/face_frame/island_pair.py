@@ -200,6 +200,13 @@ def combine(carrier, other):
         return []
     clear(carrier)
     clear(other)
+    # Both ends are back to normal handling now - re-pick them before
+    # stamping, so a carrier that was the COVERED cabinet a moment ago
+    # (Swap, or combining a second time) gets its finish back rather
+    # than carrying a panel that is still set to Unfinished.
+    from . import exposure
+    exposure.recalc_cabinet_exposure(carrier)
+    exposure.recalc_cabinet_exposure(other)
     carrier[PAIR_KEY] = other.name
     other[PAIR_KEY] = carrier.name
     _stamp_sides(carrier, CARRIES_KEY, [a for a, _b in pairs])

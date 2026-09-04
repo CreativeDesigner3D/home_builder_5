@@ -221,13 +221,17 @@ class hb_face_frame_OT_join_cabinets(bpy.types.Operator):
 # Operators: back-to-back island runs sharing one finished end
 # ---------------------------------------------------------------------------
 def _selected_cabinet_roots(context):
-    """Distinct face frame cabinet roots in the selection, active first."""
-    roots = []
-    seen = set()
+    """Distinct face frame cabinet roots in the selection, active first.
+
+    Empty unless the active object resolves to one of them: the active
+    cabinet is what picks which of the two carries the panel, so a
+    selection with nothing active is ambiguous rather than usable.
+    """
     active_root = types_face_frame.find_cabinet_root(context.active_object)
-    if active_root is not None:
-        roots.append(active_root)
-        seen.add(active_root.name)
+    if active_root is None:
+        return []
+    roots = [active_root]
+    seen = {active_root.name}
     for obj in context.selected_objects:
         root = types_face_frame.find_cabinet_root(obj)
         if root is None or root.name in seen:
