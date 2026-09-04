@@ -662,8 +662,16 @@ def _apply_panel_far_kick_notch(cab_obj, panel_obj, side, bottom_rail,
             name=_FAR_NOTCH_MOD_NAME, create_if_missing=active)
     if bottom_rail is not None:
         # The rail starts behind the far stile, so it only clears what
-        # is left of the setback once that stile took its width.
-        rail_run = max(0.0, setback - far_width)
+        # is left of the cut once that stile took its width - and the
+        # cut here is stile_depth, measured from the panel's far edge
+        # like the stile's is. The front notch adds a face frame
+        # thickness on top of its share so this cabinet's finish kick
+        # board can seat in the pocket; the far end takes no such
+        # board, so adding it there just cut past the kick.
+        # A stile wider than the cut clears the whole recess by itself
+        # and the rail is left whole, which is the common case: a panel
+        # stile is usually wider than the setback less a frame.
+        rail_run = max(0.0, stile_depth - far_width)
         _ensure_and_drive_notch(
             bottom_rail, active and rail_run > 0.0,
             rail_run,      # X = run along the rail
