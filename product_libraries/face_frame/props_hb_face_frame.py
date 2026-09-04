@@ -5762,6 +5762,23 @@ class Face_Frame_Corner_Section(PropertyGroup):
         default=False,
         update=_update_cabinet_dim,
     )  # type: ignore
+    # Per-section vertical pull placement (right-click a corner door ->
+    # Set Pull Location...). Corner cabinets have no opening cages, so
+    # this mirrors the per-opening pull_location_override at section
+    # level, exactly like the overlay unlocks above. Same items and same
+    # meaning; the corner recalc feeds it to the shared pull placement.
+    pull_location_override: EnumProperty(
+        name="Pull Location",
+        items=[
+            ('AUTO', "Automatic", "Cabinet-type rule (base: top, upper: bottom, tall: by door height)"),
+            ('TOP', "Top of Door", "Base-style: measured down from the top of the door"),
+            ('MIDDLE', "Middle of Door", "Centered on the door height"),
+            ('BOTTOM', "Bottom of Door", "Upper-style: measured up from the bottom of the door"),
+            ('TALL', "Tall Reach Height", "Tall-style: the tall vertical offset up from the door bottom"),
+        ],
+        default='AUTO',
+        update=_update_cabinet_dim,
+    )  # type: ignore
 
 
 # exterior_config items vary by cabinet type. Module-level lists keep the

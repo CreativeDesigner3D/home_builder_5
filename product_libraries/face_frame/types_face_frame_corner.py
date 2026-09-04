@@ -1019,6 +1019,27 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
             if child.get('hb_part_role') == 'PULL':
                 bpy.data.objects.remove(child, do_unlink=True)
 
+    def _corner_pull_props(self, door_obj):
+        """Opening-props stand-in carrying the door's section-level pull
+        settings, or None when the door has no section.
+
+        _create_pull_for_front reads the pinned pull location off the
+        owning opening's props. Corner cabinets have no opening cages -
+        their per-front settings live on the matching corner_sections
+        entry (see Face_Frame_Corner_Section) - so hand it a namespace
+        with the same attribute name. Without this every corner front
+        fell back to the automatic cabinet-type rule and Set Pull
+        Location had nowhere to write.
+        """
+        index = door_obj.get('hb_corner_section_index')
+        if index is None:
+            return None
+        sections = self.obj.face_frame_cabinet.corner_sections
+        if not (0 <= index < len(sections)):
+            return None
+        return SimpleNamespace(
+            pull_location_override=sections[index].pull_location_override)
+
     def _refresh_door_pull(self, door_obj, length, width, thickness,
                            width_sign=-1.0, edge='CORNER'):
         """Clear and re-attach the pull on a corner door.
@@ -1027,7 +1048,9 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         which are wiped and rebuilt each cycle - so any prior pull must
         be removed first or pulls accumulate. _create_pull_for_front
         handles asset resolution, vertical placement, and the mounting
-        plane; it expects a CabinetPart-like wrapper exposing .obj and
+        plane; the section's pinned pull location is fed to it through
+        a props stand-in (see _corner_pull_props). It expects a
+        CabinetPart-like wrapper exposing .obj and
         for a DOOR role only reads part_dims off the leaf, so a minimal
         descriptor is enough. Its horizontal heuristic assumes a
         standard front, so the Width-axis position is overridden here.
@@ -1043,6 +1066,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
             SimpleNamespace(obj=door_obj),
             ff.PART_ROLE_DOOR,
             {'part_dims': (length, width, thickness)},
+            op_props=self._corner_pull_props(door_obj),
         )
         if pull is None:
             return

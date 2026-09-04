@@ -3689,6 +3689,28 @@ _PULL_LOCATION_ITEMS = [
 ]
 
 
+def _find_owning_corner_section(obj):
+    """Resolve a corner cabinet front to (cabinet root, section index).
+
+    Corner fronts carry hb_corner_section_index and are direct children
+    of the cabinet root; the matching corner_sections entry is the
+    corner analogue of an opening cage for per-front settings. Returns
+    None when the object isn't a corner front, or when the stored index
+    no longer addresses a section (a config change can shorten the
+    collection).
+    """
+    index = obj.get('hb_corner_section_index')
+    if index is None:
+        return None
+    root = types_face_frame.find_cabinet_root(obj)
+    if root is None:
+        return None
+    sections = root.face_frame_cabinet.corner_sections
+    if not (0 <= index < len(sections)):
+        return None
+    return (root, index)
+
+
 class hb_face_frame_OT_set_pull_location(bpy.types.Operator):
     """Pin the vertical pull position on the selected doors' openings:
     top / middle / bottom of the door (or the tall reach height), or
@@ -3713,29 +3735,39 @@ class hb_face_frame_OT_set_pull_location(bpy.types.Operator):
     def execute(self, context):
         from . import ops_cabinet
         openings = {}
+        # Corner cabinets have no opening cages - their per-front
+        # settings live on the matching corner_sections entry, keyed by
+        # (cabinet root name, section index) so a pair of doors in one
+        # section is written once.
+        sections = {}
         skipped = 0
         for obj in context.selected_objects:
             if obj.get('hb_part_role') not in ('DOOR', 'PULLOUT_FRONT'):
                 continue
             opening = ops_cabinet._find_owning_opening(obj)
-            if opening is None:
+            if opening is not None:
+                openings[opening.name] = opening
+                continue
+            section = _find_owning_corner_section(obj)
+            if section is None:
                 skipped += 1
                 continue
-            openings[opening.name] = opening
-        if not openings:
-            self.report({'WARNING'},
-                        "No doors with openings selected"
-                        + (" (corner cabinet doors use the automatic rule)"
-                           if skipped else ""))
+            sections[section[0].name, section[1]] = section
+        if not openings and not sections:
+            self.report({'WARNING'}, "No doors selected")
             return {'CANCELLED'}
         with types_face_frame.suspend_recalc():
             for opening in openings.values():
                 opening.face_frame_opening.pull_location_override = self.location
+            for root, index in sections.values():
+                root.face_frame_cabinet.corner_sections[
+                    index].pull_location_override = self.location
         label = next(l for i, l, _d in _PULL_LOCATION_ITEMS
                      if i == self.location)
-        msg = f"{len(openings)} opening(s): pulls at {label.lower()}"
+        count = len(openings) + len(sections)
+        msg = f"{count} opening(s): pulls at {label.lower()}"
         if skipped:
-            msg += f"; {skipped} corner front(s) skipped"
+            msg += f"; {skipped} front(s) skipped"
         self.report({'INFO'}, msg)
         return {'FINISHED'}
 
