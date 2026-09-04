@@ -654,6 +654,14 @@ def recalc_cabinet_exposure(cab_obj):
     back_state = _back_exposure(cab_obj)
     _apply_side(cab, 'back', back_state, False, False, scene_props)
 
+    # An end combined with the run behind is settled here, after the
+    # auto pick has had its say: the covered end goes back to
+    # Unfinished and the carrier's panel is re-measured. Moving the two
+    # runs apart drops the arrangement rather than leaving a panel
+    # hanging off the end of one.
+    from . import island_pair
+    island_pair.sync(cab_obj)
+
 
 # ---------------------------------------------------------------------------
 # Placement / sweep entry points

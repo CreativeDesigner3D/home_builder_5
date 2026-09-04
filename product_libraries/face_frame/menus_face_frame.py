@@ -177,6 +177,24 @@ class HOME_BUILDER_MT_face_frame_cabinet_commands(bpy.types.Menu):
         layout.operator("hb_face_frame.equalize_bays",
                         text="Equalize Bays", icon='ALIGN_JUSTIFY')
 
+        # Back-to-back island runs: one full-depth finished end instead
+        # of two half-depth panels meeting in a seam. Combine takes two
+        # selected cabinets (its poll checks they actually meet back to
+        # back); the other two show once this cabinet is in an
+        # arrangement, so an existing one can be undone or flipped onto
+        # the other run.
+        from . import island_pair
+        _ip_root = types_face_frame.find_cabinet_root(context.active_object)
+        if _ip_root is not None and island_pair.PAIR_KEY in _ip_root:
+            layout.operator("hb_face_frame.swap_island_end_carrier",
+                            text="Swap Island End Panel",
+                            icon='ARROW_LEFTRIGHT')
+            layout.operator("hb_face_frame.separate_island_ends",
+                            text="Separate Island Ends", icon='MOD_EDGESPLIT')
+        else:
+            layout.operator("hb_face_frame.combine_island_ends",
+                            text="Combine Island Ends", icon='CON_SAMEVOL')
+
         # Show "Create Cabinet Group" whenever at least one cabinet is in
         # the selection. A single-cabinet group is allowed on purpose: the
         # 2D sheet set generates a 9-view (IslandNineView) per cabinet group

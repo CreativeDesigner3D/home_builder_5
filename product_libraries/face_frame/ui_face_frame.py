@@ -1752,6 +1752,15 @@ def draw_finished_ends(layout, cab_props):
     drops to its own labeled row. The Back's two extends (L / R) sit on a
     dedicated row below its dropdown.
     """
+    # Ends combined with the run behind are driven by the arrangement,
+    # not by these fields: the carrier's extend is measured from the
+    # other run and the covered end is held at Unfinished. Say so
+    # rather than letting an edit here quietly revert.
+    from . import island_pair
+    root = cab_props.id_data
+    carried = {s.lower() for s in island_pair.carried_sides(root)}
+    covered = {s.lower() for s in island_pair.covered_sides(root)}
+
     col = layout.column(align=True)
     for side, label, has_flush_x in (
         ('left', 'Left', True),
@@ -1759,6 +1768,11 @@ def draw_finished_ends(layout, cab_props):
         ('back', 'Back', False),
     ):
         fin_type = getattr(cab_props, f'{side}_finished_end_condition')
+        if side in covered:
+            row = col.row(align=True)
+            row.label(text=label)
+            row.label(text="Combined into the run behind", icon='AUTOMERGE_ON')
+            continue
         # Left / Right: label + dropdown, with that side's Extend Back
         # inline on the same row when it carries a finished part. The Back
         # keeps its two extends (L / R) on a dedicated row below.
@@ -1767,7 +1781,12 @@ def draw_finished_ends(layout, cab_props):
         row.prop(cab_props, f'{side}_finished_end_condition', text="")
         if (side in ('left', 'right')
                 and fin_type not in ('UNFINISHED', 'FLUSH_X')):
-            row.prop(cab_props, f'{side}_side_finished_extend_back',
+            # A combined end owns its own extend - it is measured from
+            # the run behind on every rebuild - so it reads here rather
+            # than inviting an edit that would not hold.
+            sub = row.row(align=True)
+            sub.enabled = side not in carried
+            sub.prop(cab_props, f'{side}_side_finished_extend_back',
                      text="Extend Back")
         if has_flush_x and fin_type == 'FLUSH_X':
             col.prop(cab_props, f'{side}_flush_x_amount', text="Flush-X Amount")

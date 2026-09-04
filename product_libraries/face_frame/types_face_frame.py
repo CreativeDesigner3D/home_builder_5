@@ -16106,6 +16106,14 @@ def recalculate_face_frame_cabinet(obj):
         return
     _RECALCULATING.add(id(root))
     try:
+        # Combined back-to-back island ends: re-derive how far the end
+        # panel runs back from the other run's live depth before the
+        # parts are sized, so resizing either run keeps the shared panel
+        # the right length. Only this root's own props are written, and
+        # the reentrance guard above is already armed, so the writes'
+        # update callbacks fall straight back out.
+        from . import island_pair
+        island_pair.sync(root)
         cabinet = _wrap_cabinet(root)
         cabinet.recalculate()
         _resize_seated_wood_tops(root)

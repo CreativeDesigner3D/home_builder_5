@@ -4,6 +4,7 @@ from mathutils import Vector, Matrix, Euler
 from .. import types_face_frame
 from .. import types_face_frame_corner
 from .. import bay_presets
+from .. import island_pair
 from .. import props_hb_face_frame
 from .. import split_preview
 from ....units import inch, meter_to_inch
@@ -213,6 +214,149 @@ class hb_face_frame_OT_join_cabinets(bpy.types.Operator):
         context.view_layer.objects.active = active_root
 
         self.report({'INFO'}, f"Joined {len(roots)} cabinets")
+        return {'FINISHED'}
+
+
+# ---------------------------------------------------------------------------
+# Operators: back-to-back island runs sharing one finished end
+# ---------------------------------------------------------------------------
+def _selected_cabinet_roots(context):
+    """Distinct face frame cabinet roots in the selection, active first."""
+    roots = []
+    seen = set()
+    active_root = types_face_frame.find_cabinet_root(context.active_object)
+    if active_root is not None:
+        roots.append(active_root)
+        seen.add(active_root.name)
+    for obj in context.selected_objects:
+        root = types_face_frame.find_cabinet_root(obj)
+        if root is None or root.name in seen:
+            continue
+        seen.add(root.name)
+        roots.append(root)
+    return roots
+
+
+class hb_face_frame_OT_combine_island_ends(bpy.types.Operator):
+    """Combine two back-to-back runs so each end they share is built as
+    one panel the full depth of the island instead of two half-depth
+    panels meeting in a seam.
+
+    The active cabinet carries the panel: its finished end runs back to
+    the other run's face frame. The other cabinet's matching end goes
+    Unfinished, so nothing is built or charged twice.
+    """
+    bl_idname = "hb_face_frame.combine_island_ends"
+    bl_label = "Combine Island Ends"
+    bl_description = (
+        "Combine the ends of two back-to-back runs into one full-depth "
+        "finished end panel carried by the active cabinet"
+    )
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        roots = _selected_cabinet_roots(context)
+        if len(roots) != 2:
+            return False
+        return bool(island_pair.shared_ends(roots[0], roots[1]))
+
+    def execute(self, context):
+        roots = _selected_cabinet_roots(context)
+        if len(roots) != 2:
+            self.report({'WARNING'},
+                        "Select exactly two back-to-back cabinets")
+            return {'CANCELLED'}
+        carrier, other = roots
+        if carrier.parent is not None or other.parent is not None:
+            self.report({'ERROR'},
+                        "Only free-standing cabinets can be combined")
+            return {'CANCELLED'}
+
+        # A single panel can only cover both runs if they are the same
+        # height and sit on the same plane - a raised bar run behind a
+        # base run needs two panels, whatever the plan view suggests.
+        eps = 1e-4
+        cp = carrier.face_frame_cabinet
+        op = other.face_frame_cabinet
+        if abs(cp.height - op.height) > eps:
+            self.report({'ERROR'}, "Both runs must be the same height")
+            return {'CANCELLED'}
+        if abs(carrier.matrix_world.translation.z
+               - other.matrix_world.translation.z) > eps:
+            self.report({'ERROR'}, "Both runs must sit at the same height "
+                                   "off the floor")
+            return {'CANCELLED'}
+
+        if not island_pair.shared_ends(carrier, other):
+            self.report({'ERROR'},
+                        "These cabinets do not meet back to back at an end")
+            return {'CANCELLED'}
+
+        with types_face_frame.suspend_recalc():
+            sides = island_pair.combine(carrier, other)
+        if not sides:
+            self.report({'ERROR'}, "Nothing to combine")
+            return {'CANCELLED'}
+        ends = " and ".join(s.title() for s in sides)
+        self.report({'INFO'},
+                    f"{ends} end combined onto {carrier.name}"
+                    if len(sides) == 1 else
+                    f"{ends} ends combined onto {carrier.name}")
+        return {'FINISHED'}
+
+
+class hb_face_frame_OT_separate_island_ends(bpy.types.Operator):
+    """Undo a combined island end: both runs finish their own end again."""
+    bl_idname = "hb_face_frame.separate_island_ends"
+    bl_label = "Separate Island Ends"
+    bl_description = (
+        "Split a combined island end back into one finished end per run"
+    )
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        root = types_face_frame.find_cabinet_root(context.active_object)
+        return root is not None and island_pair.PAIR_KEY in root
+
+    def execute(self, context):
+        root = types_face_frame.find_cabinet_root(context.active_object)
+        if root is None:
+            self.report({'ERROR'}, "No active face frame cabinet")
+            return {'CANCELLED'}
+        with types_face_frame.suspend_recalc():
+            island_pair.separate(root)
+        self.report({'INFO'}, "Island ends separated")
+        return {'FINISHED'}
+
+
+class hb_face_frame_OT_swap_island_end_carrier(bpy.types.Operator):
+    """Move the combined end panel onto the other run."""
+    bl_idname = "hb_face_frame.swap_island_end_carrier"
+    bl_label = "Swap Island End Panel"
+    bl_description = (
+        "Build the combined island end on the other run instead"
+    )
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        root = types_face_frame.find_cabinet_root(context.active_object)
+        return root is not None and island_pair.partner(root) is not None
+
+    def execute(self, context):
+        root = types_face_frame.find_cabinet_root(context.active_object)
+        other = island_pair.partner(root) if root is not None else None
+        if other is None:
+            self.report({'ERROR'}, "No combined island end here")
+            return {'CANCELLED'}
+        # Whichever of the two is covered right now becomes the carrier.
+        new_carrier = root if island_pair.covered_sides(root) else other
+        new_other = other if new_carrier is root else root
+        with types_face_frame.suspend_recalc():
+            island_pair.combine(new_carrier, new_other)
+        self.report({'INFO'}, f"Island end panel moved to {new_carrier.name}")
         return {'FINISHED'}
 
 
@@ -6479,6 +6623,9 @@ classes = (
     hb_face_frame_OT_ungroup_cabinet,
     hb_face_frame_OT_delete_cabinet,
     hb_face_frame_OT_join_cabinets,
+    hb_face_frame_OT_combine_island_ends,
+    hb_face_frame_OT_separate_island_ends,
+    hb_face_frame_OT_swap_island_end_carrier,
     hb_face_frame_OT_break_cabinet_left,
     hb_face_frame_OT_break_cabinet_right,
     hb_face_frame_OT_break_cabinet_both,
