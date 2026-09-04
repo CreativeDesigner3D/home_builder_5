@@ -137,13 +137,14 @@ class FaceFrameLayout:
                               if self.has_toe_kick else 'FLOATING')
         self.extend_left_stile_to_floor = cab.extend_left_stile_to_floor
         self.extend_right_stile_to_floor = cab.extend_right_stile_to_floor
-        # Combined island end: the run behind lays its finished end
-        # across this one, so this cabinet's cavity stops at that
-        # covering rather than at a side board of its own. 0.0 on every
-        # end that is not covered. See island_pair.
-        self.l_covered_cover = island_pair.covered_end_cover(
+        # Combined island end: where the run behind lays a board across
+        # this end, this cabinet builds no side of its own and its
+        # cavity stops at that board. None on every other end, including
+        # a covered end under an applied panel - a panel goes OVER a
+        # side, so this run keeps its own. See island_pair.
+        self.l_covered_thickness = island_pair.covered_end_side_thickness(
             cabinet_obj, 'LEFT')
-        self.r_covered_cover = island_pair.covered_end_cover(
+        self.r_covered_thickness = island_pair.covered_end_side_thickness(
             cabinet_obj, 'RIGHT')
         # Refrigerator cabinet: per-side raise of the carcass side + end
         # stile up to the top of the fridge opening, plus the per-cabinet
@@ -550,8 +551,8 @@ def left_side_thickness(layout):
     Reporting the covering's thickness is what keeps every part that
     lands on this side - stretchers, bottoms, kick beams - off it.
     """
-    if layout.l_covered_cover >= island_pair.SIDE_REPLACING_COVER:
-        return layout.l_covered_cover
+    if layout.l_covered_thickness is not None:
+        return layout.l_covered_thickness
     if layout.l_fin_end == 'FINISHED':
         return inch(0.75)
     if layout.l_fin_end in ('FALSE_FF', 'WORKING_FF'):
@@ -571,8 +572,8 @@ def right_scribe_offset(layout):
 
 def right_side_thickness(layout):
     """See left_side_thickness."""
-    if layout.r_covered_cover >= island_pair.SIDE_REPLACING_COVER:
-        return layout.r_covered_cover
+    if layout.r_covered_thickness is not None:
+        return layout.r_covered_thickness
     if layout.r_fin_end == 'FINISHED':
         return inch(0.75)
     if layout.r_fin_end in ('FALSE_FF', 'WORKING_FF'):

@@ -145,45 +145,46 @@ def end_is_covered(root, side):
     return raw is not None and raw[2] == COVERED
 
 
-# What a carrier's finished end leaves standing in the plane of the
-# island end, per condition. These are solver.left_scribe_offset's
-# values, plus FINISHED, where the 3/4 board itself IS the covering.
-# A 3/4 covering can serve as the covered run's side board; a 1/4
-# textured skin cannot, so that run keeps its own board and is held
-# back far enough for the skin to lie over it.
-_COVER_THICKNESS = {
-    'FINISHED': units.inch(0.75),
-    'PANELED': units.inch(0.75),
-    'FALSE_FF': units.inch(0.75),
-    'WORKING_FF': units.inch(0.75),
-    'BEADBOARD': units.inch(0.25),
-    'SHIPLAP': units.inch(0.25),
-    'V_GROOVE': units.inch(0.25),
+# How the far run's finished end is built up at the island end, per
+# condition: (how far it holds this run back, the side thickness this
+# run reports - or None when this run builds its own side board as
+# usual).
+#
+# Taken straight off solver.left_scribe_offset / left_side_thickness,
+# because the covered run has to reproduce the build-up the carrier
+# has at that end: it is the carrier's covering that runs across it.
+# Only FINISHED, where the 3/4 board IS the side, and the applied face
+# frames, which have no side board at all, leave this run without one.
+# A panel or a textured skin is applied OVER a side, so this run keeps
+# its own, set back by the same amount the carrier's is.
+_COVER_BUILDUP = {
+    'FINISHED':   (0.0, units.inch(0.75)),
+    'FALSE_FF':   (units.inch(0.75), 0.0),
+    'WORKING_FF': (units.inch(0.75), 0.0),
+    'PANELED':    (units.inch(0.75), None),
+    'BEADBOARD':  (units.inch(0.25), None),
+    'SHIPLAP':    (units.inch(0.25), None),
+    'V_GROOVE':   (units.inch(0.25), None),
 }
 
-# A covering at least this thick stands in for a carcass side board.
-SIDE_REPLACING_COVER = units.inch(0.5)
 
+def covered_end_side_thickness(root, side):
+    """The side thickness a covered end reports, or None when this end
+    builds a side board of its own as usual.
 
-def covered_end_cover(root, side):
-    """Thickness of the covering the run behind lays across this end,
-    or 0.0 when this end is not covered.
+    A number here means the far run's covering stands in for this
+    cabinet's side board, so it builds none and its cavity runs out to
+    the covering's inner face - the same thing the applied-face-frame
+    conditions already do by reporting 0.
 
     Reads the stamp only, no geometry: this is on the part loop and the
     solver of every recalc, and ``sync`` has already run this pass and
     dropped anything stale.
     """
     if root is None:
-        return 0.0
-    return float(root.get(_key(side, 'COVER_T'), 0.0))
-
-
-def cover_replaces_side(root, side):
-    """True when the covering across this end is a board in its own
-    right, so this cabinet builds no side there and its cavity runs out
-    to the covering's inner face. Both boards would otherwise land in
-    the same plane - the two runs share the island end."""
-    return covered_end_cover(root, side) >= SIDE_REPLACING_COVER
+        return None
+    value = root.get(_key(side, 'COVER_T'))
+    return None if value is None else float(value)
 
 
 def far_end_notch(root, side):
@@ -305,12 +306,13 @@ def _far_end_kick(other, other_side):
     return (kick, setback)
 
 
-def _cover_thickness(other, other_side):
-    """What the far run's finished end lays across the island end."""
+def _cover_buildup(other, other_side):
+    """(setback, side thickness or None) the covered run takes from the
+    far run's finished end. See _COVER_BUILDUP."""
     cond = getattr(other.face_frame_cabinet,
                    f'{other_side.lower()}_finished_end_condition',
                    'UNFINISHED')
-    return _COVER_THICKNESS.get(cond, 0.0)
+    return _COVER_BUILDUP.get(cond, (0.0, None))
 
 
 def combined_extend(root, other):
@@ -471,14 +473,18 @@ def sync(root):
                 setattr(cab, f'{key}_finished_end_condition', 'UNFINISHED')
             if getattr(cab, f'{key}_side_finished_extend_back') != 0.0:
                 setattr(cab, f'{key}_side_finished_extend_back', 0.0)
-            # How much of this end the other run's covering occupies.
-            # A board thick enough to be the side leaves this cabinet
-            # nothing to build there and its cavity runs out to the
-            # board's inner face (see the solver's side thickness); a
-            # thin skin leaves this run its own board, held back far
-            # enough for the skin to lie over it rather than through it.
-            cover = _cover_thickness(other, other_side)
-            root[_key(side, 'COVER_T')] = cover
-            scribe = 0.0 if cover >= SIDE_REPLACING_COVER else cover
+            # Reproduce the far run's build-up at this end, since it is
+            # that run's covering that crosses it: held back by the
+            # same setback, and building a side board of its own unless
+            # the covering IS one. The stamp's presence is the "no side
+            # board here" flag - 0.0 is a real thickness, the applied
+            # face frames use it.
+            scribe, thickness = _cover_buildup(other, other_side)
             if getattr(cab, f'{key}_scribe') != scribe:
                 setattr(cab, f'{key}_scribe', scribe)
+            cover_key = _key(side, 'COVER_T')
+            if thickness is None:
+                if cover_key in root:
+                    del root[cover_key]
+            else:
+                root[cover_key] = thickness

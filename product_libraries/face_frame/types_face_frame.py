@@ -2750,15 +2750,18 @@ class FaceFrameCabinet(GeoNodeCage):
             if role == PART_ROLE_LEFT_SIDE:
                 # FALSE_FF / WORKING_FF: the applied face frame IS the
                 # side - no carcass side panel behind it.
-                # An end combined with the run behind is the same story:
-                # the other run's panel runs the full island depth and
-                # closes this end, and both boards would otherwise sit
-                # in the same plane.
+                # An end combined with the run behind is the same
+                # story, when the far run lays a BOARD across it: that
+                # board is this end's side, and both would otherwise
+                # sit in the same plane. An applied panel goes over a
+                # side rather than replacing one, so a paneled
+                # combined end keeps its board (island_pair returns
+                # None there) and is just held back for the panel.
                 visible = (not layout.bays[0].get('remove_carcass')
                            and layout.l_fin_end not in ('FALSE_FF',
                                                         'WORKING_FF')
-                           and not island_pair.cover_replaces_side(
-                               self.obj, 'LEFT'))
+                           and island_pair.covered_end_side_thickness(
+                               self.obj, 'LEFT') is None)
                 child.hide_viewport = not visible
                 child.hide_render = not visible
                 # Refresh the square baseline even when HIDDEN: the back
@@ -2792,8 +2795,8 @@ class FaceFrameCabinet(GeoNodeCage):
                 visible = (not layout.bays[last].get('remove_carcass')
                            and layout.r_fin_end not in ('FALSE_FF',
                                                         'WORKING_FF')
-                           and not island_pair.cover_replaces_side(
-                               self.obj, 'RIGHT'))
+                           and island_pair.covered_end_side_thickness(
+                               self.obj, 'RIGHT') is None)
                 child.hide_viewport = not visible
                 child.hide_render = not visible
                 # Refresh the square baseline even when hidden - see the
