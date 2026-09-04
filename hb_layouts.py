@@ -973,15 +973,34 @@ def is_cage_object(obj) -> bool:
 
 def is_helper_object(obj) -> bool:
     """True if obj should be left out of a layout view: a helper empty
-    (prompt / anchor object), or geometry marked render-only.
+    (prompt / anchor object), geometry marked render-only, or a part
+    that has been deleted out of the model.
 
     Render-only covers scene dressing that belongs in a rendering and
     not on a drawing -- it is real geometry, so nothing else skips it,
     but every view walk goes through here and this is the one place
-    that decides what a drawing is made of."""
-    return bool(obj.get('obj_x')
-                or obj.get('IS_RENDER_ONLY')
-                or 'Overlay Prompt Obj' in obj.name)
+    that decides what a drawing is made of.
+
+    The deleted-part clause is what keeps a stale part off a drawing.
+    bpy.ops.object.delete only unlinks an object from the active scene's
+    collections, and leaves the datablock alive whenever something else
+    still holds a reference -- a view's content collections do, because
+    they link the real part objects and hang off a collection instance
+    rather than a scene. The part also keeps its parent, so a content
+    rebuild walking children finds it and links it back on every sync.
+    A live part always belongs to the scene it was built in; one that
+    belongs to no scene at all has been deleted, so drop it. Scoped to
+    tagged parts on purpose: annotations legitimately live outside the
+    model scene, in their own page's collections.
+    """
+    if obj.get('obj_x') or obj.get('IS_RENDER_ONLY'):
+        return True
+    if 'Overlay Prompt Obj' in obj.name:
+        return True
+    if ((obj.get('CABINET_PART') or obj.get('hb_part_role'))
+            and not obj.users_scene):
+        return True
+    return False
 
 
 # Product dropped on the FAR face of a wall is parented with a 180 degree Z
