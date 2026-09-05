@@ -73,6 +73,35 @@ def collect_bridges(scene):
 
 _RECESSED_FF_KICKS = {'NOTCH', 'LOOSE', 'FLOATING'}
 
+# Cages that are a cabinet in their own right rather than a part of the
+# one above them.
+_NESTED_CAGE_KEYS = ('IS_FACE_FRAME_CABINET_CAGE',
+                     'IS_FRAMELESS_CABINET_CAGE',
+                     'IS_FRAMELESS_PRODUCT_CAGE')
+
+
+def _own_parts(cage):
+    """Descendants that belong to CAGE's OWN face frame.
+
+    An applied end panel is a face frame cabinet in its own right,
+    parented to the cabinet it covers, and it carries its own rails,
+    stiles and panels. children_recursive walks straight into one - and
+    the panel's parts come out FIRST - so a plain recursive search
+    reads the END's frame everywhere it means to read the FRONT's: the
+    crown mounts off the panel's top rail instead of the rail the doors
+    sit under, and the floor scan sees the panel's bottom rail (which
+    runs to the floor by design) as a flush front.
+
+    Stop at anything that is its own cabinet.
+    """
+    stack = list(cage.children)
+    while stack:
+        child = stack.pop()
+        if any(child.get(key) for key in _NESTED_CAGE_KEYS):
+            continue
+        stack.extend(child.children)
+        yield child
+
 
 def _floor_flush_spans(cage):
     """LOCAL width spans (x0, x1) where a recessed-kick cabinet's
@@ -85,7 +114,7 @@ def _floor_flush_spans(cage):
     stile facts instead."""
     found = []
     inv = cage.matrix_world.inverted()
-    for child in cage.children_recursive:
+    for child in _own_parts(cage):
         if child.get('hb_part_role') not in ('BOTTOM_RAIL', 'MID_STILE'):
             continue
         corners = [inv @ (child.matrix_world @ mathutils.Vector(c))
@@ -122,7 +151,7 @@ def _measured_kick_setback(cage, ffc):
     Falls back to the prop when no kick-face part is built."""
     inv = cage.matrix_world.inverted()
     best = None
-    for child in cage.children_recursive:
+    for child in _own_parts(cage):
         if child.get('hb_part_role') not in _KICK_FACE_ROLES:
             continue
         corners = [inv @ (child.matrix_world @ mathutils.Vector(c))
@@ -151,7 +180,7 @@ def _finished_back_offset(obj):
     """
     inv = obj.matrix_world.inverted()
     best = 0.0
-    for child in obj.children_recursive:
+    for child in _own_parts(obj):
         if child.get('hb_part_role') != 'FINISHED_BACK':
             continue
         corners = [inv @ (child.matrix_world @ mathutils.Vector(c))
@@ -224,7 +253,7 @@ def _rail_skip_spans(cage):
 def _top_rail_width(cage):
     """Width of the built TOP_RAIL face-frame part, read from the
     geometry rather than the style props - it's exactly what's drawn."""
-    for child in cage.children_recursive:
+    for child in _own_parts(cage):
         if child.get('hb_part_role') != 'TOP_RAIL':
             continue
         try:
