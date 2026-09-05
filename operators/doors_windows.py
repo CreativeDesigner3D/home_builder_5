@@ -698,6 +698,10 @@ class _PlaceWallObjectBase(bpy.types.Operator, WallObjectPlacementMixin):
     RESET_Z_WHEN_FREE = True         # set z=0 when off-wall (False for window)
     BUILD_GEO = True                 # build 3D geometry on drop (False = cage only)
 
+    # ===== Continuous placement state =====
+    continuous: bool = False   # keep placing until right-click / Escape
+    placed_count: int = 0      # objects dropped since the tool started
+
     # ===== Abstract method implementations (mixin protocol) =====
 
     def get_placed_object(self):
@@ -810,6 +814,33 @@ class _PlaceWallObjectBase(bpy.types.Operator, WallObjectPlacementMixin):
         self.register_placement_object(self.placed_obj.obj)
         self.create_placement_dimensions()
 
+    def start_next_object(self, context):
+        """Continuous placement: build the next object so the run can carry
+        on without restarting the tool. The size just placed carries over, so
+        a typed width applies to the whole run rather than reverting to the
+        default on the next drop."""
+        width = self.get_placed_object_width()
+        height = self.get_placed_object_height()
+
+        self.placed_obj = None
+        self.swing_obj = None
+        self.selected_wall = None
+        self.wall_length = 0
+        self.placement_x = 0
+        self.offset_from_right = False
+        self.position_locked = False
+        # Two-point width mode itself stays on - only the captured start
+        # point resets, so the next object is picked the same way.
+        self.width_start_set = False
+        self.width_start_wall = None
+        self.width_start_gap = (0.0, 0.0)
+        self.width_locked_in_phase2 = False
+
+        self.create_placed_object(context)
+        self.set_placed_object_width(width)
+        self.set_placed_object_height(height)
+        self.apply_door_swing_type()
+
     # ===== Position helpers =====
 
     def set_position_on_wall(self):
@@ -909,6 +940,11 @@ class _PlaceWallObjectBase(bpy.types.Operator, WallObjectPlacementMixin):
         else:
             text = f"Move over a wall to place {label}{swing_keys} | D: 2-point width | Esc to cancel"
 
+        if (self.continuous
+                and self.placement_state != hb_placement.PlacementState.TYPING
+                and not self.two_point_in_phase2()):
+            text += " | [Continuous] Right-click: exit"
+
         hb_placement.draw_header_text(context, text)
 
     # ===== Operator lifecycle =====
@@ -924,6 +960,8 @@ class _PlaceWallObjectBase(bpy.types.Operator, WallObjectPlacementMixin):
         self.placement_x = 0
         self.offset_from_right = False
         self.position_locked = False
+        self.placed_count = 0
+        self.continuous = context.scene.home_builder.continuous_door_window_drawing
 
         self.init_two_point_state()
 
@@ -1028,6 +1066,11 @@ class _PlaceWallObjectBase(bpy.types.Operator, WallObjectPlacementMixin):
                 if self.BUILD_GEO:
                     door_window_geo.apply_scene_style_and_build(
                         self.placed_obj.obj, context)
+                self.placed_count += 1
+                if self.continuous:
+                    self.start_next_object(context)
+                    self.update_header(context)
+                    return {'RUNNING_MODAL'}
                 hb_placement.clear_header_text(context)
                 context.window.cursor_set('DEFAULT')
                 return {'FINISHED'}
@@ -1044,6 +1087,10 @@ class _PlaceWallObjectBase(bpy.types.Operator, WallObjectPlacementMixin):
             self.delete_placement_dimensions()
             self.cancel_placement(context)
             hb_placement.clear_header_text(context)
+            # Anything already dropped stays in the scene, so the run needs
+            # an undo step of its own.
+            if self.placed_count:
+                return {'FINISHED'}
             return {'CANCELLED'}
 
         # D key toggles two-point width mode

@@ -510,12 +510,25 @@ class Home_Builder_Scene_Props(PropertyGroup):
     exterior_wall_thickness: FloatProperty(name="Exterior Wall Thickness", default=inch(6),subtype='DISTANCE',precision=5)# type: ignore
     interior_wall_thickness: FloatProperty(name="Interior Wall Thickness", default=inch(4.5),subtype='DISTANCE',precision=5)# type: ignore
 
+    continuous_wall_drawing: BoolProperty(
+        name="Continuous Drawing",
+        description="Keep the Draw Walls tool running after a run of walls "
+                    "ends. Right-click or Escape once finishes the run and "
+                    "starts a new one somewhere else, twice leaves the tool",
+        default=False)  # type: ignore
+
     door_single_width: FloatProperty(name="Door Single Width", default=inch(36),subtype='DISTANCE',precision=5)
     door_double_width: FloatProperty(name="Door Double Width", default=inch(72),subtype='DISTANCE',precision=5)
     door_height: FloatProperty(name="Door Height", default=inch(84),subtype='DISTANCE',precision=5)
     window_width: FloatProperty(name="Window Width", default=inch(34),subtype='DISTANCE',precision=5)
     window_height: FloatProperty(name="Window Height", default=inch(34),subtype='DISTANCE',precision=5)
     window_height_from_floor: FloatProperty(name="Window Height From Floor", default=inch(36),subtype='DISTANCE',precision=5)
+
+    continuous_door_window_drawing: BoolProperty(
+        name="Continuous Drawing",
+        description="Keep placing doors and windows after each one is "
+                    "dropped, until you right-click or press Escape",
+        default=False)  # type: ignore
 
     entry_door_style: EnumProperty(
         name="Entry Door Style",

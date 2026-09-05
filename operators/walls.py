@@ -1235,6 +1235,12 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
     # Track if we've placed the first point
     has_start_point: bool = False
 
+    # Continuous drawing: right-click / Escape ends the current run of walls
+    # and starts another instead of leaving the tool
+    continuous: bool = False
+    # Walls dropped since the tool started, across every run
+    walls_committed: int = 0
+
     # Tracking-distance typing state: set at typing-start when the cursor is
     # snapped to a single tracking axis, used to interpret the typed value as
     # a distance from that track point along that axis.
@@ -2215,7 +2221,7 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         closing_length = math.sqrt(dx * dx + dy * dy)
         
         if closing_length < 0.01:
-            return
+            return False
         
         closing_angle = math.atan2(dy, dx)
         closing_wall.obj.rotation_euler.z = closing_angle
@@ -2248,6 +2254,8 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         
         # Hide the live wall length dimension — the room is closed
         self._wall_dim_visible = False
+        self.walls_committed += 1
+        return True
 
     def _wall_commit_error(self):
         """Return why the current wall can't be committed, or None if it can.
@@ -2318,6 +2326,7 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         update_connected_wall_miters(self.current_wall.obj)
 
         self.confirmed_wall_count += 1
+        self.walls_committed += 1
         if self.confirmed_wall_count == 1:
             self.first_wall = self.current_wall
         self.previous_wall = self.current_wall
@@ -2326,6 +2335,67 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         self.clear_track_points()
 
         self.create_wall(bpy.context)
+
+    def _run_in_progress(self):
+        """True while a run of walls is being drawn: the first point is down,
+        or at least one segment of this run has been dropped."""
+        return self.has_start_point or self.confirmed_wall_count > 0
+
+    def _discard_current_wall(self):
+        """Delete the segment still following the cursor. Dropped walls come
+        off placement_objects as they are confirmed, so this only ever
+        removes the unfinished one."""
+        if self.current_wall is None:
+            return
+        obj = self.current_wall.obj
+        for child in list(obj.children):
+            if child in self.placement_objects:
+                self.placement_objects.remove(child)
+        if obj in self.placement_objects:
+            self.placement_objects.remove(obj)
+        self._delete_object_and_children(obj)
+        self.current_wall = None
+
+    def start_new_run(self, context):
+        """End the current run of walls and reset to first-point state so a
+        new, disconnected run can be drawn without restarting the tool.
+        Continuous drawing only."""
+        self.stop_typing()
+        self.clear_wall_highlight()
+        self.clear_track_points()
+        self._discard_current_wall()
+
+        self.previous_wall = None
+        self.start_point = None
+        self.has_start_point = False
+        self.first_start_point = None
+        self.first_wall = None
+        self.confirmed_wall_count = 0
+        self.snap_wall = None
+        self.snap_endpoint = None
+        self.snap_surface = None
+        self.snap_location = None
+        self.end_snap_wall = None
+        self.end_snap_face = None
+        self._last_surface_wall = None
+        self._last_surface_face = None
+        self.close_snap_active = False
+
+        # A fresh wall, hidden until the next first point goes down: the same
+        # state execute() leaves the tool in.
+        self.create_wall(context)
+        self.current_wall.obj.hide_set(True)
+        for child in self.current_wall.obj.children:
+            child.hide_set(True)
+        self._wall_dim_visible = False
+
+    def _end_tool(self, context):
+        """Tear down the draw handlers, timer and header text."""
+        self.clear_wall_highlight()
+        self._remove_snap_indicator()
+        self._remove_dim_handler()
+        self._remove_track_timer(context)
+        hb_placement.clear_header_text(context)
 
     def _show_wall_objects(self):
         """Show the wall after first point is placed and enable the live
@@ -2383,7 +2453,14 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
                 text = f"Click to start on wall ({self.snap_surface} face){track_hint} | T: track | Esc to cancel"
             else:
                 text = f"Click to place first point{track_hint} | T: track point (hover 0.5s or press T) | Esc to cancel"
-        
+
+        if (self.continuous
+                and self.placement_state != hb_placement.PlacementState.TYPING):
+            if self._run_in_progress():
+                text += " | Right-click: end this run"
+            else:
+                text += " | [Continuous] Right-click: exit"
+
         hb_placement.draw_header_text(context, text)
 
     def execute(self, context):
@@ -2398,6 +2475,8 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         self._wall_dim_handle = None
         self._wall_dim_visible = False
         self.free_rotation = False
+        self.walls_committed = 0
+        self.continuous = context.scene.home_builder.continuous_wall_drawing
         self.first_start_point = None
         self.first_wall = None
         self.confirmed_wall_count = 0
@@ -2556,12 +2635,15 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
             else:
                 # If close-snap is active, close the room instead of confirming
                 if self.close_snap_active and self.confirmed_wall_count >= 2 and self.first_wall is not None:
-                    self.close_room(context)
-                    self.clear_wall_highlight()
-                    self._remove_snap_indicator()
-                    self._remove_dim_handler()
-                    self._remove_track_timer(context)
-                    hb_placement.clear_header_text(context)
+                    closed = self.close_room(context)
+                    if self.continuous:
+                        # The closing wall is committed, so it must not be
+                        # swept up as the unfinished segment.
+                        if closed:
+                            self.current_wall = None
+                        self.start_new_run(context)
+                        return {'RUNNING_MODAL'}
+                    self._end_tool(context)
                     return {'FINISHED'}
                 # Confirm wall and start next
                 commit_error = self._wall_commit_error()
@@ -2571,38 +2653,41 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
                     self.confirm_current_wall()
             return {'RUNNING_MODAL'}
 
-        # Right click - finish drawing
+        # Right click - end the current run, or finish drawing
         if event.type == 'RIGHTMOUSE' and event.value == 'PRESS':
-            # Clear any wall highlight
-            self.clear_wall_highlight()
-            self._remove_snap_indicator()
-            self._remove_dim_handler()
-            self._remove_track_timer(context)
+            if self.continuous and self._run_in_progress():
+                self.start_new_run(context)
+                self.update_header(context)
+                return {'RUNNING_MODAL'}
+            self._end_tool(context)
             # Remove current unfinished wall
             self.cancel_placement(context)
-            hb_placement.clear_header_text(context)
             return {'FINISHED'}
 
-        # Escape - cancel everything
+        # Escape - end the current run, or cancel everything
         if event.type == 'ESC' and event.value == 'PRESS':
-            # Clear any wall highlight
-            self.clear_wall_highlight()
-            self._remove_snap_indicator()
-            self._remove_dim_handler()
-            self._remove_track_timer(context)
+            if self.continuous and self._run_in_progress():
+                self.start_new_run(context)
+                self.update_header(context)
+                return {'RUNNING_MODAL'}
+            self._end_tool(context)
             self.cancel_placement(context)
-            hb_placement.clear_header_text(context)
+            # Walls already dropped stay in the scene, so the run needs an
+            # undo step of its own - the same one right-click pushes.
+            if self.walls_committed:
+                return {'FINISHED'}
             return {'CANCELLED'}
 
         # C key - close room (requires 2+ confirmed walls)
         if event.type == 'C' and event.value == 'PRESS' and self.has_start_point:
             if self.confirmed_wall_count >= 2 and self.first_wall is not None:
-                self.close_room(context)
-                self.clear_wall_highlight()
-                self._remove_snap_indicator()
-                self._remove_dim_handler()
-                self._remove_track_timer(context)
-                hb_placement.clear_header_text(context)
+                closed = self.close_room(context)
+                if self.continuous:
+                    if closed:
+                        self.current_wall = None
+                    self.start_new_run(context)
+                    return {'RUNNING_MODAL'}
+                self._end_tool(context)
                 return {'FINISHED'}
             return {'RUNNING_MODAL'}
 

@@ -486,6 +486,11 @@ def draw_wall_settings(layout, context, include_type=True):
     if include_type:
         col.prop(hb_scene, 'wall_type', text="Wall Type")
         col.separator()
+
+    # A tool setting rather than a wall property, but this is the form the
+    # Draw Walls button opens, which is where it is wanted.
+    col.prop(hb_scene, 'continuous_wall_drawing', text="Continuous Drawing")
+    col.separator()
     
     if hb_scene.wall_type == 'Exterior':
         row = col.row()
@@ -557,6 +562,8 @@ def draw_door_window_defaults(layout, context, include_cages=True):
         box.prop(hb_scene, 'show_entry_door_and_window_cages',
                  text="Show Entry Door and Window Cages")
         box.prop(hb_scene, 'show_door_swings', text="Show Door Swings")
+    layout.prop(hb_scene, 'continuous_door_window_drawing',
+                text="Continuous Drawing")
     col = layout.column(align=True)
     
     box = col.box()
