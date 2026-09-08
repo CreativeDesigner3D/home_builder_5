@@ -551,6 +551,17 @@ class home_builder_OT_cabinet_style_settings(bpy.types.Operator):
 
     index: bpy.props.IntProperty(default=-1)  # type: ignore
 
+    def _index(self, context):
+        """Index of the style this dialog is showing, or -1."""
+        sp = _style_props(context)
+        styles = getattr(sp, 'cabinet_styles', None) if sp else None
+        if not styles:
+            return -1
+        if 0 <= self.index < len(styles):
+            return self.index
+        active = active_style_index(context)
+        return active if 0 <= active < len(styles) else 0
+
     def _style(self, context):
         sp = _style_props(context)
         styles = getattr(sp, 'cabinet_styles', None) if sp else None
@@ -578,6 +589,17 @@ class home_builder_OT_cabinet_style_settings(bpy.types.Operator):
         # The sidebar's own per-style form, verbatim. It opens with the
         # Style Name field, so this is also how a style gets renamed.
         style.draw_cabinet_style_ui(layout, context)
+        # Delete lives here rather than as a third chip on the row: the
+        # row already carries the gear and the move arrows, and removing
+        # a style is not something to put one stray click away.
+        sp = _style_props(context)
+        styles = getattr(sp, 'cabinet_styles', None) if sp else None
+        layout.separator()
+        row = layout.row()
+        row.enabled = bool(styles) and len(styles) > 1
+        op = row.operator("hb_face_frame.remove_cabinet_style",
+                          text="Delete Style", icon='TRASH')
+        op.index = self._index(context)
 
     def execute(self, context):
         return {'FINISHED'}

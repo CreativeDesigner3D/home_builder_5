@@ -133,6 +133,11 @@ class hb_face_frame_OT_remove_cabinet_style(Operator):
     bl_description = "Remove the active cabinet style"
     bl_options = {'REGISTER', 'UNDO'}
 
+    # Callers that show a style other than the active one (the settings
+    # dialog opens on the row whose gear was clicked) pass the index they
+    # are showing; -1 keeps the old behaviour of removing the active one.
+    index: bpy.props.IntProperty(default=-1)  # type: ignore
+
     @classmethod
     def poll(cls, context):
         # Always keep at least one style around so placement / assign
@@ -145,11 +150,15 @@ class hb_face_frame_OT_remove_cabinet_style(Operator):
         if len(ff.cabinet_styles) <= 1:
             self.report({'WARNING'}, "At least one cabinet style must remain")
             return {'CANCELLED'}
-        idx = ff.active_cabinet_style_index
+        idx = self.index if self.index >= 0 else ff.active_cabinet_style_index
         if idx < 0 or idx >= len(ff.cabinet_styles):
             return {'CANCELLED'}
         name = ff.cabinet_styles[idx].name
         ff.cabinet_styles.remove(idx)
+        # Removing a row above the active one slides the rest up, so the
+        # stored index would land on the wrong style.
+        if idx < ff.active_cabinet_style_index:
+            ff.active_cabinet_style_index -= 1
         if ff.active_cabinet_style_index >= len(ff.cabinet_styles):
             ff.active_cabinet_style_index = max(0, len(ff.cabinet_styles) - 1)
         self.report({'INFO'}, f"Removed cabinet style: {name}")
