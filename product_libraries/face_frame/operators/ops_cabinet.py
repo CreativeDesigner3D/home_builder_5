@@ -2174,6 +2174,66 @@ class hb_face_frame_OT_drawer_box_prompts(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class hb_face_frame_OT_ada_front_prompts(bpy.types.Operator):
+    """Close an opening with an ADA apron: a panel raked back at the
+    bottom so knees clear the cabinet under the sink."""
+    bl_idname = "hb_face_frame.ada_front_prompts"
+    bl_label = "ADA Angled Front"
+    bl_description = ("Close this opening with an apron panel raked back "
+                      "at the bottom, leaving knee clearance under the sink")
+    bl_options = {'UNDO'}
+
+    opening_name: bpy.props.StringProperty(
+        default='', options={'HIDDEN', 'SKIP_SAVE'},
+    )  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        return _find_owning_opening(context.active_object) is not None
+
+    def invoke(self, context, event):
+        opening_obj = _find_owning_opening(context.active_object)
+        if opening_obj is None:
+            self.report({'WARNING'}, "No owning opening found")
+            return {'CANCELLED'}
+        self.opening_name = opening_obj.name
+        return context.window_manager.invoke_props_dialog(self, width=340)
+
+    def draw(self, context):
+        layout = self.layout
+        opening_obj = bpy.data.objects.get(self.opening_name)
+        if opening_obj is None:
+            layout.label(text="Opening not found", icon='INFO')
+            return
+        op_props = opening_obj.face_frame_opening
+        col = layout.column(align=True)
+        col.prop(op_props, 'ada_angled_front', text="ADA Angled Front")
+        sub = col.column(align=True)
+        sub.enabled = op_props.ada_angled_front
+        sub.prop(op_props, 'ada_panel_bottom_height', text="Bottom Height")
+        sub.prop(op_props, 'ada_panel_bottom_setback', text="Bottom Setback")
+        sub.separator()
+        sub.prop(op_props, 'ada_knee_top_height', text="Knee Top Height")
+        sub.prop(op_props, 'ada_knee_top_setback', text="Knee Top Setback")
+        sub.separator()
+        sub.prop(op_props, 'ada_panel_top_setback', text="Top Setback")
+        sub.prop(op_props, 'ada_panel_thickness', text="Thickness")
+
+        panel = next(
+            (c for c in opening_obj.children
+             if c.get('hb_part_role') == types_face_frame.PART_ROLE_ADA_PANEL
+             and c.get('hb_ada_panel') == 'KNEE'),
+            None)
+        if panel is not None:
+            box = layout.box()
+            ok = panel.get('ADA_CLEARANCE_OK')
+            box.label(
+                text="Clear at 9\": %s\"   at 27\": %s\"" % (
+                    panel.get('ADA_CLEAR_AT_9'), panel.get('ADA_CLEAR_AT_27')),
+                icon='CHECKMARK' if ok else 'ERROR')
+            box.label(text="Standard asks 11\" and 8\", off the counter edge")
+
+
 class hb_face_frame_OT_rollout_above_drawer_prompts(bpy.types.Operator):
     """Add a rollout above this drawer, behind the same front.
 
@@ -6745,6 +6805,7 @@ classes = (
     hb_face_frame_OT_drawer_box_prompts,
     hb_face_frame_OT_sink_duo_drawer_prompts,
     hb_face_frame_OT_rollout_above_drawer_prompts,
+    hb_face_frame_OT_ada_front_prompts,
     hb_face_frame_OT_sink_duo_rollout_prompts,
     hb_face_frame_OT_split_opening,
     hb_face_frame_OT_mid_stile_prompts,

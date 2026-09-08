@@ -824,6 +824,10 @@ class HOME_BUILDER_MT_face_frame_opening_commands(bpy.types.Menu):
                         text="Finish Opening...", icon='SHADING_RENDERED')
         layout.operator("hb_face_frame.interior_options",
                         text="Interior Options...", icon='MESH_GRID')
+        # Knee-clearance apron: what closes a sink opening on an
+        # accessible cabinet.
+        layout.operator("hb_face_frame.ada_front_prompts",
+                        text="ADA Angled Front...", icon='MOD_BEVEL')
         # Accessories are the host application's catalog; with none
         # registered there is nothing to add, so the entry stays out.
         if accessory_registry.available():

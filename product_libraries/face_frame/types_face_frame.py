@@ -389,6 +389,8 @@ PART_ROLE_INSET_PANEL = 'INSET_PANEL'
 # Own role (not FALSE_FRONT) so it's drawer-styled but carries a pull and
 # a swing; not in the drawer-box role set, so it gets no slide box.
 PART_ROLE_TILT_OUT = 'TILT_OUT'
+# ADA apron: the raked panel that closes a knee-clearance sink opening.
+PART_ROLE_ADA_PANEL = 'ADA_PANEL'
 PART_ROLE_APRON = 'APRON'
 # Drawer-look door: a working DOOR leaf wearing N applied drawer-front
 # panels (proud of the leaf, with reveal gaps that read as faux mid
@@ -12401,6 +12403,9 @@ class FaceFrameCabinet(GeoNodeCage):
                         if preset == 'CUSTOM':
                             box.height = item.rollout_height
 
+        # The ADA apron closes the opening at an angle.
+        self._reconcile_ada_panel(opening_obj, rect)
+
         # The rollout that rides above a drawer is a normal ROLLOUT
         # interior item - it just belongs to the cabinet rather than to
         # the user, so it is kept in step here and taken away again when
@@ -12444,6 +12449,146 @@ class FaceFrameCabinet(GeoNodeCage):
                 # TRAY_DIVIDER, TRAY_LOCKED_SHELF, VANITY_SHELF,
                 # VANITY_SUPPORT.
                 self._create_interior_mesh_part(opening_obj, desc)
+
+    def _reconcile_ada_panel(self, opening_obj, rect):
+        """Build / update / remove the ADA apron in this opening.
+
+        The apron is what closes a knee-clearance sink: raked back at
+        the bottom so someone in a wheelchair can pull up to the sink,
+        while the plumbing stays hidden. It is built in two boards
+        because that is the shape the clearance rules describe:
+
+          - the KNEE board, from its bottom edge (9" off the floor, the
+            top of the toe space) up to the height where knee clearance
+            stops mattering (27"), raked from 11" back to 8" back. That
+            is the 1" per 6" of height the standard allows.
+          - the SHIN board above it, running from that point forward to
+            just behind the face frame under the counter. Nothing is
+            required to stay clear up there, so this one can be as steep
+            as the cabinet needs.
+
+        A short opening that never reaches the knee ceiling gets the
+        first board only. Heights are measured off the floor (the
+        cabinet floor, which is the room floor on a base) and setbacks
+        off the face frame front - a countertop overhang only adds to
+        the clearance, so measuring here is the conservative read.
+
+        The clear depths the apron actually leaves are published on the
+        lower board, so a drawing or a report can call them out.
+        """
+        op_props = getattr(opening_obj, 'face_frame_opening', None)
+        if op_props is None:
+            return
+        existing = {c.get('hb_ada_panel'): c for c in opening_obj.children
+                    if c.get('hb_part_role') == PART_ROLE_ADA_PANEL}
+
+        def drop(keys):
+            for key in keys:
+                obj = existing.pop(key, None)
+                if obj is not None:
+                    bpy.data.objects.remove(obj, do_unlink=True)
+
+        if not getattr(op_props, 'ada_angled_front', False):
+            drop(list(existing.keys()))
+            return
+
+        # Opening-local frame: x across the opening, y back from the
+        # face frame front, z up from the opening floor.
+        cage_x = rect['cage_dim_x']
+        cage_y = rect['cage_dim_y']
+        cage_z = rect['cage_dim_z']
+        rl = rect['reveal_left']
+        rr = rect['reveal_right']
+        rt = rect['reveal_top']
+        width = max(cage_x - rl - rr, 0.0)
+        thickness = op_props.ada_panel_thickness
+        if width <= 0.0 or thickness <= 0.0:
+            drop(list(existing.keys()))
+            return
+
+        # The opening sits this far above the cabinet floor, which turns
+        # a height off the floor into a local one.
+        rel = self.obj.matrix_world.inverted() @ opening_obj.matrix_world
+        floor_offset = rel.translation.z
+
+        def local_z(height_aff):
+            return height_aff - floor_offset
+
+        top_z = cage_z - rt
+        bottom_z = min(max(local_z(op_props.ada_panel_bottom_height), 0.0),
+                       top_z)
+        knee_z = min(max(local_z(op_props.ada_knee_top_height), bottom_z),
+                     top_z)
+        y_bottom = min(op_props.ada_panel_bottom_setback, cage_y)
+        y_knee = min(op_props.ada_knee_top_setback, cage_y)
+        y_top = min(op_props.ada_panel_top_setback, cage_y)
+
+        # (key, bottom z, bottom setback, top z, top setback)
+        boards = [('KNEE', bottom_z, y_bottom, knee_z, y_knee)]
+        if top_z - knee_z > 1e-6:
+            boards.append(('SHIN', knee_z, y_knee, top_z, y_top))
+        drop([key for key in list(existing.keys())
+              if key not in {b[0] for b in boards}])
+
+        for key, z0, s0, z1, s1 in boards:
+            rise = z1 - z0
+            if rise <= 1e-6:
+                drop([key])
+                continue
+            run = s0 - s1
+            lean = math.atan2(run, rise)
+            obj = existing.get(key)
+            if obj is None:
+                cut = CabinetPart()
+                cut.create('ADA Apron %s' % key.title())
+                cut.obj.parent = opening_obj
+                cut.obj['hb_part_role'] = PART_ROLE_ADA_PANEL
+                cut.obj['hb_ada_panel'] = key
+                cut.obj['CABINET_PART'] = True
+                cut.obj['IS_FINISHED'] = True
+                cut.obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_part_commands'
+                obj = cut.obj
+            else:
+                cut = GeoNodeCutpart(obj)
+            # Rotated 90 degrees the board stands up with its Width
+            # running vertically; the lean tips that axis back into the
+            # cabinet so the board rises from its bottom edge. Mirror Z
+            # runs the thickness back rather than forward: the face the
+            # knees meet is the one the setbacks describe, so the stock
+            # must not sit in front of it and eat the clearance.
+            obj.location = (rl, s0, z0)
+            obj.rotation_euler = (math.radians(90) + lean, 0.0, 0.0)
+            cut.set_input('Length', width)
+            cut.set_input('Width', math.hypot(run, rise))
+            cut.set_input('Thickness', thickness)
+            cut.set_input('Mirror Z', True)
+            existing[key] = obj
+
+        # What the apron leaves clear at the two heights the standard
+        # asks about, published on the knee board.
+        knee_board = existing.get('KNEE')
+        if knee_board is not None:
+            def clear_at(height_aff):
+                z = local_z(height_aff)
+                if z < bottom_z - 1e-6:
+                    return None
+                for _key, z0, s0, z1, s1 in boards:
+                    if z <= z1 + 1e-6:
+                        span = z1 - z0
+                        if span <= 1e-6:
+                            return s1
+                        return s0 - (z - z0) / span * (s0 - s1)
+                return y_top
+
+            low = clear_at(inch(9.0))
+            high = clear_at(inch(27.0))
+            knee_board['ADA_CLEAR_AT_9'] = (round(low / inch(1.0), 3)
+                                            if low is not None else 0.0)
+            knee_board['ADA_CLEAR_AT_27'] = (round(high / inch(1.0), 3)
+                                             if high is not None else 0.0)
+            knee_board['ADA_CLEARANCE_OK'] = bool(
+                low is not None and high is not None
+                and low >= inch(11.0) - 1e-6 and high >= inch(8.0) - 1e-6)
 
     # Marks the ROLLOUT interior item this cabinet owns, so it can be
     # told apart from one the user added and taken away again when the
