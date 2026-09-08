@@ -5011,11 +5011,14 @@ def _pullout_shelf_descriptors(rect, cage_dim_y, item):
             'position':     (shelf_x, setback, z),
             'dims':         (length, width, item_height),
         })
-    out.extend(_assembly_spacers(
-        rect, ASSEMBLY_SPACER_WIDTH, 'PULLOUT_SPACER', 'PULLOUT_SPACER',
-        'Pullout Spacer',
-        left_thickness=spacer_l, right_thickness=spacer_r,
-    ))
+    # Same opt-out the rollout boxes have: a shelf that mounts straight
+    # to the cabinet needs no spacer assembly built for it.
+    if not getattr(item, 'hide_rollout_spacers', False):
+        out.extend(_assembly_spacers(
+            rect, ASSEMBLY_SPACER_WIDTH, 'PULLOUT_SPACER', 'PULLOUT_SPACER',
+            'Pullout Spacer',
+            left_thickness=spacer_l, right_thickness=spacer_r,
+        ))
     return out
 
 

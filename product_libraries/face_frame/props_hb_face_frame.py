@@ -8457,13 +8457,14 @@ class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
         default=0.0, min=0.0, unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
     )  # type: ignore
-    # Omit the four slide-mount spacer parts for this ROLLOUT. A single
-    # rollout fixed at the floor mounts straight to the cabinet, so no
-    # spacer/ladder assembly is wanted (or manufactured) for it.
+    # Omit the four slide-mount spacer parts for this ROLLOUT or
+    # PULLOUT_SHELF. One fixed at the floor mounts straight to the
+    # cabinet, so no spacer/ladder assembly is wanted (or manufactured)
+    # for it. Shared by both kinds - they build the same assembly.
     hide_rollout_spacers: BoolProperty(
-        name="Hide Rollout Spacers",
-        description="Don't build the side spacer parts the slides mount "
-                    "to (ROLLOUT only) - e.g. a single rollout fixed at "
+        name="Hide Spacer Ladders",
+        description="Don't build the side spacer ladders the slides "
+                    "mount to - e.g. a single rollout or shelf fixed at "
                     "the floor that needs no spacer assembly",
         default=False, update=_update_cabinet_dim,
     )  # type: ignore

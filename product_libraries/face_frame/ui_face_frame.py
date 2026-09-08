@@ -1347,6 +1347,8 @@ def _draw_interior_items_section(layout, target_props, target_name=""):
             sub.prop(item, 'item_setback', text="Front Setback")
             # Spacer width is fixed (ASSEMBLY_SPACER_WIDTH in the
             # solver), so no spacer_height row -- same as rollouts.
+            sub.prop(item, 'hide_rollout_spacers',
+                     text="Hide Spacer Ladders")
         elif item.kind == 'ROLLOUT':
             # One row per box: each box picks its own standard height (or
             # Custom to type one). The box count is the number of rows.
@@ -1374,7 +1376,7 @@ def _draw_interior_items_section(layout, target_props, target_name=""):
             # the back (pipe / vent run behind the rollouts).
             sub.prop(item, 'rollout_depth', text="Depth (0 = Auto)")
             sub.prop(item, 'hide_rollout_spacers',
-                     text="Hide Rollout Spacers")
+                     text="Hide Spacer Ladders")
             # On by default: the scoop is standard construction, so this
             # is here to turn it OFF for a square-front box.
             sub.prop(item, 'finger_scoop', text="Finger Scoop")
