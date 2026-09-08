@@ -3631,7 +3631,10 @@ class FaceFrameCabinet(GeoNodeCage):
 
     def _cutpart_materials(self, obj):
         """(face, edge) materials a cutpart is carrying, for a static
-        mesh that replaces its box."""
+        mesh that replaces its box. Socket values go through hb_utils:
+        modifier inputs stopped being ID properties in 5.2, and reading
+        them directly raises there instead of coming back empty - which
+        took the whole arch pass down with it."""
         for mod in obj.modifiers:
             if mod.type != 'NODES' or not mod.node_group:
                 continue
@@ -3642,9 +3645,9 @@ class FaceFrameCabinet(GeoNodeCage):
                 if getattr(item, 'item_type', '') != 'SOCKET':
                     continue
                 if item.name == 'Top Surface':
-                    face = mod.get(item.identifier)
+                    face = hb_utils.try_get_gn_input(mod, item.identifier)
                 elif item.name == 'Edge L1':
-                    edge = mod.get(item.identifier)
+                    edge = hb_utils.try_get_gn_input(mod, item.identifier)
             if face is not None or edge is not None:
                 return [face, edge if edge is not None else face]
         return []
