@@ -2932,6 +2932,9 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
             props.left_stile_width = self._ff_size_for(left_row, col)
         if not props.unlock_right_stile:
             props.right_stile_width = self._ff_size_for(right_row, col)
+        # A revolving susan's stiles are fixed by the product, so the
+        # style's stile row must not write over them.
+        apply_revolving_stile_widths(props)
 
         # Bay-level rail widths are intentionally NOT written here. Each
         # bay carries its own top/bottom rail copy with an unlock flag;
@@ -4950,6 +4953,47 @@ def _update_cabinet_dim(self, context):
     """
     from . import types_face_frame
     types_face_frame.recalculate_face_frame_cabinet(self.id_data)
+
+
+# Revolving-door susans carry 1-1/2" front stiles whatever the style's
+# stile width is - the door turns with the susan, so the frame opening
+# is sized to it rather than to the style. Both the revolving exterior
+# option and the pie-cut revolving susan interiors count.
+REVOLVING_STILE_WIDTH = units.inch(1.5)
+REVOLVING_INTERIOR_OPTIONS = ('POLYMER_PIE_CUT_REVOLVING',
+                              'WOOD_PIE_CUT_REVOLVING')
+
+
+def is_revolving_susan(cab_props):
+    """True when this corner cabinet is a revolving-door susan."""
+    return (getattr(cab_props, 'exterior_option', '') == 'REVOLVING_DOORS'
+            or getattr(cab_props, 'interior_option', '')
+            in REVOLVING_INTERIOR_OPTIONS)
+
+
+def apply_revolving_stile_widths(cab_props):
+    """Force both front stiles to 1-1/2" on a revolving susan. Written
+    to the properties rather than applied at build time so the sizes the
+    user reads match the parts. An unlocked stile is left alone - that
+    flag is the deliberate per-cabinet override everywhere else."""
+    if not is_revolving_susan(cab_props):
+        return False
+    changed = False
+    for attr, lock in (('left_stile_width', 'unlock_left_stile'),
+                       ('right_stile_width', 'unlock_right_stile')):
+        if getattr(cab_props, lock, False):
+            continue
+        if abs(getattr(cab_props, attr) - REVOLVING_STILE_WIDTH) > 1e-6:
+            setattr(cab_props, attr, REVOLVING_STILE_WIDTH)
+            changed = True
+    return changed
+
+
+def _update_corner_option(self, context):
+    """Corner exterior / interior option changed: a revolving susan
+    takes its own stile width before the rebuild reads it."""
+    apply_revolving_stile_widths(self)
+    _update_cabinet_dim(self, context)
 
 
 # Per-side band width. get/set rather than a plain property so an unset
@@ -7769,7 +7813,7 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
             ('REVOLVING_DOORS',        "Revolving Doors",        "Door rotates with the susan inside"),
         ],
         default='LEFT_DOOR_OPENS_FIRST',
-        update=_update_cabinet_dim,
+        update=_update_corner_option,
     )  # type: ignore
     interior_option: EnumProperty(
         name="Interior Option",
@@ -7783,7 +7827,7 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
             ('NOT_SO_LAZY_SUSANS',         "Not So Lazy Susan",                     "Pan storage with hooks plus a lower tray"),
         ],
         default='NONE',
-        update=_update_cabinet_dim,
+        update=_update_corner_option,
     )  # type: ignore
     # Finish the corner cabinet's interior: the cavity-facing surfaces
     # of the sides / backs / top / bottom and the corner shelves take
