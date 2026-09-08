@@ -29,6 +29,7 @@ import bpy
 from ..hb_gpu_draw import (
     draw_rect,
     draw_rects,
+    draw_lines,
     draw_text,
     point_in_rect,
 )
@@ -61,6 +62,8 @@ PAD = 4
 FONT = 10
 ACCENT_W = 3
 GEAR = 18           # the per-style settings button on a row
+ARROW = 14          # a move up / move down chip on the active row
+ARROW_GAP = 2       # between the two chips and the settings button
 PLUS_SPAN = 8       # full width of the plus mark, not half
 PLUS_GAP = 4        # plus mark to the word NEW
 
@@ -199,8 +202,23 @@ def build(rect, context):
             gear = GEAR * s
             gear_rect = (x + row_w - gear - 2 * s,
                          block_top - row_h + (row_h - gear) / 2.0, gear, gear)
+            # Move up / move down, on the ACTIVE row only. Order is what
+            # the list means -- the first style is the one drawings leave
+            # white -- so the control belongs on the row, but two more
+            # glyphs on every row would crowd a list that is mostly read.
+            # Both slots stay reserved at the ends of the list so the
+            # remaining chip does not slide sideways.
+            up_rect = down_rect = None
+            if is_active and len(styles) > 1:
+                aw = ARROW * s
+                ay = block_top - row_h + (row_h - aw) / 2.0
+                dx = gear_rect[0] - ARROW_GAP * s - aw
+                if i > 0:
+                    up_rect = (dx - aw, ay, aw, aw)
+                if i < len(styles) - 1:
+                    down_rect = (dx, ay, aw, aw)
             entries.append(('style_row', i, name, rect, is_active,
-                            gear_rect))
+                            gear_rect, up_rect, down_rect))
         elif kind == 'actions':
             n = len(payload)
             bw = (row_w - gap * (n - 1)) / n
@@ -213,6 +231,19 @@ def build(rect, context):
             entries.append(('form_row', label, method,
                             (x, block_top - row_h, row_w, row_h)))
     return entries
+
+
+def _glyph_caret(shader, cx, cy, size, up, color):
+    """Chevron pointing up or down, centred at (cx, cy). The disclosure
+    chevron's shape stood on end; `size` is pre-scaled."""
+    h = size / 2.0
+    if up:
+        pts = [(cx - h, cy - h / 2.0), (cx, cy + h / 2.0),
+               (cx, cy + h / 2.0), (cx + h, cy - h / 2.0)]
+    else:
+        pts = [(cx - h, cy + h / 2.0), (cx, cy - h / 2.0),
+               (cx, cy - h / 2.0), (cx + h, cy + h / 2.0)]
+    draw_lines(shader, pts, color)
 
 
 def _clip(entries):
@@ -267,7 +298,11 @@ def paint(entries, mx, my):
                               Theme.TEXT_PRIMARY if hot else Theme.TEXT_NORMAL,
                               "NEW")
             elif kind == 'style_row':
-                _, _i, name, rect, is_active, gear_rect = entry
+                (_, _i, name, rect, is_active, gear_rect,
+                 up_rect, down_rect) = entry
+                arrows = is_active and (up_rect is not None
+                                        or down_rect is not None)
+                arrow_room = (2 * ARROW + ARROW_GAP) * s if arrows else 0.0
                 hovered = point_in_rect(mx, my, rect)
                 rx, ry, rw, rh = rect
                 renaming = _edit.editing(_i)
@@ -281,7 +316,8 @@ def paint(entries, mx, my):
                     # The row becomes the field. A caret marks the end of
                     # the text so it reads as editable rather than
                     # selected -- the navigator's rename looks the same.
-                    field_w = rw - GEAR * s - 12 * s - (text_x - rx)
+                    field_w = (rw - GEAR * s - arrow_room - 12 * s
+                               - (text_x - rx))
                     draw_rects(shader, [(text_x - 3 * s, ry + 3 * s,
                                          field_w + 6 * s, rh - 6 * s)],
                                (0.0, 0.0, 0.0, 0.55))
@@ -289,7 +325,7 @@ def paint(entries, mx, my):
                                      field_w)
                 else:
                     shown = fit_text(font_id, FONT * s, name,
-                                     rw - GEAR * s - 16 * s)
+                                     rw - GEAR * s - arrow_room - 16 * s)
                 draw_text(font_id, text_x, ry + rh * 0.28, FONT * s,
                           Theme.TEXT_PRIMARY if (is_active or renaming)
                           else Theme.TEXT_NORMAL, shown)
@@ -303,6 +339,16 @@ def paint(entries, mx, my):
                                          gy + gh * (0.32 + k * 0.18),
                                          gw - 8 * s, 1.4 * s)],
                                Theme.GLYPH_HOVER if g_hot else Theme.GLYPH)
+                for a_rect, up in ((up_rect, True), (down_rect, False)):
+                    if a_rect is None:
+                        continue
+                    a_hot = point_in_rect(mx, my, a_rect)
+                    if a_hot:
+                        paint_button(shader, a_rect, hovered=True)
+                    ax, ay, aw, ah = a_rect
+                    _glyph_caret(shader, ax + aw / 2.0, ay + ah / 2.0,
+                                 7 * s, up,
+                                 Theme.GLYPH_HOVER if a_hot else Theme.GLYPH)
             elif kind == 'action_btn':
                 _, label, _op, _prop, _val, rect = entry
                 hovered = point_in_rect(mx, my, rect)
@@ -335,7 +381,20 @@ def hit(context, mx, my, entries):
     for entry in entries:
         kind = entry[0]
         if kind == 'style_row':
-            # Gear first: it sits inside the row, so a hit there must
+            # The chips inside the row come first: a hit on one must not
+            # also re-activate (or rename) the style underneath it. The
+            # move operator acts on the active style, which is the only
+            # row that carries the chips.
+            for a_rect, direction in ((entry[6], 'UP'), (entry[7], 'DOWN')):
+                if a_rect is not None and point_in_rect(mx, my, a_rect):
+                    try:
+                        bpy.ops.hb_face_frame.move_cabinet_style(
+                            direction=direction)
+                    except Exception as ex:
+                        print('Home Builder: move style failed: %s' % ex)
+                    _tag()
+                    return True
+            # Gear next: it sits inside the row, so a hit there must
             # not also re-activate the style underneath it.
             if point_in_rect(mx, my, entry[5]):
                 bpy.ops.home_builder.cabinet_style_settings(
