@@ -8355,6 +8355,36 @@ class Face_Frame_Bay_Props(PropertyGroup):
         name="Unlock Height", default=False,
         update=_update_cabinet_dim,
     )  # type: ignore
+    # Back type for THIS bay, over the cabinet's own back. Backs are a
+    # cabinet-level setting by default; a bay that carries its own is
+    # built at its own depth, which is what makes a run of bays at
+    # different depths read right from behind. WORKING_FF also drops the
+    # carcass back, since a working front needs the bay open behind it.
+    # The textured backs (beadboard / shiplap / v-groove / flush X) stay
+    # cabinet-level for now - they are built by a different reconciler.
+    back_condition: EnumProperty(
+        name="Back Type",
+        description="Back construction for this bay. Cabinet Default "
+                    "follows the cabinet's own back",
+        items=[
+            ('DEFAULT', "Cabinet Default",
+             "Follow the cabinet's back type"),
+            ('UNFINISHED', "Unfinished",
+             "Plain carcass back, nothing applied"),
+            ('FINISHED', "Finished",
+             "Finished panel applied over this bay's back"),
+            ('PANELED', "Paneled",
+             "Applied panel with rails and stiles on this bay's back"),
+            ('FALSE_FF', "False Face Frame",
+             "Applied frame with non-working fronts on this bay's back"),
+            ('WORKING_FF', "Working Face Frame",
+             "Applied frame with working fronts on this bay's back, for "
+             "access from behind. The carcass back is left off"),
+        ],
+        default='DEFAULT',
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
     unlock_depth: BoolProperty(
         name="Unlock Depth", default=False,
         update=_update_cabinet_dim,

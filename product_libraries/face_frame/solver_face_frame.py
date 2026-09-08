@@ -343,6 +343,7 @@ class FaceFrameLayout:
             # from finish stock rather than being lined with an applied
             # 1/4 panel - see _bay_finish_carcass.
             'finish_carcass':     _bay_finish_carcass(bp, tree),
+            'back_condition':     getattr(bp, 'back_condition', 'DEFAULT'),
             'tree':               tree,
         }
 
@@ -465,6 +466,7 @@ class FaceFrameLayout:
             'finish_bay_flush':   False,
             'finish_bay_flush_depth': 0.0,
             'finish_carcass':     False,
+            'back_condition':     'DEFAULT',
             'tree':               None,
         }
 
@@ -2785,7 +2787,23 @@ def _carcass_back_passthrough(layout, gap_index):
         return False
     if bool(bay_a.get('finish_carcass')) != bool(bay_b.get('finish_carcass')):
         return False
+    # A bay carrying its own back type gets its own panel: the applied
+    # back is built one per segment, and a working front behind a bay
+    # takes the carcass back away from that bay alone.
+    if bay_back_condition(layout, gap_index) != bay_back_condition(
+            layout, gap_index + 1):
+        return False
     return True
+
+
+def bay_back_condition(layout, bay_index):
+    """The back type in force for one bay: its own if it carries one,
+    otherwise the cabinet's."""
+    bay = layout.bays[bay_index]
+    own = bay.get('back_condition', 'DEFAULT')
+    if own and own != 'DEFAULT':
+        return own
+    return layout.b_fin_end
 
 
 def carcass_back_segments(layout):
@@ -2801,6 +2819,10 @@ def carcass_back_segments(layout):
         # Passthrough breaks at bays with remove_carcass, so flagged bays
         # arrive as (i, i) segments we drop.
         if first_bay.get('remove_carcass'):
+            continue
+        # A working face frame on this bay's back is a real front you
+        # open, so the bay cannot be closed off behind it.
+        if bay_back_condition(layout, start) == 'WORKING_FF':
             continue
         left_x, right_x = _segment_x_bounds(layout, start, end)
         # A FINISHED end is notched for the back (back_notch_depth), so
@@ -2864,8 +2886,56 @@ def carcass_back_segments(layout):
             # Segments break at finish boundaries, so the start bay
             # speaks for the whole panel.
             'finished':        bool(first_bay.get('finish_carcass')),
+            'back_condition':  bay_back_condition(layout, start),
         })
     return segments
+
+
+def applied_back_segments(layout):
+    """Where the applied back panels go, one per stretch of bays that
+    share a back type and a depth.
+
+    The carcass back segments already break on everything that matters
+    here - depth, floor and ceiling heights, and now the back type - so
+    they are the spans the applied panels follow. A bay whose back is a
+    working face frame has no carcass back at all, so its span is
+    rebuilt from the bay bounds instead.
+
+    Each entry carries the plane the panel sits on (``y``, the outer
+    face of that stretch's back), its X span, its Z range and the
+    condition to build. Only conditions that produce an applied panel
+    are returned; the caller decides what to do with each.
+    """
+    out = []
+    for start, end in _compute_segments(layout, _carcass_back_passthrough):
+        first_bay = layout.bays[start]
+        if first_bay.get('remove_carcass'):
+            continue
+        condition = bay_back_condition(layout, start)
+        left_x, right_x = _segment_x_bounds(layout, start, end)
+        # An applied back covers the cabinet's outer face, so a segment
+        # reaching a cabinet end runs out to it rather than stopping at
+        # the carcass side. With one segment this is the full-width span
+        # the cabinet-wide panel has always used.
+        if start == 0:
+            left_x = 0.0
+        if end == layout.bay_count - 1:
+            right_x = layout.dim_x
+        out.append({
+            'start_bay':  start,
+            'end_bay':    end,
+            'condition':  condition,
+            'x':          left_x,
+            'right_x':    right_x,
+            # Outer face of this stretch's back: the panel hangs on it.
+            'y':          -layout.dim_y + first_bay['depth'],
+            # Floor to cabinet top, as the cabinet-wide applied back has
+            # always run - it covers the toe-kick band at the bottom.
+            'z':          0.0,
+            'top_z':      layout.dim_z,
+            'width':      right_x - left_x,
+        })
+    return out
 
 
 def _top_stretcher_passthrough(layout, gap_index):

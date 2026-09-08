@@ -1021,6 +1021,12 @@ def draw_bay_properties(layout, bay_obj):
     field.prop(bp, 'depth', text="Depth")
     lock_icon = 'UNLOCKED' if bp.unlock_depth else 'LOCKED'
     depth_row.prop(bp, 'unlock_depth', text="", icon=lock_icon)
+
+    # Back type for this bay. Cabinet Default follows the cabinet's own
+    # back; anything else is built on THIS bay's back plane, which is
+    # what makes a run of bays at different depths read right from
+    # behind. A working face frame also opens the bay from behind.
+    col.prop(bp, 'back_condition', text="Back Type")
     col.separator()
     cab_type = bay_obj.parent.face_frame_cabinet.cabinet_type if bay_obj.parent else ''
     if cab_type in ('BASE', 'TALL', 'LAP_DRAWER'):

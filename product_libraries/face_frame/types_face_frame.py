@@ -521,6 +521,10 @@ def _shiplap_vertical(cab_props):
 # by a cabinet to serve as its left/right/back finished end. Drives
 # reconciliation (find / resize / remove on cabinet recalc).
 TAG_APPLIED_PANEL_SIDE = 'hb_applied_to_cabinet_side'
+# Which panel this is, where a side can carry more than one:
+# 'LEFT', 'RIGHT', or 'BACK:<start bay>' for the per-segment
+# applied backs.
+TAG_APPLIED_PANEL_KEY = 'hb_applied_panel_key'
 
 # Cabinet-side finished_end_condition values that spawn an applied panel
 # child. All three spawn the same face-frame panel; they differ in the
@@ -7581,25 +7585,42 @@ class FaceFrameCabinet(GeoNodeCage):
             'BACK':  cab.back_finished_end_condition,
         }
 
-        # Index existing applied panels by side. Multiple per side
+        # What to build, as (key, side, condition, segment). A side
+        # makes one panel; the BACK makes one per stretch of bays that
+        # share a back type and a depth, so a bay carrying its own back
+        # gets its own panel at its own depth.
+        back_segments = solver.applied_back_segments(layout)
+        targets = []
+        for side in ('LEFT', 'RIGHT'):
+            targets.append((side, side, side_conditions[side], None))
+        for seg in back_segments:
+            targets.append(('BACK:%d' % seg['start_bay'], 'BACK',
+                            seg['condition'], seg))
+
+        # Index existing panels by that same key. Multiple per key
         # shouldn't happen, but if it does we keep the first and remove
-        # extras to converge on a clean state.
+        # extras to converge on a clean state. Panels whose key is gone
+        # (a segment that merged away, or a back type turned off) go
+        # with them.
+        wanted_keys = {key for key, _s, _c, _seg in targets
+                       if _c in APPLIED_PANEL_END_TYPES}
         existing = {}
         extras = []
         for child in self.obj.children:
             side = child.get(TAG_APPLIED_PANEL_SIDE)
             if not side:
                 continue
-            if side in existing:
+            key = child.get(TAG_APPLIED_PANEL_KEY) or side
+            if key in existing or key not in wanted_keys:
                 extras.append(child)
             else:
-                existing[side] = child
+                existing[key] = child
         for child in extras:
             _remove_root_with_children(child)
 
-        for side, condition in side_conditions.items():
+        for key, side, condition, segment in targets:
             wants_panel = condition in APPLIED_PANEL_END_TYPES
-            panel_obj = existing.get(side)
+            panel_obj = existing.get(key)
 
             if not wants_panel:
                 if panel_obj is not None:
@@ -7614,6 +7635,7 @@ class FaceFrameCabinet(GeoNodeCage):
                 panel_obj = panel.obj
                 panel_obj.parent = self.obj
                 panel_obj[TAG_APPLIED_PANEL_SIDE] = side
+            panel_obj[TAG_APPLIED_PANEL_KEY] = key
 
             # Stamp the parent cabinet's style onto the panel root so the
             # panel's own recalc tail (_reapply_cabinet_style) materials its
@@ -7642,6 +7664,15 @@ class FaceFrameCabinet(GeoNodeCage):
             location, rotation_z, width, height, depth = (
                 applied_panel_geometry(layout, side)
             )
+            if segment is not None:
+                # Rotated 180, the panel's origin is its RIGHT end and
+                # its width runs back toward -X. The plane is this
+                # stretch's own back face, which is what puts a shallow
+                # bay's panel on the bay rather than out at the cabinet
+                # back.
+                location = (segment['right_x'], segment['y'], segment['z'])
+                width = segment['width']
+                height = segment['top_z'] - segment['z']
             ext_bl, ext_br = self._back_ext_effective()
             # Finished-end overhang (applied panel). BACK is rotated 180
             # so panel +X runs cabinet -X from origin x=dim_x: extend_left
@@ -7657,16 +7688,25 @@ class FaceFrameCabinet(GeoNodeCage):
                 # right return shifts the origin -X and narrows; a left return
                 # (far end) only narrows - mirroring the extend_r / extend_l
                 # grows below.
-                ret_l = self._finished_side_return_width(cab, layout, 'LEFT')
-                ret_r = self._finished_side_return_width(cab, layout, 'RIGHT')
+                # These are cabinet-end treatments, so with the back split
+                # into segments only the segment that reaches that end
+                # takes them; an internal edge meets its neighbour.
+                at_left = segment is None or segment['start_bay'] == 0
+                at_right = (segment is None
+                            or segment['end_bay'] == len(layout.bays) - 1)
+                ret_l = (self._finished_side_return_width(cab, layout, 'LEFT')
+                         if at_left else 0.0)
+                ret_r = (self._finished_side_return_width(cab, layout, 'RIGHT')
+                         if at_right else 0.0)
+                ext_l = cab.back_finished_extend_left if at_left else 0.0
+                ext_r = cab.back_finished_extend_right if at_right else 0.0
+                bl = ext_bl if at_left else 0.0
+                br = ext_br if at_right else 0.0
                 # Splayed back extension widens the back plane the same
                 # way it widens the carcass / finished back.
-                location = (location[0] + cab.back_finished_extend_right
-                            - ret_r + ext_br,
+                location = (location[0] + ext_r - ret_r + br,
                             location[1], location[2])
-                width = (width + cab.back_finished_extend_left
-                         + cab.back_finished_extend_right - ret_l - ret_r
-                         + ext_bl + ext_br)
+                width = (width + ext_l + ext_r - ret_l - ret_r + bl + br)
             elif side == 'LEFT':
                 eb = cab.left_side_finished_extend_back
                 location = (location[0], location[1] + eb, location[2])
@@ -7764,34 +7804,39 @@ class FaceFrameCabinet(GeoNodeCage):
     # Applied finished back (single 3/4 part layered on the carcass back)
     # =====================================================================
     def _reconcile_finished_back(self, layout):
-        """Spawn / resize / remove the FINISHED back applied panel.
+        """Spawn / resize / remove the FINISHED back panels.
 
-        Triggered only when back_finished_end_condition == 'FINISHED'.
-        The carcass back itself stays at its normal back_thickness;
-        this method just adds (or removes) a single 3/4 panel sitting
-        directly behind it. Same delete-on-condition-change /
-        resize-in-place pattern as the applied panels - the part holds
-        no user state, so reuse-when-present keeps it stable across
-        recalcs without rebuilding.
+        One 3/4 panel per stretch of bays whose back is FINISHED, laid
+        directly on that stretch's carcass back - so a bay set finished
+        on its own, or a run of bays at a different depth, carries its
+        panel on its own plane rather than out at the cabinet back. With
+        the whole cabinet finished that is a single full-width panel,
+        which is what it has always been.
 
-        Spans the full cabinet width (less any per-side return closeout,
-        which trims that end so the back butts the return post) and full
-        cabinet height. Refining for stepped cabinets or excluding the toe
-        kick is deferred.
+        The carcass back itself stays at its normal back_thickness. Same
+        delete-on-condition-change / resize-in-place pattern as the
+        applied panels - the part holds no user state, so
+        reuse-when-present keeps it stable across recalcs without
+        rebuilding. Excluding the toe kick is still deferred.
         """
+        segments = [seg for seg in solver.applied_back_segments(layout)
+                    if seg['condition'] == 'FINISHED']
+        wanted = {seg['start_bay'] for seg in segments}
+        by_bay = {}
+        for child in list(self.obj.children):
+            if child.get('hb_part_role') != PART_ROLE_FINISHED_BACK:
+                continue
+            bay = child.get('hb_segment_start_bay')
+            if bay not in wanted or bay in by_bay:
+                bpy.data.objects.remove(child, do_unlink=True)
+                continue
+            by_bay[bay] = child
+        for seg in segments:
+            self._build_finished_back(layout, seg, by_bay.get(seg['start_bay']))
+
+    def _build_finished_back(self, layout, segment, existing):
+        """One FINISHED back panel, on this segment's own back plane."""
         cab = self.obj.face_frame_cabinet
-        wants = cab.back_finished_end_condition == 'FINISHED'
-        existing = next(
-            (c for c in self.obj.children
-             if c.get('hb_part_role') == PART_ROLE_FINISHED_BACK),
-            None,
-        )
-
-        if not wants:
-            if existing is not None:
-                bpy.data.objects.remove(existing, do_unlink=True)
-            return
-
         thickness = inch(0.75)
         if existing is None:
             part = CabinetPart()
@@ -7807,6 +7852,7 @@ class FaceFrameCabinet(GeoNodeCage):
             part.obj.rotation_euler.x = math.radians(90)
             part.obj.rotation_euler.y = math.radians(-90)
             part.set_input('Mirror Y', True)
+            part.obj['hb_segment_start_bay'] = segment['start_bay']
             existing = part.obj
         else:
             part = GeoNodeCutpart(existing)
@@ -7815,18 +7861,29 @@ class FaceFrameCabinet(GeoNodeCage):
         # (-X) / right (+X) end. Width spans +X from origin x=0, so
         # extending the left end shifts the origin -X and widens; the
         # right end just widens. Negative values inset that edge.
-        ext_l = cab.back_finished_extend_left
-        ext_r = cab.back_finished_extend_right
+        # Both are cabinet-end treatments, so a segment that stops short
+        # of an end takes neither there - it meets its neighbour.
+        at_left = segment['start_bay'] == 0
+        at_right = segment['end_bay'] == len(layout.bays) - 1
+        ext_l = cab.back_finished_extend_left if at_left else 0.0
+        ext_r = cab.back_finished_extend_right if at_right else 0.0
         # Shorten the back at each end that carries a return closeout so it
         # butts the return post's outer face instead of running behind it.
         # The return panel's outer face sits `return width` in from that
         # side's outer face, so trimming the back by the same amount (and
         # shifting the origin +X for a left return) lands them flush.
-        ret_l = self._finished_side_return_width(cab, layout, 'LEFT')
-        ret_r = self._finished_side_return_width(cab, layout, 'RIGHT')
-        existing.location = (-ext_l + ret_l, thickness, 0.0)
+        ret_l = (self._finished_side_return_width(cab, layout, 'LEFT')
+                 if at_left else 0.0)
+        ret_r = (self._finished_side_return_width(cab, layout, 'RIGHT')
+                 if at_right else 0.0)
+        # The panel lies on this segment's back face: y = that plane plus
+        # its own thickness, since Mirror Y extrudes it back toward the
+        # carcass.
+        existing.location = (segment['x'] - ext_l + ret_l,
+                             segment['y'] + thickness, 0.0)
         part.set_input('Length',    layout.dim_z)
-        part.set_input('Width',     layout.dim_x + ext_l + ext_r - ret_l - ret_r)
+        part.set_input('Width',
+                       segment['width'] + ext_l + ext_r - ret_l - ret_r)
         part.set_input('Thickness', thickness)
 
     def _extend_finished_side_panels(self, layout):

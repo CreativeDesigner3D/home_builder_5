@@ -272,6 +272,26 @@ class HOME_BUILDER_MT_face_frame_cabinet_group_commands(bpy.types.Menu):
                         text="Ungroup Cabinet", icon='GROUP')
 
 
+class HOME_BUILDER_MT_face_frame_bay_back_type(bpy.types.Menu):
+    """Back type for the picked bay. Cabinet Default follows the
+    cabinet's back; the rest are built on this bay's own back plane."""
+    bl_label = "Back Type"
+
+    def draw(self, context):
+        layout = self.layout
+        bay_obj = context.active_object
+        bp = getattr(bay_obj, 'face_frame_bay', None) if bay_obj else None
+        if bp is None:
+            layout.label(text="No bay selected", icon='INFO')
+            return
+        for item in bp.bl_rna.properties['back_condition'].enum_items:
+            op = layout.operator("hb_face_frame.set_bay_back_type",
+                                 text=item.name,
+                                 icon=('CHECKMARK' if bp.back_condition
+                                       == item.identifier else 'NONE'))
+            op.back_condition = item.identifier
+
+
 class HOME_BUILDER_MT_face_frame_bay_commands(bpy.types.Menu):
     """Right-click menu for a face frame bay cage."""
     bl_label = "Face Frame Bay Commands"
@@ -294,6 +314,9 @@ class HOME_BUILDER_MT_face_frame_bay_commands(bpy.types.Menu):
         layout.separator()
         layout.operator("hb_face_frame.finish_bay_prompts",
                         text="Finish Bay...", icon='SHADING_RENDERED')
+        # What closes this bay at the back, over the cabinet's own back.
+        layout.menu("HOME_BUILDER_MT_face_frame_bay_back_type",
+                    text="Back Type", icon='MOD_SOLIDIFY')
         # Under-cabinet appliance (uppers only): a microwave or a
         # short vent hood hanging below the bay.
         if cabinet_type == 'UPPER':
@@ -1179,6 +1202,7 @@ classes = (
     HOME_BUILDER_MT_face_frame_leg_product_commands,
     HOME_BUILDER_MT_face_frame_cabinet_group_commands,
     HOME_BUILDER_MT_face_frame_bay_commands,
+    HOME_BUILDER_MT_face_frame_bay_back_type,
     HOME_BUILDER_MT_face_frame_part_commands,
     HOME_BUILDER_MT_face_frame_interior_part_commands,
     HOME_BUILDER_MT_face_frame_drawer_box_construction,

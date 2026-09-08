@@ -4543,6 +4543,49 @@ def _bay_is_flush_kick(bay_obj):
     return bay_obj.face_frame_bay.kick_height <= _FLUSH_KICK_EPS
 
 
+class hb_face_frame_OT_set_bay_back_type(bpy.types.Operator):
+    """Set the back type on the selected bays.
+
+    Cabinet Default hands the bay back to the cabinet's own back type;
+    anything else is built on that bay's back plane, so bays at
+    different depths carry their backs where they actually are. A
+    working face frame also leaves the carcass back off, since the bay
+    has to open from behind.
+    """
+    bl_idname = "hb_face_frame.set_bay_back_type"
+    bl_label = "Set Bay Back Type"
+    bl_description = "Set what closes the back of the selected bay(s)"
+    bl_options = {'UNDO'}
+
+    back_condition: bpy.props.StringProperty(default='DEFAULT')  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj is not None and obj.get(types_face_frame.TAG_BAY_CAGE)
+
+    def execute(self, context):
+        bays = [o for o in context.selected_objects
+                if o.get(types_face_frame.TAG_BAY_CAGE)]
+        active = context.active_object
+        if (active is not None and active.get(types_face_frame.TAG_BAY_CAGE)
+                and active not in bays):
+            bays.append(active)
+        if not bays:
+            self.report({'WARNING'}, "No bay selected")
+            return {'CANCELLED'}
+        for bay in bays:
+            try:
+                # The write carries its own recalc.
+                bay.face_frame_bay.back_condition = self.back_condition
+            except TypeError:
+                self.report({'WARNING'},
+                            f"Unknown back type: {self.back_condition}")
+                return {'CANCELLED'}
+        self.report({'INFO'}, f"Back type set on {len(bays)} bay(s)")
+        return {'FINISHED'}
+
+
 class hb_face_frame_OT_toggle_flush_toe_kick(bpy.types.Operator):
     """Toggle flush toe kick construction on the selected bays.
 
@@ -6661,6 +6704,7 @@ classes = (
     hb_face_frame_OT_change_opening,
     hb_face_frame_OT_change_bay,
     hb_face_frame_OT_toggle_flush_toe_kick,
+    hb_face_frame_OT_set_bay_back_type,
     hb_face_frame_OT_add_pullout_accessory,
     hb_face_frame_OT_add_interior_accessory,
     hb_face_frame_OT_accessory_menu,
