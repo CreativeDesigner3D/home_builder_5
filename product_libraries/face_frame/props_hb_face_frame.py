@@ -8512,6 +8512,17 @@ class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
                     "the floor that needs no spacer assembly",
         default=False, update=_update_cabinet_dim,
     )  # type: ignore
+    # How far up the opening the spacer ladders run. 0 = the full
+    # opening height, which is how they have always built. A typed
+    # height stops them short so what sits above - adjustable shelves,
+    # say - clears them instead of being notched around them.
+    rollout_spacer_height: FloatProperty(
+        name="Spacer Ladder Height",
+        description="Height the side spacer ladders run to. 0 runs them "
+                    "the full height of the opening",
+        default=0.0, min=0.0, unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
     # Finger scoop, the notch in the front of a rollout box that gives
     # you somewhere to pull. It is how these are built, so it is ON by
     # default and an existing job picks it up the next time its cabinet

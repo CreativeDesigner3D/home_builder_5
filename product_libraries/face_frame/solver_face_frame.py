@@ -4942,8 +4942,19 @@ def _assembly_side_geometry(rect, cage_dim_x):
     return item_x, item_dx, spacer_l, spacer_r
 
 
+def _spacer_length(rect, item):
+    """How tall the spacer ladders run. 0 (the default) is the full
+    opening height; a typed height stops them short so whatever sits
+    above them clears them instead of being notched around them."""
+    cage_dim_z = rect['cage_dim_z']
+    typed = getattr(item, 'rollout_spacer_height', 0.0) or 0.0
+    if typed <= 0.0:
+        return cage_dim_z
+    return min(typed, cage_dim_z)
+
+
 def _assembly_spacers(rect, spacer_height, kind, role, name_prefix,
-                      left_thickness, right_thickness):
+                      left_thickness, right_thickness, length=None):
     """Four vertical spacer parts for a pullout/rollout assembly. Origin
     convention for VERTICAL parts: position.y is the back face of the
     spacer's Y extent (mirror_y at materialize time fans the width
@@ -4981,7 +4992,8 @@ def _assembly_spacers(rect, spacer_height, kind, role, name_prefix,
             'name':         f'{name_prefix} {side_name}',
             'orientation':  'VERTICAL',
             'position':     (x, y, 0.0),
-            'dims':         (cage_dim_z, spacer_height, thickness),
+            'dims':         (cage_dim_z if length is None else length,
+                             spacer_height, thickness),
         })
     return out
 
@@ -5018,6 +5030,7 @@ def _pullout_shelf_descriptors(rect, cage_dim_y, item):
             rect, ASSEMBLY_SPACER_WIDTH, 'PULLOUT_SPACER', 'PULLOUT_SPACER',
             'Pullout Spacer',
             left_thickness=spacer_l, right_thickness=spacer_r,
+            length=_spacer_length(rect, item),
         ))
     return out
 
@@ -5071,6 +5084,7 @@ def _rollout_descriptors(rect, cage_dim_y, item, item_index=-1):
             rect, ASSEMBLY_SPACER_WIDTH, 'ROLLOUT_SPACER', 'ROLLOUT_SPACER',
             'Rollout Spacer',
             left_thickness=spacer_l, right_thickness=spacer_r,
+            length=_spacer_length(rect, item),
         ))
     return out
 
