@@ -9094,6 +9094,30 @@ class Face_Frame_Opening_Props(PropertyGroup):
     # box itself is wiped and rebuilt every recalc, so the user's size
     # lives here on the persistent opening cage. An un-overridden axis
     # keeps the auto fit (opening hole minus the scene clearances).
+    # A rollout riding above the drawer box, behind the same front:
+    # one front, a drawer below and a rollout over it. The drawer box
+    # gives up the height (see _create_drawer_box_for_front), so the
+    # bottom gap no longer has to be set by hand.
+    rollout_above_drawer: BoolProperty(
+        name="Rollout Above Drawer",
+        description="Add a rollout above this drawer's box, behind the "
+                    "same front. The drawer box shortens to make room",
+        default=False, update=_update_cabinet_dim,
+    )  # type: ignore
+    rollout_above_height: FloatProperty(
+        name="Rollout Height",
+        description="Height of the rollout box above the drawer",
+        default=units.inch(4.0), min=0.0, unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    rollout_above_gap: FloatProperty(
+        name="Gap Above Drawer",
+        description="Clear space between the top of the drawer box and "
+                    "the underside of the rollout",
+        default=units.inch(1.0), min=0.0, unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
     drawer_box_override_width: BoolProperty(
         name="Override Width",
         description="Use the entered drawer box width instead of the auto fit (opening minus side clearances)",

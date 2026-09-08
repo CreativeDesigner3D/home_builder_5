@@ -12101,6 +12101,17 @@ class FaceFrameCabinet(GeoNodeCage):
             if stock_dz is not None:
                 box_dz = min(stock_dz, opening_dz - bottom_clr)
 
+        # A rollout riding above this drawer takes the top of the
+        # opening: the reserve is its height, the gap under it, and the
+        # top clearance the box would have had anyway. Applied before
+        # the explicit overrides so a typed height still wins - the
+        # drafter who types one is answering this question themselves.
+        if op_props is not None and getattr(op_props,
+                                            'rollout_above_drawer', False):
+            reserve = (op_props.rollout_above_height
+                       + op_props.rollout_above_gap + top_clr)
+            box_dz = min(box_dz, cage_z - rt - rb - bottom_clr - reserve)
+
         # Per-opening size overrides (right-click the box -> Drawer Box
         # Size...). Overridden axes replace the clearance-derived size,
         # clamped so the box can't exceed the opening hole or run past
@@ -12390,6 +12401,12 @@ class FaceFrameCabinet(GeoNodeCage):
                         if preset == 'CUSTOM':
                             box.height = item.rollout_height
 
+        # The rollout that rides above a drawer is a normal ROLLOUT
+        # interior item - it just belongs to the cabinet rather than to
+        # the user, so it is kept in step here and taken away again when
+        # the option goes off.
+        self._reconcile_rollout_above_drawer(opening_obj, rect)
+
         # Floating-shelf PRODUCTS dropped into this opening (library
         # placement with the cursor over the opening) auto-fit its span
         # like the adjustable shelves spawned below.
@@ -12427,6 +12444,75 @@ class FaceFrameCabinet(GeoNodeCage):
                 # TRAY_DIVIDER, TRAY_LOCKED_SHELF, VANITY_SHELF,
                 # VANITY_SUPPORT.
                 self._create_interior_mesh_part(opening_obj, desc)
+
+    # Marks the ROLLOUT interior item this cabinet owns, so it can be
+    # told apart from one the user added and taken away again when the
+    # option goes off.
+    ROLLOUT_ABOVE_MARK = 'managed_rollout_above'
+
+    def _reconcile_rollout_above_drawer(self, opening_obj, rect):
+        """Keep the rollout that rides above a drawer in step with the
+        opening's option.
+
+        It is a normal ROLLOUT interior item - same box, same slides,
+        same spacer ladders - so everything downstream (the cutlist, the
+        drawings, the open/close command) treats it as the rollout it
+        is. The only difference is that the cabinet owns it: its height
+        comes from the opening's rollout_above_height and it sits at the
+        top of the opening, with the drawer box below shortened to suit
+        (see _create_drawer_box_for_front).
+
+        Writes here re-enter recalc; the _RECALCULATING guard absorbs
+        that, the same way the rollout-box migration above does.
+        """
+        op_props = getattr(opening_obj, 'face_frame_opening', None)
+        if op_props is None:
+            return
+        wants = (getattr(op_props, 'rollout_above_drawer', False)
+                 and op_props.front_type in ('DRAWER_FRONT', 'PULLOUT'))
+
+        managed = [item for item in op_props.interior_items
+                   if item.get(self.ROLLOUT_ABOVE_MARK)]
+        if not wants:
+            for item in managed:
+                index = list(op_props.interior_items).index(item)
+                op_props.interior_items.remove(index)
+            return
+
+        if managed:
+            item = managed[0]
+            # More than one can only come from a duplicate; keep the first.
+            for extra in managed[1:]:
+                op_props.interior_items.remove(
+                    list(op_props.interior_items).index(extra))
+        else:
+            item = op_props.interior_items.add()
+            item[self.ROLLOUT_ABOVE_MARK] = True
+            item.kind = 'ROLLOUT'
+            item.qty = 1
+
+        cage_z = rect['cage_dim_z']
+        height = op_props.rollout_above_height
+        scene_props = bpy.context.scene.hb_face_frame
+        top_clr = scene_props.drawer_box_top_clearance
+        # The rollout hangs at the top of the opening; the drawer box
+        # takes what is left under it.
+        bottom_gap = max(cage_z - top_clr - height, 0.0)
+
+        if item.kind != 'ROLLOUT':
+            item.kind = 'ROLLOUT'
+        if item.qty != 1:
+            item.qty = 1
+        if len(item.rollout_boxes) != 1:
+            item.rollout_boxes.clear()
+            item.rollout_boxes.add()
+        box = item.rollout_boxes[0]
+        if box.height_preset != 'CUSTOM':
+            box.height_preset = 'CUSTOM'
+        if abs(box.height - height) > 1e-6:
+            box.height = height
+        if abs(item.bottom_gap - bottom_gap) > 1e-6:
+            item.bottom_gap = bottom_gap
 
     def _fit_opening_floating_shelves(self, opening_obj, rect):
         """Auto-fit floating-shelf PRODUCTS parented into this opening.

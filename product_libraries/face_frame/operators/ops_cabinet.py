@@ -2174,6 +2174,61 @@ class hb_face_frame_OT_drawer_box_prompts(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class hb_face_frame_OT_rollout_above_drawer_prompts(bpy.types.Operator):
+    """Add a rollout above this drawer, behind the same front.
+
+    Right-click entry on a drawer box, alongside the other box options.
+    Like them the settings live on the owning opening (boxes are wiped
+    and rebuilt every recalc) and live-bind, so the drawer box shortens
+    and the rollout appears as the user types.
+    """
+    bl_idname = "hb_face_frame.rollout_above_drawer_prompts"
+    bl_label = "Rollout Above Drawer"
+    bl_description = ("Add a rollout above this drawer's box, behind the "
+                      "same front. The drawer box shortens to make room")
+    bl_options = {'UNDO'}
+
+    opening_name: bpy.props.StringProperty(
+        default='', options={'HIDDEN', 'SKIP_SAVE'},
+    )  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        if obj is None or not obj.get('IS_DRAWER_BOX'):
+            return False
+        return _find_owning_opening(obj) is not None
+
+    def invoke(self, context, event):
+        opening_obj = _find_owning_opening(context.active_object)
+        if opening_obj is None:
+            self.report({'WARNING'}, "No owning opening found")
+            return {'CANCELLED'}
+        self.opening_name = opening_obj.name
+        return context.window_manager.invoke_props_dialog(self, width=300)
+
+    def draw(self, context):
+        layout = self.layout
+        opening_obj = bpy.data.objects.get(self.opening_name)
+        if opening_obj is None:
+            layout.label(text="Opening not found", icon='INFO')
+            return
+        op_props = opening_obj.face_frame_opening
+        col = layout.column(align=True)
+        col.prop(op_props, 'rollout_above_drawer', text="Rollout Above Drawer")
+        sub = col.column(align=True)
+        sub.enabled = op_props.rollout_above_drawer
+        sub.prop(op_props, 'rollout_above_height', text="Rollout Height")
+        sub.prop(op_props, 'rollout_above_gap', text="Gap Above Drawer")
+        col.separator()
+        col.label(text="The drawer box shortens to fit underneath",
+                  icon='INFO')
+
+    def execute(self, context):
+        # Live-bound via the opening props' update callbacks.
+        return {'FINISHED'}
+
+
 class hb_face_frame_OT_sink_duo_drawer_prompts(bpy.types.Operator):
     """Toggle / size the sink duo (U-shaped) option on a drawer box.
 
@@ -6689,6 +6744,7 @@ classes = (
     hb_face_frame_OT_finish_bay_prompts,
     hb_face_frame_OT_drawer_box_prompts,
     hb_face_frame_OT_sink_duo_drawer_prompts,
+    hb_face_frame_OT_rollout_above_drawer_prompts,
     hb_face_frame_OT_sink_duo_rollout_prompts,
     hb_face_frame_OT_split_opening,
     hb_face_frame_OT_mid_stile_prompts,
