@@ -103,6 +103,7 @@ SECTIONS = (
                   ("Floating Shelf", "Floating Shelves"),
                   ("Valance", "Valance"))),
             ("", (("Wood Top", "Wood Top"), ("Mantle", "Mantle"))),
+            ("Wrap", (("Column", "Column"), ("Beam", "Beam"))),
         ),
     },
     {

@@ -5558,6 +5558,36 @@ class hb_face_frame_OT_valance_prompts(bpy.types.Operator):
         ui_face_frame.draw_valance_product(self.layout, root)
 
 
+class hb_face_frame_OT_column_beam_properties(bpy.types.Operator):
+    """Edit a column or beam wrap: which sides are built, framed sides,
+    the false ceiling and the order options."""
+    bl_idname = "hb_face_frame.column_beam_properties"
+    bl_label = "Column / Beam Properties"
+    bl_description = "Edit the wrap's sides, framing and options"
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        root = types_face_frame.find_cabinet_root(context.active_object)
+        return root is not None and bool(root.get('IS_COLUMN_BEAM_PRODUCT'))
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self, width=360)
+
+    def execute(self, context):
+        return {'FINISHED'}
+
+    def draw(self, context):
+        from .. import ui_face_frame
+        root = types_face_frame.find_cabinet_root(context.active_object)
+        if root is None:
+            self.layout.label(text="No column or beam selected", icon='INFO')
+            return
+        ui_face_frame.draw_identity(self.layout, root)
+        self.layout.separator()
+        ui_face_frame.draw_column_beam_product(self.layout, root)
+
+
 class hb_face_frame_OT_duplicate_floating_shelf(bpy.types.Operator):
     """Duplicate the selected floating shelf vertically by a quantity +
     spacing. Each copy is an independent, separately-editable shelf that
@@ -6578,6 +6608,7 @@ class hb_face_frame_OT_adjust_floating_shelves(bpy.types.Operator):
 classes = (
     FloatingShelfRow,
     hb_face_frame_OT_draw_cabinet,
+    hb_face_frame_OT_column_beam_properties,
     hb_face_frame_OT_create_cabinet_group,
     hb_face_frame_OT_select_cabinet_group,
     hb_face_frame_OT_ungroup_cabinet,

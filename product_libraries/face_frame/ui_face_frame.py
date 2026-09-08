@@ -674,6 +674,72 @@ def draw_mantle_product(layout, root):
     layout.prop(mantle, 'material_thickness', text="Material Thickness")
 
 
+def draw_column_beam_product(layout, root):
+    """Column / beam prompts: the run and section, which sides are
+    built, framed sides, the false ceiling, and the order options that
+    do not change the geometry."""
+    from . import types_column_beam
+
+    cab = root.face_frame_cabinet
+    cb = root.column_beam_product
+    column = cb.orientation == 'COLUMN'
+
+    layout.prop(cb, 'orientation', expand=True)
+
+    col = layout.column(align=True)
+    if column:
+        col.prop(cab, 'height', text="Length")
+        col.prop(cab, 'width', text="Width")
+        col.prop(cab, 'depth', text="Depth")
+    else:
+        col.prop(cab, 'width', text="Length")
+        col.prop(cab, 'depth', text="Depth")
+        col.prop(cab, 'height', text="Height")
+    col.prop(cb, 'material_thickness', text="Material Thickness")
+
+    faces = types_column_beam.faces_for(cb.orientation)
+
+    box = layout.box()
+    built = sum(1 for side, _framed, _label in faces if getattr(cb, side))
+    box.label(text="Sides Built: %d" % built)
+    row = box.row(align=True)
+    for side, _framed, label in faces:
+        row.prop(cb, side, text=label, toggle=True)
+
+    fbox = layout.box()
+    fbox.label(text="Framed Sides")
+    frow = fbox.row(align=True)
+    for side, framed, label in faces:
+        sub = frow.row(align=True)
+        sub.enabled = getattr(cb, side)
+        sub.prop(cb, framed, text=label, toggle=True)
+    any_framed = any(getattr(cb, framed) and getattr(cb, side)
+                     for side, framed, _label in faces)
+    fsub = fbox.column(align=True)
+    fsub.enabled = any_framed
+    fsub.prop(cb, 'panel_count', text="Panels")
+    fsub.prop(cb, 'frame_stile_width', text="Stile Width")
+    fsub.prop(cb, 'frame_rail_width', text="Rail Width")
+    fsub.prop(cb, 'frame_member_thickness', text="Frame Thickness")
+
+    if not column:
+        cbox = layout.box()
+        cbox.prop(cb, 'include_false_ceiling', text="False Ceiling")
+        csub = cbox.column(align=True)
+        csub.enabled = cb.include_false_ceiling
+        csub.prop(cb, 'false_ceiling_recess', text="Recess Depth")
+        csub.prop(cb, 'false_ceiling_thickness', text="Thickness")
+
+    obox = layout.box()
+    obox.label(text="Options (noted on the order, not drawn)")
+    ocol = obox.column(align=True)
+    ocol.prop(cb, 'butt_seam_sides', text="Butt Seam Sides")
+    ocol.prop(cb, 'random_staggered_sides', text="Staggered Seam Sides")
+    orow = obox.row(align=True)
+    orow.prop(cb, 'angled_end_start', text="Angled Start", toggle=True)
+    orow.prop(cb, 'angled_end_end', text="Angled End", toggle=True)
+
+
 def draw_valance_product(layout, root):
     """Valance prompts: dimensions, finished ends, and the cover board.
     Shown in the right-click popup. Height (Dim Z) is the valance

@@ -15,6 +15,7 @@ from . import bay_presets
 from . import cabinet_column
 from . import types_face_frame
 from . import types_face_frame_corner
+from . import types_column_beam
 from .operators import ops_part_commands
 from ... import accessory_registry, units
 
@@ -1031,6 +1032,19 @@ class HOME_BUILDER_MT_face_frame_valance_commands(bpy.types.Menu):
                         text="Delete Valance", icon='X')
 
 
+class HOME_BUILDER_MT_face_frame_column_beam_commands(bpy.types.Menu):
+    """Right-click menu for a column or beam wrap root."""
+    bl_label = "Column / Beam Commands"
+
+    def draw(self, context):
+        layout = self.layout
+        layout.operator("hb_face_frame.column_beam_properties",
+                        text="Column / Beam Properties...", icon='WINDOW')
+        layout.separator()
+        layout.operator("hb_face_frame.delete_cabinet",
+                        text="Delete Column / Beam", icon='X')
+
+
 class HOME_BUILDER_MT_face_frame_mantle_commands(bpy.types.Menu):
     """Right-click menu for a mantle root."""
     bl_label = "Mantle Commands"
@@ -1159,6 +1173,7 @@ classes = (
     HOME_BUILDER_MT_face_frame_floating_shelf_commands,
     HOME_BUILDER_MT_face_frame_valance_commands,
     HOME_BUILDER_MT_face_frame_mantle_commands,
+    HOME_BUILDER_MT_face_frame_column_beam_commands,
     HOME_BUILDER_MT_face_frame_misc_part_commands,
     HOME_BUILDER_MT_face_frame_door_part_commands,
     HOME_BUILDER_MT_face_frame_leg_product_commands,
