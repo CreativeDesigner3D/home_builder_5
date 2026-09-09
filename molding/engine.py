@@ -269,6 +269,7 @@ def _assemble_front_raw(chain, facts):
     points = []
     terminals = [None, None]
     first_straight = None
+    spans = []
 
     def _center(obj):
         fp = footprint_xy(obj)
@@ -278,6 +279,7 @@ def _assemble_front_raw(chain, facts):
     for i, obj in enumerate(chain):
         mw = obj.matrix_world
         f = facts[id(obj)]
+        start_idx = len(points)
         prev_ref = points[-1] if points else None
         next_ref = _center(chain[i + 1]) if i + 1 < n else None
 
@@ -345,7 +347,53 @@ def _assemble_front_raw(chain, facts):
             if i == n - 1:
                 terminals[1] = {'obj': obj, 'side': ordered[1][1],
                                 'back': ordered[1][2]}
+        spans.append((obj, start_idx, len(points)))
+
+    _mitre_junctions(points, spans, facts)
     return points, terminals, first_straight
+
+
+def _mitre_junctions(points, spans, facts):
+    """Clip a turning junction back to the mitre, in place.
+
+    Each member contributes its OWN front corners, so where a chain
+    turns a corner the path runs out to the last front corner of one
+    member and jogs back to the first corner of the next. Where the
+    two runs simply butt at the turn those corners coincide and there
+    is nothing to do, but a member whose body carries on past the
+    other run's front - the deep side of a blind corner - overshoots
+    by that whole amount and the sweep doubles back through its
+    neighbour. Clipping both front lines to their intersection is the
+    mitre, inside and outside corners alike.
+
+    Members on the same line are left alone: their fronts are parallel
+    and the depth jog between them is real geometry. So are corner
+    members, whose arms are already built to meet the runs on both
+    sides.
+    """
+    for (obj_a, start_a, end_a), (obj_b, start_b, end_b) in zip(
+            spans, spans[1:]):
+        if facts[id(obj_a)].get('corner') or facts[id(obj_b)].get('corner'):
+            continue
+        if end_a - start_a < 2 or end_b - start_b < 2:
+            continue
+        a0, a1 = points[end_a - 2], points[end_a - 1]
+        b0, b1 = points[start_b], points[start_b + 1]
+        if (b0 - a1).length < 1e-5:
+            continue  # already meeting - nothing to mitre
+        d1 = a1 - a0
+        d2 = b1 - b0
+        if d1.length < 1e-6 or d2.length < 1e-6:
+            continue
+        d1.normalize()
+        d2.normalize()
+        cross = d1.x * d2.y - d1.y * d2.x
+        if abs(cross) < 1e-3:
+            continue  # parallel (or near enough that the hit runs away)
+        t = ((b0.x - a1.x) * d2.y - (b0.y - a1.y) * d2.x) / cross
+        hit = a1 + d1 * t
+        points[end_a - 1] = hit
+        points[start_b] = hit.copy()
 
 
 def chain_sweep_points(chain, facts, face_offset, end_offset):
