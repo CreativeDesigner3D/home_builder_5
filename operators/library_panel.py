@@ -61,6 +61,7 @@ from ..hb_gpu_draw import (
     draw_text,
     point_in_rect,
 )
+from ..hb_gpu_ui import draw_polyline
 from ..hb_gpu_ui import (
     Theme,
     ScrollList,
@@ -96,6 +97,11 @@ PAD_X = 10
 PAD_Y = 8
 HEADER_H = 22
 HDR_BTN = 20        # the Auto Join pill and the sizes button
+# The draw-through-points mark in a tile's corner, for products that
+# offer it. Sized like the palette's settings caret: big enough to hit,
+# small enough that the thumbnail stays the picture.
+BADGE = 16
+BADGE_PAD = 3
 FILTER_H = 20
 LIB_H = 20          # the library picker row
 SECTION_H = 21      # taller, to carry FONT_SECTION
@@ -471,6 +477,32 @@ def _hit_tile(mx, my, layout):
     return None
 
 
+def _badge_rect(img_rect, s):
+    """Where a tile's draw mark sits: the top-right corner of its picture,
+    the corner a thumbnail's render leaves emptiest."""
+    ix, iy, iw, ih = img_rect
+    size = BADGE * s
+    pad = BADGE_PAD * s
+    return (ix + iw - size - pad, iy + ih - size - pad, size, size)
+
+
+def _hit_badge(mx, my, layout):
+    """The product whose draw mark is under the cursor, or None. Only
+    products that can be drawn through points have one."""
+    if layout is None:
+        return None
+    clip, tiles = layout[3], layout[4]
+    if not point_in_rect(mx, my, clip):
+        return None
+    s = scale()
+    for product, _tile_rect, img_rect in tiles:
+        if not product.get('path_draw'):
+            continue
+        if point_in_rect(mx, my, _badge_rect(img_rect, s)):
+            return product
+    return None
+
+
 def _hit_filter(mx, my, layout):
     """'CATEGORY' / 'SEARCH' / 'AUTOJOIN' / 'SIZES' / 'LIB:<tab>' / None."""
     if layout is None:
@@ -588,11 +620,19 @@ def hit(context, mx, my, entries):
             _collapsed.add(key)
         tag_redraw()
         return True
+    cat = active_catalog(context)
+    # The mark sits inside the tile, so it is asked first: a hit on it
+    # starts the drawing tool rather than dropping one product.
+    product = _hit_badge(mx, my, layout)
+    if product is not None:
+        draw_path = getattr(cat, 'draw_path', None) if cat else None
+        if draw_path is not None:
+            draw_path(context, product)
+        return True
     product = _hit_tile(mx, my, layout)
     if product is not None:
         # The panel stays up: picking from it does not dismiss it, so a
         # second cabinet is one click away rather than a reopen.
-        cat = active_catalog(context)
         if cat is not None:
             cat.place(context, product)
         return True
@@ -607,6 +647,21 @@ def scroll(mx, my, entries, rows):
     _list.scroll_by(rows, _tile_metrics(layout[0][2], s)[2])
     tag_redraw()
     return True
+
+
+def _glyph_path(shader, rect, s, color):
+    """A path with its corners marked: two legs of a run and a dot at
+    each point the user would click."""
+    rx, ry, rw, rh = rect
+    pad = 3.5 * s
+    x0, x1 = rx + pad, rx + rw - pad
+    y0, y1 = ry + pad, ry + rh - pad
+    xm = rx + rw * 0.5
+    pts = [(x0, y1), (xm, y1), (xm, y0), (x1, y0)]
+    draw_polyline(shader, pts, color)
+    dot = 2.4 * s
+    for px, py in (pts[0], pts[1], pts[2], pts[3]):
+        draw_rect(shader, px - dot / 2.0, py - dot / 2.0, dot, dot, color)
 
 
 def _paint_sizes_button(shader, sizes_rect, hovered, s):
@@ -632,6 +687,8 @@ def _paint_grid(layout, mx, my):
     # needs no listener of its own.
     _p = _hit_tile(mx, my, layout)
     hover = _p['key'] if _p else None
+    _b = _hit_badge(mx, my, layout)
+    hover_badge = _b['key'] if _b else None
     hover_ui = _hit_filter(mx, my, layout)
     hover_section = _hit_section(mx, my, layout)
 
@@ -734,6 +791,19 @@ def _paint_grid(layout, mx, my):
             gpu.state.blend_set('ALPHA')
             _draw_thumb(tex, img_rect)
         shader.bind()
+        # The draw-through-points mark, on the products that offer it.
+        # A chip behind it so it reads over a bright render; the glyph
+        # is a path with its corners marked -- what the tool asks for.
+        for product, _tile_rect, img_rect in tiles:
+            if not product.get('path_draw'):
+                continue
+            on_mark = product['key'] == hover_badge
+            rect = _badge_rect(img_rect, s)
+            paint_button(shader, rect, hovered=on_mark)
+            _glyph_path(shader, rect, s,
+                        Theme.GLYPH_HOVER if on_mark else (
+                            Theme.GLYPH if product['key'] == hover
+                            else Theme.TEXT_DIM))
         for product, tile_rect, _img in tiles:
             lx, ly, lw, _lh = tile_rect
             label = _label_for(product, font_id, FONT_LABEL * s, lw - 2 * s)
@@ -751,9 +821,11 @@ def _paint_grid(layout, mx, my):
         px, py, pw, _ph = panel_rect
         frect = (px + PAD_X * s, py + PAD_Y * s, pw - PAD_X * s * 2,
                  FOOTER_H * s)
+        footer = ('Draw %s through points' % hover
+                  if hover_badge == hover else hover)
         shader.bind()
         draw_centered_text(font_id, frect, FONT_LABEL * s, Theme.TEXT_DIM,
-                           fit_text(font_id, FONT_LABEL * s, hover,
+                           fit_text(font_id, FONT_LABEL * s, footer,
                                     frect[2] - 4 * s))
 
     gpu.state.blend_set('NONE')

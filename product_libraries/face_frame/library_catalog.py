@@ -144,7 +144,6 @@ SECTIONS = (
         'rows': (
             # X-Frame Ends hidden until that product has a builder.
             ("", (("Half Wall", "Half Wall"), ("Support", "Support Frame"),
-                  ("Support Shape", "Support Frame Shape"),
                   ("FF & Doors", "Face Frame and Doors"))),
         ),
     },
@@ -165,7 +164,11 @@ def products(section_key=None):
     nested row shape::
 
         {'display', 'cabinet_name', 'section', 'section_label',
-         'row_label', 'search'}
+         'row_label', 'search', 'path_draw'}
+
+    ``path_draw`` is True for a product that can also be drawn through
+    points -- a run of it built along a clicked path -- so a browser
+    can offer that as a second way in on the same tile.
 
     ``search`` is the pre-lowered haystack a search box matches
     against: the display name, the real product name, the section and
@@ -192,8 +195,15 @@ def products(section_key=None):
                     'row_label': row_label,
                     'search': ' '.join((display, cabinet_name,
                                         section['label'], row_label)).lower(),
+                    'path_draw': can_draw_path(cabinet_name),
                 })
     return out
+
+
+def can_draw_path(cabinet_name):
+    """True when the product has a path-drawing builder."""
+    from .operators import ops_draw_path
+    return ops_draw_path.can_draw_path(cabinet_name)
 
 
 def category_items():
@@ -288,4 +298,11 @@ def place(context, product):
     """Put one product in the scene -- the same operator the sidebar's
     library buttons fire, so there is no second placement path."""
     bpy.ops.hb_face_frame.draw_cabinet(
+        'INVOKE_DEFAULT', cabinet_name=product['key'])
+
+
+def draw_path(context, product):
+    """Draw a run of the product through clicked points. Only offered
+    for products whose ``path_draw`` is set."""
+    bpy.ops.hb_face_frame.draw_product_path(
         'INVOKE_DEFAULT', cabinet_name=product['key'])

@@ -1,14 +1,17 @@
-"""Draw a support frame through points, instead of dropping one box.
+"""Draw a product through points, instead of dropping one box.
 
-A frame that wraps two sides of an island, or steps around a peninsula,
-was three separate placements the user then had to line up by eye. This
-is the other way in: click the corners the frame runs through and the
-whole run is built at once, each leg of it an ordinary support frame so
-nothing downstream has to know it was drawn rather than placed.
+A support frame that wraps two sides of an island, or a run of panels
+that steps around a peninsula, was several placements the user then had
+to line up by eye. This is the other way in: click the corners the run
+passes through and the whole run is built at once, each span of it an
+ordinary product so nothing downstream has to know it was drawn rather
+than placed.
 
-The path is the BACK of the frame and the body stands to the right of
-the direction it is drawn, which is the same relationship a placed frame
-has to its own origin. F puts it on the other side.
+The path is the BACK of the product and the body stands to the right of
+the direction it is drawn, which is the same relationship a placed
+product has to its own origin. F puts it on the other side. Which
+products can be drawn this way, and how each turns a span into an
+object, lives in ``PATH_PRODUCTS``.
 """
 
 import math
@@ -25,6 +28,7 @@ from .... import hb_placement, hb_snap, units
 from ....units import inch
 from ...common import support_frame_shape
 from .. import types_face_frame
+from .. import props_hb_face_frame
 from . import ops_cabinet
 
 
@@ -33,18 +37,107 @@ from . import ops_cabinet
 CLOSE_THRESHOLD = 0.15
 
 # Snap radius in pixels for landing a point on existing geometry -- a
-# cabinet corner, mostly, since a support frame is nearly always lined up
-# with the run it carries.
+# cabinet corner, mostly, since a drawn run is nearly always lined up
+# with the cabinets beside it.
 SNAP_PIXELS = 20.0
 
 # Angle step when the straight-segment lock is off. Same ladder the wall
 # tool offers, so the two drawing tools behave alike.
 FREE_ANGLE_STEP = 15.0
 
+# A panel is three quarters of an inch thick, so a band drawn at its true
+# depth would be a hairline. The band's job is to show which side the
+# face is on, so a thin product gets a band this wide instead.
+MIN_PREVIEW_BAND = inch(6.0)
+
 _PATH_COLOR = (1.0, 0.65, 0.2, 0.95)
 _PENDING_COLOR = (1.0, 0.75, 0.4, 0.7)
 _BODY_COLOR = (1.0, 0.65, 0.2, 0.18)
 _CLOSE_COLOR = (0.0, 1.0, 0.4, 0.9)
+
+
+# ---- the products that can be drawn -----------------------------------------
+# Each builder takes the path as (x, y) pairs already walked in the
+# direction that puts the body on the right, and returns the span roots.
+
+def _build_support_frames(context, points, depth, z, closed):
+    product_cls = types_face_frame.SupportFrameFaceFrameProduct
+
+    def make_frame(length):
+        product = product_cls()
+        product.width = length
+        product.create("Support Frame")
+        return product
+
+    return support_frame_shape.build_path_frame(
+        points, make_frame, depth=depth, z=z, closed=closed)
+
+
+def _build_panels(context, points, depth, z, closed):
+    """One panel per span, butted at the corners.
+
+    The same corner rule as the frame: whichever span turns toward the
+    face stops a panel's thickness short, so the two never overlap and
+    the corner is closed by the one running through.
+    """
+    product_cls = types_face_frame.PanelFaceFrameCabinet
+    roots = []
+    for span in support_frame_shape.spans_for_path(points, depth,
+                                                   closed=closed):
+        if span['length'] < support_frame_shape.MIN_SPAN_LENGTH:
+            continue
+        panel = product_cls()
+        panel.create("Panel")
+        obj = panel.obj
+        obj.location = (span['origin'][0], span['origin'][1], z)
+        obj.rotation_euler = (0.0, 0.0, span['angle'])
+        # Sized through the property so the same update the placement
+        # tool relies on rebuilds the frame to the span.
+        obj.face_frame_cabinet.width = span['length']
+        roots.append(obj)
+    return roots
+
+
+def _support_frame_spec():
+    cls = types_face_frame.SupportFrameFaceFrameProduct
+    return {
+        'noun': "support frame",
+        'depth': cls().depth,
+        'z': cls.default_z_location,
+        'side': "frame stands on the",
+        'build': _build_support_frames,
+        'group': "Support Frame Shape",
+        'styled': False,
+    }
+
+
+def _panel_spec():
+    cls = types_face_frame.PanelFaceFrameCabinet
+    return {
+        'noun': "panel",
+        'depth': cls().default_depth,
+        'z': 0.0,
+        'side': "face looks to the",
+        'build': _build_panels,
+        'group': "Panel Run",
+        # A panel takes the active style the way a placed one does; the
+        # support frame already applies its finish inside create().
+        'styled': True,
+    }
+
+
+# Product name -> a function returning how it is drawn. Functions rather
+# than dicts because the depths read scene defaults at the time the tool
+# starts, not at import.
+PATH_PRODUCTS = {
+    'Support Frame': _support_frame_spec,
+    'Panel': _panel_spec,
+}
+
+
+def can_draw_path(cabinet_name):
+    """True for a product the browser should offer a draw affordance on."""
+    return cabinet_name in PATH_PRODUCTS
 
 
 def _right_of(vec):
@@ -53,9 +146,9 @@ def _right_of(vec):
 
 
 def _body_quads(points, depth, flipped=False):
-    """Corners of the frame body each span would fill.
+    """Corners of the body each span would fill.
 
-    Drawn as a translucent band so the side the frame stands on is
+    Drawn as a translucent band so the side the product stands on is
     visible while the path is still being drawn -- which side that is is
     the one thing about this tool a user cannot guess.
     """
@@ -71,9 +164,9 @@ def _body_quads(points, depth, flipped=False):
     return quads
 
 
-def draw_support_frame_preview(op, context):
+def draw_path_preview(op, context):
     """GPU overlay: the path so far, where the cursor would take it, and
-    the footprint the frame would fill."""
+    the footprint the run would fill."""
     region = op.region
     if region is None:
         return
@@ -96,7 +189,7 @@ def draw_support_frame_preview(op, context):
 
     # --- the body each span would fill ---
     tris = []
-    for quad in _body_quads(points, op.depth, op.flipped):
+    for quad in _body_quads(points, op.preview_depth, op.flipped):
         flat = [to2d(corner) for corner in quad]
         if any(c is None for c in flat):
             continue
@@ -163,22 +256,27 @@ def draw_support_frame_preview(op, context):
                 blf.draw(0, text)
 
 
-class hb_face_frame_OT_draw_support_frame(bpy.types.Operator,
-                                          hb_placement.PlacementMixin):
-    bl_idname = "hb_face_frame.draw_support_frame"
-    bl_label = "Draw Support Frame"
-    bl_description = ("Click the corners a support frame runs through. The "
-                      "frame is built along the path, one span per leg")
+class hb_face_frame_OT_draw_product_path(bpy.types.Operator,
+                                         hb_placement.PlacementMixin):
+    bl_idname = "hb_face_frame.draw_product_path"
+    bl_label = "Draw Through Points"
+    bl_description = ("Click the corners the run passes through. One "
+                      "product is built per span, grouped as a single item")
     bl_options = {'UNDO'}
+
+    cabinet_name: bpy.props.StringProperty(  # type: ignore
+        name="Product", default="Support Frame")
 
     confirmed_points: list = None
     cursor_point: Vector = None
     close_snap: bool = False
     closed: bool = False
     depth: float = inch(24)
-    # Straight segments unless the user asks otherwise, because a support
-    # frame almost always runs square to the cabinets it carries. Alt
-    # opens it up to the free angle step.
+    preview_depth: float = inch(24)
+    spec: dict = None
+    # Straight segments unless the user asks otherwise, because a drawn
+    # run almost always sits square to the cabinets beside it. Alt opens
+    # it up to the free angle step.
     free_rotation: bool = False
     fine_snap: bool = False
     # Which side of the path the body stands on. Held as a flag rather
@@ -194,9 +292,9 @@ class hb_face_frame_OT_draw_support_frame(bpy.types.Operator,
     def _floor_point(self, context):
         """Where the mouse is pointing on the floor plane.
 
-        Geometry first -- a support frame is nearly always lined up with
-        the cabinets it carries, so landing on a cabinet corner matters
-        more than landing on a round number, and a corner found there is
+        Geometry first -- a drawn run is nearly always lined up with the
+        cabinets beside it, so landing on a cabinet corner matters more
+        than landing on a round number, and a corner found there is
         taken exactly. Failing that, the raw floor plane, which the
         straight-segment lock then squares up.
         """
@@ -321,34 +419,39 @@ class hb_face_frame_OT_draw_support_frame(bpy.types.Operator,
 
     # ---- building --------------------------------------------------------
     def _build(self, context):
-        """Turn the drawn path into a run of support frames."""
-        product_cls = types_face_frame.SupportFrameFaceFrameProduct
-
-        def make_frame(length):
-            product = product_cls()
-            product.width = length
-            product.create("Support Frame")
-            return product
-
+        """Turn the drawn path into a run of the product."""
         # The body always stands to the right of the way the path runs,
         # so the other side is the same path walked backwards.
         points = list(self.confirmed_points)
         if self.flipped:
             points.reverse()
-        roots = support_frame_shape.build_path_frame(
-            [(p.x, p.y) for p in points],
-            make_frame,
-            depth=self.depth,
-            z=product_cls.default_z_location,
-            closed=self.closed,
-        )
+        roots = self.spec['build'](
+            context, [(p.x, p.y) for p in points],
+            self.depth, self.spec['z'], self.closed)
         if not roots:
             return None
+        if self.spec['styled']:
+            props_hb_face_frame.ensure_default_styles(context)
+            scene_props = props_hb_face_frame.get_style_props(context)
+            idx = scene_props.active_cabinet_style_index
+            if 0 <= idx < len(scene_props.cabinet_styles):
+                style = scene_props.cabinet_styles[idx]
+                for root in roots:
+                    style.assign_style_to_cabinet(root)
+        target = roots[-1]
         if len(roots) > 1:
             # One item to select, move and save: the run was drawn as a
             # single shape, so it should not come apart into loose boxes.
-            ops_cabinet.create_cabinet_group_from_roots(
-                roots, name="Support Frame Shape")
+            target = ops_cabinet.create_cabinet_group_from_roots(
+                roots, name=self.spec['group'])
+        # A fresh drop is only reachable in the current selection mode
+        # once it has been put through it.
+        for root in roots:
+            ops_cabinet.apply_face_frame_selection_mode(context, root)
+        for obj in context.selected_objects:
+            obj.select_set(False)
+        target.select_set(True)
+        context.view_layer.objects.active = target
         return roots
 
     # ---- modal -----------------------------------------------------------
@@ -363,14 +466,17 @@ class hb_face_frame_OT_draw_support_frame(bpy.types.Operator,
     def _finish(self, context, closed=False):
         self.closed = closed
         self._teardown(context)
+        noun = self.spec['noun']
         if len(self.confirmed_points) < 2:
-            self.report({'WARNING'}, "Need at least two points to draw a frame")
+            self.report({'WARNING'},
+                        f"Need at least two points to draw a {noun}")
             return {'CANCELLED'}
         roots = self._build(context)
         if not roots:
-            self.report({'WARNING'}, "The path was too short to build a frame")
+            self.report({'WARNING'},
+                        f"The path was too short to build a {noun}")
             return {'CANCELLED'}
-        self.report({'INFO'}, f"Built a support frame in {len(roots)} span(s)")
+        self.report({'INFO'}, f"Built a {noun} run in {len(roots)} span(s)")
         return {'FINISHED'}
 
     def cancel(self, context):
@@ -400,11 +506,17 @@ class hb_face_frame_OT_draw_support_frame(bpy.types.Operator,
         hb_placement.draw_header_text(context, " | ".join([
             state,
             "Alt: %s" % angles,
-            "F: frame stands on the %s (flip)" % side,
+            "F: %s %s (flip)" % (self.spec['side'], side),
             "Backspace: undo | Shift: fine | Ctrl: no snap | Esc: cancel",
         ]))
 
     def execute(self, context):
+        make_spec = PATH_PRODUCTS.get(self.cabinet_name)
+        if make_spec is None:
+            self.report({'WARNING'},
+                        f"{self.cabinet_name} cannot be drawn through points")
+            return {'CANCELLED'}
+        self.spec = make_spec()
         self.init_placement(context)
         self.confirmed_points = []
         self.cursor_point = None
@@ -415,10 +527,10 @@ class hb_face_frame_OT_draw_support_frame(bpy.types.Operator,
         self.fine_snap = False
         self.flipped = False
         self.direction = None
-        self.depth = types_face_frame.SupportFrameFaceFrameProduct().depth
+        self.depth = self.spec['depth']
+        self.preview_depth = max(self.depth, MIN_PREVIEW_BAND)
         self._draw_handle = bpy.types.SpaceView3D.draw_handler_add(
-            draw_support_frame_preview, (self, context), 'WINDOW',
-            'POST_PIXEL')
+            draw_path_preview, (self, context), 'WINDOW', 'POST_PIXEL')
         context.window_manager.modal_handler_add(self)
         self.update_header(context)
         return {'RUNNING_MODAL'}
@@ -491,7 +603,7 @@ class hb_face_frame_OT_draw_support_frame(bpy.types.Operator,
 
 
 classes = (
-    hb_face_frame_OT_draw_support_frame,
+    hb_face_frame_OT_draw_product_path,
 )
 
 

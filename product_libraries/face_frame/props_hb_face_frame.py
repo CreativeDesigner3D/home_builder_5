@@ -10828,6 +10828,7 @@ class Face_Frame_Scene_Props(PropertyGroup):
         ("Pie Cut Base"). Honors the thumbnail/list toggle: thumbnails get
         a tile each, list gets compact text buttons.
         """
+        from . import library_catalog
         row = layout.row(align=True)
         if label:
             row.label(text=label)
@@ -10835,14 +10836,28 @@ class Face_Frame_Scene_Props(PropertyGroup):
             for display, cab in items:
                 op = row.operator('hb_face_frame.draw_cabinet', text=display)
                 op.cabinet_name = cab
+                self._draw_path_button(row, cab, library_catalog)
         else:
             for display, cab in items:
                 cell = row.column(align=True)
                 icon_id = load_cabinet_thumbnail(cab)
                 if icon_id:
                     cell.template_icon(icon_value=icon_id, scale=4.0)
-                op = cell.operator('hb_face_frame.draw_cabinet', text=display)
+                sub = cell.row(align=True)
+                op = sub.operator('hb_face_frame.draw_cabinet', text=display)
                 op.cabinet_name = cab
+                self._draw_path_button(sub, cab, library_catalog)
+
+    @staticmethod
+    def _draw_path_button(layout, cabinet_name, library_catalog):
+        """The second way in for a product that can be drawn through
+        points: an icon beside its place button, the same affordance
+        the viewport browser puts on the tile."""
+        if not library_catalog.can_draw_path(cabinet_name):
+            return
+        op = layout.operator('hb_face_frame.draw_product_path', text="",
+                             icon='IPO_LINEAR')
+        op.cabinet_name = cabinet_name
 
     # =====================================================================
     # UI: product sections
