@@ -24,11 +24,41 @@ from ...units import inch
 # top of each other, or a span eaten by the corner that follows it.
 MIN_SPAN_LENGTH = inch(1.0)
 
+# How far a span may reach across a corner, as a multiple of the frame
+# depth. The reach grows without limit as a turn approaches doubling
+# back on itself, where two spans running side by side have no corner to
+# share; past this they are left as they were drawn.
+MAX_CORNER_REACH = 4.0
 
-def _right_of(vec):
-    """``vec`` turned 90 degrees to the right: the side a span's body
-    stands on, given the direction it runs."""
-    return Vector((vec.y, -vec.x))
+
+def _turn_angle(before, after):
+    """Signed turn from one direction to the next, in radians.
+
+    Negative turns toward the side the body stands on, positive away
+    from it.
+    """
+    return math.atan2(before.x * after.y - before.y * after.x,
+                      before.dot(after))
+
+
+def corner_reach(depth, before, after):
+    """How far a span runs past its corner -- negative to stop short.
+
+    Two spans meeting at a corner are square-cut boards of the same
+    depth, so where their outer faces cross is the only place the corner
+    can close. That crossing sits ``depth * tan(turn / 2)`` along the
+    arriving span, which is the frame depth at a right angle, nothing at
+    a straight join, and less than the depth on a shallow bend -- where
+    using the turn's sine instead, as if every corner were square, left
+    an angled joint visibly open.
+    """
+    turn = _turn_angle(before, after)
+    half = turn / 2.0
+    if abs(abs(half) - math.pi / 2.0) < 1e-3:
+        return 0.0                      # doubling back: no shared corner
+    reach = depth * math.tan(half)
+    limit = depth * MAX_CORNER_REACH
+    return max(-limit, min(limit, reach))
 
 
 def spans_for_path(points, depth, closed=False):
@@ -42,12 +72,10 @@ def spans_for_path(points, depth, closed=False):
     path, so the two spans meeting at a corner either grow into each
     other or pull apart, depending which way the path turns. Turn toward
     the body and they overlap through the corner, so the span arriving
-    stops short of the one leaving. Turn away and they meet at a single
-    point with a square of nothing behind it, so the span arriving runs
-    past the corner to fill it. Both are the same number, one signed
-    each way, and it scales with how square the turn is: a right angle
-    moves by exactly the frame depth, a gentle bend by almost nothing, a
-    straight join by none.
+    stops short of the one leaving; turn away and they meet at a single
+    point with nothing behind it, so the span arriving runs past the
+    corner to fill it. Either way the distance is where the two outer
+    faces cross -- see ``corner_reach``.
 
     Whichever span covers the corner keeps the end that closes it; the
     other drops the end it would otherwise double, and the legs that
@@ -76,7 +104,7 @@ def spans_for_path(points, depth, closed=False):
         if following is not None:
             onward = following - end
             if onward.length > 1e-6:
-                reach = depth * _right_of(onward.normalized()).dot(direction)
+                reach = corner_reach(depth, direction, onward.normalized())
 
         spans.append({
             'origin': (start.x, start.y),
