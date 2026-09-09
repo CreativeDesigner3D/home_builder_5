@@ -48,6 +48,8 @@ RENDERABLE_CATALOG = (
     "Special",
     "Combination",
     "Deluxe",
+    # Wall-hung vanity: upper construction at vanity proportions.
+    "Floating Vanity",
     # Specialty bedroom & bookcase products.
     "Bookcase",
     "Bookcase Storage Unit",

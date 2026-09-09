@@ -90,6 +90,7 @@ SECTIONS = (
             ("Vanity", (("Special", "Special"),
                         ("Combination", "Combination"),
                         ("Deluxe", "Deluxe"))),
+            ("Wall Hung", (("Floating", "Floating Vanity"),)),
         ),
     },
     {

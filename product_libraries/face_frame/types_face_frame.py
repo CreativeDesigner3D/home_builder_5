@@ -13343,6 +13343,39 @@ class UpperFaceFrameCabinet(FaceFrameCabinet):
             self.obj.location.z = scene.hb_face_frame.default_wall_cabinet_location
 
 
+class FloatingVanityCabinet(UpperFaceFrameCabinet):
+    """Wall-hung vanity: a vanity box carried by the wall rather than
+    standing on the floor.
+
+    Built as an UPPER rather than a base, which is what the construction
+    asks for: no toe kick, a top and a bottom, and the sides running the
+    full height of the face frame at both ends. A floating BASE is a
+    different animal - that one stands on its own plinth with a reveal
+    beneath it - so this does not derive from it.
+
+    Vanity proportions rather than wall-cabinet ones: deep enough for a
+    basin, and hung low. The mount height is where the placement modal
+    starts it; drag it or type a height to suit the job. The catalog's
+    floor for one of these is a 20" box.
+    """
+    # Placement reads this for the floor -> bottom mount height.
+    default_z_location = inch(4.0)
+
+    def __init__(self):
+        super().__init__()
+        scene = bpy.context.scene
+        self.default_height = inch(30.0)
+        if hasattr(scene, 'hb_face_frame'):
+            props = scene.hb_face_frame
+            self.default_width = props.default_cabinet_width
+            # A vanity is base-deep, not wall-deep.
+            self.default_depth = props.base_cabinet_depth
+
+    def create(self, name="Floating Vanity", bay_qty=1):
+        super().create(name, bay_qty=bay_qty)
+        self.obj.location.z = self.default_z_location
+
+
 class BookcaseUpperFaceFrameCabinet(UpperFaceFrameCabinet):
     """Open-shelf upper bookcase meant to sit on top of base cabinets.
     Same upper construction (no toe kick), but each bay has its bottom
@@ -16198,6 +16231,7 @@ CABINET_NAME_DISPATCH = {
     "Base Door Drw": BaseFaceFrameCabinet,
     "Base Drawer": BaseFaceFrameCabinet,
     "Floating Base Cabinet": FloatingBaseFaceFrameCabinet,
+    "Floating Vanity": FloatingVanityCabinet,
     "5 Drawer Dresser": FiveDrawerDresserCabinet,
     "6 Drawer Dresser": SixDrawerDresserCabinet,
     "Night Stand": NightStandFaceFrameCabinet,

@@ -463,6 +463,11 @@ def default_bay_config(cabinet_name, bay_width):
         return 'BUILT_IN_APPLIANCE'
     if cabinet_name == 'Sink':
         return 'FALSE_FRONT_DOUBLE_DOOR' if is_wide else 'FALSE_FRONT_DOOR'
+    if cabinet_name == 'Floating Vanity':
+        # A wall-hung vanity comes in as doors - the sink and the drawer
+        # stack are both changes from there, and doors are what the
+        # plain one is.
+        return 'DOUBLE_DOOR' if is_wide else 'LEFT_SWING_DOOR'
     if cabinet_name == 'Special':
         # Vanity "Special": a standard base cabinet with the VANITY_SPECIAL
         # bay configuration.
