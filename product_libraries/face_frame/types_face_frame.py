@@ -8868,6 +8868,7 @@ class FaceFrameCabinet(GeoNodeCage):
                         bottom_z=bay_bottom, top_z=bay_top,
                         cage_dim_y=bay_dim_y,
                         reveals=solver._bay_root_reveals(layout, bi),
+                        bay_index=bi,
                     )
                     texture = bay.get('finish_bay_texture', 'NONE')
                     specs = self._finish_region_specs(
@@ -8911,6 +8912,7 @@ class FaceFrameCabinet(GeoNodeCage):
                                  'bottom': leaf['reveal_bottom']},
                         vert_top_z=self._finish_opening_ceiling_z(
                             bay_tree, leaf, bay_bottom),
+                        bay_index=bi,
                     )
                     op_to_floor = bay_to_floor and abs(leaf['cage_z']) < 1e-6
                     # A lone finished opening can't split the bay's back
@@ -9134,7 +9136,39 @@ class FaceFrameCabinet(GeoNodeCage):
                                   mirror_y=True, mirror_z=False,
                                   loc=(left_x, cavity_back_y, vert_bottom_z),
                                   length=vert_height, width=cage_dim_x)))
+
+        # A liner running to the floor crosses the toe-kick recess at the
+        # cabinet front, and without a notch it fills the recess it is
+        # standing in. Only the side panels reach the front; the back
+        # sits behind the kick and the top is nowhere near it.
+        self._add_finish_liner_notch(layout, region, to_floor, specs)
         return specs
+
+    @staticmethod
+    def _add_finish_liner_notch(layout, region, to_floor, specs):
+        """Mark the side liners of a to-floor region for a kick notch.
+
+        Carried on the spec rather than applied here so the emit step
+        stays the one place a liner's geometry is written. The recess
+        only exists for a NOTCH kick, and a setback inside the face
+        frame band leaves nothing to cut.
+        """
+        if not to_floor:
+            return
+        if not (layout.has_toe_kick and layout.toe_kick_type == 'NOTCH'):
+            return
+        notch_depth = solver.kick_notch_depth(layout)
+        if notch_depth <= 1e-6:
+            return
+        bay_index = region.get('bay_index', -1)
+        if not (0 <= bay_index < len(layout.bays)):
+            return
+        kick = layout.bays[bay_index]['kick_height']
+        if kick <= 1e-6:
+            return
+        for face, spec in specs:
+            if face in ('LEFT', 'RIGHT'):
+                spec['notch'] = (kick, notch_depth)
 
     def _emit_bay_finish_panel(self, bay_index, opening_index, face, spec,
                                thickness, existing, texture='NONE'):
@@ -9169,7 +9203,46 @@ class FaceFrameCabinet(GeoNodeCage):
         part.set_input('Length',    spec['length'])
         part.set_input('Width',     spec['width'])
         part.set_input('Thickness', thickness)
+        self._drive_finish_liner_notch(strip, spec, thickness)
         self._texture_finish_panel(strip, spec, thickness, texture)
+
+    @staticmethod
+    def _drive_finish_liner_notch(strip, spec, thickness):
+        """Cut (or stop cutting) a liner's front-bottom toe-kick notch.
+
+        Liners are reused by key, so one that stops running to the floor
+        has to have its cut turned off again rather than merely not
+        turned on. Added lazily, so a liner built before notch support
+        upgrades in place. The side liners share the carcass side's
+        Mirror Y, so Flip Y = True is the front face and Flip X = False
+        the bottom -- the same pair every other part cut for this recess
+        uses.
+        """
+        notch = spec.get('notch')
+        mod = strip.modifiers.get('Notch Front Bottom')
+        if mod is None:
+            if notch is None:
+                return
+            cpm = GeoNodeCutpart(strip).add_part_modifier(
+                'CPM_CORNERNOTCH', 'Notch Front Bottom')
+            cpm.set_input('Flip X', False)
+            cpm.set_input('Flip Y', True)
+            mod = cpm.mod
+        if mod.node_group is None:
+            return
+        if notch is None:
+            kick = setback = route = 0.0
+        else:
+            kick, setback = notch
+            route = thickness
+        ng = mod.node_group
+        for input_name, value in (('X', kick), ('Y', setback),
+                                  ('Route Depth', route)):
+            node_input = ng.interface.items_tree.get(input_name)
+            if node_input is not None:
+                hb_utils.set_gn_input(mod, node_input.identifier, value)
+        mod.show_viewport = notch is not None
+        mod.show_render = notch is not None
 
     def _texture_finish_panel(self, strip, spec, thickness, texture):
         """Carve a finish liner, or hand it back to its cutpart.
