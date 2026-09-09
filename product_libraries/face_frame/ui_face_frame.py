@@ -1949,6 +1949,13 @@ def draw_finished_ends(layout, cab_props):
         col.prop(cab_props, 'shiplap_board_width', text="Shiplap Width")
         col.prop(cab_props, 'shiplap_direction', text="Shiplap Direction")
 
+    # V-groove spacing, for a shop cutting them at something other than
+    # the standard sheet layout. Cabinet-wide like the shiplap settings.
+    if 'V_GROOVE' in (cab_props.left_finished_end_condition,
+                      cab_props.right_finished_end_condition,
+                      cab_props.back_finished_end_condition):
+        col.prop(cab_props, 'v_groove_spacing', text="V-Groove Spacing")
+
 
 def draw_all_bays_summary(layout, root):
     """Compact list of all bays with index and dims."""

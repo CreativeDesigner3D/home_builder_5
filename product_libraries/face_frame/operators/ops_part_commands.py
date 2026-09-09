@@ -2873,10 +2873,15 @@ _BACK_PANEL_ROLES = frozenset({
 
 
 def _draw_shiplap_options(layout, cab, fin_type):
-    """Shiplap Width + Direction under a side or back set to SHIPLAP.
-    Both are cabinet-wide (every shiplap side shares them), same rows
-    the Finished Ends panel shows, so the right-click dialog is a
-    complete edit of the condition without a trip to the cabinet UI."""
+    """The carved-texture settings for a side or back: Shiplap Width +
+    Direction on a SHIPLAP one, groove spacing on a V_GROOVE one. All
+    are cabinet-wide (every side carrying that texture shares them),
+    same rows the Finished Ends panel shows, so the right-click dialog
+    is a complete edit of the condition without a trip to the cabinet
+    UI."""
+    if fin_type == 'V_GROOVE':
+        layout.prop(cab, 'v_groove_spacing', text="V-Groove Spacing")
+        return
     if fin_type != 'SHIPLAP':
         return
     layout.prop(cab, 'shiplap_board_width', text="Shiplap Width")

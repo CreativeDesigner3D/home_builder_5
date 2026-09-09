@@ -6634,6 +6634,16 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         update=_update_cabinet_dim,
     )  # type: ignore
 
+    # Spacing between v-grooves, where a shop cuts them at something
+    # other than the usual 4" sheet layout. 0 keeps that default.
+    v_groove_spacing: FloatProperty(
+        name="V-Groove Spacing",
+        description="Distance between v-grooves. 0 uses the standard "
+                    "4\" layout",
+        default=0.0, min=0.0, unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
     # Shiplap course width for SHIPLAP finished ends (all shiplap sides
     # of this cabinet share it). Same 4 / 5 / 6 ladder as the wood-hood
     # shiplap board width.

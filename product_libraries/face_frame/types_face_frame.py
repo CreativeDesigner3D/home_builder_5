@@ -520,6 +520,17 @@ TEXTURED_SHIPLAP_PITCH = 6.0 * 0.0254
 TEXTURED_V_GROOVE_SPACING = 4.0 * 0.0254
 
 
+def _v_groove_spacing(cab_props):
+    """Groove spacing for this cabinet: its own where it carries one,
+    else the standard layout. Files saved before the field existed, and
+    a 0 left in it, both read as standard."""
+    try:
+        typed = float(getattr(cab_props, 'v_groove_spacing', 0.0) or 0.0)
+    except (TypeError, ValueError):
+        return TEXTURED_V_GROOVE_SPACING
+    return typed if typed > 0.0 else TEXTURED_V_GROOVE_SPACING
+
+
 def _shiplap_vertical(cab_props):
     """True when the cabinet runs its shiplap planks upright. Files
     saved before the direction existed read as horizontal."""
@@ -9196,6 +9207,8 @@ class FaceFrameCabinet(GeoNodeCage):
                                   mirror_z=not spec['mirror_z'],
                                   shiplap_pitch=pitch,
                                   shiplap_vertical=_shiplap_vertical(
+                                      self.obj.face_frame_cabinet),
+                                  v_groove_spacing=_v_groove_spacing(
                                       self.obj.face_frame_cabinet))
         dz = -thickness if spec['mirror_z'] else thickness
         strip.data.transform(Matrix.Translation((0.0, 0.0, dz)))
@@ -9209,7 +9222,8 @@ class FaceFrameCabinet(GeoNodeCage):
     def _textured_panel_mesh(part_obj, length, width, thickness,
                              condition, mirror_z,
                              shiplap_pitch=TEXTURED_SHIPLAP_PITCH,
-                             shiplap_vertical=False):
+                             shiplap_vertical=False,
+                             v_groove_spacing=TEXTURED_V_GROOVE_SPACING):
         """Write the carved static mesh for a textured panel into
         ``part_obj``'s mesh data and hide its GN cutpart display.
 
@@ -9246,7 +9260,7 @@ class FaceFrameCabinet(GeoNodeCage):
                         or (condition == 'SHIPLAP' and shiplap_vertical))
         if condition in ('BEADBOARD', 'V_GROOVE'):
             span_u, run = width, length      # profile across Y, extrude X
-            spacing = (TEXTURED_V_GROOVE_SPACING
+            spacing = (v_groove_spacing
                        if condition == 'V_GROOVE'
                        else TEXTURED_BEADBOARD_SPACING)
             margin = max(2.0 * hw, 0.004)
@@ -9474,7 +9488,8 @@ class FaceFrameCabinet(GeoNodeCage):
             self._textured_panel_mesh(part_obj, length, width, thickness,
                                       condition, mirror_z,
                                       shiplap_pitch=pitch,
-                                      shiplap_vertical=_shiplap_vertical(cab))
+                                      shiplap_vertical=_shiplap_vertical(cab),
+                                      v_groove_spacing=_v_groove_spacing(cab))
             # Toe-kick corner notch (the CPM runs on the static mesh
             # since the cutpart GN is hidden). BACK skins never notch.
             if side in ('LEFT', 'RIGHT'):
@@ -14627,7 +14642,8 @@ class LegProductFaceFrameCabinet(FaceFrameCabinet):
             self._textured_panel_mesh(part_obj, height, panel_depth,
                                       thickness, condition, mirror_z,
                                       shiplap_pitch=pitch,
-                                      shiplap_vertical=_shiplap_vertical(cab))
+                                      shiplap_vertical=_shiplap_vertical(cab),
+                                      v_groove_spacing=_v_groove_spacing(cab))
             # The notch cuts the carved mesh - the cutpart's own display
             # is hidden by now, so the modifier has the static mesh to
             # work on, same as a cabinet's skin.
