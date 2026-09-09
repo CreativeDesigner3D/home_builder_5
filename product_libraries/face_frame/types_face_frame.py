@@ -987,6 +987,10 @@ ANGLED_CUT_PART_ROLES = frozenset({
 # pattern as the angled cutter, but the cutter is a triangular-prism MESH
 # and it's driven by the wedge_* cabinet props (see solver.wedge_geometry).
 PART_ROLE_WEDGE_CUTTER = 'WEDGE_CUTTER'
+# The wedge itself: the corner that is cut off to tip the cabinet up and
+# glued back on once it is standing. Built in place so the cabinet reads
+# whole and the cut shows as a seam rather than a missing corner.
+PART_ROLE_WEDGE = 'WEDGE'
 WEDGE_CUT_MOD_NAME = 'Tip-Up Wedge'
 WEDGE_CUT_PART_ROLES = frozenset({
     PART_ROLE_LEFT_SIDE, PART_ROLE_RIGHT_SIDE,
@@ -3381,6 +3385,7 @@ class FaceFrameCabinet(GeoNodeCage):
             cutter_obj = self._ensure_wedge_cutter()
             self._position_wedge_cutter(cutter_obj, length, height)
             self._apply_wedge_cuts(cutter_obj)
+            self._position_wedge_piece(length, height)
             # Publish the computed dims on the cabinet root (meters) as
             # id props so downstream consumers (e.g. drawing / annotation
             # layers) can read them without recomputing. Cleared when the
@@ -7060,6 +7065,55 @@ class FaceFrameCabinet(GeoNodeCage):
         bm.free()
         cutter_obj.location = (0.0, 0.0, 0.0)
 
+    def _ensure_wedge_piece(self):
+        """Find or lazily create the wedge MESH object - the corner that
+        comes off to tip the cabinet up and goes back on afterwards."""
+        for child in self.obj.children:
+            if child.get('hb_part_role') == PART_ROLE_WEDGE:
+                return child
+        mesh = bpy.data.meshes.new('Wedge')
+        piece = bpy.data.objects.new('Wedge', mesh)
+        piece['hb_part_role'] = PART_ROLE_WEDGE
+        # Not a CABINET_PART: it is the offcut of the sides, back and
+        # bottom rather than a board of its own, so it takes its finish
+        # through the plain-mesh path the way a shelf nosing does and
+        # stays out of the cutlist.
+        piece['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_part_commands'
+        piece.parent = self.obj
+        for coll in self.obj.users_collection:
+            coll.objects.link(piece)
+            break
+        return piece
+
+    def _position_wedge_piece(self, length, height):
+        """Rebuild the wedge piece from the live dims.
+
+        The same triangle the cutter takes out of the body, built to the
+        line rather than past it: from the point where the cut meets the
+        bottom, up the back to where it leaves it, and back around the
+        corner. With the body chamfered underneath it the cabinet reads
+        whole and the cut reads as a seam - which is the cabinet as it
+        ends up on site, wedge glued back on.
+        """
+        piece = self._ensure_wedge_piece()
+        dim_x = self.obj.face_frame_cabinet.width
+        bm = bmesh.new()
+        # Cross-section in Y-Z: the cut line, then the back-bottom corner.
+        section = ((-length, 0.0), (0.0, height), (0.0, 0.0))
+        left = [bm.verts.new((0.0, y, z)) for y, z in section]
+        right = [bm.verts.new((dim_x, y, z)) for y, z in section]
+        bm.verts.ensure_lookup_table()
+        bm.faces.new((left[0], left[1], left[2]))
+        bm.faces.new((right[0], right[2], right[1]))
+        for i in range(3):
+            j = (i + 1) % 3
+            bm.faces.new((left[i], right[i], right[j], left[j]))
+        bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+        bm.to_mesh(piece.data)
+        bm.free()
+        piece.location = (0.0, 0.0, 0.0)
+        return piece
+
     def _iter_wedge_cut_targets(self):
         """Root cage + carcass parts whose back-bottom corner the wedge
         chamfers. Mirrors _iter_angled_cut_targets."""
@@ -7068,7 +7122,10 @@ class FaceFrameCabinet(GeoNodeCage):
         while stack:
             obj = stack.pop()
             role = obj.get('hb_part_role')
-            if role == PART_ROLE_WEDGE_CUTTER:
+            # Neither the cutter nor the wedge itself: cutting the wedge
+            # with its own cutter would take away the very piece this is
+            # meant to leave standing.
+            if role in (PART_ROLE_WEDGE_CUTTER, PART_ROLE_WEDGE):
                 continue
             if role in WEDGE_CUT_PART_ROLES:
                 yield obj
@@ -7095,7 +7152,8 @@ class FaceFrameCabinet(GeoNodeCage):
             if mod is not None:
                 part.modifiers.remove(mod)
         for child in list(self.obj.children):
-            if child.get('hb_part_role') == PART_ROLE_WEDGE_CUTTER:
+            if child.get('hb_part_role') in (PART_ROLE_WEDGE_CUTTER,
+                                             PART_ROLE_WEDGE):
                 mesh = child.data
                 bpy.data.objects.remove(child, do_unlink=True)
                 if mesh is not None and mesh.users == 0:

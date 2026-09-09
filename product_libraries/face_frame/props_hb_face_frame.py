@@ -2589,6 +2589,10 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                                  # whose bevel geometry renders the
                                  # curve's material slot.
                                  'MANTLE_CROWN_SWEEP', 'MANTLE_BASE_SWEEP',
+                                 # Tip-up wedge: the corner cut off the
+                                 # cabinet and glued back on, so it is
+                                 # the cabinet's own outside face.
+                                 'WEDGE',
                                  # Boolean cutters: the cut faces
                                  # transfer the cutter's material, so
                                  # the finish rides along onto the cut.
@@ -7405,6 +7409,30 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         name="Wedge Fudge Allowance", default=units.inch(0.5),
         unit='LENGTH', precision=4, min=0.0, update=_update_cabinet_dim,
     )  # type: ignore
+    # Typed wedge, over the calculated one. The sizes here are what
+    # gets built, so a shop working from its own calculator can enter
+    # what that gives rather than being held to this one's arithmetic.
+    wedge_override: BoolProperty(
+        name="Use My Sizes",
+        description="Build the wedge at the sizes entered here instead "
+                    "of the calculated ones",
+        default=False, update=_update_cabinet_dim,
+    )  # type: ignore
+    wedge_length: FloatProperty(
+        name="Wedge Length",
+        description="Length of the wedge along the cabinet depth, used "
+                    "when the sizes are entered rather than calculated",
+        default=0.0, min=0.0, unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    wedge_height: FloatProperty(
+        name="Wedge Height",
+        description="Height of the wedge up the cabinet back, used when "
+                    "the sizes are entered rather than calculated",
+        default=0.0, min=0.0, unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
     wedge_max_height: FloatProperty(
         name="Wedge Max Height", default=units.inch(3.0),
         unit='LENGTH', precision=4, min=0.0, update=_update_cabinet_dim,

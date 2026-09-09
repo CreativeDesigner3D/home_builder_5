@@ -183,6 +183,9 @@ class FaceFrameLayout:
         self.wedge_ceiling_height = getattr(cab, 'wedge_ceiling_height', 0.0)
         self.wedge_fudge = getattr(cab, 'wedge_fudge', 0.0)
         self.wedge_max_height = getattr(cab, 'wedge_max_height', 0.0)
+        self.wedge_override = getattr(cab, 'wedge_override', False)
+        self.wedge_length = getattr(cab, 'wedge_length', 0.0)
+        self.wedge_height = getattr(cab, 'wedge_height', 0.0)
         self.finish_kick_thickness = cab.finish_toe_kick_thickness
         self.include_finish_kick = cab.include_finish_toe_kick
 
@@ -1633,6 +1636,15 @@ def wedge_geometry(layout):
     enabled AND needed, else None (recalc then cleans up any cutter)."""
     if not layout.wedge_enabled:
         return None
+    # Typed sizes win outright: another calculator reading the same
+    # cabinet differently is the reason the field exists, so this one
+    # does not get to second-guess the number.
+    if layout.wedge_override:
+        length = layout.wedge_length
+        height = layout.wedge_height
+        if length <= 0.0 and height <= 0.0:
+            return None
+        return length, height, False
     length, height, clamped, needed = compute_wedge(
         layout.dim_y, layout.dim_z,
         layout.wedge_ceiling_height, layout.wedge_fudge,
