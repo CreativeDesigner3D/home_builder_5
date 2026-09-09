@@ -627,6 +627,16 @@ FLOATING_VANITY_TOP_THICKNESS = inch(0.5)
 FLOATING_VANITY_BACK_THICKNESS = inch(0.75)
 
 
+def bottom_thickness(layout):
+    """Carcass bottom panel thickness: the cabinet's material, except on
+    a floating vanity, whose bottom is 3/4 by construction - it carries
+    the cabinet where a floor-standing one is carried by its base."""
+    if (getattr(layout, 'floating_vanity', False)
+            and layout.mt <= FLOATING_VANITY_BACK_THICKNESS - 1e-6):
+        return FLOATING_VANITY_BACK_THICKNESS
+    return layout.mt
+
+
 def top_thickness(layout):
     """Carcass top panel thickness: the cabinet's own override where it
     has one, the vanity's 1/2 top on a floating vanity, else the
@@ -2804,10 +2814,12 @@ def carcass_bottom_segments(layout):
             'end_bay':    end,
             'x':          left_x,
             'y':          -layout.dim_y + first_bay['depth'] - back_thickness(layout),
-            'z':          bay_bottom_z(layout, start) + first_bay['bottom_rail_width'] - layout.mt,
+            'z':          (bay_bottom_z(layout, start)
+                           + first_bay['bottom_rail_width']
+                           - bottom_thickness(layout)),
             'length':     right_x - left_x,
             'panel_dim_y': first_bay['depth'] - back_thickness(layout) - layout.fft,
-            'thickness':  layout.mt,
+            'thickness':  bottom_thickness(layout),
             # Segments break at finish boundaries, so the start bay
             # speaks for the whole panel.
             'finished':   bay_finish_bottom(layout, start),
