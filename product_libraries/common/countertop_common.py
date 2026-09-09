@@ -227,6 +227,33 @@ def has_outline(obj):
     return len(outline_of(obj)) >= 3
 
 
+def ensure_outline(obj):
+    """Give a top an outline if it has none. True when one is there.
+
+    Tops built before the outline existed are boxes, and a box is fully
+    described by the mesh it already carries: its footprint is the
+    rectangle, and its Z range the underside and the thickness. Seeding
+    from that means an old job can be reshaped without being rebuilt,
+    and the seeded shape is exactly the slab that was already there.
+    """
+    if has_outline(obj):
+        return True
+    mesh = getattr(obj, 'data', None)
+    if mesh is None or len(mesh.vertices) < 8:
+        return False
+    xs = [v.co.x for v in mesh.vertices]
+    ys = [v.co.y for v in mesh.vertices]
+    zs = [v.co.z for v in mesh.vertices]
+    thickness = max(zs) - min(zs)
+    if thickness <= 0.0:
+        return False
+    obj[TOP_KEY] = float(min(zs))
+    obj[THICKNESS_KEY] = float(thickness)
+    set_outline(obj, ((min(xs), min(ys)), (max(xs), min(ys)),
+                      (max(xs), max(ys)), (min(xs), max(ys))))
+    return True
+
+
 def rebuild(obj):
     """Rewrite the slab's mesh from its stored outline. True if built.
 
