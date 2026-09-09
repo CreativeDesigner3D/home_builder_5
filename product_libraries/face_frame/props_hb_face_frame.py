@@ -875,11 +875,11 @@ STYLE_COLOR_PALETTE = (
     (0.85, 0.75, 0.75),   # Light Rose
 )
 
-# A cabinet's cage is drawn solid and in front of its own parts whenever
-# its selection mode is active, so an opaque tint would hide the cabinet
-# it is meant to be colouring. Cages take the style colour at this alpha
-# instead: enough to read the colour, transparent enough to see the doors
-# and drawers through it. Parts stay opaque.
+# Whatever a selection mode is offering to be clicked is drawn solid and
+# in front of the cabinet, so an opaque tint would hide the cabinet it is
+# meant to be colouring. It takes the style colour at this alpha instead:
+# enough to read the colour, transparent enough to see the cabinet
+# through it. Everything else stays opaque.
 _STYLE_CAGE_ALPHA = 0.25
 
 # Cages, as opposed to parts: the wash alpha applies to all of them, so a
@@ -998,7 +998,7 @@ def apply_style_colors(context):
     return tinted
 
 
-def style_color_for_object(obj, context=None):
+def style_color_for_object(obj, context=None, highlight=None):
     """The colour ``obj`` should wear under style colours, or None.
 
     Selection modes repaint cages and parts as the user moves between
@@ -1006,6 +1006,14 @@ def style_color_for_object(obj, context=None):
     highlight. They ask here first, so a cabinet keeps its style's
     colour through a mode change. None means "not our business": the
     option is off, or the object belongs to no cabinet style.
+
+    ``highlight`` says whether this object is the thing the active
+    selection mode is offering to be clicked -- a cage in Cabinets mode,
+    the frame members in Face Frame, the shelves in Interiors. Those get
+    the see-through wash whatever they are, so the cabinet behind them
+    stays readable and every mode looks like the others. Left None, a
+    cage is treated as the highlight and a part is not, which is what a
+    plain repaint of the whole scene wants.
     """
     if obj is None:
         return None
@@ -1024,7 +1032,9 @@ def style_color_for_object(obj, context=None):
     tint = _style_tint_for_cabinet(root, props.cabinet_styles)
     if tint is None:
         return None
-    alpha = _STYLE_CAGE_ALPHA if _is_cage(obj) else 1.0
+    if highlight is None:
+        highlight = _is_cage(obj)
+    alpha = _STYLE_CAGE_ALPHA if highlight else 1.0
     return (tint[0], tint[1], tint[2], alpha)
 
 

@@ -45,19 +45,22 @@ def _under_hidden_wall(obj):
         p = p.parent
     return False
 
-def _style_color(obj, fallback):
+def _style_color(obj, fallback, highlight):
     """``obj``'s cabinet-style colour where that view mode is on, else
     ``fallback``.
 
     Style colours are a way of looking at the whole scene, so they have
     to outlast a selection-mode change: without this, entering a mode
     repainted every cage with the generic highlight and the styles
-    vanished. Imported at call time -- the style pool lives in a sibling
-    product library that imports this module.
+    vanished. ``highlight`` says whether this object is what the active
+    mode offers to be clicked, which is what earns the see-through wash.
+    Imported at call time -- the style pool lives in a sibling product
+    library that imports this module.
     """
     try:
         from ...face_frame import props_hb_face_frame
-        return props_hb_face_frame.style_color_for_object(obj) or fallback
+        return props_hb_face_frame.style_color_for_object(
+            obj, highlight=highlight) or fallback
     except Exception:
         return fallback
 
@@ -72,7 +75,8 @@ def toggle_cabinet_color(obj,toggle,type_name="",dont_show_parent=True):
                 return
         if _under_hidden_wall(obj):
             return
-        obj.color = _style_color(obj, add_on_prefs.cabinet_color)
+        obj.color = _style_color(obj, add_on_prefs.cabinet_color,
+                                 highlight=True)
         obj.show_in_front = True
         obj.hide_viewport = False
         obj.display_type = 'SOLID'
@@ -90,7 +94,8 @@ def toggle_cabinet_color(obj,toggle,type_name="",dont_show_parent=True):
             obj.display_type = 'SOLID'
         else:
             obj.color = _style_color(
-                obj, [1.000000, 1.000000, 1.000000, 1.000000])
+                obj, [1.000000, 1.000000, 1.000000, 1.000000],
+                highlight=False)
             obj.display_type = 'SOLID'
         obj.select_set(False)
 
