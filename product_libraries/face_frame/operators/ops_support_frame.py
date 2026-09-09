@@ -8,8 +8,7 @@ nothing downstream has to know it was drawn rather than placed.
 
 The path is the BACK of the frame and the body stands to the right of
 the direction it is drawn, which is the same relationship a placed frame
-has to its own origin. F turns the path around when the body lands on
-the wrong side.
+has to its own origin. F puts it on the other side.
 """
 
 import math
@@ -53,20 +52,21 @@ def _right_of(vec):
     return Vector((vec.y, -vec.x, 0.0))
 
 
-def _body_quads(points, depth):
-    """Screen-space corners of the frame body each span would fill.
+def _body_quads(points, depth, flipped=False):
+    """Corners of the frame body each span would fill.
 
     Drawn as a translucent band so the side the frame stands on is
     visible while the path is still being drawn -- which side that is is
     the one thing about this tool a user cannot guess.
     """
+    side = -depth if flipped else depth
     quads = []
     for i in range(len(points) - 1):
         start, end = points[i], points[i + 1]
         run = end - start
         if run.length <= 1e-6:
             continue
-        offset = _right_of(run.normalized()) * depth
+        offset = _right_of(run.normalized()) * side
         quads.append((start, end, end + offset, start + offset))
     return quads
 
@@ -96,7 +96,7 @@ def draw_support_frame_preview(op, context):
 
     # --- the body each span would fill ---
     tris = []
-    for quad in _body_quads(points, op.depth):
+    for quad in _body_quads(points, op.depth, op.flipped):
         flat = [to2d(corner) for corner in quad]
         if any(c is None for c in flat):
             continue
@@ -181,6 +181,10 @@ class hb_face_frame_OT_draw_support_frame(bpy.types.Operator,
     # opens it up to the free angle step.
     free_rotation: bool = False
     fine_snap: bool = False
+    # Which side of the path the body stands on. Held as a flag rather
+    # than by turning the points round, so flipping mid-run does not move
+    # the end the next corner is being drawn from.
+    flipped: bool = False
     # Direction of the span being drawn, once there is a point to draw
     # from. A typed length is measured along it.
     direction: Vector = None
@@ -326,8 +330,13 @@ class hb_face_frame_OT_draw_support_frame(bpy.types.Operator,
             product.create("Support Frame")
             return product
 
+        # The body always stands to the right of the way the path runs,
+        # so the other side is the same path walked backwards.
+        points = list(self.confirmed_points)
+        if self.flipped:
+            points.reverse()
         roots = support_frame_shape.build_path_frame(
-            [(p.x, p.y) for p in self.confirmed_points],
+            [(p.x, p.y) for p in points],
             make_frame,
             depth=self.depth,
             z=product_cls.default_z_location,
@@ -387,10 +396,11 @@ class hb_face_frame_OT_draw_support_frame(bpy.types.Operator,
             state += " -- Enter to finish"
         angles = ("Free (%d deg)" % int(FREE_ANGLE_STEP)
                   if self.free_rotation else "Straight")
+        side = "left" if self.flipped else "right"
         hb_placement.draw_header_text(context, " | ".join([
             state,
             "Alt: %s" % angles,
-            "F: flip the side the frame stands on",
+            "F: frame stands on the %s (flip)" % side,
             "Backspace: undo | Shift: fine | Ctrl: no snap | Esc: cancel",
         ]))
 
@@ -403,6 +413,7 @@ class hb_face_frame_OT_draw_support_frame(bpy.types.Operator,
         self.suspend_snap = False
         self.free_rotation = False
         self.fine_snap = False
+        self.flipped = False
         self.direction = None
         self.depth = types_face_frame.SupportFrameFaceFrameProduct().depth
         self._draw_handle = bpy.types.SpaceView3D.draw_handler_add(
@@ -460,9 +471,7 @@ class hb_face_frame_OT_draw_support_frame(bpy.types.Operator,
             return {'RUNNING_MODAL'}
 
         if event.type == 'F' and event.value == 'PRESS':
-            # The body stands to the right of the way the path runs, so
-            # drawing it backwards is what puts it on the other side.
-            self.confirmed_points.reverse()
+            self.flipped = not self.flipped
             self.update_header(context)
             return {'RUNNING_MODAL'}
 
