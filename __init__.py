@@ -88,6 +88,15 @@ def load_file_post(scene):
     from .product_libraries.frameless import types_products
     types_products.upgrade_support_frames()
 
+    # Style colours are a view mode, held per file and on by default, so
+    # the scene has to be painted for it on load rather than only when
+    # the option is switched.
+    from .product_libraries.face_frame import props_hb_face_frame
+    try:
+        props_hb_face_frame.apply_style_colors(bpy.context)
+    except Exception:
+        pass
+
 
 def _update_use_viewport_hud(self, context):
     """Flipping the HUD preference: redraw every 3D viewport so the change

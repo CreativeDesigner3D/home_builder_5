@@ -895,11 +895,35 @@ _STYLE_CAGE_TAGS = (
 )
 
 
+# The palette is tuned for 2D drawings, where a pastel fill sits behind
+# black line work on white paper. Washed over shaded 3D geometry the same
+# pastels all read as white, so the viewport uses the same hue at this
+# much more saturation -- similar colour, actually distinguishable.
+_STYLE_VIEWPORT_SATURATION = 2.2
+_STYLE_VIEWPORT_MIN_SATURATION = 0.45
+
+
 def style_palette_color(index):
     """Palette entry for a style at ``index`` in the pool, last repeating."""
     if index < 0:
         index = 0
     return STYLE_COLOR_PALETTE[min(index, len(STYLE_COLOR_PALETTE) - 1)]
+
+
+def style_viewport_color(rgb):
+    """``rgb`` saturated enough to read as a colour in solid shading.
+
+    Hue and brightness are left alone, so a cabinet still looks like the
+    fill its drawings carry. A colourless entry (the first style's white)
+    stays white rather than being pushed into a hue it never had.
+    """
+    import colorsys
+    hue, sat, val = colorsys.rgb_to_hsv(rgb[0], rgb[1], rgb[2])
+    if sat <= 0.0:
+        return (rgb[0], rgb[1], rgb[2])
+    sat = max(min(sat * _STYLE_VIEWPORT_SATURATION, 1.0),
+              _STYLE_VIEWPORT_MIN_SATURATION)
+    return colorsys.hsv_to_rgb(hue, sat, val)
 
 
 def _is_cage(obj):
@@ -924,7 +948,7 @@ def _style_tint_for_cabinet(cabinet_obj, styles):
         colour = style_palette_color(index)
         if tuple(style.color_in_2d_drawings) != colour:
             style.color_in_2d_drawings = colour
-        return colour
+        return style_viewport_color(colour)
     return None
 
 
@@ -972,6 +996,36 @@ def apply_style_colors(context):
     if not on and _STYLE_COLOR_SHADING_KEY in scene:
         del scene[_STYLE_COLOR_SHADING_KEY]
     return tinted
+
+
+def style_color_for_object(obj, context=None):
+    """The colour ``obj`` should wear under style colours, or None.
+
+    Selection modes repaint cages and parts as the user moves between
+    them, and would otherwise put a cabinet back to the generic
+    highlight. They ask here first, so a cabinet keeps its style's
+    colour through a mode change. None means "not our business": the
+    option is off, or the object belongs to no cabinet style.
+    """
+    if obj is None:
+        return None
+    context = context or bpy.context
+    try:
+        props = get_style_props(context)
+    except Exception:
+        return None
+    if not props.show_style_colors:
+        return None
+    root = obj
+    while root is not None and not root.get('IS_FACE_FRAME_CABINET_CAGE'):
+        root = root.parent
+    if root is None:
+        return None
+    tint = _style_tint_for_cabinet(root, props.cabinet_styles)
+    if tint is None:
+        return None
+    alpha = _STYLE_CAGE_ALPHA if _is_cage(obj) else 1.0
+    return (tint[0], tint[1], tint[2], alpha)
 
 
 def update_show_style_colors(self, context):
@@ -10033,7 +10087,7 @@ class Face_Frame_Scene_Props(PropertyGroup):
         name="Style Colors In Viewport",
         description="Colour cabinets in the viewport by their style "
                     "section, matching the 2D drawing fills",
-        default=False,
+        default=True,
         update=update_show_style_colors,
     )  # type: ignore
 

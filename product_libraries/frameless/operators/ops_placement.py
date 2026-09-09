@@ -45,6 +45,23 @@ def _under_hidden_wall(obj):
         p = p.parent
     return False
 
+def _style_color(obj, fallback):
+    """``obj``'s cabinet-style colour where that view mode is on, else
+    ``fallback``.
+
+    Style colours are a way of looking at the whole scene, so they have
+    to outlast a selection-mode change: without this, entering a mode
+    repainted every cage with the generic highlight and the styles
+    vanished. Imported at call time -- the style pool lives in a sibling
+    product library that imports this module.
+    """
+    try:
+        from ...face_frame import props_hb_face_frame
+        return props_hb_face_frame.style_color_for_object(obj) or fallback
+    except Exception:
+        return fallback
+
+
 def toggle_cabinet_color(obj,toggle,type_name="",dont_show_parent=True):
     hb_props = bpy.context.window_manager.home_builder
     add_on_prefs = hb_props.get_user_preferences(bpy.context)
@@ -55,7 +72,7 @@ def toggle_cabinet_color(obj,toggle,type_name="",dont_show_parent=True):
                 return
         if _under_hidden_wall(obj):
             return
-        obj.color = add_on_prefs.cabinet_color
+        obj.color = _style_color(obj, add_on_prefs.cabinet_color)
         obj.show_in_front = True
         obj.hide_viewport = False
         obj.display_type = 'SOLID'
@@ -72,7 +89,8 @@ def toggle_cabinet_color(obj,toggle,type_name="",dont_show_parent=True):
             obj.color = add_on_prefs.annotation_color
             obj.display_type = 'SOLID'
         else:
-            obj.color = [1.000000, 1.000000, 1.000000, 1.000000]
+            obj.color = _style_color(
+                obj, [1.000000, 1.000000, 1.000000, 1.000000])
             obj.display_type = 'SOLID'
         obj.select_set(False)
 
