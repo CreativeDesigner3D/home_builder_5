@@ -79,6 +79,10 @@ RENDERABLE_CATALOG = (
     # geometry (no bay preset applies; default_bay_config returns None).
     "Half Wall",
     "Support Frame",
+    # Drawn rather than placed: built here from a fixed L path so the
+    # tile shows what the tool makes rather than what a single frame
+    # looks like.
+    "Support Frame Shape",
     # FF & Doors: carcass-less panel whose opening defaults to a door
     # (no bay preset; default_bay_config returns None).
     "Face Frame and Doors",
@@ -99,11 +103,39 @@ THUMBNAIL_DIMS = {
 }
 
 
+# The path the Support Frame Shape tile is rendered from. An L reads as
+# "this makes a shape" where a single straight run would just look like
+# the Support Frame tile next to it. Metres, on the floor plane.
+_SHAPE_THUMBNAIL_PATH = ((0.0, 0.0), (1.8, 0.0), (1.8, -1.4))
+
+
+def _build_shape_in_scene():
+    """Build the path-drawn support frame for its catalog tile."""
+    from ...common import support_frame_shape
+    cls = types_face_frame.SupportFrameFaceFrameProduct
+
+    def make_frame(length):
+        product = cls()
+        product.width = length
+        product.create("Support Frame")
+        return product
+
+    roots = support_frame_shape.build_path_frame(
+        _SHAPE_THUMBNAIL_PATH, make_frame, depth=cls().depth,
+        z=cls.default_z_location)
+    if not roots:
+        return None
+    return ops_cabinet.create_cabinet_group_from_roots(
+        roots, name="Support Frame Shape")
+
+
 def _build_in_scene(name):
     """Build the catalog item `name` into the active context scene and
     populate its bays so the thumbnail shows doors and drawers. Returns
     the cabinet root, or None if the name has no real builder.
     """
+    if name == ops_cabinet.SUPPORT_FRAME_SHAPE_NAME:
+        return _build_shape_in_scene()
     cls = types_face_frame.get_cabinet_class(name)
     if cls is None:
         return None

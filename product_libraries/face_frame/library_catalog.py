@@ -144,6 +144,7 @@ SECTIONS = (
         'rows': (
             # X-Frame Ends hidden until that product has a builder.
             ("", (("Half Wall", "Half Wall"), ("Support", "Support Frame"),
+                  ("Support Shape", "Support Frame Shape"),
                   ("FF & Doors", "Face Frame and Doors"))),
         ),
     },

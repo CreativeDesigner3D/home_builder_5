@@ -11,6 +11,11 @@ from .... import hb_types, hb_utils
 from .... import accessory_registry
 from ...frameless.operators.ops_placement import toggle_cabinet_color
 
+# Catalog name for the path-drawn support frame. Not a product class:
+# it names a way of placing the support frame, so the catalog entry
+# routes to the drawing modal rather than to a cabinet builder.
+SUPPORT_FRAME_SHAPE_NAME = 'Support Frame Shape'
+
 
 # ---------------------------------------------------------------------------
 # Operator: drop a cabinet from the library
@@ -42,6 +47,12 @@ class hb_face_frame_OT_draw_cabinet(bpy.types.Operator):
         if not self.cabinet_name:
             self.report({'WARNING'}, "No cabinet name supplied")
             return {'CANCELLED'}
+        # A support frame drawn through points rather than dropped as
+        # one box: its own modal, since it collects a path instead of
+        # following the cursor with a preview cage.
+        if self.cabinet_name == SUPPORT_FRAME_SHAPE_NAME:
+            bpy.ops.hb_face_frame.draw_support_frame('INVOKE_DEFAULT')
+            return {'FINISHED'}
         # Appliance products: invoke the appliance placement modal
         # (cursor follow + wall snap, fixed width, single instance).
         if self.cabinet_name in types_face_frame.APPLIANCE_NAME_DISPATCH:
