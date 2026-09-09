@@ -115,6 +115,7 @@ SECTIONS = (
             ("Medicine", (("Recessed", "Standard Recessed Medicine Cabinet"),
                           ("Standard", "Medicine Cabinet"),
                           ("Tri-View", "Tri-View Medicine Cabinet"))),
+            ("Sink", (("ADA", "ADA Sink"),)),
             ("Other", (("Overstool", "Overstool Cabinet"),
                        ("Mirror", "Mirror Frame"),
                        ("Tub Skirt", "Tub Skirt"))),

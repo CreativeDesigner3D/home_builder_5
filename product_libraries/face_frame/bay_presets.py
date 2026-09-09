@@ -461,6 +461,10 @@ def default_bay_config(cabinet_name, bay_width):
         # below an open APPLIANCE zone. Same recipe as the Change Bay
         # menu's "Built In Appliance" option.
         return 'BUILT_IN_APPLIANCE'
+    if cabinet_name == 'ADA Sink':
+        # The apron closes this one; doors would fill the knee space
+        # the whole product exists to leave clear.
+        return None
     if cabinet_name == 'Sink':
         return 'FALSE_FRONT_DOUBLE_DOOR' if is_wide else 'FALSE_FRONT_DOOR'
     if cabinet_name == 'Floating Vanity':

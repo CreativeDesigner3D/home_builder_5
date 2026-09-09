@@ -60,6 +60,7 @@ RENDERABLE_CATALOG = (
     "Standard Recessed Medicine Cabinet",
     "Medicine Cabinet",
     "Tri-View Medicine Cabinet",
+    "ADA Sink",
     "Overstool Cabinet",
     "Mirror Frame",
     "Tub Skirt",

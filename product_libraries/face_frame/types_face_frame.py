@@ -392,6 +392,8 @@ PART_ROLE_INSET_PANEL = 'INSET_PANEL'
 PART_ROLE_TILT_OUT = 'TILT_OUT'
 # ADA apron: the raked panel that closes a knee-clearance sink opening.
 PART_ROLE_ADA_PANEL = 'ADA_PANEL'
+# Marks the accessible sink product, which carries the apron.
+ADA_SINK_TAG = 'IS_ADA_SINK'
 PART_ROLE_APRON = 'APRON'
 # Drawer-look door: a working DOOR leaf wearing N applied drawer-front
 # panels (proud of the leaf, with reveal gaps that read as faux mid
@@ -12606,9 +12608,12 @@ class FaceFrameCabinet(GeoNodeCage):
             return
 
         # The opening sits this far above the cabinet floor, which turns
-        # a height off the floor into a local one.
-        rel = self.obj.matrix_world.inverted() @ opening_obj.matrix_world
-        floor_offset = rel.translation.z
+        # a height off the floor into a local one. Summed off the parent
+        # chain rather than read from matrix_world: mid-recalc the world
+        # matrices are stale, and this pass runs right after the bay has
+        # been moved - reading them put the whole apron a toe kick too
+        # high.
+        floor_offset = self._z_in_cabinet(opening_obj)
 
         def local_z(height_aff):
             return height_aff - floor_offset
@@ -13416,6 +13421,43 @@ class SinkFaceFrameCabinet(BaseFaceFrameCabinet):
         scene = bpy.context.scene
         if hasattr(scene, 'hb_face_frame'):
             self.default_width = scene.hb_face_frame.sink_cabinet_width
+
+
+class ADASinkCabinet(SinkFaceFrameCabinet):
+    """Accessible sink base: knee and toe room under the sink, with the
+    plumbing hidden behind a raked apron.
+
+    A sink base with its opening left open and closed by the apron
+    instead of doors, and no carcass bottom, so the space under the sink
+    is clear for someone in a wheelchair. The apron's own geometry - the
+    knee board raked back to the clearance line and the shin board above
+    it - lives on the opening; see _reconcile_ada_panel.
+
+    Sizes come from the standard: 34" is the highest a counter may be,
+    which the default box sits under; the clearances the apron holds are
+    published on it and shown in the cabinet prompts.
+    """
+
+    def create(self, name="ADA Sink", bay_qty=1):
+        super().create(name, bay_qty=bay_qty)
+        self.obj[ADA_SINK_TAG] = True
+        # Clear underneath: no carcass bottom, and the front closed by
+        # the apron rather than by doors.
+        #
+        # Collect first and write inside suspend_recalc: each of these
+        # props rebuilds the cabinet on write, and a rebuild deletes and
+        # respawns the very children this would be walking.
+        bays = [c for c in self.obj.children if c.get(TAG_BAY_CAGE)]
+        openings = [o for bay in bays for o in bay.children
+                    if o.get(TAG_OPENING_CAGE)]
+        with suspend_recalc():
+            for bay_obj in bays:
+                bay_obj.face_frame_bay.remove_bottom = True
+            for opening in openings:
+                op = opening.face_frame_opening
+                op.front_type = 'NONE'
+                op.ada_angled_front = True
+        self.recalculate()
 
 
 class UpperFaceFrameCabinet(FaceFrameCabinet):
@@ -16334,6 +16376,7 @@ CABINET_NAME_DISPATCH = {
     "3 Drawer Night Stand": ThreeDrawerNightStandCabinet,
     "Window Seat": WindowSeatFaceFrameCabinet,
     "Sink": SinkFaceFrameCabinet,
+    "ADA Sink": ADASinkCabinet,
     "Lap Drawer": LapDrawerFaceFrameCabinet,
     "Upper": UpperFaceFrameCabinet,
     "Upper Stacked": UpperFaceFrameCabinet,
@@ -16533,6 +16576,7 @@ WRAP_CLASS_REGISTRY.update({
     'FloatingBaseFaceFrameCabinet': FloatingBaseFaceFrameCabinet,
     'FloatingVanityCabinet': FloatingVanityCabinet,
     'SinkFaceFrameCabinet': SinkFaceFrameCabinet,
+    'ADASinkCabinet': ADASinkCabinet,
     'UpperFaceFrameCabinet': UpperFaceFrameCabinet,
     'TallFaceFrameCabinet': TallFaceFrameCabinet,
     'RefrigeratorCabinet': RefrigeratorCabinet,
