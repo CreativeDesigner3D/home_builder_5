@@ -12,14 +12,17 @@ has to its own origin. F turns the path around when the body lands on
 the wrong side.
 """
 
+import math
+
 import bpy
+import blf
 import gpu
 from gpu_extras.batch import batch_for_shader
 from bpy_extras import view3d_utils
 from mathutils import Vector
 from mathutils.geometry import intersect_line_plane
 
-from .... import hb_placement, hb_snap
+from .... import hb_placement, hb_snap, units
 from ....units import inch
 from ...common import support_frame_shape
 from .. import types_face_frame
@@ -34,6 +37,10 @@ CLOSE_THRESHOLD = 0.15
 # cabinet corner, mostly, since a support frame is nearly always lined up
 # with the run it carries.
 SNAP_PIXELS = 20.0
+
+# Angle step when the straight-segment lock is off. Same ladder the wall
+# tool offers, so the two drawing tools behave alike.
+FREE_ANGLE_STEP = 15.0
 
 _PATH_COLOR = (1.0, 0.65, 0.2, 0.95)
 _PENDING_COLOR = (1.0, 0.75, 0.4, 0.7)
@@ -139,6 +146,22 @@ def draw_support_frame_preview(op, context):
     gpu.state.line_width_set(1.0)
     gpu.state.blend_set('NONE')
 
+    # --- how long the span being drawn is ---
+    if op.cursor_point is not None and confirmed_n:
+        last = op.confirmed_points[-1]
+        span = (op.cursor_point - last).length
+        if span > 1e-4:
+            mid = to2d((last + op.cursor_point) * 0.5)
+            if mid is not None:
+                text = op.typed_value + "_" if op.typed_value else \
+                    units.unit_to_string(
+                    context.scene.unit_settings, span)
+                blf.size(0, 14)
+                blf.color(0, 1.0, 1.0, 1.0, 1.0)
+                width = blf.dimensions(0, text)[0]
+                blf.position(0, mid.x - width * 0.5, mid.y + 10.0, 0)
+                blf.draw(0, text)
+
 
 class hb_face_frame_OT_draw_support_frame(bpy.types.Operator,
                                           hb_placement.PlacementMixin):
@@ -153,35 +176,88 @@ class hb_face_frame_OT_draw_support_frame(bpy.types.Operator,
     close_snap: bool = False
     closed: bool = False
     depth: float = inch(24)
+    # Straight segments unless the user asks otherwise, because a support
+    # frame almost always runs square to the cabinets it carries. Alt
+    # opens it up to the free angle step.
+    free_rotation: bool = False
+    fine_snap: bool = False
+    # Direction of the span being drawn, once there is a point to draw
+    # from. A typed length is measured along it.
+    direction: Vector = None
     _draw_handle = None
 
     # ---- cursor -> a point on the floor ----------------------------------
     def _floor_point(self, context):
-        """Where the mouse is pointing on the floor plane, snapped.
+        """Where the mouse is pointing on the floor plane.
 
         Geometry first -- a support frame is nearly always lined up with
         the cabinets it carries, so landing on a cabinet corner matters
-        more than landing on a round number. Failing that, the floor
-        plane on the inch grid.
+        more than landing on a round number, and a corner found there is
+        taken exactly. Failing that, the raw floor plane, which the
+        straight-segment lock then squares up.
         """
         if self.region is None:
-            return None
+            return None, False
         rv3d = self.region.data
         coord = (self.mouse_pos.x, self.mouse_pos.y)
 
         hit = self._geometry_snap(context, coord, rv3d)
         if hit is not None:
-            return Vector((hit.x, hit.y, 0.0))
+            return Vector((hit.x, hit.y, 0.0)), True
 
         origin = view3d_utils.region_2d_to_origin_3d(self.region, rv3d, coord)
-        direction = view3d_utils.region_2d_to_vector_3d(self.region, rv3d,
-                                                        coord)
-        point = intersect_line_plane(origin, origin + direction,
+        aim = view3d_utils.region_2d_to_vector_3d(self.region, rv3d, coord)
+        point = intersect_line_plane(origin, origin + aim,
                                      Vector((0, 0, 0)), Vector((0, 0, 1)))
         if point is None:
-            return None
-        snapped = hb_snap.snap_vector_to_grid(point)
-        return Vector((snapped.x, snapped.y, 0.0))
+            return None, False
+        return Vector((point.x, point.y, 0.0)), False
+
+    def _square_up(self, point):
+        """``point`` pulled onto a straight run from the last corner.
+
+        The span locks to the axis the cursor has travelled furthest
+        along -- the same rule the wall tool uses, and the reason a run
+        drawn by eye comes out square. Alt swaps that for a coarse angle
+        step. The length lands on the inch grid either way, or the
+        sixteenth grid while Shift is held.
+        """
+        if not self.confirmed_points:
+            snapped = hb_snap.snap_vector_to_grid(point, fine=self.fine_snap)
+            return Vector((snapped.x, snapped.y, 0.0))
+
+        base = self.confirmed_points[-1]
+        run = Vector((point.x - base.x, point.y - base.y))
+        if run.length <= 1e-6:
+            return base.copy()
+
+        if self.free_rotation:
+            step = math.radians(FREE_ANGLE_STEP)
+            angle = round(math.atan2(run.y, run.x) / step) * step
+            length = run.length
+        elif abs(run.x) >= abs(run.y):
+            angle = 0.0 if run.x > 0 else math.pi
+            length = abs(run.x)
+        else:
+            angle = math.pi / 2 if run.y > 0 else -math.pi / 2
+            length = abs(run.y)
+
+        length = hb_snap.snap_value_to_grid(length, fine=self.fine_snap)
+        return base + Vector((math.cos(angle), math.sin(angle), 0.0)) * length
+
+    def _resolve_cursor(self, context):
+        """Set ``cursor_point`` and the direction a typed length runs in."""
+        raw, on_geometry = self._floor_point(context)
+        if raw is None:
+            self.cursor_point = None
+            return
+        # A corner found on real geometry is the point the user asked
+        # for, so it is taken as it stands; anything else is squared up.
+        self.cursor_point = raw if on_geometry else self._square_up(raw)
+        if self.confirmed_points:
+            run = self.cursor_point - self.confirmed_points[-1]
+            if run.length > 1e-6:
+                self.direction = run.normalized()
 
     def _geometry_snap(self, context, coord, rv3d):
         """A vertex / edge / midpoint under the cursor, or None.
@@ -198,6 +274,37 @@ class hb_face_frame_OT_draw_support_frame(bpy.types.Operator,
         except Exception:
             return None
         return hit.location if hit is not None else None
+
+    # ---- typed length ----------------------------------------------------
+    def get_default_typing_target(self):
+        return hb_placement.TypingTarget.LENGTH
+
+    def _typed_point(self):
+        """Where a typed length would put the next corner, or None."""
+        if not self.confirmed_points or self.direction is None:
+            return None
+        parsed = self.parse_typed_distance()
+        if parsed is None:
+            return None
+        return self.confirmed_points[-1] + self.direction * parsed
+
+    def on_typed_value_changed(self):
+        """Show the corner a typed length would land on as it is typed."""
+        point = self._typed_point()
+        if point is not None:
+            self.cursor_point = point
+        self.update_header(bpy.context)
+        area = bpy.context.area
+        if area:
+            area.tag_redraw()
+
+    def apply_typed_value(self):
+        """Enter on a typed length places that corner and carries on."""
+        point = self._typed_point()
+        if point is not None:
+            self.confirmed_points.append(point)
+        self.stop_typing()
+        self.update_header(bpy.context)
 
     def _check_close(self):
         self.close_snap = False
@@ -261,20 +368,30 @@ class hb_face_frame_OT_draw_support_frame(bpy.types.Operator,
         self._teardown(context)
 
     def update_header(self, context):
+        if self.placement_state == hb_placement.PlacementState.TYPING:
+            hb_placement.draw_header_text(context, " | ".join([
+                f"Length: {self.typed_value}_",
+                "Enter to place the corner",
+                "Esc to stop typing",
+            ]))
+            return
         count = len(self.confirmed_points)
         if count == 0:
             state = "Click the first corner"
         elif count == 1:
-            state = "Click the next corner"
+            state = "Click the next corner, or type a length"
         else:
             state = f"{count} corners"
             if self.close_snap:
                 state += " [CLOSE]"
             state += " -- Enter to finish"
+        angles = ("Free (%d deg)" % int(FREE_ANGLE_STEP)
+                  if self.free_rotation else "Straight")
         hb_placement.draw_header_text(context, " | ".join([
             state,
-            "F: flip which side the frame stands on",
-            "Backspace: undo | Ctrl: no snap | Esc: cancel",
+            "Alt: %s" % angles,
+            "F: flip the side the frame stands on",
+            "Backspace: undo | Shift: fine | Ctrl: no snap | Esc: cancel",
         ]))
 
     def execute(self, context):
@@ -284,6 +401,9 @@ class hb_face_frame_OT_draw_support_frame(bpy.types.Operator,
         self.close_snap = False
         self.closed = False
         self.suspend_snap = False
+        self.free_rotation = False
+        self.fine_snap = False
+        self.direction = None
         self.depth = types_face_frame.SupportFrameFaceFrameProduct().depth
         self._draw_handle = bpy.types.SpaceView3D.draw_handler_add(
             draw_support_frame_preview, (self, context), 'WINDOW',
@@ -301,11 +421,23 @@ class hb_face_frame_OT_draw_support_frame(bpy.types.Operator,
             return {'PASS_THROUGH'}
 
         self.suspend_snap = event.ctrl
+        self.fine_snap = event.shift
         self.update_snap(context, event)
-        self.cursor_point = self._floor_point(context)
-        self._check_close()
+        if self.placement_state != hb_placement.PlacementState.TYPING:
+            self._resolve_cursor(context)
+            self._check_close()
         if context.area:
             context.area.tag_redraw()
+
+        # Typing owns the number keys, Backspace, Enter and Esc while it
+        # is running, so it is offered the event before anything else.
+        if self.handle_typing_event(event):
+            return {'RUNNING_MODAL'}
+
+        if event.type in {'LEFT_ALT', 'RIGHT_ALT'} and event.value == 'PRESS':
+            self.free_rotation = not self.free_rotation
+            self.update_header(context)
+            return {'RUNNING_MODAL'}
 
         if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
             if self.cursor_point is None:
