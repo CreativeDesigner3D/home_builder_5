@@ -873,149 +873,6 @@ def update_include_drawer_boxes(self, context):
 # ---------------------------------------------------------------------------
 # Cabinet Style (placeholder shell, full implementation in Phase 4)
 # ---------------------------------------------------------------------------
-class Face_Frame_Column_Beam_Props(PropertyGroup):
-    """Options for a column or beam wrap.
-
-    Lives on the wrap's cage object alongside face_frame_cabinet, which
-    carries the dims: a COLUMN runs up Dim Z with a Dim X x Dim Y
-    section, a BEAM runs along Dim X with a Dim Y x Dim Z section.
-    FRONT / BACK are the Y-extreme faces on both; the pair closing the
-    section is LEFT / RIGHT on a column and BOTTOM / TOP on a beam, so
-    only four of the six side flags apply at a time.
-    """
-    orientation: EnumProperty(
-        name="Orientation",
-        description="Which way the wrap runs",
-        items=[('COLUMN', "Column", "Runs vertically, floor to ceiling"),
-               ('BEAM', "Beam", "Runs horizontally under the ceiling")],
-        default='COLUMN', update=_update_cabinet_dim,
-    )  # type: ignore
-    material_thickness: FloatProperty(
-        name="Material Thickness", default=units.inch(0.75),
-        unit='LENGTH', precision=4, update=_update_cabinet_dim,
-        description="Stock thickness of the wrap boards",
-    )  # type: ignore
-
-    # Which faces get built. All four is a closed box; drop the one
-    # against the wall or ceiling for a 3-sided, two for an L around an
-    # outside corner.
-    side_front: BoolProperty(
-        name="Front", default=True, update=_update_cabinet_dim,
-        description="Build the front board",
-    )  # type: ignore
-    side_back: BoolProperty(
-        name="Back", default=True, update=_update_cabinet_dim,
-        description="Build the back board",
-    )  # type: ignore
-    side_left: BoolProperty(
-        name="Left", default=True, update=_update_cabinet_dim,
-        description="Build the left board (column)",
-    )  # type: ignore
-    side_right: BoolProperty(
-        name="Right", default=True, update=_update_cabinet_dim,
-        description="Build the right board (column)",
-    )  # type: ignore
-    side_bottom: BoolProperty(
-        name="Bottom", default=True, update=_update_cabinet_dim,
-        description="Build the bottom board (beam)",
-    )  # type: ignore
-    side_top: BoolProperty(
-        name="Top", default=False, update=_update_cabinet_dim,
-        description="Build the top board (beam). Usually left off where "
-                    "the beam meets the ceiling",
-    )  # type: ignore
-
-    # Framed sides: stiles and rails standing on the board, which then
-    # reads as the panel behind them.
-    framed_front: BoolProperty(
-        name="Framed Front", default=False, update=_update_cabinet_dim,
-        description="Frame this side with stiles and rails",
-    )  # type: ignore
-    framed_back: BoolProperty(
-        name="Framed Back", default=False, update=_update_cabinet_dim,
-        description="Frame this side with stiles and rails",
-    )  # type: ignore
-    framed_left: BoolProperty(
-        name="Framed Left", default=False, update=_update_cabinet_dim,
-        description="Frame this side with stiles and rails",
-    )  # type: ignore
-    framed_right: BoolProperty(
-        name="Framed Right", default=False, update=_update_cabinet_dim,
-        description="Frame this side with stiles and rails",
-    )  # type: ignore
-    framed_bottom: BoolProperty(
-        name="Framed Bottom", default=False, update=_update_cabinet_dim,
-        description="Frame this side with stiles and rails",
-    )  # type: ignore
-    framed_top: BoolProperty(
-        name="Framed Top", default=False, update=_update_cabinet_dim,
-        description="Frame this side with stiles and rails",
-    )  # type: ignore
-    panel_count: IntProperty(
-        name="Panels", default=1, min=1, max=24,
-        update=_update_cabinet_dim,
-        description="How many panels a framed side is divided into along "
-                    "the length of the wrap",
-    )  # type: ignore
-    frame_stile_width: FloatProperty(
-        name="Stile Width", default=units.inch(2.0),
-        unit='LENGTH', precision=4, update=_update_cabinet_dim,
-        description="Width of the frame members crossing the wrap",
-    )  # type: ignore
-    frame_rail_width: FloatProperty(
-        name="Rail Width", default=units.inch(2.0),
-        unit='LENGTH', precision=4, update=_update_cabinet_dim,
-        description="Width of the frame members running the length of "
-                    "the wrap",
-    )  # type: ignore
-    frame_member_thickness: FloatProperty(
-        name="Frame Thickness", default=units.inch(0.75),
-        unit='LENGTH', precision=4, update=_update_cabinet_dim,
-        description="How far the frame members stand proud of the panel",
-    )  # type: ignore
-
-    # False ceiling: a panel set up inside a beam, leaving a recess for
-    # indirect lighting.
-    include_false_ceiling: BoolProperty(
-        name="False Ceiling", default=False, update=_update_cabinet_dim,
-        description="Set a panel up inside the beam, leaving a recess "
-                    "for indirect lighting",
-    )  # type: ignore
-    false_ceiling_recess: FloatProperty(
-        name="Recess Depth", default=units.inch(3.0), min=0.0,
-        unit='LENGTH', precision=4, update=_update_cabinet_dim,
-        description="How far up inside the beam the false ceiling sits",
-    )  # type: ignore
-    false_ceiling_thickness: FloatProperty(
-        name="False Ceiling Thickness", default=units.inch(0.25),
-        unit='LENGTH', precision=4, update=_update_cabinet_dim,
-        description="Stock thickness of the false ceiling panel",
-    )  # type: ignore
-
-    # Order options. These do not change the geometry: they ride here
-    # and are published on the object so a schedule or an order can read
-    # them.
-    butt_seam_sides: IntProperty(
-        name="Butt Seams", default=0, min=0, max=4,
-        description="Number of sides carrying a butt seam. Note the "
-                    "location of each seam on the drawing",
-    )  # type: ignore
-    random_staggered_sides: IntProperty(
-        name="Staggered Seam Sides", default=0, min=0, max=4,
-        description="Number of sides built with random staggered seams",
-    )  # type: ignore
-    angled_end_start: BoolProperty(
-        name="Angled Start", default=False,
-        description="This end is cut at an angle. Supply a template and "
-                    "dimension to the longest point",
-    )  # type: ignore
-    angled_end_end: BoolProperty(
-        name="Angled End", default=False,
-        description="This end is cut at an angle. Supply a template and "
-                    "dimension to the longest point",
-    )  # type: ignore
-
-
 class Face_Frame_Millwork_Item(PropertyGroup):
     """One millwork line item on a cabinet style's Style Section.
 
@@ -11897,6 +11754,149 @@ class Face_Frame_Wood_Top_Props(PropertyGroup):
         name="Edge Right", default=False,
         description="Apply the edge band to the right end",
         update=_update_wood_top,
+    )  # type: ignore
+
+
+class Face_Frame_Column_Beam_Props(PropertyGroup):
+    """Options for a column or beam wrap.
+
+    Lives on the wrap's cage object alongside face_frame_cabinet, which
+    carries the dims: a COLUMN runs up Dim Z with a Dim X x Dim Y
+    section, a BEAM runs along Dim X with a Dim Y x Dim Z section.
+    FRONT / BACK are the Y-extreme faces on both; the pair closing the
+    section is LEFT / RIGHT on a column and BOTTOM / TOP on a beam, so
+    only four of the six side flags apply at a time.
+    """
+    orientation: EnumProperty(
+        name="Orientation",
+        description="Which way the wrap runs",
+        items=[('COLUMN', "Column", "Runs vertically, floor to ceiling"),
+               ('BEAM', "Beam", "Runs horizontally under the ceiling")],
+        default='COLUMN', update=_update_cabinet_dim,
+    )  # type: ignore
+    material_thickness: FloatProperty(
+        name="Material Thickness", default=units.inch(0.75),
+        unit='LENGTH', precision=4, update=_update_cabinet_dim,
+        description="Stock thickness of the wrap boards",
+    )  # type: ignore
+
+    # Which faces get built. All four is a closed box; drop the one
+    # against the wall or ceiling for a 3-sided, two for an L around an
+    # outside corner.
+    side_front: BoolProperty(
+        name="Front", default=True, update=_update_cabinet_dim,
+        description="Build the front board",
+    )  # type: ignore
+    side_back: BoolProperty(
+        name="Back", default=True, update=_update_cabinet_dim,
+        description="Build the back board",
+    )  # type: ignore
+    side_left: BoolProperty(
+        name="Left", default=True, update=_update_cabinet_dim,
+        description="Build the left board (column)",
+    )  # type: ignore
+    side_right: BoolProperty(
+        name="Right", default=True, update=_update_cabinet_dim,
+        description="Build the right board (column)",
+    )  # type: ignore
+    side_bottom: BoolProperty(
+        name="Bottom", default=True, update=_update_cabinet_dim,
+        description="Build the bottom board (beam)",
+    )  # type: ignore
+    side_top: BoolProperty(
+        name="Top", default=False, update=_update_cabinet_dim,
+        description="Build the top board (beam). Usually left off where "
+                    "the beam meets the ceiling",
+    )  # type: ignore
+
+    # Framed sides: stiles and rails standing on the board, which then
+    # reads as the panel behind them.
+    framed_front: BoolProperty(
+        name="Framed Front", default=False, update=_update_cabinet_dim,
+        description="Frame this side with stiles and rails",
+    )  # type: ignore
+    framed_back: BoolProperty(
+        name="Framed Back", default=False, update=_update_cabinet_dim,
+        description="Frame this side with stiles and rails",
+    )  # type: ignore
+    framed_left: BoolProperty(
+        name="Framed Left", default=False, update=_update_cabinet_dim,
+        description="Frame this side with stiles and rails",
+    )  # type: ignore
+    framed_right: BoolProperty(
+        name="Framed Right", default=False, update=_update_cabinet_dim,
+        description="Frame this side with stiles and rails",
+    )  # type: ignore
+    framed_bottom: BoolProperty(
+        name="Framed Bottom", default=False, update=_update_cabinet_dim,
+        description="Frame this side with stiles and rails",
+    )  # type: ignore
+    framed_top: BoolProperty(
+        name="Framed Top", default=False, update=_update_cabinet_dim,
+        description="Frame this side with stiles and rails",
+    )  # type: ignore
+    panel_count: IntProperty(
+        name="Panels", default=1, min=1, max=24,
+        update=_update_cabinet_dim,
+        description="How many panels a framed side is divided into along "
+                    "the length of the wrap",
+    )  # type: ignore
+    frame_stile_width: FloatProperty(
+        name="Stile Width", default=units.inch(2.0),
+        unit='LENGTH', precision=4, update=_update_cabinet_dim,
+        description="Width of the frame members crossing the wrap",
+    )  # type: ignore
+    frame_rail_width: FloatProperty(
+        name="Rail Width", default=units.inch(2.0),
+        unit='LENGTH', precision=4, update=_update_cabinet_dim,
+        description="Width of the frame members running the length of "
+                    "the wrap",
+    )  # type: ignore
+    frame_member_thickness: FloatProperty(
+        name="Frame Thickness", default=units.inch(0.75),
+        unit='LENGTH', precision=4, update=_update_cabinet_dim,
+        description="How far the frame members stand proud of the panel",
+    )  # type: ignore
+
+    # False ceiling: a panel set up inside a beam, leaving a recess for
+    # indirect lighting.
+    include_false_ceiling: BoolProperty(
+        name="False Ceiling", default=False, update=_update_cabinet_dim,
+        description="Set a panel up inside the beam, leaving a recess "
+                    "for indirect lighting",
+    )  # type: ignore
+    false_ceiling_recess: FloatProperty(
+        name="Recess Depth", default=units.inch(3.0), min=0.0,
+        unit='LENGTH', precision=4, update=_update_cabinet_dim,
+        description="How far up inside the beam the false ceiling sits",
+    )  # type: ignore
+    false_ceiling_thickness: FloatProperty(
+        name="False Ceiling Thickness", default=units.inch(0.25),
+        unit='LENGTH', precision=4, update=_update_cabinet_dim,
+        description="Stock thickness of the false ceiling panel",
+    )  # type: ignore
+
+    # Order options. These do not change the geometry: they ride here
+    # and are published on the object so a schedule or an order can read
+    # them.
+    butt_seam_sides: IntProperty(
+        name="Butt Seams", default=0, min=0, max=4,
+        description="Number of sides carrying a butt seam. Note the "
+                    "location of each seam on the drawing",
+    )  # type: ignore
+    random_staggered_sides: IntProperty(
+        name="Staggered Seam Sides", default=0, min=0, max=4,
+        description="Number of sides built with random staggered seams",
+    )  # type: ignore
+    angled_end_start: BoolProperty(
+        name="Angled Start", default=False,
+        description="This end is cut at an angle. Supply a template and "
+                    "dimension to the longest point",
+    )  # type: ignore
+    angled_end_end: BoolProperty(
+        name="Angled End", default=False,
+        description="This end is cut at an angle. Supply a template and "
+                    "dimension to the longest point",
     )  # type: ignore
 
 
