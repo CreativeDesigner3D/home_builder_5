@@ -860,21 +860,71 @@ _NO_STYLE_TINT = (1.0, 1.0, 1.0, 1.0)
 # on, so turning them off restores what the user had.
 _STYLE_COLOR_SHADING_KEY = 'HB_PRE_STYLE_COLOR_SHADING'
 
+# Fill colour per style, by the style's position in the pool: the first
+# style is white (the project default) and each one after takes the next
+# muted pastel, the last entry repeating for a pool longer than the
+# palette. Downstream 2D consumers assign the same palette by the same
+# rule, so a cabinet wears the colour on screen that it prints on paper.
+STYLE_COLOR_PALETTE = (
+    (1.0, 1.0, 1.0),      # White (project default)
+    (0.75, 0.85, 0.95),   # Light Blue
+    (0.75, 0.92, 0.75),   # Light Green
+    (0.95, 0.85, 0.75),   # Light Peach
+    (0.88, 0.80, 0.95),   # Light Lavender
+    (0.95, 0.95, 0.75),   # Light Yellow
+    (0.85, 0.75, 0.75),   # Light Rose
+)
+
+# A cabinet's cage is drawn solid and in front of its own parts whenever
+# its selection mode is active, so an opaque tint would hide the cabinet
+# it is meant to be colouring. Cages take the style colour at this alpha
+# instead: enough to read the colour, transparent enough to see the doors
+# and drawers through it. Parts stay opaque.
+_STYLE_CAGE_ALPHA = 0.25
+
+# Cages, as opposed to parts: the wash alpha applies to all of them, so a
+# bay or opening cage doesn't black out the cabinet in its own mode.
+_STYLE_CAGE_TAGS = (
+    'IS_FACE_FRAME_CABINET_CAGE',
+    'IS_FACE_FRAME_BAY_CAGE',
+    'IS_FACE_FRAME_OPENING_CAGE',
+    'IS_FACE_FRAME_PRODUCT_CAGE',
+    'IS_FRAMELESS_CABINET_CAGE',
+    'IS_FRAMELESS_PRODUCT_CAGE',
+    'IS_CAGE_GROUP',
+)
+
+
+def style_palette_color(index):
+    """Palette entry for a style at ``index`` in the pool, last repeating."""
+    if index < 0:
+        index = 0
+    return STYLE_COLOR_PALETTE[min(index, len(STYLE_COLOR_PALETTE) - 1)]
+
+
+def _is_cage(obj):
+    return any(obj.get(tag) for tag in _STYLE_CAGE_TAGS)
+
 
 def _style_tint_for_cabinet(cabinet_obj, styles):
-    """The RGBA a cabinet should render as, or None if it has no style.
+    """The RGB a cabinet should render as, or None if it has no style.
 
-    Reads the same per-style colour the 2D drawings fill with, so the
-    viewport and the drawings agree by construction rather than by two
-    tables that have to be kept in step.
+    The colour comes from the style's place in the pool rather than from
+    its stored swatch: the swatch is only filled in once shop drawings
+    have been generated, so reading it left every cabinet white until
+    then. The stored swatch is refreshed to match on the way past, so the
+    style panel shows the colour its cabinets are wearing.
     """
     name = cabinet_obj.get('STYLE_NAME')
     if not name:
         return None
-    for style in styles:
-        if style.name == name:
-            col = style.color_in_2d_drawings
-            return (col[0], col[1], col[2], 1.0)
+    for index, style in enumerate(styles):
+        if style.name != name:
+            continue
+        colour = style_palette_color(index)
+        if tuple(style.color_in_2d_drawings) != colour:
+            style.color_in_2d_drawings = colour
+        return colour
     return None
 
 
@@ -892,12 +942,17 @@ def apply_style_colors(context):
     for cage in [o for o in scene.objects
                  if o.get(types_face_frame.TAG_CABINET_CAGE)]:
         tint = _style_tint_for_cabinet(cage, styles) if on else None
-        colour = tint or _NO_STYLE_TINT
-        cage.color = colour
+        if tint is None:
+            cage.color = _NO_STYLE_TINT
+            for child in cage.children_recursive:
+                child.color = _NO_STYLE_TINT
+            continue
+        part_colour = (tint[0], tint[1], tint[2], 1.0)
+        cage_colour = (tint[0], tint[1], tint[2], _STYLE_CAGE_ALPHA)
+        cage.color = cage_colour
         for child in cage.children_recursive:
-            child.color = colour
-        if tint is not None:
-            tinted += 1
+            child.color = cage_colour if _is_cage(child) else part_colour
+        tinted += 1
 
     # The colour only shows in solid shading's OBJECT mode; remember what
     # the viewport had so turning this off gives it back.

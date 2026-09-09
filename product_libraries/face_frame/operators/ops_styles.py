@@ -7,7 +7,22 @@ from bpy.types import Operator
 
 from ..props_hb_face_frame import (get_style_props,
                                    _reapply_materials_for_door_style)
+from .. import props_hb_face_frame
 from .. import style_options
+
+
+def _refresh_style_colors(context):
+    """Repaint the viewport when style colours are showing.
+
+    A cabinet's colour comes from its style's place in the pool, so
+    adding, removing, reordering or reassigning a style changes what the
+    scene should look like. No-op while the option is off.
+    """
+    try:
+        if get_style_props(context).show_style_colors:
+            props_hb_face_frame.apply_style_colors(context)
+    except Exception:
+        pass
 
 
 def _next_unique_name(base, existing):
@@ -122,6 +137,7 @@ class hb_face_frame_OT_add_cabinet_style(Operator):
         # re-tags cabinets assigned to IT, never the style it came from.
         new_style.rename_anchor = new_style.name
         ff.active_cabinet_style_index = len(ff.cabinet_styles) - 1
+        _refresh_style_colors(context)
         self.report({'INFO'}, f"Added cabinet style: {new_style.name}")
         return {'FINISHED'}
 
@@ -161,6 +177,7 @@ class hb_face_frame_OT_remove_cabinet_style(Operator):
             ff.active_cabinet_style_index -= 1
         if ff.active_cabinet_style_index >= len(ff.cabinet_styles):
             ff.active_cabinet_style_index = max(0, len(ff.cabinet_styles) - 1)
+        _refresh_style_colors(context)
         self.report({'INFO'}, f"Removed cabinet style: {name}")
         return {'FINISHED'}
 
@@ -201,6 +218,7 @@ class hb_face_frame_OT_move_cabinet_style(Operator):
         # (the host add-on's style colors, applied at page generation) changes.
         ff.cabinet_styles.move(idx, new_idx)
         ff.active_cabinet_style_index = new_idx
+        _refresh_style_colors(context)
         return {'FINISHED'}
 
 
@@ -399,6 +417,7 @@ class hb_face_frame_OT_assign_style_to_selected_cabinets(Operator):
         for part in bare_parts:
             _apply_style_finish_to_bare_part(style, part)
         n = len(cab_roots) + len(hood_roots) + len(bare_parts)
+        _refresh_style_colors(context)
         self.report({'INFO'}, f"Applied '{style.name}' to {n} item(s)")
         return {'FINISHED'}
 
@@ -523,6 +542,7 @@ class hb_face_frame_OT_paint_assign_cabinet_style(bpy.types.Operator):
             return
         if root.get('IS_FACE_FRAME_CABINET_CAGE'):
             style.assign_style_to_cabinet(root)
+            _refresh_style_colors(context)
         elif root.get('APPLIANCE_TYPE') == 'HOOD':
             # Stamp the style, then rebuild a built wood hood so its
             # static doors pick up the new style's door construction.
