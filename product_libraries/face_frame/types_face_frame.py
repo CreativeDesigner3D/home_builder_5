@@ -16670,6 +16670,27 @@ WRAP_CLASS_REGISTRY.update({
 # upper-derived bath products wrap to a carcass either way (and resolve
 # _has_toe_kick to Upper's False == the base-wrap value), so listing them here
 # is behavior-neutral - it just makes recalc use their real class.
+# Furniture and bookcase leaf classes. These sit on a toe kick -- they
+# descend from BASE or TALL -- but an unregistered class wraps as the
+# plain FaceFrameCabinet, whose _has_toe_kick() is False. So the first
+# recalc after placement dropped the carcass bottom, back and bay by the
+# kick height and stretched the back to suit: a dresser or window seat
+# fell into its own kick as soon as it was resized. The two upper-derived
+# entries resolve the same either way, and are listed so the set is the
+# whole family rather than the half of it that misbehaved.
+WRAP_CLASS_REGISTRY.update({
+    'FurnitureFaceFrameCabinet': FurnitureFaceFrameCabinet,
+    'FiveDrawerDresserCabinet': FiveDrawerDresserCabinet,
+    'SixDrawerDresserCabinet': SixDrawerDresserCabinet,
+    'NightStandFaceFrameCabinet': NightStandFaceFrameCabinet,
+    'ThreeDrawerNightStandCabinet': ThreeDrawerNightStandCabinet,
+    'WindowSeatFaceFrameCabinet': WindowSeatFaceFrameCabinet,
+    'BookcaseStorageUnitFaceFrameCabinet': BookcaseStorageUnitFaceFrameCabinet,
+    'BookcaseUpperFaceFrameCabinet': BookcaseUpperFaceFrameCabinet,
+    'HutchUpperFaceFrameCabinet': HutchUpperFaceFrameCabinet,
+})
+
+
 WRAP_CLASS_REGISTRY.update({
     'StandardRecessedMedicineCabinet': StandardRecessedMedicineCabinet,
     'MedicineCabinetFaceFrameCabinet': MedicineCabinetFaceFrameCabinet,
