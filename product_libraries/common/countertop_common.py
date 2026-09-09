@@ -26,6 +26,12 @@ island split by one comes out as two tops, which is correct.
 The library's own countertop module owns the overhang and thickness
 settings and passes them in; nothing here reads a property group.
 
+A top is not stuck with the rectangle it was measured into. The outline
+it was built from is kept on the object, and the slab is rebuilt from
+that outline whenever it changes -- which is what lets an island top be
+pushed out over a seating overhang, or cut back around a corner, without
+the cabinets underneath having to pretend to be that shape.
+
 Every top also goes through finish(), which stamps the right-click menu
 and lays down UVs. The UVs matter more than they look: a procedural
 material reads the UV output of a Texture Coordinate node, and a mesh
@@ -54,6 +60,18 @@ JOIN_GAP = 0.0254          # 1 inch
 # A range is excluded on purpose (see the module docstring); anything
 # taller than the cabinets, a refrigerator, is excluded by height.
 UNDER_COUNTER_MARGIN = 4 * 0.0254
+
+# The top's shape, held on the object so it survives a rebuild and a
+# file round trip. OUTLINE is a flat list of local XY pairs going round
+# the slab; TOP is the local Z of its underside and THICKNESS its depth.
+# An ID property can hold a flat list of floats and not much else, which
+# is why the outline is stored the way it is.
+OUTLINE_KEY = 'ct_outline'
+TOP_KEY = 'ct_top_z'
+THICKNESS_KEY = 'ct_thickness'
+
+# Two outline points closer than this are the same corner.
+POINT_TOL = 1e-6
 
 
 def footprint(obj):
@@ -163,29 +181,82 @@ def create_group_countertop(context, members, overhang_front, overhang_sides,
     if top is None:
         return None
 
-    bm = bmesh.new()
-    lower = [bm.verts.new((x, y, top))
-             for x, y in ((x0, y0), (x1, y0), (x1, y1), (x0, y1))]
-    upper = [bm.verts.new((v.co.x, v.co.y, top + thickness)) for v in lower]
-    bm.faces.new(list(reversed(lower)))
-    bm.faces.new(upper)
-    for i in range(4):
-        j = (i + 1) % 4
-        bm.faces.new((lower[i], lower[j], upper[j], upper[i]))
-    bm.normal_update()
-    bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
-
-    mesh = bpy.data.meshes.new('Countertop')
-    bm.to_mesh(mesh)
-    bm.free()
-
-    obj = bpy.data.objects.new('Countertop', mesh)
+    obj = bpy.data.objects.new('Countertop',
+                               bpy.data.meshes.new('Countertop'))
     obj.parent = anchor
     obj.matrix_parent_inverse.identity()
     obj['IS_COUNTERTOP'] = True
     context.scene.collection.objects.link(obj)
-    finish(obj, library)
+    # The measured rectangle is only where the top STARTS. It is stored
+    # as an outline and the slab built from that, so reshaping it later
+    # is the same operation as building it now.
+    obj[TOP_KEY] = float(top)
+    obj[THICKNESS_KEY] = float(thickness)
+    set_outline(obj, ((x0, y0), (x1, y0), (x1, y1), (x0, y1)))
+    obj['MENU_ID'] = MENU_ID
+    obj['HB_COUNTERTOP_LIB'] = library
+    rebuild(obj)
     return obj
+
+
+def outline_of(obj):
+    """The top's outline as a list of local (x, y) corners."""
+    flat = obj.get(OUTLINE_KEY) or []
+    return [(flat[i], flat[i + 1]) for i in range(0, len(flat) - 1, 2)]
+
+
+def set_outline(obj, points):
+    """Store an outline, dropping corners that repeat the one before.
+
+    A drag that pushes one edge onto its neighbour would otherwise leave
+    a zero-length edge behind, and a face built on one of those is a
+    face with no area.
+    """
+    flat = []
+    last = None
+    for x, y in points:
+        if last is not None and (abs(last[0] - x) < POINT_TOL
+                                 and abs(last[1] - y) < POINT_TOL):
+            continue
+        flat.extend((float(x), float(y)))
+        last = (x, y)
+    obj[OUTLINE_KEY] = flat
+
+
+def has_outline(obj):
+    return len(outline_of(obj)) >= 3
+
+
+def rebuild(obj):
+    """Rewrite the slab's mesh from its stored outline. True if built.
+
+    Writes into the existing mesh datablock, so the material the top is
+    already wearing survives being reshaped.
+    """
+    points = outline_of(obj)
+    if len(points) < 3:
+        return False
+    top = float(obj.get(TOP_KEY, 0.0))
+    thickness = float(obj.get(THICKNESS_KEY, 0.0))
+    if thickness <= 0.0:
+        return False
+
+    bm = bmesh.new()
+    lower = [bm.verts.new((x, y, top)) for x, y in points]
+    upper = [bm.verts.new((x, y, top + thickness)) for x, y in points]
+    bm.faces.new(list(reversed(lower)))
+    bm.faces.new(upper)
+    count = len(points)
+    for i in range(count):
+        j = (i + 1) % count
+        bm.faces.new((lower[i], lower[j], upper[j], upper[i]))
+    bm.normal_update()
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+    bm.to_mesh(obj.data)
+    bm.free()
+    obj.data.update()
+    apply_world_uvs(obj)
+    return True
 
 
 def world_matrix(obj):
