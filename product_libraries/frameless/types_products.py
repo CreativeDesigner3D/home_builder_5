@@ -251,11 +251,269 @@ class Valance(Product):
         r_panel.obj['Finish Bottom'] = True
 
 
+# ---------------------------------------------------------------------------
+# Support frame
+# ---------------------------------------------------------------------------
+
+# Role tag written on every support frame part. The frame is solved in
+# Python, so each pass has to find its own parts again; a tag survives a
+# rename or a duplicate, where matching on the object name does not.
+SUPPORT_FRAME_PART_KEY = 'SUPPORT_FRAME_PART'
+
+# Frames built before the tag existed are matched on the names their parts
+# were created with, so an older job upgrades in place on first solve.
+SUPPORT_FRAME_LEGACY_NAMES = {
+    'Left Panel': 'LEFT_RAIL',
+    'Right Panel': 'RIGHT_RAIL',
+    'Front Panel': 'FRONT_RAIL',
+    'Back Panel': 'BACK_RAIL',
+    'Support': 'SUPPORT',
+    'Front Left Leg': 'FRONT_LEFT_LEG',
+    'Front Right Leg': 'FRONT_RIGHT_LEG',
+    'Back Left Leg': 'BACK_LEFT_LEG',
+    'Back Right Leg': 'BACK_RIGHT_LEG',
+}
+
+# Array modifier carrying the intermediate supports.
+SUPPORT_FRAME_ARRAY_MOD = 'Qty'
+
+# Leg Type prompt: index into ["Inset", "Wrapped"]. A wrapped leg stands
+# proud of the frame and the rails stop short of it; an inset leg tucks
+# inside, so the rails run past it and only the material thickness is lost.
+LEG_TYPE_WRAPPED = 1
+
+
+def is_support_frame(obj):
+    """True for a support frame's root (cage) object."""
+    return obj is not None and obj.get('PART_TYPE') == 'SUPPORT_FRAME'
+
+
+def support_frame_root(obj):
+    """The support frame root at or above ``obj``, or None."""
+    while obj is not None:
+        if is_support_frame(obj):
+            return obj
+        obj = obj.parent
+    return None
+
+
+def support_frame_parts(frame_obj):
+    """``{role: object}`` for the parts of one support frame."""
+    parts = {}
+    for child in frame_obj.children:
+        role = child.get(SUPPORT_FRAME_PART_KEY)
+        if role is None:
+            role = SUPPORT_FRAME_LEGACY_NAMES.get(child.name.split('.')[0])
+        if role is not None and role not in parts:
+            parts[role] = child
+    return parts
+
+
+def _clear_drivers(obj):
+    """Drop every driver on ``obj``.
+
+    Frames built before the solver carry a driver on each part's location,
+    each geometry-node size input and its visibility. The solver writes
+    those same values directly, and a leftover driver would overwrite the
+    written value on the next depsgraph evaluation -- so the old drivers
+    have to go before the first solve. Parts built by the solver have no
+    animation data at all, which makes this a no-op for them.
+    """
+    anim = obj.animation_data
+    if anim is None:
+        return
+    for fcurve in list(anim.drivers):
+        try:
+            anim.drivers.remove(fcurve)
+        except (RuntimeError, ReferenceError):
+            pass
+    if anim.action is None and not anim.nla_tracks:
+        obj.animation_data_clear()
+
+
+def _set_part(part_obj, location, length=None, width=None, thickness=None,
+              visible=True):
+    """Write one part's position, size and visibility.
+
+    Sizes are clamped at zero: a rail whose legs eat more than the frame
+    they sit in has no board left, and a negative length would build the
+    part inside out rather than not at all.
+    """
+    part = GeoNodeCutpart(part_obj)
+    part_obj.location = location
+    if length is not None:
+        part.set_input('Length', max(length, 0.0))
+    if width is not None:
+        part.set_input('Width', max(width, 0.0))
+    if thickness is not None:
+        part.set_input('Thickness', max(thickness, 0.0))
+    part_obj.hide_viewport = not visible
+    part_obj.hide_render = not visible
+
+
+def recalculate_support_frame(obj):
+    """Size and place every part of a support frame from its prompts.
+
+    Standard cabinets solve their parts in Python on demand. This frame
+    used to hold the same arithmetic in Blender drivers -- one per part,
+    per axis, per size input. Drivers evaluate in an order nothing here
+    controls, need a forced re-evaluation pass to settle after a prompt
+    edit, and only come back from a saved file once every target they
+    reference has: which is how a saved frame could reopen with its parts
+    collapsed onto the origin or missing altogether. Solving here makes
+    the built values plain object data that a file round-trips unchanged.
+
+    Accepts the frame root or any part of it, so property callbacks and
+    menu commands can hand it whatever the user had selected.
+    """
+    frame_obj = support_frame_root(obj)
+    if frame_obj is None:
+        return
+    parts = support_frame_parts(frame_obj)
+    if not parts:
+        return
+    for role, part_obj in parts.items():
+        _clear_drivers(part_obj)
+        # A frame matched on its part names carries no tags yet; stamp
+        # them now so the next solve finds its parts by tag like any
+        # frame built here.
+        part_obj[SUPPORT_FRAME_PART_KEY] = role
+
+    cage = GeoNodeCage(frame_obj)
+    dim_x = cage.get_input('Dim X')
+    dim_y = cage.get_input('Dim Y')
+    dim_z = cage.get_input('Dim Z')
+
+    get = frame_obj.get
+    mt = float(get('Material Thickness', inch(0.75)))
+    spacing = float(get('Support Spacing', inch(16)))
+    leg_w = float(get('Leg Width', inch(3.5)))
+    leg_d = float(get('Leg Depth', inch(3.5)))
+    leg_h = float(get('Leg Height', inch(34.5)))
+
+    legs = {
+        'FRONT_LEFT_LEG': (bool(get('Front Left Leg', True)),
+                           int(get('Front Left Leg Type', 0))),
+        'FRONT_RIGHT_LEG': (bool(get('Front Right Leg', True)),
+                            int(get('Front Right Leg Type', 0))),
+        'BACK_LEFT_LEG': (bool(get('Back Left Leg', True)),
+                          int(get('Back Left Leg Type', 0))),
+        'BACK_RIGHT_LEG': (bool(get('Back Right Leg', True)),
+                           int(get('Back Right Leg Type', 0))),
+    }
+
+    def wrapped(role):
+        """True when that corner carries a leg the rails must stop at."""
+        on, leg_type = legs[role]
+        return on and leg_type == LEG_TYPE_WRAPPED
+
+    # How much each corner takes out of the rail running into it: the leg
+    # itself where the leg wraps the frame, otherwise just the rail it
+    # butts against.
+    fl_y = leg_d if wrapped('FRONT_LEFT_LEG') else mt
+    fr_y = leg_d if wrapped('FRONT_RIGHT_LEG') else mt
+    bl_y = leg_d if wrapped('BACK_LEFT_LEG') else mt
+    br_y = leg_d if wrapped('BACK_RIGHT_LEG') else mt
+    bl_x = leg_w if wrapped('BACK_LEFT_LEG') else 0.0
+    br_x = leg_w if wrapped('BACK_RIGHT_LEG') else 0.0
+    fl_x = leg_w if wrapped('FRONT_LEFT_LEG') else 0.0
+    fr_x = leg_w if wrapped('FRONT_RIGHT_LEG') else 0.0
+
+    part = parts.get('LEFT_RAIL')
+    if part is not None:
+        _set_part(part, (0.0, -bl_y, 0.0),
+                  length=dim_y - fl_y - bl_y, width=dim_z, thickness=mt,
+                  visible=bool(get('Left Rail', True)))
+
+    part = parts.get('RIGHT_RAIL')
+    if part is not None:
+        _set_part(part, (dim_x, -br_y, 0.0),
+                  length=dim_y - fr_y - br_y, width=dim_z, thickness=mt,
+                  visible=bool(get('Right Rail', True)))
+
+    part = parts.get('FRONT_RAIL')
+    if part is not None:
+        _set_part(part, (fl_x, -dim_y, 0.0),
+                  length=dim_x - fl_x - fr_x, width=dim_z, thickness=mt,
+                  visible=bool(get('Front Rail', True)))
+
+    part = parts.get('BACK_RAIL')
+    if part is not None:
+        _set_part(part, (bl_x, 0.0, 0.0),
+                  length=dim_x - bl_x - br_x, width=dim_z, thickness=mt,
+                  visible=bool(get('Back Rail', True)))
+
+    part = parts.get('SUPPORT')
+    if part is not None:
+        # Intermediate supports are one part arrayed across the frame, so
+        # the count is how many whole spacings fit inside the rails.
+        count = 0
+        if spacing > 0.0:
+            count = int(math.floor((dim_x - mt * 2.0 - spacing) / spacing)) + 1
+            count = max(count, 0)
+        _set_part(part, (spacing, -mt, 0.0),
+                  length=dim_y - mt * 2.0, width=dim_z, thickness=mt,
+                  visible=count > 0)
+        array_mod = part.modifiers.get(SUPPORT_FRAME_ARRAY_MOD)
+        if array_mod is not None and array_mod.type == 'ARRAY':
+            array_mod.use_relative_offset = False
+            array_mod.use_constant_offset = True
+            # The support is laid on its side, so the frame's width runs
+            # along the part's own Z.
+            array_mod.constant_offset_displace = (0.0, 0.0, -spacing)
+            array_mod.count = max(count, 1)
+
+    # Legs hang from the top of the frame down to the floor. An inset leg
+    # sits inside the rails by their thickness; a wrapped leg sits at the
+    # frame's outside face, with the rails stopped short of it above.
+    leg_specs = {
+        'FRONT_LEFT_LEG': ((mt, -(dim_y - mt)), (0.0, -dim_y), leg_w, leg_d),
+        'FRONT_RIGHT_LEG': ((dim_x - mt, -(dim_y - mt)), (dim_x, -dim_y),
+                            leg_d, leg_w),
+        'BACK_LEFT_LEG': ((mt, -mt), (0.0, 0.0), leg_d, leg_w),
+        'BACK_RIGHT_LEG': ((dim_x - mt, -mt), (dim_x, 0.0), leg_w, leg_d),
+    }
+    for role, (inset_xy, wrapped_xy, width, thickness) in leg_specs.items():
+        part = parts.get(role)
+        if part is None:
+            continue
+        on, leg_type = legs[role]
+        x, y = wrapped_xy if leg_type == LEG_TYPE_WRAPPED else inset_xy
+        _set_part(part, (x, y, dim_z),
+                  length=leg_h, width=width, thickness=thickness,
+                  visible=on)
+
+
+def upgrade_support_frames(scene=None):
+    """Re-solve every support frame in the file.
+
+    Run on load so a frame saved by an older build sheds its drivers and
+    comes back at the size it was saved at, rather than waiting for
+    something to touch it.
+    """
+    scenes = [scene] if scene is not None else list(bpy.data.scenes)
+    seen = set()
+    for scn in scenes:
+        for obj in scn.objects:
+            if not is_support_frame(obj) or obj.name in seen:
+                continue
+            seen.add(obj.name)
+            try:
+                recalculate_support_frame(obj)
+            except Exception:
+                # One bad frame must not stop a file from opening.
+                pass
+
+
 class SupportFrame(Product):
     """Open rectangular frame (sides, top, bottom).
-    
+
     Used for supporting countertop overhangs, peninsulas, etc.
     Has configurable legs at each corner with inset or wrapped options.
+
+    Parts are solved by ``recalculate_support_frame`` -- created at rest
+    here, then sized and placed from the prompts. Call the solver after
+    changing any prompt or dimension on the frame.
     """
 
     def __init__(self):
@@ -291,6 +549,18 @@ class SupportFrame(Product):
         self.add_property(turned_leg.LEG_STYLE_PROP, 'COMBOBOX', 0,
                           combobox_items=turned_leg.style_items())
 
+    def add_part(self, name, role, rotation=(0, 0, 0), mirror=()):
+        """One frame part, parented and tagged. Size and position are the
+        solver's to write, so only the fixed orientation is set here."""
+        part = CabinetPart()
+        part.create(name)
+        part.obj.parent = self.obj
+        part.obj[SUPPORT_FRAME_PART_KEY] = role
+        part.obj.rotation_euler = tuple(math.radians(a) for a in rotation)
+        for axis in mirror:
+            part.set_input('Mirror ' + axis, True)
+        return part
+
     def create(self, name="Support Frame"):
         self.create_product(name)
         self.obj['PART_TYPE'] = 'SUPPORT_FRAME'
@@ -299,174 +569,39 @@ class SupportFrame(Product):
         self.add_properties_common()
         self.add_properties()
 
-        dim_x = self.var_input('Dim X', 'dim_x')
-        dim_y = self.var_input('Dim Y', 'dim_y')
-        dim_z = self.var_input('Dim Z', 'dim_z')
-        mt = self.var_prop('Material Thickness', 'mt')
-        ss = self.var_prop('Support Spacing', 'ss')
-        fll = self.var_prop('Front Left Leg', 'fll')
-        frl = self.var_prop('Front Right Leg', 'frl')
-        bll = self.var_prop('Back Left Leg', 'bll')
-        brl = self.var_prop('Back Right Leg', 'brl')
-        lw = self.var_prop('Leg Width', 'lw')
-        ld = self.var_prop('Leg Depth', 'ld')
-        lh = self.var_prop('Leg Height', 'lh')
-        fllt = self.var_prop('Front Left Leg Type', 'fllt')
-        frlt = self.var_prop('Front Right Leg Type', 'frlt')
-        bllt = self.var_prop('Back Left Leg Type', 'bllt')
-        brlt = self.var_prop('Back Right Leg Type', 'brlt')
-        f_rail = self.var_prop('Front Rail', 'f_rail')
-        b_rail = self.var_prop('Back Rail', 'b_rail')
-        l_rail = self.var_prop('Left Rail', 'l_rail')
-        r_rail = self.var_prop('Right Rail', 'r_rail')
+        # ---- RAILS ----
+        self.add_part('Left Panel', 'LEFT_RAIL', rotation=(-90, 0, 90),
+                      mirror='XYZ')
+        self.add_part('Right Panel', 'RIGHT_RAIL', rotation=(-90, 0, 90),
+                      mirror='XY')
+        self.add_part('Front Panel', 'FRONT_RAIL', rotation=(90, 0, 0),
+                      mirror='Z')
+        self.add_part('Back Panel', 'BACK_RAIL', rotation=(90, 0, 0))
 
-        l_panel = CabinetPart()
-        l_panel.create('Left Panel')
-        l_panel.obj.parent = self.obj
-        l_panel.obj.rotation_euler.x = math.radians(-90)
-        l_panel.obj.rotation_euler.z = math.radians(90)
-        l_panel.driver_location('y', '-IF(AND(bll,bllt==1),ld,mt)', [mt, bll, bllt, ld])
-        l_panel.driver_input("Length", 'dim_y-IF(AND(fll,fllt==1),ld,mt)-IF(AND(bll,bllt==1),ld,mt)', [dim_y, mt, fll, fllt, ld, bll, bllt])
-        l_panel.driver_input("Width", 'dim_z', [dim_z])
-        l_panel.driver_input("Thickness", 'mt', [mt])
-        l_panel.set_input("Mirror X", True)
-        l_panel.set_input("Mirror Y", True)
-        l_panel.set_input("Mirror Z", True)
-        l_panel.driver_hide('IF(l_rail,False,True)', [l_rail])
-
-        r_panel = CabinetPart()
-        r_panel.create('Right Panel')
-        r_panel.obj.parent = self.obj
-        r_panel.obj.rotation_euler.x = math.radians(-90)
-        r_panel.obj.rotation_euler.z = math.radians(90)
-        r_panel.driver_location('x', 'dim_x', [dim_x])
-        r_panel.driver_location('y', '-IF(AND(brl,brlt==1),ld,mt)', [mt, brl, brlt, ld])
-        r_panel.driver_input("Length", 'dim_y-IF(AND(frl,frlt==1),ld,mt)-IF(AND(brl,brlt==1),ld,mt)', [dim_y, mt, frl, frlt, ld, brl, brlt])
-        r_panel.driver_input("Width", 'dim_z', [dim_z])
-        r_panel.driver_input("Thickness", 'mt', [mt])
-        r_panel.set_input("Mirror X", True)
-        r_panel.set_input("Mirror Y", True)
-        r_panel.driver_hide('IF(r_rail,False,True)', [r_rail])
-
-        front = CabinetPart()
-        front.create('Front Panel')
-        front.obj.parent = self.obj
-        front.obj.rotation_euler.x = math.radians(90)
-        front.driver_location('x', 'IF(AND(fll,fllt==1),lw,0)', [fll, fllt, lw])
-        front.driver_location('y', '-dim_y', [dim_y])
-        front.driver_input("Length", 'dim_x-IF(AND(fll,fllt==1),lw,0)-IF(AND(frl,frlt==1),lw,0)', [dim_x, fll, fllt, lw, frl, frlt])
-        front.driver_input("Width", 'dim_z', [dim_z])
-        front.driver_input("Thickness", 'mt', [mt])
-        front.set_input("Mirror Z", True)
-        front.driver_hide('IF(f_rail,False,True)', [f_rail])
-
-        back = CabinetPart()
-        back.create('Back Panel')
-        back.obj.parent = self.obj
-        back.obj.rotation_euler.x = math.radians(90)
-        back.driver_location('x', 'IF(AND(bll,bllt==1),lw,0)', [bll, bllt, lw])
-        back.driver_input("Length", 'dim_x-IF(AND(bll,bllt==1),lw,0)-IF(AND(brl,brlt==1),lw,0)', [dim_x, bll, bllt, lw, brl, brlt])
-        back.driver_input("Width", 'dim_z', [dim_z])
-        back.driver_input("Thickness", 'mt', [mt])
-        back.driver_hide('IF(b_rail,False,True)', [b_rail])
-
-        # Support with array modifier
-        support = CabinetPart()
-        support.create('Support')
-        support.obj.parent = self.obj
-        support.obj.rotation_euler.x = math.radians(-90)
-        support.obj.rotation_euler.z = math.radians(90)
-        support.driver_location('x', 'ss', [ss])
-        support.driver_location('y', '-mt', [mt])
-        support.driver_input("Length", 'dim_y-mt*2', [dim_y, mt])
-        support.driver_input("Width", 'dim_z', [dim_z])
-        support.driver_input("Thickness", 'mt', [mt])
-        support.set_input("Mirror X", True)
-        support.set_input("Mirror Y", True)
-        support.set_input("Mirror Z", True)
+        # ---- INTERMEDIATE SUPPORTS ----
+        support = self.add_part('Support', 'SUPPORT', rotation=(-90, 0, 90),
+                                mirror='XYZ')
         support.obj['Finish Top'] = False
         support.obj['Finish Bottom'] = False
-        array_mod = support.obj.modifiers.new('Qty', 'ARRAY')
+        array_mod = support.obj.modifiers.new(SUPPORT_FRAME_ARRAY_MOD, 'ARRAY')
         array_mod.count = 1
         array_mod.use_relative_offset = False
         array_mod.use_constant_offset = True
         array_mod.constant_offset_displace = (0, 0, 0)
-        support.obj.home_builder.add_driver(
-            'modifiers["' + array_mod.name + '"].count', -1,
-            'IF(ss>0,floor((dim_x-mt*2-ss)/ss)+1,0)',
-            [ss, dim_x, mt])
-        support.obj.home_builder.add_driver(
-            'modifiers["' + array_mod.name + '"].constant_offset_displace', 2,
-            '-ss', [ss])
 
         # ---- LEGS ----
+        for part_name, role, rotation in (
+                ('Front Left Leg', 'FRONT_LEFT_LEG', (0, -90, -90)),
+                ('Front Right Leg', 'FRONT_RIGHT_LEG', (0, -90, 0)),
+                ('Back Left Leg', 'BACK_LEFT_LEG', (0, -90, 180)),
+                ('Back Right Leg', 'BACK_RIGHT_LEG', (0, -90, 90))):
+            leg = self.add_part(part_name, role, rotation=rotation,
+                                mirror='X')
+            leg.obj['Finish Top'] = True
+            leg.obj['Finish Bottom'] = True
 
-        # Front Left Leg
-        fl_leg = CabinetPart()
-        fl_leg.create('Front Left Leg')
-        fl_leg.obj.parent = self.obj
-        fl_leg.obj.rotation_euler.y = math.radians(-90)
-        fl_leg.obj.rotation_euler.z = math.radians(-90)
-        fl_leg.driver_location('x', 'IF(fllt==0,mt,0)', [fllt, mt])
-        fl_leg.driver_location('y', 'IF(fllt==0,-(dim_y-mt),-dim_y)', [fllt, dim_y, mt, ld])
-        fl_leg.driver_location('z', 'dim_z', [dim_z])
-        fl_leg.driver_input("Length", 'lh', [lh])
-        fl_leg.driver_input("Width", 'lw', [lw])
-        fl_leg.driver_input("Thickness", 'ld', [ld])
-        fl_leg.driver_hide('IF(fll,False,True)', [fll])
-        fl_leg.set_input("Mirror X", True)
-        fl_leg.obj['Finish Top'] = True
-        fl_leg.obj['Finish Bottom'] = True
+        recalculate_support_frame(self.obj)
 
-        # Front Right Leg
-        fr_leg = CabinetPart()
-        fr_leg.create('Front Right Leg')
-        fr_leg.obj.parent = self.obj
-        fr_leg.obj.rotation_euler.y = math.radians(-90)
-        fr_leg.driver_location('x', 'IF(frlt==0,dim_x-mt,dim_x)', [frlt, dim_x, mt, lw])
-        fr_leg.driver_location('y', 'IF(frlt==0,-(dim_y-mt),-dim_y)', [frlt, dim_y, mt, ld])
-        fr_leg.driver_location('z', 'dim_z', [dim_z])
-        fr_leg.driver_input("Length", 'lh', [lh])
-        fr_leg.driver_input("Width", 'ld', [ld])
-        fr_leg.driver_input("Thickness", 'lw', [lw])
-        fr_leg.driver_hide('IF(frl,False,True)', [frl])
-        fr_leg.set_input("Mirror X", True)
-        fr_leg.obj['Finish Top'] = True
-        fr_leg.obj['Finish Bottom'] = True
-
-        # Back Left Leg
-        bl_leg = CabinetPart()
-        bl_leg.create('Back Left Leg')
-        bl_leg.obj.parent = self.obj
-        bl_leg.obj.rotation_euler.y = math.radians(-90)
-        bl_leg.obj.rotation_euler.z = math.radians(180)
-        bl_leg.driver_location('x', 'IF(bllt==0,mt,0)', [bllt, mt])
-        bl_leg.driver_location('y', 'IF(bllt==0,-(mt),0)', [bllt, mt, ld])
-        bl_leg.driver_location('z', 'dim_z', [dim_z])
-        bl_leg.driver_input("Length", 'lh', [lh])
-        bl_leg.driver_input("Width", 'ld', [ld])
-        bl_leg.driver_input("Thickness", 'lw', [lw])
-        bl_leg.driver_hide('IF(bll,False,True)', [bll])
-        bl_leg.set_input("Mirror X", True)
-        bl_leg.obj['Finish Top'] = True
-        bl_leg.obj['Finish Bottom'] = True
-
-        # Back Right Leg
-        br_leg = CabinetPart()
-        br_leg.create('Back Right Leg')
-        br_leg.obj.parent = self.obj
-        br_leg.obj.rotation_euler.y = math.radians(-90)
-        br_leg.obj.rotation_euler.z = math.radians(90)
-        br_leg.driver_location('x', 'IF(brlt==0,dim_x-mt,dim_x)', [brlt, dim_x, mt, lw])
-        br_leg.driver_location('y', 'IF(brlt==0,-(mt),0)', [brlt, mt, ld])
-        br_leg.driver_location('z', 'dim_z', [dim_z])
-        br_leg.driver_input("Length", 'lh', [lh])
-        br_leg.driver_input("Width", 'lw', [lw])
-        br_leg.driver_input("Thickness", 'ld', [ld])
-        br_leg.driver_hide('IF(brl,False,True)', [brl])
-        br_leg.set_input("Mirror X", True)
-        br_leg.obj['Finish Top'] = True
-        br_leg.obj['Finish Bottom'] = True
 
 class HalfWall(Product):
     """Pony wall / knee wall.

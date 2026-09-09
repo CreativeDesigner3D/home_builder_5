@@ -1,5 +1,6 @@
 import bpy
 from .... import hb_utils, hb_types, units, hb_project
+from .. import types_products
 
 
 def _turned_leg():
@@ -70,14 +71,18 @@ class hb_frameless_OT_product_prompts(bpy.types.Operator):
             self.product.set_input('Dim Y', self.depth)
         hb_utils.run_calc_fix(context, self.product.obj)
         if self.part_type == 'SUPPORT_FRAME':
+            # The frame's parts are solved rather than driven, so an edit
+            # only reaches them when the solver is run.
+            types_products.recalculate_support_frame(self.product.obj)
             self._sync_support_frame_legs(self.product.obj)
         return True
 
     def _sync_support_frame_legs(self, obj):
         """Rebuild the corner legs' turnings from the dialog state. A style
-        change first sizes the legs to that style's stock blank (drivers
-        settle on the next calc pass); every change re-fits the meshes so
-        leg height / size edits reshape the turning."""
+        change first sizes the legs to that style's stock blank, which the
+        solver writes onto the parts before the turning is fitted to them;
+        every change re-fits the meshes so leg height / size edits reshape
+        the turning."""
         tl = _turned_leg()
         if tl.LEG_STYLE_PROP not in obj:
             return
@@ -85,7 +90,7 @@ class hb_frameless_OT_product_prompts(bpy.types.Operator):
         if style != self._leg_style_seen:
             self._leg_style_seen = style
             tl.size_frame_legs_from_style(obj)
-            hb_utils.run_calc_fix(bpy.context, obj)
+            types_products.recalculate_support_frame(obj)
         tl.sync_frame_legs(obj)
 
     def execute(self, context):
