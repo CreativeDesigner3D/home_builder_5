@@ -391,8 +391,11 @@ PART_ROLE_INSET_PANEL = 'INSET_PANEL'
 # a swing; not in the drawer-box role set, so it gets no slide box.
 PART_ROLE_TILT_OUT = 'TILT_OUT'
 # ADA apron: the raked panel that closes a knee-clearance sink opening.
-PART_ROLE_ADA_PANEL = 'ADA_PANEL'
-# Marks the accessible sink product, which carries the apron.
+# Accessible sink: the cutter that rakes the carcass away underneath,
+# and the tag on the product that carries it. Same lazy cutter +
+# boolean pattern as the tip-up wedge.
+PART_ROLE_ADA_CUTTER = 'ADA_CUTTER'
+ADA_CUT_MOD_NAME = 'Knee Clearance'
 ADA_SINK_TAG = 'IS_ADA_SINK'
 PART_ROLE_APRON = 'APRON'
 # Drawer-look door: a working DOOR leaf wearing N applied drawer-front
@@ -2892,16 +2895,31 @@ class FaceFrameCabinet(GeoNodeCage):
 
             # ---- End stiles ----
             elif role == PART_ROLE_LEFT_STILE:
-                pos = solver.left_end_stile_position(layout)
                 length, width, thickness = solver.left_end_stile_dims(layout)
+                # A stile with no width is not a part: some products
+                # collapse the face frame to a single member, and a
+                # zero-width board should not read on the drawings or
+                # the cutlist. Same hide-and-skip the refrigerator
+                # stile below uses.
+                visible = width > 1e-6
+                child.hide_viewport = not visible
+                child.hide_render = not visible
+                if not visible:
+                    continue
+                pos = solver.left_end_stile_position(layout)
                 child.location = pos
                 part.set_input('Length', length)
                 part.set_input('Width', width)
                 part.set_input('Thickness', thickness)
 
             elif role == PART_ROLE_RIGHT_STILE:
-                pos = solver.right_end_stile_position(layout)
                 length, width, thickness = solver.right_end_stile_dims(layout)
+                visible = width > 1e-6
+                child.hide_viewport = not visible
+                child.hide_render = not visible
+                if not visible:
+                    continue
+                pos = solver.right_end_stile_position(layout)
                 child.location = pos
                 part.set_input('Length', length)
                 part.set_input('Width', width)
@@ -3383,6 +3401,8 @@ class FaceFrameCabinet(GeoNodeCage):
         # Tip-up wedge: chamfer the back-bottom corner when enabled and the
         # cabinet's tip-up diagonal exceeds the ceiling. Re-applied here so
         # it survives part reconciliation, exactly like the angled cutter.
+        self._reconcile_ada_side_shape(layout)
+
         wedge = solver.wedge_geometry(layout) if self._has_carcass() else None
         if wedge is not None:
             length, height, _clamped = wedge
@@ -7117,6 +7137,150 @@ class FaceFrameCabinet(GeoNodeCage):
         bm.free()
         piece.location = (0.0, 0.0, 0.0)
         return piece
+
+    # =====================================================================
+    # Accessible sink: knee clearance raked out of the carcass underside
+    # =====================================================================
+    def _ada_shape(self, layout):
+        """The rake, as (wall_run, rake_run, rise, floor_z) in cabinet
+        units, or None when this cabinet is not raked.
+
+        A wheelchair comes at the cabinet from the room, so the FRONT is
+        the end that is cut away: the box keeps its full height for
+        ``wall_run`` forward of the wall, rakes down over the next
+        stretch, and is left as a band at the front where the knees go
+        under. The rake's run is what is left between the two, so a box
+        too shallow for both stretches gets no rake.
+
+        Everything is measured inside the BOX, not off the room floor.
+        On a floating kick the box starts at the kick height - that gap
+        is what the cabinet hangs above the floor - so the band height
+        is taken off the box's own height, and the cut starts at its
+        underside.
+        """
+        cab = self.obj.face_frame_cabinet
+        if not getattr(cab, 'ada_side_shape', False):
+            return None
+        floor_z = solver.bay_bottom_z(layout, 0) if layout.bays else 0.0
+        box_height = layout.dim_z - floor_z
+        wall_run = cab.ada_side_wall_run
+        front_run = cab.ada_side_front_run
+        rake_run = layout.dim_y - wall_run - front_run
+        rise = box_height - cab.ada_side_front_height
+        if rake_run <= 0.0 or rise <= 0.0:
+            return None
+        return wall_run, rake_run, rise, floor_z
+
+    def _ensure_ada_cutter(self):
+        """Find or lazily create the knee-clearance cutter MESH object."""
+        for child in self.obj.children:
+            if child.get('hb_part_role') == PART_ROLE_ADA_CUTTER:
+                return child
+        mesh = bpy.data.meshes.new('Knee Clearance Cutter')
+        cutter = bpy.data.objects.new('Knee Clearance Cutter', mesh)
+        cutter['hb_part_role'] = PART_ROLE_ADA_CUTTER
+        cutter.parent = self.obj
+        cutter.display_type = 'WIRE'
+        cutter.hide_render = True
+        cutter.hide_viewport = True
+        for coll in self.obj.users_collection:
+            coll.objects.link(cutter)
+            break
+        return cutter
+
+    def _position_ada_cutter(self, cutter_obj, layout, shape):
+        """Rebuild the cutter from the live shape.
+
+        Cross-section in Y-Z, cabinet back at y=0 and front at
+        y=-dim_y: everything below the rake line, from the wall end of
+        the rake forward past the front face, and all the way down past
+        the cabinet floor.
+
+        Down to the floor rather than just through the box: the cage
+        runs the cabinet's whole height, so stopping at the box floor
+        left a block of it hanging under the raked front - and on a
+        cabinet that keeps a toe kick, the kick under the rake is in the
+        knee space too.
+        """
+        wall_run, rake_run, rise, floor_z = shape
+        margin = inch(1.0)
+        # The rake runs from the wall end (still at the box floor) down
+        # to the front band's underside.
+        y_wall = -wall_run
+        y_rake_end = y_wall - rake_run
+        y_front = -layout.dim_y - margin
+        z0 = floor_z
+        z_bottom = -margin
+        section = ((y_wall, z0), (y_rake_end, z0 + rise),
+                   (y_front, z0 + rise), (y_front, z_bottom),
+                   (y_wall, z_bottom))
+        x_min, x_max = -margin, layout.dim_x + margin
+        bm = bmesh.new()
+        left = [bm.verts.new((x_min, y, z)) for y, z in section]
+        right = [bm.verts.new((x_max, y, z)) for y, z in section]
+        bm.verts.ensure_lookup_table()
+        bm.faces.new(left)
+        bm.faces.new(tuple(reversed(right)))
+        n = len(section)
+        for i in range(n):
+            j = (i + 1) % n
+            bm.faces.new((left[i], right[i], right[j], left[j]))
+        bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+        bm.to_mesh(cutter_obj.data)
+        bm.free()
+        cutter_obj.location = (0.0, 0.0, 0.0)
+
+    def _apply_ada_cuts(self, cutter_obj):
+        """Point every carcass part the rake meets at the cutter."""
+        for part in self._iter_wedge_cut_targets():
+            mod = part.modifiers.get(ADA_CUT_MOD_NAME)
+            if mod is None:
+                mod = part.modifiers.new(name=ADA_CUT_MOD_NAME,
+                                         type='BOOLEAN')
+                mod.operation = 'DIFFERENCE'
+                mod.solver = 'EXACT'
+            if mod.object is not cutter_obj:
+                mod.object = cutter_obj
+
+    def _cleanup_ada_cutter_and_cuts(self):
+        """Reverse of the two above. No-op with nothing to undo."""
+        for part in self._iter_wedge_cut_targets():
+            mod = part.modifiers.get(ADA_CUT_MOD_NAME)
+            if mod is not None:
+                part.modifiers.remove(mod)
+        for child in list(self.obj.children):
+            if child.get('hb_part_role') == PART_ROLE_ADA_CUTTER:
+                mesh = child.data
+                bpy.data.objects.remove(child, do_unlink=True)
+                if mesh is not None and mesh.users == 0:
+                    bpy.data.meshes.remove(mesh)
+
+    def _reconcile_ada_side_shape(self, layout):
+        """Rake the carcass underside, or take the rake away again.
+
+        Published on the root so a drawing can call the shape out
+        without redoing the trigonometry: the two runs, the rise, and
+        the raked edge's own length - the dimension the shop reads off
+        the side view.
+        """
+        shape = self._ada_shape(layout) if self._has_carcass() else None
+        if shape is None:
+            self._cleanup_ada_cutter_and_cuts()
+            for key in ('ADA_WALL_RUN', 'ADA_RAKE_RUN', 'ADA_RISE',
+                        'ADA_RAKE_LENGTH'):
+                if key in self.obj:
+                    del self.obj[key]
+            return
+        wall_run, rake_run, rise, _floor_z = shape
+        cutter = self._ensure_ada_cutter()
+        self._position_ada_cutter(cutter, layout, shape)
+        self._apply_ada_cuts(cutter)
+        one_inch = inch(1.0)
+        self.obj['ADA_WALL_RUN'] = round(wall_run / one_inch, 3)
+        self.obj['ADA_RAKE_RUN'] = round(rake_run / one_inch, 3)
+        self.obj['ADA_RISE'] = round(rise / one_inch, 3)
+        self.obj['ADA_RAKE_LENGTH'] = round(
+            math.hypot(rake_run, rise) / one_inch, 3)
 
     def _iter_wedge_cut_targets(self):
         """Root cage + carcass parts whose back-bottom corner the wedge
@@ -12504,9 +12668,6 @@ class FaceFrameCabinet(GeoNodeCage):
                         if preset == 'CUSTOM':
                             box.height = item.rollout_height
 
-        # The ADA apron closes the opening at an angle.
-        self._reconcile_ada_panel(opening_obj, rect)
-
         # The rollout that rides above a drawer is a normal ROLLOUT
         # interior item - it just belongs to the cabinet rather than to
         # the user, so it is kept in step here and taken away again when
@@ -12550,149 +12711,6 @@ class FaceFrameCabinet(GeoNodeCage):
                 # TRAY_DIVIDER, TRAY_LOCKED_SHELF, VANITY_SHELF,
                 # VANITY_SUPPORT.
                 self._create_interior_mesh_part(opening_obj, desc)
-
-    def _reconcile_ada_panel(self, opening_obj, rect):
-        """Build / update / remove the ADA apron in this opening.
-
-        The apron is what closes a knee-clearance sink: raked back at
-        the bottom so someone in a wheelchair can pull up to the sink,
-        while the plumbing stays hidden. It is built in two boards
-        because that is the shape the clearance rules describe:
-
-          - the KNEE board, from its bottom edge (9" off the floor, the
-            top of the toe space) up to the height where knee clearance
-            stops mattering (27"), raked from 11" back to 8" back. That
-            is the 1" per 6" of height the standard allows.
-          - the SHIN board above it, running from that point forward to
-            just behind the face frame under the counter. Nothing is
-            required to stay clear up there, so this one can be as steep
-            as the cabinet needs.
-
-        A short opening that never reaches the knee ceiling gets the
-        first board only. Heights are measured off the floor (the
-        cabinet floor, which is the room floor on a base) and setbacks
-        off the face frame front - a countertop overhang only adds to
-        the clearance, so measuring here is the conservative read.
-
-        The clear depths the apron actually leaves are published on the
-        lower board, so a drawing or a report can call them out.
-        """
-        op_props = getattr(opening_obj, 'face_frame_opening', None)
-        if op_props is None:
-            return
-        existing = {c.get('hb_ada_panel'): c for c in opening_obj.children
-                    if c.get('hb_part_role') == PART_ROLE_ADA_PANEL}
-
-        def drop(keys):
-            for key in keys:
-                obj = existing.pop(key, None)
-                if obj is not None:
-                    bpy.data.objects.remove(obj, do_unlink=True)
-
-        if not getattr(op_props, 'ada_angled_front', False):
-            drop(list(existing.keys()))
-            return
-
-        # Opening-local frame: x across the opening, y back from the
-        # face frame front, z up from the opening floor.
-        cage_x = rect['cage_dim_x']
-        cage_y = rect['cage_dim_y']
-        cage_z = rect['cage_dim_z']
-        rl = rect['reveal_left']
-        rr = rect['reveal_right']
-        rt = rect['reveal_top']
-        width = max(cage_x - rl - rr, 0.0)
-        thickness = op_props.ada_panel_thickness
-        if width <= 0.0 or thickness <= 0.0:
-            drop(list(existing.keys()))
-            return
-
-        # The opening sits this far above the cabinet floor, which turns
-        # a height off the floor into a local one. Summed off the parent
-        # chain rather than read from matrix_world: mid-recalc the world
-        # matrices are stale, and this pass runs right after the bay has
-        # been moved - reading them put the whole apron a toe kick too
-        # high.
-        floor_offset = self._z_in_cabinet(opening_obj)
-
-        def local_z(height_aff):
-            return height_aff - floor_offset
-
-        top_z = cage_z - rt
-        bottom_z = min(max(local_z(op_props.ada_panel_bottom_height), 0.0),
-                       top_z)
-        knee_z = min(max(local_z(op_props.ada_knee_top_height), bottom_z),
-                     top_z)
-        y_bottom = min(op_props.ada_panel_bottom_setback, cage_y)
-        y_knee = min(op_props.ada_knee_top_setback, cage_y)
-        y_top = min(op_props.ada_panel_top_setback, cage_y)
-
-        # (key, bottom z, bottom setback, top z, top setback)
-        boards = [('KNEE', bottom_z, y_bottom, knee_z, y_knee)]
-        if top_z - knee_z > 1e-6:
-            boards.append(('SHIN', knee_z, y_knee, top_z, y_top))
-        drop([key for key in list(existing.keys())
-              if key not in {b[0] for b in boards}])
-
-        for key, z0, s0, z1, s1 in boards:
-            rise = z1 - z0
-            if rise <= 1e-6:
-                drop([key])
-                continue
-            run = s0 - s1
-            lean = math.atan2(run, rise)
-            obj = existing.get(key)
-            if obj is None:
-                cut = CabinetPart()
-                cut.create('ADA Apron %s' % key.title())
-                cut.obj.parent = opening_obj
-                cut.obj['hb_part_role'] = PART_ROLE_ADA_PANEL
-                cut.obj['hb_ada_panel'] = key
-                cut.obj['CABINET_PART'] = True
-                cut.obj['IS_FINISHED'] = True
-                cut.obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_part_commands'
-                obj = cut.obj
-            else:
-                cut = GeoNodeCutpart(obj)
-            # Rotated 90 degrees the board stands up with its Width
-            # running vertically; the lean tips that axis back into the
-            # cabinet so the board rises from its bottom edge. Mirror Z
-            # runs the thickness back rather than forward: the face the
-            # knees meet is the one the setbacks describe, so the stock
-            # must not sit in front of it and eat the clearance.
-            obj.location = (rl, s0, z0)
-            obj.rotation_euler = (math.radians(90) + lean, 0.0, 0.0)
-            cut.set_input('Length', width)
-            cut.set_input('Width', math.hypot(run, rise))
-            cut.set_input('Thickness', thickness)
-            cut.set_input('Mirror Z', True)
-            existing[key] = obj
-
-        # What the apron leaves clear at the two heights the standard
-        # asks about, published on the knee board.
-        knee_board = existing.get('KNEE')
-        if knee_board is not None:
-            def clear_at(height_aff):
-                z = local_z(height_aff)
-                if z < bottom_z - 1e-6:
-                    return None
-                for _key, z0, s0, z1, s1 in boards:
-                    if z <= z1 + 1e-6:
-                        span = z1 - z0
-                        if span <= 1e-6:
-                            return s1
-                        return s0 - (z - z0) / span * (s0 - s1)
-                return y_top
-
-            low = clear_at(inch(9.0))
-            high = clear_at(inch(27.0))
-            knee_board['ADA_CLEAR_AT_9'] = (round(low / inch(1.0), 3)
-                                            if low is not None else 0.0)
-            knee_board['ADA_CLEAR_AT_27'] = (round(high / inch(1.0), 3)
-                                             if high is not None else 0.0)
-            knee_board['ADA_CLEARANCE_OK'] = bool(
-                low is not None and high is not None
-                and low >= inch(11.0) - 1e-6 and high >= inch(8.0) - 1e-6)
 
     # Marks the ROLLOUT interior item this cabinet owns, so it can be
     # told apart from one the user added and taken away again when the
@@ -13424,29 +13442,62 @@ class SinkFaceFrameCabinet(BaseFaceFrameCabinet):
 
 
 class ADASinkCabinet(SinkFaceFrameCabinet):
-    """Accessible sink base: knee and toe room under the sink, with the
-    plumbing hidden behind a raked apron.
+    """Accessible sink: a shallow box carried clear of the floor, raked
+    away underneath so a wheelchair user's knees go under it.
 
-    A sink base with its opening left open and closed by the apron
-    instead of doors, and no carcass bottom, so the space under the sink
-    is clear for someone in a wheelchair. The apron's own geometry - the
-    knee board raked back to the clearance line and the shin board above
-    it - lives on the opening; see _reconcile_ada_panel.
+    Built to the shop drawing: a 28" x 21" box 16" tall, floating 17"
+    off the floor on the toe kick, which puts its top at 33". The sides
+    keep their full height for the 8" against the wall, rake down over
+    the next 5", and finish as a 5-1/2" band across the front 8" - an
+    11-5/8" raked edge. The rake faces the room, because that is the
+    side the knees come in from. The front is a flat band the height of
+    that rake band - no stiles, no lower rail, nothing hung off it - and
+    there is no carcass bottom, so the plumbing is reachable and nothing
+    projects into the knee space.
 
-    Sizes come from the standard: 34" is the highest a counter may be,
-    which the default box sits under; the clearances the apron holds are
-    published on it and shown in the cabinet prompts.
+    Every one of those is a field: the box sizes are the cabinet's, the
+    float is its toe kick height, and the rake is the three Raked Sides
+    numbers. The rake published on the root is what a drawing reads.
     """
 
+    def __init__(self):
+        super().__init__()
+        # Overall, floor to top: a 16" box floating 17" up, per the
+        # drawing. The toe kick height set at create is the float.
+        self.default_width = inch(28.0)
+        self.default_depth = inch(21.0)
+        self.default_height = inch(33.0)
+
     def create(self, name="ADA Sink", bay_qty=1):
-        super().create(name, bay_qty=bay_qty)
+        self.create_cabinet_root(name)
+        cab = self.obj.face_frame_cabinet
+        # Carried clear of the floor: the toe kick is the gap beneath.
+        cab.toe_kick_type = 'FLOATING'
+        cab.toe_kick_height = inch(17.0)
+        # Raked underside, to the drawing: full height for the 8"
+        # against the wall, then raked down to a 5-1/2" band across the
+        # front 8", which is where the knees go under.
+        cab.ada_side_shape = True
+        cab.ada_side_wall_run = inch(8.0)
+        cab.ada_side_front_run = inch(8.0)
+        cab.ada_side_front_height = inch(5.5)
+        # The front is a flat band the height of the raked band, not a
+        # frame with a front in it: the face frame collapses to that one
+        # member, so there are no stiles down the ends and no rail under
+        # it for a door to hang from. Unlocked so assigning a style
+        # cannot write the usual widths back over them.
+        cab.unlock_top_rail = True
+        cab.unlock_bottom_rail = True
+        cab.unlock_left_stile = True
+        cab.unlock_right_stile = True
+        cab.top_rail_width = cab.ada_side_front_height
+        cab.bottom_rail_width = 0.0
+        cab.left_stile_width = 0.0
+        cab.right_stile_width = 0.0
+        self.create_carcass(has_toe_kick=True, bay_qty=bay_qty)
         self.obj[ADA_SINK_TAG] = True
-        # Clear underneath: no carcass bottom, and the front closed by
-        # the apron rather than by doors.
-        #
-        # Collect first and write inside suspend_recalc: each of these
-        # props rebuilds the cabinet on write, and a rebuild deletes and
-        # respawns the very children this would be walking.
+        # Open underneath for the plumbing, and a false front over it -
+        # removable on site, so nothing swings into the knee space.
         bays = [c for c in self.obj.children if c.get(TAG_BAY_CAGE)]
         openings = [o for bay in bays for o in bay.children
                     if o.get(TAG_OPENING_CAGE)]
@@ -13454,9 +13505,9 @@ class ADASinkCabinet(SinkFaceFrameCabinet):
             for bay_obj in bays:
                 bay_obj.face_frame_bay.remove_bottom = True
             for opening in openings:
-                op = opening.face_frame_opening
-                op.front_type = 'NONE'
-                op.ada_angled_front = True
+                # Nothing hangs off the front: the band above IS the
+                # front, and a door here would swing into the knee space.
+                opening.face_frame_opening.front_type = 'NONE'
         self.recalculate()
 
 

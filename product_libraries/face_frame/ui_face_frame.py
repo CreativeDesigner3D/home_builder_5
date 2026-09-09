@@ -453,55 +453,30 @@ def draw_construction(layout, cab_props):
 
 
 def draw_ada_sink_options(layout, root):
-    """Apron sizes for an accessible sink, and what they leave clear.
-
-    Heights are measured off the floor and setbacks off the face frame,
-    which is the conservative read - a countertop overhang only adds to
-    the clearance. Accessible sink products only.
-    """
+    """The raked underside of an accessible sink, and what it works out
+    to. Accessible sink products only."""
     from . import types_face_frame
     if not root.get(types_face_frame.ADA_SINK_TAG):
         return
-    opening = None
-    for bay in root.children:
-        if not bay.get(types_face_frame.TAG_BAY_CAGE):
-            continue
-        for child in bay.children:
-            if child.get(types_face_frame.TAG_OPENING_CAGE):
-                opening = child
-                break
-        if opening is not None:
-            break
-    if opening is None:
-        return
-    op = opening.face_frame_opening
+    cab = root.face_frame_cabinet
 
     box = layout.box()
-    box.label(text="Accessible Apron", icon='MOD_BEVEL')
+    box.label(text="Knee Clearance", icon='MOD_BEVEL')
     col = box.column(align=True)
-    col.prop(op, 'ada_angled_front', text="Angled Front")
+    col.prop(cab, 'ada_side_shape', text="Raked Sides")
     sub = col.column(align=True)
-    sub.enabled = op.ada_angled_front
-    sub.prop(op, 'ada_panel_bottom_height', text="Bottom Height")
-    sub.prop(op, 'ada_panel_bottom_setback', text="Bottom Setback")
-    sub.separator()
-    sub.prop(op, 'ada_knee_top_height', text="Knee Top Height")
-    sub.prop(op, 'ada_knee_top_setback', text="Knee Top Setback")
-    sub.separator()
-    sub.prop(op, 'ada_panel_top_setback', text="Top Setback")
-    sub.prop(op, 'ada_panel_thickness', text="Thickness")
+    sub.enabled = cab.ada_side_shape
+    sub.prop(cab, 'ada_side_wall_run', text="Full Height At Wall")
+    sub.prop(cab, 'ada_side_front_run', text="Band At Front")
+    sub.prop(cab, 'ada_side_front_height', text="Band Height")
 
-    panel = next(
-        (c for c in opening.children
-         if c.get('hb_part_role') == types_face_frame.PART_ROLE_ADA_PANEL
-         and c.get('hb_ada_panel') == 'KNEE'), None)
-    if panel is not None:
-        clear = box.column(align=True)
-        clear.label(
-            text='Clear at 9": %s"   at 27": %s"' % (
-                panel.get('ADA_CLEAR_AT_9'), panel.get('ADA_CLEAR_AT_27')),
-            icon='CHECKMARK' if panel.get('ADA_CLEARANCE_OK') else 'ERROR')
-        clear.label(text='Standard asks 11" and 8", off the counter edge')
+    rake = root.get('ADA_RAKE_LENGTH')
+    if rake:
+        info = box.column(align=True)
+        info.label(text='Rake %s" over %s" of depth, dropping %s"' % (
+            rake, root.get('ADA_RAKE_RUN'), root.get('ADA_RISE')))
+        info.label(text='Floats %.3g" off the floor (toe kick height)'
+                        % (cab.toe_kick_height / 0.0254))
 
 
 def draw_refrigerator_options(layout, root):

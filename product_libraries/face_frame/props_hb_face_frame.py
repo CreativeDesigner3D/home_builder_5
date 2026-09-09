@@ -7188,6 +7188,40 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         default=units.inch(0.75), unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
     )  # type: ignore
+    # Accessible sink: the carcass is cut away underneath at the FRONT,
+    # which is the end a wheelchair comes at. The box keeps its full
+    # height against the wall, rakes down toward the room, and is left
+    # as a shallow band at the front where the knees go under. The shop
+    # drawing has 8" full at the wall, 8" of band at the front (so a 5"
+    # rake on a 21" box) and a 5-1/2" band.
+    ada_side_shape: BoolProperty(
+        name="Raked Sides",
+        description="Cut the carcass away underneath at the front, "
+                    "leaving knee clearance under the sink",
+        default=False, update=_update_cabinet_dim,
+    )  # type: ignore
+    ada_side_wall_run: FloatProperty(
+        name="Full Height At Wall",
+        description="How far forward from the wall the sides keep their "
+                    "full height before the rake starts",
+        default=units.inch(8.0), min=0.0, unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    ada_side_front_run: FloatProperty(
+        name="Band At Front",
+        description="How far back from the front the shallow band runs. "
+                    "The rake takes what is left between the two",
+        default=units.inch(8.0), min=0.0, unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    ada_side_front_height: FloatProperty(
+        name="Band Height",
+        description="Height of the band left at the front, measured "
+                    "down from the top of the box",
+        default=units.inch(5.5), min=0.0, unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
     # Floating vanity construction, on a base cabinet whose toe kick
     # is FLOATING - the kick height is then the gap the vanity hangs
     # above the floor. The box closes at the top with a panel instead
@@ -9033,65 +9067,6 @@ class Face_Frame_Opening_Props(PropertyGroup):
     # box itself is wiped and rebuilt every recalc, so the user's size
     # lives here on the persistent opening cage. An un-overridden axis
     # keeps the auto fit (opening hole minus the scene clearances).
-    # ADA sink: an apron panel raked back at the bottom so a
-    # wheelchair user's knees clear the cabinet, hiding the plumbing
-    # without filling the space. The defaults are the clearance envelope
-    # from the accessibility standard, measured off the face frame -
-    # a countertop overhang only adds to them:
-    #   toe:  floor to 9", at least 17" clear
-    #   knee: 9" to 27", at least 11" clear at 9" and 8" at 27",
-    #         which the panel's rake matches at 1" per 6" of height
-    # The panel runs from its bottom edge up to the top of the opening.
-    ada_angled_front: BoolProperty(
-        name="ADA Angled Front",
-        description="Close this opening with an apron panel raked back "
-                    "at the bottom, leaving knee clearance under the sink",
-        default=False, update=_update_cabinet_dim,
-    )  # type: ignore
-    ada_panel_bottom_height: FloatProperty(
-        name="Panel Bottom Height",
-        description="Height above the floor of the panel's bottom edge. "
-                    "The standard's toe space is the 9\" below it",
-        default=units.inch(9.0), min=0.0, unit='LENGTH', precision=4,
-        update=_update_cabinet_dim,
-    )  # type: ignore
-    ada_panel_bottom_setback: FloatProperty(
-        name="Bottom Setback",
-        description="How far the panel's bottom edge sits back from the "
-                    "face frame. The standard asks for 11\" of knee "
-                    "clearance at 9\" above the floor",
-        default=units.inch(11.0), min=0.0, unit='LENGTH', precision=4,
-        update=_update_cabinet_dim,
-    )  # type: ignore
-    ada_knee_top_height: FloatProperty(
-        name="Knee Top Height",
-        description="Height above the floor where knee clearance stops "
-                    "mattering. The standard uses 27\"; above it the "
-                    "apron can come forward as steeply as it likes",
-        default=units.inch(27.0), min=0.0, unit='LENGTH', precision=4,
-        update=_update_cabinet_dim,
-    )  # type: ignore
-    ada_knee_top_setback: FloatProperty(
-        name="Knee Top Setback",
-        description="How far the apron sits back at the knee top height. "
-                    "The standard asks for 8\" at 27\"",
-        default=units.inch(8.0), min=0.0, unit='LENGTH', precision=4,
-        update=_update_cabinet_dim,
-    )  # type: ignore
-    ada_panel_top_setback: FloatProperty(
-        name="Top Setback",
-        description="How far the panel's top edge sits back from the "
-                    "face frame",
-        default=units.inch(0.75), min=0.0, unit='LENGTH', precision=4,
-        update=_update_cabinet_dim,
-    )  # type: ignore
-    ada_panel_thickness: FloatProperty(
-        name="Panel Thickness",
-        description="Stock thickness of the apron panel",
-        default=units.inch(0.75), min=0.0, unit='LENGTH', precision=4,
-        update=_update_cabinet_dim,
-    )  # type: ignore
-
     # A rollout riding above the drawer box, behind the same front:
     # one front, a drawer below and a rollout over it. The drawer box
     # gives up the height (see _create_drawer_box_for_front), so the
