@@ -44,6 +44,12 @@ WOOD_SPECIES = ['*Standard (no upcharge specie)',
  'White Oak, Rift Sawn',
  'White Oak, Rustic']
 
+def is_custom_finish(finish_color):
+    """True for a catalog finish that is matched to a sample rather than
+    held as a colour - every entry whose name says Custom."""
+    return str(finish_color or "").strip().lower().startswith("custom")
+
+
 COLORS = {'*Standard (no upcharge stain)': 'Stain',
  'American Classic': 'Paint',
  'Andover Blue': 'Paint',

@@ -57,6 +57,15 @@ def update_finish_material(cabinet_style):
     c1 = color_data.get('color_1', [1, 1, 1, 1])
     c2 = color_data.get('color_2', [1, 1, 1, 1])
 
+    # A custom catalog finish has no colour on file - it is matched to a
+    # sample - so the pool lookup above would render every custom job in
+    # the same fallback. The style's own colour stands in for both tones.
+    if style_options.is_custom_finish(
+            getattr(cabinet_style, 'finish_color', '')):
+        picked = list(getattr(cabinet_style, 'custom_finish_color',
+                              (1, 1, 1, 1)))
+        c1 = c2 = picked
+
     # --- Determine wood grain parameters from species ---
     noise_scale_1 = 0
     noise_scale_2 = 0

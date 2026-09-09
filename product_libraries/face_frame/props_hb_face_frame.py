@@ -852,6 +852,78 @@ def update_face_frame_selection_mode(self, context):
     bpy.ops.hb_face_frame.toggle_mode(search_obj_name="")
 
 
+# Object colour a cabinet carries when style colours are off. White is
+# what an untinted part renders as, so turning the option off puts every
+# cabinet back where it started.
+_NO_STYLE_TINT = (1.0, 1.0, 1.0, 1.0)
+# Where the viewport's own colour mode is parked while style colours are
+# on, so turning them off restores what the user had.
+_STYLE_COLOR_SHADING_KEY = 'HB_PRE_STYLE_COLOR_SHADING'
+
+
+def _style_tint_for_cabinet(cabinet_obj, styles):
+    """The RGBA a cabinet should render as, or None if it has no style.
+
+    Reads the same per-style colour the 2D drawings fill with, so the
+    viewport and the drawings agree by construction rather than by two
+    tables that have to be kept in step.
+    """
+    name = cabinet_obj.get('STYLE_NAME')
+    if not name:
+        return None
+    for style in styles:
+        if style.name == name:
+            col = style.color_in_2d_drawings
+            return (col[0], col[1], col[2], 1.0)
+    return None
+
+
+def apply_style_colors(context):
+    """Paint (or unpaint) every cabinet in the scene with its style's
+    drawing colour, and put the viewport in object-colour mode to show
+    it. Returns the number of cabinets tinted."""
+    from . import types_face_frame
+    scene = context.scene
+    props = get_style_props(context)
+    on = bool(props.show_style_colors)
+    styles = props.cabinet_styles
+
+    tinted = 0
+    for cage in [o for o in scene.objects
+                 if o.get(types_face_frame.TAG_CABINET_CAGE)]:
+        tint = _style_tint_for_cabinet(cage, styles) if on else None
+        colour = tint or _NO_STYLE_TINT
+        cage.color = colour
+        for child in cage.children_recursive:
+            child.color = colour
+        if tint is not None:
+            tinted += 1
+
+    # The colour only shows in solid shading's OBJECT mode; remember what
+    # the viewport had so turning this off gives it back.
+    for area in getattr(context.screen, 'areas', ()):
+        if area.type != 'VIEW_3D':
+            continue
+        for space in area.spaces:
+            if space.type != 'VIEW_3D':
+                continue
+            if on:
+                if _STYLE_COLOR_SHADING_KEY not in scene:
+                    scene[_STYLE_COLOR_SHADING_KEY] = space.shading.color_type
+                space.shading.color_type = 'OBJECT'
+            else:
+                space.shading.color_type = scene.get(
+                    _STYLE_COLOR_SHADING_KEY, 'MATERIAL')
+    if not on and _STYLE_COLOR_SHADING_KEY in scene:
+        del scene[_STYLE_COLOR_SHADING_KEY]
+    return tinted
+
+
+def update_show_style_colors(self, context):
+    """Toggle: paint the cabinets by style section, or put them back."""
+    apply_style_colors(context)
+
+
 def update_include_drawer_boxes(self, context):
     """Toggle: rebuild every face frame cabinet so drawer boxes are added
     behind drawer/pullout fronts (when True) or removed (when False).
@@ -1069,6 +1141,19 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         name="Stain Color",
         description="Stain color for cabinet finish",
         items=get_stain_color_enum_items,
+        update=_propagate_cabinet_style,
+    )  # type: ignore
+
+    # A custom catalog finish is "match this sample" - there is no
+    # colour on file for it, so the material fell back to a standard one
+    # and every custom job rendered the same. This is the colour to use
+    # instead: paste a hex from the paint supplier, or pick one.
+    custom_finish_color: FloatVectorProperty(
+        name="Custom Finish Color",
+        description="Colour to render a custom stain or paint in. Used "
+                    "when the catalog finish is a custom one",
+        subtype='COLOR', size=4, min=0.0, max=1.0,
+        default=(0.806947, 0.752943, 0.679543, 1.0),
         update=_propagate_cabinet_style,
     )  # type: ignore
 
@@ -3195,6 +3280,10 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         # and a ref IMAGE path (collected into the page's right-side references
         # box). Gated on the References toggle above.
         self._draw_toggle_field(col, "finish_color", "Color", "ss_color")
+        # A custom finish is matched to a sample, so there is no colour on
+        # file for it - this is the one to render in.
+        if style_options.is_custom_finish(self.finish_color):
+            col.prop(self, "custom_finish_color", text="Custom Color")
         if show_refs:
             self._draw_finish_reference(col, "ss_color_ref_name", "ss_color_ref_image")
         self._draw_toggle_field(col, "finish_varnish", "Varnish", "ss_varnish")
@@ -9882,6 +9971,17 @@ class Face_Frame_Scene_Props(PropertyGroup):
     # and pullout fronts; clearances are subtracted from the opening hole
     # to size each box. v1 keeps these scene-wide; per-front overrides
     # land when front parts grow editable per-part props.
+    # Style colours in the solid viewport: the same fill the 2D
+    # drawings use, on the cabinets themselves, so a drafter can see
+    # which style section a cabinet is in without generating a drawing.
+    show_style_colors: BoolProperty(
+        name="Style Colors In Viewport",
+        description="Colour cabinets in the viewport by their style "
+                    "section, matching the 2D drawing fills",
+        default=False,
+        update=update_show_style_colors,
+    )  # type: ignore
+
     include_drawer_boxes: BoolProperty(
         name="Include Drawer Boxes",
         description="Spawn a drawer box behind every drawer and pullout front",
@@ -10868,6 +10968,11 @@ class Face_Frame_Scene_Props(PropertyGroup):
         side.separator()
         side.operator("hb_face_frame.move_cabinet_style", text="", icon='TRIA_UP').direction = 'UP'
         side.operator("hb_face_frame.move_cabinet_style", text="", icon='TRIA_DOWN').direction = 'DOWN'
+
+        # Show the drawing fills on the cabinets themselves, so which
+        # style a cabinet is in reads in the viewport rather than only
+        # after the 2D pages are generated.
+        layout.prop(sp, 'show_style_colors', text="Style Colors In Viewport")
 
         if sp.cabinet_styles and sp.active_cabinet_style_index < len(sp.cabinet_styles):
             style = sp.cabinet_styles[sp.active_cabinet_style_index]
