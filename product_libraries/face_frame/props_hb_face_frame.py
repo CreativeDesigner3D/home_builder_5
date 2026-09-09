@@ -7188,6 +7188,56 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         default=units.inch(0.75), unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
     )  # type: ignore
+    # Floating vanity construction, on a base cabinet whose toe kick
+    # is FLOATING - the kick height is then the gap the vanity hangs
+    # above the floor. The box closes at the top with a panel instead
+    # of stretchers (there is a sink sitting on it), that top is 1/2
+    # over a 3/4 back, and the basin drops through a cutout in it.
+    floating_vanity: BoolProperty(
+        name="Floating Vanity Construction",
+        description="Build this floating base as a vanity: a closed top "
+                    "over a 3/4 back, with a cutout for the basin. The "
+                    "toe kick height is the gap above the floor",
+        default=False, update=_update_cabinet_dim,
+    )  # type: ignore
+
+    # Carcass top thickness, where it differs from the cabinet's
+    # material. 0 keeps the material thickness.
+    top_thickness_override: FloatProperty(
+        name="Top Thickness",
+        description="Thickness of the carcass top panel. 0 uses the "
+                    "cabinet's material thickness",
+        default=0.0, min=0.0, unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    # Top over back: the top runs the full depth and lands on the back
+    # panel's top edge, which then stops below it. Off, the two meet at
+    # the back panel's front face and both reach the cabinet top.
+    top_over_back: BoolProperty(
+        name="Top Over Back",
+        description="Run the carcass top back over the top edge of the "
+                    "back panel instead of butting into its front face",
+        default=False, update=_update_cabinet_dim,
+    )  # type: ignore
+    # Sink cutout in the carcass top - the hole the basin drops through
+    # on a vanity whose top IS the carcass top.
+    top_sink_cutout: BoolProperty(
+        name="Sink Cutout",
+        description="Cut a centered opening in the carcass top for a "
+                    "sink to drop through",
+        default=False, update=_update_cabinet_dim,
+    )  # type: ignore
+    top_sink_cutout_width: FloatProperty(
+        name="Sink Cutout Width",
+        default=units.inch(12.0), min=0.0, unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    top_sink_cutout_depth: FloatProperty(
+        name="Sink Cutout Depth",
+        default=units.inch(12.0), min=0.0, unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
     back_thickness: FloatProperty(
         name="Back Thickness", default=units.inch(0.25), unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
@@ -7227,7 +7277,11 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         update=_update_cabinet_dim,
     )  # type: ignore
     toe_kick_height: FloatProperty(
-        name="Toe Kick Height", default=units.inch(4.0), unit='LENGTH', precision=4,
+        # Floored at zero: on a NOTCH kick a negative height is a recess
+        # cut upward into nothing, and on a FLOATING one it hangs the
+        # box below the floor.
+        name="Toe Kick Height", default=units.inch(4.0), min=0.0,
+        unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
     )  # type: ignore
     toe_kick_setback: FloatProperty(

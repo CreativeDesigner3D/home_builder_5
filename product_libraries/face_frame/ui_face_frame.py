@@ -273,6 +273,11 @@ def draw_construction(layout, cab_props):
             col = box.column(align=True)
             col.prop(cab_props, 'toe_kick_type', text="Type")
             col.prop(cab_props, 'toe_kick_height', text="Height")
+            # Floating vanity construction: only a floating kick can
+            # carry it, and the height above is then the gap it floats.
+            if cab_props.toe_kick_type == 'FLOATING':
+                col.prop(cab_props, 'floating_vanity',
+                         text="Floating Vanity Construction")
             col.prop(cab_props, 'toe_kick_setback', text="Setback")
             col.prop(cab_props, 'inset_toe_kick_left', text="Left Inset")
             col.prop(cab_props, 'inset_toe_kick_right', text="Right Inset")

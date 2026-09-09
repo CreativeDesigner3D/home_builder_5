@@ -135,6 +135,13 @@ class FaceFrameLayout:
         self.tkt = cab.toe_kick_thickness if self.has_toe_kick else 0.0
         self.toe_kick_type = (cab.toe_kick_type
                               if self.has_toe_kick else 'FLOATING')
+        # Floating vanity: a floating base whose top closes with a panel
+        # rather than stretchers, because a sink sits on it. The rest of
+        # its construction (the 1/2 top over the 3/4 back, the basin
+        # cutout) rides the same flag - see is_floating_vanity.
+        self.floating_vanity = is_floating_vanity(cab)
+        if self.floating_vanity:
+            self.uses_stretchers = False
         self.extend_left_stile_to_floor = cab.extend_left_stile_to_floor
         self.extend_right_stile_to_floor = cab.extend_right_stile_to_floor
         # Combined island end: where the run behind lays a board across
@@ -183,6 +190,9 @@ class FaceFrameLayout:
         self.wedge_ceiling_height = getattr(cab, 'wedge_ceiling_height', 0.0)
         self.wedge_fudge = getattr(cab, 'wedge_fudge', 0.0)
         self.wedge_max_height = getattr(cab, 'wedge_max_height', 0.0)
+        self.top_thickness_override = getattr(
+            cab, 'top_thickness_override', 0.0)
+        self.top_over_back = getattr(cab, 'top_over_back', False)
         self.wedge_override = getattr(cab, 'wedge_override', False)
         self.wedge_length = getattr(cab, 'wedge_length', 0.0)
         self.wedge_height = getattr(cab, 'wedge_height', 0.0)
@@ -587,13 +597,46 @@ def right_side_thickness(layout):
 
 
 def back_thickness(layout):
-    """Carcass back panel thickness. Always the cabinet's back_thickness
-    prop (typically 1/4) regardless of finish condition - the FINISHED
-    back is rendered as a SEPARATE 3/4 applied panel layered on top of
-    the carcass back, not by thickening the carcass back itself. See
+    """Carcass back panel thickness. The cabinet's back_thickness prop
+    (typically 1/4) regardless of finish condition - the FINISHED back
+    is rendered as a SEPARATE 3/4 applied panel layered on top of the
+    carcass back, not by thickening the carcass back itself. See
     _reconcile_finished_back for the applied piece.
+
+    A floating vanity is the exception: its back is 3/4 by construction,
+    so a cabinet still carrying the 1/4 default gets the vanity's.
     """
+    if (getattr(layout, 'floating_vanity', False)
+            and layout.bt <= FLOATING_VANITY_BACK_THICKNESS - 1e-6):
+        return FLOATING_VANITY_BACK_THICKNESS
     return layout.bt
+
+
+def is_floating_vanity(cab):
+    """True for a base cabinet built as a floating vanity: the option
+    is on AND its toe kick is the floating one, since the kick height
+    is what lifts it off the floor."""
+    return (getattr(cab, 'floating_vanity', False)
+            and getattr(cab, 'toe_kick_type', '') == 'FLOATING')
+
+
+# What the floating vanity construction is, where it differs from a
+# plain floating base. Sizes stay editable per cabinet; these are what
+# ticking the box gives you.
+FLOATING_VANITY_TOP_THICKNESS = inch(0.5)
+FLOATING_VANITY_BACK_THICKNESS = inch(0.75)
+
+
+def top_thickness(layout):
+    """Carcass top panel thickness: the cabinet's own override where it
+    has one, the vanity's 1/2 top on a floating vanity, else the
+    material thickness."""
+    override = getattr(layout, 'top_thickness_override', 0.0)
+    if override > 0.0:
+        return override
+    if getattr(layout, 'floating_vanity', False):
+        return FLOATING_VANITY_TOP_THICKNESS
+    return layout.mt
 
 
 def back_notch_depth(layout, side):
@@ -2893,7 +2936,13 @@ def carcass_back_segments(layout):
             'y':               back_y,
             'z':               z_origin,
             'horizontal_length': right_x - left_x,
-            'vertical_length':   carcass_top_z(layout, start) - z_origin,
+            # A top that runs over the back stops the back below it.
+            'vertical_length':   (carcass_top_z(layout, start) - z_origin
+                                  - (top_thickness(layout)
+                                     if (getattr(layout, 'top_over_back', False)
+                                         or getattr(layout, 'floating_vanity',
+                                                    False))
+                                     and not layout.uses_stretchers else 0.0)),
             'thickness':       back_thickness(layout),
             # Segments break at finish boundaries, so the start bay
             # speaks for the whole panel.
@@ -2999,15 +3048,25 @@ def carcass_top_segments(layout):
         if first_bay.get('remove_carcass'):
             continue
         left_x, right_x = _stretcher_x_bounds(layout, start, end)
+        # Over the back, the top runs the full depth and lands on the
+        # back panel's top edge; otherwise it butts its front face.
+        if (getattr(layout, 'top_over_back', False)
+                or getattr(layout, 'floating_vanity', False)):
+            y = -layout.dim_y + first_bay['depth']
+            panel_dim_y = first_bay['depth'] - layout.fft
+        else:
+            y = -layout.dim_y + first_bay['depth'] - back_thickness(layout)
+            panel_dim_y = (first_bay['depth'] - back_thickness(layout)
+                           - layout.fft)
         segments.append({
             'start_bay':  start,
             'end_bay':    end,
             'x':          left_x,
-            'y':          -layout.dim_y + first_bay['depth'] - back_thickness(layout),
+            'y':          y,
             'z':          carcass_top_z(layout, start),
             'length':     right_x - left_x,
-            'panel_dim_y': first_bay['depth'] - back_thickness(layout) - layout.fft,
-            'thickness':  layout.mt,
+            'panel_dim_y': panel_dim_y,
+            'thickness':  top_thickness(layout),
         })
     return segments
 

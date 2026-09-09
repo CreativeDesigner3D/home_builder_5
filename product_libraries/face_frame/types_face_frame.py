@@ -24,7 +24,8 @@ from contextlib import contextmanager
 from mathutils import Vector, Matrix, Euler
 
 from ... import hb_utils
-from ...hb_types import GeoNodeCage, GeoNodeCutpart, GeoNodeDrawerBox, GeoNodeRectangle
+from ...hb_types import (CabinetPartModifier, GeoNodeCage, GeoNodeCutpart,
+                        GeoNodeDrawerBox, GeoNodeRectangle)
 from ...units import inch
 from ...hb_details import apply_label_style
 from ..common import types_appliances
@@ -2866,6 +2867,7 @@ class FaceFrameCabinet(GeoNodeCage):
                 part.set_input('Length', seg['length'])
                 part.set_input('Width', seg['panel_dim_y'])
                 part.set_input('Thickness', seg['thickness'])
+                self._apply_top_sink_cutout(child, seg)
 
             elif role == PART_ROLE_BACK:
                 # WORKING_FF back: the applied face frame is a real
@@ -10291,6 +10293,45 @@ class FaceFrameCabinet(GeoNodeCage):
                 continue
             self._create_carcass_top_part(seg['start_bay'])
 
+    def _apply_top_sink_cutout(self, top_obj, seg):
+        """Cut (or clear) the centered sink opening in a carcass top.
+
+        The hole is centered on the panel in both directions, in the
+        part's own Length / Width space. Sized off the cabinet, clamped
+        so it always leaves material around it; a cabinet narrower or
+        shallower than the opening gets no cut rather than a panel in
+        two pieces.
+        """
+        cab = self.obj.face_frame_cabinet
+        name = 'Sink Cutout'
+        existing = top_obj.modifiers.get(name)
+        margin = inch(1.0)
+        length = seg['length']
+        width = seg['panel_dim_y']
+        cw = min(getattr(cab, 'top_sink_cutout_width', 0.0),
+                 length - 2.0 * margin)
+        cd = min(getattr(cab, 'top_sink_cutout_depth', 0.0),
+                 width - 2.0 * margin)
+        wants = ((getattr(cab, 'top_sink_cutout', False)
+                  or solver.is_floating_vanity(cab))
+                 and cw > 0.0 and cd > 0.0)
+        if not wants:
+            if existing is not None:
+                top_obj.modifiers.remove(existing)
+            return
+        cpm = CabinetPartModifier(top_obj)
+        if existing is None:
+            cpm.add_node('CPM_CUTOUT', name)
+        else:
+            cpm.mod = existing
+        cpm.mod.show_viewport = True
+        cpm.mod.show_render = True
+        cpm.set_input('X', (length - cw) / 2.0)
+        cpm.set_input('End X', (length + cw) / 2.0)
+        cpm.set_input('Y', (width - cd) / 2.0)
+        cpm.set_input('End Y', (width + cd) / 2.0)
+        cpm.set_input('Route Depth', seg['thickness'])
+
     def _create_carcass_top_part(self, start_bay_index):
         """Create one solid carcass top part keyed to its segment.
 
@@ -13401,37 +13442,34 @@ class UpperFaceFrameCabinet(FaceFrameCabinet):
             self.obj.location.z = scene.hb_face_frame.default_wall_cabinet_location
 
 
-class FloatingVanityCabinet(UpperFaceFrameCabinet):
-    """Wall-hung vanity: a vanity box carried by the wall rather than
-    standing on the floor.
+class FloatingVanityCabinet(FloatingBaseFaceFrameCabinet):
+    """Floating vanity: a floating base built as a vanity.
 
-    Built as an UPPER rather than a base, which is what the construction
-    asks for: no toe kick, a top and a bottom, and the sides running the
-    full height of the face frame at both ends. A floating BASE is a
-    different animal - that one stands on its own plinth with a reveal
-    beneath it - so this does not derive from it.
+    Nothing about it is a new kind of cabinet - it is the floating toe
+    kick that already exists, with the vanity construction switched on:
+    a closed top instead of stretchers (a sink sits on it), that top 1/2
+    thick over a 3/4 back, and a 12" x 12" opening for the basin. The
+    toe kick height is the gap it floats above the floor, so raising it
+    lifts the vanity.
 
-    Vanity proportions rather than wall-cabinet ones: deep enough for a
-    basin, and hung low. The mount height is where the placement modal
-    starts it; drag it or type a height to suit the job. The catalog's
-    floor for one of these is a 20" box.
+    It places like any base cabinet - same sizes, same defaults - and
+    comes in with the floating kick and the vanity construction already
+    on. The catalog's floor for one of these is a 20" box.
     """
-    # Placement reads this for the floor -> bottom mount height.
-    default_z_location = inch(4.0)
-
-    def __init__(self):
-        super().__init__()
-        scene = bpy.context.scene
-        self.default_height = inch(30.0)
-        if hasattr(scene, 'hb_face_frame'):
-            props = scene.hb_face_frame
-            self.default_width = props.default_cabinet_width
-            # A vanity is base-deep, not wall-deep.
-            self.default_depth = props.base_cabinet_depth
 
     def create(self, name="Floating Vanity", bay_qty=1):
         super().create(name, bay_qty=bay_qty)
-        self.obj.location.z = self.default_z_location
+        cab = self.obj.face_frame_cabinet
+        cab.floating_vanity = True
+        # Written rather than left to the checkbox's derived value, so
+        # the field a drafter reads matches the part that gets built.
+        # Ticking the box on an existing cabinet still derives it.
+        cab.back_thickness = inch(0.75)
+        # Sized here so they read on the cabinet and can be tuned; the
+        # construction itself follows the checkbox.
+        cab.top_sink_cutout_width = inch(12.0)
+        cab.top_sink_cutout_depth = inch(12.0)
+        self.recalculate()
 
 
 class BookcaseUpperFaceFrameCabinet(UpperFaceFrameCabinet):
@@ -16493,6 +16531,7 @@ def _wrap_cabinet(obj):
 WRAP_CLASS_REGISTRY.update({
     'BaseFaceFrameCabinet': BaseFaceFrameCabinet,
     'FloatingBaseFaceFrameCabinet': FloatingBaseFaceFrameCabinet,
+    'FloatingVanityCabinet': FloatingVanityCabinet,
     'SinkFaceFrameCabinet': SinkFaceFrameCabinet,
     'UpperFaceFrameCabinet': UpperFaceFrameCabinet,
     'TallFaceFrameCabinet': TallFaceFrameCabinet,
