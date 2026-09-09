@@ -2734,13 +2734,24 @@ def _step_gap(layout, gap_index):
 
 
 def _void_gap(layout, gap_index):
-    """True when either bay at gap_index has remove_carcass. The mid
-    division drops to the floor there to finish the void's side, so
-    nothing passes under it - segments stop at their own side's
-    division face (same rule as a step gap)."""
+    """True when the bay on either side of gap_index is open to the floor.
+
+    That happens with remove_carcass, and equally with remove_bottom:
+    taking a bay's bottom out is how an appliance bay is made, and the
+    appliance stands on the floor, so the space below runs right down
+    through the kick. Either way the mid division becomes that void's
+    side wall and drops to the floor, and nothing passes under it -
+    segments stop at their own side's division face, the same rule as a
+    step gap.
+
+    remove_bottom used to be left out, so a bay opened for a freezer or
+    a refrigerator was walled only to the top of the kick and stood open
+    at the bottom for the kick's height.
+    """
     bay_a = layout.bays[gap_index]
     bay_b = layout.bays[gap_index + 1]
-    return bool(bay_a.get('remove_carcass') or bay_b.get('remove_carcass'))
+    return bool(bay_a.get('remove_carcass') or bay_b.get('remove_carcass')
+                or bay_a.get('remove_bottom') or bay_b.get('remove_bottom'))
 
 
 def _segment_x_bounds(layout, start, end):
@@ -3309,7 +3320,7 @@ def mid_division_panels(layout, gap_index):
         bottom_z = (bay_bottom_z(layout, bay_idx)
                     + brw_term
                     - ms['extend_down_amount'])
-        if ms.get('to_floor'):
+        if ms.get('to_floor') or void_gap:
             bottom_z = 0.0
         top = carcass_top_z(layout, bay_idx)
         # Stretchers: division flush with stretcher tops for structural
