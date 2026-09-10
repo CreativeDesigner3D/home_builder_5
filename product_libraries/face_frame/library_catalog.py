@@ -66,6 +66,10 @@ SECTIONS = (
                          ("Cooktop", "Cooktop Base"),
                          ("Refrigerator", "Refrigerator Cabinet"),
                          ("Oven", "Built in Tall"))),
+            # Galley workstation sink bases, one per workstation size.
+            ("Galley", (("IWS 2", "Galley IWS 2"), ("IWS 3", "Galley IWS 3"),
+                        ("IWS 4", "Galley IWS 4"), ("IWS 5", "Galley IWS 5"),
+                        ("IWS 6", "Galley IWS 6"), ("IWS 7", "Galley IWS 7"))),
             ("Standalone", (("Dishwasher", "Dishwasher"),
                             ("Range", "Range"),
                             ("Hood", "Range Hood"),

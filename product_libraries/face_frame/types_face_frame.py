@@ -17,6 +17,7 @@ Carcass conventions match frameless (same CabinetPart GeoNode setup):
 import bpy
 import bmesh
 import math
+import re
 from types import SimpleNamespace
 import os
 from contextlib import contextmanager
@@ -138,6 +139,11 @@ MIN_SEAM_PIECE = inch(3.0)
 PART_ROLE_TOP = 'TOP'  # solid top panel for Upper / Tall (Base / Lap use stretchers)
 PART_ROLE_FRONT_STRETCHER = 'FRONT_STRETCHER'
 PART_ROLE_REAR_STRETCHER = 'REAR_STRETCHER'
+# Workstation sink base: the aprons the sink hangs between, the
+# partitions that carry it, and the cleats under them.
+PART_ROLE_GALLEY_APRON = 'GALLEY_APRON'
+PART_ROLE_GALLEY_PARTITION = 'GALLEY_PARTITION'
+PART_ROLE_GALLEY_CLEAT = 'GALLEY_CLEAT'
 PART_ROLE_BOTTOM = 'BOTTOM'
 PART_ROLE_BACK = 'BACK'
 # Finished bottom (uppers): an applied finish panel under the carcass
@@ -3365,6 +3371,10 @@ class FaceFrameCabinet(GeoNodeCage):
         # selection removes its block.
         self._apply_under_cabinet_appliances(layout)
 
+        # Galley workstation construction: aprons, partitions, cleats
+        # and the sink. Unconditional so another cabinet sheds them.
+        self._apply_galley_parts(layout)
+
         # Appliance bay annotation (square + SINK / COOKTOP word) on top
         # of stamped bays and the dedicated sink cabinet's basin bay.
         # Unconditional so stale annotations are wiped even when the
@@ -5332,6 +5342,111 @@ class FaceFrameCabinet(GeoNodeCage):
             if mat is not None:
                 return mat
         return cls._stainless_material()
+
+    # ---- Galley workstation parts ----------------------------------
+    GALLEY_KEY = 'hb_galley_key'
+
+    def _is_galley(self):
+        return str(self.obj.get('CLASS_NAME', '')).startswith('Galley')
+
+    def _galley_children(self):
+        return [c for c in self.obj.children if c.get(self.GALLEY_KEY)]
+
+    def _cleanup_galley_parts(self, keep_keys=None):
+        for child in self._galley_children():
+            if keep_keys is not None and child.get(self.GALLEY_KEY) in keep_keys:
+                continue
+            bpy.data.objects.remove(child, do_unlink=True)
+
+    def _ensure_galley_part(self, key, name, role, kind):
+        """Find or make one workstation part. ``kind`` sets the
+        orientation: an APRON stands across the width like the back, a
+        PARTITION runs front to back like a side, a CLEAT lies flat."""
+        for child in self._galley_children():
+            if child.get(self.GALLEY_KEY) == key:
+                return child
+        part = CabinetPart()
+        part.create(name)
+        part.obj.parent = self.obj
+        part.obj[self.GALLEY_KEY] = key
+        part.obj['hb_part_role'] = role
+        part.obj['CABINET_PART'] = True
+        part.obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_part_commands'
+        if kind == 'APRON':
+            part.obj.rotation_euler.x = math.radians(90)
+            part.obj.rotation_euler.y = math.radians(-90)
+            part.set_input('Mirror Y', True)
+        elif kind == 'PARTITION':
+            part.obj.rotation_euler.y = math.radians(-90)
+            part.set_input('Mirror Y', True)
+            part.set_input('Mirror Z', True)
+        else:
+            part.set_input('Mirror Y', True)
+        return part.obj
+
+    def _apply_galley_parts(self, layout):
+        """The workstation construction, placed every recalc: aprons hung
+        from under the stretchers at the front setback and against the
+        back, partitions from the cabinet floor up to the aprons under
+        every mid stile and against each side, cleats beneath them in
+        the kick, and the sink spanning the end partitions."""
+        if not self._is_galley():
+            self._cleanup_galley_parts()
+            return
+        cab = self.obj.face_frame_cabinet
+        setback = max(float(getattr(cab, 'galley_front_apron_setback',
+                                    GALLEY_FRONT_SETBACK)), 0.0)
+        mt, dim_x, dim_y, dim_z = layout.mt, layout.dim_x, layout.dim_y, layout.dim_z
+        stretcher_t = float(getattr(cab, 'stretcher_thickness', mt))
+        apron_h = max(GALLEY_APRON_H - stretcher_t, mt)
+        apron_z = dim_z - GALLEY_APRON_H
+        inner_w = max(dim_x - 2.0 * mt, mt)
+        gm = GALLEY_MATERIAL
+        live = set()
+
+        def place(key, name, role, kind, loc, length, width, thickness):
+            obj = self._ensure_galley_part(key, name, role, kind)
+            obj.location = loc
+            part = GeoNodeCutpart(obj)
+            part.set_input('Length', length)
+            part.set_input('Width', width)
+            part.set_input('Thickness', thickness)
+            live.add(key)
+
+        # Aprons: the location is the panel's back face; it builds
+        # toward the front.
+        place('front_apron', 'Galley Front Apron', PART_ROLE_GALLEY_APRON,
+              'APRON', (mt, -dim_y + setback + gm, apron_z), apron_h, inner_w,
+              gm)
+        place('back_apron', 'Galley Back Apron', PART_ROLE_GALLEY_APRON,
+              'APRON', (mt, -mt, apron_z), apron_h, inner_w, gm)
+
+        # Partitions and their cleats.
+        z0 = layout.tkh + mt
+        p_h = max(apron_z - z0, gm)
+        p_depth = max(dim_y - setback - mt - gm, gm)
+        columns = [('end_left', mt, gm), ('end_right', dim_x - mt - gm, gm)]
+        for i in range(layout.bay_count - 1):
+            stile_x0 = solver.bay_x_position(layout, i) + layout.bays[i]['width']
+            stile_w = (layout.mid_stiles[i]['width']
+                       if i < len(layout.mid_stiles) else 0.0)
+            columns.append(('mid_%d' % i,
+                            stile_x0 + stile_w / 2.0 - GALLEY_PARTITION_T / 2.0,
+                            GALLEY_PARTITION_T))
+        for key, x, t in columns:
+            place('part_' + key, 'Galley Partition', PART_ROLE_GALLEY_PARTITION,
+                  'PARTITION', (x, -mt, z0), p_h, p_depth, t)
+            if layout.tkh > 0.0:
+                place('cleat_' + key, 'Galley Cleat', PART_ROLE_GALLEY_CLEAT,
+                      'CLEAT', (x, -mt, 0.0), t, p_depth, layout.tkh)
+        self._cleanup_galley_parts(keep_keys=live)
+
+        # The sink, between the end partitions, from the back panel to
+        # the front apron's face.
+        from ..common import appliance_geo
+        appliance_geo.sync_galley_sink(
+            self.obj, mt + gm, max(dim_x - 2.0 * (mt + gm), gm), -mt,
+            max(dim_y - setback - mt, gm), dim_z)
 
     def _uca_children(self):
         return [c for c in self.obj.children if c.get(self.UCA_TAG)]
@@ -11071,6 +11186,10 @@ class FaceFrameCabinet(GeoNodeCage):
         is_sink_cabinet = class_name == 'SinkFaceFrameCabinet'
         is_cooktop_cabinet = class_name == 'CooktopFaceFrameCabinet'
         sink_cutters = []
+        from ..common import appliance_geo
+        galley_sink = appliance_geo.opening_appliance(self.obj)
+        if galley_sink is not None:
+            sink_cutters.append(appliance_geo.sink_clearance_cutter(galley_sink))
         for bay_obj in [c for c in self.obj.children if c.get(TAG_BAY_CAGE)]:
             if bay_obj.hide_viewport:
                 self._update_countertop_appliance_in_bay(bay_obj, None)
@@ -13750,6 +13869,108 @@ class CooktopFaceFrameCabinet(BaseFaceFrameCabinet):
         scene = bpy.context.scene
         if hasattr(scene, 'hb_face_frame'):
             self.default_width = scene.hb_face_frame.range_width
+
+
+# ---------------------------------------------------------------------------
+# Galley workstation sink base
+#
+# One long workstation sink over a run of equal openings. Front and
+# back aprons hang from the top for the sink to rest between, 1 1/2 in
+# supporting partitions stand on the floor under every mid stile and
+# against each side, with cleats directly beneath them, and the sink
+# spans the end partitions. Sizes are the workstation's, IWS 2 to 7;
+# the even sizes end in an 18 in sink base opening.
+# ---------------------------------------------------------------------------
+
+GALLEY_SIZES = (
+    # key, label, cabinet width, bays, width of the last (sink base) bay
+    ('IWS2', "IWS 2", inch(28.0), 1, None),
+    ('IWS3', "IWS 3", inch(39.75), 2, None),
+    ('IWS4', "IWS 4", inch(51.75), 3, inch(18.0)),
+    ('IWS5', "IWS 5", inch(62.0), 3, None),
+    ('IWS6', "IWS 6", inch(77.75), 4, inch(18.0)),
+    ('IWS7', "IWS 7", inch(83.25), 4, None),
+)
+GALLEY_SIZE_TABLE = {k: (w, bays, sink_bay) for k, _l, w, bays, sink_bay in GALLEY_SIZES}
+GALLEY_APRON_H = inch(10.75)
+GALLEY_MATERIAL = inch(0.75)      # aprons, end partitions and cleats
+GALLEY_PARTITION_T = inch(1.5)    # a mid partition, built up
+GALLEY_FRONT_SETBACK = inch(4.0)
+
+
+def galley_size_from_name(name):
+    """'Galley IWS 4' -> 'IWS4'; None when the name carries no size."""
+    m = re.search(r'IWS\s*(\d)', name or '')
+    return 'IWS%s' % m.group(1) if m and 'IWS%s' % m.group(1) in GALLEY_SIZE_TABLE else None
+
+
+def apply_galley_size(root_obj):
+    """Size a workstation cabinet to its galley_size: the cabinet width,
+    and the last bay pinned to the sink base opening on the sizes that
+    have one, the rest sharing the remainder. Bays are made at
+    placement, so a size with a different bay count only sets the
+    width."""
+    props = root_obj.face_frame_cabinet
+    width, bays, sink_bay = GALLEY_SIZE_TABLE.get(
+        props.galley_size, GALLEY_SIZE_TABLE['IWS3'])
+    bay_objs = sorted([c for c in root_obj.children if c.get(TAG_BAY_CAGE)],
+                      key=lambda c: c.get('hb_bay_index', 0))
+    with suspend_recalc():
+        props.width = width
+        if len(bay_objs) == bays:
+            for i, bay_obj in enumerate(bay_objs):
+                bp = bay_obj.face_frame_bay
+                if sink_bay is not None and i == bays - 1:
+                    bp.width = sink_bay
+                else:
+                    bp.unlock_width = False
+
+
+class GalleyWorkstationFaceFrameCabinet(BaseFaceFrameCabinet):
+    """Sink base for a Galley workstation sink. A plain BASE construction
+    with as many bays as the size calls for; the aprons, partitions,
+    cleats and the sink are added by the recalc (see
+    _apply_galley_parts). One subclass per size carries the library
+    name and the width the placement preview needs."""
+
+    single_placement = True
+    size = 'IWS3'
+
+    def __init__(self):
+        super().__init__()
+        self.default_width = GALLEY_SIZE_TABLE[self.size][0]
+
+    def create(self, name="Galley Workstation", bay_qty=None):
+        size = galley_size_from_name(name) or self.size
+        width, bays, sink_bay = GALLEY_SIZE_TABLE[size]
+        super().create(name, bay_qty=bays)
+        # The size's update sizes the cabinet; one recalc at the end.
+        with suspend_recalc():
+            self.obj.face_frame_cabinet.galley_size = size
+
+
+class GalleyIWS2Cabinet(GalleyWorkstationFaceFrameCabinet):
+    size = 'IWS2'
+
+
+class GalleyIWS3Cabinet(GalleyWorkstationFaceFrameCabinet):
+    size = 'IWS3'
+
+
+class GalleyIWS4Cabinet(GalleyWorkstationFaceFrameCabinet):
+    size = 'IWS4'
+
+
+class GalleyIWS5Cabinet(GalleyWorkstationFaceFrameCabinet):
+    size = 'IWS5'
+
+
+class GalleyIWS6Cabinet(GalleyWorkstationFaceFrameCabinet):
+    size = 'IWS6'
+
+
+class GalleyIWS7Cabinet(GalleyWorkstationFaceFrameCabinet):
+    size = 'IWS7'
 
 
 class ADASinkCabinet(SinkFaceFrameCabinet):
@@ -16746,6 +16967,12 @@ CABINET_NAME_DISPATCH = {
     "Window Seat": WindowSeatFaceFrameCabinet,
     "Sink": SinkFaceFrameCabinet,
     "Cooktop Base": CooktopFaceFrameCabinet,
+    "Galley IWS 2": GalleyIWS2Cabinet,
+    "Galley IWS 3": GalleyIWS3Cabinet,
+    "Galley IWS 4": GalleyIWS4Cabinet,
+    "Galley IWS 5": GalleyIWS5Cabinet,
+    "Galley IWS 6": GalleyIWS6Cabinet,
+    "Galley IWS 7": GalleyIWS7Cabinet,
     "ADA Sink": ADASinkCabinet,
     "Lap Drawer": LapDrawerFaceFrameCabinet,
     "Upper": UpperFaceFrameCabinet,
@@ -16947,6 +17174,13 @@ WRAP_CLASS_REGISTRY.update({
     'FloatingVanityCabinet': FloatingVanityCabinet,
     'SinkFaceFrameCabinet': SinkFaceFrameCabinet,
     'CooktopFaceFrameCabinet': CooktopFaceFrameCabinet,
+    'GalleyWorkstationFaceFrameCabinet': GalleyWorkstationFaceFrameCabinet,
+    'GalleyIWS2Cabinet': GalleyIWS2Cabinet,
+    'GalleyIWS3Cabinet': GalleyIWS3Cabinet,
+    'GalleyIWS4Cabinet': GalleyIWS4Cabinet,
+    'GalleyIWS5Cabinet': GalleyIWS5Cabinet,
+    'GalleyIWS6Cabinet': GalleyIWS6Cabinet,
+    'GalleyIWS7Cabinet': GalleyIWS7Cabinet,
     'ADASinkCabinet': ADASinkCabinet,
     'UpperFaceFrameCabinet': UpperFaceFrameCabinet,
     'TallFaceFrameCabinet': TallFaceFrameCabinet,

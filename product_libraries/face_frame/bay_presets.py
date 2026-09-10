@@ -456,6 +456,10 @@ def default_bay_config(cabinet_name, bay_width):
         return 'DOUBLE_STACKED_DOOR' if is_wide else 'LEFT_STACKED_DOOR'
     if cabinet_name == 'Refrigerator Cabinet':
         return 'BUILT_IN_REFRIGERATOR'
+    if cabinet_name.startswith('Galley IWS'):
+        # Workstation sink base: doors in every opening; the sink rides
+        # above them between the aprons.
+        return 'DOUBLE_DOOR' if is_wide else 'LEFT_SWING_DOOR'
     if cabinet_name == 'Cooktop Base':
         # False front over doors, as the sink cabinet: the cooktop drops
         # into the counter above the false front.

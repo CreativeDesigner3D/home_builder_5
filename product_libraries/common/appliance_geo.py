@@ -168,8 +168,16 @@ SINK_MOUNT_ITEMS = [
                            "around the bowl"),
 ]
 
+DRAIN_SIDE_ITEMS = [
+    ('CENTER', "Center", "Drain in the middle of the bowl"),
+    ('LEFT', "Left", "Drain toward the left end"),
+    ('RIGHT', "Right", "Drain toward the right end"),
+]
+
 SINK_STYLE_ITEMS = [
     ('SINGLE', "Single Bowl", "One bowl the width of the sink"),
+    ('WORKSTATION', "Workstation", "One long bowl with two ledges along "
+                                   "the front and back for a culinary kit"),
     ('DOUBLE', "Double Bowl", "Two equal bowls either side of a divider"),
     ('FARMHOUSE', "Farmhouse", "One bowl behind an apron front standing "
                                "proud of the cabinet"),
@@ -283,6 +291,7 @@ _HOOD_CANOPY_H = {
 
 _SINK_DEFAULTS = dict(_COMMON_DEFAULTS, **{
     'sink_style': 'SINGLE',
+    'drain_side': 'CENTER',
     'mount': 'UNDERMOUNT',
     'faucet': True,
     'counter_thickness': inch(1.5),   # the countertop below the cage top
@@ -1176,8 +1185,25 @@ def sync_bay_sink(bay_obj, top_z):
     return sync_bay_appliance(bay_obj, 'SINK', top_z)
 
 
+def sync_galley_sink(root_obj, x, width, y_back, depth, top_z):
+    """A workstation cabinet carries its sink on the cabinet itself,
+    spanning every bay between the end partitions: ``x`` / ``width``
+    across the cabinet, ``y_back`` and ``depth`` from the back panel to
+    the front apron, the rim at ``top_z``. Seeded as a workstation bowl
+    nine inches deep."""
+    from . import types_appliances
+    existing = opening_appliance(root_obj)
+    ct = float(merged_opts(existing).get('counter_thickness', inch(1.5))
+               if existing is not None
+               else _SINK_DEFAULTS['counter_thickness'])
+    return _ensure_cabinet_appliance(
+        root_obj, types_appliances.Sink, width, depth, SINK_H + ct,
+        (x, y_back, top_z - SINK_H), top_anchored=True,
+        seed={'sink_style': 'WORKSTATION', 'bowl_depth': inch(9.0)})
+
+
 def _ensure_cabinet_appliance(parent_obj, cls, width, depth, height,
-                              location, top_anchored=False):
+                              location, top_anchored=False, seed=None):
     """The appliance cage a cabinet part houses, created the first time
     and sized every time -- until its own prompts take its size over
     (SIZE_OWNED_FLAG), after which it keeps its size and is centred in
@@ -1219,6 +1245,11 @@ def _ensure_cabinet_appliance(parent_obj, cls, width, depth, height,
     cage.location = location
     if stored_opts(cage) is None:
         seed_on_place(cage)
+        if seed and stored_opts(cage) is not None:
+            opts = merged_opts(cage)
+            opts.update(seed)
+            set_opts(cage, opts)
+            build_geometry(cage)
     refresh_labels(cage)
     return cage
 
@@ -1620,11 +1651,14 @@ def _faucet(cg, name, metal):
     return _mesh_child(cg, name, verts, faces, metal, smooth_faces=smooth)
 
 
-def _sink_bowl(cg, name, x0, width, floor_z, height, mat, dark):
+def _sink_bowl(cg, name, x0, width, floor_z, height, mat, dark,
+               drain_frac=0.5, ledges=()):
     """One bowl: four thin walls and a floor hanging from the rim, with
-    a drain in the middle of the floor. ``x0`` and ``width`` may be
-    expressions; ``floor_z`` is where the floor sits and ``height`` runs
-    from there to the rim's underside."""
+    a drain ``drain_frac`` of the way across the floor. ``x0`` and
+    ``width`` may be expressions; ``floor_z`` is where the floor sits
+    and ``height`` runs from there to the rim's underside. ``ledges``
+    are drops below the rim at which a strip steps in along the front
+    and back walls, as a workstation's tiers."""
     t = SINK_WALL_T
     depth = 'dim_y - %f' % (SINK_BACK_DECK + SINK_FRONT_RIM)
     _flat(cg, name + " Floor", x0, -SINK_BACK_DECK, floor_z, width, depth, t,
@@ -1642,12 +1676,20 @@ def _sink_bowl(cg, name, x0, width, floor_z, height, mat, dark):
                            [(inch(1.75), 0.0), (inch(1.75), inch(0.05))])
     drain = _CageWrap(_mesh_child(cg, name + " Drain", verts, faces, dark,
                                   smooth_faces=side))
-    x_mid = _add(x0, '(%s) * 0.5' % width if isinstance(width, str)
-                 else width * 0.5)
+    x_mid = _add(x0, '(%s) * %f' % (width, drain_frac)
+                 if isinstance(width, str) else width * drain_frac)
     y_mid = '-(dim_y + %f) * 0.5' % (SINK_BACK_DECK - SINK_FRONT_RIM)
     drain.driver_location('x', x_mid, cg.vars_for(x_mid))
     drain.driver_location('y', y_mid, [cg.dim_y])
     _place(cg, drain, 'z', _add(floor_z, t))
+    ledge_d, ledge_t = inch(1.25), inch(0.1)
+    for k, drop in enumerate(ledges):
+        z = _sub(_add(floor_z, height), drop)
+        _flat(cg, "%s Back Ledge %d" % (name, k + 1), x0, -SINK_BACK_DECK, z,
+              width, ledge_d, ledge_t, mat)
+        _flat(cg, "%s Front Ledge %d" % (name, k + 1), x0,
+              '-dim_y + %f' % (SINK_FRONT_RIM + ledge_d), z, width, ledge_d,
+              ledge_t, mat)
 
 
 def _sink_levels(opts):
@@ -1704,9 +1746,12 @@ def _build_sink(cage_obj, opts):
     _flat(cg, "Sink Rim Right", 'dim_x - %f' % SINK_SIDE_RIM, -SINK_BACK_DECK,
           z_rim, SINK_SIDE_RIM, inner, t, mat)
     if bowls == 1:
+        drain = {'LEFT': 0.25, 'RIGHT': 0.75}.get(
+            opts.get('drain_side', 'CENTER'), 0.5)
+        ledges = (inch(1.75), inch(3.5)) if style == 'WORKSTATION' else ()
         _sink_bowl(cg, "Bowl", SINK_SIDE_RIM,
                    'dim_x - %f' % (2.0 * SINK_SIDE_RIM), floor_z, bowl_h, mat,
-                   dark)
+                   dark, drain, ledges)
     else:
         _flat(cg, "Sink Rim Divider", 'dim_x * 0.5 - %f' % (SINK_DIVIDER / 2.0),
               -SINK_BACK_DECK, z_rim, SINK_DIVIDER, inner, t, mat)
@@ -2561,6 +2606,8 @@ class HOME_BUILDER_OT_appliance_prompts(bpy.types.Operator):
     # Sink
     sink_style: EnumProperty(name="Style", items=SINK_STYLE_ITEMS,
                              default='SINGLE')  # type: ignore
+    drain_side: EnumProperty(name="Drain", items=DRAIN_SIDE_ITEMS,
+                             default='CENTER')  # type: ignore
     mount: EnumProperty(name="Mount", items=SINK_MOUNT_ITEMS,
                         default='UNDERMOUNT')  # type: ignore
     faucet: BoolProperty(
@@ -2816,6 +2863,8 @@ class HOME_BUILDER_OT_appliance_prompts(bpy.types.Operator):
             col.prop(self, 'trim_kit')
         elif appl == 'SINK':
             col.prop(self, 'sink_style')
+            if self.sink_style != 'DOUBLE':
+                col.row(align=True).prop(self, 'drain_side', expand=True)
             col.row(align=True).prop(self, 'mount', expand=True)
             col.prop(self, 'faucet')
             col.prop(self, 'counter_thickness')

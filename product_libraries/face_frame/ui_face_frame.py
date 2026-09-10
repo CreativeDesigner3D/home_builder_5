@@ -479,6 +479,17 @@ def draw_ada_sink_options(layout, root):
                         % (cab.toe_kick_height / 0.0254))
 
 
+def draw_galley_options(layout, root):
+    """Galley workstation cabinets: size and the front apron setback."""
+    if not str(root.get('CLASS_NAME', '')).startswith('Galley'):
+        return
+    cab = root.face_frame_cabinet
+    box = layout.box()
+    box.label(text="Galley Workstation", icon='MOD_BUILD')
+    box.prop(cab, 'galley_size', text="Size")
+    box.prop(cab, 'galley_front_apron_setback', text="Front Apron Setback")
+
+
 def draw_refrigerator_options(layout, root):
     """Refrigerator opening height + per-side raise. Refrigerator cabinets only.
 
@@ -2122,6 +2133,7 @@ def draw_cabinet_wide(layout, root):
     box.label(text="Construction", icon='MODIFIER')
     draw_construction(box, cab_props)
     draw_refrigerator_options(layout, root)
+    draw_galley_options(layout, root)
     box = layout.box()
     box.label(text="Face Frame Defaults", icon='MESH_GRID')
     draw_face_frame_defaults(box, cab_props)
@@ -2197,6 +2209,7 @@ class HB_FACE_FRAME_PT_construction(bpy.types.Panel):
             return
         draw_construction(self.layout, root.face_frame_cabinet)
         draw_refrigerator_options(self.layout, root)
+        draw_galley_options(self.layout, root)
         draw_wedge(self.layout, root)
 
 

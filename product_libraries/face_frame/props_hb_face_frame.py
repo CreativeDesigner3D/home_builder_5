@@ -5510,6 +5510,12 @@ def _update_rollout_box_preset(self, context):
     _update_cabinet_dim(self, context)
 
 
+def _update_galley_size(self, context):
+    """A workstation cabinet's size: width and bay widths follow it."""
+    from . import types_face_frame
+    types_face_frame.apply_galley_size(self.id_data)
+
+
 def _update_refrigerator_opening_height(self, context):
     """Per-cabinet refrigerator opening height.
 
@@ -7261,6 +7267,26 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         ],
         default='DOORS',
         update=_update_garage_bottom,
+    )  # type: ignore
+    # Galley workstation cabinets: the size sets the width and bay
+    # split; the setback places the front apron the sink rests on.
+    galley_size: EnumProperty(
+        name="Galley Size",
+        items=[
+            ('IWS2', "IWS 2", "28 in, one opening"),
+            ('IWS3', "IWS 3", "39 3/4 in, two openings"),
+            ('IWS4', "IWS 4", "51 3/4 in, two openings and an 18 in sink base"),
+            ('IWS5', "IWS 5", "62 in, three openings"),
+            ('IWS6', "IWS 6", "77 3/4 in, three openings and an 18 in sink base"),
+            ('IWS7', "IWS 7", "83 1/4 in, four openings"),
+        ],
+        default='IWS3', update=_update_galley_size,
+    )  # type: ignore
+    galley_front_apron_setback: FloatProperty(
+        name="Front Apron Setback",
+        description="From the cabinet front to the front apron; the sink runs from there to the back",
+        default=units.inch(4.0), min=0.0, unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
     )  # type: ignore
     blind_reveal: FloatProperty(
         name="Blind Reveal", default=units.inch(1.5), unit='LENGTH', precision=4,
