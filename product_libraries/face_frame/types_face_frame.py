@@ -11151,6 +11151,7 @@ class FaceFrameCabinet(GeoNodeCage):
             rect = leaves_by_name.get(cage.name)
             if rect is None:
                 cage.hide_viewport = True
+                self._update_appliance_in_opening(cage, live=False)
                 continue
             cage.hide_viewport = False
             op = FaceFrameOpening(cage)
@@ -11161,6 +11162,7 @@ class FaceFrameCabinet(GeoNodeCage):
             op.set_input('Mirror Y', False)
             self._update_fronts_in_opening(cage, layout, rect)
             self._update_interior_items_in_opening(cage, layout, rect)
+            self._update_appliance_in_opening(cage, rect)
 
         # Pass 2: splitters (mid rails / mid stiles) - delete & recreate
         self._reconcile_bay_splitters(bay_obj, parts['splitters'])
@@ -11323,6 +11325,28 @@ class FaceFrameCabinet(GeoNodeCage):
             part.set_input('Width', rect['width'])
             part.set_input('Thickness', rect['thickness'])
         return part
+
+    def _update_appliance_in_opening(self, opening_obj, rect=None,
+                                     live=True):
+        """A refrigerator cabinet's appliance opening houses the
+        refrigerator model itself, sized on every recalc to the frame
+        opening -- between the stiles and under the rail, which the
+        rect's reveals measure in from the carcass cavity. Any other
+        opening, or one that has gone away, carries none."""
+        from ..common import appliance_geo
+        if live and opening_obj.get('SIZE_ROLE') == 'REFRIGERATOR':
+            span = None
+            if rect is not None:
+                span = (rect['reveal_left'],
+                        rect['cage_dim_x'] - rect['reveal_left']
+                        - rect['reveal_right'],
+                        rect['reveal_bottom'],
+                        rect['cage_dim_z'] - rect['reveal_top']
+                        - rect['reveal_bottom'])
+            appliance_geo.sync_opening_appliance(opening_obj, 'REFRIGERATOR',
+                                                 span)
+        else:
+            appliance_geo.remove_opening_appliance(opening_obj)
 
     def _update_fronts_in_opening(self, opening_obj, layout, rect):
         """Reconcile front parts under an opening cage.

@@ -438,7 +438,17 @@ class RefrigeratorCabinet(Cabinet):
         door_drawer.splitter_qty = 1
         door_drawer.opening_sizes = [0, props.refrigerator_height]  # Top flexible, bottom = fridge height
         door_drawer.opening_inserts = [top_doors, None]  # Doors on top, empty on bottom
-        self.add_cage_to_bay(door_drawer)
+        door_drawer.create()
+        # The bottom opening houses the refrigerator model itself; the
+        # solver keeps it sized to the opening.
+        for (role, index), opening in solver_frameless.split_parts(
+                door_drawer.obj).items():
+            if role == 'OPENING' and index == 2:
+                opening['APPLIANCE_OPENING'] = 'REFRIGERATOR'
+        for child in self.obj.children_recursive:
+            if 'IS_FRAMELESS_BAY_CAGE' in child:
+                door_drawer.obj.parent = child
+                solver_frameless.attach_cage(door_drawer.obj, child)
 
 
 class UpperCabinet(Cabinet):

@@ -69,6 +69,8 @@ PANEL_TYPES = {'REFRIGERATOR', 'DISHWASHER', 'UNDER_COUNTER'}
 # the appliance. A wider fridge gets wider doors, not a thicker door or
 # a fatter handle.
 FRIDGE_DOOR_T = inch(2.0)
+FRIDGE_KICK_H = inch(2.5)     # under the doors when the grille is on top
+FRIDGE_REVEAL_T = inch(0.125) # the dark face the door gaps open onto
 RANGE_DOOR_T = inch(1.75)
 DISHWASHER_DOOR_T = inch(1.5)
 UNDER_COUNTER_DOOR_T = inch(1.5)
@@ -132,6 +134,12 @@ HANDLE_ITEMS = [
     ('NONE', "None", "No handles -- integrated or push to open"),
 ]
 
+GRILLE_POSITION_ITEMS = [
+    ('TOP', "Top", "Louvered grille above the doors, as on a built-in"),
+    ('BOTTOM', "Bottom", "Louvered grille below the doors, as on a "
+                         "freestanding unit"),
+]
+
 FRIDGE_CONFIG_ITEMS = [
     ('FRENCH', "French Door", "Two doors over a freezer drawer"),
     ('SINGLE', "Single Door", "One door over a freezer drawer"),
@@ -178,6 +186,7 @@ _FRIDGE_DEFAULTS = dict(_COMMON_DEFAULTS, **{
     'freezer_drawers': 1,
     'freezer_fraction': 0.42,
     'grille_height': inch(4.0),
+    'grille_position': 'TOP',
     'dispenser': False,
 })
 
@@ -984,6 +993,93 @@ def apply_visibility(scene=None):
     return len(parts)
 
 
+# ---------------------------------------------------------------------------
+# Appliances housed in a cabinet opening
+#
+# A refrigerator cabinet's appliance opening carries the refrigerator
+# model itself: an ordinary appliance cage parented to the opening and
+# sized to it on every solve, so the model follows the cabinet. It is a
+# normal appliance after that -- its prompts, the Show Model switch --
+# minus the label, which the opening already carries.
+# ---------------------------------------------------------------------------
+
+CABINET_APPLIANCE_FLAG = 'IS_CABINET_APPLIANCE'
+CABINET_APPLIANCE_CLEARANCE = inch(0.25)
+CABINET_APPLIANCE_PROUD = inch(2.5)   # a built-in's doors stand this far
+                                      # out of the carcass
+
+_OPENING_APPLIANCE_CLASSES = {'REFRIGERATOR': 'Refrigerator'}
+
+
+def opening_appliance(opening_obj):
+    return next((c for c in opening_obj.children
+                 if c.get(CABINET_APPLIANCE_FLAG)), None)
+
+
+def sync_opening_appliance(opening_obj, appliance_type='REFRIGERATOR',
+                           span=None):
+    """Keep the appliance in a cabinet opening sized to it, creating it
+    the first time. The opening's origin is at its front face and the
+    cabinet's back lies at +Dim Y, so the appliance stands with its
+    back there and its doors out past the front. ``span`` is
+    (x, width, z, height) in the opening's own space when the appliance
+    must fit something narrower than the cage -- a face frame's stiles
+    and rail -- and defaults to the whole cage."""
+    from . import types_appliances
+    cls = getattr(types_appliances,
+                  _OPENING_APPLIANCE_CLASSES.get(appliance_type, ''), None)
+    if cls is None:
+        return None
+    wrap = _CageWrap(opening_obj)
+    dim_x, dim_y, dim_z = (wrap.get_input('Dim X'), wrap.get_input('Dim Y'),
+                           wrap.get_input('Dim Z'))
+    x0, span_w, z0, span_h = span or (0.0, dim_x, 0.0, dim_z)
+    c = CABINET_APPLIANCE_CLEARANCE
+    width = max(span_w - 2.0 * c, 0.0)
+    depth = dim_y + CABINET_APPLIANCE_PROUD
+    height = max(span_h - c, 0.0)
+    cage = opening_appliance(opening_obj)
+    if cage is None:
+        app = cls()
+        app.width, app.depth, app.height = width, depth, height
+        app.create()
+        cage = app.obj
+        cage.parent = opening_obj
+        cage[CABINET_APPLIANCE_FLAG] = True
+        _link_like_cage(cage, opening_obj)
+        # The opening already carries the label; a second one would
+        # print twice.
+        for child in list(cage.children):
+            if child.get('IS_APPLIANCE_TEXT'):
+                data = child.data
+                bpy.data.objects.remove(child, do_unlink=True)
+                if data is not None and data.users == 0:
+                    try:
+                        bpy.data.curves.remove(data)
+                    except Exception:
+                        pass
+    else:
+        own = _CageWrap(cage)
+        own.set_input('Dim X', width)
+        own.set_input('Dim Y', depth)
+        own.set_input('Dim Z', height)
+    cage.location = (x0 + c, dim_y, z0)
+    if stored_opts(cage) is None:
+        seed_on_place(cage)
+    return cage
+
+
+def remove_opening_appliance(opening_obj):
+    """Take the appliance out of an opening that no longer houses one."""
+    cage = opening_appliance(opening_obj)
+    if cage is None:
+        return
+    remove_geometry(cage)
+    for child in list(cage.children_recursive):
+        bpy.data.objects.remove(child, do_unlink=True)
+    bpy.data.objects.remove(cage, do_unlink=True)
+
+
 def seed_on_place(cage_obj):
     """Called once an appliance has been placed. With the switch on it
     comes in modeled with its type's defaults; off, it stays a cage
@@ -1044,6 +1140,39 @@ def _fridge_drawers(cg, opts, mat, metal, z0, height, door_t):
                     z + each - inch(3.5), 'dim_x - %f' % inch(8.0), False)
 
 
+def _fridge_grille(cg, z, height, mat, dark, door_t):
+    """A louvered grille: slats in the body finish standing proud of a
+    dark recess, pitched evenly down its height with a margin top and
+    bottom. ``z`` may be an expression, for a grille up at the top."""
+    _front(cg, "Fridge Grille", 0.0, z, 'dim_x', height, door_t, dark)
+    slat, pitch = inch(0.5), inch(0.875)
+    count = int((height - inch(0.5)) // pitch)
+    if count <= 0:
+        return
+    z0 = (height - (count * pitch - (pitch - slat))) / 2.0
+    for i in range(count):
+        _front(cg, "Grille Slat %d" % (i + 1), inch(1.0),
+               _add(z, z0 + i * pitch), 'dim_x - %f' % inch(2.0), slat,
+               inch(0.1875), mat, proud=True)
+
+
+def _fridge_dispenser(cg, z, mat, dark, metal):
+    """The water and ice dispenser on the upper left door: a dark panel
+    on the door face, a lit readout across its top and a stainless drip
+    tray at its foot. Fixed size -- a dispenser is a dispenser whatever
+    the fridge measures. ``z`` is the panel's bottom edge."""
+    x, w, h = inch(3.0), inch(9.0), inch(13.0)
+    _front(cg, "Fridge Dispenser", x, z, w, h, inch(0.125), dark, proud=True)
+    _flat(cg, "Dispenser Tray", x + inch(0.75), '-dim_y - %f' % inch(0.125),
+          _add(z, inch(0.75)), w - inch(1.5), inch(0.85), inch(0.25), metal)
+    obj = _display(cg, "Dispenser Display", dark, _display_material())
+    obj.rotation_euler.x = math.radians(90)
+    obj.location.x = x + w / 2.0
+    wrap = _CageWrap(obj)
+    wrap.driver_location('y', '-dim_y - %f' % inch(0.125), [cg.dim_y])
+    wrap.driver_location('z', _add(z, h - inch(2.0)), cg.vars_for(z))
+
+
 def _build_refrigerator(cage_obj, opts):
     cg = _Cage(cage_obj)
     mat = _finish_material(opts)
@@ -1051,15 +1180,30 @@ def _build_refrigerator(cage_obj, opts):
     metal = _metal_material()
     door_t = FRIDGE_DOOR_T
     grille_h = float(opts.get('grille_height', inch(4.0)))
+    grille_top = opts.get('grille_position', 'TOP') == 'TOP'
     panel_ready = is_panel_ready(cage_obj)
 
-    # The case: everything behind the doors.
+    # The case: everything behind the doors, faced with a dark reveal
+    # so the gaps between the doors read as gaps and not as more steel.
     _flat(cg, "Fridge Case", 0.0, 0.0, 0.0,
-          'dim_x', 'dim_y - %f' % door_t, 'dim_z',
+          'dim_x', 'dim_y - %f' % (door_t + FRIDGE_REVEAL_T), 'dim_z',
           dark if panel_ready else mat)
+    _front(cg, "Fridge Reveal", 0.0, 0.0, 'dim_x', 'dim_z', FRIDGE_REVEAL_T,
+           dark, y='-dim_y + %f' % door_t)
 
-    if grille_h > 0.0:
-        _front(cg, "Fridge Grille", 0.0, 0.0, 'dim_x', grille_h, door_t, dark)
+    # The grille sits above the doors on a built-in, with a kick below
+    # them, or below the doors on a freestanding unit.
+    base, top = 0.0, 0.0
+    if grille_h > 0.0 and grille_top:
+        _fridge_grille(cg, 'dim_z - %f' % grille_h, grille_h, mat, dark,
+                       door_t)
+        top = grille_h + GAP
+        _front(cg, "Fridge Kick", 0.0, 0.0, 'dim_x', FRIDGE_KICK_H, door_t,
+               dark, y='-dim_y + %f' % inch(0.5))
+        base = FRIDGE_KICK_H + GAP
+    elif grille_h > 0.0:
+        _fridge_grille(cg, 0.0, grille_h, mat, dark, door_t)
+        base = grille_h
 
     if panel_ready:
         # The fronts come from the appliance panels on this same cage.
@@ -1067,11 +1211,10 @@ def _build_refrigerator(cage_obj, opts):
 
     config = opts.get('fridge_config', 'FRENCH')
     freezer_h = float(opts.get('freezer_height', inch(24.0)))
-    base = grille_h
 
     if config == 'SIDE_BY_SIDE':
         frac = min(max(float(opts.get('freezer_fraction', 0.42)), 0.2), 0.8)
-        height = 'dim_z - %f' % base
+        height = 'dim_z - %f' % (base + top)
         _fridge_door(cg, opts, mat, metal, "Freezer Door", 0.0,
                      'dim_x * %f - %f' % (frac, GAP * 0.5),
                      base, height, door_t, handle_at_right=True)
@@ -1081,15 +1224,15 @@ def _build_refrigerator(cage_obj, opts):
                      base, height, door_t)
     elif config == 'TOP_FREEZER':
         _fridge_door(cg, opts, mat, metal, "Freezer Door", 0.0, 'dim_x',
-                     'dim_z - %f' % freezer_h, freezer_h, door_t,
+                     'dim_z - %f' % (freezer_h + top), freezer_h, door_t,
                      vertical_handle=False, handle_at_bottom=True)
         _fridge_door(cg, opts, mat, metal, "Fridge Door", 0.0, 'dim_x',
-                     base, 'dim_z - %f' % (base + freezer_h + GAP), door_t,
-                     vertical_handle=False)
+                     base, 'dim_z - %f' % (base + freezer_h + GAP + top),
+                     door_t, vertical_handle=False)
     else:
         _fridge_drawers(cg, opts, mat, metal, base, freezer_h, door_t)
         door_z = base + freezer_h + GAP
-        door_h = 'dim_z - %f' % door_z
+        door_h = 'dim_z - %f' % (door_z + top)
         if config == 'SINGLE':
             _fridge_door(cg, opts, mat, metal, "Fridge Door", 0.0, 'dim_x',
                          door_z, door_h, door_t)
@@ -1102,11 +1245,8 @@ def _build_refrigerator(cage_obj, opts):
                          door_z, door_h, door_t)
 
     if opts.get('dispenser'):
-        # Recessed water / ice panel, upper left. Fixed size: a
-        # dispenser is a dispenser whatever the fridge measures.
-        _front(cg, "Fridge Dispenser", inch(3.0),
-               'dim_z - %f' % inch(26.0), inch(9.0), inch(13.0),
-               inch(1.0), dark, y='-dim_y + %f' % inch(0.25))
+        _fridge_dispenser(cg, 'dim_z - %f' % (top + inch(21.0)), mat, dark,
+                          metal)
 
 
 # ---------------------------------------------------------------------------
@@ -1533,6 +1673,9 @@ class HOME_BUILDER_OT_appliance_prompts(bpy.types.Operator):
     fridge_config: EnumProperty(name="Configuration",
                                 items=FRIDGE_CONFIG_ITEMS,
                                 default='FRENCH')  # type: ignore
+    grille_position: EnumProperty(name="Grille",
+                                  items=GRILLE_POSITION_ITEMS,
+                                  default='TOP')  # type: ignore
     freezer_height: FloatProperty(
         name="Freezer Height", unit='LENGTH', precision=5, min=0.0,
         description="Height of the freezer zone")  # type: ignore
@@ -1724,6 +1867,8 @@ class HOME_BUILDER_OT_appliance_prompts(bpy.types.Operator):
                 col.prop(self, 'freezer_height')
                 if self.fridge_config in {'FRENCH', 'SINGLE'}:
                     col.prop(self, 'freezer_drawers')
+            col.separator()
+            col.row(align=True).prop(self, 'grille_position', expand=True)
             col.prop(self, 'grille_height')
             col.prop(self, 'dispenser')
         elif appl == 'UNDER_COUNTER':

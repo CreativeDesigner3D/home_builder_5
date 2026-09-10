@@ -885,6 +885,16 @@ def link_dims(parent_obj, child_obj, dims):
     return (0.0, 0.0, 0.0), (dim_x, dim_y, dim_z)
 
 
+def _sync_opening_appliance(opening_obj):
+    """An opening that houses an appliance model -- a refrigerator
+    cabinet's bottom opening -- keeps that model sized to itself."""
+    kind = opening_obj.get('APPLIANCE_OPENING')
+    if not kind:
+        return
+    from ..common import appliance_geo
+    appliance_geo.sync_opening_appliance(opening_obj, kind)
+
+
 def solve_cage_tree(cage_obj):
     """Size every cage under ``cage_obj`` from the cage above it."""
     dims = cage_dims(cage_obj)
@@ -899,6 +909,7 @@ def solve_cage_tree(cage_obj):
             for (role, _index), opening in split_parts(child).items():
                 if role == 'OPENING':
                     solve_cage_tree(opening)
+                    _sync_opening_appliance(opening)
         elif child.get('IS_FRAMELESS_INTERIOR_CAGE'):
             solve_interior_parts(child)
             solve_cage_tree(child)
