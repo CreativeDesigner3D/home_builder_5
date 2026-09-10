@@ -11068,15 +11068,71 @@ class FaceFrameCabinet(GeoNodeCage):
                 bpy.data.objects.remove(child, do_unlink=True)
 
         is_sink_cabinet = self.obj.get('CLASS_NAME') == 'SinkFaceFrameCabinet'
+        sink_cutters = []
         for bay_obj in [c for c in self.obj.children if c.get(TAG_BAY_CAGE)]:
             if bay_obj.hide_viewport:
+                self._update_sink_in_bay(bay_obj, False)
                 continue
             kind = bay_obj.get('APPLIANCE_BAY')
             if not kind and is_sink_cabinet and self._bay_has_false_front(bay_obj):
                 kind = 'SINK'
-            if kind not in ('SINK', 'COOKTOP'):
+            if kind in ('SINK', 'COOKTOP'):
+                self._create_appliance_annotation(bay_obj, kind)
+            # After the annotation: the sink decides whether it shows.
+            cutter = self._update_sink_in_bay(bay_obj, kind == 'SINK')
+            if cutter is not None:
+                sink_cutters.append(cutter)
+        # The top stretchers span every bay, so they are cut once, by
+        # the first sink; a second sink in one cabinet is not handled.
+        self._apply_sink_clearance(
+            [c for c in self.obj.children
+             if c.get('hb_part_role') in (PART_ROLE_FRONT_STRETCHER,
+                                          PART_ROLE_REAR_STRETCHER)],
+            sink_cutters[0] if sink_cutters else None)
+
+    SINK_CLEARANCE_MOD_NAME = 'Sink Clearance'
+    SINK_CLEARANCE_SHELF_ROLES = frozenset({
+        PART_ROLE_BAY_SHELF, PART_ROLE_ADJUSTABLE_SHELF, PART_ROLE_GLASS_SHELF,
+        PART_ROLE_TRAY_LOCKED_SHELF, PART_ROLE_INTERIOR_FIXED_SHELF,
+    })
+
+    def _update_sink_in_bay(self, bay_obj, is_sink):
+        """A sink bay carries the sink model itself, hung from the
+        cabinet top; the annotation above stays the 2D symbol. Any other
+        bay carries none. The bay's shelves are cut around the sink;
+        returns the sink's clearance cutter so the caller can cut the
+        cabinet-wide parts too."""
+        from ..common import appliance_geo
+        cutter = None
+        if is_sink:
+            top_z = self.get_input('Dim Z') - bay_obj.location.z
+            cage = appliance_geo.sync_bay_sink(bay_obj, top_z)
+            if cage is not None:
+                cutter = appliance_geo.sink_clearance_cutter(cage)
+        else:
+            appliance_geo.remove_opening_appliance(bay_obj)
+        self._apply_sink_clearance(
+            [c for c in bay_obj.children_recursive
+             if c.get('hb_part_role') in self.SINK_CLEARANCE_SHELF_ROLES],
+            cutter)
+        return cutter
+
+    def _apply_sink_clearance(self, parts, cutter):
+        """Every part carries a boolean DIFFERENCE against the sink's
+        clearance cutter, or loses it when there is no sink -- the same
+        lazy-cutter + boolean pattern as the angled cuts."""
+        for part in parts:
+            mod = part.modifiers.get(self.SINK_CLEARANCE_MOD_NAME)
+            if cutter is None:
+                if mod is not None:
+                    part.modifiers.remove(mod)
                 continue
-            self._create_appliance_annotation(bay_obj, kind)
+            if mod is None:
+                mod = part.modifiers.new(name=self.SINK_CLEARANCE_MOD_NAME,
+                                         type='BOOLEAN')
+                mod.operation = 'DIFFERENCE'
+            if mod.object is not cutter:
+                mod.object = cutter
 
     def _update_bay_cage(self, bay_obj, layout, bay_index):
         """Position and size a single bay cage from the solver. Cascades

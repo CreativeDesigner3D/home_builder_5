@@ -282,8 +282,18 @@ def rebuild(obj):
     bm.to_mesh(obj.data)
     bm.free()
     obj.data.update()
+    cut_for_sinks(obj)
     apply_world_uvs(obj)
     return True
+
+
+def cut_for_sinks(obj):
+    """The sinks under a top cut their openings through it."""
+    try:
+        from . import appliance_geo
+    except Exception:
+        return 0
+    return appliance_geo.cut_sink_openings(obj, world_matrix(obj))
 
 
 def world_matrix(obj):
@@ -334,6 +344,7 @@ def finish(obj, library):
     that library's cut command), and UVs."""
     obj['MENU_ID'] = MENU_ID
     obj['HB_COUNTERTOP_LIB'] = library
+    cut_for_sinks(obj)
     apply_world_uvs(obj)
     return obj
 

@@ -48,7 +48,9 @@ deliberately -- is a follow-up on the drawings side.
 
 import math
 
+import bmesh
 import bpy
+from mathutils import Vector
 from bpy.props import BoolProperty, EnumProperty, FloatProperty, IntProperty
 
 from ... import hb_utils
@@ -60,7 +62,7 @@ GEO_OPTS_PROP = "APPLIANCE_GEO_OPTS"
 GEO_CHILD_FLAG = "IS_APPLIANCE_GEO"
 
 SUPPORTED_TYPES = {'REFRIGERATOR', 'RANGE', 'DISHWASHER', 'UNDER_COUNTER',
-                   'HOOD'}
+                   'HOOD', 'SINK'}
 
 # Appliances that can wear cabinet door panels instead of their own
 # front. Matches what the appliance-panels product accepts.
@@ -85,6 +87,19 @@ LIP_W = inch(0.5)             # the cooktop tray's lip, in plan
 LIP_RISE = inch(0.375)        # how far it stands above the cooktop
 LIP_PROUD = inch(0.5)         # how far the front edge rolls out
 SMALL_OVEN_EVEN_AT = inch(30.0)   # both ovens this wide: split evenly
+SINK_WALL_T = inch(0.0625)
+SINK_BACK_DECK = inch(2.5)        # rim behind the bowls, where the faucet stands
+SINK_FRONT_RIM = inch(1.25)
+SINK_SIDE_RIM = inch(1.25)
+SINK_DIVIDER = inch(1.25)         # between the bowls of a double
+SINK_APRON_T = inch(3.0)          # a farmhouse front: through the cabinet
+                                  # front and an inch proud of the frame
+SINK_H = inch(10.0)               # a sink cage's height in a cabinet
+SINK_SIDE_MARGIN = inch(1.5)      # cabinet inside face to the sink
+SINK_END_GAP = inch(0.5)          # front and back
+SINK_SEAT = inch(1.0 / 32.0)      # a hair between the sink and the counter,
+                                  # so no two faces share a plane
+SINK_HOLE_CLEAR = inch(0.125)     # the countertop hole past the bowl walls
 HOOD_PANEL_T = inch(1.0)          # a box canopy's walls
 HOOD_LIP_H = inch(2.5)            # the vertical band under a pyramid canopy
 HOOD_DUCT_W = inch(12.0)          # a chimney's duct cover, in plan
@@ -137,6 +152,20 @@ FINISH_ITEMS = [
 HANDLE_ITEMS = [
     ('BAR', "Bar", "Bar handle standing off the door on two standoffs"),
     ('NONE', "None", "No handles -- integrated or push to open"),
+]
+
+SINK_MOUNT_ITEMS = [
+    ('UNDERMOUNT', "Undermount", "Rim under the countertop; the counter "
+                                 "edge shows around the bowl"),
+    ('DROP_IN', "Drop-In", "Rim on top of the countertop as a flange "
+                           "around the bowl"),
+]
+
+SINK_STYLE_ITEMS = [
+    ('SINGLE', "Single Bowl", "One bowl the width of the sink"),
+    ('DOUBLE', "Double Bowl", "Two equal bowls either side of a divider"),
+    ('FARMHOUSE', "Farmhouse", "One bowl behind an apron front standing "
+                               "proud of the cabinet"),
 ]
 
 HOOD_STYLE_ITEMS = [
@@ -245,7 +274,16 @@ _HOOD_CANOPY_H = {
     'UNDER_CABINET': inch(6.0),
 }
 
+_SINK_DEFAULTS = dict(_COMMON_DEFAULTS, **{
+    'sink_style': 'SINGLE',
+    'mount': 'UNDERMOUNT',
+    'faucet': True,
+    'counter_thickness': inch(1.5),   # the countertop below the cage top
+    'bowl_depth': 0.0,                # 0: the cage's own depth
+})
+
 _DEFAULTS_BY_TYPE = {
+    'SINK': _SINK_DEFAULTS,
     'HOOD': _HOOD_DEFAULTS,
     'REFRIGERATOR': _FRIDGE_DEFAULTS,
     'RANGE': _RANGE_DEFAULTS,
@@ -1021,6 +1059,8 @@ def apply_visibility(scene=None):
     parts = [obj for obj in scene.objects if obj.get(GEO_CHILD_FLAG)]
     for obj in parts:
         _set_hidden(obj, hide)
+    for obj in [o for o in scene.objects if o.get('IS_APPLIANCE')]:
+        refresh_labels(obj)
     return len(parts)
 
 
@@ -1039,7 +1079,7 @@ CABINET_APPLIANCE_CLEARANCE = inch(0.25)
 CABINET_APPLIANCE_PROUD = inch(2.5)   # a built-in's doors stand this far
                                       # out of the carcass
 
-_OPENING_APPLIANCE_CLASSES = {'REFRIGERATOR': 'Refrigerator'}
+_OPENING_APPLIANCE_CLASSES = {'REFRIGERATOR': 'Refrigerator', 'SINK': 'Sink'}
 
 
 def opening_appliance(opening_obj):
@@ -1066,20 +1106,48 @@ def sync_opening_appliance(opening_obj, appliance_type='REFRIGERATOR',
                            wrap.get_input('Dim Z'))
     x0, span_w, z0, span_h = span or (0.0, dim_x, 0.0, dim_z)
     c = CABINET_APPLIANCE_CLEARANCE
-    width = max(span_w - 2.0 * c, 0.0)
-    depth = dim_y + CABINET_APPLIANCE_PROUD
-    height = max(span_h - c, 0.0)
-    cage = opening_appliance(opening_obj)
+    return _ensure_cabinet_appliance(
+        opening_obj, cls, max(span_w - 2.0 * c, 0.0),
+        dim_y + CABINET_APPLIANCE_PROUD, max(span_h - c, 0.0),
+        (x0 + c, dim_y, z0))
+
+
+def sync_bay_sink(bay_obj, top_z):
+    """A sink bay carries the sink itself, hung with its rim at the
+    cabinet top so a countertop covers it and the faucet stands on the
+    counter. ``top_z`` is the cabinet top in the bay's own space; the
+    bay's origin is at its front and the cabinet's back lies at
+    +Dim Y."""
+    from . import types_appliances
+    wrap = _CageWrap(bay_obj)
+    dim_x, dim_y = wrap.get_input('Dim X'), wrap.get_input('Dim Y')
+    # The cage reaches from a bowl's depth below the cabinet top up to
+    # the countertop's top surface, so the sink can sit under or on it.
+    existing = opening_appliance(bay_obj)
+    ct = float(merged_opts(existing).get('counter_thickness', inch(1.5))
+               if existing is not None
+               else _SINK_DEFAULTS['counter_thickness'])
+    return _ensure_cabinet_appliance(
+        bay_obj, types_appliances.Sink,
+        max(dim_x - 2.0 * SINK_SIDE_MARGIN, 0.0),
+        max(dim_y - 2.0 * SINK_END_GAP, 0.0), SINK_H + ct,
+        (SINK_SIDE_MARGIN, dim_y - SINK_END_GAP, top_z - SINK_H))
+
+
+def _ensure_cabinet_appliance(parent_obj, cls, width, depth, height,
+                              location):
+    """The appliance cage a cabinet part houses, created the first time
+    and sized every time. Its label is dropped: the cabinet already
+    carries one."""
+    cage = opening_appliance(parent_obj)
     if cage is None:
         app = cls()
         app.width, app.depth, app.height = width, depth, height
         app.create()
         cage = app.obj
-        cage.parent = opening_obj
+        cage.parent = parent_obj
         cage[CABINET_APPLIANCE_FLAG] = True
-        _link_like_cage(cage, opening_obj)
-        # The opening already carries the label; a second one would
-        # print twice.
+        _link_like_cage(cage, parent_obj)
         for child in list(cage.children):
             if child.get('IS_APPLIANCE_TEXT'):
                 data = child.data
@@ -1094,9 +1162,10 @@ def sync_opening_appliance(opening_obj, appliance_type='REFRIGERATOR',
         own.set_input('Dim X', width)
         own.set_input('Dim Y', depth)
         own.set_input('Dim Z', height)
-    cage.location = (x0 + c, dim_y, z0)
+    cage.location = location
     if stored_opts(cage) is None:
         seed_on_place(cage)
+    refresh_labels(cage)
     return cage
 
 
@@ -1134,6 +1203,34 @@ def remove_geometry(cage_obj):
         bpy.data.objects.remove(child, do_unlink=True)
         if isinstance(data, bpy.types.Mesh) and data.users == 0:
             bpy.data.meshes.remove(data)
+    refresh_labels(cage_obj)
+
+
+def _label_objects(cage_obj):
+    """The words that name an appliance in the room: its own label text,
+    and for one housed in a cabinet, the annotation or accessory label
+    the cabinet part carries."""
+    for child in cage_obj.children:
+        if child.get('IS_APPLIANCE_TEXT'):
+            yield child
+    parent = cage_obj.parent
+    if cage_obj.get(CABINET_APPLIANCE_FLAG) and parent is not None:
+        for child in parent.children:
+            if (child.get('APPLIANCE_ANNOTATION')
+                    or child.name.startswith('Accessory Label')):
+                yield child
+
+
+def refresh_labels(cage_obj):
+    """An appliance's label shows only while its model does not: the
+    word stands in for a bare cage. Hidden in this view layer alone, so
+    the drawing scenes keep their labels."""
+    hide = models_shown() and bool(_geo_children(cage_obj))
+    for obj in _label_objects(cage_obj):
+        try:
+            obj.hide_set(hide)
+        except RuntimeError:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -1278,6 +1375,338 @@ def _build_refrigerator(cage_obj, opts):
     if opts.get('dispenser'):
         _fridge_dispenser(cg, 'dim_z - %f' % (top + inch(21.0)), mat, dark,
                           metal)
+
+
+# ---------------------------------------------------------------------------
+# Sink
+#
+# The cage top is the countertop's top surface, with the countertop
+# taking the top ``counter_thickness`` of the cage. An undermount's rim
+# sits at the counter's underside and a drop-in's flange on its top; the
+# bowl is the same depth either way, and the faucet stands on the
+# counter surface.
+# ---------------------------------------------------------------------------
+
+def _sweep(verts, faces, points, tube_r, segments=12):
+    """Append a round tube along a polyline, capped at both ends. Returns
+    its face indices. Frames are built against +X, so the path should
+    not run along X."""
+    def norm(v):
+        n = math.sqrt(v[0] ** 2 + v[1] ** 2 + v[2] ** 2) or 1.0
+        return (v[0] / n, v[1] / n, v[2] / n)
+
+    def cross(a, b):
+        return (a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2],
+                a[0] * b[1] - a[1] * b[0])
+
+    base = len(verts)
+    count = len(points)
+    for i, p in enumerate(points):
+        a = points[max(i - 1, 0)]
+        b = points[min(i + 1, count - 1)]
+        t = norm((b[0] - a[0], b[1] - a[1], b[2] - a[2]))
+        n = norm(cross(t, (1.0, 0.0, 0.0)))
+        bn = cross(t, n)
+        for k in range(segments):
+            ang = 2.0 * math.pi * k / segments
+            c, s = math.cos(ang), math.sin(ang)
+            verts.append((p[0] + tube_r * (c * n[0] + s * bn[0]),
+                          p[1] + tube_r * (c * n[1] + s * bn[1]),
+                          p[2] + tube_r * (c * n[2] + s * bn[2])))
+    start = len(faces)
+    for i in range(count - 1):
+        r0 = base + i * segments
+        r1 = r0 + segments
+        for k in range(segments):
+            j = (k + 1) % segments
+            faces.append((r0 + k, r0 + j, r1 + j, r1 + k))
+    last = base + (count - 1) * segments
+    faces.append(tuple(reversed(range(base, base + segments))))
+    faces.append(tuple(range(last, last + segments)))
+    return list(range(start, len(faces)))
+
+
+def _faucet(cg, name, metal):
+    """A gooseneck faucet: base plate, column, an arc up and over that
+    drops to the spout, and a lever handle out to the right. Built up
+    from the deck it stands on."""
+    verts, faces = [], []
+    smooth = set()
+    side, _caps = _revolve(verts, faces,
+                           [(inch(1.1), 0.0), (inch(1.0), inch(0.4))])
+    smooth.update(side)
+    top = inch(9.0)
+    side, _caps = _revolve(verts, faces,
+                           [(inch(0.55), inch(0.4)), (inch(0.55), top)])
+    smooth.update(side)
+    radius = inch(3.0)
+    path = [(0.0, -radius + radius * math.cos(a), top + radius * math.sin(a))
+            for a in (i * math.pi / 16.0 for i in range(17))]
+    path += [(0.0, -2.0 * radius, top - inch(1.0)),
+             (0.0, -2.0 * radius, top - inch(2.0))]
+    smooth.update(_sweep(verts, faces, path, inch(0.42)))
+    _box(verts, faces, inch(0.5), inch(2.8), -inch(0.25), inch(0.25),
+         inch(7.6), inch(8.2))
+    return _mesh_child(cg, name, verts, faces, metal, smooth_faces=smooth)
+
+
+def _sink_bowl(cg, name, x0, width, floor_z, height, mat, dark):
+    """One bowl: four thin walls and a floor hanging from the rim, with
+    a drain in the middle of the floor. ``x0`` and ``width`` may be
+    expressions; ``floor_z`` is where the floor sits and ``height`` runs
+    from there to the rim's underside."""
+    t = SINK_WALL_T
+    depth = 'dim_y - %f' % (SINK_BACK_DECK + SINK_FRONT_RIM)
+    _flat(cg, name + " Floor", x0, -SINK_BACK_DECK, floor_z, width, depth, t,
+          mat)
+    _front(cg, name + " Back", x0, floor_z, width, height, t, mat,
+           y=-SINK_BACK_DECK)
+    _front(cg, name + " Front", x0, floor_z, width, height, t, mat,
+           y='-dim_y + %f' % SINK_FRONT_RIM, proud=True)
+    _side(cg, name + " Left", x0, -SINK_BACK_DECK, floor_z, height, depth, t,
+          mat, plus_x=False)
+    _side(cg, name + " Right", _add(x0, width), -SINK_BACK_DECK, floor_z,
+          height, depth, t, mat)
+    verts, faces = [], []
+    side, _caps = _revolve(verts, faces,
+                           [(inch(1.75), 0.0), (inch(1.75), inch(0.05))])
+    drain = _CageWrap(_mesh_child(cg, name + " Drain", verts, faces, dark,
+                                  smooth_faces=side))
+    x_mid = _add(x0, '(%s) * 0.5' % width if isinstance(width, str)
+                 else width * 0.5)
+    y_mid = '-(dim_y + %f) * 0.5' % (SINK_BACK_DECK - SINK_FRONT_RIM)
+    drain.driver_location('x', x_mid, cg.vars_for(x_mid))
+    drain.driver_location('y', y_mid, [cg.dim_y])
+    _place(cg, drain, 'z', _add(floor_z, t))
+
+
+def _sink_levels(opts):
+    """Where a sink's rim and bowl floor sit, as offsets from the cage
+    top (the counter surface). Returns (rim_z, rim_t, floor_drop): the
+    rim's underside and thickness, and how far below the cage top the
+    floor lies -- None when the floor is simply the cage floor (or, for
+    a drop-in, a counter thickness above it)."""
+    ct = float(opts.get('counter_thickness', inch(1.5)))
+    drop_in = opts.get('mount', 'UNDERMOUNT') == 'DROP_IN'
+    depth = float(opts.get('bowl_depth', 0.0))
+    if drop_in:
+        # The flange seats on the counter, a hair up so no face shares
+        # the counter's top plane.
+        rim_t = inch(0.125)
+        rim_z = SINK_SEAT
+        floor_drop = depth if depth > 0.0 else None
+    else:
+        # The rim tucks a hair under the counter for the same reason.
+        rim_t = SINK_WALL_T
+        rim_z = -(ct + SINK_SEAT + rim_t)
+        floor_drop = (ct + SINK_SEAT + rim_t + depth) if depth > 0.0 else None
+    return rim_z, rim_t, floor_drop
+
+
+def _build_sink(cage_obj, opts):
+    cg = _Cage(cage_obj)
+    mat = _finish_material(opts)
+    dark = _dark_material()
+    metal = _metal_material()
+    style = opts.get('sink_style', 'DOUBLE')
+    bowls = 2 if style == 'DOUBLE' else 1
+    ct = float(opts.get('counter_thickness', inch(1.5)))
+    drop_in = opts.get('mount', 'UNDERMOUNT') == 'DROP_IN'
+    # A drop-in's flange is what you see; an undermount's rim is a
+    # hairline under the counter. The bowl hangs from the rim to its
+    # floor: the cage floor by default (a counter thickness up for a
+    # drop-in, so the bowl is the same depth), or Bowl Depth down.
+    rim_off, t, floor_drop = _sink_levels(opts)
+    z_rim = 'dim_z + %f' % rim_off if rim_off >= 0 else 'dim_z - %f' % -rim_off
+    if floor_drop is not None:
+        floor_z = 'dim_z - %f' % floor_drop
+    else:
+        floor_z = ct if drop_in else 0.0
+    bowl_h = _sub(z_rim, floor_z)
+
+    # The rim: strips around the bowls, and between them on a double.
+    inner = 'dim_y - %f' % (SINK_BACK_DECK + SINK_FRONT_RIM)
+    _flat(cg, "Sink Rim Back", 0.0, 0.0, z_rim, 'dim_x', SINK_BACK_DECK, t, mat)
+    _flat(cg, "Sink Rim Front", 0.0, '-dim_y + %f' % SINK_FRONT_RIM, z_rim,
+          'dim_x', SINK_FRONT_RIM, t, mat)
+    _flat(cg, "Sink Rim Left", 0.0, -SINK_BACK_DECK, z_rim, SINK_SIDE_RIM,
+          inner, t, mat)
+    _flat(cg, "Sink Rim Right", 'dim_x - %f' % SINK_SIDE_RIM, -SINK_BACK_DECK,
+          z_rim, SINK_SIDE_RIM, inner, t, mat)
+    if bowls == 1:
+        _sink_bowl(cg, "Bowl", SINK_SIDE_RIM,
+                   'dim_x - %f' % (2.0 * SINK_SIDE_RIM), floor_z, bowl_h, mat,
+                   dark)
+    else:
+        _flat(cg, "Sink Rim Divider", 'dim_x * 0.5 - %f' % (SINK_DIVIDER / 2.0),
+              -SINK_BACK_DECK, z_rim, SINK_DIVIDER, inner, t, mat)
+        width = '(dim_x - %f) * 0.5' % (2.0 * SINK_SIDE_RIM + SINK_DIVIDER)
+        _sink_bowl(cg, "Left Bowl", SINK_SIDE_RIM, width, floor_z, bowl_h, mat,
+                   dark)
+        _sink_bowl(cg, "Right Bowl", 'dim_x * 0.5 + %f' % (SINK_DIVIDER / 2.0),
+                   width, floor_z, bowl_h, mat, dark)
+
+    if style == 'FARMHOUSE':
+        # The apron runs from the bowl floor up past the counter: to the
+        # flange on a drop-in, a hair proud on an undermount, so its top
+        # never lies in the counter's own plane.
+        lip = (SINK_SEAT + t) if drop_in else inch(0.0625)
+        _front(cg, "Sink Apron", 0.0, floor_z, 'dim_x',
+               _sub('dim_z + %f' % lip, floor_z), SINK_APRON_T, mat,
+               proud=True)
+    if opts.get('faucet', True):
+        obj = _faucet(cg, "Faucet", metal)
+        obj.location.y = -SINK_BACK_DECK / 2.0
+        wrap = _CageWrap(obj)
+        wrap.driver_location('x', 'dim_x * 0.5', [cg.dim_x])
+        wrap.driver_location('z', 'dim_z', [cg.dim_z])
+    # A sink in a cabinet keeps its clearance cutter sized to the bowl
+    # it now has, without waiting for the cabinet to recalculate.
+    if any(c.get(SINK_CUTTER_FLAG) for c in cage_obj.children):
+        sink_clearance_cutter(cage_obj)
+    refresh_countertops()
+
+
+def refresh_countertops(scene=None):
+    """The countertops follow the sinks: a top that knows its outline is
+    rebuilt from it, which cuts it afresh for every sink; an older box
+    top just takes the current cut, so it gains a hole but cannot lose
+    one until countertops are added again."""
+    try:
+        from . import countertop_common
+    except Exception:
+        return
+    scene = scene or bpy.context.scene
+    for top in [o for o in scene.objects if o.get('IS_COUNTERTOP')]:
+        if countertop_common.has_outline(top):
+            countertop_common.rebuild(top)
+        else:
+            cut_sink_openings(top, countertop_common.world_matrix(top), scene)
+
+
+def sink_cutout_boxes(cage_obj):
+    """The holes a countertop needs over a sink, as boxes in the sink's
+    own space: the bowl area with a little clearance past its walls,
+    so the counter and the sink never share a face, and for a farmhouse
+    a notch through the counter's front edge for the apron. Tall enough
+    to pass through any countertop over the rim. Empty for anything but
+    a sink."""
+    if appliance_type(cage_obj) != 'SINK':
+        return []
+    wrap = _CageWrap(cage_obj)
+    dim_x, dim_y, dim_z = (wrap.get_input('Dim X'), wrap.get_input('Dim Y'),
+                           wrap.get_input('Dim Z'))
+    opts = merged_opts(cage_obj)
+    ct = float(opts.get('counter_thickness', inch(1.5)))
+    c = SINK_HOLE_CLEAR
+    z0, z1 = dim_z - ct - inch(0.25), dim_z + inch(2.0)
+    boxes = [(SINK_SIDE_RIM - c, dim_x - SINK_SIDE_RIM + c,
+              -(dim_y - SINK_FRONT_RIM) - c, -SINK_BACK_DECK + c, z0, z1)]
+    if opts.get('sink_style') == 'FARMHOUSE':
+        # The counter stops at the apron's back face, a hair into it.
+        boxes.append((-c, dim_x + c, -(dim_y + SINK_APRON_T + inch(1.0)),
+                      -dim_y - SINK_SEAT, z0, z1))
+    return boxes
+
+
+def cut_sink_openings(countertop_obj, matrix=None, scene=None):
+    """Cut the opening for every sink under a countertop, into its mesh,
+    so the top stays a plain mesh the way the manual cut leaves it.
+    ``matrix`` is the top's world matrix when the cached one is stale.
+    Returns how many sinks cut it."""
+    scene = scene or bpy.context.scene
+    if countertop_obj.type != 'MESH' or not countertop_obj.data.vertices:
+        return 0
+    sinks = [o for o in scene.objects
+             if o.get('IS_APPLIANCE') and appliance_type(o) == 'SINK']
+    if not sinks:
+        return 0
+    matrix = matrix or countertop_obj.matrix_world
+    pts = [matrix @ v.co for v in countertop_obj.data.vertices]
+    lo = [min(p[i] for p in pts) for i in range(3)]
+    hi = [max(p[i] for p in pts) for i in range(3)]
+    count = 0
+    for sink in sinks:
+        cut = False
+        for bounds in sink_cutout_boxes(sink):
+            x0, x1, y0, y1, z0, z1 = bounds
+            corners = [sink.matrix_world @ Vector((x, y, z))
+                       for x in (x0, x1) for y in (y0, y1) for z in (z0, z1)]
+            s_lo = [min(p[i] for p in corners) for i in range(3)]
+            s_hi = [max(p[i] for p in corners) for i in range(3)]
+            if any(s_lo[i] >= hi[i] or s_hi[i] <= lo[i] for i in range(3)):
+                continue
+            _subtract_box(countertop_obj, sink.matrix_world, bounds, scene)
+            cut = True
+        count += cut
+    return count
+
+
+SINK_CUTTER_FLAG = 'IS_SINK_CUTTER'
+
+
+def sink_clearance_cutter(cage_obj):
+    """The volume a sink takes out of the cabinet around it -- the whole
+    sink and a little more -- as a hidden mesh child for the cabinet's
+    parts to boolean against. Made once and resized every call, so it
+    tracks the sink. Not a model part: it outlives the model and the
+    Show Model switch."""
+    cutter = next((c for c in cage_obj.children if c.get(SINK_CUTTER_FLAG)),
+                  None)
+    wrap = _CageWrap(cage_obj)
+    dim_x, dim_y, dim_z = (wrap.get_input('Dim X'), wrap.get_input('Dim Y'),
+                           wrap.get_input('Dim Z'))
+    m = inch(0.25)
+    _rim, _t, floor_drop = _sink_levels(merged_opts(cage_obj))
+    bottom = min(0.0, dim_z - floor_drop) if floor_drop is not None else 0.0
+    verts, faces = [], []
+    _box(verts, faces, -m, dim_x + m, -dim_y - m, m, bottom - m, dim_z + m)
+    if cutter is None:
+        mesh = bpy.data.meshes.new('Sink Clearance')
+        cutter = bpy.data.objects.new('Sink Clearance', mesh)
+        cutter.parent = cage_obj
+        cutter[SINK_CUTTER_FLAG] = True
+        cutter.display_type = 'WIRE'
+        cutter.hide_viewport = True
+        cutter.hide_render = True
+        _link_like_cage(cutter, cage_obj)
+    mesh = cutter.data
+    mesh.clear_geometry()
+    mesh.from_pydata(verts, [], faces)
+    mesh.validate()
+    mesh.update()
+    return cutter
+
+
+def _subtract_box(target, matrix, bounds, scene):
+    """Boolean a box out of a mesh, evaluated through a temporary
+    modifier and written back into the mesh datablock it already has."""
+    verts, faces = [], []
+    _box(verts, faces, *bounds)
+    mesh = bpy.data.meshes.new('Sink Cutter')
+    mesh.from_pydata(verts, [], faces)
+    mesh.validate()
+    mesh.update()
+    cutter = bpy.data.objects.new('Sink Cutter', mesh)
+    cutter.matrix_world = matrix.copy()
+    scene.collection.objects.link(cutter)
+    mod = target.modifiers.new('SinkCut', 'BOOLEAN')
+    mod.operation = 'DIFFERENCE'
+    mod.object = cutter
+    mod.solver = 'EXACT'
+    try:
+        depsgraph = bpy.context.evaluated_depsgraph_get()
+        bm = bmesh.new()
+        bm.from_object(target, depsgraph)
+        target.modifiers.remove(mod)
+        bm.to_mesh(target.data)
+        bm.free()
+        target.data.update()
+    finally:
+        if 'SinkCut' in target.modifiers:
+            target.modifiers.remove(target.modifiers['SinkCut'])
+        bpy.data.objects.remove(cutter, do_unlink=True)
+        bpy.data.meshes.remove(mesh)
 
 
 # ---------------------------------------------------------------------------
@@ -1810,6 +2239,7 @@ def _build_under_counter(cage_obj, opts):
 # ---------------------------------------------------------------------------
 
 _BUILDERS = {
+    'SINK': _build_sink,
     'HOOD': _build_hood,
     'REFRIGERATOR': _build_refrigerator,
     'RANGE': _build_range,
@@ -1844,6 +2274,7 @@ def build_geometry(cage_obj):
     if not models_shown():
         for child in _geo_children(cage_obj):
             _set_hidden(child, True)
+    refresh_labels(cage_obj)
     return True
 
 
@@ -1885,6 +2316,25 @@ class HOME_BUILDER_OT_appliance_prompts(bpy.types.Operator):
                          default='STAINLESS')  # type: ignore
     handle_style: EnumProperty(name="Handles", items=HANDLE_ITEMS,
                                default='BAR')  # type: ignore
+
+    # Sink
+    sink_style: EnumProperty(name="Style", items=SINK_STYLE_ITEMS,
+                             default='SINGLE')  # type: ignore
+    mount: EnumProperty(name="Mount", items=SINK_MOUNT_ITEMS,
+                        default='UNDERMOUNT')  # type: ignore
+    faucet: BoolProperty(
+        name="Faucet", description="A gooseneck faucet on the back "
+                                   "deck")  # type: ignore
+    counter_thickness: FloatProperty(
+        name="Counter Thickness", unit='LENGTH', precision=5, min=0.0,
+        description="The countertop, which takes the top of the sink's "
+                    "cage: an undermount's rim sits under it, a drop-in's "
+                    "flange on it, and the faucet stands on it")  # type: ignore
+    bowl_depth: FloatProperty(
+        name="Bowl Depth", unit='LENGTH', precision=5, min=0.0,
+        description="Rim to bowl floor; 0 fills the sink's cage. A "
+                    "farmhouse apron runs from the floor to the counter "
+                    "top, so this sets its height too")  # type: ignore
 
     # Range hood
     hood_style: EnumProperty(name="Style", items=HOOD_STYLE_ITEMS,
@@ -2076,7 +2526,7 @@ class HOME_BUILDER_OT_appliance_prompts(bpy.types.Operator):
                       icon='INFO')
             return
         col.prop(self, 'finish')
-        if appl != 'HOOD':
+        if appl not in ('HOOD', 'SINK'):
             col.prop(self, 'handle_style')
 
         if supports_panels(self.appliance):
@@ -2097,7 +2547,13 @@ class HOME_BUILDER_OT_appliance_prompts(bpy.types.Operator):
 
         box = layout.box()
         col = box.column(align=True)
-        if appl == 'HOOD':
+        if appl == 'SINK':
+            col.prop(self, 'sink_style')
+            col.row(align=True).prop(self, 'mount', expand=True)
+            col.prop(self, 'faucet')
+            col.prop(self, 'counter_thickness')
+            col.prop(self, 'bowl_depth')
+        elif appl == 'HOOD':
             col.prop(self, 'hood_style')
             col.prop(self, 'canopy_height')
             col.prop(self, 'baffles')
