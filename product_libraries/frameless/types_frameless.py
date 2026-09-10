@@ -1623,16 +1623,18 @@ class LadderBaseCage(GeoNodeCage):
 
 class CabinetSideNotched(CabinetPart):
 
-    def create(self,name,tkh,tks,mt):
+    def create(self,name,tkh=None,tks=None,mt=None):
         super().create(name)
         self.set_input('Length', inch(24))
         self.set_input('Width', inch(18))
         self.set_input('Thickness', inch(.75))
 
+        # Without driver variables the notch is left for a solver to size.
         notch = self.add_part_modifier('CPM_CORNERNOTCH','Notch')
-        notch.driver_input('X','tkh',[tkh])
-        notch.driver_input('Y','tks',[tks])
-        notch.driver_input('Route Depth','mt',[mt])
+        if tkh is not None:
+            notch.driver_input('X','tkh',[tkh])
+            notch.driver_input('Y','tks',[tks])
+            notch.driver_input('Route Depth','mt',[mt])
         notch.set_input('Flip Y',True)
 
 

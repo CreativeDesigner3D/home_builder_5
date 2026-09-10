@@ -16172,9 +16172,12 @@ class HalfWallFaceFrameProduct(_FramelessHalfWall):
         apply_active_finish_to_product(self.obj)
 
     def apply_placement_width(self, width):
-        """The cage width maps to the product's X span = its 'Dim X' input
-        (the studs / skins / top / bottom are all driver-bound to Dim X)."""
+        """The cage width maps to the product's X span = its 'Dim X' input.
+        The studs / skins / top / bottom are solved from that input, so
+        re-solve after writing it."""
+        from ..frameless import types_products
         self.set_input('Dim X', width)
+        types_products.recalculate_product(self.obj)
 
 
 class SupportFrameFaceFrameProduct(_FramelessSupportFrame):

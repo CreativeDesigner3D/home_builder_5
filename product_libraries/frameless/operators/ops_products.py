@@ -1,5 +1,5 @@
 import bpy
-from .... import hb_utils, hb_types, units, hb_project
+from .... import hb_types, units, hb_project
 from .. import types_products
 
 
@@ -69,11 +69,10 @@ class hb_frameless_OT_product_prompts(bpy.types.Operator):
             self.product.set_input('Dim X', self.width)
             self.product.set_input('Dim Z', self.height)
             self.product.set_input('Dim Y', self.depth)
-        hb_utils.run_calc_fix(context, self.product.obj)
+        # Product parts are solved rather than driven, so an edit only
+        # reaches them when the solver is run.
+        types_products.recalculate_product(self.product.obj)
         if self.part_type == 'SUPPORT_FRAME':
-            # The frame's parts are solved rather than driven, so an edit
-            # only reaches them when the solver is run.
-            types_products.recalculate_support_frame(self.product.obj)
             self._sync_support_frame_legs(self.product.obj)
         return True
 
@@ -542,7 +541,7 @@ class hb_frameless_OT_adjust_floating_shelves(bpy.types.Operator):
             # location.z is relative to the parent (wall sits on the floor at
             # z=0), so convert the desired world elevation back to local.
             obj.location.z = row.elevation - self._parent_z(obj)
-            hb_utils.run_calc_fix(context, obj)
+            types_products.recalculate_product(obj)
 
     def execute(self, context):
         self.apply_to_scene(context)

@@ -82,11 +82,11 @@ def load_file_post(scene):
     from .product_libraries.common import door_window_geo
     door_window_geo.hide_reveal_cutters()
 
-    # Support frames are solved in Python. Frames from an older build were
-    # built from drivers instead, which is what let a saved frame reopen
+    # Products are solved in Python. Products from an older build were
+    # built from drivers instead, which is what let a saved product reopen
     # collapsed or missing -- re-solve them so they come back as saved.
     from .product_libraries.frameless import types_products
-    types_products.upgrade_support_frames()
+    types_products.upgrade_products()
 
     # Style colours are a view mode, held per file and on by default, so
     # the scene has to be painted for it on load rather than only when
