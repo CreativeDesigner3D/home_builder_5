@@ -3420,7 +3420,7 @@ class FaceFrameCabinet(GeoNodeCage):
             cutter_obj = self._ensure_wedge_cutter()
             self._position_wedge_cutter(cutter_obj, length, height)
             self._apply_wedge_cuts(cutter_obj)
-            self._position_wedge_piece(length, height)
+            self._position_wedge_piece(layout, length, height)
             # Publish the computed dims on the cabinet root (meters) as
             # id props so downstream consumers (e.g. drawing / annotation
             # layers) can read them without recomputing. Cleared when the
@@ -7120,7 +7120,7 @@ class FaceFrameCabinet(GeoNodeCage):
             break
         return piece
 
-    def _position_wedge_piece(self, length, height):
+    def _position_wedge_piece(self, layout, length, height):
         """Rebuild the wedge piece from the live dims.
 
         The same triangle the cutter takes out of the body, built to the
@@ -7129,25 +7129,120 @@ class FaceFrameCabinet(GeoNodeCage):
         corner. With the body chamfered underneath it the cabinet reads
         whole and the cut reads as a seam - which is the cabinet as it
         ends up on site, wedge glued back on.
+
+        Only where there is board to cut, though. Run across the whole
+        width it filled the open bottom of a bay - an appliance opening
+        has no floor and often no back - with a solid ramp that is no
+        part of the cabinet.
         """
         piece = self._ensure_wedge_piece()
-        dim_x = self.obj.face_frame_cabinet.width
-        bm = bmesh.new()
         # Cross-section in Y-Z: the cut line, then the back-bottom corner.
         section = ((-length, 0.0), (0.0, height), (0.0, 0.0))
-        left = [bm.verts.new((0.0, y, z)) for y, z in section]
-        right = [bm.verts.new((dim_x, y, z)) for y, z in section]
-        bm.verts.ensure_lookup_table()
-        bm.faces.new((left[0], left[1], left[2]))
-        bm.faces.new((right[0], right[2], right[1]))
-        for i in range(3):
-            j = (i + 1) % 3
-            bm.faces.new((left[i], right[i], right[j], left[j]))
-        bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+        bm = bmesh.new()
+        if length > 0.0 and height > 0.0:
+            for box in self._wedge_piece_spans(layout, height):
+                x0, x1, y0, y1, z0, z1 = box
+                clipped = self._clip_section(section, y0, y1, z0, z1)
+                if clipped:
+                    self._add_section_prism(bm, clipped, x0, x1)
+        if bm.faces:
+            bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
         bm.to_mesh(piece.data)
         bm.free()
         piece.location = (0.0, 0.0, 0.0)
         return piece
+
+    def _wedge_piece_spans(self, layout, height):
+        """Where the cabinet has material in the wedge corner.
+
+        Yields (x0, x1, y0, y1, z0, z1) boxes - the ends taken whole, then
+        each back and bay floor across its own span only. The wedge is the
+        offcut of those boards, so this is what the cut actually removes.
+        """
+        dim_x = self.obj.face_frame_cabinet.width
+        dim_y = layout.dim_y
+        inner_l = solver.carcass_inner_left_x(layout)
+        inner_r = solver.carcass_inner_right_x(layout)
+        bays = layout.bays or []
+        # The two ends: side panel plus any kick return under it, taken as
+        # one so the cut reads as a single seam down the end.
+        if bays:
+            yield (solver.left_scribe_offset(layout), inner_l,
+                   -dim_y, -dim_y + bays[0]['depth'], 0.0, height)
+            yield (inner_r, dim_x - solver.right_scribe_offset(layout),
+                   -dim_y, -dim_y + bays[-1]['depth'], 0.0, height)
+        # Backs and bay floors, clipped to the inside of the sides so a
+        # notched back does not double up on the end columns.
+        for seg in solver.carcass_back_segments(layout):
+            x0 = max(seg['x'], inner_l)
+            x1 = min(seg['x'] + seg['horizontal_length'], inner_r)
+            if x1 > x0:
+                yield (x0, x1, seg['y'] - seg['thickness'], seg['y'],
+                       seg['z'], seg['z'] + seg['vertical_length'])
+        for seg in solver.carcass_bottom_segments(layout):
+            x0 = max(seg['x'], inner_l)
+            x1 = min(seg['x'] + seg['length'], inner_r)
+            if x1 > x0:
+                yield (x0, x1, seg['y'] - seg['panel_dim_y'], seg['y'],
+                       seg['z'], seg['z'] + seg['thickness'])
+
+    @staticmethod
+    def _clip_section(section, y0, y1, z0, z1):
+        """Clip a convex Y-Z polygon to an axis-aligned box.
+
+        Sutherland-Hodgman against the four sides. Returns [] when the
+        box misses the polygon or leaves only a sliver.
+        """
+        pts = list(section)
+        for axis, bound, keep_above in ((0, y0, True), (0, y1, False),
+                                        (1, z0, True), (1, z1, False)):
+            if len(pts) < 3:
+                return []
+            out = []
+            count = len(pts)
+            for i in range(count):
+                cur = pts[i]
+                nxt = pts[(i + 1) % count]
+                if keep_above:
+                    cur_in, nxt_in = cur[axis] >= bound, nxt[axis] >= bound
+                else:
+                    cur_in, nxt_in = cur[axis] <= bound, nxt[axis] <= bound
+                if cur_in:
+                    out.append(cur)
+                if cur_in != nxt_in:
+                    da = cur[axis] - bound
+                    db = nxt[axis] - bound
+                    if abs(da - db) < 1e-12:
+                        continue
+                    t = da / (da - db)
+                    out.append((cur[0] + (nxt[0] - cur[0]) * t,
+                                cur[1] + (nxt[1] - cur[1]) * t))
+            pts = out
+        if len(pts) < 3:
+            return []
+        area = 0.0
+        for i in range(len(pts)):
+            a = pts[i]
+            b = pts[(i + 1) % len(pts)]
+            area += a[0] * b[1] - b[0] * a[1]
+        if abs(area) * 0.5 < 1e-10:
+            return []
+        return pts
+
+    @staticmethod
+    def _add_section_prism(bm, section, x0, x1):
+        """Extrude a Y-Z polygon between two X planes into ``bm``."""
+        if x1 - x0 < 1e-9:
+            return
+        left = [bm.verts.new((x0, y, z)) for y, z in section]
+        right = [bm.verts.new((x1, y, z)) for y, z in section]
+        bm.verts.ensure_lookup_table()
+        bm.faces.new(left)
+        bm.faces.new(tuple(reversed(right)))
+        count = len(section)
+        for i in range(count):
+            j = (i + 1) % count
+            bm.faces.new((left[i], right[i], right[j], left[j]))
 
     # =====================================================================
     # Accessible sink: knee clearance raked out of the carcass underside
