@@ -711,15 +711,7 @@ class CabinetShelves(CabinetInterior):
         self.add_property('Shelf Clip Gap', 'DISTANCE', inch(.125))
         self.add_property('Shelf Setback', 'DISTANCE', inch(.25))
 
-        dim_x = self.var_input('Dim X', 'dim_x')
-        dim_y = self.var_input('Dim Y', 'dim_y')
-        dim_z = self.var_input('Dim Z', 'dim_z')
-
-        mt = self.var_prop('Material Thickness', 'mt')
-        setback = self.var_prop('Shelf Setback', 'setback')
-        clip_gap = self.var_prop('Shelf Clip Gap', 'clip_gap')
-        qty = self.var_prop('Shelf Quantity', 'qty')
-
+        # One shelf, arrayed up the interior by the solver.
         shelves = CabinetPart()
         shelves.create('Shelf')
         shelves.obj['IS_FRAMELESS_INTERIOR_PART'] = True
@@ -728,21 +720,12 @@ class CabinetShelves(CabinetInterior):
         shelves.obj['Finish Top'] = False
         shelves.obj['Finish Bottom'] = False
         shelves.obj.parent = self.obj
+        shelves.obj[solver_frameless.PART_ROLE_KEY] = 'SHELF'
         array_mod = shelves.obj.modifiers.new('Qty','ARRAY')
-        array_mod.count = 1   
+        array_mod.count = 1
         array_mod.use_relative_offset = False
         array_mod.use_constant_offset = True
-        array_mod.constant_offset_displace = (0,0,0)        
-        shelves.driver_location('x', 'clip_gap',[clip_gap])
-        shelves.driver_location('y', 'setback',[setback])
-        shelves.driver_location('z', '(dim_z-(mt*qty))/(qty+1)',[dim_z,mt,qty])
-        shelves.driver_input("Length", 'dim_x-clip_gap*2', [dim_x,clip_gap])
-        shelves.driver_input("Width", 'dim_y-setback', [dim_y,setback])
-        shelves.driver_input("Thickness", 'mt', [mt])
-        shelves.obj.home_builder.add_driver('modifiers["' + array_mod.name + '"].count',-1,'qty',[qty])
-        shelves.obj.home_builder.add_driver('modifiers["' + array_mod.name + '"].constant_offset_displace',2,
-                                     '((dim_z-(mt*qty))/(qty+1))+mt',
-                                     [dim_z,mt,qty])        
+        array_mod.constant_offset_displace = (0,0,0)
 
 
 class Doors(CabinetOpening):
@@ -1309,59 +1292,28 @@ class InteriorSplitterVertical(CabinetInterior):
         self.add_property('Divider Quantity', 'QUANTITY', self.splitter_qty)
         self.add_property('Material Thickness', 'DISTANCE', props.default_carcass_part_thickness)
 
-        # Add calculator for section heights
+        # Section heights live on a calculator: the solver reads them and
+        # fills in the equal ones from whatever height is left over.
         empty_obj = self.add_empty("Calc Object")
         empty_obj.empty_display_size = .001
         section_calculator = self.obj.home_builder.add_calculator("Section Calculator", empty_obj)
         for i in range(1, self.splitter_qty + 2):
             section_calculator.add_calculator_prompt('Section ' + str(i) + ' Height')
 
-        dim_x = self.var_input('Dim X', 'dim_x')
-        dim_y = self.var_input('Dim Y', 'dim_y')
-        dim_z = self.var_input('Dim Z', 'dim_z')
-        mt = self.var_prop('Material Thickness', 'mt')
-
-        # Total distance is height minus material thickness for all dividers
-        section_calculator.set_total_distance('dim_z-mt*' + str(self.splitter_qty), [dim_z, mt])
-
-        previous_divider = None
-
-        # Add horizontal dividers from top to bottom
+        # Add horizontal dividers and sections from top to bottom
         for i in range(1, self.splitter_qty + 2):
-            section_prompt = section_calculator.get_calculator_prompt('Section ' + str(i) + ' Height')
-            sh = section_prompt.get_var('Section Calculator', 'sh')
-
-            # Add divider (horizontal shelf acting as divider)
             if i < self.splitter_qty + 1:
                 divider = CabinetPart()
                 divider.create('Interior Divider ' + str(i))
                 divider.obj['IS_FRAMELESS_INTERIOR_PART'] = True
                 divider.obj['MENU_ID'] = 'HOME_BUILDER_MT_interior_part_commands'
                 divider.obj.parent = self.obj
-                if previous_divider:
-                    loc_z = previous_divider.var_location('loc_z', 'z')
-                    divider.driver_location('z', 'loc_z-sh-mt', [loc_z, sh, mt])
-                else:
-                    divider.driver_location('z', 'dim_z-sh-mt', [dim_z, sh, mt])
-                divider.driver_input("Length", 'dim_x', [dim_x])
-                divider.driver_input("Width", 'dim_y', [dim_y])
-                divider.driver_input("Thickness", 'mt', [mt])
+                solver_frameless.tag_split_part(divider.obj, 'SPLITTER', i)
 
-                previous_divider = divider
-
-            # Add interior section
             section = InteriorSection()
             section.create('Section ' + str(i))
             section.obj.parent = self.obj
-            if i < self.splitter_qty + 1:
-                loc_z = previous_divider.var_location('loc_z', 'z')
-                section.driver_location('z', 'loc_z+mt', [loc_z, mt])
-            else:
-                section.obj.location.z = 0
-
-            section.driver_input("Dim X", 'dim_x', [dim_x])
-            section.driver_input("Dim Y", 'dim_y', [dim_y])
-            section.driver_input("Dim Z", 'sh', [sh])
+            solver_frameless.tag_split_part(section.obj, 'OPENING', i)
 
             # Add interior type to section based on section_types
             if len(self.section_types) > i - 1:
@@ -1379,22 +1331,14 @@ class InteriorSplitterVertical(CabinetInterior):
                 sh.equal = False
                 sh.distance_value = self.section_sizes[i - 1]
 
-        section_calculator.calculate()
-
     def _add_shelves_to_section(self, section):
         props = bpy.context.scene.hb_frameless
-        dim_x = section.var_input('Dim X', 'dim_x')
-        dim_y = section.var_input('Dim Y', 'dim_y')
-        dim_z = section.var_input('Dim Z', 'dim_z')
-
         shelf = CabinetPart()
         shelf.create('Shelf')
         shelf.obj['IS_FRAMELESS_INTERIOR_PART'] = True
         shelf.obj['MENU_ID'] = 'HOME_BUILDER_MT_interior_part_commands'
         shelf.obj.parent = section.obj
-        shelf.driver_location('z', 'dim_z/2', [dim_z])
-        shelf.driver_input("Length", 'dim_x', [dim_x])
-        shelf.driver_input("Width", 'dim_y-.025', [dim_y])  # Small setback
+        shelf.obj[solver_frameless.PART_ROLE_KEY] = 'SECTION_SHELF'
         shelf.set_input("Thickness", props.default_carcass_part_thickness)
 
     def _add_rollouts_to_section(self, section):
@@ -1424,29 +1368,16 @@ class InteriorSplitterHorizontal(CabinetInterior):
         self.add_property('Divider Quantity', 'QUANTITY', self.splitter_qty)
         self.add_property('Material Thickness', 'DISTANCE', props.default_carcass_part_thickness)
 
-        # Add calculator for section widths
+        # Section widths live on a calculator: the solver reads them and
+        # fills in the equal ones from whatever width is left over.
         empty_obj = self.add_empty("Calc Object")
         empty_obj.empty_display_size = .001
         section_calculator = self.obj.home_builder.add_calculator("Section Calculator", empty_obj)
         for i in range(1, self.splitter_qty + 2):
             section_calculator.add_calculator_prompt('Section ' + str(i) + ' Width')
 
-        dim_x = self.var_input('Dim X', 'dim_x')
-        dim_y = self.var_input('Dim Y', 'dim_y')
-        dim_z = self.var_input('Dim Z', 'dim_z')
-        mt = self.var_prop('Material Thickness', 'mt')
-
-        # Total distance is width minus material thickness for all dividers
-        section_calculator.set_total_distance('dim_x-mt*' + str(self.splitter_qty), [dim_x, mt])
-
-        previous_divider = None
-
-        # Add vertical dividers from left to right
+        # Add vertical dividers and sections from left to right
         for i in range(1, self.splitter_qty + 2):
-            section_prompt = section_calculator.get_calculator_prompt('Section ' + str(i) + ' Width')
-            sw = section_prompt.get_var('Section Calculator', 'sw')
-
-            # Add divider (vertical panel)
             if i < self.splitter_qty + 1:
                 divider = CabinetPart()
                 divider.create('Interior Divider ' + str(i))
@@ -1454,30 +1385,12 @@ class InteriorSplitterHorizontal(CabinetInterior):
                 divider.obj['MENU_ID'] = 'HOME_BUILDER_MT_interior_part_commands'
                 divider.obj.parent = self.obj
                 divider.obj.rotation_euler.y = math.radians(-90)
-                if previous_divider:
-                    loc_x = previous_divider.var_location('loc_x', 'x')
-                    divider.driver_location('x', 'loc_x+sw+mt', [loc_x, sw, mt])
-                else:
-                    divider.driver_location('x', 'sw', [sw])
-                divider.driver_input("Length", 'dim_z', [dim_z])
-                divider.driver_input("Width", 'dim_y', [dim_y])
-                divider.driver_input("Thickness", 'mt', [mt])
+                solver_frameless.tag_split_part(divider.obj, 'SPLITTER', i)
 
-                previous_divider = divider
-
-            # Add interior section
             section = InteriorSection()
             section.create('Section ' + str(i))
             section.obj.parent = self.obj
-            if i == 1:
-                section.obj.location.x = 0
-            else:
-                loc_x = previous_divider.var_location('loc_x', 'x')
-                section.driver_location('x', 'loc_x+mt', [loc_x, mt])
-
-            section.driver_input("Dim X", 'sw', [sw])
-            section.driver_input("Dim Y", 'dim_y', [dim_y])
-            section.driver_input("Dim Z", 'dim_z', [dim_z])
+            solver_frameless.tag_split_part(section.obj, 'OPENING', i)
 
             # Add interior type to section
             if len(self.section_types) > i - 1:
@@ -1494,22 +1407,14 @@ class InteriorSplitterHorizontal(CabinetInterior):
                 sw.equal = False
                 sw.distance_value = self.section_sizes[i - 1]
 
-        section_calculator.calculate()
-
     def _add_shelves_to_section(self, section):
         props = bpy.context.scene.hb_frameless
-        dim_x = section.var_input('Dim X', 'dim_x')
-        dim_y = section.var_input('Dim Y', 'dim_y')
-        dim_z = section.var_input('Dim Z', 'dim_z')
-
         shelf = CabinetPart()
         shelf.create('Shelf')
         shelf.obj['IS_FRAMELESS_INTERIOR_PART'] = True
         shelf.obj['MENU_ID'] = 'HOME_BUILDER_MT_interior_part_commands'
         shelf.obj.parent = section.obj
-        shelf.driver_location('z', 'dim_z/2', [dim_z])
-        shelf.driver_input("Length", 'dim_x', [dim_x])
-        shelf.driver_input("Width", 'dim_y-.025', [dim_y])
+        shelf.obj[solver_frameless.PART_ROLE_KEY] = 'SECTION_SHELF'
         shelf.set_input("Thickness", props.default_carcass_part_thickness)
 
     def _add_rollouts_to_section(self, section):

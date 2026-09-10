@@ -472,7 +472,15 @@ CAGE_LINK_TAGS = (
 # or left to right, counted from 1.
 SPLIT_INDEX_KEY = 'hb_split_index'
 
-_SPLIT_LEGACY_NAME = re.compile(r'^(Opening|Vertical Splitter|Horizontal Splitter) (\d+)$')
+_SPLIT_LEGACY_NAME = re.compile(
+    r'^(Opening|Section|Vertical Splitter|Horizontal Splitter|Interior Divider) (\d+)$')
+_SPLIT_OPENING_NAMES = ('Opening', 'Section')
+
+INTERIOR_SPLITTER_VERTICAL_TAG = 'IS_FRAMELESS_INTERIOR_SPLITTER_VERTICAL'
+INTERIOR_SPLITTER_HORIZONTAL_TAG = 'IS_FRAMELESS_INTERIOR_SPLITTER_HORIZONTAL'
+
+# Array modifier carrying a shelf interior's repeated shelf.
+SHELF_ARRAY_MOD = 'Qty'
 
 
 def is_cage_link(obj):
@@ -524,7 +532,7 @@ def split_parts(splitter_obj):
             match = _SPLIT_LEGACY_NAME.match(child.name.split('.')[0])
             if match is None:
                 continue
-            role = 'OPENING' if match.group(1) == 'Opening' else 'SPLITTER'
+            role = 'OPENING' if match.group(1) in _SPLIT_OPENING_NAMES else 'SPLITTER'
             index = int(match.group(2))
         key = (role, int(index))
         if key not in parts:
@@ -629,9 +637,65 @@ def solve_cage_tree(cage_obj):
             for (role, _index), opening in split_parts(child).items():
                 if role == 'OPENING':
                     solve_cage_tree(opening)
+        elif child.get('IS_FRAMELESS_INTERIOR_CAGE'):
+            solve_interior_parts(child)
+            solve_cage_tree(child)
         else:
             solve_insert_parts(child)
             solve_cage_tree(child)
+
+
+# ---------------------------------------------------------------------------
+# Interiors: shelves and interior splitters
+# ---------------------------------------------------------------------------
+
+def _solve_shelves(interior_obj):
+    """One shelf part arrayed up the interior at equal spacing."""
+    shelf = None
+    for child in interior_obj.children:
+        if child.get('IS_FRAMELESS_INTERIOR_PART') and child.modifiers.get(SHELF_ARRAY_MOD) is not None:
+            shelf = child
+            break
+    if shelf is None:
+        return
+    clear_drivers(shelf)
+    shelf[PART_ROLE_KEY] = 'SHELF'
+    dim_x, dim_y, dim_z = cage_dims(interior_obj)
+    mt = float(prompt(interior_obj, 'Material Thickness', inch(0.75)))
+    qty = int(prompt(interior_obj, 'Shelf Quantity', 1))
+    clip_gap = float(prompt(interior_obj, 'Shelf Clip Gap', inch(0.125)))
+    setback = float(prompt(interior_obj, 'Shelf Setback', inch(0.25)))
+    spacing = (dim_z - mt * qty) / (qty + 1)
+    # A quantity of zero means no shelves, which the array's own minimum
+    # of one could not express.
+    set_part(shelf, (clip_gap, setback, spacing), length=dim_x - clip_gap * 2.0,
+             width=dim_y - setback, thickness=mt, visible=qty > 0)
+    set_array(shelf, SHELF_ARRAY_MOD, qty, spacing + mt)
+
+
+def _solve_section_parts(section_obj):
+    """A section's own shelf sits mid-height and spans the section."""
+    dim_x, dim_y, dim_z = cage_dims(section_obj)
+    for child in section_obj.children:
+        if not child.get('IS_FRAMELESS_INTERIOR_PART'):
+            continue
+        clear_drivers(child)
+        child[PART_ROLE_KEY] = 'SECTION_SHELF'
+        part = GeoNodeCutpart(child)
+        child.location.z = dim_z / 2.0
+        part.set_input('Length', max(dim_x, 0.0))
+        part.set_input('Width', max(dim_y - 0.025, 0.0))
+
+
+def solve_interior_parts(interior_obj):
+    """Place the parts of one interior cage."""
+    if interior_obj.get(INTERIOR_SPLITTER_VERTICAL_TAG) or interior_obj.get(INTERIOR_SPLITTER_HORIZONTAL_TAG):
+        _solve_splitter(interior_obj, bool(interior_obj.get(INTERIOR_SPLITTER_VERTICAL_TAG)))
+        for (role, _index), section in split_parts(interior_obj).items():
+            if role == 'OPENING':
+                _solve_section_parts(section)
+    elif 'Shelf Quantity' in interior_obj:
+        _solve_shelves(interior_obj)
 
 
 # ---------------------------------------------------------------------------
