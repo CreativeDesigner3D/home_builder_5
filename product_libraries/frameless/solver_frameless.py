@@ -19,7 +19,9 @@ Shared helpers here are also used by the product solvers in
 """
 
 import bpy
+import re
 import traceback
+from ... import hb_utils
 from ...hb_types import GeoNodeCage, GeoNodeCutpart, CabinetPartModifier
 from ...units import inch
 
@@ -436,6 +438,206 @@ def recalculate_cabinet(obj):
     _SOLVERS[kind](root, parts, _Prompts(root),
                    cage.get_input('Dim X'), cage.get_input('Dim Y'),
                    cage.get_input('Dim Z'))
+
+    bay = parts.get('BAY')
+    if bay is not None:
+        solve_cage_tree(bay)
+
+
+# ---------------------------------------------------------------------------
+# Below the bay: cage links and splitters
+# ---------------------------------------------------------------------------
+#
+# Every cage under the bay takes its size from the cage above it: an insert
+# fills its opening, an interior fills its insert, a splitter fills the bay
+# or opening it divides. Splitters then hand each of their openings a share
+# of that size from the calculator prompts the user edits. Parts inside an
+# insert (fronts, pulls, drawer boxes, shelves) are still driven from the
+# insert's dimensions, which are written here.
+
+DIM_INPUTS = ('Dim X', 'Dim Y', 'Dim Z')
+
+SPLITTER_VERTICAL_TAG = 'IS_FRAMELESS_SPLITTER_VERTICAL_CAGE'
+SPLITTER_HORIZONTAL_TAG = 'IS_FRAMELESS_SPLITTER_HORIZONTAL_CAGE'
+
+# A child carrying one of these is sized from its parent cage.
+CAGE_LINK_TAGS = (
+    SPLITTER_VERTICAL_TAG,
+    SPLITTER_HORIZONTAL_TAG,
+    'IS_FRAMELESS_OPENING_CAGE',
+    'IS_FRAMELESS_INTERIOR_CAGE',
+)
+
+# Index of an opening or splitter board within its splitter, top to bottom
+# or left to right, counted from 1.
+SPLIT_INDEX_KEY = 'hb_split_index'
+
+_SPLIT_LEGACY_NAME = re.compile(r'^(Opening|Vertical Splitter|Horizontal Splitter) (\d+)$')
+
+
+def is_cage_link(obj):
+    return any(obj.get(tag) for tag in CAGE_LINK_TAGS)
+
+
+def cage_dims(cage_obj):
+    cage = GeoNodeCage(cage_obj)
+    return (cage.get_input('Dim X'), cage.get_input('Dim Y'),
+            cage.get_input('Dim Z'))
+
+
+def clear_input_drivers(obj, names=DIM_INPUTS, location=False):
+    """Drop the drivers on the named geometry-node inputs (and the object's
+    location) while leaving any other driver on the object alone."""
+    anim = obj.animation_data
+    if anim is None:
+        return
+    paths = set()
+    mod_name = obj.home_builder.mod_name if hasattr(obj, 'home_builder') else ''
+    mod = obj.modifiers.get(mod_name) if mod_name else None
+    if mod is not None and mod.node_group is not None:
+        for name in names:
+            item = mod.node_group.interface.items_tree.get(name)
+            if item is not None:
+                paths.add(hb_utils.gn_input_data_path(mod, item.identifier))
+    for fcurve in list(anim.drivers):
+        if fcurve.data_path in paths or (location and fcurve.data_path == 'location'):
+            try:
+                anim.drivers.remove(fcurve)
+            except (RuntimeError, ReferenceError):
+                pass
+    if not anim.drivers and anim.action is None and not anim.nla_tracks:
+        obj.animation_data_clear()
+
+
+def tag_split_part(obj, role, index):
+    obj[PART_ROLE_KEY] = role
+    obj[SPLIT_INDEX_KEY] = index
+
+
+def split_parts(splitter_obj):
+    """``{(role, index): object}`` for a splitter's openings and boards."""
+    parts = {}
+    for child in splitter_obj.children:
+        role = child.get(PART_ROLE_KEY)
+        index = child.get(SPLIT_INDEX_KEY)
+        if role not in ('OPENING', 'SPLITTER') or index is None:
+            match = _SPLIT_LEGACY_NAME.match(child.name.split('.')[0])
+            if match is None:
+                continue
+            role = 'OPENING' if match.group(1) == 'Opening' else 'SPLITTER'
+            index = int(match.group(2))
+        key = (role, int(index))
+        if key not in parts:
+            parts[key] = child
+    return parts
+
+
+def splitter_calculator(splitter_obj):
+    calcs = splitter_obj.home_builder.calculators
+    calc = calcs.get('Opening Calculator')
+    if calc is None and len(calcs):
+        calc = calcs[0]
+    return calc
+
+
+def solve_calculator(calc, total):
+    """Share ``total`` among the calculator's prompts: fixed prompts keep
+    their value, equal prompts split what is left. Returns the sizes in
+    prompt order."""
+    if calc.distance_obj is not None:
+        clear_drivers(calc.distance_obj)
+        calc.distance_obj.home_builder.calculator_distance = total
+    fixed = sum(p.distance_value for p in calc.prompts if p.include and not p.equal)
+    equal = [p for p in calc.prompts if p.equal]
+    included = sum(1 for p in equal if p.include)
+    if included:
+        share = (total - fixed) / included
+        for p in equal:
+            p.distance_value = share if p.include else 0.0
+    return [p.distance_value for p in calc.prompts]
+
+
+def _solve_splitter(splitter_obj, vertical):
+    parts = split_parts(splitter_obj)
+    calc = splitter_calculator(splitter_obj)
+    if calc is None or not parts:
+        return
+    for (role, index), part_obj in parts.items():
+        clear_drivers(part_obj)
+        tag_split_part(part_obj, role, index)
+
+    dim_x, dim_y, dim_z = cage_dims(splitter_obj)
+    mt = float(prompt(splitter_obj, 'Material Thickness', inch(0.75)))
+    count = len(calc.prompts)
+    span = dim_z if vertical else dim_x
+    sizes = solve_calculator(calc, span - mt * (count - 1))
+
+    if vertical:
+        # Openings run top to bottom; the last one sits on the floor of
+        # the splitter whatever the sizes above it add up to.
+        top = dim_z
+        for i in range(1, count + 1):
+            size = sizes[i - 1]
+            opening = parts.get(('OPENING', i))
+            if opening is not None:
+                z = 0.0 if i == count else top - size
+                set_cage(opening, (0.0, 0.0, z), dim_x=dim_x, dim_y=dim_y,
+                         dim_z=size)
+            board = parts.get(('SPLITTER', i))
+            if board is not None:
+                set_part(board, (0.0, 0.0, top - size - mt), length=dim_x,
+                         width=dim_y, thickness=mt)
+            top -= size + mt
+    else:
+        x = 0.0
+        for i in range(1, count + 1):
+            size = sizes[i - 1]
+            opening = parts.get(('OPENING', i))
+            if opening is not None:
+                set_cage(opening, (x, 0.0, 0.0), dim_x=size, dim_y=dim_y,
+                         dim_z=dim_z)
+            board = parts.get(('SPLITTER', i))
+            if board is not None:
+                set_part(board, (x + size, 0.0, 0.0), length=dim_z,
+                         width=dim_y, thickness=mt)
+            x += size + mt
+
+
+def link_dims(parent_obj, child_obj, dims):
+    """Where a linked child sits in its parent and how big it is. An
+    interior behind an inset front starts behind the front."""
+    dim_x, dim_y, dim_z = dims
+    if child_obj.get('IS_FRAMELESS_INTERIOR_CAGE') and 'Inset Front' in parent_obj:
+        offset = 0.0
+        if parent_obj.get('Inset Front'):
+            offset = float(prompt(parent_obj, 'Front Thickness', 0.0))
+        return (0.0, offset, 0.0), (dim_x, dim_y - offset, dim_z)
+    return (0.0, 0.0, 0.0), (dim_x, dim_y, dim_z)
+
+
+def solve_cage_tree(cage_obj):
+    """Size every cage under ``cage_obj`` from the cage above it."""
+    dims = cage_dims(cage_obj)
+    for child in list(cage_obj.children):
+        if not is_cage_link(child):
+            continue
+        loc, child_dims = link_dims(cage_obj, child, dims)
+        clear_input_drivers(child, DIM_INPUTS, location=True)
+        set_cage(child, loc, *child_dims)
+        if child.get(SPLITTER_VERTICAL_TAG) or child.get(SPLITTER_HORIZONTAL_TAG):
+            _solve_splitter(child, bool(child.get(SPLITTER_VERTICAL_TAG)))
+            for (role, _index), opening in split_parts(child).items():
+                if role == 'OPENING':
+                    solve_cage_tree(opening)
+        else:
+            solve_cage_tree(child)
+
+
+def attach_cage(child_obj, parent_obj):
+    """Parent a cage (insert, splitter, interior) under another cage and
+    size everything under the parent."""
+    child_obj.parent = parent_obj
+    solve_cage_tree(parent_obj)
 
 
 # ---------------------------------------------------------------------------

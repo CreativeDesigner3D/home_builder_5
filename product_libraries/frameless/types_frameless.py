@@ -57,12 +57,7 @@ class Cabinet(GeoNodeCage):
             if 'IS_FRAMELESS_BAY_CAGE' in child:
                 bay = CabinetBay(child)
                 cage.obj.parent = child
-                dim_x = bay.var_input('Dim X', 'dim_x')
-                dim_y = bay.var_input('Dim Y', 'dim_y')
-                dim_z = bay.var_input('Dim Z', 'dim_z') 
-                cage.driver_input('Dim X', 'dim_x',[dim_x])
-                cage.driver_input('Dim Y', 'dim_y',[dim_y])
-                cage.driver_input('Dim Z', 'dim_z',[dim_z])
+                solver_frameless.attach_cage(cage.obj, bay.obj)
 
     def _get_leg_leveler_object(self):
         """Get the leg leveler mesh object, loading once and caching via scene props."""
@@ -518,14 +513,7 @@ class SplitterVertical(GeoNodeCage):
         self.opening_inserts = [] # Default Opening Inserts top to bottom
 
     def add_insert_into_opening(self,opening,insert):
-        dim_x = opening.var_input('Dim X', 'dim_x')
-        dim_y = opening.var_input('Dim Y', 'dim_y')
-        dim_z = opening.var_input('Dim Z', 'dim_z')
-
-        insert.obj.parent = opening.obj
-        insert.driver_input("Dim X", 'dim_x', [dim_x])
-        insert.driver_input("Dim Y", 'dim_y', [dim_y])
-        insert.driver_input("Dim Z", 'dim_z', [dim_z])
+        solver_frameless.attach_cage(insert.obj, opening.obj)
         
     def create(self):
         super().create('Splitter Vertical')
@@ -537,58 +525,26 @@ class SplitterVertical(GeoNodeCage):
         self.add_property('Shelf Quantity', 'QUANTITY', 1)
         self.add_property('Material Thickness', 'DISTANCE', props.default_carcass_part_thickness)
 
-        # Add calculator for opening heights
+        # Opening heights live on a calculator: the solver reads them and
+        # fills in the equal ones from whatever height is left over.
         empty_obj = self.add_empty("Calc Object")
         empty_obj.empty_display_size = .001
         opening_calculator = self.obj.home_builder.add_calculator("Opening Calculator",empty_obj)
         for i in range(1,self.splitter_qty+2):
             opening_calculator.add_calculator_prompt('Opening ' + str(i) + ' Height')
 
-        dim_x = self.var_input('Dim X', 'dim_x')
-        dim_y = self.var_input('Dim Y', 'dim_y')
-        dim_z = self.var_input('Dim Z', 'dim_z')
-        mt = self.var_prop('Material Thickness', 'mt')
-
-        # Total distance is height minus material thickness for all splitters
-        opening_calculator.set_total_distance('dim_z-mt*' + str(self.splitter_qty),[dim_z,mt])
-        
-        previous_splitter = None
-
-        # Add Shelf Splitters Adding from Top to Bottom
+        # Add Shelf Splitters and Openings from Top to Bottom
         for i in range(1,self.splitter_qty+2):
-            opening_prompt = opening_calculator.get_calculator_prompt('Opening ' + str(i) + ' Height')
-            oh = opening_prompt.get_var('Opening Calculator','oh')
-
-            # Add Shelf
             if i < self.splitter_qty+1:
                 shelf = CabinetPart()
                 shelf.create('Vertical Splitter ' + str(i))
-                shelf.obj.parent = self.obj      
-                if previous_splitter:
-                    loc_z = previous_splitter.var_location('loc_z','z')
-                    shelf.driver_location('z', 'loc_z-oh-mt',[loc_z,oh,mt])
-                else:
-                    shelf.driver_location('z', 'dim_z-oh-mt',[dim_z,oh,mt])   
-                shelf.driver_input("Length", 'dim_x', [dim_x])
-                shelf.driver_input("Width", 'dim_y', [dim_y])
-                shelf.driver_input("Thickness", 'mt', [mt])
+                shelf.obj.parent = self.obj
+                solver_frameless.tag_split_part(shelf.obj, 'SPLITTER', i)
 
-            previous_splitter = shelf
-
-            loc_z = previous_splitter.var_location('loc_z','z')
-
-            # Add Opening
             opening = CabinetOpening()
             opening.create('Opening ' + str(i))
             opening.obj.parent = self.obj
-            if i < self.splitter_qty+1:
-                opening.driver_location('z', 'loc_z+mt',[loc_z,mt])
-            else:
-                opening.obj.location.z = 0
-            
-            opening.driver_input("Dim X", 'dim_x', [dim_x])
-            opening.driver_input("Dim Y", 'dim_y', [dim_y])
-            opening.driver_input("Dim Z", 'oh', [oh])
+            solver_frameless.tag_split_part(opening.obj, 'OPENING', i)
 
             # Add Insert into Opening
             if len(self.opening_inserts) > i - 1:
@@ -596,7 +552,7 @@ class SplitterVertical(GeoNodeCage):
                 if insert:
                     insert.create()
                     self.add_insert_into_opening(opening,insert)
-                    
+
                     # Set FORCE_HALF_OVERLAY flags for split openings
                     # Top opening (i=1) needs half overlay on bottom where it meets splitter
                     # Bottom opening (i=splitter_qty+1) needs half overlay on top
@@ -612,8 +568,6 @@ class SplitterVertical(GeoNodeCage):
                 oh = opening_calculator.get_calculator_prompt('Opening ' + str(i) + ' Height')
                 oh.equal = False
                 oh.distance_value = self.opening_sizes[i-1]
-
-        opening_calculator.calculate() 
 
 
 
@@ -631,14 +585,7 @@ class SplitterHorizontal(GeoNodeCage):
         self.opening_inserts = [] # Default Opening Inserts left to right
 
     def add_insert_into_opening(self,opening,insert):
-        dim_x = opening.var_input('Dim X', 'dim_x')
-        dim_y = opening.var_input('Dim Y', 'dim_y')
-        dim_z = opening.var_input('Dim Z', 'dim_z')
-
-        insert.obj.parent = opening.obj
-        insert.driver_input("Dim X", 'dim_x', [dim_x])
-        insert.driver_input("Dim Y", 'dim_y', [dim_y])
-        insert.driver_input("Dim Z", 'dim_z', [dim_z])
+        solver_frameless.attach_cage(insert.obj, opening.obj)
         
     def create(self):
         super().create('Splitter Horizontal')
@@ -650,41 +597,20 @@ class SplitterHorizontal(GeoNodeCage):
         self.add_property('Divider Quantity', 'QUANTITY', 1)
         self.add_property('Material Thickness', 'DISTANCE', props.default_carcass_part_thickness)
 
-        # Add calculator for opening widths
+        # Opening widths live on a calculator: the solver reads them and
+        # fills in the equal ones from whatever width is left over.
         empty_obj = self.add_empty("Calc Object")
         empty_obj.empty_display_size = .001
         opening_calculator = self.obj.home_builder.add_calculator("Opening Calculator",empty_obj)
         for i in range(1,self.splitter_qty+2):
             opening_calculator.add_calculator_prompt('Opening ' + str(i) + ' Width')
 
-        dim_x = self.var_input('Dim X', 'dim_x')
-        dim_y = self.var_input('Dim Y', 'dim_y')
-        dim_z = self.var_input('Dim Z', 'dim_z')
-        mt = self.var_prop('Material Thickness', 'mt')
-
-        # Total distance is width minus material thickness for all splitters
-        opening_calculator.set_total_distance('dim_x-mt*' + str(self.splitter_qty),[dim_x,mt])
-        
-        previous_splitter = None
-
         # Add Openings and Dividers from Left to Right
         for i in range(1,self.splitter_qty+2):
-            opening_prompt = opening_calculator.get_calculator_prompt('Opening ' + str(i) + ' Width')
-            ow = opening_prompt.get_var('Opening Calculator','ow')
-
-            # Add Opening FIRST (before divider, so it references the correct previous_splitter)
             opening = CabinetOpening()
             opening.create('Opening ' + str(i))
             opening.obj.parent = self.obj
-            if i == 1:
-                opening.obj.location.x = 0
-            else:
-                loc_x = previous_splitter.var_location('loc_x','x')
-                opening.driver_location('x', 'loc_x+mt',[loc_x,mt])
-            
-            opening.driver_input("Dim X", 'ow', [ow])
-            opening.driver_input("Dim Y", 'dim_y', [dim_y])
-            opening.driver_input("Dim Z", 'dim_z', [dim_z])
+            solver_frameless.tag_split_part(opening.obj, 'OPENING', i)
 
             # Add Insert into Opening
             if len(self.opening_inserts) > i - 1:
@@ -692,7 +618,7 @@ class SplitterHorizontal(GeoNodeCage):
                 if insert:
                     insert.create()
                     self.add_insert_into_opening(opening,insert)
-                    
+
                     # Set FORCE_HALF_OVERLAY flags for split openings
                     # Left opening (i=1) needs half overlay on right where it meets divider
                     # Right opening (i=splitter_qty+1) needs half overlay on left
@@ -708,17 +634,8 @@ class SplitterHorizontal(GeoNodeCage):
                 divider.create('Horizontal Splitter ' + str(i))
                 divider.obj.parent = self.obj
                 divider.obj.rotation_euler.y = math.radians(-90)
-                if previous_splitter:
-                    loc_x = previous_splitter.var_location('loc_x','x')
-                    divider.driver_location('x', 'loc_x+ow+mt',[loc_x,ow,mt])
-                else:
-                    divider.driver_location('x', 'ow',[ow])
-                divider.driver_input("Length", 'dim_z', [dim_z])
-                divider.driver_input("Width", 'dim_y', [dim_y])
-                divider.driver_input("Thickness", 'mt', [mt])
                 divider.set_input("Mirror Z",True)
-
-                previous_splitter = divider
+                solver_frameless.tag_split_part(divider.obj, 'SPLITTER', i)
 
         # Set Opening Sizes
         for i in range(1,self.splitter_qty+2):
@@ -726,8 +643,6 @@ class SplitterHorizontal(GeoNodeCage):
                 ow = opening_calculator.get_calculator_prompt('Opening ' + str(i) + ' Width')
                 ow.equal = False
                 ow.distance_value = self.opening_sizes[i-1]
-
-        opening_calculator.calculate() 
 
 
 class CabinetOpening(GeoNodeCage):
@@ -918,18 +833,8 @@ class Doors(CabinetOpening):
         self.add_interior(CabinetShelves())
 
     def add_interior(self,interior):
-        x = self.var_input('Dim X', 'x')
-        y = self.var_input('Dim Y', 'y')
-        z = self.var_input('Dim Z', 'z')
-        inset = self.var_prop('Inset Front', 'inset')
-        ft = self.var_prop('Front Thickness', 'ft')
-
         interior.create('Interior')
-        interior.obj.parent = self.obj
-        interior.driver_location('y', 'IF(inset,ft,0)',[inset,ft])
-        interior.driver_input('Dim X','x',[x])
-        interior.driver_input('Dim Y','y-IF(inset,ft,0)',[y,inset,ft])
-        interior.driver_input('Dim Z','z',[z])         
+        solver_frameless.attach_cage(interior.obj, self.obj)
 
 
 class FlipUpDoor(CabinetOpening):
@@ -976,18 +881,8 @@ class FlipUpDoor(CabinetOpening):
         self.add_interior(CabinetShelves())
 
     def add_interior(self, interior):
-        x = self.var_input('Dim X', 'x')
-        y = self.var_input('Dim Y', 'y')
-        z = self.var_input('Dim Z', 'z')
-        inset = self.var_prop('Inset Front', 'inset')
-        ft = self.var_prop('Front Thickness', 'ft')
-
         interior.create('Interior')
-        interior.obj.parent = self.obj
-        interior.driver_location('y', 'IF(inset,ft,0)', [inset, ft])
-        interior.driver_input('Dim X', 'x', [x])
-        interior.driver_input('Dim Y', 'y-IF(inset,ft,0)', [y, inset, ft])
-        interior.driver_input('Dim Z', 'z', [z])
+        solver_frameless.attach_cage(interior.obj, self.obj)
 
 
 class Drawer(CabinetOpening):
@@ -1172,15 +1067,8 @@ class OpenWithShelves(CabinetOpening):
         self.add_interior(CabinetShelves())
         
     def add_interior(self,interior):
-        x = self.var_input('Dim X', 'x')
-        y = self.var_input('Dim Y', 'y')
-        z = self.var_input('Dim Z', 'z')
-
         interior.create('Interior')
-        interior.obj.parent = self.obj
-        interior.driver_input('Dim X','x',[x])
-        interior.driver_input('Dim Y','y',[y])
-        interior.driver_input('Dim Z','z',[z])  
+        solver_frameless.attach_cage(interior.obj, self.obj)
 
 
 class CabinetPart(GeoNodeCutpart):
