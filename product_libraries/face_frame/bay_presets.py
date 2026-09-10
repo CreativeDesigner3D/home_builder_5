@@ -456,6 +456,10 @@ def default_bay_config(cabinet_name, bay_width):
         return 'DOUBLE_STACKED_DOOR' if is_wide else 'LEFT_STACKED_DOOR'
     if cabinet_name == 'Refrigerator Cabinet':
         return 'BUILT_IN_REFRIGERATOR'
+    if cabinet_name == 'Cooktop Base':
+        # False front over doors, as the sink cabinet: the cooktop drops
+        # into the counter above the false front.
+        return 'FALSE_FRONT_DOUBLE_DOOR'
     if cabinet_name == 'Built in Tall':
         # Tall cabinet with a built-in appliance opening: doors above and
         # below an open APPLIANCE zone. Same recipe as the Change Bay

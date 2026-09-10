@@ -80,6 +80,8 @@ class Cooktop(Appliance):
     height = inch(4)
     depth = inch(21)
     
+    APPLIANCE_TYPE = 'COOKTOP'
+
     def create(self, name="Cooktop"):
         self.create_appliance(name, 'COOKTOP')
         self.obj['IS_COUNTERTOP_APPLIANCE'] = True

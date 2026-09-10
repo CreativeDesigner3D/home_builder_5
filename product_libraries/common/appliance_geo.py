@@ -62,7 +62,7 @@ GEO_OPTS_PROP = "APPLIANCE_GEO_OPTS"
 GEO_CHILD_FLAG = "IS_APPLIANCE_GEO"
 
 SUPPORTED_TYPES = {'REFRIGERATOR', 'RANGE', 'DISHWASHER', 'UNDER_COUNTER',
-                   'HOOD', 'SINK', 'WALL_OVEN', 'MICROWAVE'}
+                   'HOOD', 'SINK', 'WALL_OVEN', 'MICROWAVE', 'COOKTOP'}
 
 # Appliances that can wear cabinet door panels instead of their own
 # front. Matches what the appliance-panels product accepts.
@@ -87,6 +87,9 @@ LIP_W = inch(0.5)             # the cooktop tray's lip, in plan
 LIP_RISE = inch(0.375)        # how far it stands above the cooktop
 LIP_PROUD = inch(0.5)         # how far the front edge rolls out
 SMALL_OVEN_EVEN_AT = inch(30.0)   # both ovens this wide: split evenly
+COOKTOP_PLATE_T = inch(0.5)       # the top that sits on the counter
+COOKTOP_LIP = inch(0.75)          # how far it overhangs the body below
+COOKTOP_DROP = inch(4.0)          # the body below the counter, in a cabinet
 OVEN_CONTROL_H = inch(4.0)        # a wall oven's control band
 MICRO_TRIM = inch(1.25)           # a built-in microwave's trim kit frame
 MICRO_PANEL_W = inch(6.0)         # its control panel, right of the door
@@ -295,8 +298,16 @@ _MICROWAVE_DEFAULTS = dict(_COMMON_DEFAULTS, **{
     'handle_style': 'NONE',
 })
 
+_COOKTOP_DEFAULTS = dict(_COMMON_DEFAULTS, **{
+    'burner_style': 'GAS',
+    'burner_count': 5,
+    'knob_count': 5,
+    'counter_thickness': inch(1.5),
+})
+
 _DEFAULTS_BY_TYPE = {
     'SINK': _SINK_DEFAULTS,
+    'COOKTOP': _COOKTOP_DEFAULTS,
     'WALL_OVEN': _OVEN_DEFAULTS,
     'MICROWAVE': _MICROWAVE_DEFAULTS,
     'HOOD': _HOOD_DEFAULTS,
@@ -890,31 +901,33 @@ _GRATE_COLUMNS = {
 }
 
 
-def _build_gas_grates(cg, layout, iron):
+def _build_gas_grates(cg, layout, iron, top='dim_z', front=GRATE_FRONT):
     """One continuous grate per column of burners. The frame is driven
     slabs, so it stretches with the range; each burner inside it gets a
     fixed ring joined to the frame by driven arms -- out to the runners
     either side, and front and back to the rails or, where two burners
     share a column, to each other. Arm lengths clamp at zero so a
-    narrow range cannot fold one inside out."""
+    narrow range cannot fold one inside out. ``top`` is the cooking
+    surface as an expression; ``front`` how far down the depth the
+    grates reach, as a fraction."""
     columns = _GRATE_COLUMNS.get(len(layout), _GRATE_COLUMNS[5])
     rail, gap, lift, bar_h = GRATE_RAIL, GRATE_GAP, GRATE_LIFT, GRATE_BAR_H
     reach = rail + GRATE_RING_R - inch(0.1)   # arm end tucks into the ring
-    z_top = 'dim_z + %f' % lift
+    z_top = '%s + %f' % (top, lift)
     y_back = '-dim_y * %f' % GRATE_BACK
-    depth = 'dim_y * %f' % (GRATE_FRONT - GRATE_BACK)
+    depth = 'dim_y * %f' % (front - GRATE_BACK)
     for c, (c0, c1) in enumerate(columns):
         tag = "Grate %d" % (c + 1)
         x0 = 'dim_x * %f + %f' % (c0, gap)
         width = 'dim_x * %f - %f' % (c1 - c0, 2.0 * gap)
-        _flat(cg, tag + " Left Runner", x0, y_back, 'dim_z', rail, depth,
+        _flat(cg, tag + " Left Runner", x0, y_back, top, rail, depth,
               lift + bar_h, iron)
         _flat(cg, tag + " Right Runner", 'dim_x * %f - %f' % (c1, gap + rail),
-              y_back, 'dim_z', rail, depth, lift + bar_h, iron)
+              y_back, top, rail, depth, lift + bar_h, iron)
         _flat(cg, tag + " Back Rail", x0, y_back, z_top, width, rail, bar_h,
               iron)
         _flat(cg, tag + " Front Rail", x0,
-              '-dim_y * %f + %f' % (GRATE_FRONT, rail), z_top, width, rail,
+              '-dim_y * %f + %f' % (front, rail), z_top, width, rail,
               bar_h, iron)
         members = sorted((fy, fx, i) for i, (fx, fy) in enumerate(layout)
                          if c0 <= fx < c1)
@@ -923,7 +936,7 @@ def _build_gas_grates(cg, layout, iron):
             ring = _CageWrap(_grate_ring(cg, name + " Ring", iron))
             ring.driver_location('x', 'dim_x * %f' % fx, [cg.dim_x])
             ring.driver_location('y', '-dim_y * %f' % fy, [cg.dim_y])
-            ring.driver_location('z', 'dim_z', [cg.dim_z])
+            ring.driver_location('z', top, [cg.dim_z])
             _flat(cg, name + " Left Arm", '%s + %f' % (x0, rail),
                   '-dim_y * %f + %f' % (fy, rail / 2.0), z_top,
                   'max(dim_x * %f - %f, 0.0)' % (fx - c0, gap + reach),
@@ -944,7 +957,7 @@ def _build_gas_grates(cg, layout, iron):
                       'dim_x * %f - %f' % (fx, rail / 2.0),
                       '-dim_y * %f - %f' % (fy, GRATE_RING_R - inch(0.1)),
                       z_top, rail,
-                      'max(dim_y * %f - %f, 0.0)' % (GRATE_FRONT - fy, reach),
+                      'max(dim_y * %f - %f, 0.0)' % (front - fy, reach),
                       bar_h, iron)
             else:
                 fy_next = members[k + 1][0]
@@ -1129,32 +1142,47 @@ def sync_opening_appliance(opening_obj, appliance_type='REFRIGERATOR',
         (x0 + c, dim_y, z0))
 
 
-def sync_bay_sink(bay_obj, top_z):
-    """A sink bay carries the sink itself, hung with its rim at the
-    cabinet top so a countertop covers it and the faucet stands on the
-    counter. ``top_z`` is the cabinet top in the bay's own space; the
-    bay's origin is at its front and the cabinet's back lies at
-    +Dim Y."""
+SIZE_OWNED_FLAG = 'APPLIANCE_SIZE_OWNED'
+
+
+def sync_bay_appliance(bay_obj, kind, top_z):
+    """A sink or cooktop bay carries the appliance itself, hung with the
+    countertop's top surface at the top of its cage so it can sit under
+    or on the counter. ``top_z`` is the cabinet top in the bay's own
+    space; the bay's origin is at its front and the cabinet's back lies
+    at +Dim Y. The appliance fills the bay until its own prompts take
+    over its size, after which the bay only keeps it centred."""
     from . import types_appliances
     wrap = _CageWrap(bay_obj)
     dim_x, dim_y = wrap.get_input('Dim X'), wrap.get_input('Dim Y')
-    # The cage reaches from a bowl's depth below the cabinet top up to
-    # the countertop's top surface, so the sink can sit under or on it.
     existing = opening_appliance(bay_obj)
+    defaults = _DEFAULTS_BY_TYPE.get(kind, _COMMON_DEFAULTS)
     ct = float(merged_opts(existing).get('counter_thickness', inch(1.5))
                if existing is not None
-               else _SINK_DEFAULTS['counter_thickness'])
+               else defaults.get('counter_thickness', inch(1.5)))
+    if kind == 'COOKTOP':
+        cls, drop = types_appliances.Cooktop, COOKTOP_DROP
+    else:
+        cls, drop = types_appliances.Sink, SINK_H
     return _ensure_cabinet_appliance(
-        bay_obj, types_appliances.Sink,
+        bay_obj, cls,
         max(dim_x - 2.0 * SINK_SIDE_MARGIN, 0.0),
-        max(dim_y - 2.0 * SINK_END_GAP, 0.0), SINK_H + ct,
-        (SINK_SIDE_MARGIN, dim_y - SINK_END_GAP, top_z - SINK_H))
+        max(dim_y - 2.0 * SINK_END_GAP, 0.0), drop + ct,
+        (SINK_SIDE_MARGIN, dim_y - SINK_END_GAP, top_z - drop),
+        top_anchored=True)
+
+
+def sync_bay_sink(bay_obj, top_z):
+    return sync_bay_appliance(bay_obj, 'SINK', top_z)
 
 
 def _ensure_cabinet_appliance(parent_obj, cls, width, depth, height,
-                              location):
+                              location, top_anchored=False):
     """The appliance cage a cabinet part houses, created the first time
-    and sized every time. Its label is dropped: the cabinet already
+    and sized every time -- until its own prompts take its size over
+    (SIZE_OWNED_FLAG), after which it keeps its size and is centred in
+    the width it would have filled, holding its top or its bottom as
+    ``top_anchored`` says. Its label is dropped: the cabinet already
     carries one."""
     cage = opening_appliance(parent_obj)
     if cage is not None and cage.get('APPLIANCE_TYPE') != getattr(
@@ -1178,6 +1206,11 @@ def _ensure_cabinet_appliance(parent_obj, cls, width, depth, height,
                         bpy.data.curves.remove(data)
                     except Exception:
                         pass
+    elif cage.get(SIZE_OWNED_FLAG):
+        own = _CageWrap(cage)
+        own_w, own_h = own.get_input('Dim X'), own.get_input('Dim Z')
+        location = (location[0] + (width - own_w) / 2.0, location[1],
+                    location[2] + ((height - own_h) if top_anchored else 0.0))
     else:
         own = _CageWrap(cage)
         own.set_input('Dim X', width)
@@ -1728,7 +1761,8 @@ def sink_cutout_boxes(cage_obj):
     a notch through the counter's front edge for the apron. Tall enough
     to pass through any countertop over the rim. Empty for anything but
     a sink."""
-    if appliance_type(cage_obj) != 'SINK':
+    kind = appliance_type(cage_obj)
+    if kind not in ('SINK', 'COOKTOP'):
         return []
     wrap = _CageWrap(cage_obj)
     dim_x, dim_y, dim_z = (wrap.get_input('Dim X'), wrap.get_input('Dim Y'),
@@ -1737,6 +1771,11 @@ def sink_cutout_boxes(cage_obj):
     ct = float(opts.get('counter_thickness', inch(1.5)))
     c = SINK_HOLE_CLEAR
     z0, z1 = dim_z - ct - inch(0.25), dim_z + inch(2.0)
+    if kind == 'COOKTOP':
+        # The body drops through; the plate covers the hole.
+        lip = COOKTOP_LIP
+        return [(lip - c, dim_x - lip + c, -(dim_y - lip) - c, -lip + c,
+                 z0, z1)]
     boxes = [(SINK_SIDE_RIM - c, dim_x - SINK_SIDE_RIM + c,
               -(dim_y - SINK_FRONT_RIM) - c, -SINK_BACK_DECK + c, z0, z1)]
     if opts.get('sink_style') == 'FARMHOUSE':
@@ -1754,8 +1793,8 @@ def cut_sink_openings(countertop_obj, matrix=None, scene=None):
     scene = scene or bpy.context.scene
     if countertop_obj.type != 'MESH' or not countertop_obj.data.vertices:
         return 0
-    sinks = [o for o in scene.objects
-             if o.get('IS_APPLIANCE') and appliance_type(o) == 'SINK']
+    sinks = [o for o in scene.objects if o.get('IS_APPLIANCE')
+             and appliance_type(o) in ('SINK', 'COOKTOP')]
     if not sinks:
         return 0
     matrix = matrix or countertop_obj.matrix_world
@@ -1794,8 +1833,11 @@ def sink_clearance_cutter(cage_obj):
     dim_x, dim_y, dim_z = (wrap.get_input('Dim X'), wrap.get_input('Dim Y'),
                            wrap.get_input('Dim Z'))
     m = inch(0.25)
-    _rim, _t, floor_drop = _sink_levels(merged_opts(cage_obj))
-    bottom = min(0.0, dim_z - floor_drop) if floor_drop is not None else 0.0
+    bottom = 0.0
+    if appliance_type(cage_obj) == 'SINK':
+        _rim, _t, floor_drop = _sink_levels(merged_opts(cage_obj))
+        if floor_drop is not None:
+            bottom = min(0.0, dim_z - floor_drop)
     verts, faces = [], []
     _box(verts, faces, -m, dim_x + m, -dim_y - m, m, bottom - m, dim_z + m)
     if cutter is None:
@@ -2042,10 +2084,14 @@ _BURNER_LAYOUTS = {
         (0.19, 0.75), (0.50, 0.75), (0.81, 0.75)),
 }
 
-def _build_burners(cg, opts, dark):
+def _build_burners(cg, opts, dark, top='dim_z', y_scale=1.0):
+    """The burners and, for gas, their grates on a cooking surface at
+    ``top``. ``y_scale`` pulls the layout toward the back, for a
+    cooktop whose knobs take the front of the surface."""
     style = opts.get('burner_style', 'GAS')
     count = int(opts.get('burner_count', 5))
-    layout = _BURNER_LAYOUTS.get(count, _BURNER_LAYOUTS[5])
+    layout = [(fx, fy * y_scale) for fx, fy in
+              _BURNER_LAYOUTS.get(count, _BURNER_LAYOUTS[5])]
     if style == 'ELECTRIC':
         coil = _coil_material()
         make = lambda name: _electric_burner(cg, name, coil, dark)
@@ -2061,9 +2107,51 @@ def _build_burners(cg, opts, dark):
         # but never grow.
         wrap.driver_location('x', 'dim_x * %f' % fx, [cg.dim_x])
         wrap.driver_location('y', '-dim_y * %f' % fy, [cg.dim_y])
-        wrap.driver_location('z', 'dim_z', [cg.dim_z])
+        wrap.driver_location('z', top, [cg.dim_z])
     if style not in ('ELECTRIC', 'INDUCTION'):
-        _build_gas_grates(cg, layout, _iron_material())
+        _build_gas_grates(cg, layout, _iron_material(), top,
+                          GRATE_FRONT * y_scale)
+
+
+# ---------------------------------------------------------------------------
+# Cooktop
+#
+# Like the sink, the cage top is the countertop's top surface: the
+# body drops through the counter into the cabinet and the top plate
+# sits on the counter, carrying the range's burners and, for gas, a row
+# of knobs along its front.
+# ---------------------------------------------------------------------------
+
+def _build_cooktop(cage_obj, opts):
+    cg = _Cage(cage_obj)
+    mat = _finish_material(opts)
+    dark = _dark_material()
+    metal = _metal_material()
+    style = opts.get('burner_style', 'GAS')
+    lip = COOKTOP_LIP
+    _flat(cg, "Cooktop Body", lip, -lip, 0.0, 'dim_x - %f' % (2.0 * lip),
+          'dim_y - %f' % (2.0 * lip), 'dim_z + %f' % SINK_SEAT, dark)
+    _flat(cg, "Cooktop", 0.0, 0.0, 'dim_z + %f' % SINK_SEAT, 'dim_x', 'dim_y',
+          COOKTOP_PLATE_T, mat if style == 'GAS' else dark)
+    top = 'dim_z + %f' % (SINK_SEAT + COOKTOP_PLATE_T)
+    if style == 'GAS':
+        # The burners keep clear of a strip along the front where the
+        # knobs stand up out of the plate.
+        _build_burners(cg, opts, dark, top, y_scale=0.8)
+        count = int(opts.get('knob_count', 0))
+        margin = 0.08
+        for i in range(count):
+            frac = margin + (1.0 - 2.0 * margin) * (i + 0.5) / count
+            wrap = _CageWrap(_knob(cg, "Cooktop Knob %d" % (i + 1), metal,
+                                   dark))
+            wrap.driver_location('x', 'dim_x * %f' % frac, [cg.dim_x])
+            wrap.driver_location('y', '-dim_y + %f' % inch(2.0), [cg.dim_y])
+            wrap.driver_location('z', top, [cg.dim_z])
+    else:
+        _build_burners(cg, opts, dark, top)
+    if any(c.get(SINK_CUTTER_FLAG) for c in cage_obj.children):
+        sink_clearance_cutter(cage_obj)
+    refresh_countertops()
 
 
 def _build_knobs(cg, opts, metal, dark, control_h):
@@ -2377,6 +2465,7 @@ def _build_under_counter(cage_obj, opts):
 
 _BUILDERS = {
     'SINK': _build_sink,
+    'COOKTOP': _build_cooktop,
     'WALL_OVEN': _build_wall_oven,
     'MICROWAVE': _build_microwave,
     'HOOD': _build_hood,
@@ -2449,6 +2538,11 @@ class HOME_BUILDER_OT_appliance_prompts(bpy.types.Operator):
 
     model_style: EnumProperty(name="Model", items=MODEL_STYLE_ITEMS,
                               default='NONE')  # type: ignore
+    size_from_cabinet: BoolProperty(
+        name="Size From Cabinet",
+        description="Let the cabinet size this appliance to its opening; "
+                    "off keeps the size set here and the cabinet only "
+                    "centres it")  # type: ignore
     front_style: EnumProperty(name="Front", items=FRONT_STYLE_ITEMS,
                               default='APPLIANCE')  # type: ignore
     finish: EnumProperty(name="Finish", items=FINISH_ITEMS,
@@ -2594,6 +2688,7 @@ class HOME_BUILDER_OT_appliance_prompts(bpy.types.Operator):
                     setattr(self, key, value)
                 except (TypeError, ValueError):
                     pass
+        self.size_from_cabinet = not self.appliance.get(SIZE_OWNED_FLAG)
         self._applied_key = None
         return context.window_manager.invoke_props_dialog(self, width=340)
 
@@ -2606,6 +2701,19 @@ class HOME_BUILDER_OT_appliance_prompts(bpy.types.Operator):
         # Size is pushed on every interaction: the parts are driven, so
         # this restretches the model without touching an object.
         cage = _CageWrap(self.appliance)
+        if self.appliance.get(CABINET_APPLIANCE_FLAG):
+            # Typing a size takes it over from the cabinet; the checkbox
+            # hands it back.
+            was = (cage.get_input('Dim X'), cage.get_input('Dim Z'),
+                   cage.get_input('Dim Y'))
+            now = (self.appliance_width, self.appliance_height,
+                   self.appliance_depth)
+            if any(abs(a - b) > 1e-6 for a, b in zip(was, now)):
+                self.size_from_cabinet = False
+            if self.size_from_cabinet:
+                self.appliance.pop(SIZE_OWNED_FLAG, None)
+            else:
+                self.appliance[SIZE_OWNED_FLAG] = True
         cage.set_input('Dim X', self.appliance_width)
         cage.set_input('Dim Z', self.appliance_height)
         cage.set_input('Dim Y', self.appliance_depth)
@@ -2664,6 +2772,8 @@ class HOME_BUILDER_OT_appliance_prompts(bpy.types.Operator):
             row = col.row(align=True)
             row.label(text=label)
             row.prop(self, prop, text="")
+        if self.appliance.get(CABINET_APPLIANCE_FLAG):
+            col.prop(self, 'size_from_cabinet')
 
         box = layout.box()
         col = box.column(align=True)
@@ -2673,7 +2783,7 @@ class HOME_BUILDER_OT_appliance_prompts(bpy.types.Operator):
                       icon='INFO')
             return
         col.prop(self, 'finish')
-        if appl not in ('HOOD', 'SINK'):
+        if appl not in ('HOOD', 'SINK', 'COOKTOP'):
             col.prop(self, 'handle_style')
 
         if supports_panels(self.appliance):
@@ -2694,7 +2804,13 @@ class HOME_BUILDER_OT_appliance_prompts(bpy.types.Operator):
 
         box = layout.box()
         col = box.column(align=True)
-        if appl == 'WALL_OVEN':
+        if appl == 'COOKTOP':
+            col.prop(self, 'burner_style')
+            col.prop(self, 'burner_count')
+            if self.burner_style == 'GAS':
+                col.prop(self, 'knob_count')
+            col.prop(self, 'counter_thickness')
+        elif appl == 'WALL_OVEN':
             col.prop(self, 'knobs')
         elif appl == 'MICROWAVE':
             col.prop(self, 'trim_kit')

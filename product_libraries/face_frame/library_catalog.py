@@ -63,6 +63,7 @@ SECTIONS = (
             # No dedicated Oven product: the Oven button places the
             # built-in tall oven tower.
             ("Cabinet", (("Sink", "Sink"),
+                         ("Cooktop", "Cooktop Base"),
                          ("Refrigerator", "Refrigerator Cabinet"),
                          ("Oven", "Built in Tall"))),
             ("Standalone", (("Dishwasher", "Dishwasher"),

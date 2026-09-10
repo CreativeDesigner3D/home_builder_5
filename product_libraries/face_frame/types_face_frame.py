@@ -11067,19 +11067,24 @@ class FaceFrameCabinet(GeoNodeCage):
             if child.get('hb_part_role') == PART_ROLE_APPLIANCE_ANNOTATION:
                 bpy.data.objects.remove(child, do_unlink=True)
 
-        is_sink_cabinet = self.obj.get('CLASS_NAME') == 'SinkFaceFrameCabinet'
+        class_name = self.obj.get('CLASS_NAME')
+        is_sink_cabinet = class_name == 'SinkFaceFrameCabinet'
+        is_cooktop_cabinet = class_name == 'CooktopFaceFrameCabinet'
         sink_cutters = []
         for bay_obj in [c for c in self.obj.children if c.get(TAG_BAY_CAGE)]:
             if bay_obj.hide_viewport:
-                self._update_sink_in_bay(bay_obj, False)
+                self._update_countertop_appliance_in_bay(bay_obj, None)
                 continue
             kind = bay_obj.get('APPLIANCE_BAY')
             if not kind and is_sink_cabinet and self._bay_has_false_front(bay_obj):
                 kind = 'SINK'
+            if not kind and is_cooktop_cabinet:
+                kind = 'COOKTOP'
             if kind in ('SINK', 'COOKTOP'):
                 self._create_appliance_annotation(bay_obj, kind)
-            # After the annotation: the sink decides whether it shows.
-            cutter = self._update_sink_in_bay(bay_obj, kind == 'SINK')
+            # After the annotation: the appliance decides whether it shows.
+            cutter = self._update_countertop_appliance_in_bay(
+                bay_obj, kind if kind in ('SINK', 'COOKTOP') else None)
             if cutter is not None:
                 sink_cutters.append(cutter)
         # The top stretchers span every bay, so they are cut once, by
@@ -11096,17 +11101,17 @@ class FaceFrameCabinet(GeoNodeCage):
         PART_ROLE_TRAY_LOCKED_SHELF, PART_ROLE_INTERIOR_FIXED_SHELF,
     })
 
-    def _update_sink_in_bay(self, bay_obj, is_sink):
-        """A sink bay carries the sink model itself, hung from the
-        cabinet top; the annotation above stays the 2D symbol. Any other
-        bay carries none. The bay's shelves are cut around the sink;
-        returns the sink's clearance cutter so the caller can cut the
-        cabinet-wide parts too."""
+    def _update_countertop_appliance_in_bay(self, bay_obj, kind):
+        """A sink or cooktop bay carries the appliance model itself, hung
+        from the cabinet top; the annotation above stays the 2D symbol.
+        Any other bay carries none. The bay's shelves are cut around the
+        appliance; returns its clearance cutter so the caller can cut
+        the cabinet-wide parts too."""
         from ..common import appliance_geo
         cutter = None
-        if is_sink:
+        if kind is not None:
             top_z = self.get_input('Dim Z') - bay_obj.location.z
-            cage = appliance_geo.sync_bay_sink(bay_obj, top_z)
+            cage = appliance_geo.sync_bay_appliance(bay_obj, kind, top_z)
             if cage is not None:
                 cutter = appliance_geo.sink_clearance_cutter(cage)
         else:
@@ -13730,6 +13735,21 @@ class SinkFaceFrameCabinet(BaseFaceFrameCabinet):
         scene = bpy.context.scene
         if hasattr(scene, 'hb_face_frame'):
             self.default_width = scene.hb_face_frame.sink_cabinet_width
+
+
+class CooktopFaceFrameCabinet(BaseFaceFrameCabinet):
+    """Base cabinet for a drop-in cooktop: a false front over doors, the
+    same construction as the sink cabinet, with the cooktop model
+    carried in its bay. Width is seeded from the scene range_width, the
+    size a cooktop shares with a range."""
+
+    single_placement = True
+
+    def __init__(self):
+        super().__init__()
+        scene = bpy.context.scene
+        if hasattr(scene, 'hb_face_frame'):
+            self.default_width = scene.hb_face_frame.range_width
 
 
 class ADASinkCabinet(SinkFaceFrameCabinet):
@@ -16725,6 +16745,7 @@ CABINET_NAME_DISPATCH = {
     "3 Drawer Night Stand": ThreeDrawerNightStandCabinet,
     "Window Seat": WindowSeatFaceFrameCabinet,
     "Sink": SinkFaceFrameCabinet,
+    "Cooktop Base": CooktopFaceFrameCabinet,
     "ADA Sink": ADASinkCabinet,
     "Lap Drawer": LapDrawerFaceFrameCabinet,
     "Upper": UpperFaceFrameCabinet,
@@ -16925,6 +16946,7 @@ WRAP_CLASS_REGISTRY.update({
     'FloatingBaseFaceFrameCabinet': FloatingBaseFaceFrameCabinet,
     'FloatingVanityCabinet': FloatingVanityCabinet,
     'SinkFaceFrameCabinet': SinkFaceFrameCabinet,
+    'CooktopFaceFrameCabinet': CooktopFaceFrameCabinet,
     'ADASinkCabinet': ADASinkCabinet,
     'UpperFaceFrameCabinet': UpperFaceFrameCabinet,
     'TallFaceFrameCabinet': TallFaceFrameCabinet,
