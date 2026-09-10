@@ -59,7 +59,18 @@ CARCASS_LEGACY_NAMES = {
     'Leg Leveler FR': ('LEG_LEVELER_FR', 'IS_LEG_LEVELER'),
     'Leg Leveler BL': ('LEG_LEVELER_BL', 'IS_LEG_LEVELER'),
     'Leg Leveler BR': ('LEG_LEVELER_BR', 'IS_LEG_LEVELER'),
+    # Corner cabinets
+    'Left Back': ('LEFT_BACK', 'CABINET_PART'),
+    'Right Back': ('RIGHT_BACK', 'CABINET_PART'),
+    'Left Toe Kick': ('LEFT_TOE_KICK', 'CABINET_PART'),
+    'Right Toe Kick': ('RIGHT_TOE_KICK', 'CABINET_PART'),
+    'Left Door': ('LEFT_DOOR', 'IS_DOOR_FRONT'),
+    'Right Door': ('RIGHT_DOOR', 'IS_DOOR_FRONT'),
+    'Corner Overlay Calc': ('CORNER_OVERLAY', None),
 }
+
+# Corner shape modifier on a corner cabinet's top and bottom (one of these).
+CORNER_SHAPE_MODS = ('Chamfer', 'Corner Notch')
 
 # Base Top Construction prompt: index into ["Full Top", "Stretchers", "Sink"].
 TOP_FULL, TOP_STRETCHERS, TOP_SINK = 0, 1, 2
@@ -146,6 +157,22 @@ def set_modifier(part_obj, mod_name, inputs=(), visible=None):
         mod.show_render = visible
 
 
+def clear_modifier_drivers(obj, mod_name):
+    """Drop the drivers on one modifier's inputs, leaving the rest."""
+    anim = obj.animation_data
+    if anim is None:
+        return
+    prefix = 'modifiers["%s"]' % mod_name
+    for fcurve in list(anim.drivers):
+        if fcurve.data_path.startswith(prefix):
+            try:
+                anim.drivers.remove(fcurve)
+            except (RuntimeError, ReferenceError):
+                pass
+    if not anim.drivers and anim.action is None and not anim.nla_tracks:
+        obj.animation_data_clear()
+
+
 def set_array(part_obj, mod_name, count, offset_z):
     """Lay a part out ``count`` times along its own Z."""
     array_mod = part_obj.modifiers.get(mod_name)
@@ -180,6 +207,8 @@ def carcass_kind(root):
     if kind:
         return kind
     cabinet_type = root.get('CABINET_TYPE')
+    if 'CORNER_TYPE' in root:
+        return 'CORNER_UPPER' if cabinet_type == 'UPPER' else 'CORNER_BASE'
     if cabinet_type == 'UPPER':
         return 'UPPER'
     if cabinet_type == 'TALL':
@@ -191,11 +220,9 @@ def carcass_kind(root):
 
 
 def is_solved_cabinet(obj):
-    """True for a cabinet cage whose carcass the solver owns. Corner
-    cabinets are built differently and stay driven for now."""
+    """True for a cabinet cage whose carcass the solver owns."""
     return (obj is not None
             and bool(obj.get('IS_FRAMELESS_CABINET_CAGE'))
-            and 'CORNER_TYPE' not in obj
             and carcass_kind(obj) in _SOLVERS)
 
 
@@ -206,7 +233,8 @@ def carcass_parts(root):
         role = child.get(PART_ROLE_KEY)
         if role is None:
             entry = CARCASS_LEGACY_NAMES.get(child.name.split('.')[0])
-            if entry is not None and child.get(entry[1]) and has_drivers(child):
+            if (entry is not None and has_drivers(child)
+                    and (entry[1] is None or child.get(entry[1]))):
                 role = entry[0]
         if role is not None and role not in parts:
             parts[role] = child
@@ -405,11 +433,197 @@ def _solve_lap_drawer(root, parts, p, dim_x, dim_y, dim_z):
                  dim_z=dim_z - mt * 2.0)
 
 
+def _solve_corner_shape(root, parts, p, dim_x, dim_y, dim_z):
+    """The L-shaped top and bottom, and the pie-cut notch on the cage."""
+    ld = float(prompt(root, 'Left Depth', dim_y))
+    rd = float(prompt(root, 'Right Depth', dim_y))
+    for role in ('TOP', 'BOTTOM'):
+        part = parts.get(role)
+        if part is None:
+            continue
+        for mod_name in CORNER_SHAPE_MODS:
+            set_modifier(part, mod_name,
+                         (('X', dim_x - ld - p.mt), ('Y', dim_y - rd - p.mt),
+                          ('Route Depth', p.mt + 0.01)))
+    # A pie-cut cage carries the same notch so its wireframe reads as an L.
+    # The cage keeps whatever else is on it; only the notch's own drivers
+    # go, so they cannot overwrite the written values.
+    clear_modifier_drivers(root, 'Corner Notch')
+    set_modifier(root, 'Corner Notch',
+                 (('X', dim_x - ld), ('Y', dim_y - rd), ('Route Depth', dim_z + 0.01)))
+
+
+def _solve_corner_doors(root, parts, p, dim_x, dim_y, dim_z):
+    """Pie-cut doors: one on each face of the notch, hinged at the
+    notch corner. Top and bottom overlay the horizontal boards; the outer
+    edge overlays the side panel; the two doors meet at the corner."""
+    left = parts.get('LEFT_DOOR')
+    right = parts.get('RIGHT_DOOR')
+    if left is None and right is None:
+        return
+    mt, tkh = p.mt, p.tkh
+    ld = float(prompt(root, 'Left Depth', dim_y))
+    rd = float(prompt(root, 'Right Depth', dim_y))
+    ft = float(prompt(root, 'Front Thickness', inch(0.75)))
+    gap = float(prompt(root, 'Door to Cabinet Gap', inch(0.125)))
+    inset = bool(root.get('Inset Front', False))
+    inset_reveal = float(prompt(root, 'Inset Reveal', inch(0.125)))
+    vg = float(prompt(root, 'Vertical Gap', inch(0.125)))
+
+    def overlay(half_key, reveal_key, reveal_default):
+        if inset:
+            return -inset_reveal
+        if root.get(half_key, False):
+            return (mt - vg) / 2.0
+        return mt - float(prompt(root, reveal_key, reveal_default))
+
+    top = overlay('Half Overlay Top', 'Top Reveal', inch(0.0625))
+    bottom = overlay('Half Overlay Bottom', 'Bottom Reveal', 0.0)
+    outer = overlay('Half Overlay Outer', 'Outer Reveal', inch(0.0625))
+
+    calc = parts.get('CORNER_OVERLAY')
+    if calc is not None:
+        calc['Overlay Top'] = top
+        calc['Overlay Bottom'] = bottom
+        calc['Overlay Outer'] = outer
+
+    bottom_t = 0.0 if p.rb else mt
+    y = -rd + ft if inset else -rd - gap
+    z = tkh + bottom_t - bottom
+    length = dim_z - tkh - bottom_t - mt + top + bottom
+    swing = int(prompt(root, 'Door Swing', 0))
+
+    if left is not None:
+        x = ld - ft if inset else ld + gap
+        width = dim_y - rd + outer if inset else dim_y - rd - mt + outer - gap
+        set_part(left, (x, y, z), length=length, width=width, thickness=ft,
+                 visible=not left.hide_viewport)
+        for pull in left.children:
+            if pull.get('IS_CABINET_PULL'):
+                _solve_pull(left, pull, length, width, ft, swing == 0)
+
+    if right is not None:
+        x = ld + mt - ft - outer if inset else ld + gap * 2.0 + mt
+        width = (dim_x - ld - mt + outer * 2.0 if inset
+                 else dim_x - ld - mt + outer - gap * 2.0 - mt)
+        set_part(right, (x, y, z), length=length, width=width, thickness=ft,
+                 visible=not right.hide_viewport)
+        for pull in right.children:
+            if pull.get('IS_CABINET_PULL'):
+                _solve_pull(right, pull, length, width, ft, swing == 1)
+
+
+def _solve_corner_base(root, parts, p, dim_x, dim_y, dim_z):
+    mt, tkh = p.mt, p.tkh
+    ld = float(prompt(root, 'Left Depth', dim_y))
+    rd = float(prompt(root, 'Right Depth', dim_y))
+
+    # Sides: the left wing runs back along -Y, the right wing along +X.
+    for role, loc, width in (('LEFT_SIDE', (0.0, -dim_y), ld),
+                             ('RIGHT_SIDE', (dim_x, 0.0), rd)):
+        part = parts.get(role)
+        if part is None:
+            continue
+        if part.modifiers.get(NOTCH_MOD_NAME) is not None:
+            set_part(part, (loc[0], loc[1], 0.0), length=dim_z, width=width,
+                     thickness=mt)
+            set_modifier(part, NOTCH_MOD_NAME,
+                         (('X', tkh), ('Y', p.tks), ('Route Depth', mt)))
+        else:
+            set_part(part, (loc[0], loc[1], tkh), length=dim_z - tkh,
+                     width=width, thickness=mt)
+
+    part = parts.get('LEFT_BACK')
+    if part is not None:
+        set_part(part, (0.0, 0.0, tkh + mt), length=dim_z - tkh - mt * 2.0,
+                 width=dim_y - mt, thickness=mt)
+
+    part = parts.get('RIGHT_BACK')
+    if part is not None:
+        set_part(part, (mt, 0.0, tkh + mt), length=dim_x - mt * 2.0,
+                 width=dim_z - tkh - mt * 2.0, thickness=mt)
+
+    part = parts.get('BOTTOM')
+    if part is not None:
+        set_part(part, (0.0, 0.0, tkh), length=dim_x - mt, width=dim_y - mt,
+                 thickness=mt)
+
+    part = parts.get('TOP')
+    if part is not None:
+        set_part(part, (0.0, 0.0, dim_z), length=dim_x - mt, width=dim_y - mt,
+                 thickness=mt)
+
+    part = parts.get('LEFT_TOE_KICK')
+    if part is not None:
+        set_part(part, (ld - p.tks, -dim_y + mt, 0.0),
+                 length=dim_y - rd - mt + p.tks, width=tkh, thickness=mt)
+
+    part = parts.get('RIGHT_TOE_KICK')
+    if part is not None:
+        set_part(part, (dim_x - mt, -rd + p.tks, 0.0),
+                 length=dim_x - ld - mt + p.tks, width=tkh, thickness=mt)
+
+    part = parts.get('LADDER_BASE')
+    if part is not None:
+        set_cage(part, (0.0, 0.0, 0.0), dim_x=dim_x, dim_y=dim_y, dim_z=tkh)
+
+    lli = p.lli
+    for role, x, y in (('LEG_LEVELER_BL', lli, -(dim_y - lli)),
+                       ('LEG_LEVELER_BR', dim_x - lli, -lli),
+                       ('LEG_LEVELER_FL', ld, -(dim_y - lli)),
+                       ('LEG_LEVELER_FR', dim_x - lli, -rd)):
+        part = parts.get(role)
+        if part is not None:
+            part.location = (x, y, 0.0)
+
+    _solve_corner_shape(root, parts, p, dim_x, dim_y, dim_z)
+    _solve_corner_doors(root, parts, p, dim_x, dim_y, dim_z)
+
+
+def _solve_corner_upper(root, parts, p, dim_x, dim_y, dim_z):
+    mt = p.mt
+    ld = float(prompt(root, 'Left Depth', dim_y))
+    rd = float(prompt(root, 'Right Depth', dim_y))
+
+    part = parts.get('LEFT_SIDE')
+    if part is not None:
+        set_part(part, (0.0, -dim_y, 0.0), length=dim_z, width=ld, thickness=mt)
+
+    part = parts.get('RIGHT_SIDE')
+    if part is not None:
+        set_part(part, (dim_x, 0.0, 0.0), length=dim_z, width=rd, thickness=mt)
+
+    part = parts.get('LEFT_BACK')
+    if part is not None:
+        set_part(part, (0.0, 0.0, mt), length=dim_z - mt * 2.0,
+                 width=dim_y - mt, thickness=mt)
+
+    part = parts.get('RIGHT_BACK')
+    if part is not None:
+        set_part(part, (mt, 0.0, mt), length=dim_x - mt * 2.0,
+                 width=dim_z - mt * 2.0, thickness=mt)
+
+    part = parts.get('BOTTOM')
+    if part is not None:
+        set_part(part, (0.0, 0.0, 0.0), length=dim_x - mt, width=dim_y - mt,
+                 thickness=mt)
+
+    part = parts.get('TOP')
+    if part is not None:
+        set_part(part, (0.0, 0.0, dim_z), length=dim_x - mt, width=dim_y - mt,
+                 thickness=mt)
+
+    _solve_corner_shape(root, parts, p, dim_x, dim_y, dim_z)
+    _solve_corner_doors(root, parts, p, dim_x, dim_y, dim_z)
+
+
 _SOLVERS = {
     'BASE': _solve_base,
     'TALL': _solve_tall,
     'UPPER': _solve_upper,
     'LAP_DRAWER': _solve_lap_drawer,
+    'CORNER_BASE': _solve_corner_base,
+    'CORNER_UPPER': _solve_corner_upper,
 }
 
 

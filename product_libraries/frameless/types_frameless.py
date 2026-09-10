@@ -1453,7 +1453,7 @@ class CornerCabinet(Cabinet):
         self.add_property('Left Depth', 'DISTANCE', self.depth)
         self.add_property('Right Depth', 'DISTANCE', self.depth)
 
-    def add_corner_modifier(self, part, dim_x, dim_y, ld, rd, mt):
+    def add_corner_modifier(self, part):
         """Add the corner shape modifier to a top or bottom panel.
         
         Override in subclasses to use CPM_CHAMFER (diagonal) or 
@@ -1471,25 +1471,18 @@ class CornerCabinet(Cabinet):
 
     def add_corner_doors(self):
         """Add a single door to each front face of the pie-cut notch.
-        
+
         Left door covers the notch X-face (at Y=-rd, running in +X).
         Right door covers the notch Y-face (at X=ld, running in -Y).
         Both doors hinge from the notch corner.
-        
+
         Overlay edges:
           Top/Bottom: full overlay over horizontal carcass panels
           Outer: full overlay over adjacent side panel
           Inner (corner): half gap between the two doors
-        """
-        dim_x = self.var_input('Dim X', 'dim_x')
-        dim_y = self.var_input('Dim Y', 'dim_y')
-        dim_z = self.var_input('Dim Z', 'dim_z')
-        mt = self.var_prop('Material Thickness', 'mt')
-        tkh = self.var_prop('Toe Kick Height', 'tkh')
-        rb = self.var_prop('Remove Bottom', 'rb')
-        ld = self.var_prop('Left Depth', 'ld')
-        rd = self.var_prop('Right Depth', 'rd')
 
+        The doors and their pulls are placed by the solver.
+        """
         # Overlay properties
         self.add_property('Front Thickness', 'DISTANCE', inch(.75))
         self.add_property('Door to Cabinet Gap', 'DISTANCE', inch(.125))
@@ -1503,38 +1496,15 @@ class CornerCabinet(Cabinet):
         self.add_property('Outer Reveal', 'DISTANCE', inch(.0625))
         self.add_property('Vertical Gap', 'DISTANCE', inch(.125))
 
-        ft = self.var_prop('Front Thickness', 'ft')
-        dtcg = self.var_prop('Door to Cabinet Gap', 'dtcg')
-        inset = self.var_prop('Inset Front', 'inset')
-        ir = self.var_prop('Inset Reveal', 'ir')
-        hot = self.var_prop('Half Overlay Top', 'hot')
-        hob = self.var_prop('Half Overlay Bottom', 'hob')
-        hoo = self.var_prop('Half Overlay Outer', 'hoo')
-        tr = self.var_prop('Top Reveal', 'tr')
-        br = self.var_prop('Bottom Reveal', 'br')
-        otr = self.var_prop('Outer Reveal', 'otr')
-        vg = self.var_prop('Vertical Gap', 'vg')
-
-        # Overlay calculation empty (avoids circular dependencies)
+        # Overlay values, written by the solver from the prompts above
         overlay_obj = self.add_empty('Corner Overlay Calc')
         overlay_obj.home_builder.add_property("Overlay Top", 'DISTANCE', 0.0)
         overlay_obj.home_builder.add_property("Overlay Bottom", 'DISTANCE', 0.0)
         overlay_obj.home_builder.add_property("Overlay Outer", 'DISTANCE', 0.0)
+        overlay_obj[solver_frameless.PART_ROLE_KEY] = 'CORNER_OVERLAY'
 
-        # Inset: negative overlay (door smaller than opening)
-        # Half Overlay: (thickness - gap) / 2
-        # Full Overlay: thickness - reveal
-        overlay_obj.home_builder.driver_prop("Overlay Top", "IF(inset,-ir,IF(hot,(mt-vg)/2,mt-tr))", [inset, ir, hot, mt, vg, tr])
-        overlay_obj.home_builder.driver_prop("Overlay Bottom", "IF(inset,-ir,IF(hob,(mt-vg)/2,mt-br))", [inset, ir, hob, mt, vg, br])
-        overlay_obj.home_builder.driver_prop("Overlay Outer", "IF(inset,-ir,IF(hoo,(mt-vg)/2,mt-otr))", [inset, ir, hoo, mt, vg, otr])
-
-        to = overlay_obj.home_builder.var_prop('Overlay Top', 'to')
-        bo = overlay_obj.home_builder.var_prop('Overlay Bottom', 'bo')
-        oo = overlay_obj.home_builder.var_prop('Overlay Outer', 'oo')
-
-        # Door swing: determines which door(s) get a pull handle
+        # Door swing: determines which door gets a pull handle
         self.add_property("Door Swing", 'COMBOBOX', 0, combobox_items=["Left", "Right"])
-        ds = self.var_prop('Door Swing', 'ds')
 
         # --- Left door (notch X-face) ---
         left_door = CabinetDoor()
@@ -1543,17 +1513,7 @@ class CornerCabinet(Cabinet):
         left_door.obj.parent = self.obj
         left_door.obj.rotation_euler.y = math.radians(-90)
         left_door.obj.rotation_euler.z = math.radians(180)
-        # X: inner edge at notch corner (inset flush, overlay offset by dtcg)
-        left_door.driver_location('x', 'IF(inset,ld-ft,ld+dtcg)', [inset, ld, ft, dtcg])
-        # Y: inset recesses into opening, overlay projects forward
-        left_door.driver_location('y', 'IF(inset,-rd+ft,-rd-dtcg)', [inset, rd, ft, dtcg])
-        # Z: shift down by bottom overlay
-        left_door.driver_location('z', 'tkh+IF(rb,0,mt)-bo', [tkh, mt, rb, bo])
-        # Height: opening height + top + bottom overlay
-        left_door.driver_input("Length", 'dim_z-tkh-IF(rb,0,mt)-mt+to+bo', [dim_z, tkh, mt, rb, to, bo])
-        # Width: notch X span + outer overlay (oo goes negative for inset)
-        left_door.driver_input("Width", 'IF(inset,dim_y-rd+oo,dim_y-rd-mt+oo-dtcg)', [inset, dim_y, rd, mt, oo, dtcg])
-        left_door.driver_input("Thickness", 'ft', [ft])
+        left_door.obj[solver_frameless.PART_ROLE_KEY] = 'LEFT_DOOR'
 
         # --- Right door (notch Y-face) ---
         right_door = CabinetDoor()
@@ -1562,395 +1522,181 @@ class CornerCabinet(Cabinet):
         right_door.obj.parent = self.obj
         right_door.obj.rotation_euler.x = math.radians(90)
         right_door.obj.rotation_euler.y = math.radians(-90)
-        # X: inset recesses into opening, overlay projects forward
-        right_door.driver_location('x', 'IF(inset,ld+mt-ft-oo,ld+dtcg+mt+dtcg)', [inset, ld, mt, ft, oo, dtcg])
-        # Y: inner edge at notch corner (inset flush, overlay offset by dtcg)
-        right_door.driver_location('y', 'IF(inset,-rd+ft,-rd-dtcg)', [inset, rd, ft, dtcg])
-        # Z: shift down by bottom overlay
-        right_door.driver_location('z', 'tkh+IF(rb,0,mt)-bo', [tkh, mt, rb, bo])
-        # Height: opening height + top + bottom overlay
-        right_door.driver_input("Length", 'dim_z-tkh-IF(rb,0,mt)-mt+to+bo', [dim_z, tkh, mt, rb, to, bo])
-        # Width: notch Y span + outer overlay (oo goes negative for inset)
-        right_door.driver_input("Width", 'IF(inset,dim_x-ld-mt+oo*2,dim_x-ld-mt+oo-dtcg-mt-dtcg)', [inset, dim_x, ld, mt, oo, dtcg])
-        right_door.driver_input("Thickness", 'ft', [ft])
         right_door.set_input("Mirror Y", True)
+        right_door.obj[solver_frameless.PART_ROLE_KEY] = 'RIGHT_DOOR'
 
-        # Hide pulls based on door swing setting
-        # ds==0: Left swing (pull on left door only)
-        # ds==1: Right swing (pull on right door only)
-        # ds==2: Both (pulls on both doors)
-        for child in left_door.obj.children:
-            if 'IS_CABINET_PULL' in child:
-                pull = GeoNodeHardware(child)
-                pull.driver_hide('IF(ds==0,True,False)', [ds])
-                break
-
-        for child in right_door.obj.children:
-            if 'IS_CABINET_PULL' in child:
-                pull = GeoNodeHardware(child)
-                pull.driver_hide('IF(ds==1,True,False)', [ds])
-                break
-
-
-    def _add_corner_leg_levelers(self, dim_x, dim_y, lli, ld, rd):
-        """Add leg leveler hardware at the corners of a corner cabinet."""
+    def _add_corner_leg_levelers(self):
+        """Add leg leveler hardware at the four outer corners of the L."""
         ll_obj = self._get_leg_leveler_object()
         if ll_obj is None:
             return
-
-        # Corner cabinets have an L-shape, so place levelers at the 4 outer corners
-        positions = [
-            ('Leg Leveler BL', 'lli', '-(dim_y-lli)', [lli], [dim_y, lli]),           # Back Left
-            ('Leg Leveler BR', 'dim_x-lli', '-lli', [dim_x, lli], [lli]),              # Back Right
-            ('Leg Leveler FL', 'ld', '-(dim_y-lli)', [ld], [dim_y, lli]),              # Front Left
-            ('Leg Leveler FR', 'dim_x-lli', '-rd', [dim_x, lli], [rd]),                # Front Right
-        ]
-        for name, x_expr, y_expr, x_vars, y_vars in positions:
+        for name, role in (('Leg Leveler BL', 'LEG_LEVELER_BL'),
+                           ('Leg Leveler BR', 'LEG_LEVELER_BR'),
+                           ('Leg Leveler FL', 'LEG_LEVELER_FL'),
+                           ('Leg Leveler FR', 'LEG_LEVELER_FR')):
             ll = GeoNodeHardware()
             ll.create(name)
             ll.obj['IS_LEG_LEVELER'] = True
+            ll.obj[solver_frameless.PART_ROLE_KEY] = role
             ll.obj.parent = self.obj
             ll.set_input("Object", ll_obj)
-            ll.driver_location('x', x_expr, x_vars)
-            ll.driver_location('y', y_expr, y_vars)
             ll.obj.location.z = 0
+
+    def _add_corner_top_bottom(self):
+        bottom = self._add_carcass_part('Bottom', 'BOTTOM', mirror='Y')
+        self.add_corner_modifier(bottom)
+        top = self._add_carcass_part('Top', 'TOP', mirror='YZ')
+        self.add_corner_modifier(top)
 
     def create_corner_base_carcass(self, name):
         """Create the corner base cabinet carcass.
-        
+
         Shared by all corner base cabinet types (diagonal, pie cut).
         The top/bottom panel shape is determined by add_corner_modifier().
         """
         super().create_cabinet(name)
-        
+
         self.add_properties_common()
         self.add_properties_toe_kick()
         self.add_properties_corner()
-        
+        self.obj[solver_frameless.CARCASS_KEY] = 'CORNER_BASE'
+
         # Set dimensions - corner size determines X and Y
         self.set_input('Dim X', self.corner_size)
         self.set_input('Dim Y', self.corner_size)
         self.set_input('Dim Z', self.height)
-        
-        dim_x = self.var_input('Dim X', 'dim_x')
-        dim_y = self.var_input('Dim Y', 'dim_y')
-        dim_z = self.var_input('Dim Z', 'dim_z')
-        
-        mt = self.var_prop('Material Thickness', 'mt')
-        tkh = self.var_prop('Toe Kick Height', 'tkh')
-        tks = self.var_prop('Toe Kick Setback', 'tks')
-        ld = self.var_prop('Left Depth', 'ld')
-        rd = self.var_prop('Right Depth', 'rd')
 
         toe_kick_type = self.obj.get('Toe Kick Type', 0)
-        
-        # === SIDES ===
+        side_cls = CabinetSideNotched if toe_kick_type == 0 else CabinetPart
+
+        # Sides: the left wing runs back along -Y, the right wing along +X.
+        self._add_carcass_part('Left Side', 'LEFT_SIDE', side_cls,
+                               rotation=(0, -90, -90))
+        self._add_carcass_part('Right Side', 'RIGHT_SIDE', side_cls,
+                               rotation=(0, -90, 0), mirror='Y')
+        self._add_carcass_part('Left Back', 'LEFT_BACK', rotation=(0, -90, 0),
+                               mirror='YZ')
+        self._add_carcass_part('Right Back', 'RIGHT_BACK', rotation=(-90, 0, 0),
+                               mirror='YZ')
+        self._add_corner_top_bottom()
+
         if toe_kick_type == 0:  # Notch Ends to Floor
-            left_side = CabinetSideNotched()
-            left_side.create('Left Side', tkh, tks, mt)
-            left_side.obj.parent = self.obj
-            left_side.obj.rotation_euler.y = math.radians(-90)
-            left_side.obj.rotation_euler.z = math.radians(-90)
-            left_side.driver_location('y', '-dim_y', [dim_y])
-            left_side.driver_input("Length", 'dim_z', [dim_z])
-            left_side.driver_input("Width", 'ld', [ld])
-            left_side.driver_input("Thickness", 'mt', [mt])
-            
-            right_side = CabinetSideNotched()
-            right_side.create('Right Side', tkh, tks, mt)
-            right_side.obj.parent = self.obj
-            right_side.driver_location('x', 'dim_x', [dim_x])
-            right_side.obj.rotation_euler.y = math.radians(-90)
-            right_side.driver_input("Length", 'dim_z', [dim_z])
-            right_side.driver_input("Width", 'rd', [rd])
-            right_side.driver_input("Thickness", 'mt', [mt])
-            right_side.set_input("Mirror Y", True)
-            right_side.set_input("Mirror Z", False)
-        else:  # Ladder Style, Floating, Leg Levelers - plain sides starting at tkh
-            left_side = CabinetPart()
-            left_side.create('Left Side')
-            left_side.obj.parent = self.obj
-            left_side.obj.rotation_euler.y = math.radians(-90)
-            left_side.obj.rotation_euler.z = math.radians(-90)
-            left_side.driver_location('y', '-dim_y', [dim_y])
-            left_side.driver_location('z', 'tkh', [tkh])
-            left_side.driver_input("Length", 'dim_z-tkh', [dim_z, tkh])
-            left_side.driver_input("Width", 'ld', [ld])
-            left_side.driver_input("Thickness", 'mt', [mt])
-            
-            right_side = CabinetPart()
-            right_side.create('Right Side')
-            right_side.obj.parent = self.obj
-            right_side.driver_location('x', 'dim_x', [dim_x])
-            right_side.driver_location('z', 'tkh', [tkh])
-            right_side.obj.rotation_euler.y = math.radians(-90)
-            right_side.driver_input("Length", 'dim_z-tkh', [dim_z, tkh])
-            right_side.driver_input("Width", 'rd', [rd])
-            right_side.driver_input("Thickness", 'mt', [mt])
-            right_side.set_input("Mirror Y", True)
-            right_side.set_input("Mirror Z", False)
-        
-        # === BACKS (same for all types) ===
-        left_back = CabinetPart()
-        left_back.create('Left Back')
-        left_back.obj.parent = self.obj
-        left_back.obj.rotation_euler.y = math.radians(-90)
-        left_back.driver_location('z', 'tkh+mt', [tkh, mt])
-        left_back.driver_input("Length", 'dim_z-tkh-mt*2', [dim_z, tkh, mt])
-        left_back.driver_input("Width", 'dim_y-mt', [dim_y, mt])
-        left_back.driver_input("Thickness", 'mt', [mt])
-        left_back.set_input("Mirror Y", True)
-        left_back.set_input("Mirror Z", True)
-        
-        right_back = CabinetPart()
-        right_back.create('Right Back')
-        right_back.obj.parent = self.obj
-        right_back.driver_location('x', 'mt', [mt])
-        right_back.driver_location('z', 'tkh+mt', [tkh, mt])
-        right_back.obj.rotation_euler.x = math.radians(-90)
-        right_back.driver_input("Length", 'dim_x-mt-mt', [dim_x, rd, mt])
-        right_back.driver_input("Width", 'dim_z-tkh-mt*2', [dim_z, tkh, mt])
-        right_back.driver_input("Thickness", 'mt', [mt])
-        right_back.set_input("Mirror Y", True)
-        right_back.set_input("Mirror Z", True)
-        
-        # === BOTTOM (same for all types) ===
-        bottom = CabinetPart()
-        bottom.create('Bottom')
-        bottom.obj.parent = self.obj
-        bottom.driver_location('z', 'tkh', [tkh])
-        bottom.driver_input("Length", 'dim_x-mt', [dim_x, mt])
-        bottom.driver_input("Width", 'dim_y-mt', [dim_y, mt])
-        bottom.driver_input("Thickness", 'mt', [mt])
-        bottom.set_input("Mirror Y", True)
-        bottom.set_input("Mirror Z", False)
-        self.add_corner_modifier(bottom, dim_x, dim_y, ld, rd, mt)
-        
-        # === TOP (same for all types) ===
-        top = CabinetPart()
-        top.create('Top')
-        top.obj.parent = self.obj
-        top.driver_location('z', 'dim_z', [dim_z])
-        top.driver_input("Length", 'dim_x-mt', [dim_x, mt])
-        top.driver_input("Width", 'dim_y-mt', [dim_y, mt])
-        top.driver_input("Thickness", 'mt', [mt])
-        top.set_input("Mirror Y", True)
-        top.set_input("Mirror Z", True)
-        self.add_corner_modifier(top, dim_x, dim_y, ld, rd, mt)
-
-        # === TOE KICK PANELS (only for Notch Ends to Floor) ===
-        if toe_kick_type == 0:
-            left_toe_kick = CabinetPart()
-            left_toe_kick.create('Left Toe Kick')
-            left_toe_kick.obj.parent = self.obj
-            left_toe_kick.obj.rotation_euler.x = math.radians(-90)
-            left_toe_kick.obj.rotation_euler.z = math.radians(90)
-            left_toe_kick.driver_location('x', 'ld-tks', [ld,tks])
-            left_toe_kick.driver_location('y', '-dim_y+mt', [dim_y, mt])
-            left_toe_kick.driver_input("Length", 'dim_y-rd-mt+tks', [dim_y, rd, mt, tks])
-            left_toe_kick.driver_input("Width", 'tkh', [tkh])
-            left_toe_kick.driver_input("Thickness", 'mt', [mt])
-            left_toe_kick.set_input("Mirror Y", True)
-            
-            right_toe_kick = CabinetPart()
-            right_toe_kick.create('Right Toe Kick')
-            right_toe_kick.obj.parent = self.obj
-            right_toe_kick.obj.rotation_euler.x = math.radians(-90)
-            right_toe_kick.driver_location('x', 'dim_x-mt', [dim_x, mt])
-            right_toe_kick.driver_location('y', '-rd+tks', [rd, tks])
-            right_toe_kick.driver_input("Length", 'dim_x-ld-mt+tks', [dim_x, ld, mt, tks])
-            right_toe_kick.driver_input("Width", 'tkh', [tkh])
-            right_toe_kick.driver_input("Thickness", 'mt', [mt])
-            right_toe_kick.set_input("Mirror X", True)
-            right_toe_kick.set_input("Mirror Y", True)
-
-        # === TOE KICK TYPE-SPECIFIC ADDITIONS ===
-        if toe_kick_type == 1:  # Ladder Style
+            self._add_carcass_part('Left Toe Kick', 'LEFT_TOE_KICK',
+                                   rotation=(-90, 0, 90), mirror='Y')
+            self._add_carcass_part('Right Toe Kick', 'RIGHT_TOE_KICK',
+                                   rotation=(-90, 0, 0), mirror='XY')
+        elif toe_kick_type == 1:  # Ladder Style
             ladder = LadderBaseCage()
             ladder.create('Ladder Base')
             ladder.obj.parent = self.obj
-            ladder.driver_input("Dim X", 'dim_x', [dim_x])
-            ladder.driver_input("Dim Y", 'dim_y', [dim_y])
-            ladder.driver_input("Dim Z", 'tkh', [tkh])
+            ladder.obj[solver_frameless.PART_ROLE_KEY] = 'LADDER_BASE'
         elif toe_kick_type == 3:  # Leg Levelers
-            lli = self.var_prop('Leg Leveler Inset', 'lli')
-            self._add_corner_leg_levelers(dim_x, dim_y, lli, ld, rd)
+            self._add_corner_leg_levelers()
+
+        solver_frameless.recalculate_cabinet(self.obj)
 
     def create_corner_upper_carcass(self, name):
         """Create the corner upper cabinet carcass.
-        
+
         Similar to base but without toe kicks or notched sides.
         Bottom sits at Z=0, sides are plain CabinetPart.
         """
         super().create_cabinet(name)
-        
+
         self.add_properties_common()
         self.add_properties_corner()
-        
+        self.obj[solver_frameless.CARCASS_KEY] = 'CORNER_UPPER'
+
         # Set dimensions
         self.set_input('Dim X', self.corner_size)
         self.set_input('Dim Y', self.corner_size)
         self.set_input('Dim Z', self.height)
-        
-        dim_x = self.var_input('Dim X', 'dim_x')
-        dim_y = self.var_input('Dim Y', 'dim_y')
-        dim_z = self.var_input('Dim Z', 'dim_z')
-        
-        mt = self.var_prop('Material Thickness', 'mt')
-        ld = self.var_prop('Left Depth', 'ld')
-        rd = self.var_prop('Right Depth', 'rd')
-        
-        # Left Side - runs along Y axis on the left edge
-        left_side = CabinetPart()
-        left_side.create('Left Side')
-        left_side.obj.parent = self.obj
-        left_side.obj.rotation_euler.y = math.radians(-90)
-        left_side.obj.rotation_euler.z = math.radians(-90)
-        left_side.driver_location('y', '-dim_y', [dim_y])
-        left_side.driver_input("Length", 'dim_z', [dim_z])
-        left_side.driver_input("Width", 'ld', [ld])
-        left_side.driver_input("Thickness", 'mt', [mt])
-        
-        # Right Side - runs along X axis from the right edge
-        right_side = CabinetPart()
-        right_side.create('Right Side')
-        right_side.obj.parent = self.obj
-        right_side.driver_location('x', 'dim_x', [dim_x])
-        right_side.obj.rotation_euler.y = math.radians(-90)
-        right_side.driver_input("Length", 'dim_z', [dim_z])
-        right_side.driver_input("Width", 'rd', [rd])
-        right_side.driver_input("Thickness", 'mt', [mt])
-        right_side.set_input("Mirror Y", True)
-        right_side.set_input("Mirror Z", False)
-        
-        # Left Back - vertical panel against left wall
-        left_back = CabinetPart()
-        left_back.create('Left Back')
-        left_back.obj.parent = self.obj
-        left_back.obj.rotation_euler.y = math.radians(-90)
-        left_back.driver_location('z', 'mt', [mt])
-        left_back.driver_input("Length", 'dim_z-mt*2', [dim_z, mt])
-        left_back.driver_input("Width", 'dim_y-mt', [dim_y, mt])
-        left_back.driver_input("Thickness", 'mt', [mt])
-        left_back.set_input("Mirror Y", True)
-        left_back.set_input("Mirror Z", True)
-        
-        # Right Back - vertical panel against right wall
-        right_back = CabinetPart()
-        right_back.create('Right Back')
-        right_back.obj.parent = self.obj
-        right_back.driver_location('x', 'mt', [mt])
-        right_back.driver_location('z', 'mt', [mt])
-        right_back.obj.rotation_euler.x = math.radians(-90)
-        right_back.driver_input("Length", 'dim_x-mt-mt', [dim_x, mt])
-        right_back.driver_input("Width", 'dim_z-mt*2', [dim_z, mt])
-        right_back.driver_input("Thickness", 'mt', [mt])
-        right_back.set_input("Mirror Y", True)
-        right_back.set_input("Mirror Z", True)
-        
-        # Bottom panel
-        bottom = CabinetPart()
-        bottom.create('Bottom')
-        bottom.obj.parent = self.obj
-        bottom.driver_input("Length", 'dim_x-mt', [dim_x, mt])
-        bottom.driver_input("Width", 'dim_y-mt', [dim_y, mt])
-        bottom.driver_input("Thickness", 'mt', [mt])
-        bottom.set_input("Mirror Y", True)
-        bottom.set_input("Mirror Z", False)
-        self.add_corner_modifier(bottom, dim_x, dim_y, ld, rd, mt)
-        
-        # Top panel
-        top = CabinetPart()
-        top.create('Top')
-        top.obj.parent = self.obj
-        top.driver_location('z', 'dim_z', [dim_z])
-        top.driver_input("Length", 'dim_x-mt', [dim_x, mt])
-        top.driver_input("Width", 'dim_y-mt', [dim_y, mt])
-        top.driver_input("Thickness", 'mt', [mt])
-        top.set_input("Mirror Y", True)
-        top.set_input("Mirror Z", True)
-        self.add_corner_modifier(top, dim_x, dim_y, ld, rd, mt)
+
+        self._add_carcass_part('Left Side', 'LEFT_SIDE', rotation=(0, -90, -90))
+        self._add_carcass_part('Right Side', 'RIGHT_SIDE', rotation=(0, -90, 0),
+                               mirror='Y')
+        self._add_carcass_part('Left Back', 'LEFT_BACK', rotation=(0, -90, 0),
+                               mirror='YZ')
+        self._add_carcass_part('Right Back', 'RIGHT_BACK', rotation=(-90, 0, 0),
+                               mirror='YZ')
+        self._add_corner_top_bottom()
+
+        solver_frameless.recalculate_cabinet(self.obj)
 
 
 class DiagonalCornerBaseCabinet(CornerCabinet):
-    """Diagonal corner base cabinet - 45° angled front."""
-    
+    """Diagonal corner base cabinet - 45 degree angled front."""
+
     def __init__(self):
         super().__init__()
         props = bpy.context.scene.hb_frameless
         self.corner_size = props.base_inside_corner_size
         self.height = props.base_cabinet_height
         self.depth = props.base_cabinet_depth
-    
+
     def create(self, name="Diagonal Corner Base"):
         self.create_corner_base_carcass(name)
         self.obj['CABINET_TYPE'] = 'BASE'
         self.obj['CORNER_TYPE'] = 'DIAGONAL'
         self.obj['IS_CORNER_CABINET'] = True
 
-    def add_corner_modifier(self, part, dim_x, dim_y, ld, rd, mt):
-        """Diagonal uses CPM_CHAMFER to cut a 45° angle."""
+    def add_corner_modifier(self, part):
+        """Diagonal uses CPM_CHAMFER to cut a 45 degree angle; the solver
+        sizes it."""
         chamfer = part.add_part_modifier('CPM_CHAMFER', 'Chamfer')
-        chamfer.driver_input('X', 'dim_x-ld-mt', [dim_x, ld, mt])
-        chamfer.driver_input('Y', 'dim_y-rd-mt', [dim_y, rd, mt])
-        chamfer.driver_input('Route Depth', 'mt+.01', [mt])
         chamfer.set_input('Flip X', True)
 
 
+def _add_pie_cut_cage_notch(cabinet):
+    """Notch the cage itself so its wireframe matches the L-shape; the
+    solver sizes it."""
+    cpm = CabinetPartModifier(cabinet.obj)
+    cpm.add_node('CPM_CORNERNOTCH', 'Corner Notch')
+    cpm.set_input('Flip X', True)
+    cpm.set_input('Flip Y', True)
+
+
+def _add_pie_cut_part_notch(part):
+    """Pie cut uses CPM_CORNERNOTCH for a rectangular notch; the solver
+    sizes it."""
+    notch = part.add_part_modifier('CPM_CORNERNOTCH', 'Corner Notch')
+    notch.set_input('Flip X', True)
+    notch.set_input('Flip Y', True)
+
+
 class PieCutCornerBaseCabinet(CornerCabinet):
-    """Pie cut corner base cabinet - rectangular notch, two fronts at 90°."""
-    
+    """Pie cut corner base cabinet - rectangular notch, two fronts at 90 degrees."""
+
     def __init__(self):
         super().__init__()
         props = bpy.context.scene.hb_frameless
         self.corner_size = props.base_inside_corner_size
         self.height = props.base_cabinet_height
         self.depth = props.base_cabinet_depth
-    
+
     def create(self, name="Pie Cut Corner Base"):
         self.create_corner_base_carcass(name)
         self.obj['CABINET_TYPE'] = 'BASE'
         self.obj['CORNER_TYPE'] = 'PIECUT'
         self.obj['IS_CORNER_CABINET'] = True
-
-        # Add corner notch to cage so wireframe matches the L-shape
-        dim_x = self.var_input('Dim X', 'dim_x')
-        dim_y = self.var_input('Dim Y', 'dim_y')
-        dim_z = self.var_input('Dim Z', 'dim_z')
-        ld = self.var_prop('Left Depth', 'ld')
-        rd = self.var_prop('Right Depth', 'rd')
-        mt = self.var_prop('Material Thickness', 'mt')
-        cpm = CabinetPartModifier(self.obj)
-        cpm.add_node('CPM_CORNERNOTCH', 'Corner Notch')
-        cpm.driver_input('X', 'dim_x-ld', [dim_x, ld, mt])
-        cpm.driver_input('Y', 'dim_y-rd', [dim_y, rd, mt])
-        cpm.driver_input('Route Depth', 'dim_z+.01', [dim_z])
-        cpm.set_input('Flip X', True)
-        cpm.set_input('Flip Y', True)
-
+        _add_pie_cut_cage_notch(self)
         self.add_corner_doors()
+        solver_frameless.recalculate_cabinet(self.obj)
 
-    def add_corner_modifier(self, part, dim_x, dim_y, ld, rd, mt):
-        """Pie cut uses CPM_CORNERNOTCH for a rectangular notch."""
-        notch = part.add_part_modifier('CPM_CORNERNOTCH', 'Corner Notch')
-        notch.driver_input('X', 'dim_x-ld-mt', [dim_x, ld, mt])
-        notch.driver_input('Y', 'dim_y-rd-mt', [dim_y, rd, mt])
-        notch.driver_input('Route Depth', 'mt+.01', [mt])
-        notch.set_input('Flip X', True)
-        notch.set_input('Flip Y', True)
-
+    def add_corner_modifier(self, part):
+        _add_pie_cut_part_notch(part)
 
 
 class DiagonalCornerTallCabinet(CornerCabinet):
     """Diagonal corner tall cabinet."""
-    
+
     def __init__(self):
         super().__init__()
         props = bpy.context.scene.hb_frameless
         self.corner_size = props.tall_inside_corner_size
         self.height = props.tall_cabinet_height
         self.depth = props.tall_cabinet_depth
-    
+
     def create(self, name="Diagonal Corner Tall"):
         self.create_cabinet(name)
         self.obj['CABINET_TYPE'] = 'TALL'
@@ -1961,57 +1707,37 @@ class PieCutCornerTallCabinet(CornerCabinet):
     """Pie cut corner tall cabinet."""
 
     door_pull_location = "Tall"
-    
+
     def __init__(self):
         super().__init__()
         props = bpy.context.scene.hb_frameless
         self.corner_size = props.tall_inside_corner_size
         self.height = props.tall_cabinet_height
         self.depth = props.tall_cabinet_depth
-    
+
     def create(self, name="Pie Cut Corner Tall"):
         self.create_corner_base_carcass(name)
         self.obj['CABINET_TYPE'] = 'TALL'
         self.obj['CORNER_TYPE'] = 'PIECUT'
         self.obj['IS_CORNER_CABINET'] = True
-
-        # Add corner notch to cage
-        dim_x = self.var_input('Dim X', 'dim_x')
-        dim_y = self.var_input('Dim Y', 'dim_y')
-        dim_z = self.var_input('Dim Z', 'dim_z')
-        ld = self.var_prop('Left Depth', 'ld')
-        rd = self.var_prop('Right Depth', 'rd')
-        mt = self.var_prop('Material Thickness', 'mt')
-        cpm = CabinetPartModifier(self.obj)
-        cpm.add_node('CPM_CORNERNOTCH', 'Corner Notch')
-        cpm.driver_input('X', 'dim_x-ld', [dim_x, ld, mt])
-        cpm.driver_input('Y', 'dim_y-rd', [dim_y, rd, mt])
-        cpm.driver_input('Route Depth', 'dim_z+.01', [dim_z])
-        cpm.set_input('Flip X', True)
-        cpm.set_input('Flip Y', True)
-
+        _add_pie_cut_cage_notch(self)
         self.add_corner_doors()
+        solver_frameless.recalculate_cabinet(self.obj)
 
-    def add_corner_modifier(self, part, dim_x, dim_y, ld, rd, mt):
-        """Pie cut uses CPM_CORNERNOTCH for a rectangular notch."""
-        notch = part.add_part_modifier('CPM_CORNERNOTCH', 'Corner Notch')
-        notch.driver_input('X', 'dim_x-ld-mt', [dim_x, ld, mt])
-        notch.driver_input('Y', 'dim_y-rd-mt', [dim_y, rd, mt])
-        notch.driver_input('Route Depth', 'mt+.01', [mt])
-        notch.set_input('Flip X', True)
-        notch.set_input('Flip Y', True)
+    def add_corner_modifier(self, part):
+        _add_pie_cut_part_notch(part)
 
 
 class DiagonalCornerUpperCabinet(CornerCabinet):
     """Diagonal corner upper cabinet."""
-    
+
     def __init__(self):
         super().__init__()
         props = bpy.context.scene.hb_frameless
         self.corner_size = props.upper_inside_corner_size
         self.height = props.upper_cabinet_height
         self.depth = props.upper_cabinet_depth
-    
+
     def create(self, name="Diagonal Corner Upper"):
         self.create_cabinet(name)
         self.obj['CABINET_TYPE'] = 'UPPER'
@@ -2022,46 +1748,25 @@ class PieCutCornerUpperCabinet(CornerCabinet):
     """Pie-cut corner upper cabinet."""
 
     door_pull_location = "Upper"
-    
+
     def __init__(self):
         super().__init__()
         props = bpy.context.scene.hb_frameless
         self.corner_size = props.upper_inside_corner_size
         self.height = props.upper_cabinet_height
         self.depth = props.upper_cabinet_depth
-    
+
     def create(self, name="Pie Cut Corner Upper"):
         self.create_corner_upper_carcass(name)
         self.obj['CABINET_TYPE'] = 'UPPER'
         self.obj['CORNER_TYPE'] = 'PIECUT'
         self.obj['IS_CORNER_CABINET'] = True
-
         # Add properties that add_corner_doors expects (upper has no toe kick)
         self.add_property('Toe Kick Height', 'DISTANCE', 0)
         self.add_property('Remove Bottom', 'CHECKBOX', False)
-
-        # Add corner notch to cage
-        dim_x = self.var_input('Dim X', 'dim_x')
-        dim_y = self.var_input('Dim Y', 'dim_y')
-        dim_z = self.var_input('Dim Z', 'dim_z')
-        ld = self.var_prop('Left Depth', 'ld')
-        rd = self.var_prop('Right Depth', 'rd')
-        mt = self.var_prop('Material Thickness', 'mt')
-        cpm = CabinetPartModifier(self.obj)
-        cpm.add_node('CPM_CORNERNOTCH', 'Corner Notch')
-        cpm.driver_input('X', 'dim_x-ld', [dim_x, ld, mt])
-        cpm.driver_input('Y', 'dim_y-rd', [dim_y, rd, mt])
-        cpm.driver_input('Route Depth', 'dim_z+.01', [dim_z])
-        cpm.set_input('Flip X', True)
-        cpm.set_input('Flip Y', True)
-
+        _add_pie_cut_cage_notch(self)
         self.add_corner_doors()
+        solver_frameless.recalculate_cabinet(self.obj)
 
-    def add_corner_modifier(self, part, dim_x, dim_y, ld, rd, mt):
-        """Pie cut uses CPM_CORNERNOTCH for a rectangular notch."""
-        notch = part.add_part_modifier('CPM_CORNERNOTCH', 'Corner Notch')
-        notch.driver_input('X', 'dim_x-ld-mt', [dim_x, ld, mt])
-        notch.driver_input('Y', 'dim_y-rd-mt', [dim_y, rd, mt])
-        notch.driver_input('Route Depth', 'mt+.01', [mt])
-        notch.set_input('Flip X', True)
-        notch.set_input('Flip Y', True)
+    def add_corner_modifier(self, part):
+        _add_pie_cut_part_notch(part)
