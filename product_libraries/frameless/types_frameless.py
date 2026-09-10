@@ -86,30 +86,22 @@ class Cabinet(GeoNodeCage):
             return obj
         return None
 
-    def _add_leg_levelers(self, dim_x=None, dim_y=None, lli=None):
+    def _add_leg_levelers(self):
         """Add four leg leveler hardware objects at the bottom corners of the
-        cabinet. With driver variables the levelers are driven from them;
-        without, they are left for the solver to place."""
+        cabinet, placed by the solver."""
         ll_obj = self._get_leg_leveler_object()
         if ll_obj is None:
             return
-
-        positions = [
-            ('Leg Leveler FL', 'LEG_LEVELER_FL', 'lli', '-(dim_y-lli)', [lli], [dim_y, lli]),
-            ('Leg Leveler FR', 'LEG_LEVELER_FR', 'dim_x-lli', '-(dim_y-lli)', [dim_x, lli], [dim_y, lli]),
-            ('Leg Leveler BL', 'LEG_LEVELER_BL', 'lli', '-lli', [lli], [lli]),
-            ('Leg Leveler BR', 'LEG_LEVELER_BR', 'dim_x-lli', '-lli', [dim_x, lli], [lli]),
-        ]
-        for name, role, x_expr, y_expr, x_vars, y_vars in positions:
+        for name, role in (('Leg Leveler FL', 'LEG_LEVELER_FL'),
+                           ('Leg Leveler FR', 'LEG_LEVELER_FR'),
+                           ('Leg Leveler BL', 'LEG_LEVELER_BL'),
+                           ('Leg Leveler BR', 'LEG_LEVELER_BR')):
             ll = GeoNodeHardware()
             ll.create(name)
             ll.obj['IS_LEG_LEVELER'] = True
             ll.obj[solver_frameless.PART_ROLE_KEY] = role
             ll.obj.parent = self.obj
             ll.set_input("Object", ll_obj)
-            if lli is not None:
-                ll.driver_location('x', x_expr, x_vars)
-                ll.driver_location('y', y_expr, y_vars)
             ll.obj.location.z = 0
 
     def create_cabinet(self,name):
@@ -946,19 +938,16 @@ class LadderBaseCage(GeoNodeCage):
 
 
 class CabinetSideNotched(CabinetPart):
+    """A side with the toe kick notched out of its front bottom corner;
+    the solver sizes the notch."""
 
-    def create(self,name,tkh=None,tks=None,mt=None):
+    def create(self,name):
         super().create(name)
         self.set_input('Length', inch(24))
         self.set_input('Width', inch(18))
         self.set_input('Thickness', inch(.75))
 
-        # Without driver variables the notch is left for a solver to size.
         notch = self.add_part_modifier('CPM_CORNERNOTCH','Notch')
-        if tkh is not None:
-            notch.driver_input('X','tkh',[tkh])
-            notch.driver_input('Y','tks',[tks])
-            notch.driver_input('Route Depth','mt',[mt])
         notch.set_input('Flip Y',True)
 
 

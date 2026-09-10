@@ -72,6 +72,18 @@ CARCASS_LEGACY_NAMES = {
 # Corner shape modifier on a corner cabinet's top and bottom (one of these).
 CORNER_SHAPE_MODS = ('Chamfer', 'Corner Notch')
 
+# Applied end panels hang off the cabinet cage by side.
+APPLIED_END_TAGS = (
+    ('IS_APPLIED_END_LEFT', 'APPLIED_END_LEFT'),
+    ('IS_APPLIED_END_RIGHT', 'APPLIED_END_RIGHT'),
+    ('IS_APPLIED_END_BACK', 'APPLIED_END_BACK'),
+)
+# A slab end runs past the carcass front to sit flush with the fronts:
+# the door gap plus the front thickness.
+APPLIED_END_EXTENSION = inch(0.875)
+# A five-piece end either runs to the floor or stops at the toe kick.
+PANEL_TO_FLOOR_KEY = 'Panel To Floor'
+
 # Base Top Construction prompt: index into ["Full Top", "Stretchers", "Sink"].
 TOP_FULL, TOP_STRETCHERS, TOP_SINK = 0, 1, 2
 
@@ -236,9 +248,43 @@ def carcass_parts(root):
             if (entry is not None and has_drivers(child)
                     and (entry[1] is None or child.get(entry[1]))):
                 role = entry[0]
+        if role is None:
+            for tag, end_role in APPLIED_END_TAGS:
+                if child.get(tag):
+                    role = end_role
+                    break
         if role is not None and role not in parts:
             parts[role] = child
     return parts
+
+
+def _solve_applied_ends(root, parts, p, dim_x, dim_y, dim_z):
+    """Applied end panels on the cabinet's outside faces."""
+    for role, side in (('APPLIED_END_LEFT', 'LEFT'), ('APPLIED_END_RIGHT', 'RIGHT'),
+                       ('APPLIED_END_BACK', 'BACK')):
+        part = parts.get(role)
+        if part is None:
+            continue
+        if part.get('IS_APPLIED_PANEL_5PIECE'):
+            if PANEL_TO_FLOOR_KEY not in part:
+                # An older panel recorded the choice only in where it
+                # was built.
+                part[PANEL_TO_FLOOR_KEY] = part.location.z <= 1e-6
+            to_floor = bool(part.get(PANEL_TO_FLOOR_KEY))
+            z = 0.0 if to_floor else p.tkh
+            length = dim_z if to_floor else dim_z - p.tkh
+            width = dim_y - inch(0.75)
+        else:
+            z = 0.0
+            length = dim_z
+            width = dim_y + APPLIED_END_EXTENSION
+        visible = not part.hide_viewport
+        if side == 'LEFT':
+            set_part(part, (0.0, 0.0, z), length=length, width=width, visible=visible)
+        elif side == 'RIGHT':
+            set_part(part, (dim_x, 0.0, z), length=length, width=width, visible=visible)
+        else:
+            set_part(part, (0.0, 0.0, 0.0), length=dim_x, width=dim_z, visible=visible)
 
 
 # ---------------------------------------------------------------------------
@@ -649,9 +695,11 @@ def recalculate_cabinet(obj):
         root[CARCASS_KEY] = kind
 
     cage = GeoNodeCage(root)
-    _SOLVERS[kind](root, parts, _Prompts(root),
-                   cage.get_input('Dim X'), cage.get_input('Dim Y'),
-                   cage.get_input('Dim Z'))
+    prompts = _Prompts(root)
+    dims = (cage.get_input('Dim X'), cage.get_input('Dim Y'),
+            cage.get_input('Dim Z'))
+    _SOLVERS[kind](root, parts, prompts, *dims)
+    _solve_applied_ends(root, parts, prompts, *dims)
 
     bay = parts.get('BAY')
     if bay is not None:

@@ -2,6 +2,7 @@ import bpy
 import math
 import os
 from .. import types_frameless
+from .. import solver_frameless
 from .... import hb_utils, hb_types, hb_project, units
 from ....units import inch
 
@@ -145,9 +146,6 @@ class hb_frameless_OT_update_finished_end(bpy.types.Operator):
         props = bpy.context.scene.hb_frameless
         cabinet = hb_types.GeoNodeCage(cabinet_obj)
         
-        dim_x = cabinet.var_input('Dim X', 'dim_x')
-        dim_y = cabinet.var_input('Dim Y', 'dim_y')
-        dim_z = cabinet.var_input('Dim Z', 'dim_z')
         
         # Extension to be flush with door front
         front_extension = inch(0.875)  # gap + thickness
@@ -156,6 +154,7 @@ class hb_frameless_OT_update_finished_end(bpy.types.Operator):
         panel.create(f'Applied End {side.title()}')
         panel.obj['IS_APPLIED_END_' + side] = True
         panel.obj['IS_SLAB_PANEL'] = True
+        panel.obj[solver_frameless.PART_ROLE_KEY] = 'APPLIED_END_' + side
         panel.obj['MENU_ID'] = 'HOME_BUILDER_MT_applied_end_commands'
         panel.obj.parent = cabinet_obj
         panel.obj.location.z = 0
@@ -165,24 +164,17 @@ class hb_frameless_OT_update_finished_end(bpy.types.Operator):
             panel.obj.location.x = 0
             panel.set_input("Mirror Y", True)
             panel.set_input("Mirror Z", False)
-            panel.driver_input("Length", 'dim_z', [dim_z])
-            panel.driver_input("Width", f'dim_y+{front_extension}', [dim_y])
             
         elif side == 'RIGHT':
             panel.obj.rotation_euler.y = math.radians(-90)
-            panel.driver_location('x', 'dim_x', [dim_x])
             panel.set_input("Mirror Y", True)
             panel.set_input("Mirror Z", True)
-            panel.driver_input("Length", 'dim_z', [dim_z])
-            panel.driver_input("Width", f'dim_y+{front_extension}', [dim_y])
             
         elif side == 'BACK':
             panel.obj.rotation_euler.x = math.radians(90)
             panel.obj.location.y = 0
             panel.set_input("Mirror Y", False)
             panel.set_input("Mirror Z", True)
-            panel.driver_input("Length", 'dim_x', [dim_x])
-            panel.driver_input("Width", 'dim_z', [dim_z])
         
         panel.set_input("Thickness", props.default_carcass_part_thickness)
         
@@ -196,6 +188,8 @@ class hb_frameless_OT_update_finished_end(bpy.types.Operator):
             panel.set_input("Edge L1", material_rotated)
             panel.set_input("Edge L2", material_rotated)
         
+        # The panel is sized and placed by the solver.
+        solver_frameless.recalculate_cabinet(cabinet_obj)
         return panel.obj
 
     def create_5piece_panel(self, context, cabinet_obj, side):
@@ -203,22 +197,15 @@ class hb_frameless_OT_update_finished_end(bpy.types.Operator):
         props = bpy.context.scene.hb_frameless
         cabinet = hb_types.GeoNodeCage(cabinet_obj)
         
-        dim_x = cabinet.var_input('Dim X', 'dim_x')
-        dim_y = cabinet.var_input('Dim Y', 'dim_y')
-        dim_z = cabinet.var_input('Dim Z', 'dim_z')
         
-        # Get toe kick height if it exists
-        tkh_value = 0
-        try:
-            tkh_value = cabinet_obj.get('Toe Kick Height', 0)
-        except:
-            pass
         
         # Create the base panel
         panel = types_frameless.CabinetPart()
         panel.create(f'Applied Panel 5Piece {side.title()}')
         panel.obj['IS_APPLIED_END_' + side] = True
         panel.obj['IS_APPLIED_PANEL_5PIECE'] = True
+        panel.obj[solver_frameless.PART_ROLE_KEY] = 'APPLIED_END_' + side
+        panel.obj[solver_frameless.PANEL_TO_FLOOR_KEY] = bool(self.panel_to_floor)
         panel.obj['MENU_ID'] = 'HOME_BUILDER_MT_applied_end_commands'
         panel.obj.parent = cabinet_obj
         
@@ -232,38 +219,20 @@ class hb_frameless_OT_update_finished_end(bpy.types.Operator):
             panel.set_input("Mirror Y", True)
             panel.set_input("Mirror Z", False)
             
-            if self.panel_to_floor:
-                panel.obj.location.z = 0
-                panel.driver_input("Length", 'dim_z', [dim_z])
-            else:
-                panel.obj.location.z = tkh_value
-                panel.driver_input("Length", f'dim_z-{tkh_value}', [dim_z])
             
-            # Width is cabinet depth minus carcass thickness
-            panel.driver_input("Width", f'dim_y-{inch(0.75)}', [dim_y])
             
         elif side == 'RIGHT':
             panel.obj.rotation_euler.y = math.radians(-90)
-            panel.driver_location('x', 'dim_x', [dim_x])
             panel.set_input("Mirror Y", True)
             panel.set_input("Mirror Z", True)
             
-            if self.panel_to_floor:
-                panel.obj.location.z = 0
-                panel.driver_input("Length", 'dim_z', [dim_z])
-            else:
-                panel.obj.location.z = tkh_value
-                panel.driver_input("Length", f'dim_z-{tkh_value}', [dim_z])
             
-            panel.driver_input("Width", f'dim_y-{inch(0.75)}', [dim_y])
             
         elif side == 'BACK':
             panel.obj.rotation_euler.x = math.radians(90)
             panel.obj.location.y = 0
             panel.set_input("Mirror Y", False)
             panel.set_input("Mirror Z", True)
-            panel.driver_input("Length", 'dim_x', [dim_x])
-            panel.driver_input("Width", 'dim_z', [dim_z])
         
         panel.set_input("Thickness", inch(0.75))
         
@@ -307,6 +276,8 @@ class hb_frameless_OT_update_finished_end(bpy.types.Operator):
         
         door_style_mod.mod.show_viewport = True
         
+        # The panel is sized and placed by the solver.
+        solver_frameless.recalculate_cabinet(cabinet_obj)
         return panel.obj
 
     def invoke(self, context, event):

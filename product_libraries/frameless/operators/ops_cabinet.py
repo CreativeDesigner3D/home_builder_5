@@ -1,6 +1,7 @@
 import bpy
 import math
 from .. import types_frameless
+from .. import solver_frameless
 from .. import props_hb_frameless
 from . import ops_placement
 import os
@@ -221,10 +222,6 @@ class hb_frameless_OT_add_applied_end(bpy.types.Operator):
         props = bpy.context.scene.hb_frameless
         cabinet = hb_types.GeoNodeCage(cabinet_obj)
         
-        # Get cabinet dimensions
-        dim_x = cabinet.var_input('Dim X', 'dim_x')
-        dim_y = cabinet.var_input('Dim Y', 'dim_y')
-        dim_z = cabinet.var_input('Dim Z', 'dim_z')
         
         # Extension to be flush with door front:
         # door_to_cabinet_gap (0.125") + front_thickness (0.75") = 0.875"
@@ -236,6 +233,7 @@ class hb_frameless_OT_add_applied_end(bpy.types.Operator):
         panel = types_frameless.CabinetPart()
         panel.create(f'Applied End {side.title()}')
         panel.obj['IS_APPLIED_END_' + side] = True
+        panel.obj[solver_frameless.PART_ROLE_KEY] = 'APPLIED_END_' + side
         panel.obj['MENU_ID'] = 'HOME_BUILDER_MT_cabinet_commands'
         panel.obj['Finish Top'] = True
         panel.obj['Finish Bottom'] = True        
@@ -250,21 +248,12 @@ class hb_frameless_OT_add_applied_end(bpy.types.Operator):
             panel.obj.location.x = 0
             panel.set_input("Mirror Y", True)
             panel.set_input("Mirror Z", False)
-            # Full cabinet height
-            panel.driver_input("Length", 'dim_z', [dim_z])
-            # Depth extends past front to be flush with door/drawer fronts
-            panel.driver_input("Width", f'dim_y+{front_extension}', [dim_y])
             
         elif side == 'RIGHT':
             # Rotate panel to vertical orientation (side panel)
             panel.obj.rotation_euler.y = math.radians(-90)
-            panel.driver_location('x', 'dim_x', [dim_x])
             panel.set_input("Mirror Y", True)
             panel.set_input("Mirror Z", True)
-            # Full cabinet height
-            panel.driver_input("Length", 'dim_z', [dim_z])
-            # Depth extends past front to be flush with door/drawer fronts
-            panel.driver_input("Width", f'dim_y+{front_extension}', [dim_y])
             
         elif side == 'BACK':
             # Back panel - at back of cabinet
@@ -272,13 +261,11 @@ class hb_frameless_OT_add_applied_end(bpy.types.Operator):
             panel.obj.location.y = 0
             panel.set_input("Mirror Y", False)
             panel.set_input("Mirror Z", True)
-            # Width matches cabinet width
-            panel.driver_input("Length", 'dim_x', [dim_x])
-            # Height is full cabinet height
-            panel.driver_input("Width", 'dim_z', [dim_z])
         
         # Set thickness
         panel.set_input("Thickness", props.default_carcass_part_thickness)
+        # The panel is sized and placed by the solver.
+        solver_frameless.recalculate_cabinet(cabinet_obj)
         
         # Assign cabinet style material to the applied end
         style_index = cabinet_obj.get('CABINET_STYLE_INDEX', 0)

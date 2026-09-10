@@ -214,25 +214,26 @@ def delete_obj_and_children(obj):
 
 def run_calc_fix(context, obj=None, passes=2):
     """
-    Workaround for Blender bug #133392 - grandchild drivers not updating.
-    
-    This function forces all drivers in an object hierarchy to recalculate
-    by using frame change and touching driven properties.
-    
+    Bring an object hierarchy up to date after a prompt or size edit.
+
+    Cabinets and products solve their parts in Python, so the hierarchy is
+    solved first. Anything still bound to a driver under it (parts from
+    other product lines, or from an older file) is then settled the old
+    way: Blender bug #133392 leaves grandchild drivers stale, so driven
+    properties are touched and the frame is stepped to force a full
+    re-evaluation.
+
     Args:
         context: Blender context
         obj: Optional object to update (updates all descendants)
              If None, updates all objects in the scene
-        passes: Number of calculation passes (default 2 for reliability)
+        passes: Number of driver settle passes (default 2 for reliability)
     """
     if obj:
         objects_to_update = [obj] + list(obj.children_recursive)
     else:
         objects_to_update = list(context.scene.objects)
 
-    # Solved cabinets and products write their parts directly. Run them
-    # first so whatever is still driven below them settles against values
-    # that have already landed.
     try:
         from .product_libraries.frameless import solver_frameless
         solver_frameless.solve_roots(objects_to_update)
@@ -241,11 +242,19 @@ def run_calc_fix(context, obj=None, passes=2):
         traceback.print_exc()
 
     home_builder_calculators = []
+    driven = False
 
     # Collect all calculators
     for o in objects_to_update:
         for calculator in o.home_builder.calculators:
             home_builder_calculators.append(calculator)
+        if o.animation_data is not None and len(o.animation_data.drivers):
+            driven = True
+
+    if not driven:
+        # Nothing left to settle: the solved values are already in place.
+        context.view_layer.update()
+        return
 
     # Run multiple passes to ensure all dependencies resolve
     for _ in range(passes):
@@ -257,7 +266,7 @@ def run_calc_fix(context, obj=None, passes=2):
             for mod in o.modifiers:
                 if mod.type == 'NODES':
                     mod.show_viewport = mod.show_viewport
-        
+
         # Calculate all calculators
         for calculator in home_builder_calculators:
             calculator.calculate()
@@ -267,10 +276,10 @@ def run_calc_fix(context, obj=None, passes=2):
         current_frame = scene.frame_current
         scene.frame_set(current_frame + 1)
         scene.frame_set(current_frame)
-        
+
         # Update depsgraph
         context.view_layer.update()
-    
+
     # Force evaluated mesh read to ensure geometry nodes have processed
     depsgraph = context.evaluated_depsgraph_get()
     for o in objects_to_update:
