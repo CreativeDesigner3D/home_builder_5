@@ -78,11 +78,30 @@ UNDER_COUNTER_FRAME_W = inch(1.75)
 UNDER_COUNTER_INTERIOR_D = inch(3.5)
 LINER_T = inch(0.5)
 COOKTOP_T = inch(0.5)
+LIP_W = inch(0.5)             # the cooktop tray's lip, in plan
+LIP_RISE = inch(0.375)        # how far it stands above the cooktop
+LIP_PROUD = inch(0.5)         # how far the front edge rolls out
+SMALL_OVEN_EVEN_AT = inch(30.0)   # both ovens this wide: split evenly
 GAP = inch(0.125)
 HANDLE_SECTION = inch(1.125)
 HANDLE_STANDOFF = inch(1.25)
 STANDOFF_SECTION = inch(0.75)
 BACKGUARD_T = inch(1.0)
+# Gas grates: continuous castings, one per column of burners, running
+# the cooktop's depth. Side runners stand on the glass; the rails and
+# the arms out to each burner's ring are lifted off it.
+GRATE_RAIL = inch(0.5)
+GRATE_GAP = inch(0.15)        # between neighbouring grates
+GRATE_RING_R = inch(2.9)
+GRATE_LIFT = inch(0.35)
+GRATE_BAR_H = inch(0.45)
+GRATE_BACK = 0.12             # fractions of the cooktop depth
+GRATE_FRONT = 0.90
+KNOB_BEZEL_R = inch(1.125)
+DISPLAY_W = inch(5.0)
+DISPLAY_H = inch(1.5)
+KNOB_R = inch(0.875)
+KNOB_DEPTH = inch(1.25)
 
 
 # ---------------------------------------------------------------------------
@@ -169,7 +188,8 @@ _RANGE_DEFAULTS = dict(_COMMON_DEFAULTS, **{
     'control_height': inch(3.0),
     'knob_count': 5,
     'backguard_height': 0.0,
-    'drawer_height': 0.0,
+    'drawer_height': inch(6.0),
+    'small_oven_width': inch(18.0),
 })
 
 _DISHWASHER_DEFAULTS = dict(_COMMON_DEFAULTS, **{
@@ -409,6 +429,45 @@ def _metal_material():
     return _material('Appliance Handle Metal', (0.66, 0.67, 0.69), 1.0, 0.28)
 
 
+def _iron_material():
+    """Cast-iron grates: black and dead flat."""
+    return _material('Appliance Cast Iron', (0.02, 0.02, 0.022), 0.0, 0.85)
+
+
+def _brass_material():
+    """Gas burner heads and caps."""
+    return _material('Appliance Brass', (0.62, 0.46, 0.22), 1.0, 0.40)
+
+
+def _coil_material():
+    """Electric elements: dark metal, not chrome."""
+    return _material('Appliance Coil', (0.10, 0.10, 0.10), 0.6, 0.55)
+
+
+def _print_material():
+    """The rings printed on induction glass."""
+    return _material('Appliance Print', (0.78, 0.78, 0.78), 0.0, 0.5)
+
+
+def _display_material():
+    """The lit digits of a control panel readout. Emissive for renders,
+    and a bright solid-mode colour so it reads in the workbench too."""
+    name = 'Appliance Display'
+    mat = bpy.data.materials.get(name)
+    if mat is not None:
+        return mat
+    color = (0.25, 0.65, 1.0)
+    mat = _material(name, color, 0.0, 0.4)
+    bsdf = next((n for n in mat.node_tree.nodes
+                 if n.type == 'BSDF_PRINCIPLED'), None)
+    if bsdf is not None:
+        if 'Emission Color' in bsdf.inputs:
+            bsdf.inputs['Emission Color'].default_value = (*color, 1.0)
+        if 'Emission Strength' in bsdf.inputs:
+            bsdf.inputs['Emission Strength'].default_value = 4.0
+    return mat
+
+
 def _apply_material(part, mat):
     """Push one material into every surface and edge slot of a cutpart.
     Wrapped because the slots are geometry-node inputs, and a node group
@@ -553,14 +612,21 @@ def _side(cg, name, x, y, z, height, depth, thickness, mat=None,
     return part
 
 
-def _mesh_child(cg, name, verts, faces, mat=None):
+def _mesh_child(cg, name, verts, faces, mat=None, extra_mats=(),
+                face_mats=None, smooth_faces=()):
     """A round detail as a plain mesh. Fixed shape -- only its position
-    is driven."""
+    is driven. ``face_mats`` maps a face index to a slot in
+    (mat, *extra_mats); ``smooth_faces`` are shaded smooth."""
     mesh = bpy.data.meshes.new(name)
     mesh.from_pydata(verts, [], faces)
-    if mat is not None:
-        mesh.materials.append(mat)
+    for slot in (mat, *extra_mats):
+        if slot is not None:
+            mesh.materials.append(slot)
     mesh.validate()
+    for index, slot in (face_mats or {}).items():
+        mesh.polygons[index].material_index = slot
+    for index in smooth_faces:
+        mesh.polygons[index].use_smooth = True
     mesh.update()
     obj = bpy.data.objects.new(name, mesh)
     obj.parent = cg.obj
@@ -573,21 +639,257 @@ def _mesh_child(cg, name, verts, faces, mat=None):
     return obj
 
 
-def _disc(cg, name, radius, height, mat=None, segments=16):
-    """Capped cylinder standing on the object origin, built along +Z."""
-    verts = []
-    faces = []
-    for level in (0.0, height):
+def _revolve(verts, faces, profile, segments=32, caps=True):
+    """Append a surface of revolution about +Z: each (r, z) point of the
+    profile becomes a ring, consecutive rings a band of quads, and the
+    two end rings flat caps. Returns (side faces, cap faces) as index
+    lists so the caller can shade and paint them. A closed profile (last
+    point repeating the first) wants ``caps=False``."""
+    base = len(verts)
+    for radius, z in profile:
         for i in range(segments):
             angle = 2.0 * math.pi * i / segments
             verts.append((radius * math.cos(angle),
-                          radius * math.sin(angle), level))
+                          radius * math.sin(angle), z))
+    side = []
+    for ring in range(len(profile) - 1):
+        r0 = base + ring * segments
+        r1 = r0 + segments
+        for i in range(segments):
+            j = (i + 1) % segments
+            side.append(len(faces))
+            faces.append((r0 + i, r0 + j, r1 + j, r1 + i))
+    if not caps:
+        return side, []
+    last = base + (len(profile) - 1) * segments
+    cap_faces = [len(faces), len(faces) + 1]
+    faces.append(tuple(reversed(range(base, base + segments))))
+    faces.append(tuple(range(last, last + segments)))
+    return side, cap_faces
+
+
+def _torus(verts, faces, ring_r, tube_r, z, segments=32, profile=10):
+    """Append a torus lying flat at height z. Returns its face indices."""
+    base = len(verts)
     for i in range(segments):
-        j = (i + 1) % segments
-        faces.append((i, j, j + segments, i + segments))
-    faces.append(tuple(range(segments)))
-    faces.append(tuple(reversed(range(segments, 2 * segments))))
-    return _mesh_child(cg, name, verts, faces, mat)
+        a = 2.0 * math.pi * i / segments
+        for j in range(profile):
+            b = 2.0 * math.pi * j / profile
+            r = ring_r + tube_r * math.cos(b)
+            verts.append((r * math.cos(a), r * math.sin(a),
+                          z + tube_r * math.sin(b)))
+    start = len(faces)
+    for i in range(segments):
+        i2 = (i + 1) % segments
+        for j in range(profile):
+            j2 = (j + 1) % profile
+            faces.append((base + i * profile + j, base + i2 * profile + j,
+                          base + i2 * profile + j2, base + i * profile + j2))
+    return list(range(start, len(faces)))
+
+
+def _box(verts, faces, x0, x1, y0, y1, z0, z1):
+    """Append an axis-aligned box. Returns its face indices."""
+    b = len(verts)
+    verts.extend([(x0, y0, z0), (x1, y0, z0), (x1, y1, z0), (x0, y1, z0),
+                  (x0, y0, z1), (x1, y0, z1), (x1, y1, z1), (x0, y1, z1)])
+    start = len(faces)
+    for f in ((0, 3, 2, 1), (4, 5, 6, 7), (0, 1, 5, 4),
+              (1, 2, 6, 5), (2, 3, 7, 6), (3, 0, 4, 7)):
+        faces.append(tuple(b + k for k in f))
+    return list(range(start, len(faces)))
+
+
+def _display(cg, name, dark, lit):
+    """The control panel readout: a dark glass window a hair proud of
+    the panel, with four lit digit blocks and a colon on it -- a clock
+    at any distance the model is seen from. Built along +Z from the
+    panel face, like a knob."""
+    verts, faces = [], []
+    lit_faces = set()
+    hw, hh = DISPLAY_W / 2.0, DISPLAY_H / 2.0
+    glass_t = inch(0.0625)
+    _box(verts, faces, -hw, hw, -hh, hh, 0.0, glass_t)
+    dw, dh, gap, colon = inch(0.5), inch(0.8), inch(0.18), inch(0.18)
+    top = glass_t + inch(0.02)
+    for x in (-colon - 2.0 * dw - gap, -colon - dw, colon, colon + dw + gap):
+        lit_faces.update(_box(verts, faces, x, x + dw, -dh / 2.0, dh / 2.0,
+                              glass_t, top))
+    for y in (-inch(0.22), inch(0.12)):
+        lit_faces.update(_box(verts, faces, -inch(0.05), inch(0.05),
+                              y, y + inch(0.1), glass_t, top))
+    return _mesh_child(cg, name, verts, faces, dark, extra_mats=(lit,),
+                       face_mats={i: 1 for i in lit_faces})
+
+
+def _knob(cg, name, metal, dark):
+    """A control knob, built along +Z from the panel face: a stainless
+    bezel ring on the panel, a dark neck, a tapered body with a
+    chamfered front rim, and a dark pointer bar on the face. One mesh,
+    two materials."""
+    verts, faces = [], []
+    smooth, dark_faces = set(), set()
+    bezel_t = inch(0.0625)
+    neck_end = inch(0.4)
+    side, _caps = _revolve(verts, faces,
+                           [(KNOB_BEZEL_R, 0.0), (KNOB_BEZEL_R, bezel_t)])
+    smooth.update(side)
+    side, caps = _revolve(verts, faces,
+                          [(inch(0.5), bezel_t), (inch(0.5), neck_end)])
+    smooth.update(side)
+    dark_faces.update(side + caps)
+    side, _caps = _revolve(verts, faces,
+                           [(KNOB_R, neck_end),
+                            (KNOB_R, neck_end + inch(0.15)),
+                            (KNOB_R * 0.92, KNOB_DEPTH - inch(0.1)),
+                            (KNOB_R * 0.8, KNOB_DEPTH)])
+    smooth.update(side)
+    # Pointer: up the face from just off centre, so the knob reads as
+    # turned to OFF. Local +Y is up once the knob is stood up.
+    dark_faces.update(_box(verts, faces, -inch(0.06), inch(0.06),
+                           inch(0.12), KNOB_R * 0.7,
+                           KNOB_DEPTH, KNOB_DEPTH + inch(0.07)))
+    return _mesh_child(cg, name, verts, faces, metal, extra_mats=(dark,),
+                       face_mats={i: 1 for i in dark_faces},
+                       smooth_faces=smooth)
+
+
+def _gas_burner(cg, name, brass, metal):
+    """A sealed gas burner, built up from the cooktop: a stainless base
+    dish and a brass head and cap, topping out under the grate so a pan
+    would sit on iron. One mesh, two materials."""
+    verts, faces = [], []
+    smooth, mats = set(), {}
+    side, caps = _revolve(verts, faces,
+                          [(inch(2.7), 0.0), (inch(2.5), inch(0.25))])
+    smooth.update(side)
+    mats.update({i: 1 for i in side + caps})
+    side, caps = _revolve(verts, faces,
+                          [(inch(1.7), inch(0.25)), (inch(1.7), inch(0.6))])
+    smooth.update(side)
+    side, caps = _revolve(verts, faces,
+                          [(inch(1.35), inch(0.6)), (inch(1.35), inch(0.68)),
+                           (inch(1.1), inch(0.75))])
+    smooth.update(side)
+    return _mesh_child(cg, name, verts, faces, brass, extra_mats=(metal,),
+                       face_mats=mats, smooth_faces=smooth)
+
+
+def _grate_ring(cg, name, iron):
+    """The cast ring around a gas burner, lifted like the rails. A closed
+    square profile revolved; only its walls shade smooth."""
+    verts, faces = [], []
+    r0, r1 = GRATE_RING_R - GRATE_RAIL, GRATE_RING_R
+    z0, z1 = GRATE_LIFT, GRATE_LIFT + GRATE_BAR_H
+    side, _caps = _revolve(verts, faces,
+                           [(r0, z0), (r1, z0), (r1, z1), (r0, z1), (r0, z0)],
+                           caps=False)
+    n = len(side) // 4
+    return _mesh_child(cg, name, verts, faces, iron,
+                       smooth_faces=side[n:2 * n] + side[3 * n:])
+
+
+# Grate columns per burner count, as (x0, x1) fractions of the width.
+_GRATE_COLUMNS = {
+    4: ((0.02, 0.50), (0.50, 0.98)),
+    5: ((0.02, 0.36), (0.36, 0.64), (0.64, 0.98)),
+    6: ((0.02, 0.345), (0.345, 0.655), (0.655, 0.98)),
+}
+
+
+def _build_gas_grates(cg, layout, iron):
+    """One continuous grate per column of burners. The frame is driven
+    slabs, so it stretches with the range; each burner inside it gets a
+    fixed ring joined to the frame by driven arms -- out to the runners
+    either side, and front and back to the rails or, where two burners
+    share a column, to each other. Arm lengths clamp at zero so a
+    narrow range cannot fold one inside out."""
+    columns = _GRATE_COLUMNS.get(len(layout), _GRATE_COLUMNS[5])
+    rail, gap, lift, bar_h = GRATE_RAIL, GRATE_GAP, GRATE_LIFT, GRATE_BAR_H
+    reach = rail + GRATE_RING_R - inch(0.1)   # arm end tucks into the ring
+    z_top = 'dim_z + %f' % lift
+    y_back = '-dim_y * %f' % GRATE_BACK
+    depth = 'dim_y * %f' % (GRATE_FRONT - GRATE_BACK)
+    for c, (c0, c1) in enumerate(columns):
+        tag = "Grate %d" % (c + 1)
+        x0 = 'dim_x * %f + %f' % (c0, gap)
+        width = 'dim_x * %f - %f' % (c1 - c0, 2.0 * gap)
+        _flat(cg, tag + " Left Runner", x0, y_back, 'dim_z', rail, depth,
+              lift + bar_h, iron)
+        _flat(cg, tag + " Right Runner", 'dim_x * %f - %f' % (c1, gap + rail),
+              y_back, 'dim_z', rail, depth, lift + bar_h, iron)
+        _flat(cg, tag + " Back Rail", x0, y_back, z_top, width, rail, bar_h,
+              iron)
+        _flat(cg, tag + " Front Rail", x0,
+              '-dim_y * %f + %f' % (GRATE_FRONT, rail), z_top, width, rail,
+              bar_h, iron)
+        members = sorted((fy, fx, i) for i, (fx, fy) in enumerate(layout)
+                         if c0 <= fx < c1)
+        for k, (fy, fx, i) in enumerate(members):
+            name = "Burner %d" % (i + 1)
+            ring = _CageWrap(_grate_ring(cg, name + " Ring", iron))
+            ring.driver_location('x', 'dim_x * %f' % fx, [cg.dim_x])
+            ring.driver_location('y', '-dim_y * %f' % fy, [cg.dim_y])
+            ring.driver_location('z', 'dim_z', [cg.dim_z])
+            _flat(cg, name + " Left Arm", '%s + %f' % (x0, rail),
+                  '-dim_y * %f + %f' % (fy, rail / 2.0), z_top,
+                  'max(dim_x * %f - %f, 0.0)' % (fx - c0, gap + reach),
+                  rail, bar_h, iron)
+            _flat(cg, name + " Right Arm",
+                  'dim_x * %f + %f' % (fx, GRATE_RING_R - inch(0.1)),
+                  '-dim_y * %f + %f' % (fy, rail / 2.0), z_top,
+                  'max(dim_x * %f - %f, 0.0)' % (c1 - fx, gap + reach),
+                  rail, bar_h, iron)
+            if k == 0:
+                _flat(cg, name + " Back Arm",
+                      'dim_x * %f - %f' % (fx, rail / 2.0),
+                      '-dim_y * %f - %f' % (GRATE_BACK, rail), z_top, rail,
+                      'max(dim_y * %f - %f, 0.0)' % (fy - GRATE_BACK, reach),
+                      bar_h, iron)
+            if k == len(members) - 1:
+                _flat(cg, name + " Front Arm",
+                      'dim_x * %f - %f' % (fx, rail / 2.0),
+                      '-dim_y * %f - %f' % (fy, GRATE_RING_R - inch(0.1)),
+                      z_top, rail,
+                      'max(dim_y * %f - %f, 0.0)' % (GRATE_FRONT - fy, reach),
+                      bar_h, iron)
+            else:
+                fy_next = members[k + 1][0]
+                _flat(cg, name + " Link Arm",
+                      'dim_x * %f - %f' % (fx, rail / 2.0),
+                      '-dim_y * %f - %f' % (fy, GRATE_RING_R - inch(0.1)),
+                      z_top, rail,
+                      'max(dim_y * %f - %f, 0.0)'
+                      % (fy_next - fy, 2.0 * (GRATE_RING_R - inch(0.1))),
+                      bar_h, iron)
+
+
+def _electric_burner(cg, name, coil, dark):
+    """A coil element in its drip bowl. Concentric rings read as the
+    spiral from any distance the model is seen at."""
+    verts, faces = [], []
+    smooth, mats = set(), {}
+    side, caps = _revolve(verts, faces,
+                          [(inch(3.7), 0.0), (inch(3.7), inch(0.1)),
+                           (inch(3.2), inch(0.2))])
+    smooth.update(side)
+    mats.update({i: 1 for i in side + caps})
+    for ring in (1.0, 1.7, 2.4, 3.05):
+        smooth.update(_torus(verts, faces, inch(ring), inch(0.2), inch(0.35)))
+    return _mesh_child(cg, name, verts, faces, coil, extra_mats=(dark,),
+                       face_mats=mats, smooth_faces=smooth)
+
+
+def _induction_mark(cg, name, print_mat):
+    """The ring printed on induction glass for one element, with a small
+    centre ring, sitting a hair proud so it is not lost in the glass."""
+    verts, faces = [], []
+    h = inch(0.01)
+    for r0, r1 in ((inch(3.4), inch(3.6)), (inch(0.9), inch(1.05))):
+        _revolve(verts, faces,
+                 [(r0, 0.0), (r1, 0.0), (r1, h), (r0, h), (r0, 0.0)],
+                 caps=False)
+    return _mesh_child(cg, name, verts, faces, print_mat)
 
 
 def _bar_handle(cg, name, opts, mat, x, z, length, vertical):
@@ -814,62 +1116,85 @@ def _build_refrigerator(cage_obj, opts):
 # Burner centers as fractions of (dim_x, dim_y).
 _BURNER_LAYOUTS = {
     4: ((0.27, 0.30), (0.73, 0.30), (0.27, 0.72), (0.73, 0.72)),
-    5: ((0.24, 0.28), (0.76, 0.28), (0.50, 0.50),
-        (0.24, 0.75), (0.76, 0.75)),
+    5: ((0.20, 0.28), (0.80, 0.28), (0.50, 0.50),
+        (0.20, 0.75), (0.80, 0.75)),
     6: ((0.19, 0.28), (0.50, 0.28), (0.81, 0.28),
         (0.19, 0.75), (0.50, 0.75), (0.81, 0.75)),
 }
-
-# (radius, height) discs stacked per burner style.
-_BURNER_SHAPES = {
-    'GAS': ((inch(4.0), inch(0.55)), (inch(1.6), inch(0.85))),
-    'ELECTRIC': ((inch(3.4), inch(0.30)),),
-    'INDUCTION': ((inch(3.6), inch(0.02)),),
-}
-
 
 def _build_burners(cg, opts, dark):
     style = opts.get('burner_style', 'GAS')
     count = int(opts.get('burner_count', 5))
     layout = _BURNER_LAYOUTS.get(count, _BURNER_LAYOUTS[5])
-    shapes = _BURNER_SHAPES.get(style, _BURNER_SHAPES['GAS'])
+    if style == 'ELECTRIC':
+        coil = _coil_material()
+        make = lambda name: _electric_burner(cg, name, coil, dark)
+    elif style == 'INDUCTION':
+        print_mat = _print_material()
+        make = lambda name: _induction_mark(cg, name, print_mat)
+    else:
+        brass, metal = _brass_material(), _metal_material()
+        make = lambda name: _gas_burner(cg, name, brass, metal)
     for i, (fx, fy) in enumerate(layout):
-        for j, (radius, height) in enumerate(shapes):
-            name = ("Burner %d" % (i + 1) if j == 0
-                    else "Burner %d Cap" % (i + 1))
-            wrap = _CageWrap(_disc(cg, name, radius, height, dark))
-            # Fixed shape, driven position: burners spread with the
-            # cooktop but never grow.
-            wrap.driver_location('x', 'dim_x * %f' % fx, [cg.dim_x])
-            wrap.driver_location('y', '-dim_y * %f' % fy, [cg.dim_y])
-            wrap.driver_location('z', 'dim_z', [cg.dim_z])
+        wrap = _CageWrap(make("Burner %d" % (i + 1)))
+        # Fixed shape, driven position: burners spread with the cooktop
+        # but never grow.
+        wrap.driver_location('x', 'dim_x * %f' % fx, [cg.dim_x])
+        wrap.driver_location('y', '-dim_y * %f' % fy, [cg.dim_y])
+        wrap.driver_location('z', 'dim_z', [cg.dim_z])
+    if style not in ('ELECTRIC', 'INDUCTION'):
+        _build_gas_grates(cg, layout, _iron_material())
 
 
-def _build_knobs(cg, opts, metal, control_h):
+def _build_knobs(cg, opts, metal, dark, control_h):
     count = int(opts.get('knob_count', 0))
     if count <= 0 or control_h <= 0.0:
         return
-    for i in range(count):
-        frac = (i + 0.5) / count
-        obj = _disc(cg, "Range Knob %d" % (i + 1), inch(0.75), inch(0.9),
-                    metal)
-        # The disc builds along +Z; stand it up so it points forward.
-        obj.rotation_euler.x = math.radians(90)
-        wrap = _CageWrap(obj)
-        wrap.driver_location('x', 'dim_x * %f' % frac, [cg.dim_x])
-        wrap.driver_location('y', '-dim_y', [cg.dim_y])
-        wrap.driver_location(
-            'z', 'dim_z - %f' % (COOKTOP_T + control_h * 0.5), [cg.dim_z])
+    # Two groups, either side of the display: the burner knobs to the
+    # left, the oven's to the right. Each group runs from a margin at
+    # the panel's end in to a fixed clearance from the display, so the
+    # knobs spread with the range while the display stays put.
+    margin = 0.07
+    clear = DISPLAY_W / 2.0 + inch(1.5)
+    left = (count + 1) // 2
+    number = 0
+    for size, mirrored in ((left, False), (count - left, True)):
+        for k in range(size):
+            t = (k + 0.5) / size
+            frac = margin + t * (0.5 - margin)
+            if mirrored:
+                x = 'dim_x * %f + %f' % (1.0 - frac, t * clear)
+            else:
+                x = 'dim_x * %f - %f' % (frac, t * clear)
+            number += 1
+            obj = _knob(cg, "Range Knob %d" % number, metal, dark)
+            # The knob builds along +Z; stand it up so it points forward.
+            obj.rotation_euler.x = math.radians(90)
+            wrap = _CageWrap(obj)
+            wrap.driver_location('x', x, [cg.dim_x])
+            wrap.driver_location('y', '-dim_y', [cg.dim_y])
+            wrap.driver_location(
+                'z', 'dim_z - %f' % (COOKTOP_T + control_h * 0.5),
+                [cg.dim_z])
+    obj = _display(cg, "Range Display", dark, _display_material())
+    obj.rotation_euler.x = math.radians(90)
+    wrap = _CageWrap(obj)
+    wrap.driver_location('x', 'dim_x * 0.5', [cg.dim_x])
+    wrap.driver_location('y', '-dim_y', [cg.dim_y])
+    wrap.driver_location(
+        'z', 'dim_z - %f' % (COOKTOP_T + control_h * 0.5), [cg.dim_z])
 
 
-def _oven_window(cg, name, z, height, dark):
-    """The window in an oven door: a dark panel just proud of the door
-    face, inset from its edges."""
-    inset_x = inch(3.0)
-    inset_z = inch(3.0)
-    _front(cg, "%s Window" % name, inset_x, _add(z, inset_z),
-           'dim_x - %f' % (2.0 * inset_x), _sub(height, 2.0 * inset_z),
-           inch(0.125), dark, proud=True)
+def _oven_window(cg, name, x, width, z, height, dark):
+    """The window in an oven door: a dark glass band the full width of
+    the door, barely proud of its face. It stops short of the top edge
+    to leave the handle its own band of steel, and of the bottom edge
+    for the door's lower rail."""
+    inset_top = inch(4.0)
+    inset_bottom = inch(3.0)
+    _front(cg, "%s Window" % name, x, _add(z, inset_bottom), width,
+           _sub(height, inset_top + inset_bottom), inch(0.0625), dark,
+           proud=True)
 
 
 def _build_range(cage_obj, opts):
@@ -885,23 +1210,37 @@ def _build_range(cage_obj, opts):
     # Body, capped by the cooktop.
     _flat(cg, "Range Case", 0.0, 0.0, 0.0, 'dim_x',
           'dim_y - %f' % door_t, 'dim_z - %f' % COOKTOP_T, mat)
-    _flat(cg, "Cooktop", 0.0, 0.0, 'dim_z', 'dim_x', 'dim_y', COOKTOP_T,
-          dark if opts.get('burner_style') == 'INDUCTION' else mat,
+    _flat(cg, "Cooktop", 0.0, 0.0, 'dim_z', 'dim_x', 'dim_y - %f' % LIP_W,
+          COOKTOP_T, dark if opts.get('burner_style') == 'INDUCTION' else mat,
           down=True)
+    # The cooktop is a tray: a lip stands up around its sides and back,
+    # and its front edge rolls out proud of the panel below. The back
+    # lip gives way to a backguard where there is one.
+    _flat(cg, "Cooktop Front Lip", 0.0, '-dim_y + %f' % LIP_W,
+          'dim_z - %f' % COOKTOP_T, 'dim_x', LIP_W + LIP_PROUD,
+          COOKTOP_T + LIP_RISE, mat)
+    _flat(cg, "Cooktop Left Lip", 0.0, 0.0, 'dim_z', LIP_W,
+          'dim_y - %f' % LIP_W, LIP_RISE, mat)
+    _flat(cg, "Cooktop Right Lip", 'dim_x - %f' % LIP_W, 0.0, 'dim_z', LIP_W,
+          'dim_y - %f' % LIP_W, LIP_RISE, mat)
+    if backguard_h <= 0.0:
+        _flat(cg, "Cooktop Back Lip", LIP_W, 0.0, 'dim_z',
+              'dim_x - %f' % (2.0 * LIP_W), LIP_W, LIP_RISE, mat)
 
-    # Control strip across the front, under the cooktop.
+    # Control panel across the front, under the cooktop, in the body
+    # finish: the knobs and the display are what mark it out.
     if control_h > 0.0:
         _front(cg, "Range Controls", 0.0,
                'dim_z - %f' % (COOKTOP_T + control_h), 'dim_x', control_h,
-               door_t, dark)
-    _build_knobs(cg, opts, metal, control_h)
+               door_t, mat)
+    _build_knobs(cg, opts, metal, dark, control_h)
 
-    # Storage / warming drawer at the bottom, when there is one.
+    # Storage / warming drawer at the bottom, when there is one. It has
+    # no handle: on a real range the drawer front is a plain panel that
+    # pulls on its top edge, and a bar there fights the oven handle.
     oven_z = 0.0
     if drawer_h > 0.0:
         _front(cg, "Range Drawer", 0.0, 0.0, 'dim_x', drawer_h, door_t, mat)
-        _bar_handle(cg, "Range Drawer Handle", opts, metal, inch(4.0),
-                    drawer_h - inch(2.5), 'dim_x - %f' % inch(8.0), False)
         oven_z = drawer_h + GAP
 
     # Oven doors fill what is left between the drawer and the controls.
@@ -909,20 +1248,38 @@ def _build_range(cage_obj, opts):
     span = 'dim_z - %f' % (COOKTOP_T + control_h + oven_z + GAP)
     if doors == 1:
         _front(cg, "Oven Door", 0.0, oven_z, 'dim_x', span, door_t, mat)
-        _oven_window(cg, "Oven Door", oven_z, span, dark)
+        _oven_window(cg, "Oven Door", 0.0, 'dim_x', oven_z, span, dark)
         _bar_handle(cg, "Oven Handle", opts, metal, inch(2.0),
                     _sub(_add(oven_z, span), inch(3.0)),
                     'dim_x - %f' % inch(4.0), False)
     else:
-        each = '((%s) - %f) * 0.5' % (span, GAP)
-        for i in range(doors):
-            z = oven_z if i == 0 else _add(_add(oven_z, each), GAP)
+        # A double oven sits side by side, each door the full height.
+        # The small oven is on the right at its set width and the large
+        # one takes the rest, unless the range is wide enough for two
+        # full-size ovens, when they split evenly. A width of 0 always
+        # splits evenly. Decided in the driver, so a width change
+        # re-decides it without a rebuild.
+        small = float(opts.get('small_oven_width', inch(18.0)))
+        even = '(dim_x - %f) * 0.5' % GAP
+        if small > 0.0:
+            # A nominal 60 counts: the gap comes out of the ovens.
+            full_pair = 2.0 * SMALL_OVEN_EVEN_AT - inch(0.01)
+            large = '(dim_x - %f) if dim_x < %f else (%s)' % (
+                small + GAP, full_pair, even)
+            widths = (large, '%f if dim_x < %f else (%s)' % (
+                small, full_pair, even))
+        else:
+            widths = (even, even)
+        x = 0.0
+        for i, width in enumerate(widths[:doors]):
             name = "Oven Door %d" % (i + 1)
-            _front(cg, name, 0.0, z, 'dim_x', each, door_t, mat)
-            _oven_window(cg, name, z, each, dark)
-            _bar_handle(cg, "%s Handle" % name, opts, metal, inch(2.0),
-                        _sub(_add(z, each), inch(3.0)),
-                        'dim_x - %f' % inch(4.0), False)
+            _front(cg, name, x, oven_z, width, span, door_t, mat)
+            _oven_window(cg, name, x, width, oven_z, span, dark)
+            _bar_handle(cg, "%s Handle" % name, opts, metal,
+                        _add(x, inch(2.0)),
+                        _sub(_add(oven_z, span), inch(3.0)),
+                        _sub(width, inch(4.0)), False)
+            x = _add(_add(x, width), GAP)
 
     if backguard_h > 0.0:
         _front(cg, "Range Backguard", 0.0, 'dim_z', 'dim_x', backguard_h,
@@ -1219,7 +1576,8 @@ class HOME_BUILDER_OT_appliance_prompts(bpy.types.Operator):
     burner_count: IntProperty(name="Burners", min=4, max=6)  # type: ignore
     oven_doors: IntProperty(
         name="Oven Doors", min=1, max=2,
-        description="1 for a single oven, 2 for a stacked double")  # type: ignore
+        description="1 for a single oven, 2 for a double with the "
+                    "ovens side by side")  # type: ignore
     control_height: FloatProperty(
         name="Control Panel", unit='LENGTH', precision=5, min=0.0,
         description="Height of the control strip below the cooktop")  # type: ignore
@@ -1235,6 +1593,11 @@ class HOME_BUILDER_OT_appliance_prompts(bpy.types.Operator):
         name="Bottom Drawer", unit='LENGTH', precision=5, min=0.0,
         description="Storage or warming drawer below the oven, 0 for "
                     "none")  # type: ignore
+    small_oven_width: FloatProperty(
+        name="Small Oven", unit='LENGTH', precision=5, min=0.0,
+        description="Width of the smaller oven of a double, on the "
+                    "right. 0 splits the two evenly, as does a range "
+                    "wide enough for two full-size ovens")  # type: ignore
 
     appliance = None
 
@@ -1382,6 +1745,8 @@ class HOME_BUILDER_OT_appliance_prompts(bpy.types.Operator):
             col.prop(self, 'burner_count')
             col.separator()
             col.prop(self, 'oven_doors')
+            if self.oven_doors > 1:
+                col.prop(self, 'small_oven_width')
             col.prop(self, 'drawer_height')
             col.separator()
             col.prop(self, 'control_height')
