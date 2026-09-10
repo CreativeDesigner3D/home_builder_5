@@ -363,8 +363,12 @@ class HOME_BUILDER_MT_appliance_commands(bpy.types.Menu):
         layout = self.layout
         obj = context.active_object
         if obj is not None and obj.get('APPLIANCE_TYPE') == 'HOOD':
+            # A range hood can be a wood hood or a generic stainless
+            # model; each dialog takes the other down when it builds.
             layout.operator("home_builder.wood_hood_prompts",
                             text="Wood Hood Prompts", icon='MOD_BEVEL')
+            layout.operator("home_builder.appliance_prompts",
+                            text="Appliance Prompts")
         elif obj is not None and appliance_geo.supports(obj):
             # Size and 3D model in one dialog for the types that have a
             # model; the others keep the size-only prompts.

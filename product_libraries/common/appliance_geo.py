@@ -59,7 +59,8 @@ from ...units import inch
 GEO_OPTS_PROP = "APPLIANCE_GEO_OPTS"
 GEO_CHILD_FLAG = "IS_APPLIANCE_GEO"
 
-SUPPORTED_TYPES = {'REFRIGERATOR', 'RANGE', 'DISHWASHER', 'UNDER_COUNTER'}
+SUPPORTED_TYPES = {'REFRIGERATOR', 'RANGE', 'DISHWASHER', 'UNDER_COUNTER',
+                   'HOOD'}
 
 # Appliances that can wear cabinet door panels instead of their own
 # front. Matches what the appliance-panels product accepts.
@@ -84,6 +85,10 @@ LIP_W = inch(0.5)             # the cooktop tray's lip, in plan
 LIP_RISE = inch(0.375)        # how far it stands above the cooktop
 LIP_PROUD = inch(0.5)         # how far the front edge rolls out
 SMALL_OVEN_EVEN_AT = inch(30.0)   # both ovens this wide: split evenly
+HOOD_PANEL_T = inch(1.0)          # a box canopy's walls
+HOOD_LIP_H = inch(2.5)            # the vertical band under a pyramid canopy
+HOOD_DUCT_W = inch(12.0)          # a chimney's duct cover, in plan
+HOOD_DUCT_D = inch(10.0)
 GAP = inch(0.125)
 HANDLE_SECTION = inch(1.125)
 HANDLE_STANDOFF = inch(1.25)
@@ -132,6 +137,16 @@ FINISH_ITEMS = [
 HANDLE_ITEMS = [
     ('BAR', "Bar", "Bar handle standing off the door on two standoffs"),
     ('NONE', "None", "No handles -- integrated or push to open"),
+]
+
+HOOD_STYLE_ITEMS = [
+    ('PRO', "Professional", "Box canopy under a full-width duct cover"),
+    ('CHIMNEY', "Wall Chimney", "Pyramid canopy against the wall under a "
+                                "narrow duct cover"),
+    ('ISLAND', "Island", "Pyramid canopy hung from the ceiling, finished "
+                         "on all four sides"),
+    ('UNDER_CABINET', "Under Cabinet", "Slim canopy under a wall cabinet, "
+                                       "no duct cover"),
 ]
 
 GRILLE_POSITION_ITEMS = [
@@ -215,7 +230,23 @@ _UNDER_COUNTER_DEFAULTS = dict(_COMMON_DEFAULTS, **{
     'kick_height': inch(3.5),
 })
 
+_HOOD_DEFAULTS = dict(_COMMON_DEFAULTS, **{
+    'hood_style': 'CHIMNEY',
+    'canopy_height': 0.0,       # 0: the style's own height
+    'baffles': True,
+    'lamps': True,
+})
+
+# Canopy heights per style, for a canopy_height of 0.
+_HOOD_CANOPY_H = {
+    'PRO': inch(18.0),
+    'CHIMNEY': inch(10.0),
+    'ISLAND': inch(10.0),
+    'UNDER_CABINET': inch(6.0),
+}
+
 _DEFAULTS_BY_TYPE = {
+    'HOOD': _HOOD_DEFAULTS,
     'REFRIGERATOR': _FRIDGE_DEFAULTS,
     'RANGE': _RANGE_DEFAULTS,
     'DISHWASHER': _DISHWASHER_DEFAULTS,
@@ -1250,6 +1281,189 @@ def _build_refrigerator(cage_obj, opts):
 
 
 # ---------------------------------------------------------------------------
+# Range hood
+#
+# A generic stainless hood on the range hood cage, as an alternative to a
+# wood hood. The cage runs from the hood's mounting height to the
+# ceiling; the canopy takes the bottom of it and a duct cover the rest.
+# The pyramid canopy and the filter are cut to the cage at build time,
+# so the prompts rebuild them on a size change (the driven parts follow
+# on their own).
+# ---------------------------------------------------------------------------
+
+def _cage_dims(cg):
+    wrap = _CageWrap(cg.obj)
+    return (wrap.get_input('Dim X'), wrap.get_input('Dim Y'),
+            wrap.get_input('Dim Z'))
+
+
+def _hood_lamp(cg, name, lit, metal):
+    """A downlight in a canopy's underside: a stainless trim ring around
+    a lit lens. Built up from its origin; the caller turns it over."""
+    verts, faces = [], []
+    smooth, mats = set(), {}
+    side, _caps = _revolve(verts, faces,
+                           [(inch(1.5), 0.0), (inch(1.5), inch(0.2))])
+    smooth.update(side)
+    side, caps = _revolve(verts, faces,
+                          [(inch(1.1), inch(0.2)), (inch(1.1), inch(0.25))])
+    smooth.update(side)
+    mats.update({i: 1 for i in side + caps})
+    return _mesh_child(cg, name, verts, faces, metal, extra_mats=(lit,),
+                       face_mats=mats, smooth_faces=smooth)
+
+
+def _hood_filter(cg, name, w, d, metal, dark, baffles):
+    """The filter in a box canopy's open underside: a dark panel with,
+    on a professional hood, stainless baffles hanging below it. Origin
+    at the back-left corner of the baffles' bottom edge, built up."""
+    verts, faces = [], []
+    mats = {}
+    t, bh = inch(0.125), inch(0.75) if baffles else 0.0
+    _box(verts, faces, 0.0, w, -d, 0.0, bh, bh + t)
+    if baffles:
+        pitch, bw = inch(1.5), inch(0.5)
+        count = max(1, int((w - inch(1.0)) // pitch))
+        x0 = (w - ((count - 1) * pitch + bw)) / 2.0
+        for i in range(count):
+            x = x0 + i * pitch
+            mats.update({k: 1 for k in _box(
+                verts, faces, x, x + bw, -d + inch(0.75), -inch(0.75),
+                0.0, bh)})
+    return _mesh_child(cg, name, verts, faces, dark, extra_mats=(metal,),
+                       face_mats=mats)
+
+
+def _pyramid_canopy(cg, name, w, d, h, island, mat, dark, ceiling_z):
+    """A chimney hood's canopy: a vertical lip band around the bottom,
+    then faces sloping up to the duct cover's footprint -- at the back
+    against a wall, centred over an island. The underside is open: a
+    recess inside the lip band up to a dark ceiling at ``ceiling_z``,
+    where the filter and lamps hang. Cut to the cage at build time."""
+    tx0 = (w - HOOD_DUCT_W) / 2.0
+    tx1 = tx0 + HOOD_DUCT_W
+    if island:
+        ty0, ty1 = -(d + HOOD_DUCT_D) / 2.0, -(d - HOOD_DUCT_D) / 2.0
+    else:
+        ty0, ty1 = -HOOD_DUCT_D, 0.0
+    wall = inch(0.5)
+    # Rings run clockwise in plan: back-left, back-right, front-right,
+    # front-left. Three outside, two inside for the recess.
+    rings = [[(0.0, 0.0, 0.0), (w, 0.0, 0.0), (w, -d, 0.0), (0.0, -d, 0.0)],
+             [(0.0, 0.0, HOOD_LIP_H), (w, 0.0, HOOD_LIP_H),
+              (w, -d, HOOD_LIP_H), (0.0, -d, HOOD_LIP_H)],
+             [(tx0, ty1, h), (tx1, ty1, h), (tx1, ty0, h), (tx0, ty0, h)],
+             [(wall, -wall, 0.0), (w - wall, -wall, 0.0),
+              (w - wall, -d + wall, 0.0), (wall, -d + wall, 0.0)],
+             [(wall, -wall, ceiling_z), (w - wall, -wall, ceiling_z),
+              (w - wall, -d + wall, ceiling_z), (wall, -d + wall, ceiling_z)]]
+    verts = [v for ring in rings for v in ring]
+    faces = []
+    for r in range(2):                    # lip band, then the slopes
+        a, b = r * 4, (r + 1) * 4
+        for i in range(4):
+            j = (i + 1) % 4
+            faces.append((a + j, a + i, b + i, b + j))
+    faces.append((11, 10, 9, 8))          # top, facing up
+    for i in range(4):                    # bottom edge of the wall
+        j = (i + 1) % 4
+        faces.append((i, j, 12 + j, 12 + i))
+    for i in range(4):                    # inside of the wall, facing in
+        j = (i + 1) % 4
+        faces.append((12 + i, 12 + j, 16 + j, 16 + i))
+    faces.append((16, 17, 18, 19))        # recess ceiling, facing down
+    return _mesh_child(cg, name, verts, faces, mat, extra_mats=(dark,),
+                       face_mats={len(faces) - 1: 1})
+
+
+def _build_hood(cage_obj, opts):
+    cg = _Cage(cage_obj)
+    mat = _finish_material(opts)
+    dark = _dark_material()
+    metal = _metal_material()
+    lit = _display_material()
+    style = opts.get('hood_style', 'PRO')
+    w, d, total_h = _cage_dims(cg)
+    canopy_h = float(opts.get('canopy_height', 0.0)) or _HOOD_CANOPY_H.get(
+        style, inch(18.0))
+    if total_h > 0.0:
+        canopy_h = min(canopy_h, total_h)
+    duct_h = 'max(dim_z - %f, 0.0)' % canopy_h
+    # Every style hangs its filter in a recess under the canopy, with
+    # the lamps on the recess ceiling beside it.
+    recess = inch(1.5)
+    baffles = bool(opts.get('baffles', True))
+    filter_h = (inch(0.75) if baffles else 0.0) + inch(0.125)
+    lamp_z = recess + filter_h
+    # The lamps take a strip across the front of the recess; the filter
+    # stops short of it, so the two never share the same patch.
+    lamps = bool(opts.get('lamps', True))
+    lamp_strip = inch(4.5) if lamps else 0.0
+
+    if style in ('CHIMNEY', 'ISLAND'):
+        island = style == 'ISLAND'
+        _pyramid_canopy(cg, "Hood Canopy", w, d, canopy_h, island, mat, dark,
+                        recess + filter_h)
+        filt = _hood_filter(cg, "Hood Filter", w - inch(2.0),
+                            d - inch(2.0) - lamp_strip, metal, dark, baffles)
+        filt.location = (inch(1.0), -inch(1.0), recess)
+        y_duct = ('-dim_y * 0.5 + %f' % (HOOD_DUCT_D / 2.0) if island
+                  else 0.0)
+        _flat(cg, "Hood Duct Cover", 'dim_x * 0.5 - %f' % (HOOD_DUCT_W / 2.0),
+              y_duct, canopy_h, HOOD_DUCT_W, HOOD_DUCT_D, duct_h, mat)
+    else:
+        # A box canopy open underneath, with the filter recessed in it.
+        t = HOOD_PANEL_T
+        _front(cg, "Hood Front", 0.0, 0.0, 'dim_x', canopy_h, t, mat)
+        _side(cg, "Hood Left", 0.0, 0.0, 0.0, canopy_h, 'dim_y', t, mat)
+        _side(cg, "Hood Right", 'dim_x', 0.0, 0.0, canopy_h, 'dim_y', t, mat,
+              plus_x=False)
+        _flat(cg, "Hood Top", 0.0, 0.0, canopy_h, 'dim_x', 'dim_y', t, mat,
+              down=True)
+        filt = _hood_filter(cg, "Hood Filter", w - 2.0 * t,
+                            d - 2.0 * t - lamp_strip, metal, dark, baffles)
+        filt.location = (t, -t, recess)
+        _front(cg, "Hood Controls", 'dim_x - %f' % inch(9.0), inch(0.75),
+               inch(7.0), inch(1.0), inch(0.0625), dark, proud=True)
+        if style == 'PRO':
+            _flat(cg, "Hood Duct Cover", inch(1.0), 0.0, canopy_h,
+                  'dim_x - %f' % inch(2.0), 'dim_y - %f' % inch(3.0), duct_h,
+                  mat)
+
+    if lamps:
+        for i, fx in enumerate((0.25, 0.75)):
+            obj = _hood_lamp(cg, "Hood Lamp %d" % (i + 1), lit, metal)
+            # Built up from its origin; turned over to hang below it.
+            obj.rotation_euler.x = math.pi
+            obj.location.z = lamp_z
+            wrap = _CageWrap(obj)
+            wrap.driver_location('x', 'dim_x * %f' % fx, [cg.dim_x])
+            wrap.driver_location('y', '-dim_y + %f' % (inch(1.0) + lamp_strip / 2.0),
+                                 [cg.dim_y])
+
+
+def _drop_wood_hood(cage_obj):
+    """A generic hood model and a wood hood cannot share a cage: building
+    the model takes the wood hood down."""
+    try:
+        from . import wood_hoods
+    except Exception:
+        return
+    if cage_obj.get(wood_hoods.HOOD_STYLE_PROP):
+        wood_hoods.remove_wood_hood(cage_obj)
+
+
+def drop_model_for_wood_hood(cage_obj):
+    """The other direction, called by the wood hoods when one is built:
+    the model comes off, and the cage remembers it chose None so the
+    Show Model switch leaves it alone."""
+    remove_geometry(cage_obj)
+    opts = merged_opts(cage_obj)
+    opts['model_style'] = 'NONE'
+    set_opts(cage_obj, opts)
+
+
+# ---------------------------------------------------------------------------
 # Range
 # ---------------------------------------------------------------------------
 
@@ -1596,6 +1810,7 @@ def _build_under_counter(cage_obj, opts):
 # ---------------------------------------------------------------------------
 
 _BUILDERS = {
+    'HOOD': _build_hood,
     'REFRIGERATOR': _build_refrigerator,
     'RANGE': _build_range,
     'DISHWASHER': _build_dishwasher,
@@ -1621,6 +1836,8 @@ def build_geometry(cage_obj):
     builder = _BUILDERS.get(appliance_type(cage_obj))
     if builder is None:
         return False
+    if appliance_type(cage_obj) == 'HOOD':
+        _drop_wood_hood(cage_obj)
     builder(cage_obj, opts)
     # A model built while the scene is showing cages lands hidden, so
     # the switch means the same thing for new and existing appliances.
@@ -1668,6 +1885,20 @@ class HOME_BUILDER_OT_appliance_prompts(bpy.types.Operator):
                          default='STAINLESS')  # type: ignore
     handle_style: EnumProperty(name="Handles", items=HANDLE_ITEMS,
                                default='BAR')  # type: ignore
+
+    # Range hood
+    hood_style: EnumProperty(name="Style", items=HOOD_STYLE_ITEMS,
+                             default='CHIMNEY')  # type: ignore
+    canopy_height: FloatProperty(
+        name="Canopy Height", unit='LENGTH', precision=5, min=0.0,
+        description="Height of the canopy at the bottom of the hood; the "
+                    "duct cover takes the rest up to the ceiling. 0 uses "
+                    "the style's own height")  # type: ignore
+    baffles: BoolProperty(
+        name="Baffle Filters",
+        description="Stainless baffles in the filter opening")  # type: ignore
+    lamps: BoolProperty(
+        name="Lamps", description="Two downlights in the underside")  # type: ignore
 
     # Refrigerator
     fridge_config: EnumProperty(name="Configuration",
@@ -1801,6 +2032,12 @@ class HOME_BUILDER_OT_appliance_prompts(bpy.types.Operator):
         # rebuild when the options actually changed.
         opts = self._opts_dict()
         key = repr(sorted(opts.items())) + '|' + self.front_style
+        if appliance_type(self.appliance) == 'HOOD':
+            # The canopy and filter are cut to the cage at build time,
+            # so a size change is a rebuild too.
+            key += '|%.5f,%.5f,%.5f' % (self.appliance_width,
+                                        self.appliance_height,
+                                        self.appliance_depth)
         if getattr(self, '_applied_key', None) == key:
             return
         self._applied_key = key
@@ -1839,7 +2076,8 @@ class HOME_BUILDER_OT_appliance_prompts(bpy.types.Operator):
                       icon='INFO')
             return
         col.prop(self, 'finish')
-        col.prop(self, 'handle_style')
+        if appl != 'HOOD':
+            col.prop(self, 'handle_style')
 
         if supports_panels(self.appliance):
             box = layout.box()
@@ -1859,7 +2097,12 @@ class HOME_BUILDER_OT_appliance_prompts(bpy.types.Operator):
 
         box = layout.box()
         col = box.column(align=True)
-        if appl == 'REFRIGERATOR':
+        if appl == 'HOOD':
+            col.prop(self, 'hood_style')
+            col.prop(self, 'canopy_height')
+            col.prop(self, 'baffles')
+            col.prop(self, 'lamps')
+        elif appl == 'REFRIGERATOR':
             col.prop(self, 'fridge_config')
             if self.fridge_config == 'SIDE_BY_SIDE':
                 col.prop(self, 'freezer_fraction')

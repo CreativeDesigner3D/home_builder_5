@@ -1991,6 +1991,12 @@ def build_wood_hood(hood_obj, style):
     if style == 'NONE':
         remove_wood_hood(hood_obj)
         return
+    # A wood hood and the generic hood model cannot share a cage.
+    try:
+        from . import appliance_geo
+        appliance_geo.drop_model_for_wood_hood(hood_obj)
+    except Exception:
+        pass
     _clear_hood_parts(hood_obj)
     builder = _STYLE_BUILDERS.get(style, _build_box)
     builder(hood_obj)
