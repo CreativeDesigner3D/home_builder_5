@@ -952,6 +952,20 @@ def _style_tint_for_cabinet(cabinet_obj, styles):
     return None
 
 
+def _annotation_color(context):
+    """The colour drawing text is meant to wear, from preferences.
+
+    Dimensions and labels are annotation, not cabinet surface: they
+    print from ``obj.color``, so they have to keep this colour even
+    when the cabinet they hang off is wearing a style tint.
+    """
+    try:
+        hb_props = context.window_manager.home_builder
+        return tuple(hb_props.get_user_preferences(context).annotation_color)
+    except Exception:
+        return (0.0, 0.0, 0.0, 1.0)
+
+
 def apply_style_colors(context):
     """Paint (or unpaint) every cabinet in the scene with its style's
     drawing colour, and put the viewport in object-colour mode to show
@@ -963,18 +977,28 @@ def apply_style_colors(context):
     styles = props.cabinet_styles
 
     tinted = 0
+    # Annotation hangs off the cabinet it describes, so a plain walk of the
+    # children painted the drawing's dimensions and labels in the cabinet's
+    # colour (and washed them out again when the tint came off). They are
+    # repainted to their own colour on the way past instead, which also
+    # puts right any that an earlier build had already tinted.
+    note_colour = _annotation_color(context)
     for cage in [o for o in scene.objects
                  if o.get(types_face_frame.TAG_CABINET_CAGE)]:
         tint = _style_tint_for_cabinet(cage, styles) if on else None
         if tint is None:
             cage.color = _NO_STYLE_TINT
             for child in cage.children_recursive:
-                child.color = _NO_STYLE_TINT
+                child.color = (note_colour if child.get('IS_2D_ANNOTATION')
+                               else _NO_STYLE_TINT)
             continue
         part_colour = (tint[0], tint[1], tint[2], 1.0)
         cage_colour = (tint[0], tint[1], tint[2], _STYLE_CAGE_ALPHA)
         cage.color = cage_colour
         for child in cage.children_recursive:
+            if child.get('IS_2D_ANNOTATION'):
+                child.color = note_colour
+                continue
             child.color = cage_colour if _is_cage(child) else part_colour
         tinted += 1
 
@@ -1017,6 +1041,8 @@ def style_color_for_object(obj, context=None, highlight=None):
     """
     if obj is None:
         return None
+    if obj.get('IS_2D_ANNOTATION'):
+        return None          # drawing text keeps its own colour
     context = context or bpy.context
     try:
         props = get_style_props(context)
