@@ -3347,6 +3347,25 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         r.prop(self, ref_image_attr, text="", icon='IMAGE_DATA')
         _draw_second_ref_image(col, self, ref_image_attr)
 
+    def _pool_index(self, context):
+        """This style's own index in the shared pool, or -1.
+
+        The row buttons below act on a style, and the form is drawn from
+        two places: the sidebar list, where the drawn style is the
+        highlighted one, and the settings dialog, which opens whichever
+        row's gear was clicked. Handing the operators this index keeps
+        them on the style in front of the user rather than on whatever
+        row the list happens to have highlighted.
+        """
+        pool = getattr(get_style_props(context), "cabinet_styles", None)
+        if not pool:
+            return -1
+        mine = self.as_pointer()
+        for i, style in enumerate(pool):
+            if style.as_pointer() == mine:
+                return i
+        return -1
+
     def draw_cabinet_style_ui(self, layout, context):
         """Per-style settings drawn inside the cabinet styles UIList panel.
 
@@ -3355,6 +3374,7 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         shared front-style pools.
         """
         main = layout.column()
+        style_index = self._pool_index(context)
 
         name_box = main.box()
         name_box.prop(self, "name", text="Style Name")
@@ -3416,15 +3436,18 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         # Each effect row also carries its own ref name + image.
         sfx = box.column(align=True)
         sfx.operator("hb_face_frame.add_special_effects",
-                     text="Add Special Effects", icon='ADD')
+                     text="Add Special Effects",
+                     icon='ADD').style_index = style_index
         for effect in self.special_effects:
             r = sfx.row(align=True)
             r.label(text=effect.name, icon='DOT')
             if show_refs:
                 r.prop(effect, "ref_name", text="")
                 r.prop(effect, "ref_image", text="", icon='IMAGE_DATA')
-            r.operator("hb_face_frame.remove_special_effect",
-                       text="", icon='X', emboss=False).effect_name = effect.name
+            op = r.operator("hb_face_frame.remove_special_effect",
+                            text="", icon='X', emboss=False)
+            op.effect_name = effect.name
+            op.style_index = style_index
             if show_refs:
                 _draw_second_ref_image(sfx, effect, "ref_image")
 
@@ -3443,8 +3466,11 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                             text="", icon='X', emboss=False)
             op.kind = 'DOOR'
             op.index = i
-        col.operator("hb_face_frame.add_cabinet_extra_front_style",
-                     text="Add Door Style", icon='ADD').kind = 'DOOR'
+            op.style_index = style_index
+        op = col.operator("hb_face_frame.add_cabinet_extra_front_style",
+                          text="Add Door Style", icon='ADD')
+        op.kind = 'DOOR'
+        op.style_index = style_index
 
         col.separator()
         self._draw_toggle_field(col, "drawer_front_style", "Drawer Front", "ss_drawer")
@@ -3455,8 +3481,11 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                             text="", icon='X', emboss=False)
             op.kind = 'DRAWER'
             op.index = i
-        col.operator("hb_face_frame.add_cabinet_extra_front_style",
-                     text="Add Drawer Front Style", icon='ADD').kind = 'DRAWER'
+            op.style_index = style_index
+        op = col.operator("hb_face_frame.add_cabinet_extra_front_style",
+                          text="Add Drawer Front Style", icon='ADD')
+        op.kind = 'DRAWER'
+        op.style_index = style_index
 
         box = main.box()
         row = box.row()
@@ -3493,10 +3522,12 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         for i, note in enumerate(self.ss_notes):
             r = col.row(align=True)
             r.prop(note, "text", text="")
-            r.operator("hb_face_frame.remove_style_note",
-                       text="", icon='X', emboss=False).index = i
+            op = r.operator("hb_face_frame.remove_style_note",
+                            text="", icon='X', emboss=False)
+            op.index = i
+            op.style_index = style_index
         col.operator("hb_face_frame.add_style_note",
-                     text="Add Note", icon='ADD')
+                     text="Add Note", icon='ADD').style_index = style_index
 
 
 class HB_UL_face_frame_cabinet_styles(UIList):
