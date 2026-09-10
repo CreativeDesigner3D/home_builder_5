@@ -681,37 +681,13 @@ class CabinetOpening(GeoNodeCage):
         self.add_property("Bottom Thickness",'DISTANCE',props.default_carcass_part_thickness)
 
     def add_properties_front_overlay_calculations(self):
-        hot = self.var_prop('Half Overlay Top', 'hot')
-        hob = self.var_prop('Half Overlay Bottom', 'hob')
-        hol = self.var_prop('Half Overlay Left', 'hol')
-        hor = self.var_prop('Half Overlay Right', 'hor')
-        lt = self.var_prop('Left Thickness', 'lt')
-        rt = self.var_prop('Right Thickness', 'rt')
-        tt = self.var_prop('Top Thickness', 'tt')
-        bt = self.var_prop('Bottom Thickness', 'bt')
-        vg = self.var_prop('Vertical Gap', 'vg')
-        lr = self.var_prop('Left Reveal', 'lr')
-        rr = self.var_prop('Right Reveal', 'rr')
-        tr = self.var_prop('Top Reveal', 'tr')
-        br = self.var_prop('Bottom Reveal', 'br')
-        inset = self.var_prop('Inset Front', 'inset')
-        ir = self.var_prop('Inset Reveal', 'ir')
 
-        # Overlay Prompts Stored in Separate Empty Object to Avoid Circular Dependency Graph Issues
         self.overlay_prompts = self.add_empty('Overlay Prompt Obj')
         self.overlay_prompts.home_builder.add_property("Overlay Top",'DISTANCE',0.0)
         self.overlay_prompts.home_builder.add_property("Overlay Bottom",'DISTANCE',0.0)
         self.overlay_prompts.home_builder.add_property("Overlay Left",'DISTANCE',0.0)
         self.overlay_prompts.home_builder.add_property("Overlay Right",'DISTANCE',0.0)
-
-        # Inset: negative overlay (door smaller than opening by inset reveal)
-        # Half Overlay: (thickness - gap) / 2
-        # Full Overlay: thickness - reveal
-        self.overlay_prompts.home_builder.driver_prop("Overlay Top", "IF(inset,-ir,IF(hot,(tt-vg)/2,tt-tr))", [inset,ir,hot,tt,vg,tr])
-        self.overlay_prompts.home_builder.driver_prop("Overlay Bottom", "IF(inset,-ir,IF(hob,(bt-vg)/2,bt-br))", [inset,ir,hob,bt,vg,br])
-        self.overlay_prompts.home_builder.driver_prop("Overlay Left", "IF(inset,-ir,IF(hol,(lt-vg)/2,lt-lr))", [inset,ir,hol,lt,vg,lr])
-        self.overlay_prompts.home_builder.driver_prop("Overlay Right", "IF(inset,-ir,IF(hor,(rt-vg)/2,rt-rr))", [inset,ir,hor,rt,vg,rr])
-
+        # Values are written by the solver from the reveal prompts above.
         return self.overlay_prompts
 
 
@@ -783,20 +759,8 @@ class Doors(CabinetOpening):
         self.add_properties_front_overlays()
         overlay_prompts = self.add_properties_front_overlay_calculations()
 
-        to = overlay_prompts.home_builder.var_prop('Overlay Top', 'to')
-        bo = overlay_prompts.home_builder.var_prop('Overlay Bottom', 'bo')
-        lo = overlay_prompts.home_builder.var_prop('Overlay Left', 'lo')
-        ro = overlay_prompts.home_builder.var_prop('Overlay Right', 'ro')
 
-        dim_x = self.var_input('Dim X', 'dim_x')
-        dim_y = self.var_input('Dim Y', 'dim_y')
-        dim_z = self.var_input('Dim Z', 'dim_z')
-        ft = self.var_prop('Front Thickness', 'ft')
-        vg = self.var_prop('Vertical Gap', 'vg')
-        ds = self.var_prop('Door Swing', 'ds')
-        door_to_cab_gap = self.var_prop('Door to Cabinet Gap', 'door_to_cab_gap')
 
-        inset = self.var_prop('Inset Front', 'inset')
 
         left_door = CabinetDoor()
         left_door.door_pull_location = self.door_pull_location
@@ -804,14 +768,6 @@ class Doors(CabinetOpening):
         left_door.obj.parent = self.obj
         left_door.obj.rotation_euler.x = math.radians(90)
         left_door.obj.rotation_euler.y = math.radians(-90)
-        left_door.driver_location('x', '-lo',[lo])
-        # Inset: door sits inside opening (Y=0), Overlay: door projects forward
-        left_door.driver_location('y', 'IF(inset,ft,-door_to_cab_gap)',[inset,ft,door_to_cab_gap])
-        left_door.driver_location('z', '-bo',[bo])
-        left_door.driver_input("Length", 'dim_z+to+bo', [dim_z,to,bo])
-        left_door.driver_input("Width", 'IF(ds==2,(dim_x+lo+ro-vg)/2,dim_x+lo+ro)', [dim_x,lo,ro,vg,ds])
-        left_door.driver_input("Thickness", 'ft', [ft])   
-        left_door.driver_hide('IF(ds==1,True,False)',[ds])
         left_door.set_input("Mirror Y", True)  
 
         right_door = CabinetDoor()
@@ -820,14 +776,6 @@ class Doors(CabinetOpening):
         right_door.obj.parent = self.obj
         right_door.obj.rotation_euler.x = math.radians(90)
         right_door.obj.rotation_euler.y = math.radians(-90)
-        right_door.driver_location('x', 'dim_x+ro',[dim_x,ro])
-        # Inset: door sits inside opening (Y=0), Overlay: door projects forward
-        right_door.driver_location('y', 'IF(inset,ft,-door_to_cab_gap)',[inset,ft,door_to_cab_gap])
-        right_door.driver_location('z', '-bo',[bo])
-        right_door.driver_input("Length", 'dim_z+to+bo', [dim_z,to,bo])
-        right_door.driver_input("Width", 'IF(ds==2,(dim_x+lo+ro-vg)/2,dim_x+lo+ro)', [dim_x,lo,ro,vg,ds])
-        right_door.driver_input("Thickness", 'ft', [ft]) 
-        right_door.driver_hide('IF(ds==0,True,False)',[ds])  
         right_door.set_input("Mirror Y", False) 
 
         self.add_interior(CabinetShelves())
@@ -851,18 +799,8 @@ class FlipUpDoor(CabinetOpening):
         self.add_properties_front_overlays()
         overlay_prompts = self.add_properties_front_overlay_calculations()
 
-        to = overlay_prompts.home_builder.var_prop('Overlay Top', 'to')
-        bo = overlay_prompts.home_builder.var_prop('Overlay Bottom', 'bo')
-        lo = overlay_prompts.home_builder.var_prop('Overlay Left', 'lo')
-        ro = overlay_prompts.home_builder.var_prop('Overlay Right', 'ro')
 
-        dim_x = self.var_input('Dim X', 'dim_x')
-        dim_y = self.var_input('Dim Y', 'dim_y')
-        dim_z = self.var_input('Dim Z', 'dim_z')
-        ft = self.var_prop('Front Thickness', 'ft')
-        door_to_cab_gap = self.var_prop('Door to Cabinet Gap', 'door_to_cab_gap')
 
-        inset = self.var_prop('Inset Front', 'inset')
 
         # Single door covering entire opening with centered, rotated pull
         door = CabinetFlipUpDoor()
@@ -870,12 +808,6 @@ class FlipUpDoor(CabinetOpening):
         door.obj.parent = self.obj
         door.obj.rotation_euler.x = math.radians(90)
         door.obj.rotation_euler.y = math.radians(-90)
-        door.driver_location('x', '-lo', [lo])
-        door.driver_location('y', 'IF(inset,ft,-door_to_cab_gap)', [inset, ft, door_to_cab_gap])
-        door.driver_location('z', '-bo', [bo])
-        door.driver_input("Length", 'dim_z+to+bo', [dim_z, to, bo])
-        door.driver_input("Width", 'dim_x+lo+ro', [dim_x, lo, ro])
-        door.driver_input("Thickness", 'ft', [ft])
         door.set_input("Mirror Y", True)
 
         self.add_interior(CabinetShelves())
@@ -895,35 +827,14 @@ class Drawer(CabinetOpening):
         self.add_properties_front_overlays()
         overlay_prompts = self.add_properties_front_overlay_calculations()
 
-        to = overlay_prompts.home_builder.var_prop('Overlay Top', 'to')
-        bo = overlay_prompts.home_builder.var_prop('Overlay Bottom', 'bo')
-        lo = overlay_prompts.home_builder.var_prop('Overlay Left', 'lo')
-        ro = overlay_prompts.home_builder.var_prop('Overlay Right', 'ro')
 
-        dim_x = self.var_input('Dim X', 'dim_x')
-        dim_y = self.var_input('Dim Y', 'dim_y')
-        dim_z = self.var_input('Dim Z', 'dim_z')
-        ft = self.var_prop('Front Thickness', 'ft')
-        door_to_cab_gap = self.var_prop('Door to Cabinet Gap', 'door_to_cab_gap')
 
-        inset = self.var_prop('Inset Front', 'inset')
 
         drawer_front = CabinetDrawerFront()
         drawer_front.create('Drawer Front')
         drawer_front.obj.parent = self.obj
         drawer_front.obj.rotation_euler.x = math.radians(90)
         drawer_front.obj.rotation_euler.y = math.radians(-90)
-        drawer_front.driver_location('x', '-lo',[lo])
-        # Inset: drawer front sits inside opening (Y=0), Overlay: projects forward
-        drawer_front.driver_location('y', 'IF(inset,ft,-door_to_cab_gap)',[inset,ft,door_to_cab_gap])
-        drawer_front.driver_location('z', '-bo',[bo])
-        drawer_front.driver_input("Length", 'dim_z+to+bo', [dim_z,to,bo])
-        drawer_front.driver_input("Width", 'dim_x+lo+ro', [dim_x,lo,ro])
-        drawer_front.driver_input("Thickness", 'ft', [ft]) 
-        drawer_front.driver_prop("Top Overlay", 'to', [to])
-        drawer_front.driver_prop("Bottom Overlay", 'bo', [bo])
-        drawer_front.driver_prop("Left Overlay", 'lo', [lo])
-        drawer_front.driver_prop("Right Overlay", 'ro', [ro])
         drawer_front.set_input("Mirror Y", True)
         drawer_front.add_drawer_box()
 
@@ -943,18 +854,8 @@ class Pullout(CabinetOpening):
         self.add_properties_front_overlays()
         overlay_prompts = self.add_properties_front_overlay_calculations()
 
-        to = overlay_prompts.home_builder.var_prop('Overlay Top', 'to')
-        bo = overlay_prompts.home_builder.var_prop('Overlay Bottom', 'bo')
-        lo = overlay_prompts.home_builder.var_prop('Overlay Left', 'lo')
-        ro = overlay_prompts.home_builder.var_prop('Overlay Right', 'ro')
 
-        dim_x = self.var_input('Dim X', 'dim_x')
-        dim_y = self.var_input('Dim Y', 'dim_y')
-        dim_z = self.var_input('Dim Z', 'dim_z')
-        ft = self.var_prop('Front Thickness', 'ft')
-        door_to_cab_gap = self.var_prop('Door to Cabinet Gap', 'door_to_cab_gap')
 
-        inset = self.var_prop('Inset Front', 'inset')
 
         pullout_front = CabinetPulloutFront()
         pullout_front.door_pull_location = self.door_pull_location
@@ -962,17 +863,6 @@ class Pullout(CabinetOpening):
         pullout_front.obj.parent = self.obj
         pullout_front.obj.rotation_euler.x = math.radians(90)
         pullout_front.obj.rotation_euler.y = math.radians(-90)
-        pullout_front.driver_location('x', '-lo',[lo])
-        # Inset: front sits inside opening (Y=0), Overlay: projects forward
-        pullout_front.driver_location('y', 'IF(inset,ft,-door_to_cab_gap)',[inset,ft,door_to_cab_gap])
-        pullout_front.driver_location('z', '-bo',[bo])
-        pullout_front.driver_input("Length", 'dim_z+to+bo', [dim_z,to,bo])
-        pullout_front.driver_input("Width", 'dim_x+lo+ro', [dim_x,lo,ro])
-        pullout_front.driver_input("Thickness", 'ft', [ft]) 
-        pullout_front.driver_prop("Top Overlay", 'to', [to])
-        pullout_front.driver_prop("Bottom Overlay", 'bo', [bo])
-        pullout_front.driver_prop("Left Overlay", 'lo', [lo])
-        pullout_front.driver_prop("Right Overlay", 'ro', [ro])
         pullout_front.set_input("Mirror Y", True)
         
         pullout_front.add_drawer_box()
@@ -991,34 +881,14 @@ class FalseFront(CabinetOpening):
         self.add_properties_front_overlays()
         overlay_prompts = self.add_properties_front_overlay_calculations()
 
-        to = overlay_prompts.home_builder.var_prop('Overlay Top', 'to')
-        bo = overlay_prompts.home_builder.var_prop('Overlay Bottom', 'bo')
-        lo = overlay_prompts.home_builder.var_prop('Overlay Left', 'lo')
-        ro = overlay_prompts.home_builder.var_prop('Overlay Right', 'ro')
 
-        dim_x = self.var_input('Dim X', 'dim_x')
-        dim_y = self.var_input('Dim Y', 'dim_y')
-        dim_z = self.var_input('Dim Z', 'dim_z')
-        ft = self.var_prop('Front Thickness', 'ft')
-        door_to_cab_gap = self.var_prop('Door to Cabinet Gap', 'door_to_cab_gap')
 
-        inset = self.var_prop('Inset Front', 'inset')
 
         drawer_front = CabinetDrawerFront()
         drawer_front.create('False Front')
         drawer_front.obj.parent = self.obj
         drawer_front.obj.rotation_euler.x = math.radians(90)
         drawer_front.obj.rotation_euler.y = math.radians(-90)
-        drawer_front.driver_location('x', '-lo', [lo])
-        drawer_front.driver_location('y', 'IF(inset,ft,-door_to_cab_gap)', [inset, ft, door_to_cab_gap])
-        drawer_front.driver_location('z', '-bo', [bo])
-        drawer_front.driver_input("Length", 'dim_z+to+bo', [dim_z, to, bo])
-        drawer_front.driver_input("Width", 'dim_x+lo+ro', [dim_x, lo, ro])
-        drawer_front.driver_input("Thickness", 'ft', [ft])
-        drawer_front.driver_prop("Top Overlay", 'to', [to])
-        drawer_front.driver_prop("Bottom Overlay", 'bo', [bo])
-        drawer_front.driver_prop("Left Overlay", 'lo', [lo])
-        drawer_front.driver_prop("Right Overlay", 'ro', [ro])
         drawer_front.set_input("Mirror Y", True)
         
         # Set False Front to True - no drawer box or handle
@@ -1041,9 +911,6 @@ class Appliance(CabinetOpening):
         # Store appliance name on the object
         self.obj['APPLIANCE_NAME'] = self.appliance_name
         
-        dim_x = self.var_input('Dim X', 'dim_x')
-        dim_y = self.var_input('Dim Y', 'dim_y')
-        dim_z = self.var_input('Dim Z', 'dim_z')
         
         props = bpy.context.scene.home_builder
         
@@ -1052,8 +919,6 @@ class Appliance(CabinetOpening):
         appliance_text.obj.parent = self.obj
         appliance_text.obj['IS_APPLIANCE_TEXT'] = True
         appliance_text.obj.rotation_euler.x = math.radians(90)
-        appliance_text.driver_location("x", 'dim_x/2', [dim_x])
-        appliance_text.driver_location("z", 'dim_z/2', [dim_z])
         appliance_text.set_alignment('CENTER', 'CENTER')
 
 
@@ -1230,22 +1095,10 @@ class CabinetDoor(CabinetFront):
         self.add_property('Tall Pull Vertical Location', 'DISTANCE', props.pull_vertical_location_tall)
         self.add_property('Upper Pull Vertical Location', 'DISTANCE', props.pull_vertical_location_upper)
         
-        # Get pull object and its length for positioning calculations
         pull_obj = self.get_pull_object()
         pull_length = pull_obj.dimensions.x if pull_obj else 0.1016  # Default to 4 inches
         self.add_property('Pull Length', 'DISTANCE', pull_length)
 
-        length = self.var_input('Length', 'length')
-        width = self.var_input('Width', 'width')
-        thickness = self.var_input('Thickness', 'thickness')
-        mirror_y = self.var_input('Mirror Y', 'mirror_y')
-        hhl = self.var_prop('Handle Horizontal Location', 'hhl')
-        pl = self.var_prop('Pull Location', 'pl')
-        pvl_base = self.var_prop('Base Pull Vertical Location', 'pvl_base')
-        pvl_tall = self.var_prop('Tall Pull Vertical Location', 'pvl_tall')
-        pvl_upper = self.var_prop('Upper Pull Vertical Location', 'pvl_upper')
-        pull_len = self.var_prop('Pull Length', 'pull_len')
-        hide_door = self.var_hide('hide_door')
 
         pull = GeoNodeHardware()
         pull.create('Pull')
@@ -1254,12 +1107,6 @@ class CabinetDoor(CabinetFront):
         pull.obj.rotation_euler.x = math.radians(-90)
         if pull_obj:
             pull.set_input("Object",pull_obj)
-        # Base: measure from top of door to TOP of pull (subtract half pull length)
-        # Tall/Upper: measure from bottom of door to BOTTOM of pull (add half pull length)
-        pull.driver_location('x', 'IF(pl==0,length-pvl_base-pull_len/2,IF(pl==1,pvl_tall+pull_len/2,pvl_upper+pull_len/2))',[length,pl,pvl_base,pvl_tall,pvl_upper,pull_len])
-        pull.driver_location('y', 'IF(mirror_y,-width+hhl,width-hhl)',[width,hhl,mirror_y])
-        pull.driver_location('z', 'thickness',[thickness])
-        pull.driver_hide('hide_door',[hide_door])
 
 
 class CabinetFlipUpDoor(CabinetFront):
@@ -1272,33 +1119,20 @@ class CabinetFlipUpDoor(CabinetFront):
         self.obj['IS_FLIP_UP_DOOR'] = True
         props = bpy.context.scene.hb_frameless
         
-        # Get pull object and its length for positioning calculations
         pull_obj = self.get_pull_object()
         pull_length = pull_obj.dimensions.x if pull_obj else 0.1016  # Default to 4 inches
         self.add_property('Pull Length', 'DISTANCE', pull_length)
         self.add_property('Pull Vertical Location', 'DISTANCE', props.pull_vertical_location_upper)
 
-        length = self.var_input('Length', 'length')
-        width = self.var_input('Width', 'width')
-        thickness = self.var_input('Thickness', 'thickness')
-        pull_len = self.var_prop('Pull Length', 'pull_len')
-        pvl = self.var_prop('Pull Vertical Location', 'pvl')
-        hide_door = self.var_hide('hide_door')
 
         pull = GeoNodeHardware()
         pull.create('Pull')
         pull.obj['IS_CABINET_PULL'] = True
         pull.obj.parent = self.obj
-        # Rotate pull 90 degrees for horizontal orientation
         pull.obj.rotation_euler.x = math.radians(-90)
         pull.obj.rotation_euler.z = math.radians(90)
         if pull_obj:
             pull.set_input("Object", pull_obj)
-        # Position at bottom (like upper pull) but centered horizontally
-        pull.driver_location('x', 'pvl', [pvl])
-        pull.driver_location('y', '-width/2', [width])
-        pull.driver_location('z', 'thickness', [thickness])
-        pull.driver_hide('hide_door', [hide_door])
 
 
 class CabinetDrawerFront(CabinetFront):
@@ -1314,20 +1148,10 @@ class CabinetDrawerFront(CabinetFront):
         self.add_property("Center Pull",'CHECKBOX',props.center_pulls_on_drawer_front)
         self.add_property('Handle Horizontal Location', 'DISTANCE', props.pull_vertical_location_drawers)
         
-        # Get pull object and its length for positioning calculations
         pull_obj = self.get_pull_object(pull_type='drawer')
         pull_length = pull_obj.dimensions.x if pull_obj else 0.1016  # Default to 4 inches
         self.add_property('Pull Length', 'DISTANCE', pull_length)
 
-        #Length is height of the drawer front
-        length = self.var_input('Length', 'length')
-        #Width is width of the drawer front
-        width = self.var_input('Width', 'width')
-        thickness = self.var_input('Thickness', 'thickness')
-        false_front = self.var_prop('False Front', 'false_front')
-        center_pull = self.var_prop('Center Pull', 'center_pull')
-        hhl = self.var_prop('Handle Horizontal Location', 'hhl')
-        pull_len = self.var_prop('Pull Length', 'pull_len')
 
         pull = GeoNodeHardware()
         pull.create('Pull')
@@ -1337,12 +1161,6 @@ class CabinetDrawerFront(CabinetFront):
         pull.obj.rotation_euler.z = math.radians(90)
         if pull_obj:
             pull.set_input("Object",pull_obj)
-        # When not centered: measure from top of drawer front to TOP of pull
-        pull.driver_location('x', 'IF(center_pull,length/2,length-hhl-pull_len/2)',[center_pull,length,hhl,pull_len])
-        pull.driver_location('y', '-width/2',[width])
-        pull.driver_location('z', 'thickness',[thickness])
-        # Hide pull when False Front is enabled
-        pull.driver_hide('false_front', [false_front])
 
     def add_drawer_box(self):
         """Add a drawer box to this drawer front.
@@ -1362,17 +1180,7 @@ class CabinetDrawerFront(CabinetFront):
             if child.get('IS_DRAWER_BOX'):
                 return  # Already has a drawer box
         
-        # Get drawer opening depth from parent
-        drawer_opening = GeoNodeCage(self.obj.parent)
-        opening_depth = drawer_opening.var_input('Dim Y', 'opening_depth')
 
-        # Get drawer front variables
-        df_height = self.var_input('Length', 'df_height')
-        df_width = self.var_input('Width', 'df_width')
-        lo = self.var_prop('Left Overlay', 'lo')
-        ro = self.var_prop('Right Overlay', 'ro')
-        to = self.var_prop('Top Overlay', 'to')
-        bo = self.var_prop('Bottom Overlay', 'bo')
         
         # Add drawer box properties if not present
         if 'Drawer Box Side Clearance' not in self.obj:
@@ -1381,10 +1189,6 @@ class CabinetDrawerFront(CabinetFront):
             self.add_property('Drawer Box Rear Clearance', 'DISTANCE', inch(1.0))
             self.add_property('Drawer Box Bottom Clearance', 'DISTANCE', inch(.5))
         
-        side_clr = self.var_prop('Drawer Box Side Clearance', 'side_clr')
-        top_clr = self.var_prop('Drawer Box Top Clearance', 'top_clr')
-        rear_clr = self.var_prop('Drawer Box Rear Clearance', 'rear_clr')
-        bottom_clr = self.var_prop('Drawer Box Bottom Clearance', 'bottom_clr')
         
         drawer_box = GeoNodeDrawerBox()
         drawer_box.create('Drawer Box')
@@ -1393,17 +1197,6 @@ class CabinetDrawerFront(CabinetFront):
         drawer_box.obj.parent = self.obj
         drawer_box.obj.rotation_euler.x = math.radians(-90)
         drawer_box.obj.rotation_euler.z = math.radians(-90)
-        # Drawer box dimensions with clearances
-        drawer_box.driver_input('Dim X', 'df_width - lo - ro - (side_clr * 2)', [df_width,lo,ro,side_clr])
-        drawer_box.driver_input('Dim Y', 'opening_depth - rear_clr', [opening_depth, rear_clr])
-        drawer_box.driver_input('Dim Z', 'df_height - to - bo - top_clr - bottom_clr', [df_height,to,bo,top_clr,bottom_clr])
-        # X is vertical location
-        drawer_box.driver_location('x', 'bo + bottom_clr', [bo,bottom_clr])
-        # Y is horizontal Location
-        drawer_box.driver_location('y', '-lo - side_clr', [lo,side_clr])
-        # Hide drawer box when False Front is enabled
-        false_front = self.var_prop('False Front', 'false_front')
-        drawer_box.driver_hide('false_front', [false_front])
 
 
 class CabinetPulloutFront(CabinetFront):
@@ -1437,15 +1230,6 @@ class CabinetPulloutFront(CabinetFront):
         pull_length = pull_obj.dimensions.x if pull_obj else 0.1016
         self.add_property('Pull Length', 'DISTANCE', pull_length)
 
-        length = self.var_input('Length', 'length')
-        width = self.var_input('Width', 'width')
-        thickness = self.var_input('Thickness', 'thickness')
-        false_front = self.var_prop('False Front', 'false_front')
-        pl = self.var_prop('Pull Location', 'pl')
-        pvl_base = self.var_prop('Base Pull Vertical Location', 'pvl_base')
-        pvl_tall = self.var_prop('Tall Pull Vertical Location', 'pvl_tall')
-        pvl_upper = self.var_prop('Upper Pull Vertical Location', 'pvl_upper')
-        pull_len = self.var_prop('Pull Length', 'pull_len')
 
         pull = GeoNodeHardware()
         pull.create('Pull')
@@ -1455,11 +1239,6 @@ class CabinetPulloutFront(CabinetFront):
         pull.obj.rotation_euler.z = math.radians(90)
         if pull_obj:
             pull.set_input("Object", pull_obj)
-        # Base: measure from top, Tall/Upper: measure from bottom
-        pull.driver_location('x', 'IF(pl==0,length-pvl_base-pull_len/2,IF(pl==1,pvl_tall+pull_len/2,pvl_upper+pull_len/2))', [length, pl, pvl_base, pvl_tall, pvl_upper, pull_len])
-        pull.driver_location('y', '-width/2', [width])
-        pull.driver_location('z', 'thickness', [thickness])
-        pull.driver_hide('false_front', [false_front])
 
     def add_drawer_box(self):
         """Add a drawer box to this pullout front."""
@@ -1475,15 +1254,7 @@ class CabinetPulloutFront(CabinetFront):
             if child.get('IS_DRAWER_BOX'):
                 return
 
-        drawer_opening = GeoNodeCage(self.obj.parent)
-        opening_depth = drawer_opening.var_input('Dim Y', 'opening_depth')
 
-        df_height = self.var_input('Length', 'df_height')
-        df_width = self.var_input('Width', 'df_width')
-        lo = self.var_prop('Left Overlay', 'lo')
-        ro = self.var_prop('Right Overlay', 'ro')
-        to = self.var_prop('Top Overlay', 'to')
-        bo = self.var_prop('Bottom Overlay', 'bo')
         
         if 'Drawer Box Side Clearance' not in self.obj:
             self.add_property('Drawer Box Side Clearance', 'DISTANCE', inch(0.5))
@@ -1491,10 +1262,6 @@ class CabinetPulloutFront(CabinetFront):
             self.add_property('Drawer Box Rear Clearance', 'DISTANCE', inch(1.0))
             self.add_property('Drawer Box Bottom Clearance', 'DISTANCE', inch(.5))
         
-        side_clr = self.var_prop('Drawer Box Side Clearance', 'side_clr')
-        top_clr = self.var_prop('Drawer Box Top Clearance', 'top_clr')
-        rear_clr = self.var_prop('Drawer Box Rear Clearance', 'rear_clr')
-        bottom_clr = self.var_prop('Drawer Box Bottom Clearance', 'bottom_clr')
         
         drawer_box = GeoNodeDrawerBox()
         drawer_box.create('Drawer Box')
@@ -1503,13 +1270,6 @@ class CabinetPulloutFront(CabinetFront):
         drawer_box.obj.parent = self.obj
         drawer_box.obj.rotation_euler.x = math.radians(-90)
         drawer_box.obj.rotation_euler.z = math.radians(-90)
-        drawer_box.driver_input('Dim X', 'df_width - lo - ro - (side_clr * 2)', [df_width, lo, ro, side_clr])
-        drawer_box.driver_input('Dim Y', 'opening_depth - rear_clr', [opening_depth, rear_clr])
-        drawer_box.driver_input('Dim Z', 'df_height - to - bo - top_clr - bottom_clr', [df_height, to, bo, top_clr, bottom_clr])
-        drawer_box.driver_location('x', 'bo + bottom_clr', [bo, bottom_clr])
-        drawer_box.driver_location('y', '-lo - side_clr', [lo, side_clr])
-        false_front = self.var_prop('False Front', 'false_front')
-        drawer_box.driver_hide('false_front', [false_front])
 
 
 # =============================================================================

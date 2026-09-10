@@ -89,6 +89,8 @@ def assign_pull_locations_to_cabinet(cabinet_bp):
             # Set the Pull Location directly on the object
             if 'Pull Location' in child:
                 child['Pull Location'] = pull_index
+    # The pulls are placed by the solver from that prompt.
+    solver_frameless.recalculate_cabinet(cabinet_bp)
 
 
 class hb_frameless_OT_change_bay_opening(bpy.types.Operator):

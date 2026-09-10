@@ -630,7 +630,184 @@ def solve_cage_tree(cage_obj):
                 if role == 'OPENING':
                     solve_cage_tree(opening)
         else:
+            solve_insert_parts(child)
             solve_cage_tree(child)
+
+
+# ---------------------------------------------------------------------------
+# Inserts: fronts, pulls, drawer boxes
+# ---------------------------------------------------------------------------
+#
+# An insert (doors, drawer, pullout, false front, flip-up door, appliance)
+# is an opening cage carrying the front prompts. Its fronts overlay the
+# cage by the reveal rules, each front carries its pull, and a drawer or
+# pullout front carries its drawer box.
+
+OVERLAY_EMPTY_NAME = 'Overlay Prompt Obj'
+
+# Door Swing prompt: index into ["Left", "Right", "Double"].
+SWING_LEFT, SWING_RIGHT, SWING_DOUBLE = 0, 1, 2
+
+# Pull Location prompt: index into ["Base", "Tall", "Upper"].
+PULL_BASE, PULL_TALL, PULL_UPPER = 0, 1, 2
+
+_DOOR_ROLE_BY_NAME = {'Left Door': 'LEFT_DOOR', 'Right Door': 'RIGHT_DOOR'}
+
+
+def front_overlays(insert_obj):
+    """(top, bottom, left, right) overlay of a front on its opening.
+
+    Inset fronts sit inside the opening by the inset reveal; a half
+    overlay splits the neighbouring board with the front next door; a
+    full overlay covers the board less the reveal.
+    """
+    inset = bool(insert_obj.get('Inset Front', False))
+    inset_reveal = float(prompt(insert_obj, 'Inset Reveal', inch(0.125)))
+    gap = float(prompt(insert_obj, 'Vertical Gap', inch(0.125)))
+
+    def overlay(half_key, thickness_key, reveal_key, reveal_default):
+        if inset:
+            return -inset_reveal
+        thickness = float(prompt(insert_obj, thickness_key, inch(0.75)))
+        if insert_obj.get(half_key, False):
+            return (thickness - gap) / 2.0
+        return thickness - float(prompt(insert_obj, reveal_key, reveal_default))
+
+    return (overlay('Half Overlay Top', 'Top Thickness', 'Top Reveal', inch(0.0625)),
+            overlay('Half Overlay Bottom', 'Bottom Thickness', 'Bottom Reveal', 0.0),
+            overlay('Half Overlay Left', 'Left Thickness', 'Left Reveal', inch(0.0625)),
+            overlay('Half Overlay Right', 'Right Thickness', 'Right Reveal', inch(0.0625)))
+
+
+def _front_role(child):
+    role = child.get(PART_ROLE_KEY)
+    if role in ('LEFT_DOOR', 'RIGHT_DOOR', 'FRONT'):
+        return role
+    if child.get('IS_DOOR_FRONT') and not child.get('IS_FLIP_UP_DOOR'):
+        return _DOOR_ROLE_BY_NAME.get(child.name.split('.')[0], 'FRONT')
+    return 'FRONT'
+
+
+def _pull_x(front_obj, length, pull_len):
+    """Height of the pull up the front for door-style pull locations."""
+    location = int(prompt(front_obj, 'Pull Location', PULL_BASE))
+    if location == PULL_BASE:
+        # Measured from the top of the door to the top of the pull.
+        return length - float(prompt(front_obj, 'Base Pull Vertical Location', 0.0)) - pull_len / 2.0
+    if location == PULL_TALL:
+        return float(prompt(front_obj, 'Tall Pull Vertical Location', 0.0)) + pull_len / 2.0
+    return float(prompt(front_obj, 'Upper Pull Vertical Location', 0.0)) + pull_len / 2.0
+
+
+def _solve_pull(front_obj, pull_obj, length, width, thickness, hidden):
+    clear_drivers(pull_obj)
+    pull_obj[PART_ROLE_KEY] = 'PULL'
+    pull_len = float(prompt(front_obj, 'Pull Length', 0.0))
+    if front_obj.get('IS_FLIP_UP_DOOR'):
+        x = float(prompt(front_obj, 'Pull Vertical Location', 0.0))
+        y = -width / 2.0
+    elif front_obj.get('IS_DRAWER_FRONT'):
+        if front_obj.get('Center Pull', False):
+            x = length / 2.0
+        else:
+            x = length - float(prompt(front_obj, 'Handle Horizontal Location', 0.0)) - pull_len / 2.0
+        y = -width / 2.0
+    elif front_obj.get('IS_PULLOUT_FRONT'):
+        x = _pull_x(front_obj, length, pull_len)
+        y = -width / 2.0
+    else:
+        x = _pull_x(front_obj, length, pull_len)
+        offset = float(prompt(front_obj, 'Handle Horizontal Location', 0.0))
+        try:
+            mirrored = bool(GeoNodeCutpart(front_obj).get_input('Mirror Y'))
+        except Exception:
+            mirrored = False
+        y = -width + offset if mirrored else width - offset
+    pull_obj.location = (x, y, thickness)
+    pull_obj.hide_viewport = hidden
+    pull_obj.hide_render = hidden
+
+
+def _solve_drawer_box(front_obj, box_obj, insert_obj, length, width,
+                      overlays, hidden):
+    clear_drivers(box_obj)
+    box_obj[PART_ROLE_KEY] = 'DRAWER_BOX'
+    top, bottom, left, right = overlays
+    side = float(prompt(front_obj, 'Drawer Box Side Clearance', inch(0.5)))
+    top_clr = float(prompt(front_obj, 'Drawer Box Top Clearance', inch(0.75)))
+    rear = float(prompt(front_obj, 'Drawer Box Rear Clearance', inch(1.0)))
+    bottom_clr = float(prompt(front_obj, 'Drawer Box Bottom Clearance', inch(0.5)))
+    depth = cage_dims(insert_obj)[1]
+    set_cage(box_obj, (bottom + bottom_clr, -left - side, 0.0),
+             dim_x=width - left - right - side * 2.0,
+             dim_y=depth - rear,
+             dim_z=length - top - bottom - top_clr - bottom_clr)
+    box_obj.hide_viewport = hidden
+    box_obj.hide_render = hidden
+
+
+def solve_insert_parts(insert_obj):
+    """Place the fronts, pulls and drawer boxes of one insert."""
+    has_fronts = 'Inset Front' in insert_obj
+    dim_x, dim_y, dim_z = cage_dims(insert_obj)
+    overlays = front_overlays(insert_obj) if has_fronts else (0.0, 0.0, 0.0, 0.0)
+    top, bottom, left, right = overlays
+    thickness = float(prompt(insert_obj, 'Front Thickness', inch(0.75)))
+    gap = float(prompt(insert_obj, 'Vertical Gap', inch(0.125)))
+    swing = int(prompt(insert_obj, 'Door Swing', SWING_DOUBLE))
+    if insert_obj.get('Inset Front', False):
+        y = thickness
+    else:
+        y = -float(prompt(insert_obj, 'Door to Cabinet Gap', inch(0.125)))
+
+    for child in list(insert_obj.children):
+        if child.get('IS_APPLIANCE_TEXT'):
+            clear_drivers(child)
+            child[PART_ROLE_KEY] = 'APPLIANCE_TEXT'
+            child.location.x = dim_x / 2.0
+            child.location.z = dim_z / 2.0
+            continue
+        if child.name.split('.')[0] == OVERLAY_EMPTY_NAME or child.get(PART_ROLE_KEY) == 'OVERLAY_PROMPTS':
+            clear_drivers(child)
+            child[PART_ROLE_KEY] = 'OVERLAY_PROMPTS'
+            child['Overlay Top'] = top
+            child['Overlay Bottom'] = bottom
+            child['Overlay Left'] = left
+            child['Overlay Right'] = right
+            continue
+        if not child.get('IS_CABINET_FRONT') or not has_fronts:
+            continue
+
+        role = _front_role(child)
+        clear_drivers(child)
+        child[PART_ROLE_KEY] = role
+        length = dim_z + top + bottom
+        if role == 'LEFT_DOOR':
+            width = (dim_x + left + right - gap) / 2.0 if swing == SWING_DOUBLE else dim_x + left + right
+            set_part(child, (-left, y, -bottom), length=length, width=width,
+                     thickness=thickness, visible=swing != SWING_RIGHT)
+        elif role == 'RIGHT_DOOR':
+            width = (dim_x + left + right - gap) / 2.0 if swing == SWING_DOUBLE else dim_x + left + right
+            set_part(child, (dim_x + right, y, -bottom), length=length,
+                     width=width, thickness=thickness, visible=swing != SWING_LEFT)
+        else:
+            width = dim_x + left + right
+            # A lone front keeps whatever visibility it was given.
+            set_part(child, (-left, y, -bottom), length=length, width=width,
+                     thickness=thickness, visible=not child.hide_viewport)
+        for key, value in (('Top Overlay', top), ('Bottom Overlay', bottom),
+                           ('Left Overlay', left), ('Right Overlay', right)):
+            if key in child:
+                child[key] = value
+
+        false_front = bool(child.get('False Front', False))
+        for part in list(child.children):
+            if part.get('IS_CABINET_PULL'):
+                hidden = false_front if (child.get('IS_DRAWER_FRONT') or child.get('IS_PULLOUT_FRONT')) else child.hide_viewport
+                _solve_pull(child, part, length, width, thickness, hidden)
+            elif part.get('IS_DRAWER_BOX'):
+                _solve_drawer_box(child, part, insert_obj, length, width,
+                                  overlays, false_front)
 
 
 def attach_cage(child_obj, parent_obj):
