@@ -230,6 +230,16 @@ def run_calc_fix(context, obj=None, passes=2):
     else:
         objects_to_update = list(context.scene.objects)
 
+    # Solved cabinets and products write their parts directly. Run them
+    # first so whatever is still driven below them settles against values
+    # that have already landed.
+    try:
+        from .product_libraries.frameless import solver_frameless
+        solver_frameless.solve_roots(objects_to_update)
+    except Exception:
+        import traceback
+        traceback.print_exc()
+
     home_builder_calculators = []
 
     # Collect all calculators

@@ -4,6 +4,9 @@ from ...hb_types import GeoNodeCage, GeoNodeCutpart, CabinetPartModifier
 from ... import units
 from ...units import inch
 from .types_frameless import CabinetPart, CabinetSideNotched
+from .solver_frameless import (PART_ROLE_KEY, clear_drivers as _clear_drivers,
+                               set_part as _set_part, set_modifier as _set_modifier,
+                               set_array, prompt as _prompt)
 
 
 # ---------------------------------------------------------------------------
@@ -21,11 +24,6 @@ from .types_frameless import CabinetPart, CabinetSideNotched
 #
 # Call ``recalculate_product`` after changing any prompt or dimension on a
 # product; it accepts the cage or any part under it.
-
-# Role tag written on every product part. The solver finds its parts by
-# role each pass, which survives a rename or a duplicate where matching on
-# the object name does not. Same key the cabinet libraries use.
-PART_ROLE_KEY = 'hb_part_role'
 
 # Tag support frames carried before the products shared one key.
 SUPPORT_FRAME_PART_KEY = 'SUPPORT_FRAME_PART'
@@ -144,81 +142,10 @@ def product_parts(product_obj):
     return parts
 
 
-def _clear_drivers(obj):
-    """Drop every driver on ``obj``.
-
-    Products built before the solver carry a driver on each part's
-    location, each geometry-node size input and its visibility. The solver
-    writes those same values directly, and a leftover driver would
-    overwrite the written value on the next depsgraph evaluation -- so the
-    old drivers have to go before the first solve. Parts built by the
-    solver have no animation data at all, which makes this a no-op.
-    """
-    anim = obj.animation_data
-    if anim is None:
-        return
-    for fcurve in list(anim.drivers):
-        try:
-            anim.drivers.remove(fcurve)
-        except (RuntimeError, ReferenceError):
-            pass
-    if anim.action is None and not anim.nla_tracks:
-        obj.animation_data_clear()
-
-
-def _set_part(part_obj, location, length=None, width=None, thickness=None,
-              visible=True):
-    """Write one part's position, size and visibility.
-
-    Sizes are clamped at zero: a board whose neighbours eat more than the
-    span it sits in has nothing left, and a negative length would build
-    the part inside out rather than not at all.
-    """
-    part = GeoNodeCutpart(part_obj)
-    part_obj.location = location
-    if length is not None:
-        part.set_input('Length', max(length, 0.0))
-    if width is not None:
-        part.set_input('Width', max(width, 0.0))
-    if thickness is not None:
-        part.set_input('Thickness', max(thickness, 0.0))
-    part_obj.hide_viewport = not visible
-    part_obj.hide_render = not visible
-
-
-def _set_modifier(part_obj, mod_name, inputs=(), visible=None):
-    """Write a part modifier's node inputs and visibility. No-op when the
-    part has no such modifier (an older build, or an applied part)."""
-    mod = part_obj.modifiers.get(mod_name)
-    if mod is None or mod.type != 'NODES' or mod.node_group is None:
-        return
-    cpm = CabinetPartModifier(part_obj)
-    cpm.mod = mod
-    for name, value in inputs:
-        try:
-            cpm.set_input(name, value)
-        except (KeyError, AttributeError, ValueError):
-            pass
-    if visible is not None:
-        mod.show_viewport = visible
-        mod.show_render = visible
-
-
 def _set_array(part_obj, count, offset_z):
     """Lay a part out ``count`` times along its own Z. The part is built on
     its side, so the product's width runs along the part's Z."""
-    array_mod = part_obj.modifiers.get(ARRAY_MOD_NAME)
-    if array_mod is None or array_mod.type != 'ARRAY':
-        return
-    array_mod.use_relative_offset = False
-    array_mod.use_constant_offset = True
-    array_mod.constant_offset_displace = (0.0, 0.0, offset_z)
-    array_mod.count = max(count, 1)
-
-
-def _prompt(obj, name, default):
-    value = obj.get(name, default)
-    return default if value is None else value
+    set_array(part_obj, ARRAY_MOD_NAME, count, offset_z)
 
 
 def recalculate_product(obj):

@@ -85,8 +85,9 @@ def load_file_post(scene):
     # Products are solved in Python. Products from an older build were
     # built from drivers instead, which is what let a saved product reopen
     # collapsed or missing -- re-solve them so they come back as saved.
-    from .product_libraries.frameless import types_products
+    from .product_libraries.frameless import types_products, solver_frameless
     types_products.upgrade_products()
+    solver_frameless.upgrade_cabinets()
 
     # Style colours are a view mode, held per file and on by default, so
     # the scene has to be painted for it on load rather than only when

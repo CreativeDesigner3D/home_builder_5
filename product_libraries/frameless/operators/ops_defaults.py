@@ -153,6 +153,7 @@ class hb_frameless_OT_update_cabinet_sizes(bpy.types.Operator):
             try:
                 cabinet.set_input('Dim Y', new_depth)
                 cabinet.set_input('Dim Z', new_height)
+                hb_utils.run_calc_fix(context, cabinet.obj)
                 updated_count += 1
             except Exception as e:
                 self.report({'WARNING'}, f"Could not update cabinet {obj.name}: {str(e)}")
