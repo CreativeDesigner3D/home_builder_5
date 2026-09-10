@@ -16,7 +16,9 @@ Shape
     {'key':   short id, used by the viewport panel's category filter
      'label': section header text, shown in both browsers
      'prop':  the expand/collapse BoolProperty backing the sidebar box
-     'rows':  ((row_label, ((display, cabinet_name), ...)), ...)}
+     'rows':  ((row_label, ((display, cabinet_name), ...)), ...)
+     'toggle': optional (label, scene group, bool name) -- a switch the
+               viewport panel draws on the section's header row}
 
 ``row_label`` is the small left-hand caption in the sidebar ("Pie Cut",
 "Diagonal", "Cabinet", "Standalone"); blank means an unlabelled row.
@@ -54,6 +56,9 @@ SECTIONS = (
         'key': 'appliance',
         'label': "Appliance Products",
         'prop': 'show_appliance_library',
+        # Cages or 3D models, room-wide. Which appliances HAVE a model is
+        # each one's own choice, in its prompts.
+        'toggle': ("Show Model", 'home_builder', 'show_appliance_models'),
         'rows': (
             # No dedicated Oven product: the Oven button places the
             # built-in tall oven tower.

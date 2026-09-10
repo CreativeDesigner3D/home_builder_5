@@ -20,7 +20,7 @@ PART_CLASS_MAP = {
     'Panel': types_products.Panel,
 }
 from .. import props_hb_frameless
-from ...common import types_appliances
+from ...common import types_appliances, appliance_geo
 from .... import hb_utils, hb_project, hb_snap, hb_placement, hb_details, hb_types, units
 
 def has_child_item_type(obj,item_type):
@@ -1884,6 +1884,8 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                     self.assign_door_styles_to_cabinet(cabinet.obj)
                     # Calculate default shelf quantities based on opening heights
                     bpy.ops.hb_frameless.calculate_shelf_quantity(cabinet_name=cabinet.obj.name)
+                else:
+                    appliance_geo.seed_on_place(cabinet.obj)
                 # Apply toggle mode for display
                 bpy.ops.hb_frameless.toggle_mode(search_obj_name=cabinet.obj.name)
             # Remove preview cage and dimensions

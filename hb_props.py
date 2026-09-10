@@ -37,6 +37,14 @@ def update_product_tab(self,context):
                 area.tag_redraw()
 
 
+def update_show_appliance_models(self, context):
+    """Show or hide the 3D model on every appliance in the scene. The
+    cages stay either way; this is a way of looking at the room."""
+    from .product_libraries.common import appliance_geo
+    appliance_geo.apply_visibility(context.scene)
+    update_product_tab(self, context)
+
+
 def update_line_thickness(self, context):
     """Update all curve line thicknesses in the scene."""
     for obj in context.scene.objects:
@@ -491,6 +499,13 @@ class Home_Builder_Scene_Props(PropertyGroup):
                                  ('CLOSET',"Pulito - Closet","Show the Pulito - Closet Library")],
                           default='FRAMELESS',
                           update=update_product_tab)# type: ignore
+
+    show_appliance_models: BoolProperty(
+        name="Show Model",
+        description=("Show the 3D model on the appliances that have one, "
+                     "or only their cages"),
+        default=True,
+        update=update_show_appliance_models)  # type: ignore
 
     room_name: StringProperty(name="Room Name", default="")
     room_type: StringProperty(name="Room Type", default="")

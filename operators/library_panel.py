@@ -217,6 +217,21 @@ def _auto_join_prop(context):
     return (props, name) if (name and props is not None) else None
 
 
+def _section_toggle(context, section):
+    """(label, property group, property name) for the switch a section
+    puts on its header row, or None where it has none. The group is a
+    pointer on the scene, so a section can name a scene-wide setting as
+    easily as one of the library's own."""
+    spec = section.get('toggle') if section else None
+    if not spec:
+        return None
+    label, group, name = spec
+    props = getattr(context.scene, group, None)
+    if props is None or not hasattr(props, name):
+        return None
+    return label, props, name
+
+
 def _sizes_form(context):
     """The active library's default-sizes draw method, or None."""
     cat = active_catalog(context)
@@ -381,7 +396,8 @@ def compute_layout(context, rect):
         if not group:
             continue
         section = cat.section_by_key(key)
-        blocks.append(('header', (key, section['label'])))
+        blocks.append(('header', (key, section['label'],
+                                  _section_toggle(context, section))))
         if key in _collapsed:
             continue
         for i in range(0, len(group), COLS):
@@ -432,15 +448,21 @@ def compute_layout(context, rect):
                                    content_h, cell_h)
 
     tiles = []
-    headers = []         # (key, label, rect)
+    headers = []         # (key, label, rect, toggle_rect, toggle)
     for block, block_top, _block_bottom in _list.visible(
             blocks, list_top, list_bottom, _block_h):
         kind, payload = block
         if kind == 'header':
-            key, label = payload
-            headers.append((key, label,
-                            (content_x, block_top - sect_h,
-                             content_w, sect_h)))
+            key, label, toggle = payload
+            hdr = (content_x, block_top - sect_h, content_w, sect_h)
+            # The switch sits right-aligned on the header row, a pill
+            # like Auto Join: a state you want to see, not hunt for.
+            tog_rect = None
+            if toggle is not None:
+                tw = text_width(0, FONT_LABEL * s, toggle[0]) + 12 * s
+                tog_rect = (content_x + content_w - 6 * s - tw,
+                            hdr[1] + 2 * s, tw, sect_h - 4 * s)
+            headers.append((key, label, hdr, tog_rect, toggle))
             continue
         for col, product in enumerate(payload):
             tx = content_x + col * (tile + gap)
@@ -453,13 +475,29 @@ def compute_layout(context, rect):
             clip_rect,
             tiles, track, thumb, len(items), headers)
 
+def _hit_section_toggle(mx, my, layout):
+    """(section key, toggle) for the header switch under the cursor, or
+    None. Asked before the header itself, so a click on the switch
+    flips it rather than folding the section."""
+    if layout is None:
+        return None
+    if not point_in_rect(mx, my, layout[3]):
+        return None
+    for key, _label, _rect, tog_rect, toggle in layout[8]:
+        if tog_rect is not None and point_in_rect(mx, my, tog_rect):
+            return key, toggle
+    return None
+
+
 def _hit_section(mx, my, layout):
     """Section key whose header is under the cursor, or None."""
     if layout is None:
         return None
     if not point_in_rect(mx, my, layout[3]):
         return None
-    for key, _label, rect in layout[8]:
+    if _hit_section_toggle(mx, my, layout) is not None:
+        return None
+    for key, _label, rect, _tog_rect, _toggle in layout[8]:
         if point_in_rect(mx, my, rect):
             return key
     return None
@@ -612,6 +650,12 @@ def hit(context, mx, my, entries):
     if which == 'SIZES':
         bpy.ops.home_builder.cabinet_sizes('INVOKE_DEFAULT')
         return True
+    tog = _hit_section_toggle(mx, my, layout)
+    if tog is not None:
+        _label, props, name = tog[1]
+        setattr(props, name, not getattr(props, name))
+        tag_redraw()
+        return True
     key = _hit_section(mx, my, layout)
     if key is not None:
         if key in _collapsed:
@@ -691,6 +735,8 @@ def _paint_grid(layout, mx, my):
     hover_badge = _b['key'] if _b else None
     hover_ui = _hit_filter(mx, my, layout)
     hover_section = _hit_section(mx, my, layout)
+    _t = _hit_section_toggle(mx, my, layout)
+    hover_toggle = _t[0] if _t else None
 
     s = scale()
     font_id = 0
@@ -759,7 +805,7 @@ def _paint_grid(layout, mx, my):
     try:
         # Section headers: a chevron and the name. Clicking one folds
         # the section away.
-        for key, label, rect in headers:
+        for key, label, rect, tog_rect, toggle in headers:
             hx, hy, hw, hh = rect
             if key == hover_section:
                 draw_rects(shader, [rect], Theme.ROW_HOVER_BG)
@@ -770,6 +816,13 @@ def _paint_grid(layout, mx, my):
                       hy + (hh - FONT_SECTION * s) / 2.0 + 1 * s,
                       FONT_SECTION * s, Theme.TEXT_PRIMARY, label)
             draw_rects(shader, [(hx, hy, hw, 1 * s)], Theme.SEPARATOR)
+            if tog_rect is not None:
+                on = bool(getattr(toggle[1], toggle[2], False))
+                paint_button(shader, tog_rect, hovered=key == hover_toggle,
+                             active=on)
+                draw_centered_text(
+                    font_id, tog_rect, FONT_LABEL * s,
+                    Theme.TEXT_PRIMARY if on else Theme.TEXT_DIM, toggle[0])
 
         # Only the hovered tile gets a chip behind it. A fill under
         # every thumbnail tiled the panel with light grey boxes, and the

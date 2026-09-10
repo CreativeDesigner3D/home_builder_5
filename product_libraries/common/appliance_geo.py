@@ -634,6 +634,65 @@ def _geo_children(cage_obj):
     return [c for c in cage_obj.children if c.get(GEO_CHILD_FLAG)]
 
 
+def models_shown(scene=None):
+    """Whether the scene shows its appliance models, or only the cages."""
+    scene = scene or bpy.context.scene
+    hb = getattr(scene, 'home_builder', None)
+    return bool(getattr(hb, 'show_appliance_models', True))
+
+
+def _set_hidden(obj, hide):
+    obj.hide_viewport = hide
+    try:
+        obj.hide_set(hide)
+    except RuntimeError:
+        pass  # not in the active view layer
+
+
+def _follows_switch(cage_obj):
+    """An appliance that has never been given its own model choice
+    follows the scene switch: modeled while it is on, a cage while
+    off. One that was set to None in its prompts stays a cage."""
+    return supports(cage_obj) and stored_opts(cage_obj) is None
+
+
+def _seed_modeled(cage_obj):
+    opts = defaults_for(cage_obj)
+    opts['model_style'] = 'MODELED'
+    set_opts(cage_obj, opts)
+    return build_geometry(cage_obj)
+
+
+def apply_visibility(scene=None):
+    """Hide or show the model parts on every appliance in the scene, per
+    its Show Model switch. Turning it on also models the appliances
+    that have been following the switch. Renders are left alone: the
+    switch is about what the viewport shows, not what the appliance is."""
+    scene = scene or bpy.context.scene
+    hide = not models_shown(scene)
+    if not hide:
+        # Snapshot first: building adds objects to the scene.
+        waiting = [obj for obj in scene.objects
+                   if obj.get('IS_APPLIANCE') and _follows_switch(obj)]
+        for obj in waiting:
+            _seed_modeled(obj)
+    parts = [obj for obj in scene.objects if obj.get(GEO_CHILD_FLAG)]
+    for obj in parts:
+        _set_hidden(obj, hide)
+    return len(parts)
+
+
+def seed_on_place(cage_obj):
+    """Called once an appliance has been placed. With the switch on it
+    comes in modeled with its type's defaults; off, it stays a cage
+    and picks up a model when the switch turns on."""
+    if cage_obj is None or not _follows_switch(cage_obj):
+        return False
+    if not models_shown():
+        return False
+    return _seed_modeled(cage_obj)
+
+
 def remove_geometry(cage_obj):
     """Drop every generated part. Leaves the cage, its label text and any
     appliance panels alone."""
@@ -1066,6 +1125,11 @@ def build_geometry(cage_obj):
     if builder is None:
         return False
     builder(cage_obj, opts)
+    # A model built while the scene is showing cages lands hidden, so
+    # the switch means the same thing for new and existing appliances.
+    if not models_shown():
+        for child in _geo_children(cage_obj):
+            _set_hidden(child, True)
     return True
 
 

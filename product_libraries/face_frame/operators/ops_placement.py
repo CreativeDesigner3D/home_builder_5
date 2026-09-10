@@ -41,6 +41,7 @@ from .. import types_face_frame_corner
 from .. import bay_presets
 from .. import props_hb_face_frame
 from .. import exposure
+from ...common import appliance_geo
 from . import ops_cabinet
 from .... import hb_placement, hb_types, units
 
@@ -5251,6 +5252,7 @@ class hb_face_frame_OT_place_appliance(bpy.types.Operator,
         # placed appliance. Dishwasher placement is the headline case -
         # adjacent cabinet sides auto-flip to FLUSH_X.
         exposure.recalc_after_appliance_placement(app_obj)
+        appliance_geo.seed_on_place(app_obj)
 
         for o in context.selected_objects:
             o.select_set(False)
