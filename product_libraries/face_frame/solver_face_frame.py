@@ -2990,6 +2990,12 @@ def applied_back_segments(layout):
     condition to build. Only conditions that produce an applied panel
     are returned; the caller decides what to do with each.
     """
+    # A bay-less product (a leg post) passes a minimal layout snapshot: it
+    # has no carcass back for a panel to hang on, and every field below is
+    # bay-derived. Nothing to build, so answer that directly rather than
+    # raising partway through the caller's applied-panel pass.
+    if not getattr(layout, "bays", None):
+        return []
     out = []
     for start, end in _compute_segments(layout, _carcass_back_passthrough):
         first_bay = layout.bays[start]
