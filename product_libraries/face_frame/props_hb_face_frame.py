@@ -9254,6 +9254,18 @@ class Face_Frame_Opening_Props(PropertyGroup):
         default=units.inch(24.0), unit='LENGTH', precision=4, min=0.0,
         update=_update_cabinet_dim,
     )  # type: ignore
+    # The appliance model shown in the opening. AUTO reads the opening:
+    # a short one takes a microwave, a tall one a wall oven.
+    appliance_kind: EnumProperty(
+        name="Appliance",
+        items=[
+            ('AUTO', "Auto", "A microwave in a short opening, a wall oven in a tall one"),
+            ('OVEN', "Wall Oven", "A wall oven"),
+            ('MICROWAVE', "Microwave", "A built-in microwave"),
+            ('NONE', "None", "No appliance model in this opening"),
+        ],
+        default='AUTO', update=_update_cabinet_dim,
+    )  # type: ignore
     include_fillers: BoolProperty(
         name="Include Fillers",
         description="Build the left/right filler stiles; off reserves the opening as an appliance with no fillers",

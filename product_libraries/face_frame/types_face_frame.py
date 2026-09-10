@@ -11203,6 +11203,12 @@ class FaceFrameCabinet(GeoNodeCage):
             sn.location = (0.0, 0.0, 0.0)
 
         # Pass 1b: opening cages - in-place match by obj.name
+        # Where the appliance openings sit, top to bottom, so Auto can
+        # tell a microwave over an oven from a lone oven.
+        appliance_zs = sorted(
+            leaves_by_name[c.name]['cage_z'] for c in opening_cages
+            if c.name in leaves_by_name
+            and c.face_frame_opening.front_type == 'APPLIANCE')
         for cage in opening_cages:
             rect = leaves_by_name.get(cage.name)
             if rect is None:
@@ -11218,7 +11224,8 @@ class FaceFrameCabinet(GeoNodeCage):
             op.set_input('Mirror Y', False)
             self._update_fronts_in_opening(cage, layout, rect)
             self._update_interior_items_in_opening(cage, layout, rect)
-            self._update_appliance_in_opening(cage, rect)
+            self._update_appliance_in_opening(cage, rect,
+                                              appliance_zs=appliance_zs)
 
         # Pass 2: splitters (mid rails / mid stiles) - delete & recreate
         self._reconcile_bay_splitters(bay_obj, parts['splitters'])
@@ -11383,24 +11390,45 @@ class FaceFrameCabinet(GeoNodeCage):
         return part
 
     def _update_appliance_in_opening(self, opening_obj, rect=None,
-                                     live=True):
-        """A refrigerator cabinet's appliance opening houses the
-        refrigerator model itself, sized on every recalc to the frame
-        opening -- between the stiles and under the rail, which the
-        rect's reveals measure in from the carcass cavity. Any other
-        opening, or one that has gone away, carries none."""
+                                     live=True, appliance_zs=()):
+        """An appliance opening houses its appliance model, sized on
+        every recalc to the frame opening -- between the stiles and
+        under the rail, which the rect's reveals measure in from the
+        carcass cavity. A refrigerator cabinet's opening takes the
+        refrigerator; an APPLIANCE front takes the wall oven or
+        microwave its Appliance setting names, between its fillers. Any
+        other opening, or one that has gone away, carries none."""
         from ..common import appliance_geo
-        if live and opening_obj.get('SIZE_ROLE') == 'REFRIGERATOR':
-            span = None
-            if rect is not None:
-                span = (rect['reveal_left'],
-                        rect['cage_dim_x'] - rect['reveal_left']
-                        - rect['reveal_right'],
-                        rect['reveal_bottom'],
-                        rect['cage_dim_z'] - rect['reveal_top']
-                        - rect['reveal_bottom'])
-            appliance_geo.sync_opening_appliance(opening_obj, 'REFRIGERATOR',
-                                                 span)
+        kind = None
+        span = None
+        if live and rect is not None:
+            x0 = rect['reveal_left']
+            width = (rect['cage_dim_x'] - rect['reveal_left']
+                     - rect['reveal_right'])
+            z0 = rect['reveal_bottom']
+            height = (rect['cage_dim_z'] - rect['reveal_top']
+                      - rect['reveal_bottom'])
+            props = opening_obj.face_frame_opening
+            if opening_obj.get('SIZE_ROLE') == 'REFRIGERATOR':
+                kind = 'REFRIGERATOR'
+            elif props.front_type == 'APPLIANCE':
+                choice = props.appliance_kind
+                if choice == 'AUTO':
+                    # A short opening is a microwave; so is the top of
+                    # a stack of two, which is a microwave over an oven.
+                    top_of_stack = (len(appliance_zs) >= 2
+                                    and rect['cage_z'] >= appliance_zs[-1]
+                                    - 1e-6)
+                    choice = ('MICROWAVE' if height < inch(20.0)
+                              or top_of_stack else 'OVEN')
+                kind = {'OVEN': 'WALL_OVEN',
+                        'MICROWAVE': 'MICROWAVE'}.get(choice)
+                left, right = solver.appliance_filler_widths(rect, props)
+                x0 += left
+                width -= left + right
+            span = (x0, width, z0, height)
+        if kind is not None:
+            appliance_geo.sync_opening_appliance(opening_obj, kind, span)
         else:
             appliance_geo.remove_opening_appliance(opening_obj)
 

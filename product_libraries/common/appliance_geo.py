@@ -62,7 +62,7 @@ GEO_OPTS_PROP = "APPLIANCE_GEO_OPTS"
 GEO_CHILD_FLAG = "IS_APPLIANCE_GEO"
 
 SUPPORTED_TYPES = {'REFRIGERATOR', 'RANGE', 'DISHWASHER', 'UNDER_COUNTER',
-                   'HOOD', 'SINK'}
+                   'HOOD', 'SINK', 'WALL_OVEN', 'MICROWAVE'}
 
 # Appliances that can wear cabinet door panels instead of their own
 # front. Matches what the appliance-panels product accepts.
@@ -87,6 +87,10 @@ LIP_W = inch(0.5)             # the cooktop tray's lip, in plan
 LIP_RISE = inch(0.375)        # how far it stands above the cooktop
 LIP_PROUD = inch(0.5)         # how far the front edge rolls out
 SMALL_OVEN_EVEN_AT = inch(30.0)   # both ovens this wide: split evenly
+OVEN_CONTROL_H = inch(4.0)        # a wall oven's control band
+MICRO_TRIM = inch(1.25)           # a built-in microwave's trim kit frame
+MICRO_PANEL_W = inch(6.0)         # its control panel, right of the door
+MICRO_RECESS = inch(0.5)          # the face sits this far behind the trim
 SINK_WALL_T = inch(0.0625)
 SINK_BACK_DECK = inch(2.5)        # rim behind the bowls, where the faucet stands
 SINK_FRONT_RIM = inch(1.25)
@@ -282,8 +286,19 @@ _SINK_DEFAULTS = dict(_COMMON_DEFAULTS, **{
     'bowl_depth': 0.0,                # 0: the cage's own depth
 })
 
+_OVEN_DEFAULTS = dict(_COMMON_DEFAULTS, **{
+    'knobs': True,
+})
+
+_MICROWAVE_DEFAULTS = dict(_COMMON_DEFAULTS, **{
+    'trim_kit': False,
+    'handle_style': 'NONE',
+})
+
 _DEFAULTS_BY_TYPE = {
     'SINK': _SINK_DEFAULTS,
+    'WALL_OVEN': _OVEN_DEFAULTS,
+    'MICROWAVE': _MICROWAVE_DEFAULTS,
     'HOOD': _HOOD_DEFAULTS,
     'REFRIGERATOR': _FRIDGE_DEFAULTS,
     'RANGE': _RANGE_DEFAULTS,
@@ -1079,7 +1094,9 @@ CABINET_APPLIANCE_CLEARANCE = inch(0.25)
 CABINET_APPLIANCE_PROUD = inch(2.5)   # a built-in's doors stand this far
                                       # out of the carcass
 
-_OPENING_APPLIANCE_CLASSES = {'REFRIGERATOR': 'Refrigerator', 'SINK': 'Sink'}
+_OPENING_APPLIANCE_CLASSES = {'REFRIGERATOR': 'Refrigerator', 'SINK': 'Sink',
+                              'WALL_OVEN': 'WallOven',
+                              'MICROWAVE': 'Microwave'}
 
 
 def opening_appliance(opening_obj):
@@ -1140,6 +1157,10 @@ def _ensure_cabinet_appliance(parent_obj, cls, width, depth, height,
     and sized every time. Its label is dropped: the cabinet already
     carries one."""
     cage = opening_appliance(parent_obj)
+    if cage is not None and cage.get('APPLIANCE_TYPE') != getattr(
+            cls, 'APPLIANCE_TYPE', cage.get('APPLIANCE_TYPE')):
+        remove_opening_appliance(parent_obj)
+        cage = None
     if cage is None:
         app = cls()
         app.width, app.depth, app.height = width, depth, height
@@ -1375,6 +1396,122 @@ def _build_refrigerator(cage_obj, opts):
     if opts.get('dispenser'):
         _fridge_dispenser(cg, 'dim_z - %f' % (top + inch(21.0)), mat, dark,
                           metal)
+
+
+# ---------------------------------------------------------------------------
+# Built-in wall oven and microwave
+#
+# Both live in a tall cabinet's appliance opening: the cage fills the
+# opening between the fillers, a couple of inches proud of the carcass.
+# ---------------------------------------------------------------------------
+
+def _build_wall_oven(cage_obj, opts):
+    cg = _Cage(cage_obj)
+    mat = _finish_material(opts)
+    dark = _dark_material()
+    metal = _metal_material()
+    door_t = RANGE_DOOR_T
+    ctrl = OVEN_CONTROL_H
+    _flat(cg, "Oven Case", 0.0, 0.0, 0.0, 'dim_x', 'dim_y - %f' % door_t,
+          'dim_z', mat)
+    # Control band across the top, with the readout in the middle and a
+    # knob either side of it.
+    _front(cg, "Oven Controls", 0.0, 'dim_z - %f' % ctrl, 'dim_x', ctrl,
+           door_t, dark)
+    z_ctrl = 'dim_z - %f' % (ctrl * 0.5)
+    obj = _display(cg, "Oven Display", dark, _display_material())
+    obj.rotation_euler.x = math.radians(90)
+    wrap = _CageWrap(obj)
+    wrap.driver_location('x', 'dim_x * 0.5', [cg.dim_x])
+    wrap.driver_location('y', '-dim_y', [cg.dim_y])
+    wrap.driver_location('z', z_ctrl, [cg.dim_z])
+    if opts.get('knobs', True):
+        for i, fx in enumerate((0.16, 0.84)):
+            obj = _knob(cg, "Oven Knob %d" % (i + 1), metal, dark)
+            obj.rotation_euler.x = math.radians(90)
+            wrap = _CageWrap(obj)
+            wrap.driver_location('x', 'dim_x * %f' % fx, [cg.dim_x])
+            wrap.driver_location('y', '-dim_y', [cg.dim_y])
+            wrap.driver_location('z', z_ctrl, [cg.dim_z])
+    # The door fills what is left, with the full-width window and a bar
+    # handle along its top, like a range's oven.
+    height = 'dim_z - %f' % (ctrl + GAP)
+    _front(cg, "Oven Door", 0.0, 0.0, 'dim_x', height, door_t, mat)
+    _oven_window(cg, "Oven Door", 0.0, 'dim_x', 0.0, height, dark)
+    _bar_handle(cg, "Oven Handle", opts, metal, inch(2.0),
+                _sub(height, inch(3.0)), 'dim_x - %f' % inch(4.0), False)
+
+
+def _keypad(cg, name, dark, lit):
+    """A microwave's keypad: a grid of small keys, built up from the
+    panel face, with the top row lit as the readout's neighbours."""
+    verts, faces = [], []
+    key_w, key_h, gap = inch(1.0), inch(0.55), inch(0.3)
+    cols, rows = 3, 4
+    total_w = cols * key_w + (cols - 1) * gap
+    total_h = rows * key_h + (rows - 1) * gap
+    for r in range(rows):
+        for c in range(cols):
+            x = -total_w / 2.0 + c * (key_w + gap)
+            y = total_h / 2.0 - key_h - r * (key_h + gap)
+            _box(verts, faces, x, x + key_w, y, y + key_h, 0.0, inch(0.05))
+    return _mesh_child(cg, name, verts, faces, dark, extra_mats=(lit,))
+
+
+def _build_microwave(cage_obj, opts):
+    cg = _Cage(cage_obj)
+    mat = _finish_material(opts)
+    dark = _dark_material()
+    metal = _metal_material()
+    t = inch(1.0)
+    trim = MICRO_TRIM if opts.get('trim_kit', True) else 0.0
+    # The face recesses behind a trim kit; without one it is the front.
+    # The case stops where the door and panel begin, so no two faces
+    # share the front plane.
+    recess = MICRO_RECESS if trim > 0.0 else 0.0
+    face_y = '-dim_y + %f' % recess
+    _flat(cg, "Microwave Case", 0.0, 0.0, 0.0, 'dim_x',
+          'dim_y - %f' % (recess + t), 'dim_z', mat)
+    if trim > 0.0:
+        # The trim kit: a stainless frame at the front plane around a
+        # recessed face.
+        _front(cg, "Trim Top", 0.0, 'dim_z - %f' % trim, 'dim_x', trim,
+               MICRO_RECESS, mat)
+        _front(cg, "Trim Bottom", 0.0, 0.0, 'dim_x', trim, MICRO_RECESS, mat)
+        _front(cg, "Trim Left", 0.0, trim, trim, 'dim_z - %f' % (2.0 * trim),
+               MICRO_RECESS, mat)
+        _front(cg, "Trim Right", 'dim_x - %f' % trim, trim, trim,
+               'dim_z - %f' % (2.0 * trim), MICRO_RECESS, mat)
+    # Door on the left, control panel on the right.
+    door_w = 'dim_x - %f' % (2.0 * trim + MICRO_PANEL_W + GAP)
+    height = 'dim_z - %f' % (2.0 * trim)
+    _front(cg, "Microwave Door", trim, trim, door_w, height, t, mat,
+           y=face_y)
+    inset = inch(1.5)
+    _front(cg, "Microwave Window", trim + inset, trim + inset,
+           _sub(door_w, 2.0 * inset), _sub(height, 2.0 * inset), inch(0.0625),
+           dark, y=face_y, proud=True)
+    _bar_handle(cg, "Microwave Handle", opts, metal,
+                _sub(_add(trim, door_w), inch(2.0) + HANDLE_SECTION),
+                trim + inch(3.0), _sub(height, inch(6.0)), True)
+    x_panel = 'dim_x - %f' % (trim + MICRO_PANEL_W)
+    _front(cg, "Microwave Controls", x_panel, trim, MICRO_PANEL_W, height, t,
+           dark, y=face_y)
+    lit = _display_material()
+    obj = _display(cg, "Microwave Display", dark, lit)
+    obj.rotation_euler.x = math.radians(90)
+    wrap = _CageWrap(obj)
+    wrap.driver_location('x', 'dim_x - %f' % (trim + MICRO_PANEL_W / 2.0),
+                         [cg.dim_x])
+    wrap.driver_location('y', face_y, [cg.dim_y])
+    wrap.driver_location('z', 'dim_z - %f' % (trim + inch(1.75)), [cg.dim_z])
+    obj = _keypad(cg, "Microwave Keypad", metal, lit)
+    obj.rotation_euler.x = math.radians(90)
+    wrap = _CageWrap(obj)
+    wrap.driver_location('x', 'dim_x - %f' % (trim + MICRO_PANEL_W / 2.0),
+                         [cg.dim_x])
+    wrap.driver_location('y', face_y, [cg.dim_y])
+    wrap.driver_location('z', 'dim_z - %f' % (trim + inch(5.5)), [cg.dim_z])
 
 
 # ---------------------------------------------------------------------------
@@ -2240,6 +2377,8 @@ def _build_under_counter(cage_obj, opts):
 
 _BUILDERS = {
     'SINK': _build_sink,
+    'WALL_OVEN': _build_wall_oven,
+    'MICROWAVE': _build_microwave,
     'HOOD': _build_hood,
     'REFRIGERATOR': _build_refrigerator,
     'RANGE': _build_range,
@@ -2316,6 +2455,14 @@ class HOME_BUILDER_OT_appliance_prompts(bpy.types.Operator):
                          default='STAINLESS')  # type: ignore
     handle_style: EnumProperty(name="Handles", items=HANDLE_ITEMS,
                                default='BAR')  # type: ignore
+
+    # Wall oven / microwave
+    knobs: BoolProperty(
+        name="Knobs", description="A knob either side of the "
+                                  "readout")  # type: ignore
+    trim_kit: BoolProperty(
+        name="Trim Kit", description="A stainless frame around the "
+                                     "microwave's face")  # type: ignore
 
     # Sink
     sink_style: EnumProperty(name="Style", items=SINK_STYLE_ITEMS,
@@ -2547,7 +2694,11 @@ class HOME_BUILDER_OT_appliance_prompts(bpy.types.Operator):
 
         box = layout.box()
         col = box.column(align=True)
-        if appl == 'SINK':
+        if appl == 'WALL_OVEN':
+            col.prop(self, 'knobs')
+        elif appl == 'MICROWAVE':
+            col.prop(self, 'trim_kit')
+        elif appl == 'SINK':
             col.prop(self, 'sink_style')
             col.row(align=True).prop(self, 'mount', expand=True)
             col.prop(self, 'faucet')

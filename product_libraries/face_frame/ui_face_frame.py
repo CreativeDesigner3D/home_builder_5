@@ -1239,6 +1239,7 @@ def draw_opening_properties(layout, opening_obj):
         # Appliance: filler stiles fitting an appliance. Two input modes
         # toggled by Set Appliance Width (see Face_Frame_Opening_Props).
         if op.front_type == 'APPLIANCE':
+            fcol.prop(op, 'appliance_kind', text="Appliance")
             fcol.prop(op, 'include_fillers', text="Include Fillers")
             if op.include_fillers:
                 fcol.prop(op, 'set_appliance_width', text="Set Appliance Width")
