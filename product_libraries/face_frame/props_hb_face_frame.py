@@ -825,8 +825,10 @@ def update_door_style_name(self, context):
         while f"{base_name}.{i:03d}" in existing:
             i += 1
         final = f"{base_name}.{i:03d}"
+    # A live sibling's name can never be this style's previous name, so an
+    # anchor that matches one is stale (a copied style) and must not re-tag.
     old = self.rename_anchor
-    if old and old != final:
+    if old and old != final and old not in existing:
         roles = (Face_Frame_Door_Style._DRAWER_FRONT_ROLES if in_drawer
                  else Face_Frame_Door_Style._DOOR_FRONT_ROLES)
         for obj in bpy.data.objects:

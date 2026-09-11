@@ -47,14 +47,19 @@ def _copy_door_style(src, dst):
             setattr(dst, pid, getattr(src, pid))
         except Exception:
             pass
+    # rename_anchor is the style's OWN previous name (see the cabinet-style
+    # copy above): copying it would make the copy's first rename re-tag
+    # every front of the SOURCE style.
     for prop in src.bl_rna.properties:
         pid = prop.identifier
-        if pid in ('rna_type', 'name') or pid in cascade or prop.is_readonly:
+        if (pid in ('rna_type', 'name', 'rename_anchor') or pid in cascade
+                or prop.is_readonly):
             continue
         try:
             setattr(dst, pid, getattr(src, pid))
         except Exception:
             pass
+    dst.rename_anchor = dst.name
 
 
 def _copy_collection(src_coll, dst_coll):
