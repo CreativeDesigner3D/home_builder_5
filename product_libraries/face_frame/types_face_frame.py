@@ -12239,7 +12239,9 @@ class FaceFrameCabinet(GeoNodeCage):
     DRAWER_BOX_INSIDE_FLOOR = inch(0.75)
     # Headroom an insert leaves under the rim of the box.
     DRAWER_INSERT_RIM_GAP = inch(0.75)
-    DRAWER_DIVIDER_TH = inch(0.25)
+    # Removable divider stock. A render hint may name its own
+    # thickness (TH) when a product is cut from something else.
+    DRAWER_DIVIDER_TH = inch(0.375)
     # Insert stock: tray walls and partitions, and the thinner panel
     # the bottoms, ribs and sloped shelves are made from.
     INSERT_WALL_TH = inch(0.375)
@@ -12454,7 +12456,9 @@ class FaceFrameCabinet(GeoNodeCage):
         before. Returns the packing cursor to carry on from, or None
         when it took no space.
         """
-        th = self.DRAWER_DIVIDER_TH
+        th = inch(params.get('TH', 0.0))
+        if th < 1e-6:
+            th = self.DRAWER_DIVIDER_TH
         if (rect.x1 - rect.x0 < th * 2) or (rect.y1 - rect.y0 < th * 2):
             return None
         z0, z1 = rect.z0, rect.z0 + rect.h
