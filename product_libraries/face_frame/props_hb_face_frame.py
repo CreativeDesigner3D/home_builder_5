@@ -6,6 +6,7 @@ Phase 3 (types_face_frame.py).
 """
 import bpy
 import os
+import re
 from contextlib import contextmanager
 from bpy.types import (
     PropertyGroup,
@@ -429,6 +430,7 @@ def update_front_series(self, context):
     if items:
         _set_enum_safe(self, "front_shape", items[0][0])
     _apply_series_frame_to_door_style(self)
+    _refresh_auto_front_style_name(self)
     _propagate_door_style(self, context)
 
 
@@ -487,6 +489,7 @@ def update_front_shape(self, context):
     # The shape drives geometry (arched tops); the panel reset above
     # only propagates when the panel value actually changes, so push
     # explicitly -- shape-only changes must rebuild fronts too.
+    _refresh_auto_front_style_name(self)
     _propagate_door_style(self, context)
 
 
@@ -495,6 +498,7 @@ def update_front_panel(self, context):
     to assigned fronts, and re-apply materials so a Prep-for-Glass panel
     renders as glass immediately (and switching away restores the finish)."""
     _apply_series_frame_to_door_style(self)
+    _refresh_auto_front_style_name(self)
     _propagate_door_style(self, context)
     _reapply_materials_for_door_style(self, context)
 
@@ -785,8 +789,8 @@ def ensure_default_styles(context):
             cs.finish_hinge_seeded = True
     if len(ff.door_styles) == 0:
         ds = ff.door_styles.add()
-        ds.name = "Craftsman Square Recessed Panel"
         _apply_default_front_style(ds)
+        ds.name = _auto_front_style_name(*_DEFAULT_FRONT)
         # Rail callouts are a drawer-rail concern: door styles start
         # with the callout off (the drawer seed below keeps the
         # enabled default). Copy-based Add duplicates the active
@@ -795,29 +799,86 @@ def ensure_default_styles(context):
         ff.active_door_style_index = 0
     if len(ff.drawer_front_styles) == 0:
         ds = ff.drawer_front_styles.add()
-        ds.name = "Craftsman Square Recessed Panel"
         _apply_default_front_style(ds)
+        ds.name = _auto_front_style_name(*_DEFAULT_FRONT)
         ff.active_drawer_front_style_index = 0
 
 
 def update_door_style_name(self, context):
     """Keep style names unique within the style's OWN pool (door_styles or
     drawer_front_styles -- independent lists, so a name may repeat across
-    pools). Pool is read from the RNA path."""
+    pools). Pool is read from the RNA path.
+
+    Fronts are tagged with the style's name (DOOR_STYLE_NAME), so a rename
+    re-tags them from the previous name held in rename_anchor -- the same
+    scheme the cabinet style uses for STYLE_NAME. Cabinet-style references
+    (door_style / drawer_front_style) are index-backed dynamic enums and
+    follow a rename on their own."""
     main = get_style_props(context)
-    try:
-        in_drawer = "drawer_front_styles" in self.path_from_id()
-    except Exception:
-        in_drawer = False
+    in_drawer = _front_is_drawer(self)
     pool = main.drawer_front_styles if in_drawer else main.door_styles
     base_name = self.name if self.name else "Door Style"
     existing = [s.name for s in pool if s != self]
-    if base_name not in existing:
+    final = base_name
+    if base_name in existing:
+        i = 1
+        while f"{base_name}.{i:03d}" in existing:
+            i += 1
+        final = f"{base_name}.{i:03d}"
+    old = self.rename_anchor
+    if old and old != final:
+        roles = (Face_Frame_Door_Style._DRAWER_FRONT_ROLES if in_drawer
+                 else Face_Frame_Door_Style._DOOR_FRONT_ROLES)
+        for obj in bpy.data.objects:
+            if (obj.get('DOOR_STYLE_NAME') == old
+                    and obj.get('hb_part_role') in roles):
+                obj['DOOR_STYLE_NAME'] = final
+    self.rename_anchor = final
+    # Apply the de-duplicated name last; a re-entry sees anchor == final
+    # and is a clean no-op.
+    if self.name != final:
+        self.name = final
+
+
+# --- automatic front-style names (series + shape + panel) ---
+# A style keeps following its catalog pick as long as its name is one this
+# rule would produce (or one of the seed names); typing any other name pins
+# it. No stored flag: the name itself is the record.
+_LEGACY_AUTO_FRONT_NAMES = {"Door Style", "Craftsman Square Recessed Panel"}
+_AUTO_FRONT_NAMES_CACHE = {}
+_NAME_SUFFIX_RE = re.compile(r"\.\d{3}$")
+
+
+def _auto_front_style_name(series, shape, panel):
+    return " ".join(part for part in (series, shape, panel) if part)
+
+
+def _auto_front_style_names(in_drawer):
+    names = _AUTO_FRONT_NAMES_CACHE.get(bool(in_drawer))
+    if names is None:
+        table = _DRAWER_PANEL_ITEMS if in_drawer else _DOOR_PANEL_ITEMS
+        names = {_auto_front_style_name(series, shape, panel[0])
+                 for (series, shape), panels in table.items()
+                 for panel in panels}
+        names |= _LEGACY_AUTO_FRONT_NAMES
+        _AUTO_FRONT_NAMES_CACHE[bool(in_drawer)] = names
+    return names
+
+
+def _refresh_auto_front_style_name(self):
+    """Series / shape / panel changed: rename the style after the pick
+    unless the user gave it a name of their own."""
+    current = self.name or ""
+    base = _NAME_SUFFIX_RE.sub("", current)
+    if base not in _auto_front_style_names(_front_is_drawer(self)):
         return
-    i = 1
-    while f"{base_name}.{i:03d}" in existing:
-        i += 1
-    self.name = f"{base_name}.{i:03d}"
+    new = _auto_front_style_name(self.front_series, self.front_shape,
+                                 self.front_panel)
+    if base == new:
+        return
+    # The name update callback de-duplicates within the pool and re-tags
+    # the fronts carrying the old name.
+    self.name = new
 
 
 def update_top_cabinet_clearance(self, context):
@@ -4019,6 +4080,14 @@ class Face_Frame_Door_Style(PropertyGroup):
         update=update_door_style_name,
     )  # type: ignore
 
+    rename_anchor: StringProperty(
+        name="Rename Anchor",
+        description="Internal: the style's previous name, used to re-tag "
+                    "fronts carrying the old DOOR_STYLE_NAME on a rename",
+        default="",
+        options={'HIDDEN'},
+    )  # type: ignore
+
     show_expanded: BoolProperty(
         name="Show Expanded",
         description="Show expanded style options",
@@ -4551,6 +4620,8 @@ class Face_Frame_Door_Style(PropertyGroup):
         # over from a live 5-piece -> slab edit.
         _sync_rail_size_annotation(front_obj, None, 0.0, 0.0, False)
         front_obj['DOOR_STYLE_NAME'] = self.name
+        if not self.rename_anchor:
+            self.rename_anchor = self.name
 
     def _apply_mirror_door_front(self, front_obj):
         """Fixed tri-view mirror-door build: a plain SQUARE wood frame at
@@ -4629,6 +4700,8 @@ class Face_Frame_Door_Style(PropertyGroup):
         }
         _sync_rail_size_annotation(front_obj, None, 0.0, 0.0, False)
         front_obj['DOOR_STYLE_NAME'] = self.name
+        if not self.rename_anchor:
+            self.rename_anchor = self.name
         return True
 
     def assign_style_to_front(self, front_obj, record_override=False):
@@ -5109,6 +5182,8 @@ class Face_Frame_Door_Style(PropertyGroup):
         # Material inheritance from the parent cabinet style lands once
         # cabinet-style material walking is implemented.
         front_obj['DOOR_STYLE_NAME'] = self.name
+        if not self.rename_anchor:
+            self.rename_anchor = self.name
         return True
 
     def draw_door_style_ui(self, layout, context):
@@ -12374,16 +12449,18 @@ _register_classes, _unregister_classes = bpy.utils.register_classes_factory(clas
 
 @bpy.app.handlers.persistent
 def _seed_style_rename_anchors(_dummy):
-    """On file load, seed each cabinet style's rename_anchor from its current
-    name. Files saved before rename-propagation existed have empty anchors;
-    without this seed their first rename could not re-tag assigned cabinets."""
+    """On file load, seed each style's rename_anchor from its current name
+    (cabinet styles and both front-style pools). Files saved before
+    rename-propagation existed have empty anchors; without this seed their
+    first rename could not re-tag assigned cabinets / fronts."""
     for scene in bpy.data.scenes:
         ff = getattr(scene, 'hb_face_frame', None)
         if ff is None:
             continue
-        for style in getattr(ff, 'cabinet_styles', ()):
-            if not style.rename_anchor:
-                style.rename_anchor = style.name
+        for pool in ('cabinet_styles', 'door_styles', 'drawer_front_styles'):
+            for style in getattr(ff, pool, ()):
+                if not style.rename_anchor:
+                    style.rename_anchor = style.name
 
 
 def register():
