@@ -66,10 +66,6 @@ SECTIONS = (
                          ("Cooktop", "Cooktop Base"),
                          ("Refrigerator", "Refrigerator Cabinet"),
                          ("Oven", "Built in Tall"))),
-            # Galley workstation sink bases, one per workstation size.
-            ("Galley", (("IWS 2", "Galley IWS 2"), ("IWS 3", "Galley IWS 3"),
-                        ("IWS 4", "Galley IWS 4"), ("IWS 5", "Galley IWS 5"),
-                        ("IWS 6", "Galley IWS 6"), ("IWS 7", "Galley IWS 7"))),
             ("Standalone", (("Dishwasher", "Dishwasher"),
                             ("Range", "Range"),
                             ("Hood", "Range Hood"),
@@ -77,6 +73,18 @@ SECTIONS = (
             # Generic under-counter appliance (beverage centre, wine
             # fridge, ice maker) - relabel after placing via Set Label.
             ("", (("Under Counter", "Under Counter Appliance"),)),
+        ),
+    },
+    {
+        # Galley workstation sink bases, one per workstation size.
+        'key': 'galley',
+        'label': "Galley Workstations",
+        'prop': 'show_galley_library',
+        'rows': (
+            ("", (("IWS 2", "Galley IWS 2"), ("IWS 3", "Galley IWS 3"),
+                  ("IWS 4", "Galley IWS 4"))),
+            ("", (("IWS 5", "Galley IWS 5"), ("IWS 6", "Galley IWS 6"),
+                  ("IWS 7", "Galley IWS 7"))),
         ),
     },
     {

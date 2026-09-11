@@ -10160,6 +10160,7 @@ class Face_Frame_Scene_Props(PropertyGroup):
     show_cabinet_library: BoolProperty(name="Show Standard Cabinets", default=True)  # type: ignore
     show_corner_cabinet_library: BoolProperty(name="Show Corner Cabinets", default=False)  # type: ignore
     show_appliance_library: BoolProperty(name="Show Appliance Products", default=False)  # type: ignore
+    show_galley_library: BoolProperty(name="Show Galley Workstations", default=False)  # type: ignore
     show_vanity_library: BoolProperty(name="Show Vanities", default=False)  # type: ignore
     show_part_library: BoolProperty(name="Show Parts", default=False)  # type: ignore
     show_specialty_bath_library: BoolProperty(name="Show Specialty Bath", default=False)  # type: ignore
@@ -10995,6 +10996,9 @@ class Face_Frame_Scene_Props(PropertyGroup):
     def draw_appliance_library_ui(self, layout, context):
         self._draw_library_section(layout, 'appliance')
 
+    def draw_galley_library_ui(self, layout, context):
+        self._draw_library_section(layout, 'galley')
+
     def draw_vanity_library_ui(self, layout, context):
         self._draw_library_section(layout, 'vanity')
 
@@ -11321,6 +11325,7 @@ class Face_Frame_Scene_Props(PropertyGroup):
             sections = [
                 ('show_cabinet_library',          "Standard Cabinets",            self.draw_cabinet_library_ui),
                 ('show_appliance_library',        "Appliance Products",           self.draw_appliance_library_ui),
+                ('show_galley_library',           "Galley Workstations",          self.draw_galley_library_ui),
                 ('show_corner_cabinet_library',   "Corner Cabinets",              self.draw_corner_cabinet_library_ui),
                 ('show_vanity_library',           "Vanities",                     self.draw_vanity_library_ui),
                 ('show_part_library',             "Parts",                        self.draw_part_library_ui),

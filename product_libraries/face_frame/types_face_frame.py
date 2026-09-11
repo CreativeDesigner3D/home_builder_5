@@ -5479,7 +5479,13 @@ class FaceFrameCabinet(GeoNodeCage):
     def seed_galley_storage(self, layout):
         """Put the kit into the storage openings once: the roll-outs are
         the two culinary-kit boxes, a 14 in bowl below a 10 1/2 in one,
-        and the default shelves come out of any opening that gets kit."""
+        and the default shelves come out of any opening that gets kit.
+        Everything keeps under the sink: the roll-outs go without their
+        full-height spacers and the tray dividers' locked shelf sits
+        just below the bowl."""
+        from ..common import appliance_geo
+        inv = self.obj.matrix_world.inverted()
+        sink_bottom = layout.dim_z - appliance_geo.SINK_H
         for bay, kind in self._galley_storage_bays(layout):
             for cage in bay.children_recursive:
                 if not cage.get(TAG_OPENING_CAGE) or cage.get('hb_galley_seeded'):
@@ -5495,7 +5501,12 @@ class FaceFrameCabinet(GeoNodeCage):
                     continue    # the sink base stays open for the plumbing
                 item = op.interior_items.add()
                 item.kind = kind
+                opening_z = (inv @ cage.matrix_world.translation).z
+                if kind == 'TRAY_DIVIDERS':
+                    item.tray_opening_height = max(
+                        sink_bottom - opening_z - inch(0.25), inch(6.0))
                 if kind == 'ROLLOUT':
+                    item.hide_rollout_spacers = True
                     for height, top in ((inch(6.125), 'BOWL_14'),
                                         (inch(4.625), 'BOWL_10')):
                         box = item.rollout_boxes.add()
@@ -11273,8 +11284,20 @@ class FaceFrameCabinet(GeoNodeCage):
                                           PART_ROLE_MID_DIVISION,
                                           PART_ROLE_BAY_DIVISION)],
             sink_cutters[0] if sink_cutters else None)
+        # A cabinet-wide sink reaches into every bay, so the interior
+        # parts of every bay clear it too.
+        if galley_sink is not None:
+            self._apply_sink_clearance(
+                [c for c in self.obj.children_recursive
+                 if c.get('hb_part_role') in self.SINK_CLEARANCE_INTERIOR_ROLES],
+                sink_cutters[0])
 
     SINK_CLEARANCE_MOD_NAME = 'Sink Clearance'
+    SINK_CLEARANCE_INTERIOR_ROLES = frozenset({
+        PART_ROLE_BAY_SHELF, PART_ROLE_ADJUSTABLE_SHELF, PART_ROLE_GLASS_SHELF,
+        PART_ROLE_TRAY_LOCKED_SHELF, PART_ROLE_INTERIOR_FIXED_SHELF,
+        'TRAY_DIVIDER', 'ROLLOUT_SPACER', 'PULLOUT_SPACER',
+    })
     SINK_CLEARANCE_SHELF_ROLES = frozenset({
         PART_ROLE_BAY_SHELF, PART_ROLE_ADJUSTABLE_SHELF, PART_ROLE_GLASS_SHELF,
         PART_ROLE_TRAY_LOCKED_SHELF, PART_ROLE_INTERIOR_FIXED_SHELF,
