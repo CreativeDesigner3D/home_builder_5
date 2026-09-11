@@ -2,6 +2,10 @@
 
 import bpy
 
+# The claim marker the hide / isolate commands stamp is shared with
+# the wall ones, so either Show All restores what the other hid.
+from .walls import ISOLATE_HIDDEN_TAG
+
 
 class HB_MT_call_menu_wrapper(bpy.types.Menu):
     """Wrapper menu that forces INVOKE_DEFAULT on its contents.
@@ -258,10 +262,186 @@ class HB_GENERAL_OT_delete(bpy.types.Operator):
         return {'FINISHED'}
 
 
+def _product_root(obj):
+    """The whole product the object belongs to, or the object itself.
+
+    Every library hangs its parts off a root, so hiding "the cabinet"
+    has to start there: a part's own hide leaves its siblings on screen,
+    which is what makes a half-hidden product look broken. Deliberately
+    generous -- an object that belongs to no library comes back
+    unchanged, so the caller can treat everything the same way.
+    """
+    if obj is None:
+        return None
+    from .. import hb_utils
+    from ..product_libraries.face_frame import types_face_frame
+    from ..product_libraries.closets import types_closets
+
+    # An applied / standalone panel is its own root, and find_cabinet_root
+    # already stops there rather than climbing into its host cabinet.
+    root = types_face_frame.find_cabinet_root(obj)
+    if root is not None:
+        return root
+    root = types_closets.find_starter_root(obj)
+    if root is not None:
+        return root
+    root = hb_utils.get_cabinet_bp(obj) or hb_utils.get_appliance_bp(obj)
+    if root is not None:
+        return root
+    cur = obj
+    while cur is not None:
+        if cur.get('IS_APPLIANCE') or cur.get('IS_WALL_BP'):
+            return cur
+        cur = cur.parent
+    return obj
+
+
+def _hide_object(obj):
+    """Hide one object and claim it, unless something already hid it.
+
+    Anything already out of sight is left alone and unclaimed: the
+    product logic keeps cutters, disabled partitions and construction
+    helpers hidden, and the user may have hidden things by hand. Show
+    All Hidden only restores what carries the claim.
+    """
+    try:
+        if obj.hide_get():
+            return False
+    except RuntimeError:
+        pass  # excluded from the view layer: the monitor flag decides
+    if obj.hide_viewport:
+        return False
+    _set_hidden(obj, True)
+    obj[ISOLATE_HIDDEN_TAG] = True
+    return True
+
+
+def _set_hidden(obj, hide):
+    obj.hide_viewport = hide
+    try:
+        obj.hide_set(hide)
+    except RuntimeError:
+        pass  # not in the active view layer
+
+
+class HB_GENERAL_OT_hide(bpy.types.Operator):
+    """Hide a whole product, or a single part of one, with Show All
+    Hidden to bring it back.
+
+    Blender's own hide takes the selected objects and nothing else,
+    which on an asset built from dozens of parented objects hides the
+    cage and leaves the doors, drawers and carcass standing. ``scope``
+    picks what a hide means:
+
+    - PRODUCT -> the product root each selection resolves to, plus
+      every object under it.
+    - OBJECT  -> exactly the selected objects, for studying one part.
+
+    With ``isolate`` the sense is inverted: everything else in the room
+    is hidden instead, leaving the chosen product or part on its own.
+    """
+    bl_idname = "hb_general.hide"
+    bl_label = "Hide"
+    bl_options = {'UNDO'}
+
+    scope: bpy.props.EnumProperty(
+        name="Scope",
+        items=[('PRODUCT', "Product",
+                "The whole product and all of its parts"),
+               ('OBJECT', "Object", "Only the selected objects")],
+        default='PRODUCT')  # type: ignore
+
+    isolate: bpy.props.BoolProperty(
+        name="Isolate",
+        description="Hide everything else instead",
+        default=False)  # type: ignore
+
+    @classmethod
+    def description(cls, context, properties):
+        noun = "product" if properties.scope == 'PRODUCT' else "part"
+        if properties.isolate:
+            return f"Hide everything except the selected {noun}"
+        if properties.scope == 'PRODUCT':
+            return "Hide the selected product and all of its parts"
+        return "Hide the selected part"
+
+    def _targets(self, context):
+        """The objects this run is about: the selection itself, or every
+        object under the products it belongs to."""
+        selected = list(context.selected_objects)
+        if not selected and context.active_object is not None:
+            selected = [context.active_object]
+        if self.scope == 'OBJECT':
+            return selected
+        roots = []
+        for obj in selected:
+            root = _product_root(obj)
+            if root is not None and root not in roots:
+                roots.append(root)
+        targets = []
+        for root in roots:
+            for obj in [root] + list(root.children_recursive):
+                if obj not in targets:
+                    targets.append(obj)
+        return targets
+
+    def execute(self, context):
+        targets = self._targets(context)
+        if not targets:
+            self.report({'WARNING'}, "Nothing selected")
+            return {'CANCELLED'}
+
+        count = 0
+        if self.isolate:
+            keep = set(targets)
+            for obj in context.scene.objects:
+                # Cameras and lights are not room content, and hiding
+                # them would blank the viewport.
+                if obj in keep or obj.type in {'CAMERA', 'LIGHT'}:
+                    continue
+                count += bool(_hide_object(obj))
+            self.report({'INFO'}, f"Isolated, hid {count} object(s)")
+            return {'FINISHED'}
+
+        for obj in targets:
+            count += bool(_hide_object(obj))
+        self.report({'INFO'}, f"{count} object(s) hidden")
+        return {'FINISHED'}
+
+
+class HB_GENERAL_OT_show_all_hidden(bpy.types.Operator):
+    """Show everything the hide and isolate commands hid.
+
+    Only claimed objects come back, so the parts the product logic keeps
+    hidden stay hidden and no rebuild is needed afterwards.
+    """
+    bl_idname = "hb_general.show_all_hidden"
+    bl_label = "Show All Hidden"
+    bl_description = ("Unhide everything hidden by the hide and isolate "
+                      "commands")
+    bl_options = {'UNDO'}
+
+    def execute(self, context):
+        count = 0
+        for obj in context.scene.objects:
+            if not obj.get(ISOLATE_HIDDEN_TAG):
+                continue
+            _set_hidden(obj, False)
+            del obj[ISOLATE_HIDDEN_TAG]
+            count += 1
+        if count:
+            self.report({'INFO'}, f"Restored {count} hidden object(s)")
+        else:
+            self.report({'INFO'}, "No hidden objects found")
+        return {'FINISHED'}
+
+
 classes = (
     HB_MT_call_menu_wrapper,
     HB_GENERAL_OT_menu,
     HB_GENERAL_OT_delete,
+    HB_GENERAL_OT_hide,
+    HB_GENERAL_OT_show_all_hidden,
 )
 
 

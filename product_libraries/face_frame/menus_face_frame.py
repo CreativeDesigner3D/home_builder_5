@@ -34,6 +34,27 @@ def _draw_drawer_box_construction_menu(layout):
                 text="Drawer Box Construction", icon='SNAP_VOLUME')
 
 
+def _draw_visibility_items(layout, scope, noun):
+    """Hide / Isolate / Show All Hidden for the clicked thing.
+
+    Blender's own hide only takes what is selected, so on a product built
+    from many parented objects it hides the cage and leaves the rest
+    standing. These commands hide the whole product, or one part on its
+    own, and bring everything back.
+    """
+    layout.separator()
+    op = layout.operator("hb_general.hide", text=f"Hide {noun}",
+                         icon='HIDE_ON')
+    op.scope = scope
+    op.isolate = False
+    op = layout.operator("hb_general.hide", text=f"Isolate {noun}",
+                         icon='ZOOM_SELECTED')
+    op.scope = scope
+    op.isolate = True
+    layout.operator("hb_general.show_all_hidden", text="Show All Hidden",
+                    icon='HIDE_OFF')
+
+
 def _draw_cutout_items(layout, obj):
     """Add / Edit / Remove entries for machining cutouts (hole or route) on a
     parametric cutpart - sides, backs, panels, doors, hood parts. Editing
@@ -253,6 +274,8 @@ class HOME_BUILDER_MT_face_frame_cabinet_commands(bpy.types.Menu):
             if has_chase:
                 layout.operator("hb_face_frame.remove_pipe_chase",
                                 text="Remove Pipe Chase", icon='X')
+
+        _draw_visibility_items(layout, 'PRODUCT', "Cabinet")
 
         layout.separator()
         layout.operator("hb_face_frame.delete_cabinet",
@@ -668,6 +691,8 @@ class HOME_BUILDER_MT_face_frame_part_commands(bpy.types.Menu):
 
         _draw_make_editable_items(layout, obj)
 
+        _draw_visibility_items(layout, 'OBJECT', "Part")
+
 
 class HOME_BUILDER_MT_face_frame_interior_part_commands(bpy.types.Menu):
     """Right-click menu for an interior part (shelf, pullout, mesh part,
@@ -715,6 +740,8 @@ class HOME_BUILDER_MT_face_frame_interior_part_commands(bpy.types.Menu):
         # A shelf is as worth hand-editing as any other cutpart, and
         # this is the only menu it has.
         _draw_make_editable_items(layout, obj)
+
+        _draw_visibility_items(layout, 'OBJECT', "Part")
 
 
 class HOME_BUILDER_MT_face_frame_drawer_box_construction(bpy.types.Menu):
