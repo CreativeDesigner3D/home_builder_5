@@ -2342,6 +2342,7 @@ class hb_face_frame_OT_sink_duo_rollout_prompts(bpy.types.Operator):
             layout.label(text="Rollout box not found", icon='INFO')
             return
         col = layout.column(align=True)
+        col.prop(box_props, 'galley_top')
         col.prop(box_props, 'sink_duo')
         sub = col.column(align=True)
         sub.enabled = box_props.sink_duo

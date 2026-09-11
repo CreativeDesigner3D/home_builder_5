@@ -8748,6 +8748,19 @@ class Face_Frame_Rollout_Box(bpy.types.PropertyGroup):
     # top box wrapped around the plumbing and the lower one left whole.
     # Field names match the opening's sink_duo_* so _apply_sink_duo_notch
     # reads either one unchanged.
+    # Workstation culinary-kit roll-out: a 1/2 in plywood top over the
+    # box with the opening the kit's bowl or bins drop through.
+    galley_top: EnumProperty(
+        name="Top Opening",
+        description="A 1/2 in top over this box with an opening for a workstation's culinary kit",
+        items=[
+            ('NONE', "None", "No top"),
+            ('BOWL_10', "10 1/2 in Bowl", "Top with a 10 1/2 in round opening"),
+            ('BOWL_14', "14 in Bowl", "Top with a 14 in round opening"),
+            ('BINS', "Two Bins", "Top with two 6 1/8 x 3 5/8 in openings"),
+        ],
+        default='NONE', update=_update_cabinet_dim,
+    )  # type: ignore
     sink_duo: BoolProperty(
         name="U-Shaped Box",
         description="Notch this rollout box from the back so it wraps "

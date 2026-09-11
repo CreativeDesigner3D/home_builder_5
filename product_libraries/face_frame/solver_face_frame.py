@@ -5205,6 +5205,9 @@ def _pullout_shelf_descriptors(rect, cage_dim_y, item):
     return out
 
 
+GALLEY_TOP_T = inch(0.5)      # a workstation roll-out's plywood top
+
+
 def _rollout_descriptors(rect, cage_dim_y, item, item_index=-1):
     # Per-box stack: each box in item.rollout_boxes carries its own height,
     # so the boxes are placed bottom to top by a running Z sum rather than a
@@ -5248,6 +5251,21 @@ def _rollout_descriptors(rect, cage_dim_y, item, item_index=-1):
             'item_index':   item_index,
             'box_index':    k,
         })
+        # A workstation roll-out carries a top with a bowl or bin opening,
+        # which takes its own thickness out of the stack.
+        box = item.rollout_boxes[k] if k < len(item.rollout_boxes) else None
+        top = getattr(box, 'galley_top', 'NONE') if box is not None else 'NONE'
+        if top != 'NONE':
+            out.append({
+                'kind':         'GALLEY_ROLLOUT_TOP',
+                'role':         'GALLEY_ROLLOUT_TOP',
+                'name':         f'Rollout Top {k + 1}',
+                'orientation':  'HORIZONTAL',
+                'position':     (box_x, setback, z + item_height),
+                'dims':         (box_dx, box_dy, GALLEY_TOP_T),
+                'galley_top':   top,
+            })
+            z += GALLEY_TOP_T
         z += item_height + distance_between
     if not getattr(item, 'hide_rollout_spacers', False):
         out.extend(_assembly_spacers(

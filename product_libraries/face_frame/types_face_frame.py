@@ -5447,6 +5447,64 @@ class FaceFrameCabinet(GeoNodeCage):
         appliance_geo.sync_galley_sink(
             self.obj, mt + gm, max(dim_x - 2.0 * (mt + gm), gm), -mt,
             max(dim_y - setback - mt, gm), dim_z)
+        # The storage openings' kit goes in on a deferred pass: seeding
+        # writes interior items, which is a recalc of its own.
+        if self._galley_storage_unseeded(layout):
+            _schedule_galley_seed(self.obj.name)
+
+    def _galley_storage_bays(self, layout):
+        """(bay, kind) for every bay: the last is the sink base and gets
+        no kit (kind None), the bay beside it takes the two culinary-kit
+        roll-outs, and the rest take tray dividers."""
+        bays = sorted([c for c in self.obj.children if c.get(TAG_BAY_CAGE)],
+                      key=lambda c: c.get('hb_bay_index', 0))[:layout.bay_count]
+        out = []
+        for i, bay in enumerate(bays):
+            if i == len(bays) - 1:
+                kind = None
+            elif i == len(bays) - 2:
+                kind = 'ROLLOUT'
+            else:
+                kind = 'TRAY_DIVIDERS'
+            out.append((bay, kind))
+        return out
+
+    def _galley_storage_unseeded(self, layout):
+        for bay, _kind in self._galley_storage_bays(layout):
+            for cage in bay.children_recursive:
+                if cage.get(TAG_OPENING_CAGE) and not cage.get('hb_galley_seeded'):
+                    return True
+        return False
+
+    def seed_galley_storage(self, layout):
+        """Put the kit into the storage openings once: the roll-outs are
+        the two culinary-kit boxes, a 14 in bowl below a 10 1/2 in one,
+        and the default shelves come out of any opening that gets kit."""
+        for bay, kind in self._galley_storage_bays(layout):
+            for cage in bay.children_recursive:
+                if not cage.get(TAG_OPENING_CAGE) or cage.get('hb_galley_seeded'):
+                    continue
+                cage['hb_galley_seeded'] = True
+                op = cage.face_frame_opening
+                if op.front_type not in ('DOOR', 'NONE'):
+                    continue
+                for j in reversed(range(len(op.interior_items))):
+                    if op.interior_items[j].kind == 'ADJUSTABLE_SHELF':
+                        op.interior_items.remove(j)
+                if kind is None:
+                    continue    # the sink base stays open for the plumbing
+                item = op.interior_items.add()
+                item.kind = kind
+                if kind == 'ROLLOUT':
+                    for height, top in ((inch(6.125), 'BOWL_14'),
+                                        (inch(4.625), 'BOWL_10')):
+                        box = item.rollout_boxes.add()
+                        try:
+                            box.height_preset = 'CUSTOM'
+                        except TypeError:
+                            pass
+                        box.height = height
+                        box.galley_top = top
 
     def _uca_children(self):
         return [c for c in self.obj.children if c.get(self.UCA_TAG)]
@@ -11211,7 +11269,9 @@ class FaceFrameCabinet(GeoNodeCage):
         self._apply_sink_clearance(
             [c for c in self.obj.children
              if c.get('hb_part_role') in (PART_ROLE_FRONT_STRETCHER,
-                                          PART_ROLE_REAR_STRETCHER)],
+                                          PART_ROLE_REAR_STRETCHER,
+                                          PART_ROLE_MID_DIVISION,
+                                          PART_ROLE_BAY_DIVISION)],
             sink_cutters[0] if sink_cutters else None)
 
     SINK_CLEARANCE_MOD_NAME = 'Sink Clearance'
@@ -13110,6 +13170,8 @@ class FaceFrameCabinet(GeoNodeCage):
                     self._create_accessory_label(opening_obj, desc)
             elif kind == 'ROLLOUT_BOX':
                 self._create_rollout_box(opening_obj, desc)
+            elif kind == 'GALLEY_ROLLOUT_TOP':
+                self._create_galley_rollout_top(opening_obj, desc)
             elif kind == 'CLOSET_ROD':
                 self._create_closet_rod_part(opening_obj, desc)
             elif kind in bar_storage.KINDS:
@@ -13529,6 +13591,68 @@ class FaceFrameCabinet(GeoNodeCage):
         part.set_input('Thickness', thickness)
         return part
 
+    def _create_galley_rollout_top(self, opening_obj, desc):
+        """A workstation roll-out's plywood top: a plain slab over the
+        box, with the bowl or bin opening cut by a hidden cutter that
+        is wiped and remade with the top on every recalc."""
+        part = self._create_interior_mesh_part(opening_obj, desc)
+        dx, dy, t = desc['dims']
+        px, py, pz = desc['position']
+        kind = desc.get('galley_top', 'NONE')
+        verts, faces = [], []
+
+        def box(x0, x1, y0, y1, z0, z1):
+            b = len(verts)
+            verts.extend([(x0, y0, z0), (x1, y0, z0), (x1, y1, z0), (x0, y1, z0),
+                          (x0, y0, z1), (x1, y0, z1), (x1, y1, z1), (x0, y1, z1)])
+            for f in ((0, 3, 2, 1), (4, 5, 6, 7), (0, 1, 5, 4),
+                      (1, 2, 6, 5), (2, 3, 7, 6), (3, 0, 4, 7)):
+                faces.append(tuple(b + k for k in f))
+
+        def cylinder(cx, cy, radius, z0, z1, segments=48):
+            b = len(verts)
+            for z in (z0, z1):
+                for i in range(segments):
+                    a = 2.0 * math.pi * i / segments
+                    verts.append((cx + radius * math.cos(a),
+                                  cy + radius * math.sin(a), z))
+            for i in range(segments):
+                j = (i + 1) % segments
+                faces.append((b + i, b + j, b + segments + j, b + segments + i))
+            faces.append(tuple(reversed(range(b, b + segments))))
+            faces.append(tuple(range(b + segments, b + 2 * segments)))
+
+        z0, z1 = -inch(1.0), t + inch(1.0)
+        cx, cy = dx / 2.0, dy / 2.0
+        if kind == 'BOWL_10':
+            cylinder(cx, cy, inch(5.25), z0, z1)
+        elif kind == 'BOWL_14':
+            cylinder(cx, cy, inch(7.0), z0, z1)
+        elif kind == 'BINS':
+            w, d, gap = inch(6.125), inch(3.625), inch(1.0)
+            for x in (cx - gap / 2.0 - w, cx + gap / 2.0):
+                box(x, x + w, cy - d / 2.0, cy + d / 2.0, z0, z1)
+        if not faces:
+            return part
+        mesh = bpy.data.meshes.new(desc['name'] + ' Cutter')
+        mesh.from_pydata(verts, [], faces)
+        mesh.validate()
+        mesh.update()
+        cutter = bpy.data.objects.new(desc['name'] + ' Cutter', mesh)
+        cutter.parent = opening_obj
+        cutter.location = (px, py, pz)
+        cutter['hb_part_role'] = 'GALLEY_TOP_CUTTER'
+        cutter['IS_FACE_FRAME_INTERIOR_PART'] = True
+        cutter.display_type = 'WIRE'
+        cutter.hide_viewport = True
+        cutter.hide_render = True
+        for coll in opening_obj.users_collection:
+            coll.objects.link(cutter)
+        mod = part.obj.modifiers.new(name='Top Opening', type='BOOLEAN')
+        mod.operation = 'DIFFERENCE'
+        mod.object = cutter
+        return part
+
     def _create_interior_face_frame_part(self, opening_obj, desc):
         """Optional face frame member at an interior split node - a rail
         for a fixed shelf (kind INTERIOR_FF_RAIL) or a stile for a
@@ -13896,6 +14020,34 @@ GALLEY_APRON_H = inch(10.75)
 GALLEY_MATERIAL = inch(0.75)      # aprons, end partitions and cleats
 GALLEY_PARTITION_T = inch(1.5)    # a mid partition, built up
 GALLEY_FRONT_SETBACK = inch(4.0)
+
+
+_GALLEY_SEED_PENDING = set()
+
+
+def _schedule_galley_seed(cab_name):
+    """Seed a workstation cabinet's storage openings on the next timer
+    tick, outside the recalc that noticed they were empty, under one
+    recalc suspension so the writes land as a single rebuild."""
+    if cab_name in _GALLEY_SEED_PENDING:
+        return
+    _GALLEY_SEED_PENDING.add(cab_name)
+
+    def run():
+        _GALLEY_SEED_PENDING.discard(cab_name)
+        root = bpy.data.objects.get(cab_name)
+        if root is None:
+            return None
+        cab = FaceFrameCabinet(root)
+        try:
+            with suspend_recalc():
+                cab.seed_galley_storage(solver.FaceFrameLayout(root))
+        except Exception:
+            import traceback
+            traceback.print_exc()
+        return None
+
+    bpy.app.timers.register(run, first_interval=0.0)
 
 
 def galley_size_from_name(name):
