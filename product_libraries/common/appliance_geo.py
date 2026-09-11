@@ -1059,7 +1059,11 @@ def models_shown(scene=None):
 
 
 def _set_hidden(obj, hide):
+    # Render visibility goes with it: the generated drawings and
+    # renders are produced through the render path, and a model the
+    # room is not showing has no business printing on a sheet.
     obj.hide_viewport = hide
+    obj.hide_render = hide
     try:
         obj.hide_set(hide)
     except RuntimeError:
@@ -1083,8 +1087,9 @@ def _seed_modeled(cage_obj):
 def apply_visibility(scene=None):
     """Hide or show the model parts on every appliance in the scene, per
     its Show Model switch. Turning it on also models the appliances
-    that have been following the switch. Renders are left alone: the
-    switch is about what the viewport shows, not what the appliance is."""
+    that have been following the switch. The switch covers renders and
+    generated drawings too -- models turned off stay off the sheet --
+    while the cages, and the labels they carry, remain."""
     scene = scene or bpy.context.scene
     hide = not models_shown(scene)
     if not hide:
@@ -2919,11 +2924,32 @@ _CLASSES = (
 )
 
 
+@bpy.app.handlers.persistent
+def _hidden_models_load_post(_dummy):
+    """Re-assert the Show Model switch on every room of a file opened.
+
+    Files saved before the switch covered render visibility carry models
+    that are hidden on screen but not in a render, so they still print.
+    Only the switched-off rooms are touched, and only to hide: nothing
+    is built and a room showing its models is left alone.
+    """
+    for scene in bpy.data.scenes:
+        if models_shown(scene):
+            continue
+        for obj in scene.objects:
+            if obj.get(GEO_CHILD_FLAG) and not obj.hide_render:
+                _set_hidden(obj, True)
+
+
 def register():
     for cls in _CLASSES:
         bpy.utils.register_class(cls)
+    if _hidden_models_load_post not in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.append(_hidden_models_load_post)
 
 
 def unregister():
+    if _hidden_models_load_post in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(_hidden_models_load_post)
     for cls in reversed(_CLASSES):
         bpy.utils.unregister_class(cls)
