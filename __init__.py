@@ -77,6 +77,10 @@ def load_file_post(scene):
     from .operators import viewport_hud
     viewport_hud.ensure_listener()
 
+    # msgbus subscriptions do not survive a .blend load either.
+    from .product_libraries.face_frame import quiet_cages
+    quiet_cages.ensure_subscriptions()
+
     # Door/window boolean cutters saved while still visible in the
     # viewport would cover their own opening in rendered shading.
     from .product_libraries.common import door_window_geo

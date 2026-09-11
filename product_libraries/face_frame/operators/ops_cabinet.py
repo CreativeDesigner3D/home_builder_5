@@ -6,6 +6,7 @@ from .. import types_face_frame_corner
 from .. import bay_presets
 from .. import props_hb_face_frame
 from .. import split_preview
+from .. import quiet_cages
 from ....units import inch, meter_to_inch
 from .... import hb_types, hb_utils
 from .... import accessory_registry
@@ -629,6 +630,7 @@ def apply_face_frame_selection_mode(context, root_obj=None):
     else:
         for obj in context.scene.objects:
             _selection_mode_toggle_one(obj, mode)
+    quiet_cages.after_mode_applied()
 
 
 class hb_face_frame_OT_toggle_mode(bpy.types.Operator):
@@ -741,6 +743,12 @@ def _selection_mode_toggle_one(obj, mode):
     # even after _matches_mode correctly excludes the panel itself.
     # _matches_mode already does the conceptual filtering here.
     if _selection_mode_matches(obj, mode):
+        # Material Preview / Rendered: a cage the mode offers stays
+        # hidden unless it is selected (see quiet_cages).
+        if quiet_cages.keep_hidden(obj, mode):
+            toggle_cabinet_color(obj, False,
+                                 type_name=SELECTION_MODE_TAGS.get(mode, ''))
+            return
         toggle_cabinet_color(obj, True, type_name=SELECTION_MODE_TAGS.get(mode, ''),
                              dont_show_parent=False)
         # In Face Frame mode, recolour parts the user has unlocked so

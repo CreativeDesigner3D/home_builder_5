@@ -17559,6 +17559,7 @@ def _reapply_selection_mode_highlights(root):
     # and pulling it at module top would couple type-level recalc to the
     # frameless package import order during addon load.
     from ..frameless.operators.ops_placement import toggle_cabinet_color
+    from . import quiet_cages
 
     scene_props = getattr(bpy.context.scene, 'hb_face_frame', None)
     if scene_props is None:
@@ -17607,6 +17608,16 @@ def _reapply_selection_mode_highlights(root):
         if any(t in obj for t in skip_markers):
             return
         if matches(obj):
+            # Material Preview / Rendered: an unselected cage stays
+            # hidden (see quiet_cages). prev_selected is the snapshot
+            # taken below, before this pass touches anything.
+            if quiet_cages.keep_hidden(obj, mode,
+                                       selected_names=prev_selected):
+                toggle_cabinet_color(
+                    obj, False,
+                    type_name=mode_tags.get(mode, ''),
+                )
+                return
             toggle_cabinet_color(
                 obj, True,
                 type_name=mode_tags.get(mode, ''),

@@ -6,6 +6,7 @@ from . import menus_face_frame
 from . import operators
 from . import ui_face_frame
 from . import dim_edit_overlay
+from . import quiet_cages
 
 NAMESPACE = "hb_face_frame"
 MENU_NAME = "Face Frame"
@@ -18,9 +19,11 @@ def register():
     operators.register()
     ui_face_frame.register()
     dim_edit_overlay.register()
+    quiet_cages.register()
 
 
 def unregister():
+    quiet_cages.unregister()
     dim_edit_overlay.unregister()
     ui_face_frame.unregister()
     operators.unregister()
