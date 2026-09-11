@@ -91,6 +91,10 @@ def _is_dishwasher(obj):
     return bool(obj.get('IS_APPLIANCE')) and obj.get('APPLIANCE_TYPE') == 'DISHWASHER'
 
 
+def _is_hood(obj):
+    return bool(obj.get('IS_APPLIANCE')) and obj.get('APPLIANCE_TYPE') == 'HOOD'
+
+
 def _union_zcoverage(bands, z_min, z_max):
     """Union the given [z0, z1] bands clamped to [z_min, z_max] and
     return total covered length. Caller compares to (z_max - z_min) to
@@ -419,6 +423,7 @@ def _side_exposure(cab_obj, side):
     target_x = cab_x if side == 'left' else cab_x + cab_w
     bands = []
     dishwasher_seen = False
+    hood_seen = False
 
     for sib in parent.children:
         if sib is cab_obj:
@@ -433,11 +438,21 @@ def _side_exposure(cab_obj, side):
         zspan = _neighbor_zspan(sib)
         if zspan is None:
             continue
+        # A range hood's cage runs from the upper-cabinet base to the
+        # ceiling, but the hood itself never hides the side beside it
+        # (canopy and duct cover are narrower and shallower than the
+        # cage). It doesn't count as coverage; it leaves the side at
+        # least partially open so the auto pick finishes it.
+        if _is_hood(sib):
+            hood_seen = True
+            continue
         bands.append(zspan)
         if _is_dishwasher(sib):
             dishwasher_seen = True
 
     if not bands:
+        if hood_seen:
+            return ('PARTIAL', False, False)
         # No collinear sibling: a 45-degree corner sink whose front
         # corner meets this end face still covers the side (the side
         # faces the closed corner recess) - unfinished, neighbor
@@ -454,7 +469,7 @@ def _side_exposure(cab_obj, side):
     coverage = _union_zcoverage(bands, cab_z, cab_z + cab_h)
     if coverage >= cab_h - EPS:
         return ('UNEXPOSED', dishwasher_seen, False)
-    if coverage > EPS:
+    if coverage > EPS or hood_seen:
         return ('PARTIAL', dishwasher_seen, False)
     return ('EXPOSED', False, False)
 
