@@ -4463,7 +4463,7 @@ def _bay_wants_floor_stiles(bay_obj):
     return bool(bp.floating_bay or bp.remove_bottom)
 
 
-def _apply_flanking_stile_floor(root, bay_obj, config, reset):
+def _apply_flanking_stile_floor(root, bay_obj, config, reset, was_floor=False):
     """Toggle the to-floor flag on the stiles flanking `bay_obj`.
 
     Selecting a bay_presets.FLOOR_STILE_CONFIGS preset (Lap Drawer /
@@ -4478,9 +4478,15 @@ def _apply_flanking_stile_floor(root, bay_obj, config, reset):
     drag stiles to the floor on an unrelated preset swap.
     Placement-time callers (reset=False) only ever set flags, never
     clear, mirroring _apply_bay_prop_overrides.
+
+    `was_floor` says whether the bay needed floor stiles BEFORE the
+    swap (read by the caller, since the bay props are reset first).
+    Only a bay that had them is allowed to take them away again: a
+    stile that was dropped to the floor deliberately has to survive
+    an unrelated layout change.
     """
     want = config in bay_presets.FLOOR_STILE_CONFIGS
-    if not want and not reset:
+    if not want and not (reset and was_floor):
         return
     cab = root.face_frame_cabinet
     bay_index = bay_obj.get('hb_bay_index', 0)
@@ -4542,6 +4548,10 @@ def apply_bay_recipe(bay_obj, recipe, config=None, reset_bay_props=False):
     root = types_face_frame.find_cabinet_root(bay_obj)
     if root is None:
         return False
+    # Read before the prop reset below wipes the evidence: the stile
+    # clear path is only allowed to lift stiles a floor-stile bay put
+    # down, so it needs the bay's construction as it was.
+    was_floor = _bay_wants_floor_stiles(bay_obj)
     # Wipe + rebuild fires update callbacks on every front_type / overlay /
     # hinge write, and each one triggers a full cabinet recalc. Suspend so
     # the explicit final recalc below is the only one that actually runs.
@@ -4553,7 +4563,8 @@ def apply_bay_recipe(bay_obj, recipe, config=None, reset_bay_props=False):
         )
         if config is not None:
             _apply_bay_prop_overrides(bay_obj, config, reset_bay_props)
-            _apply_flanking_stile_floor(root, bay_obj, config, reset_bay_props)
+            _apply_flanking_stile_floor(root, bay_obj, config,
+                                        reset_bay_props, was_floor)
         types_face_frame.recalculate_face_frame_cabinet(root)
     return True
 
