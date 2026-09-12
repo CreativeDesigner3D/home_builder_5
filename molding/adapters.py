@@ -53,16 +53,39 @@ def collect_targets(scene, molding_type):
     return _face_frame_roots(scene, types) + _frameless_roots(scene, types)
 
 
+def _housed_in_cabinet(obj):
+    """True for an appliance a cabinet carries as part of itself: the
+    refrigerator model a refrigerator cabinet builds inside its opening
+    (tagged IS_CABINET_APPLIANCE), or any appliance cage parented
+    somewhere under a cabinet cage."""
+    if obj.get('IS_CABINET_APPLIANCE'):
+        return True
+    node = obj.parent
+    while node is not None:
+        if any(node.get(key) for key in _NESTED_CAGE_KEYS):
+            return True
+        node = node.parent
+    return False
+
+
 def collect_bridges(scene):
     """Floor-standing appliances that sit inside runs (dishwashers,
     ranges, freestanding refrigerators): they keep a run in one piece
-    and contribute skip spans."""
+    and contribute skip spans.
+
+    Appliances housed BY a cabinet are not bridges: the cabinet is the
+    run member and already spans that footprint. A refrigerator
+    cabinet's own refrigerator model stands on the floor inside the
+    cabinet; as a bridge it joined the chain on top of its cabinet and
+    flipped the run."""
     out = []
     for obj in scene.objects:
         if not obj.get('IS_APPLIANCE'):
             continue
         if obj.matrix_world.translation.z > 0.02:
             continue  # mounted at height (wall ovens, OTR microwaves)
+        if _housed_in_cabinet(obj):
+            continue  # a cabinet's own appliance model
         out.append(obj)
     return out
 
