@@ -31,6 +31,7 @@ The cage is flagged HB_CURRENT_DRAW_OBJ so hb_snap raycasts skip it
 
 import bpy
 from .... import units
+from .... import hb_utils
 import math
 from mathutils import Vector, Matrix
 from mathutils.geometry import intersect_line_plane, intersect_point_line
@@ -4032,6 +4033,7 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
                 opening = None
             if opening is not None:
                 cab_obj.parent = opening
+                hb_utils.note_parent_change()
                 cab_obj.matrix_parent_inverse.identity()
                 cab_obj.location = loc
                 cab_obj.rotation_euler = (0.0, 0.0, 0.0)
@@ -4070,6 +4072,7 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
                 anchor = None
             if anchor is not None:
                 cab_obj.parent = anchor
+                hb_utils.note_parent_change()
                 cab_obj.matrix_parent_inverse.identity()
                 cab_obj.location = loc
                 cab_obj.rotation_euler = (0.0, 0.0, 0.0)
@@ -4090,6 +4093,7 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
 
         if captured_parent is not None:
             cab_obj.parent = captured_parent
+            hb_utils.note_parent_change()
             cab_obj.matrix_parent_inverse.identity()
             cab_obj.location = captured_local_loc
             cab_obj.rotation_euler = captured_local_rot
@@ -4318,11 +4322,13 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
 
         if captured_parent is not None:
             src.parent = captured_parent
+            hb_utils.note_parent_change()
             src.matrix_parent_inverse.identity()
             src.location = captured_local_loc
             src.rotation_euler = captured_local_rot
         else:
             src.parent = None
+            hb_utils.note_parent_change()
             src.matrix_world = captured_world
 
         # Fill-the-gap commit: the same width push a duplicate gets, so
@@ -4399,11 +4405,13 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
 
         if captured_parent is not None:
             cab_obj.parent = captured_parent
+            hb_utils.note_parent_change()
             cab_obj.matrix_parent_inverse.identity()
             cab_obj.location = captured_local_loc
             cab_obj.rotation_euler = captured_local_rot
         else:
             cab_obj.parent = None
+            hb_utils.note_parent_change()
             cab_obj.matrix_world = captured_world
 
         # Mirror before the width push so the fill recalc lays out the
@@ -5242,6 +5250,7 @@ class hb_face_frame_OT_place_appliance(bpy.types.Operator,
         app_obj = appliance.obj
         if captured_parent is not None:
             app_obj.parent = captured_parent
+            hb_utils.note_parent_change()
             app_obj.matrix_parent_inverse.identity()
             app_obj.location = captured_local_loc
             app_obj.rotation_euler = captured_local_rot
@@ -6026,6 +6035,7 @@ class hb_face_frame_OT_place_corner_cabinet(bpy.types.Operator,
         cab_obj = cabinet.obj
         if captured_parent is not None:
             cab_obj.parent = captured_parent
+            hb_utils.note_parent_change()
             cab_obj.matrix_parent_inverse.identity()
             cab_obj.location = captured_local_loc
             cab_obj.rotation_euler = captured_local_rot

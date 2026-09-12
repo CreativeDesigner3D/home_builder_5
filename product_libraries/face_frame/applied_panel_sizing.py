@@ -439,7 +439,7 @@ def apply_panel_x_frame(cab_obj, panel_obj, side):
     bm.to_mesh(mesh)
     bm.free()
 
-    obj = bpy.data.objects.new(f"{panel_obj.name} X Brace", mesh)
+    obj = hb_utils.new_object(f"{panel_obj.name} X Brace", mesh)
     obj[X_BRACE_TAG] = True
     obj['IS_CABINET_PART'] = True
     obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_part_commands'
@@ -1469,7 +1469,7 @@ def _create_opening_under(parent_obj, child_index, opening_index,
 
 def _create_split_node_under(parent_obj, child_index, axis, splitter_width):
     """Create one Split Node empty parented to parent_obj."""
-    node = bpy.data.objects.new('Split Node', None)
+    node = hb_utils.new_object('Split Node', None)
     bpy.context.scene.collection.objects.link(node)
     node.empty_display_type = 'PLAIN_AXES'
     node.empty_display_size = 0.001

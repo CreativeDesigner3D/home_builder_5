@@ -85,7 +85,7 @@ class GeoNodeObject:
         
         geo_node_group = bpy.data.node_groups[geo_node_name]
         mesh = bpy.data.meshes.new(name)
-        self.obj = bpy.data.objects.new(name, mesh)
+        self.obj = hb_utils.new_object(name, mesh)
         
         # Add geometry nodes modifier
         mod = self.obj.modifiers.new(name=geo_node_name, type='NODES')
@@ -109,7 +109,7 @@ class GeoNodeObject:
         curve = bpy.data.curves.new('Dimension','CURVE')
         spline = curve.splines.new('POLY')
         spline.points.add(1)
-        self.obj = bpy.data.objects.new('Dimension',curve)
+        self.obj = hb_utils.new_object('Dimension',curve)
         
         # Add geometry nodes modifier
         mod = self.obj.modifiers.new(name=geo_node_name, type='NODES')
@@ -122,7 +122,7 @@ class GeoNodeObject:
         bpy.context.scene.collection.objects.link(self.obj)
 
     def add_empty(self,obj_name):
-        obj = bpy.data.objects.new(obj_name,None)
+        obj = hb_utils.new_object(obj_name,None)
         obj.empty_display_size = 0
         obj.parent = self.obj
         bpy.context.scene.collection.objects.link(obj)
@@ -452,7 +452,7 @@ class GeoNodeWall(GeoNodeObject):
         length = self.var_input('Length', 'length')
 
         #Create a object to store the wall length used for constraints
-        self.obj_x = bpy.data.objects.new("obj_x",None)
+        self.obj_x = hb_utils.new_object("obj_x",None)
         self.obj_x.empty_display_size = .01
         self.obj_x.location = (0,0,0)
         self.obj_x.parent = self.obj

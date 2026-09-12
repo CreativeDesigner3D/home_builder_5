@@ -1221,6 +1221,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
     # -----------------------------------------------------------------
     # Recalculate (overrides FaceFrameCabinet.recalculate)
     # -----------------------------------------------------------------
+    @hb_utils.with_children_index
     def recalculate(self):
         """Corner cabinet recalc. Drives root cage dimensions, root
         corner notch, and corner-shape-specific carcass parts directly
@@ -2642,7 +2643,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                     or sec.garage_door_type != 'TAMBOUR'):
                 continue
             mesh = bpy.data.meshes.new('Tambour Door')
-            tam = bpy.data.objects.new('Tambour Door %d' % (i + 1), mesh)
+            tam = hb_utils.new_object('Tambour Door %d' % (i + 1), mesh)
             for coll in self.obj.users_collection:
                 coll.objects.link(tam)
             tam.parent = self.obj

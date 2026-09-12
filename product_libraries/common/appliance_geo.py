@@ -741,7 +741,7 @@ def _mesh_child(cg, name, verts, faces, mat=None, extra_mats=(),
     for index in smooth_faces:
         mesh.polygons[index].use_smooth = True
     mesh.update()
-    obj = bpy.data.objects.new(name, mesh)
+    obj = hb_utils.new_object(name, mesh)
     obj.parent = cg.obj
     obj[GEO_CHILD_FLAG] = True
     if cg.obj.get('MENU_ID'):
@@ -1892,7 +1892,7 @@ def sink_clearance_cutter(cage_obj):
     _box(verts, faces, -m, dim_x + m, -dim_y - m, m, bottom - m, dim_z + m)
     if cutter is None:
         mesh = bpy.data.meshes.new('Sink Clearance')
-        cutter = bpy.data.objects.new('Sink Clearance', mesh)
+        cutter = hb_utils.new_object('Sink Clearance', mesh)
         cutter.parent = cage_obj
         cutter[SINK_CUTTER_FLAG] = True
         cutter.display_type = 'WIRE'
@@ -1916,7 +1916,7 @@ def _subtract_box(target, matrix, bounds, scene):
     mesh.from_pydata(verts, [], faces)
     mesh.validate()
     mesh.update()
-    cutter = bpy.data.objects.new('Sink Cutter', mesh)
+    cutter = hb_utils.new_object('Sink Cutter', mesh)
     cutter.matrix_world = matrix.copy()
     scene.collection.objects.link(cutter)
     mod = target.modifiers.new('SinkCut', 'BOOLEAN')

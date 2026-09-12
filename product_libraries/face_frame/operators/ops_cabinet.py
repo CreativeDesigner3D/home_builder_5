@@ -1,6 +1,8 @@
 import bpy
 from mathutils import Vector, Matrix, Euler
 
+from .... import hb_utils
+
 from .. import types_face_frame
 from .. import types_face_frame_corner
 from .. import bay_presets
@@ -1769,7 +1771,7 @@ class hb_face_frame_OT_split_opening(bpy.types.Operator):
             inherited_role = original.get('SIZE_ROLE')
 
             # Create split node empty
-            split_obj = bpy.data.objects.new('Split Node', None)
+            split_obj = hb_utils.new_object('Split Node', None)
             bpy.context.scene.collection.objects.link(split_obj)
             split_obj.empty_display_type = 'PLAIN_AXES'
             split_obj.empty_display_size = 0.001
@@ -1822,6 +1824,7 @@ class hb_face_frame_OT_split_opening(bpy.types.Operator):
 
             # Re-parent original under split as the last child.
             original.parent = split_obj
+            hb_utils.note_parent_change()
             original['hb_split_child_index'] = new_count
             op_props.size = self.sizes[new_count]
             op_props.unlock_size = self.unlocks[new_count]
@@ -2936,7 +2939,7 @@ def _split_active_region(target, axis):
                 types_face_frame._DISTRIBUTING_WIDTHS.discard(guard_id)
 
     # Create the split node empty
-    split = bpy.data.objects.new('Interior Split', None)
+    split = hb_utils.new_object('Interior Split', None)
     bpy.context.scene.collection.objects.link(split)
     split.empty_display_type = 'PLAIN_AXES'
     split.empty_display_size = 0.001
@@ -2985,6 +2988,7 @@ def _split_active_region(target, axis):
     split.parent = leaf_parent
     split['hb_interior_child_index'] = leaf_index
     leaf.parent = split
+    hb_utils.note_parent_change()
     leaf['hb_interior_child_index'] = 0
     _seed_size(rp_existing, half, False)
 
@@ -3530,7 +3534,7 @@ def _build_recipe_into(recipe, parent_obj, child_index,
     if kind == 'split':
         axis = recipe[1]
         children = recipe[2]
-        split_obj = bpy.data.objects.new('Split Node', None)
+        split_obj = hb_utils.new_object('Split Node', None)
         bpy.context.scene.collection.objects.link(split_obj)
         split_obj.empty_display_type = 'PLAIN_AXES'
         split_obj.empty_display_size = 0.001
@@ -5412,6 +5416,7 @@ def create_cabinet_group_from_roots(roots, name="New Cabinet Group"):
     for root in roots:
         world_matrix = _resolved_world_matrix(root)
         root.parent = group.obj
+        hb_utils.note_parent_change()
         root.matrix_parent_inverse = Matrix.Identity(4)
         root.matrix_basis = group_matrix_inv @ world_matrix
         # Cabinet / product cages get hidden so only the group cage
@@ -5533,6 +5538,7 @@ class hb_face_frame_OT_ungroup_cabinet(bpy.types.Operator):
         for m in members:
             world_matrix = m.matrix_world.copy()
             m.parent = None
+            hb_utils.note_parent_change()
             m.matrix_world = world_matrix
             # Cabinet / product cages were hidden when grouped; show them
             # again so the freed member is selectable. The selection-mode

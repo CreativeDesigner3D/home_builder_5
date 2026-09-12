@@ -177,6 +177,7 @@ class ColumnBeamProduct(ff.FaceFrameCabinet):
         obj.hide_render = not visible
 
     # -- build ---------------------------------------------------------
+    @hb_utils.with_children_index
     def recalculate(self):
         cab = self.obj.face_frame_cabinet
         cb = self.obj.column_beam_product

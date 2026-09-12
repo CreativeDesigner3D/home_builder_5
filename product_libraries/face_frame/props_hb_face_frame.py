@@ -3706,7 +3706,7 @@ def _sync_rail_size_annotation(front_obj, part, top_rail_width,
     fd.size = 0.04
     fd.align_x = 'RIGHT'
     fd.align_y = 'CENTER'
-    text_obj = bpy.data.objects.new('Rail Size Annotation', fd)
+    text_obj = hb_utils.new_object('Rail Size Annotation', fd)
     text_obj[RAIL_SIZE_ANNOTATION_TAG] = True
     text_obj['IS_2D_ANNOTATION'] = True
     text_obj.color = (0.0, 0.0, 0.0, 1.0)

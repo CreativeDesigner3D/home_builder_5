@@ -18,6 +18,7 @@ import os
 
 import bpy
 
+from .. import hb_utils
 from .. import units
 
 
@@ -375,7 +376,7 @@ def make_profile_object(profile_ref, fallback_key, name, collection,
         for pt, (x, y) in zip(spline.points, outline):
             pt.co = (x, y, 0.0, 1.0)
         spline.use_cyclic_u = True
-        obj = bpy.data.objects.new(name, curve)
+        obj = hb_utils.new_object(name, curve)
         _finish_profile(obj, collection)
     if height is not None and height > 1e-5:
         _scale_profile_height(obj, height)

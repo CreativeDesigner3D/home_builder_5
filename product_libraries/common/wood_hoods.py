@@ -301,7 +301,7 @@ def _mesh_part(hood_obj, name, verts, faces):
     me = bpy.data.meshes.new(name)
     me.from_pydata(verts, [], faces)
     me.update()
-    obj = bpy.data.objects.new(name, me)
+    obj = hb_utils.new_object(name, me)
     obj[HOOD_PART_TAG] = True
     obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_part_commands'
     cols = hood_obj.users_collection or [bpy.context.scene.collection]

@@ -99,7 +99,8 @@ def suspend_recalc():
     global _RECALC_SUSPEND_DEPTH
     _RECALC_SUSPEND_DEPTH += 1
     try:
-        yield
+        with hb_utils.children_index():
+            yield
     finally:
         _RECALC_SUSPEND_DEPTH -= 1
         if _RECALC_SUSPEND_DEPTH == 0:
@@ -1490,7 +1491,7 @@ def _clone_interior_tree_node(src_node, new_parent):
         return new_leaf.obj
 
     if src_node.get(TAG_INTERIOR_SPLIT_NODE):
-        split_obj = bpy.data.objects.new('Interior Split', None)
+        split_obj = hb_utils.new_object('Interior Split', None)
         bpy.context.scene.collection.objects.link(split_obj)
         split_obj.empty_display_type = 'PLAIN_AXES'
         split_obj.empty_display_size = 0.001
@@ -1547,7 +1548,7 @@ def _clone_bay_tree_node(src_node, new_parent, opening_counter):
         return new_op.obj
 
     if src_node.get(TAG_SPLIT_NODE):
-        split_obj = bpy.data.objects.new('Split Node', None)
+        split_obj = hb_utils.new_object('Split Node', None)
         bpy.context.scene.collection.objects.link(split_obj)
         split_obj.empty_display_type = 'PLAIN_AXES'
         split_obj.empty_display_size = 0.001
@@ -2592,6 +2593,7 @@ class FaceFrameCabinet(GeoNodeCage):
         elif obj.get(TAG_SPLIT_NODE):
             obj.face_frame_split.size = value
 
+    @hb_utils.with_children_index
     def recalculate(self):
         """Recompute all part dimensions and positions from props.
 
@@ -3860,8 +3862,7 @@ class FaceFrameCabinet(GeoNodeCage):
         bay shelf / adjustable shelf living deeper in the bay tree.
         """
         yield self.obj
-        kids = hb_utils.children_map()
-        stack = list(kids.get(self.obj, ()))
+        stack = list(self.obj.children)
         while stack:
             obj = stack.pop()
             role = obj.get('hb_part_role')
@@ -3869,7 +3870,7 @@ class FaceFrameCabinet(GeoNodeCage):
                 continue
             if role in ANGLED_CUT_PART_ROLES:
                 yield obj
-            stack.extend(kids.get(obj, ()))
+            stack.extend(obj.children)
 
     def _apply_angled_cuts(self, cutter_obj):
         """Ensure every cuttable target carries a boolean DIFFERENCE
@@ -3925,7 +3926,7 @@ class FaceFrameCabinet(GeoNodeCage):
                 return child
         name = f'Angled Wedge Cutter {side.title()}'
         mesh = bpy.data.meshes.new(name)
-        cutter = bpy.data.objects.new(name, mesh)
+        cutter = hb_utils.new_object(name, mesh)
         cutter['hb_part_role'] = PART_ROLE_ANGLED_CUTTER
         cutter['hb_angled_side'] = side
         cutter.parent = self.obj
@@ -4050,7 +4051,7 @@ class FaceFrameCabinet(GeoNodeCage):
                 return child
         name = f'End Miter Cutter {side.title()} {which.title()}'
         mesh = bpy.data.meshes.new(name)
-        cutter = bpy.data.objects.new(name, mesh)
+        cutter = hb_utils.new_object(name, mesh)
         cutter['hb_part_role'] = PART_ROLE_BOX_MITER_CUTTER
         cutter['hb_miter_side'] = side
         cutter['hb_miter_part'] = which
@@ -4208,7 +4209,7 @@ class FaceFrameCabinet(GeoNodeCage):
                 return child
         name = f'Mid Stile Miter Cutter {gap_index + 1} {half.title()}'
         mesh = bpy.data.meshes.new(name)
-        cutter = bpy.data.objects.new(name, mesh)
+        cutter = hb_utils.new_object(name, mesh)
         cutter['hb_part_role'] = self.MID_STILE_MITER_CUTTER_ROLE
         cutter['hb_ms_miter_gap'] = gap_index
         cutter['hb_ms_miter_half'] = half
@@ -4363,7 +4364,7 @@ class FaceFrameCabinet(GeoNodeCage):
                 return child
         name = f'Panel Miter Cutter {side.title()} {which.title()}'
         mesh = bpy.data.meshes.new(name)
-        cutter = bpy.data.objects.new(name, mesh)
+        cutter = hb_utils.new_object(name, mesh)
         cutter['hb_part_role'] = role
         cutter['hb_miter_side'] = side
         cutter['hb_miter_which'] = which
@@ -4703,7 +4704,7 @@ class FaceFrameCabinet(GeoNodeCage):
             if child.get('hb_part_role') == PART_ROLE_FURNITURE_TOP_CUTTER:
                 return child
         mesh = bpy.data.meshes.new('Wood Top Shape Cutter')
-        cutter = bpy.data.objects.new('Wood Top Shape Cutter', mesh)
+        cutter = hb_utils.new_object('Wood Top Shape Cutter', mesh)
         cutter['hb_part_role'] = PART_ROLE_FURNITURE_TOP_CUTTER
         cutter.parent = self.obj
         cutter.display_type = 'WIRE'
@@ -5225,7 +5226,7 @@ class FaceFrameCabinet(GeoNodeCage):
             cutter = self._fb_child_for_key(PART_ROLE_FB_LED_CUTTER, key)
             if cutter is None:
                 mesh = bpy.data.meshes.new('FB LED Route Cutter')
-                cutter = bpy.data.objects.new('FB LED Route Cutter', mesh)
+                cutter = hb_utils.new_object('FB LED Route Cutter', mesh)
                 for coll in self.obj.users_collection:
                     coll.objects.link(cutter)
                 cutter.parent = parent
@@ -5260,7 +5261,7 @@ class FaceFrameCabinet(GeoNodeCage):
             light_obj = self._fb_child_for_key(PART_ROLE_FB_LIGHT, key)
             if light_obj is None or light_obj.type != 'LIGHT':
                 light_data = bpy.data.lights.new('FB LED Light', 'AREA')
-                light_obj = bpy.data.objects.new('FB LED Light', light_data)
+                light_obj = hb_utils.new_object('FB LED Light', light_data)
                 for coll in self.obj.users_collection:
                     coll.objects.link(light_obj)
                 light_obj.parent = parent
@@ -5285,7 +5286,7 @@ class FaceFrameCabinet(GeoNodeCage):
             strip = self._fb_child_for_key(PART_ROLE_FB_LED_STRIP, key)
             if strip is None:
                 mesh = bpy.data.meshes.new('FB LED Strip')
-                strip = bpy.data.objects.new('FB LED Strip', mesh)
+                strip = hb_utils.new_object('FB LED Strip', mesh)
                 for coll in self.obj.users_collection:
                     coll.objects.link(strip)
                 strip.parent = parent
@@ -5600,7 +5601,7 @@ class FaceFrameCabinet(GeoNodeCage):
                     break
             if block is None:
                 mesh = bpy.data.meshes.new(name)
-                block = bpy.data.objects.new(name, mesh)
+                block = hb_utils.new_object(name, mesh)
                 for coll in self.obj.users_collection:
                     coll.objects.link(block)
                 block.parent = self.obj
@@ -5858,7 +5859,7 @@ class FaceFrameCabinet(GeoNodeCage):
         if cutter is None:
             name = f'Side Front Trim Cutter {side.title()}'
             mesh = bpy.data.meshes.new(name)
-            cutter = bpy.data.objects.new(name, mesh)
+            cutter = hb_utils.new_object(name, mesh)
             cutter['hb_part_role'] = cutter_role
             cutter['hb_trim_side'] = side
             cutter.parent = self.obj
@@ -6136,7 +6137,7 @@ class FaceFrameCabinet(GeoNodeCage):
             if child.get('hb_part_role') == PART_ROLE_BACK_EXT_CUTTER:
                 return child
         mesh = bpy.data.meshes.new('Back Extension Cutter')
-        cutter = bpy.data.objects.new('Back Extension Cutter', mesh)
+        cutter = hb_utils.new_object('Back Extension Cutter', mesh)
         cutter['hb_part_role'] = PART_ROLE_BACK_EXT_CUTTER
         cutter.parent = self.obj
         cutter.display_type = 'WIRE'
@@ -6226,8 +6227,7 @@ class FaceFrameCabinet(GeoNodeCage):
     def _iter_back_ext_cut_targets(self):
         """Full-depth panels the trapezoid trim applies to. Mirrors
         _iter_wedge_cut_targets."""
-        kids = hb_utils.children_map()
-        stack = list(kids.get(self.obj, ()))
+        stack = list(self.obj.children)
         while stack:
             obj = stack.pop()
             role = obj.get('hb_part_role')
@@ -6235,7 +6235,7 @@ class FaceFrameCabinet(GeoNodeCage):
                 continue
             if role in BACK_EXT_CUT_PART_ROLES:
                 yield obj
-            stack.extend(kids.get(obj, ()))
+            stack.extend(obj.children)
 
     def _apply_back_ext_cuts(self, cutter_obj):
         """Ensure every target carries a boolean DIFFERENCE modifier named
@@ -6432,7 +6432,7 @@ class FaceFrameCabinet(GeoNodeCage):
                 return child
         name = 'Side Profile Cutter ' + side.title()
         mesh = bpy.data.meshes.new(name)
-        cutter = bpy.data.objects.new(name, mesh)
+        cutter = hb_utils.new_object(name, mesh)
         cutter['hb_part_role'] = PART_ROLE_SIDE_PROFILE_CUTTER
         cutter['hb_profile_side'] = side
         cutter.parent = self.obj
@@ -6548,7 +6548,7 @@ class FaceFrameCabinet(GeoNodeCage):
                 return child
         name = 'Bottom Rail Profile Cutter ' + str(seg_key)
         mesh = bpy.data.meshes.new(name)
-        cutter = bpy.data.objects.new(name, mesh)
+        cutter = hb_utils.new_object(name, mesh)
         cutter['hb_part_role'] = PART_ROLE_BOTTOM_RAIL_PROFILE_CUTTER
         cutter['hb_profile_seg'] = seg_key
         cutter.parent = self.obj
@@ -6728,7 +6728,7 @@ class FaceFrameCabinet(GeoNodeCage):
                 return child
         name = 'Corner Treatment Cutter ' + key
         mesh = bpy.data.meshes.new(name)
-        cutter = bpy.data.objects.new(name, mesh)
+        cutter = hb_utils.new_object(name, mesh)
         cutter['hb_part_role'] = PART_ROLE_CORNER_TREATMENT_CUTTER
         cutter['hb_ct_key'] = key
         cutter.parent = self.obj
@@ -6937,7 +6937,7 @@ class FaceFrameCabinet(GeoNodeCage):
                 return child
         name = 'Frame Profile Cutter ' + key
         mesh = bpy.data.meshes.new(name)
-        cutter = bpy.data.objects.new(name, mesh)
+        cutter = hb_utils.new_object(name, mesh)
         cutter['hb_part_role'] = PART_ROLE_FRAME_PROFILE_CUTTER
         cutter['hb_fp_key'] = key
         cutter.parent = self.obj
@@ -7185,7 +7185,7 @@ class FaceFrameCabinet(GeoNodeCage):
             if child.get('hb_part_role') == PART_ROLE_OVERSTOOL_TOWEL_BAR:
                 return child
         mesh = bpy.data.meshes.new('Towel Bar')
-        bar = bpy.data.objects.new('Towel Bar', mesh)
+        bar = hb_utils.new_object('Towel Bar', mesh)
         bar['hb_part_role'] = PART_ROLE_OVERSTOOL_TOWEL_BAR
         bar['CABINET_PART'] = True
         bar.parent = self.obj
@@ -7255,7 +7255,7 @@ class FaceFrameCabinet(GeoNodeCage):
             if child.get('hb_part_role') == PART_ROLE_WEDGE_CUTTER:
                 return child
         mesh = bpy.data.meshes.new('Wedge Cutter')
-        cutter = bpy.data.objects.new('Wedge Cutter', mesh)
+        cutter = hb_utils.new_object('Wedge Cutter', mesh)
         cutter['hb_part_role'] = PART_ROLE_WEDGE_CUTTER
         cutter.parent = self.obj
         cutter.display_type = 'WIRE'
@@ -7307,7 +7307,7 @@ class FaceFrameCabinet(GeoNodeCage):
             if child.get('hb_part_role') == PART_ROLE_WEDGE:
                 return child
         mesh = bpy.data.meshes.new('Wedge')
-        piece = bpy.data.objects.new('Wedge', mesh)
+        piece = hb_utils.new_object('Wedge', mesh)
         piece['hb_part_role'] = PART_ROLE_WEDGE
         # Not a CABINET_PART: it is the offcut of the sides, back and
         # bottom rather than a board of its own, so it takes its finish
@@ -7483,7 +7483,7 @@ class FaceFrameCabinet(GeoNodeCage):
             if child.get('hb_part_role') == PART_ROLE_ADA_CUTTER:
                 return child
         mesh = bpy.data.meshes.new('Knee Clearance Cutter')
-        cutter = bpy.data.objects.new('Knee Clearance Cutter', mesh)
+        cutter = hb_utils.new_object('Knee Clearance Cutter', mesh)
         cutter['hb_part_role'] = PART_ROLE_ADA_CUTTER
         cutter.parent = self.obj
         cutter.display_type = 'WIRE'
@@ -7592,8 +7592,7 @@ class FaceFrameCabinet(GeoNodeCage):
         """Root cage + carcass parts whose back-bottom corner the wedge
         chamfers. Mirrors _iter_angled_cut_targets."""
         yield self.obj
-        kids = hb_utils.children_map()
-        stack = list(kids.get(self.obj, ()))
+        stack = list(self.obj.children)
         while stack:
             obj = stack.pop()
             role = obj.get('hb_part_role')
@@ -7604,7 +7603,7 @@ class FaceFrameCabinet(GeoNodeCage):
                 continue
             if role in WEDGE_CUT_PART_ROLES:
                 yield obj
-            stack.extend(kids.get(obj, ()))
+            stack.extend(obj.children)
 
     def _apply_wedge_cuts(self, cutter_obj):
         """Ensure every target carries a boolean DIFFERENCE modifier named
@@ -7743,7 +7742,7 @@ class FaceFrameCabinet(GeoNodeCage):
             if child.get('hb_part_role') == PART_ROLE_PIPE_CHASE_CUTTER:
                 return child
         mesh = bpy.data.meshes.new('Pipe Chase Cutter')
-        cutter = bpy.data.objects.new('Pipe Chase Cutter', mesh)
+        cutter = hb_utils.new_object('Pipe Chase Cutter', mesh)
         cutter['hb_part_role'] = PART_ROLE_PIPE_CHASE_CUTTER
         cutter.parent = self.obj
         cutter.display_type = 'WIRE'
@@ -8903,7 +8902,7 @@ class FaceFrameCabinet(GeoNodeCage):
                 return child
         name = f'FO Stile Miter Cutter {side.title()}'
         mesh = bpy.data.meshes.new(name)
-        cutter = bpy.data.objects.new(name, mesh)
+        cutter = hb_utils.new_object(name, mesh)
         cutter['hb_part_role'] = role
         cutter[TAG_FO_STILE_SIDE] = side
         cutter.parent = self.obj
@@ -10408,7 +10407,7 @@ class FaceFrameCabinet(GeoNodeCage):
         if existing is not None:
             return existing
         mesh = bpy.data.meshes.new('Blind Section Tambour')
-        tam = bpy.data.objects.new(
+        tam = hb_utils.new_object(
             f'Blind Section Tambour {side.capitalize()}', mesh)
         for coll in self.obj.users_collection:
             coll.objects.link(tam)
@@ -11978,7 +11977,7 @@ class FaceFrameCabinet(GeoNodeCage):
         pull_obj = pulls.resolve_pull_object(scene_props, 'drawer')
         if pull_obj is None:
             return
-        instance = bpy.data.objects.new("Pull - " + panel_obj.name,
+        instance = hb_utils.new_object("Pull - " + panel_obj.name,
                                         pull_obj.data)
         bpy.context.scene.collection.objects.link(instance)
         instance.parent = panel_obj
@@ -11995,7 +11994,7 @@ class FaceFrameCabinet(GeoNodeCage):
         through the opening's swing_percent slider, not by grabbing the
         empty directly, so the gizmo doesn't need to be prominent.
         """
-        pivot = bpy.data.objects.new('Front Pivot', None)
+        pivot = hb_utils.new_object('Front Pivot', None)
         bpy.context.scene.collection.objects.link(pivot)
         pivot.empty_display_type = 'PLAIN_AXES'
         pivot.empty_display_size = 0.001
@@ -12212,7 +12211,7 @@ class FaceFrameCabinet(GeoNodeCage):
         # (toward the viewer). The pull mounts on the front face.
         z = thickness
 
-        instance = bpy.data.objects.new(f"Pull - {front_part.obj.name}", pull_obj.data)
+        instance = hb_utils.new_object(f"Pull - {front_part.obj.name}", pull_obj.data)
         bpy.context.scene.collection.objects.link(instance)
         instance.parent = front_part.obj
         instance.location = (x, y, z)
@@ -12296,7 +12295,7 @@ class FaceFrameCabinet(GeoNodeCage):
         bm.to_mesh(mesh)
         bm.free()
         mesh.update()
-        obj = bpy.data.objects.new(name, mesh)
+        obj = hb_utils.new_object(name, mesh)
         for coll in box_obj.users_collection:
             coll.objects.link(obj)
             break
@@ -12979,7 +12978,7 @@ class FaceFrameCabinet(GeoNodeCage):
         x0 = (box_dx - notch_w) / 2.0
         x1 = x0 + notch_w
         mesh = bpy.data.meshes.new('Sink Duo Cutter')
-        cutter = bpy.data.objects.new('Sink Duo Cutter', mesh)
+        cutter = hb_utils.new_object('Sink Duo Cutter', mesh)
         cutter['hb_part_role'] = PART_ROLE_DRAWER_BOX_CUTTER
         cutter.parent = box_obj
         cutter.display_type = 'WIRE'
@@ -13043,7 +13042,7 @@ class FaceFrameCabinet(GeoNodeCage):
         cx, zt = box_dx / 2.0, box_dz
 
         mesh = bpy.data.meshes.new('Finger Scoop Cutter')
-        cutter = bpy.data.objects.new('Finger Scoop Cutter', mesh)
+        cutter = hb_utils.new_object('Finger Scoop Cutter', mesh)
         cutter['hb_part_role'] = PART_ROLE_DRAWER_BOX_CUTTER
         cutter.parent = box_obj
         cutter.display_type = 'WIRE'
@@ -13387,7 +13386,7 @@ class FaceFrameCabinet(GeoNodeCage):
         font_curve.size = desc['size']
         font_curve.align_x = 'CENTER'
         font_curve.align_y = 'CENTER'
-        text_obj = bpy.data.objects.new(desc['name'], font_curve)
+        text_obj = hb_utils.new_object(desc['name'], font_curve)
         bpy.context.scene.collection.objects.link(text_obj)
         # Resolved annotation font + color (Calibri by default).
         apply_label_style(text_obj, bpy.context.scene)
@@ -13682,7 +13681,7 @@ class FaceFrameCabinet(GeoNodeCage):
         mesh.from_pydata(verts, [], faces)
         mesh.validate()
         mesh.update()
-        cutter = bpy.data.objects.new(desc['name'] + ' Cutter', mesh)
+        cutter = hb_utils.new_object(desc['name'] + ' Cutter', mesh)
         cutter.parent = opening_obj
         cutter.location = (px, py, pz)
         cutter['hb_part_role'] = 'GALLEY_TOP_CUTTER'
@@ -14940,7 +14939,7 @@ class LegProductFaceFrameCabinet(FaceFrameCabinet):
                 break
         if obj is None:
             mesh = bpy.data.meshes.new('Curved Leg Panel')
-            obj = bpy.data.objects.new('Curved Leg Panel', mesh)
+            obj = hb_utils.new_object('Curved Leg Panel', mesh)
             bpy.context.scene.collection.objects.link(obj)
             obj.parent = self.obj
             obj['hb_part_role'] = PART_ROLE_LEG_CURVED_PANEL
@@ -15003,6 +15002,7 @@ class LegProductFaceFrameCabinet(FaceFrameCabinet):
     # ------------------------------------------------------------------
     # Recalc (bespoke; bypasses the bay solver)
     # ------------------------------------------------------------------
+    @hb_utils.with_children_index
     def recalculate(self):
         cab = self.obj.face_frame_cabinet
         leg = self.obj.leg_product
@@ -15454,6 +15454,7 @@ class FloatingShelfFaceFrameCabinet(FaceFrameCabinet):
         mod.show_viewport = active
         mod.show_render = active
 
+    @hb_utils.with_children_index
     def recalculate(self):
         cab = self.obj.face_frame_cabinet
         shelf = self.obj.floating_shelf
@@ -15763,7 +15764,7 @@ class MantleFaceFrameProduct(FaceFrameCabinet):
 
         if sweep is None:
             curve_data = bpy.data.curves.new('Mantle Crown', 'CURVE')
-            sweep = bpy.data.objects.new('Mantle Crown', curve_data)
+            sweep = hb_utils.new_object('Mantle Crown', curve_data)
             for coll in self.obj.users_collection:
                 coll.objects.link(sweep)
             sweep.parent = self.obj
@@ -15840,6 +15841,7 @@ class MantleFaceFrameProduct(FaceFrameCabinet):
                 gn.set_input(k, mirror.get(k, False))
         obj['IS_FINISHED'] = True
 
+    @hb_utils.with_children_index
     def recalculate(self):
         cab = self.obj.face_frame_cabinet
         mp = self.obj.mantle_product
@@ -16173,7 +16175,7 @@ class MantleFaceFrameProduct(FaceFrameCabinet):
 
         if sweep is None:
             curve_data = bpy.data.curves.new('Mantle Base', 'CURVE')
-            sweep = bpy.data.objects.new('Mantle Base', curve_data)
+            sweep = hb_utils.new_object('Mantle Base', curve_data)
             for coll in self.obj.users_collection:
                 coll.objects.link(sweep)
             sweep.parent = self.obj
@@ -16279,6 +16281,7 @@ class ValanceFaceFrameProduct(FaceFrameCabinet):
         part.obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_part_commands'
         return part.obj
 
+    @hb_utils.with_children_index
     def recalculate(self):
         cab = self.obj.face_frame_cabinet
         val = self.obj.valance_product
@@ -16709,7 +16712,7 @@ def position_door_part_pull(door_obj):
         if inst.data is not pull_obj.data:
             inst.data = pull_obj.data
     else:
-        inst = bpy.data.objects.new(f"Pull - {door_obj.name}", pull_obj.data)
+        inst = hb_utils.new_object(f"Pull - {door_obj.name}", pull_obj.data)
         bpy.context.scene.collection.objects.link(inst)
         inst.parent = door_obj
         inst['hb_part_role'] = 'PULL'
@@ -17518,30 +17521,34 @@ def recalculate_face_frame_cabinet(obj):
         return
     _RECALCULATING.add(id(root))
     try:
-        # Combined back-to-back island ends: re-derive how far the end
-        # panel runs back from the other run's live depth before the
-        # parts are sized, so resizing either run keeps the shared panel
-        # the right length. Only this root's own props are written, and
-        # the reentrance guard above is already armed, so the writes'
-        # update callbacks fall straight back out.
-        island_pair.sync(root)
-        cabinet = _wrap_cabinet(root)
-        cabinet.recalculate()
-        _resize_seated_wood_tops(root)
-        _reapply_cabinet_style(root)
-        # Round-top doors: carry a quarter / half circle door's curve
-        # into the frame member above it, so the opening follows the
-        # door instead of showing square above the arc. After the style
-        # pass, which is what gives each door the frame its curve is
-        # measured from. No-op + cleanup when no door is round.
-        refresh_round_top_frames(root)
-        _reapply_selection_mode_highlights(root)
+        with hb_utils.children_index():
+            # Combined back-to-back island ends: re-derive how far the
+            # end panel runs back from the other run's live depth before
+            # the parts are sized, so resizing either run keeps the
+            # shared panel the right length. Only this root's own props
+            # are written, and the reentrance guard above is already
+            # armed, so the writes' update callbacks fall straight back
+            # out.
+            island_pair.sync(root)
+            cabinet = _wrap_cabinet(root)
+            cabinet.recalculate()
+            _resize_seated_wood_tops(root)
+            _reapply_cabinet_style(root)
+            # Round-top doors: carry a quarter / half circle door's
+            # curve into the frame member above it, so the opening
+            # follows the door instead of showing square above the arc.
+            # After the style pass, which is what gives each door the
+            # frame its curve is measured from. No-op + cleanup when no
+            # door is round.
+            refresh_round_top_frames(root)
+            _reapply_selection_mode_highlights(root)
     finally:
         _RECALCULATING.discard(id(root))
 
     # Standalone panels get the applied-back behaviour after the core
     # recalc (own guard prevents recursion via its bay insert/delete).
-    _reconcile_standalone_panel(root)
+    with hb_utils.children_index():
+        _reconcile_standalone_panel(root)
 
 
 def _resize_seated_wood_tops(root):
@@ -18003,6 +18010,7 @@ def merge_cabinets(anchor, absorbed, side):
         for bay in absorbed_bays:
             bay.parent = anchor
             bay.matrix_parent_inverse.identity()
+        hb_utils.note_parent_change()
 
         if side == 'RIGHT':
             final_bays = anchor_bays + absorbed_bays
@@ -18096,6 +18104,7 @@ def merge_cabinets(anchor, absorbed, side):
             for part in absorbed_mid_parts:
                 part.parent = anchor
                 part.matrix_parent_inverse.identity()
+        hb_utils.note_parent_change()
 
         # Build the boundary mid stile + slot-0 / slot-1 mid div pair.
         # _create_mid_parts_at parents to anchor and sets defaults; the
@@ -18317,6 +18326,7 @@ def break_cabinet_at_gap(cabinet, gap_index, shrink_side='AUTO'):
             bay.matrix_parent_inverse.identity()
             bay['hb_bay_index'] = new_idx
             bay.face_frame_bay.bay_index = new_idx
+        hb_utils.note_parent_change()
 
         # Delete boundary mid stile + mid div pair
         for p in boundary_parts:
@@ -18329,6 +18339,7 @@ def break_cabinet_at_gap(cabinet, gap_index, shrink_side='AUTO'):
             p['hb_mid_stile_index'] = old_idx - (gap_index + 1)
             p.parent = new_root
             p.matrix_parent_inverse.identity()
+        hb_utils.note_parent_change()
 
         # Strip original's mid_stile_widths down to first gap_index entries
         coll_a = cab_props.mid_stile_widths

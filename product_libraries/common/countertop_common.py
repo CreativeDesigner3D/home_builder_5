@@ -48,6 +48,7 @@ import bpy
 from mathutils import Vector
 
 from ... import hb_types
+from ... import hb_utils
 
 MENU_ID = 'HOME_BUILDER_MT_countertop_commands'
 
@@ -181,7 +182,7 @@ def create_group_countertop(context, members, overhang_front, overhang_sides,
     if top is None:
         return None
 
-    obj = bpy.data.objects.new('Countertop',
+    obj = hb_utils.new_object('Countertop',
                                bpy.data.meshes.new('Countertop'))
     obj.parent = anchor
     obj.matrix_parent_inverse.identity()
