@@ -1682,49 +1682,63 @@ class FaceFrameCabinet(GeoNodeCage):
         # origin, matching the convention used by all child parts.
         self.set_input('Mirror Y', True)
 
-        # Initialize the object-level PropertyGroup. Note: setting the
-        # width/height/depth here will fire their update callbacks, which
-        # call recalculate(). At this point parts don't exist yet, so the
-        # recalc just sets the cage Dim X/Y/Z and returns - safe.
+        # Initialize the object-level PropertyGroup. Every size write
+        # below fires an update callback that would run a full
+        # recalculate() on a root with no parts yet - a dozen no-op
+        # layouts per cabinet, each walking the whole scene. The
+        # reentrance guard sends those callbacks straight back out
+        # (the width callback still records its anchor stash); the cage
+        # dims are synced by hand after, and create_carcass() runs the
+        # real layout once the parts exist.
         scene = bpy.context.scene
         cab_props = self.obj.face_frame_cabinet
-        cab_props.cabinet_type = self.default_cabinet_type
+        cabinet_id = id(self.obj)
+        _RECALCULATING.add(cabinet_id)
+        try:
+            cab_props.cabinet_type = self.default_cabinet_type
 
-        # Type-specific top scribe defaults: amount the carcass top is
-        # held down from bay_top_z. Uppers and talls both reserve a 1/2
-        # band for scribing to the ceiling; bases get none.
-        # Sides drop with the carcass top unless flagged finished.
-        cab_props.top_scribe = {
-            'UPPER': inch(0.5),
-            'TALL':  inch(0.5),
-        }.get(self.default_cabinet_type, 0.0)
+            # Type-specific top scribe defaults: amount the carcass top
+            # is held down from bay_top_z. Uppers and talls both reserve
+            # a 1/2 band for scribing to the ceiling; bases get none.
+            # Sides drop with the carcass top unless flagged finished.
+            cab_props.top_scribe = {
+                'UPPER': inch(0.5),
+                'TALL':  inch(0.5),
+            }.get(self.default_cabinet_type, 0.0)
 
-        # Uppers sit at the back of a corner with shallower carcasses, so
-        # the blind amount default tracks Upper depth conventions (12") vs
-        # the standard 24" Base/Tall default seeded by the property declaration.
-        if self.default_cabinet_type == 'UPPER':
-            cab_props.blind_amount_left = inch(12.0)
-            cab_props.blind_amount_right = inch(12.0)
+            # Uppers sit at the back of a corner with shallower
+            # carcasses, so the blind amount default tracks Upper depth
+            # conventions (12") vs the standard 24" Base/Tall default
+            # seeded by the property declaration.
+            if self.default_cabinet_type == 'UPPER':
+                cab_props.blind_amount_left = inch(12.0)
+                cab_props.blind_amount_right = inch(12.0)
 
-        if hasattr(scene, 'hb_face_frame'):
-            ff_scene = scene.hb_face_frame
-            cab_props.left_stile_width = ff_scene.ff_end_stile_width
-            cab_props.right_stile_width = ff_scene.ff_end_stile_width
-            cab_props.top_rail_width = ff_scene.ff_top_rail_width
-            cab_props.bottom_rail_width = ff_scene.ff_bottom_rail_width
-            cab_props.face_frame_thickness = ff_scene.ff_face_frame_thickness
-            # Project toe kick defaults (product classes that need a
-            # fixed kick -- refrigerator 0, lap drawer float -- override
-            # after this in their own create()).
-            tk_h = getattr(ff_scene, 'default_toe_kick_height', None)
-            if tk_h is not None:
-                cab_props.toe_kick_height = tk_h
-                cab_props.toe_kick_setback = ff_scene.default_toe_kick_setback
+            if hasattr(scene, 'hb_face_frame'):
+                ff_scene = scene.hb_face_frame
+                cab_props.left_stile_width = ff_scene.ff_end_stile_width
+                cab_props.right_stile_width = ff_scene.ff_end_stile_width
+                cab_props.top_rail_width = ff_scene.ff_top_rail_width
+                cab_props.bottom_rail_width = ff_scene.ff_bottom_rail_width
+                cab_props.face_frame_thickness = ff_scene.ff_face_frame_thickness
+                # Project toe kick defaults (product classes that need a
+                # fixed kick -- refrigerator 0, lap drawer float --
+                # override after this in their own create()).
+                tk_h = getattr(ff_scene, 'default_toe_kick_height', None)
+                if tk_h is not None:
+                    cab_props.toe_kick_height = tk_h
+                    cab_props.toe_kick_setback = ff_scene.default_toe_kick_setback
 
-        # Set dimensions last; this fires the update path
-        cab_props.width = self.default_width
-        cab_props.height = self.default_height
-        cab_props.depth = self.default_depth
+            cab_props.width = self.default_width
+            cab_props.height = self.default_height
+            cab_props.depth = self.default_depth
+        finally:
+            _RECALCULATING.discard(cabinet_id)
+
+        # What the skipped recalcs would have done on a bare root.
+        self.set_input('Dim X', cab_props.width)
+        self.set_input('Dim Y', cab_props.depth)
+        self.set_input('Dim Z', cab_props.height)
 
     def create_carcass(self, has_toe_kick, bay_qty=1):
         """Create the 5-part carcass + face frame end stiles + N bay cages
@@ -3846,7 +3860,8 @@ class FaceFrameCabinet(GeoNodeCage):
         bay shelf / adjustable shelf living deeper in the bay tree.
         """
         yield self.obj
-        stack = list(self.obj.children)
+        kids = hb_utils.children_map()
+        stack = list(kids.get(self.obj, ()))
         while stack:
             obj = stack.pop()
             role = obj.get('hb_part_role')
@@ -3854,7 +3869,7 @@ class FaceFrameCabinet(GeoNodeCage):
                 continue
             if role in ANGLED_CUT_PART_ROLES:
                 yield obj
-            stack.extend(obj.children)
+            stack.extend(kids.get(obj, ()))
 
     def _apply_angled_cuts(self, cutter_obj):
         """Ensure every cuttable target carries a boolean DIFFERENCE
@@ -6211,7 +6226,8 @@ class FaceFrameCabinet(GeoNodeCage):
     def _iter_back_ext_cut_targets(self):
         """Full-depth panels the trapezoid trim applies to. Mirrors
         _iter_wedge_cut_targets."""
-        stack = list(self.obj.children)
+        kids = hb_utils.children_map()
+        stack = list(kids.get(self.obj, ()))
         while stack:
             obj = stack.pop()
             role = obj.get('hb_part_role')
@@ -6219,7 +6235,7 @@ class FaceFrameCabinet(GeoNodeCage):
                 continue
             if role in BACK_EXT_CUT_PART_ROLES:
                 yield obj
-            stack.extend(obj.children)
+            stack.extend(kids.get(obj, ()))
 
     def _apply_back_ext_cuts(self, cutter_obj):
         """Ensure every target carries a boolean DIFFERENCE modifier named
@@ -7576,7 +7592,8 @@ class FaceFrameCabinet(GeoNodeCage):
         """Root cage + carcass parts whose back-bottom corner the wedge
         chamfers. Mirrors _iter_angled_cut_targets."""
         yield self.obj
-        stack = list(self.obj.children)
+        kids = hb_utils.children_map()
+        stack = list(kids.get(self.obj, ()))
         while stack:
             obj = stack.pop()
             role = obj.get('hb_part_role')
@@ -7587,7 +7604,7 @@ class FaceFrameCabinet(GeoNodeCage):
                 continue
             if role in WEDGE_CUT_PART_ROLES:
                 yield obj
-            stack.extend(obj.children)
+            stack.extend(kids.get(obj, ()))
 
     def _apply_wedge_cuts(self, cutter_obj):
         """Ensure every target carries a boolean DIFFERENCE modifier named

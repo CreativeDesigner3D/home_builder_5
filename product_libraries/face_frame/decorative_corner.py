@@ -54,6 +54,7 @@ import math
 import bpy
 import bmesh
 
+from ... import hb_utils
 from ...units import inch
 
 
@@ -576,14 +577,15 @@ def _cut_mod_name(corner):
 
 
 def _iter_cut_targets(cabinet_obj):
-    stack = list(cabinet_obj.children)
+    kids = hb_utils.children_map()
+    stack = list(kids.get(cabinet_obj, ()))
     while stack:
         obj = stack.pop()
         role = obj.get('hb_part_role')
         if role not in (PART_ROLE, PART_ROLE_CUTTER):
             if role in CUT_PART_ROLES and obj.type == 'MESH':
                 yield obj
-            stack.extend(obj.children)
+            stack.extend(kids.get(obj, ()))
 
 
 def _apply_cuts(cabinet_obj, cutters):

@@ -2184,7 +2184,19 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         and recalc. Material assignment to parts and door-style application
         to fronts ship in the next phase, once Face_Frame_Door_Style and
         the per-part material rules are in place.
+
+        The whole write runs under suspend_recalc(): the five overlay /
+        inset props and the face frame widths each carry an update
+        callback, so without it one assignment rebuilt the cabinet six
+        or seven times before the explicit recalc at the end. Suspended,
+        every write queues the same cabinet and the outermost resume
+        rebuilds it once.
         """
+        from . import types_face_frame
+        with types_face_frame.suspend_recalc():
+            self._assign_style_to_cabinet_inner(cabinet_obj)
+
+    def _assign_style_to_cabinet_inner(self, cabinet_obj):
         self.apply_overlay_to_cabinet(cabinet_obj)
 
         cabinet_obj['STYLE_NAME'] = self.name

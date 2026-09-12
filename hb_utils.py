@@ -212,6 +212,24 @@ def delete_obj_and_children(obj):
         bpy.data.objects.remove(o, do_unlink=True)
 
 
+def children_map():
+    """Parent -> [children] for every parented object, from ONE pass over
+    bpy.data.objects.
+
+    Object.children scans all of bpy.data.objects on every call, so a
+    tree walk that asks each node for its children pays that scan once
+    per node - and the scan grows with every product in the file. Build
+    this once per walk and read it instead: stack.extend(kids.get(obj, ())).
+    It is a snapshot: rebuild after creating, deleting or reparenting.
+    """
+    kids = {}
+    for obj in bpy.data.objects:
+        parent = obj.parent
+        if parent is not None:
+            kids.setdefault(parent, []).append(obj)
+    return kids
+
+
 def run_calc_fix(context, obj=None, passes=2):
     """
     Bring an object hierarchy up to date after a prompt or size edit.
