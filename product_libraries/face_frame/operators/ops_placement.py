@@ -1085,12 +1085,10 @@ def _try_auto_merge_with_neighbor(context, cab_obj):
     if cab_obj.get('IS_VALANCE_PRODUCT'):
         return None
 
-    # Force a depsgraph update so cab_obj.matrix_world reflects the
-    # parent + location assignments _finalize just made. Without this,
-    # the Z-match check in merge_cabinets sees a stale world Z (often
-    # the cabinet's pre-parenting world origin) and rejects what should
-    # be a valid auto-merge.
-    context.view_layer.update()
+    # cab_obj was parented and positioned by _finalize a moment ago, so
+    # its matrix_world is stale until the next depsgraph pass; every
+    # world-space read here and in merge_cabinets goes through
+    # hb_utils.world_matrix instead of forcing one.
 
     parent = cab_obj.parent
     if parent is not None:
@@ -1106,12 +1104,12 @@ def _try_auto_merge_with_neighbor(context, cab_obj):
     # Run axis = cab_obj's local +X projected into world XY. Matches
     # the convention used inside merge_cabinets so the bucketing and
     # the merge primitive's abutment check see the same geometry.
-    cab_run = cab_obj.matrix_world.to_3x3() @ Vector((1.0, 0.0, 0.0))
+    cab_run = hb_utils.world_matrix(cab_obj).to_3x3() @ Vector((1.0, 0.0, 0.0))
     cab_run.z = 0.0
     if cab_run.length < 1e-8:
         return None
     cab_run.normalize()
-    cab_origin = cab_obj.matrix_world.translation
+    cab_origin = hb_utils.world_matrix(cab_obj).translation
     cab_w = cab_obj.face_frame_cabinet.width
     eps = 1e-4
     cos_tol = math.cos(math.radians(0.5))
@@ -1136,7 +1134,7 @@ def _try_auto_merge_with_neighbor(context, cab_obj):
             continue
         if sib.get('IS_VALANCE_PRODUCT'):
             continue
-        sib_run = sib.matrix_world.to_3x3() @ Vector((1.0, 0.0, 0.0))
+        sib_run = hb_utils.world_matrix(sib).to_3x3() @ Vector((1.0, 0.0, 0.0))
         sib_run.z = 0.0
         if sib_run.length < 1e-8:
             continue
@@ -1145,7 +1143,7 @@ def _try_auto_merge_with_neighbor(context, cab_obj):
         # too but filtering here avoids spinning through obvious misses.
         if cab_run.dot(sib_run) < cos_tol:
             continue
-        disp = sib.matrix_world.translation - cab_origin
+        disp = hb_utils.world_matrix(sib).translation - cab_origin
         signed = disp.x * cab_run.x + disp.y * cab_run.y
         sib_w = sib.face_frame_cabinet.width
         # Bucket by sib's position along cab's run. The merge primitive
@@ -1215,7 +1213,7 @@ def _cabinet_world_z_range(obj):
         dim_z = hb_types.GeoNodeObject(obj).get_input('Dim Z')
     except Exception:
         return None
-    z0 = obj.matrix_world.translation.z
+    z0 = hb_utils.world_matrix(obj).translation.z
     return (z0, z0 + dim_z)
 
 
@@ -4191,17 +4189,16 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
 
         # Auto-pick a leg product's finish from its placed position:
         # open sides get finished, sides covered by an abutting cabinet
-        # / wall don't. view_layer.update() first so the just-set parent
-        # + location are reflected in the sibling-abutment scan.
+        # / wall don't. The abutment scans read world space through
+        # hb_utils.world_matrix, so the just-set parent + location count
+        # without a depsgraph pass.
         if selection_target.get('IS_LEG_PRODUCT'):
-            context.view_layer.update()
             selection_target.leg_product.finish_type = \
                 exposure.auto_leg_finish_type(selection_target)
 
         # Auto-set a floating shelf's finished ends: an end gets a panel
         # when it's exposed, none when a cabinet / wall abuts it.
         if selection_target.get('IS_FLOATING_SHELF'):
-            context.view_layer.update()
             fl, fr = exposure.auto_floating_shelf_finish(selection_target)
             sp = selection_target.floating_shelf
             sp.finish_left = fl
@@ -4210,7 +4207,6 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         # Auto-set a mantle's finished ends the same way: box end panel
         # + crown return when the end is exposed.
         if selection_target.get('IS_MANTLE_PRODUCT'):
-            context.view_layer.update()
             fl, fr = exposure.auto_floating_shelf_finish(selection_target)
             mp = selection_target.mantle_product
             mp.finish_left = fl
@@ -4219,7 +4215,6 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         # Auto-set a valance's finished ends the same way: a return
         # panel when the end is exposed, none when a cabinet abuts it.
         if selection_target.get('IS_VALANCE_PRODUCT'):
-            context.view_layer.update()
             fl, fr = exposure.auto_floating_shelf_finish(selection_target)
             vp = selection_target.valance_product
             vp.finish_left = fl

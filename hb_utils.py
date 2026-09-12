@@ -413,6 +413,26 @@ def note_parent_change():
         _children_index.invalidate()
 
 
+def world_matrix(obj):
+    """obj.matrix_world without waiting for the depsgraph.
+
+    matrix_world only refreshes when the scene is evaluated, so reading
+    it for an object placed or moved a moment ago returns where the
+    object used to be - and forcing an evaluation just for that rebuilds
+    the whole scene's relations, which grows with every object in the
+    file. Composing the transform channels up the parent chain gives the
+    same matrix for plain parenting. Objects with constraints (walls
+    chained with Copy Location) keep their evaluated matrix: nothing
+    places or moves those mid-operation.
+    """
+    if obj.constraints:
+        return obj.matrix_world.copy()
+    parent = obj.parent
+    if parent is None:
+        return obj.matrix_basis.copy()
+    return world_matrix(parent) @ obj.matrix_parent_inverse @ obj.matrix_basis
+
+
 def run_calc_fix(context, obj=None, passes=2):
     """
     Bring an object hierarchy up to date after a prompt or size edit.

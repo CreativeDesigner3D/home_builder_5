@@ -17908,7 +17908,7 @@ def merge_cabinets(anchor, absorbed, side):
         return False
     if abs(a_props.depth - b_props.depth) > eps:
         return False
-    if abs(anchor.matrix_world.translation.z - absorbed.matrix_world.translation.z) > eps:
+    if abs(hb_utils.world_matrix(anchor).translation.z - hb_utils.world_matrix(absorbed).translation.z) > eps:
         return False
     if anchor.parent is not absorbed.parent:
         return False
@@ -17927,9 +17927,9 @@ def merge_cabinets(anchor, absorbed, side):
     # anchor.location.x) - same number the old code computed. For
     # island / off-wall placement the cabinets can sit at any Z
     # rotation; the projection handles both cases.
-    a_run = anchor.matrix_world.to_3x3() @ Vector((1.0, 0.0, 0.0))
+    a_run = hb_utils.world_matrix(anchor).to_3x3() @ Vector((1.0, 0.0, 0.0))
     a_run.z = 0.0
-    b_run = absorbed.matrix_world.to_3x3() @ Vector((1.0, 0.0, 0.0))
+    b_run = hb_utils.world_matrix(absorbed).to_3x3() @ Vector((1.0, 0.0, 0.0))
     b_run.z = 0.0
     if a_run.length < 1e-8 or b_run.length < 1e-8:
         return False
@@ -17941,7 +17941,7 @@ def merge_cabinets(anchor, absorbed, side):
     if a_run.dot(b_run) < math.cos(math.radians(0.5)):
         return False
 
-    disp = absorbed.matrix_world.translation - anchor.matrix_world.translation
+    disp = hb_utils.world_matrix(absorbed).translation - hb_utils.world_matrix(anchor).translation
     signed = disp.x * a_run.x + disp.y * a_run.y
     perp_x = disp.x - signed * a_run.x
     perp_y = disp.y - signed * a_run.y
