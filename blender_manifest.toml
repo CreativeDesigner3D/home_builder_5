@@ -49,4 +49,7 @@ paths_exclude_pattern = [
     "__pycache__/",
     ".*",
     "*.zip",
+    # Closet material libraries are not shipped in this release
+    "product_libraries/closets/assets/materials/library.blend",
+    "product_libraries/closets/assets/materials/countertops.blend",
 ]
