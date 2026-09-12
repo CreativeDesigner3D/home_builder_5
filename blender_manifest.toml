@@ -11,7 +11,7 @@ website = "https://creativedesigner3d.com/"
 
 tags = ["Add Mesh", "Scene"]
 
-blender_version_min = "5.2.0"
+blender_version_min = "5.1.0"
 
 license = [
     "SPDX:GPL-3.0-or-later",
@@ -25,7 +25,7 @@ platforms = ["windows-x64", "windows-arm64", "macos-arm64", "macos-x64", "linux-
 
 # Bundled Python wheels (Pillow for PDF export)
 wheels = [
-    # Python 3.13 (Blender 5.2)
+    # Python 3.13 (Blender 5.1 and newer)
     "./wheels/pillow-12.1.1-cp313-cp313-win_amd64.whl",
     "./wheels/pillow-12.1.1-cp313-cp313-win_arm64.whl",
     "./wheels/pillow-12.1.1-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
@@ -42,7 +42,7 @@ paths_exclude_pattern = [
     "__pycache__/",
     ".*",
     "*.zip",
-    # Python 3.11 wheels stay on disk but are not needed on Blender 5.2
+    # Python 3.11 wheels stay on disk but are not needed on Blender 5.1+
     "wheels/*-cp311-*.whl",
     # Closet material libraries are not shipped in this release
     "product_libraries/closets/assets/materials/library.blend",
