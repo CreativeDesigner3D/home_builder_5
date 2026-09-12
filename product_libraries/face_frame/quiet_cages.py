@@ -31,8 +31,14 @@ QUIET_SHADING_TYPES = {'MATERIAL', 'RENDERED'}
 CAGE_MODES = {'Cabinets', 'Bays', 'Openings', 'Applied Panels'}
 
 _TICK = 0.25
+# Ticks between full passes while the selection has not changed. The
+# per-tick check only reads the selected objects; the full pass walks
+# the scene for revealed cages nothing selects.
+_FULL_PASS_EVERY = 8
 _msgbus_owner = object()
 _busy = False
+_last_selection = None
+_ticks_since_full = 0
 
 
 # ---------------------------------------------------------------------------
@@ -156,10 +162,15 @@ def _sweep(scene, view_layer, mode):
             _hide(obj, mode)
 
 
-def promote(context=None):
+def promote(context=None, force=True):
     """Swap selected parts for the cages the current quiet mode offers,
-    then hide any revealed cage that is no longer selected."""
-    global _busy
+    then hide any revealed cage that is no longer selected.
+
+    With ``force`` off (the timer) nothing runs while the selection is
+    the same as last time, and the scene-wide sweep for revealed cages
+    only runs every _FULL_PASS_EVERY ticks - so an idle scene costs the
+    timer a read of the selected objects and nothing more."""
+    global _busy, _last_selection, _ticks_since_full
     if _busy:
         return
     context = context or bpy.context
@@ -171,7 +182,18 @@ def promote(context=None):
     if scene is None or view_layer is None:
         return
     active = view_layer.objects.active
-    selected = [o for o in view_layer.objects if _is_selected(o, view_layer)]
+    # The selected collection can hand back None for a base whose
+    # object was just removed; the timer can land right after one.
+    selected = [o for o in view_layer.objects.selected if o is not None]
+    signature = (mode, active.name if active is not None else None,
+                 frozenset(o.name for o in selected))
+    if not force:
+        _ticks_since_full += 1
+        if (signature == _last_selection
+                and _ticks_since_full < _FULL_PASS_EVERY):
+            return
+    _last_selection = signature
+    _ticks_since_full = 0
     targets = []
     demoted = []
     for o in selected:
@@ -233,7 +255,7 @@ def _tick():
     if quiet_mode() is None:
         return None             # stops until the next mode / shading change
     try:
-        promote()
+        promote(force=False)
     except Exception as e:      # a timer that raises is unregistered
         print(f"quiet_cages: {e}")
     return _TICK

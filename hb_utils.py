@@ -233,17 +233,21 @@ def delete_obj_and_children(obj):
 #   - an object moved from one parent to another is the one change the
 #     map cannot see, so code that re-parents an existing object calls
 #     note_parent_change() and the map is rebuilt on the next lookup;
-#   - the object count is checked on every lookup: more new objects than
+#   - the object count is checked every so often: more new objects than
 #     were noted means something created objects behind the map's back,
-#     and it is rebuilt from scratch.
+#     and it is rebuilt from scratch. (len(bpy.data.objects) walks the
+#     whole list, so it is not asked on every lookup.)
 
 class _ChildrenIndex:
+
+    _COUNT_EVERY = 64           # lookups between object-count checks
 
     def __init__(self):
         self._kids = None       # parent -> [children], Blender's name order
         self._count = 0         # len(bpy.data.objects) at the last sync
         self._noted = []        # created since the last sync
         self._fresh = []        # noted objects still waiting for a parent
+        self._lookups = 0       # since the last object-count check
 
     def invalidate(self):
         self._kids = None
@@ -261,6 +265,7 @@ class _ChildrenIndex:
         self._count = len(bpy.data.objects)
         self._noted = []
         self._fresh = []
+        self._lookups = 0
 
     def _insert(self, obj, parent):
         # bpy.data.objects is kept sorted case-insensitively by name, and
@@ -293,11 +298,14 @@ class _ChildrenIndex:
         if self._kids is None:
             self._rebuild()
             return
-        count = len(bpy.data.objects)
-        if count - self._count > len(self._noted):
-            self._rebuild()
-            return
-        self._count = count
+        self._lookups += 1
+        if self._lookups >= self._COUNT_EVERY:
+            self._lookups = 0
+            count = len(bpy.data.objects)
+            if count - self._count > len(self._noted):
+                self._rebuild()
+                return
+            self._count = count
         if self._noted:
             noted, self._noted = self._noted, []
             self._fresh.extend(self._place(noted))

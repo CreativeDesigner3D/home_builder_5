@@ -626,9 +626,9 @@ def apply_face_frame_selection_mode(context, root_obj=None):
     if not ff_scene.face_frame_selection_mode_enabled or mode == 'Parts':
         mode = '__off__'
     if root_obj is not None:
-        _selection_mode_toggle_one(root_obj, mode)
-        for child in root_obj.children_recursive:
-            _selection_mode_toggle_one(child, mode)
+        with hb_utils.children_index():
+            for obj in [root_obj, *root_obj.children_recursive]:
+                _selection_mode_toggle_one(obj, mode)
     else:
         for obj in context.scene.objects:
             _selection_mode_toggle_one(obj, mode)

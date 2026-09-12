@@ -17672,11 +17672,11 @@ def _reapply_selection_mode_highlights(root):
     prev_selected = {o.name for o in bpy.context.selected_objects}
     prev_active = view_layer.objects.active
 
-    apply(root)
-    for child in root.children_recursive:
-        apply(child)
+    subtree = [root, *root.children_recursive]
+    for obj in subtree:
+        apply(obj)
 
-    for obj in [root, *root.children_recursive]:
+    for obj in subtree:
         try:
             obj.select_set(obj.name in prev_selected)
         except RuntimeError:
