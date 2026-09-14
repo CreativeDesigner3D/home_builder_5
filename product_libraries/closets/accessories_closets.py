@@ -398,7 +398,7 @@ class AccessoryDef:
                  'depths', 'min_width', 'max_width', 'setback',
                  'center_depth', 'model_y', 'model_z',
                  'floor_snap',
-                 'colors', 'fabrics', 'ready', 'description')
+                 'colors', 'fabrics', 'ready', 'description', 'menu')
 
     def __init__(self, key, label, family, model='', model_path='',
                  bands=(), band_axis=BAND_BY_WIDTH, width=0.0, height=0.0,
@@ -408,7 +408,7 @@ class AccessoryDef:
                  max_width=0.0, setback=0.0, center_depth=False,
                  model_y=0.0,
                  model_z=0.0, floor_snap=False, colors=(), fabrics=(),
-                 ready=False, description=""):
+                 ready=False, description="", menu=''):
         self.key = key
         self.label = label
         self.family = family
@@ -437,6 +437,11 @@ class AccessoryDef:
         self.fabrics = tuple(fabrics)
         self.ready = ready
         self.description = description or label
+        # The menu a line is offered from. Blank for the mounting-family
+        # menus (Opening / Panel / Insert / Cleat); anything else names a
+        # menu a host draws for itself, and that line stays out of the
+        # family menus. The library does not know what the names mean.
+        self.menu = menu or ''
 
     @property
     def is_sized(self):
@@ -574,7 +579,8 @@ def _def_from_item(item):
         colors=tuple(item.get('colors') or ()),
         fabrics=tuple(item.get('fabrics') or ()),
         ready=bool(item.get('ready')),
-        description=item.get('description') or '')
+        description=item.get('description') or '',
+        menu=item.get('menu') or '')
 
 
 _catalog_cache = None
@@ -654,15 +660,21 @@ def get(key):
     return catalog_by_key().get(key)
 
 
-def catalog_items(family=None, ready_only=True):
+def catalog_items(family=None, ready_only=True, menu=''):
     """Catalog lines, optionally one family's worth. ready_only keeps
     the not-yet-built entries out of the menu while leaving them in
-    the catalog."""
+    the catalog.
+
+    menu picks which menu's lines: '' (the default) is the mounting-
+    family menus, a name is the lines a host offers from its own menu,
+    and None is every line whatever menu it belongs to."""
     out = []
     for d in catalog():
         if ready_only and not d.ready:
             continue
         if family is not None and d.family != family:
+            continue
+        if menu is not None and d.menu != menu:
             continue
         out.append(d)
     return out
@@ -670,8 +682,11 @@ def catalog_items(family=None, ready_only=True):
 
 def enum_items(family=None):
     """(key, label, description) tuples for a dropdown."""
+    # Every line, whichever menu offers it: this backs the accessory
+    # property on the add / place operators, which must accept a line
+    # picked from a host's own menu as readily as one from a family menu.
     return [(d.key, d.label, d.description)
-            for d in catalog_items(family)]
+            for d in catalog_items(family, menu=None)]
 
 
 def model_is_installed(path):
