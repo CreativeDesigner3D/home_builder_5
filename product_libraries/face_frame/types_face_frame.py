@@ -915,6 +915,63 @@ def stock_drawer_box_height(opening_height):
         if opening_in >= min_opening_in - 1.0e-4:
             return inch(box_in)
     return None
+
+
+# Rollouts riding above a drawer box, behind the same front. The top one
+# hangs this far under the opening top; each box after it - the drawer
+# box included - sits a box gap lower (a rollout's top clearance plus a
+# drawer box's bottom clearance).
+ROLLOUT_ABOVE_TOP_CLEARANCE = inch(0.3125)
+ROLLOUT_ABOVE_BOX_GAP = inch(0.875)
+
+
+def rollout_above_layout(opening_bottom, opening_top, rollout_heights,
+                         bottom_clearance, drawer_box_height=None):
+    """Stack rollouts down from the top of a drawer opening and size the
+    drawer box under them.
+
+    Heights are top down. Each rollout sits a box gap under the one
+    above; one is only placed while a smallest stock drawer box still
+    fits under it (a box gap below it, bottom clearance under the box),
+    so the drawer is never squeezed out. The first that doesn't fit and
+    every one after it are left out and counted in 'skipped'.
+
+    The drawer box takes the tallest stock height that fits under the
+    lowest rollout, or `drawer_box_height` when that one fits ('pick_fits'
+    False when it doesn't). All values are scene units, Z up from the
+    opening cage bottom. 'rollouts' is [(bottom_z, height), ...] top down;
+    'drawer_dz' is None when no rollout was placed.
+    """
+    eps = 1.0e-5
+    stock = sorted(inch(box_in) for _min_in, box_in in STOCK_DRAWER_BOX_HEIGHTS)
+    floor = opening_bottom + bottom_clearance
+    top = opening_top - ROLLOUT_ABOVE_TOP_CLEARANCE
+    placed = []
+    for height in rollout_heights:
+        bottom = top - height
+        if bottom - ROLLOUT_ABOVE_BOX_GAP - stock[0] < floor - eps:
+            break
+        placed.append((bottom, height))
+        top = bottom - ROLLOUT_ABOVE_BOX_GAP
+    result = {
+        'rollouts': placed,
+        'skipped': len(rollout_heights) - len(placed),
+        'drawer_dz': None,
+        'drawer_space': None,
+        'pick_fits': True,
+    }
+    if not placed:
+        return result
+    space = top - floor
+    drawer_dz = [h for h in stock if h <= space + eps][-1]
+    if drawer_box_height is not None:
+        if drawer_box_height <= space + eps:
+            drawer_dz = drawer_box_height
+        else:
+            result['pick_fits'] = False
+    result['drawer_dz'] = drawer_dz
+    result['drawer_space'] = space
+    return result
 # Bar storage inserts (wine cubby / cellar / lattice / X / diagonal
 # / half-circle, stemware, plate rack). One role for the whole family:
 # each insert is a single derived mesh built in bar_storage.py; the
@@ -12882,13 +12939,7 @@ class FaceFrameCabinet(GeoNodeCage):
         bottom_clr = scene_props.drawer_box_bottom_clearance
 
         cage_x = rect['cage_dim_x']
-        cage_y = rect['cage_dim_y']
         cage_z = rect['cage_dim_z']
-        # Working face frame panel: the box runs back into the host
-        # cabinet's cavity, not the panel's own 3/4 reserve.
-        applied_depth = self.obj.get(TAG_APPLIED_BOX_DEPTH)
-        if applied_depth:
-            cage_y = max(cage_y, float(applied_depth))
         rl = rect['reveal_left']
         rr = rect['reveal_right']
         rt = rect['reveal_top']
@@ -12907,7 +12958,7 @@ class FaceFrameCabinet(GeoNodeCage):
         front_back_y = a_y
 
         box_dx = cage_x - rl - rr - 2.0 * side_clr
-        box_dy = (cage_y - rear_clr) - front_back_y
+        box_dy = self._drawer_box_depth(rect, front_back_y, op_props)
         box_dz = cage_z - rt - rb - top_clr - bottom_clr
 
         # Snap to a stock box height. Clearance-derived sizing cuts the
@@ -12921,31 +12972,28 @@ class FaceFrameCabinet(GeoNodeCage):
             if stock_dz is not None:
                 box_dz = min(stock_dz, opening_dz - bottom_clr)
 
-        # A rollout riding above this drawer takes the top of the
-        # opening: the reserve is its height, the gap under it, and the
-        # top clearance the box would have had anyway. Applied before
-        # the explicit overrides so a typed height still wins - the
-        # drafter who types one is answering this question themselves.
-        if op_props is not None and getattr(op_props,
-                                            'rollout_above_drawer', False):
-            reserve = (op_props.rollout_above_height
-                       + op_props.rollout_above_gap + top_clr)
-            box_dz = min(box_dz, cage_z - rt - rb - bottom_clr - reserve)
+        # Rollouts riding above this drawer take the top of the opening
+        # and the box takes a stock height under the lowest one (see
+        # rollout_above_layout). A rollout that would leave no room for
+        # the smallest box is not built, so the drawer always stays.
+        # Applied before the explicit overrides so a typed height still
+        # wins - the drafter who types one is answering this themselves.
+        if op_props is not None:
+            fit = self._rollout_above_fit(op_props, rect)
+            if fit is not None and fit['drawer_dz'] is not None:
+                box_dz = fit['drawer_dz']
 
         # Per-opening size overrides (right-click the box -> Drawer Box
         # Size...). Overridden axes replace the clearance-derived size,
-        # clamped so the box can't exceed the opening hole or run past
-        # the carcass back. Height keeps the bottom-clearance anchor;
-        # depth grows rearward from the front anchor.
+        # clamped so the box can't exceed the opening hole. Height keeps
+        # the bottom-clearance anchor; the depth override is applied in
+        # _drawer_box_depth.
         if op_props is not None:
             if getattr(op_props, 'drawer_box_override_width', False):
                 box_dx = min(op_props.drawer_box_width, cage_x - rl - rr)
             if getattr(op_props, 'drawer_box_override_height', False):
                 box_dz = min(op_props.drawer_box_height,
                              cage_z - rt - rb - bottom_clr)
-            if getattr(op_props, 'drawer_box_override_depth', False):
-                box_dy = min(op_props.drawer_box_depth,
-                             cage_y - front_back_y)
         if box_dx <= 0.0 or box_dy <= 0.0 or box_dz <= 0.0:
             return None
 
@@ -13225,7 +13273,7 @@ class FaceFrameCabinet(GeoNodeCage):
         # interior item - it just belongs to the cabinet rather than to
         # the user, so it is kept in step here and taken away again when
         # the option goes off.
-        self._reconcile_rollout_above_drawer(opening_obj, rect)
+        self._reconcile_rollout_above_drawer(opening_obj, layout, rect)
 
         # Floating-shelf PRODUCTS dropped into this opening (library
         # placement with the cursor over the opening) auto-fit its span
@@ -13272,17 +13320,112 @@ class FaceFrameCabinet(GeoNodeCage):
     # option goes off.
     ROLLOUT_ABOVE_MARK = 'managed_rollout_above'
 
-    def _reconcile_rollout_above_drawer(self, opening_obj, rect):
-        """Keep the rollout that rides above a drawer in step with the
-        opening's option.
+    # What the last recalc could build, stamped on the opening cage for
+    # the Rollout Above Drawer dialog: how many rollouts fit, the drawer
+    # box height under them, and whether a picked box height fit.
+    TAG_ROLLOUT_ABOVE_BUILT = 'hb_rollout_above_built'
+    TAG_ROLLOUT_ABOVE_DRAWER_DZ = 'hb_rollout_above_drawer_height'
+    TAG_ROLLOUT_ABOVE_PICK_FITS = 'hb_rollout_above_pick_fits'
 
-        It is a normal ROLLOUT interior item - same box, same slides,
-        same spacer ladders - so everything downstream (the cutlist, the
-        drawings, the open/close command) treats it as the rollout it
-        is. The only difference is that the cabinet owns it: its height
-        comes from the opening's rollout_above_height and it sits at the
-        top of the opening, with the drawer box below shortened to suit
-        (see _create_drawer_box_for_front).
+    def _drawer_box_depth(self, rect, front_back_y, op_props):
+        """Depth of the drawer box behind a drawer / pullout front: from
+        the back of the front to the cavity back less the rear
+        clearance, or the opening's typed depth. A rollout riding above
+        the drawer takes the same depth."""
+        rear_clr = bpy.context.scene.hb_face_frame.drawer_box_rear_clearance
+        cage_y = rect['cage_dim_y']
+        # Working face frame panel: the box runs back into the host
+        # cabinet's cavity, not the panel's own 3/4 reserve.
+        applied_depth = self.obj.get(TAG_APPLIED_BOX_DEPTH)
+        if applied_depth:
+            cage_y = max(cage_y, float(applied_depth))
+        if (op_props is not None
+                and getattr(op_props, 'drawer_box_override_depth', False)):
+            return min(op_props.drawer_box_depth, cage_y - front_back_y)
+        return (cage_y - rear_clr) - front_back_y
+
+    def _rollout_above_fit(self, op_props, rect, migrate=True):
+        """rollout_above_layout for this opening, or None when it is not
+        a drawer opening or carries no rollouts above its drawer."""
+        if migrate:
+            self._migrate_rollout_above(op_props, rect)
+        if (op_props.front_type not in DRAWER_BOX_FRONT_TYPES
+                or len(op_props.rollouts_above) == 0):
+            return None
+        from . import props_hb_face_frame
+        heights = [inch(props_hb_face_frame.rollout_height_inches(
+                        entry.height_preset))
+                   for entry in op_props.rollouts_above]
+        pick_in = props_hb_face_frame.drawer_box_height_inches(
+            op_props.rollout_above_drawer_box_height)
+        scene_props = bpy.context.scene.hb_face_frame
+        return rollout_above_layout(
+            rect['reveal_bottom'],
+            rect['cage_dim_z'] - max(rect['reveal_top'], 0.0),
+            heights,
+            scene_props.drawer_box_bottom_clearance,
+            inch(pick_in) if pick_in is not None else None)
+
+    def _migrate_rollout_above(self, op_props, rect):
+        """Carry the first version's single rollout forward: its free
+        height goes to the nearest standard size, and a gap typed wider
+        than the minimum becomes a smaller standard drawer box that keeps
+        at least that gap. Runs once - the old switch goes off after.
+        Writes re-enter recalc; the _RECALCULATING guard absorbs that."""
+        if not getattr(op_props, 'rollout_above_drawer', False):
+            return
+        from . import props_hb_face_frame
+        if len(op_props.rollouts_above) == 0:
+            entry = op_props.rollouts_above.add()
+            entry.height_preset = (
+                props_hb_face_frame.nearest_rollout_height_preset(
+                    op_props.rollout_above_height))
+            extra_gap = op_props.rollout_above_gap - ROLLOUT_ABOVE_BOX_GAP
+            fit = (self._rollout_above_fit(op_props, rect, migrate=False)
+                   if extra_gap > 1.0e-5 else None)
+            if fit is not None and fit['drawer_dz'] is not None:
+                space = fit['drawer_space'] - extra_gap
+                best_key, best_h = None, 0.0
+                for key, inches in (props_hb_face_frame
+                                    ._DRAWER_BOX_HEIGHTS_IN.items()):
+                    height = inch(inches)
+                    if (best_h < height <= space + 1.0e-5
+                            and height < fit['drawer_dz'] - 1.0e-5):
+                        best_key, best_h = key, height
+                if best_key is not None:
+                    op_props.rollout_above_drawer_box_height = best_key
+        op_props.rollout_above_drawer = False
+
+    def _stamp_rollout_above_fit(self, opening_obj, fit):
+        values = {}
+        if fit is not None:
+            values = {
+                self.TAG_ROLLOUT_ABOVE_BUILT: len(fit['rollouts']),
+                self.TAG_ROLLOUT_ABOVE_DRAWER_DZ: fit['drawer_dz'] or 0.0,
+                self.TAG_ROLLOUT_ABOVE_PICK_FITS: int(fit['pick_fits']),
+            }
+        for key in (self.TAG_ROLLOUT_ABOVE_BUILT,
+                    self.TAG_ROLLOUT_ABOVE_DRAWER_DZ,
+                    self.TAG_ROLLOUT_ABOVE_PICK_FITS):
+            if key in values:
+                if opening_obj.get(key) != values[key]:
+                    opening_obj[key] = values[key]
+            elif key in opening_obj:
+                del opening_obj[key]
+
+    def _reconcile_rollout_above_drawer(self, opening_obj, layout, rect):
+        """Keep the rollouts that ride above a drawer in step with the
+        opening's rollouts_above list.
+
+        They are one normal ROLLOUT interior item - same boxes, same
+        slides, same spacer ladders - so everything downstream (the
+        cutlist, the drawings, the open/close command, the rollout's own
+        right-click menu) treats them as the rollouts they are. The only
+        difference is that the cabinet owns the item: its boxes, gaps
+        and position come from rollout_above_layout, hung from the top of
+        the opening a box gap apart, and it sits front to back exactly
+        like the drawer box under it. Rollouts that don't fit are left
+        out of the item.
 
         Writes here re-enter recalc; the _RECALCULATING guard absorbs
         that, the same way the rollout-box migration above does.
@@ -13290,51 +13433,55 @@ class FaceFrameCabinet(GeoNodeCage):
         op_props = getattr(opening_obj, 'face_frame_opening', None)
         if op_props is None:
             return
-        wants = (getattr(op_props, 'rollout_above_drawer', False)
-                 and op_props.front_type in ('DRAWER_FRONT', 'PULLOUT'))
+        fit = self._rollout_above_fit(op_props, rect)
+        placed = fit['rollouts'] if fit is not None else []
+        self._stamp_rollout_above_fit(opening_obj, fit)
 
-        managed = [item for item in op_props.interior_items
+        managed = [index for index, item in enumerate(op_props.interior_items)
                    if item.get(self.ROLLOUT_ABOVE_MARK)]
-        if not wants:
-            for item in managed:
-                index = list(op_props.interior_items).index(item)
+        if not placed:
+            for index in reversed(managed):
                 op_props.interior_items.remove(index)
             return
 
         if managed:
-            item = managed[0]
             # More than one can only come from a duplicate; keep the first.
-            for extra in managed[1:]:
-                op_props.interior_items.remove(
-                    list(op_props.interior_items).index(extra))
+            for index in reversed(managed[1:]):
+                op_props.interior_items.remove(index)
+            item = op_props.interior_items[managed[0]]
         else:
             item = op_props.interior_items.add()
             item[self.ROLLOUT_ABOVE_MARK] = True
             item.kind = 'ROLLOUT'
             item.qty = 1
 
-        cage_z = rect['cage_dim_z']
-        height = op_props.rollout_above_height
-        scene_props = bpy.context.scene.hb_face_frame
-        top_clr = scene_props.drawer_box_top_clearance
-        # The rollout hangs at the top of the opening; the drawer box
-        # takes what is left under it.
-        bottom_gap = max(cage_z - top_clr - height, 0.0)
+        def _set(owner, name, value):
+            if abs(getattr(owner, name) - value) > 1e-6:
+                setattr(owner, name, value)
 
         if item.kind != 'ROLLOUT':
             item.kind = 'ROLLOUT'
-        if item.qty != 1:
-            item.qty = 1
-        if len(item.rollout_boxes) != 1:
+        # The item stacks its boxes bottom to top.
+        heights = [height for _bottom, height in reversed(placed)]
+        if len(item.rollout_boxes) != len(heights):
             item.rollout_boxes.clear()
-            item.rollout_boxes.add()
-        box = item.rollout_boxes[0]
-        if box.height_preset != 'CUSTOM':
-            box.height_preset = 'CUSTOM'
-        if abs(box.height - height) > 1e-6:
-            box.height = height
-        if abs(item.bottom_gap - bottom_gap) > 1e-6:
-            item.bottom_gap = bottom_gap
+            for _ in heights:
+                item.rollout_boxes.add()
+        from . import props_hb_face_frame
+        for box, height in zip(item.rollout_boxes, heights):
+            preset = props_hb_face_frame.rollout_height_preset_for(height)
+            if box.height_preset != preset:
+                box.height_preset = preset
+            _set(box, 'height', height)
+        _set(item, 'distance_between', ROLLOUT_ABOVE_BOX_GAP)
+        _set(item, 'bottom_gap', placed[-1][0])
+        # Front to back like the drawer box: no setback, starting at the
+        # back of the drawer front and running the drawer box's depth.
+        front_back_y = solver.slide_front_back_y(
+            layout, self.obj.face_frame_cabinet)
+        _set(item, 'item_setback', front_back_y)
+        _set(item, 'rollout_depth',
+             max(self._drawer_box_depth(rect, front_back_y, op_props), 0.0))
 
     def _fit_opening_floating_shelves(self, opening_obj, rect):
         """Auto-fit floating-shelf PRODUCTS parented into this opening.

@@ -4464,6 +4464,14 @@ def _ff_front_y_bay_local(layout):
     return 0.0 if layout.cabinet_type == 'PANEL' else -layout.fft
 
 
+def slide_front_back_y(layout, cab_props):
+    """Opening-local Y of a closed drawer / pullout front's back face.
+    The drawer box behind the front starts here, and so does a rollout
+    riding above that drawer."""
+    return (_ff_front_y_bay_local(layout) - DOOR_TO_FRAME_GAP
+            + cab_props.default_door_inset_amount)
+
+
 def _ff_back_y_bay_local(layout):
     """Bay-local Y of the face frame's back (inner) face.
 
@@ -4661,7 +4669,7 @@ def _drawer_or_pullout_slide_leaf(layout, rect, cab_props,
     bottom_overlay = front_overlay(rect, cab_props, opening_props, 'bottom')
 
     base_x = rect['reveal_left'] - left_overlay
-    base_y = _ff_front_y_bay_local(layout) - DOOR_TO_FRAME_GAP + cab_props.default_door_inset_amount
+    base_y = slide_front_back_y(layout, cab_props)
     base_z = rect['reveal_bottom'] - bottom_overlay
     slide = opening_props.swing_percent * _drawer_max_slide(layout, rect)
 
