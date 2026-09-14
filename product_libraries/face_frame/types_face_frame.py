@@ -7738,9 +7738,10 @@ class FaceFrameCabinet(GeoNodeCage):
     def _chase_fit_box(self, parent_obj, op_props, op_x, op_y,
                        box_dx, box_dy, rear_clr):
         """Resolve a box (drawer or rollout) against the cabinet's pipe
-        chase. Returns ``(box_dy, notch_width)``: the depth to build at
-        and, for the NOTCH fit, the overlap width to boolean out
-        (None when the box doesn't meet the chase).
+        chase. Returns ``(box_dy, notch_width, notch_depth)``: the depth
+        to build at and, for the NOTCH fit, the overlap width to boolean
+        out and how far the box rear runs past the chase covers' interior
+        face (both None when the box isn't notched).
 
         The opening's ``chase_fit`` decides: SHORTEN (default) clamps the
         depth so the box and its slide clear the chase covers by the
@@ -7752,16 +7753,16 @@ class FaceFrameCabinet(GeoNodeCage):
         """
         cab = self.obj.face_frame_cabinet
         if not (getattr(cab, 'chase_enabled', False) and self._has_carcass()):
-            return box_dy, None
+            return box_dy, None, None
         span = self._chase_extents(cab)
         if span is None:
-            return box_dy, None
+            return box_dy, None, None
         px, py, _pz = self._cabinet_local_offset(parent_obj)
         bx0 = px + op_x
         bx1 = bx0 + box_dx
         x_lo, x_hi = span
         if bx1 <= x_lo or bx0 >= x_hi:
-            return box_dy, None
+            return box_dy, None, None
         fit = (getattr(op_props, 'chase_fit', 'SHORTEN')
                if op_props is not None else 'SHORTEN')
         chase_depth = min(cab.chase_depth, cab.depth)
@@ -7769,12 +7770,12 @@ class FaceFrameCabinet(GeoNodeCage):
         # face sits at -chase_depth (back plane = 0).
         intrusion = py + op_y + box_dy + chase_depth
         if intrusion <= 0.0:
-            return box_dy, None
+            return box_dy, None, None
         if fit == 'SHORTEN':
-            return box_dy - (intrusion + rear_clr), None
+            return box_dy - (intrusion + rear_clr), None, None
         if fit == 'NOTCH':
-            return box_dy, min(bx1, x_hi) - max(bx0, x_lo)
-        return box_dy, None
+            return box_dy, min(bx1, x_hi) - max(bx0, x_lo), intrusion
+        return box_dy, None, None
 
     def _apply_pipe_chase(self, layout):
         """Notch the chosen back corner (or the back middle) full height
@@ -13006,7 +13007,7 @@ class FaceFrameCabinet(GeoNodeCage):
 
         # Pipe chase interaction: shorten, notch, or leave the box per
         # the opening's chase_fit (see _chase_fit_box).
-        box_dy, notch_w = self._chase_fit_box(
+        box_dy, notch_w, notch_d = self._chase_fit_box(
             pivot_obj.parent, op_props, op_x, op_y, box_dx, box_dy, rear_clr)
         if box_dy <= 0.0:
             return None
@@ -13038,7 +13039,7 @@ class FaceFrameCabinet(GeoNodeCage):
             box.obj['HB_CHASE_FIT'] = 'NOTCH'
             box.obj['CHASE_NOTCHED'] = True
             box.obj['CHASE_NOTCH_WIDTH'] = notch_w
-            box.obj['CHASE_NOTCH_DEPTH'] = intrusion
+            box.obj['CHASE_NOTCH_DEPTH'] = notch_d
         return box
 
     @staticmethod
@@ -13996,7 +13997,7 @@ class FaceFrameCabinet(GeoNodeCage):
             rear_clr = bpy.context.scene.hb_face_frame.drawer_box_rear_clearance
         except AttributeError:
             rear_clr = 0.0
-        dy, notch_w = self._chase_fit_box(
+        dy, notch_w, notch_d = self._chase_fit_box(
             opening_obj, op_props, desc['position'][0], desc['position'][1],
             dx, dy, rear_clr)
         if dy <= 0.0:
@@ -14013,6 +14014,7 @@ class FaceFrameCabinet(GeoNodeCage):
             box.obj['HB_CHASE_FIT'] = 'NOTCH'
             box.obj['CHASE_NOTCHED'] = True
             box.obj['CHASE_NOTCH_WIDTH'] = notch_w
+            box.obj['CHASE_NOTCH_DEPTH'] = notch_d
         # Per-box U-notch (the rollout equivalent of the sink duo drawer).
         # The indices are stamped so the right-click command can walk back
         # from this object to the rollout_boxes entry that owns it.
