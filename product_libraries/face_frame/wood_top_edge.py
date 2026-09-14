@@ -45,18 +45,28 @@ _TOP_ONLY_ITEMS = [
      "Wide rolled edge sweeping out past the top"),
     ('LARGE_BAR', "Large Bar Edge",
      "Bar rail lapped over the top face with a rolled front; "
-     "the rail stands above the top"),
+     "the rail stands above the top. Sets a 1-1/2\" top"),
     ('BULLNOSE_HINGED', "Bullnose Trim",
-     "2\" bullnose trim, as on a hinged lid (3/4\" top)"),
+     "2\" bullnose trim, as on a hinged lid. Sets a 3/4\" top"),
     ('STD_CROWN', "Crown Under Edge",
-     "Crown flush with a 3/4\" step-back top, hanging below it"),
+     "Crown flush with a step-back top, hanging below it. "
+     "Sets a 3/4\" top"),
     ('LIBRARY', "Library Moulding",
-     "Library moulding on the top edge (1-3/4\" top)"),
+     "Library moulding on the top edge. Sets a 1-3/4\" top"),
 ]
 
 EDGE_STYLE_ITEMS = shelf_nosing.NOSING_STYLE_ITEMS + _TOP_ONLY_ITEMS
 
 _TOP_ONLY_STYLES = frozenset(key for key, _l, _d in _TOP_ONLY_ITEMS)
+
+# Applied-edge builds made for one stock thickness. Picking one sets the
+# top to it, so the band and the board it edges meet top and bottom.
+STYLE_THICKNESS = {
+    'LARGE_BAR': inch(1.5),
+    'BULLNOSE_HINGED': inch(0.75),
+    'STD_CROWN': inch(0.75),
+    'LIBRARY': inch(1.75),
+}
 
 _ARC_STEPS = 12
 

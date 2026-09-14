@@ -12160,8 +12160,17 @@ def _update_wood_top_nosing_style(self, context):
     thickness -- a nosing a different thickness than the top it edges is
     the exception, not the norm, so the property default (2") was the
     wrong starting point. A height the user dialed in is left alone.
+
+    An applied-edge build made for one stock thickness (bullnose trim,
+    crown under edge, ...) sets the top to that thickness, so its band
+    meets the board top and bottom.
     """
     global _SEEDING_NOSING_HEIGHT
+    want = wood_top_edge.STYLE_THICKNESS.get(self.nosing_style)
+    if want is not None and abs(self.thickness - want) > 0.0001:
+        # Writing the thickness runs its own update, which rebuilds.
+        self.thickness = want
+        return
     if (self.nosing_style in shelf_nosing.EXTRA_HEIGHT_STYLES
             and not self.get('nosing_height_set')
             and abs(self.nosing_height - self.thickness) > 0.0001):
