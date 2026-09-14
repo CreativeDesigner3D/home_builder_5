@@ -715,6 +715,13 @@ class HOME_BUILDER_MT_face_frame_interior_part_commands(bpy.types.Menu):
         if (obj is not None
                 and obj.get('hb_part_role')
                 == types_face_frame.PART_ROLE_ROLLOUT_BOX):
+            # A rollout the cabinet built above a drawer is edited from
+            # here too, not only from the drawer box under it.
+            from .operators import ops_cabinet
+            if ops_cabinet.rollout_above_target(obj)[0] is not None:
+                layout.operator("hb_face_frame.rollout_above_drawer_prompts",
+                                text="Rollout Above Drawer...",
+                                icon='TRIA_UP_BAR')
             # Per-box U-notch, the rollout's version of the sink duo
             # drawer. Self-polling: hidden when the box predates the
             # per-box options and its indices don't resolve.
@@ -851,6 +858,13 @@ class HOME_BUILDER_MT_face_frame_opening_commands(bpy.types.Menu):
                         text="Finish Opening...", icon='SHADING_RENDERED')
         layout.operator("hb_face_frame.interior_options",
                         text="Interior Options...", icon='MESH_GRID')
+        # On the opening as well as the drawer box, so the rollouts stay
+        # reachable whatever is or isn't built inside.
+        from .operators import ops_cabinet
+        if ops_cabinet.rollout_above_target(context.active_object)[0]:
+            layout.operator("hb_face_frame.rollout_above_drawer_prompts",
+                            text="Rollout Above Drawer...",
+                            icon='TRIA_UP_BAR')
         # Accessories are the host application's catalog; with none
         # registered there is nothing to add, so the entry stays out.
         if accessory_registry.available():
