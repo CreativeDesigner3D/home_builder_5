@@ -586,6 +586,141 @@ class hb_face_frame_OT_equalize_opening_heights(bpy.types.Operator):
 
 
 # ---------------------------------------------------------------------------
+# Operator: equalize front heights in a stack of openings
+# ---------------------------------------------------------------------------
+class hb_face_frame_OT_equalize_front_heights(bpy.types.Operator):
+    """Size a stack of openings so their FRONTS come out the same height.
+
+    Equal openings don't give equal fronts: each front adds its own top and
+    bottom overlay, and the top and bottom fronts of a stack overlay the
+    frame's top / bottom rail while the ones between overlay mid rails, or
+    close to a reveal where a mid rail was removed. This keeps the space the
+    openings already take and re-divides it so opening + overlays is the
+    same for each, reading every overlay the way the fronts are built
+    (solver front_overlay on the opening's own rect).
+
+    The stack is the column the active opening sits in: its horizontal split
+    and any horizontal splits nested in it. Selected openings in that column
+    are equalized; with fewer than two selected, every opening in it that
+    carries an overlay front is. The new heights are locked, and a nested
+    split grows or shrinks by its children's change, so the column's total
+    and everything beside it stay put."""
+    bl_idname = "hb_face_frame.equalize_front_heights"
+    bl_label = "Equalize Drawer Front Heights"
+    bl_description = (
+        "Resize the openings stacked with the active opening so their "
+        "fronts all come out the same height"
+    )
+    bl_options = {'REGISTER', 'UNDO'}
+
+    # Fronts that are not an opening plus overlays: nothing to equalize.
+    _SKIP_FRONT_TYPES = frozenset({'NONE', 'APPLIANCE', 'INSET_PANEL'})
+
+    @staticmethod
+    def _is_h_split(obj):
+        return (obj is not None
+                and obj.get('IS_FACE_FRAME_SPLIT_NODE')
+                and obj.face_frame_split.axis == 'H')
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (obj is not None
+                and bool(obj.get('IS_FACE_FRAME_OPENING_CAGE'))
+                and bool(cls._is_h_split(obj.parent)))
+
+    def _stack(self, node):
+        """Front-carrying openings in a column, top to bottom, through
+        nested horizontal splits (a vertical split starts a new column)."""
+        kids = sorted(
+            [c for c in node.children
+             if c.get('IS_FACE_FRAME_OPENING_CAGE')
+             or c.get('IS_FACE_FRAME_SPLIT_NODE')],
+            key=lambda c: c.get('hb_split_child_index', 0))
+        for c in kids:
+            if c.get('IS_FACE_FRAME_OPENING_CAGE'):
+                if (c.face_frame_opening.front_type
+                        not in self._SKIP_FRONT_TYPES):
+                    yield c
+            elif self._is_h_split(c):
+                yield from self._stack(c)
+
+    def execute(self, context):
+        from .. import solver_face_frame as solver
+        active = context.active_object
+        if not self.poll(context):
+            self.report({'WARNING'},
+                        "The active opening is not stacked in a "
+                        "horizontal split")
+            return {'CANCELLED'}
+        top = active.parent
+        while self._is_h_split(top.parent):
+            top = top.parent
+        stack = list(self._stack(top))
+        selected = set(context.selected_objects)
+        picked = [c for c in stack if c == active or c in selected]
+        targets = picked if len(picked) >= 2 else stack
+        if len(targets) < 2:
+            self.report({'WARNING'},
+                        "Need two or more openings with fronts in this stack")
+            return {'CANCELLED'}
+
+        root = types_face_frame.find_cabinet_root(active)
+        bay = _find_bay(active)
+        if root is None or bay is None:
+            self.report({'WARNING'}, "No cabinet found for this opening")
+            return {'CANCELLED'}
+        layout = solver.FaceFrameLayout(root)
+        rects = {r['obj_name']: r for r in solver.bay_openings(
+            layout, bay.get('hb_bay_index', 0)).get('leaves', [])}
+        cab_props = root.face_frame_cabinet
+
+        # (cage, built opening height, top + bottom overlay of its front)
+        spans = []
+        for cage in targets:
+            rect = rects.get(cage.name)
+            if rect is None:
+                self.report({'WARNING'},
+                            "Opening layout is out of date - try again")
+                return {'CANCELLED'}
+            op = cage.face_frame_opening
+            height = rect['cage_dim_z'] - rect['reveal_top'] - rect['reveal_bottom']
+            overlays = (solver.front_overlay(rect, cab_props, op, 'top')
+                        + solver.front_overlay(rect, cab_props, op, 'bottom'))
+            spans.append((cage, height, overlays))
+
+        front_h = (sum(h for _c, h, _o in spans)
+                   + sum(o for _c, _h, o in spans)) / len(spans)
+        if any(front_h - o <= 0.0 for _c, _h, o in spans):
+            self.report({'WARNING'}, "Not enough room to equalize the fronts")
+            return {'CANCELLED'}
+
+        with types_face_frame.suspend_recalc():
+            # A nested split holds its own size in the column above it, so
+            # it takes its children's change to keep the column total.
+            node_delta = {}
+            for cage, height, overlays in spans:
+                new_size = front_h - overlays
+                node = cage.parent
+                while node is not top:
+                    node_delta[node] = (node_delta.get(node, 0.0)
+                                        + new_size - height)
+                    node = node.parent
+                fo = cage.face_frame_opening
+                fo.unlock_size = True
+                fo.size = new_size
+            for node, delta in node_delta.items():
+                sp = node.face_frame_split
+                sp.unlock_size = True
+                sp.size = sp.size + delta
+        types_face_frame.recalculate_face_frame_cabinet(root)
+        self.report({'INFO'},
+                    f"Equalized {len(spans)} front(s) at "
+                    f"{meter_to_inch(front_h):.4f}\"")
+        return {'FINISHED'}
+
+
+# ---------------------------------------------------------------------------
 # Selection mode application (highlights matching objects, dims others)
 # ---------------------------------------------------------------------------
 # Module-level so non-operator callers (the live-preview appliance dialog)
@@ -6745,6 +6880,7 @@ classes = (
     hb_face_frame_OT_break_cabinet_both,
     hb_face_frame_OT_equalize_bays,
     hb_face_frame_OT_equalize_opening_heights,
+    hb_face_frame_OT_equalize_front_heights,
     hb_face_frame_OT_wood_top_prompts,
     hb_face_frame_OT_toggle_mode,
     hb_face_frame_OT_cabinet_prompts,

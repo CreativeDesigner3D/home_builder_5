@@ -865,6 +865,9 @@ class HOME_BUILDER_MT_face_frame_opening_commands(bpy.types.Menu):
         layout.operator("hb_face_frame.equalize_opening_heights",
                         text="Equalize Opening Heights",
                         icon='ALIGN_JUSTIFY')
+        layout.operator("hb_face_frame.equalize_front_heights",
+                        text="Equalize Drawer Front Heights",
+                        icon='ALIGN_JUSTIFY')
 
         layout.separator()
         op = layout.operator("hb_face_frame.split_opening",
