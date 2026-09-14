@@ -1207,6 +1207,22 @@ def sync_galley_sink(root_obj, x, width, y_back, depth, top_z):
         seed={'sink_style': 'WORKSTATION', 'bowl_depth': inch(9.0)})
 
 
+def _drop_own_label(cage_obj):
+    """Remove an appliance's own label text. Run on every sync, not only
+    when the cage is created, so a cage that kept its label heals on the
+    next recalc instead of printing the word over the cabinet front."""
+    for child in list(cage_obj.children):
+        if not child.get('IS_APPLIANCE_TEXT'):
+            continue
+        data = child.data
+        bpy.data.objects.remove(child, do_unlink=True)
+        if data is not None and data.users == 0:
+            try:
+                bpy.data.curves.remove(data)
+            except Exception:
+                pass
+
+
 def _ensure_cabinet_appliance(parent_obj, cls, width, depth, height,
                               location, top_anchored=False, seed=None):
     """The appliance cage a cabinet part houses, created the first time
@@ -1228,15 +1244,6 @@ def _ensure_cabinet_appliance(parent_obj, cls, width, depth, height,
         cage.parent = parent_obj
         cage[CABINET_APPLIANCE_FLAG] = True
         _link_like_cage(cage, parent_obj)
-        for child in list(cage.children):
-            if child.get('IS_APPLIANCE_TEXT'):
-                data = child.data
-                bpy.data.objects.remove(child, do_unlink=True)
-                if data is not None and data.users == 0:
-                    try:
-                        bpy.data.curves.remove(data)
-                    except Exception:
-                        pass
     elif cage.get(SIZE_OWNED_FLAG):
         own = _CageWrap(cage)
         own_w, own_h = own.get_input('Dim X'), own.get_input('Dim Z')
@@ -1248,6 +1255,7 @@ def _ensure_cabinet_appliance(parent_obj, cls, width, depth, height,
         own.set_input('Dim Y', depth)
         own.set_input('Dim Z', height)
     cage.location = location
+    _drop_own_label(cage)
     if stored_opts(cage) is None:
         seed_on_place(cage)
         if seed and stored_opts(cage) is not None:
