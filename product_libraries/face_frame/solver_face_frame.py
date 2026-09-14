@@ -451,10 +451,6 @@ class FaceFrameLayout:
             # (frontless: appliance / open shelving) or a true mid rail
             # (a door/drawer/pullout below). See _walk_tree.
             'front_type':   op.front_type,
-            # Resolved per-side overlays, used by the removed-mid-rail gap
-            # math so the collapse accounts for a per-opening overlay override.
-            'overlay_top':    resolved_overlay(self._cab_props, op, 'top'),
-            'overlay_bottom': resolved_overlay(self._cab_props, op, 'bottom'),
         }
 
     def _make_default_bay(self):
@@ -3896,6 +3892,34 @@ def _redistribute_sizes(children, available, splitter_total):
     return sizes
 
 
+def removed_rail_allowance(widths, removes, held):
+    """What a split's size pool is charged for each splitter, and what
+    each child gets on top of its distributed share, once mid rails have
+    been removed.
+
+    A removed rail takes no space in the frame: its width goes to the two
+    openings it separated, half each. An auto-sized neighbour draws its
+    half from the pool; a held (typed) size is already the real opening,
+    so the half it covers is not charged. Either way the child sizes sum
+    to the space available. `widths` are the full member widths,
+    `removes` the per-member removal flags and `held` the per-child
+    unlock_size flags. Returns (charges, bonuses): one pool charge per
+    member and one addition per child. Shared with the stored-size
+    distribution so the built fronts and the typed sizes agree.
+    """
+    charges = list(widths)
+    bonuses = [0.0] * (len(widths) + 1)
+    for i, width in enumerate(widths):
+        if not removes[i]:
+            continue
+        charges[i] = 0.0
+        for k in (i, i + 1):
+            if not held[k]:
+                charges[i] += width / 2.0
+                bonuses[k] += width / 2.0
+    return charges, bonuses
+
+
 # Backing kind is implied by the split's axis: H-splits (mid rails)
 # always get a shelf, V-splits (mid stiles) always get a division.
 _AXIS_TO_BACKING_ROLE = {
@@ -4030,13 +4054,20 @@ def _emit_v_splitter(node, cage_x, cage_z, cage_dim_x, cage_dim_y, cage_dim_z,
     })
 
 
-def _child_overlay(child, side, default):
-    """Resolved overlay on one side of a child node. Leaves carry their
-    own snapshotted overlays; a nested split node has none, so the
-    cabinet default is used. Feeds the removed-mid-rail gap collapse."""
-    if child.get('kind') == 'leaf':
-        return child.get('overlay_' + side, default)
-    return default
+def _mark_removed_rail_edges(leaves, top_z=None, bottom_z=None):
+    """Stamp rail_removed_top / rail_removed_bottom on the leaf rects whose
+    face frame opening edge lies on a removed mid rail's centerline
+    (bay-local Z), so their fronts take the removed-rail reveal on that
+    edge (see front_overlay). Leaves of a nested split only qualify along
+    that shared edge."""
+    for lf in leaves:
+        if (top_z is not None
+                and abs(lf['cage_z'] + lf['cage_dim_z'] - lf['reveal_top']
+                        - top_z) < 1e-6):
+            lf['rail_removed_top'] = True
+        if (bottom_z is not None
+                and abs(lf['cage_z'] + lf['reveal_bottom'] - bottom_z) < 1e-6):
+            lf['rail_removed_bottom'] = True
 
 
 # Frontless bottom-opening front types: openings that carry no door/drawer
@@ -4103,10 +4134,11 @@ def _walk_tree(node, layout, bay_index,
         removes = [False] * n_splitters
 
     # A removed mid rail (H-split member) emits NO face-frame member and
-    # NO backing; its splitter space collapses so the two overlay fronts
-    # sit MID_RAIL_REMOVED_GAP apart. front_gap = space - ov_above -
-    # ov_below, so space = gap + ov_above + ov_below. Removal is H-only
-    # (mid rails); a V-split mid stile ignores the flag (members stay).
+    # NO backing, and takes no space: the openings either side meet on its
+    # centerline and the fronts there stop short of that line (see
+    # front_overlay), leaving MID_RAIL_REMOVED_GAP between them whatever
+    # the overlay. Removal is H-only (mid rails); a V-split mid stile
+    # ignores the flag (members stay).
     eff_widths = list(widths)
     # When the bay drops its bottom rail and the bottom-most child runs
     # open to the kick, the LAST root H-split splitter is the lowest
@@ -4117,11 +4149,7 @@ def _walk_tree(node, layout, bay_index,
     if node['axis'] == 'H':
         for i in range(n_splitters):
             if removes[i]:
-                ov_above = _child_overlay(children[i], 'bottom',
-                                          layout.default_bottom_overlay)
-                ov_below = _child_overlay(children[i + 1], 'top',
-                                          layout.default_top_overlay)
-                eff_widths[i] = MID_RAIL_REMOVED_GAP + ov_above + ov_below
+                eff_widths[i] = 0.0
         bay = layout.bays[bay_index]
         if (is_bay_root and n_splitters >= 1
                 and bay.get('remove_bottom')
@@ -4132,30 +4160,26 @@ def _walk_tree(node, layout, bay_index,
             brw = bay.get('bottom_rail_width') or 0.0
             if brw > 0:
                 eff_widths[bottom_rail_splitter_index] = brw
-    # For size distribution a removed rail still consumes its FULL width
-    # from the pool; the freed space (full width minus the collapsed gap)
-    # is handed to the two adjacent openings below, half each. Without
-    # this the freed space went to whichever siblings were unlocked --
-    # and silently vanished when every sibling held a typed size, so the
-    # opening dims never summed back to the cabinet height.
-    dist_widths = list(eff_widths)
+    # A removed rail's width goes to the two openings it separated, half
+    # each (removed_rail_allowance), so the opening dims still sum back to
+    # the cabinet height.
     if node['axis'] == 'H':
-        for i in range(n_splitters):
-            if removes[i]:
-                dist_widths[i] = widths[i]
-    splitter_total = sum(dist_widths)
+        pool_widths, bonuses = removed_rail_allowance(
+            [widths[i] if removes[i] else eff_widths[i]
+             for i in range(n_splitters)],
+            removes,
+            [bool(c.get('unlock_size')) for c in children],
+        )
+        splitter_total = sum(pool_widths)
+    else:
+        splitter_total = sum(eff_widths)
 
     if node['axis'] == 'H':
         ff_avail_z = cage_dim_z - reveals['top'] - reveals['bottom']
         sizes = _redistribute_sizes(
             children, ff_avail_z, splitter_total
         )
-        for i in range(n_splitters):
-            if removes[i]:
-                freed = dist_widths[i] - eff_widths[i]
-                if freed > 0:
-                    sizes[i] += freed / 2.0
-                    sizes[i + 1] += freed / 2.0
+        sizes = [s + b for s, b in zip(sizes, bonuses)]
         ff_opening_top_z = cage_z + cage_dim_z - reveals['top']
         cur_z_top = ff_opening_top_z
         for i, child in enumerate(children):
@@ -4173,6 +4197,7 @@ def _walk_tree(node, layout, bay_index,
                 'left':   reveals['left'],
                 'right':  reveals['right'],
             }
+            first_leaf = len(leaves)
             _walk_tree(
                 child, layout, bay_index,
                 cage_x=cage_x,
@@ -4183,10 +4208,16 @@ def _walk_tree(node, layout, bay_index,
                 reveals=child_reveals,
                 leaves=leaves, splitters=splitters, backings=backings,
             )
+            _mark_removed_rail_edges(
+                leaves[first_leaf:],
+                top_z=cur_z_top if i > 0 and removes[i - 1] else None,
+                bottom_z=(child_ff_bottom_z
+                          if i < n_children - 1 and removes[i] else None),
+            )
             if i < n_children - 1:
                 # Mid rail sits below this child's FF bottom edge. A removed
-                # member emits nothing (no rail, no backing) - only the
-                # collapsed gap is consumed so the fronts land 3/32" apart.
+                # member emits nothing (no rail, no backing) and takes no
+                # space; the next opening starts on its centerline.
                 w_i = eff_widths[i]
                 if not removes[i]:
                     splitter_top_z = child_ff_bottom_z
@@ -4373,9 +4404,16 @@ FULL_CORNER_SIDE_OVERLAY = inch(0.25)
 
 
 def front_overlay(rect, cab_props, opening_props, side):
-    """resolved_overlay plus the FULL-overlay corner pullback: a front
-    whose rect is stamped corner_left/right takes the corner overlay on
-    that side (an explicit per-opening unlock still wins)."""
+    """resolved_overlay plus two edges stamped on the rect.
+
+    FULL-overlay corner pullback: a front whose rect is stamped
+    corner_left/right takes the corner overlay on that side (an explicit
+    per-opening unlock still wins). Removed mid rail: an edge stamped
+    rail_removed_top/bottom has no member to overlay, so the front stops
+    half of MID_RAIL_REMOVED_GAP short of the rail's centerline whatever
+    the overlay, and the two fronts there sit that gap apart."""
+    if side in ('top', 'bottom') and rect.get(f'rail_removed_{side}'):
+        return -MID_RAIL_REMOVED_GAP / 2.0
     if (side in ('left', 'right') and rect.get(f'corner_{side}')
             and not getattr(opening_props, f'unlock_{side}_overlay')):
         return FULL_CORNER_SIDE_OVERLAY
@@ -4401,10 +4439,10 @@ DOUBLE_DOOR_REVEAL = inch(0.125)
 # Inset doors butt closer than overlay doors where a pair meets.
 INSET_DOUBLE_DOOR_REVEAL = inch(0.0625)   # 1/16"
 # Front-to-front reveal left when a mid rail is removed between two
-# (typically drawer) openings. The split is kept but the face-frame
-# member + its backing are dropped; the solver collapses the splitter
-# space to this gap plus the two adjacent overlays so the fronts sit
-# this far apart. See _walk_tree.
+# (typically drawer) openings, whatever the overlay. The split is kept
+# but the face-frame member + its backing are dropped; the openings meet
+# on the rail's centerline and each front stops half this short of it.
+# See _walk_tree and front_overlay.
 MID_RAIL_REMOVED_GAP = inch(0.09375)   # 3/32"
 TRIVIEW_DOOR_REVEAL = inch(0.125)   # gap where adjacent mirror doors meet
 TRIVIEW_FRAME_WIDTH = inch(1.25)    # tri-view stile / rail width (spec default)
@@ -4458,8 +4496,8 @@ def _door_panel_size(rect, cab_props, opening_props):
     )
     height = (
         opening_height
-        + resolved_overlay(cab_props, opening_props, 'top')
-        + resolved_overlay(cab_props, opening_props, 'bottom')
+        + front_overlay(rect, cab_props, opening_props, 'top')
+        + front_overlay(rect, cab_props, opening_props, 'bottom')
     )
     return width, height
 
@@ -4535,7 +4573,7 @@ def _single_door_leaf_pivot(layout, rect, cab_props, opening_props):
     door_thickness = cab_props.door_thickness
     width, height = _door_panel_size(rect, cab_props, opening_props)
     left_overlay = front_overlay(rect, cab_props, opening_props, 'left')
-    bottom_overlay = resolved_overlay(cab_props, opening_props, 'bottom')
+    bottom_overlay = front_overlay(rect, cab_props, opening_props, 'bottom')
 
     # Door pivot lives in OPENING-local coords. The opening cage origin
     # for this leaf is at (rect['cage_x'], 0, rect['cage_z']) in bay
@@ -4588,7 +4626,7 @@ def _double_door_leaves(layout, rect, cab_props, opening_props, role):
               else DOUBLE_DOOR_REVEAL)
     leaf_width = (width - reveal) / 2.0
     left_overlay = front_overlay(rect, cab_props, opening_props, 'left')
-    bottom_overlay = resolved_overlay(cab_props, opening_props, 'bottom')
+    bottom_overlay = front_overlay(rect, cab_props, opening_props, 'bottom')
 
     base_x = rect['reveal_left'] - left_overlay
     base_y = _ff_front_y_bay_local(layout) - DOOR_TO_FRAME_GAP + cab_props.default_door_inset_amount
@@ -4620,7 +4658,7 @@ def _drawer_or_pullout_slide_leaf(layout, rect, cab_props,
     door_thickness = cab_props.door_thickness
     width, height = _door_panel_size(rect, cab_props, opening_props)
     left_overlay = front_overlay(rect, cab_props, opening_props, 'left')
-    bottom_overlay = resolved_overlay(cab_props, opening_props, 'bottom')
+    bottom_overlay = front_overlay(rect, cab_props, opening_props, 'bottom')
 
     base_x = rect['reveal_left'] - left_overlay
     base_y = _ff_front_y_bay_local(layout) - DOOR_TO_FRAME_GAP + cab_props.default_door_inset_amount
@@ -4720,7 +4758,7 @@ def _triple_door_leaves(layout, rect, cab_props, opening_props, role):
     door_thickness = cab_props.door_thickness
     width, height = _door_panel_size(rect, cab_props, opening_props)
     left_overlay = front_overlay(rect, cab_props, opening_props, 'left')
-    bottom_overlay = resolved_overlay(cab_props, opening_props, 'bottom')
+    bottom_overlay = front_overlay(rect, cab_props, opening_props, 'bottom')
 
     base_x = rect['reveal_left'] - left_overlay
     base_y = _ff_front_y_bay_local(layout) - DOOR_TO_FRAME_GAP + cab_props.default_door_inset_amount

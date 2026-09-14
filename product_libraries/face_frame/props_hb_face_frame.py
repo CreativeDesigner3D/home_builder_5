@@ -9844,8 +9844,8 @@ class Face_Frame_Splitter_Width(PropertyGroup):
         name="Remove Member",
         description=(
             "Drop this splitter's face-frame member (and its carcass backing). "
-            "The opening stays split; the solver collapses the gap so the two "
-            "fronts sit 3/32\" apart. Used between drawers"
+            "The opening stays split; the two openings share its width and "
+            "their fronts sit 3/32\" apart. Used between drawers"
         ),
         default=False,
         update=_update_cabinet_dim,

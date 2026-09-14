@@ -2533,8 +2533,20 @@ class FaceFrameCabinet(GeoNodeCage):
         is_h = (sp.axis == 'H')
         parent_dim = parent_ff_height if is_h else parent_ff_width
         n_splitters = len(children) - 1
-        splitter_total = sum(self._splitter_widths_for(
-            sp, children, n_splitters, bay_props, is_bay_root))
+        widths = self._splitter_widths_for(
+            sp, children, n_splitters, bay_props, is_bay_root)
+        # A removed mid rail's width goes to the two openings it separated,
+        # half each - the same rule the solver builds by.
+        bonuses = [0.0] * len(children)
+        if is_h:
+            ov = sp.splitter_widths
+            widths, bonuses = solver.removed_rail_allowance(
+                widths,
+                [i < len(ov) and ov[i].remove_member
+                 for i in range(n_splitters)],
+                [self._read_node_size(c)[1] for c in children],
+            )
+        splitter_total = sum(widths)
 
         locked_total = 0.0
         unlocked = []
@@ -2562,7 +2574,8 @@ class FaceFrameCabinet(GeoNodeCage):
             for c in unlocked:
                 extra = (solver.VANITY_DOOR_EXTRA_WIDTH
                          if c.get('SIZE_ROLE') == 'VANITY_DOOR' else 0.0)
-                self._write_node_size(c, share + extra)
+                self._write_node_size(
+                    c, share + extra + bonuses[children.index(c)])
         finally:
             _DISTRIBUTING_WIDTHS.discard(id(self.obj))
 

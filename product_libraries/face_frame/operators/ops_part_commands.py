@@ -2730,9 +2730,10 @@ class hb_face_frame_OT_revert_part_to_parametric(bpy.types.Operator):
 
 class hb_face_frame_OT_remove_mid_rail(bpy.types.Operator):
     """Remove the mid rail the user clicked. The opening stays SPLIT - only
-    the face-frame member and its carcass backing are dropped, and the solver
-    collapses the splitter space so the two (typically drawer) fronts close to
-    a 3/32" reveal (MID_RAIL_REMOVED_GAP in solver_face_frame).
+    the face-frame member and its carcass backing are dropped. The two
+    openings it separated meet on its centerline, each taking half its
+    width, and their (typically drawer) fronts close to a 3/32" reveal
+    whatever the overlay (MID_RAIL_REMOVED_GAP in solver_face_frame).
 
     Stored as remove_member on the owning split node's per-splitter entry,
     keyed by the part's hb_splitter_index, so it survives recalc. The rail
@@ -2742,8 +2743,9 @@ class hb_face_frame_OT_remove_mid_rail(bpy.types.Operator):
     bl_idname = "hb_face_frame.remove_mid_rail"
     bl_label = "Remove Mid Rail"
     bl_description = (
-        "Remove this mid rail. Keeps the split; drops the member + its backing "
-        "and closes the two fronts to a 3/32\" gap"
+        "Remove this mid rail. Keeps the split; drops the member + its backing, "
+        "gives each opening half its width and closes the two fronts to a "
+        "3/32\" gap"
     )
     bl_options = {'UNDO'}
 
@@ -2760,13 +2762,32 @@ class hb_face_frame_OT_remove_mid_rail(bpy.types.Operator):
         if split is None:
             self.report({'WARNING'}, "No split node found for this mid rail")
             return {'CANCELLED'}
-        # Lazily grow the per-splitter collection to cover this index, then
-        # set remove_member (its update callback fires the cabinet recalc).
+        sp = split.face_frame_split
+        # Lazily grow the per-splitter collection to cover this index.
         idx = obj.get('hb_splitter_index', 0)
-        coll = split.face_frame_split.splitter_widths
+        coll = sp.splitter_widths
         while len(coll) <= idx:
             coll.add()
-        coll[idx].remove_member = True
+        entry = coll[idx]
+        half = (entry.width if entry.active else sp.splitter_width) / 2.0
+        children = sorted(
+            [c for c in split.children
+             if c.get(types_face_frame.TAG_OPENING_CAGE)
+             or c.get(types_face_frame.TAG_SPLIT_NODE)],
+            key=lambda c: c.get('hb_split_child_index', 0),
+        )
+        with types_face_frame.suspend_recalc():
+            # Each opening the rail separated takes half its width. An
+            # auto-sized one picks that up in the size distribution; a held
+            # size is the user's real opening, so it grows here, once.
+            for child in children[idx:idx + 2]:
+                props = (child.face_frame_opening
+                         if child.get(types_face_frame.TAG_OPENING_CAGE)
+                         else child.face_frame_split)
+                if props.unlock_size:
+                    props.size += half
+            # remove_member's update callback queues the cabinet recalc.
+            entry.remove_member = True
         return {'FINISHED'}
 
 
