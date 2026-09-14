@@ -11445,7 +11445,7 @@ class FaceFrameCabinet(GeoNodeCage):
             op.set_input('Dim Y', cage_dim_y)
             op.set_input('Dim Z', rect['cage_dim_z'])
             op.set_input('Mirror Y', False)
-            self._update_fronts_in_opening(cage, layout, rect)
+            self._update_fronts_in_opening(cage, layout, rect, bay_index)
             self._update_interior_items_in_opening(cage, layout, rect)
             self._update_appliance_in_opening(cage, rect,
                                               appliance_zs=appliance_zs)
@@ -11655,7 +11655,8 @@ class FaceFrameCabinet(GeoNodeCage):
         else:
             appliance_geo.remove_opening_appliance(opening_obj)
 
-    def _update_fronts_in_opening(self, opening_obj, layout, rect):
+    def _update_fronts_in_opening(self, opening_obj, layout, rect,
+                                  bay_index=None):
         """Reconcile front parts under an opening cage.
 
         Structure: opening cage -> front pivot empty -> front part.
@@ -11777,26 +11778,47 @@ class FaceFrameCabinet(GeoNodeCage):
             if drawer_look:
                 self._build_drawer_look_fronts(front, leaf, op_props)
 
-        # Sink apron: a fixed face-frame-depth panel across the top of a
-        # DOOR opening (apron / farmhouse sink). The door(s) stay full
-        # height; the apron sits behind them in the face-frame band
-        # (y from the FF front face back by fft). Built directly here -
-        # not via the leaf/pivot path - so it carries no door style or
-        # pull; PART_ROLE_APRON is in FRONT_PART_ROLES so it's wiped on
-        # the next rebuild. Same orientation as a front part (Length ->
-        # vertical, Width -> horizontal, Thickness -> depth).
+        # Sink apron: a 1/2" panel across the top of a DOOR opening
+        # (apron / farmhouse sink), set 1/8" behind the face frame. The
+        # door(s) stay full height; the apron sits behind them. Built
+        # directly here - not via the leaf/pivot path - so it carries no
+        # door style or pull; PART_ROLE_APRON is in FRONT_PART_ROLES so
+        # it's wiped on the next rebuild. Same orientation as a front part
+        # (Length -> vertical, Width -> horizontal, Thickness -> depth).
         if op_props.add_apron and front_type == 'DOOR':
             # Full interior width (the whole opening cage, x from 0), and
             # set BEHIND the face frame: the FF back plane is bay-local
             # y = 0, and a front part's Thickness extends -Y from its
-            # origin, so an origin at y = +fft puts the apron body in
-            # y[0, fft] - just behind the frame, in the interior.
+            # origin, so an origin at y = setback + t puts the apron body
+            # in y[setback, setback + t] - in the interior.
             full_w = rect['cage_dim_x']
+            apron_t = inch(0.5)
+            apron_setback = inch(0.125)
             top_z = rect['cage_dim_z'] - rect['reveal_top']
-            apron_h = min(op_props.apron_height,
-                          top_z - rect['reveal_bottom'])
+            bottom_z = top_z - op_props.apron_height
+            if bay_index is not None:
+                # Apron Height is measured down from the top of the
+                # front construction, not the panel's own height: an
+                # opening that reaches the top stretcher gets a panel
+                # hung directly under it, shorter by its thickness.
+                # Opening-local Z (the cage sits at cage_z in its bay).
+                bay_top = solver.bay_cage_dims(layout, bay_index)[2]
+                if (rect['cage_z'] + rect['cage_dim_z']
+                        >= bay_top - inch(1.0 / 16.0)):
+                    cage_bottom = (
+                        solver.bay_bottom_z(layout, bay_index)
+                        + solver.effective_bottom_rail_width(layout,
+                                                             bay_index))
+                    front_top = (solver.carcass_top_z(layout, bay_index)
+                                 - solver.front_drop(layout, bay_index)
+                                 - cage_bottom - rect['cage_z'])
+                    top_t = (layout.stretcher_t if layout.uses_stretchers
+                             else layout.mt)
+                    top_z = front_top - top_t
+                    bottom_z = front_top - op_props.apron_height
+            bottom_z = max(bottom_z, rect['reveal_bottom'])
+            apron_h = top_z - bottom_z
             if full_w > 0.0 and apron_h > 0.0:
-                fft = cab_props.face_frame_thickness
                 apron = CabinetPart()
                 apron.create('Apron')
                 apron.obj.parent = opening_obj
@@ -11809,10 +11831,10 @@ class FaceFrameCabinet(GeoNodeCage):
                 apron.obj.rotation_euler.y = math.radians(-90)
                 apron.obj.rotation_euler.z = math.radians(90)
                 apron.set_input('Mirror Y', True)
-                apron.obj.location = (0.0, fft, top_z - apron_h)
+                apron.obj.location = (0.0, apron_setback + apron_t, bottom_z)
                 apron.set_input('Length', apron_h)
                 apron.set_input('Width', full_w)
-                apron.set_input('Thickness', fft)
+                apron.set_input('Thickness', apron_t)
 
         # APPLIANCE openings: filler stiles at the left/right inboard edges so
         # the clear opening matches the appliance width. Built directly here
