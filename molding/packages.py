@@ -356,12 +356,108 @@ def _scale_profile_height(obj, height):
                 p.co.y *= factor
 
 
+_RESIZE_TOL = 1e-5
+
+
+def _profile_point_records(obj):
+    """[(point, is_bezier)] for every point on the profile curve."""
+    out = []
+    for spline in obj.data.splines:
+        if spline.type == 'BEZIER':
+            out.extend((p, True) for p in spline.bezier_points)
+        else:
+            out.extend((p, False) for p in spline.points)
+    return out
+
+
+def _resize_profile(obj, thickness, height):
+    """Resize a profile curve to `thickness` (X extent) and `height`
+    (Y extent) with an anchored stretch: the edge on the sweep path and
+    the bottom stay pinned, and every point past a split line in the
+    flat faces moves by the size delta, so a routed or eased edge keeps
+    its true shape while the flat stock lengthens. Either size may be
+    None to leave that axis alone. Sections whose splits would cut
+    through the shaped edge fall back to a plain axis scale."""
+    records = _profile_point_records(obj)
+    if not records:
+        return
+    xs = [p.co.x for p, _b in records]
+    ys = [p.co.y for p, _b in records]
+    minx, maxx, miny, maxy = min(xs), max(xs), min(ys), max(ys)
+    # Packs may author the section on either side of the path line:
+    # work in a mirrored frame where material projects toward +X.
+    sign = 1.0 if abs(minx) <= abs(maxx) else -1.0
+
+    def fx(x):
+        return x * sign
+
+    lo, hi = sorted((fx(minx), fx(maxx)))
+    nat_w, nat_h = hi - lo, maxy - miny
+    dw = 0.0 if thickness is None else thickness - nat_w
+    dh = 0.0 if height is None else height - nat_h
+    if abs(dw) < 1e-9 and abs(dh) < 1e-9:
+        return
+
+    x_split = lo + _RESIZE_TOL
+    front_y = [p.co.y for p, _b in records
+               if abs(fx(p.co.x) - hi) < _RESIZE_TOL]
+    y_split = min(front_y) if front_y else miny
+
+    valid = True
+    for spline in obj.data.splines:
+        pts = (spline.bezier_points if spline.type == 'BEZIER'
+               else spline.points)
+        n = len(pts)
+        for i in range(n):
+            a, b = pts[i].co, pts[(i + 1) % n].co
+            if ((fx(a.x) > x_split) != (fx(b.x) > x_split)
+                    and abs(a.y - b.y) > _RESIZE_TOL):
+                valid = False
+            if ((a.y > y_split) != (b.y > y_split)
+                    and abs(a.x - b.x) > _RESIZE_TOL):
+                valid = False
+
+    if not valid:
+        sx = (thickness / nat_w) if thickness and nat_w > 1e-9 else 1.0
+        sy = (height / maxy) if height and maxy > 1e-9 else 1.0
+        for p, is_bez in records:
+            p.co.x *= sx
+            p.co.y *= sy
+            if is_bez:
+                p.handle_left.x *= sx
+                p.handle_left.y *= sy
+                p.handle_right.x *= sx
+                p.handle_right.y *= sy
+        return
+
+    # Clamp shrinks so the flat band past each split can't invert.
+    mov_x = [fx(p.co.x) for p, _b in records if fx(p.co.x) > x_split]
+    mov_y = [p.co.y for p, _b in records if p.co.y > y_split]
+    if mov_x:
+        dw = max(dw, -(min(mov_x) - x_split))
+    if mov_y:
+        dh = max(dh, -(min(mov_y) - y_split))
+
+    for p, is_bez in records:
+        ddx = dw * sign if fx(p.co.x) > x_split else 0.0
+        ddy = dh if p.co.y > y_split else 0.0
+        p.co.x += ddx
+        p.co.y += ddy
+        if is_bez:
+            p.handle_left.x += ddx
+            p.handle_left.y += ddy
+            p.handle_right.x += ddx
+            p.handle_right.y += ddy
+
+
 def make_profile_object(profile_ref, fallback_key, name, collection,
-                        height=None):
+                        height=None, size=None):
     """Profile curve for a sweep's bevel_object: the library profile
     from an installed asset pack when available, else the built-in
     placeholder outline for `fallback_key`. When `height` is given the
     outline is scaled in Y to that overall height (adjustable spacer).
+    `size` is a (thickness, height) pair - either may be None - that
+    resizes the section with an anchored stretch (see _resize_profile).
     Returns None when neither profile resolves."""
     obj = _load_library_profile(profile_ref, collection)
     if obj is None:
@@ -380,4 +476,6 @@ def make_profile_object(profile_ref, fallback_key, name, collection,
         _finish_profile(obj, collection)
     if height is not None and height > 1e-5:
         _scale_profile_height(obj, height)
+    if size is not None:
+        _resize_profile(obj, size[0], size[1])
     return obj

@@ -56,8 +56,11 @@ def _resolve_stack(stack, opts):
       PRECEDING entries (max of their dx + measured profile
       thickness), so an entry mounts on the face of what's below it -
       the crown on its spacer, the shoe on its base molding.
+    - the base molding entry (not the shoe) carries the room's size
+      override, and its overridden thickness sets the running front.
 
-    Returns a list of concrete (ref, fallback, dx, dy, height) tuples.
+    Returns a list of concrete (ref, fallback, dx, dy, height, size)
+    tuples; size is a (thickness, height) pair or None.
     """
     resolved = []
     front = 0.0
@@ -69,12 +72,30 @@ def _resolve_stack(stack, opts):
         if override:
             profile_ref = f"{category}/{override}"
         height = opts['spacer_height'] if category == 'Spacer' else None
+        size = None
+        if (category == 'Base Molding'
+                and fallback_key != packages.BASE_SHOE_FALLBACK):
+            size = opts.get('base_size')
         if dx == 'STACK_FRONT':
             dx = front
-        resolved.append((profile_ref, fallback_key, dx, dy, height))
-        front = max(front, dx + packages.profile_front_depth(
-            profile_ref, fallback_key))
+        resolved.append((profile_ref, fallback_key, dx, dy, height, size))
+        depth = (size[0] if size else
+                 packages.profile_front_depth(profile_ref, fallback_key))
+        front = max(front, dx + depth)
     return resolved
+
+
+def base_profile_size(hb):
+    """(thickness, height) of the room's current base molding profile,
+    or None when no base package is selected."""
+    stack = packages.package_stack(
+        'BASE', getattr(hb, 'molding_base_package', 'NONE'))
+    for ref, fallback, _dx, _dy in _base_stack(hb, stack or []):
+        if fallback == packages.BASE_SHOE_FALLBACK:
+            continue
+        top, depth = packages._profile_metrics(ref, fallback)
+        return (depth, top)
+    return None
 
 
 def _run_ceiling_local(first, opts):
@@ -107,12 +128,12 @@ def _ceiling_stack(first, facts, resolved_stack, opts):
     datum = _crown_datum(first, facts, opts)
     ceiling = _run_ceiling_local(first, opts)
     crown_h = 0.0
-    for ref, fb, _dx, _dy, _height in resolved_stack:
+    for ref, fb, _dx, _dy, _height, _size in resolved_stack:
         if _category(ref) == 'Crown Molding':
             crown_h = max(crown_h, packages.profile_top_height(ref, fb))
     fill = max(ceiling - datum - crown_h, 0.0)
     out = []
-    for ref, fb, dx, dy, height in resolved_stack:
+    for ref, fb, dx, dy, height, size in resolved_stack:
         category = _category(ref)
         if category == 'Crown Molding':
             dy = fill
@@ -121,7 +142,7 @@ def _ceiling_stack(first, facts, resolved_stack, opts):
                 # No usable gap under the crown - drop the spacer.
                 continue
             dy, height = 0.0, fill
-        out.append((ref, fb, dx, dy, height))
+        out.append((ref, fb, dx, dy, height, size))
     return out
 
 
@@ -151,7 +172,7 @@ def _crown_stack_top(first, facts, opts):
         return _run_ceiling_local(first, opts)
     base = _crown_datum(first, facts, opts)
     top = None
-    for profile_ref, fallback_key, _dx, dy, height in _resolve_stack(
+    for profile_ref, fallback_key, _dx, dy, height, _size in _resolve_stack(
             stack, opts):
         if height is None:
             height = packages.profile_top_height(profile_ref, fallback_key)
@@ -268,7 +289,7 @@ def _material_slot(curve, material):
 
 
 def _spawn_sweep(scene, molding_type, chain, segments, profile_ref,
-                 fallback_key, dy, facts, opts, height=None):
+                 fallback_key, dy, facts, opts, height=None, size=None):
     """Create the sweep object(s) for one chain: hidden profile + curve
     through the world-space segments.
 
@@ -307,20 +328,22 @@ def _spawn_sweep(scene, molding_type, chain, segments, profile_ref,
                        if material is not None and mat is material), first)
         sweep = _spawn_sweep_piece(scene, molding_type, chain, runs,
                                    material, parent, z_world, profile_ref,
-                                   fallback_key, height)
+                                   fallback_key, height, size)
         if sweep is not None:
             made = sweep
     return made
 
 
 def _spawn_sweep_piece(scene, molding_type, chain, runs, material, parent,
-                       z_world, profile_ref, fallback_key, height):
+                       z_world, profile_ref, fallback_key, height,
+                       size=None):
     """One sweep object through ``runs`` (world-space (points, cyclic)
     pairs sharing ``material``), localized to and parented on
     ``parent`` at world height ``z_world``."""
     profile = packages.make_profile_object(
         profile_ref, fallback_key,
-        f"Molding_Profile_{fallback_key}", scene.collection, height=height)
+        f"Molding_Profile_{fallback_key}", scene.collection, height=height,
+        size=size)
     if profile is None:
         return None
     curve = bpy.data.curves.new("MoldingSweep", type='CURVE')
@@ -398,7 +421,7 @@ def _apply_type(scene, molding_type, align, stack, opts):
             _pts, norm_chain = result
             run_stack = _ceiling_stack(norm_chain[0], facts,
                                        resolved_stack, opts)
-        for profile_ref, fallback_key, dx, dy, height in run_stack:
+        for profile_ref, fallback_key, dx, dy, height, size in run_stack:
             if molding_type == 'BASE':
                 segments = engine.kick_sweep_segments(
                     chain, facts, dx, opts['include_recessed'])
@@ -420,7 +443,7 @@ def _apply_type(scene, molding_type, align, stack, opts):
                 continue
             if _spawn_sweep(scene, molding_type, sweep_chain, segments,
                             profile_ref, fallback_key, dy, facts,
-                            opts, height=height) is not None:
+                            opts, height=height, size=size) is not None:
                 made += 1
             if molding_type != 'LIGHT_RAIL':
                 continue
@@ -438,7 +461,7 @@ def _apply_type(scene, molding_type, align, stack, opts):
                     if _spawn_sweep(scene, molding_type, [member],
                                     [(pts, False)], profile_ref,
                                     fallback_key, dy + dz, facts, opts,
-                                    height=height) is not None:
+                                    height=height, size=size) is not None:
                         made += 1
     return made
 
@@ -488,6 +511,11 @@ def apply_scene_packages(scene):
         'ceiling_height': getattr(hb, 'ceiling_height', units.inch(96.0)),
         'cap_offset': getattr(hb, 'molding_cap_offset', 0.0),
         'cap_overhang': getattr(hb, 'molding_cap_overhang', 0.0),
+        # (thickness, height) for the base molding, or None to use the
+        # profile's own size.
+        'base_size': ((hb.molding_base_thickness, hb.molding_base_height)
+                      if getattr(hb, 'molding_base_size_override', False)
+                      else None),
         # The active crown stack, kept for the furniture cap's default
         # position (on top of the tallest crown-stack molding).
         'crown_stack': (packages.package_stack('CROWN', crown_ident)

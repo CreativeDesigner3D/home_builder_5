@@ -11634,6 +11634,15 @@ class Face_Frame_Scene_Props(PropertyGroup):
             sub = col.row()
             sub.enabled = base_on
             sub.prop(hb_scene, "molding_base_profile", text="Profile")
+        sub = col.row()
+        sub.enabled = base_on
+        sub.prop(hb_scene, "molding_base_size_override")
+        sub = col.row()
+        sub.enabled = base_on and hb_scene.molding_base_size_override
+        sub.prop(hb_scene, "molding_base_height", text="Height")
+        sub = col.row()
+        sub.enabled = base_on and hb_scene.molding_base_size_override
+        sub.prop(hb_scene, "molding_base_thickness", text="Thickness")
         # The shoe is independent of the package: alone it runs at the
         # kick face, with a package it applies to the molding's front.
         col.prop(hb_scene, "molding_base_shoe")

@@ -214,6 +214,22 @@ def update_molding_package(self, context):
     molding_ops.on_package_changed(self, context)
 
 
+def update_molding_base_size_override(self, context):
+    """The first time Override Size goes on, seed Height / Thickness
+    from the current base profile so the fields open at its real size."""
+    if (self.molding_base_size_override
+            and self.get('molding_base_height') is None
+            and self.get('molding_base_thickness') is None):
+        from .molding import ops as molding_ops
+        size = molding_ops.base_profile_size(self)
+        if size is not None:
+            # ID-property writes skip the update callbacks, so the
+            # room rebuilds once below instead of once per field.
+            self['molding_base_thickness'] = size[0]
+            self['molding_base_height'] = size[1]
+    update_molding_package(self, context)
+
+
 def _molding_crown_items(self, context):
     from .molding import packages
     return packages.enum_items('CROWN')
@@ -663,6 +679,26 @@ class Home_Builder_Scene_Props(PropertyGroup):
         name="Base Molding Profile",
         description="Base molding profile from the installed molding pack (Default uses the package's standard profile)",
         items=_molding_base_profile_items,
+        update=update_molding_package,
+    )  # type: ignore
+    molding_base_size_override: BoolProperty(
+        name="Override Size",
+        description="Set the base molding's height and thickness instead of using the profile's own size. The flat faces stretch while the shaped edge keeps its size",
+        default=False,
+        update=update_molding_base_size_override,
+    )  # type: ignore
+    molding_base_height: FloatProperty(
+        name="Base Molding Height",
+        description="Overall height of the base molding when Override Size is on",
+        default=inch(3.0), min=inch(0.5),
+        unit='LENGTH', precision=4,
+        update=update_molding_package,
+    )  # type: ignore
+    molding_base_thickness: FloatProperty(
+        name="Base Molding Thickness",
+        description="Thickness of the base molding off the toe kick face when Override Size is on",
+        default=inch(0.625), min=inch(0.125),
+        unit='LENGTH', precision=4,
         update=update_molding_package,
     )  # type: ignore
     molding_base_shoe: BoolProperty(
