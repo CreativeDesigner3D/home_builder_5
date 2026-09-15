@@ -744,8 +744,10 @@ class HOME_BUILDER_MT_face_frame_interior_part_commands(bpy.types.Menu):
                         text="Finish Opening...", icon='SHADING_RENDERED')
         layout.operator("hb_face_frame.interior_options",
                         text="Interior Options...", icon='MESH_GRID')
-        # A shelf is as worth hand-editing as any other cutpart, and
-        # this is the only menu it has.
+        # A shelf takes cutouts and hand edits like any other cutpart, and
+        # this is the only menu it has. Its cutouts carry across the
+        # interior rebuild (_update_interior_items_in_opening).
+        _draw_cutout_items(layout, obj)
         _draw_make_editable_items(layout, obj)
 
         _draw_visibility_items(layout, 'OBJECT', "Part")

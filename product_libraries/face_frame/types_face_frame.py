@@ -1021,6 +1021,107 @@ INTERIOR_PART_ROLES = frozenset({
     PART_ROLE_INTERIOR_FF_STILE,
 })
 
+# User cutouts (the part menu's Add Cutout) are CPM_CUTOUT modifiers named
+# 'Cutout', 'Cutout.001', ... on the part itself. Interior parts are wiped
+# and rebuilt on every recalc, so the cutouts are read off before the wipe
+# and re-added to the rebuilt part with the same role and build position
+# (INTERIOR_BUILD_INDEX, stamped as each part is built).
+INTERIOR_BUILD_INDEX = 'hb_interior_build_index'
+_USER_CUTOUT_TOKEN = 'CPM_CUTOUT'
+_USER_CUTOUT_NAME = 'Cutout'
+
+
+def _snapshot_interior_cutouts(opening_obj):
+    """{(role, build index): [(modifier name, state), ...]} for every
+    interior part under ``opening_obj`` carrying user cutouts."""
+    kept = {}
+    for child in opening_obj.children:
+        role = child.get('hb_part_role')
+        if (role not in INTERIOR_PART_ROLES or child.type != 'MESH'
+                or INTERIOR_BUILD_INDEX not in child):
+            continue
+        try:
+            thickness = float(GeoNodeCutpart(child).get_input('Thickness'))
+        except Exception:
+            continue
+        cuts = []
+        for mod in child.modifiers:
+            if not (mod.type == 'NODES' and mod.node_group
+                    and mod.node_group.name == _USER_CUTOUT_TOKEN
+                    and mod.name.split('.')[0] == _USER_CUTOUT_NAME):
+                continue
+            cpm = CabinetPartModifier(child)
+            cpm.mod = mod
+            try:
+                depth = float(cpm.get_input('Route Depth'))
+                cuts.append((mod.name, {
+                    'x': float(cpm.get_input('X')),
+                    'end_x': float(cpm.get_input('End X')),
+                    'y': float(cpm.get_input('Y')),
+                    'end_y': float(cpm.get_input('End Y')),
+                    'depth': depth,
+                    'through': depth >= thickness - inch(0.001),
+                    'flip_z': bool(cpm.get_input('Flip Z')),
+                }))
+            except Exception:
+                continue
+        if cuts:
+            kept[(role, int(child[INTERIOR_BUILD_INDEX]))] = cuts
+    return kept
+
+
+def _tag_interior_build_order(opening_obj, seen, counters):
+    """Stamp INTERIOR_BUILD_INDEX on the interior parts built since
+    ``seen`` (child names already accounted for), numbering per role in
+    build order."""
+    new = sorted((c for c in opening_obj.children if c.name not in seen),
+                 key=lambda c: c.name)
+    for child in new:
+        seen.add(child.name)
+        role = child.get('hb_part_role')
+        if role not in INTERIOR_PART_ROLES:
+            continue
+        idx = counters.get(role, 0)
+        counters[role] = idx + 1
+        child[INTERIOR_BUILD_INDEX] = idx
+
+
+def _restore_interior_cutouts(opening_obj, kept):
+    """Re-add the cutouts _snapshot_interior_cutouts read, clamped to the
+    rebuilt part's face; a through cut stays through if the thickness
+    changed."""
+    if not kept:
+        return
+    for child in opening_obj.children:
+        cuts = kept.get((child.get('hb_part_role'),
+                         child.get(INTERIOR_BUILD_INDEX)))
+        if not cuts or child.type != 'MESH':
+            continue
+        part = GeoNodeCutpart(child)
+        try:
+            length = float(part.get_input('Length'))
+            width = float(part.get_input('Width'))
+            thickness = float(part.get_input('Thickness'))
+        except Exception:
+            continue
+        for name, st in cuts:
+            cl = min(max(st['end_x'] - st['x'], 0.0), length)
+            cw = min(max(st['end_y'] - st['y'], 0.0), width)
+            if cl <= 0.0 or cw <= 0.0:
+                continue
+            x0 = min(max(st['x'], 0.0), length - cl)
+            y0 = min(max(st['y'], 0.0), width - cw)
+            cpm = part.add_part_modifier(_USER_CUTOUT_TOKEN, name)
+            cpm.set_input('X', x0)
+            cpm.set_input('End X', x0 + cl)
+            cpm.set_input('Y', y0)
+            cpm.set_input('End Y', y0 + cw)
+            cpm.set_input('Route Depth', thickness if st['through']
+                          else min(st['depth'], thickness))
+            cpm.set_input('Flip Z', st['flip_z'])
+            cpm.mod.show_viewport = True
+            cpm.mod.show_render = True
+
 # Maps a Face_Frame_Interior_Item.kind to the *primary* part role its
 # descriptors carry. Multi-part assemblies (PULLOUT_SHELF, ROLLOUT,
 # TRAY_DIVIDERS, VANITY_SHELVES) emit multiple part roles; this map
@@ -13182,6 +13283,10 @@ class FaceFrameCabinet(GeoNodeCage):
         """
         op_props = opening_obj.face_frame_opening
 
+        # User cutouts live on the parts about to be wiped; carry them
+        # over to the rebuilt parts (restored after the spawn loop).
+        kept_cutouts = _snapshot_interior_cutouts(opening_obj)
+
         # Wipe existing interior children. Match either by role tag or
         # by the explicit ACCESSORY marker we set on text objects, since
         # text-data objects can't carry the same custom prop conventions
@@ -13281,6 +13386,8 @@ class FaceFrameCabinet(GeoNodeCage):
         # like the adjustable shelves spawned below.
         self._fit_opening_floating_shelves(opening_obj, rect)
 
+        seen = {c.name for c in opening_obj.children}
+        built = {}
         for desc in solver.interior_descriptors_for_opening(
             opening_obj, layout, rect, self.obj.face_frame_cabinet,
         ):
@@ -13315,6 +13422,9 @@ class FaceFrameCabinet(GeoNodeCage):
                 # TRAY_DIVIDER, TRAY_LOCKED_SHELF, VANITY_SHELF,
                 # VANITY_SUPPORT.
                 self._create_interior_mesh_part(opening_obj, desc)
+            _tag_interior_build_order(opening_obj, seen, built)
+
+        _restore_interior_cutouts(opening_obj, kept_cutouts)
 
     # Marks the ROLLOUT interior item this cabinet owns, so it can be
     # told apart from one the user added and taken away again when the
