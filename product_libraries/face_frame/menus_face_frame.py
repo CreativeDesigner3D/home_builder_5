@@ -746,8 +746,16 @@ class HOME_BUILDER_MT_face_frame_interior_part_commands(bpy.types.Menu):
                         text="Interior Options...", icon='MESH_GRID')
         # A shelf takes cutouts and hand edits like any other cutpart, and
         # this is the only menu it has. Its cutouts carry across the
-        # interior rebuild (_update_interior_items_in_opening).
+        # interior rebuild (_update_interior_items_in_opening), and so
+        # does a shelf made editable, standing in for the shelf it was.
         _draw_cutout_items(layout, obj)
+        if (obj is not None and obj.get('IS_MANUAL_PART')
+                and obj.get(types_face_frame.INTERIOR_MANUAL_UNMATCHED)):
+            # The layout no longer builds the shelf this one replaced
+            # (fewer shelves, item removed): it is kept, not rebuilt.
+            layout.separator()
+            layout.label(text="Edited part is no longer in the layout",
+                         icon='ERROR')
         _draw_make_editable_items(layout, obj)
 
         _draw_visibility_items(layout, 'OBJECT', "Part")

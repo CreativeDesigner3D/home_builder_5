@@ -2685,6 +2685,11 @@ class hb_face_frame_OT_revert_part_to_parametric(bpy.types.Operator):
             if 'IS_MANUAL_PART' in obj.keys():
                 del obj['IS_MANUAL_PART']
             return
+        if (obj.get('hb_part_role') in types_face_frame.INTERIOR_PART_ROLES
+                and cage is not None):
+            hb_face_frame_OT_revert_part_to_parametric._revert_interior_one(
+                obj, ng)
+            return
         obj.modifiers.clear()
         obj.data.clear_geometry()
         mod = obj.modifiers.new(name='GeoNodeCutpart', type='NODES')
@@ -2700,6 +2705,32 @@ class hb_face_frame_OT_revert_part_to_parametric(bpy.types.Operator):
                 if key in obj.keys():
                     gn.set_input(inp, obj[key])
         for key in ('IS_MANUAL_PART',) + _MANUAL_STASH_KEYS:
+            if key in obj.keys():
+                del obj[key]
+
+    @staticmethod
+    def _revert_interior_one(obj, ng):
+        """Interior part (shelf, pullout, ...): the interior rebuild wipes
+        every non-manual part and builds its slot fresh, so clearing the
+        flag is the whole revert. A cutpart gets its GN back first, sized
+        from the stash, so the rebuild can read its thickness and carry
+        its cutouts over like any other shelf's."""
+        mn = obj.home_builder.mod_name
+        if ('HB_MANUAL_THICKNESS' in obj.keys() and obj.type == 'MESH'
+                and not (mn and mn in obj.modifiers)):
+            obj.data.clear_geometry()
+            mod = obj.modifiers.new(name='GeoNodeCutpart', type='NODES')
+            mod.node_group = ng
+            mod.show_viewport = True
+            obj.modifiers.move(len(obj.modifiers) - 1, 0)
+            obj.home_builder.mod_name = mod.name
+            gn = GeoNodeCutpart(obj)
+            for key, inp in _MANUAL_STASH_INPUTS:
+                if key in obj.keys():
+                    gn.set_input(inp, obj[key])
+        for key in (('IS_MANUAL_PART',
+                     types_face_frame.INTERIOR_MANUAL_UNMATCHED)
+                    + _MANUAL_STASH_KEYS):
             if key in obj.keys():
                 del obj[key]
 

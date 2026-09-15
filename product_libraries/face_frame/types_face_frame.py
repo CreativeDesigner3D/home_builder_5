@@ -1030,15 +1030,53 @@ INTERIOR_BUILD_INDEX = 'hb_interior_build_index'
 _USER_CUTOUT_TOKEN = 'CPM_CUTOUT'
 _USER_CUTOUT_NAME = 'Cutout'
 
+# A manual interior part (Make Editable) is left out of the wipe and stands
+# in for the rebuilt part with the same role and build index, which is
+# built and then thrown away. When the rebuild no longer produces that
+# index (fewer shelves, item removed) the hand-edited part is still kept
+# rather than lost, and flagged with this so its menu can say so; Revert
+# to Parametric removes it.
+INTERIOR_MANUAL_UNMATCHED = 'hb_interior_manual_unmatched'
+
+
+def _remove_interior_part(part):
+    """Delete one interior part, its boolean cutters, and any data left
+    without users."""
+    # A boolean operand has to be an object, so a part's cutters hang off
+    # the PART rather than off the opening and a walk of the opening's
+    # children never sees them. Take them with their host: removing the
+    # host alone leaves them behind as loose wire objects that nothing
+    # ever collects.
+    for sub in list(part.children):
+        if sub.get('hb_part_role') != PART_ROLE_DRAWER_BOX_CUTTER:
+            continue
+        sub_data = sub.data
+        bpy.data.objects.remove(sub, do_unlink=True)
+        if isinstance(sub_data, bpy.types.Mesh) and sub_data.users == 0:
+            bpy.data.meshes.remove(sub_data)
+    data = part.data
+    bpy.data.objects.remove(part, do_unlink=True)
+    # Orphaned data (per-part meshes like shelf nosings, accessory font
+    # curves) would otherwise pile up until the next save. Shared data
+    # keeps users and is skipped.
+    if data is not None and data.users == 0:
+        if isinstance(data, bpy.types.Mesh):
+            bpy.data.meshes.remove(data)
+        elif isinstance(data, bpy.types.Curve):
+            bpy.data.curves.remove(data)
+
 
 def _snapshot_interior_cutouts(opening_obj):
     """{(role, build index): [(modifier name, state), ...]} for every
-    interior part under ``opening_obj`` carrying user cutouts."""
+    interior part under ``opening_obj`` carrying user cutouts. Manual
+    parts survive the rebuild with their cutouts on them, so they are
+    left out."""
     kept = {}
     for child in opening_obj.children:
         role = child.get('hb_part_role')
         if (role not in INTERIOR_PART_ROLES or child.type != 'MESH'
-                or INTERIOR_BUILD_INDEX not in child):
+                or INTERIOR_BUILD_INDEX not in child
+                or child.get('IS_MANUAL_PART')):
             continue
         try:
             thickness = float(GeoNodeCutpart(child).get_input('Thickness'))
@@ -1073,9 +1111,10 @@ def _snapshot_interior_cutouts(opening_obj):
 def _tag_interior_build_order(opening_obj, seen, counters):
     """Stamp INTERIOR_BUILD_INDEX on the interior parts built since
     ``seen`` (child names already accounted for), numbering per role in
-    build order."""
+    build order. Returns the parts stamped."""
     new = sorted((c for c in opening_obj.children if c.name not in seen),
                  key=lambda c: c.name)
+    tagged = []
     for child in new:
         seen.add(child.name)
         role = child.get('hb_part_role')
@@ -1084,6 +1123,8 @@ def _tag_interior_build_order(opening_obj, seen, counters):
         idx = counters.get(role, 0)
         counters[role] = idx + 1
         child[INTERIOR_BUILD_INDEX] = idx
+        tagged.append(child)
+    return tagged
 
 
 def _restore_interior_cutouts(opening_obj, kept):
@@ -1095,7 +1136,7 @@ def _restore_interior_cutouts(opening_obj, kept):
     for child in opening_obj.children:
         cuts = kept.get((child.get('hb_part_role'),
                          child.get(INTERIOR_BUILD_INDEX)))
-        if not cuts or child.type != 'MESH':
+        if not cuts or child.type != 'MESH' or child.get('IS_MANUAL_PART'):
             continue
         part = GeoNodeCutpart(child)
         try:
@@ -13272,10 +13313,11 @@ class FaceFrameCabinet(GeoNodeCage):
 
     def _update_interior_items_in_opening(self, opening_obj, layout, rect):
         """Rebuild the opening's interior parts (shelves, accessory
-        labels, ...). Same wipe-and-recreate strategy as fronts:
-        interior parts hold no user state worth preserving across
-        recalcs - their geometry is fully derived from the InteriorItem
-        collection on the opening props.
+        labels, ...). Same wipe-and-recreate strategy as fronts: a
+        parametric interior part's geometry is fully derived from the
+        InteriorItem collection on the opening props. The user state
+        on them - cutouts, and parts made editable - is carried by
+        build slot (role, INTERIOR_BUILD_INDEX).
 
         Panel roots (face-frame only) never have interior parts; we
         still run the wipe to clean up anything stale, then clear the
@@ -13290,32 +13332,19 @@ class FaceFrameCabinet(GeoNodeCage):
         # Wipe existing interior children. Match either by role tag or
         # by the explicit ACCESSORY marker we set on text objects, since
         # text-data objects can't carry the same custom prop conventions
-        # quite as cleanly as mesh parts.
+        # quite as cleanly as mesh parts. Manual (Make Editable) parts
+        # are kept, keyed by the build slot they took over.
+        manual = {}
         for child in list(opening_obj.children):
-            if child.get('hb_part_role') in INTERIOR_PART_ROLES:
-                # A boolean operand has to be an object, so a part's
-                # cutters hang off the PART rather than off the opening
-                # and this loop never sees them. Take them with their
-                # host: removing the host alone leaves them behind as
-                # loose wire objects that nothing ever collects.
-                for sub in list(child.children):
-                    if sub.get('hb_part_role') != PART_ROLE_DRAWER_BOX_CUTTER:
-                        continue
-                    sub_data = sub.data
-                    bpy.data.objects.remove(sub, do_unlink=True)
-                    if (isinstance(sub_data, bpy.types.Mesh)
-                            and sub_data.users == 0):
-                        bpy.data.meshes.remove(sub_data)
-                data = child.data
-                bpy.data.objects.remove(child, do_unlink=True)
-                # Orphaned data (per-part meshes like shelf nosings,
-                # accessory font curves) would otherwise pile up until
-                # the next save. Shared data keeps users and is skipped.
-                if data is not None and data.users == 0:
-                    if isinstance(data, bpy.types.Mesh):
-                        bpy.data.meshes.remove(data)
-                    elif isinstance(data, bpy.types.Curve):
-                        bpy.data.curves.remove(data)
+            role = child.get('hb_part_role')
+            if role not in INTERIOR_PART_ROLES:
+                continue
+            if child.get('IS_MANUAL_PART'):
+                if INTERIOR_BUILD_INDEX in child:
+                    key = (role, int(child[INTERIOR_BUILD_INDEX]))
+                    manual.setdefault(key, []).append(child)
+                continue
+            _remove_interior_part(child)
 
         if not self._has_carcass():
             if len(op_props.interior_items) > 0:
@@ -13388,6 +13417,7 @@ class FaceFrameCabinet(GeoNodeCage):
 
         seen = {c.name for c in opening_obj.children}
         built = {}
+        matched = set()
         for desc in solver.interior_descriptors_for_opening(
             opening_obj, layout, rect, self.obj.face_frame_cabinet,
         ):
@@ -13422,7 +13452,24 @@ class FaceFrameCabinet(GeoNodeCage):
                 # TRAY_DIVIDER, TRAY_LOCKED_SHELF, VANITY_SHELF,
                 # VANITY_SUPPORT.
                 self._create_interior_mesh_part(opening_obj, desc)
-            _tag_interior_build_order(opening_obj, seen, built)
+            for part in _tag_interior_build_order(opening_obj, seen, built):
+                key = (part.get('hb_part_role'), part[INTERIOR_BUILD_INDEX])
+                if key not in manual:
+                    continue
+                # The hand-edited part stands in for this one. Its name
+                # leaves 'seen' with it, or a later part that happens to
+                # be given the freed name would go untagged.
+                matched.add(key)
+                seen.discard(part.name)
+                _remove_interior_part(part)
+
+        for key, parts in manual.items():
+            for part in parts:
+                if key in matched:
+                    if INTERIOR_MANUAL_UNMATCHED in part:
+                        del part[INTERIOR_MANUAL_UNMATCHED]
+                else:
+                    part[INTERIOR_MANUAL_UNMATCHED] = True
 
         _restore_interior_cutouts(opening_obj, kept_cutouts)
 
