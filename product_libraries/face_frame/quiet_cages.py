@@ -23,8 +23,13 @@ and Material Preview, so the cages come and go with the shading.
 """
 import bpy
 
+from ... import hb_utils
+
 # Shading types where cages stay hidden.
 QUIET_SHADING_TYPES = {'MATERIAL', 'RENDERED'}
+
+# Opening contents with no front to click through to the opening's cage.
+_FRONTLESS_FRONT_TYPES = frozenset({'NONE', 'APPLIANCE'})
 
 # Modes whose selection targets are cages. Face Frame, Interiors and
 # Parts offer real parts, which are visible geometry in any shading.
@@ -104,16 +109,41 @@ def _is_selected(obj, view_layer=None, selected_names=None):
         return False
 
 
+def is_frontless(obj):
+    """True for an opening cage with no door or drawer in front of it, or
+    a bay cage holding one. Promotion needs a part under the cage to click,
+    and what shows through an empty opening (sides, back, stiles) belongs
+    to the cabinet, so these cages stay revealed to remain clickable."""
+    from . import types_face_frame
+    if obj.get(types_face_frame.TAG_OPENING_CAGE):
+        return obj.face_frame_opening.front_type in _FRONTLESS_FRONT_TYPES
+    if not obj.get(types_face_frame.TAG_BAY_CAGE):
+        return False
+    with hb_utils.children_index():
+        stack = list(obj.children)
+        while stack:
+            o = stack.pop()
+            if o.get(types_face_frame.TAG_OPENING_CAGE):
+                if o.face_frame_opening.front_type in _FRONTLESS_FRONT_TYPES:
+                    return True
+            elif o.get(types_face_frame.TAG_SPLIT_NODE):
+                stack.extend(o.children)
+    return False
+
+
 def keep_hidden(obj, mode, selected_names=None):
     """True when a mode-matching object takes the hidden path instead of
     being revealed: it is a cage, the mode is a cage mode, the shading is
-    quiet, and nothing has it selected. ``selected_names`` stands in for
-    the live selection where a caller has snapshotted it."""
+    quiet, nothing has it selected, and it has a front to click.
+    ``selected_names`` stands in for the live selection where a caller
+    has snapshotted it."""
     if mode not in CAGE_MODES or not obj.get('IS_GEONODE_CAGE'):
         return False
     if _is_selected(obj, selected_names=selected_names):
         return False
-    return shading_is_quiet()
+    if not shading_is_quiet():
+        return False
+    return not is_frontless(obj)
 
 
 # ---------------------------------------------------------------------------
@@ -152,14 +182,15 @@ def _hide(obj, mode):
 
 
 def _sweep(scene, view_layer, mode):
-    """Hide every revealed cage nothing selects."""
-    for obj in scene.objects:
-        if not obj.get('IS_GEONODE_CAGE') or obj.hide_viewport:
-            continue
-        if not _matches(obj, mode):
-            continue
-        if not _is_selected(obj, view_layer):
-            _hide(obj, mode)
+    """Hide every revealed cage nothing selects, except frontless ones."""
+    with hb_utils.children_index():
+        for obj in scene.objects:
+            if not obj.get('IS_GEONODE_CAGE') or obj.hide_viewport:
+                continue
+            if not _matches(obj, mode):
+                continue
+            if not _is_selected(obj, view_layer) and not is_frontless(obj):
+                _hide(obj, mode)
 
 
 def promote(context=None, force=True):
