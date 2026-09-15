@@ -3634,6 +3634,18 @@ class ClosetStarter(GeoNodeCage):
         # rather than being torn down and built again.
         color = cage.get(PROP_ACCESSORY_COLOR, '')
         fab = cage.get(PROP_ACCESSORY_FABRIC, '')
+        if acc_def.hook_qty:
+            # A line whose model is itself a row of hooks - a hook
+            # panel - is as long as its model along the board, so the
+            # end ones are kept in by half of that and stay on the
+            # board. A single hook keeps the inset it was given.
+            # Read off the mesh rather than the bounding box: the
+            # source is never linked, so its box is never worked out.
+            try:
+                half = max(abs(v.co.y) for v in src.data.vertices)
+            except Exception:
+                half = 0.0
+            inset = min(max(inset, half), length / 2.0)
         for i, obj in enumerate(existing):
             if obj.data is not src.data:
                 obj.data = src.data

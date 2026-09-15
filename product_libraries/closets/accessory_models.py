@@ -194,6 +194,44 @@ class _Build:
         self._claim(slot, before)
         return verts
 
+    def tube(self, points, r, segs=8, mat=None):
+        """A round rod swept through a list of points, capped at both
+        ends - a bent wire, where a string of straight bars would show
+        its joints."""
+        slot = self._slot(mat or _metal())
+        before = set(self.bm.faces)
+        pts = [mathutils.Vector(p) for p in points]
+        rings = []
+        normal = None
+        for i, p in enumerate(pts):
+            ahead = pts[min(i + 1, len(pts) - 1)]
+            behind = pts[max(i - 1, 0)]
+            tangent = (ahead - behind).normalized()
+            if normal is None:
+                seed = mathutils.Vector((0.0, 1.0, 0.0))
+                if abs(tangent.dot(seed)) > 0.9:
+                    seed = mathutils.Vector((1.0, 0.0, 0.0))
+                normal = tangent.cross(seed).normalized()
+            else:
+                # Carried along rather than worked out afresh, so the
+                # rings do not twist round the bends.
+                normal = (normal - tangent * normal.dot(tangent))
+                normal.normalize()
+            side = tangent.cross(normal)
+            ring = []
+            for k in range(segs):
+                a = 2.0 * math.pi * k / segs
+                ring.append(self.bm.verts.new(
+                    p + (normal * math.cos(a) + side * math.sin(a)) * r))
+            rings.append(ring)
+        for ra, rb in zip(rings, rings[1:]):
+            for k in range(segs):
+                k2 = (k + 1) % segs
+                self.bm.faces.new((ra[k], ra[k2], rb[k2], rb[k]))
+        self.bm.faces.new(list(reversed(rings[0])))
+        self.bm.faces.new(rings[-1])
+        self._claim(slot, before)
+
     def open_box(self, sx, sy, sz, x, y, z, t, mat=None, bottom=True):
         """A thin-walled, open-topped box - a bin, a bag, a tray."""
         self.box(t, sy, sz, x, y, z, mat)
@@ -586,6 +624,64 @@ def build_hook_waterfall():
     return _hook('Hook Waterfall')
 
 
+def _arc(cx, cz, radius, a0, a1, steps=6):
+    """Points round an arc in the XZ plane, from angle a0 to a1."""
+    return [(cx + radius * math.cos(a0 + (a1 - a0) * i / steps), 0.0,
+             cz + radius * math.sin(a0 + (a1 - a0) * i / steps))
+            for i in range(steps + 1)]
+
+
+def build_hook_panel(length_in=14.125, hooks=6):
+    """A fixed hook panel: a mounting rail with a row of J hooks
+    hanging under it - the fixed cousin of the scarf rack.
+
+    Drawn to the vendor's figures - the length, the hook count, and
+    the rack's 1 5/8" reach and 2 13/16" height - and otherwise to a
+    plain rail and rod, since there is no bought file to measure.
+
+    Unlike a rack it is centred front to back on its origin, the way
+    a single hook is, so on a cleat - where a hook is hung by its
+    middle - the panel lands centred on where it is put. On a panel
+    face it is placed by its front edge either way."""
+    L = length_in * _IN
+    b = _Build()
+    rail_d = 0.45 * _IN           # off the panel face
+    rail_top = 0.83 * _IN
+    rail_bot = -0.60 * _IN
+    cap = 0.19 * _IN
+    # the rail, and a slightly proud end cap at each end
+    b.box(rail_d, L - 2.0 * cap, rail_top - rail_bot,
+          -rail_d, -L / 2.0 + cap, rail_bot)
+    for y in (-L / 2.0, L / 2.0 - cap):
+        b.box(rail_d + 0.06 * _IN, cap, rail_top - rail_bot + 0.08 * _IN,
+              -rail_d - 0.06 * _IN, y, rail_bot - 0.04 * _IN)
+    # a shallow reveal along the face, which is what reads as a rail
+    # rather than a block at closet distance
+    b.box(0.03 * _IN, L - 2.0 * cap, 0.12 * _IN,
+          -rail_d - 0.03 * _IN, -L / 2.0 + cap, 0.05 * _IN)
+    # the hooks: down out of the rail, a bend out, a run forward and
+    # a tip turned up - 1 5/8" reach, bottom at 2 13/16" overall
+    r = 0.085 * _IN
+    bend = 0.22 * _IN
+    stem_x = -0.30 * _IN
+    tip_x = -1.625 * _IN + r * 1.35
+    low = -1.94 * _IN + r
+    path = [(stem_x, 0.0, rail_bot + 0.10 * _IN)]
+    path += _arc(stem_x - bend, low + bend, bend, 0.0, -math.pi / 2.0)
+    path += _arc(tip_x + bend, low + bend, bend, -math.pi / 2.0,
+                 -math.pi)
+    path.append((tip_x, 0.0, low + bend + 0.30 * _IN))
+    margin = 1.25 * _IN
+    for i in range(hooks):
+        y = (-L / 2.0 + margin
+             + (L - 2.0 * margin) * i / max(hooks - 1, 1))
+        b.tube([(x, y, z) for x, _y, z in path], r)
+        # a round end on the tip, as the cast hooks have
+        b.bar(r * 1.35, r * 1.2, 'Z', tip_x, y, path[-1][2] - r * 0.2,
+              segs=8)
+    return b.done('Hook Panel %g' % length_in)
+
+
 # ---------------------------------------------------------------------------
 # Ironing boards and mirrors, standing up from their mount
 # ---------------------------------------------------------------------------
@@ -677,6 +773,10 @@ for _d in (12, 14):
                                                 depth_in=_d)
 MODELS.update({
     'Valet Pin.blend': build_valet_pin,
+    'Curate Hook Panel 14.blend': _sized(build_hook_panel,
+                                         length_in=14.125, hooks=6),
+    'Curate Hook Panel 18.blend': _sized(build_hook_panel,
+                                         length_in=17.875, hooks=8),
     'Hook Belt.blend': build_hook_belt,
     'Hook Broom.blend': build_hook_broom,
     'Hook Coat.blend': build_hook_coat,
