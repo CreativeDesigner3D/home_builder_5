@@ -588,7 +588,7 @@ def draw_floating_shelf(layout, root):
     row.prop(shelf, 'finish_left', text="Left", toggle=True)
     row.prop(shelf, 'finish_right', text="Right", toggle=True)
 
-    layout.prop(shelf, 'material_thickness', text="Material Thickness")
+    layout.prop(shelf, 'material_thickness', text="Top & Bottom Thickness")
 
     layout.separator()
     layout.operator("hb_face_frame.duplicate_floating_shelf",

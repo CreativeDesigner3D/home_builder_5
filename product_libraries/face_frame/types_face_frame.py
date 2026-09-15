@@ -15650,6 +15650,9 @@ class FloatingShelfFaceFrameCabinet(FaceFrameCabinet):
         self.set_input('Dim Y', depth)
         self.set_input('Dim Z', thickness)
 
+        # The front board and finished end panels are fixed 3/4" stock;
+        # material_thickness sets only the top and bottom panels.
+        ft = inch(0.75)
         mt = shelf.material_thickness
         fl = shelf.finish_left
         fr = shelf.finish_right
@@ -15677,22 +15680,22 @@ class FloatingShelfFaceFrameCabinet(FaceFrameCabinet):
             for k, v in mirror.items():
                 gn.set_input(k, v)
 
-        inset_l = mt if fl else 0.0
-        inset_r = mt if fr else 0.0
+        inset_l = ft if fl else 0.0
+        inset_r = ft if fr else 0.0
         inner_len = width - inset_l - inset_r
-        inner_depth = depth - mt
+        inner_depth = depth - ft
 
         # Front board: full width, stands `thickness` tall at the front.
-        place(FRONT, width, thickness, mt, (0.0, -depth, 0.0),
+        place(FRONT, width, thickness, ft, (0.0, -depth, 0.0),
               (math.radians(-90), 0.0, 0.0), {'Mirror Y': True})
         FRONT['IS_FINISHED'] = True
 
         # Top + bottom: horizontal panels between the end panels, behind
         # the front board, spanning the remaining depth.
-        place(TOP, inner_len, inner_depth, mt, (inset_l, -depth + mt, thickness),
+        place(TOP, inner_len, inner_depth, mt, (inset_l, -depth + ft, thickness),
               (0.0, 0.0, 0.0), {'Mirror Z': True})
         TOP['IS_FINISHED'] = True
-        place(BOTTOM, inner_len, inner_depth, mt, (inset_l, -depth + mt, 0.0),
+        place(BOTTOM, inner_len, inner_depth, mt, (inset_l, -depth + ft, 0.0),
               (0.0, 0.0, 0.0), {})
         BOTTOM['IS_FINISHED'] = True
 
@@ -15700,7 +15703,7 @@ class FloatingShelfFaceFrameCabinet(FaceFrameCabinet):
         # runs the full depth and miters into the front board at 45
         # through the corner (the shop's construction) instead of
         # butting behind it.
-        place(LP, depth if fl else inner_depth, thickness, mt,
+        place(LP, depth if fl else inner_depth, thickness, ft,
               (0.0, 0.0, 0.0),
               (math.radians(-90), 0.0, math.radians(90)),
               {'Mirror X': True, 'Mirror Y': True, 'Mirror Z': True})
@@ -15709,7 +15712,7 @@ class FloatingShelfFaceFrameCabinet(FaceFrameCabinet):
             LP.hide_render = not fl
         LP['IS_FINISHED'] = True
 
-        place(RP, depth if fr else inner_depth, thickness, mt,
+        place(RP, depth if fr else inner_depth, thickness, ft,
               (width, 0.0, 0.0),
               (math.radians(-90), 0.0, math.radians(90)),
               {'Mirror X': True, 'Mirror Y': True})
@@ -15719,9 +15722,9 @@ class FloatingShelfFaceFrameCabinet(FaceFrameCabinet):
         RP['IS_FINISHED'] = True
 
         self._apply_box_end_miter('LEFT', fl, FRONT, LP,
-                                  width, depth, mt, thickness)
+                                  width, depth, ft, thickness)
         self._apply_box_end_miter('RIGHT', fr, FRONT, RP,
-                                  width, depth, mt, thickness)
+                                  width, depth, ft, thickness)
 
         # --- Light groove (Heavy Duty shelves only) ---
         # A routed LED channel on the top and/or bottom face, set a

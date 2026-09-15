@@ -11937,6 +11937,8 @@ class Face_Frame_Floating_Shelf_Props(PropertyGroup):
     )  # type: ignore
     material_thickness: FloatProperty(
         name="Material Thickness", default=units.inch(0.75),
+        description="Thickness of the top and bottom panels. The front "
+                    "board and finished ends are always 3/4\"",
         unit='LENGTH', precision=4, update=_update_cabinet_dim,
     )  # type: ignore
     shelf_type: EnumProperty(
