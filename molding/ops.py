@@ -269,9 +269,55 @@ def _material_slot(curve, material):
 
 def _spawn_sweep(scene, molding_type, chain, segments, profile_ref,
                  fallback_key, dy, facts, opts, height=None):
-    """Create one sweep object: hidden profile + curve through the
-    world-space segments, localized to (and parented on) chain[0]."""
+    """Create the sweep object(s) for one chain: hidden profile + curve
+    through the world-space segments.
+
+    Each stretch takes the style finish of the cabinet it fronts (see
+    _material_runs). A mixed-style chain makes one object PER STYLE,
+    parented on a member of that style: drawing views tint a sweep by
+    the cabinet it hangs from, so a single object drew the whole chain
+    in chain[0]'s style. Every piece carries the whole chain's member
+    stamp. Members that resolve no material - appliance bridges - fall
+    back to the first material the chain resolves. Returns the last
+    object made, or None."""
     first = chain[0]
+    member_materials = [(m, adapters.finish_material(m)) for m in chain]
+    fallback_mat = next(
+        (mat for _m, mat in member_materials if mat is not None), None)
+
+    groups = []  # [(material, [(world_pts, cyclic), ...])]
+    for pts, cyclic in segments:
+        for run_pts, material, run_cyclic in _material_runs(
+                pts, cyclic, member_materials, fallback_mat):
+            group = next((g for g in groups if g[0] is material), None)
+            if group is None:
+                group = (material, [])
+                groups.append(group)
+            group[1].append((run_pts, run_cyclic))
+
+    # The height is resolved in chain[0]'s frame; every piece keeps
+    # that same world height under its own parent.
+    z_local = _sweep_z(molding_type, first, dy, facts, opts)
+    z_world = (first.matrix_world
+               @ mathutils.Vector((0.0, 0.0, z_local))).z
+
+    made = None
+    for material, runs in groups:
+        parent = next((m for m, mat in member_materials
+                       if material is not None and mat is material), first)
+        sweep = _spawn_sweep_piece(scene, molding_type, chain, runs,
+                                   material, parent, z_world, profile_ref,
+                                   fallback_key, height)
+        if sweep is not None:
+            made = sweep
+    return made
+
+
+def _spawn_sweep_piece(scene, molding_type, chain, runs, material, parent,
+                       z_world, profile_ref, fallback_key, height):
+    """One sweep object through ``runs`` (world-space (points, cyclic)
+    pairs sharing ``material``), localized to and parented on
+    ``parent`` at world height ``z_world``."""
     profile = packages.make_profile_object(
         profile_ref, fallback_key,
         f"Molding_Profile_{fallback_key}", scene.collection, height=height)
@@ -287,47 +333,37 @@ def _spawn_sweep(scene, molding_type, chain, segments, profile_ref,
     sweep[MOLDING_TAG] = True
     sweep[MOLDING_TYPE] = molding_type
     sweep[MOLDING_MEMBERS] = ",".join(c.name for c in chain)
-    sweep.parent = first
-    sweep.location.z = _sweep_z(molding_type, first, dy, facts, opts)
+    sweep.parent = parent
+    parent_inv = parent.matrix_world.inverted()
+    sweep.location.z = (parent_inv
+                        @ mathutils.Vector((0.0, 0.0, z_world))).z
     profile.parent = sweep
 
-    # Each stretch of the sweep takes the style finish of the cabinet
-    # it fronts: mixed-style chains split into per-style splines at the
-    # cabinet seams (see _material_runs). Members that resolve no
-    # material - appliance bridges - fall back to the first material
-    # the chain resolves.
-    member_materials = [(m, adapters.finish_material(m)) for m in chain]
-    fallback_mat = next(
-        (mat for _m, mat in member_materials if mat is not None), None)
-
-    first_inv = first.matrix_world.inverted()
     wrote = 0
-    for pts, cyclic in segments:
-        for run_pts, material, run_cyclic in _material_runs(
-                pts, cyclic, member_materials, fallback_mat):
-            local = []
-            for p in run_pts:
-                lp = first_inv @ mathutils.Vector((p.x, p.y, 0.0))
-                if not local or (abs(lp.x - local[-1][0]) > 1e-4
-                                 or abs(lp.y - local[-1][1]) > 1e-4):
-                    local.append((lp.x, lp.y, 0.0))
-            if (run_cyclic and len(local) > 2
-                    and abs(local[0][0] - local[-1][0]) < 1e-4
-                    and abs(local[0][1] - local[-1][1]) < 1e-4):
-                local.pop()
-            if len(local) < (3 if run_cyclic else 2):
-                continue
-            spline = curve.splines.new('BEZIER')
-            spline.use_smooth = False
-            spline.bezier_points.add(count=len(local) - 1)
-            for bp, co in zip(spline.bezier_points, local):
-                bp.co = co
-                bp.handle_left_type = 'VECTOR'
-                bp.handle_right_type = 'VECTOR'
-            spline.use_cyclic_u = run_cyclic
-            if material is not None:
-                spline.material_index = _material_slot(curve, material)
-            wrote += 1
+    for run_pts, run_cyclic in runs:
+        local = []
+        for p in run_pts:
+            lp = parent_inv @ mathutils.Vector((p.x, p.y, 0.0))
+            if not local or (abs(lp.x - local[-1][0]) > 1e-4
+                             or abs(lp.y - local[-1][1]) > 1e-4):
+                local.append((lp.x, lp.y, 0.0))
+        if (run_cyclic and len(local) > 2
+                and abs(local[0][0] - local[-1][0]) < 1e-4
+                and abs(local[0][1] - local[-1][1]) < 1e-4):
+            local.pop()
+        if len(local) < (3 if run_cyclic else 2):
+            continue
+        spline = curve.splines.new('BEZIER')
+        spline.use_smooth = False
+        spline.bezier_points.add(count=len(local) - 1)
+        for bp, co in zip(spline.bezier_points, local):
+            bp.co = co
+            bp.handle_left_type = 'VECTOR'
+            bp.handle_right_type = 'VECTOR'
+        spline.use_cyclic_u = run_cyclic
+        if material is not None:
+            spline.material_index = _material_slot(curve, material)
+        wrote += 1
     if wrote == 0:
         bpy.data.objects.remove(sweep, do_unlink=True)
         bpy.data.objects.remove(profile, do_unlink=True)
