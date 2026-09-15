@@ -444,7 +444,10 @@ SHOE_FENCE_COLOR_ITEMS = [(c, c, c) for c in SHOE_FENCE_COLORS]
 # Colors saved under an earlier spelling, mapped onto the material that
 # carries that finish now, so a shelf stack built before the rename keeps
 # the finish it was given.
-SHOE_FENCE_COLOR_ALIASES = {'Chrome': 'Polished Chrome'}
+SHOE_FENCE_COLOR_ALIASES = {'Chrome': 'Polished Chrome',
+                            # A host fence line sold in "Slate" draws in
+                            # the slate the finishes blend carries.
+                            'Slate': 'Slate Graphite'}
 
 
 def shoe_fence_color(saved):
@@ -6500,6 +6503,8 @@ def add_accessory(opening, key):
     # An accessory sold in widths arrives as the one nearest the
     # opening it was dropped in; the person can change it after.
     from . import accessories_closets as acc
+    if acc_def.family == acc.FAMILY_CLEAT and acc_def.hook_qty:
+        cage.obj[PROP_HOOK_QTY] = acc_def.hook_qty
     if acc_def.family == acc.FAMILY_PANEL:
         cage.obj[PROP_ACCESSORY_PANEL_LOC] = acc.PANEL_DEFAULT_LOCATION
         band = acc_def.bands[0] if acc_def.bands else None
@@ -6540,6 +6545,8 @@ def add_wall_accessory(wall, key):
     # The board arrives at a length of its own and keeps it - there
     # is no opening whose width it could follow.
     cage.obj[PROP_CLEAT_LENGTH] = float(acc_def.width or inch(24))
+    if acc_def.hook_qty:
+        cage.obj[PROP_HOOK_QTY] = acc_def.hook_qty
     band = acc_def.bands[0] if acc_def.bands else None
     if band is not None:
         cage.obj[PROP_ACCESSORY_MODEL] = band[2]

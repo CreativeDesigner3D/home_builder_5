@@ -3064,6 +3064,9 @@ class hb_closets_OT_add_slanted_shelves(_ClosetInsertDialog,
             'slant_spacing': self.spacing,
             'slant_angle': self.angle,
             'slant_color': self.color,
+            # This dialog sets the library's own fence, so it clears any
+            # other line an opening was carrying.
+            'slant_fence_line': '',
         })
 
 

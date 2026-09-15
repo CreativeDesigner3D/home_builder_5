@@ -1092,6 +1092,13 @@ class Closet_Opening_Props(PropertyGroup):
         description="Finish of the metal shoe fence across the front of "
                     "each shelf",
         default='')  # type: ignore
+    # Which line the fences are bought from. Blank is the library's own
+    # fence; a host that sells another line of fences names it here, and
+    # prices and offers it for itself.
+    slant_fence_line: bpy.props.StringProperty(
+        name="Fence Line",
+        description="Which line of shoe fences the shelves carry",
+        default='')  # type: ignore
     # The fence is a bought rail, so it is cut shorter than the shelf and
     # held off each end. Both figures are the prior library's.
     slant_fence_inset: FloatProperty(
@@ -1371,7 +1378,7 @@ class Closet_Opening_Props(PropertyGroup):
         'rollout_qty', 'rollout_height',
         'rollout_inset_front', 'rollout_inset_reveal',
         'slant_qty', 'slant_spacing', 'slant_angle', 'slant_color',
-        'slant_fence_inset', 'slant_back_inset',
+        'slant_fence_line', 'slant_fence_inset', 'slant_back_inset',
         'cubby_cols', 'cubby_rows', 'cubby_setback',
         'door_swing', 'is_hamper',
         'rod_set_from_front', 'rod_from_front', 'rod_from_rear',
