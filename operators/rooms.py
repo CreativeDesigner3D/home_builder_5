@@ -67,7 +67,7 @@ class home_builder_OT_create_room(bpy.types.Operator):
 
         # A new room shows appliance models the way the drawing does.
         if not original_scene.home_builder.show_appliance_models:
-            new_scene.home_builder.show_appliance_models = False
+            new_scene.home_builder['show_appliance_models'] = False
 
         # Save view state of original scene if it's a room
         if hb_utils.is_room_scene(original_scene):

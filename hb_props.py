@@ -43,6 +43,28 @@ def update_show_appliance_models(self, context):
     from .product_libraries.common import appliance_geo
     appliance_geo.apply_visibility(context.scene)
     update_product_tab(self, context)
+    _remember_show_appliance_models(self.show_appliance_models)
+
+
+def _remember_show_appliance_models(show):
+    """The switch is also the user's standing choice: new drawings start
+    with it as last set. Saved on a timer -- saving preferences from
+    inside a property update is not allowed."""
+    try:
+        prefs = bpy.context.preferences.addons[__package__].preferences
+    except (KeyError, AttributeError):
+        return
+    if prefs.show_appliance_models == show:
+        return
+    prefs.show_appliance_models = show
+
+    def _save():
+        try:
+            bpy.ops.wm.save_userpref()
+        except Exception as e:
+            print(f"Home Builder: could not save preferences: {e}")
+        return None
+    bpy.app.timers.register(_save, first_interval=0.0)
 
 
 def update_line_thickness(self, context):

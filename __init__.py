@@ -102,8 +102,8 @@ def load_file_post(scene):
     except Exception:
         pass
 
-    # A new, never-saved file takes its Show Model switch from the
-    # preference; a saved file keeps the switch it was saved with.
+    # A new, never-saved file starts with the Show Model switch the user
+    # last chose; a saved file keeps the switch it was saved with.
     if not bpy.data.filepath:
         _apply_new_file_appliance_models()
 
@@ -113,12 +113,12 @@ def _apply_new_file_appliance_models():
         prefs = bpy.context.preferences.addons[__package__].preferences
     except (KeyError, AttributeError):
         return
-    if prefs.show_appliance_models_in_new_files:
-        return
+    show = bool(prefs.show_appliance_models)
     for scene in bpy.data.scenes:
         hb = getattr(scene, 'home_builder', None)
-        if hb is not None and hb.show_appliance_models:
-            hb.show_appliance_models = False
+        if hb is not None and hb.show_appliance_models != show:
+            # Stored directly: the update would re-save the preference.
+            hb['show_appliance_models'] = show
 
 
 def _update_use_viewport_hud(self, context):
@@ -194,12 +194,12 @@ class Home_Builder_AddonPreferences(bpy.types.AddonPreferences):
         update=_update_use_viewport_hud,
     ) # type: ignore
 
-    show_appliance_models_in_new_files: bpy.props.BoolProperty(
-        name="Show Appliance Models in New Drawings",
-        description="Start every new drawing with Show Model on, so "
-                    "appliances come in with their 3D model. When off, a "
-                    "new drawing shows only the appliance cages until "
-                    "Show Model is turned on",
+    # Not drawn: remembers the library panel's Show Model switch, which
+    # sets it, so a new drawing starts the way the user last left it.
+    show_appliance_models: bpy.props.BoolProperty(
+        name="Show Appliance Models",
+        description="Whether new drawings start with the 3D models on "
+                    "their appliances showing",
         default=True,
     ) # type: ignore
 
@@ -339,7 +339,6 @@ class Home_Builder_AddonPreferences(bpy.types.AddonPreferences):
 
         layout.prop(self, "sidebar_tab_first")
         layout.prop(self, "hide_2d_drawing_panels")
-        layout.prop(self, "show_appliance_models_in_new_files")
 
         # Viewport interface. Every one of these is off by default:
         # they add controls painted into the 3D viewport, and the
