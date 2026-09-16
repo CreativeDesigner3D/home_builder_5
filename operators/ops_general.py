@@ -53,6 +53,9 @@ class HB_GENERAL_OT_menu(bpy.types.Operator):
     def invoke(self, context, event):
         obj = context.object
         menu_id = ""
+        if obj and obj.get('IS_OBSTACLE') and not obj.get("MENU_ID"):
+            # Obstacles placed before they carried a menu.
+            obj["MENU_ID"] = 'HOME_BUILDER_MT_obstacle_commands'
         if obj and "MENU_ID" in obj and obj["MENU_ID"]:
             menu_id = obj["MENU_ID"]
 
