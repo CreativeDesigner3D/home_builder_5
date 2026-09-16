@@ -102,6 +102,24 @@ def load_file_post(scene):
     except Exception:
         pass
 
+    # A new, never-saved file takes its Show Model switch from the
+    # preference; a saved file keeps the switch it was saved with.
+    if not bpy.data.filepath:
+        _apply_new_file_appliance_models()
+
+
+def _apply_new_file_appliance_models():
+    try:
+        prefs = bpy.context.preferences.addons[__package__].preferences
+    except (KeyError, AttributeError):
+        return
+    if prefs.show_appliance_models_in_new_files:
+        return
+    for scene in bpy.data.scenes:
+        hb = getattr(scene, 'home_builder', None)
+        if hb is not None and hb.show_appliance_models:
+            hb.show_appliance_models = False
+
 
 def _update_use_viewport_hud(self, context):
     """Flipping the HUD preference: redraw every 3D viewport so the change
@@ -174,6 +192,15 @@ class Home_Builder_AddonPreferences(bpy.types.AddonPreferences):
                     "while the marks are still unfamiliar",
         default=False,
         update=_update_use_viewport_hud,
+    ) # type: ignore
+
+    show_appliance_models_in_new_files: bpy.props.BoolProperty(
+        name="Show Appliance Models in New Drawings",
+        description="Start every new drawing with Show Model on, so "
+                    "appliances come in with their 3D model. When off, a "
+                    "new drawing shows only the appliance cages until "
+                    "Show Model is turned on",
+        default=True,
     ) # type: ignore
 
     hide_2d_drawing_panels: bpy.props.BoolProperty(
@@ -312,6 +339,7 @@ class Home_Builder_AddonPreferences(bpy.types.AddonPreferences):
 
         layout.prop(self, "sidebar_tab_first")
         layout.prop(self, "hide_2d_drawing_panels")
+        layout.prop(self, "show_appliance_models_in_new_files")
 
         # Viewport interface. Every one of these is off by default:
         # they add controls painted into the 3D viewport, and the
@@ -324,7 +352,7 @@ class Home_Builder_AddonPreferences(bpy.types.AddonPreferences):
         sub = col.column(align=True)
         sub.enabled = self.use_room_palette
         sub.prop(self, "palette_expanded")
-        
+
         # Layout view defaults
         box = layout.box()
         box.label(text="Layout View Defaults", icon='RENDERLAYERS')
