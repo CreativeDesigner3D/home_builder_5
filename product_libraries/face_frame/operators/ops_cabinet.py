@@ -3878,6 +3878,7 @@ _OPENING_PRESETS = {
     'DOOR_LOOKS_2_DRAWER': {'front_type': 'DOOR', 'hinge_side': 'LEFT', 'drawer_look': '2'},
     'DOOR_LOOKS_3_DRAWER': {'front_type': 'DOOR', 'hinge_side': 'LEFT', 'drawer_look': '3'},
     'DOOR_LOOKS_4_DRAWER': {'front_type': 'DOOR', 'hinge_side': 'LEFT', 'drawer_look': '4'},
+    'DOOR_LOOKS_2_DOOR': {'front_type': 'DOOR', 'hinge_side': 'LEFT', 'door_look': '2'},
     'FLIP_UP_DOOR':      {'front_type': 'DOOR',         'hinge_side': 'TOP'},
     'FLIP_DOWN_DOOR':    {'front_type': 'DOOR',         'hinge_side': 'BOTTOM'},
     # Retracting mechanisms: regular door fronts plus the door_mechanism
@@ -3899,6 +3900,8 @@ _OPENING_PRESETS = {
     'BIFOLD_RIGHT_DOOR':      {'front_type': 'DOOR', 'hinge_side': 'DOUBLE',
                                'mechanism': 'BIFOLD_RIGHT'},
     'DRAWER':            {'front_type': 'DRAWER_FRONT'},
+    'DRAWER_LOOKS_2_DRAWER': {'front_type': 'DRAWER_FRONT', 'drawer_look': '2'},
+    'DRAWER_LOOKS_3_DRAWER': {'front_type': 'DRAWER_FRONT', 'drawer_look': '3'},
     'PULLOUT':           {'front_type': 'PULLOUT'},
     'INSET_PANEL':       {'front_type': 'INSET_PANEL', 'shelves': 'CLEAR'},
     'FALSE_FRONT':       {'front_type': 'FALSE_FRONT'},
@@ -3978,6 +3981,7 @@ def apply_opening_preset(opening_obj, config, **overrides):
     # its update seeds the per-opening height rows. Unconditional so
     # re-applying another preset drops a previous drawer-look.
     op_props.drawer_look_divisions = preset.get('drawer_look', 'NONE')
+    op_props.door_look_divisions = preset.get('door_look', 'NONE')
 
     # Post-front_type shelf strip (see docstring: the DOOR write above
     # re-seeds a shelf, so this must come after it).
@@ -4024,6 +4028,10 @@ class hb_face_frame_OT_change_opening(bpy.types.Operator):
             ('LEFT_DOOR',         "Left Door",         "Single door hinged on the left"),
             ('RIGHT_DOOR',        "Right Door",        "Single door hinged on the right"),
             ('DOUBLE_DOOR',       "Double Door",       "Pair of doors meeting in the middle"),
+            ('DOOR_LOOKS_2_DRAWER', "Door - Looks like 2 Drawers", "One door shown as two drawer fronts"),
+            ('DOOR_LOOKS_3_DRAWER', "Door - Looks like 3 Drawers", "One door shown as three drawer fronts"),
+            ('DOOR_LOOKS_4_DRAWER', "Door - Looks like 4 Drawers", "One door shown as four drawer fronts"),
+            ('DOOR_LOOKS_2_DOOR', "Door - Looks like 2 Doors", "One door shown as two doors battened together"),
             ('FLIP_UP_DOOR',      "Flip Up Door",      "Door hinged on the top edge"),
             ('FLIP_DOWN_DOOR',    "Flip Down Door",    "Door hinged on the bottom edge"),
             ('RETRACTING_DOOR',   "Retracting Door",   "Single door that opens, then slides back into the cabinet"),
@@ -4033,6 +4041,8 @@ class hb_face_frame_OT_change_opening(bpy.types.Operator):
             ('BIFOLD_LEFT_DOOR',  "Bi-fold Doors (Left)",  "Door pair hinged on the left that folds open"),
             ('BIFOLD_RIGHT_DOOR', "Bi-fold Doors (Right)", "Door pair hinged on the right that folds open"),
             ('DRAWER',            "Drawer",            "Drawer front"),
+            ('DRAWER_LOOKS_2_DRAWER', "Drawer - Looks like 2 Drawers", "One drawer shown as two drawer fronts"),
+            ('DRAWER_LOOKS_3_DRAWER', "Drawer - Looks like 3 Drawers", "One drawer shown as three drawer fronts"),
             ('PULLOUT',           "Pullout",           "Door front on a pullout slide"),
             ('INSET_PANEL',       "Inset Panel",       "Recessed 1/4\" panel filling the opening"),
             ('FALSE_FRONT',       "False Front",       "Decorative drawer-style panel; fixed"),

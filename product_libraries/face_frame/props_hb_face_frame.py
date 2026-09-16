@@ -2273,7 +2273,7 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         'LEFT_REFRIG_STILE', 'RIGHT_REFRIG_STILE',
         # Drawer-look appliance panels (flat slabs mimicking a drawer
         # stack, plus the inset look's mid rails)
-        'DRAWER_LOOK_FRONT', 'DRAWER_LOOK_RAIL',
+        'DRAWER_LOOK_FRONT', 'DRAWER_LOOK_RAIL', 'DOOR_LOOK_FRONT',
         # Valance product boards
         'VALANCE_BOARD', 'VALANCE_COVER',
         'VALANCE_PANEL_LEFT', 'VALANCE_PANEL_RIGHT',
@@ -3320,7 +3320,7 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         """
         from . import types_face_frame as _tff
 
-        DOOR_ROLES = {'DOOR', 'PULLOUT_FRONT'}
+        DOOR_ROLES = {'DOOR', 'PULLOUT_FRONT', 'DOOR_LOOK_FRONT'}
         DRAWER_ROLES = {'DRAWER_FRONT', 'FALSE_FRONT', 'TILT_OUT',
                         'DRAWER_LOOK_FRONT'}
 
@@ -4373,7 +4373,7 @@ class Face_Frame_Door_Style(PropertyGroup):
     # Front roles this style will act on (DOOR + PULLOUT_FRONT read door_style
     # on the parent cabinet style - a pullout is a door on a slide; the rest
     # read drawer_front_style).
-    _DOOR_FRONT_ROLES = {'DOOR', 'PULLOUT_FRONT'}
+    _DOOR_FRONT_ROLES = {'DOOR', 'PULLOUT_FRONT', 'DOOR_LOOK_FRONT'}
     _DRAWER_FRONT_ROLES = {'DRAWER_FRONT', 'FALSE_FRONT', 'TILT_OUT',
                             'DRAWER_LOOK_FRONT'}
     _STYLEABLE_ROLES = _DOOR_FRONT_ROLES | _DRAWER_FRONT_ROLES
@@ -9400,7 +9400,11 @@ def _update_drawer_look_divisions(self, context):
             coll.remove(len(coll) - 1)
         while len(coll) < n:
             coll.add()
-        if n:
+        if n and self.front_type == 'DRAWER_FRONT':
+            # One drawer shown as N: the faces share the drawer equally.
+            for item in coll:
+                item.unlock_size = False
+        elif n:
             top_oh = bpy.context.scene.hb_face_frame.top_drawer_opening_height
             for i, item in enumerate(coll):
                 # index n-1 == top opening: held at the top-drawer height;
@@ -9757,6 +9761,20 @@ class Face_Frame_Opening_Props(PropertyGroup):
     # the division count by _update_drawer_look_divisions; consumed by
     # _build_drawer_look_fronts (front height = opening height + overlays).
     drawer_look_openings: CollectionProperty(type=Face_Frame_Drawer_Look_Opening)  # type: ignore
+    # Door-look door: a single LEFT / RIGHT swing leaf shown as N door
+    # panels side by side (doors battened together), still one door.
+    # Ignored while drawer_look_divisions is set.
+    door_look_divisions: EnumProperty(
+        name="Door-Look Divisions",
+        description="Show this door as N doors battened together (still opens as one door)",
+        items=[
+            ('NONE', "None", "Plain door"),
+            ('2', "2 Doors", "Two door panels side by side"),
+            ('3', "3 Doors", "Three door panels side by side"),
+        ],
+        default='NONE',
+        update=_update_cabinet_dim,
+    )  # type: ignore
 
     HINGE_SIDE_ITEMS = [
         ('LEFT', "Left", "Single door, hinged on the left edge"),

@@ -1247,10 +1247,15 @@ def draw_opening_properties(layout, opening_obj):
             if op.add_apron:
                 fcol.prop(op, 'apron_height', text="Apron Height")
 
-        # Drawer-look door (single-leaf swing doors): render the leaf as a
-        # stack of applied drawer fronts that still opens as one door.
-        if op.front_type == 'DOOR' and op.hinge_side in ('LEFT', 'RIGHT'):
+        # Drawer-look (single-leaf swing doors and drawer fronts): render
+        # the front as a stack of applied drawer fronts that still opens
+        # as one door / one drawer.
+        single_door = (op.front_type == 'DOOR'
+                       and op.hinge_side in ('LEFT', 'RIGHT'))
+        if single_door or op.front_type == 'DRAWER_FRONT':
             fcol.prop(op, 'drawer_look_divisions', text="Drawer-Look")
+            if single_door and op.drawer_look_divisions == 'NONE':
+                fcol.prop(op, 'door_look_divisions', text="Door-Look")
             if op.drawer_look_divisions != 'NONE':
                 heights_box = fcol.box()
                 heights_box.label(text="Drawer Opening Heights (top to bottom)")

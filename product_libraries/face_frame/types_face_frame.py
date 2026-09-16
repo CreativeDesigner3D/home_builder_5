@@ -424,6 +424,10 @@ PART_ROLE_DRAWER_LOOK_FRONT = 'DRAWER_LOOK_FRONT'
 # Faux mid-rail strip between drawer-look fronts, added only for FULL
 # INSET (proud of the inset fronts, like a real inset face frame).
 PART_ROLE_DRAWER_LOOK_RAIL = 'DRAWER_LOOK_RAIL'
+# Door-look door: the same carrier trick sideways - one working leaf
+# wearing N applied door panels side by side (battened pair look), with
+# the double-door center reveal between them. Styled from the door pool.
+PART_ROLE_DOOR_LOOK_FRONT = 'DOOR_LOOK_FRONT'
 DRAWER_LOOK_REVEAL = inch(0.125)            # gap between applied fronts
 DRAWER_LOOK_TALLER_TOP_FACTOR = 1.5         # top front height vs each other
 
@@ -12236,12 +12240,22 @@ class FaceFrameCabinet(GeoNodeCage):
                 elif _prop in front.obj:
                     del front.obj[_prop]
 
-            # Drawer-look doors swap the single door pull for one pull
-            # per applied drawer front; the panels are added below and
-            # inherit the leaf swing. v1: single-leaf LEFT / RIGHT only.
+            # Drawer-look fronts swap the single pull for one pull per
+            # applied drawer front; the panels are added below and ride
+            # the leaf (swing or slide). Doors: single-leaf LEFT / RIGHT
+            # only. Drawer fronts: one box behind N faces.
             drawer_look = (
-                leaf['role'] == PART_ROLE_DOOR
-                and getattr(op_props, 'drawer_look_divisions', 'NONE') != 'NONE'
+                getattr(op_props, 'drawer_look_divisions', 'NONE') != 'NONE'
+                and (leaf['role'] == PART_ROLE_DRAWER_FRONT
+                     or (leaf['role'] == PART_ROLE_DOOR
+                         and op_props.hinge_side in ('LEFT', 'RIGHT')))
+            )
+            # Door-look door: one leaf shown as N battened doors. Keeps
+            # its normal pull (lifted onto the outer panel below).
+            door_look = (
+                not drawer_look
+                and leaf['role'] == PART_ROLE_DOOR
+                and getattr(op_props, 'door_look_divisions', 'NONE') != 'NONE'
                 and op_props.hinge_side in ('LEFT', 'RIGHT')
             )
             # Tri-view mirror doors carry no pulls (touch-open per the
@@ -12250,12 +12264,15 @@ class FaceFrameCabinet(GeoNodeCage):
             no_pulls = (self.obj.get('HB_NO_DOOR_PULLS')
                         or self.obj.get('HB_TRIVIEW_DOORS'))
             # Bi-fold pairs pull from the lead leaf only.
+            pull = None
             if not drawer_look and not no_pulls and not leaf.get('no_pull'):
-                self._create_pull_for_front(front, leaf['role'], leaf,
-                                            op_props)
+                pull = self._create_pull_for_front(front, leaf['role'], leaf,
+                                                   op_props)
             self._create_drawer_box_for_front(pivot, leaf, rect, op_props)
             if drawer_look:
                 self._build_drawer_look_fronts(front, leaf, op_props)
+            elif door_look:
+                self._build_door_look_fronts(front, leaf, op_props, pull)
 
         # Sink apron: a 1/2" panel across the top of a DOOR opening
         # (apron / farmhouse sink), set 1/8" behind the face frame. The
@@ -12372,12 +12389,16 @@ class FaceFrameCabinet(GeoNodeCage):
         front gets its own drawer pull. The panels live under the front
         pivot, so the per-recalc pivot wipe clears them.
 
-        v1 scope: single-leaf LEFT / RIGHT swing doors.
+        Scope: single-leaf LEFT / RIGHT swing doors, and drawer fronts
+        (one drawer box behind N faces).
         """
         divisions = getattr(op_props, 'drawer_look_divisions', 'NONE')
-        if leaf['role'] != PART_ROLE_DOOR or divisions == 'NONE':
+        if divisions == 'NONE':
             return
-        if op_props.hinge_side not in ('LEFT', 'RIGHT'):
+        if leaf['role'] == PART_ROLE_DOOR:
+            if op_props.hinge_side not in ('LEFT', 'RIGHT'):
+                return
+        elif leaf['role'] != PART_ROLE_DRAWER_FRONT:
             return
         n = int(divisions)
         length, width, thickness = leaf['part_dims']
@@ -12403,6 +12424,8 @@ class FaceFrameCabinet(GeoNodeCage):
         openings = getattr(op_props, 'drawer_look_openings', None)
         if openings is not None and len(openings) == n:
             spec = [(o.size, bool(o.unlock_size)) for o in openings]
+        elif leaf['role'] == PART_ROLE_DRAWER_FRONT:
+            spec = [(0.0, False)] * n
         else:
             top_oh = bpy.context.scene.hb_face_frame.top_drawer_opening_height
             spec = [(0.0, False)] * (n - 1) + [(top_oh, True)]
@@ -12469,6 +12492,54 @@ class FaceFrameCabinet(GeoNodeCage):
                 rail.set_input('Width', width)
                 rail.set_input('Thickness', thickness)
             z += h + reveal
+
+    def _build_door_look_fronts(self, front, leaf, op_props, pull=None):
+        """Lay N applied door panels side by side on one DOOR leaf so it
+        reads like doors battened together but swings as one door.
+
+        Same carrier construction as _build_drawer_look_fronts: the leaf
+        becomes a flat slab recessed one thickness, and the proud panels
+        (DOOR_LOOK_FRONT, styled from the door pool) tile its width with
+        the double-door center reveal between them. The leaf's own pull
+        stays where the pull placer put it - on the unhinged edge, which
+        is the outer panel - lifted onto the panel face.
+        """
+        divisions = getattr(op_props, 'door_look_divisions', 'NONE')
+        if leaf['role'] != PART_ROLE_DOOR or divisions == 'NONE':
+            return
+        if op_props.hinge_side not in ('LEFT', 'RIGHT'):
+            return
+        n = int(divisions)
+        length, width, thickness = leaf['part_dims']
+        cab_props = self.obj.face_frame_cabinet
+        reveal = (solver.INSET_DOUBLE_DOOR_REVEAL
+                  if cab_props.default_door_inset_amount > 0
+                  else solver.DOUBLE_DOOR_REVEAL)
+        panel_w = (width - (n - 1) * reveal) / n
+        if panel_w <= 0.0 or length <= 0.0:
+            return
+
+        carrier = front.obj
+        carrier['HB_DRAWER_LOOK_CARRIER'] = True
+        outward = carrier.rotation_euler.to_matrix() @ Vector((0.0, 0.0, 1.0))
+        carrier.location = carrier.location - outward * thickness
+
+        for i in range(n):
+            panel = CabinetPart()
+            panel.create("Door-Look Panel " + str(i + 1))
+            panel.obj.parent = carrier
+            panel.obj['hb_part_role'] = PART_ROLE_DOOR_LOOK_FRONT
+            panel.obj['CABINET_PART'] = True
+            # Carrier-local frame: X = vertical, -Y = horizontal.
+            panel.obj.rotation_euler = (0.0, 0.0, 0.0)
+            panel.set_input('Mirror Y', True)
+            panel.obj.location = (0.0, -i * (panel_w + reveal), thickness)
+            panel.set_input('Length', length)
+            panel.set_input('Width', panel_w)
+            panel.set_input('Thickness', thickness)
+
+        if pull is not None:
+            pull.location.z += thickness
 
     def _add_drawer_look_pull(self, panel_obj, length, width, thickness,
                               scene_props):
