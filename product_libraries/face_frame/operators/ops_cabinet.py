@@ -4799,6 +4799,24 @@ def _apply_flanking_stile_floor(root, bay_obj, config, reset, was_floor=False):
         _set_mid_stile(bay_index, bay_index + 1)
 
 
+def _tune_panel_bay_splits(root, bay_obj):
+    """Panel bay mid stiles read as part of the panel frame: sized like
+    a finished-end panel's mid stile (door-style stile width), with no
+    division behind them - the panels are one field, not two cavities."""
+    from .. import applied_panel_sizing
+    cab = root.face_frame_cabinet
+    stile_w = applied_panel_sizing._mid_stile_width_for_panel(
+        root, cab, 'LEFT')
+    for child in bay_obj.children_recursive:
+        if not child.get(types_face_frame.TAG_SPLIT_NODE):
+            continue
+        sp = child.face_frame_split
+        if sp.axis != 'V':
+            continue
+        sp.add_backing = False
+        sp.splitter_width = stile_w
+
+
 def apply_bay_recipe(bay_obj, recipe, config=None, reset_bay_props=False):
     """Wipe `bay_obj`'s contents and rebuild them from a recipe tree.
 
@@ -4833,6 +4851,8 @@ def apply_bay_recipe(bay_obj, recipe, config=None, reset_bay_props=False):
         _build_recipe_into(
             recipe, bay_obj, 0, opening_idx, root.face_frame_cabinet,
         )
+        if config == 'PANEL':
+            _tune_panel_bay_splits(root, bay_obj)
         if config is not None:
             _apply_bay_prop_overrides(bay_obj, config, reset_bay_props)
             _apply_flanking_stile_floor(root, bay_obj, config,
@@ -4865,7 +4885,10 @@ def apply_bay_preset(bay_obj, config, reset_bay_props=False):
     presets = bay_presets.PRESETS.get(cabinet_type)
     if not presets or config not in presets:
         return False
-    return apply_bay_recipe(bay_obj, presets[config], config, reset_bay_props)
+    recipe = presets[config]
+    if config == 'PANEL':
+        recipe = bay_presets.panel_recipe(bay_obj.face_frame_bay.width)
+    return apply_bay_recipe(bay_obj, recipe, config, reset_bay_props)
 
 
 # ---------------------------------------------------------------------------

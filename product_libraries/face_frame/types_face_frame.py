@@ -2567,14 +2567,38 @@ class FaceFrameCabinet(GeoNodeCage):
             [c for c in self.obj.children if c.get(TAG_BAY_CAGE)],
             key=lambda c: c.get('hb_bay_index', 0),
         )
+        panel_rails = None
         for bay_obj in bays:
             bp = bay_obj.face_frame_bay
+            top_target = cab_props.top_rail_width
+            bottom_target = cab_props.bottom_rail_width
+            if bp.panel_bay:
+                if panel_rails is None:
+                    panel_rails = self._panel_bay_rail_widths()
+                top_target, bottom_target = panel_rails
             if not bp.unlock_top_rail:
-                if abs(bp.top_rail_width - cab_props.top_rail_width) > 1e-6:
-                    bp.top_rail_width = cab_props.top_rail_width
+                if abs(bp.top_rail_width - top_target) > 1e-6:
+                    bp.top_rail_width = top_target
             if not bp.unlock_bottom_rail:
-                if abs(bp.bottom_rail_width - cab_props.bottom_rail_width) > 1e-6:
-                    bp.bottom_rail_width = cab_props.bottom_rail_width
+                if abs(bp.bottom_rail_width - bottom_target) > 1e-6:
+                    bp.bottom_rail_width = bottom_target
+
+    def _panel_bay_rail_widths(self):
+        """(top, bottom) rail widths for a panel bay: the frame rail the
+        neighbouring doors overlay, less the overlay, plus the door
+        style's own rail - so the panel's inner edges land where the
+        door panels do. SLAB / no door style keeps the cabinet rails.
+        Same rule as a PANELED finished end (applied_panel_sizing)."""
+        from . import applied_panel_sizing
+        cab_props = self.obj.face_frame_cabinet
+        rail = applied_panel_sizing._door_rail_width(self.obj)
+        if rail <= 0.0:
+            return cab_props.top_rail_width, cab_props.bottom_rail_width
+        return (
+            cab_props.top_rail_width - cab_props.default_top_overlay + rail,
+            cab_props.bottom_rail_width - cab_props.default_bottom_overlay
+            + rail,
+        )
 
     def _distribute_bay_widths(self):
         """Redistribute available width among bays whose unlock_width is False.

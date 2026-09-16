@@ -8693,6 +8693,15 @@ class Face_Frame_Bay_Props(PropertyGroup):
         name="Remove Carcass", default=False,
         update=_update_cabinet_dim,
     )  # type: ignore
+    # Panel bay (Change Bay > Panel): the bay's face frame reads as a
+    # frame-and-panel. While a rail is locked its width follows the
+    # doors beside it (door-style rail + frame rail - overlay) so the
+    # panel's inner edges line up with the door panels; the rails run
+    # through and any mid stile sits between them.
+    panel_bay: BoolProperty(
+        name="Panel Bay", default=False,
+        update=_update_cabinet_dim,
+    )  # type: ignore
     # Per-bay override: when True this bay behaves as FLOATING regardless
     # of the cabinet's toe_kick_type. Sides under an end bay anchor at the
     # bay bottom rather than the floor, and kick subfront / finish kick
