@@ -1749,14 +1749,13 @@ class ClosetStarter(GeoNodeCage):
         self._reconcile_captured_back(opening)
         self._reconcile_cubbies(opening)
 
-        sp = self.obj.hb_closet_starter
-        lo, ro, to, bo = front_overlays(sp, scene_props, opening)
-        v_gap = sp.vertical_gap
-        h_gap = sp.horizontal_gap
+        lo, ro, to, bo = front_overlays(scene_props, opening)
+        v_gap = scene_props.vertical_gap
+        h_gap = scene_props.horizontal_gap
         if side == 'BACK':
-            front_y = sp.door_to_cabinet_gap
+            front_y = scene_props.door_to_cabinet_gap
         else:
-            front_y = -depth - sp.door_to_cabinet_gap
+            front_y = -depth - scene_props.door_to_cabinet_gap
 
         # Blender works out an object's children by walking every
         # object in the file, so the list is taken once here and shared
@@ -2765,12 +2764,11 @@ class ClosetStarter(GeoNodeCage):
             return
         st = scene_props.shelf_thickness
         pt = scene_props.panel_thickness
-        sp = self.obj.hb_closet_starter
         # A door across a whole bay has no opening of its own, so it
-        # takes the run's overlays as they come.
-        lo, ro, to, bo = front_overlays(sp, scene_props)
-        h_gap = sp.horizontal_gap
-        front_y = base_y - o_depth - sp.door_to_cabinet_gap
+        # takes the room's overlays as they come.
+        lo, ro, to, bo = front_overlays(scene_props)
+        h_gap = scene_props.horizontal_gap
+        front_y = base_y - o_depth - scene_props.door_to_cabinet_gap
         width = bay['width']
         interior_h = bay['interior_h']
         full = width + lo + ro
@@ -5427,7 +5425,7 @@ def _stash_door_closed(door, cx, cy, cz, leaf, side, height=0.0):
     door['hb_door_h'] = float(height)
 
 
-def front_overlays(sp, scene_props, opening=None):
+def front_overlays(scene_props, opening=None):
     """How far a front reaches over what it meets on each of its four
     sides, as (left, right, top, bottom).
 
@@ -5438,7 +5436,9 @@ def front_overlays(sp, scene_props, opening=None):
     edge by its reveal instead, leaving the edge showing - what a
     finished end or an exposed top wants. Left and right work off the
     panel thickness and the horizontal gap, top and bottom off the
-    shelf thickness and the vertical gap.
+    shelf thickness and the vertical gap. The figures are the room's -
+    every run hangs its fronts the same way, which is why they live in
+    the room options rather than in a starter dialog.
 
     Hand in an opening to let it take over any side it has unlocked,
     the same way a face frame opening takes a side over from its
@@ -5448,14 +5448,18 @@ def front_overlays(sp, scene_props, opening=None):
     """
     st = scene_props.shelf_thickness
     pt = scene_props.panel_thickness
-    lo = ((pt - sp.horizontal_gap) / 2.0 if sp.half_overlay_left
-          else pt - sp.left_reveal)
-    ro = ((pt - sp.horizontal_gap) / 2.0 if sp.half_overlay_right
-          else pt - sp.right_reveal)
-    to = ((st - sp.vertical_gap) / 2.0 if sp.half_overlay_top
-          else st - sp.top_reveal)
-    bo = ((st - sp.vertical_gap) / 2.0 if sp.half_overlay_bottom
-          else st - sp.bottom_reveal)
+    lo = ((pt - scene_props.horizontal_gap) / 2.0
+          if scene_props.half_overlay_left
+          else pt - scene_props.left_reveal)
+    ro = ((pt - scene_props.horizontal_gap) / 2.0
+          if scene_props.half_overlay_right
+          else pt - scene_props.right_reveal)
+    to = ((st - scene_props.vertical_gap) / 2.0
+          if scene_props.half_overlay_top
+          else st - scene_props.top_reveal)
+    bo = ((st - scene_props.vertical_gap) / 2.0
+          if scene_props.half_overlay_bottom
+          else st - scene_props.bottom_reveal)
     if opening is not None:
         op = opening.hb_closet_opening
         if op.unlock_left_overlay:
@@ -5515,10 +5519,10 @@ def drawer_front_span(opening, qty):
     root = find_starter_root(opening)
     if root is None or qty <= 0:
         return 0.0
-    sp = root.hb_closet_starter
-    _lo, _ro, to, bo = front_overlays(sp, run_sizes(opening), opening)
+    sizes = run_sizes(opening)
+    _lo, _ro, to, bo = front_overlays(sizes, opening)
     return max(_cage_dim_z(opening) + to + bo
-               - (qty - 1) * sp.vertical_gap, 0.0)
+               - (qty - 1) * sizes.vertical_gap, 0.0)
 
 
 # The least a segment stands at once a grab is pushing on it - the
@@ -5543,12 +5547,11 @@ def opening_min_interior(root, opening, scene_props):
     n = len(fronts)
     if not n:
         return 0.0
-    sp = root.hb_closet_starter
-    lo, ro, to, bo = front_overlays(sp, scene_props, opening)
+    lo, ro, to, bo = front_overlays(scene_props, opening)
     span = sum((float(f.get(PROP_FRONT_HEIGHT, 0.0))
                 if f.get(PROP_UNLOCK_FRONT_HEIGHT, 0)
                 else const.MIN_DRAWER_FRONT) for f in fronts)
-    span += (n - 1) * sp.vertical_gap
+    span += (n - 1) * scene_props.vertical_gap
     return max(span - to - bo, 0.0)
 
 
@@ -7306,9 +7309,11 @@ def apply_bay_config(bay_obj, config):
     ih = bp.height - 2.0 * st - kick
     dh = const.DRAWER_FRONT_HEIGHT
 
+    v_gap = run_sizes(root).vertical_gap
+
     def cap_z(qty):
         # Drawer-bank cap: top front half-overlays the shelf.
-        return qty * (dh + root.hb_closet_starter.vertical_gap) - st
+        return qty * (dh + v_gap) - st
 
     # Parse "Doors Over N Drawers" (DOORS_NDR) and "Doors Open N Drawers"
     # (DOORS_OPEN_NDR - same build with the doors shown open).

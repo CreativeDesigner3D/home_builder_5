@@ -78,6 +78,17 @@ def _update_starter_prop(self, context):
     types_closets.recalculate_closet_starter(self.id_data)
 
 
+def _update_room_solve(self, context):
+    """A room construction figure changed: re-solve every run, so the
+    whole room reads the new figure at once."""
+    from . import types_closets
+    scene = getattr(context, 'scene', None) or bpy.context.scene
+    with types_closets.suspend_recalc():
+        for obj in scene.objects:
+            if obj.get(types_closets.TAG_STARTER_CAGE):
+                types_closets.recalculate_closet_starter(obj)
+
+
 def _thickness_lock_update(attr):
     """The padlock beside one of the run's part thicknesses. Opening it
     hands the run the room's figure as it stands, so the field opens on
@@ -318,10 +329,6 @@ class Closet_Starter_Props(PropertyGroup):
         name="Show Corner", default=False)  # type: ignore
     show_panels: BoolProperty(
         name="Show Panels", default=False)  # type: ignore
-    show_thicknesses: BoolProperty(
-        name="Show Thicknesses", default=False)  # type: ignore
-    show_fronts: BoolProperty(
-        name="Show Fronts", default=False)  # type: ignore
     show_per_bay: BoolProperty(
         name="Show Per Bay", default=False)  # type: ignore
 
@@ -585,77 +592,6 @@ class Closet_Starter_Props(PropertyGroup):
                     "bottom shelf",
         default=0.0, min=0.0, unit='LENGTH', precision=4,
         update=_update_starter_prop)  # type: ignore
-
-    # ----- Fronts -----
-    # How far a door or drawer front reaches over what it meets on each
-    # of its four sides. A half overlay splits what the front shares
-    # with its neighbour: the two meet over the middle of the panel or
-    # shelf between them and the gap is what shows. Turning a side off
-    # holds the front back from that edge by the reveal instead, which
-    # is how a finished end or a top is left showing. Left and right
-    # work off the panel thickness and the horizontal gap, top and
-    # bottom off the shelf thickness and the vertical gap. Any opening
-    # can take a side over for itself.
-    half_overlay_top: BoolProperty(
-        name="Half Overlay Top",
-        description="Share the shelf above with the front over it, "
-                    "rather than holding back by the top reveal",
-        default=True, update=_update_starter_prop)  # type: ignore
-    half_overlay_bottom: BoolProperty(
-        name="Half Overlay Bottom",
-        description="Share the shelf below with the front under it, "
-                    "rather than holding back by the bottom reveal",
-        default=True, update=_update_starter_prop)  # type: ignore
-    half_overlay_left: BoolProperty(
-        name="Half Overlay Left",
-        description="Share the panel on the left with the front beside "
-                    "it, rather than holding back by the left reveal",
-        default=True, update=_update_starter_prop)  # type: ignore
-    half_overlay_right: BoolProperty(
-        name="Half Overlay Right",
-        description="Share the panel on the right with the front beside "
-                    "it, rather than holding back by the right reveal",
-        default=True, update=_update_starter_prop)  # type: ignore
-    top_reveal: FloatProperty(
-        name="Top Reveal",
-        description="How much of the shelf above is left showing when "
-                    "the top is not a half overlay",
-        default=const.TOP_REVEAL, min=0.0, unit='LENGTH', precision=4,
-        update=_update_starter_prop)  # type: ignore
-    bottom_reveal: FloatProperty(
-        name="Bottom Reveal",
-        description="How much of the shelf below is left showing when "
-                    "the bottom is not a half overlay",
-        default=const.BOTTOM_REVEAL, min=0.0, unit='LENGTH', precision=4,
-        update=_update_starter_prop)  # type: ignore
-    left_reveal: FloatProperty(
-        name="Left Reveal",
-        description="How much of the panel on the left is left showing "
-                    "when the left is not a half overlay",
-        default=const.LEFT_REVEAL, min=0.0, unit='LENGTH', precision=4,
-        update=_update_starter_prop)  # type: ignore
-    right_reveal: FloatProperty(
-        name="Right Reveal",
-        description="How much of the panel on the right is left showing "
-                    "when the right is not a half overlay",
-        default=const.RIGHT_REVEAL, min=0.0, unit='LENGTH', precision=4,
-        update=_update_starter_prop)  # type: ignore
-    vertical_gap: FloatProperty(
-        name="Vertical Gap",
-        description="Gap between a front and the front above or below it",
-        default=const.VERTICAL_GAP, min=0.0, unit='LENGTH', precision=4,
-        update=_update_starter_prop)  # type: ignore
-    horizontal_gap: FloatProperty(
-        name="Horizontal Gap",
-        description="Gap between a front and the front beside it",
-        default=const.HORIZONTAL_GAP, min=0.0, unit='LENGTH', precision=4,
-        update=_update_starter_prop)  # type: ignore
-    door_to_cabinet_gap: FloatProperty(
-        name="Door to Cabinet Gap",
-        description="How far the back of a front is held off the front "
-                    "edge of the closet",
-        default=const.DOOR_TO_CABINET_GAP, min=0.0, unit='LENGTH',
-        precision=4, update=_update_starter_prop)  # type: ignore
 
     # End options. Finished end and drill through are recorded on the
     # panel as flags - whether the end is exposed, and whether its
@@ -1527,6 +1463,78 @@ class Closets_Scene_Props(PropertyGroup):
         name="Toe Kick Setback", default=const.DEFAULT_TOE_KICK_SETBACK,
         unit='LENGTH', precision=4)  # type: ignore
 
+    # ----- Fronts -----
+    # How every door and drawer front in the room hangs. These are the
+    # room's figures - every run hangs its fronts the same way, so they
+    # live here rather than in a starter dialog. A half overlay splits
+    # what the front shares with its neighbour: the two meet over the
+    # middle of the panel or shelf between them and the gap is what
+    # shows. Turning a side off holds the front back from that edge by
+    # the reveal instead, which is how a finished end or a top is left
+    # showing. Left and right work off the panel thickness and the
+    # horizontal gap, top and bottom off the shelf thickness and the
+    # vertical gap. Any opening can still take a side over for itself.
+    door_to_cabinet_gap: FloatProperty(
+        name="Door to Cabinet Gap",
+        description="How far the back of a front is held off the front "
+                    "edge of the closet",
+        default=const.DOOR_TO_CABINET_GAP, min=0.0, unit='LENGTH',
+        precision=4, update=_update_room_solve)  # type: ignore
+    vertical_gap: FloatProperty(
+        name="Vertical Gap",
+        description="Gap between a front and the front above or below it",
+        default=const.VERTICAL_GAP, min=0.0, unit='LENGTH', precision=4,
+        update=_update_room_solve)  # type: ignore
+    horizontal_gap: FloatProperty(
+        name="Horizontal Gap",
+        description="Gap between a front and the front beside it",
+        default=const.HORIZONTAL_GAP, min=0.0, unit='LENGTH', precision=4,
+        update=_update_room_solve)  # type: ignore
+    half_overlay_top: BoolProperty(
+        name="Half Overlay Top",
+        description="Share the shelf above with the front over it, "
+                    "rather than holding back by the top reveal",
+        default=True, update=_update_room_solve)  # type: ignore
+    half_overlay_bottom: BoolProperty(
+        name="Half Overlay Bottom",
+        description="Share the shelf below with the front under it, "
+                    "rather than holding back by the bottom reveal",
+        default=True, update=_update_room_solve)  # type: ignore
+    half_overlay_left: BoolProperty(
+        name="Half Overlay Left",
+        description="Share the panel on the left with the front beside "
+                    "it, rather than holding back by the left reveal",
+        default=True, update=_update_room_solve)  # type: ignore
+    half_overlay_right: BoolProperty(
+        name="Half Overlay Right",
+        description="Share the panel on the right with the front beside "
+                    "it, rather than holding back by the right reveal",
+        default=True, update=_update_room_solve)  # type: ignore
+    top_reveal: FloatProperty(
+        name="Top Reveal",
+        description="How much of the shelf above is left showing when "
+                    "the top is not a half overlay",
+        default=const.TOP_REVEAL, min=0.0, unit='LENGTH', precision=4,
+        update=_update_room_solve)  # type: ignore
+    bottom_reveal: FloatProperty(
+        name="Bottom Reveal",
+        description="How much of the shelf below is left showing when "
+                    "the bottom is not a half overlay",
+        default=const.BOTTOM_REVEAL, min=0.0, unit='LENGTH', precision=4,
+        update=_update_room_solve)  # type: ignore
+    left_reveal: FloatProperty(
+        name="Left Reveal",
+        description="How much of the panel on the left is left showing "
+                    "when the left is not a half overlay",
+        default=const.LEFT_REVEAL, min=0.0, unit='LENGTH', precision=4,
+        update=_update_room_solve)  # type: ignore
+    right_reveal: FloatProperty(
+        name="Right Reveal",
+        description="How much of the panel on the right is left showing "
+                    "when the right is not a half overlay",
+        default=const.RIGHT_REVEAL, min=0.0, unit='LENGTH', precision=4,
+        update=_update_room_solve)  # type: ignore
+
     # ----- Selection modes -----
     closet_selection_mode: EnumProperty(
         name="Closet Selection Mode",
@@ -1917,6 +1925,25 @@ class Closets_Scene_Props(PropertyGroup):
         col.separator()
         col.prop(self, 'closet_seed_door_shelves',
                  text="Shelves Behind Doors")
+
+        # How every front in the room hangs. Room figures - a change
+        # here re-solves every run; any one opening can still take an
+        # overlay side over for itself in its own dialog.
+        col = layout.column(align=True)
+        col.label(text="Gaps:")
+        col.prop(self, 'door_to_cabinet_gap', text="Door to Cabinet")
+        col.prop(self, 'vertical_gap', text="Vertical")
+        col.prop(self, 'horizontal_gap', text="Horizontal")
+
+        col = layout.column(align=True)
+        col.label(text="Half Overlay / Reveal:")
+        for side, label in (('top', "Top"), ('bottom', "Bottom"),
+                            ('left', "Left"), ('right', "Right")):
+            row = col.row(align=True)
+            row.prop(self, 'half_overlay_%s' % side, text=label)
+            sub = row.row(align=True)
+            sub.enabled = not getattr(self, 'half_overlay_%s' % side)
+            sub.prop(self, '%s_reveal' % side, text="")
 
     # =====================================================================
     # UI: pulls (Options tab)

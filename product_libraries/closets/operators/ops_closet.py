@@ -5827,8 +5827,7 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
         # what happens at the top first - the accent shelf, then the
         # hang rail it mounts by - the panels and what hangs on them in
         # the middle, and the floor - insets, then the toe kick - last.
-        # The cross-cutting sections (fronts, thicknesses, per bay)
-        # stand between the middle and the floor.
+        # Per Bay stands between the middle and the floor.
         if not is_corner:
             box = _section(layout, sp, 'show_top', "Top")
             if box is not None:
@@ -5917,47 +5916,10 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
                 col = box.column(align=True)
                 col.prop(sp, 'l_add_cleat')
 
-        # What this run's parts are cut from. Each figure follows the
-        # room while its padlock is closed, which is why a closed one
-        # reads back the room's figure: there is something to measure
-        # against before taking it over.
-        box = _section(layout, sp, 'show_thicknesses', "Thicknesses")
-        if box is not None:
-            room = context.scene.hb_closets
-            col = box.column(align=True)
-            for attr, label in (('panel_thickness', "Panel"),
-                                ('shelf_thickness', "Shelf"),
-                                ('divider_thickness', "Cubby Divider"),
-                                ('batten_thickness', "Batten"),
-                                ('batten_width', "Batten Width")):
-                row = col.row(align=True)
-                row.label(text=label)
-                _locked_field(row, sp, attr, 'unlock_' + attr,
-                              locked_src=room)
-
-        # How every door and drawer front on the run sits against what it
-        # meets. A half overlay splits what the front shares with its
-        # neighbour, so the two meet over the middle of the panel or
-        # shelf between them and the gap is what shows; turning a side
-        # off holds the front back from that edge by the reveal instead,
-        # which is how a finished end or an exposed top is left showing.
-        # Any one opening can still take a side over for itself.
-        box = _section(layout, sp, 'show_fronts', "Fronts")
-        if box is not None:
-            col = box.column(align=True)
-            col.prop(sp, 'door_to_cabinet_gap')
-            col.prop(sp, 'vertical_gap')
-            col.prop(sp, 'horizontal_gap')
-            col = box.column(align=True)
-            col.label(text="Half Overlay / Reveal")
-            for side, label in (('top', "Top"), ('bottom', "Bottom"),
-                                ('left', "Left"), ('right', "Right")):
-                row = col.row(align=True)
-                row.prop(sp, 'half_overlay_%s' % side, text=label)
-                sub = row.row(align=True)
-                sub.enabled = not getattr(sp, 'half_overlay_%s' % side)
-                sub.prop(sp, '%s_reveal' % side, text="")
-
+        # Thicknesses and front hanging figures are deliberately not
+        # here: they are the room's, set in the library's Options
+        # (thicknesses under Sizes, front gaps and overlays under
+        # Doors & Drawer Fronts). This dialog is one run's build.
         if bays:
             box = _section(layout, sp, 'show_per_bay', "Per Bay")
             if box is not None:
@@ -6909,13 +6871,13 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
             sub = box.column(align=True)
             sub.enabled = self.door_swing != 'NONE'
             sub.prop(self, 'open_door')
-        # What the run works out for a front, and any side this opening
-        # has taken over. A locked side reads back the run's figure, so
+        # What the room works out for a front, and any side this opening
+        # has taken over. A locked side reads back the room's figure, so
         # there is something to measure against before unlocking it.
         run = types_closets.find_starter_root(opening)
         if run is not None:
             resolved = types_closets.front_overlays(
-                run.hb_closet_starter, types_closets.run_sizes(run))
+                types_closets.run_sizes(run))
             box = layout.box()
             box.label(text="Overlays", icon='MOD_EDGESPLIT')
             col = box.column(align=True)
