@@ -11621,7 +11621,11 @@ class FaceFrameCabinet(GeoNodeCage):
     def _apply_sink_clearance(self, parts, cutter):
         """Every part carries a boolean DIFFERENCE against the sink's
         clearance cutter, or loses it when there is no sink -- the same
-        lazy-cutter + boolean pattern as the angled cuts."""
+        lazy-cutter + boolean pattern as the angled cuts. The cut is
+        switched off while the appliance shows no model."""
+        from ..common import appliance_geo
+        active = cutter is not None and appliance_geo.clearance_active(
+            cutter.parent)
         for part in parts:
             mod = part.modifiers.get(self.SINK_CLEARANCE_MOD_NAME)
             if cutter is None:
@@ -11634,6 +11638,7 @@ class FaceFrameCabinet(GeoNodeCage):
                 mod.operation = 'DIFFERENCE'
             if mod.object is not cutter:
                 mod.object = cutter
+            appliance_geo.set_clearance_cut(mod, active)
 
     def _update_bay_cage(self, bay_obj, layout, bay_index):
         """Position and size a single bay cage from the solver. Cascades

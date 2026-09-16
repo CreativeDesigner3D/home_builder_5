@@ -1103,6 +1103,7 @@ def apply_visibility(scene=None):
         _set_hidden(obj, hide)
     for obj in [o for o in scene.objects if o.get('IS_APPLIANCE')]:
         refresh_labels(obj)
+    refresh_clearance_cuts(scene)
     return len(parts)
 
 
@@ -1915,6 +1916,37 @@ def sink_clearance_cutter(cage_obj):
     return cutter
 
 
+def clearance_active(cage_obj, scene=None):
+    """A sink or cooktop clears the cabinet around it only while its
+    model shows: a cage with no model, or a room showing only cages,
+    leaves the cabinet parts whole."""
+    return (cage_obj is not None and models_shown(scene)
+            and bool(_geo_children(cage_obj)))
+
+
+def set_clearance_cut(mod, active):
+    if mod.show_viewport != active:
+        mod.show_viewport = active
+    if mod.show_render != active:
+        mod.show_render = active
+
+
+def refresh_clearance_cuts(scene=None, cage_obj=None):
+    """Switch every boolean cut against a clearance cutter on or off to
+    match its appliance -- all of them, or just ``cage_obj``'s."""
+    scene = scene or bpy.context.scene
+    for obj in scene.objects:
+        for mod in obj.modifiers:
+            if mod.type != 'BOOLEAN':
+                continue
+            cutter = mod.object
+            if cutter is None or not cutter.get(SINK_CUTTER_FLAG):
+                continue
+            if cage_obj is not None and cutter.parent is not cage_obj:
+                continue
+            set_clearance_cut(mod, clearance_active(cutter.parent, scene))
+
+
 def _subtract_box(target, matrix, bounds, scene):
     """Boolean a box out of a mesh, evaluated through a temporary
     modifier and written back into the mesh datablock it already has."""
@@ -2545,9 +2577,11 @@ def build_geometry(cage_obj):
         return False
     remove_geometry(cage_obj)
     if not supports(cage_obj) or stored_opts(cage_obj) is None:
+        _refresh_own_clearance(cage_obj)
         return False
     opts = merged_opts(cage_obj)
     if opts.get('model_style', 'NONE') == 'NONE':
+        _refresh_own_clearance(cage_obj)
         return False
     builder = _BUILDERS.get(appliance_type(cage_obj))
     if builder is None:
@@ -2561,7 +2595,13 @@ def build_geometry(cage_obj):
         for child in _geo_children(cage_obj):
             _set_hidden(child, True)
     refresh_labels(cage_obj)
+    _refresh_own_clearance(cage_obj)
     return True
+
+
+def _refresh_own_clearance(cage_obj):
+    if any(c.get(SINK_CUTTER_FLAG) for c in cage_obj.children):
+        refresh_clearance_cuts(cage_obj=cage_obj)
 
 
 def rebuild_all(scene=None):
