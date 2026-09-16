@@ -1712,6 +1712,12 @@ class hb_closets_OT_add_part(bpy.types.Operator,
         z = const.snap_system_hole(seg_bottom + local_z) - seg_bottom
         z = max(0.0, min(z, interior_h))
         if self.part_type == 'ROD':
+            # The standard drop under the shelf or top above wins over
+            # the hole lattice when the cursor is near it: a rod hangs
+            # from cups under the shelf, not on a system hole.
+            z_hang = interior_h - const.ROD_TOP_OFFSET
+            if z_hang > 0.0 and abs(local_z - z_hang) < units.inch(1.0):
+                z = z_hang
             # Stored as distance from the opening top (rods ride the top).
             self._preview['hb_z_offset'] = float(interior_h - z)
             self._preview['hb_anchor_top'] = 1
@@ -3715,6 +3721,86 @@ class hb_closets_OT_place_misc_part(bpy.types.Operator,
         return {'RUNNING_MODAL'}
 
 
+class hb_closets_OT_rod_prompts(bpy.types.Operator):
+    """Move the active closet rod: its height is its own, how far it
+    stands off the back is the opening's (every rod in that opening
+    moves with it)."""
+    bl_idname = "hb_closets.rod_prompts"
+    bl_label = "Rod Properties"
+    bl_options = {'UNDO'}
+
+    from_top: bpy.props.FloatProperty(
+        name="Distance From Top",
+        description="How far down from the shelf or top above the rod's "
+                    "centerline sits",
+        min=0.0, unit='LENGTH', precision=4)  # type: ignore
+    set_from_front: bpy.props.BoolProperty(
+        name="Set Distance From Front",
+        description="Measure the rod front to back from the front edge of "
+                    "the opening instead of from the back")  # type: ignore
+    from_front: bpy.props.FloatProperty(
+        name="Dim From Front", min=0.0,
+        unit='LENGTH', precision=4)  # type: ignore
+    from_rear: bpy.props.FloatProperty(
+        name="Dim From Rear", min=0.0,
+        unit='LENGTH', precision=4)  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (obj is not None
+                and obj.get('hb_part_role') == types_closets.PART_ROLE_ROD
+                and obj.parent is not None
+                and hasattr(obj.parent, 'hb_closet_opening'))
+
+    def invoke(self, context, event):
+        obj = context.active_object
+        op = obj.parent.hb_closet_opening
+        self.from_top = float(obj.get('hb_z_offset', 0.0))
+        if not obj.get('hb_anchor_top'):
+            # A rod held off the bottom reads as a drop from the top.
+            try:
+                interior_h = hb_types.GeoNodeCage(obj.parent).get_input(
+                    'Dim Z')
+            except Exception:
+                interior_h = 0.0
+            self.from_top = max(0.0, interior_h - self.from_top)
+        self.set_from_front = bool(op.rod_set_from_front)
+        self.from_front = float(op.rod_from_front)
+        self.from_rear = float(op.rod_from_rear)
+        return context.window_manager.invoke_props_dialog(self, width=300)
+
+    def draw(self, context):
+        layout = self.layout
+        box = layout.box()
+        box.label(text="Height", icon='SORT_DESC')
+        box.prop(self, 'from_top')
+        box = layout.box()
+        box.label(text="Front to Back (whole opening)",
+                  icon='ORIENTATION_LOCAL')
+        col = box.column(align=True)
+        col.prop(self, 'set_from_front')
+        if self.set_from_front:
+            col.prop(self, 'from_front')
+        else:
+            col.prop(self, 'from_rear')
+
+    def execute(self, context):
+        obj = context.active_object
+        if obj is None or obj.parent is None:
+            return {'CANCELLED'}
+        obj['hb_z_offset'] = float(self.from_top)
+        obj['hb_anchor_top'] = 1
+        op = obj.parent.hb_closet_opening
+        op.rod_set_from_front = self.set_from_front
+        op.rod_from_front = self.from_front
+        op.rod_from_rear = self.from_rear
+        root = types_closets.find_starter_root(obj)
+        if root is not None:
+            types_closets.recalculate_closet_starter(root)
+        return {'FINISHED'}
+
+
 class hb_closets_OT_misc_part_prompts(bpy.types.Operator):
     """Size and place the active misc part. Nothing about a misc part
     is worked out for the person: the numbers here are the part."""
@@ -5487,6 +5573,11 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
             col.prop(sp, 'filler_left_width')
             col.prop(sp, 'filler_right_width')
             return
+        from .. import props_closets
+        if props_closets.starter_wall(root) is not None:
+            box = layout.box()
+            box.label(text="Location")
+            box.prop(sp, 'wall_offset')
         if is_corner:
             box = layout.box()
             box.label(text="Corner")
@@ -7299,6 +7390,7 @@ classes = (
     hb_closets_OT_place_misc_part,
     hb_closets_OT_place_continuous_top,
     hb_closets_OT_continuous_top_prompts,
+    hb_closets_OT_rod_prompts,
     hb_closets_OT_misc_part_prompts,
     hb_closets_OT_add_adj_shelves,
     hb_closets_OT_add_drawers,

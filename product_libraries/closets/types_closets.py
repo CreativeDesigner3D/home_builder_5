@@ -7254,6 +7254,8 @@ def apply_bay_config(bay_obj, config):
 # ---------------------------------------------------------------------------
 OPENING_CONFIG_GROUPS = [
     [('ADJ_SHELVES', "Adjustable Shelves")],
+    [('HANG_ROD', "Hanging Rod"),
+     ('DOUBLE_HANG', "Double Hang")],
     [('DOOR_LEFT', "Left Swing Door"),
      ('DOOR_RIGHT', "Right Swing Door"),
      ('DOOR_DOUBLE', "Double Door"),
@@ -7279,6 +7281,10 @@ def apply_opening_config(opening, config):
     if config == 'ADJ_SHELVES':
         opening.hb_closet_opening.adj_shelf_qty = \
             default_adj_shelf_qty(opening)
+    elif config == 'HANG_ROD':
+        _cfg_rod(opening)
+    elif config == 'DOUBLE_HANG':
+        _cfg_double_hang(opening)
     elif config == 'DOOR_LEFT':
         opening.hb_closet_opening.door_swing = 'LEFT'
         seed_door_shelves(opening)
