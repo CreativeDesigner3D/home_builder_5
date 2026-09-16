@@ -5223,12 +5223,7 @@ class FaceFrameCabinet(GeoNodeCage):
     # with their top against the carcass bottom's underside; flush panels
     # sit with their underside at the bottom-rail bottom (cabinet z=0) -
     # the same placement rule the upper-bottom detail card draws.
-    _FINISHED_BOTTOM_SPECS = {
-        'QUARTER': (inch(0.25), False),
-        'THREE_QUARTER': (inch(0.75), False),
-        'QUARTER_FLUSH': (inch(0.25), True),
-        'THREE_QUARTER_FLUSH': (inch(0.75), True),
-    }
+    _FINISHED_BOTTOM_SPECS = solver.FINISHED_BOTTOM_SPECS
     _FB_ROUTE_WIDTH = inch(0.875)
     _FB_ROUTE_FRONT_INSET = inch(1.5)
     _FB_CUT_MOD_NAME = 'FB LED Route'
@@ -5342,10 +5337,12 @@ class FaceFrameCabinet(GeoNodeCage):
             'thickness': thickness,
         }
 
-    def _fb_bottom_targets(self, cab):
+    def _fb_bottom_targets(self, cab, layout):
         """One target per live carcass-bottom segment, filtered by the
         cabinet's per-bay scope (empty scope = every segment,
-        FINISHED_BOTTOM_BAYS_NONE = none of them)."""
+        FINISHED_BOTTOM_BAYS_NONE = none of them). A segment reaching a
+        finish-faced side runs out to that side's outer face; the side
+        stops on top of the panel (solver.finished_bottom_wraps_side)."""
         scope = {s.strip() for s in
                  getattr(cab, 'finished_bottom_bays', '').split(',')
                  if s.strip()}
@@ -5363,8 +5360,21 @@ class FaceFrameCabinet(GeoNodeCage):
             tgt = self._fb_target_from_part(
                 src, key, self.obj, cab.bottom_rail_width,
                 cab.material_thickness)
-            if tgt is not None:
-                targets.append(tgt)
+            if tgt is None:
+                continue
+            eps = 1e-5
+            if (solver.finished_bottom_wraps_side(layout, 'LEFT')
+                    and tgt['x'] <= solver.carcass_inner_left_x(layout)
+                    + eps):
+                outer = solver.left_scribe_offset(layout)
+                tgt['length'] += tgt['x'] - outer
+                tgt['x'] = outer
+            if (solver.finished_bottom_wraps_side(layout, 'RIGHT')
+                    and tgt['x'] + tgt['length']
+                    >= solver.carcass_inner_right_x(layout) - eps):
+                outer = layout.dim_x - solver.right_scribe_offset(layout)
+                tgt['length'] = outer - tgt['x']
+            targets.append(tgt)
         return targets
 
     @staticmethod
@@ -5424,9 +5434,9 @@ class FaceFrameCabinet(GeoNodeCage):
         cabinet's finished_bottom_type; ensure it's gone when NONE.
 
         Targets are the live carcass-bottom segments of an upper (one
-        panel each, mirroring that segment's span and height - so the
-        finish stops inside finished ends exactly like the carcass bottom
-        does, follows a raised / dropped bay's own bottom, and skips bays
+        panel each, mirroring that segment's span and height, run out to
+        the outer face of a finish-faced side that stops on top of it -
+        so it follows a raised / dropped bay's own bottom, and skips bays
         whose bottom is removed) plus any mid-rail shelf switched on for
         it. Each panel gets an LED route cut into its underside near the
         front edge and an optional area light in the route.
@@ -5439,7 +5449,7 @@ class FaceFrameCabinet(GeoNodeCage):
             return
         targets = []
         if layout.cabinet_type == 'UPPER':
-            targets.extend(self._fb_bottom_targets(cab))
+            targets.extend(self._fb_bottom_targets(cab, layout))
         targets.extend(self._fb_shelf_targets())
         if not targets:
             self._cleanup_finished_bottom()
