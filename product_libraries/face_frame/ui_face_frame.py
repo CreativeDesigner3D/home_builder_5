@@ -84,6 +84,10 @@ def draw_identity(layout, root):
     row = layout.row()
     row.prop(root, 'name', text='', icon='MESH_CUBE')
     row.label(text=cab_props.cabinet_type)
+    layout.prop(cab_props, 'existing_cabinet')
+    if cab_props.existing_cabinet:
+        layout.label(text="Already on site: shown gray, not built or priced",
+                     icon='INFO')
 
 
 def draw_dimensions(layout, root):

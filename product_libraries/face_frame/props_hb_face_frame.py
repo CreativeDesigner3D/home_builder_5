@@ -993,6 +993,24 @@ def _is_cage(obj):
     return any(obj.get(tag) for tag in _STYLE_CAGE_TAGS)
 
 
+# Cage stamp for a cabinet that is already on site: drawn for reference,
+# not built and not priced (Face_Frame_Cabinet_Props.existing_cabinet).
+# Downstream consumers read the stamp, so it is checked up the parent
+# chain - anything nested inside an existing cabinet is existing too.
+EXISTING_CABINET_TAG = 'IS_EXISTING_CABINET'
+# Grey an existing cabinet wears in place of its style colour.
+EXISTING_CABINET_COLOR = (0.55, 0.55, 0.55)
+
+
+def is_existing_cabinet(obj):
+    """True when ``obj`` is, or sits inside, a cabinet marked existing."""
+    while obj is not None:
+        if obj.get(EXISTING_CABINET_TAG):
+            return True
+        obj = obj.parent
+    return False
+
+
 def _style_tint_for_cabinet(cabinet_obj, styles):
     """The RGB a cabinet should render as, or None if it has no style.
 
@@ -1002,6 +1020,8 @@ def _style_tint_for_cabinet(cabinet_obj, styles):
     then. The stored swatch is refreshed to match on the way past, so the
     style panel shows the colour its cabinets are wearing.
     """
+    if is_existing_cabinet(cabinet_obj):
+        return EXISTING_CABINET_COLOR
     name = cabinet_obj.get('STYLE_NAME')
     if not name:
         return None
@@ -1125,6 +1145,17 @@ def style_color_for_object(obj, context=None, highlight=None):
         highlight = _is_cage(obj)
     alpha = _STYLE_CAGE_ALPHA if highlight else 1.0
     return (tint[0], tint[1], tint[2], alpha)
+
+
+def _update_existing_cabinet(self, context):
+    """Stamp (or clear) the existing-cabinet tag on the cabinet root and
+    repaint, so the grey shows as soon as the box is ticked."""
+    root = self.id_data
+    if self.existing_cabinet:
+        root[EXISTING_CABINET_TAG] = True
+    elif EXISTING_CABINET_TAG in root:
+        del root[EXISTING_CABINET_TAG]
+    apply_style_colors(context)
 
 
 def update_show_style_colors(self, context):
@@ -7000,6 +7031,14 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         name="Lock Width",
         description="Hold this cabinet's width when a containing group is resized",
         default=False,
+    )  # type: ignore
+
+    existing_cabinet: BoolProperty(
+        name="Existing Cabinet",
+        description="This cabinet is already on site and is not being "
+                    "built. It is drawn gray in the model and drawings "
+                    "and left out of pricing",
+        default=False, update=_update_existing_cabinet,
     )  # type: ignore
 
     cabinet_type: EnumProperty(

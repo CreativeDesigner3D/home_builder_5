@@ -277,6 +277,11 @@ class HOME_BUILDER_MT_face_frame_cabinet_commands(bpy.types.Menu):
 
         _draw_visibility_items(layout, 'PRODUCT', "Cabinet")
 
+        _ex_root = types_face_frame.find_cabinet_root(context.active_object)
+        if _ex_root is not None:
+            layout.separator()
+            layout.prop(_ex_root.face_frame_cabinet, 'existing_cabinet')
+
         layout.separator()
         layout.operator("hb_face_frame.delete_cabinet",
                         text="Delete Cabinet", icon='X')
