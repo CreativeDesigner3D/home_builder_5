@@ -3045,8 +3045,10 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                         child, finish_mat, finish_mat_rotated)
                 continue
 
-            if role in ('ADA_FRONT', 'ADA_ANGLED_FRONT', 'ADA_BOTTOM'):
-                # Python-built accessible sink fronts: slot 0 on a slab
+            if role in ('ADA_FRONT', 'ADA_ANGLED_FRONT', 'ADA_BOTTOM',
+                        'PANELED_TOP_RAIL'):
+                # Python-built accessible sink fronts and paneled top
+                # rails: slot 0 on a slab
                 # (grain along the band), stile / rail / panel slots on
                 # stiles and rails.
                 me = child.data
@@ -7686,6 +7688,14 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
                     "down from the top of the box",
         default=units.inch(5.5), min=0.0, unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
+    )  # type: ignore
+    paneled_top_rail: BoolProperty(
+        name="Paneled Top Rail",
+        description="Build each top rail as stiles and rails around a "
+                    "panel from the door style, for a tall rail that "
+                    "should read like a door. A rail too narrow for a "
+                    "frame stays a plain rail",
+        default=False, update=_update_cabinet_dim,
     )  # type: ignore
     ada_front_construction: EnumProperty(
         name="Front",

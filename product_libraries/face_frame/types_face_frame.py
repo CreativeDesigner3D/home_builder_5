@@ -417,6 +417,11 @@ PART_ROLE_ADA_BOTTOM = 'ADA_BOTTOM'
 ADA_FRONT_PART_ROLES = (PART_ROLE_ADA_FRONT, PART_ROLE_ADA_ANGLED_FRONT,
                         PART_ROLE_ADA_BOTTOM)
 PART_ROLE_APRON = 'APRON'
+# Paneled top rail: stiles and rails around a panel from the door style,
+# built in place of a top rail segment (the plain rail is hidden while
+# it exists). Face_Frame_Cabinet_Props.paneled_top_rail.
+PART_ROLE_PANELED_TOP_RAIL = 'PANELED_TOP_RAIL'
+PANELED_RAIL_HIDDEN_TAG = 'hb_paneled_rail_hidden'
 # Drawer-look door: a working DOOR leaf wearing N applied drawer-front
 # panels (proud of the leaf, with reveal gaps that read as faux mid
 # rails) so it looks like a drawer stack but opens as one door. Built in
@@ -1900,6 +1905,15 @@ def locked_bay_slack(cabinet_obj):
 # ---------------------------------------------------------------------------
 # Base cabinet class
 # ---------------------------------------------------------------------------
+
+def _remove_part_with_mesh(obj):
+    """Delete a python-built part and its mesh once nothing else uses it."""
+    mesh = obj.data
+    bpy.data.objects.remove(obj, do_unlink=True)
+    if mesh is not None and mesh.users == 0:
+        bpy.data.meshes.remove(mesh)
+
+
 class FaceFrameCabinet(GeoNodeCage):
     # When True, the place_cabinet modal pins bay_qty=1 and disables
     # fill-to-gap behavior. Used for single-unit products like sinks
@@ -3732,6 +3746,7 @@ class FaceFrameCabinet(GeoNodeCage):
         # cabinet's tip-up diagonal exceeds the ceiling. Re-applied here so
         # it survives part reconciliation, exactly like the angled cutter.
         self._reconcile_ada_side_shape(layout)
+        self._reconcile_paneled_top_rails()
 
         wedge = solver.wedge_geometry(layout) if self._has_carcass() else None
         if wedge is not None:
@@ -7996,6 +8011,95 @@ class FaceFrameCabinet(GeoNodeCage):
             obj.matrix_basis = Matrix.Translation(origin) @ basis.to_4x4()
             self._build_ada_front_mesh(obj, construction, width, height,
                                        thickness)
+
+    def _reconcile_paneled_top_rails(self):
+        """Build a paneled part over each top rail segment, or take them
+        away.
+
+        Each part takes its rail's place and size exactly (rail length
+        across, rail width tall, face frame thickness deep) and builds as
+        stiles and rails around a panel from the door style. The rail
+        stays in the file, hidden, so turning the option off - or a rail
+        too narrow for a frame - falls straight back to the plain rail.
+        Accessible sinks already replace the top rail with their own
+        front, so they are left alone.
+        """
+        cab = self.obj.face_frame_cabinet
+        want = (cab.paneled_top_rail and not self.obj.get(ADA_SINK_TAG)
+                and self._has_carcass())
+        rails = {}
+        panels = {}
+        for child in list(self.obj.children):
+            role = child.get('hb_part_role')
+            if role == PART_ROLE_TOP_RAIL:
+                rails[child.get('hb_segment_start_bay')] = child
+            elif role == PART_ROLE_PANELED_TOP_RAIL:
+                key = child.get('hb_segment_start_bay')
+                if key in panels or not want or key not in rails:
+                    _remove_part_with_mesh(child)
+                else:
+                    panels[key] = child
+        for key in [k for k in panels if k not in rails]:
+            del panels[key]
+
+        # door_builder's front-cutpart space (height up X, width along
+        # -Y, face at +Z) in a top rail's local frame: the rail runs its
+        # length along X, hangs its width down from the origin (mirror
+        # Y) and its thickness back from the face (mirror Z, then the
+        # 90 degree X rotation).
+        for key, rail in rails.items():
+            panel = panels.get(key)
+            built = False
+            if want:
+                rail_part = CabinetPart(rail)
+                length = rail_part.get_input('Length')
+                width = rail_part.get_input('Width')
+                thickness = rail_part.get_input('Thickness')
+                if (not rail.get('hb_ada_hidden') and length > 0.0
+                        and width > 0.0 and thickness > 0.0):
+                    if panel is None:
+                        part = CabinetPart()
+                        part.create(rail.name.replace('Top Rail',
+                                                      'Paneled Top Rail'))
+                        part.obj.parent = self.obj
+                        part.obj['hb_part_role'] = PART_ROLE_PANELED_TOP_RAIL
+                        part.obj['CABINET_PART'] = True
+                        part.obj['hb_segment_start_bay'] = key
+                        part.obj['MENU_ID'] = (
+                            'HOME_BUILDER_MT_face_frame_part_commands')
+                        panel = part.obj
+                    part = CabinetPart(panel)
+                    part.set_input('Length', width)
+                    part.set_input('Width', length)
+                    part.set_input('Thickness', thickness)
+                    for mod in panel.modifiers:
+                        if mod.type == 'NODES':
+                            mod.show_viewport = False
+                            mod.show_render = False
+                    if panel.data.users > 1:
+                        panel.data = panel.data.copy()
+                    to_rail = Matrix(((0.0, -1.0, 0.0, 0.0),
+                                      (1.0, 0.0, 0.0, -width),
+                                      (0.0, 0.0, 1.0, -thickness),
+                                      (0.0, 0.0, 0.0, 1.0)))
+                    panel.matrix_basis = rail.matrix_basis @ to_rail
+                    self._build_ada_front_mesh(panel, 'FRAME', length,
+                                               width, thickness)
+                    if panel.get('HB_STATIC_SLAB'):
+                        # Too narrow for stiles and rails: keep the rail.
+                        _remove_part_with_mesh(panel)
+                    else:
+                        built = True
+            elif panel is not None:
+                _remove_part_with_mesh(panel)
+            if built or rail.get(PANELED_RAIL_HIDDEN_TAG):
+                hide = built or bool(rail.get('hb_ada_hidden'))
+                rail.hide_viewport = hide
+                rail.hide_render = hide
+                if built:
+                    rail[PANELED_RAIL_HIDDEN_TAG] = True
+                elif PANELED_RAIL_HIDDEN_TAG in rail:
+                    del rail[PANELED_RAIL_HIDDEN_TAG]
 
     def _build_ada_front_mesh(self, obj, construction, width, height,
                               thickness):

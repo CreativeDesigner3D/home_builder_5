@@ -501,6 +501,14 @@ class HOME_BUILDER_MT_face_frame_part_commands(bpy.types.Menu):
             layout.operator("hb_face_frame.set_part_width",
                             text=width_text, icon='ARROW_LEFTRIGHT')
 
+        # Top rail: build it as stiles and rails around a panel, and
+        # back again from the paneled part.
+        if role in (types_face_frame.PART_ROLE_TOP_RAIL,
+                    types_face_frame.PART_ROLE_PANELED_TOP_RAIL):
+            cab_root = types_face_frame.find_cabinet_root(obj)
+            if cab_root is not None:
+                layout.prop(cab_root.face_frame_cabinet, 'paneled_top_rail')
+
         # Scribe only makes sense at the cabinet's outer edges: end
         # stiles (left / right) and the top rail (top_scribe).
         if role in (types_face_frame.PART_ROLE_LEFT_STILE,

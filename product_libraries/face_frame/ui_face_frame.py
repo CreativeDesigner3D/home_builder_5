@@ -963,6 +963,7 @@ def draw_face_frame_defaults(layout, cab_props):
     fcol = fbox.column(align=False)
     _draw_locked_rail_row(fcol, cab_props, 'top_rail_width',
                           'unlock_top_rail', "Top Rail")
+    fcol.prop(cab_props, 'paneled_top_rail')
     srow = fcol.row(align=True)
     _locked_field(srow, cab_props, 'left_stile_width',
                   'unlock_left_stile', "Left Stile")
