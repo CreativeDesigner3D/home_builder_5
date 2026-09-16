@@ -3938,7 +3938,23 @@ class hb_closets_OT_add_accessory(bpy.types.Operator):
             # only exists once the run has been solved.
             types_closets.seat_insert_on_shelf(cage, clear)
             _settle_new_opening(context, root)
+        _report_finish_fallback(self, acc_def)
         return {'FINISHED'}
+
+
+def _report_finish_fallback(op, acc_def):
+    """Say so when an accessory just placed is not made in the room's
+    default finish or fabric and was made in black instead."""
+    from .. import accessories_closets as acc
+    if acc_def is None:
+        return
+    color, fabric, missing = acc.default_finish(acc_def)
+    if not missing:
+        return
+    used = tuple(v for v in (color, fabric)
+                 if v and v not in acc._room_defaults())
+    op.report({'WARNING'},
+              acc.notice_lines([(acc_def.label, missing, used)])[0])
 
 
 def _opening_under_cursor(context, region, mouse_pos, x_margin=0.0):
@@ -4439,6 +4455,7 @@ class hb_closets_OT_place_accessory(bpy.types.Operator,
             context.view_layer.objects.active = cage
             self._end(context)
             self.report({'INFO'}, self._note)
+            _report_finish_fallback(self, acc_def)
             if event.shift:
                 bpy.ops.hb_closets.place_accessory(
                     'INVOKE_DEFAULT', accessory=self.accessory,

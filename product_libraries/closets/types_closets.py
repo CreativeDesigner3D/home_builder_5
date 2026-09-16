@@ -6518,10 +6518,11 @@ def add_accessory(opening, key):
     cage.obj.parent = opening
     cage.obj['hb_part_role'] = PART_ROLE_ACCESSORY
     cage.obj[PROP_ACCESSORY_KEY] = acc_def.key
-    cage.obj[PROP_ACCESSORY_COLOR] = (acc_def.colors[0]
-                                      if acc_def.colors else '')
-    cage.obj[PROP_ACCESSORY_FABRIC] = (acc_def.fabrics[0]
-                                       if acc_def.fabrics else '')
+    # The room's default finish and fabric, or black where this one is
+    # not made in them.
+    color, fabric, _missing = acc.default_finish(acc_def)
+    cage.obj[PROP_ACCESSORY_COLOR] = color
+    cage.obj[PROP_ACCESSORY_FABRIC] = fabric
     cage.obj[PROP_ACCESSORY_Z] = 0.0
     # An accessory sold in widths arrives as the one nearest the
     # opening it was dropped in; the person can change it after.
@@ -6560,10 +6561,11 @@ def add_wall_accessory(wall, key):
     cage.obj['hb_part_role'] = PART_ROLE_ACCESSORY
     cage.obj[PROP_ACCESSORY_KEY] = acc_def.key
     cage.obj[PROP_ACCESSORY_ON_WALL] = 1
-    cage.obj[PROP_ACCESSORY_COLOR] = (acc_def.colors[0]
-                                      if acc_def.colors else '')
-    cage.obj[PROP_ACCESSORY_FABRIC] = (acc_def.fabrics[0]
-                                       if acc_def.fabrics else '')
+    # The room's default finish and fabric, or black where this one is
+    # not made in them.
+    color, fabric, _missing = acc.default_finish(acc_def)
+    cage.obj[PROP_ACCESSORY_COLOR] = color
+    cage.obj[PROP_ACCESSORY_FABRIC] = fabric
     cage.obj[PROP_ACCESSORY_Z] = 0.0
     # The board arrives at a length of its own and keeps it - there
     # is no opening whose width it could follow.

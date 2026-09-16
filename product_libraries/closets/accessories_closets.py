@@ -143,6 +143,132 @@ ACCESSORY_COLORS = (
 )
 ACCESSORY_FABRICS = ('Fabric Beach', 'Fabric Slate', 'Fabric Black')
 
+# The room's default finish and fabric, picked in the closet Options.
+# Numbered so a saved file keeps its choice if the list grows.
+ACCESSORY_COLOR_ITEMS = [(c, c, "Metal finish for new and existing "
+                                "accessories", i)
+                         for i, c in enumerate(ACCESSORY_COLORS)]
+ACCESSORY_FABRIC_ITEMS = [(f, f.replace('Fabric ', ''),
+                           "Fabric for new and existing accessories", i)
+                          for i, f in enumerate(ACCESSORY_FABRICS)]
+# What an accessory not offered in the default is made in instead.
+FALLBACK_COLOR = 'Black'
+FALLBACK_FABRIC = 'Fabric Black'
+
+
+def _room_defaults(scene=None):
+    """(finish, fabric) the room asks accessories to be made in."""
+    try:
+        props = (scene or bpy.context.scene).hb_closets
+    except Exception:
+        return '', ''
+    return (getattr(props, 'default_accessory_color', '') or '',
+            getattr(props, 'default_accessory_fabric', '') or '')
+
+
+def _pick(offered, wanted, fallback):
+    """(choice, fell_back) from what an accessory is offered in. Black
+    when the wanted one is not offered; the first offered when black
+    is not offered either."""
+    if not offered:
+        return '', False
+    if not wanted or wanted in offered:
+        return (wanted or offered[0]), False
+    if fallback in offered:
+        return fallback, True
+    return offered[0], True
+
+
+def default_finish(acc_def, scene=None):
+    """(color, fabric, missing) an accessory takes from the room.
+
+    `missing` names what the room asked for that this accessory is not
+    made in - ('Matte Aluminum',) and the like - empty when it is."""
+    want_c, want_f = _room_defaults(scene)
+    color, c_miss = _pick(acc_def.colors, want_c, FALLBACK_COLOR)
+    fabric, f_miss = _pick(acc_def.fabrics, want_f, FALLBACK_FABRIC)
+    missing = tuple(w for w, m in ((want_c, c_miss), (want_f, f_miss))
+                    if m)
+    return color, fabric, missing
+
+
+def unavailable_finishes(scene=None):
+    """The accessory lines in a scene that the room's default finish or
+    fabric is not offered on: (label, missing, used) per line, one row
+    per line however many of it are placed."""
+    from . import types_closets as tc
+    scene = scene or bpy.context.scene
+    rows = {}
+    for obj in scene.objects:
+        if obj.get('hb_part_role') != tc.PART_ROLE_ACCESSORY:
+            continue
+        d = get(obj.get(tc.PROP_ACCESSORY_KEY, ''))
+        if d is None or d.key in rows:
+            continue
+        color, fabric, missing = default_finish(d, scene)
+        if missing:
+            used = [v for v, offered in ((color, d.colors),
+                                         (fabric, d.fabrics))
+                    if offered and v not in _room_defaults(scene)]
+            rows[d.key] = (d.label, missing, tuple(used))
+    return sorted(rows.values())
+
+
+def apply_room_finishes(scene=None):
+    """Put every accessory in the scene into the room's default finish
+    and fabric - black where it is not made in them - and redraw.
+    Hands back what unavailable_finishes() lists."""
+    from . import types_closets as tc
+    scene = scene or bpy.context.scene
+    roots = []
+    walls = []
+    for obj in scene.objects:
+        if obj.get('hb_part_role') != tc.PART_ROLE_ACCESSORY:
+            continue
+        d = get(obj.get(tc.PROP_ACCESSORY_KEY, ''))
+        if d is None:
+            continue
+        color, fabric, _missing = default_finish(d, scene)
+        obj[tc.PROP_ACCESSORY_COLOR] = color
+        obj[tc.PROP_ACCESSORY_FABRIC] = fabric
+        if obj.get(tc.PROP_ACCESSORY_ON_WALL):
+            walls.append(obj)
+        else:
+            root = tc.find_starter_root(obj)
+            if root is not None and root not in roots:
+                roots.append(root)
+    for root in roots:
+        tc.recalculate_closet_starter(root)
+    for cage in walls:
+        tc.layout_wall_accessory(cage)
+    return unavailable_finishes(scene)
+
+
+def notice_lines(rows):
+    """The notice for accessories not made in the room's default, one
+    line per accessory line."""
+    return ["%s: no %s - using %s" % (label, " / ".join(missing),
+                                      " / ".join(used) or "black")
+            for label, missing, used in rows]
+
+
+def update_room_finishes(self, context):
+    """Options dropdown callback: re-dress the room's accessories and
+    say which of them are not made in what was picked."""
+    rows = apply_room_finishes(context.scene)
+    if not rows:
+        return
+    lines = notice_lines(rows)
+
+    def draw(menu, _context):
+        for line in lines:
+            menu.layout.label(text=line)
+    try:
+        context.window_manager.popup_menu(
+            draw, title="Not available in that finish", icon='ERROR')
+    except Exception:
+        pass
+
 # An accessory model is drawn with its origin on its front face and
 # its depth running back down +Y. This library runs the same way, so a
 # model needs no turning, only putting at the front of the opening it
