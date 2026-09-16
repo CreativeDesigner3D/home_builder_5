@@ -127,6 +127,8 @@ def draw_dimensions(layout, root):
             if is_upper:
                 col.prop(cab_props, 'exterior_config', text="Config")
             col.prop(cab_props, 'interior_option',  text="Interior")
+            if not is_upper:
+                _draw_corner_adjustable_shelves(col, cab_props)
             col.prop(cab_props, 'corner_finish_interior', text="Finish Interior")
             col.prop(cab_props, 'tray_compartment', text="Tray Compartment")
             if cab_props.tray_compartment != 'NONE':
@@ -143,6 +145,8 @@ def draw_dimensions(layout, root):
                          text="Apron Height")
             col.prop(cab_props, 'diag_door_swing', text="Door Swing")
             col.prop(cab_props, 'interior_option', text="Interior")
+            if root.get('CABINET_TYPE') != 'UPPER':
+                _draw_corner_adjustable_shelves(col, cab_props)
             col.prop(cab_props, 'corner_finish_interior', text="Finish Interior")
             col.prop(cab_props, 'corner_remove_bottom', text="Remove Bottom")
             draw_corner_sections(layout, cab_props)
@@ -176,6 +180,24 @@ def draw_dimensions(layout, root):
         right_row.prop(cab_props, 'unlock_right_depth', text="", icon=lock_icon)
 
 
+def _draw_corner_adjustable_shelves(col, cab_props):
+    """Base / tall corner opt-in for shelves behind the doors. Greyed
+    while a susan interior option fills the cavity (the recalc ignores
+    the toggle then)."""
+    row = col.row()
+    row.enabled = cab_props.interior_option == 'NONE'
+    row.prop(cab_props, 'corner_adjustable_shelves',
+             text="Adjustable Shelves")
+
+
+def _corner_door_shelves_on(cab_props):
+    """True when corner DOORS sections build adjustable shelves: always
+    on uppers, opt-in on base / tall corners with no susan."""
+    return (cab_props.cabinet_type == 'UPPER'
+            or (cab_props.corner_adjustable_shelves
+                and cab_props.interior_option == 'NONE'))
+
+
 _CORNER_SECTION_LABELS = {
     'DOORS':       "Doors",
     'FALSE_FRONT': "False Front",
@@ -199,7 +221,7 @@ def draw_corner_sections(layout, cab_props):
     # overrides (corners have no opening cages, so the standard
     # per-opening overlay unlocks live here instead).
     has_open = any(s.content == 'OPEN' for s in sections)
-    has_upper_doors = (cab_props.cabinet_type == 'UPPER'
+    has_upper_doors = (_corner_door_shelves_on(cab_props)
                        and any(s.content == 'DOORS' for s in sections))
     has_fronts = any(s.content in ('DOORS', 'FALSE_FRONT')
                      for s in sections)
@@ -227,8 +249,8 @@ def draw_corner_sections(layout, cab_props):
         if section.content == 'OPEN':
             col.prop(section, 'shelf_qty', text="Shelves")
         elif (section.content == 'DOORS'
-              and cab_props.cabinet_type == 'UPPER'):
-            # Upper door sections auto-count shelves by height; the
+              and _corner_door_shelves_on(cab_props)):
+            # Door sections with shelves auto-count them by height; the
             # lock mirrors the standard interior-item qty pattern
             # (locked = auto, unlocked = manual override).
             qty_row = col.row(align=True)

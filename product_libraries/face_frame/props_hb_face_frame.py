@@ -8417,6 +8417,16 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         default=False,
         update=_update_cabinet_dim,
     )  # type: ignore
+    # Adjustable shelves behind the doors of a base / tall corner. Uppers
+    # always build them; lower corners opt in here. Same L / diagonal
+    # shelf parts and auto-by-height count (per-section lock overrides).
+    # Ignored while a susan interior option fills the cavity.
+    corner_adjustable_shelves: BoolProperty(
+        name="Adjustable Shelves",
+        description="Add adjustable shelves behind the doors of this corner cabinet",
+        default=False,
+        update=_update_cabinet_dim,
+    )  # type: ignore
     # ---- Finished bottom (uppers) ----
     # Finished bottom condition, matching the upper-bottom detail
     # card's options. Any non-NONE choice builds the finish panel with

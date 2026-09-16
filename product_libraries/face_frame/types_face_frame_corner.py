@@ -2354,7 +2354,12 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         ext = cab_props.exterior_option
         # Upper pie-cut corners get adjustable shelves behind their doors
         # (auto by section height), L-shaped like the Top/Bottom panels.
+        # Base / tall pie cuts opt in (Adjustable Shelves) unless a susan
+        # fills the cavity.
         is_upper = self.default_cabinet_type == 'UPPER'
+        build_shelves = is_upper or (
+            cab_props.corner_adjustable_shelves
+            and cab_props.interior_option == 'NONE')
         z_cursor = z_open_bot
         for i in range(n_sec - 1, -1, -1):
             sec_h = sec_heights[i]
@@ -2436,7 +2441,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                 else:
                     self._clear_door_pull(door)
 
-            if is_upper:
+            if build_shelves:
                 # Adjustable shelves behind the doors; L-shaped to match
                 # the Top / Bottom panels. Auto by section height while
                 # the section's qty is locked (synced into shelf_qty so
@@ -2457,6 +2462,10 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                 self._position_pie_cut_shelves(
                     i, qty, sec_z0, sec_h, depth, width, t, fft, ld, rd,
                     fflo, ffro, l_scribe, r_scribe)
+            else:
+                # Shelves switched off (or a susan picked): drop any left
+                # from an earlier recalc.
+                self._ensure_pie_cut_section_shelves(i, 0)
 
             z_cursor = sec_z0 + sec_h
             if i > 0:
@@ -3194,7 +3203,12 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
             sec_heights[n_sec - 1] += reclaimed
         # Upper corner cabinets get adjustable shelves behind their doors
         # (auto by section height), reusing the Top/Bottom boolean cutters.
+        # Base / tall diagonals opt in (Adjustable Shelves) unless a susan
+        # fills the cavity.
         is_upper = self.default_cabinet_type == 'UPPER'
+        build_shelves = is_upper or (
+            cab_props.corner_adjustable_shelves
+            and cab_props.interior_option == 'NONE')
         diag_cutter = parts.get(PART_ROLE_DIAGONAL_CUTTER)
         diag_back_cutter = parts.get(PART_ROLE_CORNER_BACK_CUTTER)
         z_cursor = z_open_bot
@@ -3340,7 +3354,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                                 ('Width', rail_length),
                                 ('Thickness', fft),
                             ))
-                if is_upper and sections[i].content == 'DOORS':
+                if build_shelves and sections[i].content == 'DOORS':
                     # Adjustable shelves behind the doors (GARAGE keeps
                     # its opening clear for countertop appliances). Auto by section
                     # height while the section's qty is locked (synced into
@@ -3363,6 +3377,11 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                         i, qty, diag_cutter, diag_back_cutter)
                     self._position_diagonal_shelves(
                         i, qty, sec_z0, sec_h, t, width, depth, fflo, ffro)
+                elif sections[i].content == 'DOORS':
+                    # Shelves switched off (or a susan picked): drop any
+                    # left from an earlier recalc.
+                    self._ensure_diagonal_section_shelves(
+                        i, 0, diag_cutter, diag_back_cutter)
             elif sections[i].content == 'FALSE_FRONT':
                 # One fixed panel spanning the section opening, proud of
                 # the FF like a door but with no pull and no center gap.
