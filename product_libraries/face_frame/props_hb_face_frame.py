@@ -2797,7 +2797,7 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
             # rebuild, so painting a beadboard end came undone the next
             # time anything resized the cabinet.
             if ((role in ('BEADBOARD', 'SHIPLAP', 'V_GROOVE', 'WOOD_TOP',
-                          'INSET_PANEL')
+                          'WOOD_TOP_EDGE', 'INSET_PANEL')
                  or child.get('hb_return_member'))
                     and child.get('HB_STATIC_TEXTURED')):
                 slot_mat = ov_mat if ov_mat is not None else finish_mat

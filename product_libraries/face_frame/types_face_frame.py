@@ -38,6 +38,8 @@ from . import solver_face_frame as solver
 from . import island_pair
 from . import shelf_nosing
 from . import wood_top_edge
+from . import wood_top_shape
+from ..common import countertop_common
 from . import decorative_corner
 from . import cabinet_column
 from . import bar_storage
@@ -17637,6 +17639,9 @@ class WoodTopPart(CabinetPart):
         build the nosed front edge when a nosing style is set."""
         obj = self.obj
         wt = obj.wood_top
+        # A reshaped top keeps its outline and builds from that; the
+        # square top below is the one it started as.
+        shaped = wood_top_shape.is_shaped(obj)
         # An applied edge takes the outer band of the top: the board
         # this object drives becomes the core, the band builds as its
         # own part, and the overhangs still measure to the outside of
@@ -17647,7 +17652,7 @@ class WoodTopPart(CabinetPart):
                  if getattr(wt, 'edge_' + s, False)]
         if (getattr(wt, 'edge_type', 'NONE') == 'NONE'
                 or wt.nosing_style not in (None, '', 'NONE')
-                or edge_t <= 0.0):
+                or edge_t <= 0.0 or shaped):
             edged = []
         anchor = (obj.parent
                   if obj.parent is not None
@@ -17667,6 +17672,9 @@ class WoodTopPart(CabinetPart):
             width = wt.width
             depth = wt.depth
         t = wt.thickness
+        if shaped:
+            self._rebuild_shaped(obj, wt, width, depth, t)
+            return
         core_w = width - edge_t * (('left' in edged) + ('right' in edged))
         core_d = depth - edge_t * (('front' in edged) + ('back' in edged))
         # A band wider than the top itself would invert the core.
@@ -17697,16 +17705,7 @@ class WoodTopPart(CabinetPart):
             mod.show_viewport = False
             mod.show_render = False
         obj[TAG_STATIC_TEXTURED] = True
-        # The static mesh renders its own slots; seed them from the
-        # cutpart's surface input so a finish applied while the top was
-        # a plain board carries over to the nosed display.
-        if obj.data is not None and not obj.data.materials:
-            try:
-                surf = self.get_input('Top Surface')
-            except Exception:
-                surf = None
-            if surf is not None:
-                obj.data.materials.append(surf)
+        self._seed_static_material(obj)
 
     @staticmethod
     def _sync_edge_bands(obj, core_w, core_d, t, wt, edged):
@@ -17778,26 +17777,20 @@ class WoodTopPart(CabinetPart):
                 part.modifiers.remove(bev)
 
     @staticmethod
-    def _write_nosed_mesh(obj, width, depth, t, wt, nosed_sides):
-        """Static mesh: a core board shortened by the nosing stock depth
-        on each nosed side, plus one profiled prism per nosed edge.
-        Prism ends miter at 45 degrees where two nosed edges meet at a
-        corner, and cut square at the board edge otherwise. Local space
-        matches the driven cutpart: X 0..width, Y 0..-depth (Mirror Y),
-        Z 0..thickness with the nosing top flush to the board top
-        (extra-height styles drop below).
-        """
+    def _nosing_section(wt, t):
+        """The milled profile as a prism cross-section, and how deep it
+        runs in from the outer face. (None, 0.0) when the style has no
+        outline."""
         h = (max(t, wt.nosing_height)
              if wt.nosing_style in shelf_nosing.EXTRA_HEIGHT_STYLES
              else t)
         outline = wood_top_edge.edge_outline(wt.nosing_style, t, h)
         if not outline:
-            return
+            return None, 0.0
         # Band depth follows the profile: a shallow one keeps the stock
         # depth and leaves a flat behind it, a deep one grows the band
         # instead of poking out past the top's outer face.
         nose_d = wood_top_edge.stock_depth(outline)
-        nosed = set(nosed_sides)
         # Prism cross-section in (d, z): d grows outward from the core
         # face (0) to the board's outer face (nose_d) -- the outline's
         # forward distance maps to d DIRECTLY (mirroring it through the
@@ -17810,6 +17803,222 @@ class WoodTopPart(CabinetPart):
         sec.append((0.0, min(0.0, t + outline[-1][1])))
         if sec[-1][1] < -1e-9:
             sec.append((0.0, 0.0))
+        return sec, nose_d
+
+    # --- shaped tops ------------------------------------------------------
+    @staticmethod
+    def outer_size(obj):
+        """(width, depth) of the top's outside: the cabinet it is seated
+        on plus the overhangs, or its own width and depth when free."""
+        wt = obj.wood_top
+        anchor = (obj.parent
+                  if obj.parent is not None
+                  and obj.parent.get(TAG_CABINET_CAGE) else None)
+        if anchor is not None:
+            ap = anchor.face_frame_cabinet
+            return (ap.width + wt.overhang_left + wt.overhang_right,
+                    ap.depth + wt.overhang_front + wt.overhang_back)
+        return wt.width, wt.depth
+
+    @staticmethod
+    def start_shape(obj):
+        """Give a square top an outline to reshape, if it has none.
+
+        The four sides' finished flags come from whichever edge
+        treatment is on -- the milled profile's sides, else the applied
+        band's -- so the top looks the same the moment it becomes
+        shaped."""
+        if wood_top_shape.is_shaped(obj):
+            return
+        wt = obj.wood_top
+        if wt.nosing_style in (None, '', 'NONE') and wt.edge_type != 'NONE':
+            flags = (wt.edge_front, wt.edge_right, wt.edge_back,
+                     wt.edge_left)
+        else:
+            flags = (wt.nosing_front, wt.nosing_right, wt.nosing_back,
+                     wt.nosing_left)
+        width, depth = WoodTopPart.outer_size(obj)
+        countertop_common.set_outline(
+            obj, wood_top_shape.rectangle(width, depth),
+            wood_top_shape.seed_corners(*flags))
+        obj[wood_top_shape.BASE_KEY] = [float(width), float(depth)]
+
+    @staticmethod
+    def clear_shape(obj):
+        """Back to the square top."""
+        for key in (countertop_common.OUTLINE_KEY,
+                    countertop_common.CORNERS_KEY,
+                    countertop_common.EDGES_KEY,
+                    wood_top_shape.BASE_KEY):
+            if key in obj:
+                del obj[key]
+
+    def _rebuild_shaped(self, obj, wt, width, depth, t):
+        """Build a reshaped top from its outline.
+
+        The outline stretches with the rectangle it was drawn on, so a
+        seated top follows its cabinet. The board is one static mesh: the
+        core, pulled in on each finished edge, plus the milled profile
+        swept along those edges. An applied band builds as parts of its
+        own instead, one per run of edge.
+        """
+        points = countertop_common.outline_of(obj)
+        corners = countertop_common.corners_of(obj)
+        base = obj.get(wood_top_shape.BASE_KEY)
+        base = (tuple(base) if base is not None and len(base) == 2
+                else (width, depth))
+        if abs(base[0] - width) > 1e-6 or abs(base[1] - depth) > 1e-6:
+            points = wood_top_shape.restretch(points, base, (width, depth))
+            countertop_common.set_outline(obj, points, corners)
+            points = countertop_common.outline_of(obj)
+            corners = countertop_common.corners_of(obj)
+        obj[wood_top_shape.BASE_KEY] = [float(width), float(depth)]
+
+        outline, values = countertop_common.expand_outline_edges(points,
+                                                                 corners)
+        if len(outline) < 3:
+            return
+        outline, values = wood_top_shape.anticlockwise(outline, values)
+        finished = [v > 0.5 for v in values]
+        x0, x1, y0, y1 = wood_top_shape.bounds(outline)
+        # The driven cutpart is hidden, but its size is what anything
+        # reading the part's dimensions sees: the overall extents.
+        self.set_input('Length', x1 - x0)
+        self.set_input('Width', y1 - y0)
+        self.set_input('Thickness', t)
+
+        nosed = wt.nosing_style not in (None, '', 'NONE')
+        edge_t = getattr(wt, 'edge_thickness', 0.0)
+        banded = (not nosed and getattr(wt, 'edge_type', 'NONE') != 'NONE'
+                  and edge_t > 0.0)
+
+        bm = bmesh.new()
+        sec, nose_d = (self._nosing_section(wt, t) if nosed
+                       else (None, 0.0))
+        if sec is not None and any(finished):
+            _add_prism(bm, wood_top_shape.core_outline(outline, finished,
+                                                        nose_d), 0.0, t)
+            profile = [(nose_d - d, z) for d, z in sec]
+            for i, fin in enumerate(finished):
+                if fin:
+                    _add_sweep(bm, *wood_top_shape.sweep_rings(
+                        outline, finished, profile, i))
+        elif banded and any(finished):
+            _add_prism(bm, wood_top_shape.core_outline(outline, finished,
+                                                        edge_t), 0.0, t)
+        else:
+            _add_prism(bm, outline, 0.0, t)
+        bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+        bm.to_mesh(obj.data)
+        bm.free()
+        obj.data.update()
+
+        mod_name = getattr(obj.home_builder, 'mod_name', '')
+        mod = obj.modifiers.get(mod_name) if mod_name else None
+        if mod is not None:
+            mod.show_viewport = False
+            mod.show_render = False
+        obj[TAG_STATIC_TEXTURED] = True
+        self._seed_static_material(obj)
+
+        if banded:
+            self._sync_shaped_bands(obj, outline, finished, t, wt, edge_t)
+        else:
+            self._sync_edge_bands(obj, 0.0, 0.0, t, wt, [])
+
+    def _seed_static_material(self, obj):
+        """The static mesh renders its own slots; seed them from the
+        cutpart's surface input so a finish applied while the top was
+        a plain board carries over."""
+        if obj.data is not None and not obj.data.materials:
+            try:
+                surf = self.get_input('Top Surface')
+            except Exception:
+                surf = None
+            if surf is not None:
+                obj.data.materials.append(surf)
+
+    def _sync_shaped_bands(self, obj, outline, finished, t, wt, edge_t):
+        """One band part per run of finished edge, each a mitred static
+        mesh in the board's own space. Parts left over from a previous
+        shape go."""
+        runs = wood_top_shape.runs(outline, finished)
+        existing = {}
+        for child in list(obj.children):
+            if child.get('hb_part_role') == PART_ROLE_WOOD_TOP_EDGE:
+                existing[child.get('hb_wood_top_edge_side')] = child
+        wanted = {f'run{k}' for k in range(len(runs))}
+        for side, part in existing.items():
+            if side not in wanted:
+                bpy.data.objects.remove(part, do_unlink=True)
+        profile = [(edge_t, 0.0), (0.0, 0.0), (0.0, t), (edge_t, t)]
+        for k, run in enumerate(runs):
+            side = f'run{k}'
+            part = existing.get(side)
+            band = CabinetPart()
+            if part is None:
+                band.create(f'Wood Top Edge {k + 1}')
+                part = band.obj
+                part.parent = obj
+                part['hb_part_role'] = PART_ROLE_WOOD_TOP_EDGE
+                part['hb_wood_top_edge_side'] = side
+                part['CABINET_PART'] = True
+                part['IS_FINISHED'] = True
+                part['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_part_commands'
+                band.set_input('Mirror Y', True)
+            else:
+                band.obj = part
+            part['hb_wood_top_edge_type'] = wt.edge_type
+            band.set_input('Length', wood_top_shape.run_length(outline, run))
+            band.set_input('Width', edge_t)
+            band.set_input('Thickness', t)
+            part.location = (0.0, 0.0, 0.0)
+            part.rotation_euler = (0.0, 0.0, 0.0)
+            bm = bmesh.new()
+            for i in run:
+                _add_sweep(bm, *wood_top_shape.sweep_rings(
+                    outline, finished, profile, i))
+            bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+            bm.to_mesh(part.data)
+            bm.free()
+            part.data.update()
+            mod_name = getattr(part.home_builder, 'mod_name', '')
+            mod = part.modifiers.get(mod_name) if mod_name else None
+            if mod is not None:
+                mod.show_viewport = False
+                mod.show_render = False
+            part[TAG_STATIC_TEXTURED] = True
+            if part.data is not None and not part.data.materials:
+                try:
+                    surf = band.get_input('Top Surface')
+                except Exception:
+                    surf = None
+                if surf is not None:
+                    part.data.materials.append(surf)
+            bev = part.modifiers.get('Eased Edge')
+            if wt.edge_type == 'EASED':
+                if bev is None:
+                    bev = part.modifiers.new('Eased Edge', 'BEVEL')
+                bev.width = inch(0.0625)
+                bev.segments = 3
+                bev.limit_method = 'ANGLE'
+            elif bev is not None:
+                part.modifiers.remove(bev)
+
+    @staticmethod
+    def _write_nosed_mesh(obj, width, depth, t, wt, nosed_sides):
+        """Static mesh: a core board shortened by the nosing stock depth
+        on each nosed side, plus one profiled prism per nosed edge.
+        Prism ends miter at 45 degrees where two nosed edges meet at a
+        corner, and cut square at the board edge otherwise. Local space
+        matches the driven cutpart: X 0..width, Y 0..-depth (Mirror Y),
+        Z 0..thickness with the nosing top flush to the board top
+        (extra-height styles drop below).
+        """
+        sec, nose_d = WoodTopPart._nosing_section(wt, t)
+        if sec is None:
+            return
+        nosed = set(nosed_sides)
 
         # Core box, shrunk on each nosed side (clamped to stay a solid).
         x0 = min(nose_d if 'left' in nosed else 0.0, width * 0.5 - 1e-4)
@@ -17862,6 +18071,46 @@ class WoodTopPart(CabinetPart):
         bm.to_mesh(obj.data)
         bm.free()
         obj.data.update()
+
+
+def _add_prism(bm, polygon, z0, z1):
+    """A closed slab over a 2D outline, z0 to z1."""
+    if len(polygon) < 3:
+        return
+    lower = [bm.verts.new((x, y, z0)) for x, y in polygon]
+    upper = [bm.verts.new((x, y, z1)) for x, y in polygon]
+    try:
+        bm.faces.new(list(reversed(lower)))
+        bm.faces.new(upper)
+    except ValueError:
+        return
+    count = len(polygon)
+    for i in range(count):
+        j = (i + 1) % count
+        try:
+            bm.faces.new((lower[i], lower[j], upper[j], upper[i]))
+        except ValueError:
+            pass
+
+
+def _add_sweep(bm, ring0, ring1):
+    """A closed prism between two matching rings of section points."""
+    if len(ring0) < 3 or len(ring0) != len(ring1):
+        return
+    v0 = [bm.verts.new(p) for p in ring0]
+    v1 = [bm.verts.new(p) for p in ring1]
+    for face in (v0, list(reversed(v1))):
+        try:
+            bm.faces.new(face)
+        except ValueError:
+            pass
+    n = len(v0)
+    for i in range(n):
+        j = (i + 1) % n
+        try:
+            bm.faces.new((v0[i], v0[j], v1[j], v1[i]))
+        except ValueError:
+            pass
 
 
 CABINET_NAME_DISPATCH = {

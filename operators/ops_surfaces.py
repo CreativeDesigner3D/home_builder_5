@@ -659,6 +659,9 @@ CLICK_PX = 4.0
 COL_CORNER = (1.0, 1.0, 1.0, 0.95)
 COL_FINISH = (0.35, 0.95, 0.55, 1.0)
 COL_GUIDE = (1.0, 1.0, 1.0, 0.35)
+# A wood top's plain edges (no nosing or band) read quieter than its
+# finished ones.
+COL_PLAIN_EDGE = (0.55, 0.6, 0.7, 0.8)
 
 _TYPED_CHARS = set("0123456789.-/ '\"")
 
@@ -776,8 +779,14 @@ def _draw_countertop_edit(op):
                 a, b = to2d(handle['a']), to2d(handle['b'])
                 if a is None or b is None:
                     continue
-                shader.uniform_float("color", COL_HOT if hot else COL_EDGE)
-                _thick_line(shader, a, b, EDGE_HOT_PX if hot else EDGE_PX)
+                plain = handle.get('finished') is False
+                shader.uniform_float(
+                    "color", COL_HOT if hot else
+                    (COL_PLAIN_EDGE if plain else COL_EDGE))
+                width = EDGE_HOT_PX if hot else EDGE_PX
+                if handle.get('finished'):
+                    width += 2.0
+                _thick_line(shader, a, b, width)
                 continue
             p = to2d(handle['world'])
             if p is None:
@@ -813,10 +822,10 @@ def _draw_countertop_edit(op):
 
 class HOME_BUILDER_OT_edit_countertop(bpy.types.Operator):
     bl_idname = "home_builder.edit_countertop"
-    bl_label = "Edit Countertop Shape"
-    bl_description = ("Reshape the slab in the viewport: drag edges and "
-                      "corners, add a corner to make an offset, bump-out "
-                      "or L, and clip or round corners")
+    bl_label = "Edit Top Shape"
+    bl_description = ("Reshape a countertop or wood top in the viewport: "
+                      "drag edges and corners, add a corner to make an "
+                      "offset, bump-out or L, and clip or round corners")
     bl_options = {'REGISTER', 'UNDO'}
 
     _draw_handle = None
@@ -825,6 +834,8 @@ class HOME_BUILDER_OT_edit_countertop(bpy.types.Operator):
               "Shift+Click edge: add corner   |   B: bob corner   "
               "R: radius   X: remove corner   |   Ctrl: snap   |   "
               "Enter: done   |   Esc: cancel")
+    WOOD_STATUS = STATUS.replace("X: remove corner",
+                                 "X: remove corner   E: finished edge")
 
     @classmethod
     def poll(cls, context):
@@ -833,8 +844,26 @@ class HOME_BUILDER_OT_edit_countertop(bpy.types.Operator):
         obj = context.active_object
         # A top from before outlines existed has one seeded on the way
         # in, so the command is offered for those too.
-        return bool(obj and obj.get('IS_COUNTERTOP')
+        return bool(obj and (obj.get('IS_COUNTERTOP') or obj.get('IS_WOOD_TOP'))
                     and getattr(obj, 'data', None) is not None)
+
+    # -- the top being edited ------------------------------------------
+    # A countertop is a slab built straight from its outline. A wood top
+    # is a face frame part: its board, nosing and bands rebuild through
+    # the part, and each edge also says whether it is finished.
+    def _wood_part(self):
+        from ..product_libraries.face_frame import types_face_frame
+        part = types_face_frame.WoodTopPart()
+        part.obj = self.obj
+        return part
+
+    def _top_z(self):
+        """Local Z of the top face."""
+        obj = self.obj
+        if self.is_wood:
+            return float(obj.wood_top.thickness)
+        return (float(obj.get(countertop_common.TOP_KEY, 0.0))
+                + float(obj.get(countertop_common.THICKNESS_KEY, 0.0)))
 
     # -- shape ---------------------------------------------------------
     def _shape(self):
@@ -844,7 +873,10 @@ class HOME_BUILDER_OT_edit_countertop(bpy.types.Operator):
 
     def _store(self, points, corners):
         countertop_common.set_outline(self.obj, points, corners)
-        countertop_common.rebuild(self.obj)
+        if self.is_wood:
+            self._wood_part().rebuild()
+        else:
+            countertop_common.rebuild(self.obj)
 
     def _valid(self, points, corners):
         if len(points) < 3:
@@ -861,10 +893,8 @@ class HOME_BUILDER_OT_edit_countertop(bpy.types.Operator):
         reads the same whether the top is seen in plan or from an angle.
         """
         obj = self.obj
-        top = float(obj.get(countertop_common.TOP_KEY, 0.0))
-        thickness = float(obj.get(countertop_common.THICKNESS_KEY, 0.0))
         mw = countertop_common.world_matrix(obj)
-        point = mw @ Vector((0.0, 0.0, top + thickness))
+        point = mw @ Vector((0.0, 0.0, self._top_z()))
         normal = (mw.to_3x3() @ Vector((0.0, 0.0, 1.0))).normalized()
         return point, normal
 
@@ -875,12 +905,11 @@ class HOME_BUILDER_OT_edit_countertop(bpy.types.Operator):
         finished so the edge drawn is the edge that exists."""
         obj = self.obj
         points, corners = self._shape()
-        top = float(obj.get(countertop_common.TOP_KEY, 0.0))
-        thickness = float(obj.get(countertop_common.THICKNESS_KEY, 0.0))
+        z = self._top_z()
         mw = countertop_common.world_matrix(obj)
 
         def world(p):
-            return mw @ Vector((p[0], p[1], top + thickness))
+            return mw @ Vector((p[0], p[1], z))
 
         self.handles = []
         count = len(points)
@@ -914,9 +943,13 @@ class HOME_BUILDER_OT_edit_countertop(bpy.types.Operator):
             j = (i + 1) % count
             a = along(i, j, reach[i][1])
             b = along(j, i, reach[j][0])
-            self.handles.append({'kind': 'EDGE', 'index': i,
-                                 'a': world(a), 'b': world(b),
-                                 'world': (world(a) + world(b)) / 2.0})
+            handle = {'kind': 'EDGE', 'index': i,
+                      'a': world(a), 'b': world(b),
+                      'world': (world(a) + world(b)) / 2.0}
+            if self.is_wood:
+                handle['finished'] = (len(corners[i]) > 3
+                                      and corners[i][3] > 0.5)
+            self.handles.append(handle)
         self.built_world = [world(p) for p in
                             countertop_common.expand_outline(points, corners)]
 
@@ -986,9 +1019,12 @@ class HOME_BUILDER_OT_edit_countertop(bpy.types.Operator):
         count = len(points)
         if handle['kind'] == 'EDGE':
             a, b = points[i], points[(i + 1) % count]
-            return _length(context, math.hypot(b[0] - a[0], b[1] - a[1]))
+            text = _length(context, math.hypot(b[0] - a[0], b[1] - a[1]))
+            if self.is_wood:
+                text += "   finished" if handle.get('finished') else "   plain"
+            return text
         if handle['kind'] == 'FINISH':
-            kind, size, _ = corners[i]
+            kind, size = corners[i][0], corners[i][1]
             name = ("Radius" if kind == countertop_common.CORNER_RADIUS
                     else "Bob")
             return f"{name} {_length(context, size)}"
@@ -1236,13 +1272,31 @@ class HOME_BUILDER_OT_edit_countertop(bpy.types.Operator):
         self.hover = None
         self.readout = ""
 
+    def _toggle_finished_edge(self, context, index):
+        points, corners = self._shape()
+        on = len(corners[index]) > 3 and corners[index][3] > 0.5
+        cns = countertop_common.set_edge_value(corners, index,
+                                               0.0 if on else 1.0)
+        self._store(points, cns)
+        self._rebuild_handles()
+        self.hover = self._find_handle('EDGE', index)
+        self.readout = self._hover_readout(context, self.hover)
+
     def _typed_value(self, context):
         return _parse_length(context, self.typed)
 
     # -- modal ---------------------------------------------------------
     def invoke(self, context, event):
         self.obj = context.active_object
-        if not countertop_common.ensure_outline(self.obj):
+        self.is_wood = bool(self.obj.get('IS_WOOD_TOP'))
+        if self.is_wood:
+            from ..product_libraries.face_frame import wood_top_shape
+            # A square top becomes shaped as the edit starts; cancelling
+            # puts it back to square rather than leaving a shaped copy
+            # of the same rectangle behind.
+            self._was_shaped = wood_top_shape.is_shaped(self.obj)
+            self._wood_part().start_shape(self.obj)
+        elif not countertop_common.ensure_outline(self.obj):
             self.report({'WARNING'}, "This countertop has no shape to edit")
             return {'CANCELLED'}
         self.region = context.region
@@ -1257,7 +1311,8 @@ class HOME_BUILDER_OT_edit_countertop(bpy.types.Operator):
 
         self._draw_handle = bpy.types.SpaceView3D.draw_handler_add(
             _draw_countertop_edit, (self,), 'WINDOW', 'POST_PIXEL')
-        context.workspace.status_text_set(self.STATUS)
+        context.workspace.status_text_set(
+            self.WOOD_STATUS if self.is_wood else self.STATUS)
         context.window_manager.modal_handler_add(self)
         context.area.tag_redraw()
         return {'RUNNING_MODAL'}
@@ -1288,10 +1343,14 @@ class HOME_BUILDER_OT_edit_countertop(bpy.types.Operator):
             context.window.cursor_modal_set('SCROLL_XY')
             return {'RUNNING_MODAL'}
 
-        if event.value == 'PRESS' and event.type in {'B', 'R', 'X', 'DEL'}:
+        if event.value == 'PRESS' and event.type in {'B', 'R', 'X', 'DEL', 'E'}:
             if self.hover is not None and 0 <= self.hover < len(self.handles):
                 handle = self.handles[self.hover]
-                if handle['kind'] in {'CORNER', 'FINISH'}:
+                if event.type == 'E':
+                    if self.is_wood and handle['kind'] == 'EDGE':
+                        self._toggle_finished_edge(context, handle['index'])
+                        context.area.tag_redraw()
+                elif handle['kind'] in {'CORNER', 'FINISH'}:
                     if event.type == 'B':
                         self._toggle_finish(context, handle['index'],
                                             countertop_common.CORNER_CLIP)
@@ -1307,7 +1366,12 @@ class HOME_BUILDER_OT_edit_countertop(bpy.types.Operator):
             return self._finish(context)
 
         if event.type in {'ESC', 'RIGHTMOUSE'} and event.value == 'PRESS':
-            self._store(*self._undo_shape)
+            if self.is_wood and not self._was_shaped:
+                part = self._wood_part()
+                part.clear_shape(self.obj)
+                part.rebuild()
+            else:
+                self._store(*self._undo_shape)
             return self._finish(context, cancelled=True)
 
         if event.type.startswith('NUMPAD_') or event.type in {'HOME', 'ACCENT_GRAVE'}:

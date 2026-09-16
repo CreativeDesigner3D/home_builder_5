@@ -1212,6 +1212,12 @@ class HOME_BUILDER_MT_face_frame_wood_top_commands(bpy.types.Menu):
         layout = self.layout
         layout.operator("hb_face_frame.wood_top_prompts",
                         text="Wood Top Options...", icon='WINDOW')
+        layout.operator("home_builder.edit_countertop",
+                        text="Edit Shape", icon='MOD_MESHDEFORM')
+        obj = context.active_object
+        if obj is not None and obj.get('ct_outline'):
+            layout.operator("hb_face_frame.wood_top_reset_shape",
+                            text="Reset Shape", icon='LOOP_BACK')
         layout.separator()
         layout.operator("hb_general.delete", text="Delete Wood Top",
                         icon='X')

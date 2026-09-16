@@ -82,6 +82,14 @@ CORNER_SHARP = 0
 CORNER_CLIP = 1
 CORNER_RADIUS = 2
 
+# Optional per-edge data, one float per corner for the edge leaving it
+# (corner i -> corner i + 1). A top that uses it -- a wood top marks which
+# edges are finished -- carries it as a fourth field on each corner
+# tuple, and every shape edit hands it on: an edge split in two, or a
+# step put into one, gives the new edges the value of the edge they came
+# from. Tops without the key get plain three-field corners.
+EDGES_KEY = 'ct_edges'
+
 # Degrees of arc per segment of a rounded corner.
 ARC_STEP_DEG = 7.5
 
@@ -221,18 +229,34 @@ def outline_of(obj):
 
 
 def corners_of(obj):
-    """One (kind, size_before, size_after) per outline corner."""
+    """One (kind, size_before, size_after) per outline corner, plus the
+    edge value leaving it when the top keeps per-edge data."""
     count = len(outline_of(obj))
     flat = list(obj.get(CORNERS_KEY) or [])
+    edges = obj.get(EDGES_KEY)
+    edges = list(edges) if edges is not None else None
     out = []
     for i in range(count):
         j = i * 3
         if j + 2 < len(flat):
-            out.append((int(round(flat[j])), float(flat[j + 1]),
-                        float(flat[j + 2])))
+            c = (int(round(flat[j])), float(flat[j + 1]), float(flat[j + 2]))
         else:
-            out.append((CORNER_SHARP, 0.0, 0.0))
+            c = (CORNER_SHARP, 0.0, 0.0)
+        if edges is not None:
+            c = c + (float(edges[i]) if i < len(edges) else 0.0,)
+        out.append(c)
     return out
+
+
+def _extras(corner):
+    """The per-edge fields of a corner tuple, if any."""
+    return tuple(corner[3:]) if corner is not None else ()
+
+
+def sharp_like(corner):
+    """A sharp corner that keeps ``corner``'s edge data -- what a point
+    inserted along that corner's edge gets."""
+    return (CORNER_SHARP, 0.0, 0.0) + _extras(corner)
 
 
 def dedupe_shape(points, corners=None):
@@ -241,15 +265,18 @@ def dedupe_shape(points, corners=None):
     A drag that pushes one edge onto its neighbour would otherwise leave
     a zero-length edge behind, and a face built on one of those is a
     face with no area. A dropped corner takes its finish with it -- the
-    survivor keeps whichever finish it already had.
+    survivor keeps whichever finish it already had -- and the survivor
+    takes over the dropped corner's edge, and with it that edge's data.
     """
     corners = list(corners) if corners is not None else None
     pts, cns = [], []
     for i, (x, y) in enumerate(points):
         if pts and (abs(pts[-1][0] - x) < POINT_TOL
                     and abs(pts[-1][1] - y) < POINT_TOL):
-            if corners is not None and cns[-1][0] == CORNER_SHARP:
-                cns[-1] = corners[i]
+            if corners is not None and i < len(corners):
+                head = (cns[-1] if cns[-1][0] != CORNER_SHARP
+                        else corners[i])
+                cns[-1] = tuple(head[:3]) + _extras(corners[i])
             continue
         pts.append((float(x), float(y)))
         cns.append(corners[i] if corners is not None and i < len(corners)
@@ -271,13 +298,15 @@ def set_outline(obj, points, corners=None):
     for x, y in pts:
         flat.extend((x, y))
     obj[OUTLINE_KEY] = flat
+    if corners is not None and cns and len(cns[0]) > 3:
+        obj[EDGES_KEY] = [float(c[3]) for c in cns]
     if corners is None or all(c[0] == CORNER_SHARP for c in cns):
         if CORNERS_KEY in obj:
             del obj[CORNERS_KEY]
         return
     flat = []
-    for kind, s0, s1 in cns:
-        flat.extend((float(kind), float(s0), float(s1)))
+    for c in cns:
+        flat.extend((float(c[0]), float(c[1]), float(c[2])))
     obj[CORNERS_KEY] = flat
 
 
@@ -339,7 +368,8 @@ def corner_tangents(points, corners):
     count = len(points)
     want = []
     for i in range(count):
-        kind, s0, s1 = corners[i] if i < len(corners) else (CORNER_SHARP, 0, 0)
+        kind, s0, s1 = (corners[i] if i < len(corners)
+                        else (CORNER_SHARP, 0, 0))[:3]
         if kind == CORNER_CLIP:
             want.append([max(0.0, s0), max(0.0, s1)])
         elif kind == CORNER_RADIUS:
@@ -384,28 +414,49 @@ def corner_tangents(points, corners):
 def expand_outline(points, corners):
     """The slab's real outline: the dragged corners with each finish cut
     in -- a clip becomes two points, a radius a run of arc points."""
+    return expand_outline_edges(points, corners)[0]
+
+
+def expand_outline_edges(points, corners):
+    """expand_outline, plus the edge value of every edge of the result.
+
+    An edge that is part of a design edge keeps that edge's value; the
+    short edges a clip or a radius adds take the larger of the two edges
+    they join, so a clipped corner between a finished edge and an
+    unfinished one is finished. Without per-edge data every value is 0.
+    """
     count = len(points)
+
+    def value(i):
+        c = corners[i % count] if (i % count) < len(corners) else None
+        extra = _extras(c)
+        return float(extra[0]) if extra else 0.0
+
     if count < 3:
-        return list(points)
+        return list(points), [value(i) for i in range(count)]
     reach = corner_tangents(points, corners)
-    out = []
+    out, vals = [], []
     for i in range(count):
         c = points[i]
         kind = corners[i][0] if i < len(corners) else CORNER_SHARP
+        joint = max(value(i - 1), value(i))
         r0, r1 = reach[i]
         if kind == CORNER_SHARP or (r0 < POINT_TOL and r1 < POINT_TOL):
             out.append(c)
+            vals.append(value(i))
             continue
         u0, _ = _unit(points[i - 1][0] - c[0], points[i - 1][1] - c[1])
         u1, _ = _unit(points[(i + 1) % count][0] - c[0],
                       points[(i + 1) % count][1] - c[1])
         if u0 is None or u1 is None:
             out.append(c)
+            vals.append(value(i))
             continue
         p0 = (c[0] + u0[0] * r0, c[1] + u0[1] * r0)
         p1 = (c[0] + u1[0] * r1, c[1] + u1[1] * r1)
         if kind == CORNER_CLIP:
             out.extend((p0, p1))
+            vals.extend((joint, value(i)))
             continue
         # Radius: the arc centre sits on the bisector, square to both
         # tangent points.
@@ -414,6 +465,7 @@ def expand_outline(points, corners):
         theta = math.acos(cos_t)
         if bis is None or theta < 1e-3:
             out.extend((p0, p1))
+            vals.extend((joint, value(i)))
             continue
         radius = r0 * math.tan(theta / 2.0)
         dist = radius / math.sin(theta / 2.0)
@@ -430,8 +482,9 @@ def expand_outline(points, corners):
             a = a0 + sweep * s / steps
             out.append((centre[0] + math.cos(a) * radius,
                         centre[1] + math.sin(a) * radius))
-    pts, _ = dedupe_shape(out)
-    return pts
+            vals.append(joint if s < steps else value(i))
+    pts, cns = dedupe_shape(out, [(CORNER_SHARP, 0.0, 0.0, v) for v in vals])
+    return pts, [c[3] for c in cns]
 
 
 def built_outline(obj):
@@ -448,6 +501,14 @@ def built_outline(obj):
 # ---------------------------------------------------------------------------
 
 SHARP = (CORNER_SHARP, 0.0, 0.0)
+
+
+def set_edge_value(corners, index, value):
+    """Set the edge data on the edge leaving corner ``index``."""
+    cns = list(corners)
+    i = index % len(cns)
+    cns[i] = tuple(cns[i][:3]) + (float(value),)
+    return cns
 
 
 def edge_normal(points, index):
@@ -509,11 +570,11 @@ def slide_edge(points, corners, index, delta):
 
     # What stands in for a, and for b.
     if hit_a is None:
-        a_pts, a_cns = [a, ma], [corners[index], SHARP]
+        a_pts, a_cns = [a, ma], [corners[index], sharp_like(corners[index])]
     else:
         a_pts, a_cns = [hit_a], [corners[index]]
     if hit_b is None:
-        b_pts, b_cns = [mb, b], [SHARP, corners[nxt]]
+        b_pts, b_cns = [mb, b], [sharp_like(corners[index]), corners[nxt]]
     else:
         b_pts, b_cns = [hit_b], [corners[nxt]]
 
@@ -554,7 +615,8 @@ def split_edge(points, corners, index, point):
         return list(points), list(corners), None
     p = (a[0] + u[0] * t, a[1] + u[1] * t)
     pts = list(points[:index + 1]) + [p] + list(points[index + 1:])
-    cns = list(corners[:index + 1]) + [SHARP] + list(corners[index + 1:])
+    cns = (list(corners[:index + 1]) + [sharp_like(corners[index])]
+           + list(corners[index + 1:]))
     return pts, cns, index + 1
 
 
@@ -594,8 +656,9 @@ def set_corner_finish(corners, index, kind, size_before, size_after=None):
     cns = list(corners)
     if size_after is None:
         size_after = size_before
-    cns[index % len(cns)] = ((kind, float(size_before), float(size_after))
-                             if kind != CORNER_SHARP else SHARP)
+    i = index % len(cns)
+    cns[i] = ((kind, float(size_before), float(size_after))
+              if kind != CORNER_SHARP else SHARP) + _extras(cns[i])
     return cns
 
 
