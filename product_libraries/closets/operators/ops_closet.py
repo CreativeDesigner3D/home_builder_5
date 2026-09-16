@@ -2121,14 +2121,32 @@ def _pin_rollout_trays(opening, rows):
 
 class hb_closets_OT_add_drawers(_ClosetInsertDialog, bpy.types.Operator):
     """Set the drawer stack for the active opening (fronts stack from
-    the bottom; each drawer gets a box behind its front)."""
+    the bottom; each drawer gets a box behind its front). Filling the
+    opening, the fronts divide it between them; not filling it, each
+    front stands at the size it is given and a fixed shelf caps the
+    stack with the space above left open."""
     bl_idname = "hb_closets.add_drawers"
-    bl_label = "Drawers"
+    bl_label = "Add Drawers"
     bl_options = {'UNDO'}
     interior_kind = 'DRAWERS'
 
     qty: bpy.props.IntProperty(name="Drawer Quantity", default=3,
                                min=0, max=10)  # type: ignore
+    fill: bpy.props.BoolProperty(
+        name="Fill Opening",
+        description="Divide the whole opening between the drawers - a "
+                    "drawer given a height of its own holds it and the "
+                    "rest share what is left. Off, every drawer stands "
+                    "at the height set below and a fixed shelf caps "
+                    "the stack",
+        default=True)  # type: ignore
+    clear_first: bpy.props.BoolProperty(
+        name="Clear Opening First",
+        description="Strip the opening (rods, shelves, doors) before "
+                    "the drawers go in - the Change Opening entry sets "
+                    "this",
+        default=False,
+        options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
     drawer_box: bpy.props.EnumProperty(
         name="Drawer Box",
         items=_DRAWER_BOX_OVERRIDE_ITEMS,
@@ -2162,15 +2180,21 @@ class hb_closets_OT_add_drawers(_ClosetInsertDialog, bpy.types.Operator):
             self.qty = int(op.drawer_qty) or 3
             self.drawer_box = op.drawer_box_override or 'DEFAULT'
             self.stretcher_width = float(op.drawer_stretcher_width)
-            for i, (equal, key) in enumerate(
-                    _read_drawer_front_heights(opening, self.qty), 1):
+            pairs = _read_drawer_front_heights(opening, self.qty)
+            for i, (equal, key) in enumerate(pairs, 1):
                 setattr(self, 'front_%d_equal' % i, equal)
                 setattr(self, 'front_%d_height' % i, key)
+            # A bank whose every front is holding a size of its own is
+            # not filling the opening - it stops under its cap shelf -
+            # so the dialog reads back that way.
+            if pairs:
+                self.fill = any(equal for equal, _k in pairs)
         return context.window_manager.invoke_props_dialog(self, width=330)
 
     def _sizes(self):
-        """The bank as the dialog has it, bottom drawer first."""
-        return [(bool(getattr(self, 'front_%d_equal' % i)),
+        """The bank as the dialog has it, bottom drawer first. A bank
+        not filling the opening holds every front at its own size."""
+        return [(self.fill and bool(getattr(self, 'front_%d_equal' % i)),
                  getattr(self, 'front_%d_height' % i))
                 for i in range(1, self.qty + 1)]
 
@@ -2197,11 +2221,13 @@ class hb_closets_OT_add_drawers(_ClosetInsertDialog, bpy.types.Operator):
         col.prop(self, 'qty')
         col.prop(self, 'drawer_box')
         col.prop(self, 'stretcher_width')
+        col.prop(self, 'fill')
 
         # A row per drawer, bottom drawer first, the order the bank is
-        # built in. A drawer sharing the opening reads back the height
-        # it is getting; one holding a size shows the size instead, and
-        # the ones still sharing take up the difference.
+        # built in. Filling the opening, a drawer sharing it reads back
+        # the height it is getting and one holding a size shows the
+        # size instead, the ones still sharing taking up the
+        # difference. Not filling it, every drawer is a size to set.
         if self.qty <= 0:
             return
         heights = self._heights(context)
@@ -2212,11 +2238,17 @@ class hb_closets_OT_add_drawers(_ClosetInsertDialog, bpy.types.Operator):
         for i in range(1, self.qty + 1):
             row = col.row(align=True)
             row.label(text="Drawer %d" % i)
+            if not self.fill:
+                row.prop(self, 'front_%d_height' % i, text="")
+                continue
             row.prop(self, 'front_%d_equal' % i, text="")
             if getattr(self, 'front_%d_equal' % i):
                 row.label(text=units.unit_to_string(unit, heights[i - 1]))
             else:
                 row.prop(self, 'front_%d_height' % i, text="")
+        if not self.fill:
+            box.label(text="A fixed shelf caps the stack; the space "
+                           "above stays open", icon='INFO')
         # A bank of drawers all holding sizes that add up to more than
         # the opening is squeezed to fit; say so rather than let the
         # sizes on screen read as what gets built.
@@ -2234,6 +2266,10 @@ class hb_closets_OT_add_drawers(_ClosetInsertDialog, bpy.types.Operator):
         opening = _active_opening_for_insert(context)
         if opening is None:
             return {'CANCELLED'}
+        if self.clear_first:
+            # Change Opening semantics: the drawers replace whatever
+            # the opening was holding, rods and doors included.
+            types_closets.clear_opening_contents(opening)
         opening.hb_closet_opening.drawer_qty = self.qty
         opening.hb_closet_opening.drawer_stretcher_width = \
             self.stretcher_width

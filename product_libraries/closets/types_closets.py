@@ -7425,10 +7425,9 @@ OPENING_CONFIG_GROUPS = [
      ('DOOR_DOUBLE', "Double Door"),
      ('DOOR_LIFT_UP', "Lift Up Door"),
      ('DOOR_TILT_OUT', "Tilt Out Hamper")],
-    [('DRAWERS_1', "1 Drawer"), ('DRAWERS_2', "2 Drawer"),
-     ('DRAWERS_3', "3 Drawer"), ('DRAWERS_4', "4 Drawer"),
-     ('DRAWERS_5', "5 Drawer"), ('DRAWERS_6', "6 Drawer"),
-     ('DRAWERS_7', "7 Drawer"), ('DRAWERS_8', "8 Drawer")],
+    # Drawers are not in this list: a bank has a quantity and sizes to
+    # ask about, so the menu offers the Add Drawers dialog in this
+    # group's place instead of fixed 1..8 entries.
     [('CUBBIES', "Cubbies"),
      ('ROLLOUTS', "Rollout Trays")],
 ]

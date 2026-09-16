@@ -260,7 +260,9 @@ class HOME_BUILDER_MT_closet_change_bay(bpy.types.Menu):
 
 class HOME_BUILDER_MT_closet_change_opening(bpy.types.Menu):
     """Swap one opening to a standard configuration. Grouped with
-    separators."""
+    separators. Drawers have a quantity and sizes to ask about, so
+    their entry opens the Add Drawers dialog (clearing the opening the
+    way the fixed entries do) instead of firing a configuration."""
     bl_label = "Change Opening"
 
     def draw(self, context):
@@ -272,12 +274,17 @@ class HOME_BUILDER_MT_closet_change_opening(bpy.types.Menu):
             for cid, label in group:
                 op = layout.operator("hb_closets.change_opening", text=label)
                 op.config = cid
+            if group[-1][0] == 'DOOR_TILT_OUT':
+                layout.separator()
+                op = layout.operator("hb_closets.add_drawers",
+                                     text="Add Drawers...")
+                op.clear_first = True
 
 
 class HOME_BUILDER_MT_closet_doors_drawers(bpy.types.Menu):
     """Add Doors & Drawers submenu. Door entries fire directly with the
     swing baked in, tilt-out hamper included (no dialog by design);
-    Drawers keeps its small dialog for the quantity."""
+    Add Drawers opens its dialog for the quantity and sizes."""
     bl_label = "Add Doors & Drawers"
 
     def draw(self, context):
@@ -292,7 +299,7 @@ class HOME_BUILDER_MT_closet_doors_drawers(bpy.types.Menu):
                              text="Tilt Out Hamper")
         op.swing = 'TILT_OUT'
         layout.separator()
-        layout.operator("hb_closets.add_drawers", text="Drawers...")
+        layout.operator("hb_closets.add_drawers", text="Add Drawers...")
 
 
 class HOME_BUILDER_MT_closet_part_commands(bpy.types.Menu):
