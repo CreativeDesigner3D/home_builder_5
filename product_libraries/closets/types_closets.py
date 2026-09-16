@@ -386,6 +386,33 @@ def _stamp_warning(obj, message):
         del obj[PROP_BOX_WARNING]
 
 
+def _door_size_warning(width, height, hinge):
+    """Why this door is past what the catalog makes, in the words the
+    prior library used, or '' when it is not. A swing door runs up to
+    24 5/8" wide by 84" tall; a lift-up lies on its side and takes the
+    same limits the other way around, and its hardware will not work a
+    door shorter than 11 1/4". A tilt-out hamper went unchecked in the
+    prior library, so it is left alone here too. More than one limit
+    can be broken at once; every broken one is said."""
+    msgs = []
+    if hinge == 'TOP':
+        if height < const.LIFT_UP_MIN_HEIGHT:
+            msgs.append("Lift Up door height must be at least "
+                        "11 1/4 Inches")
+        if width > const.DOOR_MAX_LONG:
+            msgs.append("Room has door width that exceeds 84 Inches")
+        if height > const.DOOR_MAX_NARROW:
+            msgs.append("Room has door height that exceeds "
+                        "24 5/8 Inches")
+    elif hinge in ('LEFT', 'RIGHT'):
+        if width > const.DOOR_MAX_NARROW:
+            msgs.append("Room has door width that exceeds "
+                        "24 5/8 Inches")
+        if height > const.DOOR_MAX_LONG:
+            msgs.append("Room has door height that exceeds 84 Inches")
+    return "; ".join(msgs)
+
+
 def _set_part_hidden(obj, hidden):
     obj.hide_viewport = hidden
     obj.hide_render = hidden
@@ -1909,6 +1936,12 @@ class ClosetStarter(GeoNodeCage):
         # metal fence sits flush. The fence is a purchased rail across the
         # front, parented to the shelf so it rides the tilt.
         slants = groups.get(PART_ROLE_SLANTED_SHELF, [])
+        # What the prior library said out loud about a slanted stack,
+        # carried on the opening: behind a door the stack gets refit on
+        # site, and the metal fence is only sold in lengths to 35".
+        # Stamped empty when there is no stack (or nothing to say), so
+        # the warning leaves with the shelves.
+        slant_msgs = []
         if slants:
             slants.sort(key=lambda o: o.get('hb_slant_index', 0))
             spacing = float(opening.hb_closet_opening.slant_spacing)
@@ -1942,6 +1975,17 @@ class ClosetStarter(GeoNodeCage):
                       - const.SHOE_FENCE_STANDOFF)
             f_back = min(max(float(_shp.slant_back_inset), 0.0),
                          max(f_room, 0.0))
+            covered = bool(groups.get(PART_ROLE_DOOR))
+            if not covered:
+                bay = find_bay_cage(opening)
+                covered = bool(bay is not None
+                               and bay.hb_closet_bay.door_swing)
+            if covered:
+                slant_msgs.append("Slanted Shoe Shelf behind door, "
+                                  "final placement may be different.")
+            if (max(shelf_w - 2 * f_inset, inch(1.0)) + 1.0e-6
+                    >= const.SHOE_FENCE_MAX_LENGTH):
+                slant_msgs.append("Shoe Shelf Fence Excedes 35 Inches")
             for i, child in enumerate(slants):
                 z = spacing * i + rise
                 # The stack stops where the opening stops: a shelf whose
@@ -1978,6 +2022,7 @@ class ClosetStarter(GeoNodeCage):
                     fpart.set_input('Thickness', const.SHOE_FENCE_HEIGHT)
                     if fence_mat is not None:
                         _set_fence_finish(fpart, fence_mat)
+        _stamp_warning(opening, "; ".join(slant_msgs))
 
         # ----- Doors (1 leaf, or 2 for DOUBLE swing) -----
         doors = groups.get(PART_ROLE_DOOR, [])
@@ -2012,6 +2057,8 @@ class ClosetStarter(GeoNodeCage):
                     part.set_input('Length', leaf)
                     part.set_input('Width', d_h)
                 part.set_input('Thickness', const.FRONT_THICKNESS)
+                _stamp_warning(child, _door_size_warning(
+                    leaf, d_h, child.get('hb_hinge', 'LEFT')))
                 _apply_front_style(child, is_drawer=False)
                 _stash_door_closed(child, x, front_y,
                                    (-bo + d_h) if up else -bo,
@@ -2104,9 +2151,17 @@ class ClosetStarter(GeoNodeCage):
                 child[PROP_OPEN_HEIGHT] = avail_h
                 child[PROP_BOX_TYPE_RESOLVED] = box_type
                 _tray = child.get(PROP_JEWELRY_TRAY, '')
+                tray_warn = ''
                 if _tray and _tray != 'NONE':
-                    child[PROP_JEWELRY_TRAY_NAME] = jewelry_tray_name(
-                        _tray, _inside, depth)
+                    _tray_name = jewelry_tray_name(_tray, _inside,
+                                                   depth)
+                    child[PROP_JEWELRY_TRAY_NAME] = _tray_name
+                    if not _tray_name:
+                        # No size band covers this drawer, so no tray
+                        # goes on the order. Said in the prior
+                        # library's words rather than silently dropped.
+                        tray_warn = ("Invalid jewelry tray selection: "
+                                     + _tray)
                 elif PROP_JEWELRY_TRAY_NAME in child:
                     del child[PROP_JEWELRY_TRAY_NAME]
                 _apply_front_style(child, is_drawer=True)
@@ -2122,7 +2177,8 @@ class ClosetStarter(GeoNodeCage):
                                     wood_d)
                 warn = dbx.box_warning(box_type, avail_h, depth,
                                        wood_d)
-                _stamp_warning(child, warn)
+                _stamp_warning(child, "; ".join(
+                    m for m in (warn, tray_warn) if m))
                 # Explicit per-front size overrides (0 = system size).
                 _dov = float(child.get(PROP_BOX_DEPTH_OVERRIDE, 0.0))
                 _hov = float(child.get(PROP_BOX_HEIGHT_OVERRIDE, 0.0))
@@ -2707,6 +2763,9 @@ class ClosetStarter(GeoNodeCage):
             part.set_input('Length', leaf)
             part.set_input('Width', interior_h + to + bo)
             part.set_input('Thickness', const.FRONT_THICKNESS)
+            _stamp_warning(child, _door_size_warning(
+                leaf, interior_h + to + bo,
+                child.get('hb_hinge', 'LEFT')))
             _apply_front_style(child, is_drawer=False)
             _stash_door_closed(child, x, front_y, z, leaf, side,
                                height=interior_h + to + bo)
