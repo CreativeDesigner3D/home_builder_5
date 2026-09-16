@@ -3045,6 +3045,23 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                         child, finish_mat, finish_mat_rotated)
                 continue
 
+            if role in ('ADA_FRONT', 'ADA_ANGLED_FRONT'):
+                # Python-built accessible sink fronts: slot 0 on a slab
+                # (grain along the band), stile / rail / panel slots on
+                # stiles and rails.
+                me = child.data
+                if child.get('HB_STATIC_SLAB'):
+                    slots = (finish_mat_rotated or finish_mat,)
+                else:
+                    slots = (finish_mat, finish_mat_rotated or finish_mat,
+                             finish_mat)
+                while len(me.materials) < len(slots):
+                    me.materials.append(None)
+                for i, mat in enumerate(slots):
+                    if mat is not None:
+                        me.materials[i] = mat
+                continue
+
             if role in self._FRONT_ROLES:
                 # A front's paint override lives on the stable OPENING cage
                 # (fronts are wiped + rebuilt each recalc, so a prop on the
@@ -7669,6 +7686,26 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
                     "down from the top of the box",
         default=units.inch(5.5), min=0.0, unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
+    )  # type: ignore
+    ada_front_construction: EnumProperty(
+        name="Front",
+        description="How the band across the front is built",
+        items=[
+            ('SLAB', "Slab", "One solid part"),
+            ('FRAME', "Stiles and Rails",
+             "Stiles and rails around a panel, from the door style"),
+        ],
+        default='SLAB', update=_update_cabinet_dim,
+    )  # type: ignore
+    ada_angled_front_construction: EnumProperty(
+        name="Angled Front",
+        description="How the panel that closes the rake is built",
+        items=[
+            ('SLAB', "Slab", "One solid part"),
+            ('FRAME', "Stiles and Rails",
+             "Stiles and rails around a panel, from the door style"),
+        ],
+        default='SLAB', update=_update_cabinet_dim,
     )  # type: ignore
 
     # Floating vanity construction, on a base cabinet whose toe kick

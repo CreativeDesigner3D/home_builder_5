@@ -492,6 +492,12 @@ def draw_ada_sink_options(layout, root):
     sub.prop(cab, 'ada_side_front_run', text="Band At Front")
     sub.prop(cab, 'ada_side_front_height', text="Band Height")
 
+    col = box.column(align=True)
+    col.prop(cab, 'ada_front_construction', text="Front")
+    sub = col.row(align=True)
+    sub.enabled = cab.ada_side_shape
+    sub.prop(cab, 'ada_angled_front_construction', text="Angled Front")
+
     rake = root.get('ADA_RAKE_LENGTH')
     if rake:
         info = box.column(align=True)

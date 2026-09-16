@@ -404,6 +404,12 @@ PART_ROLE_TILT_OUT = 'TILT_OUT'
 PART_ROLE_ADA_CUTTER = 'ADA_CUTTER'
 ADA_CUT_MOD_NAME = 'Knee Clearance'
 ADA_SINK_TAG = 'IS_ADA_SINK'
+# Accessible sink fronts: the band across the front and the panel that
+# closes the rake. Each builds as a slab or as stiles and rails around
+# a panel (Face_Frame_Cabinet_Props.ada_front_construction /
+# ada_angled_front_construction).
+PART_ROLE_ADA_FRONT = 'ADA_FRONT'
+PART_ROLE_ADA_ANGLED_FRONT = 'ADA_ANGLED_FRONT'
 PART_ROLE_APRON = 'APRON'
 # Drawer-look door: a working DOOR leaf wearing N applied drawer-front
 # panels (proud of the leaf, with reveal gaps that read as faux mid
@@ -7847,6 +7853,7 @@ class FaceFrameCabinet(GeoNodeCage):
         the side view.
         """
         shape = self._ada_shape(layout) if self._has_carcass() else None
+        self._reconcile_ada_fronts(layout, shape)
         if shape is None:
             self._cleanup_ada_cutter_and_cuts()
             for key in ('ADA_WALL_RUN', 'ADA_RAKE_RUN', 'ADA_RISE',
@@ -7864,6 +7871,177 @@ class FaceFrameCabinet(GeoNodeCage):
         self.obj['ADA_RISE'] = round(rise / one_inch, 3)
         self.obj['ADA_RAKE_LENGTH'] = round(
             math.hypot(rake_run, rise) / one_inch, 3)
+
+    def _reconcile_ada_fronts(self, layout, shape):
+        """Build the accessible sink's two fronts, or take them away.
+
+        The FRONT is the band across the top of the box, in the face
+        frame plane; it stands in for the collapsed face frame's top
+        rail, which is hidden while the front is there. The ANGLED
+        FRONT closes the rake between the sides, its face flush with
+        the raked edges and toward the knees; it only exists while the
+        sides are raked. Each is a slab or stiles and rails around a
+        panel, per the cabinet's two construction picks.
+        """
+        cab = self.obj.face_frame_cabinet
+        specs = {}
+        if self.obj.get(ADA_SINK_TAG) and self._has_carcass():
+            fft = cab.face_frame_thickness
+            band = min(cab.ada_side_front_height, layout.dim_z)
+            if band > 0.0 and layout.dim_x > 0.0:
+                # Height up the part's X, width along its -Y, face at
+                # +Z: door_builder's front-cutpart space.
+                basis = Matrix(((0.0, -1.0, 0.0),
+                                (0.0, 0.0, -1.0),
+                                (1.0, 0.0, 0.0)))
+                origin = Vector((0.0, -layout.dim_y + fft,
+                                 layout.dim_z - band))
+                specs[PART_ROLE_ADA_FRONT] = (
+                    'Front', cab.ada_front_construction, basis, origin,
+                    layout.dim_x, band, fft)
+            if shape is not None:
+                wall_run, rake_run, rise, floor_z = shape
+                rake = math.hypot(rake_run, rise)
+                t = cab.door_thickness
+                x_lo = solver.carcass_inner_left_x(layout)
+                width = solver.carcass_inner_right_x(layout) - x_lo
+                if width > 0.0:
+                    up = Vector((0.0, -rake_run / rake, rise / rake))
+                    face = Vector((0.0, -rise / rake, -rake_run / rake))
+                    basis = Matrix(((0.0, -1.0, 0.0),
+                                    (up.y, 0.0, face.y),
+                                    (up.z, 0.0, face.z)))
+                    # Face on the rake line, stock behind it in the box.
+                    origin = (Vector((x_lo, -wall_run, floor_z))
+                              - face * t)
+                    specs[PART_ROLE_ADA_ANGLED_FRONT] = (
+                        'Angled Front', cab.ada_angled_front_construction,
+                        basis, origin, width, rake, t)
+
+        existing = {}
+        for child in list(self.obj.children):
+            role = child.get('hb_part_role')
+            if role in (PART_ROLE_ADA_FRONT, PART_ROLE_ADA_ANGLED_FRONT):
+                if role in specs and role not in existing:
+                    existing[role] = child
+                else:
+                    mesh = child.data
+                    bpy.data.objects.remove(child, do_unlink=True)
+                    if mesh is not None and mesh.users == 0:
+                        bpy.data.meshes.remove(mesh)
+            elif role == PART_ROLE_TOP_RAIL:
+                hide = PART_ROLE_ADA_FRONT in specs
+                if hide or child.get('hb_ada_hidden'):
+                    child.hide_viewport = hide
+                    child.hide_render = hide
+                    if hide:
+                        child['hb_ada_hidden'] = True
+                    elif 'hb_ada_hidden' in child:
+                        del child['hb_ada_hidden']
+
+        for role, (name, construction, basis, origin, width, height,
+                   thickness) in specs.items():
+            obj = existing.get(role)
+            if obj is None:
+                part = CabinetPart()
+                part.create(name)
+                part.obj.parent = self.obj
+                part.obj['hb_part_role'] = role
+                part.obj['CABINET_PART'] = True
+                part.set_input('Mirror Y', True)
+                obj = part.obj
+            part = CabinetPart(obj)
+            part.set_input('Length', height)
+            part.set_input('Width', width)
+            part.set_input('Thickness', thickness)
+            for mod in obj.modifiers:
+                if mod.type == 'NODES':
+                    mod.show_viewport = False
+                    mod.show_render = False
+            if obj.data.users > 1:
+                obj.data = obj.data.copy()
+            obj.matrix_basis = Matrix.Translation(origin) @ basis.to_4x4()
+            self._build_ada_front_mesh(obj, construction, width, height,
+                                       thickness)
+
+    def _build_ada_front_mesh(self, obj, construction, width, height,
+                              thickness):
+        """Slab, or stiles and rails around a panel from the cabinet's
+        door style (a 2-1/4" square frame with no 5-piece door style).
+        Rails narrow to keep a 1" panel on a short band; a front too
+        small for any frame builds as a slab."""
+        from ..common import door_builder
+        from . import applied_panel_sizing
+        from .props_hb_face_frame import get_style_props
+        one_inch = inch(1.0)
+        style = applied_panel_sizing._resolve_door_style(self.obj)
+        if style is not None and getattr(style, 'door_type', '') != '5_PIECE':
+            style = None
+        kwargs = {}
+        if construction == 'FRAME':
+            info = door_builder.door_style_info(style)
+            if style is None:
+                info.update(stile_width=inch(2.25), rail_width=inch(2.25))
+            info.update(door_type='5_PIECE', add_mid_rail=False,
+                        mid_rail_z=None, mid_rail_count=0,
+                        mid_stile_count=0, left_stile_width=None,
+                        right_stile_width=None, top_rail_width=None,
+                        bottom_rail_width=None)
+            if style is not None:
+                member_sec = style.resolve_member_section(thickness)
+                pkind, p_th, p_inset = style.effective_panel_fields(
+                    thickness)
+                info['panel_thickness'] = p_th
+                info['panel_inset'] = p_inset
+                if member_sec is not None:
+                    mw = max(u for u, v in member_sec)
+                    info.update(stile_width=mw, rail_width=mw)
+                kwargs = style.resolve_mesh_sections(
+                    thickness, p_inset, pkind, member_sec)
+            rail_fit = (height - one_inch) / 2.0
+            if (kwargs.get('member_section') is None
+                    and info['rail_width'] > rail_fit):
+                info['rail_width'] = max(rail_fit, inch(0.5))
+            min_w, min_h = door_builder.layout_min_size(info)
+            if width <= min_w or height <= min_h:
+                info['door_type'] = 'SLAB'
+                kwargs = {}
+        else:
+            info = door_builder.door_style_info(None)
+            info['door_type'] = 'SLAB'
+        finish = grain = None
+        style_name = self.obj.get('STYLE_NAME')
+        if style_name:
+            for cs in get_style_props().cabinet_styles:
+                if cs.name == style_name:
+                    finish, grain = cs.get_finish_material()
+                    break
+        if info['door_type'] == 'SLAB':
+            materials = (grain or finish,) if (grain or finish) else None
+        elif finish is not None:
+            materials = (finish, grain or finish, finish)
+        else:
+            materials = None
+        door_builder.build_door_mesh(obj.data, info, width, height,
+                                     thickness, materials=materials,
+                                     **kwargs)
+        if info['door_type'] == 'SLAB':
+            obj['HB_STATIC_SLAB'] = True
+            if 'HB_DOOR_FRAME' in obj:
+                del obj['HB_DOOR_FRAME']
+        else:
+            obj['HB_DOOR_FRAME'] = {
+                'left_stile': info['stile_width'],
+                'right_stile': info['stile_width'],
+                'top_rail': info['rail_width'],
+                'bottom_rail': info['rail_width'],
+                'add_mid_rail': False,
+                'mid_center': True,
+                'mid_loc': 0.0,
+                'mid_rail_width': info['mid_rail_width'],
+            }
+            if 'HB_STATIC_SLAB' in obj:
+                del obj['HB_STATIC_SLAB']
 
     def _iter_wedge_cut_targets(self):
         """Root cage + carcass parts whose back-bottom corner the wedge
