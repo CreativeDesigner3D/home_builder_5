@@ -132,7 +132,11 @@ class home_builder_obstacles_OT_place_obstacle(bpy.types.Operator, hb_placement.
     
     def get_walls_in_scene(self, context):
         """Get all wall objects in the current scene."""
-        return [obj for obj in context.scene.objects if obj.get('IS_WALL_BP')]
+        # Only the walls on screen: an obstacle is not put on a wall that
+        # Hide Wall or Isolate Selected Walls has put away.
+        return [obj for obj in context.scene.objects
+                if obj.get('IS_WALL_BP')
+                and hb_placement.object_shown(obj, context.space_data)]
     
     def get_wall_length(self, wall):
         """Get wall length from obj_x child or geometry node input."""

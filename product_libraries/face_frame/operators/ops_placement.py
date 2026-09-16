@@ -423,6 +423,9 @@ def _opening_under_cursor(context, view_point, hit_location):
     direction = direction / ray_len
     pad = units.inch(0.75)
     slack = units.inch(4.0)   # doors / drawer fronts sit proud of the box
+    from .. import dim_edit_overlay
+    space = context.space_data
+    shown = {}
     best = None
     best_t = None
     for cage in context.scene.objects:
@@ -430,6 +433,13 @@ def _opening_under_cursor(context, view_point, hit_location):
             continue
         root = types_face_frame.find_cabinet_root(cage)
         if root is None or root.get(types_face_frame.FLOATING_SHELF_TAG):
+            continue
+        # An opening in a cabinet that cannot be seen - its wall hidden,
+        # the cabinet hidden, local view - takes nothing. The cages are
+        # hidden by design, so the cabinet is asked instead.
+        if root not in shown:
+            shown[root] = dim_edit_overlay._cabinet_shown(root, space)
+        if not shown[root]:
             continue
         try:
             gn = hb_types.GeoNodeCage(cage)
@@ -580,6 +590,9 @@ def _find_nearest_wall_from_cursor(op, context):
 
     for obj in context.scene.objects:
         if 'IS_WALL_BP' not in obj:
+            continue
+        # A hidden wall is not somewhere to put anything.
+        if not hb_placement.object_shown(obj, context.space_data):
             continue
         try:
             wall = hb_types.GeoNodeWall(obj)
@@ -749,6 +762,9 @@ def _wall_behind_corner_snap(op, context, corner_obj, side, new_width):
     best_dist = _CORNER_WALL_BEHIND_TOL
     for obj in context.scene.objects:
         if 'IS_WALL_BP' not in obj:
+            continue
+        # A hidden wall is not one to run the cabinet along.
+        if not hb_placement.object_shown(obj, context.space_data):
             continue
         try:
             wall = hb_types.GeoNodeWall(obj)
