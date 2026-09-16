@@ -5745,6 +5745,24 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
                 _sync_height_dropdown(bay.hb_closet_bay)
         return context.window_manager.invoke_props_dialog(self, width=560)
 
+    def _draw_location(self, col, root, sp):
+        """Where the unit sits, beside its dimensions on every tab, the
+        way the prior library laid the dialog out. On a wall X reads from
+        the left end of the side of the wall it is on (so a unit on the
+        back of a wall still counts from its own left); a free-standing
+        unit gets its turn as well."""
+        from .. import props_closets
+        on_wall = props_closets.starter_wall(root) is not None
+        col.label(text="Location:")
+        if on_wall:
+            col.prop(sp, 'wall_offset', text="X")
+        else:
+            col.prop(root, 'location', index=0, text="X")
+        col.prop(root, 'location', index=1, text="Y")
+        col.prop(root, 'location', index=2, text="Z")
+        if not on_wall:
+            col.prop(root, 'rotation_euler', index=2, text="Z Rotation")
+
     # -- tab bodies ---------------------------------------------------
     def _draw_sizes(self, layout, root, sp, bays, is_corner, is_filler):
         if is_filler:
@@ -5756,11 +5774,6 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
             col.prop(sp, 'filler_left_width')
             col.prop(sp, 'filler_right_width')
             return
-        from .. import props_closets
-        if props_closets.starter_wall(root) is not None:
-            box = layout.box()
-            box.label(text="Location", icon='ORIENTATION_LOCAL')
-            box.prop(sp, 'wall_offset')
         if is_corner:
             box = layout.box()
             box.label(text="Corner", icon='MOD_BEVEL')
@@ -6005,7 +6018,9 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
         # so a run can be named where it is edited.
         box = layout.box()
         box.prop(root, 'name', text="", icon='OUTLINER_OB_LATTICE')
-        col = box.column(align=True)
+        split = box.split(factor=0.55)
+        col = split.column(align=True)
+        col.label(text="Dimensions:")
         col.prop(sp, 'width')
         # The run height and depth carry to every bay that has not been
         # handed one of its own. The Bays table is where a bay takes a
@@ -6014,6 +6029,7 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
         if sp.height_preset == 'CUSTOM':
             col.prop(sp, 'height', text="Custom Height")
         col.prop(sp, 'depth')
+        self._draw_location(split.column(align=True), root, sp)
 
         # A countertop belongs to a unit that has a top to sit on - a
         # base run or an island. A tall or hanging unit finishes at its
