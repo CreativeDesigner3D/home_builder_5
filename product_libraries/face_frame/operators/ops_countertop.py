@@ -17,7 +17,7 @@ or modified by either library's tooling.
 import bpy
 import bmesh
 import math
-from .... import hb_types, hb_project, units
+from .... import hb_types, hb_project, hb_utils, units
 from .. import types_face_frame
 from ...common import countertop_common
 from . import ops_placement as ff_ops_placement
@@ -431,7 +431,7 @@ def create_wall_countertop(context, wall_obj, cabinets, has_left_conn, has_right
     mesh.from_pydata(verts, [], faces)
     mesh.update()
 
-    obj = bpy.data.objects.new('Countertop', mesh)
+    obj = hb_utils.new_object('Countertop', mesh)
     obj.parent = wall_obj
     obj['IS_COUNTERTOP'] = True
     context.scene.collection.objects.link(obj)
@@ -536,7 +536,7 @@ def create_island_countertop(context, cab_obj):
     mesh.from_pydata(verts, [], faces)
     mesh.update()
 
-    obj = bpy.data.objects.new('Countertop', mesh)
+    obj = hb_utils.new_object('Countertop', mesh)
     obj.parent = cab_obj
     obj['IS_COUNTERTOP'] = True
     context.scene.collection.objects.link(obj)

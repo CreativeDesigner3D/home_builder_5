@@ -6,6 +6,7 @@ Phase 3 (types_face_frame.py).
 """
 import bpy
 import os
+import re
 from contextlib import contextmanager
 from bpy.types import (
     PropertyGroup,
@@ -429,6 +430,7 @@ def update_front_series(self, context):
     if items:
         _set_enum_safe(self, "front_shape", items[0][0])
     _apply_series_frame_to_door_style(self)
+    _refresh_auto_front_style_name(self)
     _propagate_door_style(self, context)
 
 
@@ -487,6 +489,7 @@ def update_front_shape(self, context):
     # The shape drives geometry (arched tops); the panel reset above
     # only propagates when the panel value actually changes, so push
     # explicitly -- shape-only changes must rebuild fronts too.
+    _refresh_auto_front_style_name(self)
     _propagate_door_style(self, context)
 
 
@@ -495,6 +498,7 @@ def update_front_panel(self, context):
     to assigned fronts, and re-apply materials so a Prep-for-Glass panel
     renders as glass immediately (and switching away restores the finish)."""
     _apply_series_frame_to_door_style(self)
+    _refresh_auto_front_style_name(self)
     _propagate_door_style(self, context)
     _reapply_materials_for_door_style(self, context)
 
@@ -785,8 +789,8 @@ def ensure_default_styles(context):
             cs.finish_hinge_seeded = True
     if len(ff.door_styles) == 0:
         ds = ff.door_styles.add()
-        ds.name = "Craftsman Square Recessed Panel"
         _apply_default_front_style(ds)
+        ds.name = _auto_front_style_name(*_DEFAULT_FRONT)
         # Rail callouts are a drawer-rail concern: door styles start
         # with the callout off (the drawer seed below keeps the
         # enabled default). Copy-based Add duplicates the active
@@ -795,29 +799,88 @@ def ensure_default_styles(context):
         ff.active_door_style_index = 0
     if len(ff.drawer_front_styles) == 0:
         ds = ff.drawer_front_styles.add()
-        ds.name = "Craftsman Square Recessed Panel"
         _apply_default_front_style(ds)
+        ds.name = _auto_front_style_name(*_DEFAULT_FRONT)
         ff.active_drawer_front_style_index = 0
 
 
 def update_door_style_name(self, context):
     """Keep style names unique within the style's OWN pool (door_styles or
     drawer_front_styles -- independent lists, so a name may repeat across
-    pools). Pool is read from the RNA path."""
+    pools). Pool is read from the RNA path.
+
+    Fronts are tagged with the style's name (DOOR_STYLE_NAME), so a rename
+    re-tags them from the previous name held in rename_anchor -- the same
+    scheme the cabinet style uses for STYLE_NAME. Cabinet-style references
+    (door_style / drawer_front_style) are index-backed dynamic enums and
+    follow a rename on their own."""
     main = get_style_props(context)
-    try:
-        in_drawer = "drawer_front_styles" in self.path_from_id()
-    except Exception:
-        in_drawer = False
+    in_drawer = _front_is_drawer(self)
     pool = main.drawer_front_styles if in_drawer else main.door_styles
     base_name = self.name if self.name else "Door Style"
     existing = [s.name for s in pool if s != self]
-    if base_name not in existing:
+    final = base_name
+    if base_name in existing:
+        i = 1
+        while f"{base_name}.{i:03d}" in existing:
+            i += 1
+        final = f"{base_name}.{i:03d}"
+    # A live sibling's name can never be this style's previous name, so an
+    # anchor that matches one is stale (a copied style) and must not re-tag.
+    old = self.rename_anchor
+    if old and old != final and old not in existing:
+        roles = (Face_Frame_Door_Style._DRAWER_FRONT_ROLES if in_drawer
+                 else Face_Frame_Door_Style._DOOR_FRONT_ROLES)
+        for obj in bpy.data.objects:
+            if (obj.get('DOOR_STYLE_NAME') == old
+                    and obj.get('hb_part_role') in roles):
+                obj['DOOR_STYLE_NAME'] = final
+    self.rename_anchor = final
+    # Apply the de-duplicated name last; a re-entry sees anchor == final
+    # and is a clean no-op.
+    if self.name != final:
+        self.name = final
+
+
+# --- automatic front-style names (series + shape + panel) ---
+# A style keeps following its catalog pick as long as its name is one this
+# rule would produce (or one of the seed names); typing any other name pins
+# it. No stored flag: the name itself is the record.
+_LEGACY_AUTO_FRONT_NAMES = {"Door Style", "Craftsman Square Recessed Panel"}
+_AUTO_FRONT_NAMES_CACHE = {}
+_NAME_SUFFIX_RE = re.compile(r"\.\d{3}$")
+
+
+def _auto_front_style_name(series, shape, panel):
+    return " ".join(part for part in (series, shape, panel) if part)
+
+
+def _auto_front_style_names(in_drawer):
+    names = _AUTO_FRONT_NAMES_CACHE.get(bool(in_drawer))
+    if names is None:
+        table = _DRAWER_PANEL_ITEMS if in_drawer else _DOOR_PANEL_ITEMS
+        names = {_auto_front_style_name(series, shape, panel[0])
+                 for (series, shape), panels in table.items()
+                 for panel in panels}
+        names |= _LEGACY_AUTO_FRONT_NAMES
+        _AUTO_FRONT_NAMES_CACHE[bool(in_drawer)] = names
+    return names
+
+
+def _refresh_auto_front_style_name(self):
+    """Series / shape / panel changed: rename the style after the pick
+    unless the user gave it a name of their own."""
+    current = self.name or ""
+    base = _NAME_SUFFIX_RE.sub("", current)
+    if base not in _auto_front_style_names(_front_is_drawer(self)):
         return
-    i = 1
-    while f"{base_name}.{i:03d}" in existing:
-        i += 1
-    self.name = f"{base_name}.{i:03d}"
+    new = _auto_front_style_name(self.front_series, self.front_shape,
+                                 self.front_panel)
+    if base == new:
+        return
+    # The name update callback de-duplicates within the pool and re-tags
+    # the fronts carrying the old name.
+    self.name = new
 
 
 def update_top_cabinet_clearance(self, context):
@@ -850,6 +913,223 @@ def update_face_frame_selection_mode(self, context):
     objects and highlights/dims them based on which mode is active.
     """
     bpy.ops.hb_face_frame.toggle_mode(search_obj_name="")
+
+
+# Object colour a cabinet carries when style colours are off. White is
+# what an untinted part renders as, so turning the option off puts every
+# cabinet back where it started.
+_NO_STYLE_TINT = (1.0, 1.0, 1.0, 1.0)
+# Where the viewport's own colour mode is parked while style colours are
+# on, so turning them off restores what the user had.
+_STYLE_COLOR_SHADING_KEY = 'HB_PRE_STYLE_COLOR_SHADING'
+
+# Fill colour per style, by the style's position in the pool: the first
+# style is white (the project default) and each one after takes the next
+# muted pastel, the last entry repeating for a pool longer than the
+# palette. Downstream 2D consumers assign the same palette by the same
+# rule, so a cabinet wears the colour on screen that it prints on paper.
+STYLE_COLOR_PALETTE = (
+    (1.0, 1.0, 1.0),      # White (project default)
+    (0.75, 0.85, 0.95),   # Light Blue
+    (0.75, 0.92, 0.75),   # Light Green
+    (0.95, 0.85, 0.75),   # Light Peach
+    (0.88, 0.80, 0.95),   # Light Lavender
+    (0.95, 0.95, 0.75),   # Light Yellow
+    (0.85, 0.75, 0.75),   # Light Rose
+)
+
+# Whatever a selection mode is offering to be clicked is drawn solid and
+# in front of the cabinet, so an opaque tint would hide the cabinet it is
+# meant to be colouring. It takes the style colour at this alpha instead:
+# enough to read the colour, transparent enough to see the cabinet
+# through it. Everything else stays opaque.
+_STYLE_CAGE_ALPHA = 0.25
+
+# Cages, as opposed to parts: the wash alpha applies to all of them, so a
+# bay or opening cage doesn't black out the cabinet in its own mode.
+_STYLE_CAGE_TAGS = (
+    'IS_FACE_FRAME_CABINET_CAGE',
+    'IS_FACE_FRAME_BAY_CAGE',
+    'IS_FACE_FRAME_OPENING_CAGE',
+    'IS_FACE_FRAME_PRODUCT_CAGE',
+    'IS_FRAMELESS_CABINET_CAGE',
+    'IS_FRAMELESS_PRODUCT_CAGE',
+    'IS_CAGE_GROUP',
+)
+
+
+# The palette is tuned for 2D drawings, where a pastel fill sits behind
+# black line work on white paper. Washed over shaded 3D geometry the same
+# pastels all read as white, so the viewport uses the same hue at this
+# much more saturation -- similar colour, actually distinguishable.
+_STYLE_VIEWPORT_SATURATION = 2.2
+_STYLE_VIEWPORT_MIN_SATURATION = 0.45
+
+
+def style_palette_color(index):
+    """Palette entry for a style at ``index`` in the pool, last repeating."""
+    if index < 0:
+        index = 0
+    return STYLE_COLOR_PALETTE[min(index, len(STYLE_COLOR_PALETTE) - 1)]
+
+
+def style_viewport_color(rgb):
+    """``rgb`` saturated enough to read as a colour in solid shading.
+
+    Hue and brightness are left alone, so a cabinet still looks like the
+    fill its drawings carry. A colourless entry (the first style's white)
+    stays white rather than being pushed into a hue it never had.
+    """
+    import colorsys
+    hue, sat, val = colorsys.rgb_to_hsv(rgb[0], rgb[1], rgb[2])
+    if sat <= 0.0:
+        return (rgb[0], rgb[1], rgb[2])
+    sat = max(min(sat * _STYLE_VIEWPORT_SATURATION, 1.0),
+              _STYLE_VIEWPORT_MIN_SATURATION)
+    return colorsys.hsv_to_rgb(hue, sat, val)
+
+
+def _is_cage(obj):
+    return any(obj.get(tag) for tag in _STYLE_CAGE_TAGS)
+
+
+def _style_tint_for_cabinet(cabinet_obj, styles):
+    """The RGB a cabinet should render as, or None if it has no style.
+
+    The colour comes from the style's place in the pool rather than from
+    its stored swatch: the swatch is only filled in once shop drawings
+    have been generated, so reading it left every cabinet white until
+    then. The stored swatch is refreshed to match on the way past, so the
+    style panel shows the colour its cabinets are wearing.
+    """
+    name = cabinet_obj.get('STYLE_NAME')
+    if not name:
+        return None
+    for index, style in enumerate(styles):
+        if style.name != name:
+            continue
+        colour = style_palette_color(index)
+        if tuple(style.color_in_2d_drawings) != colour:
+            style.color_in_2d_drawings = colour
+        return style_viewport_color(colour)
+    return None
+
+
+def _annotation_color(context):
+    """The colour drawing text is meant to wear, from preferences.
+
+    Dimensions and labels are annotation, not cabinet surface: they
+    print from ``obj.color``, so they have to keep this colour even
+    when the cabinet they hang off is wearing a style tint.
+    """
+    try:
+        hb_props = context.window_manager.home_builder
+        return tuple(hb_props.get_user_preferences(context).annotation_color)
+    except Exception:
+        return (0.0, 0.0, 0.0, 1.0)
+
+
+def apply_style_colors(context):
+    """Paint (or unpaint) every cabinet in the scene with its style's
+    drawing colour, and put the viewport in object-colour mode to show
+    it. Returns the number of cabinets tinted."""
+    from . import types_face_frame
+    scene = context.scene
+    props = get_style_props(context)
+    on = bool(props.show_style_colors)
+    styles = props.cabinet_styles
+
+    tinted = 0
+    # Annotation hangs off the cabinet it describes, so a plain walk of the
+    # children painted the drawing's dimensions and labels in the cabinet's
+    # colour (and washed them out again when the tint came off). They are
+    # repainted to their own colour on the way past instead, which also
+    # puts right any that an earlier build had already tinted.
+    note_colour = _annotation_color(context)
+    for cage in [o for o in scene.objects
+                 if o.get(types_face_frame.TAG_CABINET_CAGE)]:
+        tint = _style_tint_for_cabinet(cage, styles) if on else None
+        if tint is None:
+            cage.color = _NO_STYLE_TINT
+            for child in cage.children_recursive:
+                child.color = (note_colour if child.get('IS_2D_ANNOTATION')
+                               else _NO_STYLE_TINT)
+            continue
+        part_colour = (tint[0], tint[1], tint[2], 1.0)
+        cage_colour = (tint[0], tint[1], tint[2], _STYLE_CAGE_ALPHA)
+        cage.color = cage_colour
+        for child in cage.children_recursive:
+            if child.get('IS_2D_ANNOTATION'):
+                child.color = note_colour
+                continue
+            child.color = cage_colour if _is_cage(child) else part_colour
+        tinted += 1
+
+    # The colour only shows in solid shading's OBJECT mode; remember what
+    # the viewport had so turning this off gives it back.
+    for area in getattr(context.screen, 'areas', ()):
+        if area.type != 'VIEW_3D':
+            continue
+        for space in area.spaces:
+            if space.type != 'VIEW_3D':
+                continue
+            if on:
+                if _STYLE_COLOR_SHADING_KEY not in scene:
+                    scene[_STYLE_COLOR_SHADING_KEY] = space.shading.color_type
+                space.shading.color_type = 'OBJECT'
+            else:
+                space.shading.color_type = scene.get(
+                    _STYLE_COLOR_SHADING_KEY, 'MATERIAL')
+    if not on and _STYLE_COLOR_SHADING_KEY in scene:
+        del scene[_STYLE_COLOR_SHADING_KEY]
+    return tinted
+
+
+def style_color_for_object(obj, context=None, highlight=None):
+    """The colour ``obj`` should wear under style colours, or None.
+
+    Selection modes repaint cages and parts as the user moves between
+    them, and would otherwise put a cabinet back to the generic
+    highlight. They ask here first, so a cabinet keeps its style's
+    colour through a mode change. None means "not our business": the
+    option is off, or the object belongs to no cabinet style.
+
+    ``highlight`` says whether this object is the thing the active
+    selection mode is offering to be clicked -- a cage in Cabinets mode,
+    the frame members in Face Frame, the shelves in Interiors. Those get
+    the see-through wash whatever they are, so the cabinet behind them
+    stays readable and every mode looks like the others. Left None, a
+    cage is treated as the highlight and a part is not, which is what a
+    plain repaint of the whole scene wants.
+    """
+    if obj is None:
+        return None
+    if obj.get('IS_2D_ANNOTATION'):
+        return None          # drawing text keeps its own colour
+    context = context or bpy.context
+    try:
+        props = get_style_props(context)
+    except Exception:
+        return None
+    if not props.show_style_colors:
+        return None
+    root = obj
+    while root is not None and not root.get('IS_FACE_FRAME_CABINET_CAGE'):
+        root = root.parent
+    if root is None:
+        return None
+    tint = _style_tint_for_cabinet(root, props.cabinet_styles)
+    if tint is None:
+        return None
+    if highlight is None:
+        highlight = _is_cage(obj)
+    alpha = _STYLE_CAGE_ALPHA if highlight else 1.0
+    return (tint[0], tint[1], tint[2], alpha)
+
+
+def update_show_style_colors(self, context):
+    """Toggle: paint the cabinets by style section, or put them back."""
+    apply_style_colors(context)
 
 
 def update_include_drawer_boxes(self, context):
@@ -1069,6 +1349,19 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         name="Stain Color",
         description="Stain color for cabinet finish",
         items=get_stain_color_enum_items,
+        update=_propagate_cabinet_style,
+    )  # type: ignore
+
+    # A custom catalog finish is "match this sample" - there is no
+    # colour on file for it, so the material fell back to a standard one
+    # and every custom job rendered the same. This is the colour to use
+    # instead: paste a hex from the paint supplier, or pick one.
+    custom_finish_color: FloatVectorProperty(
+        name="Custom Finish Color",
+        description="Colour to render a custom stain or paint in. Used "
+                    "when the catalog finish is a custom one",
+        subtype='COLOR', size=4, min=0.0, max=1.0,
+        default=(0.806947, 0.752943, 0.679543, 1.0),
         update=_propagate_cabinet_style,
     )  # type: ignore
 
@@ -1891,7 +2184,19 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         and recalc. Material assignment to parts and door-style application
         to fronts ship in the next phase, once Face_Frame_Door_Style and
         the per-part material rules are in place.
+
+        The whole write runs under suspend_recalc(): the five overlay /
+        inset props and the face frame widths each carry an update
+        callback, so without it one assignment rebuilt the cabinet six
+        or seven times before the explicit recalc at the end. Suspended,
+        every write queues the same cabinet and the outermost resume
+        rebuilds it once.
         """
+        from . import types_face_frame
+        with types_face_frame.suspend_recalc():
+            self._assign_style_to_cabinet_inner(cabinet_obj)
+
+    def _assign_style_to_cabinet_inner(self, cabinet_obj):
         self.apply_overlay_to_cabinet(cabinet_obj)
 
         cabinet_obj['STYLE_NAME'] = self.name
@@ -2446,6 +2751,10 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                                  # whose bevel geometry renders the
                                  # curve's material slot.
                                  'MANTLE_CROWN_SWEEP', 'MANTLE_BASE_SWEEP',
+                                 # Tip-up wedge: the corner cut off the
+                                 # cabinet and glued back on, so it is
+                                 # the cabinet's own outside face.
+                                 'WEDGE',
                                  # Boolean cutters: the cut faces
                                  # transfer the cutter's material, so
                                  # the finish rides along onto the cut.
@@ -2736,6 +3045,23 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                         child, finish_mat, finish_mat_rotated)
                 continue
 
+            if role in ('ADA_FRONT', 'ADA_ANGLED_FRONT', 'ADA_BOTTOM'):
+                # Python-built accessible sink fronts: slot 0 on a slab
+                # (grain along the band), stile / rail / panel slots on
+                # stiles and rails.
+                me = child.data
+                if child.get('HB_STATIC_SLAB'):
+                    slots = (finish_mat_rotated or finish_mat,)
+                else:
+                    slots = (finish_mat, finish_mat_rotated or finish_mat,
+                             finish_mat)
+                while len(me.materials) < len(slots):
+                    me.materials.append(None)
+                for i, mat in enumerate(slots):
+                    if mat is not None:
+                        me.materials[i] = mat
+                continue
+
             if role in self._FRONT_ROLES:
                 # A front's paint override lives on the stable OPENING cage
                 # (fronts are wiped + rebuilt each recalc, so a prop on the
@@ -2932,6 +3258,9 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
             props.left_stile_width = self._ff_size_for(left_row, col)
         if not props.unlock_right_stile:
             props.right_stile_width = self._ff_size_for(right_row, col)
+        # A revolving susan's stiles are fixed by the product, so the
+        # style's stile row must not write over them.
+        apply_revolving_stile_widths(props)
 
         # Bay-level rail widths are intentionally NOT written here. Each
         # bay carries its own top/bottom rail copy with an unlock flag;
@@ -3136,6 +3465,25 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         r.prop(self, ref_image_attr, text="", icon='IMAGE_DATA')
         _draw_second_ref_image(col, self, ref_image_attr)
 
+    def _pool_index(self, context):
+        """This style's own index in the shared pool, or -1.
+
+        The row buttons below act on a style, and the form is drawn from
+        two places: the sidebar list, where the drawn style is the
+        highlighted one, and the settings dialog, which opens whichever
+        row's gear was clicked. Handing the operators this index keeps
+        them on the style in front of the user rather than on whatever
+        row the list happens to have highlighted.
+        """
+        pool = getattr(get_style_props(context), "cabinet_styles", None)
+        if not pool:
+            return -1
+        mine = self.as_pointer()
+        for i, style in enumerate(pool):
+            if style.as_pointer() == mine:
+                return i
+        return -1
+
     def draw_cabinet_style_ui(self, layout, context):
         """Per-style settings drawn inside the cabinet styles UIList panel.
 
@@ -3144,6 +3492,7 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         shared front-style pools.
         """
         main = layout.column()
+        style_index = self._pool_index(context)
 
         name_box = main.box()
         name_box.prop(self, "name", text="Style Name")
@@ -3188,6 +3537,10 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         # and a ref IMAGE path (collected into the page's right-side references
         # box). Gated on the References toggle above.
         self._draw_toggle_field(col, "finish_color", "Color", "ss_color")
+        # A custom finish is matched to a sample, so there is no colour on
+        # file for it - this is the one to render in.
+        if style_options.is_custom_finish(self.finish_color):
+            col.prop(self, "custom_finish_color", text="Custom Color")
         if show_refs:
             self._draw_finish_reference(col, "ss_color_ref_name", "ss_color_ref_image")
         self._draw_toggle_field(col, "finish_varnish", "Varnish", "ss_varnish")
@@ -3201,15 +3554,18 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         # Each effect row also carries its own ref name + image.
         sfx = box.column(align=True)
         sfx.operator("hb_face_frame.add_special_effects",
-                     text="Add Special Effects", icon='ADD')
+                     text="Add Special Effects",
+                     icon='ADD').style_index = style_index
         for effect in self.special_effects:
             r = sfx.row(align=True)
             r.label(text=effect.name, icon='DOT')
             if show_refs:
                 r.prop(effect, "ref_name", text="")
                 r.prop(effect, "ref_image", text="", icon='IMAGE_DATA')
-            r.operator("hb_face_frame.remove_special_effect",
-                       text="", icon='X', emboss=False).effect_name = effect.name
+            op = r.operator("hb_face_frame.remove_special_effect",
+                            text="", icon='X', emboss=False)
+            op.effect_name = effect.name
+            op.style_index = style_index
             if show_refs:
                 _draw_second_ref_image(sfx, effect, "ref_image")
 
@@ -3228,8 +3584,11 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                             text="", icon='X', emboss=False)
             op.kind = 'DOOR'
             op.index = i
-        col.operator("hb_face_frame.add_cabinet_extra_front_style",
-                     text="Add Door Style", icon='ADD').kind = 'DOOR'
+            op.style_index = style_index
+        op = col.operator("hb_face_frame.add_cabinet_extra_front_style",
+                          text="Add Door Style", icon='ADD')
+        op.kind = 'DOOR'
+        op.style_index = style_index
 
         col.separator()
         self._draw_toggle_field(col, "drawer_front_style", "Drawer Front", "ss_drawer")
@@ -3240,8 +3599,11 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                             text="", icon='X', emboss=False)
             op.kind = 'DRAWER'
             op.index = i
-        col.operator("hb_face_frame.add_cabinet_extra_front_style",
-                     text="Add Drawer Front Style", icon='ADD').kind = 'DRAWER'
+            op.style_index = style_index
+        op = col.operator("hb_face_frame.add_cabinet_extra_front_style",
+                          text="Add Drawer Front Style", icon='ADD')
+        op.kind = 'DRAWER'
+        op.style_index = style_index
 
         box = main.box()
         row = box.row()
@@ -3278,10 +3640,12 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         for i, note in enumerate(self.ss_notes):
             r = col.row(align=True)
             r.prop(note, "text", text="")
-            r.operator("hb_face_frame.remove_style_note",
-                       text="", icon='X', emboss=False).index = i
+            op = r.operator("hb_face_frame.remove_style_note",
+                            text="", icon='X', emboss=False)
+            op.index = i
+            op.style_index = style_index
         col.operator("hb_face_frame.add_style_note",
-                     text="Add Note", icon='ADD')
+                     text="Add Note", icon='ADD').style_index = style_index
 
 
 class HB_UL_face_frame_cabinet_styles(UIList):
@@ -3359,7 +3723,7 @@ def _sync_rail_size_annotation(front_obj, part, top_rail_width,
     fd.size = 0.04
     fd.align_x = 'RIGHT'
     fd.align_y = 'CENTER'
-    text_obj = bpy.data.objects.new('Rail Size Annotation', fd)
+    text_obj = hb_utils.new_object('Rail Size Annotation', fd)
     text_obj[RAIL_SIZE_ANNOTATION_TAG] = True
     text_obj['IS_2D_ANNOTATION'] = True
     text_obj.color = (0.0, 0.0, 0.0, 1.0)
@@ -3745,6 +4109,14 @@ class Face_Frame_Door_Style(PropertyGroup):
         description="Door style name",
         default="Door Style",
         update=update_door_style_name,
+    )  # type: ignore
+
+    rename_anchor: StringProperty(
+        name="Rename Anchor",
+        description="Internal: the style's previous name, used to re-tag "
+                    "fronts carrying the old DOOR_STYLE_NAME on a rename",
+        default="",
+        options={'HIDDEN'},
     )  # type: ignore
 
     show_expanded: BoolProperty(
@@ -4279,6 +4651,8 @@ class Face_Frame_Door_Style(PropertyGroup):
         # over from a live 5-piece -> slab edit.
         _sync_rail_size_annotation(front_obj, None, 0.0, 0.0, False)
         front_obj['DOOR_STYLE_NAME'] = self.name
+        if not self.rename_anchor:
+            self.rename_anchor = self.name
 
     def _apply_mirror_door_front(self, front_obj):
         """Fixed tri-view mirror-door build: a plain SQUARE wood frame at
@@ -4357,6 +4731,8 @@ class Face_Frame_Door_Style(PropertyGroup):
         }
         _sync_rail_size_annotation(front_obj, None, 0.0, 0.0, False)
         front_obj['DOOR_STYLE_NAME'] = self.name
+        if not self.rename_anchor:
+            self.rename_anchor = self.name
         return True
 
     def assign_style_to_front(self, front_obj, record_override=False):
@@ -4837,6 +5213,8 @@ class Face_Frame_Door_Style(PropertyGroup):
         # Material inheritance from the parent cabinet style lands once
         # cabinet-style material walking is implemented.
         front_obj['DOOR_STYLE_NAME'] = self.name
+        if not self.rename_anchor:
+            self.rename_anchor = self.name
         return True
 
     def draw_door_style_ui(self, layout, context):
@@ -4950,6 +5328,47 @@ def _update_cabinet_dim(self, context):
     """
     from . import types_face_frame
     types_face_frame.recalculate_face_frame_cabinet(self.id_data)
+
+
+# Revolving-door susans carry 1-1/2" front stiles whatever the style's
+# stile width is - the door turns with the susan, so the frame opening
+# is sized to it rather than to the style. Both the revolving exterior
+# option and the pie-cut revolving susan interiors count.
+REVOLVING_STILE_WIDTH = units.inch(1.5)
+REVOLVING_INTERIOR_OPTIONS = ('POLYMER_PIE_CUT_REVOLVING',
+                              'WOOD_PIE_CUT_REVOLVING')
+
+
+def is_revolving_susan(cab_props):
+    """True when this corner cabinet is a revolving-door susan."""
+    return (getattr(cab_props, 'exterior_option', '') == 'REVOLVING_DOORS'
+            or getattr(cab_props, 'interior_option', '')
+            in REVOLVING_INTERIOR_OPTIONS)
+
+
+def apply_revolving_stile_widths(cab_props):
+    """Force both front stiles to 1-1/2" on a revolving susan. Written
+    to the properties rather than applied at build time so the sizes the
+    user reads match the parts. An unlocked stile is left alone - that
+    flag is the deliberate per-cabinet override everywhere else."""
+    if not is_revolving_susan(cab_props):
+        return False
+    changed = False
+    for attr, lock in (('left_stile_width', 'unlock_left_stile'),
+                       ('right_stile_width', 'unlock_right_stile')):
+        if getattr(cab_props, lock, False):
+            continue
+        if abs(getattr(cab_props, attr) - REVOLVING_STILE_WIDTH) > 1e-6:
+            setattr(cab_props, attr, REVOLVING_STILE_WIDTH)
+            changed = True
+    return changed
+
+
+def _update_corner_option(self, context):
+    """Corner exterior / interior option changed: a revolving susan
+    takes its own stile width before the rebuild reads it."""
+    apply_revolving_stile_widths(self)
+    _update_cabinet_dim(self, context)
 
 
 # Per-side band width. get/set rather than a plain property so an unset
@@ -5195,6 +5614,71 @@ def _update_rollout_box_preset(self, context):
         if inches is not None:
             self.height = units.inch(inches)
     _update_cabinet_dim(self, context)
+
+
+# A rollout riding above a drawer picks from the standard sizes only -
+# there is no Custom, the box is bought in these heights.
+ROLLOUT_ABOVE_HEIGHT_ITEMS = [
+    entry for entry in ROLLOUT_HEIGHT_PRESET_ITEMS if entry[0] != 'CUSTOM']
+
+
+def rollout_height_inches(preset):
+    """Inch height of a standard rollout preset id (3 5/8 when unknown)."""
+    return _ROLLOUT_HEIGHT_PRESETS_IN.get(preset, 3.625)
+
+
+def nearest_rollout_height_preset(height):
+    """The standard rollout preset closest to `height` (scene units);
+    a tie goes to the smaller box. Maps a typed height forward onto the
+    standard list."""
+    return min(_ROLLOUT_HEIGHT_PRESETS_IN.items(),
+               key=lambda kv: (abs(units.inch(kv[1]) - height), kv[1]))[0]
+
+
+# Drawer box under rollouts: the same standard heights the stock box
+# sizing uses (types_face_frame.STOCK_DRAWER_BOX_HEIGHTS), plus Auto for
+# the largest one that fits.
+_DRAWER_BOX_HEIGHTS_IN = {
+    'IN_2_125': 2.125,
+    'IN_3_125': 3.125,
+    'IN_3_625': 3.625,
+    'IN_4_125': 4.125,
+    'IN_5_125': 5.125,
+    'IN_6_125': 6.125,
+    'IN_7_125': 7.125,
+    'IN_8_125': 8.125,
+    'IN_9_125': 9.125,
+    'IN_10_125': 10.125,
+    'IN_11_125': 11.125,
+}
+
+ROLLOUT_ABOVE_DRAWER_BOX_ITEMS = [
+    ('AUTO',      "Largest That Fits",
+     "The tallest standard drawer box that leaves the minimum gap under "
+     "the lowest rollout", 0),
+    ('IN_2_125',  '2 1/8"',  'Standard 2 1/8" drawer box height', 1),
+    ('IN_3_125',  '3 1/8"',  'Standard 3 1/8" drawer box height', 2),
+    ('IN_3_625',  '3 5/8"',  'Standard 3 5/8" drawer box height', 3),
+    ('IN_4_125',  '4 1/8"',  'Standard 4 1/8" drawer box height', 4),
+    ('IN_5_125',  '5 1/8"',  'Standard 5 1/8" drawer box height', 5),
+    ('IN_6_125',  '6 1/8"',  'Standard 6 1/8" drawer box height', 6),
+    ('IN_7_125',  '7 1/8"',  'Standard 7 1/8" drawer box height', 7),
+    ('IN_8_125',  '8 1/8"',  'Standard 8 1/8" drawer box height', 8),
+    ('IN_9_125',  '9 1/8"',  'Standard 9 1/8" drawer box height', 9),
+    ('IN_10_125', '10 1/8"', 'Standard 10 1/8" drawer box height', 10),
+    ('IN_11_125', '11 1/8"', 'Standard 11 1/8" drawer box height', 11),
+]
+
+
+def drawer_box_height_inches(preset):
+    """Inch height of a standard drawer box preset id, None for AUTO."""
+    return _DRAWER_BOX_HEIGHTS_IN.get(preset)
+
+
+def _update_galley_size(self, context):
+    """A workstation cabinet's size: width and bay widths follow it."""
+    from . import types_face_frame
+    types_face_frame.apply_galley_size(self.id_data)
 
 
 def _update_refrigerator_opening_height(self, context):
@@ -6586,6 +7070,16 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         update=_update_cabinet_dim,
     )  # type: ignore
 
+    # Spacing between v-grooves, where a shop cuts them at something
+    # other than the usual 4" sheet layout. 0 keeps that default.
+    v_groove_spacing: FloatProperty(
+        name="V-Groove Spacing",
+        description="Distance between v-grooves. 0 uses the standard "
+                    "4\" layout",
+        default=0.0, min=0.0, unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
     # Shiplap course width for SHIPLAP finished ends (all shiplap sides
     # of this cabinet share it). Same 4 / 5 / 6 ladder as the wood-hood
     # shiplap board width.
@@ -6939,6 +7433,26 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         default='DOORS',
         update=_update_garage_bottom,
     )  # type: ignore
+    # Galley workstation cabinets: the size sets the width and bay
+    # split; the setback places the front apron the sink rests on.
+    galley_size: EnumProperty(
+        name="Galley Size",
+        items=[
+            ('IWS2', "IWS 2", "28 in, one opening"),
+            ('IWS3', "IWS 3", "39 3/4 in, two openings"),
+            ('IWS4', "IWS 4", "51 3/4 in, two openings and an 18 in sink base"),
+            ('IWS5', "IWS 5", "62 in, three openings"),
+            ('IWS6', "IWS 6", "77 3/4 in, three openings and an 18 in sink base"),
+            ('IWS7', "IWS 7", "83 1/4 in, four openings"),
+        ],
+        default='IWS3', update=_update_galley_size,
+    )  # type: ignore
+    galley_front_apron_setback: FloatProperty(
+        name="Front Apron Setback",
+        description="From the cabinet front to the front apron; the sink runs from there to the back",
+        default=units.inch(4.0), min=0.0, unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
     blind_reveal: FloatProperty(
         name="Blind Reveal", default=units.inch(1.5), unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
@@ -7140,6 +7654,110 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         default=units.inch(0.75), unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
     )  # type: ignore
+    # Accessible sink: the carcass is cut away underneath at the FRONT,
+    # which is the end a wheelchair comes at. The box keeps its full
+    # height against the wall, rakes down toward the room, and is left
+    # as a shallow band at the front where the knees go under. The shop
+    # drawing has 8" full at the wall, 8" of band at the front (so a 5"
+    # rake on a 21" box) and a 5-1/2" band.
+    ada_side_shape: BoolProperty(
+        name="Raked Sides",
+        description="Cut the carcass away underneath at the front, "
+                    "leaving knee clearance under the sink",
+        default=False, update=_update_cabinet_dim,
+    )  # type: ignore
+    ada_side_wall_run: FloatProperty(
+        name="Full Height At Wall",
+        description="How far forward from the wall the sides keep their "
+                    "full height before the rake starts",
+        default=units.inch(8.0), min=0.0, unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    ada_side_front_run: FloatProperty(
+        name="Band At Front",
+        description="How far back from the front the shallow band runs. "
+                    "The rake takes what is left between the two",
+        default=units.inch(8.0), min=0.0, unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    ada_side_front_height: FloatProperty(
+        name="Band Height",
+        description="Height of the band left at the front, measured "
+                    "down from the top of the box",
+        default=units.inch(5.5), min=0.0, unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    ada_front_construction: EnumProperty(
+        name="Front",
+        description="How the band across the front is built",
+        items=[
+            ('SLAB', "Slab", "One solid part"),
+            ('FRAME', "Stiles and Rails",
+             "Stiles and rails around a panel, from the door style"),
+        ],
+        default='SLAB', update=_update_cabinet_dim,
+    )  # type: ignore
+    ada_angled_front_construction: EnumProperty(
+        name="Angled Front",
+        description="How the panel that closes the rake is built",
+        items=[
+            ('SLAB', "Slab", "One solid part"),
+            ('FRAME', "Stiles and Rails",
+             "Stiles and rails around a panel, from the door style"),
+        ],
+        default='SLAB', update=_update_cabinet_dim,
+    )  # type: ignore
+
+    # Floating vanity construction, on a base cabinet whose toe kick
+    # is FLOATING - the kick height is then the gap the vanity hangs
+    # above the floor. The box closes at the top with a panel instead
+    # of stretchers (there is a sink sitting on it), that top is 1/2
+    # over a 3/4 back, and the basin drops through a cutout in it.
+    floating_vanity: BoolProperty(
+        name="Floating Vanity Construction",
+        description="Build this floating base as a vanity: a closed top "
+                    "over a 3/4 back, with a cutout for the basin. The "
+                    "toe kick height is the gap above the floor",
+        default=False, update=_update_cabinet_dim,
+    )  # type: ignore
+
+    # Carcass top thickness, where it differs from the cabinet's
+    # material. 0 keeps the material thickness.
+    top_thickness_override: FloatProperty(
+        name="Top Thickness",
+        description="Thickness of the carcass top panel. 0 uses the "
+                    "cabinet's material thickness",
+        default=0.0, min=0.0, unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    # Top over back: the top runs the full depth and lands on the back
+    # panel's top edge, which then stops below it. Off, the two meet at
+    # the back panel's front face and both reach the cabinet top.
+    top_over_back: BoolProperty(
+        name="Top Over Back",
+        description="Run the carcass top back over the top edge of the "
+                    "back panel instead of butting into its front face",
+        default=False, update=_update_cabinet_dim,
+    )  # type: ignore
+    # Sink cutout in the carcass top - the hole the basin drops through
+    # on a vanity whose top IS the carcass top.
+    top_sink_cutout: BoolProperty(
+        name="Sink Cutout",
+        description="Cut a centered opening in the carcass top for a "
+                    "sink to drop through",
+        default=False, update=_update_cabinet_dim,
+    )  # type: ignore
+    top_sink_cutout_width: FloatProperty(
+        name="Sink Cutout Width",
+        default=units.inch(12.0), min=0.0, unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    top_sink_cutout_depth: FloatProperty(
+        name="Sink Cutout Depth",
+        default=units.inch(12.0), min=0.0, unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
     back_thickness: FloatProperty(
         name="Back Thickness", default=units.inch(0.25), unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
@@ -7179,7 +7797,11 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         update=_update_cabinet_dim,
     )  # type: ignore
     toe_kick_height: FloatProperty(
-        name="Toe Kick Height", default=units.inch(4.0), unit='LENGTH', precision=4,
+        # Floored at zero: on a NOTCH kick a negative height is a recess
+        # cut upward into nothing, and on a FLOATING one it hangs the
+        # box below the floor.
+        name="Toe Kick Height", default=units.inch(4.0), min=0.0,
+        unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
     )  # type: ignore
     toe_kick_setback: FloatProperty(
@@ -7218,6 +7840,30 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         name="Wedge Fudge Allowance", default=units.inch(0.5),
         unit='LENGTH', precision=4, min=0.0, update=_update_cabinet_dim,
     )  # type: ignore
+    # Typed wedge, over the calculated one. The sizes here are what
+    # gets built, so a shop working from its own calculator can enter
+    # what that gives rather than being held to this one's arithmetic.
+    wedge_override: BoolProperty(
+        name="Use My Sizes",
+        description="Build the wedge at the sizes entered here instead "
+                    "of the calculated ones",
+        default=False, update=_update_cabinet_dim,
+    )  # type: ignore
+    wedge_length: FloatProperty(
+        name="Wedge Length",
+        description="Length of the wedge along the cabinet depth, used "
+                    "when the sizes are entered rather than calculated",
+        default=0.0, min=0.0, unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    wedge_height: FloatProperty(
+        name="Wedge Height",
+        description="Height of the wedge up the cabinet back, used when "
+                    "the sizes are entered rather than calculated",
+        default=0.0, min=0.0, unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
     wedge_max_height: FloatProperty(
         name="Wedge Max Height", default=units.inch(3.0),
         unit='LENGTH', precision=4, min=0.0, update=_update_cabinet_dim,
@@ -7769,7 +8415,7 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
             ('REVOLVING_DOORS',        "Revolving Doors",        "Door rotates with the susan inside"),
         ],
         default='LEFT_DOOR_OPENS_FIRST',
-        update=_update_cabinet_dim,
+        update=_update_corner_option,
     )  # type: ignore
     interior_option: EnumProperty(
         name="Interior Option",
@@ -7783,7 +8429,7 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
             ('NOT_SO_LAZY_SUSANS',         "Not So Lazy Susan",                     "Pan storage with hooks plus a lower tray"),
         ],
         default='NONE',
-        update=_update_cabinet_dim,
+        update=_update_corner_option,
     )  # type: ignore
     # Finish the corner cabinet's interior: the cavity-facing surfaces
     # of the sides / backs / top / bottom and the corner shelves take
@@ -7805,6 +8451,16 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
     corner_remove_bottom: BoolProperty(
         name="Remove Bottom",
         description="Remove the carcass bottom and the bottom rail; the lowest opening runs to the carcass floor",
+        default=False,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    # Adjustable shelves behind the doors of a base / tall corner. Uppers
+    # always build them; lower corners opt in here. Same L / diagonal
+    # shelf parts and auto-by-height count (per-section lock overrides).
+    # Ignored while a susan interior option fills the cavity.
+    corner_adjustable_shelves: BoolProperty(
+        name="Adjustable Shelves",
+        description="Add adjustable shelves behind the doors of this corner cabinet",
         default=False,
         update=_update_cabinet_dim,
     )  # type: ignore
@@ -8074,6 +8730,15 @@ class Face_Frame_Bay_Props(PropertyGroup):
         name="Remove Carcass", default=False,
         update=_update_cabinet_dim,
     )  # type: ignore
+    # Panel bay (Change Bay > Panel): the bay's face frame reads as a
+    # frame-and-panel. While a rail is locked its width follows the
+    # doors beside it (door-style rail + frame rail - overlay) so the
+    # panel's inner edges line up with the door panels; the rails run
+    # through and any mid stile sits between them.
+    panel_bay: BoolProperty(
+        name="Panel Bay", default=False,
+        update=_update_cabinet_dim,
+    )  # type: ignore
     # Per-bay override: when True this bay behaves as FLOATING regardless
     # of the cabinet's toe_kick_type. Sides under an end bay anchor at the
     # bay bottom rather than the floor, and kick subfront / finish kick
@@ -8168,6 +8833,36 @@ class Face_Frame_Bay_Props(PropertyGroup):
         name="Unlock Height", default=False,
         update=_update_cabinet_dim,
     )  # type: ignore
+    # Back type for THIS bay, over the cabinet's own back. Backs are a
+    # cabinet-level setting by default; a bay that carries its own is
+    # built at its own depth, which is what makes a run of bays at
+    # different depths read right from behind. WORKING_FF also drops the
+    # carcass back, since a working front needs the bay open behind it.
+    # The textured backs (beadboard / shiplap / v-groove / flush X) stay
+    # cabinet-level for now - they are built by a different reconciler.
+    back_condition: EnumProperty(
+        name="Back Type",
+        description="Back construction for this bay. Cabinet Default "
+                    "follows the cabinet's own back",
+        items=[
+            ('DEFAULT', "Cabinet Default",
+             "Follow the cabinet's back type"),
+            ('UNFINISHED', "Unfinished",
+             "Plain carcass back, nothing applied"),
+            ('FINISHED', "Finished",
+             "Finished panel applied over this bay's back"),
+            ('PANELED', "Paneled",
+             "Applied panel with rails and stiles on this bay's back"),
+            ('FALSE_FF', "False Face Frame",
+             "Applied frame with non-working fronts on this bay's back"),
+            ('WORKING_FF', "Working Face Frame",
+             "Applied frame with working fronts on this bay's back, for "
+             "access from behind. The carcass back is left off"),
+        ],
+        default='DEFAULT',
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
     unlock_depth: BoolProperty(
         name="Unlock Depth", default=False,
         update=_update_cabinet_dim,
@@ -8257,6 +8952,19 @@ class Face_Frame_Rollout_Box(bpy.types.PropertyGroup):
     # top box wrapped around the plumbing and the lower one left whole.
     # Field names match the opening's sink_duo_* so _apply_sink_duo_notch
     # reads either one unchanged.
+    # Workstation culinary-kit roll-out: a 1/2 in plywood top over the
+    # box with the opening the kit's bowl or bins drop through.
+    galley_top: EnumProperty(
+        name="Top Opening",
+        description="A 1/2 in top over this box with an opening for a workstation's culinary kit",
+        items=[
+            ('NONE', "None", "No top"),
+            ('BOWL_10', "10 1/2 in Bowl", "Top with a 10 1/2 in round opening"),
+            ('BOWL_14', "14 in Bowl", "Top with a 14 in round opening"),
+            ('BINS', "Two Bins", "Top with two 6 1/8 x 3 5/8 in openings"),
+        ],
+        default='NONE', update=_update_cabinet_dim,
+    )  # type: ignore
     sink_duo: BoolProperty(
         name="U-Shaped Box",
         description="Notch this rollout box from the back so it wraps "
@@ -8274,6 +8982,19 @@ class Face_Frame_Rollout_Box(bpy.types.PropertyGroup):
         description="How far the U-notch reaches into the box from the "
                     "back; 0 uses two-thirds of the box depth",
         default=0.0, unit='LENGTH', precision=4, min=0.0,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
+
+class Face_Frame_Rollout_Above(bpy.types.PropertyGroup):
+    """One rollout riding above a drawer box, behind the same front.
+    Listed top down; each picks its own standard height. The cabinet
+    places them from the top of the opening and sizes the drawer box
+    below (types_face_frame.rollout_above_layout)."""
+    height_preset: EnumProperty(
+        name="Rollout Height",
+        description="Standard height of this rollout box",
+        items=ROLLOUT_ABOVE_HEIGHT_ITEMS, default='IN_3_625',
         update=_update_cabinet_dim,
     )  # type: ignore
 
@@ -8457,15 +9178,27 @@ class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
         default=0.0, min=0.0, unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
     )  # type: ignore
-    # Omit the four slide-mount spacer parts for this ROLLOUT. A single
-    # rollout fixed at the floor mounts straight to the cabinet, so no
-    # spacer/ladder assembly is wanted (or manufactured) for it.
+    # Omit the four slide-mount spacer parts for this ROLLOUT or
+    # PULLOUT_SHELF. One fixed at the floor mounts straight to the
+    # cabinet, so no spacer/ladder assembly is wanted (or manufactured)
+    # for it. Shared by both kinds - they build the same assembly.
     hide_rollout_spacers: BoolProperty(
-        name="Hide Rollout Spacers",
-        description="Don't build the side spacer parts the slides mount "
-                    "to (ROLLOUT only) - e.g. a single rollout fixed at "
+        name="Hide Spacer Ladders",
+        description="Don't build the side spacer ladders the slides "
+                    "mount to - e.g. a single rollout or shelf fixed at "
                     "the floor that needs no spacer assembly",
         default=False, update=_update_cabinet_dim,
+    )  # type: ignore
+    # How far up the opening the spacer ladders run. 0 = the full
+    # opening height, which is how they have always built. A typed
+    # height stops them short so what sits above - adjustable shelves,
+    # say - clears them instead of being notched around them.
+    rollout_spacer_height: FloatProperty(
+        name="Spacer Ladder Height",
+        description="Height the side spacer ladders run to. 0 runs them "
+                    "the full height of the opening",
+        default=0.0, min=0.0, unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
     )  # type: ignore
     # Finger scoop, the notch in the front of a rollout box that gives
     # you somewhere to pull. It is how these are built, so it is ON by
@@ -8777,6 +9510,18 @@ class Face_Frame_Opening_Props(PropertyGroup):
         default=units.inch(24.0), unit='LENGTH', precision=4, min=0.0,
         update=_update_cabinet_dim,
     )  # type: ignore
+    # The appliance model shown in the opening. AUTO reads the opening:
+    # a short one takes a microwave, a tall one a wall oven.
+    appliance_kind: EnumProperty(
+        name="Appliance",
+        items=[
+            ('AUTO', "Auto", "A microwave in a short opening, a wall oven in a tall one"),
+            ('OVEN', "Wall Oven", "A wall oven"),
+            ('MICROWAVE', "Microwave", "A built-in microwave"),
+            ('NONE', "None", "No appliance model in this opening"),
+        ],
+        default='AUTO', update=_update_cabinet_dim,
+    )  # type: ignore
     include_fillers: BoolProperty(
         name="Include Fillers",
         description="Build the left/right filler stiles; off reserves the opening as an appliance with no fillers",
@@ -8865,6 +9610,35 @@ class Face_Frame_Opening_Props(PropertyGroup):
     # box itself is wiped and rebuilt every recalc, so the user's size
     # lives here on the persistent opening cage. An un-overridden axis
     # keeps the auto fit (opening hole minus the scene clearances).
+    # Rollouts riding above the drawer box, behind the same front, top
+    # down. The drawer box takes a standard height under the lowest one
+    # (see types_face_frame.rollout_above_layout).
+    rollouts_above: CollectionProperty(
+        type=Face_Frame_Rollout_Above)  # type: ignore
+    rollout_above_drawer_box_height: EnumProperty(
+        name="Drawer Box Height",
+        description="Standard height of the drawer box under the "
+                    "rollouts. A smaller box leaves a bigger gap",
+        items=ROLLOUT_ABOVE_DRAWER_BOX_ITEMS, default='AUTO',
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    # LEGACY - the first version's single rollout: an on/off, a free
+    # height and a typed gap. Still read once to carry a saved file
+    # forward onto rollouts_above (then switched off); nothing else
+    # reads them.
+    rollout_above_drawer: BoolProperty(
+        name="Rollout Above Drawer (Legacy)",
+        default=False, update=_update_cabinet_dim,
+    )  # type: ignore
+    rollout_above_height: FloatProperty(
+        name="Rollout Height (Legacy)",
+        default=units.inch(4.0), min=0.0, unit='LENGTH', precision=4,
+    )  # type: ignore
+    rollout_above_gap: FloatProperty(
+        name="Gap Above Drawer (Legacy)",
+        default=units.inch(1.0), min=0.0, unit='LENGTH', precision=4,
+    )  # type: ignore
+
     drawer_box_override_width: BoolProperty(
         name="Override Width",
         description="Use the entered drawer box width instead of the auto fit (opening minus side clearances)",
@@ -9020,6 +9794,13 @@ class Face_Frame_Opening_Props(PropertyGroup):
          "cabinet required"),
         ('LIFT_UP_BIFOLD', "Deluxe Bi-fold Lift-Up",
          "Two-panel door that folds as it lifts; for taller openings"),
+        # Plain bi-fold pairs (no retract): the pair hinges on the named
+        # side and folds open, one pull on the lead leaf. Appended so
+        # stored enum values keep their meaning.
+        ('BIFOLD_LEFT', "Bi-fold (Left)",
+         "Door pair hinged on the left that folds open; pull on the right"),
+        ('BIFOLD_RIGHT', "Bi-fold (Right)",
+         "Door pair hinged on the right that folds open; pull on the left"),
     ]
     door_mechanism: EnumProperty(
         name="Door Mechanism", items=DOOR_MECHANISM_ITEMS, default='NONE',
@@ -9203,8 +9984,8 @@ class Face_Frame_Splitter_Width(PropertyGroup):
         name="Remove Member",
         description=(
             "Drop this splitter's face-frame member (and its carcass backing). "
-            "The opening stays split; the solver collapses the gap so the two "
-            "fronts sit 3/32\" apart. Used between drawers"
+            "The opening stays split; the two openings share its width and "
+            "their fronts sit 3/32\" apart. Used between drawers"
         ),
         default=False,
         update=_update_cabinet_dim,
@@ -9608,6 +10389,7 @@ class Face_Frame_Scene_Props(PropertyGroup):
     show_cabinet_library: BoolProperty(name="Show Standard Cabinets", default=True)  # type: ignore
     show_corner_cabinet_library: BoolProperty(name="Show Corner Cabinets", default=False)  # type: ignore
     show_appliance_library: BoolProperty(name="Show Appliance Products", default=False)  # type: ignore
+    show_galley_library: BoolProperty(name="Show Galley Workstations", default=False)  # type: ignore
     show_vanity_library: BoolProperty(name="Show Vanities", default=False)  # type: ignore
     show_part_library: BoolProperty(name="Show Parts", default=False)  # type: ignore
     show_specialty_bath_library: BoolProperty(name="Show Specialty Bath", default=False)  # type: ignore
@@ -9646,10 +10428,39 @@ class Face_Frame_Scene_Props(PropertyGroup):
     # and pullout fronts; clearances are subtracted from the opening hole
     # to size each box. v1 keeps these scene-wide; per-front overrides
     # land when front parts grow editable per-part props.
+    # Style colours in the solid viewport: the same fill the 2D
+    # drawings use, on the cabinets themselves, so a drafter can see
+    # which style section a cabinet is in without generating a drawing.
+    show_style_colors: BoolProperty(
+        name="Style Colors In Viewport",
+        description="Colour cabinets in the viewport by their style "
+                    "section, matching the 2D drawing fills",
+        default=True,
+        update=update_show_style_colors,
+    )  # type: ignore
+
     include_drawer_boxes: BoolProperty(
         name="Include Drawer Boxes",
         description="Spawn a drawer box behind every drawer and pullout front",
         default=True,
+        update=update_include_drawer_boxes,
+    )  # type: ignore
+    # How drawer boxes are sized. Blum TANDEM sizes to the slide spec
+    # (types_face_frame.BLUM_TANDEM_*): fixed minimum clearances, stock
+    # heights, and depth to the longest runner that fits. Custom uses
+    # the clearance props below.
+    drawer_box_sizing: EnumProperty(
+        name="Drawer Box Sizing",
+        items=[
+            ('BLUM_TANDEM', "Blum TANDEM",
+             "Size boxes for Blum TANDEM BLUMOTION slides: 3/16\" sides, "
+             "9/16\" bottom, 5/16\" minimum top, stock heights, and "
+             "depth to the longest runner (9-21\") that leaves 15/16\" "
+             "behind the box"),
+            ('CUSTOM', "Custom Clearances",
+             "Size boxes from the clearances below"),
+        ],
+        default='BLUM_TANDEM',
         update=update_include_drawer_boxes,
     )  # type: ignore
     drawer_box_side_clearance: FloatProperty(
@@ -10373,6 +11184,7 @@ class Face_Frame_Scene_Props(PropertyGroup):
         ("Pie Cut Base"). Honors the thumbnail/list toggle: thumbnails get
         a tile each, list gets compact text buttons.
         """
+        from . import library_catalog
         row = layout.row(align=True)
         if label:
             row.label(text=label)
@@ -10380,14 +11192,28 @@ class Face_Frame_Scene_Props(PropertyGroup):
             for display, cab in items:
                 op = row.operator('hb_face_frame.draw_cabinet', text=display)
                 op.cabinet_name = cab
+                self._draw_path_button(row, cab, library_catalog)
         else:
             for display, cab in items:
                 cell = row.column(align=True)
                 icon_id = load_cabinet_thumbnail(cab)
                 if icon_id:
                     cell.template_icon(icon_value=icon_id, scale=4.0)
-                op = cell.operator('hb_face_frame.draw_cabinet', text=display)
+                sub = cell.row(align=True)
+                op = sub.operator('hb_face_frame.draw_cabinet', text=display)
                 op.cabinet_name = cab
+                self._draw_path_button(sub, cab, library_catalog)
+
+    @staticmethod
+    def _draw_path_button(layout, cabinet_name, library_catalog):
+        """The second way in for a product that can be drawn through
+        points: an icon beside its place button, the same affordance
+        the viewport browser puts on the tile."""
+        if not library_catalog.can_draw_path(cabinet_name):
+            return
+        op = layout.operator('hb_face_frame.draw_product_path', text="",
+                             icon='IPO_LINEAR')
+        op.cabinet_name = cabinet_name
 
     # =====================================================================
     # UI: product sections
@@ -10416,6 +11242,9 @@ class Face_Frame_Scene_Props(PropertyGroup):
 
     def draw_appliance_library_ui(self, layout, context):
         self._draw_library_section(layout, 'appliance')
+
+    def draw_galley_library_ui(self, layout, context):
+        self._draw_library_section(layout, 'galley')
 
     def draw_vanity_library_ui(self, layout, context):
         self._draw_library_section(layout, 'vanity')
@@ -10633,6 +11462,11 @@ class Face_Frame_Scene_Props(PropertyGroup):
         side.operator("hb_face_frame.move_cabinet_style", text="", icon='TRIA_UP').direction = 'UP'
         side.operator("hb_face_frame.move_cabinet_style", text="", icon='TRIA_DOWN').direction = 'DOWN'
 
+        # Show the drawing fills on the cabinets themselves, so which
+        # style a cabinet is in reads in the viewport rather than only
+        # after the 2D pages are generated.
+        layout.prop(sp, 'show_style_colors', text="Style Colors In Viewport")
+
         if sp.cabinet_styles and sp.active_cabinet_style_index < len(sp.cabinet_styles):
             style = sp.cabinet_styles[sp.active_cabinet_style_index]
             # Assign to Selected hits the current selection; Assign by
@@ -10738,6 +11572,7 @@ class Face_Frame_Scene_Props(PropertyGroup):
             sections = [
                 ('show_cabinet_library',          "Standard Cabinets",            self.draw_cabinet_library_ui),
                 ('show_appliance_library',        "Appliance Products",           self.draw_appliance_library_ui),
+                ('show_galley_library',           "Galley Workstations",          self.draw_galley_library_ui),
                 ('show_corner_cabinet_library',   "Corner Cabinets",              self.draw_corner_cabinet_library_ui),
                 ('show_vanity_library',           "Vanities",                     self.draw_vanity_library_ui),
                 ('show_part_library',             "Parts",                        self.draw_part_library_ui),
@@ -10880,6 +11715,15 @@ class Face_Frame_Scene_Props(PropertyGroup):
             sub = col.row()
             sub.enabled = base_on
             sub.prop(hb_scene, "molding_base_profile", text="Profile")
+        sub = col.row()
+        sub.enabled = base_on
+        sub.prop(hb_scene, "molding_base_size_override")
+        sub = col.row()
+        sub.enabled = base_on and hb_scene.molding_base_size_override
+        sub.prop(hb_scene, "molding_base_height", text="Height")
+        sub = col.row()
+        sub.enabled = base_on and hb_scene.molding_base_size_override
+        sub.prop(hb_scene, "molding_base_thickness", text="Thickness")
         # The shoe is independent of the package: alone it runs at the
         # kick face, with a package it applies to the molding's front.
         col.prop(hb_scene, "molding_base_shoe")
@@ -10910,6 +11754,13 @@ class Face_Frame_Scene_Props(PropertyGroup):
 
         col = layout.column(align=True)
         col.prop(props, 'include_drawer_boxes', text="Include Drawer Boxes")
+        col.prop(props, 'drawer_box_sizing', text="Sizing")
+
+        if props.drawer_box_sizing == 'BLUM_TANDEM':
+            col.separator()
+            col.label(text="Sides 3/16\", Bottom 9/16\", Top 5/16\" min")
+            col.label(text="Stock heights, runner depth (15/16\" rear min)")
+            return
 
         col.prop(props, 'use_stock_drawer_box_heights',
                  text="Stock Box Heights")
@@ -11174,6 +12025,8 @@ class Face_Frame_Floating_Shelf_Props(PropertyGroup):
     )  # type: ignore
     material_thickness: FloatProperty(
         name="Material Thickness", default=units.inch(0.75),
+        description="Thickness of the top and bottom panels. The front "
+                    "board and finished ends are always 3/4\"",
         unit='LENGTH', precision=4, update=_update_cabinet_dim,
     )  # type: ignore
     shelf_type: EnumProperty(
@@ -11406,8 +12259,17 @@ def _update_wood_top_nosing_style(self, context):
     thickness -- a nosing a different thickness than the top it edges is
     the exception, not the norm, so the property default (2") was the
     wrong starting point. A height the user dialed in is left alone.
+
+    An applied-edge build made for one stock thickness (bullnose trim,
+    crown under edge, ...) sets the top to that thickness, so its band
+    meets the board top and bottom.
     """
     global _SEEDING_NOSING_HEIGHT
+    want = wood_top_edge.STYLE_THICKNESS.get(self.nosing_style)
+    if want is not None and abs(self.thickness - want) > 0.0001:
+        # Writing the thickness runs its own update, which rebuilds.
+        self.thickness = want
+        return
     if (self.nosing_style in shelf_nosing.EXTRA_HEIGHT_STYLES
             and not self.get('nosing_height_set')
             and abs(self.nosing_height - self.thickness) > 0.0001):
@@ -11560,6 +12422,149 @@ class Face_Frame_Wood_Top_Props(PropertyGroup):
     )  # type: ignore
 
 
+class Face_Frame_Column_Beam_Props(PropertyGroup):
+    """Options for a column or beam wrap.
+
+    Lives on the wrap's cage object alongside face_frame_cabinet, which
+    carries the dims: a COLUMN runs up Dim Z with a Dim X x Dim Y
+    section, a BEAM runs along Dim X with a Dim Y x Dim Z section.
+    FRONT / BACK are the Y-extreme faces on both; the pair closing the
+    section is LEFT / RIGHT on a column and BOTTOM / TOP on a beam, so
+    only four of the six side flags apply at a time.
+    """
+    orientation: EnumProperty(
+        name="Orientation",
+        description="Which way the wrap runs",
+        items=[('COLUMN', "Column", "Runs vertically, floor to ceiling"),
+               ('BEAM', "Beam", "Runs horizontally under the ceiling")],
+        default='COLUMN', update=_update_cabinet_dim,
+    )  # type: ignore
+    material_thickness: FloatProperty(
+        name="Material Thickness", default=units.inch(0.75),
+        unit='LENGTH', precision=4, update=_update_cabinet_dim,
+        description="Stock thickness of the wrap boards",
+    )  # type: ignore
+
+    # Which faces get built. All four is a closed box; drop the one
+    # against the wall or ceiling for a 3-sided, two for an L around an
+    # outside corner.
+    side_front: BoolProperty(
+        name="Front", default=True, update=_update_cabinet_dim,
+        description="Build the front board",
+    )  # type: ignore
+    side_back: BoolProperty(
+        name="Back", default=True, update=_update_cabinet_dim,
+        description="Build the back board",
+    )  # type: ignore
+    side_left: BoolProperty(
+        name="Left", default=True, update=_update_cabinet_dim,
+        description="Build the left board (column)",
+    )  # type: ignore
+    side_right: BoolProperty(
+        name="Right", default=True, update=_update_cabinet_dim,
+        description="Build the right board (column)",
+    )  # type: ignore
+    side_bottom: BoolProperty(
+        name="Bottom", default=True, update=_update_cabinet_dim,
+        description="Build the bottom board (beam)",
+    )  # type: ignore
+    side_top: BoolProperty(
+        name="Top", default=False, update=_update_cabinet_dim,
+        description="Build the top board (beam). Usually left off where "
+                    "the beam meets the ceiling",
+    )  # type: ignore
+
+    # Framed sides: stiles and rails standing on the board, which then
+    # reads as the panel behind them.
+    framed_front: BoolProperty(
+        name="Framed Front", default=False, update=_update_cabinet_dim,
+        description="Frame this side with stiles and rails",
+    )  # type: ignore
+    framed_back: BoolProperty(
+        name="Framed Back", default=False, update=_update_cabinet_dim,
+        description="Frame this side with stiles and rails",
+    )  # type: ignore
+    framed_left: BoolProperty(
+        name="Framed Left", default=False, update=_update_cabinet_dim,
+        description="Frame this side with stiles and rails",
+    )  # type: ignore
+    framed_right: BoolProperty(
+        name="Framed Right", default=False, update=_update_cabinet_dim,
+        description="Frame this side with stiles and rails",
+    )  # type: ignore
+    framed_bottom: BoolProperty(
+        name="Framed Bottom", default=False, update=_update_cabinet_dim,
+        description="Frame this side with stiles and rails",
+    )  # type: ignore
+    framed_top: BoolProperty(
+        name="Framed Top", default=False, update=_update_cabinet_dim,
+        description="Frame this side with stiles and rails",
+    )  # type: ignore
+    panel_count: IntProperty(
+        name="Panels", default=1, min=1, max=24,
+        update=_update_cabinet_dim,
+        description="How many panels a framed side is divided into along "
+                    "the length of the wrap",
+    )  # type: ignore
+    frame_stile_width: FloatProperty(
+        name="Stile Width", default=units.inch(2.0),
+        unit='LENGTH', precision=4, update=_update_cabinet_dim,
+        description="Width of the frame members crossing the wrap",
+    )  # type: ignore
+    frame_rail_width: FloatProperty(
+        name="Rail Width", default=units.inch(2.0),
+        unit='LENGTH', precision=4, update=_update_cabinet_dim,
+        description="Width of the frame members running the length of "
+                    "the wrap",
+    )  # type: ignore
+    frame_member_thickness: FloatProperty(
+        name="Frame Thickness", default=units.inch(0.75),
+        unit='LENGTH', precision=4, update=_update_cabinet_dim,
+        description="How far the frame members stand proud of the panel",
+    )  # type: ignore
+
+    # False ceiling: a panel set up inside a beam, leaving a recess for
+    # indirect lighting.
+    include_false_ceiling: BoolProperty(
+        name="False Ceiling", default=False, update=_update_cabinet_dim,
+        description="Set a panel up inside the beam, leaving a recess "
+                    "for indirect lighting",
+    )  # type: ignore
+    false_ceiling_recess: FloatProperty(
+        name="Recess Depth", default=units.inch(3.0), min=0.0,
+        unit='LENGTH', precision=4, update=_update_cabinet_dim,
+        description="How far up inside the beam the false ceiling sits",
+    )  # type: ignore
+    false_ceiling_thickness: FloatProperty(
+        name="False Ceiling Thickness", default=units.inch(0.25),
+        unit='LENGTH', precision=4, update=_update_cabinet_dim,
+        description="Stock thickness of the false ceiling panel",
+    )  # type: ignore
+
+    # Order options. These do not change the geometry: they ride here
+    # and are published on the object so a schedule or an order can read
+    # them.
+    butt_seam_sides: IntProperty(
+        name="Butt Seams", default=0, min=0, max=4,
+        description="Number of sides carrying a butt seam. Note the "
+                    "location of each seam on the drawing",
+    )  # type: ignore
+    random_staggered_sides: IntProperty(
+        name="Staggered Seam Sides", default=0, min=0, max=4,
+        description="Number of sides built with random staggered seams",
+    )  # type: ignore
+    angled_end_start: BoolProperty(
+        name="Angled Start", default=False,
+        description="This end is cut at an angle. Supply a template and "
+                    "dimension to the longest point",
+    )  # type: ignore
+    angled_end_end: BoolProperty(
+        name="Angled End", default=False,
+        description="This end is cut at an angle. Supply a template and "
+                    "dimension to the longest point",
+    )  # type: ignore
+
+
 class Face_Frame_Valance_Props(PropertyGroup):
     """Options for a Valance product (a decorative board spanning the
     gap between two upper cabinets).
@@ -11610,6 +12615,7 @@ classes = (
     Face_Frame_Mantle_Props,
     Face_Frame_Wood_Top_Props,
     Face_Frame_Valance_Props,
+    Face_Frame_Column_Beam_Props,
     Face_Frame_Millwork_Item,
     Face_Frame_Special_Effect,
     Face_Frame_Cabinet_Extra_Front_Style,
@@ -11626,6 +12632,7 @@ classes = (
     Face_Frame_Cabinet_Props,
     Face_Frame_Bay_Props,
     Face_Frame_Rollout_Box,
+    Face_Frame_Rollout_Above,
     Face_Frame_Interior_Item,
     Face_Frame_Interior_Region_Props,
     Face_Frame_Drawer_Look_Opening,
@@ -11642,16 +12649,18 @@ _register_classes, _unregister_classes = bpy.utils.register_classes_factory(clas
 
 @bpy.app.handlers.persistent
 def _seed_style_rename_anchors(_dummy):
-    """On file load, seed each cabinet style's rename_anchor from its current
-    name. Files saved before rename-propagation existed have empty anchors;
-    without this seed their first rename could not re-tag assigned cabinets."""
+    """On file load, seed each style's rename_anchor from its current name
+    (cabinet styles and both front-style pools). Files saved before
+    rename-propagation existed have empty anchors; without this seed their
+    first rename could not re-tag assigned cabinets / fronts."""
     for scene in bpy.data.scenes:
         ff = getattr(scene, 'hb_face_frame', None)
         if ff is None:
             continue
-        for style in getattr(ff, 'cabinet_styles', ()):
-            if not style.rename_anchor:
-                style.rename_anchor = style.name
+        for pool in ('cabinet_styles', 'door_styles', 'drawer_front_styles'):
+            for style in getattr(ff, pool, ()):
+                if not style.rename_anchor:
+                    style.rename_anchor = style.name
 
 
 def register():
@@ -11669,6 +12678,7 @@ def register():
     bpy.types.Object.mantle_product = PointerProperty(type=Face_Frame_Mantle_Props)
     bpy.types.Object.wood_top = PointerProperty(type=Face_Frame_Wood_Top_Props)
     bpy.types.Object.valance_product = PointerProperty(type=Face_Frame_Valance_Props)
+    bpy.types.Object.column_beam_product = PointerProperty(type=Face_Frame_Column_Beam_Props)
     bpy.types.Object.face_frame_bay = PointerProperty(type=Face_Frame_Bay_Props)
     bpy.types.Object.face_frame_opening = PointerProperty(type=Face_Frame_Opening_Props)
     bpy.types.Object.face_frame_split = PointerProperty(type=Face_Frame_Split_Props)
@@ -11695,6 +12705,8 @@ def unregister():
         del bpy.types.Object.floating_shelf
     if hasattr(bpy.types.Object, 'mantle_product'):
         del bpy.types.Object.mantle_product
+    if hasattr(bpy.types.Object, 'column_beam_product'):
+        del bpy.types.Object.column_beam_product
     if hasattr(bpy.types.Object, 'valance_product'):
         del bpy.types.Object.valance_product
     if hasattr(bpy.types.Object, 'wood_top'):

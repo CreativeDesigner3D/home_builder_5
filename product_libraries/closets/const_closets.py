@@ -390,8 +390,9 @@ L_NOTCH_TOOL_RADIUS = inch(0.25)
 # the viewport with geometry.
 L_CORNER_RADIUS = inch(6.0)
 L_CORNER_RADIUS_SEGMENTS = 15
-# Default distance from the opening TOP to a hang rod's center when the
-# rod is added from the menu (modal placement types an exact height).
+# Distance from the opening TOP to a hang rod's center: where a rod
+# from a configuration hangs, and the height modal placement snaps to
+# under a shelf.
 ROD_TOP_OFFSET = inch(2.145)
 ADJ_SHELF_DEFAULT_QTY = 3
 # A shelf that sits on clips is cut a touch narrower than the opening

@@ -66,6 +66,7 @@ SECTIONS = (
         'key': 'appliance',
         'label': "Appliances",
         'prop': 'show_appliance_library',
+        'toggle': ("Show Model", 'home_builder', 'show_appliance_models'),
         'rows': (
             ("", (("Fridge Cabinet", "Refrigerator Cabinet",
                    "Refrigerator Frameless Cabinet"),

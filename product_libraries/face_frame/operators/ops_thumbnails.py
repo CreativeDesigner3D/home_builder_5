@@ -48,6 +48,8 @@ RENDERABLE_CATALOG = (
     "Special",
     "Combination",
     "Deluxe",
+    # Wall-hung vanity: upper construction at vanity proportions.
+    "Floating Vanity",
     # Specialty bedroom & bookcase products.
     "Bookcase",
     "Bookcase Storage Unit",
@@ -58,6 +60,7 @@ RENDERABLE_CATALOG = (
     "Standard Recessed Medicine Cabinet",
     "Medicine Cabinet",
     "Tri-View Medicine Cabinet",
+    "ADA Sink",
     "Overstool Cabinet",
     "Mirror Frame",
     "Tub Skirt",
@@ -79,7 +82,21 @@ RENDERABLE_CATALOG = (
     # FF & Doors: carcass-less panel whose opening defaults to a door
     # (no bay preset; default_bay_config returns None).
     "Face Frame and Doors",
+    # Wraps. No bays either; create() builds the boards straight from
+    # the propgroup defaults, and the beam comes up 3-sided.
+    "Column",
+    "Beam",
 )
+
+
+# A product built at its default dims does not always read at tile
+# size. These are presentation proportions only - stockier and shorter,
+# so the shape is legible in a 540px square - not a change to what gets
+# placed. (width, depth, height) in inches.
+THUMBNAIL_DIMS = {
+    "Column": (12.0, 12.0, 48.0),
+    "Beam": (72.0, 12.0, 10.0),
+}
 
 
 def _build_in_scene(name):
@@ -93,6 +110,15 @@ def _build_in_scene(name):
     cabinet = cls()
     cabinet.create(name, bay_qty=1)
     root = cabinet.obj
+
+    dims = THUMBNAIL_DIMS.get(name)
+    if dims is not None:
+        from ... import units
+        cab_props = root.face_frame_cabinet
+        cab_props.width = units.inch(dims[0])
+        cab_props.depth = units.inch(dims[1])
+        cab_props.height = units.inch(dims[2])
+        cabinet.recalculate()
 
     # cabinet.create() leaves every opening at front_type NONE. The
     # placement operator's _finalize is what fills bays, via a name-driven

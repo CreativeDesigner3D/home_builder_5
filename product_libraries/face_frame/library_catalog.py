@@ -16,7 +16,9 @@ Shape
     {'key':   short id, used by the viewport panel's category filter
      'label': section header text, shown in both browsers
      'prop':  the expand/collapse BoolProperty backing the sidebar box
-     'rows':  ((row_label, ((display, cabinet_name), ...)), ...)}
+     'rows':  ((row_label, ((display, cabinet_name), ...)), ...)
+     'toggle': optional (label, scene group, bool name) -- a switch the
+               viewport panel draws on the section's header row}
 
 ``row_label`` is the small left-hand caption in the sidebar ("Pie Cut",
 "Diagonal", "Cabinet", "Standalone"); blank means an unlabelled row.
@@ -54,10 +56,14 @@ SECTIONS = (
         'key': 'appliance',
         'label': "Appliance Products",
         'prop': 'show_appliance_library',
+        # Cages or 3D models, room-wide. Which appliances HAVE a model is
+        # each one's own choice, in its prompts.
+        'toggle': ("Show Model", 'home_builder', 'show_appliance_models'),
         'rows': (
             # No dedicated Oven product: the Oven button places the
             # built-in tall oven tower.
             ("Cabinet", (("Sink", "Sink"),
+                         ("Cooktop", "Cooktop Base"),
                          ("Refrigerator", "Refrigerator Cabinet"),
                          ("Oven", "Built in Tall"))),
             ("Standalone", (("Dishwasher", "Dishwasher"),
@@ -67,6 +73,18 @@ SECTIONS = (
             # Generic under-counter appliance (beverage centre, wine
             # fridge, ice maker) - relabel after placing via Set Label.
             ("", (("Under Counter", "Under Counter Appliance"),)),
+        ),
+    },
+    {
+        # Galley workstation sink bases, one per workstation size.
+        'key': 'galley',
+        'label': "Galley Workstations",
+        'prop': 'show_galley_library',
+        'rows': (
+            ("", (("IWS 2", "Galley IWS 2"), ("IWS 3", "Galley IWS 3"),
+                  ("IWS 4", "Galley IWS 4"))),
+            ("", (("IWS 5", "Galley IWS 5"), ("IWS 6", "Galley IWS 6"),
+                  ("IWS 7", "Galley IWS 7"))),
         ),
     },
     {
@@ -90,6 +108,7 @@ SECTIONS = (
             ("Vanity", (("Special", "Special"),
                         ("Combination", "Combination"),
                         ("Deluxe", "Deluxe"))),
+            ("Wall Hung", (("Floating", "Floating Vanity"),)),
         ),
     },
     {
@@ -103,6 +122,7 @@ SECTIONS = (
                   ("Floating Shelf", "Floating Shelves"),
                   ("Valance", "Valance"))),
             ("", (("Wood Top", "Wood Top"), ("Mantle", "Mantle"))),
+            ("Wrap", (("Column", "Column"), ("Beam", "Beam"))),
         ),
     },
     {
@@ -113,6 +133,7 @@ SECTIONS = (
             ("Medicine", (("Recessed", "Standard Recessed Medicine Cabinet"),
                           ("Standard", "Medicine Cabinet"),
                           ("Tri-View", "Tri-View Medicine Cabinet"))),
+            ("Sink", (("ADA", "ADA Sink"),)),
             ("Other", (("Overstool", "Overstool Cabinet"),
                        ("Mirror", "Mirror Frame"),
                        ("Tub Skirt", "Tub Skirt"))),
@@ -161,7 +182,11 @@ def products(section_key=None):
     nested row shape::
 
         {'display', 'cabinet_name', 'section', 'section_label',
-         'row_label', 'search'}
+         'row_label', 'search', 'path_draw'}
+
+    ``path_draw`` is True for a product that can also be drawn through
+    points -- a run of it built along a clicked path -- so a browser
+    can offer that as a second way in on the same tile.
 
     ``search`` is the pre-lowered haystack a search box matches
     against: the display name, the real product name, the section and
@@ -188,8 +213,15 @@ def products(section_key=None):
                     'row_label': row_label,
                     'search': ' '.join((display, cabinet_name,
                                         section['label'], row_label)).lower(),
+                    'path_draw': can_draw_path(cabinet_name),
                 })
     return out
+
+
+def can_draw_path(cabinet_name):
+    """True when the product has a path-drawing builder."""
+    from .operators import ops_draw_path
+    return ops_draw_path.can_draw_path(cabinet_name)
 
 
 def category_items():
@@ -284,4 +316,11 @@ def place(context, product):
     """Put one product in the scene -- the same operator the sidebar's
     library buttons fire, so there is no second placement path."""
     bpy.ops.hb_face_frame.draw_cabinet(
+        'INVOKE_DEFAULT', cabinet_name=product['key'])
+
+
+def draw_path(context, product):
+    """Draw a run of the product through clicked points. Only offered
+    for products whose ``path_draw`` is set."""
+    bpy.ops.hb_face_frame.draw_product_path(
         'INVOKE_DEFAULT', cabinet_name=product['key'])

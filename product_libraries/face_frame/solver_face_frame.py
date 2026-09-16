@@ -135,6 +135,13 @@ class FaceFrameLayout:
         self.tkt = cab.toe_kick_thickness if self.has_toe_kick else 0.0
         self.toe_kick_type = (cab.toe_kick_type
                               if self.has_toe_kick else 'FLOATING')
+        # Floating vanity: a floating base whose top closes with a panel
+        # rather than stretchers, because a sink sits on it. The rest of
+        # its construction (the 1/2 top over the 3/4 back, the basin
+        # cutout) rides the same flag - see is_floating_vanity.
+        self.floating_vanity = is_floating_vanity(cab)
+        if self.floating_vanity:
+            self.uses_stretchers = False
         self.extend_left_stile_to_floor = cab.extend_left_stile_to_floor
         self.extend_right_stile_to_floor = cab.extend_right_stile_to_floor
         # Combined island end: where the run behind lays a board across
@@ -183,6 +190,12 @@ class FaceFrameLayout:
         self.wedge_ceiling_height = getattr(cab, 'wedge_ceiling_height', 0.0)
         self.wedge_fudge = getattr(cab, 'wedge_fudge', 0.0)
         self.wedge_max_height = getattr(cab, 'wedge_max_height', 0.0)
+        self.top_thickness_override = getattr(
+            cab, 'top_thickness_override', 0.0)
+        self.top_over_back = getattr(cab, 'top_over_back', False)
+        self.wedge_override = getattr(cab, 'wedge_override', False)
+        self.wedge_length = getattr(cab, 'wedge_length', 0.0)
+        self.wedge_height = getattr(cab, 'wedge_height', 0.0)
         self.finish_kick_thickness = cab.finish_toe_kick_thickness
         self.include_finish_kick = cab.include_finish_toe_kick
 
@@ -343,6 +356,7 @@ class FaceFrameLayout:
             # from finish stock rather than being lined with an applied
             # 1/4 panel - see _bay_finish_carcass.
             'finish_carcass':     _bay_finish_carcass(bp, tree),
+            'back_condition':     getattr(bp, 'back_condition', 'DEFAULT'),
             'tree':               tree,
         }
 
@@ -437,10 +451,6 @@ class FaceFrameLayout:
             # (frontless: appliance / open shelving) or a true mid rail
             # (a door/drawer/pullout below). See _walk_tree.
             'front_type':   op.front_type,
-            # Resolved per-side overlays, used by the removed-mid-rail gap
-            # math so the collapse accounts for a per-opening overlay override.
-            'overlay_top':    resolved_overlay(self._cab_props, op, 'top'),
-            'overlay_bottom': resolved_overlay(self._cab_props, op, 'bottom'),
         }
 
     def _make_default_bay(self):
@@ -465,6 +475,7 @@ class FaceFrameLayout:
             'finish_bay_flush':   False,
             'finish_bay_flush_depth': 0.0,
             'finish_carcass':     False,
+            'back_condition':     'DEFAULT',
             'tree':               None,
         }
 
@@ -582,13 +593,56 @@ def right_side_thickness(layout):
 
 
 def back_thickness(layout):
-    """Carcass back panel thickness. Always the cabinet's back_thickness
-    prop (typically 1/4) regardless of finish condition - the FINISHED
-    back is rendered as a SEPARATE 3/4 applied panel layered on top of
-    the carcass back, not by thickening the carcass back itself. See
+    """Carcass back panel thickness. The cabinet's back_thickness prop
+    (typically 1/4) regardless of finish condition - the FINISHED back
+    is rendered as a SEPARATE 3/4 applied panel layered on top of the
+    carcass back, not by thickening the carcass back itself. See
     _reconcile_finished_back for the applied piece.
+
+    A floating vanity is the exception: its back is 3/4 by construction,
+    so a cabinet still carrying the 1/4 default gets the vanity's.
     """
+    if (getattr(layout, 'floating_vanity', False)
+            and layout.bt <= FLOATING_VANITY_BACK_THICKNESS - 1e-6):
+        return FLOATING_VANITY_BACK_THICKNESS
     return layout.bt
+
+
+def is_floating_vanity(cab):
+    """True for a base cabinet built as a floating vanity: the option
+    is on AND its toe kick is the floating one, since the kick height
+    is what lifts it off the floor."""
+    return (getattr(cab, 'floating_vanity', False)
+            and getattr(cab, 'toe_kick_type', '') == 'FLOATING')
+
+
+# What the floating vanity construction is, where it differs from a
+# plain floating base. Sizes stay editable per cabinet; these are what
+# ticking the box gives you.
+FLOATING_VANITY_TOP_THICKNESS = inch(0.5)
+FLOATING_VANITY_BACK_THICKNESS = inch(0.75)
+
+
+def bottom_thickness(layout):
+    """Carcass bottom panel thickness: the cabinet's material, except on
+    a floating vanity, whose bottom is 3/4 by construction - it carries
+    the cabinet where a floor-standing one is carried by its base."""
+    if (getattr(layout, 'floating_vanity', False)
+            and layout.mt <= FLOATING_VANITY_BACK_THICKNESS - 1e-6):
+        return FLOATING_VANITY_BACK_THICKNESS
+    return layout.mt
+
+
+def top_thickness(layout):
+    """Carcass top panel thickness: the cabinet's own override where it
+    has one, the vanity's 1/2 top on a floating vanity, else the
+    material thickness."""
+    override = getattr(layout, 'top_thickness_override', 0.0)
+    if override > 0.0:
+        return override
+    if getattr(layout, 'floating_vanity', False):
+        return FLOATING_VANITY_TOP_THICKNESS
+    return layout.mt
 
 
 def back_notch_depth(layout, side):
@@ -1631,6 +1685,15 @@ def wedge_geometry(layout):
     enabled AND needed, else None (recalc then cleans up any cutter)."""
     if not layout.wedge_enabled:
         return None
+    # Typed sizes win outright: another calculator reading the same
+    # cabinet differently is the reason the field exists, so this one
+    # does not get to second-guess the number.
+    if layout.wedge_override:
+        length = layout.wedge_length
+        height = layout.wedge_height
+        if length <= 0.0 and height <= 0.0:
+            return None
+        return length, height, False
     length, height, clamped, needed = compute_wedge(
         layout.dim_y, layout.dim_z,
         layout.wedge_ceiling_height, layout.wedge_fudge,
@@ -2667,13 +2730,24 @@ def _step_gap(layout, gap_index):
 
 
 def _void_gap(layout, gap_index):
-    """True when either bay at gap_index has remove_carcass. The mid
-    division drops to the floor there to finish the void's side, so
-    nothing passes under it - segments stop at their own side's
-    division face (same rule as a step gap)."""
+    """True when the bay on either side of gap_index is open to the floor.
+
+    That happens with remove_carcass, and equally with remove_bottom:
+    taking a bay's bottom out is how an appliance bay is made, and the
+    appliance stands on the floor, so the space below runs right down
+    through the kick. Either way the mid division becomes that void's
+    side wall and drops to the floor, and nothing passes under it -
+    segments stop at their own side's division face, the same rule as a
+    step gap.
+
+    remove_bottom used to be left out, so a bay opened for a freezer or
+    a refrigerator was walled only to the top of the kick and stood open
+    at the bottom for the kick's height.
+    """
     bay_a = layout.bays[gap_index]
     bay_b = layout.bays[gap_index + 1]
-    return bool(bay_a.get('remove_carcass') or bay_b.get('remove_carcass'))
+    return bool(bay_a.get('remove_carcass') or bay_b.get('remove_carcass')
+                or bay_a.get('remove_bottom') or bay_b.get('remove_bottom'))
 
 
 def _segment_x_bounds(layout, start, end):
@@ -2747,10 +2821,12 @@ def carcass_bottom_segments(layout):
             'end_bay':    end,
             'x':          left_x,
             'y':          -layout.dim_y + first_bay['depth'] - back_thickness(layout),
-            'z':          bay_bottom_z(layout, start) + first_bay['bottom_rail_width'] - layout.mt,
+            'z':          (bay_bottom_z(layout, start)
+                           + first_bay['bottom_rail_width']
+                           - bottom_thickness(layout)),
             'length':     right_x - left_x,
             'panel_dim_y': first_bay['depth'] - back_thickness(layout) - layout.fft,
-            'thickness':  layout.mt,
+            'thickness':  bottom_thickness(layout),
             # Segments break at finish boundaries, so the start bay
             # speaks for the whole panel.
             'finished':   bay_finish_bottom(layout, start),
@@ -2785,7 +2861,23 @@ def _carcass_back_passthrough(layout, gap_index):
         return False
     if bool(bay_a.get('finish_carcass')) != bool(bay_b.get('finish_carcass')):
         return False
+    # A bay carrying its own back type gets its own panel: the applied
+    # back is built one per segment, and a working front behind a bay
+    # takes the carcass back away from that bay alone.
+    if bay_back_condition(layout, gap_index) != bay_back_condition(
+            layout, gap_index + 1):
+        return False
     return True
+
+
+def bay_back_condition(layout, bay_index):
+    """The back type in force for one bay: its own if it carries one,
+    otherwise the cabinet's."""
+    bay = layout.bays[bay_index]
+    own = bay.get('back_condition', 'DEFAULT')
+    if own and own != 'DEFAULT':
+        return own
+    return layout.b_fin_end
 
 
 def carcass_back_segments(layout):
@@ -2801,6 +2893,10 @@ def carcass_back_segments(layout):
         # Passthrough breaks at bays with remove_carcass, so flagged bays
         # arrive as (i, i) segments we drop.
         if first_bay.get('remove_carcass'):
+            continue
+        # A working face frame on this bay's back is a real front you
+        # open, so the bay cannot be closed off behind it.
+        if bay_back_condition(layout, start) == 'WORKING_FF':
             continue
         left_x, right_x = _segment_x_bounds(layout, start, end)
         # A FINISHED end is notched for the back (back_notch_depth), so
@@ -2859,13 +2955,73 @@ def carcass_back_segments(layout):
             'y':               back_y,
             'z':               z_origin,
             'horizontal_length': right_x - left_x,
-            'vertical_length':   carcass_top_z(layout, start) - z_origin,
+            # A top that runs over the back stops the back below it.
+            'vertical_length':   (carcass_top_z(layout, start) - z_origin
+                                  - (top_thickness(layout)
+                                     if (getattr(layout, 'top_over_back', False)
+                                         or getattr(layout, 'floating_vanity',
+                                                    False))
+                                     and not layout.uses_stretchers else 0.0)),
             'thickness':       back_thickness(layout),
             # Segments break at finish boundaries, so the start bay
             # speaks for the whole panel.
             'finished':        bool(first_bay.get('finish_carcass')),
+            'back_condition':  bay_back_condition(layout, start),
         })
     return segments
+
+
+def applied_back_segments(layout):
+    """Where the applied back panels go, one per stretch of bays that
+    share a back type and a depth.
+
+    The carcass back segments already break on everything that matters
+    here - depth, floor and ceiling heights, and now the back type - so
+    they are the spans the applied panels follow. A bay whose back is a
+    working face frame has no carcass back at all, so its span is
+    rebuilt from the bay bounds instead.
+
+    Each entry carries the plane the panel sits on (``y``, the outer
+    face of that stretch's back), its X span, its Z range and the
+    condition to build. Only conditions that produce an applied panel
+    are returned; the caller decides what to do with each.
+    """
+    # A bay-less product (a leg post) passes a minimal layout snapshot: it
+    # has no carcass back for a panel to hang on, and every field below is
+    # bay-derived. Nothing to build, so answer that directly rather than
+    # raising partway through the caller's applied-panel pass.
+    if not getattr(layout, "bays", None):
+        return []
+    out = []
+    for start, end in _compute_segments(layout, _carcass_back_passthrough):
+        first_bay = layout.bays[start]
+        if first_bay.get('remove_carcass'):
+            continue
+        condition = bay_back_condition(layout, start)
+        left_x, right_x = _segment_x_bounds(layout, start, end)
+        # An applied back covers the cabinet's outer face, so a segment
+        # reaching a cabinet end runs out to it rather than stopping at
+        # the carcass side. With one segment this is the full-width span
+        # the cabinet-wide panel has always used.
+        if start == 0:
+            left_x = 0.0
+        if end == layout.bay_count - 1:
+            right_x = layout.dim_x
+        out.append({
+            'start_bay':  start,
+            'end_bay':    end,
+            'condition':  condition,
+            'x':          left_x,
+            'right_x':    right_x,
+            # Outer face of this stretch's back: the panel hangs on it.
+            'y':          -layout.dim_y + first_bay['depth'],
+            # Floor to cabinet top, as the cabinet-wide applied back has
+            # always run - it covers the toe-kick band at the bottom.
+            'z':          0.0,
+            'top_z':      layout.dim_z,
+            'width':      right_x - left_x,
+        })
+    return out
 
 
 def _top_stretcher_passthrough(layout, gap_index):
@@ -2917,15 +3073,25 @@ def carcass_top_segments(layout):
         if first_bay.get('remove_carcass'):
             continue
         left_x, right_x = _stretcher_x_bounds(layout, start, end)
+        # Over the back, the top runs the full depth and lands on the
+        # back panel's top edge; otherwise it butts its front face.
+        if (getattr(layout, 'top_over_back', False)
+                or getattr(layout, 'floating_vanity', False)):
+            y = -layout.dim_y + first_bay['depth']
+            panel_dim_y = first_bay['depth'] - layout.fft
+        else:
+            y = -layout.dim_y + first_bay['depth'] - back_thickness(layout)
+            panel_dim_y = (first_bay['depth'] - back_thickness(layout)
+                           - layout.fft)
         segments.append({
             'start_bay':  start,
             'end_bay':    end,
             'x':          left_x,
-            'y':          -layout.dim_y + first_bay['depth'] - back_thickness(layout),
+            'y':          y,
             'z':          carcass_top_z(layout, start),
             'length':     right_x - left_x,
-            'panel_dim_y': first_bay['depth'] - back_thickness(layout) - layout.fft,
-            'thickness':  layout.mt,
+            'panel_dim_y': panel_dim_y,
+            'thickness':  top_thickness(layout),
         })
     return segments
 
@@ -3156,7 +3322,7 @@ def mid_division_panels(layout, gap_index):
         bottom_z = (bay_bottom_z(layout, bay_idx)
                     + brw_term
                     - ms['extend_down_amount'])
-        if ms.get('to_floor'):
+        if ms.get('to_floor') or void_gap:
             bottom_z = 0.0
         top = carcass_top_z(layout, bay_idx)
         # Stretchers: division flush with stretcher tops for structural
@@ -3726,6 +3892,34 @@ def _redistribute_sizes(children, available, splitter_total):
     return sizes
 
 
+def removed_rail_allowance(widths, removes, held):
+    """What a split's size pool is charged for each splitter, and what
+    each child gets on top of its distributed share, once mid rails have
+    been removed.
+
+    A removed rail takes no space in the frame: its width goes to the two
+    openings it separated, half each. An auto-sized neighbour draws its
+    half from the pool; a held (typed) size is already the real opening,
+    so the half it covers is not charged. Either way the child sizes sum
+    to the space available. `widths` are the full member widths,
+    `removes` the per-member removal flags and `held` the per-child
+    unlock_size flags. Returns (charges, bonuses): one pool charge per
+    member and one addition per child. Shared with the stored-size
+    distribution so the built fronts and the typed sizes agree.
+    """
+    charges = list(widths)
+    bonuses = [0.0] * (len(widths) + 1)
+    for i, width in enumerate(widths):
+        if not removes[i]:
+            continue
+        charges[i] = 0.0
+        for k in (i, i + 1):
+            if not held[k]:
+                charges[i] += width / 2.0
+                bonuses[k] += width / 2.0
+    return charges, bonuses
+
+
 # Backing kind is implied by the split's axis: H-splits (mid rails)
 # always get a shelf, V-splits (mid stiles) always get a division.
 _AXIS_TO_BACKING_ROLE = {
@@ -3860,13 +4054,20 @@ def _emit_v_splitter(node, cage_x, cage_z, cage_dim_x, cage_dim_y, cage_dim_z,
     })
 
 
-def _child_overlay(child, side, default):
-    """Resolved overlay on one side of a child node. Leaves carry their
-    own snapshotted overlays; a nested split node has none, so the
-    cabinet default is used. Feeds the removed-mid-rail gap collapse."""
-    if child.get('kind') == 'leaf':
-        return child.get('overlay_' + side, default)
-    return default
+def _mark_removed_rail_edges(leaves, top_z=None, bottom_z=None):
+    """Stamp rail_removed_top / rail_removed_bottom on the leaf rects whose
+    face frame opening edge lies on a removed mid rail's centerline
+    (bay-local Z), so their fronts take the removed-rail reveal on that
+    edge (see front_overlay). Leaves of a nested split only qualify along
+    that shared edge."""
+    for lf in leaves:
+        if (top_z is not None
+                and abs(lf['cage_z'] + lf['cage_dim_z'] - lf['reveal_top']
+                        - top_z) < 1e-6):
+            lf['rail_removed_top'] = True
+        if (bottom_z is not None
+                and abs(lf['cage_z'] + lf['reveal_bottom'] - bottom_z) < 1e-6):
+            lf['rail_removed_bottom'] = True
 
 
 # Frontless bottom-opening front types: openings that carry no door/drawer
@@ -3933,10 +4134,11 @@ def _walk_tree(node, layout, bay_index,
         removes = [False] * n_splitters
 
     # A removed mid rail (H-split member) emits NO face-frame member and
-    # NO backing; its splitter space collapses so the two overlay fronts
-    # sit MID_RAIL_REMOVED_GAP apart. front_gap = space - ov_above -
-    # ov_below, so space = gap + ov_above + ov_below. Removal is H-only
-    # (mid rails); a V-split mid stile ignores the flag (members stay).
+    # NO backing, and takes no space: the openings either side meet on its
+    # centerline and the fronts there stop short of that line (see
+    # front_overlay), leaving MID_RAIL_REMOVED_GAP between them whatever
+    # the overlay. Removal is H-only (mid rails); a V-split mid stile
+    # ignores the flag (members stay).
     eff_widths = list(widths)
     # When the bay drops its bottom rail and the bottom-most child runs
     # open to the kick, the LAST root H-split splitter is the lowest
@@ -3947,11 +4149,7 @@ def _walk_tree(node, layout, bay_index,
     if node['axis'] == 'H':
         for i in range(n_splitters):
             if removes[i]:
-                ov_above = _child_overlay(children[i], 'bottom',
-                                          layout.default_bottom_overlay)
-                ov_below = _child_overlay(children[i + 1], 'top',
-                                          layout.default_top_overlay)
-                eff_widths[i] = MID_RAIL_REMOVED_GAP + ov_above + ov_below
+                eff_widths[i] = 0.0
         bay = layout.bays[bay_index]
         if (is_bay_root and n_splitters >= 1
                 and bay.get('remove_bottom')
@@ -3962,30 +4160,26 @@ def _walk_tree(node, layout, bay_index,
             brw = bay.get('bottom_rail_width') or 0.0
             if brw > 0:
                 eff_widths[bottom_rail_splitter_index] = brw
-    # For size distribution a removed rail still consumes its FULL width
-    # from the pool; the freed space (full width minus the collapsed gap)
-    # is handed to the two adjacent openings below, half each. Without
-    # this the freed space went to whichever siblings were unlocked --
-    # and silently vanished when every sibling held a typed size, so the
-    # opening dims never summed back to the cabinet height.
-    dist_widths = list(eff_widths)
+    # A removed rail's width goes to the two openings it separated, half
+    # each (removed_rail_allowance), so the opening dims still sum back to
+    # the cabinet height.
     if node['axis'] == 'H':
-        for i in range(n_splitters):
-            if removes[i]:
-                dist_widths[i] = widths[i]
-    splitter_total = sum(dist_widths)
+        pool_widths, bonuses = removed_rail_allowance(
+            [widths[i] if removes[i] else eff_widths[i]
+             for i in range(n_splitters)],
+            removes,
+            [bool(c.get('unlock_size')) for c in children],
+        )
+        splitter_total = sum(pool_widths)
+    else:
+        splitter_total = sum(eff_widths)
 
     if node['axis'] == 'H':
         ff_avail_z = cage_dim_z - reveals['top'] - reveals['bottom']
         sizes = _redistribute_sizes(
             children, ff_avail_z, splitter_total
         )
-        for i in range(n_splitters):
-            if removes[i]:
-                freed = dist_widths[i] - eff_widths[i]
-                if freed > 0:
-                    sizes[i] += freed / 2.0
-                    sizes[i + 1] += freed / 2.0
+        sizes = [s + b for s, b in zip(sizes, bonuses)]
         ff_opening_top_z = cage_z + cage_dim_z - reveals['top']
         cur_z_top = ff_opening_top_z
         for i, child in enumerate(children):
@@ -4003,6 +4197,7 @@ def _walk_tree(node, layout, bay_index,
                 'left':   reveals['left'],
                 'right':  reveals['right'],
             }
+            first_leaf = len(leaves)
             _walk_tree(
                 child, layout, bay_index,
                 cage_x=cage_x,
@@ -4013,10 +4208,16 @@ def _walk_tree(node, layout, bay_index,
                 reveals=child_reveals,
                 leaves=leaves, splitters=splitters, backings=backings,
             )
+            _mark_removed_rail_edges(
+                leaves[first_leaf:],
+                top_z=cur_z_top if i > 0 and removes[i - 1] else None,
+                bottom_z=(child_ff_bottom_z
+                          if i < n_children - 1 and removes[i] else None),
+            )
             if i < n_children - 1:
                 # Mid rail sits below this child's FF bottom edge. A removed
-                # member emits nothing (no rail, no backing) - only the
-                # collapsed gap is consumed so the fronts land 3/32" apart.
+                # member emits nothing (no rail, no backing) and takes no
+                # space; the next opening starts on its centerline.
                 w_i = eff_widths[i]
                 if not removes[i]:
                     splitter_top_z = child_ff_bottom_z
@@ -4203,9 +4404,16 @@ FULL_CORNER_SIDE_OVERLAY = inch(0.25)
 
 
 def front_overlay(rect, cab_props, opening_props, side):
-    """resolved_overlay plus the FULL-overlay corner pullback: a front
-    whose rect is stamped corner_left/right takes the corner overlay on
-    that side (an explicit per-opening unlock still wins)."""
+    """resolved_overlay plus two edges stamped on the rect.
+
+    FULL-overlay corner pullback: a front whose rect is stamped
+    corner_left/right takes the corner overlay on that side (an explicit
+    per-opening unlock still wins). Removed mid rail: an edge stamped
+    rail_removed_top/bottom has no member to overlay, so the front stops
+    half of MID_RAIL_REMOVED_GAP short of the rail's centerline whatever
+    the overlay, and the two fronts there sit that gap apart."""
+    if side in ('top', 'bottom') and rect.get(f'rail_removed_{side}'):
+        return -MID_RAIL_REMOVED_GAP / 2.0
     if (side in ('left', 'right') and rect.get(f'corner_{side}')
             and not getattr(opening_props, f'unlock_{side}_overlay')):
         return FULL_CORNER_SIDE_OVERLAY
@@ -4231,10 +4439,10 @@ DOUBLE_DOOR_REVEAL = inch(0.125)
 # Inset doors butt closer than overlay doors where a pair meets.
 INSET_DOUBLE_DOOR_REVEAL = inch(0.0625)   # 1/16"
 # Front-to-front reveal left when a mid rail is removed between two
-# (typically drawer) openings. The split is kept but the face-frame
-# member + its backing are dropped; the solver collapses the splitter
-# space to this gap plus the two adjacent overlays so the fronts sit
-# this far apart. See _walk_tree.
+# (typically drawer) openings, whatever the overlay. The split is kept
+# but the face-frame member + its backing are dropped; the openings meet
+# on the rail's centerline and each front stops half this short of it.
+# See _walk_tree and front_overlay.
 MID_RAIL_REMOVED_GAP = inch(0.09375)   # 3/32"
 TRIVIEW_DOOR_REVEAL = inch(0.125)   # gap where adjacent mirror doors meet
 TRIVIEW_FRAME_WIDTH = inch(1.25)    # tri-view stile / rail width (spec default)
@@ -4254,6 +4462,14 @@ def _ff_front_y_bay_local(layout):
     plane regardless of cabinet vs panel context.
     """
     return 0.0 if layout.cabinet_type == 'PANEL' else -layout.fft
+
+
+def slide_front_back_y(layout, cab_props):
+    """Opening-local Y of a closed drawer / pullout front's back face.
+    The drawer box behind the front starts here, and so does a rollout
+    riding above that drawer."""
+    return (_ff_front_y_bay_local(layout) - DOOR_TO_FRAME_GAP
+            + cab_props.default_door_inset_amount)
 
 
 def _ff_back_y_bay_local(layout):
@@ -4288,8 +4504,8 @@ def _door_panel_size(rect, cab_props, opening_props):
     )
     height = (
         opening_height
-        + resolved_overlay(cab_props, opening_props, 'top')
-        + resolved_overlay(cab_props, opening_props, 'bottom')
+        + front_overlay(rect, cab_props, opening_props, 'top')
+        + front_overlay(rect, cab_props, opening_props, 'bottom')
     )
     return width, height
 
@@ -4365,7 +4581,7 @@ def _single_door_leaf_pivot(layout, rect, cab_props, opening_props):
     door_thickness = cab_props.door_thickness
     width, height = _door_panel_size(rect, cab_props, opening_props)
     left_overlay = front_overlay(rect, cab_props, opening_props, 'left')
-    bottom_overlay = resolved_overlay(cab_props, opening_props, 'bottom')
+    bottom_overlay = front_overlay(rect, cab_props, opening_props, 'bottom')
 
     # Door pivot lives in OPENING-local coords. The opening cage origin
     # for this leaf is at (rect['cage_x'], 0, rect['cage_z']) in bay
@@ -4418,7 +4634,7 @@ def _double_door_leaves(layout, rect, cab_props, opening_props, role):
               else DOUBLE_DOOR_REVEAL)
     leaf_width = (width - reveal) / 2.0
     left_overlay = front_overlay(rect, cab_props, opening_props, 'left')
-    bottom_overlay = resolved_overlay(cab_props, opening_props, 'bottom')
+    bottom_overlay = front_overlay(rect, cab_props, opening_props, 'bottom')
 
     base_x = rect['reveal_left'] - left_overlay
     base_y = _ff_front_y_bay_local(layout) - DOOR_TO_FRAME_GAP + cab_props.default_door_inset_amount
@@ -4443,6 +4659,83 @@ def _double_door_leaves(layout, rect, cab_props, opening_props, role):
     ]
 
 
+BIFOLD_MECHANISMS = ('BIFOLD_LEFT', 'BIFOLD_RIGHT')
+
+
+def _bifold_door_leaves(layout, rect, cab_props, opening_props, role):
+    """Two leaves for a plain (non-retracting) bi-fold pair: the stile
+    leaf hinges on the frame like a single door, the lead leaf hangs off
+    its free edge on a back-face hinge and folds back against it as the
+    pair opens (backs together at full swing). Only the lead leaf takes
+    a pull, on its free edge.
+
+    Leaf widths and the center reveal match a double door, so the closed
+    pair reads the same as one.
+    """
+    door_thickness = cab_props.door_thickness
+    width, height = _door_panel_size(rect, cab_props, opening_props)
+    reveal = (INSET_DOUBLE_DOOR_REVEAL
+              if cab_props.default_door_inset_amount > 0
+              else DOUBLE_DOOR_REVEAL)
+    leaf_width = (width - reveal) / 2.0
+    left_overlay = front_overlay(rect, cab_props, opening_props, 'left')
+    bottom_overlay = front_overlay(rect, cab_props, opening_props, 'bottom')
+
+    base_x = rect['reveal_left'] - left_overlay
+    base_y = _ff_front_y_bay_local(layout) - DOOR_TO_FRAME_GAP + cab_props.default_door_inset_amount
+    base_z = rect['reveal_bottom'] - bottom_overlay
+    angle = opening_props.swing_percent * DOOR_MAX_SWING_ANGLE
+    # The lead leaf turns twice as far as the stile leaf, in the other
+    # direction, capped at folded flat.
+    fold = min(2.0 * angle, math.pi)
+    c, s = math.cos(angle), math.sin(angle)
+    dims = (height, leaf_width, door_thickness)
+    t = door_thickness
+
+    if opening_props.door_mechanism == 'BIFOLD_RIGHT':
+        stile = _hinge_barrel_pivot({
+            'role': role, 'name': 'Door (Right)',
+            'pivot_position': (base_x + width, base_y, base_z),
+            'pivot_rotation': (0.0, 0.0, +angle),
+            'part_position':  (-leaf_width, 0.0, 0.0),
+            'part_dims':      dims,
+            'no_pull':        True,
+        }, door_thickness)
+        px, py, pz = stile['pivot_position']
+        # Stile leaf's back face at its free (left) edge, rotated +angle.
+        hinge = (px - leaf_width * c - t * s,
+                 py - leaf_width * s + t * c, pz)
+        lead = {
+            'role': role, 'name': 'Door (Left)',
+            'pivot_position': hinge,
+            'pivot_rotation': (0.0, 0.0, angle - fold),
+            'part_position':  (-reveal - leaf_width, 0.0, 0.0),
+            'part_dims':      dims,
+        }
+        return [lead, stile]
+
+    stile = _hinge_barrel_pivot({
+        'role': role, 'name': 'Door (Left)',
+        'pivot_position': (base_x, base_y, base_z),
+        'pivot_rotation': (0.0, 0.0, -angle),
+        'part_position':  (0.0, 0.0, 0.0),
+        'part_dims':      dims,
+        'no_pull':        True,
+    }, door_thickness)
+    px, py, pz = stile['pivot_position']
+    # Stile leaf's back face at its free (right) edge, rotated -angle.
+    hinge = (px + leaf_width * c + t * s,
+             py - leaf_width * s + t * c, pz)
+    lead = {
+        'role': role, 'name': 'Door (Right)',
+        'pivot_position': hinge,
+        'pivot_rotation': (0.0, 0.0, -angle + fold),
+        'part_position':  (reveal, 0.0, 0.0),
+        'part_dims':      dims,
+    }
+    return [stile, lead]
+
+
 def _drawer_or_pullout_slide_leaf(layout, rect, cab_props,
                                   opening_props, role, name):
     """Single-leaf slide-out front. Pivot translates in -Y by
@@ -4450,10 +4743,10 @@ def _drawer_or_pullout_slide_leaf(layout, rect, cab_props,
     door_thickness = cab_props.door_thickness
     width, height = _door_panel_size(rect, cab_props, opening_props)
     left_overlay = front_overlay(rect, cab_props, opening_props, 'left')
-    bottom_overlay = resolved_overlay(cab_props, opening_props, 'bottom')
+    bottom_overlay = front_overlay(rect, cab_props, opening_props, 'bottom')
 
     base_x = rect['reveal_left'] - left_overlay
-    base_y = _ff_front_y_bay_local(layout) - DOOR_TO_FRAME_GAP + cab_props.default_door_inset_amount
+    base_y = slide_front_back_y(layout, cab_props)
     base_z = rect['reveal_bottom'] - bottom_overlay
     slide = opening_props.swing_percent * _drawer_max_slide(layout, rect)
 
@@ -4550,7 +4843,7 @@ def _triple_door_leaves(layout, rect, cab_props, opening_props, role):
     door_thickness = cab_props.door_thickness
     width, height = _door_panel_size(rect, cab_props, opening_props)
     left_overlay = front_overlay(rect, cab_props, opening_props, 'left')
-    bottom_overlay = resolved_overlay(cab_props, opening_props, 'bottom')
+    bottom_overlay = front_overlay(rect, cab_props, opening_props, 'bottom')
 
     base_x = rect['reveal_left'] - left_overlay
     base_y = _ff_front_y_bay_local(layout) - DOOR_TO_FRAME_GAP + cab_props.default_door_inset_amount
@@ -4659,6 +4952,11 @@ def front_leaves(layout, rect, cab_props, opening_props):
     if cab_props.id_data.get('HB_TRIVIEW_DOORS'):
         # Tri-view medicine cabinet: three mirror doors in one opening.
         return _triple_door_leaves(
+            layout, rect, cab_props, opening_props, role
+        )
+    if (getattr(opening_props, 'door_mechanism', 'NONE') in BIFOLD_MECHANISMS
+            and opening_props.hinge_side not in ('TOP', 'BOTTOM')):
+        return _bifold_door_leaves(
             layout, rect, cab_props, opening_props, role
         )
     if opening_props.hinge_side == 'DOUBLE':
@@ -4942,8 +5240,19 @@ def _assembly_side_geometry(rect, cage_dim_x):
     return item_x, item_dx, spacer_l, spacer_r
 
 
+def _spacer_length(rect, item):
+    """How tall the spacer ladders run. 0 (the default) is the full
+    opening height; a typed height stops them short so whatever sits
+    above them clears them instead of being notched around them."""
+    cage_dim_z = rect['cage_dim_z']
+    typed = getattr(item, 'rollout_spacer_height', 0.0) or 0.0
+    if typed <= 0.0:
+        return cage_dim_z
+    return min(typed, cage_dim_z)
+
+
 def _assembly_spacers(rect, spacer_height, kind, role, name_prefix,
-                      left_thickness, right_thickness):
+                      left_thickness, right_thickness, length=None):
     """Four vertical spacer parts for a pullout/rollout assembly. Origin
     convention for VERTICAL parts: position.y is the back face of the
     spacer's Y extent (mirror_y at materialize time fans the width
@@ -4981,7 +5290,8 @@ def _assembly_spacers(rect, spacer_height, kind, role, name_prefix,
             'name':         f'{name_prefix} {side_name}',
             'orientation':  'VERTICAL',
             'position':     (x, y, 0.0),
-            'dims':         (cage_dim_z, spacer_height, thickness),
+            'dims':         (cage_dim_z if length is None else length,
+                             spacer_height, thickness),
         })
     return out
 
@@ -5011,12 +5321,19 @@ def _pullout_shelf_descriptors(rect, cage_dim_y, item):
             'position':     (shelf_x, setback, z),
             'dims':         (length, width, item_height),
         })
-    out.extend(_assembly_spacers(
-        rect, ASSEMBLY_SPACER_WIDTH, 'PULLOUT_SPACER', 'PULLOUT_SPACER',
-        'Pullout Spacer',
-        left_thickness=spacer_l, right_thickness=spacer_r,
-    ))
+    # Same opt-out the rollout boxes have: a shelf that mounts straight
+    # to the cabinet needs no spacer assembly built for it.
+    if not getattr(item, 'hide_rollout_spacers', False):
+        out.extend(_assembly_spacers(
+            rect, ASSEMBLY_SPACER_WIDTH, 'PULLOUT_SPACER', 'PULLOUT_SPACER',
+            'Pullout Spacer',
+            left_thickness=spacer_l, right_thickness=spacer_r,
+            length=_spacer_length(rect, item),
+        ))
     return out
+
+
+GALLEY_TOP_T = inch(0.5)      # a workstation roll-out's plywood top
 
 
 def _rollout_descriptors(rect, cage_dim_y, item, item_index=-1):
@@ -5062,12 +5379,28 @@ def _rollout_descriptors(rect, cage_dim_y, item, item_index=-1):
             'item_index':   item_index,
             'box_index':    k,
         })
+        # A workstation roll-out carries a top with a bowl or bin opening,
+        # which takes its own thickness out of the stack.
+        box = item.rollout_boxes[k] if k < len(item.rollout_boxes) else None
+        top = getattr(box, 'galley_top', 'NONE') if box is not None else 'NONE'
+        if top != 'NONE':
+            out.append({
+                'kind':         'GALLEY_ROLLOUT_TOP',
+                'role':         'GALLEY_ROLLOUT_TOP',
+                'name':         f'Rollout Top {k + 1}',
+                'orientation':  'HORIZONTAL',
+                'position':     (box_x, setback, z + item_height),
+                'dims':         (box_dx, box_dy, GALLEY_TOP_T),
+                'galley_top':   top,
+            })
+            z += GALLEY_TOP_T
         z += item_height + distance_between
     if not getattr(item, 'hide_rollout_spacers', False):
         out.extend(_assembly_spacers(
             rect, ASSEMBLY_SPACER_WIDTH, 'ROLLOUT_SPACER', 'ROLLOUT_SPACER',
             'Rollout Spacer',
             left_thickness=spacer_l, right_thickness=spacer_r,
+            length=_spacer_length(rect, item),
         ))
     return out
 

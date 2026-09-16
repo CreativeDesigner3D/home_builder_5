@@ -19,6 +19,8 @@ The edit modal draws only while it is running: no persistent overlay,
 nothing left behind when it exits.
 """
 
+import math
+
 import blf
 import bpy
 import gpu
@@ -30,6 +32,7 @@ from mathutils import Vector
 from mathutils.geometry import intersect_line_plane
 
 from .. import backsplash, units
+from ..product_libraries.common import countertop_common
 from .. import surface_materials as sm
 
 SPLASH_MATERIAL = "Backsplash"
@@ -635,6 +638,292 @@ class HOME_BUILDER_OT_edit_backsplash(bpy.types.Operator):
 
 
 # ---------------------------------------------------------------------------
+# Countertop shape
+# ---------------------------------------------------------------------------
+
+# A top may not be dragged narrower than this across any direction -- past
+# it there is no slab left to grab hold of again.
+MIN_COUNTERTOP_SPAN = 2.0 * backsplash.INCH
+
+
+def _line_intersection(a0, da, b0, db):
+    """Where two 2D lines cross, or None when they run parallel."""
+    cross = da[0] * db[1] - da[1] * db[0]
+    if abs(cross) < 1e-9:
+        return None
+    dx, dy = b0[0] - a0[0], b0[1] - a0[1]
+    t = (dx * db[1] - dy * db[0]) / cross
+    return (a0[0] + da[0] * t, a0[1] + da[1] * t)
+
+
+class HOME_BUILDER_OT_edit_countertop(bpy.types.Operator):
+    bl_idname = "home_builder.edit_countertop"
+    bl_label = "Edit Countertop Shape"
+    bl_description = ("Drag the countertop edges in the viewport to reshape "
+                      "the slab -- an overhang, a notch, a cut-back corner")
+    bl_options = {'REGISTER', 'UNDO'}
+
+    _draw_handle = None
+
+    @classmethod
+    def poll(cls, context):
+        if context.area is None or context.area.type != 'VIEW_3D':
+            return False
+        obj = context.active_object
+        # A top from before outlines existed has one seeded on the way
+        # in, so the command is offered for those too.
+        return bool(obj and obj.get('IS_COUNTERTOP')
+                    and getattr(obj, 'data', None) is not None)
+
+    # -- state ---------------------------------------------------------
+    def _plane(self):
+        """(point, normal) of the slab's top face, in world space.
+
+        A drag is measured on the surface the user is looking at, so it
+        reads the same whether the top is seen in plan or from an angle.
+        """
+        obj = self.obj
+        top = float(obj.get(countertop_common.TOP_KEY, 0.0))
+        thickness = float(obj.get(countertop_common.THICKNESS_KEY, 0.0))
+        mw = countertop_common.world_matrix(obj)
+        point = mw @ Vector((0.0, 0.0, top + thickness))
+        normal = (mw.to_3x3() @ Vector((0.0, 0.0, 1.0))).normalized()
+        return point, normal
+
+    def _rebuild_handles(self):
+        """One handle per outline edge, drawn on the slab's top face."""
+        obj = self.obj
+        points = countertop_common.outline_of(obj)
+        top = float(obj.get(countertop_common.TOP_KEY, 0.0))
+        thickness = float(obj.get(countertop_common.THICKNESS_KEY, 0.0))
+        mw = countertop_common.world_matrix(obj)
+
+        def world(p):
+            return mw @ Vector((p[0], p[1], top + thickness))
+
+        self.handles = []
+        count = len(points)
+        for i in range(count):
+            a = points[i]
+            b = points[(i + 1) % count]
+            self.handles.append({'kind': 'EDGE', 'index': i,
+                                 'a': world(a), 'b': world(b)})
+        for handle in self.handles:
+            handle['world'] = (handle['a'] + handle['b']) / 2.0
+        self.outline_world = [world(p) for p in points]
+
+    @staticmethod
+    def _distance_to_edge(p, a, b):
+        """Screen distance from p to the segment ab, not to its ends."""
+        ab = b - a
+        length_sq = ab.length_squared
+        if length_sq < 1e-9:
+            return (p - a).length
+        t = max(0.0, min(1.0, (p - a).dot(ab) / length_sq))
+        return (p - (a + ab * t)).length
+
+    def _pick(self, context, event):
+        region, rv3d = context.region, context.region_data
+        mouse = Vector((event.mouse_region_x, event.mouse_region_y))
+        best, best_d = None, PICK_PX
+        for i, handle in enumerate(self.handles):
+            a = view3d_utils.location_3d_to_region_2d(region, rv3d,
+                                                      handle['a'])
+            b = view3d_utils.location_3d_to_region_2d(region, rv3d,
+                                                      handle['b'])
+            if a is None or b is None:
+                continue
+            d = self._distance_to_edge(mouse, a, b)
+            if d < best_d:
+                best, best_d = i, d
+        return best
+
+    def _edge_normal(self, points, index):
+        """Outward unit normal of edge ``index``, on the floor plane."""
+        a = points[index]
+        b = points[(index + 1) % len(points)]
+        dx, dy = b[0] - a[0], b[1] - a[1]
+        length = math.hypot(dx, dy)
+        if length < 1e-9:
+            return None
+        n = (dy / length, -dx / length)
+        return n if self._winding(points) > 0.0 else (-n[0], -n[1])
+
+    @staticmethod
+    def _winding(points):
+        """Twice the signed area: positive when the outline runs
+        anticlockwise, which is what tells an outward normal from an
+        inward one."""
+        total = 0.0
+        for i, a in enumerate(points):
+            b = points[(i + 1) % len(points)]
+            total += a[0] * b[1] - b[0] * a[1]
+        return total
+
+    def _span_along(self, points, normal):
+        """How far the outline reaches across ``normal``."""
+        values = [p[0] * normal[0] + p[1] * normal[1] for p in points]
+        return max(values) - min(values)
+
+    def _readout_for(self, context, index):
+        """How wide the top measures across the edge under the mouse."""
+        if index is None or not (0 <= index < len(self.handles)):
+            return ""
+        points = countertop_common.outline_of(self.obj)
+        normal = self._edge_normal(points, self.handles[index]['index'])
+        if normal is None:
+            return ""
+        return _length(context, self._span_along(points, normal))
+
+    def _local_point(self, context, event):
+        """The mouse on the slab's top face, in the top's own space."""
+        region, rv3d = context.region, context.region_data
+        co = (event.mouse_region_x, event.mouse_region_y)
+        origin = view3d_utils.region_2d_to_origin_3d(region, rv3d, co)
+        direction = view3d_utils.region_2d_to_vector_3d(region, rv3d, co)
+        point, normal = self._plane()
+        world = intersect_line_plane(origin, origin + direction * 1000.0,
+                                     point, normal)
+        if world is None:
+            anchor = self.handles[self.drag]['world']
+            world = view3d_utils.region_2d_to_location_3d(
+                region, rv3d, co, anchor)
+        return countertop_common.world_matrix(self.obj).inverted() @ world
+
+    def _apply(self, context, event):
+        """Slide the dragged edge along its own normal.
+
+        The edge keeps its direction and the two edges either side keep
+        theirs: the moved line is re-crossed with its neighbours and the
+        shared corners land where they now meet. That is what makes a
+        rectangle stay a rectangle when its front is pulled out, and an
+        angled corner stay at its angle. Neighbours running parallel to
+        the edge have no crossing, so those corners simply travel with
+        it.
+        """
+        points = countertop_common.outline_of(self.obj)
+        count = len(points)
+        if count < 3:
+            return
+        index = self.handles[self.drag]['index'] % count
+        normal = self._edge_normal(points, index)
+        if normal is None:
+            return
+
+        local = self._local_point(context, event)
+        target = local.x * normal[0] + local.y * normal[1]
+        if event.ctrl:
+            target = round(target / SNAP_STEP) * SNAP_STEP
+        a = points[index]
+        current = a[0] * normal[0] + a[1] * normal[1]
+        delta = target - current
+        if abs(delta) < 1e-9:
+            return
+
+        nxt = (index + 1) % count
+        moved_a = (a[0] + normal[0] * delta, a[1] + normal[1] * delta)
+        b = points[nxt]
+        moved_b = (b[0] + normal[0] * delta, b[1] + normal[1] * delta)
+        edge_dir = (moved_b[0] - moved_a[0], moved_b[1] - moved_a[1])
+
+        prev = (index - 1) % count
+        after = (nxt + 1) % count
+        prev_dir = (a[0] - points[prev][0], a[1] - points[prev][1])
+        next_dir = (points[after][0] - b[0], points[after][1] - b[1])
+        corner_a = _line_intersection(moved_a, edge_dir,
+                                      points[prev], prev_dir) or moved_a
+        corner_b = _line_intersection(moved_a, edge_dir,
+                                      points[after], next_dir) or moved_b
+
+        candidate = list(points)
+        candidate[index] = corner_a
+        candidate[nxt] = corner_b
+        if self._span_along(candidate, normal) < MIN_COUNTERTOP_SPAN:
+            return
+
+        countertop_common.set_outline(self.obj, candidate)
+        countertop_common.rebuild(self.obj)
+        self._rebuild_handles()
+        last = len(self.handles) - 1
+        if self.drag is not None:
+            self.drag = min(self.drag, last)
+        if self.hover is not None:
+            self.hover = min(self.hover, last)
+        self.readout = self._readout_for(context, self.drag)
+
+    # -- modal ---------------------------------------------------------
+    def invoke(self, context, event):
+        self.obj = context.active_object
+        if not countertop_common.ensure_outline(self.obj):
+            self.report({'WARNING'}, "This countertop has no shape to edit")
+            return {'CANCELLED'}
+        self.region = context.region
+        self.hover = None
+        self.drag = None
+        self.readout = ""
+        self._undo_outline = countertop_common.outline_of(self.obj)
+        self._rebuild_handles()
+
+        self._draw_handle = bpy.types.SpaceView3D.draw_handler_add(
+            _draw_edit, (self,), 'WINDOW', 'POST_PIXEL')
+        context.workspace.status_text_set(
+            "Hover an edge to highlight it, then drag   |   "
+            "Ctrl: snap to the inch   |   Enter: done   |   Esc: cancel")
+        context.window_manager.modal_handler_add(self)
+        context.area.tag_redraw()
+        return {'RUNNING_MODAL'}
+
+    def modal(self, context, event):
+        if event.type in {'MIDDLEMOUSE', 'WHEELUPMOUSE', 'WHEELDOWNMOUSE'}:
+            self._rebuild_handles()
+            return {'PASS_THROUGH'}
+
+        if event.type == 'MOUSEMOVE':
+            if self.drag is not None:
+                self._apply(context, event)
+            else:
+                self.hover = self._pick(context, event)
+                self.readout = self._readout_for(context, self.hover)
+            context.area.tag_redraw()
+            return {'RUNNING_MODAL'}
+
+        if event.type == 'LEFTMOUSE':
+            if event.value == 'PRESS':
+                picked = self._pick(context, event)
+                if picked is None:
+                    return self._finish(context)
+                self.drag = picked
+                self.hover = picked
+                return {'RUNNING_MODAL'}
+            if event.value == 'RELEASE' and self.drag is not None:
+                self.drag = None
+                self.readout = ""
+                context.area.tag_redraw()
+                return {'RUNNING_MODAL'}
+
+        if event.type in {'RET', 'NUMPAD_ENTER'} and event.value == 'PRESS':
+            return self._finish(context)
+
+        if event.type in {'ESC', 'RIGHTMOUSE'} and event.value == 'PRESS':
+            countertop_common.set_outline(self.obj, self._undo_outline)
+            countertop_common.rebuild(self.obj)
+            return self._finish(context, cancelled=True)
+
+        return {'RUNNING_MODAL'}
+
+    def _finish(self, context, cancelled=False):
+        if self._draw_handle is not None:
+            bpy.types.SpaceView3D.draw_handler_remove(
+                self._draw_handle, 'WINDOW')
+            self._draw_handle = None
+        context.workspace.status_text_set(None)
+        context.window.cursor_modal_restore()
+        if context.area:
+            context.area.tag_redraw()
+        return {'CANCELLED'} if cancelled else {'FINISHED'}
+
+
+# ---------------------------------------------------------------------------
 # Materials
 # ---------------------------------------------------------------------------
 
@@ -850,6 +1139,8 @@ class HOME_BUILDER_MT_countertop_commands(bpy.types.Menu):
         layout = self.layout
         layout.operator("home_builder.surface_material",
                         text="Countertop Material", icon='MATERIAL')
+        layout.operator("home_builder.edit_countertop",
+                        text="Edit Shape", icon='MOD_MESHDEFORM')
         layout.separator()
         obj = context.active_object
         library = (obj.get('HB_COUNTERTOP_LIB') if obj else None) or 'FACE_FRAME'
@@ -883,6 +1174,7 @@ classes = [
     HOME_BUILDER_OT_remove_backsplash,
     HOME_BUILDER_OT_backsplash_prompts,
     HOME_BUILDER_OT_edit_backsplash,
+    HOME_BUILDER_OT_edit_countertop,
     HOME_BUILDER_OT_surface_material,
     HOME_BUILDER_MT_backsplash_commands,
 ]

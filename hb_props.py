@@ -37,6 +37,36 @@ def update_product_tab(self,context):
                 area.tag_redraw()
 
 
+def update_show_appliance_models(self, context):
+    """Show or hide the 3D model on every appliance in the scene. The
+    cages stay either way; this is a way of looking at the room."""
+    from .product_libraries.common import appliance_geo
+    appliance_geo.apply_visibility(context.scene)
+    update_product_tab(self, context)
+    _remember_show_appliance_models(self.show_appliance_models)
+
+
+def _remember_show_appliance_models(show):
+    """The switch is also the user's standing choice: new drawings start
+    with it as last set. Saved on a timer -- saving preferences from
+    inside a property update is not allowed."""
+    try:
+        prefs = bpy.context.preferences.addons[__package__].preferences
+    except (KeyError, AttributeError):
+        return
+    if prefs.show_appliance_models == show:
+        return
+    prefs.show_appliance_models = show
+
+    def _save():
+        try:
+            bpy.ops.wm.save_userpref()
+        except Exception as e:
+            print(f"Home Builder: could not save preferences: {e}")
+        return None
+    bpy.app.timers.register(_save, first_interval=0.0)
+
+
 def update_line_thickness(self, context):
     """Update all curve line thicknesses in the scene."""
     for obj in context.scene.objects:
@@ -204,6 +234,22 @@ def update_molding_package(self, context):
     (or the recessed-kick toggle) changes - the dropdown IS the UI."""
     from .molding import ops as molding_ops
     molding_ops.on_package_changed(self, context)
+
+
+def update_molding_base_size_override(self, context):
+    """The first time Override Size goes on, seed Height / Thickness
+    from the current base profile so the fields open at its real size."""
+    if (self.molding_base_size_override
+            and self.get('molding_base_height') is None
+            and self.get('molding_base_thickness') is None):
+        from .molding import ops as molding_ops
+        size = molding_ops.base_profile_size(self)
+        if size is not None:
+            # ID-property writes skip the update callbacks, so the
+            # room rebuilds once below instead of once per field.
+            self['molding_base_thickness'] = size[0]
+            self['molding_base_height'] = size[1]
+    update_molding_package(self, context)
 
 
 def _molding_crown_items(self, context):
@@ -492,6 +538,13 @@ class Home_Builder_Scene_Props(PropertyGroup):
                           default='FRAMELESS',
                           update=update_product_tab)# type: ignore
 
+    show_appliance_models: BoolProperty(
+        name="Show Model",
+        description=("Show the 3D model on the appliances that have one, "
+                     "or only their cages"),
+        default=True,
+        update=update_show_appliance_models)  # type: ignore
+
     room_name: StringProperty(name="Room Name", default="")
     room_type: StringProperty(name="Room Type", default="")
     sort_order: IntProperty(name="Sort Order", default=0, description="Order for sorting scenes") # type: ignore
@@ -648,6 +701,26 @@ class Home_Builder_Scene_Props(PropertyGroup):
         name="Base Molding Profile",
         description="Base molding profile from the installed molding pack (Default uses the package's standard profile)",
         items=_molding_base_profile_items,
+        update=update_molding_package,
+    )  # type: ignore
+    molding_base_size_override: BoolProperty(
+        name="Override Size",
+        description="Set the base molding's height and thickness instead of using the profile's own size. The flat faces stretch while the shaped edge keeps its size",
+        default=False,
+        update=update_molding_base_size_override,
+    )  # type: ignore
+    molding_base_height: FloatProperty(
+        name="Base Molding Height",
+        description="Overall height of the base molding when Override Size is on",
+        default=inch(3.0), min=inch(0.5),
+        unit='LENGTH', precision=4,
+        update=update_molding_package,
+    )  # type: ignore
+    molding_base_thickness: FloatProperty(
+        name="Base Molding Thickness",
+        description="Thickness of the base molding off the toe kick face when Override Size is on",
+        default=inch(0.625), min=inch(0.125),
+        unit='LENGTH', precision=4,
         update=update_molding_package,
     )  # type: ignore
     molding_base_shoe: BoolProperty(

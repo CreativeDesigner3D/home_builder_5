@@ -127,6 +127,8 @@ def draw_dimensions(layout, root):
             if is_upper:
                 col.prop(cab_props, 'exterior_config', text="Config")
             col.prop(cab_props, 'interior_option',  text="Interior")
+            if not is_upper:
+                _draw_corner_adjustable_shelves(col, cab_props)
             col.prop(cab_props, 'corner_finish_interior', text="Finish Interior")
             col.prop(cab_props, 'tray_compartment', text="Tray Compartment")
             if cab_props.tray_compartment != 'NONE':
@@ -143,6 +145,8 @@ def draw_dimensions(layout, root):
                          text="Apron Height")
             col.prop(cab_props, 'diag_door_swing', text="Door Swing")
             col.prop(cab_props, 'interior_option', text="Interior")
+            if root.get('CABINET_TYPE') != 'UPPER':
+                _draw_corner_adjustable_shelves(col, cab_props)
             col.prop(cab_props, 'corner_finish_interior', text="Finish Interior")
             col.prop(cab_props, 'corner_remove_bottom', text="Remove Bottom")
             draw_corner_sections(layout, cab_props)
@@ -176,6 +180,24 @@ def draw_dimensions(layout, root):
         right_row.prop(cab_props, 'unlock_right_depth', text="", icon=lock_icon)
 
 
+def _draw_corner_adjustable_shelves(col, cab_props):
+    """Base / tall corner opt-in for shelves behind the doors. Greyed
+    while a susan interior option fills the cavity (the recalc ignores
+    the toggle then)."""
+    row = col.row()
+    row.enabled = cab_props.interior_option == 'NONE'
+    row.prop(cab_props, 'corner_adjustable_shelves',
+             text="Adjustable Shelves")
+
+
+def _corner_door_shelves_on(cab_props):
+    """True when corner DOORS sections build adjustable shelves: always
+    on uppers, opt-in on base / tall corners with no susan."""
+    return (cab_props.cabinet_type == 'UPPER'
+            or (cab_props.corner_adjustable_shelves
+                and cab_props.interior_option == 'NONE'))
+
+
 _CORNER_SECTION_LABELS = {
     'DOORS':       "Doors",
     'FALSE_FRONT': "False Front",
@@ -199,7 +221,7 @@ def draw_corner_sections(layout, cab_props):
     # overrides (corners have no opening cages, so the standard
     # per-opening overlay unlocks live here instead).
     has_open = any(s.content == 'OPEN' for s in sections)
-    has_upper_doors = (cab_props.cabinet_type == 'UPPER'
+    has_upper_doors = (_corner_door_shelves_on(cab_props)
                        and any(s.content == 'DOORS' for s in sections))
     has_fronts = any(s.content in ('DOORS', 'FALSE_FRONT')
                      for s in sections)
@@ -227,8 +249,8 @@ def draw_corner_sections(layout, cab_props):
         if section.content == 'OPEN':
             col.prop(section, 'shelf_qty', text="Shelves")
         elif (section.content == 'DOORS'
-              and cab_props.cabinet_type == 'UPPER'):
-            # Upper door sections auto-count shelves by height; the
+              and _corner_door_shelves_on(cab_props)):
+            # Door sections with shelves auto-count them by height; the
             # lock mirrors the standard interior-item qty pattern
             # (locked = auto, unlocked = manual override).
             qty_row = col.row(align=True)
@@ -273,6 +295,11 @@ def draw_construction(layout, cab_props):
             col = box.column(align=True)
             col.prop(cab_props, 'toe_kick_type', text="Type")
             col.prop(cab_props, 'toe_kick_height', text="Height")
+            # Floating vanity construction: only a floating kick can
+            # carry it, and the height above is then the gap it floats.
+            if cab_props.toe_kick_type == 'FLOATING':
+                col.prop(cab_props, 'floating_vanity',
+                         text="Floating Vanity Construction")
             col.prop(cab_props, 'toe_kick_setback', text="Setback")
             col.prop(cab_props, 'inset_toe_kick_left', text="Left Inset")
             col.prop(cab_props, 'inset_toe_kick_right', text="Right Inset")
@@ -447,6 +474,50 @@ def draw_construction(layout, cab_props):
             rpbox.prop(cab_props, 'bottom_rail_profile', text="Profile")
 
 
+def draw_ada_sink_options(layout, root):
+    """The raked underside of an accessible sink, and what it works out
+    to. Accessible sink products only."""
+    from . import types_face_frame
+    if not root.get(types_face_frame.ADA_SINK_TAG):
+        return
+    cab = root.face_frame_cabinet
+
+    box = layout.box()
+    box.label(text="Knee Clearance", icon='MOD_BEVEL')
+    col = box.column(align=True)
+    col.prop(cab, 'ada_side_shape', text="Raked Sides")
+    sub = col.column(align=True)
+    sub.enabled = cab.ada_side_shape
+    sub.prop(cab, 'ada_side_wall_run', text="Full Height At Wall")
+    sub.prop(cab, 'ada_side_front_run', text="Band At Front")
+    sub.prop(cab, 'ada_side_front_height', text="Band Height")
+
+    col = box.column(align=True)
+    col.prop(cab, 'ada_front_construction', text="Front")
+    sub = col.row(align=True)
+    sub.enabled = cab.ada_side_shape
+    sub.prop(cab, 'ada_angled_front_construction', text="Angled Front")
+
+    rake = root.get('ADA_RAKE_LENGTH')
+    if rake:
+        info = box.column(align=True)
+        info.label(text='Rake %s" over %s" of depth, dropping %s"' % (
+            rake, root.get('ADA_RAKE_RUN'), root.get('ADA_RISE')))
+        info.label(text='Floats %.3g" off the floor (toe kick height)'
+                        % (cab.toe_kick_height / 0.0254))
+
+
+def draw_galley_options(layout, root):
+    """Galley workstation cabinets: size and the front apron setback."""
+    if not str(root.get('CLASS_NAME', '')).startswith('Galley'):
+        return
+    cab = root.face_frame_cabinet
+    box = layout.box()
+    box.label(text="Galley Workstation", icon='MOD_BUILD')
+    box.prop(cab, 'galley_size', text="Size")
+    box.prop(cab, 'galley_front_apron_setback', text="Front Apron Setback")
+
+
 def draw_refrigerator_options(layout, root):
     """Refrigerator opening height + per-side raise. Refrigerator cabinets only.
 
@@ -545,7 +616,7 @@ def draw_floating_shelf(layout, root):
     row.prop(shelf, 'finish_left', text="Left", toggle=True)
     row.prop(shelf, 'finish_right', text="Right", toggle=True)
 
-    layout.prop(shelf, 'material_thickness', text="Material Thickness")
+    layout.prop(shelf, 'material_thickness', text="Top & Bottom Thickness")
 
     layout.separator()
     layout.operator("hb_face_frame.duplicate_floating_shelf",
@@ -672,6 +743,72 @@ def draw_mantle_product(layout, root):
     if mantle.mantle_style != 'CONTEMPORARY':
         layout.prop(mantle, 'top_overhang', text="Top Overhang")
     layout.prop(mantle, 'material_thickness', text="Material Thickness")
+
+
+def draw_column_beam_product(layout, root):
+    """Column / beam prompts: the run and section, which sides are
+    built, framed sides, the false ceiling, and the order options that
+    do not change the geometry."""
+    from . import types_column_beam
+
+    cab = root.face_frame_cabinet
+    cb = root.column_beam_product
+    column = cb.orientation == 'COLUMN'
+
+    layout.prop(cb, 'orientation', expand=True)
+
+    col = layout.column(align=True)
+    if column:
+        col.prop(cab, 'height', text="Length")
+        col.prop(cab, 'width', text="Width")
+        col.prop(cab, 'depth', text="Depth")
+    else:
+        col.prop(cab, 'width', text="Length")
+        col.prop(cab, 'depth', text="Depth")
+        col.prop(cab, 'height', text="Height")
+    col.prop(cb, 'material_thickness', text="Material Thickness")
+
+    faces = types_column_beam.faces_for(cb.orientation)
+
+    box = layout.box()
+    built = sum(1 for side, _framed, _label in faces if getattr(cb, side))
+    box.label(text="Sides Built: %d" % built)
+    row = box.row(align=True)
+    for side, _framed, label in faces:
+        row.prop(cb, side, text=label, toggle=True)
+
+    fbox = layout.box()
+    fbox.label(text="Framed Sides")
+    frow = fbox.row(align=True)
+    for side, framed, label in faces:
+        sub = frow.row(align=True)
+        sub.enabled = getattr(cb, side)
+        sub.prop(cb, framed, text=label, toggle=True)
+    any_framed = any(getattr(cb, framed) and getattr(cb, side)
+                     for side, framed, _label in faces)
+    fsub = fbox.column(align=True)
+    fsub.enabled = any_framed
+    fsub.prop(cb, 'panel_count', text="Panels")
+    fsub.prop(cb, 'frame_stile_width', text="Stile Width")
+    fsub.prop(cb, 'frame_rail_width', text="Rail Width")
+    fsub.prop(cb, 'frame_member_thickness', text="Frame Thickness")
+
+    if not column:
+        cbox = layout.box()
+        cbox.prop(cb, 'include_false_ceiling', text="False Ceiling")
+        csub = cbox.column(align=True)
+        csub.enabled = cb.include_false_ceiling
+        csub.prop(cb, 'false_ceiling_recess', text="Recess Depth")
+        csub.prop(cb, 'false_ceiling_thickness', text="Thickness")
+
+    obox = layout.box()
+    obox.label(text="Options (noted on the order, not drawn)")
+    ocol = obox.column(align=True)
+    ocol.prop(cb, 'butt_seam_sides', text="Butt Seam Sides")
+    ocol.prop(cb, 'random_staggered_sides', text="Staggered Seam Sides")
+    orow = obox.row(align=True)
+    orow.prop(cb, 'angled_end_start', text="Angled Start", toggle=True)
+    orow.prop(cb, 'angled_end_end', text="Angled End", toggle=True)
 
 
 def draw_valance_product(layout, root):
@@ -955,6 +1092,12 @@ def draw_bay_properties(layout, bay_obj):
     field.prop(bp, 'depth', text="Depth")
     lock_icon = 'UNLOCKED' if bp.unlock_depth else 'LOCKED'
     depth_row.prop(bp, 'unlock_depth', text="", icon=lock_icon)
+
+    # Back type for this bay. Cabinet Default follows the cabinet's own
+    # back; anything else is built on THIS bay's back plane, which is
+    # what makes a run of bays at different depths read right from
+    # behind. A working face frame also opens the bay from behind.
+    col.prop(bp, 'back_condition', text="Back Type")
     col.separator()
     cab_type = bay_obj.parent.face_frame_cabinet.cabinet_type if bay_obj.parent else ''
     if cab_type in ('BASE', 'TALL', 'LAP_DRAWER'):
@@ -1135,6 +1278,7 @@ def draw_opening_properties(layout, opening_obj):
         # Appliance: filler stiles fitting an appliance. Two input modes
         # toggled by Set Appliance Width (see Face_Frame_Opening_Props).
         if op.front_type == 'APPLIANCE':
+            fcol.prop(op, 'appliance_kind', text="Appliance")
             fcol.prop(op, 'include_fillers', text="Include Fillers")
             if op.include_fillers:
                 fcol.prop(op, 'set_appliance_width', text="Set Appliance Width")
@@ -1296,6 +1440,14 @@ def _draw_interior_items_section(layout, target_props, target_name=""):
     box = layout.box()
     for i, item in enumerate(target_props.interior_items):
         sub = box.column(align=True)
+        # Rollouts above a drawer belong to the cabinet; its sizes come
+        # from the Rollout Above Drawer dialog and would be rewritten
+        # here on the next recalc.
+        if item.get(types_face_frame.FaceFrameCabinet.ROLLOUT_ABOVE_MARK):
+            sub.label(text="Rollouts Above Drawer", icon='TRIA_UP_BAR')
+            sub.label(text="Right-click the drawer box or a rollout "
+                           "to edit")
+            continue
         header = sub.row(align=True)
         header.prop(item, 'kind', text="")
         rm = header.operator(
@@ -1347,6 +1499,12 @@ def _draw_interior_items_section(layout, target_props, target_name=""):
             sub.prop(item, 'item_setback', text="Front Setback")
             # Spacer width is fixed (ASSEMBLY_SPACER_WIDTH in the
             # solver), so no spacer_height row -- same as rollouts.
+            sub.prop(item, 'hide_rollout_spacers',
+                     text="Hide Spacer Ladders")
+            lh = sub.row()
+            lh.enabled = not item.hide_rollout_spacers
+            lh.prop(item, 'rollout_spacer_height',
+                    text="Ladder Height (0 = Full)")
         elif item.kind == 'ROLLOUT':
             # One row per box: each box picks its own standard height (or
             # Custom to type one). The box count is the number of rows.
@@ -1374,7 +1532,11 @@ def _draw_interior_items_section(layout, target_props, target_name=""):
             # the back (pipe / vent run behind the rollouts).
             sub.prop(item, 'rollout_depth', text="Depth (0 = Auto)")
             sub.prop(item, 'hide_rollout_spacers',
-                     text="Hide Rollout Spacers")
+                     text="Hide Spacer Ladders")
+            lh = sub.row()
+            lh.enabled = not item.hide_rollout_spacers
+            lh.prop(item, 'rollout_spacer_height',
+                    text="Ladder Height (0 = Full)")
             # On by default: the scoop is standard construction, so this
             # is here to turn it OFF for a square-front box.
             sub.prop(item, 'finger_scoop', text="Finger Scoop")
@@ -1835,6 +1997,13 @@ def draw_finished_ends(layout, cab_props):
         col.prop(cab_props, 'shiplap_board_width', text="Shiplap Width")
         col.prop(cab_props, 'shiplap_direction', text="Shiplap Direction")
 
+    # V-groove spacing, for a shop cutting them at something other than
+    # the standard sheet layout. Cabinet-wide like the shiplap settings.
+    if 'V_GROOVE' in (cab_props.left_finished_end_condition,
+                      cab_props.right_finished_end_condition,
+                      cab_props.back_finished_end_condition):
+        col.prop(cab_props, 'v_groove_spacing', text="V-Groove Spacing")
+
 
 def draw_all_bays_summary(layout, root):
     """Compact list of all bays with index and dims."""
@@ -2000,6 +2169,7 @@ def draw_cabinet_wide(layout, root):
     box.label(text="Construction", icon='MODIFIER')
     draw_construction(box, cab_props)
     draw_refrigerator_options(layout, root)
+    draw_galley_options(layout, root)
     box = layout.box()
     box.label(text="Face Frame Defaults", icon='MESH_GRID')
     draw_face_frame_defaults(box, cab_props)
@@ -2075,6 +2245,7 @@ class HB_FACE_FRAME_PT_construction(bpy.types.Panel):
             return
         draw_construction(self.layout, root.face_frame_cabinet)
         draw_refrigerator_options(self.layout, root)
+        draw_galley_options(self.layout, root)
         draw_wedge(self.layout, root)
 
 

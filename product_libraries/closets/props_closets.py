@@ -236,10 +236,58 @@ def _update_countertop_mode(self, context):
     materials_closets.update_room(self, context)
 
 
+def starter_wall(obj):
+    """The wall a starter hangs on, or None for a free-standing one."""
+    wall = obj.parent if obj is not None else None
+    if wall is not None and 'IS_WALL_BP' in wall:
+        return wall
+    return None
+
+
+def _starter_on_wall_back(obj):
+    # Placed on the back of a wall: turned half round, origin at its
+    # right end in wall space.
+    return abs(math.cos(obj.rotation_euler.z) + 1.0) < 1e-3
+
+
+def _wall_length(wall):
+    from ... import hb_types
+    try:
+        return float(hb_types.GeoNodeWall(wall).get_input('Length'))
+    except Exception:
+        return 0.0
+
+
+def _get_wall_offset(self):
+    obj = self.id_data
+    wall = starter_wall(obj)
+    if wall is not None and _starter_on_wall_back(obj):
+        return _wall_length(wall) - obj.location.x
+    return obj.location.x
+
+
+def _set_wall_offset(self, value):
+    obj = self.id_data
+    wall = starter_wall(obj)
+    if wall is not None and _starter_on_wall_back(obj):
+        obj.location.x = _wall_length(wall) - value
+    else:
+        obj.location.x = value
+
+
 # ---------------------------------------------------------------------------
 # Object-level: starter root
 # ---------------------------------------------------------------------------
 class Closet_Starter_Props(PropertyGroup):
+
+    # Where the starter sits along its wall, read off and written to the
+    # root's location - nothing is stored here.
+    wall_offset: FloatProperty(
+        name="Distance From Left",
+        description="How far the starter's left side is from the left end "
+                    "of the wall, looking at the side of the wall it is on",
+        unit='LENGTH', precision=4,
+        get=_get_wall_offset, set=_set_wall_offset)  # type: ignore
 
     # Which page of the properties dialog is showing. Purely UI state.
     prompt_tab: EnumProperty(
@@ -1567,6 +1615,11 @@ class Closets_Scene_Props(PropertyGroup):
         description="Handle used on every closet front",
         items=pulls_closets.pull_enum_items,
         update=pulls_closets.update_room)  # type: ignore
+    closet_custom_pull_size: FloatProperty(
+        name="Pull Size",
+        description="Center to center of the Custom pull's mounting holes",
+        default=0.096, min=0.01, unit='LENGTH', precision=4,
+        update=pulls_closets.update_room)  # type: ignore
     closet_pull_finish: EnumProperty(
         name="Pull Finish",
         items=pulls_closets.PULL_FINISHES,
@@ -1873,6 +1926,9 @@ class Closets_Scene_Props(PropertyGroup):
     def draw_pull_options_ui(self, layout, context):
         col = layout.column(align=True)
         col.prop(self, 'closet_pull', text="Pull")
+        if self.closet_pull == pulls_closets.CUSTOM_PULL:
+            col.prop(self, 'closet_custom_pull_size',
+                     text="Center to Center")
         col.prop(self, 'closet_pull_finish', text="Finish")
 
         col.separator()

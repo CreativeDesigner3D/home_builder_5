@@ -1,5 +1,6 @@
 import bpy
 from .. import types_frameless
+from .. import solver_frameless
 from .. import props_hb_frameless
 from .... import hb_utils, hb_types, units
 from . import ops_interior
@@ -88,6 +89,8 @@ def assign_pull_locations_to_cabinet(cabinet_bp):
             # Set the Pull Location directly on the object
             if 'Pull Location' in child:
                 child['Pull Location'] = pull_index
+    # The pulls are placed by the solver from that prompt.
+    solver_frameless.recalculate_cabinet(cabinet_bp)
 
 
 class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
@@ -168,12 +171,7 @@ class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
         """Add a cage to the bay with proper dimension drivers."""
         cage.create()
         cage.obj.parent = bay.obj
-        dim_x = bay.var_input('Dim X', 'dim_x')
-        dim_y = bay.var_input('Dim Y', 'dim_y')
-        dim_z = bay.var_input('Dim Z', 'dim_z')
-        cage.driver_input('Dim X', 'dim_x', [dim_x])
-        cage.driver_input('Dim Y', 'dim_y', [dim_y])
-        cage.driver_input('Dim Z', 'dim_z', [dim_z])
+        solver_frameless.attach_cage(cage.obj, bay.obj)
 
     def get_cabinet_type(self, bay_obj):
         """Get the cabinet type from the cabinet parent."""
@@ -897,12 +895,7 @@ class hb_frameless_OT_change_opening_type(bpy.types.Operator):
         """Add an insert to the opening with proper dimension drivers."""
         insert.create()
         insert.obj.parent = opening.obj
-        dim_x = opening.var_input('Dim X', 'dim_x')
-        dim_y = opening.var_input('Dim Y', 'dim_y')
-        dim_z = opening.var_input('Dim Z', 'dim_z')
-        insert.driver_input('Dim X', 'dim_x', [dim_x])
-        insert.driver_input('Dim Y', 'dim_y', [dim_y])
-        insert.driver_input('Dim Z', 'dim_z', [dim_z])
+        solver_frameless.attach_cage(insert.obj, opening.obj)
 
     def create_doors(self, opening, door_swing, half_top, half_bottom, half_left, half_right):
         """Create doors with specified swing direction."""
@@ -1178,12 +1171,7 @@ class hb_frameless_OT_custom_vertical_splitter(bpy.types.Operator):
         else:
             bay = types_frameless.CabinetOpening(parent_obj)
             
-        dim_x = bay.var_input('Dim X', 'dim_x')
-        dim_y = bay.var_input('Dim Y', 'dim_y')
-        dim_z = bay.var_input('Dim Z', 'dim_z')
-        splitter.driver_input('Dim X', 'dim_x', [dim_x])
-        splitter.driver_input('Dim Y', 'dim_y', [dim_y])
-        splitter.driver_input('Dim Z', 'dim_z', [dim_z])
+        solver_frameless.attach_cage(splitter.obj, bay.obj)
         hb_utils.run_calc_fix(context, splitter.obj,passes=3)
         
         self.splitter_obj_name = splitter.obj.name
@@ -1375,12 +1363,7 @@ class hb_frameless_OT_custom_vertical_splitter(bpy.types.Operator):
         else:
             bay = types_frameless.CabinetOpening(parent_obj)
             
-        dim_x = bay.var_input('Dim X', 'dim_x')
-        dim_y = bay.var_input('Dim Y', 'dim_y')
-        dim_z = bay.var_input('Dim Z', 'dim_z')
-        splitter.driver_input('Dim X', 'dim_x', [dim_x])
-        splitter.driver_input('Dim Y', 'dim_y', [dim_y])
-        splitter.driver_input('Dim Z', 'dim_z', [dim_z])
+        solver_frameless.attach_cage(splitter.obj, bay.obj)
         hb_utils.run_calc_fix(context, splitter.obj,passes=3)
         
         # Run calc fix
@@ -1516,12 +1499,7 @@ class hb_frameless_OT_custom_horizontal_splitter(bpy.types.Operator):
         else:
             bay = types_frameless.CabinetOpening(parent_obj)
             
-        dim_x = bay.var_input('Dim X', 'dim_x')
-        dim_y = bay.var_input('Dim Y', 'dim_y')
-        dim_z = bay.var_input('Dim Z', 'dim_z')
-        splitter.driver_input('Dim X', 'dim_x', [dim_x])
-        splitter.driver_input('Dim Y', 'dim_y', [dim_y])
-        splitter.driver_input('Dim Z', 'dim_z', [dim_z])
+        solver_frameless.attach_cage(splitter.obj, bay.obj)
         hb_utils.run_calc_fix(context, splitter.obj, passes=3)
         
         self.splitter_obj_name = splitter.obj.name
@@ -1656,12 +1634,7 @@ class hb_frameless_OT_custom_horizontal_splitter(bpy.types.Operator):
         else:
             bay = types_frameless.CabinetOpening(parent_obj)
             
-        dim_x = bay.var_input('Dim X', 'dim_x')
-        dim_y = bay.var_input('Dim Y', 'dim_y')
-        dim_z = bay.var_input('Dim Z', 'dim_z')
-        splitter.driver_input('Dim X', 'dim_x', [dim_x])
-        splitter.driver_input('Dim Y', 'dim_y', [dim_y])
-        splitter.driver_input('Dim Z', 'dim_z', [dim_z])
+        solver_frameless.attach_cage(splitter.obj, bay.obj)
         hb_utils.run_calc_fix(context, splitter.obj, passes=3)
         
         # Run calc fix

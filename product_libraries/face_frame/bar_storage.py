@@ -38,6 +38,7 @@ import bpy
 import bmesh
 import math
 
+from ... import hb_utils
 from ...units import inch
 
 # Kinds owned by this module (must match the Face_Frame_Interior_Item
@@ -518,4 +519,4 @@ def build_bar_storage_object(kind, name, w, h, depth):
     mesh = bpy.data.meshes.new(name)
     bm.to_mesh(mesh)
     bm.free()
-    return bpy.data.objects.new(name, mesh)
+    return hb_utils.new_object(name, mesh)

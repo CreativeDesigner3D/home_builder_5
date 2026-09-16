@@ -1,4 +1,6 @@
+import functools
 import math
+from contextlib import contextmanager
 
 import bpy
 from mathutils import Quaternion, Euler
@@ -212,30 +214,276 @@ def delete_obj_and_children(obj):
         bpy.data.objects.remove(o, do_unlink=True)
 
 
+# =============================================================================
+# CHILDREN INDEX
+# =============================================================================
+# Object.children and Object.children_recursive are Python properties that
+# scan every object in the file on each call (see Blender's _bpy_types.py),
+# so a product rebuild that walks its part tree pays that scan thousands
+# of times, and the price grows with every product in the file. Inside a
+# children_index() scope both properties answer from one parent ->
+# children map instead; outside a scope Blender's own properties are back.
+#
+# Keeping the map honest while the tree is being edited:
+#   - objects created through new_object() (and the GeoNodeObject
+#     creators, which use it) are noted and slotted under their parent on
+#     the next lookup, in the same name order Blender keeps;
+#   - a removed object stays in the map as a dead wrapper and is dropped
+#     the next time its parent's list is read;
+#   - an object moved from one parent to another is the one change the
+#     map cannot see, so code that re-parents an existing object calls
+#     note_parent_change() and the map is rebuilt on the next lookup;
+#   - the object count is checked every so often: more new objects than
+#     were noted means something created objects behind the map's back,
+#     and it is rebuilt from scratch. (len(bpy.data.objects) walks the
+#     whole list, so it is not asked on every lookup.)
+
+class _ChildrenIndex:
+
+    _COUNT_EVERY = 64           # lookups between object-count checks
+
+    def __init__(self):
+        self._kids = None       # parent -> [children], Blender's name order
+        self._count = 0         # len(bpy.data.objects) at the last sync
+        self._noted = []        # created since the last sync
+        self._fresh = []        # noted objects still waiting for a parent
+        self._lookups = 0       # since the last object-count check
+
+    def invalidate(self):
+        self._kids = None
+
+    def note_new(self, obj):
+        self._noted.append(obj)
+
+    def _rebuild(self):
+        kids = {}
+        for obj in bpy.data.objects:
+            parent = obj.parent
+            if parent is not None:
+                kids.setdefault(parent, []).append(obj)
+        self._kids = kids
+        self._count = len(bpy.data.objects)
+        self._noted = []
+        self._fresh = []
+        self._lookups = 0
+
+    def _insert(self, obj, parent):
+        # bpy.data.objects is kept sorted case-insensitively by name, and
+        # Object.children follows that order.
+        siblings = self._kids.setdefault(parent, [])
+        key = obj.name.lower()
+        for i, sib in enumerate(siblings):
+            try:
+                if sib.name.lower() > key:
+                    siblings.insert(i, obj)
+                    return
+            except ReferenceError:
+                continue
+        siblings.append(obj)
+
+    def _place(self, objs):
+        waiting = []
+        for obj in objs:
+            try:
+                parent = obj.parent
+            except ReferenceError:
+                continue
+            if parent is None:
+                waiting.append(obj)
+            else:
+                self._insert(obj, parent)
+        return waiting
+
+    def _sync(self):
+        if self._kids is None:
+            self._rebuild()
+            return
+        self._lookups += 1
+        if self._lookups >= self._COUNT_EVERY:
+            self._lookups = 0
+            count = len(bpy.data.objects)
+            if count - self._count > len(self._noted):
+                self._rebuild()
+                return
+            self._count = count
+        if self._noted:
+            noted, self._noted = self._noted, []
+            self._fresh.extend(self._place(noted))
+        if self._fresh:
+            self._fresh = self._place(self._fresh)
+
+    def _live_children(self, obj):
+        siblings = self._kids.get(obj)
+        if not siblings:
+            return []
+        live = []
+        stale = False
+        for child in siblings:
+            try:
+                parent = child.parent
+            except ReferenceError:
+                stale = True
+                continue
+            if parent == obj:
+                live.append(child)
+            else:
+                stale = True
+        if stale:
+            if live:
+                self._kids[obj] = live
+            else:
+                del self._kids[obj]
+        return live
+
+    def children(self, obj):
+        self._sync()
+        return tuple(self._live_children(obj))
+
+    def children_recursive(self, obj):
+        self._sync()
+        out = []
+
+        def walk(parent):
+            for child in self._live_children(parent):
+                out.append(child)
+                walk(child)
+
+        walk(obj)
+        return out
+
+
+_children_index = None
+_children_index_depth = 0
+_blender_children = None
+_blender_children_recursive = None
+
+
+def _indexed_children(self):
+    return _children_index.children(self)
+
+
+def _indexed_children_recursive(self):
+    return _children_index.children_recursive(self)
+
+
+@contextmanager
+def children_index():
+    """Answer Object.children / children_recursive from one parent map for
+    the duration of the block. Nests; the outermost block owns the map."""
+    global _children_index, _children_index_depth
+    global _blender_children, _blender_children_recursive
+    if _children_index_depth == 0:
+        _children_index = _ChildrenIndex()
+        _blender_children = bpy.types.Object.children
+        _blender_children_recursive = bpy.types.Object.children_recursive
+        bpy.types.Object.children = property(
+            _indexed_children, doc=_blender_children.__doc__)
+        bpy.types.Object.children_recursive = property(
+            _indexed_children_recursive,
+            doc=_blender_children_recursive.__doc__)
+    _children_index_depth += 1
+    try:
+        yield
+    finally:
+        _children_index_depth -= 1
+        if _children_index_depth == 0:
+            bpy.types.Object.children = _blender_children
+            bpy.types.Object.children_recursive = _blender_children_recursive
+            _children_index = None
+
+
+def with_children_index(fn):
+    """Decorator form of children_index() for the rebuild entry points."""
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        with children_index():
+            return fn(*args, **kwargs)
+    return wrapper
+
+
+def new_object(name, data):
+    """bpy.data.objects.new that the children index hears about."""
+    obj = bpy.data.objects.new(name, data)
+    if _children_index is not None:
+        _children_index.note_new(obj)
+    return obj
+
+
+def note_new_object(obj):
+    """Tell the children index about an object created some other way."""
+    if _children_index is not None:
+        _children_index.note_new(obj)
+
+
+def note_parent_change():
+    """Call after re-parenting an object that already existed."""
+    if _children_index is not None:
+        _children_index.invalidate()
+
+
+def world_matrix(obj):
+    """obj.matrix_world without waiting for the depsgraph.
+
+    matrix_world only refreshes when the scene is evaluated, so reading
+    it for an object placed or moved a moment ago returns where the
+    object used to be - and forcing an evaluation just for that rebuilds
+    the whole scene's relations, which grows with every object in the
+    file. Composing the transform channels up the parent chain gives the
+    same matrix for plain parenting. Objects with constraints (walls
+    chained with Copy Location) keep their evaluated matrix: nothing
+    places or moves those mid-operation.
+    """
+    if obj.constraints:
+        return obj.matrix_world.copy()
+    parent = obj.parent
+    if parent is None:
+        return obj.matrix_basis.copy()
+    return world_matrix(parent) @ obj.matrix_parent_inverse @ obj.matrix_basis
+
+
 def run_calc_fix(context, obj=None, passes=2):
     """
-    Workaround for Blender bug #133392 - grandchild drivers not updating.
-    
-    This function forces all drivers in an object hierarchy to recalculate
-    by using frame change and touching driven properties.
-    
+    Bring an object hierarchy up to date after a prompt or size edit.
+
+    Cabinets and products solve their parts in Python, so the hierarchy is
+    solved first. Anything still bound to a driver under it (parts from
+    other product lines, or from an older file) is then settled the old
+    way: Blender bug #133392 leaves grandchild drivers stale, so driven
+    properties are touched and the frame is stepped to force a full
+    re-evaluation.
+
     Args:
         context: Blender context
         obj: Optional object to update (updates all descendants)
              If None, updates all objects in the scene
-        passes: Number of calculation passes (default 2 for reliability)
+        passes: Number of driver settle passes (default 2 for reliability)
     """
     if obj:
         objects_to_update = [obj] + list(obj.children_recursive)
     else:
         objects_to_update = list(context.scene.objects)
 
+    try:
+        from .product_libraries.frameless import solver_frameless
+        solver_frameless.solve_roots(objects_to_update)
+    except Exception:
+        import traceback
+        traceback.print_exc()
+
     home_builder_calculators = []
+    driven = False
 
     # Collect all calculators
     for o in objects_to_update:
         for calculator in o.home_builder.calculators:
             home_builder_calculators.append(calculator)
+        if o.animation_data is not None and len(o.animation_data.drivers):
+            driven = True
+
+    if not driven:
+        # Nothing left to settle: the solved values are already in place.
+        context.view_layer.update()
+        return
 
     # Run multiple passes to ensure all dependencies resolve
     for _ in range(passes):
@@ -247,7 +495,7 @@ def run_calc_fix(context, obj=None, passes=2):
             for mod in o.modifiers:
                 if mod.type == 'NODES':
                     mod.show_viewport = mod.show_viewport
-        
+
         # Calculate all calculators
         for calculator in home_builder_calculators:
             calculator.calculate()
@@ -257,10 +505,10 @@ def run_calc_fix(context, obj=None, passes=2):
         current_frame = scene.frame_current
         scene.frame_set(current_frame + 1)
         scene.frame_set(current_frame)
-        
+
         # Update depsgraph
         context.view_layer.update()
-    
+
     # Force evaluated mesh read to ensure geometry nodes have processed
     depsgraph = context.evaluated_depsgraph_get()
     for o in objects_to_update:

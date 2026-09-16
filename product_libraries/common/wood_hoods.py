@@ -301,7 +301,7 @@ def _mesh_part(hood_obj, name, verts, faces):
     me = bpy.data.meshes.new(name)
     me.from_pydata(verts, [], faces)
     me.update()
-    obj = bpy.data.objects.new(name, me)
+    obj = hb_utils.new_object(name, me)
     obj[HOOD_PART_TAG] = True
     obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_part_commands'
     cols = hood_obj.users_collection or [bpy.context.scene.collection]
@@ -397,6 +397,7 @@ _CUSTOM_DEFAULTS = {
     'include_bottom_molding': False,  # strip wrapping the hood bottom front + sides
     'bottom_molding_width': inch(1.5),
     'bottom_molding_thickness': inch(0.75),
+    'bottom_molding_depth': 0.0,    # side returns stop here; 0 = full depth
     'fan_cutout_width': inch(30.0),  # opening in the bottom liner shelf
     'fan_cutout_depth': inch(12.0),
     'fan_cutout_offset': 0.0,        # shift the opening front (+) / back (-)
@@ -720,18 +721,26 @@ def _liner_shelf(hood_obj, cutout_w, cutout_d, front_ext=0.0,
     cpm.set_input('Route Depth', mt)
 
 
-def _molding_wrap(hood_obj, prefix, tag, W, y_face, z0, z1, m_th):
+def _molding_wrap(hood_obj, prefix, tag, W, y_face, z0, z1, m_th,
+                  y_back=0.0):
     """One mitred molding band wrapping the hood between ``z0`` and
     ``z1``: a strip across the front face (``y_face``) and strips back
     along both hood sides to the wall, mitred at the front corners (45
     degrees in plan), standing ``m_th`` proud of the faces. Parts are
     named ``<prefix> F<tag>`` / ``L<tag>`` / ``R<tag>``. Static meshes
-    sized at build time."""
+    sized at build time.
+
+    ``y_back`` is where the side returns stop -- the wall (0.0) by
+    default, or short of it when the returns have to clear whatever
+    sits beside the hood. Depth runs -Y, so a return stopping short
+    has a larger (less negative) back plane than the front face.
+    """
+    y_back = min(max(y_back, y_face + m_th), 0.0)
     corners = {
         'fl_i': (0.0, y_face), 'fr_i': (W, y_face),
         'fl_o': (-m_th, y_face - m_th), 'fr_o': (W + m_th, y_face - m_th),
-        'bl_i': (0.0, 0.0), 'br_i': (W, 0.0),
-        'bl_o': (-m_th, 0.0), 'br_o': (W + m_th, 0.0),
+        'bl_i': (0.0, y_back), 'br_i': (W, y_back),
+        'bl_o': (-m_th, y_back), 'br_o': (W + m_th, y_back),
     }
 
     def prism(name, keys):
@@ -767,8 +776,13 @@ def _bottom_molding(hood_obj, opts, W, y_face):
     face-frame front whose bottom rail wants a wrapped trim strip)."""
     m_w = max(opts['bottom_molding_width'], inch(0.25))
     m_th = max(opts['bottom_molding_thickness'], inch(0.125))
+    # A depth of 0 keeps the historic full-depth returns; anything
+    # else stops them that far back from the molding's front face,
+    # so they clear whatever stands beside the hood.
+    dep = max(opts.get('bottom_molding_depth', 0.0), 0.0)
+    y_back = 0.0 if dep <= 0.0 else y_face - m_th + dep
     _molding_wrap(hood_obj, "Hood Bottom Molding", "",
-                  W, y_face, 0.0, m_w, m_th)
+                  W, y_face, 0.0, m_w, m_th, y_back=y_back)
 
 
 def _front_face_frame(hood_obj, opts, band):
@@ -1977,6 +1991,12 @@ def build_wood_hood(hood_obj, style):
     if style == 'NONE':
         remove_wood_hood(hood_obj)
         return
+    # A wood hood and the generic hood model cannot share a cage.
+    try:
+        from . import appliance_geo
+        appliance_geo.drop_model_for_wood_hood(hood_obj)
+    except Exception:
+        pass
     _clear_hood_parts(hood_obj)
     builder = _STYLE_BUILDERS.get(style, _build_box)
     builder(hood_obj)
@@ -2137,6 +2157,12 @@ class HOME_BUILDER_OT_wood_hood_prompts(bpy.types.Operator):
         default=_CUSTOM_DEFAULTS['bottom_molding_thickness'],
         description="How far the bottom molding stands proud of the hood "
                     "faces")  # type: ignore
+    bottom_molding_depth: FloatProperty(
+        name="Bottom Molding Depth", unit='LENGTH', precision=5, min=0.0,
+        default=_CUSTOM_DEFAULTS['bottom_molding_depth'],
+        description="How far back the side returns run, measured from "
+                    "the molding's front face. Zero runs them the full "
+                    "depth to the wall")  # type: ignore
     fan_cutout_width: FloatProperty(
         name="Fan Cutout Width", unit='LENGTH', precision=5,
         default=_CUSTOM_DEFAULTS['fan_cutout_width'],
@@ -2264,6 +2290,8 @@ class HOME_BUILDER_OT_wood_hood_prompts(bpy.types.Operator):
         self.include_bottom_molding = bool(opts['include_bottom_molding'])
         self.bottom_molding_width = opts['bottom_molding_width']
         self.bottom_molding_thickness = opts['bottom_molding_thickness']
+        self.bottom_molding_depth = max(
+            float(opts.get('bottom_molding_depth', 0.0)), 0.0)
         self.fan_cutout_width = opts['fan_cutout_width']
         self.fan_cutout_depth = opts['fan_cutout_depth']
         self.fan_cutout_offset = opts['fan_cutout_offset']
@@ -2317,6 +2345,7 @@ class HOME_BUILDER_OT_wood_hood_prompts(bpy.types.Operator):
                 'include_bottom_molding': self.include_bottom_molding,
                 'bottom_molding_width': self.bottom_molding_width,
                 'bottom_molding_thickness': self.bottom_molding_thickness,
+                'bottom_molding_depth': self.bottom_molding_depth,
                 'fan_cutout_width': self.fan_cutout_width,
                 'fan_cutout_depth': self.fan_cutout_depth,
                 'fan_cutout_offset': self.fan_cutout_offset,
@@ -2457,6 +2486,7 @@ class HOME_BUILDER_OT_wood_hood_prompts(bpy.types.Operator):
         sub.active = self.include_bottom_molding
         sub.prop(self, 'bottom_molding_width', text="W")
         sub.prop(self, 'bottom_molding_thickness', text="T")
+        sub.prop(self, 'bottom_molding_depth', text="D")
 
     def _draw_front(self, box):
         col = box.column(align=True)

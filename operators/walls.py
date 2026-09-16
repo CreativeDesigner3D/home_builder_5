@@ -5442,6 +5442,14 @@ class home_builder_walls_OT_delete_wall(bpy.types.Operator):
 ISOLATE_HIDDEN_TAG = 'HB_ISOLATED_HIDDEN'
 
 
+def _in_view_layer(context, obj):
+    """hide_set / hide_get only work on objects in the active view layer.
+    Wall children can live in excluded collections or other scenes'
+    collections (drawing annotations parented to the wall), and
+    hide_set raises on those."""
+    return context.view_layer.objects.get(obj.name) is obj
+
+
 class home_builder_walls_OT_hide_wall(bpy.types.Operator):
     """Hide the selected wall and all its children"""
     bl_idname = "home_builder_walls.hide_wall"
@@ -5468,6 +5476,8 @@ class home_builder_walls_OT_hide_wall(bpy.types.Operator):
 
         for wall_bp in wall_bps:
             for obj in [wall_bp] + list(wall_bp.children_recursive):
+                if not _in_view_layer(context, obj):
+                    continue
                 # Skip anything already hidden: internal parts the product
                 # logic keeps hidden, or objects the user hid manually.
                 # Only marker-stamped objects get revealed by Show All
@@ -5495,7 +5505,7 @@ class home_builder_walls_OT_show_all_walls(bpy.types.Operator):
         # clearing the marker as we go. Internal product parts were never
         # stamped (they were already hidden), so they stay hidden.
         for obj in context.scene.objects:
-            if obj.get(ISOLATE_HIDDEN_TAG):
+            if obj.get(ISOLATE_HIDDEN_TAG) and _in_view_layer(context, obj):
                 obj.hide_set(False)
                 obj.hide_viewport = False
                 del obj[ISOLATE_HIDDEN_TAG]
@@ -5506,10 +5516,14 @@ class home_builder_walls_OT_show_all_walls(bpy.types.Operator):
         # this CAN reveal internal parts on such old files (a prompt edit
         # re-hides them); marker-stamped hides never take this path.
         for obj in context.scene.objects:
+            if not _in_view_layer(context, obj):
+                continue
             if obj.get('IS_WALL_BP') and (obj.hide_get() or obj.hide_viewport):
                 obj.hide_set(False)
                 obj.hide_viewport = False
                 for child in obj.children_recursive:
+                    if not _in_view_layer(context, child):
+                        continue
                     child.hide_set(False)
                     child.hide_viewport = False
                 count += 1
@@ -5568,6 +5582,8 @@ class home_builder_walls_OT_isolate_selected_walls(bpy.types.Operator):
             # Never hide cameras / lights - hiding them would blank the
             # viewport, and they aren't room content.
             if obj.type in {'CAMERA', 'LIGHT'}:
+                continue
+            if not _in_view_layer(context, obj):
                 continue
             # Skip anything already hidden so we don't claim (and later
             # reveal via Show All Walls) objects the user hid themselves.

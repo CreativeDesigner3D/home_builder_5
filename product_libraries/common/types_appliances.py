@@ -80,6 +80,8 @@ class Cooktop(Appliance):
     height = inch(4)
     depth = inch(21)
     
+    APPLIANCE_TYPE = 'COOKTOP'
+
     def create(self, name="Cooktop"):
         self.create_appliance(name, 'COOKTOP')
         self.obj['IS_COUNTERTOP_APPLIANCE'] = True
@@ -92,6 +94,8 @@ class WallOven(Appliance):
     height = inch(29)
     depth = inch(24)
     
+    APPLIANCE_TYPE = 'WALL_OVEN'
+
     def create(self, name="Wall Oven"):
         self.create_appliance(name, 'WALL_OVEN')
         
@@ -169,6 +173,8 @@ class Microwave(Appliance):
     height = inch(12)
     depth = inch(14)
     
+    APPLIANCE_TYPE = 'MICROWAVE'
+
     def create(self, name="Microwave"):
         self.create_appliance(name, 'MICROWAVE')
         

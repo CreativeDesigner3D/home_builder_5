@@ -41,6 +41,7 @@ import math
 import bpy
 import bmesh
 
+from ... import hb_utils
 from ...units import inch
 
 
@@ -377,7 +378,7 @@ def ensure_part(cabinet_obj, key, component, label):
         return obj
     name = 'Cabinet Column %s %s' % (label,
                                      component.title().replace('_', ' '))
-    obj = bpy.data.objects.new(name, bpy.data.meshes.new(name))
+    obj = hb_utils.new_object(name, bpy.data.meshes.new(name))
     obj['hb_part_role'] = PART_ROLE
     obj['hb_column_key'] = key
     obj['hb_column_part'] = component

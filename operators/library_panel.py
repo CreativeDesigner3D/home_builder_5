@@ -61,6 +61,7 @@ from ..hb_gpu_draw import (
     draw_text,
     point_in_rect,
 )
+from ..hb_gpu_ui import draw_polyline
 from ..hb_gpu_ui import (
     Theme,
     ScrollList,
@@ -96,6 +97,11 @@ PAD_X = 10
 PAD_Y = 8
 HEADER_H = 22
 HDR_BTN = 20        # the Auto Join pill and the sizes button
+# The draw-through-points mark in a tile's corner, for products that
+# offer it. Sized like the palette's settings caret: big enough to hit,
+# small enough that the thumbnail stays the picture.
+BADGE = 16
+BADGE_PAD = 3
 FILTER_H = 20
 LIB_H = 20          # the library picker row
 SECTION_H = 21      # taller, to carry FONT_SECTION
@@ -209,6 +215,21 @@ def _auto_join_prop(context):
     name = getattr(cat, 'AUTO_JOIN', None) if cat else None
     props = library_props(context)
     return (props, name) if (name and props is not None) else None
+
+
+def _section_toggle(context, section):
+    """(label, property group, property name) for the switch a section
+    puts on its header row, or None where it has none. The group is a
+    pointer on the scene, so a section can name a scene-wide setting as
+    easily as one of the library's own."""
+    spec = section.get('toggle') if section else None
+    if not spec:
+        return None
+    label, group, name = spec
+    props = getattr(context.scene, group, None)
+    if props is None or not hasattr(props, name):
+        return None
+    return label, props, name
 
 
 def _sizes_form(context):
@@ -375,7 +396,8 @@ def compute_layout(context, rect):
         if not group:
             continue
         section = cat.section_by_key(key)
-        blocks.append(('header', (key, section['label'])))
+        blocks.append(('header', (key, section['label'],
+                                  _section_toggle(context, section))))
         if key in _collapsed:
             continue
         for i in range(0, len(group), COLS):
@@ -426,15 +448,21 @@ def compute_layout(context, rect):
                                    content_h, cell_h)
 
     tiles = []
-    headers = []         # (key, label, rect)
+    headers = []         # (key, label, rect, toggle_rect, toggle)
     for block, block_top, _block_bottom in _list.visible(
             blocks, list_top, list_bottom, _block_h):
         kind, payload = block
         if kind == 'header':
-            key, label = payload
-            headers.append((key, label,
-                            (content_x, block_top - sect_h,
-                             content_w, sect_h)))
+            key, label, toggle = payload
+            hdr = (content_x, block_top - sect_h, content_w, sect_h)
+            # The switch sits right-aligned on the header row, a pill
+            # like Auto Join: a state you want to see, not hunt for.
+            tog_rect = None
+            if toggle is not None:
+                tw = text_width(0, FONT_LABEL * s, toggle[0]) + 12 * s
+                tog_rect = (content_x + content_w - 6 * s - tw,
+                            hdr[1] + 2 * s, tw, sect_h - 4 * s)
+            headers.append((key, label, hdr, tog_rect, toggle))
             continue
         for col, product in enumerate(payload):
             tx = content_x + col * (tile + gap)
@@ -447,13 +475,29 @@ def compute_layout(context, rect):
             clip_rect,
             tiles, track, thumb, len(items), headers)
 
+def _hit_section_toggle(mx, my, layout):
+    """(section key, toggle) for the header switch under the cursor, or
+    None. Asked before the header itself, so a click on the switch
+    flips it rather than folding the section."""
+    if layout is None:
+        return None
+    if not point_in_rect(mx, my, layout[3]):
+        return None
+    for key, _label, _rect, tog_rect, toggle in layout[8]:
+        if tog_rect is not None and point_in_rect(mx, my, tog_rect):
+            return key, toggle
+    return None
+
+
 def _hit_section(mx, my, layout):
     """Section key whose header is under the cursor, or None."""
     if layout is None:
         return None
     if not point_in_rect(mx, my, layout[3]):
         return None
-    for key, _label, rect in layout[8]:
+    if _hit_section_toggle(mx, my, layout) is not None:
+        return None
+    for key, _label, rect, _tog_rect, _toggle in layout[8]:
         if point_in_rect(mx, my, rect):
             return key
     return None
@@ -467,6 +511,32 @@ def _hit_tile(mx, my, layout):
         return None
     for product, tile_rect, _img in tiles:
         if point_in_rect(mx, my, tile_rect):
+            return product
+    return None
+
+
+def _badge_rect(img_rect, s):
+    """Where a tile's draw mark sits: the top-right corner of its picture,
+    the corner a thumbnail's render leaves emptiest."""
+    ix, iy, iw, ih = img_rect
+    size = BADGE * s
+    pad = BADGE_PAD * s
+    return (ix + iw - size - pad, iy + ih - size - pad, size, size)
+
+
+def _hit_badge(mx, my, layout):
+    """The product whose draw mark is under the cursor, or None. Only
+    products that can be drawn through points have one."""
+    if layout is None:
+        return None
+    clip, tiles = layout[3], layout[4]
+    if not point_in_rect(mx, my, clip):
+        return None
+    s = scale()
+    for product, _tile_rect, img_rect in tiles:
+        if not product.get('path_draw'):
+            continue
+        if point_in_rect(mx, my, _badge_rect(img_rect, s)):
             return product
     return None
 
@@ -580,6 +650,12 @@ def hit(context, mx, my, entries):
     if which == 'SIZES':
         bpy.ops.home_builder.cabinet_sizes('INVOKE_DEFAULT')
         return True
+    tog = _hit_section_toggle(mx, my, layout)
+    if tog is not None:
+        _label, props, name = tog[1]
+        setattr(props, name, not getattr(props, name))
+        tag_redraw()
+        return True
     key = _hit_section(mx, my, layout)
     if key is not None:
         if key in _collapsed:
@@ -588,11 +664,19 @@ def hit(context, mx, my, entries):
             _collapsed.add(key)
         tag_redraw()
         return True
+    cat = active_catalog(context)
+    # The mark sits inside the tile, so it is asked first: a hit on it
+    # starts the drawing tool rather than dropping one product.
+    product = _hit_badge(mx, my, layout)
+    if product is not None:
+        draw_path = getattr(cat, 'draw_path', None) if cat else None
+        if draw_path is not None:
+            draw_path(context, product)
+        return True
     product = _hit_tile(mx, my, layout)
     if product is not None:
         # The panel stays up: picking from it does not dismiss it, so a
         # second cabinet is one click away rather than a reopen.
-        cat = active_catalog(context)
         if cat is not None:
             cat.place(context, product)
         return True
@@ -607,6 +691,21 @@ def scroll(mx, my, entries, rows):
     _list.scroll_by(rows, _tile_metrics(layout[0][2], s)[2])
     tag_redraw()
     return True
+
+
+def _glyph_path(shader, rect, s, color):
+    """A path with its corners marked: two legs of a run and a dot at
+    each point the user would click."""
+    rx, ry, rw, rh = rect
+    pad = 3.5 * s
+    x0, x1 = rx + pad, rx + rw - pad
+    y0, y1 = ry + pad, ry + rh - pad
+    xm = rx + rw * 0.5
+    pts = [(x0, y1), (xm, y1), (xm, y0), (x1, y0)]
+    draw_polyline(shader, pts, color)
+    dot = 2.4 * s
+    for px, py in (pts[0], pts[1], pts[2], pts[3]):
+        draw_rect(shader, px - dot / 2.0, py - dot / 2.0, dot, dot, color)
 
 
 def _paint_sizes_button(shader, sizes_rect, hovered, s):
@@ -632,8 +731,12 @@ def _paint_grid(layout, mx, my):
     # needs no listener of its own.
     _p = _hit_tile(mx, my, layout)
     hover = _p['key'] if _p else None
+    _b = _hit_badge(mx, my, layout)
+    hover_badge = _b['key'] if _b else None
     hover_ui = _hit_filter(mx, my, layout)
     hover_section = _hit_section(mx, my, layout)
+    _t = _hit_section_toggle(mx, my, layout)
+    hover_toggle = _t[0] if _t else None
 
     s = scale()
     font_id = 0
@@ -702,7 +805,7 @@ def _paint_grid(layout, mx, my):
     try:
         # Section headers: a chevron and the name. Clicking one folds
         # the section away.
-        for key, label, rect in headers:
+        for key, label, rect, tog_rect, toggle in headers:
             hx, hy, hw, hh = rect
             if key == hover_section:
                 draw_rects(shader, [rect], Theme.ROW_HOVER_BG)
@@ -713,6 +816,13 @@ def _paint_grid(layout, mx, my):
                       hy + (hh - FONT_SECTION * s) / 2.0 + 1 * s,
                       FONT_SECTION * s, Theme.TEXT_PRIMARY, label)
             draw_rects(shader, [(hx, hy, hw, 1 * s)], Theme.SEPARATOR)
+            if tog_rect is not None:
+                on = bool(getattr(toggle[1], toggle[2], False))
+                paint_button(shader, tog_rect, hovered=key == hover_toggle,
+                             active=on)
+                draw_centered_text(
+                    font_id, tog_rect, FONT_LABEL * s,
+                    Theme.TEXT_PRIMARY if on else Theme.TEXT_DIM, toggle[0])
 
         # Only the hovered tile gets a chip behind it. A fill under
         # every thumbnail tiled the panel with light grey boxes, and the
@@ -734,6 +844,19 @@ def _paint_grid(layout, mx, my):
             gpu.state.blend_set('ALPHA')
             _draw_thumb(tex, img_rect)
         shader.bind()
+        # The draw-through-points mark, on the products that offer it.
+        # A chip behind it so it reads over a bright render; the glyph
+        # is a path with its corners marked -- what the tool asks for.
+        for product, _tile_rect, img_rect in tiles:
+            if not product.get('path_draw'):
+                continue
+            on_mark = product['key'] == hover_badge
+            rect = _badge_rect(img_rect, s)
+            paint_button(shader, rect, hovered=on_mark)
+            _glyph_path(shader, rect, s,
+                        Theme.GLYPH_HOVER if on_mark else (
+                            Theme.GLYPH if product['key'] == hover
+                            else Theme.TEXT_DIM))
         for product, tile_rect, _img in tiles:
             lx, ly, lw, _lh = tile_rect
             label = _label_for(product, font_id, FONT_LABEL * s, lw - 2 * s)
@@ -751,9 +874,11 @@ def _paint_grid(layout, mx, my):
         px, py, pw, _ph = panel_rect
         frect = (px + PAD_X * s, py + PAD_Y * s, pw - PAD_X * s * 2,
                  FOOTER_H * s)
+        footer = ('Draw %s through points' % hover
+                  if hover_badge == hover else hover)
         shader.bind()
         draw_centered_text(font_id, frect, FONT_LABEL * s, Theme.TEXT_DIM,
-                           fit_text(font_id, FONT_LABEL * s, hover,
+                           fit_text(font_id, FONT_LABEL * s, footer,
                                     frect[2] - 4 * s))
 
     gpu.state.blend_set('NONE')

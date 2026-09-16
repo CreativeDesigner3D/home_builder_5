@@ -1,5 +1,6 @@
 import bpy
 from .. import types_frameless
+from .. import solver_frameless
 from .. import props_hb_frameless
 from .... import hb_utils, units
 
@@ -38,8 +39,10 @@ class hb_frameless_OT_door_front_prompts(bpy.types.Operator):
         return wm.invoke_props_dialog(self, width=300)
 
     def tag_front(self):
-        """5.2 modifier-input writes don't tag; rebuild the front."""
+        """5.2 modifier-input writes don't tag; rebuild the front. The
+        pull is placed by the solver, so re-solve for the pull prompts."""
         if self.front:
+            solver_frameless.recalculate_cabinet(self.front)
             self.front.update_tag()
 
     def check(self, context):

@@ -17,9 +17,10 @@ Back exposure is reduced to UNEXPOSED-when-wall-parented; partial
 backs don't show up in practice.
 """
 import bpy
+from contextlib import contextmanager
 from mathutils import Vector
 
-from ... import hb_types, units
+from ... import hb_types, hb_utils, units
 from . import types_face_frame
 
 
@@ -39,6 +40,68 @@ _NEIGHBOR_SCRIBE = units.inch(0.25)
 # ---------------------------------------------------------------------------
 # Neighbor probing (parent-wall siblings)
 # ---------------------------------------------------------------------------
+
+# The neighbour searches below each walk the whole scene, and a placement
+# asks several of them. Inside a scene_scan() block the roots they care
+# about are collected once and reused; outside one, they scan live.
+# Nothing inside the block adds or removes cabinet roots - the recalcs
+# it triggers are suspended and rebuild parts, not roots.
+class _SceneScan:
+
+    def __init__(self):
+        self._carcasses = None
+        self._walls = None
+
+    def _collect(self):
+        carcasses = []
+        walls = []
+        for obj in bpy.context.scene.objects:
+            if 'IS_WALL_BP' in obj:
+                walls.append(obj)
+            elif _is_face_frame_carcass(obj):
+                carcasses.append(obj)
+        self._carcasses = carcasses
+        self._walls = walls
+
+    def carcasses(self):
+        if self._carcasses is None:
+            self._collect()
+        return self._carcasses
+
+    def walls(self):
+        if self._walls is None:
+            self._collect()
+        return self._walls
+
+
+_scan = None
+
+
+@contextmanager
+def scene_scan():
+    global _scan
+    outer = _scan
+    if outer is None:
+        _scan = _SceneScan()
+    try:
+        yield
+    finally:
+        if outer is None:
+            _scan = None
+
+
+def _scene_carcasses():
+    if _scan is not None:
+        return _scan.carcasses()
+    return [obj for obj in bpy.context.scene.objects
+            if _is_face_frame_carcass(obj)]
+
+
+def _scene_walls():
+    if _scan is not None:
+        return _scan.walls()
+    return [obj for obj in bpy.context.scene.objects if 'IS_WALL_BP' in obj]
+
 
 def _is_face_frame_carcass(obj):
     """True when obj is a face-frame cabinet root with a real carcass
@@ -89,6 +152,10 @@ def _neighbor_zspan(obj):
 
 def _is_dishwasher(obj):
     return bool(obj.get('IS_APPLIANCE')) and obj.get('APPLIANCE_TYPE') == 'DISHWASHER'
+
+
+def _is_hood(obj):
+    return bool(obj.get('IS_APPLIANCE')) and obj.get('APPLIANCE_TYPE') == 'HOOD'
 
 
 def _union_zcoverage(bands, z_min, z_max):
@@ -149,7 +216,7 @@ def _end_abuts_wall(cab_obj, side):
     if not _is_face_frame_carcass(cab_obj):
         return False
     cp = cab_obj.face_frame_cabinet
-    mw = cab_obj.matrix_world
+    mw = hb_utils.world_matrix(cab_obj)
     # End face in plan: local x = 0 (left) or width (right), running
     # from the back plane (y=0) to the front (y=-depth).
     end_x = 0.0 if side == 'left' else cp.width
@@ -167,9 +234,7 @@ def _end_abuts_wall(cab_obj, side):
     cab_z0 = mw.translation.z
     cab_z1 = cab_z0 + cp.height
 
-    for wall_obj in bpy.context.scene.objects:
-        if 'IS_WALL_BP' not in wall_obj:
-            continue
+    for wall_obj in _scene_walls():
         try:
             wall = hb_types.GeoNodeWall(wall_obj)
             if not wall.has_modifier():
@@ -179,7 +244,7 @@ def _end_abuts_wall(cab_obj, side):
             height = wall.get_input('Height')
         except Exception:
             continue
-        wm = wall_obj.matrix_world
+        wm = hb_utils.world_matrix(wall_obj)
         wall_z0 = wm.translation.z
         # Z overlap so a pony wall doesn't anchor an upper above it.
         if cab_z0 >= wall_z0 + height - EPS or cab_z1 <= wall_z0 + EPS:
@@ -223,9 +288,9 @@ _CS_GAP_TOL = units.inch(0.125)
 
 
 def _zspans_overlap(obj_a, obj_b):
-    a0 = obj_a.matrix_world.translation.z
+    a0 = hb_utils.world_matrix(obj_a).translation.z
     a1 = a0 + obj_a.face_frame_cabinet.height
-    b0 = obj_b.matrix_world.translation.z
+    b0 = hb_utils.world_matrix(obj_b).translation.z
     b1 = b0 + obj_b.face_frame_cabinet.height
     return a0 < b1 - EPS and b0 < a1 - EPS
 
@@ -237,7 +302,7 @@ def _sink_front_corner(sink_obj, side):
     """
     sp = sink_obj.face_frame_cabinet
     lx = 0.0 if side == 'left' else sp.width
-    w = sink_obj.matrix_world @ Vector((lx, -sp.depth, 0.0))
+    w = hb_utils.world_matrix(sink_obj) @ Vector((lx, -sp.depth, 0.0))
     return Vector((w.x, w.y))
 
 
@@ -246,7 +311,7 @@ def _end_face_hits_point(cab_obj, side, pt):
     face (back corner to front corner in plan) within tolerance.
     """
     cp = cab_obj.face_frame_cabinet
-    mw = cab_obj.matrix_world
+    mw = hb_utils.world_matrix(cab_obj)
     end_x = 0.0 if side == 'left' else cp.width
     p0w = mw @ Vector((end_x, 0.0, 0.0))
     p1w = mw @ Vector((end_x, -cp.depth, 0.0))
@@ -271,10 +336,8 @@ def _abutting_corner_sink(cab_obj, side):
     the sink is only parented to one of them, so the sibling scan in
     _side_exposure never sees it from the other.
     """
-    for obj in bpy.context.scene.objects:
+    for obj in _scene_carcasses():
         if not obj.get('HB_CORNER_SINK_45') or obj is cab_obj:
-            continue
-        if not _is_face_frame_carcass(obj):
             continue
         if not _zspans_overlap(cab_obj, obj):
             continue
@@ -292,10 +355,8 @@ def _corner_sink_closing_neighbors(sink_obj, side):
     """
     corner = _sink_front_corner(sink_obj, side)
     hits = []
-    for obj in bpy.context.scene.objects:
+    for obj in _scene_carcasses():
         if obj is sink_obj or obj.get('HB_CORNER_SINK_45'):
-            continue
-        if not _is_face_frame_carcass(obj):
             continue
         if not _zspans_overlap(sink_obj, obj):
             continue
@@ -341,7 +402,7 @@ def _end_meet_point(obj, side):
                  else Vector((0.0, 0.0, 0.0)))
     else:
         local = Vector((cab.width, 0.0, 0.0))
-    w = obj.matrix_world @ local
+    w = hb_utils.world_matrix(obj) @ local
     return Vector((w.x, w.y))
 
 
@@ -354,8 +415,8 @@ def _meeting_end_neighbor(cab_obj, side, corners_only=False):
     upper never reads as covering the base below it.
     """
     pt = _end_meet_point(cab_obj, side)
-    for obj in bpy.context.scene.objects:
-        if obj is cab_obj or not _is_face_frame_carcass(obj):
+    for obj in _scene_carcasses():
+        if obj is cab_obj:
             continue
         if corners_only and not _is_corner_cabinet(obj):
             continue
@@ -419,6 +480,7 @@ def _side_exposure(cab_obj, side):
     target_x = cab_x if side == 'left' else cab_x + cab_w
     bands = []
     dishwasher_seen = False
+    hood_seen = False
 
     for sib in parent.children:
         if sib is cab_obj:
@@ -433,11 +495,21 @@ def _side_exposure(cab_obj, side):
         zspan = _neighbor_zspan(sib)
         if zspan is None:
             continue
+        # A range hood's cage runs from the upper-cabinet base to the
+        # ceiling, but the hood itself never hides the side beside it
+        # (canopy and duct cover are narrower and shallower than the
+        # cage). It doesn't count as coverage; it leaves the side at
+        # least partially open so the auto pick finishes it.
+        if _is_hood(sib):
+            hood_seen = True
+            continue
         bands.append(zspan)
         if _is_dishwasher(sib):
             dishwasher_seen = True
 
     if not bands:
+        if hood_seen:
+            return ('PARTIAL', False, False)
         # No collinear sibling: a 45-degree corner sink whose front
         # corner meets this end face still covers the side (the side
         # faces the closed corner recess) - unfinished, neighbor
@@ -454,7 +526,7 @@ def _side_exposure(cab_obj, side):
     coverage = _union_zcoverage(bands, cab_z, cab_z + cab_h)
     if coverage >= cab_h - EPS:
         return ('UNEXPOSED', dishwasher_seen, False)
-    if coverage > EPS:
+    if coverage > EPS or hood_seen:
         return ('PARTIAL', dishwasher_seen, False)
     return ('EXPOSED', False, False)
 
@@ -478,7 +550,7 @@ def _back_face_segment(cab_obj):
     if not _is_face_frame_carcass(cab_obj):
         return None
     cp = cab_obj.face_frame_cabinet
-    mw = cab_obj.matrix_world
+    mw = hb_utils.world_matrix(cab_obj)
     # Carcass origin is back-left; depth extrudes -Y toward the front, so
     # the back edge runs local (0,0) to (width,0) and the outward back
     # normal is local +Y (pointing away from the carcass interior).
@@ -527,7 +599,7 @@ def _find_back_abutting_cabinets(cab_obj):
     if seg is None:
         return []
     hits = []
-    for obj in bpy.context.scene.objects:
+    for obj in _scene_carcasses():
         if obj is cab_obj:
             continue
         other = _back_face_segment(obj)
@@ -772,10 +844,10 @@ def recalc_with_neighbors(cab_obj):
     any free-standing run cab_obj was placed back-to-back against -
     those cabinets' backs just became unexposed.
     """
-    # cab_obj may have just been placed or moved; refresh matrix_world
-    # before the back-abutment scan reads sibling transforms.
-    bpy.context.view_layer.update()
-    with types_face_frame.suspend_recalc():
+    # cab_obj may have just been placed or moved: every world-space read
+    # below goes through hb_utils.world_matrix, so no depsgraph pass is
+    # needed first.
+    with scene_scan(), types_face_frame.suspend_recalc():
         recalc_cabinet_exposure(cab_obj)
         left, right = _find_immediate_face_frame_neighbors(cab_obj)
         if left is not None:
@@ -822,7 +894,7 @@ def recalc_after_appliance_placement(app_obj):
             touched.add(sib)
     if not touched:
         return
-    with types_face_frame.suspend_recalc():
+    with scene_scan(), types_face_frame.suspend_recalc():
         for sib in touched:
             recalc_cabinet_exposure(sib)
 
@@ -833,9 +905,8 @@ def recalc_all_cabinet_exposure(context):
     survive a user-initiated Recalculate request. PANEL roots are
     skipped.
     """
-    cabs = [obj for obj in context.scene.objects
-            if _is_face_frame_carcass(obj)]
-    with types_face_frame.suspend_recalc():
+    with scene_scan(), types_face_frame.suspend_recalc():
+        cabs = list(_scene_carcasses())
         for obj in cabs:
             cp = obj.face_frame_cabinet
             cp.left_finish_end_auto = True

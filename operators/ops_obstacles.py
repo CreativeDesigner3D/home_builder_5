@@ -9,14 +9,25 @@ from .. import hb_utils, hb_snap, hb_placement, hb_types, units
 # OBSTACLE CREATION UTILITIES
 # =============================================================================
 
-def create_obstacle_mesh(name, width, height, depth, obstacle_type):
-    """Create a simple box mesh for the obstacle."""
-    
-    mesh = bpy.data.meshes.new(name)
-    obj = bpy.data.objects.new(name, mesh)
-    
+def obstacle_z_size(height, depth, obstacle_type, surface):
+    """How tall the obstacle's mesh stands. Floor and ceiling items lie
+    flat - width by height across the floor, depth their thickness -
+    while wall items and vertical pipes / columns stand up."""
+    if obstacle_type == 'PIPE_VERTICAL' or 'COLUMN' in obstacle_type:
+        return height
+    if surface in ('FLOOR', 'CEILING'):
+        return depth
+    if any(x in obstacle_type for x in ['CIRCLE', 'RECESSED', 'SPRINKLER',
+                                        'DETECTOR', 'FAN', 'DRAIN']):
+        return depth
+    return height
+
+
+def build_obstacle_mesh(mesh, width, height, depth, obstacle_type,
+                        surface='WALL'):
+    """Fill mesh with the obstacle's shape, centered on the origin."""
     bm = bmesh.new()
-    
+
     # Circular obstacles
     if any(x in obstacle_type for x in ['CIRCLE', 'RECESSED', 'SPRINKLER', 'DETECTOR', 'FAN', 'DRAIN']):
         bmesh.ops.create_cone(
@@ -24,6 +35,15 @@ def create_obstacle_mesh(name, width, height, depth, obstacle_type):
             radius1=width / 2, radius2=width / 2,
             depth=depth, cap_ends=True
         )
+    # Horizontal pipe: a cylinder along the wall
+    elif obstacle_type == 'PIPE_HORIZONTAL':
+        geom = bmesh.ops.create_cone(
+            bm, segments=12,
+            radius1=height / 2, radius2=height / 2,
+            depth=width, cap_ends=True
+        )
+        bmesh.ops.rotate(bm, verts=geom['verts'], cent=(0, 0, 0),
+                         matrix=Matrix.Rotation(math.pi / 2, 3, 'Y'))
     # Pipes/columns (vertical cylinder)
     elif 'PIPE' in obstacle_type or 'COLUMN' in obstacle_type:
         bmesh.ops.create_cone(
@@ -33,15 +53,23 @@ def create_obstacle_mesh(name, width, height, depth, obstacle_type):
         )
     # Default box
     else:
+        flat = surface in ('FLOOR', 'CEILING')
         bmesh.ops.create_cube(bm, size=1.0)
         for v in bm.verts:
             v.co.x *= width
-            v.co.y *= depth
-            v.co.z *= height
-    
+            v.co.y *= height if flat else depth
+            v.co.z *= depth if flat else height
+
     bm.to_mesh(mesh)
     bm.free()
-    
+
+
+def create_obstacle_mesh(name, width, height, depth, obstacle_type,
+                         surface='WALL'):
+    """Create the obstacle object with its mesh."""
+    mesh = bpy.data.meshes.new(name)
+    obj = bpy.data.objects.new(name, mesh)
+    build_obstacle_mesh(mesh, width, height, depth, obstacle_type, surface)
     return obj
 
 
@@ -262,13 +290,18 @@ class home_builder_obstacles_OT_place_obstacle(bpy.types.Operator, hb_placement.
             self.obs_width,
             self.obs_height,
             self.obs_depth,
-            hb_obs.obstacle_type
+            hb_obs.obstacle_type,
+            self.obs_surface_type
         )
-        
+
         # Set properties
         self.obstacle_obj['IS_OBSTACLE'] = True
         self.obstacle_obj['OBSTACLE_TYPE'] = hb_obs.obstacle_type
         self.obstacle_obj['OBSTACLE_SURFACE'] = self.obs_surface_type
+        self.obstacle_obj['OBSTACLE_WIDTH'] = self.obs_width
+        self.obstacle_obj['OBSTACLE_HEIGHT'] = self.obs_height
+        self.obstacle_obj['OBSTACLE_DEPTH'] = self.obs_depth
+        self.obstacle_obj['MENU_ID'] = 'HOME_BUILDER_MT_obstacle_commands'
         
         # Set color
         color = get_obstacle_color(hb_obs.obstacle_type)
@@ -339,10 +372,14 @@ class home_builder_obstacles_OT_place_obstacle(bpy.types.Operator, hb_placement.
             
         else:  # FLOOR
             if self.hit_location:
+                z_size = obstacle_z_size(
+                    self.obs_height, self.obs_depth,
+                    self.obstacle_obj.get('OBSTACLE_TYPE', ''),
+                    self.obs_surface_type)
                 self.obstacle_obj.location = Vector((
                     self.hit_location.x,
                     self.hit_location.y,
-                    self.obs_height / 2
+                    z_size / 2
                 ))
             self.obstacle_obj.rotation_euler.z = 0
     
@@ -599,63 +636,128 @@ class home_builder_obstacles_OT_select_obstacle(bpy.types.Operator):
 # EDIT OBSTACLE
 # =============================================================================
 
+def _obstacle_wall(obj):
+    wall = obj.parent
+    if wall is not None and wall.get('IS_WALL_BP'):
+        return wall
+    return None
+
+
+def _obstacle_size(obj):
+    """(width, height, depth) as placed. Older obstacles carry no size
+    props, so read their mesh: width along X, and height / depth from
+    whichever axes this surface stands them on."""
+    if 'OBSTACLE_WIDTH' in obj:
+        return (float(obj['OBSTACLE_WIDTH']), float(obj['OBSTACLE_HEIGHT']),
+                float(obj['OBSTACLE_DEPTH']))
+    verts = [v.co for v in obj.data.vertices] if obj.type == 'MESH' else []
+    if not verts:
+        return 0.0, 0.0, 0.0
+    size = [max(v[i] for v in verts) - min(v[i] for v in verts)
+            for i in range(3)]
+    return size[0], size[2], size[1]
+
+
 class home_builder_obstacles_OT_edit_obstacle(bpy.types.Operator):
     bl_idname = "home_builder_obstacles.edit_obstacle"
-    bl_label = "Edit Obstacle"
-    bl_description = "Edit obstacle dimensions"
+    bl_label = "Obstacle Properties"
+    bl_description = "Name, size and position of the selected obstacle"
     bl_options = {'REGISTER', 'UNDO'}
-    
-    width: bpy.props.FloatProperty(name="Width", default=0.07, min=0.01, unit='LENGTH')  # type: ignore
-    height: bpy.props.FloatProperty(name="Height", default=0.1143, min=0.01, unit='LENGTH')  # type: ignore
-    depth: bpy.props.FloatProperty(name="Depth", default=0.05, min=0.01, unit='LENGTH')  # type: ignore
-    
+
+    obstacle_name: bpy.props.StringProperty(
+        name="Name",
+        description="What the obstacle is. Drawings label it with this "
+                    "name")  # type: ignore
+    width: bpy.props.FloatProperty(name="Width", default=0.07, min=0.001, unit='LENGTH')  # type: ignore
+    height: bpy.props.FloatProperty(name="Height", default=0.1143, min=0.001, unit='LENGTH')  # type: ignore
+    depth: bpy.props.FloatProperty(name="Depth", default=0.05, min=0.001, unit='LENGTH')  # type: ignore
+    from_wall_start: bpy.props.FloatProperty(
+        name="From Wall Start",
+        description="Distance along the wall from its start to the "
+                    "obstacle's nearer edge",
+        unit='LENGTH')  # type: ignore
+    from_floor: bpy.props.FloatProperty(
+        name="From Floor",
+        description="Height of the obstacle's center off the floor",
+        unit='LENGTH')  # type: ignore
+
     @classmethod
     def poll(cls, context):
         return context.active_object and context.active_object.get('IS_OBSTACLE')
-    
+
     def invoke(self, context, event):
         obj = context.active_object
-        if obj.type == 'MESH':
-            bounds = [obj.matrix_world @ Vector(corner) for corner in obj.bound_box]
-            self.width = max(v.x for v in bounds) - min(v.x for v in bounds)
-            self.height = max(v.z for v in bounds) - min(v.z for v in bounds)
-            self.depth = max(v.y for v in bounds) - min(v.y for v in bounds)
-        return context.window_manager.invoke_props_dialog(self)
-    
+        self.obstacle_name = obj.name
+        self.width, self.height, self.depth = _obstacle_size(obj)
+        wall = _obstacle_wall(obj)
+        if wall is not None:
+            local = wall.matrix_world.inverted() @ obj.matrix_world.translation
+            self.from_wall_start = local.x - self.width / 2
+            self.from_floor = local.z
+        return context.window_manager.invoke_props_dialog(self, width=300)
+
     def execute(self, context):
         obj = context.active_object
-        loc, rot, parent = obj.location.copy(), obj.rotation_euler.copy(), obj.parent
+        if obj is None or not obj.get('IS_OBSTACLE'):
+            return {'CANCELLED'}
+        if self.obstacle_name and self.obstacle_name != obj.name:
+            obj.name = self.obstacle_name
         obs_type = obj.get('OBSTACLE_TYPE', 'CUSTOM_RECT')
-        old_mesh = obj.data
-        
-        mesh = bpy.data.meshes.new(obj.name)
-        bm = bmesh.new()
-        
-        if 'CIRCLE' in obs_type or 'RECESSED' in obs_type:
-            bmesh.ops.create_cone(bm, segments=16, radius1=self.width/2, radius2=self.width/2, depth=self.depth, cap_ends=True)
-        else:
-            bmesh.ops.create_cube(bm, size=1.0)
-            for v in bm.verts:
-                v.co.x *= self.width
-                v.co.y *= self.depth
-                v.co.z *= self.height
-        
-        bm.to_mesh(mesh)
-        bm.free()
-        
-        obj.data = mesh
-        bpy.data.meshes.remove(old_mesh)
-        obj.location, obj.rotation_euler = loc, rot
-        if parent:
-            obj.parent = parent
-        
+        surface = obj.get('OBSTACLE_SURFACE', 'WALL')
+        wall = _obstacle_wall(obj)
+        on_wall = wall is not None
+        # Older floor obstacles were built standing up like wall plates
+        # and carry no size props; they keep that shape so an edit does
+        # not swap their height and depth around.
+        build_surface = ('WALL' if on_wall
+                         or 'OBSTACLE_WIDTH' not in obj else surface)
+        old_w, old_h, old_d = _obstacle_size(obj)
+        old_z = obstacle_z_size(old_h, old_d, obs_type, build_surface)
+        mesh = obj.data
+        if mesh.users > 1:
+            mesh = mesh.copy()
+            obj.data = mesh
+        build_obstacle_mesh(mesh, self.width, self.height, self.depth,
+                            obs_type, build_surface)
+        obj['OBSTACLE_WIDTH'] = self.width
+        obj['OBSTACLE_HEIGHT'] = self.height
+        obj['OBSTACLE_DEPTH'] = self.depth
+        obj['MENU_ID'] = 'HOME_BUILDER_MT_obstacle_commands'
+
+        if on_wall:
+            wall_mw = wall.matrix_world
+            local = wall_mw.inverted() @ obj.matrix_world.translation
+            try:
+                thickness = hb_types.GeoNodeWall(wall).get_input('Thickness')
+            except Exception:
+                thickness = 0.0
+            if local.y > thickness / 2:
+                local.y = thickness + self.depth / 2
+            else:
+                local.y = -self.depth / 2
+            local.x = self.from_wall_start + self.width / 2
+            local.z = self.from_floor
+            # Parented with the wall's inverse, so location is world.
+            obj.location = wall_mw @ local
+        elif surface != 'CEILING':
+            # Keep a floor obstacle sitting on the floor as it grows.
+            new_z = obstacle_z_size(self.height, self.depth, obs_type,
+                                    build_surface)
+            obj.location.z += (new_z - old_z) / 2
         return {'FINISHED'}
-    
+
     def draw(self, context):
         layout = self.layout
-        layout.prop(self, "width")
-        layout.prop(self, "height")
-        layout.prop(self, "depth")
+        obj = context.active_object
+        layout.prop(self, "obstacle_name")
+        col = layout.column(align=True)
+        col.prop(self, "width")
+        col.prop(self, "height")
+        col.prop(self, "depth")
+        if obj is not None and _obstacle_wall(obj) is not None:
+            col = layout.column(align=True)
+            col.prop(self, "from_wall_start")
+            col.prop(self, "from_floor")
 
 
 # =============================================================================

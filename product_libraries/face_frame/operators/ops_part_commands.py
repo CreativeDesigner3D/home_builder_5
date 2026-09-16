@@ -2685,6 +2685,11 @@ class hb_face_frame_OT_revert_part_to_parametric(bpy.types.Operator):
             if 'IS_MANUAL_PART' in obj.keys():
                 del obj['IS_MANUAL_PART']
             return
+        if (obj.get('hb_part_role') in types_face_frame.INTERIOR_PART_ROLES
+                and cage is not None):
+            hb_face_frame_OT_revert_part_to_parametric._revert_interior_one(
+                obj, ng)
+            return
         obj.modifiers.clear()
         obj.data.clear_geometry()
         mod = obj.modifiers.new(name='GeoNodeCutpart', type='NODES')
@@ -2700,6 +2705,32 @@ class hb_face_frame_OT_revert_part_to_parametric(bpy.types.Operator):
                 if key in obj.keys():
                     gn.set_input(inp, obj[key])
         for key in ('IS_MANUAL_PART',) + _MANUAL_STASH_KEYS:
+            if key in obj.keys():
+                del obj[key]
+
+    @staticmethod
+    def _revert_interior_one(obj, ng):
+        """Interior part (shelf, pullout, ...): the interior rebuild wipes
+        every non-manual part and builds its slot fresh, so clearing the
+        flag is the whole revert. A cutpart gets its GN back first, sized
+        from the stash, so the rebuild can read its thickness and carry
+        its cutouts over like any other shelf's."""
+        mn = obj.home_builder.mod_name
+        if ('HB_MANUAL_THICKNESS' in obj.keys() and obj.type == 'MESH'
+                and not (mn and mn in obj.modifiers)):
+            obj.data.clear_geometry()
+            mod = obj.modifiers.new(name='GeoNodeCutpart', type='NODES')
+            mod.node_group = ng
+            mod.show_viewport = True
+            obj.modifiers.move(len(obj.modifiers) - 1, 0)
+            obj.home_builder.mod_name = mod.name
+            gn = GeoNodeCutpart(obj)
+            for key, inp in _MANUAL_STASH_INPUTS:
+                if key in obj.keys():
+                    gn.set_input(inp, obj[key])
+        for key in (('IS_MANUAL_PART',
+                     types_face_frame.INTERIOR_MANUAL_UNMATCHED)
+                    + _MANUAL_STASH_KEYS):
             if key in obj.keys():
                 del obj[key]
 
@@ -2730,9 +2761,10 @@ class hb_face_frame_OT_revert_part_to_parametric(bpy.types.Operator):
 
 class hb_face_frame_OT_remove_mid_rail(bpy.types.Operator):
     """Remove the mid rail the user clicked. The opening stays SPLIT - only
-    the face-frame member and its carcass backing are dropped, and the solver
-    collapses the splitter space so the two (typically drawer) fronts close to
-    a 3/32" reveal (MID_RAIL_REMOVED_GAP in solver_face_frame).
+    the face-frame member and its carcass backing are dropped. The two
+    openings it separated meet on its centerline, each taking half its
+    width, and their (typically drawer) fronts close to a 3/32" reveal
+    whatever the overlay (MID_RAIL_REMOVED_GAP in solver_face_frame).
 
     Stored as remove_member on the owning split node's per-splitter entry,
     keyed by the part's hb_splitter_index, so it survives recalc. The rail
@@ -2742,8 +2774,9 @@ class hb_face_frame_OT_remove_mid_rail(bpy.types.Operator):
     bl_idname = "hb_face_frame.remove_mid_rail"
     bl_label = "Remove Mid Rail"
     bl_description = (
-        "Remove this mid rail. Keeps the split; drops the member + its backing "
-        "and closes the two fronts to a 3/32\" gap"
+        "Remove this mid rail. Keeps the split; drops the member + its backing, "
+        "gives each opening half its width and closes the two fronts to a "
+        "3/32\" gap"
     )
     bl_options = {'UNDO'}
 
@@ -2760,13 +2793,32 @@ class hb_face_frame_OT_remove_mid_rail(bpy.types.Operator):
         if split is None:
             self.report({'WARNING'}, "No split node found for this mid rail")
             return {'CANCELLED'}
-        # Lazily grow the per-splitter collection to cover this index, then
-        # set remove_member (its update callback fires the cabinet recalc).
+        sp = split.face_frame_split
+        # Lazily grow the per-splitter collection to cover this index.
         idx = obj.get('hb_splitter_index', 0)
-        coll = split.face_frame_split.splitter_widths
+        coll = sp.splitter_widths
         while len(coll) <= idx:
             coll.add()
-        coll[idx].remove_member = True
+        entry = coll[idx]
+        half = (entry.width if entry.active else sp.splitter_width) / 2.0
+        children = sorted(
+            [c for c in split.children
+             if c.get(types_face_frame.TAG_OPENING_CAGE)
+             or c.get(types_face_frame.TAG_SPLIT_NODE)],
+            key=lambda c: c.get('hb_split_child_index', 0),
+        )
+        with types_face_frame.suspend_recalc():
+            # Each opening the rail separated takes half its width. An
+            # auto-sized one picks that up in the size distribution; a held
+            # size is the user's real opening, so it grows here, once.
+            for child in children[idx:idx + 2]:
+                props = (child.face_frame_opening
+                         if child.get(types_face_frame.TAG_OPENING_CAGE)
+                         else child.face_frame_split)
+                if props.unlock_size:
+                    props.size += half
+            # remove_member's update callback queues the cabinet recalc.
+            entry.remove_member = True
         return {'FINISHED'}
 
 
@@ -2873,10 +2925,15 @@ _BACK_PANEL_ROLES = frozenset({
 
 
 def _draw_shiplap_options(layout, cab, fin_type):
-    """Shiplap Width + Direction under a side or back set to SHIPLAP.
-    Both are cabinet-wide (every shiplap side shares them), same rows
-    the Finished Ends panel shows, so the right-click dialog is a
-    complete edit of the condition without a trip to the cabinet UI."""
+    """The carved-texture settings for a side or back: Shiplap Width +
+    Direction on a SHIPLAP one, groove spacing on a V_GROOVE one. All
+    are cabinet-wide (every side carrying that texture shares them),
+    same rows the Finished Ends panel shows, so the right-click dialog
+    is a complete edit of the condition without a trip to the cabinet
+    UI."""
+    if fin_type == 'V_GROOVE':
+        layout.prop(cab, 'v_groove_spacing', text="V-Groove Spacing")
+        return
     if fin_type != 'SHIPLAP':
         return
     layout.prop(cab, 'shiplap_board_width', text="Shiplap Width")

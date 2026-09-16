@@ -25,6 +25,7 @@ import bpy
 import bmesh
 import math
 
+from ... import hb_utils
 from ...units import inch
 
 # Solid stock the nosing is milled from (front-to-back).
@@ -180,4 +181,4 @@ def build_nosing_object(name, length, style, shelf_thickness, height):
     mesh = bpy.data.meshes.new(name)
     bm.to_mesh(mesh)
     bm.free()
-    return bpy.data.objects.new(name, mesh)
+    return hb_utils.new_object(name, mesh)

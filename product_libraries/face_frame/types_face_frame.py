@@ -17,6 +17,7 @@ Carcass conventions match frameless (same CabinetPart GeoNode setup):
 import bpy
 import bmesh
 import math
+import re
 from types import SimpleNamespace
 import os
 from contextlib import contextmanager
@@ -24,7 +25,8 @@ from contextlib import contextmanager
 from mathutils import Vector, Matrix, Euler
 
 from ... import hb_utils
-from ...hb_types import GeoNodeCage, GeoNodeCutpart, GeoNodeDrawerBox, GeoNodeRectangle
+from ...hb_types import (CabinetPartModifier, GeoNodeCage, GeoNodeCutpart,
+                        GeoNodeDrawerBox, GeoNodeRectangle)
 from ...units import inch
 from ...hb_details import apply_label_style
 from ..common import types_appliances
@@ -97,7 +99,8 @@ def suspend_recalc():
     global _RECALC_SUSPEND_DEPTH
     _RECALC_SUSPEND_DEPTH += 1
     try:
-        yield
+        with hb_utils.children_index():
+            yield
     finally:
         _RECALC_SUSPEND_DEPTH -= 1
         if _RECALC_SUSPEND_DEPTH == 0:
@@ -137,6 +140,11 @@ MIN_SEAM_PIECE = inch(3.0)
 PART_ROLE_TOP = 'TOP'  # solid top panel for Upper / Tall (Base / Lap use stretchers)
 PART_ROLE_FRONT_STRETCHER = 'FRONT_STRETCHER'
 PART_ROLE_REAR_STRETCHER = 'REAR_STRETCHER'
+# Workstation sink base: the aprons the sink hangs between, the
+# partitions that carry it, and the cleats under them.
+PART_ROLE_GALLEY_APRON = 'GALLEY_APRON'
+PART_ROLE_GALLEY_PARTITION = 'GALLEY_PARTITION'
+PART_ROLE_GALLEY_CLEAT = 'GALLEY_CLEAT'
 PART_ROLE_BOTTOM = 'BOTTOM'
 PART_ROLE_BACK = 'BACK'
 # Finished bottom (uppers): an applied finish panel under the carcass
@@ -389,6 +397,23 @@ PART_ROLE_INSET_PANEL = 'INSET_PANEL'
 # Own role (not FALSE_FRONT) so it's drawer-styled but carries a pull and
 # a swing; not in the drawer-box role set, so it gets no slide box.
 PART_ROLE_TILT_OUT = 'TILT_OUT'
+# ADA apron: the raked panel that closes a knee-clearance sink opening.
+# Accessible sink: the cutter that rakes the carcass away underneath,
+# and the tag on the product that carries it. Same lazy cutter +
+# boolean pattern as the tip-up wedge.
+PART_ROLE_ADA_CUTTER = 'ADA_CUTTER'
+ADA_CUT_MOD_NAME = 'Knee Clearance'
+ADA_SINK_TAG = 'IS_ADA_SINK'
+# Accessible sink fronts: the band across the front and the panel that
+# closes the rake. Each builds as a slab or as stiles and rails around
+# a panel (Face_Frame_Cabinet_Props.ada_front_construction /
+# ada_angled_front_construction).
+PART_ROLE_ADA_FRONT = 'ADA_FRONT'
+PART_ROLE_ADA_ANGLED_FRONT = 'ADA_ANGLED_FRONT'
+# The slab closing the band's flat underside between the two fronts.
+PART_ROLE_ADA_BOTTOM = 'ADA_BOTTOM'
+ADA_FRONT_PART_ROLES = (PART_ROLE_ADA_FRONT, PART_ROLE_ADA_ANGLED_FRONT,
+                        PART_ROLE_ADA_BOTTOM)
 PART_ROLE_APRON = 'APRON'
 # Drawer-look door: a working DOOR leaf wearing N applied drawer-front
 # panels (proud of the leaf, with reveal gaps that read as faux mid
@@ -512,6 +537,17 @@ TEXTURED_SHIPLAP_PITCH = 6.0 * 0.0254
 TEXTURED_V_GROOVE_SPACING = 4.0 * 0.0254
 
 
+def _v_groove_spacing(cab_props):
+    """Groove spacing for this cabinet: its own where it carries one,
+    else the standard layout. Files saved before the field existed, and
+    a 0 left in it, both read as standard."""
+    try:
+        typed = float(getattr(cab_props, 'v_groove_spacing', 0.0) or 0.0)
+    except (TypeError, ValueError):
+        return TEXTURED_V_GROOVE_SPACING
+    return typed if typed > 0.0 else TEXTURED_V_GROOVE_SPACING
+
+
 def _shiplap_vertical(cab_props):
     """True when the cabinet runs its shiplap planks upright. Files
     saved before the direction existed read as horizontal."""
@@ -521,6 +557,10 @@ def _shiplap_vertical(cab_props):
 # by a cabinet to serve as its left/right/back finished end. Drives
 # reconciliation (find / resize / remove on cabinet recalc).
 TAG_APPLIED_PANEL_SIDE = 'hb_applied_to_cabinet_side'
+# Which panel this is, where a side can carry more than one:
+# 'LEFT', 'RIGHT', or 'BACK:<start bay>' for the per-segment
+# applied backs.
+TAG_APPLIED_PANEL_KEY = 'hb_applied_panel_key'
 
 # Cabinet-side finished_end_condition values that spawn an applied panel
 # child. All three spawn the same face-frame panel; they differ in the
@@ -885,6 +925,104 @@ def stock_drawer_box_height(opening_height):
         if opening_in >= min_opening_in - 1.0e-4:
             return inch(box_in)
     return None
+
+
+# Blum TANDEM BLUMOTION sizing (scene drawer_box_sizing 'BLUM_TANDEM'):
+# the slide sets the clearances - 3/16 each side, 9/16 under the box, at
+# least 5/16 over it (the stock height table above already leaves the
+# 7/8 total) and at least 15/16 behind it - and the box is as deep as
+# its runner. Past 2-9/16 behind the box the runner's rear socket may
+# need blocking to land on.
+BLUM_TANDEM_SIDE_CLEARANCE = inch(0.1875)
+BLUM_TANDEM_TOP_CLEARANCE = inch(0.3125)
+BLUM_TANDEM_BOTTOM_CLEARANCE = inch(0.5625)
+BLUM_TANDEM_REAR_CLEARANCE = inch(0.9375)
+BLUM_TANDEM_BLOCKING_REAR_CLEARANCE = inch(2.5625)
+BLUM_TANDEM_RUNNER_LENGTHS_IN = (21.0, 18.0, 15.0, 12.0, 9.0)
+
+
+def uses_blum_tandem_sizing(scene_props):
+    return getattr(scene_props, 'drawer_box_sizing', 'CUSTOM') == 'BLUM_TANDEM'
+
+
+def drawer_box_clearances(scene_props):
+    """(side, top, bottom, rear) drawer box clearances for the scene's
+    sizing mode. Blum TANDEM's are fixed minimums; Custom reads the
+    scene clearance props."""
+    if uses_blum_tandem_sizing(scene_props):
+        return (BLUM_TANDEM_SIDE_CLEARANCE, BLUM_TANDEM_TOP_CLEARANCE,
+                BLUM_TANDEM_BOTTOM_CLEARANCE, BLUM_TANDEM_REAR_CLEARANCE)
+    return (scene_props.drawer_box_side_clearance,
+            scene_props.drawer_box_top_clearance,
+            scene_props.drawer_box_bottom_clearance,
+            scene_props.drawer_box_rear_clearance)
+
+
+def blum_tandem_runner_length(available_depth):
+    """Longest runner (scene units) that fits `available_depth` - the
+    depth left for the box after the minimum rear clearance - or None
+    when even the shortest runner doesn't."""
+    for length_in in BLUM_TANDEM_RUNNER_LENGTHS_IN:
+        if inch(length_in) <= available_depth + 1.0e-5:
+            return inch(length_in)
+    return None
+
+
+# Rollouts riding above a drawer box, behind the same front. The top one
+# hangs this far under the opening top; each box after it - the drawer
+# box included - sits a box gap lower (a rollout's top clearance plus a
+# drawer box's bottom clearance).
+ROLLOUT_ABOVE_TOP_CLEARANCE = inch(0.3125)
+ROLLOUT_ABOVE_BOX_GAP = inch(0.875)
+
+
+def rollout_above_layout(opening_bottom, opening_top, rollout_heights,
+                         bottom_clearance, drawer_box_height=None):
+    """Stack rollouts down from the top of a drawer opening and size the
+    drawer box under them.
+
+    Heights are top down. Each rollout sits a box gap under the one
+    above; one is only placed while a smallest stock drawer box still
+    fits under it (a box gap below it, bottom clearance under the box),
+    so the drawer is never squeezed out. The first that doesn't fit and
+    every one after it are left out and counted in 'skipped'.
+
+    The drawer box takes the tallest stock height that fits under the
+    lowest rollout, or `drawer_box_height` when that one fits ('pick_fits'
+    False when it doesn't). All values are scene units, Z up from the
+    opening cage bottom. 'rollouts' is [(bottom_z, height), ...] top down;
+    'drawer_dz' is None when no rollout was placed.
+    """
+    eps = 1.0e-5
+    stock = sorted(inch(box_in) for _min_in, box_in in STOCK_DRAWER_BOX_HEIGHTS)
+    floor = opening_bottom + bottom_clearance
+    top = opening_top - ROLLOUT_ABOVE_TOP_CLEARANCE
+    placed = []
+    for height in rollout_heights:
+        bottom = top - height
+        if bottom - ROLLOUT_ABOVE_BOX_GAP - stock[0] < floor - eps:
+            break
+        placed.append((bottom, height))
+        top = bottom - ROLLOUT_ABOVE_BOX_GAP
+    result = {
+        'rollouts': placed,
+        'skipped': len(rollout_heights) - len(placed),
+        'drawer_dz': None,
+        'drawer_space': None,
+        'pick_fits': True,
+    }
+    if not placed:
+        return result
+    space = top - floor
+    drawer_dz = [h for h in stock if h <= space + eps][-1]
+    if drawer_box_height is not None:
+        if drawer_box_height <= space + eps:
+            drawer_dz = drawer_box_height
+        else:
+            result['pick_fits'] = False
+    result['drawer_dz'] = drawer_dz
+    result['drawer_space'] = space
+    return result
 # Bar storage inserts (wine cubby / cellar / lattice / X / diagonal
 # / half-circle, stemware, plate rack). One role for the whole family:
 # each insert is a single derived mesh built in bar_storage.py; the
@@ -934,6 +1072,148 @@ INTERIOR_PART_ROLES = frozenset({
     PART_ROLE_INTERIOR_FF_STILE,
 })
 
+# User cutouts (the part menu's Add Cutout) are CPM_CUTOUT modifiers named
+# 'Cutout', 'Cutout.001', ... on the part itself. Interior parts are wiped
+# and rebuilt on every recalc, so the cutouts are read off before the wipe
+# and re-added to the rebuilt part with the same role and build position
+# (INTERIOR_BUILD_INDEX, stamped as each part is built).
+INTERIOR_BUILD_INDEX = 'hb_interior_build_index'
+_USER_CUTOUT_TOKEN = 'CPM_CUTOUT'
+_USER_CUTOUT_NAME = 'Cutout'
+
+# A manual interior part (Make Editable) is left out of the wipe and stands
+# in for the rebuilt part with the same role and build index, which is
+# built and then thrown away. When the rebuild no longer produces that
+# index (fewer shelves, item removed) the hand-edited part is still kept
+# rather than lost, and flagged with this so its menu can say so; Revert
+# to Parametric removes it.
+INTERIOR_MANUAL_UNMATCHED = 'hb_interior_manual_unmatched'
+
+
+def _remove_interior_part(part):
+    """Delete one interior part, its boolean cutters, and any data left
+    without users."""
+    # A boolean operand has to be an object, so a part's cutters hang off
+    # the PART rather than off the opening and a walk of the opening's
+    # children never sees them. Take them with their host: removing the
+    # host alone leaves them behind as loose wire objects that nothing
+    # ever collects.
+    for sub in list(part.children):
+        if sub.get('hb_part_role') != PART_ROLE_DRAWER_BOX_CUTTER:
+            continue
+        sub_data = sub.data
+        bpy.data.objects.remove(sub, do_unlink=True)
+        if isinstance(sub_data, bpy.types.Mesh) and sub_data.users == 0:
+            bpy.data.meshes.remove(sub_data)
+    data = part.data
+    bpy.data.objects.remove(part, do_unlink=True)
+    # Orphaned data (per-part meshes like shelf nosings, accessory font
+    # curves) would otherwise pile up until the next save. Shared data
+    # keeps users and is skipped.
+    if data is not None and data.users == 0:
+        if isinstance(data, bpy.types.Mesh):
+            bpy.data.meshes.remove(data)
+        elif isinstance(data, bpy.types.Curve):
+            bpy.data.curves.remove(data)
+
+
+def _snapshot_interior_cutouts(opening_obj):
+    """{(role, build index): [(modifier name, state), ...]} for every
+    interior part under ``opening_obj`` carrying user cutouts. Manual
+    parts survive the rebuild with their cutouts on them, so they are
+    left out."""
+    kept = {}
+    for child in opening_obj.children:
+        role = child.get('hb_part_role')
+        if (role not in INTERIOR_PART_ROLES or child.type != 'MESH'
+                or INTERIOR_BUILD_INDEX not in child
+                or child.get('IS_MANUAL_PART')):
+            continue
+        try:
+            thickness = float(GeoNodeCutpart(child).get_input('Thickness'))
+        except Exception:
+            continue
+        cuts = []
+        for mod in child.modifiers:
+            if not (mod.type == 'NODES' and mod.node_group
+                    and mod.node_group.name == _USER_CUTOUT_TOKEN
+                    and mod.name.split('.')[0] == _USER_CUTOUT_NAME):
+                continue
+            cpm = CabinetPartModifier(child)
+            cpm.mod = mod
+            try:
+                depth = float(cpm.get_input('Route Depth'))
+                cuts.append((mod.name, {
+                    'x': float(cpm.get_input('X')),
+                    'end_x': float(cpm.get_input('End X')),
+                    'y': float(cpm.get_input('Y')),
+                    'end_y': float(cpm.get_input('End Y')),
+                    'depth': depth,
+                    'through': depth >= thickness - inch(0.001),
+                    'flip_z': bool(cpm.get_input('Flip Z')),
+                }))
+            except Exception:
+                continue
+        if cuts:
+            kept[(role, int(child[INTERIOR_BUILD_INDEX]))] = cuts
+    return kept
+
+
+def _tag_interior_build_order(opening_obj, seen, counters):
+    """Stamp INTERIOR_BUILD_INDEX on the interior parts built since
+    ``seen`` (child names already accounted for), numbering per role in
+    build order. Returns the parts stamped."""
+    new = sorted((c for c in opening_obj.children if c.name not in seen),
+                 key=lambda c: c.name)
+    tagged = []
+    for child in new:
+        seen.add(child.name)
+        role = child.get('hb_part_role')
+        if role not in INTERIOR_PART_ROLES:
+            continue
+        idx = counters.get(role, 0)
+        counters[role] = idx + 1
+        child[INTERIOR_BUILD_INDEX] = idx
+        tagged.append(child)
+    return tagged
+
+
+def _restore_interior_cutouts(opening_obj, kept):
+    """Re-add the cutouts _snapshot_interior_cutouts read, clamped to the
+    rebuilt part's face; a through cut stays through if the thickness
+    changed."""
+    if not kept:
+        return
+    for child in opening_obj.children:
+        cuts = kept.get((child.get('hb_part_role'),
+                         child.get(INTERIOR_BUILD_INDEX)))
+        if not cuts or child.type != 'MESH' or child.get('IS_MANUAL_PART'):
+            continue
+        part = GeoNodeCutpart(child)
+        try:
+            length = float(part.get_input('Length'))
+            width = float(part.get_input('Width'))
+            thickness = float(part.get_input('Thickness'))
+        except Exception:
+            continue
+        for name, st in cuts:
+            cl = min(max(st['end_x'] - st['x'], 0.0), length)
+            cw = min(max(st['end_y'] - st['y'], 0.0), width)
+            if cl <= 0.0 or cw <= 0.0:
+                continue
+            x0 = min(max(st['x'], 0.0), length - cl)
+            y0 = min(max(st['y'], 0.0), width - cw)
+            cpm = part.add_part_modifier(_USER_CUTOUT_TOKEN, name)
+            cpm.set_input('X', x0)
+            cpm.set_input('End X', x0 + cl)
+            cpm.set_input('Y', y0)
+            cpm.set_input('End Y', y0 + cw)
+            cpm.set_input('Route Depth', thickness if st['through']
+                          else min(st['depth'], thickness))
+            cpm.set_input('Flip Z', st['flip_z'])
+            cpm.mod.show_viewport = True
+            cpm.mod.show_render = True
+
 # Maps a Face_Frame_Interior_Item.kind to the *primary* part role its
 # descriptors carry. Multi-part assemblies (PULLOUT_SHELF, ROLLOUT,
 # TRAY_DIVIDERS, VANITY_SHELVES) emit multiple part roles; this map
@@ -981,6 +1261,10 @@ ANGLED_CUT_PART_ROLES = frozenset({
 # pattern as the angled cutter, but the cutter is a triangular-prism MESH
 # and it's driven by the wedge_* cabinet props (see solver.wedge_geometry).
 PART_ROLE_WEDGE_CUTTER = 'WEDGE_CUTTER'
+# The wedge itself: the corner that is cut off to tip the cabinet up and
+# glued back on once it is standing. Built in place so the cabinet reads
+# whole and the cut shows as a seam rather than a missing corner.
+PART_ROLE_WEDGE = 'WEDGE'
 WEDGE_CUT_MOD_NAME = 'Tip-Up Wedge'
 WEDGE_CUT_PART_ROLES = frozenset({
     PART_ROLE_LEFT_SIDE, PART_ROLE_RIGHT_SIDE,
@@ -1457,7 +1741,7 @@ def _clone_interior_tree_node(src_node, new_parent):
         return new_leaf.obj
 
     if src_node.get(TAG_INTERIOR_SPLIT_NODE):
-        split_obj = bpy.data.objects.new('Interior Split', None)
+        split_obj = hb_utils.new_object('Interior Split', None)
         bpy.context.scene.collection.objects.link(split_obj)
         split_obj.empty_display_type = 'PLAIN_AXES'
         split_obj.empty_display_size = 0.001
@@ -1514,7 +1798,7 @@ def _clone_bay_tree_node(src_node, new_parent, opening_counter):
         return new_op.obj
 
     if src_node.get(TAG_SPLIT_NODE):
-        split_obj = bpy.data.objects.new('Split Node', None)
+        split_obj = hb_utils.new_object('Split Node', None)
         bpy.context.scene.collection.objects.link(split_obj)
         split_obj.empty_display_type = 'PLAIN_AXES'
         split_obj.empty_display_size = 0.001
@@ -1649,49 +1933,63 @@ class FaceFrameCabinet(GeoNodeCage):
         # origin, matching the convention used by all child parts.
         self.set_input('Mirror Y', True)
 
-        # Initialize the object-level PropertyGroup. Note: setting the
-        # width/height/depth here will fire their update callbacks, which
-        # call recalculate(). At this point parts don't exist yet, so the
-        # recalc just sets the cage Dim X/Y/Z and returns - safe.
+        # Initialize the object-level PropertyGroup. Every size write
+        # below fires an update callback that would run a full
+        # recalculate() on a root with no parts yet - a dozen no-op
+        # layouts per cabinet, each walking the whole scene. The
+        # reentrance guard sends those callbacks straight back out
+        # (the width callback still records its anchor stash); the cage
+        # dims are synced by hand after, and create_carcass() runs the
+        # real layout once the parts exist.
         scene = bpy.context.scene
         cab_props = self.obj.face_frame_cabinet
-        cab_props.cabinet_type = self.default_cabinet_type
+        cabinet_id = id(self.obj)
+        _RECALCULATING.add(cabinet_id)
+        try:
+            cab_props.cabinet_type = self.default_cabinet_type
 
-        # Type-specific top scribe defaults: amount the carcass top is
-        # held down from bay_top_z. Uppers and talls both reserve a 1/2
-        # band for scribing to the ceiling; bases get none.
-        # Sides drop with the carcass top unless flagged finished.
-        cab_props.top_scribe = {
-            'UPPER': inch(0.5),
-            'TALL':  inch(0.5),
-        }.get(self.default_cabinet_type, 0.0)
+            # Type-specific top scribe defaults: amount the carcass top
+            # is held down from bay_top_z. Uppers and talls both reserve
+            # a 1/2 band for scribing to the ceiling; bases get none.
+            # Sides drop with the carcass top unless flagged finished.
+            cab_props.top_scribe = {
+                'UPPER': inch(0.5),
+                'TALL':  inch(0.5),
+            }.get(self.default_cabinet_type, 0.0)
 
-        # Uppers sit at the back of a corner with shallower carcasses, so
-        # the blind amount default tracks Upper depth conventions (12") vs
-        # the standard 24" Base/Tall default seeded by the property declaration.
-        if self.default_cabinet_type == 'UPPER':
-            cab_props.blind_amount_left = inch(12.0)
-            cab_props.blind_amount_right = inch(12.0)
+            # Uppers sit at the back of a corner with shallower
+            # carcasses, so the blind amount default tracks Upper depth
+            # conventions (12") vs the standard 24" Base/Tall default
+            # seeded by the property declaration.
+            if self.default_cabinet_type == 'UPPER':
+                cab_props.blind_amount_left = inch(12.0)
+                cab_props.blind_amount_right = inch(12.0)
 
-        if hasattr(scene, 'hb_face_frame'):
-            ff_scene = scene.hb_face_frame
-            cab_props.left_stile_width = ff_scene.ff_end_stile_width
-            cab_props.right_stile_width = ff_scene.ff_end_stile_width
-            cab_props.top_rail_width = ff_scene.ff_top_rail_width
-            cab_props.bottom_rail_width = ff_scene.ff_bottom_rail_width
-            cab_props.face_frame_thickness = ff_scene.ff_face_frame_thickness
-            # Project toe kick defaults (product classes that need a
-            # fixed kick -- refrigerator 0, lap drawer float -- override
-            # after this in their own create()).
-            tk_h = getattr(ff_scene, 'default_toe_kick_height', None)
-            if tk_h is not None:
-                cab_props.toe_kick_height = tk_h
-                cab_props.toe_kick_setback = ff_scene.default_toe_kick_setback
+            if hasattr(scene, 'hb_face_frame'):
+                ff_scene = scene.hb_face_frame
+                cab_props.left_stile_width = ff_scene.ff_end_stile_width
+                cab_props.right_stile_width = ff_scene.ff_end_stile_width
+                cab_props.top_rail_width = ff_scene.ff_top_rail_width
+                cab_props.bottom_rail_width = ff_scene.ff_bottom_rail_width
+                cab_props.face_frame_thickness = ff_scene.ff_face_frame_thickness
+                # Project toe kick defaults (product classes that need a
+                # fixed kick -- refrigerator 0, lap drawer float --
+                # override after this in their own create()).
+                tk_h = getattr(ff_scene, 'default_toe_kick_height', None)
+                if tk_h is not None:
+                    cab_props.toe_kick_height = tk_h
+                    cab_props.toe_kick_setback = ff_scene.default_toe_kick_setback
 
-        # Set dimensions last; this fires the update path
-        cab_props.width = self.default_width
-        cab_props.height = self.default_height
-        cab_props.depth = self.default_depth
+            cab_props.width = self.default_width
+            cab_props.height = self.default_height
+            cab_props.depth = self.default_depth
+        finally:
+            _RECALCULATING.discard(cabinet_id)
+
+        # What the skipped recalcs would have done on a bare root.
+        self.set_input('Dim X', cab_props.width)
+        self.set_input('Dim Y', cab_props.depth)
+        self.set_input('Dim Z', cab_props.height)
 
     def create_carcass(self, has_toe_kick, bay_qty=1):
         """Create the 5-part carcass + face frame end stiles + N bay cages
@@ -2320,14 +2618,38 @@ class FaceFrameCabinet(GeoNodeCage):
             [c for c in self.obj.children if c.get(TAG_BAY_CAGE)],
             key=lambda c: c.get('hb_bay_index', 0),
         )
+        panel_rails = None
         for bay_obj in bays:
             bp = bay_obj.face_frame_bay
+            top_target = cab_props.top_rail_width
+            bottom_target = cab_props.bottom_rail_width
+            if bp.panel_bay:
+                if panel_rails is None:
+                    panel_rails = self._panel_bay_rail_widths()
+                top_target, bottom_target = panel_rails
             if not bp.unlock_top_rail:
-                if abs(bp.top_rail_width - cab_props.top_rail_width) > 1e-6:
-                    bp.top_rail_width = cab_props.top_rail_width
+                if abs(bp.top_rail_width - top_target) > 1e-6:
+                    bp.top_rail_width = top_target
             if not bp.unlock_bottom_rail:
-                if abs(bp.bottom_rail_width - cab_props.bottom_rail_width) > 1e-6:
-                    bp.bottom_rail_width = cab_props.bottom_rail_width
+                if abs(bp.bottom_rail_width - bottom_target) > 1e-6:
+                    bp.bottom_rail_width = bottom_target
+
+    def _panel_bay_rail_widths(self):
+        """(top, bottom) rail widths for a panel bay: the frame rail the
+        neighbouring doors overlay, less the overlay, plus the door
+        style's own rail - so the panel's inner edges land where the
+        door panels do. SLAB / no door style keeps the cabinet rails.
+        Same rule as a PANELED finished end (applied_panel_sizing)."""
+        from . import applied_panel_sizing
+        cab_props = self.obj.face_frame_cabinet
+        rail = applied_panel_sizing._door_rail_width(self.obj)
+        if rail <= 0.0:
+            return cab_props.top_rail_width, cab_props.bottom_rail_width
+        return (
+            cab_props.top_rail_width - cab_props.default_top_overlay + rail,
+            cab_props.bottom_rail_width - cab_props.default_bottom_overlay
+            + rail,
+        )
 
     def _distribute_bay_widths(self):
         """Redistribute available width among bays whose unlock_width is False.
@@ -2485,8 +2807,20 @@ class FaceFrameCabinet(GeoNodeCage):
         is_h = (sp.axis == 'H')
         parent_dim = parent_ff_height if is_h else parent_ff_width
         n_splitters = len(children) - 1
-        splitter_total = sum(self._splitter_widths_for(
-            sp, children, n_splitters, bay_props, is_bay_root))
+        widths = self._splitter_widths_for(
+            sp, children, n_splitters, bay_props, is_bay_root)
+        # A removed mid rail's width goes to the two openings it separated,
+        # half each - the same rule the solver builds by.
+        bonuses = [0.0] * len(children)
+        if is_h:
+            ov = sp.splitter_widths
+            widths, bonuses = solver.removed_rail_allowance(
+                widths,
+                [i < len(ov) and ov[i].remove_member
+                 for i in range(n_splitters)],
+                [self._read_node_size(c)[1] for c in children],
+            )
+        splitter_total = sum(widths)
 
         locked_total = 0.0
         unlocked = []
@@ -2514,7 +2848,8 @@ class FaceFrameCabinet(GeoNodeCage):
             for c in unlocked:
                 extra = (solver.VANITY_DOOR_EXTRA_WIDTH
                          if c.get('SIZE_ROLE') == 'VANITY_DOOR' else 0.0)
-                self._write_node_size(c, share + extra)
+                self._write_node_size(
+                    c, share + extra + bonuses[children.index(c)])
         finally:
             _DISTRIBUTING_WIDTHS.discard(id(self.obj))
 
@@ -2545,6 +2880,7 @@ class FaceFrameCabinet(GeoNodeCage):
         elif obj.get(TAG_SPLIT_NODE):
             obj.face_frame_split.size = value
 
+    @hb_utils.with_children_index
     def recalculate(self):
         """Recompute all part dimensions and positions from props.
 
@@ -2856,6 +3192,7 @@ class FaceFrameCabinet(GeoNodeCage):
                 part.set_input('Length', seg['length'])
                 part.set_input('Width', seg['panel_dim_y'])
                 part.set_input('Thickness', seg['thickness'])
+                self._apply_top_sink_cutout(child, seg)
 
             elif role == PART_ROLE_BACK:
                 # WORKING_FF back: the applied face frame is a real
@@ -2878,16 +3215,31 @@ class FaceFrameCabinet(GeoNodeCage):
 
             # ---- End stiles ----
             elif role == PART_ROLE_LEFT_STILE:
-                pos = solver.left_end_stile_position(layout)
                 length, width, thickness = solver.left_end_stile_dims(layout)
+                # A stile with no width is not a part: some products
+                # collapse the face frame to a single member, and a
+                # zero-width board should not read on the drawings or
+                # the cutlist. Same hide-and-skip the refrigerator
+                # stile below uses.
+                visible = width > 1e-6
+                child.hide_viewport = not visible
+                child.hide_render = not visible
+                if not visible:
+                    continue
+                pos = solver.left_end_stile_position(layout)
                 child.location = pos
                 part.set_input('Length', length)
                 part.set_input('Width', width)
                 part.set_input('Thickness', thickness)
 
             elif role == PART_ROLE_RIGHT_STILE:
-                pos = solver.right_end_stile_position(layout)
                 length, width, thickness = solver.right_end_stile_dims(layout)
+                visible = width > 1e-6
+                child.hide_viewport = not visible
+                child.hide_render = not visible
+                if not visible:
+                    continue
+                pos = solver.right_end_stile_position(layout)
                 child.location = pos
                 part.set_input('Length', length)
                 part.set_input('Width', width)
@@ -3322,6 +3674,10 @@ class FaceFrameCabinet(GeoNodeCage):
         # selection removes its block.
         self._apply_under_cabinet_appliances(layout)
 
+        # Galley workstation construction: aprons, partitions, cleats
+        # and the sink. Unconditional so another cabinet sheds them.
+        self._apply_galley_parts(layout)
+
         # Appliance bay annotation (square + SINK / COOKTOP word) on top
         # of stamped bays and the dedicated sink cabinet's basin bay.
         # Unconditional so stale annotations are wiped even when the
@@ -3369,12 +3725,15 @@ class FaceFrameCabinet(GeoNodeCage):
         # Tip-up wedge: chamfer the back-bottom corner when enabled and the
         # cabinet's tip-up diagonal exceeds the ceiling. Re-applied here so
         # it survives part reconciliation, exactly like the angled cutter.
+        self._reconcile_ada_side_shape(layout)
+
         wedge = solver.wedge_geometry(layout) if self._has_carcass() else None
         if wedge is not None:
             length, height, _clamped = wedge
             cutter_obj = self._ensure_wedge_cutter()
             self._position_wedge_cutter(cutter_obj, length, height)
             self._apply_wedge_cuts(cutter_obj)
+            self._position_wedge_piece(layout, length, height)
             # Publish the computed dims on the cabinet root (meters) as
             # id props so downstream consumers (e.g. drawing / annotation
             # layers) can read them without recomputing. Cleared when the
@@ -3631,7 +3990,10 @@ class FaceFrameCabinet(GeoNodeCage):
 
     def _cutpart_materials(self, obj):
         """(face, edge) materials a cutpart is carrying, for a static
-        mesh that replaces its box."""
+        mesh that replaces its box. Socket values go through hb_utils:
+        modifier inputs stopped being ID properties in 5.2, and reading
+        them directly raises there instead of coming back empty - which
+        took the whole arch pass down with it."""
         for mod in obj.modifiers:
             if mod.type != 'NODES' or not mod.node_group:
                 continue
@@ -3642,9 +4004,9 @@ class FaceFrameCabinet(GeoNodeCage):
                 if getattr(item, 'item_type', '') != 'SOCKET':
                     continue
                 if item.name == 'Top Surface':
-                    face = mod.get(item.identifier)
+                    face = hb_utils.try_get_gn_input(mod, item.identifier)
                 elif item.name == 'Edge L1':
-                    edge = mod.get(item.identifier)
+                    edge = hb_utils.try_get_gn_input(mod, item.identifier)
             if face is not None or edge is not None:
                 return [face, edge if edge is not None else face]
         return []
@@ -3851,7 +4213,7 @@ class FaceFrameCabinet(GeoNodeCage):
                 return child
         name = f'Angled Wedge Cutter {side.title()}'
         mesh = bpy.data.meshes.new(name)
-        cutter = bpy.data.objects.new(name, mesh)
+        cutter = hb_utils.new_object(name, mesh)
         cutter['hb_part_role'] = PART_ROLE_ANGLED_CUTTER
         cutter['hb_angled_side'] = side
         cutter.parent = self.obj
@@ -3976,7 +4338,7 @@ class FaceFrameCabinet(GeoNodeCage):
                 return child
         name = f'End Miter Cutter {side.title()} {which.title()}'
         mesh = bpy.data.meshes.new(name)
-        cutter = bpy.data.objects.new(name, mesh)
+        cutter = hb_utils.new_object(name, mesh)
         cutter['hb_part_role'] = PART_ROLE_BOX_MITER_CUTTER
         cutter['hb_miter_side'] = side
         cutter['hb_miter_part'] = which
@@ -4134,7 +4496,7 @@ class FaceFrameCabinet(GeoNodeCage):
                 return child
         name = f'Mid Stile Miter Cutter {gap_index + 1} {half.title()}'
         mesh = bpy.data.meshes.new(name)
-        cutter = bpy.data.objects.new(name, mesh)
+        cutter = hb_utils.new_object(name, mesh)
         cutter['hb_part_role'] = self.MID_STILE_MITER_CUTTER_ROLE
         cutter['hb_ms_miter_gap'] = gap_index
         cutter['hb_ms_miter_half'] = half
@@ -4289,7 +4651,7 @@ class FaceFrameCabinet(GeoNodeCage):
                 return child
         name = f'Panel Miter Cutter {side.title()} {which.title()}'
         mesh = bpy.data.meshes.new(name)
-        cutter = bpy.data.objects.new(name, mesh)
+        cutter = hb_utils.new_object(name, mesh)
         cutter['hb_part_role'] = role
         cutter['hb_miter_side'] = side
         cutter['hb_miter_which'] = which
@@ -4629,7 +4991,7 @@ class FaceFrameCabinet(GeoNodeCage):
             if child.get('hb_part_role') == PART_ROLE_FURNITURE_TOP_CUTTER:
                 return child
         mesh = bpy.data.meshes.new('Wood Top Shape Cutter')
-        cutter = bpy.data.objects.new('Wood Top Shape Cutter', mesh)
+        cutter = hb_utils.new_object('Wood Top Shape Cutter', mesh)
         cutter['hb_part_role'] = PART_ROLE_FURNITURE_TOP_CUTTER
         cutter.parent = self.obj
         cutter.display_type = 'WIRE'
@@ -5151,7 +5513,7 @@ class FaceFrameCabinet(GeoNodeCage):
             cutter = self._fb_child_for_key(PART_ROLE_FB_LED_CUTTER, key)
             if cutter is None:
                 mesh = bpy.data.meshes.new('FB LED Route Cutter')
-                cutter = bpy.data.objects.new('FB LED Route Cutter', mesh)
+                cutter = hb_utils.new_object('FB LED Route Cutter', mesh)
                 for coll in self.obj.users_collection:
                     coll.objects.link(cutter)
                 cutter.parent = parent
@@ -5186,7 +5548,7 @@ class FaceFrameCabinet(GeoNodeCage):
             light_obj = self._fb_child_for_key(PART_ROLE_FB_LIGHT, key)
             if light_obj is None or light_obj.type != 'LIGHT':
                 light_data = bpy.data.lights.new('FB LED Light', 'AREA')
-                light_obj = bpy.data.objects.new('FB LED Light', light_data)
+                light_obj = hb_utils.new_object('FB LED Light', light_data)
                 for coll in self.obj.users_collection:
                     coll.objects.link(light_obj)
                 light_obj.parent = parent
@@ -5211,7 +5573,7 @@ class FaceFrameCabinet(GeoNodeCage):
             strip = self._fb_child_for_key(PART_ROLE_FB_LED_STRIP, key)
             if strip is None:
                 mesh = bpy.data.meshes.new('FB LED Strip')
-                strip = bpy.data.objects.new('FB LED Strip', mesh)
+                strip = hb_utils.new_object('FB LED Strip', mesh)
                 for coll in self.obj.users_collection:
                     coll.objects.link(strip)
                 strip.parent = parent
@@ -5284,6 +5646,180 @@ class FaceFrameCabinet(GeoNodeCage):
                 return mat
         return cls._stainless_material()
 
+    # ---- Galley workstation parts ----------------------------------
+    GALLEY_KEY = 'hb_galley_key'
+
+    def _is_galley(self):
+        return str(self.obj.get('CLASS_NAME', '')).startswith('Galley')
+
+    def _galley_children(self):
+        return [c for c in self.obj.children if c.get(self.GALLEY_KEY)]
+
+    def _cleanup_galley_parts(self, keep_keys=None):
+        for child in self._galley_children():
+            if keep_keys is not None and child.get(self.GALLEY_KEY) in keep_keys:
+                continue
+            bpy.data.objects.remove(child, do_unlink=True)
+
+    def _ensure_galley_part(self, key, name, role, kind):
+        """Find or make one workstation part. ``kind`` sets the
+        orientation: an APRON stands across the width like the back, a
+        PARTITION runs front to back like a side, a CLEAT lies flat."""
+        for child in self._galley_children():
+            if child.get(self.GALLEY_KEY) == key:
+                return child
+        part = CabinetPart()
+        part.create(name)
+        part.obj.parent = self.obj
+        part.obj[self.GALLEY_KEY] = key
+        part.obj['hb_part_role'] = role
+        part.obj['CABINET_PART'] = True
+        part.obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_part_commands'
+        if kind == 'APRON':
+            part.obj.rotation_euler.x = math.radians(90)
+            part.obj.rotation_euler.y = math.radians(-90)
+            part.set_input('Mirror Y', True)
+        elif kind == 'PARTITION':
+            part.obj.rotation_euler.y = math.radians(-90)
+            part.set_input('Mirror Y', True)
+            part.set_input('Mirror Z', True)
+        else:
+            part.set_input('Mirror Y', True)
+        return part.obj
+
+    def _apply_galley_parts(self, layout):
+        """The workstation construction, placed every recalc: aprons hung
+        from under the stretchers at the front setback and against the
+        back, partitions from the cabinet floor up to the aprons under
+        every mid stile and against each side, cleats beneath them in
+        the kick, and the sink spanning the end partitions."""
+        if not self._is_galley():
+            self._cleanup_galley_parts()
+            return
+        cab = self.obj.face_frame_cabinet
+        setback = max(float(getattr(cab, 'galley_front_apron_setback',
+                                    GALLEY_FRONT_SETBACK)), 0.0)
+        mt, dim_x, dim_y, dim_z = layout.mt, layout.dim_x, layout.dim_y, layout.dim_z
+        stretcher_t = float(getattr(cab, 'stretcher_thickness', mt))
+        apron_h = max(GALLEY_APRON_H - stretcher_t, mt)
+        apron_z = dim_z - GALLEY_APRON_H
+        inner_w = max(dim_x - 2.0 * mt, mt)
+        gm = GALLEY_MATERIAL
+        live = set()
+
+        def place(key, name, role, kind, loc, length, width, thickness):
+            obj = self._ensure_galley_part(key, name, role, kind)
+            obj.location = loc
+            part = GeoNodeCutpart(obj)
+            part.set_input('Length', length)
+            part.set_input('Width', width)
+            part.set_input('Thickness', thickness)
+            live.add(key)
+
+        # Aprons: the location is the panel's back face; it builds
+        # toward the front.
+        place('front_apron', 'Galley Front Apron', PART_ROLE_GALLEY_APRON,
+              'APRON', (mt, -dim_y + setback + gm, apron_z), apron_h, inner_w,
+              gm)
+        place('back_apron', 'Galley Back Apron', PART_ROLE_GALLEY_APRON,
+              'APRON', (mt, -mt, apron_z), apron_h, inner_w, gm)
+
+        # Partitions and their cleats.
+        z0 = layout.tkh + mt
+        p_h = max(apron_z - z0, gm)
+        p_depth = max(dim_y - setback - mt - gm, gm)
+        columns = [('end_left', mt, gm), ('end_right', dim_x - mt - gm, gm)]
+        for i in range(layout.bay_count - 1):
+            stile_x0 = solver.bay_x_position(layout, i) + layout.bays[i]['width']
+            stile_w = (layout.mid_stiles[i]['width']
+                       if i < len(layout.mid_stiles) else 0.0)
+            columns.append(('mid_%d' % i,
+                            stile_x0 + stile_w / 2.0 - GALLEY_PARTITION_T / 2.0,
+                            GALLEY_PARTITION_T))
+        for key, x, t in columns:
+            place('part_' + key, 'Galley Partition', PART_ROLE_GALLEY_PARTITION,
+                  'PARTITION', (x, -mt, z0), p_h, p_depth, t)
+            if layout.tkh > 0.0:
+                place('cleat_' + key, 'Galley Cleat', PART_ROLE_GALLEY_CLEAT,
+                      'CLEAT', (x, -mt, 0.0), t, p_depth, layout.tkh)
+        self._cleanup_galley_parts(keep_keys=live)
+
+        # The sink, between the end partitions, from the back panel to
+        # the front apron's face.
+        from ..common import appliance_geo
+        appliance_geo.sync_galley_sink(
+            self.obj, mt + gm, max(dim_x - 2.0 * (mt + gm), gm), -mt,
+            max(dim_y - setback - mt, gm), dim_z)
+        # The storage openings' kit goes in on a deferred pass: seeding
+        # writes interior items, which is a recalc of its own.
+        if self._galley_storage_unseeded(layout):
+            _schedule_galley_seed(self.obj.name)
+
+    def _galley_storage_bays(self, layout):
+        """(bay, kind) for every bay: the last is the sink base and gets
+        no kit (kind None), the bay beside it takes the two culinary-kit
+        roll-outs, and the rest take tray dividers."""
+        bays = sorted([c for c in self.obj.children if c.get(TAG_BAY_CAGE)],
+                      key=lambda c: c.get('hb_bay_index', 0))[:layout.bay_count]
+        out = []
+        for i, bay in enumerate(bays):
+            if i == len(bays) - 1:
+                kind = None
+            elif i == len(bays) - 2:
+                kind = 'ROLLOUT'
+            else:
+                kind = 'TRAY_DIVIDERS'
+            out.append((bay, kind))
+        return out
+
+    def _galley_storage_unseeded(self, layout):
+        for bay, _kind in self._galley_storage_bays(layout):
+            for cage in bay.children_recursive:
+                if cage.get(TAG_OPENING_CAGE) and not cage.get('hb_galley_seeded'):
+                    return True
+        return False
+
+    def seed_galley_storage(self, layout):
+        """Put the kit into the storage openings once: the roll-outs are
+        the two culinary-kit boxes, a 14 in bowl below a 10 1/2 in one,
+        and the default shelves come out of any opening that gets kit.
+        Everything keeps under the sink: the roll-outs go without their
+        full-height spacers and the tray dividers' locked shelf sits
+        just below the bowl."""
+        from ..common import appliance_geo
+        inv = self.obj.matrix_world.inverted()
+        sink_bottom = layout.dim_z - appliance_geo.SINK_H
+        for bay, kind in self._galley_storage_bays(layout):
+            for cage in bay.children_recursive:
+                if not cage.get(TAG_OPENING_CAGE) or cage.get('hb_galley_seeded'):
+                    continue
+                cage['hb_galley_seeded'] = True
+                op = cage.face_frame_opening
+                if op.front_type not in ('DOOR', 'NONE'):
+                    continue
+                for j in reversed(range(len(op.interior_items))):
+                    if op.interior_items[j].kind == 'ADJUSTABLE_SHELF':
+                        op.interior_items.remove(j)
+                if kind is None:
+                    continue    # the sink base stays open for the plumbing
+                item = op.interior_items.add()
+                item.kind = kind
+                opening_z = (inv @ cage.matrix_world.translation).z
+                if kind == 'TRAY_DIVIDERS':
+                    item.tray_opening_height = max(
+                        sink_bottom - opening_z - inch(0.25), inch(6.0))
+                if kind == 'ROLLOUT':
+                    item.hide_rollout_spacers = True
+                    for height, top in ((inch(6.125), 'BOWL_14'),
+                                        (inch(4.625), 'BOWL_10')):
+                        box = item.rollout_boxes.add()
+                        try:
+                            box.height_preset = 'CUSTOM'
+                        except TypeError:
+                            pass
+                        box.height = height
+                        box.galley_top = top
+
     def _uca_children(self):
         return [c for c in self.obj.children if c.get(self.UCA_TAG)]
 
@@ -5352,7 +5888,7 @@ class FaceFrameCabinet(GeoNodeCage):
                     break
             if block is None:
                 mesh = bpy.data.meshes.new(name)
-                block = bpy.data.objects.new(name, mesh)
+                block = hb_utils.new_object(name, mesh)
                 for coll in self.obj.users_collection:
                     coll.objects.link(block)
                 block.parent = self.obj
@@ -5610,7 +6146,7 @@ class FaceFrameCabinet(GeoNodeCage):
         if cutter is None:
             name = f'Side Front Trim Cutter {side.title()}'
             mesh = bpy.data.meshes.new(name)
-            cutter = bpy.data.objects.new(name, mesh)
+            cutter = hb_utils.new_object(name, mesh)
             cutter['hb_part_role'] = cutter_role
             cutter['hb_trim_side'] = side
             cutter.parent = self.obj
@@ -5888,7 +6424,7 @@ class FaceFrameCabinet(GeoNodeCage):
             if child.get('hb_part_role') == PART_ROLE_BACK_EXT_CUTTER:
                 return child
         mesh = bpy.data.meshes.new('Back Extension Cutter')
-        cutter = bpy.data.objects.new('Back Extension Cutter', mesh)
+        cutter = hb_utils.new_object('Back Extension Cutter', mesh)
         cutter['hb_part_role'] = PART_ROLE_BACK_EXT_CUTTER
         cutter.parent = self.obj
         cutter.display_type = 'WIRE'
@@ -6183,7 +6719,7 @@ class FaceFrameCabinet(GeoNodeCage):
                 return child
         name = 'Side Profile Cutter ' + side.title()
         mesh = bpy.data.meshes.new(name)
-        cutter = bpy.data.objects.new(name, mesh)
+        cutter = hb_utils.new_object(name, mesh)
         cutter['hb_part_role'] = PART_ROLE_SIDE_PROFILE_CUTTER
         cutter['hb_profile_side'] = side
         cutter.parent = self.obj
@@ -6299,7 +6835,7 @@ class FaceFrameCabinet(GeoNodeCage):
                 return child
         name = 'Bottom Rail Profile Cutter ' + str(seg_key)
         mesh = bpy.data.meshes.new(name)
-        cutter = bpy.data.objects.new(name, mesh)
+        cutter = hb_utils.new_object(name, mesh)
         cutter['hb_part_role'] = PART_ROLE_BOTTOM_RAIL_PROFILE_CUTTER
         cutter['hb_profile_seg'] = seg_key
         cutter.parent = self.obj
@@ -6479,7 +7015,7 @@ class FaceFrameCabinet(GeoNodeCage):
                 return child
         name = 'Corner Treatment Cutter ' + key
         mesh = bpy.data.meshes.new(name)
-        cutter = bpy.data.objects.new(name, mesh)
+        cutter = hb_utils.new_object(name, mesh)
         cutter['hb_part_role'] = PART_ROLE_CORNER_TREATMENT_CUTTER
         cutter['hb_ct_key'] = key
         cutter.parent = self.obj
@@ -6688,7 +7224,7 @@ class FaceFrameCabinet(GeoNodeCage):
                 return child
         name = 'Frame Profile Cutter ' + key
         mesh = bpy.data.meshes.new(name)
-        cutter = bpy.data.objects.new(name, mesh)
+        cutter = hb_utils.new_object(name, mesh)
         cutter['hb_part_role'] = PART_ROLE_FRAME_PROFILE_CUTTER
         cutter['hb_fp_key'] = key
         cutter.parent = self.obj
@@ -6936,7 +7472,7 @@ class FaceFrameCabinet(GeoNodeCage):
             if child.get('hb_part_role') == PART_ROLE_OVERSTOOL_TOWEL_BAR:
                 return child
         mesh = bpy.data.meshes.new('Towel Bar')
-        bar = bpy.data.objects.new('Towel Bar', mesh)
+        bar = hb_utils.new_object('Towel Bar', mesh)
         bar['hb_part_role'] = PART_ROLE_OVERSTOOL_TOWEL_BAR
         bar['CABINET_PART'] = True
         bar.parent = self.obj
@@ -7006,7 +7542,7 @@ class FaceFrameCabinet(GeoNodeCage):
             if child.get('hb_part_role') == PART_ROLE_WEDGE_CUTTER:
                 return child
         mesh = bpy.data.meshes.new('Wedge Cutter')
-        cutter = bpy.data.objects.new('Wedge Cutter', mesh)
+        cutter = hb_utils.new_object('Wedge Cutter', mesh)
         cutter['hb_part_role'] = PART_ROLE_WEDGE_CUTTER
         cutter.parent = self.obj
         cutter.display_type = 'WIRE'
@@ -7051,6 +7587,479 @@ class FaceFrameCabinet(GeoNodeCage):
         bm.free()
         cutter_obj.location = (0.0, 0.0, 0.0)
 
+    def _ensure_wedge_piece(self):
+        """Find or lazily create the wedge MESH object - the corner that
+        comes off to tip the cabinet up and goes back on afterwards."""
+        for child in self.obj.children:
+            if child.get('hb_part_role') == PART_ROLE_WEDGE:
+                return child
+        mesh = bpy.data.meshes.new('Wedge')
+        piece = hb_utils.new_object('Wedge', mesh)
+        piece['hb_part_role'] = PART_ROLE_WEDGE
+        # Not a CABINET_PART: it is the offcut of the sides, back and
+        # bottom rather than a board of its own, so it takes its finish
+        # through the plain-mesh path the way a shelf nosing does and
+        # stays out of the cutlist.
+        piece['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_part_commands'
+        piece.parent = self.obj
+        for coll in self.obj.users_collection:
+            coll.objects.link(piece)
+            break
+        return piece
+
+    def _position_wedge_piece(self, layout, length, height):
+        """Rebuild the wedge piece from the live dims.
+
+        The same triangle the cutter takes out of the body, built to the
+        line rather than past it: from the point where the cut meets the
+        bottom, up the back to where it leaves it, and back around the
+        corner. With the body chamfered underneath it the cabinet reads
+        whole and the cut reads as a seam - which is the cabinet as it
+        ends up on site, wedge glued back on.
+
+        Only where there is board to cut, though. Run across the whole
+        width it filled the open bottom of a bay - an appliance opening
+        has no floor and often no back - with a solid ramp that is no
+        part of the cabinet.
+        """
+        piece = self._ensure_wedge_piece()
+        # Cross-section in Y-Z: the cut line, then the back-bottom corner.
+        section = ((-length, 0.0), (0.0, height), (0.0, 0.0))
+        bm = bmesh.new()
+        if length > 0.0 and height > 0.0:
+            for box in self._wedge_piece_spans(layout, height):
+                x0, x1, y0, y1, z0, z1 = box
+                clipped = self._clip_section(section, y0, y1, z0, z1)
+                if clipped:
+                    self._add_section_prism(bm, clipped, x0, x1)
+        if bm.faces:
+            bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+        bm.to_mesh(piece.data)
+        bm.free()
+        piece.location = (0.0, 0.0, 0.0)
+        return piece
+
+    def _wedge_piece_spans(self, layout, height):
+        """Where the cabinet has material in the wedge corner.
+
+        Yields (x0, x1, y0, y1, z0, z1) boxes - the ends taken whole, then
+        each back and bay floor across its own span only. The wedge is the
+        offcut of those boards, so this is what the cut actually removes.
+        """
+        dim_x = self.obj.face_frame_cabinet.width
+        dim_y = layout.dim_y
+        inner_l = solver.carcass_inner_left_x(layout)
+        inner_r = solver.carcass_inner_right_x(layout)
+        bays = layout.bays or []
+        # The two ends: side panel plus any kick return under it, taken as
+        # one so the cut reads as a single seam down the end.
+        if bays:
+            yield (solver.left_scribe_offset(layout), inner_l,
+                   -dim_y, -dim_y + bays[0]['depth'], 0.0, height)
+            yield (inner_r, dim_x - solver.right_scribe_offset(layout),
+                   -dim_y, -dim_y + bays[-1]['depth'], 0.0, height)
+        # Backs and bay floors, clipped to the inside of the sides so a
+        # notched back does not double up on the end columns.
+        for seg in solver.carcass_back_segments(layout):
+            x0 = max(seg['x'], inner_l)
+            x1 = min(seg['x'] + seg['horizontal_length'], inner_r)
+            if x1 > x0:
+                yield (x0, x1, seg['y'] - seg['thickness'], seg['y'],
+                       seg['z'], seg['z'] + seg['vertical_length'])
+        for seg in solver.carcass_bottom_segments(layout):
+            x0 = max(seg['x'], inner_l)
+            x1 = min(seg['x'] + seg['length'], inner_r)
+            if x1 > x0:
+                yield (x0, x1, seg['y'] - seg['panel_dim_y'], seg['y'],
+                       seg['z'], seg['z'] + seg['thickness'])
+
+    @staticmethod
+    def _clip_section(section, y0, y1, z0, z1):
+        """Clip a convex Y-Z polygon to an axis-aligned box.
+
+        Sutherland-Hodgman against the four sides. Returns [] when the
+        box misses the polygon or leaves only a sliver.
+        """
+        pts = list(section)
+        for axis, bound, keep_above in ((0, y0, True), (0, y1, False),
+                                        (1, z0, True), (1, z1, False)):
+            if len(pts) < 3:
+                return []
+            out = []
+            count = len(pts)
+            for i in range(count):
+                cur = pts[i]
+                nxt = pts[(i + 1) % count]
+                if keep_above:
+                    cur_in, nxt_in = cur[axis] >= bound, nxt[axis] >= bound
+                else:
+                    cur_in, nxt_in = cur[axis] <= bound, nxt[axis] <= bound
+                if cur_in:
+                    out.append(cur)
+                if cur_in != nxt_in:
+                    da = cur[axis] - bound
+                    db = nxt[axis] - bound
+                    if abs(da - db) < 1e-12:
+                        continue
+                    t = da / (da - db)
+                    out.append((cur[0] + (nxt[0] - cur[0]) * t,
+                                cur[1] + (nxt[1] - cur[1]) * t))
+            pts = out
+        if len(pts) < 3:
+            return []
+        area = 0.0
+        for i in range(len(pts)):
+            a = pts[i]
+            b = pts[(i + 1) % len(pts)]
+            area += a[0] * b[1] - b[0] * a[1]
+        if abs(area) * 0.5 < 1e-10:
+            return []
+        return pts
+
+    @staticmethod
+    def _add_section_prism(bm, section, x0, x1):
+        """Extrude a Y-Z polygon between two X planes into ``bm``."""
+        if x1 - x0 < 1e-9:
+            return
+        left = [bm.verts.new((x0, y, z)) for y, z in section]
+        right = [bm.verts.new((x1, y, z)) for y, z in section]
+        bm.verts.ensure_lookup_table()
+        bm.faces.new(left)
+        bm.faces.new(tuple(reversed(right)))
+        count = len(section)
+        for i in range(count):
+            j = (i + 1) % count
+            bm.faces.new((left[i], right[i], right[j], left[j]))
+
+    # =====================================================================
+    # Accessible sink: knee clearance raked out of the carcass underside
+    # =====================================================================
+    def _ada_shape(self, layout):
+        """The rake, as (wall_run, rake_run, rise, floor_z) in cabinet
+        units, or None when this cabinet is not raked.
+
+        A wheelchair comes at the cabinet from the room, so the FRONT is
+        the end that is cut away: the box keeps its full height for
+        ``wall_run`` forward of the wall, rakes down over the next
+        stretch, and is left as a band at the front where the knees go
+        under. The rake's run is what is left between the two, so a box
+        too shallow for both stretches gets no rake.
+
+        Everything is measured inside the BOX, not off the room floor.
+        On a floating kick the box starts at the kick height - that gap
+        is what the cabinet hangs above the floor - so the band height
+        is taken off the box's own height, and the cut starts at its
+        underside.
+        """
+        cab = self.obj.face_frame_cabinet
+        if not getattr(cab, 'ada_side_shape', False):
+            return None
+        floor_z = solver.bay_bottom_z(layout, 0) if layout.bays else 0.0
+        box_height = layout.dim_z - floor_z
+        wall_run = cab.ada_side_wall_run
+        front_run = cab.ada_side_front_run
+        rake_run = layout.dim_y - wall_run - front_run
+        rise = box_height - cab.ada_side_front_height
+        if rake_run <= 0.0 or rise <= 0.0:
+            return None
+        return wall_run, rake_run, rise, floor_z
+
+    def _ensure_ada_cutter(self):
+        """Find or lazily create the knee-clearance cutter MESH object."""
+        for child in self.obj.children:
+            if child.get('hb_part_role') == PART_ROLE_ADA_CUTTER:
+                return child
+        mesh = bpy.data.meshes.new('Knee Clearance Cutter')
+        cutter = hb_utils.new_object('Knee Clearance Cutter', mesh)
+        cutter['hb_part_role'] = PART_ROLE_ADA_CUTTER
+        cutter.parent = self.obj
+        cutter.display_type = 'WIRE'
+        cutter.hide_render = True
+        cutter.hide_viewport = True
+        for coll in self.obj.users_collection:
+            coll.objects.link(cutter)
+            break
+        return cutter
+
+    def _position_ada_cutter(self, cutter_obj, layout, shape):
+        """Rebuild the cutter from the live shape.
+
+        Cross-section in Y-Z, cabinet back at y=0 and front at
+        y=-dim_y: everything below the rake line, from the wall end of
+        the rake forward past the front face, and all the way down past
+        the cabinet floor.
+
+        Down to the floor rather than just through the box: the cage
+        runs the cabinet's whole height, so stopping at the box floor
+        left a block of it hanging under the raked front - and on a
+        cabinet that keeps a toe kick, the kick under the rake is in the
+        knee space too.
+        """
+        wall_run, rake_run, rise, floor_z = shape
+        margin = inch(1.0)
+        # The rake runs from the wall end (still at the box floor) down
+        # to the front band's underside.
+        y_wall = -wall_run
+        y_rake_end = y_wall - rake_run
+        y_front = -layout.dim_y - margin
+        z0 = floor_z
+        z_bottom = -margin
+        section = ((y_wall, z0), (y_rake_end, z0 + rise),
+                   (y_front, z0 + rise), (y_front, z_bottom),
+                   (y_wall, z_bottom))
+        x_min, x_max = -margin, layout.dim_x + margin
+        bm = bmesh.new()
+        left = [bm.verts.new((x_min, y, z)) for y, z in section]
+        right = [bm.verts.new((x_max, y, z)) for y, z in section]
+        bm.verts.ensure_lookup_table()
+        bm.faces.new(left)
+        bm.faces.new(tuple(reversed(right)))
+        n = len(section)
+        for i in range(n):
+            j = (i + 1) % n
+            bm.faces.new((left[i], right[i], right[j], left[j]))
+        bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+        bm.to_mesh(cutter_obj.data)
+        bm.free()
+        cutter_obj.location = (0.0, 0.0, 0.0)
+
+    def _apply_ada_cuts(self, cutter_obj):
+        """Point every carcass part the rake meets at the cutter."""
+        for part in self._iter_wedge_cut_targets():
+            mod = part.modifiers.get(ADA_CUT_MOD_NAME)
+            if mod is None:
+                mod = part.modifiers.new(name=ADA_CUT_MOD_NAME,
+                                         type='BOOLEAN')
+                mod.operation = 'DIFFERENCE'
+                mod.solver = 'EXACT'
+            if mod.object is not cutter_obj:
+                mod.object = cutter_obj
+
+    def _cleanup_ada_cutter_and_cuts(self):
+        """Reverse of the two above. No-op with nothing to undo."""
+        for part in self._iter_wedge_cut_targets():
+            mod = part.modifiers.get(ADA_CUT_MOD_NAME)
+            if mod is not None:
+                part.modifiers.remove(mod)
+        for child in list(self.obj.children):
+            if child.get('hb_part_role') == PART_ROLE_ADA_CUTTER:
+                mesh = child.data
+                bpy.data.objects.remove(child, do_unlink=True)
+                if mesh is not None and mesh.users == 0:
+                    bpy.data.meshes.remove(mesh)
+
+    def _reconcile_ada_side_shape(self, layout):
+        """Rake the carcass underside, or take the rake away again.
+
+        Published on the root so a drawing can call the shape out
+        without redoing the trigonometry: the two runs, the rise, and
+        the raked edge's own length - the dimension the shop reads off
+        the side view.
+        """
+        shape = self._ada_shape(layout) if self._has_carcass() else None
+        self._reconcile_ada_fronts(layout, shape)
+        if shape is None:
+            self._cleanup_ada_cutter_and_cuts()
+            for key in ('ADA_WALL_RUN', 'ADA_RAKE_RUN', 'ADA_RISE',
+                        'ADA_RAKE_LENGTH'):
+                if key in self.obj:
+                    del self.obj[key]
+            return
+        wall_run, rake_run, rise, _floor_z = shape
+        cutter = self._ensure_ada_cutter()
+        self._position_ada_cutter(cutter, layout, shape)
+        self._apply_ada_cuts(cutter)
+        one_inch = inch(1.0)
+        self.obj['ADA_WALL_RUN'] = round(wall_run / one_inch, 3)
+        self.obj['ADA_RAKE_RUN'] = round(rake_run / one_inch, 3)
+        self.obj['ADA_RISE'] = round(rise / one_inch, 3)
+        self.obj['ADA_RAKE_LENGTH'] = round(
+            math.hypot(rake_run, rise) / one_inch, 3)
+
+    def _reconcile_ada_fronts(self, layout, shape):
+        """Build the accessible sink's fronts, or take them away.
+
+        The FRONT is the band across the top of the box, in the face
+        frame plane; it stands in for the collapsed face frame's top
+        rail, which is hidden while the front is there. The ANGLED
+        FRONT closes the rake between the sides, its face flush with
+        the raked edges and toward the knees; it only exists while the
+        sides are raked. Each is a slab or stiles and rails around a
+        panel, per the cabinet's two construction picks.
+        """
+        cab = self.obj.face_frame_cabinet
+        specs = {}
+        if self.obj.get(ADA_SINK_TAG) and self._has_carcass():
+            fft = cab.face_frame_thickness
+            band = min(cab.ada_side_front_height, layout.dim_z)
+            if band > 0.0 and layout.dim_x > 0.0:
+                # Height up the part's X, width along its -Y, face at
+                # +Z: door_builder's front-cutpart space.
+                basis = Matrix(((0.0, -1.0, 0.0),
+                                (0.0, 0.0, -1.0),
+                                (1.0, 0.0, 0.0)))
+                origin = Vector((0.0, -layout.dim_y + fft,
+                                 layout.dim_z - band))
+                specs[PART_ROLE_ADA_FRONT] = (
+                    'Front', cab.ada_front_construction, basis, origin,
+                    layout.dim_x, band, fft)
+            if shape is not None:
+                wall_run, rake_run, rise, floor_z = shape
+                rake = math.hypot(rake_run, rise)
+                t = cab.door_thickness
+                x_lo = solver.carcass_inner_left_x(layout)
+                width = solver.carcass_inner_right_x(layout) - x_lo
+                if width > 0.0:
+                    up = Vector((0.0, -rake_run / rake, rise / rake))
+                    face = Vector((0.0, -rise / rake, -rake_run / rake))
+                    basis = Matrix(((0.0, -1.0, 0.0),
+                                    (up.y, 0.0, face.y),
+                                    (up.z, 0.0, face.z)))
+                    # Face on the rake line, stock behind it in the box.
+                    origin = (Vector((x_lo, -wall_run, floor_z))
+                              - face * t)
+                    specs[PART_ROLE_ADA_ANGLED_FRONT] = (
+                        'Angled Front', cab.ada_angled_front_construction,
+                        basis, origin, width, rake, t)
+                    # The flat underside of the band, from the top of
+                    # the rake forward to the back of the front: a slab
+                    # facing down, its underside flush with the band's.
+                    run_y = -(wall_run + rake_run)
+                    depth = run_y - (-layout.dim_y + fft)
+                    if depth > 0.0:
+                        basis = Matrix(((0.0, -1.0, 0.0),
+                                        (-1.0, 0.0, 0.0),
+                                        (0.0, 0.0, -1.0)))
+                        origin = Vector((x_lo, run_y, floor_z + rise + t))
+                        specs[PART_ROLE_ADA_BOTTOM] = (
+                            'Front Bottom', 'SLAB', basis, origin, width,
+                            depth, t)
+
+        existing = {}
+        for child in list(self.obj.children):
+            role = child.get('hb_part_role')
+            if role in ADA_FRONT_PART_ROLES:
+                if role in specs and role not in existing:
+                    existing[role] = child
+                else:
+                    mesh = child.data
+                    bpy.data.objects.remove(child, do_unlink=True)
+                    if mesh is not None and mesh.users == 0:
+                        bpy.data.meshes.remove(mesh)
+            elif role == PART_ROLE_TOP_RAIL:
+                hide = PART_ROLE_ADA_FRONT in specs
+                if hide or child.get('hb_ada_hidden'):
+                    child.hide_viewport = hide
+                    child.hide_render = hide
+                    if hide:
+                        child['hb_ada_hidden'] = True
+                    elif 'hb_ada_hidden' in child:
+                        del child['hb_ada_hidden']
+
+        for role, (name, construction, basis, origin, width, height,
+                   thickness) in specs.items():
+            obj = existing.get(role)
+            if obj is None:
+                part = CabinetPart()
+                part.create(name)
+                part.obj.parent = self.obj
+                part.obj['hb_part_role'] = role
+                part.obj['CABINET_PART'] = True
+                part.set_input('Mirror Y', True)
+                obj = part.obj
+            part = CabinetPart(obj)
+            part.set_input('Length', height)
+            part.set_input('Width', width)
+            part.set_input('Thickness', thickness)
+            for mod in obj.modifiers:
+                if mod.type == 'NODES':
+                    mod.show_viewport = False
+                    mod.show_render = False
+            if obj.data.users > 1:
+                obj.data = obj.data.copy()
+            obj.matrix_basis = Matrix.Translation(origin) @ basis.to_4x4()
+            self._build_ada_front_mesh(obj, construction, width, height,
+                                       thickness)
+
+    def _build_ada_front_mesh(self, obj, construction, width, height,
+                              thickness):
+        """Slab, or stiles and rails around a panel from the cabinet's
+        door style (a 2-1/4" square frame with no 5-piece door style).
+        Rails narrow to keep a 1" panel on a short band; a front too
+        small for any frame builds as a slab."""
+        from ..common import door_builder
+        from . import applied_panel_sizing
+        from .props_hb_face_frame import get_style_props
+        one_inch = inch(1.0)
+        style = applied_panel_sizing._resolve_door_style(self.obj)
+        if style is not None and getattr(style, 'door_type', '') != '5_PIECE':
+            style = None
+        kwargs = {}
+        if construction == 'FRAME':
+            info = door_builder.door_style_info(style)
+            if style is None:
+                info.update(stile_width=inch(2.25), rail_width=inch(2.25))
+            info.update(door_type='5_PIECE', add_mid_rail=False,
+                        mid_rail_z=None, mid_rail_count=0,
+                        mid_stile_count=0, left_stile_width=None,
+                        right_stile_width=None, top_rail_width=None,
+                        bottom_rail_width=None)
+            if style is not None:
+                member_sec = style.resolve_member_section(thickness)
+                pkind, p_th, p_inset = style.effective_panel_fields(
+                    thickness)
+                info['panel_thickness'] = p_th
+                info['panel_inset'] = p_inset
+                if member_sec is not None:
+                    mw = max(u for u, v in member_sec)
+                    info.update(stile_width=mw, rail_width=mw)
+                kwargs = style.resolve_mesh_sections(
+                    thickness, p_inset, pkind, member_sec)
+            rail_fit = (height - one_inch) / 2.0
+            if (kwargs.get('member_section') is None
+                    and info['rail_width'] > rail_fit):
+                info['rail_width'] = max(rail_fit, inch(0.5))
+            min_w, min_h = door_builder.layout_min_size(info)
+            if width <= min_w or height <= min_h:
+                info['door_type'] = 'SLAB'
+                kwargs = {}
+        else:
+            info = door_builder.door_style_info(None)
+            info['door_type'] = 'SLAB'
+        finish = grain = None
+        style_name = self.obj.get('STYLE_NAME')
+        if style_name:
+            for cs in get_style_props().cabinet_styles:
+                if cs.name == style_name:
+                    finish, grain = cs.get_finish_material()
+                    break
+        if info['door_type'] == 'SLAB':
+            materials = (grain or finish,) if (grain or finish) else None
+        elif finish is not None:
+            materials = (finish, grain or finish, finish)
+        else:
+            materials = None
+        door_builder.build_door_mesh(obj.data, info, width, height,
+                                     thickness, materials=materials,
+                                     **kwargs)
+        if info['door_type'] == 'SLAB':
+            obj['HB_STATIC_SLAB'] = True
+            if 'HB_DOOR_FRAME' in obj:
+                del obj['HB_DOOR_FRAME']
+        else:
+            obj['HB_DOOR_FRAME'] = {
+                'left_stile': info['stile_width'],
+                'right_stile': info['stile_width'],
+                'top_rail': info['rail_width'],
+                'bottom_rail': info['rail_width'],
+                'add_mid_rail': False,
+                'mid_center': True,
+                'mid_loc': 0.0,
+                'mid_rail_width': info['mid_rail_width'],
+            }
+            if 'HB_STATIC_SLAB' in obj:
+                del obj['HB_STATIC_SLAB']
+
     def _iter_wedge_cut_targets(self):
         """Root cage + carcass parts whose back-bottom corner the wedge
         chamfers. Mirrors _iter_angled_cut_targets."""
@@ -7059,7 +8068,10 @@ class FaceFrameCabinet(GeoNodeCage):
         while stack:
             obj = stack.pop()
             role = obj.get('hb_part_role')
-            if role == PART_ROLE_WEDGE_CUTTER:
+            # Neither the cutter nor the wedge itself: cutting the wedge
+            # with its own cutter would take away the very piece this is
+            # meant to leave standing.
+            if role in (PART_ROLE_WEDGE_CUTTER, PART_ROLE_WEDGE):
                 continue
             if role in WEDGE_CUT_PART_ROLES:
                 yield obj
@@ -7086,7 +8098,8 @@ class FaceFrameCabinet(GeoNodeCage):
             if mod is not None:
                 part.modifiers.remove(mod)
         for child in list(self.obj.children):
-            if child.get('hb_part_role') == PART_ROLE_WEDGE_CUTTER:
+            if child.get('hb_part_role') in (PART_ROLE_WEDGE_CUTTER,
+                                             PART_ROLE_WEDGE):
                 mesh = child.data
                 bpy.data.objects.remove(child, do_unlink=True)
                 if mesh is not None and mesh.users == 0:
@@ -7127,9 +8140,10 @@ class FaceFrameCabinet(GeoNodeCage):
     def _chase_fit_box(self, parent_obj, op_props, op_x, op_y,
                        box_dx, box_dy, rear_clr):
         """Resolve a box (drawer or rollout) against the cabinet's pipe
-        chase. Returns ``(box_dy, notch_width)``: the depth to build at
-        and, for the NOTCH fit, the overlap width to boolean out
-        (None when the box doesn't meet the chase).
+        chase. Returns ``(box_dy, notch_width, notch_depth)``: the depth
+        to build at and, for the NOTCH fit, the overlap width to boolean
+        out and how far the box rear runs past the chase covers' interior
+        face (both None when the box isn't notched).
 
         The opening's ``chase_fit`` decides: SHORTEN (default) clamps the
         depth so the box and its slide clear the chase covers by the
@@ -7141,16 +8155,16 @@ class FaceFrameCabinet(GeoNodeCage):
         """
         cab = self.obj.face_frame_cabinet
         if not (getattr(cab, 'chase_enabled', False) and self._has_carcass()):
-            return box_dy, None
+            return box_dy, None, None
         span = self._chase_extents(cab)
         if span is None:
-            return box_dy, None
+            return box_dy, None, None
         px, py, _pz = self._cabinet_local_offset(parent_obj)
         bx0 = px + op_x
         bx1 = bx0 + box_dx
         x_lo, x_hi = span
         if bx1 <= x_lo or bx0 >= x_hi:
-            return box_dy, None
+            return box_dy, None, None
         fit = (getattr(op_props, 'chase_fit', 'SHORTEN')
                if op_props is not None else 'SHORTEN')
         chase_depth = min(cab.chase_depth, cab.depth)
@@ -7158,12 +8172,12 @@ class FaceFrameCabinet(GeoNodeCage):
         # face sits at -chase_depth (back plane = 0).
         intrusion = py + op_y + box_dy + chase_depth
         if intrusion <= 0.0:
-            return box_dy, None
+            return box_dy, None, None
         if fit == 'SHORTEN':
-            return box_dy - (intrusion + rear_clr), None
+            return box_dy - (intrusion + rear_clr), None, None
         if fit == 'NOTCH':
-            return box_dy, min(bx1, x_hi) - max(bx0, x_lo)
-        return box_dy, None
+            return box_dy, min(bx1, x_hi) - max(bx0, x_lo), intrusion
+        return box_dy, None, None
 
     def _apply_pipe_chase(self, layout):
         """Notch the chosen back corner (or the back middle) full height
@@ -7201,7 +8215,7 @@ class FaceFrameCabinet(GeoNodeCage):
             if child.get('hb_part_role') == PART_ROLE_PIPE_CHASE_CUTTER:
                 return child
         mesh = bpy.data.meshes.new('Pipe Chase Cutter')
-        cutter = bpy.data.objects.new('Pipe Chase Cutter', mesh)
+        cutter = hb_utils.new_object('Pipe Chase Cutter', mesh)
         cutter['hb_part_role'] = PART_ROLE_PIPE_CHASE_CUTTER
         cutter.parent = self.obj
         cutter.display_type = 'WIRE'
@@ -7578,25 +8592,42 @@ class FaceFrameCabinet(GeoNodeCage):
             'BACK':  cab.back_finished_end_condition,
         }
 
-        # Index existing applied panels by side. Multiple per side
+        # What to build, as (key, side, condition, segment). A side
+        # makes one panel; the BACK makes one per stretch of bays that
+        # share a back type and a depth, so a bay carrying its own back
+        # gets its own panel at its own depth.
+        back_segments = solver.applied_back_segments(layout)
+        targets = []
+        for side in ('LEFT', 'RIGHT'):
+            targets.append((side, side, side_conditions[side], None))
+        for seg in back_segments:
+            targets.append(('BACK:%d' % seg['start_bay'], 'BACK',
+                            seg['condition'], seg))
+
+        # Index existing panels by that same key. Multiple per key
         # shouldn't happen, but if it does we keep the first and remove
-        # extras to converge on a clean state.
+        # extras to converge on a clean state. Panels whose key is gone
+        # (a segment that merged away, or a back type turned off) go
+        # with them.
+        wanted_keys = {key for key, _s, _c, _seg in targets
+                       if _c in APPLIED_PANEL_END_TYPES}
         existing = {}
         extras = []
         for child in self.obj.children:
             side = child.get(TAG_APPLIED_PANEL_SIDE)
             if not side:
                 continue
-            if side in existing:
+            key = child.get(TAG_APPLIED_PANEL_KEY) or side
+            if key in existing or key not in wanted_keys:
                 extras.append(child)
             else:
-                existing[side] = child
+                existing[key] = child
         for child in extras:
             _remove_root_with_children(child)
 
-        for side, condition in side_conditions.items():
+        for key, side, condition, segment in targets:
             wants_panel = condition in APPLIED_PANEL_END_TYPES
-            panel_obj = existing.get(side)
+            panel_obj = existing.get(key)
 
             if not wants_panel:
                 if panel_obj is not None:
@@ -7611,6 +8642,7 @@ class FaceFrameCabinet(GeoNodeCage):
                 panel_obj = panel.obj
                 panel_obj.parent = self.obj
                 panel_obj[TAG_APPLIED_PANEL_SIDE] = side
+            panel_obj[TAG_APPLIED_PANEL_KEY] = key
 
             # Stamp the parent cabinet's style onto the panel root so the
             # panel's own recalc tail (_reapply_cabinet_style) materials its
@@ -7639,6 +8671,15 @@ class FaceFrameCabinet(GeoNodeCage):
             location, rotation_z, width, height, depth = (
                 applied_panel_geometry(layout, side)
             )
+            if segment is not None:
+                # Rotated 180, the panel's origin is its RIGHT end and
+                # its width runs back toward -X. The plane is this
+                # stretch's own back face, which is what puts a shallow
+                # bay's panel on the bay rather than out at the cabinet
+                # back.
+                location = (segment['right_x'], segment['y'], segment['z'])
+                width = segment['width']
+                height = segment['top_z'] - segment['z']
             ext_bl, ext_br = self._back_ext_effective()
             # Finished-end overhang (applied panel). BACK is rotated 180
             # so panel +X runs cabinet -X from origin x=dim_x: extend_left
@@ -7654,16 +8695,25 @@ class FaceFrameCabinet(GeoNodeCage):
                 # right return shifts the origin -X and narrows; a left return
                 # (far end) only narrows - mirroring the extend_r / extend_l
                 # grows below.
-                ret_l = self._finished_side_return_width(cab, layout, 'LEFT')
-                ret_r = self._finished_side_return_width(cab, layout, 'RIGHT')
+                # These are cabinet-end treatments, so with the back split
+                # into segments only the segment that reaches that end
+                # takes them; an internal edge meets its neighbour.
+                at_left = segment is None or segment['start_bay'] == 0
+                at_right = (segment is None
+                            or segment['end_bay'] == len(layout.bays) - 1)
+                ret_l = (self._finished_side_return_width(cab, layout, 'LEFT')
+                         if at_left else 0.0)
+                ret_r = (self._finished_side_return_width(cab, layout, 'RIGHT')
+                         if at_right else 0.0)
+                ext_l = cab.back_finished_extend_left if at_left else 0.0
+                ext_r = cab.back_finished_extend_right if at_right else 0.0
+                bl = ext_bl if at_left else 0.0
+                br = ext_br if at_right else 0.0
                 # Splayed back extension widens the back plane the same
                 # way it widens the carcass / finished back.
-                location = (location[0] + cab.back_finished_extend_right
-                            - ret_r + ext_br,
+                location = (location[0] + ext_r - ret_r + br,
                             location[1], location[2])
-                width = (width + cab.back_finished_extend_left
-                         + cab.back_finished_extend_right - ret_l - ret_r
-                         + ext_bl + ext_br)
+                width = (width + ext_l + ext_r - ret_l - ret_r + bl + br)
             elif side == 'LEFT':
                 eb = cab.left_side_finished_extend_back
                 location = (location[0], location[1] + eb, location[2])
@@ -7761,34 +8811,39 @@ class FaceFrameCabinet(GeoNodeCage):
     # Applied finished back (single 3/4 part layered on the carcass back)
     # =====================================================================
     def _reconcile_finished_back(self, layout):
-        """Spawn / resize / remove the FINISHED back applied panel.
+        """Spawn / resize / remove the FINISHED back panels.
 
-        Triggered only when back_finished_end_condition == 'FINISHED'.
-        The carcass back itself stays at its normal back_thickness;
-        this method just adds (or removes) a single 3/4 panel sitting
-        directly behind it. Same delete-on-condition-change /
-        resize-in-place pattern as the applied panels - the part holds
-        no user state, so reuse-when-present keeps it stable across
-        recalcs without rebuilding.
+        One 3/4 panel per stretch of bays whose back is FINISHED, laid
+        directly on that stretch's carcass back - so a bay set finished
+        on its own, or a run of bays at a different depth, carries its
+        panel on its own plane rather than out at the cabinet back. With
+        the whole cabinet finished that is a single full-width panel,
+        which is what it has always been.
 
-        Spans the full cabinet width (less any per-side return closeout,
-        which trims that end so the back butts the return post) and full
-        cabinet height. Refining for stepped cabinets or excluding the toe
-        kick is deferred.
+        The carcass back itself stays at its normal back_thickness. Same
+        delete-on-condition-change / resize-in-place pattern as the
+        applied panels - the part holds no user state, so
+        reuse-when-present keeps it stable across recalcs without
+        rebuilding. Excluding the toe kick is still deferred.
         """
+        segments = [seg for seg in solver.applied_back_segments(layout)
+                    if seg['condition'] == 'FINISHED']
+        wanted = {seg['start_bay'] for seg in segments}
+        by_bay = {}
+        for child in list(self.obj.children):
+            if child.get('hb_part_role') != PART_ROLE_FINISHED_BACK:
+                continue
+            bay = child.get('hb_segment_start_bay')
+            if bay not in wanted or bay in by_bay:
+                bpy.data.objects.remove(child, do_unlink=True)
+                continue
+            by_bay[bay] = child
+        for seg in segments:
+            self._build_finished_back(layout, seg, by_bay.get(seg['start_bay']))
+
+    def _build_finished_back(self, layout, segment, existing):
+        """One FINISHED back panel, on this segment's own back plane."""
         cab = self.obj.face_frame_cabinet
-        wants = cab.back_finished_end_condition == 'FINISHED'
-        existing = next(
-            (c for c in self.obj.children
-             if c.get('hb_part_role') == PART_ROLE_FINISHED_BACK),
-            None,
-        )
-
-        if not wants:
-            if existing is not None:
-                bpy.data.objects.remove(existing, do_unlink=True)
-            return
-
         thickness = inch(0.75)
         if existing is None:
             part = CabinetPart()
@@ -7804,6 +8859,7 @@ class FaceFrameCabinet(GeoNodeCage):
             part.obj.rotation_euler.x = math.radians(90)
             part.obj.rotation_euler.y = math.radians(-90)
             part.set_input('Mirror Y', True)
+            part.obj['hb_segment_start_bay'] = segment['start_bay']
             existing = part.obj
         else:
             part = GeoNodeCutpart(existing)
@@ -7812,18 +8868,29 @@ class FaceFrameCabinet(GeoNodeCage):
         # (-X) / right (+X) end. Width spans +X from origin x=0, so
         # extending the left end shifts the origin -X and widens; the
         # right end just widens. Negative values inset that edge.
-        ext_l = cab.back_finished_extend_left
-        ext_r = cab.back_finished_extend_right
+        # Both are cabinet-end treatments, so a segment that stops short
+        # of an end takes neither there - it meets its neighbour.
+        at_left = segment['start_bay'] == 0
+        at_right = segment['end_bay'] == len(layout.bays) - 1
+        ext_l = cab.back_finished_extend_left if at_left else 0.0
+        ext_r = cab.back_finished_extend_right if at_right else 0.0
         # Shorten the back at each end that carries a return closeout so it
         # butts the return post's outer face instead of running behind it.
         # The return panel's outer face sits `return width` in from that
         # side's outer face, so trimming the back by the same amount (and
         # shifting the origin +X for a left return) lands them flush.
-        ret_l = self._finished_side_return_width(cab, layout, 'LEFT')
-        ret_r = self._finished_side_return_width(cab, layout, 'RIGHT')
-        existing.location = (-ext_l + ret_l, thickness, 0.0)
+        ret_l = (self._finished_side_return_width(cab, layout, 'LEFT')
+                 if at_left else 0.0)
+        ret_r = (self._finished_side_return_width(cab, layout, 'RIGHT')
+                 if at_right else 0.0)
+        # The panel lies on this segment's back face: y = that plane plus
+        # its own thickness, since Mirror Y extrudes it back toward the
+        # carcass.
+        existing.location = (segment['x'] - ext_l + ret_l,
+                             segment['y'] + thickness, 0.0)
         part.set_input('Length',    layout.dim_z)
-        part.set_input('Width',     layout.dim_x + ext_l + ext_r - ret_l - ret_r)
+        part.set_input('Width',
+                       segment['width'] + ext_l + ext_r - ret_l - ret_r)
         part.set_input('Thickness', thickness)
 
     def _extend_finished_side_panels(self, layout):
@@ -8308,7 +9375,7 @@ class FaceFrameCabinet(GeoNodeCage):
                 return child
         name = f'FO Stile Miter Cutter {side.title()}'
         mesh = bpy.data.meshes.new(name)
-        cutter = bpy.data.objects.new(name, mesh)
+        cutter = hb_utils.new_object(name, mesh)
         cutter['hb_part_role'] = role
         cutter[TAG_FO_STILE_SIDE] = side
         cutter.parent = self.obj
@@ -8569,6 +9636,7 @@ class FaceFrameCabinet(GeoNodeCage):
                         bottom_z=bay_bottom, top_z=bay_top,
                         cage_dim_y=bay_dim_y,
                         reveals=solver._bay_root_reveals(layout, bi),
+                        bay_index=bi,
                     )
                     texture = bay.get('finish_bay_texture', 'NONE')
                     specs = self._finish_region_specs(
@@ -8612,6 +9680,7 @@ class FaceFrameCabinet(GeoNodeCage):
                                  'bottom': leaf['reveal_bottom']},
                         vert_top_z=self._finish_opening_ceiling_z(
                             bay_tree, leaf, bay_bottom),
+                        bay_index=bi,
                     )
                     op_to_floor = bay_to_floor and abs(leaf['cage_z']) < 1e-6
                     # A lone finished opening can't split the bay's back
@@ -8835,7 +9904,39 @@ class FaceFrameCabinet(GeoNodeCage):
                                   mirror_y=True, mirror_z=False,
                                   loc=(left_x, cavity_back_y, vert_bottom_z),
                                   length=vert_height, width=cage_dim_x)))
+
+        # A liner running to the floor crosses the toe-kick recess at the
+        # cabinet front, and without a notch it fills the recess it is
+        # standing in. Only the side panels reach the front; the back
+        # sits behind the kick and the top is nowhere near it.
+        self._add_finish_liner_notch(layout, region, to_floor, specs)
         return specs
+
+    @staticmethod
+    def _add_finish_liner_notch(layout, region, to_floor, specs):
+        """Mark the side liners of a to-floor region for a kick notch.
+
+        Carried on the spec rather than applied here so the emit step
+        stays the one place a liner's geometry is written. The recess
+        only exists for a NOTCH kick, and a setback inside the face
+        frame band leaves nothing to cut.
+        """
+        if not to_floor:
+            return
+        if not (layout.has_toe_kick and layout.toe_kick_type == 'NOTCH'):
+            return
+        notch_depth = solver.kick_notch_depth(layout)
+        if notch_depth <= 1e-6:
+            return
+        bay_index = region.get('bay_index', -1)
+        if not (0 <= bay_index < len(layout.bays)):
+            return
+        kick = layout.bays[bay_index]['kick_height']
+        if kick <= 1e-6:
+            return
+        for face, spec in specs:
+            if face in ('LEFT', 'RIGHT'):
+                spec['notch'] = (kick, notch_depth)
 
     def _emit_bay_finish_panel(self, bay_index, opening_index, face, spec,
                                thickness, existing, texture='NONE'):
@@ -8870,7 +9971,46 @@ class FaceFrameCabinet(GeoNodeCage):
         part.set_input('Length',    spec['length'])
         part.set_input('Width',     spec['width'])
         part.set_input('Thickness', thickness)
+        self._drive_finish_liner_notch(strip, spec, thickness)
         self._texture_finish_panel(strip, spec, thickness, texture)
+
+    @staticmethod
+    def _drive_finish_liner_notch(strip, spec, thickness):
+        """Cut (or stop cutting) a liner's front-bottom toe-kick notch.
+
+        Liners are reused by key, so one that stops running to the floor
+        has to have its cut turned off again rather than merely not
+        turned on. Added lazily, so a liner built before notch support
+        upgrades in place. The side liners share the carcass side's
+        Mirror Y, so Flip Y = True is the front face and Flip X = False
+        the bottom -- the same pair every other part cut for this recess
+        uses.
+        """
+        notch = spec.get('notch')
+        mod = strip.modifiers.get('Notch Front Bottom')
+        if mod is None:
+            if notch is None:
+                return
+            cpm = GeoNodeCutpart(strip).add_part_modifier(
+                'CPM_CORNERNOTCH', 'Notch Front Bottom')
+            cpm.set_input('Flip X', False)
+            cpm.set_input('Flip Y', True)
+            mod = cpm.mod
+        if mod.node_group is None:
+            return
+        if notch is None:
+            kick = setback = route = 0.0
+        else:
+            kick, setback = notch
+            route = thickness
+        ng = mod.node_group
+        for input_name, value in (('X', kick), ('Y', setback),
+                                  ('Route Depth', route)):
+            node_input = ng.interface.items_tree.get(input_name)
+            if node_input is not None:
+                hb_utils.set_gn_input(mod, node_input.identifier, value)
+        mod.show_viewport = notch is not None
+        mod.show_render = notch is not None
 
     def _texture_finish_panel(self, strip, spec, thickness, texture):
         """Carve a finish liner, or hand it back to its cutpart.
@@ -8908,6 +10048,8 @@ class FaceFrameCabinet(GeoNodeCage):
                                   mirror_z=not spec['mirror_z'],
                                   shiplap_pitch=pitch,
                                   shiplap_vertical=_shiplap_vertical(
+                                      self.obj.face_frame_cabinet),
+                                  v_groove_spacing=_v_groove_spacing(
                                       self.obj.face_frame_cabinet))
         dz = -thickness if spec['mirror_z'] else thickness
         strip.data.transform(Matrix.Translation((0.0, 0.0, dz)))
@@ -8921,7 +10063,8 @@ class FaceFrameCabinet(GeoNodeCage):
     def _textured_panel_mesh(part_obj, length, width, thickness,
                              condition, mirror_z,
                              shiplap_pitch=TEXTURED_SHIPLAP_PITCH,
-                             shiplap_vertical=False):
+                             shiplap_vertical=False,
+                             v_groove_spacing=TEXTURED_V_GROOVE_SPACING):
         """Write the carved static mesh for a textured panel into
         ``part_obj``'s mesh data and hide its GN cutpart display.
 
@@ -8958,7 +10101,7 @@ class FaceFrameCabinet(GeoNodeCage):
                         or (condition == 'SHIPLAP' and shiplap_vertical))
         if condition in ('BEADBOARD', 'V_GROOVE'):
             span_u, run = width, length      # profile across Y, extrude X
-            spacing = (TEXTURED_V_GROOVE_SPACING
+            spacing = (v_groove_spacing
                        if condition == 'V_GROOVE'
                        else TEXTURED_BEADBOARD_SPACING)
             margin = max(2.0 * hw, 0.004)
@@ -9186,7 +10329,8 @@ class FaceFrameCabinet(GeoNodeCage):
             self._textured_panel_mesh(part_obj, length, width, thickness,
                                       condition, mirror_z,
                                       shiplap_pitch=pitch,
-                                      shiplap_vertical=_shiplap_vertical(cab))
+                                      shiplap_vertical=_shiplap_vertical(cab),
+                                      v_groove_spacing=_v_groove_spacing(cab))
             # Toe-kick corner notch (the CPM runs on the static mesh
             # since the cutpart GN is hidden). BACK skins never notch.
             if side in ('LEFT', 'RIGHT'):
@@ -9736,7 +10880,7 @@ class FaceFrameCabinet(GeoNodeCage):
         if existing is not None:
             return existing
         mesh = bpy.data.meshes.new('Blind Section Tambour')
-        tam = bpy.data.objects.new(
+        tam = hb_utils.new_object(
             f'Blind Section Tambour {side.capitalize()}', mesh)
         for coll in self.obj.users_collection:
             coll.objects.link(tam)
@@ -10171,6 +11315,45 @@ class FaceFrameCabinet(GeoNodeCage):
                 continue
             self._create_carcass_top_part(seg['start_bay'])
 
+    def _apply_top_sink_cutout(self, top_obj, seg):
+        """Cut (or clear) the centered sink opening in a carcass top.
+
+        The hole is centered on the panel in both directions, in the
+        part's own Length / Width space. Sized off the cabinet, clamped
+        so it always leaves material around it; a cabinet narrower or
+        shallower than the opening gets no cut rather than a panel in
+        two pieces.
+        """
+        cab = self.obj.face_frame_cabinet
+        name = 'Sink Cutout'
+        existing = top_obj.modifiers.get(name)
+        margin = inch(1.0)
+        length = seg['length']
+        width = seg['panel_dim_y']
+        cw = min(getattr(cab, 'top_sink_cutout_width', 0.0),
+                 length - 2.0 * margin)
+        cd = min(getattr(cab, 'top_sink_cutout_depth', 0.0),
+                 width - 2.0 * margin)
+        wants = ((getattr(cab, 'top_sink_cutout', False)
+                  or solver.is_floating_vanity(cab))
+                 and cw > 0.0 and cd > 0.0)
+        if not wants:
+            if existing is not None:
+                top_obj.modifiers.remove(existing)
+            return
+        cpm = CabinetPartModifier(top_obj)
+        if existing is None:
+            cpm.add_node('CPM_CUTOUT', name)
+        else:
+            cpm.mod = existing
+        cpm.mod.show_viewport = True
+        cpm.mod.show_render = True
+        cpm.set_input('X', (length - cw) / 2.0)
+        cpm.set_input('End X', (length + cw) / 2.0)
+        cpm.set_input('Y', (width - cd) / 2.0)
+        cpm.set_input('End Y', (width + cd) / 2.0)
+        cpm.set_input('Route Depth', seg['thickness'])
+
     def _create_carcass_top_part(self, start_bay_index):
         """Create one solid carcass top part keyed to its segment.
 
@@ -10557,16 +11740,100 @@ class FaceFrameCabinet(GeoNodeCage):
             if child.get('hb_part_role') == PART_ROLE_APPLIANCE_ANNOTATION:
                 bpy.data.objects.remove(child, do_unlink=True)
 
-        is_sink_cabinet = self.obj.get('CLASS_NAME') == 'SinkFaceFrameCabinet'
+        class_name = self.obj.get('CLASS_NAME')
+        is_sink_cabinet = class_name == 'SinkFaceFrameCabinet'
+        is_cooktop_cabinet = class_name == 'CooktopFaceFrameCabinet'
+        sink_cutters = []
+        from ..common import appliance_geo
+        galley_sink = appliance_geo.opening_appliance(self.obj)
+        if galley_sink is not None:
+            sink_cutters.append(appliance_geo.sink_clearance_cutter(galley_sink))
         for bay_obj in [c for c in self.obj.children if c.get(TAG_BAY_CAGE)]:
             if bay_obj.hide_viewport:
+                self._update_countertop_appliance_in_bay(bay_obj, None)
                 continue
             kind = bay_obj.get('APPLIANCE_BAY')
             if not kind and is_sink_cabinet and self._bay_has_false_front(bay_obj):
                 kind = 'SINK'
-            if kind not in ('SINK', 'COOKTOP'):
+            if not kind and is_cooktop_cabinet:
+                kind = 'COOKTOP'
+            if kind in ('SINK', 'COOKTOP'):
+                self._create_appliance_annotation(bay_obj, kind)
+            # After the annotation: the appliance decides whether it shows.
+            cutter = self._update_countertop_appliance_in_bay(
+                bay_obj, kind if kind in ('SINK', 'COOKTOP') else None)
+            if cutter is not None:
+                sink_cutters.append(cutter)
+        # The top stretchers span every bay, so they are cut once, by
+        # the first sink; a second sink in one cabinet is not handled.
+        self._apply_sink_clearance(
+            [c for c in self.obj.children
+             if c.get('hb_part_role') in (PART_ROLE_FRONT_STRETCHER,
+                                          PART_ROLE_REAR_STRETCHER,
+                                          PART_ROLE_MID_DIVISION,
+                                          PART_ROLE_BAY_DIVISION)],
+            sink_cutters[0] if sink_cutters else None)
+        # A cabinet-wide sink reaches into every bay, so the interior
+        # parts of every bay clear it too.
+        if galley_sink is not None:
+            self._apply_sink_clearance(
+                [c for c in self.obj.children_recursive
+                 if c.get('hb_part_role') in self.SINK_CLEARANCE_INTERIOR_ROLES],
+                sink_cutters[0])
+
+    SINK_CLEARANCE_MOD_NAME = 'Sink Clearance'
+    SINK_CLEARANCE_INTERIOR_ROLES = frozenset({
+        PART_ROLE_BAY_SHELF, PART_ROLE_ADJUSTABLE_SHELF, PART_ROLE_GLASS_SHELF,
+        PART_ROLE_TRAY_LOCKED_SHELF, PART_ROLE_INTERIOR_FIXED_SHELF,
+        'TRAY_DIVIDER', 'ROLLOUT_SPACER', 'PULLOUT_SPACER',
+    })
+    SINK_CLEARANCE_SHELF_ROLES = frozenset({
+        PART_ROLE_BAY_SHELF, PART_ROLE_ADJUSTABLE_SHELF, PART_ROLE_GLASS_SHELF,
+        PART_ROLE_TRAY_LOCKED_SHELF, PART_ROLE_INTERIOR_FIXED_SHELF,
+    })
+
+    def _update_countertop_appliance_in_bay(self, bay_obj, kind):
+        """A sink or cooktop bay carries the appliance model itself, hung
+        from the cabinet top; the annotation above stays the 2D symbol.
+        Any other bay carries none. The bay's shelves are cut around the
+        appliance; returns its clearance cutter so the caller can cut
+        the cabinet-wide parts too."""
+        from ..common import appliance_geo
+        cutter = None
+        if kind is not None:
+            top_z = self.get_input('Dim Z') - bay_obj.location.z
+            cage = appliance_geo.sync_bay_appliance(bay_obj, kind, top_z)
+            if cage is not None:
+                cutter = appliance_geo.sink_clearance_cutter(cage)
+        else:
+            appliance_geo.remove_opening_appliance(bay_obj)
+        self._apply_sink_clearance(
+            [c for c in bay_obj.children_recursive
+             if c.get('hb_part_role') in self.SINK_CLEARANCE_SHELF_ROLES],
+            cutter)
+        return cutter
+
+    def _apply_sink_clearance(self, parts, cutter):
+        """Every part carries a boolean DIFFERENCE against the sink's
+        clearance cutter, or loses it when there is no sink -- the same
+        lazy-cutter + boolean pattern as the angled cuts. The cut is
+        switched off while the appliance shows no model."""
+        from ..common import appliance_geo
+        active = cutter is not None and appliance_geo.clearance_active(
+            cutter.parent)
+        for part in parts:
+            mod = part.modifiers.get(self.SINK_CLEARANCE_MOD_NAME)
+            if cutter is None:
+                if mod is not None:
+                    part.modifiers.remove(mod)
                 continue
-            self._create_appliance_annotation(bay_obj, kind)
+            if mod is None:
+                mod = part.modifiers.new(name=self.SINK_CLEARANCE_MOD_NAME,
+                                         type='BOOLEAN')
+                mod.operation = 'DIFFERENCE'
+            if mod.object is not cutter:
+                mod.object = cutter
+            appliance_geo.set_clearance_cut(mod, active)
 
     def _update_bay_cage(self, bay_obj, layout, bay_index):
         """Position and size a single bay cage from the solver. Cascades
@@ -10637,10 +11904,17 @@ class FaceFrameCabinet(GeoNodeCage):
             sn.location = (0.0, 0.0, 0.0)
 
         # Pass 1b: opening cages - in-place match by obj.name
+        # Where the appliance openings sit, top to bottom, so Auto can
+        # tell a microwave over an oven from a lone oven.
+        appliance_zs = sorted(
+            leaves_by_name[c.name]['cage_z'] for c in opening_cages
+            if c.name in leaves_by_name
+            and c.face_frame_opening.front_type == 'APPLIANCE')
         for cage in opening_cages:
             rect = leaves_by_name.get(cage.name)
             if rect is None:
                 cage.hide_viewport = True
+                self._update_appliance_in_opening(cage, live=False)
                 continue
             cage.hide_viewport = False
             op = FaceFrameOpening(cage)
@@ -10649,8 +11923,10 @@ class FaceFrameCabinet(GeoNodeCage):
             op.set_input('Dim Y', cage_dim_y)
             op.set_input('Dim Z', rect['cage_dim_z'])
             op.set_input('Mirror Y', False)
-            self._update_fronts_in_opening(cage, layout, rect)
+            self._update_fronts_in_opening(cage, layout, rect, bay_index)
             self._update_interior_items_in_opening(cage, layout, rect)
+            self._update_appliance_in_opening(cage, rect,
+                                              appliance_zs=appliance_zs)
 
         # Pass 2: splitters (mid rails / mid stiles) - delete & recreate
         self._reconcile_bay_splitters(bay_obj, parts['splitters'])
@@ -10814,7 +12090,51 @@ class FaceFrameCabinet(GeoNodeCage):
             part.set_input('Thickness', rect['thickness'])
         return part
 
-    def _update_fronts_in_opening(self, opening_obj, layout, rect):
+    def _update_appliance_in_opening(self, opening_obj, rect=None,
+                                     live=True, appliance_zs=()):
+        """An appliance opening houses its appliance model, sized on
+        every recalc to the frame opening -- between the stiles and
+        under the rail, which the rect's reveals measure in from the
+        carcass cavity. A refrigerator cabinet's opening takes the
+        refrigerator; an APPLIANCE front takes the wall oven or
+        microwave its Appliance setting names, between its fillers. Any
+        other opening, or one that has gone away, carries none."""
+        from ..common import appliance_geo
+        kind = None
+        span = None
+        if live and rect is not None:
+            x0 = rect['reveal_left']
+            width = (rect['cage_dim_x'] - rect['reveal_left']
+                     - rect['reveal_right'])
+            z0 = rect['reveal_bottom']
+            height = (rect['cage_dim_z'] - rect['reveal_top']
+                      - rect['reveal_bottom'])
+            props = opening_obj.face_frame_opening
+            if opening_obj.get('SIZE_ROLE') == 'REFRIGERATOR':
+                kind = 'REFRIGERATOR'
+            elif props.front_type == 'APPLIANCE':
+                choice = props.appliance_kind
+                if choice == 'AUTO':
+                    # A short opening is a microwave; so is the top of
+                    # a stack of two, which is a microwave over an oven.
+                    top_of_stack = (len(appliance_zs) >= 2
+                                    and rect['cage_z'] >= appliance_zs[-1]
+                                    - 1e-6)
+                    choice = ('MICROWAVE' if height < inch(20.0)
+                              or top_of_stack else 'OVEN')
+                kind = {'OVEN': 'WALL_OVEN',
+                        'MICROWAVE': 'MICROWAVE'}.get(choice)
+                left, right = solver.appliance_filler_widths(rect, props)
+                x0 += left
+                width -= left + right
+            span = (x0, width, z0, height)
+        if kind is not None:
+            appliance_geo.sync_opening_appliance(opening_obj, kind, span)
+        else:
+            appliance_geo.remove_opening_appliance(opening_obj)
+
+    def _update_fronts_in_opening(self, opening_obj, layout, rect,
+                                  bay_index=None):
         """Reconcile front parts under an opening cage.
 
         Structure: opening cage -> front pivot empty -> front part.
@@ -10929,33 +12249,55 @@ class FaceFrameCabinet(GeoNodeCage):
             # single-opening builds.
             no_pulls = (self.obj.get('HB_NO_DOOR_PULLS')
                         or self.obj.get('HB_TRIVIEW_DOORS'))
-            if not drawer_look and not no_pulls:
+            # Bi-fold pairs pull from the lead leaf only.
+            if not drawer_look and not no_pulls and not leaf.get('no_pull'):
                 self._create_pull_for_front(front, leaf['role'], leaf,
                                             op_props)
             self._create_drawer_box_for_front(pivot, leaf, rect, op_props)
             if drawer_look:
                 self._build_drawer_look_fronts(front, leaf, op_props)
 
-        # Sink apron: a fixed face-frame-depth panel across the top of a
-        # DOOR opening (apron / farmhouse sink). The door(s) stay full
-        # height; the apron sits behind them in the face-frame band
-        # (y from the FF front face back by fft). Built directly here -
-        # not via the leaf/pivot path - so it carries no door style or
-        # pull; PART_ROLE_APRON is in FRONT_PART_ROLES so it's wiped on
-        # the next rebuild. Same orientation as a front part (Length ->
-        # vertical, Width -> horizontal, Thickness -> depth).
+        # Sink apron: a 1/2" panel across the top of a DOOR opening
+        # (apron / farmhouse sink), set 1/8" behind the face frame. The
+        # door(s) stay full height; the apron sits behind them. Built
+        # directly here - not via the leaf/pivot path - so it carries no
+        # door style or pull; PART_ROLE_APRON is in FRONT_PART_ROLES so
+        # it's wiped on the next rebuild. Same orientation as a front part
+        # (Length -> vertical, Width -> horizontal, Thickness -> depth).
         if op_props.add_apron and front_type == 'DOOR':
             # Full interior width (the whole opening cage, x from 0), and
             # set BEHIND the face frame: the FF back plane is bay-local
             # y = 0, and a front part's Thickness extends -Y from its
-            # origin, so an origin at y = +fft puts the apron body in
-            # y[0, fft] - just behind the frame, in the interior.
+            # origin, so an origin at y = setback + t puts the apron body
+            # in y[setback, setback + t] - in the interior.
             full_w = rect['cage_dim_x']
+            apron_t = inch(0.5)
+            apron_setback = inch(0.125)
             top_z = rect['cage_dim_z'] - rect['reveal_top']
-            apron_h = min(op_props.apron_height,
-                          top_z - rect['reveal_bottom'])
+            bottom_z = top_z - op_props.apron_height
+            if bay_index is not None:
+                # Apron Height is measured down from the top of the
+                # front construction, not the panel's own height: an
+                # opening that reaches the top stretcher gets a panel
+                # hung directly under it, shorter by its thickness.
+                # Opening-local Z (the cage sits at cage_z in its bay).
+                bay_top = solver.bay_cage_dims(layout, bay_index)[2]
+                if (rect['cage_z'] + rect['cage_dim_z']
+                        >= bay_top - inch(1.0 / 16.0)):
+                    cage_bottom = (
+                        solver.bay_bottom_z(layout, bay_index)
+                        + solver.effective_bottom_rail_width(layout,
+                                                             bay_index))
+                    front_top = (solver.carcass_top_z(layout, bay_index)
+                                 - solver.front_drop(layout, bay_index)
+                                 - cage_bottom - rect['cage_z'])
+                    top_t = (layout.stretcher_t if layout.uses_stretchers
+                             else layout.mt)
+                    top_z = front_top - top_t
+                    bottom_z = front_top - op_props.apron_height
+            bottom_z = max(bottom_z, rect['reveal_bottom'])
+            apron_h = top_z - bottom_z
             if full_w > 0.0 and apron_h > 0.0:
-                fft = cab_props.face_frame_thickness
                 apron = CabinetPart()
                 apron.create('Apron')
                 apron.obj.parent = opening_obj
@@ -10968,10 +12310,10 @@ class FaceFrameCabinet(GeoNodeCage):
                 apron.obj.rotation_euler.y = math.radians(-90)
                 apron.obj.rotation_euler.z = math.radians(90)
                 apron.set_input('Mirror Y', True)
-                apron.obj.location = (0.0, fft, top_z - apron_h)
+                apron.obj.location = (0.0, apron_setback + apron_t, bottom_z)
                 apron.set_input('Length', apron_h)
                 apron.set_input('Width', full_w)
-                apron.set_input('Thickness', fft)
+                apron.set_input('Thickness', apron_t)
 
         # APPLIANCE openings: filler stiles at the left/right inboard edges so
         # the clear opening matches the appliance width. Built directly here
@@ -11136,7 +12478,7 @@ class FaceFrameCabinet(GeoNodeCage):
         pull_obj = pulls.resolve_pull_object(scene_props, 'drawer')
         if pull_obj is None:
             return
-        instance = bpy.data.objects.new("Pull - " + panel_obj.name,
+        instance = hb_utils.new_object("Pull - " + panel_obj.name,
                                         pull_obj.data)
         bpy.context.scene.collection.objects.link(instance)
         instance.parent = panel_obj
@@ -11153,7 +12495,7 @@ class FaceFrameCabinet(GeoNodeCage):
         through the opening's swing_percent slider, not by grabbing the
         empty directly, so the gizmo doesn't need to be prominent.
         """
-        pivot = bpy.data.objects.new('Front Pivot', None)
+        pivot = hb_utils.new_object('Front Pivot', None)
         bpy.context.scene.collection.objects.link(pivot)
         pivot.empty_display_type = 'PLAIN_AXES'
         pivot.empty_display_size = 0.001
@@ -11370,7 +12712,7 @@ class FaceFrameCabinet(GeoNodeCage):
         # (toward the viewer). The pull mounts on the front face.
         z = thickness
 
-        instance = bpy.data.objects.new(f"Pull - {front_part.obj.name}", pull_obj.data)
+        instance = hb_utils.new_object(f"Pull - {front_part.obj.name}", pull_obj.data)
         bpy.context.scene.collection.objects.link(instance)
         instance.parent = front_part.obj
         instance.location = (x, y, z)
@@ -11414,7 +12756,9 @@ class FaceFrameCabinet(GeoNodeCage):
     DRAWER_BOX_INSIDE_FLOOR = inch(0.75)
     # Headroom an insert leaves under the rim of the box.
     DRAWER_INSERT_RIM_GAP = inch(0.75)
-    DRAWER_DIVIDER_TH = inch(0.25)
+    # Removable divider stock. A render hint may name its own
+    # thickness (TH) when a product is cut from something else.
+    DRAWER_DIVIDER_TH = inch(0.375)
     # Insert stock: tray walls and partitions, and the thinner panel
     # the bottoms, ribs and sloped shelves are made from.
     INSERT_WALL_TH = inch(0.375)
@@ -11452,7 +12796,7 @@ class FaceFrameCabinet(GeoNodeCage):
         bm.to_mesh(mesh)
         bm.free()
         mesh.update()
-        obj = bpy.data.objects.new(name, mesh)
+        obj = hb_utils.new_object(name, mesh)
         for coll in box_obj.users_collection:
             coll.objects.link(obj)
             break
@@ -11629,7 +12973,9 @@ class FaceFrameCabinet(GeoNodeCage):
         before. Returns the packing cursor to carry on from, or None
         when it took no space.
         """
-        th = self.DRAWER_DIVIDER_TH
+        th = inch(params.get('TH', 0.0))
+        if th < 1e-6:
+            th = self.DRAWER_DIVIDER_TH
         if (rect.x1 - rect.x0 < th * 2) or (rect.y1 - rect.y0 < th * 2):
             return None
         z0, z1 = rect.z0, rect.z0 + rect.h
@@ -11996,19 +13342,12 @@ class FaceFrameCabinet(GeoNodeCage):
         if not scene_props.include_drawer_boxes:
             return None
 
-        side_clr = scene_props.drawer_box_side_clearance
-        top_clr = scene_props.drawer_box_top_clearance
-        rear_clr = scene_props.drawer_box_rear_clearance
-        bottom_clr = scene_props.drawer_box_bottom_clearance
+        side_clr, top_clr, bottom_clr, rear_clr = drawer_box_clearances(
+            scene_props)
+        blum = uses_blum_tandem_sizing(scene_props)
 
         cage_x = rect['cage_dim_x']
-        cage_y = rect['cage_dim_y']
         cage_z = rect['cage_dim_z']
-        # Working face frame panel: the box runs back into the host
-        # cabinet's cavity, not the panel's own 3/4 reserve.
-        applied_depth = self.obj.get(TAG_APPLIED_BOX_DEPTH)
-        if applied_depth:
-            cage_y = max(cage_y, float(applied_depth))
         rl = rect['reveal_left']
         rr = rect['reveal_right']
         rt = rect['reveal_top']
@@ -12027,7 +13366,7 @@ class FaceFrameCabinet(GeoNodeCage):
         front_back_y = a_y
 
         box_dx = cage_x - rl - rr - 2.0 * side_clr
-        box_dy = (cage_y - rear_clr) - front_back_y
+        box_dy = self._drawer_box_depth(rect, front_back_y, op_props)
         box_dz = cage_z - rt - rb - top_clr - bottom_clr
 
         # Snap to a stock box height. Clearance-derived sizing cuts the
@@ -12035,26 +13374,35 @@ class FaceFrameCabinet(GeoNodeCage):
         # most visibly a pullout behind a tall door, drawn as a drawer
         # nearly the height of the door. The box keeps its bottom
         # clearance and the extra room stays above it.
-        if scene_props.use_stock_drawer_box_heights:
+        # Blum TANDEM boxes are always stock heights.
+        if blum or scene_props.use_stock_drawer_box_heights:
             opening_dz = cage_z - rt - rb
             stock_dz = stock_drawer_box_height(opening_dz)
             if stock_dz is not None:
                 box_dz = min(stock_dz, opening_dz - bottom_clr)
 
+        # Rollouts riding above this drawer take the top of the opening
+        # and the box takes a stock height under the lowest one (see
+        # rollout_above_layout). A rollout that would leave no room for
+        # the smallest box is not built, so the drawer always stays.
+        # Applied before the explicit overrides so a typed height still
+        # wins - the drafter who types one is answering this themselves.
+        if op_props is not None:
+            fit = self._rollout_above_fit(op_props, rect)
+            if fit is not None and fit['drawer_dz'] is not None:
+                box_dz = fit['drawer_dz']
+
         # Per-opening size overrides (right-click the box -> Drawer Box
         # Size...). Overridden axes replace the clearance-derived size,
-        # clamped so the box can't exceed the opening hole or run past
-        # the carcass back. Height keeps the bottom-clearance anchor;
-        # depth grows rearward from the front anchor.
+        # clamped so the box can't exceed the opening hole. Height keeps
+        # the bottom-clearance anchor; the depth override is applied in
+        # _drawer_box_depth.
         if op_props is not None:
             if getattr(op_props, 'drawer_box_override_width', False):
                 box_dx = min(op_props.drawer_box_width, cage_x - rl - rr)
             if getattr(op_props, 'drawer_box_override_height', False):
                 box_dz = min(op_props.drawer_box_height,
                              cage_z - rt - rb - bottom_clr)
-            if getattr(op_props, 'drawer_box_override_depth', False):
-                box_dy = min(op_props.drawer_box_depth,
-                             cage_y - front_back_y)
         if box_dx <= 0.0 or box_dy <= 0.0 or box_dz <= 0.0:
             return None
 
@@ -12067,7 +13415,7 @@ class FaceFrameCabinet(GeoNodeCage):
 
         # Pipe chase interaction: shorten, notch, or leave the box per
         # the opening's chase_fit (see _chase_fit_box).
-        box_dy, notch_w = self._chase_fit_box(
+        box_dy, notch_w, notch_d = self._chase_fit_box(
             pivot_obj.parent, op_props, op_x, op_y, box_dx, box_dy, rear_clr)
         if box_dy <= 0.0:
             return None
@@ -12083,6 +13431,12 @@ class FaceFrameCabinet(GeoNodeCage):
         box.obj['hb_part_role'] = PART_ROLE_DRAWER_BOX
         box.obj['CABINET_PART'] = True
         box.obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_drawer_box_commands'
+        # Largest sizes that still keep the minimum clearances, for the
+        # Drawer Box Size dialog to warn against when a size is typed.
+        box.obj['HB_BOX_MAX_WIDTH'] = cage_x - rl - rr - 2.0 * side_clr
+        box.obj['HB_BOX_MAX_HEIGHT'] = cage_z - rt - rb - top_clr - bottom_clr
+        box.obj['HB_BOX_DEPTH_SPACE'] = self._drawer_box_depth_space(
+            rect, front_back_y)
         self._stamp_drawer_box_construction(box.obj, op_props)
         if op_props is not None:
             self._spawn_drawer_inserts(box.obj, box_dx, box_dy, box_dz,
@@ -12099,7 +13453,7 @@ class FaceFrameCabinet(GeoNodeCage):
             box.obj['HB_CHASE_FIT'] = 'NOTCH'
             box.obj['CHASE_NOTCHED'] = True
             box.obj['CHASE_NOTCH_WIDTH'] = notch_w
-            box.obj['CHASE_NOTCH_DEPTH'] = intrusion
+            box.obj['CHASE_NOTCH_DEPTH'] = notch_d
         return box
 
     @staticmethod
@@ -12122,7 +13476,7 @@ class FaceFrameCabinet(GeoNodeCage):
         x0 = (box_dx - notch_w) / 2.0
         x1 = x0 + notch_w
         mesh = bpy.data.meshes.new('Sink Duo Cutter')
-        cutter = bpy.data.objects.new('Sink Duo Cutter', mesh)
+        cutter = hb_utils.new_object('Sink Duo Cutter', mesh)
         cutter['hb_part_role'] = PART_ROLE_DRAWER_BOX_CUTTER
         cutter.parent = box_obj
         cutter.display_type = 'WIRE'
@@ -12186,7 +13540,7 @@ class FaceFrameCabinet(GeoNodeCage):
         cx, zt = box_dx / 2.0, box_dz
 
         mesh = bpy.data.meshes.new('Finger Scoop Cutter')
-        cutter = bpy.data.objects.new('Finger Scoop Cutter', mesh)
+        cutter = hb_utils.new_object('Finger Scoop Cutter', mesh)
         cutter['hb_part_role'] = PART_ROLE_DRAWER_BOX_CUTTER
         cutter.parent = box_obj
         cutter.display_type = 'WIRE'
@@ -12231,10 +13585,11 @@ class FaceFrameCabinet(GeoNodeCage):
 
     def _update_interior_items_in_opening(self, opening_obj, layout, rect):
         """Rebuild the opening's interior parts (shelves, accessory
-        labels, ...). Same wipe-and-recreate strategy as fronts:
-        interior parts hold no user state worth preserving across
-        recalcs - their geometry is fully derived from the InteriorItem
-        collection on the opening props.
+        labels, ...). Same wipe-and-recreate strategy as fronts: a
+        parametric interior part's geometry is fully derived from the
+        InteriorItem collection on the opening props. The user state
+        on them - cutouts, and parts made editable - is carried by
+        build slot (role, INTERIOR_BUILD_INDEX).
 
         Panel roots (face-frame only) never have interior parts; we
         still run the wipe to clean up anything stale, then clear the
@@ -12242,35 +13597,26 @@ class FaceFrameCabinet(GeoNodeCage):
         """
         op_props = opening_obj.face_frame_opening
 
+        # User cutouts live on the parts about to be wiped; carry them
+        # over to the rebuilt parts (restored after the spawn loop).
+        kept_cutouts = _snapshot_interior_cutouts(opening_obj)
+
         # Wipe existing interior children. Match either by role tag or
         # by the explicit ACCESSORY marker we set on text objects, since
         # text-data objects can't carry the same custom prop conventions
-        # quite as cleanly as mesh parts.
+        # quite as cleanly as mesh parts. Manual (Make Editable) parts
+        # are kept, keyed by the build slot they took over.
+        manual = {}
         for child in list(opening_obj.children):
-            if child.get('hb_part_role') in INTERIOR_PART_ROLES:
-                # A boolean operand has to be an object, so a part's
-                # cutters hang off the PART rather than off the opening
-                # and this loop never sees them. Take them with their
-                # host: removing the host alone leaves them behind as
-                # loose wire objects that nothing ever collects.
-                for sub in list(child.children):
-                    if sub.get('hb_part_role') != PART_ROLE_DRAWER_BOX_CUTTER:
-                        continue
-                    sub_data = sub.data
-                    bpy.data.objects.remove(sub, do_unlink=True)
-                    if (isinstance(sub_data, bpy.types.Mesh)
-                            and sub_data.users == 0):
-                        bpy.data.meshes.remove(sub_data)
-                data = child.data
-                bpy.data.objects.remove(child, do_unlink=True)
-                # Orphaned data (per-part meshes like shelf nosings,
-                # accessory font curves) would otherwise pile up until
-                # the next save. Shared data keeps users and is skipped.
-                if data is not None and data.users == 0:
-                    if isinstance(data, bpy.types.Mesh):
-                        bpy.data.meshes.remove(data)
-                    elif isinstance(data, bpy.types.Curve):
-                        bpy.data.curves.remove(data)
+            role = child.get('hb_part_role')
+            if role not in INTERIOR_PART_ROLES:
+                continue
+            if child.get('IS_MANUAL_PART'):
+                if INTERIOR_BUILD_INDEX in child:
+                    key = (role, int(child[INTERIOR_BUILD_INDEX]))
+                    manual.setdefault(key, []).append(child)
+                continue
+            _remove_interior_part(child)
 
         if not self._has_carcass():
             if len(op_props.interior_items) > 0:
@@ -12330,11 +13676,20 @@ class FaceFrameCabinet(GeoNodeCage):
                         if preset == 'CUSTOM':
                             box.height = item.rollout_height
 
+        # The rollout that rides above a drawer is a normal ROLLOUT
+        # interior item - it just belongs to the cabinet rather than to
+        # the user, so it is kept in step here and taken away again when
+        # the option goes off.
+        self._reconcile_rollout_above_drawer(opening_obj, layout, rect)
+
         # Floating-shelf PRODUCTS dropped into this opening (library
         # placement with the cursor over the opening) auto-fit its span
         # like the adjustable shelves spawned below.
         self._fit_opening_floating_shelves(opening_obj, rect)
 
+        seen = {c.name for c in opening_obj.children}
+        built = {}
+        matched = set()
         for desc in solver.interior_descriptors_for_opening(
             opening_obj, layout, rect, self.obj.face_frame_cabinet,
         ):
@@ -12351,6 +13706,8 @@ class FaceFrameCabinet(GeoNodeCage):
                     self._create_accessory_label(opening_obj, desc)
             elif kind == 'ROLLOUT_BOX':
                 self._create_rollout_box(opening_obj, desc)
+            elif kind == 'GALLEY_ROLLOUT_TOP':
+                self._create_galley_rollout_top(opening_obj, desc)
             elif kind == 'CLOSET_ROD':
                 self._create_closet_rod_part(opening_obj, desc)
             elif kind in bar_storage.KINDS:
@@ -12367,6 +13724,207 @@ class FaceFrameCabinet(GeoNodeCage):
                 # TRAY_DIVIDER, TRAY_LOCKED_SHELF, VANITY_SHELF,
                 # VANITY_SUPPORT.
                 self._create_interior_mesh_part(opening_obj, desc)
+            for part in _tag_interior_build_order(opening_obj, seen, built):
+                key = (part.get('hb_part_role'), part[INTERIOR_BUILD_INDEX])
+                if key not in manual:
+                    continue
+                # The hand-edited part stands in for this one. Its name
+                # leaves 'seen' with it, or a later part that happens to
+                # be given the freed name would go untagged.
+                matched.add(key)
+                seen.discard(part.name)
+                _remove_interior_part(part)
+
+        for key, parts in manual.items():
+            for part in parts:
+                if key in matched:
+                    if INTERIOR_MANUAL_UNMATCHED in part:
+                        del part[INTERIOR_MANUAL_UNMATCHED]
+                else:
+                    part[INTERIOR_MANUAL_UNMATCHED] = True
+
+        _restore_interior_cutouts(opening_obj, kept_cutouts)
+
+    # Marks the ROLLOUT interior item this cabinet owns, so it can be
+    # told apart from one the user added and taken away again when the
+    # option goes off.
+    ROLLOUT_ABOVE_MARK = 'managed_rollout_above'
+
+    # What the last recalc could build, stamped on the opening cage for
+    # the Rollout Above Drawer dialog: how many rollouts fit, the drawer
+    # box height under them, and whether a picked box height fit.
+    TAG_ROLLOUT_ABOVE_BUILT = 'hb_rollout_above_built'
+    TAG_ROLLOUT_ABOVE_DRAWER_DZ = 'hb_rollout_above_drawer_height'
+    TAG_ROLLOUT_ABOVE_PICK_FITS = 'hb_rollout_above_pick_fits'
+
+    def _drawer_box_depth(self, rect, front_back_y, op_props):
+        """Depth of the drawer box behind a drawer / pullout front: from
+        the back of the front to the cavity back less the rear
+        clearance, or the opening's typed depth. A rollout riding above
+        the drawer takes the same depth."""
+        scene_props = bpy.context.scene.hb_face_frame
+        rear_clr = drawer_box_clearances(scene_props)[3]
+        space = self._drawer_box_depth_space(rect, front_back_y)
+        if (op_props is not None
+                and getattr(op_props, 'drawer_box_override_depth', False)):
+            return min(op_props.drawer_box_depth, space)
+        available = space - rear_clr
+        if uses_blum_tandem_sizing(scene_props):
+            # As deep as the longest runner that fits; a cavity too
+            # shallow for the shortest runner keeps the clearance fit.
+            runner = blum_tandem_runner_length(available)
+            if runner is not None:
+                return runner
+        return available
+
+    def _drawer_box_depth_space(self, rect, front_back_y):
+        """Depth from the back of the drawer front to the cavity back."""
+        cage_y = rect['cage_dim_y']
+        # Working face frame panel: the box runs back into the host
+        # cabinet's cavity, not the panel's own 3/4 reserve.
+        applied_depth = self.obj.get(TAG_APPLIED_BOX_DEPTH)
+        if applied_depth:
+            cage_y = max(cage_y, float(applied_depth))
+        return cage_y - front_back_y
+
+    def _rollout_above_fit(self, op_props, rect, migrate=True):
+        """rollout_above_layout for this opening, or None when it is not
+        a drawer opening or carries no rollouts above its drawer."""
+        if migrate:
+            self._migrate_rollout_above(op_props, rect)
+        if (op_props.front_type not in DRAWER_BOX_FRONT_TYPES
+                or len(op_props.rollouts_above) == 0):
+            return None
+        from . import props_hb_face_frame
+        heights = [inch(props_hb_face_frame.rollout_height_inches(
+                        entry.height_preset))
+                   for entry in op_props.rollouts_above]
+        pick_in = props_hb_face_frame.drawer_box_height_inches(
+            op_props.rollout_above_drawer_box_height)
+        scene_props = bpy.context.scene.hb_face_frame
+        return rollout_above_layout(
+            rect['reveal_bottom'],
+            rect['cage_dim_z'] - max(rect['reveal_top'], 0.0),
+            heights,
+            drawer_box_clearances(scene_props)[2],
+            inch(pick_in) if pick_in is not None else None)
+
+    def _migrate_rollout_above(self, op_props, rect):
+        """Carry the first version's single rollout forward: its free
+        height goes to the nearest standard size, and a gap typed wider
+        than the minimum becomes a smaller standard drawer box that keeps
+        at least that gap. Runs once - the old switch goes off after.
+        Writes re-enter recalc; the _RECALCULATING guard absorbs that."""
+        if not getattr(op_props, 'rollout_above_drawer', False):
+            return
+        from . import props_hb_face_frame
+        if len(op_props.rollouts_above) == 0:
+            entry = op_props.rollouts_above.add()
+            entry.height_preset = (
+                props_hb_face_frame.nearest_rollout_height_preset(
+                    op_props.rollout_above_height))
+            extra_gap = op_props.rollout_above_gap - ROLLOUT_ABOVE_BOX_GAP
+            fit = (self._rollout_above_fit(op_props, rect, migrate=False)
+                   if extra_gap > 1.0e-5 else None)
+            if fit is not None and fit['drawer_dz'] is not None:
+                space = fit['drawer_space'] - extra_gap
+                best_key, best_h = None, 0.0
+                for key, inches in (props_hb_face_frame
+                                    ._DRAWER_BOX_HEIGHTS_IN.items()):
+                    height = inch(inches)
+                    if (best_h < height <= space + 1.0e-5
+                            and height < fit['drawer_dz'] - 1.0e-5):
+                        best_key, best_h = key, height
+                if best_key is not None:
+                    op_props.rollout_above_drawer_box_height = best_key
+        op_props.rollout_above_drawer = False
+
+    def _stamp_rollout_above_fit(self, opening_obj, fit):
+        values = {}
+        if fit is not None:
+            values = {
+                self.TAG_ROLLOUT_ABOVE_BUILT: len(fit['rollouts']),
+                self.TAG_ROLLOUT_ABOVE_DRAWER_DZ: fit['drawer_dz'] or 0.0,
+                self.TAG_ROLLOUT_ABOVE_PICK_FITS: int(fit['pick_fits']),
+            }
+        for key in (self.TAG_ROLLOUT_ABOVE_BUILT,
+                    self.TAG_ROLLOUT_ABOVE_DRAWER_DZ,
+                    self.TAG_ROLLOUT_ABOVE_PICK_FITS):
+            if key in values:
+                if opening_obj.get(key) != values[key]:
+                    opening_obj[key] = values[key]
+            elif key in opening_obj:
+                del opening_obj[key]
+
+    def _reconcile_rollout_above_drawer(self, opening_obj, layout, rect):
+        """Keep the rollouts that ride above a drawer in step with the
+        opening's rollouts_above list.
+
+        They are one normal ROLLOUT interior item - same boxes, same
+        slides, same spacer ladders - so everything downstream (the
+        cutlist, the drawings, the open/close command, the rollout's own
+        right-click menu) treats them as the rollouts they are. The only
+        difference is that the cabinet owns the item: its boxes, gaps
+        and position come from rollout_above_layout, hung from the top of
+        the opening a box gap apart, and it sits front to back exactly
+        like the drawer box under it. Rollouts that don't fit are left
+        out of the item.
+
+        Writes here re-enter recalc; the _RECALCULATING guard absorbs
+        that, the same way the rollout-box migration above does.
+        """
+        op_props = getattr(opening_obj, 'face_frame_opening', None)
+        if op_props is None:
+            return
+        fit = self._rollout_above_fit(op_props, rect)
+        placed = fit['rollouts'] if fit is not None else []
+        self._stamp_rollout_above_fit(opening_obj, fit)
+
+        managed = [index for index, item in enumerate(op_props.interior_items)
+                   if item.get(self.ROLLOUT_ABOVE_MARK)]
+        if not placed:
+            for index in reversed(managed):
+                op_props.interior_items.remove(index)
+            return
+
+        if managed:
+            # More than one can only come from a duplicate; keep the first.
+            for index in reversed(managed[1:]):
+                op_props.interior_items.remove(index)
+            item = op_props.interior_items[managed[0]]
+        else:
+            item = op_props.interior_items.add()
+            item[self.ROLLOUT_ABOVE_MARK] = True
+            item.kind = 'ROLLOUT'
+            item.qty = 1
+
+        def _set(owner, name, value):
+            if abs(getattr(owner, name) - value) > 1e-6:
+                setattr(owner, name, value)
+
+        if item.kind != 'ROLLOUT':
+            item.kind = 'ROLLOUT'
+        # The item stacks its boxes bottom to top.
+        heights = [height for _bottom, height in reversed(placed)]
+        if len(item.rollout_boxes) != len(heights):
+            item.rollout_boxes.clear()
+            for _ in heights:
+                item.rollout_boxes.add()
+        from . import props_hb_face_frame
+        for box, height in zip(item.rollout_boxes, heights):
+            preset = props_hb_face_frame.rollout_height_preset_for(height)
+            if box.height_preset != preset:
+                box.height_preset = preset
+            _set(box, 'height', height)
+        _set(item, 'distance_between', ROLLOUT_ABOVE_BOX_GAP)
+        _set(item, 'bottom_gap', placed[-1][0])
+        # Front to back like the drawer box: no setback, starting at the
+        # back of the drawer front and running the drawer box's depth.
+        front_back_y = solver.slide_front_back_y(
+            layout, self.obj.face_frame_cabinet)
+        _set(item, 'item_setback', front_back_y)
+        _set(item, 'rollout_depth',
+             max(self._drawer_box_depth(rect, front_back_y, op_props), 0.0))
 
     def _fit_opening_floating_shelves(self, opening_obj, rect):
         """Auto-fit floating-shelf PRODUCTS parented into this opening.
@@ -12453,7 +14011,7 @@ class FaceFrameCabinet(GeoNodeCage):
         font_curve.size = desc['size']
         font_curve.align_x = 'CENTER'
         font_curve.align_y = 'CENTER'
-        text_obj = bpy.data.objects.new(desc['name'], font_curve)
+        text_obj = hb_utils.new_object(desc['name'], font_curve)
         bpy.context.scene.collection.objects.link(text_obj)
         # Resolved annotation font + color (Calibri by default).
         apply_label_style(text_obj, bpy.context.scene)
@@ -12701,6 +14259,68 @@ class FaceFrameCabinet(GeoNodeCage):
         part.set_input('Thickness', thickness)
         return part
 
+    def _create_galley_rollout_top(self, opening_obj, desc):
+        """A workstation roll-out's plywood top: a plain slab over the
+        box, with the bowl or bin opening cut by a hidden cutter that
+        is wiped and remade with the top on every recalc."""
+        part = self._create_interior_mesh_part(opening_obj, desc)
+        dx, dy, t = desc['dims']
+        px, py, pz = desc['position']
+        kind = desc.get('galley_top', 'NONE')
+        verts, faces = [], []
+
+        def box(x0, x1, y0, y1, z0, z1):
+            b = len(verts)
+            verts.extend([(x0, y0, z0), (x1, y0, z0), (x1, y1, z0), (x0, y1, z0),
+                          (x0, y0, z1), (x1, y0, z1), (x1, y1, z1), (x0, y1, z1)])
+            for f in ((0, 3, 2, 1), (4, 5, 6, 7), (0, 1, 5, 4),
+                      (1, 2, 6, 5), (2, 3, 7, 6), (3, 0, 4, 7)):
+                faces.append(tuple(b + k for k in f))
+
+        def cylinder(cx, cy, radius, z0, z1, segments=48):
+            b = len(verts)
+            for z in (z0, z1):
+                for i in range(segments):
+                    a = 2.0 * math.pi * i / segments
+                    verts.append((cx + radius * math.cos(a),
+                                  cy + radius * math.sin(a), z))
+            for i in range(segments):
+                j = (i + 1) % segments
+                faces.append((b + i, b + j, b + segments + j, b + segments + i))
+            faces.append(tuple(reversed(range(b, b + segments))))
+            faces.append(tuple(range(b + segments, b + 2 * segments)))
+
+        z0, z1 = -inch(1.0), t + inch(1.0)
+        cx, cy = dx / 2.0, dy / 2.0
+        if kind == 'BOWL_10':
+            cylinder(cx, cy, inch(5.25), z0, z1)
+        elif kind == 'BOWL_14':
+            cylinder(cx, cy, inch(7.0), z0, z1)
+        elif kind == 'BINS':
+            w, d, gap = inch(6.125), inch(3.625), inch(1.0)
+            for x in (cx - gap / 2.0 - w, cx + gap / 2.0):
+                box(x, x + w, cy - d / 2.0, cy + d / 2.0, z0, z1)
+        if not faces:
+            return part
+        mesh = bpy.data.meshes.new(desc['name'] + ' Cutter')
+        mesh.from_pydata(verts, [], faces)
+        mesh.validate()
+        mesh.update()
+        cutter = hb_utils.new_object(desc['name'] + ' Cutter', mesh)
+        cutter.parent = opening_obj
+        cutter.location = (px, py, pz)
+        cutter['hb_part_role'] = 'GALLEY_TOP_CUTTER'
+        cutter['IS_FACE_FRAME_INTERIOR_PART'] = True
+        cutter.display_type = 'WIRE'
+        cutter.hide_viewport = True
+        cutter.hide_render = True
+        for coll in opening_obj.users_collection:
+            coll.objects.link(cutter)
+        mod = part.obj.modifiers.new(name='Top Opening', type='BOOLEAN')
+        mod.operation = 'DIFFERENCE'
+        mod.object = cutter
+        return part
+
     def _create_interior_face_frame_part(self, opening_obj, desc):
         """Optional face frame member at an interior split node - a rail
         for a fixed shelf (kind INTERIOR_FF_RAIL) or a stile for a
@@ -12816,10 +14436,11 @@ class FaceFrameCabinet(GeoNodeCage):
         # drawer box does -- U-shape it around the chase, or shorten it
         # to clear the covers, per the opening's chase_fit.
         try:
-            rear_clr = bpy.context.scene.hb_face_frame.drawer_box_rear_clearance
+            rear_clr = drawer_box_clearances(
+                bpy.context.scene.hb_face_frame)[3]
         except AttributeError:
             rear_clr = 0.0
-        dy, notch_w = self._chase_fit_box(
+        dy, notch_w, notch_d = self._chase_fit_box(
             opening_obj, op_props, desc['position'][0], desc['position'][1],
             dx, dy, rear_clr)
         if dy <= 0.0:
@@ -12836,6 +14457,7 @@ class FaceFrameCabinet(GeoNodeCage):
             box.obj['HB_CHASE_FIT'] = 'NOTCH'
             box.obj['CHASE_NOTCHED'] = True
             box.obj['CHASE_NOTCH_WIDTH'] = notch_w
+            box.obj['CHASE_NOTCH_DEPTH'] = notch_d
         # Per-box U-notch (the rollout equivalent of the sink duo drawer).
         # The indices are stamped so the right-click command can walk back
         # from this object to the rollout_boxes entry that owns it.
@@ -13028,6 +14650,221 @@ class SinkFaceFrameCabinet(BaseFaceFrameCabinet):
             self.default_width = scene.hb_face_frame.sink_cabinet_width
 
 
+class CooktopFaceFrameCabinet(BaseFaceFrameCabinet):
+    """Base cabinet for a drop-in cooktop: a false front over doors, the
+    same construction as the sink cabinet, with the cooktop model
+    carried in its bay. Width is seeded from the scene range_width, the
+    size a cooktop shares with a range."""
+
+    single_placement = True
+
+    def __init__(self):
+        super().__init__()
+        scene = bpy.context.scene
+        if hasattr(scene, 'hb_face_frame'):
+            self.default_width = scene.hb_face_frame.range_width
+
+
+# ---------------------------------------------------------------------------
+# Galley workstation sink base
+#
+# One long workstation sink over a run of equal openings. Front and
+# back aprons hang from the top for the sink to rest between, 1 1/2 in
+# supporting partitions stand on the floor under every mid stile and
+# against each side, with cleats directly beneath them, and the sink
+# spans the end partitions. Sizes are the workstation's, IWS 2 to 7;
+# the even sizes end in an 18 in sink base opening.
+# ---------------------------------------------------------------------------
+
+GALLEY_SIZES = (
+    # key, label, cabinet width, bays, width of the last (sink base) bay
+    ('IWS2', "IWS 2", inch(28.0), 1, None),
+    ('IWS3', "IWS 3", inch(39.75), 2, None),
+    ('IWS4', "IWS 4", inch(51.75), 3, inch(18.0)),
+    ('IWS5', "IWS 5", inch(62.0), 3, None),
+    ('IWS6', "IWS 6", inch(77.75), 4, inch(18.0)),
+    ('IWS7', "IWS 7", inch(83.25), 4, None),
+)
+GALLEY_SIZE_TABLE = {k: (w, bays, sink_bay) for k, _l, w, bays, sink_bay in GALLEY_SIZES}
+GALLEY_APRON_H = inch(10.75)
+GALLEY_MATERIAL = inch(0.75)      # aprons, end partitions and cleats
+GALLEY_PARTITION_T = inch(1.5)    # a mid partition, built up
+GALLEY_FRONT_SETBACK = inch(4.0)
+
+
+_GALLEY_SEED_PENDING = set()
+
+
+def _schedule_galley_seed(cab_name):
+    """Seed a workstation cabinet's storage openings on the next timer
+    tick, outside the recalc that noticed they were empty, under one
+    recalc suspension so the writes land as a single rebuild."""
+    if cab_name in _GALLEY_SEED_PENDING:
+        return
+    _GALLEY_SEED_PENDING.add(cab_name)
+
+    def run():
+        _GALLEY_SEED_PENDING.discard(cab_name)
+        root = bpy.data.objects.get(cab_name)
+        if root is None:
+            return None
+        cab = FaceFrameCabinet(root)
+        try:
+            with suspend_recalc():
+                cab.seed_galley_storage(solver.FaceFrameLayout(root))
+        except Exception:
+            import traceback
+            traceback.print_exc()
+        return None
+
+    bpy.app.timers.register(run, first_interval=0.0)
+
+
+def galley_size_from_name(name):
+    """'Galley IWS 4' -> 'IWS4'; None when the name carries no size."""
+    m = re.search(r'IWS\s*(\d)', name or '')
+    return 'IWS%s' % m.group(1) if m and 'IWS%s' % m.group(1) in GALLEY_SIZE_TABLE else None
+
+
+def apply_galley_size(root_obj):
+    """Size a workstation cabinet to its galley_size: the cabinet width,
+    and the last bay pinned to the sink base opening on the sizes that
+    have one, the rest sharing the remainder. Bays are made at
+    placement, so a size with a different bay count only sets the
+    width."""
+    props = root_obj.face_frame_cabinet
+    width, bays, sink_bay = GALLEY_SIZE_TABLE.get(
+        props.galley_size, GALLEY_SIZE_TABLE['IWS3'])
+    bay_objs = sorted([c for c in root_obj.children if c.get(TAG_BAY_CAGE)],
+                      key=lambda c: c.get('hb_bay_index', 0))
+    with suspend_recalc():
+        props.width = width
+        if len(bay_objs) == bays:
+            for i, bay_obj in enumerate(bay_objs):
+                bp = bay_obj.face_frame_bay
+                if sink_bay is not None and i == bays - 1:
+                    bp.width = sink_bay
+                else:
+                    bp.unlock_width = False
+
+
+class GalleyWorkstationFaceFrameCabinet(BaseFaceFrameCabinet):
+    """Sink base for a Galley workstation sink. A plain BASE construction
+    with as many bays as the size calls for; the aprons, partitions,
+    cleats and the sink are added by the recalc (see
+    _apply_galley_parts). One subclass per size carries the library
+    name and the width the placement preview needs."""
+
+    single_placement = True
+    size = 'IWS3'
+
+    def __init__(self):
+        super().__init__()
+        self.default_width = GALLEY_SIZE_TABLE[self.size][0]
+
+    def create(self, name="Galley Workstation", bay_qty=None):
+        size = galley_size_from_name(name) or self.size
+        width, bays, sink_bay = GALLEY_SIZE_TABLE[size]
+        super().create(name, bay_qty=bays)
+        # The size's update sizes the cabinet; one recalc at the end.
+        with suspend_recalc():
+            self.obj.face_frame_cabinet.galley_size = size
+
+
+class GalleyIWS2Cabinet(GalleyWorkstationFaceFrameCabinet):
+    size = 'IWS2'
+
+
+class GalleyIWS3Cabinet(GalleyWorkstationFaceFrameCabinet):
+    size = 'IWS3'
+
+
+class GalleyIWS4Cabinet(GalleyWorkstationFaceFrameCabinet):
+    size = 'IWS4'
+
+
+class GalleyIWS5Cabinet(GalleyWorkstationFaceFrameCabinet):
+    size = 'IWS5'
+
+
+class GalleyIWS6Cabinet(GalleyWorkstationFaceFrameCabinet):
+    size = 'IWS6'
+
+
+class GalleyIWS7Cabinet(GalleyWorkstationFaceFrameCabinet):
+    size = 'IWS7'
+
+
+class ADASinkCabinet(SinkFaceFrameCabinet):
+    """Accessible sink: a shallow box carried clear of the floor, raked
+    away underneath so a wheelchair user's knees go under it.
+
+    Built to the shop drawing: a 28" x 21" box 16" tall, floating 17"
+    off the floor on the toe kick, which puts its top at 33". The sides
+    keep their full height for the 8" against the wall, rake down over
+    the next 5", and finish as a 5-1/2" band across the front 8" - an
+    11-5/8" raked edge. The rake faces the room, because that is the
+    side the knees come in from. The front is a flat band the height of
+    that rake band - no stiles, no lower rail, nothing hung off it - and
+    there is no carcass bottom, so the plumbing is reachable and nothing
+    projects into the knee space.
+
+    Every one of those is a field: the box sizes are the cabinet's, the
+    float is its toe kick height, and the rake is the three Raked Sides
+    numbers. The rake published on the root is what a drawing reads.
+    """
+
+    def __init__(self):
+        super().__init__()
+        # Overall, floor to top: a 16" box floating 17" up, per the
+        # drawing. The toe kick height set at create is the float.
+        self.default_width = inch(28.0)
+        self.default_depth = inch(21.0)
+        self.default_height = inch(33.0)
+
+    def create(self, name="ADA Sink", bay_qty=1):
+        self.create_cabinet_root(name)
+        cab = self.obj.face_frame_cabinet
+        # Carried clear of the floor: the toe kick is the gap beneath.
+        cab.toe_kick_type = 'FLOATING'
+        cab.toe_kick_height = inch(17.0)
+        # Raked underside, to the drawing: full height for the 8"
+        # against the wall, then raked down to a 5-1/2" band across the
+        # front 8", which is where the knees go under.
+        cab.ada_side_shape = True
+        cab.ada_side_wall_run = inch(8.0)
+        cab.ada_side_front_run = inch(8.0)
+        cab.ada_side_front_height = inch(5.5)
+        # The front is a flat band the height of the raked band, not a
+        # frame with a front in it: the face frame collapses to that one
+        # member, so there are no stiles down the ends and no rail under
+        # it for a door to hang from. Unlocked so assigning a style
+        # cannot write the usual widths back over them.
+        cab.unlock_top_rail = True
+        cab.unlock_bottom_rail = True
+        cab.unlock_left_stile = True
+        cab.unlock_right_stile = True
+        cab.top_rail_width = cab.ada_side_front_height
+        cab.bottom_rail_width = 0.0
+        cab.left_stile_width = 0.0
+        cab.right_stile_width = 0.0
+        self.create_carcass(has_toe_kick=True, bay_qty=bay_qty)
+        self.obj[ADA_SINK_TAG] = True
+        # Open underneath for the plumbing, and a false front over it -
+        # removable on site, so nothing swings into the knee space.
+        bays = [c for c in self.obj.children if c.get(TAG_BAY_CAGE)]
+        openings = [o for bay in bays for o in bay.children
+                    if o.get(TAG_OPENING_CAGE)]
+        with suspend_recalc():
+            for bay_obj in bays:
+                bay_obj.face_frame_bay.remove_bottom = True
+            for opening in openings:
+                # Nothing hangs off the front: the band above IS the
+                # front, and a door here would swing into the knee space.
+                opening.face_frame_opening.front_type = 'NONE'
+        self.recalculate()
+
+
 class UpperFaceFrameCabinet(FaceFrameCabinet):
     """Upper (wall) cabinet. No toe kick; mounts above the counter."""
     default_cabinet_type = 'UPPER'
@@ -13050,6 +14887,36 @@ class UpperFaceFrameCabinet(FaceFrameCabinet):
         scene = bpy.context.scene
         if hasattr(scene, 'hb_face_frame'):
             self.obj.location.z = scene.hb_face_frame.default_wall_cabinet_location
+
+
+class FloatingVanityCabinet(FloatingBaseFaceFrameCabinet):
+    """Floating vanity: a floating base built as a vanity.
+
+    Nothing about it is a new kind of cabinet - it is the floating toe
+    kick that already exists, with the vanity construction switched on:
+    a closed top instead of stretchers (a sink sits on it), that top 1/2
+    thick over a 3/4 back, and a 12" x 12" opening for the basin. The
+    toe kick height is the gap it floats above the floor, so raising it
+    lifts the vanity.
+
+    It places like any base cabinet - same sizes, same defaults - and
+    comes in with the floating kick and the vanity construction already
+    on. The catalog's floor for one of these is a 20" box.
+    """
+
+    def create(self, name="Floating Vanity", bay_qty=1):
+        super().create(name, bay_qty=bay_qty)
+        cab = self.obj.face_frame_cabinet
+        cab.floating_vanity = True
+        # Written rather than left to the checkbox's derived value, so
+        # the field a drafter reads matches the part that gets built.
+        # Ticking the box on an existing cabinet still derives it.
+        cab.back_thickness = inch(0.75)
+        # Sized here so they read on the cabinet and can be tuned; the
+        # construction itself follows the checkbox.
+        cab.top_sink_cutout_width = inch(12.0)
+        cab.top_sink_cutout_depth = inch(12.0)
+        self.recalculate()
 
 
 class BookcaseUpperFaceFrameCabinet(UpperFaceFrameCabinet):
@@ -13699,7 +15566,7 @@ class LegProductFaceFrameCabinet(FaceFrameCabinet):
                 break
         if obj is None:
             mesh = bpy.data.meshes.new('Curved Leg Panel')
-            obj = bpy.data.objects.new('Curved Leg Panel', mesh)
+            obj = hb_utils.new_object('Curved Leg Panel', mesh)
             bpy.context.scene.collection.objects.link(obj)
             obj.parent = self.obj
             obj['hb_part_role'] = PART_ROLE_LEG_CURVED_PANEL
@@ -13762,6 +15629,7 @@ class LegProductFaceFrameCabinet(FaceFrameCabinet):
     # ------------------------------------------------------------------
     # Recalc (bespoke; bypasses the bay solver)
     # ------------------------------------------------------------------
+    @hb_utils.with_children_index
     def recalculate(self):
         cab = self.obj.face_frame_cabinet
         leg = self.obj.leg_product
@@ -14114,7 +15982,8 @@ class LegProductFaceFrameCabinet(FaceFrameCabinet):
             self._textured_panel_mesh(part_obj, height, panel_depth,
                                       thickness, condition, mirror_z,
                                       shiplap_pitch=pitch,
-                                      shiplap_vertical=_shiplap_vertical(cab))
+                                      shiplap_vertical=_shiplap_vertical(cab),
+                                      v_groove_spacing=_v_groove_spacing(cab))
             # The notch cuts the carved mesh - the cutpart's own display
             # is hidden by now, so the modifier has the static mesh to
             # work on, same as a cabinet's skin.
@@ -14212,6 +16081,7 @@ class FloatingShelfFaceFrameCabinet(FaceFrameCabinet):
         mod.show_viewport = active
         mod.show_render = active
 
+    @hb_utils.with_children_index
     def recalculate(self):
         cab = self.obj.face_frame_cabinet
         shelf = self.obj.floating_shelf
@@ -14223,6 +16093,9 @@ class FloatingShelfFaceFrameCabinet(FaceFrameCabinet):
         self.set_input('Dim Y', depth)
         self.set_input('Dim Z', thickness)
 
+        # The front board and finished end panels are fixed 3/4" stock;
+        # material_thickness sets only the top and bottom panels.
+        ft = inch(0.75)
         mt = shelf.material_thickness
         fl = shelf.finish_left
         fr = shelf.finish_right
@@ -14250,22 +16123,22 @@ class FloatingShelfFaceFrameCabinet(FaceFrameCabinet):
             for k, v in mirror.items():
                 gn.set_input(k, v)
 
-        inset_l = mt if fl else 0.0
-        inset_r = mt if fr else 0.0
+        inset_l = ft if fl else 0.0
+        inset_r = ft if fr else 0.0
         inner_len = width - inset_l - inset_r
-        inner_depth = depth - mt
+        inner_depth = depth - ft
 
         # Front board: full width, stands `thickness` tall at the front.
-        place(FRONT, width, thickness, mt, (0.0, -depth, 0.0),
+        place(FRONT, width, thickness, ft, (0.0, -depth, 0.0),
               (math.radians(-90), 0.0, 0.0), {'Mirror Y': True})
         FRONT['IS_FINISHED'] = True
 
         # Top + bottom: horizontal panels between the end panels, behind
         # the front board, spanning the remaining depth.
-        place(TOP, inner_len, inner_depth, mt, (inset_l, -depth + mt, thickness),
+        place(TOP, inner_len, inner_depth, mt, (inset_l, -depth + ft, thickness),
               (0.0, 0.0, 0.0), {'Mirror Z': True})
         TOP['IS_FINISHED'] = True
-        place(BOTTOM, inner_len, inner_depth, mt, (inset_l, -depth + mt, 0.0),
+        place(BOTTOM, inner_len, inner_depth, mt, (inset_l, -depth + ft, 0.0),
               (0.0, 0.0, 0.0), {})
         BOTTOM['IS_FINISHED'] = True
 
@@ -14273,7 +16146,7 @@ class FloatingShelfFaceFrameCabinet(FaceFrameCabinet):
         # runs the full depth and miters into the front board at 45
         # through the corner (the shop's construction) instead of
         # butting behind it.
-        place(LP, depth if fl else inner_depth, thickness, mt,
+        place(LP, depth if fl else inner_depth, thickness, ft,
               (0.0, 0.0, 0.0),
               (math.radians(-90), 0.0, math.radians(90)),
               {'Mirror X': True, 'Mirror Y': True, 'Mirror Z': True})
@@ -14282,7 +16155,7 @@ class FloatingShelfFaceFrameCabinet(FaceFrameCabinet):
             LP.hide_render = not fl
         LP['IS_FINISHED'] = True
 
-        place(RP, depth if fr else inner_depth, thickness, mt,
+        place(RP, depth if fr else inner_depth, thickness, ft,
               (width, 0.0, 0.0),
               (math.radians(-90), 0.0, math.radians(90)),
               {'Mirror X': True, 'Mirror Y': True})
@@ -14292,9 +16165,9 @@ class FloatingShelfFaceFrameCabinet(FaceFrameCabinet):
         RP['IS_FINISHED'] = True
 
         self._apply_box_end_miter('LEFT', fl, FRONT, LP,
-                                  width, depth, mt, thickness)
+                                  width, depth, ft, thickness)
         self._apply_box_end_miter('RIGHT', fr, FRONT, RP,
-                                  width, depth, mt, thickness)
+                                  width, depth, ft, thickness)
 
         # --- Light groove (Heavy Duty shelves only) ---
         # A routed LED channel on the top and/or bottom face, set a
@@ -14521,7 +16394,7 @@ class MantleFaceFrameProduct(FaceFrameCabinet):
 
         if sweep is None:
             curve_data = bpy.data.curves.new('Mantle Crown', 'CURVE')
-            sweep = bpy.data.objects.new('Mantle Crown', curve_data)
+            sweep = hb_utils.new_object('Mantle Crown', curve_data)
             for coll in self.obj.users_collection:
                 coll.objects.link(sweep)
             sweep.parent = self.obj
@@ -14598,6 +16471,7 @@ class MantleFaceFrameProduct(FaceFrameCabinet):
                 gn.set_input(k, mirror.get(k, False))
         obj['IS_FINISHED'] = True
 
+    @hb_utils.with_children_index
     def recalculate(self):
         cab = self.obj.face_frame_cabinet
         mp = self.obj.mantle_product
@@ -14931,7 +16805,7 @@ class MantleFaceFrameProduct(FaceFrameCabinet):
 
         if sweep is None:
             curve_data = bpy.data.curves.new('Mantle Base', 'CURVE')
-            sweep = bpy.data.objects.new('Mantle Base', curve_data)
+            sweep = hb_utils.new_object('Mantle Base', curve_data)
             for coll in self.obj.users_collection:
                 coll.objects.link(sweep)
             sweep.parent = self.obj
@@ -15037,6 +16911,7 @@ class ValanceFaceFrameProduct(FaceFrameCabinet):
         part.obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_part_commands'
         return part.obj
 
+    @hb_utils.with_children_index
     def recalculate(self):
         cab = self.obj.face_frame_cabinet
         val = self.obj.valance_product
@@ -15467,7 +17342,7 @@ def position_door_part_pull(door_obj):
         if inst.data is not pull_obj.data:
             inst.data = pull_obj.data
     else:
-        inst = bpy.data.objects.new(f"Pull - {door_obj.name}", pull_obj.data)
+        inst = hb_utils.new_object(f"Pull - {door_obj.name}", pull_obj.data)
         bpy.context.scene.collection.objects.link(inst)
         inst.parent = door_obj
         inst['hb_part_role'] = 'PULL'
@@ -15570,9 +17445,12 @@ class HalfWallFaceFrameProduct(_FramelessHalfWall):
         apply_active_finish_to_product(self.obj)
 
     def apply_placement_width(self, width):
-        """The cage width maps to the product's X span = its 'Dim X' input
-        (the studs / skins / top / bottom are all driver-bound to Dim X)."""
+        """The cage width maps to the product's X span = its 'Dim X' input.
+        The studs / skins / top / bottom are solved from that input, so
+        re-solve after writing it."""
+        from ..frameless import types_products
         self.set_input('Dim X', width)
+        types_products.recalculate_product(self.obj)
 
 
 class SupportFrameFaceFrameProduct(_FramelessSupportFrame):
@@ -15620,9 +17498,12 @@ class SupportFrameFaceFrameProduct(_FramelessSupportFrame):
         apply_active_finish_to_product(self.obj)
 
     def apply_placement_width(self, width):
-        """The cage width maps to the product's X span = its 'Dim X' input
-        (panels / supports / legs are all driver-bound to Dim X)."""
+        """The cage width maps to the product's X span = its 'Dim X' input.
+        The frame's panels / supports / legs are solved from that input, so
+        re-solve after writing it."""
+        from ..frameless import types_products
         self.set_input('Dim X', width)
+        types_products.recalculate_support_frame(self.obj)
 
 
 class WoodTopPart(CabinetPart):
@@ -15907,12 +17788,21 @@ CABINET_NAME_DISPATCH = {
     "Base Door Drw": BaseFaceFrameCabinet,
     "Base Drawer": BaseFaceFrameCabinet,
     "Floating Base Cabinet": FloatingBaseFaceFrameCabinet,
+    "Floating Vanity": FloatingVanityCabinet,
     "5 Drawer Dresser": FiveDrawerDresserCabinet,
     "6 Drawer Dresser": SixDrawerDresserCabinet,
     "Night Stand": NightStandFaceFrameCabinet,
     "3 Drawer Night Stand": ThreeDrawerNightStandCabinet,
     "Window Seat": WindowSeatFaceFrameCabinet,
     "Sink": SinkFaceFrameCabinet,
+    "Cooktop Base": CooktopFaceFrameCabinet,
+    "Galley IWS 2": GalleyIWS2Cabinet,
+    "Galley IWS 3": GalleyIWS3Cabinet,
+    "Galley IWS 4": GalleyIWS4Cabinet,
+    "Galley IWS 5": GalleyIWS5Cabinet,
+    "Galley IWS 6": GalleyIWS6Cabinet,
+    "Galley IWS 7": GalleyIWS7Cabinet,
+    "ADA Sink": ADASinkCabinet,
     "Lap Drawer": LapDrawerFaceFrameCabinet,
     "Upper": UpperFaceFrameCabinet,
     "Upper Stacked": UpperFaceFrameCabinet,
@@ -16110,7 +18000,17 @@ def _wrap_cabinet(obj):
 WRAP_CLASS_REGISTRY.update({
     'BaseFaceFrameCabinet': BaseFaceFrameCabinet,
     'FloatingBaseFaceFrameCabinet': FloatingBaseFaceFrameCabinet,
+    'FloatingVanityCabinet': FloatingVanityCabinet,
     'SinkFaceFrameCabinet': SinkFaceFrameCabinet,
+    'CooktopFaceFrameCabinet': CooktopFaceFrameCabinet,
+    'GalleyWorkstationFaceFrameCabinet': GalleyWorkstationFaceFrameCabinet,
+    'GalleyIWS2Cabinet': GalleyIWS2Cabinet,
+    'GalleyIWS3Cabinet': GalleyIWS3Cabinet,
+    'GalleyIWS4Cabinet': GalleyIWS4Cabinet,
+    'GalleyIWS5Cabinet': GalleyIWS5Cabinet,
+    'GalleyIWS6Cabinet': GalleyIWS6Cabinet,
+    'GalleyIWS7Cabinet': GalleyIWS7Cabinet,
+    'ADASinkCabinet': ADASinkCabinet,
     'UpperFaceFrameCabinet': UpperFaceFrameCabinet,
     'TallFaceFrameCabinet': TallFaceFrameCabinet,
     'RefrigeratorCabinet': RefrigeratorCabinet,
@@ -16134,6 +18034,27 @@ WRAP_CLASS_REGISTRY.update({
 # upper-derived bath products wrap to a carcass either way (and resolve
 # _has_toe_kick to Upper's False == the base-wrap value), so listing them here
 # is behavior-neutral - it just makes recalc use their real class.
+# Furniture and bookcase leaf classes. These sit on a toe kick -- they
+# descend from BASE or TALL -- but an unregistered class wraps as the
+# plain FaceFrameCabinet, whose _has_toe_kick() is False. So the first
+# recalc after placement dropped the carcass bottom, back and bay by the
+# kick height and stretched the back to suit: a dresser or window seat
+# fell into its own kick as soon as it was resized. The two upper-derived
+# entries resolve the same either way, and are listed so the set is the
+# whole family rather than the half of it that misbehaved.
+WRAP_CLASS_REGISTRY.update({
+    'FurnitureFaceFrameCabinet': FurnitureFaceFrameCabinet,
+    'FiveDrawerDresserCabinet': FiveDrawerDresserCabinet,
+    'SixDrawerDresserCabinet': SixDrawerDresserCabinet,
+    'NightStandFaceFrameCabinet': NightStandFaceFrameCabinet,
+    'ThreeDrawerNightStandCabinet': ThreeDrawerNightStandCabinet,
+    'WindowSeatFaceFrameCabinet': WindowSeatFaceFrameCabinet,
+    'BookcaseStorageUnitFaceFrameCabinet': BookcaseStorageUnitFaceFrameCabinet,
+    'BookcaseUpperFaceFrameCabinet': BookcaseUpperFaceFrameCabinet,
+    'HutchUpperFaceFrameCabinet': HutchUpperFaceFrameCabinet,
+})
+
+
 WRAP_CLASS_REGISTRY.update({
     'StandardRecessedMedicineCabinet': StandardRecessedMedicineCabinet,
     'MedicineCabinetFaceFrameCabinet': MedicineCabinetFaceFrameCabinet,
@@ -16230,30 +18151,34 @@ def recalculate_face_frame_cabinet(obj):
         return
     _RECALCULATING.add(id(root))
     try:
-        # Combined back-to-back island ends: re-derive how far the end
-        # panel runs back from the other run's live depth before the
-        # parts are sized, so resizing either run keeps the shared panel
-        # the right length. Only this root's own props are written, and
-        # the reentrance guard above is already armed, so the writes'
-        # update callbacks fall straight back out.
-        island_pair.sync(root)
-        cabinet = _wrap_cabinet(root)
-        cabinet.recalculate()
-        _resize_seated_wood_tops(root)
-        _reapply_cabinet_style(root)
-        # Round-top doors: carry a quarter / half circle door's curve
-        # into the frame member above it, so the opening follows the
-        # door instead of showing square above the arc. After the style
-        # pass, which is what gives each door the frame its curve is
-        # measured from. No-op + cleanup when no door is round.
-        refresh_round_top_frames(root)
-        _reapply_selection_mode_highlights(root)
+        with hb_utils.children_index():
+            # Combined back-to-back island ends: re-derive how far the
+            # end panel runs back from the other run's live depth before
+            # the parts are sized, so resizing either run keeps the
+            # shared panel the right length. Only this root's own props
+            # are written, and the reentrance guard above is already
+            # armed, so the writes' update callbacks fall straight back
+            # out.
+            island_pair.sync(root)
+            cabinet = _wrap_cabinet(root)
+            cabinet.recalculate()
+            _resize_seated_wood_tops(root)
+            _reapply_cabinet_style(root)
+            # Round-top doors: carry a quarter / half circle door's
+            # curve into the frame member above it, so the opening
+            # follows the door instead of showing square above the arc.
+            # After the style pass, which is what gives each door the
+            # frame its curve is measured from. No-op + cleanup when no
+            # door is round.
+            refresh_round_top_frames(root)
+            _reapply_selection_mode_highlights(root)
     finally:
         _RECALCULATING.discard(id(root))
 
     # Standalone panels get the applied-back behaviour after the core
     # recalc (own guard prevents recursion via its bay insert/delete).
-    _reconcile_standalone_panel(root)
+    with hb_utils.children_index():
+        _reconcile_standalone_panel(root)
 
 
 def _resize_seated_wood_tops(root):
@@ -16292,6 +18217,7 @@ def _reapply_selection_mode_highlights(root):
     # and pulling it at module top would couple type-level recalc to the
     # frameless package import order during addon load.
     from ..frameless.operators.ops_placement import toggle_cabinet_color
+    from . import quiet_cages
 
     scene_props = getattr(bpy.context.scene, 'hb_face_frame', None)
     if scene_props is None:
@@ -16340,6 +18266,16 @@ def _reapply_selection_mode_highlights(root):
         if any(t in obj for t in skip_markers):
             return
         if matches(obj):
+            # Material Preview / Rendered: an unselected cage stays
+            # hidden (see quiet_cages). prev_selected is the snapshot
+            # taken below, before this pass touches anything.
+            if quiet_cages.keep_hidden(obj, mode,
+                                       selected_names=prev_selected):
+                toggle_cabinet_color(
+                    obj, False,
+                    type_name=mode_tags.get(mode, ''),
+                )
+                return
             toggle_cabinet_color(
                 obj, True,
                 type_name=mode_tags.get(mode, ''),
@@ -16366,11 +18302,11 @@ def _reapply_selection_mode_highlights(root):
     prev_selected = {o.name for o in bpy.context.selected_objects}
     prev_active = view_layer.objects.active
 
-    apply(root)
-    for child in root.children_recursive:
-        apply(child)
+    subtree = [root, *root.children_recursive]
+    for obj in subtree:
+        apply(obj)
 
-    for obj in [root, *root.children_recursive]:
+    for obj in subtree:
         try:
             obj.select_set(obj.name in prev_selected)
         except RuntimeError:
@@ -16602,7 +18538,7 @@ def merge_cabinets(anchor, absorbed, side):
         return False
     if abs(a_props.depth - b_props.depth) > eps:
         return False
-    if abs(anchor.matrix_world.translation.z - absorbed.matrix_world.translation.z) > eps:
+    if abs(hb_utils.world_matrix(anchor).translation.z - hb_utils.world_matrix(absorbed).translation.z) > eps:
         return False
     if anchor.parent is not absorbed.parent:
         return False
@@ -16621,9 +18557,9 @@ def merge_cabinets(anchor, absorbed, side):
     # anchor.location.x) - same number the old code computed. For
     # island / off-wall placement the cabinets can sit at any Z
     # rotation; the projection handles both cases.
-    a_run = anchor.matrix_world.to_3x3() @ Vector((1.0, 0.0, 0.0))
+    a_run = hb_utils.world_matrix(anchor).to_3x3() @ Vector((1.0, 0.0, 0.0))
     a_run.z = 0.0
-    b_run = absorbed.matrix_world.to_3x3() @ Vector((1.0, 0.0, 0.0))
+    b_run = hb_utils.world_matrix(absorbed).to_3x3() @ Vector((1.0, 0.0, 0.0))
     b_run.z = 0.0
     if a_run.length < 1e-8 or b_run.length < 1e-8:
         return False
@@ -16635,7 +18571,7 @@ def merge_cabinets(anchor, absorbed, side):
     if a_run.dot(b_run) < math.cos(math.radians(0.5)):
         return False
 
-    disp = absorbed.matrix_world.translation - anchor.matrix_world.translation
+    disp = hb_utils.world_matrix(absorbed).translation - hb_utils.world_matrix(anchor).translation
     signed = disp.x * a_run.x + disp.y * a_run.y
     perp_x = disp.x - signed * a_run.x
     perp_y = disp.y - signed * a_run.y
@@ -16704,6 +18640,7 @@ def merge_cabinets(anchor, absorbed, side):
         for bay in absorbed_bays:
             bay.parent = anchor
             bay.matrix_parent_inverse.identity()
+        hb_utils.note_parent_change()
 
         if side == 'RIGHT':
             final_bays = anchor_bays + absorbed_bays
@@ -16797,6 +18734,7 @@ def merge_cabinets(anchor, absorbed, side):
             for part in absorbed_mid_parts:
                 part.parent = anchor
                 part.matrix_parent_inverse.identity()
+        hb_utils.note_parent_change()
 
         # Build the boundary mid stile + slot-0 / slot-1 mid div pair.
         # _create_mid_parts_at parents to anchor and sets defaults; the
@@ -17018,6 +18956,7 @@ def break_cabinet_at_gap(cabinet, gap_index, shrink_side='AUTO'):
             bay.matrix_parent_inverse.identity()
             bay['hb_bay_index'] = new_idx
             bay.face_frame_bay.bay_index = new_idx
+        hb_utils.note_parent_change()
 
         # Delete boundary mid stile + mid div pair
         for p in boundary_parts:
@@ -17030,6 +18969,7 @@ def break_cabinet_at_gap(cabinet, gap_index, shrink_side='AUTO'):
             p['hb_mid_stile_index'] = old_idx - (gap_index + 1)
             p.parent = new_root
             p.matrix_parent_inverse.identity()
+        hb_utils.note_parent_change()
 
         # Strip original's mid_stile_widths down to first gap_index entries
         coll_a = cab_props.mid_stile_widths

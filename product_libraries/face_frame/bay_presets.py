@@ -139,6 +139,8 @@ BASE_PRESETS = {
                                  L('DRAWER')),
     'OPEN_WITH_SHELVES':       L('OPEN_WITH_SHELVES'),
     'OPEN':                    L('OPEN'),
+    # Recipe placeholder; apply_bay_preset swaps in panel_recipe().
+    'PANEL':                   L('INSET_PANEL'),
     # Single opening filled by a recessed 1/4" inset panel (no overlay,
     # no swing). Default front for the Window Seat product.
     'INSET_PANEL':             L('INSET_PANEL'),
@@ -186,6 +188,8 @@ TALL_PRESETS = {
     'TALL_PULLOUT':               L('PULLOUT'),
     'OPEN_WITH_SHELVES':          L('OPEN_WITH_SHELVES'),
     'OPEN':                       L('OPEN'),
+    # Recipe placeholder; apply_bay_preset swaps in panel_recipe().
+    'PANEL':                      L('INSET_PANEL'),
     # Bookcase Storage Unit: open adjustable shelves on top over a double-
     # door storage base. The bottom doors pin to tall_cabinet_split_height
     # (TALL_SPLIT_BOTTOM) so the shelf zone above flexes with cabinet height.
@@ -231,6 +235,8 @@ UPPER_PRESETS = {
     'FALSE_FRONT':             L('FALSE_FRONT'),
     'OPEN_WITH_SHELVES':       L('OPEN_WITH_SHELVES'),
     'OPEN':                    L('OPEN'),
+    # Recipe placeholder; apply_bay_preset swaps in panel_recipe().
+    'PANEL':                   L('INSET_PANEL'),
 }
 
 
@@ -261,6 +267,8 @@ BAY_PROP_DEFAULTS = {
     # Re-locking kick height lets the recalc's kick-height distribution
     # re-sync the bay to the cabinet's toe_kick_height.
     'unlock_kick_height': False,
+    # Swapping away from Panel returns the rails to the cabinet widths.
+    'panel_bay': False,
 }
 
 BAY_PROPS = {
@@ -280,7 +288,30 @@ BAY_PROPS = {
         'remove_bottom': True,
         'kick_height': 0.0,
     },
+    # Panel bay: rails follow the neighbouring doors (see
+    # Face_Frame_Bay_Props.panel_bay); the recipe comes from
+    # panel_recipe() since the mid stile depends on the bay width.
+    'PANEL': {
+        'panel_bay': True,
+    },
 }
+
+
+# ---------------------------------------------------------------------------
+# Panel bay
+# ---------------------------------------------------------------------------
+# A frame-and-panel bay: recessed inset panels between rails that run
+# through the bay. Bays wider than the threshold get one mid stile,
+# which sits between the rails (it never cuts them). Same threshold as
+# finished-end panels.
+PANEL_MID_STILE_WIDTH_THRESHOLD = inch(21.0)
+
+
+def panel_recipe(bay_width):
+    """Recipe for the PANEL config at `bay_width`."""
+    if bay_width > PANEL_MID_STILE_WIDTH_THRESHOLD:
+        return V(L('INSET_PANEL'), L('INSET_PANEL'))
+    return L('INSET_PANEL')
 
 # Configs whose construction exposes the kick zone beside the bay (the
 # bay floats or has no bottom). The change_bay apply drops the stiles
@@ -324,6 +355,7 @@ BASE_MENU_ENTRIES = [
     SEP,
     ('OPEN_WITH_SHELVES',        "Open with Shelves"),
     ('OPEN',                     "Open"),
+    ('PANEL',                    "Panel"),
     SEP,
     ('LAP_DRAWER',               "Lap Drawer"),
     ('SUPPORT_FRAME',            "Support Frame"),
@@ -353,6 +385,7 @@ TALL_MENU_ENTRIES = [
     SEP,
     ('OPEN_WITH_SHELVES',         "Open with Shelves"),
     ('OPEN',                      "Open"),
+    ('PANEL',                     "Panel"),
     SEP,
     ('CUSTOM_HORIZONTAL', "Custom Horizontal", 'SNAP_EDGE'),
     ('CUSTOM_VERTICAL',   "Custom Vertical",   'PAUSE'),
@@ -379,6 +412,7 @@ UPPER_MENU_ENTRIES = [
     SEP,
     ('OPEN_WITH_SHELVES',         "Open with Shelves"),
     ('OPEN',                      "Open"),
+    ('PANEL',                     "Panel"),
     SEP,
     ('CUSTOM_HORIZONTAL', "Custom Horizontal", 'SNAP_EDGE'),
     ('CUSTOM_VERTICAL',   "Custom Vertical",   'PAUSE'),
@@ -456,13 +490,30 @@ def default_bay_config(cabinet_name, bay_width):
         return 'DOUBLE_STACKED_DOOR' if is_wide else 'LEFT_STACKED_DOOR'
     if cabinet_name == 'Refrigerator Cabinet':
         return 'BUILT_IN_REFRIGERATOR'
+    if cabinet_name.startswith('Galley IWS'):
+        # Workstation sink base: doors in every opening; the sink rides
+        # above them between the aprons.
+        return 'DOUBLE_DOOR' if is_wide else 'LEFT_SWING_DOOR'
+    if cabinet_name == 'Cooktop Base':
+        # False front over doors, as the sink cabinet: the cooktop drops
+        # into the counter above the false front.
+        return 'FALSE_FRONT_DOUBLE_DOOR'
     if cabinet_name == 'Built in Tall':
         # Tall cabinet with a built-in appliance opening: doors above and
         # below an open APPLIANCE zone. Same recipe as the Change Bay
         # menu's "Built In Appliance" option.
         return 'BUILT_IN_APPLIANCE'
+    if cabinet_name == 'ADA Sink':
+        # The apron closes this one; doors would fill the knee space
+        # the whole product exists to leave clear.
+        return None
     if cabinet_name == 'Sink':
         return 'FALSE_FRONT_DOUBLE_DOOR' if is_wide else 'FALSE_FRONT_DOOR'
+    if cabinet_name == 'Floating Vanity':
+        # A wall-hung vanity comes in as doors - the sink and the drawer
+        # stack are both changes from there, and doors are what the
+        # plain one is.
+        return 'DOUBLE_DOOR' if is_wide else 'LEFT_SWING_DOOR'
     if cabinet_name == 'Special':
         # Vanity "Special": a standard base cabinet with the VANITY_SPECIAL
         # bay configuration.

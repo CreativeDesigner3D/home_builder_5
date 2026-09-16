@@ -19,6 +19,22 @@ def get_color(color_name, color_type='stain'):
     return c1, c2
 
 
+def custom_finish_override(cabinet_style, c1, c2):
+    """(c1, c2) with a custom finish's picked colour standing in for both.
+
+    A custom catalog finish has no colour on file - it is matched to a
+    sample - so the finish tables fall back to one shade and every custom
+    job renders the same. Every path that builds the finish material runs
+    its colour pair through here, so they cannot drift apart.
+    """
+    if not style_options.is_custom_finish(
+            getattr(cabinet_style, 'finish_color', '')):
+        return c1, c2
+    picked = list(getattr(cabinet_style, 'custom_finish_color',
+                          (1, 1, 1, 1)))
+    return picked, list(picked)
+
+
 def update_finish_material(cabinet_style):
     """Update the finish material nodes based on the cabinet style settings.
     
@@ -56,6 +72,8 @@ def update_finish_material(cabinet_style):
 
     c1 = color_data.get('color_1', [1, 1, 1, 1])
     c2 = color_data.get('color_2', [1, 1, 1, 1])
+
+    c1, c2 = custom_finish_override(cabinet_style, c1, c2)
 
     # --- Determine wood grain parameters from species ---
     noise_scale_1 = 0
@@ -254,6 +272,7 @@ def update_finish_material_from_catalog(cabinet_style):
         return
 
     c1, c2 = style_options.color_rgb(cabinet_style.finish_color)
+    c1, c2 = custom_finish_override(cabinet_style, c1, c2)
     g = style_options.grain_for_wood(cabinet_style.finish_wood)
 
     for node, rotation in [(mat_node, math.radians(90)), (rotated_node, math.radians(0))]:

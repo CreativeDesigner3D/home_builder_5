@@ -20,7 +20,7 @@ PART_CLASS_MAP = {
     'Panel': types_products.Panel,
 }
 from .. import props_hb_frameless
-from ...common import types_appliances
+from ...common import types_appliances, appliance_geo
 from .... import hb_utils, hb_project, hb_snap, hb_placement, hb_details, hb_types, units
 
 def has_child_item_type(obj,item_type):
@@ -45,6 +45,26 @@ def _under_hidden_wall(obj):
         p = p.parent
     return False
 
+def _style_color(obj, fallback, highlight):
+    """``obj``'s cabinet-style colour where that view mode is on, else
+    ``fallback``.
+
+    Style colours are a way of looking at the whole scene, so they have
+    to outlast a selection-mode change: without this, entering a mode
+    repainted every cage with the generic highlight and the styles
+    vanished. ``highlight`` says whether this object is what the active
+    mode offers to be clicked, which is what earns the see-through wash.
+    Imported at call time -- the style pool lives in a sibling product
+    library that imports this module.
+    """
+    try:
+        from ...face_frame import props_hb_face_frame
+        return props_hb_face_frame.style_color_for_object(
+            obj, highlight=highlight) or fallback
+    except Exception:
+        return fallback
+
+
 def toggle_cabinet_color(obj,toggle,type_name="",dont_show_parent=True):
     hb_props = bpy.context.window_manager.home_builder
     add_on_prefs = hb_props.get_user_preferences(bpy.context)
@@ -55,7 +75,8 @@ def toggle_cabinet_color(obj,toggle,type_name="",dont_show_parent=True):
                 return
         if _under_hidden_wall(obj):
             return
-        obj.color = add_on_prefs.cabinet_color
+        obj.color = _style_color(obj, add_on_prefs.cabinet_color,
+                                 highlight=True)
         obj.show_in_front = True
         obj.hide_viewport = False
         obj.display_type = 'SOLID'
@@ -72,7 +93,9 @@ def toggle_cabinet_color(obj,toggle,type_name="",dont_show_parent=True):
             obj.color = add_on_prefs.annotation_color
             obj.display_type = 'SOLID'
         else:
-            obj.color = [1.000000, 1.000000, 1.000000, 1.000000]
+            obj.color = _style_color(
+                obj, [1.000000, 1.000000, 1.000000, 1.000000],
+                highlight=False)
             obj.display_type = 'SOLID'
         obj.select_set(False)
 
@@ -1864,6 +1887,8 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                     self.assign_door_styles_to_cabinet(cabinet.obj)
                     # Calculate default shelf quantities based on opening heights
                     bpy.ops.hb_frameless.calculate_shelf_quantity(cabinet_name=cabinet.obj.name)
+                else:
+                    appliance_geo.seed_on_place(cabinet.obj)
                 # Apply toggle mode for display
                 bpy.ops.hb_frameless.toggle_mode(search_obj_name=cabinet.obj.name)
             # Remove preview cage and dimensions

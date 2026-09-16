@@ -15,6 +15,7 @@ from . import bay_presets
 from . import cabinet_column
 from . import types_face_frame
 from . import types_face_frame_corner
+from . import types_column_beam
 from .operators import ops_part_commands
 from ... import accessory_registry, units
 
@@ -31,6 +32,27 @@ def _has_drawer_box_construction_options():
 def _draw_drawer_box_construction_menu(layout):
     layout.menu("HOME_BUILDER_MT_face_frame_drawer_box_construction",
                 text="Drawer Box Construction", icon='SNAP_VOLUME')
+
+
+def _draw_visibility_items(layout, scope, noun):
+    """Hide / Isolate / Show All Hidden for the clicked thing.
+
+    Blender's own hide only takes what is selected, so on a product built
+    from many parented objects it hides the cage and leaves the rest
+    standing. These commands hide the whole product, or one part on its
+    own, and bring everything back.
+    """
+    layout.separator()
+    op = layout.operator("hb_general.hide", text=f"Hide {noun}",
+                         icon='HIDE_ON')
+    op.scope = scope
+    op.isolate = False
+    op = layout.operator("hb_general.hide", text=f"Isolate {noun}",
+                         icon='ZOOM_SELECTED')
+    op.scope = scope
+    op.isolate = True
+    layout.operator("hb_general.show_all_hidden", text="Show All Hidden",
+                    icon='HIDE_OFF')
 
 
 def _draw_cutout_items(layout, obj):
@@ -253,6 +275,8 @@ class HOME_BUILDER_MT_face_frame_cabinet_commands(bpy.types.Menu):
                 layout.operator("hb_face_frame.remove_pipe_chase",
                                 text="Remove Pipe Chase", icon='X')
 
+        _draw_visibility_items(layout, 'PRODUCT', "Cabinet")
+
         layout.separator()
         layout.operator("hb_face_frame.delete_cabinet",
                         text="Delete Cabinet", icon='X')
@@ -269,6 +293,26 @@ class HOME_BUILDER_MT_face_frame_cabinet_group_commands(bpy.types.Menu):
         layout.separator()
         layout.operator("hb_face_frame.ungroup_cabinet",
                         text="Ungroup Cabinet", icon='GROUP')
+
+
+class HOME_BUILDER_MT_face_frame_bay_back_type(bpy.types.Menu):
+    """Back type for the picked bay. Cabinet Default follows the
+    cabinet's back; the rest are built on this bay's own back plane."""
+    bl_label = "Back Type"
+
+    def draw(self, context):
+        layout = self.layout
+        bay_obj = context.active_object
+        bp = getattr(bay_obj, 'face_frame_bay', None) if bay_obj else None
+        if bp is None:
+            layout.label(text="No bay selected", icon='INFO')
+            return
+        for item in bp.bl_rna.properties['back_condition'].enum_items:
+            op = layout.operator("hb_face_frame.set_bay_back_type",
+                                 text=item.name,
+                                 icon=('CHECKMARK' if bp.back_condition
+                                       == item.identifier else 'NONE'))
+            op.back_condition = item.identifier
 
 
 class HOME_BUILDER_MT_face_frame_bay_commands(bpy.types.Menu):
@@ -293,6 +337,9 @@ class HOME_BUILDER_MT_face_frame_bay_commands(bpy.types.Menu):
         layout.separator()
         layout.operator("hb_face_frame.finish_bay_prompts",
                         text="Finish Bay...", icon='SHADING_RENDERED')
+        # What closes this bay at the back, over the cabinet's own back.
+        layout.menu("HOME_BUILDER_MT_face_frame_bay_back_type",
+                    text="Back Type", icon='MOD_SOLIDIFY')
         # Under-cabinet appliance (uppers only): a microwave or a
         # short vent hood hanging below the bay.
         if cabinet_type == 'UPPER':
@@ -644,6 +691,8 @@ class HOME_BUILDER_MT_face_frame_part_commands(bpy.types.Menu):
 
         _draw_make_editable_items(layout, obj)
 
+        _draw_visibility_items(layout, 'OBJECT', "Part")
+
 
 class HOME_BUILDER_MT_face_frame_interior_part_commands(bpy.types.Menu):
     """Right-click menu for an interior part (shelf, pullout, mesh part,
@@ -666,6 +715,13 @@ class HOME_BUILDER_MT_face_frame_interior_part_commands(bpy.types.Menu):
         if (obj is not None
                 and obj.get('hb_part_role')
                 == types_face_frame.PART_ROLE_ROLLOUT_BOX):
+            # A rollout the cabinet built above a drawer is edited from
+            # here too, not only from the drawer box under it.
+            from .operators import ops_cabinet
+            if ops_cabinet.rollout_above_target(obj)[0] is not None:
+                layout.operator("hb_face_frame.rollout_above_drawer_prompts",
+                                text="Rollout Above Drawer...",
+                                icon='TRIA_UP_BAR')
             # Per-box U-notch, the rollout's version of the sink duo
             # drawer. Self-polling: hidden when the box predates the
             # per-box options and its indices don't resolve.
@@ -688,9 +744,21 @@ class HOME_BUILDER_MT_face_frame_interior_part_commands(bpy.types.Menu):
                         text="Finish Opening...", icon='SHADING_RENDERED')
         layout.operator("hb_face_frame.interior_options",
                         text="Interior Options...", icon='MESH_GRID')
-        # A shelf is as worth hand-editing as any other cutpart, and
-        # this is the only menu it has.
+        # A shelf takes cutouts and hand edits like any other cutpart, and
+        # this is the only menu it has. Its cutouts carry across the
+        # interior rebuild (_update_interior_items_in_opening), and so
+        # does a shelf made editable, standing in for the shelf it was.
+        _draw_cutout_items(layout, obj)
+        if (obj is not None and obj.get('IS_MANUAL_PART')
+                and obj.get(types_face_frame.INTERIOR_MANUAL_UNMATCHED)):
+            # The layout no longer builds the shelf this one replaced
+            # (fewer shelves, item removed): it is kept, not rebuilt.
+            layout.separator()
+            layout.label(text="Edited part is no longer in the layout",
+                         icon='ERROR')
         _draw_make_editable_items(layout, obj)
+
+        _draw_visibility_items(layout, 'OBJECT', "Part")
 
 
 class HOME_BUILDER_MT_face_frame_drawer_box_construction(bpy.types.Menu):
@@ -762,6 +830,8 @@ class HOME_BUILDER_MT_face_frame_drawer_box_commands(bpy.types.Menu):
         layout.separator()
         layout.operator("hb_face_frame.drawer_box_prompts",
                         text="Drawer Box Size...", icon='ARROW_LEFTRIGHT')
+        layout.operator("hb_face_frame.rollout_above_drawer_prompts",
+                        text="Rollout Above Drawer...", icon='TRIA_UP_BAR')
         layout.operator("hb_face_frame.sink_duo_drawer_prompts",
                         text="Sink Duo Drawer...", icon='SELECT_SUBTRACT')
         if _has_drawer_box_construction_options():
@@ -798,6 +868,13 @@ class HOME_BUILDER_MT_face_frame_opening_commands(bpy.types.Menu):
                         text="Finish Opening...", icon='SHADING_RENDERED')
         layout.operator("hb_face_frame.interior_options",
                         text="Interior Options...", icon='MESH_GRID')
+        # On the opening as well as the drawer box, so the rollouts stay
+        # reachable whatever is or isn't built inside.
+        from .operators import ops_cabinet
+        if ops_cabinet.rollout_above_target(context.active_object)[0]:
+            layout.operator("hb_face_frame.rollout_above_drawer_prompts",
+                            text="Rollout Above Drawer...",
+                            icon='TRIA_UP_BAR')
         # Accessories are the host application's catalog; with none
         # registered there is nothing to add, so the entry stays out.
         if accessory_registry.available():
@@ -811,6 +888,9 @@ class HOME_BUILDER_MT_face_frame_opening_commands(bpy.types.Menu):
         layout.separator()
         layout.operator("hb_face_frame.equalize_opening_heights",
                         text="Equalize Opening Heights",
+                        icon='ALIGN_JUSTIFY')
+        layout.operator("hb_face_frame.equalize_front_heights",
+                        text="Equalize Drawer Front Heights",
                         icon='ALIGN_JUSTIFY')
 
         layout.separator()
@@ -838,6 +918,8 @@ class HOME_BUILDER_MT_face_frame_change_opening(bpy.types.Menu):
         ('LEFT_DOOR',         "Left Door"),
         ('RIGHT_DOOR',        "Right Door"),
         ('DOUBLE_DOOR',       "Double Door"),
+        ('BIFOLD_LEFT_DOOR',  "Bi-fold Doors (Left)"),
+        ('BIFOLD_RIGHT_DOOR', "Bi-fold Doors (Right)"),
         ('SEP',),
         ('FLIP_UP_DOOR',      "Flip Up Door"),
         ('FLIP_DOWN_DOOR',    "Flip Down Door"),
@@ -1031,6 +1113,19 @@ class HOME_BUILDER_MT_face_frame_valance_commands(bpy.types.Menu):
                         text="Delete Valance", icon='X')
 
 
+class HOME_BUILDER_MT_face_frame_column_beam_commands(bpy.types.Menu):
+    """Right-click menu for a column or beam wrap root."""
+    bl_label = "Column / Beam Commands"
+
+    def draw(self, context):
+        layout = self.layout
+        layout.operator("hb_face_frame.column_beam_properties",
+                        text="Column / Beam Properties...", icon='WINDOW')
+        layout.separator()
+        layout.operator("hb_face_frame.delete_cabinet",
+                        text="Delete Column / Beam", icon='X')
+
+
 class HOME_BUILDER_MT_face_frame_mantle_commands(bpy.types.Menu):
     """Right-click menu for a mantle root."""
     bl_label = "Mantle Commands"
@@ -1159,11 +1254,13 @@ classes = (
     HOME_BUILDER_MT_face_frame_floating_shelf_commands,
     HOME_BUILDER_MT_face_frame_valance_commands,
     HOME_BUILDER_MT_face_frame_mantle_commands,
+    HOME_BUILDER_MT_face_frame_column_beam_commands,
     HOME_BUILDER_MT_face_frame_misc_part_commands,
     HOME_BUILDER_MT_face_frame_door_part_commands,
     HOME_BUILDER_MT_face_frame_leg_product_commands,
     HOME_BUILDER_MT_face_frame_cabinet_group_commands,
     HOME_BUILDER_MT_face_frame_bay_commands,
+    HOME_BUILDER_MT_face_frame_bay_back_type,
     HOME_BUILDER_MT_face_frame_part_commands,
     HOME_BUILDER_MT_face_frame_interior_part_commands,
     HOME_BUILDER_MT_face_frame_drawer_box_construction,

@@ -64,7 +64,11 @@ class home_builder_OT_create_room(bpy.types.Operator):
                 original_scene.hb_face_frame.top_drawer_opening_height)
         except Exception:
             pass
-        
+
+        # A new room shows appliance models the way the drawing does.
+        if not original_scene.home_builder.show_appliance_models:
+            new_scene.home_builder['show_appliance_models'] = False
+
         # Save view state of original scene if it's a room
         if hb_utils.is_room_scene(original_scene):
             hb_utils.save_view_state(original_scene)

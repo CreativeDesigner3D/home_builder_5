@@ -287,6 +287,7 @@ _pull_cache = {'selection': '', 'object': None}
 
 
 DEFAULT_PULL = 'CLASSIC 96.blend'
+CUSTOM_PULL = 'CUSTOM'
 
 
 def get_pull_files():
@@ -328,6 +329,11 @@ def pull_enum_items(self, context):
             stem = os.path.splitext(fname)[0]
             items.append((fname, stem, "", _thumb_icon(stem), i))
         items.append(('NONE', "None", "No pulls", 'X', len(items)))
+        # Numbered clear of the handle files: files store this enum by
+        # number, so adding a handle file must not land on Custom.
+        items.append((CUSTOM_PULL, "Custom",
+                      "A plain bar pull at the size typed below",
+                      'MODIFIER', 1000))
         _enum_cache = items
     return _enum_cache
 
@@ -381,7 +387,66 @@ def current_pull_stem():
                         'closet_pull', DEFAULT_PULL)
     if not selection or selection == 'NONE':
         return ''
+    if selection == CUSTOM_PULL:
+        return "CUSTOM %g" % round(_custom_pull_size() * 1000.0, 1)
     return os.path.splitext(selection)[0]
+
+
+def _custom_pull_size():
+    """Typed center to center of the custom pull, in meters."""
+    return max(float(getattr(bpy.context.scene.hb_closets,
+                             'closet_custom_pull_size', 0.096)), 0.01)
+
+
+def _build_custom_pull(mesh, center_to_center):
+    """A plain bar pull in the handle assets' space: centered on the
+    origin, bar along X, standing off the front along -Y. Two square
+    posts at the hole centers carry a bar that runs a little past
+    them."""
+    import bmesh
+    post = 0.01
+    stand_off = 0.028
+    overhang = 0.011
+    half = center_to_center / 2.0
+    boxes = (
+        # (x0, x1, y0, y1)
+        (-half - post / 2.0, -half + post / 2.0, -stand_off + post, 0.0),
+        (half - post / 2.0, half + post / 2.0, -stand_off + post, 0.0),
+        (-half - overhang, half + overhang, -stand_off, -stand_off + post),
+    )
+    bm = bmesh.new()
+    for x0, x1, y0, y1 in boxes:
+        geom = bmesh.ops.create_cube(bm, size=1.0)
+        bmesh.ops.scale(bm, vec=(x1 - x0, y1 - y0, post),
+                        verts=geom['verts'])
+        bmesh.ops.translate(bm, vec=((x0 + x1) / 2.0, (y0 + y1) / 2.0,
+                                     0.0),
+                            verts=geom['verts'])
+    bm.to_mesh(mesh)
+    bm.free()
+
+
+def _resolve_custom_pull(finish=None):
+    size = _custom_pull_size()
+    key = "%s:%.6f" % (CUSTOM_PULL, size)
+    cached = _pull_cache['object']
+    if _pull_cache['selection'] == key and cached is not None:
+        try:
+            cached.name
+            _apply_finish_to_pull(cached, finish)
+            return cached
+        except ReferenceError:
+            pass
+    pull_obj = bpy.data.objects.get('Closet Custom Pull')
+    if pull_obj is None or pull_obj.type != 'MESH':
+        mesh = bpy.data.meshes.new('Closet Custom Pull')
+        pull_obj = bpy.data.objects.new('Closet Custom Pull', mesh)
+    # Rebuilt in place: placed pulls share this mesh, so they resize too.
+    _build_custom_pull(pull_obj.data, size)
+    _pull_cache['selection'] = key
+    _pull_cache['object'] = pull_obj
+    _apply_finish_to_pull(pull_obj, finish)
+    return pull_obj
 
 
 def resolve_pull_object(selection=None, finish=None):
@@ -396,6 +461,8 @@ def resolve_pull_object(selection=None, finish=None):
                             'closet_pull', DEFAULT_PULL)
     if not selection or selection == 'NONE':
         return None
+    if selection == CUSTOM_PULL:
+        return _resolve_custom_pull(finish)
 
     cached = _pull_cache['object']
     if _pull_cache['selection'] == selection and cached is not None:

@@ -113,6 +113,18 @@ class HOME_BUILDER_MT_door_commands(bpy.types.Menu):
         layout.operator("home_builder_doors_windows.delete_door_window", text="Delete Door").object_type = 'DOOR'
 
 
+class HOME_BUILDER_MT_obstacle_commands(bpy.types.Menu):
+    bl_label = "Obstacle Commands"
+
+    def draw(self, context):
+        layout = self.layout
+        layout.operator("home_builder_obstacles.edit_obstacle",
+                        text="Obstacle Properties", icon='WINDOW')
+        layout.separator()
+        layout.operator("home_builder_obstacles.delete_obstacle",
+                        text="Delete Obstacle", icon='X')
+
+
 class HOME_BUILDER_MT_window_commands(bpy.types.Menu):
     bl_label = "Window Commands"
 
@@ -881,6 +893,7 @@ classes = (
     HOME_BUILDER_MT_wall_commands,
     HOME_BUILDER_MT_soffit_commands,
     HOME_BUILDER_MT_door_commands,
+    HOME_BUILDER_MT_obstacle_commands,
     HOME_BUILDER_MT_window_commands,
     HOME_BUILDER_OT_flip_dimensions,
     HOME_BUILDER_OT_flip_dimension_text,

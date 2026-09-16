@@ -13,6 +13,7 @@ from . import ops_thumbnails
 from . import ops_wedge
 from . import ops_pipe_chase
 from . import ops_pull_library
+from . import ops_draw_path
 
 
 def register():
@@ -31,9 +32,11 @@ def register():
     ops_wedge.register()
     ops_pipe_chase.register()
     ops_pull_library.register()
+    ops_draw_path.register()
 
 
 def unregister():
+    ops_draw_path.unregister()
     ops_pull_library.unregister()
     ops_pipe_chase.unregister()
     ops_wedge.unregister()

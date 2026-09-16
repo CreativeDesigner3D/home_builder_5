@@ -9,7 +9,7 @@ solver_face_frame.compute_wedge / wedge_geometry and
 types_face_frame._apply_wedge_cuts.
 """
 import bpy
-from bpy.props import FloatProperty
+from bpy.props import BoolProperty, FloatProperty
 
 from .. import solver_face_frame as solver
 from ....units import inch, meter_to_inch
@@ -65,6 +65,22 @@ class HB_FACE_FRAME_OT_add_refrigerator_wedge(bpy.types.Operator):
         default=inch(3.0), unit='LENGTH', subtype='DISTANCE', precision=4,
         min=0.0,
     )  # type: ignore
+    use_my_sizes: BoolProperty(
+        name="Use My Sizes",
+        description="Build the wedge at the sizes entered below instead "
+                    "of the calculated ones",
+        default=False,
+    )  # type: ignore
+    my_length: FloatProperty(
+        name="Wedge Length",
+        description="Length of the wedge along the cabinet depth",
+        default=0.0, min=0.0, unit='LENGTH', subtype='DISTANCE', precision=4,
+    )  # type: ignore
+    my_height: FloatProperty(
+        name="Wedge Height",
+        description="Height of the wedge up the cabinet back",
+        default=0.0, min=0.0, unit='LENGTH', subtype='DISTANCE', precision=4,
+    )  # type: ignore
 
     @classmethod
     def poll(cls, context):
@@ -78,6 +94,9 @@ class HB_FACE_FRAME_OT_add_refrigerator_wedge(bpy.types.Operator):
             self.ceiling_height = cab.wedge_ceiling_height
             self.fudge_allowance = cab.wedge_fudge
             self.max_wedge_height = cab.wedge_max_height
+            self.use_my_sizes = getattr(cab, 'wedge_override', False)
+            self.my_length = getattr(cab, 'wedge_length', 0.0)
+            self.my_height = getattr(cab, 'wedge_height', 0.0)
         else:
             hb = getattr(context.scene, 'home_builder', None)
             if hb is not None:
@@ -121,6 +140,21 @@ class HB_FACE_FRAME_OT_add_refrigerator_wedge(bpy.types.Operator):
             box.label(text="No Wedge Needed", icon='INFO')
             box.label(text="The cabinet's diagonal fits the effective ceiling.")
 
+        # Somewhere else may work this out differently. What is typed
+        # here is what gets built, no questions asked.
+        box = layout.box()
+        box.prop(self, 'use_my_sizes', text="Use my sizes instead")
+        sub = box.column(align=True)
+        sub.enabled = self.use_my_sizes
+        sub.prop(self, 'my_length')
+        sub.prop(self, 'my_height')
+        if not self.use_my_sizes and needed:
+            box.label(text="Ticking this starts from the sizes above",
+                      icon='INFO')
+
+        layout.label(text="The wedge stays in the model, cut and back in "
+                          "place, as it is on site.", icon='INFO')
+
     def execute(self, context):
         cab = context.active_object.face_frame_cabinet
         length, height, clamped, needed = solver.compute_wedge(
@@ -131,6 +165,16 @@ class HB_FACE_FRAME_OT_add_refrigerator_wedge(bpy.types.Operator):
         cab.wedge_ceiling_height = self.ceiling_height
         cab.wedge_fudge = self.fudge_allowance
         cab.wedge_max_height = self.max_wedge_height
+        cab.wedge_override = self.use_my_sizes
+        if self.use_my_sizes:
+            # An empty field means "start from what you worked out", so
+            # the calculated size lands in it rather than building
+            # nothing.
+            cab.wedge_length = self.my_length if self.my_length > 0.0 else length
+            cab.wedge_height = self.my_height if self.my_height > 0.0 else height
+            length = cab.wedge_length
+            height = cab.wedge_height
+            needed = length > 0.0 or height > 0.0
         # Setting wedge_enabled fires the update callback -> recalc.
         cab.wedge_enabled = True
 

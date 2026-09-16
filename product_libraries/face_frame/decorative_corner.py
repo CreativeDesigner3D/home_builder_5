@@ -54,6 +54,7 @@ import math
 import bpy
 import bmesh
 
+from ... import hb_utils
 from ...units import inch
 
 
@@ -521,7 +522,7 @@ def ensure_post(cabinet_obj, corner, label):
     if obj is not None:
         return obj
     name = 'Decorative Corner %s' % label
-    obj = bpy.data.objects.new(name, bpy.data.meshes.new(name))
+    obj = hb_utils.new_object(name, bpy.data.meshes.new(name))
     obj['hb_part_role'] = PART_ROLE
     obj['hb_corner'] = corner
     obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_cabinet_commands'
@@ -537,7 +538,7 @@ def ensure_cutter(cabinet_obj, corner, label):
     if obj is not None:
         return obj
     name = 'Decorative Corner Cutter %s' % label
-    obj = bpy.data.objects.new(name, bpy.data.meshes.new(name))
+    obj = hb_utils.new_object(name, bpy.data.meshes.new(name))
     obj['hb_part_role'] = PART_ROLE_CUTTER
     obj['hb_corner'] = corner
     obj.parent = cabinet_obj

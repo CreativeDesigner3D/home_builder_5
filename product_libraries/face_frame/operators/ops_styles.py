@@ -7,7 +7,22 @@ from bpy.types import Operator
 
 from ..props_hb_face_frame import (get_style_props,
                                    _reapply_materials_for_door_style)
+from .. import props_hb_face_frame
 from .. import style_options
+
+
+def _refresh_style_colors(context):
+    """Repaint the viewport when style colours are showing.
+
+    A cabinet's colour comes from its style's place in the pool, so
+    adding, removing, reordering or reassigning a style changes what the
+    scene should look like. No-op while the option is off.
+    """
+    try:
+        if get_style_props(context).show_style_colors:
+            props_hb_face_frame.apply_style_colors(context)
+    except Exception:
+        pass
 
 
 def _next_unique_name(base, existing):
@@ -32,14 +47,19 @@ def _copy_door_style(src, dst):
             setattr(dst, pid, getattr(src, pid))
         except Exception:
             pass
+    # rename_anchor is the style's OWN previous name (see the cabinet-style
+    # copy above): copying it would make the copy's first rename re-tag
+    # every front of the SOURCE style.
     for prop in src.bl_rna.properties:
         pid = prop.identifier
-        if pid in ('rna_type', 'name') or pid in cascade or prop.is_readonly:
+        if (pid in ('rna_type', 'name', 'rename_anchor') or pid in cascade
+                or prop.is_readonly):
             continue
         try:
             setattr(dst, pid, getattr(src, pid))
         except Exception:
             pass
+    dst.rename_anchor = dst.name
 
 
 def _copy_collection(src_coll, dst_coll):
@@ -122,6 +142,7 @@ class hb_face_frame_OT_add_cabinet_style(Operator):
         # re-tags cabinets assigned to IT, never the style it came from.
         new_style.rename_anchor = new_style.name
         ff.active_cabinet_style_index = len(ff.cabinet_styles) - 1
+        _refresh_style_colors(context)
         self.report({'INFO'}, f"Added cabinet style: {new_style.name}")
         return {'FINISHED'}
 
@@ -132,6 +153,11 @@ class hb_face_frame_OT_remove_cabinet_style(Operator):
     bl_label = "Remove Cabinet Style"
     bl_description = "Remove the active cabinet style"
     bl_options = {'REGISTER', 'UNDO'}
+
+    # Callers that show a style other than the active one (the settings
+    # dialog opens on the row whose gear was clicked) pass the index they
+    # are showing; -1 keeps the old behaviour of removing the active one.
+    index: bpy.props.IntProperty(default=-1)  # type: ignore
 
     @classmethod
     def poll(cls, context):
@@ -145,13 +171,18 @@ class hb_face_frame_OT_remove_cabinet_style(Operator):
         if len(ff.cabinet_styles) <= 1:
             self.report({'WARNING'}, "At least one cabinet style must remain")
             return {'CANCELLED'}
-        idx = ff.active_cabinet_style_index
+        idx = self.index if self.index >= 0 else ff.active_cabinet_style_index
         if idx < 0 or idx >= len(ff.cabinet_styles):
             return {'CANCELLED'}
         name = ff.cabinet_styles[idx].name
         ff.cabinet_styles.remove(idx)
+        # Removing a row above the active one slides the rest up, so the
+        # stored index would land on the wrong style.
+        if idx < ff.active_cabinet_style_index:
+            ff.active_cabinet_style_index -= 1
         if ff.active_cabinet_style_index >= len(ff.cabinet_styles):
             ff.active_cabinet_style_index = max(0, len(ff.cabinet_styles) - 1)
+        _refresh_style_colors(context)
         self.report({'INFO'}, f"Removed cabinet style: {name}")
         return {'FINISHED'}
 
@@ -192,6 +223,7 @@ class hb_face_frame_OT_move_cabinet_style(Operator):
         # (the host add-on's style colors, applied at page generation) changes.
         ff.cabinet_styles.move(idx, new_idx)
         ff.active_cabinet_style_index = new_idx
+        _refresh_style_colors(context)
         return {'FINISHED'}
 
 
@@ -390,6 +422,7 @@ class hb_face_frame_OT_assign_style_to_selected_cabinets(Operator):
         for part in bare_parts:
             _apply_style_finish_to_bare_part(style, part)
         n = len(cab_roots) + len(hood_roots) + len(bare_parts)
+        _refresh_style_colors(context)
         self.report({'INFO'}, f"Applied '{style.name}' to {n} item(s)")
         return {'FINISHED'}
 
@@ -514,6 +547,7 @@ class hb_face_frame_OT_paint_assign_cabinet_style(bpy.types.Operator):
             return
         if root.get('IS_FACE_FRAME_CABINET_CAGE'):
             style.assign_style_to_cabinet(root)
+            _refresh_style_colors(context)
         elif root.get('APPLIANCE_TYPE') == 'HOOD':
             # Stamp the style, then rebuild a built wood hood so its
             # static doors pick up the new style's door construction.
@@ -1056,15 +1090,30 @@ class hb_face_frame_PG_temp_special_effect(bpy.types.PropertyGroup):
     is_selected: bpy.props.BoolProperty(name="Is Selected")  # type: ignore
 
 
-def _active_cabinet_style(context):
-    """The cabinet style currently selected in the styles list, or None."""
+def _active_cabinet_style(context, style_index=-1):
+    """The cabinet style the user is editing, or None.
+
+    ``style_index`` names a row outright -- the per-style form is also
+    drawn in a settings dialog opened on a row that is not the
+    highlighted one, and its buttons pass the row they belong to. With
+    no index (or one that no longer exists) this falls back to the
+    highlighted row, which is what the sidebar form shows.
+    """
     ff = get_style_props(context)
     if ff is None or not ff.cabinet_styles:
         return None
+    if 0 <= style_index < len(ff.cabinet_styles):
+        return ff.cabinet_styles[style_index]
     idx = ff.active_cabinet_style_index
     if idx < 0 or idx >= len(ff.cabinet_styles):
         return None
     return ff.cabinet_styles[idx]
+
+
+def _style_index_prop():
+    """Row this button belongs to; -1 means "the highlighted style"."""
+    return bpy.props.IntProperty(name="Style Index", default=-1,
+                                 options={'HIDDEN'})
 
 
 class hb_face_frame_OT_add_special_effects(Operator):
@@ -1078,10 +1127,12 @@ class hb_face_frame_OT_add_special_effects(Operator):
 
     candidates: bpy.props.CollectionProperty(
         type=hb_face_frame_PG_temp_special_effect)  # type: ignore
+    style_index: bpy.props.IntProperty(
+        name="Style Index", default=-1, options={'HIDDEN'})  # type: ignore
 
     def invoke(self, context, event):
         self.candidates.clear()
-        style = _active_cabinet_style(context)
+        style = _active_cabinet_style(context, self.style_index)
         if style is None:
             self.report({'ERROR'}, "No active cabinet style.")
             return {'CANCELLED'}
@@ -1102,7 +1153,7 @@ class hb_face_frame_OT_add_special_effects(Operator):
             col.prop(c, "is_selected", text=c.name)
 
     def execute(self, context):
-        style = _active_cabinet_style(context)
+        style = _active_cabinet_style(context, self.style_index)
         if style is None:
             return {'CANCELLED'}
         added = 0
@@ -1122,9 +1173,11 @@ class hb_face_frame_OT_remove_special_effect(Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     effect_name: bpy.props.StringProperty(name="Name")  # type: ignore
+    style_index: bpy.props.IntProperty(
+        name="Style Index", default=-1, options={'HIDDEN'})  # type: ignore
 
     def execute(self, context):
-        style = _active_cabinet_style(context)
+        style = _active_cabinet_style(context, self.style_index)
         if style is None:
             return {'CANCELLED'}
         for i, item in enumerate(style.special_effects):
@@ -1149,9 +1202,11 @@ class hb_face_frame_OT_add_cabinet_extra_front_style(Operator):
         items=[('DOOR', "Door", "Door style"),
                ('DRAWER', "Drawer", "Drawer front style")],
         default='DOOR')  # type: ignore
+    style_index: bpy.props.IntProperty(
+        name="Style Index", default=-1, options={'HIDDEN'})  # type: ignore
 
     def execute(self, context):
-        style = _active_cabinet_style(context)
+        style = _active_cabinet_style(context, self.style_index)
         if style is None:
             self.report({'ERROR'}, "No active cabinet style.")
             return {'CANCELLED'}
@@ -1172,10 +1227,12 @@ class hb_face_frame_OT_remove_cabinet_extra_front_style(Operator):
         items=[('DOOR', "Door", "Door style"),
                ('DRAWER', "Drawer", "Drawer front style")],
         default='DOOR')  # type: ignore
+    style_index: bpy.props.IntProperty(
+        name="Style Index", default=-1, options={'HIDDEN'})  # type: ignore
     index: bpy.props.IntProperty(name="Index", default=-1)  # type: ignore
 
     def execute(self, context):
-        style = _active_cabinet_style(context)
+        style = _active_cabinet_style(context, self.style_index)
         if style is None:
             return {'CANCELLED'}
         coll = (style.extra_drawer_front_styles if self.kind == 'DRAWER'
@@ -1194,8 +1251,11 @@ class hb_face_frame_OT_add_style_note(Operator):
     bl_description = "Add a note line printed on the Style Section page"
     bl_options = {'REGISTER', 'UNDO'}
 
+    style_index: bpy.props.IntProperty(
+        name="Style Index", default=-1, options={'HIDDEN'})  # type: ignore
+
     def execute(self, context):
-        style = _active_cabinet_style(context)
+        style = _active_cabinet_style(context, self.style_index)
         if style is None:
             self.report({'ERROR'}, "No active cabinet style.")
             return {'CANCELLED'}
@@ -1211,9 +1271,11 @@ class hb_face_frame_OT_remove_style_note(Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     index: bpy.props.IntProperty(name="Index", default=-1)  # type: ignore
+    style_index: bpy.props.IntProperty(
+        name="Style Index", default=-1, options={'HIDDEN'})  # type: ignore
 
     def execute(self, context):
-        style = _active_cabinet_style(context)
+        style = _active_cabinet_style(context, self.style_index)
         if style is None:
             return {'CANCELLED'}
         if 0 <= self.index < len(style.ss_notes):

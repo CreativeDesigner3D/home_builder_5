@@ -45,8 +45,8 @@ from bpy.app.handlers import persistent
 bl_info = {
     "name": "Home Builder 5",
     "author": "Andrew Peel",
-    "version": (5, 2, 0),
-    "blender": (5, 0, 0),
+    "version": (5, 2, 7),
+    "blender": (5, 1, 0),
     "location": "3D Viewport Sidebar",
     "description": "Library for Designing Interior Spaces",
     "warning": "",
@@ -77,10 +77,48 @@ def load_file_post(scene):
     from .operators import viewport_hud
     viewport_hud.ensure_listener()
 
+    # msgbus subscriptions do not survive a .blend load either.
+    from .product_libraries.face_frame import quiet_cages
+    quiet_cages.ensure_subscriptions()
+
     # Door/window boolean cutters saved while still visible in the
     # viewport would cover their own opening in rendered shading.
     from .product_libraries.common import door_window_geo
     door_window_geo.hide_reveal_cutters()
+
+    # Products are solved in Python. Products from an older build were
+    # built from drivers instead, which is what let a saved product reopen
+    # collapsed or missing -- re-solve them so they come back as saved.
+    from .product_libraries.frameless import types_products, solver_frameless
+    types_products.upgrade_products()
+    solver_frameless.upgrade_cabinets()
+
+    # Style colours are a view mode, held per file and on by default, so
+    # the scene has to be painted for it on load rather than only when
+    # the option is switched.
+    from .product_libraries.face_frame import props_hb_face_frame
+    try:
+        props_hb_face_frame.apply_style_colors(bpy.context)
+    except Exception:
+        pass
+
+    # A new, never-saved file starts with the Show Model switch the user
+    # last chose; a saved file keeps the switch it was saved with.
+    if not bpy.data.filepath:
+        _apply_new_file_appliance_models()
+
+
+def _apply_new_file_appliance_models():
+    try:
+        prefs = bpy.context.preferences.addons[__package__].preferences
+    except (KeyError, AttributeError):
+        return
+    show = bool(prefs.show_appliance_models)
+    for scene in bpy.data.scenes:
+        hb = getattr(scene, 'home_builder', None)
+        if hb is not None and hb.show_appliance_models != show:
+            # Stored directly: the update would re-save the preference.
+            hb['show_appliance_models'] = show
 
 
 def _update_use_viewport_hud(self, context):
@@ -154,6 +192,15 @@ class Home_Builder_AddonPreferences(bpy.types.AddonPreferences):
                     "while the marks are still unfamiliar",
         default=False,
         update=_update_use_viewport_hud,
+    ) # type: ignore
+
+    # Not drawn: remembers the library panel's Show Model switch, which
+    # sets it, so a new drawing starts the way the user last left it.
+    show_appliance_models: bpy.props.BoolProperty(
+        name="Show Appliance Models",
+        description="Whether new drawings start with the 3D models on "
+                    "their appliances showing",
+        default=True,
     ) # type: ignore
 
     hide_2d_drawing_panels: bpy.props.BoolProperty(
@@ -304,7 +351,7 @@ class Home_Builder_AddonPreferences(bpy.types.AddonPreferences):
         sub = col.column(align=True)
         sub.enabled = self.use_room_palette
         sub.prop(self, "palette_expanded")
-        
+
         # Layout view defaults
         box = layout.box()
         box.label(text="Layout View Defaults", icon='RENDERLAYERS')
