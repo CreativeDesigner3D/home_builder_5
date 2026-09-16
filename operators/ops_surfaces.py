@@ -646,6 +646,10 @@ class HOME_BUILDER_OT_edit_backsplash(bpy.types.Operator):
 # it there is no slab left to grab hold of again.
 MIN_COUNTERTOP_SPAN = 2.0 * backsplash.INCH
 
+# A top's shape is shop data, so a drag always lands on the sixteenth;
+# Ctrl coarsens that to the inch.
+FINE_SNAP_STEP = backsplash.INCH / 16.0
+
 # Sizes a corner finish starts at. A clip starts square at a foot each
 # way, the size fabricators quote a clipped corner at; a radius at six
 # inches. Both shrink to fit a short edge.
@@ -852,7 +856,7 @@ class HOME_BUILDER_OT_edit_countertop(bpy.types.Operator):
 
     STATUS = ("Drag an edge or corner (click it to place, type a size)   |   "
               "Shift+Click edge: add corner   |   B: bob corner   "
-              "R: radius   X: remove corner   |   Ctrl: snap   |   "
+              "R: radius   X: remove corner   |   Ctrl: snap to the inch   |   "
               "Enter: done   |   Esc: cancel")
     WOOD_STATUS = STATUS.replace(
         "X: remove corner",
@@ -1137,7 +1141,7 @@ class HOME_BUILDER_OT_edit_countertop(bpy.types.Operator):
         mouse = self._local_point(context, event)
         dx = mouse[0] - self.press_local[0]
         dy = mouse[1] - self.press_local[1]
-        snap = event.ctrl
+        step = SNAP_STEP if event.ctrl else FINE_SNAP_STEP
         result = None
         readout = ""
         new_index = i
@@ -1151,8 +1155,7 @@ class HOME_BUILDER_OT_edit_countertop(bpy.types.Operator):
             if n is None:
                 return
             delta = dx * n[0] + dy * n[1]
-            if snap:
-                delta = round(delta / SNAP_STEP) * SNAP_STEP
+            delta = round(delta / step) * step
             if typed_value is not None:
                 delta = typed_value
             pts, cns, edge = countertop_common.slide_edge(
@@ -1173,8 +1176,7 @@ class HOME_BUILDER_OT_edit_countertop(bpy.types.Operator):
             t = (c[0] + dx - p[0]) * u[0] + (c[1] + dy - p[1]) * u[1]
             from_prev = self.anchor_end == 'PREV'
             dist = t if from_prev else length - t
-            if snap:
-                dist = round(dist / SNAP_STEP) * SNAP_STEP
+            dist = round(dist / step) * step
             if typed_value is not None:
                 dist = typed_value
             t = dist if from_prev else length - dist
@@ -1187,9 +1189,8 @@ class HOME_BUILDER_OT_edit_countertop(bpy.types.Operator):
 
         elif self.drag_kind == 'CORNER':
             ox, oy = dx, dy
-            if snap:
-                ox = round(ox / SNAP_STEP) * SNAP_STEP
-                oy = round(oy / SNAP_STEP) * SNAP_STEP
+            ox = round(ox / step) * step
+            oy = round(oy / step) * step
             c = points[i]
             pts, cns = countertop_common.move_corner(
                 points, corners, i, (c[0] + ox, c[1] + oy))
@@ -1223,8 +1224,7 @@ class HOME_BUILDER_OT_edit_countertop(bpy.types.Operator):
             else:
                 factor = max(math.cos(half), 1e-6)
             size = max(0.0, d / factor) if factor > 1e-6 else 0.0
-            if snap:
-                size = round(size / SNAP_STEP) * SNAP_STEP
+            size = round(size / step) * step
             if typed_value is not None:
                 size = max(0.0, typed_value)
             size = max(size, 0.125 * backsplash.INCH)
@@ -1371,12 +1371,12 @@ class HOME_BUILDER_OT_edit_countertop(bpy.types.Operator):
         i = handle['index']
         mouse = self._local_point(context, event)
         a, b = points[i], points[(i + 1) % len(points)]
-        if event.ctrl:
-            u = self._unit((b[0] - a[0], b[1] - a[1]))
-            if u is not None:
-                t = (mouse[0] - a[0]) * u[0] + (mouse[1] - a[1]) * u[1]
-                t = round(t / SNAP_STEP) * SNAP_STEP
-                mouse = (a[0] + u[0] * t, a[1] + u[1] * t)
+        u = self._unit((b[0] - a[0], b[1] - a[1]))
+        if u is not None:
+            step = SNAP_STEP if event.ctrl else FINE_SNAP_STEP
+            t = (mouse[0] - a[0]) * u[0] + (mouse[1] - a[1]) * u[1]
+            t = round(t / step) * step
+            mouse = (a[0] + u[0] * t, a[1] + u[1] * t)
         pts, cns, new = countertop_common.split_edge(points, corners, i, mouse)
         if new is None:
             return
