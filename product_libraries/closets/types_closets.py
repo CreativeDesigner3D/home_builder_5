@@ -387,29 +387,29 @@ def _stamp_warning(obj, message):
 
 
 def _door_size_warning(width, height, hinge):
-    """Why this door is past what the catalog makes, in the words the
-    prior library used, or '' when it is not. A swing door runs up to
-    24 5/8" wide by 84" tall; a lift-up lies on its side and takes the
-    same limits the other way around, and its hardware will not work a
-    door shorter than 11 1/4". A tilt-out hamper went unchecked in the
-    prior library, so it is left alone here too. More than one limit
-    can be broken at once; every broken one is said."""
+    """Why this door is past what the catalog makes, or '' when it is
+    not. A swing door runs up to 24 5/8" wide by 84" tall; a lift-up
+    lies on its side and takes the same limits the other way around,
+    and its hardware will not work a door shorter than 11 1/4". A
+    tilt-out hamper went unchecked in the prior library, so it is left
+    alone here too. More than one limit can be broken at once; every
+    broken one is said. The warning rides the door itself, so it names
+    the dimension plainly rather than in the prior library's list-speak
+    ("Room has door width that...")."""
     msgs = []
     if hinge == 'TOP':
         if height < const.LIFT_UP_MIN_HEIGHT:
-            msgs.append("Lift Up door height must be at least "
+            msgs.append("Lift Up Door Height must be at least "
                         "11 1/4 Inches")
         if width > const.DOOR_MAX_LONG:
-            msgs.append("Room has door width that exceeds 84 Inches")
+            msgs.append("Door Width exceeds 84 Inches")
         if height > const.DOOR_MAX_NARROW:
-            msgs.append("Room has door height that exceeds "
-                        "24 5/8 Inches")
+            msgs.append("Door Height exceeds 24 5/8 Inches")
     elif hinge in ('LEFT', 'RIGHT'):
         if width > const.DOOR_MAX_NARROW:
-            msgs.append("Room has door width that exceeds "
-                        "24 5/8 Inches")
+            msgs.append("Door Width exceeds 24 5/8 Inches")
         if height > const.DOOR_MAX_LONG:
-            msgs.append("Room has door height that exceeds 84 Inches")
+            msgs.append("Door Height exceeds 84 Inches")
     return "; ".join(msgs)
 
 
@@ -2005,7 +2005,7 @@ class ClosetStarter(GeoNodeCage):
                                   "final placement may be different.")
             if (max(shelf_w - 2 * f_inset, inch(1.0)) + 1.0e-6
                     >= const.SHOE_FENCE_MAX_LENGTH):
-                slant_msgs.append("Shoe Shelf Fence Excedes 35 Inches")
+                slant_msgs.append("Shoe Shelf Fence exceeds 35 Inches")
             for i, child in enumerate(slants):
                 z = spacing * i + rise
                 # The stack stops where the opening stops: a shelf whose
