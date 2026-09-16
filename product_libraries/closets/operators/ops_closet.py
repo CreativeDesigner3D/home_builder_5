@@ -4599,7 +4599,9 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
     fabric: bpy.props.EnumProperty(
         name="Fabric", items=_fabric_items)  # type: ignore
     location: bpy.props.FloatProperty(
-        name="Height Off Opening Floor", min=0.0,
+        name="Height Off Opening Floor",
+        description="How far up the opening the accessory sits. Below "
+                    "zero hangs it down past the bottom of the partition",
         unit='LENGTH', precision=4)  # type: ignore
     setback: bpy.props.FloatProperty(
         name="Back From The Front", min=0.0, unit='LENGTH',
@@ -4834,8 +4836,13 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
             if self.fabric != 'NONE':
                 obj[types_closets.PROP_ACCESSORY_FABRIC] = self.fabric
             if acc_def is None or acc_def.family != acc.FAMILY_INSERT:
-                obj[types_closets.PROP_ACCESSORY_Z] = float(
-                    self.location)
+                # Below zero hangs it past the bottom of the partition.
+                # A wall has no partition to hang below - the floor is
+                # under it.
+                z = float(self.location)
+                if obj.get(types_closets.PROP_ACCESSORY_ON_WALL):
+                    z = max(z, 0.0)
+                obj[types_closets.PROP_ACCESSORY_Z] = z
             if acc_def is not None and acc_def.family == acc.FAMILY_INSERT:
                 obj[types_closets.PROP_ACCESSORY_NO_FRONT] = (
                     1 if self.remove_front else 0)

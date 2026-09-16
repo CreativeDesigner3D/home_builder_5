@@ -3172,11 +3172,16 @@ class ClosetStarter(GeoNodeCage):
                                     []).append(front)
 
             # Where it sits. A height set close to the floor is taken
-            # to mean the floor.
+            # to mean the floor. One typed below the floor in its
+            # properties is left there, the way the prior library let
+            # it be: a rack or a hook can hang down past the bottom of
+            # a partition. An insert stands on a shelf, so it cannot.
             z = float(cage.get(PROP_ACCESSORY_Z, 0.0))
-            if z < const.ACCESSORY_BOTTOM_SNAP_TOL:
+            if 0.0 <= z < const.ACCESSORY_BOTTOM_SNAP_TOL:
                 z = 0.0
-            z = max(0.0, min(z, max(interior_h - acc_def.height, 0.0)))
+            z = min(z, max(interior_h - acc_def.height, 0.0))
+            if acc_def.family == acc.FAMILY_INSERT:
+                z = max(z, 0.0)
             cage[PROP_ACCESSORY_Z] = z
 
             band = accessory_band(cage, acc_def, width)
@@ -3246,7 +3251,7 @@ class ClosetStarter(GeoNodeCage):
                 pt = scene_props.panel_thickness
                 # It stands its own height rather than the catalog's,
                 # so how far up it can go is settled here.
-                z = max(0.0, min(z, max(interior_h - c_h, 0.0)))
+                z = min(z, max(interior_h - c_h, 0.0))
                 cage[PROP_ACCESSORY_Z] = z
                 cage.location = (c_x, 0.0, z)
                 geo.set_input('Dim X', c_len)
