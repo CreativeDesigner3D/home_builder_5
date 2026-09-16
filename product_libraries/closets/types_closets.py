@@ -5388,21 +5388,18 @@ def tray_height(tray, stack_h):
 def _distribute_front_heights(avail, fronts):
     """How tall each front in a drawer bank stands.
 
-    `fronts` is (height, pinned) per front, bottom-up. A bank is a bank
-    rather than a fill: a front nobody has pinned stands at the standard
-    drawer height, the bank stops where it stops, and its own shelf caps
-    it - which is what the prior library built, and what a closet drawer
-    bank is. Dividing a full-height opening between three fronts gives
-    three fronts two feet tall, which is not a drawer.
+    `fronts` is (height, pinned) per front, bottom-up. The drawers fill
+    the opening, the way the prior library's Drawers Filled insert did:
+    a pinned front holds the height it was given and the fronts still
+    sharing divide what is left between them equally, down to
+    MIN_DRAWER_FRONT. Four drawers nobody has sized are four equal
+    fronts from the bottom of the opening to the top.
 
-    A pinned front holds the height it was given. Only when the bank
-    would not fit does the opening take over: the fronts still sharing
-    give up what is over, down to MIN_DRAWER_FRONT, and if every front
-    is pinned they scale together.
+    With every front pinned there is nothing to share out: the fronts
+    keep their heights and the bank stops where it stops, under its own
+    shelf. Only when they would not fit do they scale down together.
     """
-    out = [h if lk else const.DRAWER_FRONT_HEIGHT for h, lk in fronts]
-    if sum(out) <= avail:
-        return out
+    out = [h for h, _lk in fronts]
     unlocked = [i for i, (_h, lk) in enumerate(fronts) if not lk]
     if unlocked:
         locked_sum = sum(h for h, lk in fronts if lk)
@@ -5410,11 +5407,25 @@ def _distribute_front_heights(avail, fronts):
         share = max(share, const.MIN_DRAWER_FRONT)
         for i in unlocked:
             out[i] = share
-    else:
+    elif sum(out) > avail:
         total = sum(out) or 1.0
         scale = avail / total
         out = [h * scale for h in out]
     return out
+
+
+def drawer_front_span(opening, qty):
+    """The height a drawer bank of `qty` fronts shares out in an
+    opening: the opening's height, the overlays top and bottom, less a
+    gap between each front and the next. What the solve fills, worked
+    out the same way so a dialog can show the heights before it runs."""
+    root = find_starter_root(opening)
+    if root is None or qty <= 0:
+        return 0.0
+    sp = root.hb_closet_starter
+    _lo, _ro, to, bo = front_overlays(sp, run_sizes(opening), opening)
+    return max(_cage_dim_z(opening) + to + bo
+               - (qty - 1) * sp.vertical_gap, 0.0)
 
 
 # The least a segment stands at once a grab is pushing on it - the
@@ -5425,10 +5436,10 @@ MIN_SEGMENT = inch(1.0)
 def opening_min_interior(root, opening, scene_props):
     """The interior height an opening cannot give up.
 
-    A bank is a bank: each front claims the height it is holding - the
-    height it was pinned at, or the standard drawer height while it is
-    sharing - so the segment carrying a bank stops a grab at the bank
-    instead of letting it mash the drawers flat. Everything else in an
+    Each front claims the height it is holding - the height it was
+    pinned at, or the least a sharing front is squeezed to - so the
+    segment carrying a bank stops a grab at the bank instead of letting
+    it mash the drawers flat. Everything else in an
     opening gives way on its own - adjustable shelves and rollouts
     respace, slanted stacks step aside, fixed shelves and rods clamp -
     and claims nothing here."""
@@ -5443,7 +5454,7 @@ def opening_min_interior(root, opening, scene_props):
     lo, ro, to, bo = front_overlays(sp, scene_props, opening)
     span = sum((float(f.get(PROP_FRONT_HEIGHT, 0.0))
                 if f.get(PROP_UNLOCK_FRONT_HEIGHT, 0)
-                else const.DRAWER_FRONT_HEIGHT) for f in fronts)
+                else const.MIN_DRAWER_FRONT) for f in fronts)
     span += (n - 1) * sp.vertical_gap
     return max(span - to - bo, 0.0)
 

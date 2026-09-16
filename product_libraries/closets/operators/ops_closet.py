@@ -2116,22 +2116,6 @@ def _pin_rollout_trays(opening, rows):
             tray[types_closets.PROP_UNLOCK_TRAY_Z] = 0
 
 
-def _run_vertical_gap(context, opening=None):
-    """The gap this run stacks its fronts with.
-
-    A drawer bank stands as tall as its fronts plus a gap apiece, and
-    the gap is the run's to set, so the dialog has to ask the run rather
-    than assume the standard one. Falls back to the standard gap when
-    there is no run to ask."""
-    if opening is None:
-        opening = _active_opening_for_insert(context)
-    root = (types_closets.find_starter_root(opening)
-            if opening is not None else None)
-    if root is None:
-        return const.VERTICAL_GAP
-    return root.hb_closet_starter.vertical_gap
-
-
 class hb_closets_OT_add_drawers(_ClosetInsertDialog, bpy.types.Operator):
     """Set the drawer stack for the active opening (fronts stack from
     the bottom; each drawer gets a box behind its front)."""
@@ -2142,12 +2126,6 @@ class hb_closets_OT_add_drawers(_ClosetInsertDialog, bpy.types.Operator):
 
     qty: bpy.props.IntProperty(name="Drawer Quantity", default=3,
                                min=0, max=10)  # type: ignore
-    front_height: bpy.props.FloatProperty(
-        name="Front Height",
-        description="Height of a drawer front that is sharing the "
-                    "bank rather than holding a size of its own",
-        default=const.DRAWER_FRONT_HEIGHT,
-        unit='LENGTH', precision=4)  # type: ignore
     drawer_box: bpy.props.EnumProperty(
         name="Drawer Box",
         items=_DRAWER_BOX_OVERRIDE_ITEMS,
@@ -2159,9 +2137,9 @@ class hb_closets_OT_add_drawers(_ClosetInsertDialog, bpy.types.Operator):
         default=const.DRAWER_STRETCHER_WIDTH, min=0.0,
         unit='LENGTH', precision=4)  # type: ignore
     # Per-drawer sizes (front_1..front_10; the first `qty` are shown
-    # and used). A drawer left equal takes its share of the bank;
-    # unticking it holds that drawer at a standard size and lets the
-    # drawers still sharing absorb the difference.
+    # and used). A drawer left equal takes an equal share of the
+    # opening; unticking it holds that drawer at a standard size and
+    # lets the drawers still sharing absorb the difference.
     for _i in range(1, 11):
         __annotations__['front_%d_equal' % _i] = bpy.props.BoolProperty(
             name="Equal", default=True,
@@ -2179,7 +2157,6 @@ class hb_closets_OT_add_drawers(_ClosetInsertDialog, bpy.types.Operator):
         if opening is not None:
             op = opening.hb_closet_opening
             self.qty = int(op.drawer_qty) or 3
-            self.front_height = float(op.drawer_front_height)
             self.drawer_box = op.drawer_box_override or 'DEFAULT'
             self.stretcher_width = float(op.drawer_stretcher_width)
             for i, (equal, key) in enumerate(
@@ -2194,13 +2171,20 @@ class hb_closets_OT_add_drawers(_ClosetInsertDialog, bpy.types.Operator):
                  getattr(self, 'front_%d_height' % i))
                 for i in range(1, self.qty + 1)]
 
-    def _heights(self):
-        """What each front in the bank will measure. A drawer holding a
-        size measures that size; the ones sharing each measure the
-        bank's front height."""
-        return [self.front_height if equal
-                else const.drawer_front_height(key)
-                for equal, key in self._sizes()]
+    def _heights(self, context):
+        """What each front in the bank will measure, worked out the way
+        the solve works it out: a drawer holding a size measures that
+        size, and the ones sharing divide what is left of the opening
+        equally."""
+        opening = _active_opening_for_insert(context)
+        sizes = self._sizes()
+        if opening is None:
+            return [const.drawer_front_height(key)
+                    for _equal, key in sizes]
+        span = types_closets.drawer_front_span(opening, self.qty)
+        return types_closets._distribute_front_heights(
+            span, [(const.drawer_front_height(key), not equal)
+                   for equal, key in sizes])
 
     def draw(self, context):
         layout = self.layout
@@ -2208,15 +2192,17 @@ class hb_closets_OT_add_drawers(_ClosetInsertDialog, bpy.types.Operator):
         box.label(text="Drawers", icon='SNAP_VOLUME')
         col = box.column(align=True)
         col.prop(self, 'qty')
-        col.prop(self, 'front_height')
         col.prop(self, 'drawer_box')
         col.prop(self, 'stretcher_width')
 
         # A row per drawer, bottom drawer first, the order the bank is
-        # built in. A drawer sharing the bank reads back the height it
-        # is getting; one holding a size shows the size instead.
+        # built in. A drawer sharing the opening reads back the height
+        # it is getting; one holding a size shows the size instead, and
+        # the ones still sharing take up the difference.
         if self.qty <= 0:
             return
+        heights = self._heights(context)
+        unit = context.scene.unit_settings
         box = layout.box()
         box.label(text="Drawer Heights", icon='MESH_GRID')
         col = box.column(align=True)
@@ -2225,24 +2211,27 @@ class hb_closets_OT_add_drawers(_ClosetInsertDialog, bpy.types.Operator):
             row.label(text="Drawer %d" % i)
             row.prop(self, 'front_%d_equal' % i, text="")
             if getattr(self, 'front_%d_equal' % i):
-                row.label(text=units.unit_to_string(
-                    context.scene.unit_settings, self.front_height))
+                row.label(text=units.unit_to_string(unit, heights[i - 1]))
             else:
                 row.prop(self, 'front_%d_height' % i, text="")
-        # How tall the bank stands once the fronts and the gaps between
-        # them are added up - the height the shelf capping it moves to.
-        box.label(text="Drawer Stack Height: " + units.unit_to_string(
-            context.scene.unit_settings,
-            sum(self._heights())
-            + self.qty * _run_vertical_gap(context)))
+        # A bank of drawers all holding sizes that add up to more than
+        # the opening is squeezed to fit; say so rather than let the
+        # sizes on screen read as what gets built.
+        opening = _active_opening_for_insert(context)
+        if opening is not None:
+            span = types_closets.drawer_front_span(opening, self.qty)
+            wanted = sum(const.drawer_front_height(key)
+                         for equal, key in self._sizes() if not equal)
+            sharing = sum(1 for equal, _k in self._sizes() if equal)
+            if wanted + sharing * const.MIN_DRAWER_FRONT > span + 1e-4:
+                box.label(text="Sizes are more than the opening holds",
+                          icon='ERROR')
 
     def execute(self, context):
-        from .. import const_closets as const
         opening = _active_opening_for_insert(context)
         if opening is None:
             return {'CANCELLED'}
         opening.hb_closet_opening.drawer_qty = self.qty
-        opening.hb_closet_opening.drawer_front_height = self.front_height
         opening.hb_closet_opening.drawer_stretcher_width = \
             self.stretcher_width
         # 'Use Default' clears the per-opening override so the box system
@@ -2253,49 +2242,15 @@ class hb_closets_OT_add_drawers(_ClosetInsertDialog, bpy.types.Operator):
             opening.hb_closet_opening.property_unset('drawer_box_override')
         types_closets.clear_other_interiors(opening, self.interior_kind)
         root = types_closets.find_starter_root(opening)
-        bay = types_closets.find_bay_cage(opening)
 
         # The fronts have to be standing there before they can be told
         # what to hold, and the quantity just set is what decides how
-        # many of them there are. Build the bank, then size it.
+        # many of them there are. Build the bank, then size it. The
+        # bank fills the opening it is put in: the shelf above stays
+        # where it is, and the drawers still sharing take up whatever
+        # the sized ones leave.
         types_closets.recalculate_closet_starter(root)
         _pin_drawer_front_heights(opening, self._sizes())
-
-        # A drawer bank comes in capped by a fixed shelf (shop
-        # convention). The cap's underside sits so the top drawer front
-        # half-overlays it, which puts it at the fronts' own heights
-        # plus a gap apiece, less the shelf, in opening-local Z. Adding
-        # up the heights the bank was actually given rather than taking
-        # them all for alike is what lets a drawer hold a size: the
-        # opening grows to the bank instead of the bank being squeezed
-        # back into the opening. If this segment is already capped, MOVE
-        # the cap to match the new stack instead of stacking another.
-        # A cap runs the width of the bay, so a bank standing in one
-        # column of a divided segment goes uncapped rather than cutting
-        # the columns beside it in two.
-        if (self.qty > 0 and bay is not None
-                and types_closets.segment_columns(opening) == 1):
-            st = types_closets.run_sizes(opening).shelf_thickness
-            cap_z_local = (sum(self._heights())
-                           + self.qty * _run_vertical_gap(context, opening)
-                           - st)
-            seg_bottom = opening.get('hb_seg_bottom', 0.0)
-            side = opening.get(types_closets.PROP_OPENING_SIDE, 'FRONT')
-            shelves = sorted(
-                [c for c in bay.children
-                 if c.get('hb_part_role')
-                 == types_closets.PART_ROLE_FIXED_SHELF
-                 and c.get(types_closets.PROP_OPENING_SIDE,
-                           'FRONT') == side
-                 and not c.get('hb_preview')],
-                key=lambda o: o.get('hb_z_offset', 0.0))
-            cap = next((sh for sh in shelves
-                        if sh.get('hb_z_offset', 0.0)
-                        >= seg_bottom - 1e-6), None)
-            if cap is not None:
-                cap['hb_z_offset'] = float(seg_bottom + cap_z_local)
-            else:
-                types_closets.add_fixed_shelf(opening, cap_z_local)
 
         types_closets.recalculate_closet_starter(root)
         _apply_finish(root)
@@ -6547,8 +6502,10 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
             _locked_field(col, self, 'setback', 'unlock_setback',
                           text="Setback")
         elif self.fill == 'DRAWERS':
+            # The drawers fill the opening, so there is no front height
+            # to ask for here: a single drawer is sized on its own label
+            # or in the Drawers dialog, and the rest share what is left.
             col.prop(self, 'drawer_qty')
-            col.prop(self, 'drawer_front_height')
             col.prop(self, 'drawer_box')
             col.prop(self, 'drawer_stretcher_width')
             col.prop(self, 'open_drawer')
