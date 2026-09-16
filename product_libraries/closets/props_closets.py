@@ -306,8 +306,6 @@ class Closet_Starter_Props(PropertyGroup):
     # and only what is being worked on is unfolded.
     show_toe_kick: BoolProperty(
         name="Show Toe Kick", default=False)  # type: ignore
-    show_ends: BoolProperty(
-        name="Show Ends", default=False)  # type: ignore
     show_top: BoolProperty(
         name="Show Top", default=False)  # type: ignore
     show_hang_rail: BoolProperty(

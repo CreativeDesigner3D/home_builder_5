@@ -6006,6 +6006,7 @@ def recalculate_closet_starter(obj):
     clear_hamper_shelves(root)
     _wrap_starter(root).recalculate()
     mark_parts(root)
+    stamp_part_menus(root)
 
 
 # The shelves that hold a unit square rather than resting on clips.
@@ -6045,6 +6046,36 @@ def mark_parts(root):
         if obj.get('hb_part_role') not in _MARKABLE_ROLES:
             continue
         obj.color = part_marker_color(obj) or const.PLAIN_PART_COLOR
+
+
+# The library-built parts whose options live in one of the closet
+# dialogs rather than in a dialog of their own. Each of these answers
+# the part menu, which reads the role and offers the dialog the
+# options live in - the bay's for carcass parts, the starter's for
+# run-level parts, the opening's for interior hardware. Parts stamped
+# with a menu at creation (rods, misc parts, fronts, accessory cages,
+# hangers) are left with the one they have.
+_MENU_STAMP_ROLES = frozenset((
+    PART_ROLE_BOTTOM_SHELF, PART_ROLE_TOP_SHELF, PART_ROLE_TOE_KICK,
+    PART_ROLE_CLEAT, PART_ROLE_APPLIED_BACK, PART_ROLE_CENTER_BACK,
+    PART_ROLE_COUNTERTOP, PART_ROLE_BACKSPLASH, PART_ROLE_ACCENT_SHELF,
+    PART_ROLE_BATTEN, PART_ROLE_FILLER, PART_ROLE_HANG_RAIL,
+    PART_ROLE_HANG_RAIL_COVER, PART_ROLE_BRIDGE_SHELF,
+    PART_ROLE_SHOE_FENCE, PART_ROLE_DRAWER_BOX,
+    PART_ROLE_DRAWER_STRETCHER,
+))
+
+
+def stamp_part_menus(root):
+    """Give every library-built part a right-click menu. Runs on every
+    solve, so a closet built before its parts had menus gains them the
+    next time it recalculates. Only fills the gap: a part already
+    carrying a menu keeps it."""
+    for obj in root.children_recursive:
+        if 'MENU_ID' in obj:
+            continue
+        if obj.get('hb_part_role') in _MENU_STAMP_ROLES:
+            obj['MENU_ID'] = 'HOME_BUILDER_MT_closet_part_commands'
 
 
 def _recalculate_now(obj):

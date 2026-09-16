@@ -367,6 +367,47 @@ class HOME_BUILDER_MT_closet_part_commands(bpy.types.Menu):
                 else 'DECORATE_LOCKED')
             op.lock = not locked
             layout.separator()
+        # A library-built part has no dialog of its own - its options
+        # live in one of the closet dialogs - so its menu opens the
+        # dialog they live in: the bay's for carcass parts, the
+        # starter's for run-level parts, the opening's for interior
+        # hardware. Panels offer the starter dialog too: that is where
+        # the Panels section stands.
+        role = obj.get('hb_part_role') if obj is not None else None
+        opening_roles = (types_closets.PART_ROLE_SHOE_FENCE,
+                         types_closets.PART_ROLE_DRAWER_BOX,
+                         types_closets.PART_ROLE_DRAWER_STRETCHER)
+        bay_roles = (types_closets.PART_ROLE_BOTTOM_SHELF,
+                     types_closets.PART_ROLE_TOP_SHELF,
+                     types_closets.PART_ROLE_TOE_KICK,
+                     types_closets.PART_ROLE_CLEAT,
+                     types_closets.PART_ROLE_APPLIED_BACK,
+                     types_closets.PART_ROLE_CENTER_BACK)
+        starter_roles = (types_closets.PART_ROLE_PANEL,
+                         types_closets.PART_ROLE_COUNTERTOP,
+                         types_closets.PART_ROLE_BACKSPLASH,
+                         types_closets.PART_ROLE_ACCENT_SHELF,
+                         types_closets.PART_ROLE_BATTEN,
+                         types_closets.PART_ROLE_FILLER,
+                         types_closets.PART_ROLE_HANG_RAIL,
+                         types_closets.PART_ROLE_HANG_RAIL_COVER,
+                         types_closets.PART_ROLE_BRIDGE_SHELF)
+        offered = False
+        if role in opening_roles:
+            layout.operator("hb_closets.opening_prompts",
+                            text="Opening Properties...", icon='WINDOW')
+            offered = True
+        if (role in bay_roles
+                and types_closets.find_bay_cage(obj) is not None):
+            layout.operator("hb_closets.bay_prompts",
+                            text="Bay Properties...", icon='WINDOW')
+            offered = True
+        if role in bay_roles or role in starter_roles:
+            layout.operator("hb_closets.starter_prompts",
+                            text="Closet Properties...", icon='WINDOW')
+            offered = True
+        if offered:
+            layout.separator()
         layout.operator("hb_closets.delete_part",
                         text="Delete Part", icon='X')
 

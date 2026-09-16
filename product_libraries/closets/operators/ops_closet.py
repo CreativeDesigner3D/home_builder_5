@@ -3954,7 +3954,7 @@ class hb_closets_OT_panel_prompts(bpy.types.Operator):
         col.prop(self, 'finished_end')
         if side is not None:
             col.prop(self, 'drill_through')
-            box.label(text="Also in the starter's Ends section",
+            box.label(text="Also in the starter's Panels section",
                       icon='INFO')
 
     def execute(self, context):
@@ -5787,19 +5787,20 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
 
     def _draw_construction(self, context, layout, root, sp, bays, cls,
                            is_corner):
-        box = _section(layout, sp, 'show_toe_kick', "Toe Kick")
-        if box is not None:
-            col = box.column(align=True)
-            col.prop(sp, 'toe_kick_height_preset')
-            if sp.toe_kick_height_preset == 'CUSTOM':
-                col.prop(sp, 'toe_kick_height')
-            col.prop(sp, 'toe_kick_setback')
-
-        if is_corner:
-            box = _section(layout, sp, 'show_corner', "Corner")
+        # The sections read down the closet the way the closet stands:
+        # what happens at the top first - the accent shelf, then the
+        # hang rail it mounts by - the panels and what hangs on them in
+        # the middle, and the floor - insets, then the toe kick - last.
+        # The cross-cutting sections (fronts, thicknesses, per bay)
+        # stand between the middle and the floor.
+        if not is_corner:
+            box = _section(layout, sp, 'show_top', "Top")
             if box is not None:
                 col = box.column(align=True)
-                col.prop(sp, 'l_add_cleat')
+                col.prop(sp, 'add_top_accent_shelf')
+                sub = col.column(align=True)
+                sub.enabled = sp.add_top_accent_shelf
+                sub.prop(sp, 'top_accent_overhang')
 
         if getattr(cls, 'has_hang_rail', False):
             box = _section(layout, sp, 'show_hang_rail', "Hang Rail")
@@ -5817,14 +5818,18 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
                 row.enabled = sp.use_one_hang_rail_height
                 row.prop(sp, 'hang_rail_height_location')
 
-        # A corner has an end panel on each wing too, so the three
-        # flags that act on an end panel reach it. Which wing is Left
-        # and which is Right follows the walls - the left wing is the
-        # one along the side wall - and is the same pairing the hang
-        # rail covers already read. What a corner has no use for is
-        # the wall filler, the batten and the bridge: all three want a
-        # neighbouring run to sit against.
-        box = _section(layout, sp, 'show_ends', "Ends")
+        # Everything that acts on a panel, in one place: what each end
+        # panel is - finished, turned off, drilled through, dressed
+        # with a filler or a batten, bridged to a neighbour - and then
+        # what reaches every panel in the run. A corner has an end
+        # panel on each wing too, so the three flags that act on an
+        # end panel reach it. Which wing is Left and which is Right
+        # follows the walls - the left wing is the one along the side
+        # wall - and is the same pairing the hang rail covers already
+        # read. What a corner has no use for is the wall filler, the
+        # batten and the bridge: all three want a neighbouring run to
+        # sit against.
+        box = _section(layout, sp, 'show_panels', "Panels")
         if box is not None:
             row = box.row()
             for side, cap in (('left', "Left"), ('right', "Right")):
@@ -5851,15 +5856,17 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
                              text="Shelf Width")
                     sub.prop(sp, f'include_bottom_bridge_{side}',
                              text="Bottom Bridge")
-
-        if not is_corner:
-            box = _section(layout, sp, 'show_top', "Top")
-            if box is not None:
-                col = box.column(align=True)
-                col.prop(sp, 'add_top_accent_shelf')
-                sub = col.column(align=True)
-                sub.enabled = sp.add_top_accent_shelf
-                sub.prop(sp, 'top_accent_overhang')
+            # The extension drops hanging panels past the bottom of
+            # their section so they finish alongside whatever sits
+            # below - every panel, not just the ends. It only reaches
+            # hanging panels, which is why it lives here rather than
+            # with the countertop.
+            box.separator()
+            sub = box.column(align=True)
+            sub.prop(sp, 'extend_panels_to_countertop')
+            row = sub.row(align=True)
+            row.enabled = sp.extend_panels_to_countertop
+            row.prop(sp, 'extend_panel_amount')
 
         if getattr(cls, 'has_applied_back', False):
             box = _section(layout, sp, 'show_applied_back', "Applied Back")
@@ -5868,26 +5875,11 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
                 col.prop(sp, 'back_to_floor')
                 col.prop(sp, 'applied_back_overlay')
 
-        # Both insets act on parts a floor bay has and a hanging bay does
-        # not, so say so rather than letting them read as run-wide.
-        box = _section(layout, sp, 'show_insets', "Insets")
-        if box is not None:
-            col = box.column(align=True)
-            col.prop(sp, 'inset_bottom')
-            col.prop(sp, 'inset_cleat')
-            box.label(text="Floor bays only", icon='INFO')
-
-        # The extension drops hanging panels past the bottom of their
-        # section so they finish alongside whatever sits below - every
-        # panel, not just the ends. It only reaches hanging panels, which
-        # is why it lives here rather than with the countertop.
-        box = _section(layout, sp, 'show_panels', "Panels")
-        if box is not None:
-            sub = box.column(align=True)
-            sub.prop(sp, 'extend_panels_to_countertop')
-            row = sub.row(align=True)
-            row.enabled = sp.extend_panels_to_countertop
-            row.prop(sp, 'extend_panel_amount')
+        if is_corner:
+            box = _section(layout, sp, 'show_corner', "Corner")
+            if box is not None:
+                col = box.column(align=True)
+                col.prop(sp, 'l_add_cleat')
 
         # What this run's parts are cut from. Each figure follows the
         # room while its padlock is closed, which is why a closed one
@@ -5941,6 +5933,23 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
                     rows.append(('double_panel_right', "Double Panel",
                                  0, len(bays) - 2))
                 _bay_grid(box, bays, rows)
+
+        # Both insets act on parts a floor bay has and a hanging bay does
+        # not, so say so rather than letting them read as run-wide.
+        box = _section(layout, sp, 'show_insets', "Insets")
+        if box is not None:
+            col = box.column(align=True)
+            col.prop(sp, 'inset_bottom')
+            col.prop(sp, 'inset_cleat')
+            box.label(text="Floor bays only", icon='INFO')
+
+        box = _section(layout, sp, 'show_toe_kick', "Toe Kick")
+        if box is not None:
+            col = box.column(align=True)
+            col.prop(sp, 'toe_kick_height_preset')
+            if sp.toe_kick_height_preset == 'CUSTOM':
+                col.prop(sp, 'toe_kick_height')
+            col.prop(sp, 'toe_kick_setback')
 
     def _draw_countertop(self, layout, root, sp):
         layout.prop(sp, 'include_countertop')
