@@ -4659,6 +4659,83 @@ def _double_door_leaves(layout, rect, cab_props, opening_props, role):
     ]
 
 
+BIFOLD_MECHANISMS = ('BIFOLD_LEFT', 'BIFOLD_RIGHT')
+
+
+def _bifold_door_leaves(layout, rect, cab_props, opening_props, role):
+    """Two leaves for a plain (non-retracting) bi-fold pair: the stile
+    leaf hinges on the frame like a single door, the lead leaf hangs off
+    its free edge on a back-face hinge and folds back against it as the
+    pair opens (backs together at full swing). Only the lead leaf takes
+    a pull, on its free edge.
+
+    Leaf widths and the center reveal match a double door, so the closed
+    pair reads the same as one.
+    """
+    door_thickness = cab_props.door_thickness
+    width, height = _door_panel_size(rect, cab_props, opening_props)
+    reveal = (INSET_DOUBLE_DOOR_REVEAL
+              if cab_props.default_door_inset_amount > 0
+              else DOUBLE_DOOR_REVEAL)
+    leaf_width = (width - reveal) / 2.0
+    left_overlay = front_overlay(rect, cab_props, opening_props, 'left')
+    bottom_overlay = front_overlay(rect, cab_props, opening_props, 'bottom')
+
+    base_x = rect['reveal_left'] - left_overlay
+    base_y = _ff_front_y_bay_local(layout) - DOOR_TO_FRAME_GAP + cab_props.default_door_inset_amount
+    base_z = rect['reveal_bottom'] - bottom_overlay
+    angle = opening_props.swing_percent * DOOR_MAX_SWING_ANGLE
+    # The lead leaf turns twice as far as the stile leaf, in the other
+    # direction, capped at folded flat.
+    fold = min(2.0 * angle, math.pi)
+    c, s = math.cos(angle), math.sin(angle)
+    dims = (height, leaf_width, door_thickness)
+    t = door_thickness
+
+    if opening_props.door_mechanism == 'BIFOLD_RIGHT':
+        stile = _hinge_barrel_pivot({
+            'role': role, 'name': 'Door (Right)',
+            'pivot_position': (base_x + width, base_y, base_z),
+            'pivot_rotation': (0.0, 0.0, +angle),
+            'part_position':  (-leaf_width, 0.0, 0.0),
+            'part_dims':      dims,
+            'no_pull':        True,
+        }, door_thickness)
+        px, py, pz = stile['pivot_position']
+        # Stile leaf's back face at its free (left) edge, rotated +angle.
+        hinge = (px - leaf_width * c - t * s,
+                 py - leaf_width * s + t * c, pz)
+        lead = {
+            'role': role, 'name': 'Door (Left)',
+            'pivot_position': hinge,
+            'pivot_rotation': (0.0, 0.0, angle - fold),
+            'part_position':  (-reveal - leaf_width, 0.0, 0.0),
+            'part_dims':      dims,
+        }
+        return [lead, stile]
+
+    stile = _hinge_barrel_pivot({
+        'role': role, 'name': 'Door (Left)',
+        'pivot_position': (base_x, base_y, base_z),
+        'pivot_rotation': (0.0, 0.0, -angle),
+        'part_position':  (0.0, 0.0, 0.0),
+        'part_dims':      dims,
+        'no_pull':        True,
+    }, door_thickness)
+    px, py, pz = stile['pivot_position']
+    # Stile leaf's back face at its free (right) edge, rotated -angle.
+    hinge = (px + leaf_width * c + t * s,
+             py - leaf_width * s + t * c, pz)
+    lead = {
+        'role': role, 'name': 'Door (Right)',
+        'pivot_position': hinge,
+        'pivot_rotation': (0.0, 0.0, -angle + fold),
+        'part_position':  (reveal, 0.0, 0.0),
+        'part_dims':      dims,
+    }
+    return [stile, lead]
+
+
 def _drawer_or_pullout_slide_leaf(layout, rect, cab_props,
                                   opening_props, role, name):
     """Single-leaf slide-out front. Pivot translates in -Y by
@@ -4875,6 +4952,11 @@ def front_leaves(layout, rect, cab_props, opening_props):
     if cab_props.id_data.get('HB_TRIVIEW_DOORS'):
         # Tri-view medicine cabinet: three mirror doors in one opening.
         return _triple_door_leaves(
+            layout, rect, cab_props, opening_props, role
+        )
+    if (getattr(opening_props, 'door_mechanism', 'NONE') in BIFOLD_MECHANISMS
+            and opening_props.hinge_side not in ('TOP', 'BOTTOM')):
+        return _bifold_door_leaves(
             layout, rect, cab_props, opening_props, role
         )
     if opening_props.hinge_side == 'DOUBLE':

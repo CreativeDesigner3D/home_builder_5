@@ -9748,6 +9748,13 @@ class Face_Frame_Opening_Props(PropertyGroup):
          "cabinet required"),
         ('LIFT_UP_BIFOLD', "Deluxe Bi-fold Lift-Up",
          "Two-panel door that folds as it lifts; for taller openings"),
+        # Plain bi-fold pairs (no retract): the pair hinges on the named
+        # side and folds open, one pull on the lead leaf. Appended so
+        # stored enum values keep their meaning.
+        ('BIFOLD_LEFT', "Bi-fold (Left)",
+         "Door pair hinged on the left that folds open; pull on the right"),
+        ('BIFOLD_RIGHT', "Bi-fold (Right)",
+         "Door pair hinged on the right that folds open; pull on the left"),
     ]
     door_mechanism: EnumProperty(
         name="Door Mechanism", items=DOOR_MECHANISM_ITEMS, default='NONE',

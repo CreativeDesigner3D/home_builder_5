@@ -11984,7 +11984,8 @@ class FaceFrameCabinet(GeoNodeCage):
             # single-opening builds.
             no_pulls = (self.obj.get('HB_NO_DOOR_PULLS')
                         or self.obj.get('HB_TRIVIEW_DOORS'))
-            if not drawer_look and not no_pulls:
+            # Bi-fold pairs pull from the lead leaf only.
+            if not drawer_look and not no_pulls and not leaf.get('no_pull'):
                 self._create_pull_for_front(front, leaf['role'], leaf,
                                             op_props)
             self._create_drawer_box_for_front(pivot, leaf, rect, op_props)

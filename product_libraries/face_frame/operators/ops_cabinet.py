@@ -3848,6 +3848,12 @@ _OPENING_PRESETS = {
                                'mechanism': 'RETRACTING_BIFOLD'},
     'TOP_RETRACTING_DOOR':    {'front_type': 'DOOR', 'hinge_side': 'TOP',
                                'mechanism': 'RETRACTING_TOP'},
+    # Plain bi-fold pairs stay DOUBLE so everything counting doors still
+    # sees two leaves; the mechanism carries the hand.
+    'BIFOLD_LEFT_DOOR':       {'front_type': 'DOOR', 'hinge_side': 'DOUBLE',
+                               'mechanism': 'BIFOLD_LEFT'},
+    'BIFOLD_RIGHT_DOOR':      {'front_type': 'DOOR', 'hinge_side': 'DOUBLE',
+                               'mechanism': 'BIFOLD_RIGHT'},
     'DRAWER':            {'front_type': 'DRAWER_FRONT'},
     'PULLOUT':           {'front_type': 'PULLOUT'},
     'INSET_PANEL':       {'front_type': 'INSET_PANEL', 'shelves': 'CLEAR'},
@@ -3980,6 +3986,8 @@ class hb_face_frame_OT_change_opening(bpy.types.Operator):
             ('RETRACTING_DOOR_PAIR', "Retracting Doors (Pair)", "Pair of doors that open, then slide back into the cabinet"),
             ('BIFOLD_RETRACTING_DOOR', "Bi-fold Retracting Doors", "Hinged pair that folds, then slides back into the cabinet"),
             ('TOP_RETRACTING_DOOR', "Top-Mount Retracting Door", "Full-width door that retracts up into the cabinet"),
+            ('BIFOLD_LEFT_DOOR',  "Bi-fold Doors (Left)",  "Door pair hinged on the left that folds open"),
+            ('BIFOLD_RIGHT_DOOR', "Bi-fold Doors (Right)", "Door pair hinged on the right that folds open"),
             ('DRAWER',            "Drawer",            "Drawer front"),
             ('PULLOUT',           "Pullout",           "Door front on a pullout slide"),
             ('INSET_PANEL',       "Inset Panel",       "Recessed 1/4\" panel filling the opening"),

@@ -918,6 +918,8 @@ class HOME_BUILDER_MT_face_frame_change_opening(bpy.types.Menu):
         ('LEFT_DOOR',         "Left Door"),
         ('RIGHT_DOOR',        "Right Door"),
         ('DOUBLE_DOOR',       "Double Door"),
+        ('BIFOLD_LEFT_DOOR',  "Bi-fold Doors (Left)"),
+        ('BIFOLD_RIGHT_DOOR', "Bi-fold Doors (Right)"),
         ('SEP',),
         ('FLIP_UP_DOOR',      "Flip Up Door"),
         ('FLIP_DOWN_DOOR',    "Flip Down Door"),
