@@ -662,6 +662,7 @@ COL_GUIDE = (1.0, 1.0, 1.0, 0.35)
 # A wood top's plain edges (no nosing or band) read quieter than its
 # finished ones.
 COL_PLAIN_EDGE = (0.55, 0.6, 0.7, 0.8)
+COL_JOINT = (0.95, 0.35, 0.75, 1.0)
 
 _TYPED_CHARS = set("0123456789.-/ '\"")
 
@@ -775,6 +776,25 @@ def _draw_countertop_edit(op):
 
         for i, handle in enumerate(op.handles):
             hot = (i == active)
+            if handle['kind'] == 'JOINT':
+                a, b = to2d(handle['a']), to2d(handle['b'])
+                if a is None or b is None:
+                    continue
+                shader.uniform_float("color", COL_HOT if hot else COL_JOINT)
+                # Dashed, so a joint never reads as an edge of the top.
+                d = b - a
+                length = d.length
+                if length < 1.0:
+                    continue
+                step = d / length
+                width = EDGE_HOT_PX if hot else EDGE_PX
+                pos = 0.0
+                while pos < length:
+                    end = min(length, pos + 9.0)
+                    _thick_line(shader, a + step * pos, a + step * end,
+                                width)
+                    pos += 15.0
+                continue
             if handle['kind'] == 'EDGE':
                 a, b = to2d(handle['a']), to2d(handle['b'])
                 if a is None or b is None:
@@ -834,8 +854,10 @@ class HOME_BUILDER_OT_edit_countertop(bpy.types.Operator):
               "Shift+Click edge: add corner   |   B: bob corner   "
               "R: radius   X: remove corner   |   Ctrl: snap   |   "
               "Enter: done   |   Esc: cancel")
-    WOOD_STATUS = STATUS.replace("X: remove corner",
-                                 "X: remove corner   E: finished edge")
+    WOOD_STATUS = STATUS.replace(
+        "X: remove corner",
+        "X: remove   E: finished edge   M: miter (inside corner)   "
+        "S: seam")
 
     @classmethod
     def poll(cls, context):
@@ -877,6 +899,25 @@ class HOME_BUILDER_OT_edit_countertop(bpy.types.Operator):
             self._wood_part().rebuild()
         else:
             countertop_common.rebuild(self.obj)
+
+    def _outline_now(self):
+        """The built outline running anticlockwise -- what joints sit
+        on."""
+        from ..product_libraries.face_frame import wood_top_shape
+        points, corners = self._shape()
+        built = countertop_common.expand_outline(points, corners)
+        pts, _ = wood_top_shape.anticlockwise(built, [0.0] * len(built))
+        return pts
+
+    def _joints(self):
+        if not self.is_wood:
+            return []
+        from ..product_libraries.face_frame import wood_top_shape
+        return wood_top_shape.joints_of(self.obj)
+
+    def _set_joints(self, joints):
+        from ..product_libraries.face_frame import wood_top_shape
+        wood_top_shape.set_joints(self.obj, joints)
 
     def _valid(self, points, corners):
         if len(points) < 3:
@@ -950,6 +991,11 @@ class HOME_BUILDER_OT_edit_countertop(bpy.types.Operator):
                 handle['finished'] = (len(corners[i]) > 3
                                       and corners[i][3] > 0.5)
             self.handles.append(handle)
+        for j, (kind, a, b) in enumerate(self._joints()):
+            self.handles.append({'kind': 'JOINT', 'index': j,
+                                 'joint': kind,
+                                 'a': world(a), 'b': world(b),
+                                 'world': (world(a) + world(b)) / 2.0})
         self.built_world = [world(p) for p in
                             countertop_common.expand_outline(points, corners)]
 
@@ -981,7 +1027,7 @@ class HOME_BUILDER_OT_edit_countertop(bpy.types.Operator):
         if best is not None:
             return best
         for i, handle in enumerate(self.handles):
-            if handle['kind'] != 'EDGE':
+            if handle['kind'] not in {'EDGE', 'JOINT'}:
                 continue
             a = view3d_utils.location_3d_to_region_2d(region, rv3d,
                                                       handle['a'])
@@ -1023,12 +1069,28 @@ class HOME_BUILDER_OT_edit_countertop(bpy.types.Operator):
             if self.is_wood:
                 text += "   finished" if handle.get('finished') else "   plain"
             return text
+        if handle['kind'] == 'JOINT':
+            return self._joint_readout(context, handle['index'])
         if handle['kind'] == 'FINISH':
             kind, size = corners[i][0], corners[i][1]
             name = ("Radius" if kind == countertop_common.CORNER_RADIUS
                     else "Bob")
             return f"{name} {_length(context, size)}"
         return self._corner_readout(context, points, i)
+
+    def _joint_readout(self, context, index):
+        """What a joint is, and the length of each piece it leaves."""
+        from ..product_libraries.face_frame import wood_top_shape
+        joints = self._joints()
+        if not (0 <= index < len(joints)):
+            return ""
+        name = ("Miter" if joints[index][0] == wood_top_shape.JOINT_MITER
+                else "Seam")
+        lengths = list(self.obj.get(wood_top_shape.PIECE_LENGTHS_KEY) or [])
+        if len(lengths) > 1:
+            return name + "   pieces " + "  |  ".join(
+                _length(context, v) for v in lengths)
+        return name
 
     def _corner_readout(self, context, points, i):
         count = len(points)
@@ -1048,6 +1110,7 @@ class HOME_BUILDER_OT_edit_countertop(bpy.types.Operator):
         self.drag_corner = handle['index']
         self.start_points = points
         self.start_corners = corners
+        self.start_joints = self._joints()
         self.press_local = self._local_point(context, event)
         self.press_mouse = (event.mouse_region_x, event.mouse_region_y)
         self.moved = False
@@ -1078,6 +1141,10 @@ class HOME_BUILDER_OT_edit_countertop(bpy.types.Operator):
         result = None
         readout = ""
         new_index = i
+
+        if self.drag_kind == 'JOINT':
+            self._drag_joint(context, dx, dy)
+            return
 
         if self.drag_kind == 'EDGE':
             n = countertop_common.edge_normal(points, i)
@@ -1179,12 +1246,85 @@ class HOME_BUILDER_OT_edit_countertop(bpy.types.Operator):
 
         if result is None or not self._valid(*result):
             return
+        if self.is_wood:
+            # Joints are found again on the shape each rebuild; starting
+            # from where they were when the drag began means one that
+            # loses its corner mid-drag comes back when the corner does.
+            self._set_joints(self.start_joints)
         self._store(*result)
         self._rebuild_handles()
         self.readout = readout
         # An inserted step renumbers the edges, so find the handle again.
         self.drag = self._find_handle(self.drag_kind, new_index)
         self.hover = self.drag
+
+    def _drag_joint(self, context, dx, dy):
+        """Slide a seam along the top, keeping its direction. A miter
+        belongs to its corner and does not drag."""
+        from ..product_libraries.face_frame import wood_top_shape
+        joints = list(self.start_joints)
+        j = self.drag_corner
+        if not (0 <= j < len(joints)):
+            return
+        kind, a, b = joints[j]
+        if kind != wood_top_shape.JOINT_SEAM:
+            return
+        direction = (b[0] - a[0], b[1] - a[1])
+        length = math.hypot(*direction)
+        if length < 1e-9:
+            return
+        direction = (direction[0] / length, direction[1] / length)
+        joint = wood_top_shape.seam_from(self._outline_now(),
+                                         (a[0] + dx, a[1] + dy), direction)
+        if joint is None:
+            return
+        joints[j] = joint
+        self._set_joints(joints)
+        self._wood_part().rebuild()
+        self._rebuild_handles()
+        self.drag = self._find_handle('JOINT', j)
+        self.hover = self.drag
+        self.readout = self._joint_readout(context, j)
+
+    def _add_joint(self, context, event, handle):
+        from ..product_libraries.face_frame import wood_top_shape
+        outline = self._outline_now()
+        if event.type == 'M':
+            p = handle['world']
+            local = countertop_common.world_matrix(self.obj).inverted() @ p
+            joint = wood_top_shape.miter_from(outline, (local.x, local.y))
+            if joint is None:
+                self.report({'WARNING'},
+                            "A miter runs from an inside corner")
+                return
+        else:
+            joint = wood_top_shape.seam_from(
+                outline, self._local_point(context, event))
+            if joint is None:
+                self.report({'WARNING'}, "No room for a seam there")
+                return
+        joints = self._joints()
+        for kind, a, b in joints:
+            if (kind == joint[0]
+                    and math.hypot(a[0] - joint[1][0], a[1] - joint[1][1]) < 1e-4
+                    and math.hypot(b[0] - joint[2][0], b[1] - joint[2][1]) < 1e-4):
+                return
+        joints.append(joint)
+        self._set_joints(joints)
+        self._wood_part().rebuild()
+        self._rebuild_handles()
+        self.hover = self._find_handle('JOINT', len(self._joints()) - 1)
+        self.readout = self._hover_readout(context, self.hover)
+
+    def _remove_joint(self, context, index):
+        joints = self._joints()
+        if 0 <= index < len(joints):
+            del joints[index]
+            self._set_joints(joints)
+            self._wood_part().rebuild()
+            self._rebuild_handles()
+        self.hover = None
+        self.readout = ""
 
     def _find_handle(self, kind, index):
         for h, handle in enumerate(self.handles):
@@ -1214,6 +1354,8 @@ class HOME_BUILDER_OT_edit_countertop(bpy.types.Operator):
 
     def _end_drag(self, context, revert=False):
         if revert:
+            if self.is_wood:
+                self._set_joints(self.start_joints)
             self._store(self.start_points, self.start_corners)
         self.drag = None
         self.grab = False
@@ -1307,6 +1449,7 @@ class HOME_BUILDER_OT_edit_countertop(bpy.types.Operator):
         self.typed = ""
         self.readout = ""
         self._undo_shape = self._shape()
+        self._undo_joints = self._joints()
         self._rebuild_handles()
 
         self._draw_handle = bpy.types.SpaceView3D.draw_handler_add(
@@ -1343,10 +1486,20 @@ class HOME_BUILDER_OT_edit_countertop(bpy.types.Operator):
             context.window.cursor_modal_set('SCROLL_XY')
             return {'RUNNING_MODAL'}
 
-        if event.value == 'PRESS' and event.type in {'B', 'R', 'X', 'DEL', 'E'}:
+        if event.value == 'PRESS' and event.type in {'B', 'R', 'X', 'DEL', 'E',
+                                                     'M', 'S'}:
             if self.hover is not None and 0 <= self.hover < len(self.handles):
                 handle = self.handles[self.hover]
-                if event.type == 'E':
+                if handle['kind'] == 'JOINT':
+                    if event.type in {'X', 'DEL'}:
+                        self._remove_joint(context, handle['index'])
+                        context.area.tag_redraw()
+                elif event.type in {'M', 'S'}:
+                    wanted = 'CORNER' if event.type == 'M' else 'EDGE'
+                    if self.is_wood and handle['kind'] == wanted:
+                        self._add_joint(context, event, handle)
+                        context.area.tag_redraw()
+                elif event.type == 'E':
                     if self.is_wood and handle['kind'] == 'EDGE':
                         self._toggle_finished_edge(context, handle['index'])
                         context.area.tag_redraw()
@@ -1371,6 +1524,8 @@ class HOME_BUILDER_OT_edit_countertop(bpy.types.Operator):
                 part.clear_shape(self.obj)
                 part.rebuild()
             else:
+                if self.is_wood:
+                    self._set_joints(self._undo_joints)
                 self._store(*self._undo_shape)
             return self._finish(context, cancelled=True)
 

@@ -17849,7 +17849,9 @@ class WoodTopPart(CabinetPart):
         for key in (countertop_common.OUTLINE_KEY,
                     countertop_common.CORNERS_KEY,
                     countertop_common.EDGES_KEY,
-                    wood_top_shape.BASE_KEY):
+                    wood_top_shape.BASE_KEY,
+                    wood_top_shape.JOINTS_KEY,
+                    wood_top_shape.PIECE_LENGTHS_KEY):
             if key in obj:
                 del obj[key]
 
@@ -17860,15 +17862,19 @@ class WoodTopPart(CabinetPart):
         seated top follows its cabinet. The board is one static mesh: the
         core, pulled in on each finished edge, plus the milled profile
         swept along those edges. An applied band builds as parts of its
-        own instead, one per run of edge.
+        own instead, one per run of edge. Miter and seam joints cut the
+        board into its pieces, which is what draws the joint lines.
         """
         points = countertop_common.outline_of(obj)
         corners = countertop_common.corners_of(obj)
+        joints = wood_top_shape.joints_of(obj)
         base = obj.get(wood_top_shape.BASE_KEY)
         base = (tuple(base) if base is not None and len(base) == 2
                 else (width, depth))
         if abs(base[0] - width) > 1e-6 or abs(base[1] - depth) > 1e-6:
             points = wood_top_shape.restretch(points, base, (width, depth))
+            joints = wood_top_shape.restretch_joints(joints, base,
+                                                     (width, depth))
             countertop_common.set_outline(obj, points, corners)
             points = countertop_common.outline_of(obj)
             corners = countertop_common.corners_of(obj)
@@ -17880,6 +17886,11 @@ class WoodTopPart(CabinetPart):
             return
         outline, values = wood_top_shape.anticlockwise(outline, values)
         finished = [v > 0.5 for v in values]
+        joints = wood_top_shape.resolve_joints(outline, joints)
+        wood_top_shape.set_joints(obj, joints)
+        obj[wood_top_shape.PIECE_LENGTHS_KEY] = [
+            float(wood_top_shape.piece_length(piece))
+            for piece in wood_top_shape.split_all(outline, joints)]
         x0, x1, y0, y1 = wood_top_shape.bounds(outline)
         # The driven cutpart is hidden, but its size is what anything
         # reading the part's dimensions sees: the overall extents.
@@ -17895,19 +17906,22 @@ class WoodTopPart(CabinetPart):
         bm = bmesh.new()
         sec, nose_d = (self._nosing_section(wt, t) if nosed
                        else (None, 0.0))
+
+        def slab(polygon):
+            for piece in wood_top_shape.split_all(polygon, joints):
+                _add_prism(bm, piece, 0.0, t)
+
         if sec is not None and any(finished):
-            _add_prism(bm, wood_top_shape.core_outline(outline, finished,
-                                                        nose_d), 0.0, t)
+            slab(wood_top_shape.core_outline(outline, finished, nose_d))
             profile = [(nose_d - d, z) for d, z in sec]
             for i, fin in enumerate(finished):
                 if fin:
                     _add_sweep(bm, *wood_top_shape.sweep_rings(
                         outline, finished, profile, i))
         elif banded and any(finished):
-            _add_prism(bm, wood_top_shape.core_outline(outline, finished,
-                                                        edge_t), 0.0, t)
+            slab(wood_top_shape.core_outline(outline, finished, edge_t))
         else:
-            _add_prism(bm, outline, 0.0, t)
+            slab(outline)
         bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
         bm.to_mesh(obj.data)
         bm.free()
