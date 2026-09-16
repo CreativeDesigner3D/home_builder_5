@@ -3983,10 +3983,24 @@ def _opening_under_cursor(context, region, mouse_pos, x_margin=0.0):
         region, rv3d, mouse_pos)
     direction = view3d_utils.region_2d_to_vector_3d(
         region, rv3d, mouse_pos)
+    from .. import gpu_overlay_closets as overlay
+    space = getattr(context, 'space_data', None)
+    shown = {}
     best = None
     for obj in context.scene.objects:
         if not obj.get(types_closets.TAG_OPENING_CAGE):
             continue
+        # A closet that cannot be seen - its wall hidden or isolated
+        # away, the closet hidden, local view - is not a place to put
+        # anything. The opening cages are hidden and shown with the
+        # selection mode, so they cannot answer this; the closet is
+        # asked, the same way its labels and grab handles ask it.
+        root = types_closets.find_starter_root(obj)
+        if root is not None:
+            if root not in shown:
+                shown[root] = overlay._starter_shown(root, space)
+            if not shown[root]:
+                continue
         try:
             cage = hb_types.GeoNodeCage(obj)
             o_w = cage.get_input('Dim X')
