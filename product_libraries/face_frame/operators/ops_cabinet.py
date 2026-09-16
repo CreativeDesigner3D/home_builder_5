@@ -999,6 +999,8 @@ class hb_face_frame_OT_wood_top_prompts(bpy.types.Operator):
         else:
             col.prop(wt, 'width')
             col.prop(wt, 'depth')
+        col.separator()
+        col.prop(wt, 'plan_display')
 
 
 class hb_face_frame_OT_wood_top_reset_shape(bpy.types.Operator):

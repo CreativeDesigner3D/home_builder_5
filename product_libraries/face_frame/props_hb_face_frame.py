@@ -12438,6 +12438,26 @@ class Face_Frame_Wood_Top_Props(PropertyGroup):
         description="Apply the edge band to the right end",
         update=_update_wood_top,
     )  # type: ignore
+    # How plan drawings show the top. Drawn over the cabinets, a top hides
+    # them and their dimensions, so a shaped one is usually drawn as a
+    # view of its own on the sheet with just its outline left on the plan.
+    # Read by drawing tools; nothing in the model depends on it.
+    plan_display: EnumProperty(
+        name="Plan Drawing",
+        items=[
+            ('AUTO', "Auto",
+             "A separate view when the top is shaped, in place when it is "
+             "a plain rectangle"),
+            ('IN_PLACE', "In Place",
+             "Draw the top over the cabinets on the plan"),
+            ('SEPARATE', "Separate View",
+             "Leave a dashed outline on the plan and draw the top, with "
+             "its dimensions, as its own view on the sheet"),
+            ('BOTH', "Both",
+             "Draw the top in place and as its own view"),
+        ],
+        default='AUTO',
+    )  # type: ignore
 
 
 class Face_Frame_Column_Beam_Props(PropertyGroup):
