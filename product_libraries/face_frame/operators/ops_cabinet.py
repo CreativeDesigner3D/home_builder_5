@@ -2315,6 +2315,50 @@ class hb_face_frame_OT_drawer_box_prompts(bpy.types.Operator):
             sub.prop(op_props, val_prop, text=label)
         col.separator()
         col.label(text="Unchecked sizes stay automatic", icon='INFO')
+        self._draw_clearance_warnings(context, layout, opening_obj, op_props)
+
+    @staticmethod
+    def _draw_clearance_warnings(context, layout, opening_obj, op_props):
+        """Flag typed sizes that break the minimum clearances. The box
+        is rebuilt as the user types, so read the limits the build
+        stamped on the current box each redraw."""
+        box = next((c for c in opening_obj.children_recursive
+                    if c.get('IS_DRAWER_BOX') and 'HB_BOX_MAX_WIDTH' in c),
+                   None)
+        if box is None:
+            return
+        eps = inch(0.001)
+        scene_props = context.scene.hb_face_frame
+        rear_min = types_face_frame.drawer_box_clearances(scene_props)[3]
+        blum = types_face_frame.uses_blum_tandem_sizing(scene_props)
+        notes = []
+        if (op_props.drawer_box_override_width
+                and op_props.drawer_box_width > box['HB_BOX_MAX_WIDTH'] + eps):
+            notes.append(('ERROR', "Width is under the side clearance"))
+        if (op_props.drawer_box_override_height
+                and op_props.drawer_box_height > box['HB_BOX_MAX_HEIGHT'] + eps):
+            notes.append(('ERROR', "Height is under the top/bottom clearance"))
+        try:
+            depth = hb_types.GeoNodeObject(box).get_input('Dim Y')
+        except Exception:
+            depth = None
+        if depth is not None:
+            rear = box['HB_BOX_DEPTH_SPACE'] - depth
+            if op_props.drawer_box_override_depth and rear < rear_min - eps:
+                notes.append(('ERROR', "Depth is under the rear clearance"))
+            # Auto depth is already the longest runner that fits, so the
+            # runner notes only concern a typed depth.
+            if blum and op_props.drawer_box_override_depth:
+                if all(abs(depth - inch(n)) > eps for n in
+                       types_face_frame.BLUM_TANDEM_RUNNER_LENGTHS_IN):
+                    notes.append(('INFO', "Depth is not a runner length"))
+                if rear > types_face_frame.BLUM_TANDEM_BLOCKING_REAR_CLEARANCE + eps:
+                    notes.append(('INFO', "Over 2-9/16\" behind the box: "
+                                          "runners may need blocking"))
+        if notes:
+            box_col = layout.column(align=True)
+            for icon, text in notes:
+                box_col.label(text=text, icon=icon)
 
     def execute(self, context):
         # Live-bound via the opening props' update callbacks; OK needs

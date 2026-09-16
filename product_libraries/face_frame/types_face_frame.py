@@ -917,6 +917,47 @@ def stock_drawer_box_height(opening_height):
     return None
 
 
+# Blum TANDEM BLUMOTION sizing (scene drawer_box_sizing 'BLUM_TANDEM'):
+# the slide sets the clearances - 3/16 each side, 9/16 under the box, at
+# least 5/16 over it (the stock height table above already leaves the
+# 7/8 total) and at least 15/16 behind it - and the box is as deep as
+# its runner. Past 2-9/16 behind the box the runner's rear socket may
+# need blocking to land on.
+BLUM_TANDEM_SIDE_CLEARANCE = inch(0.1875)
+BLUM_TANDEM_TOP_CLEARANCE = inch(0.3125)
+BLUM_TANDEM_BOTTOM_CLEARANCE = inch(0.5625)
+BLUM_TANDEM_REAR_CLEARANCE = inch(0.9375)
+BLUM_TANDEM_BLOCKING_REAR_CLEARANCE = inch(2.5625)
+BLUM_TANDEM_RUNNER_LENGTHS_IN = (21.0, 18.0, 15.0, 12.0, 9.0)
+
+
+def uses_blum_tandem_sizing(scene_props):
+    return getattr(scene_props, 'drawer_box_sizing', 'CUSTOM') == 'BLUM_TANDEM'
+
+
+def drawer_box_clearances(scene_props):
+    """(side, top, bottom, rear) drawer box clearances for the scene's
+    sizing mode. Blum TANDEM's are fixed minimums; Custom reads the
+    scene clearance props."""
+    if uses_blum_tandem_sizing(scene_props):
+        return (BLUM_TANDEM_SIDE_CLEARANCE, BLUM_TANDEM_TOP_CLEARANCE,
+                BLUM_TANDEM_BOTTOM_CLEARANCE, BLUM_TANDEM_REAR_CLEARANCE)
+    return (scene_props.drawer_box_side_clearance,
+            scene_props.drawer_box_top_clearance,
+            scene_props.drawer_box_bottom_clearance,
+            scene_props.drawer_box_rear_clearance)
+
+
+def blum_tandem_runner_length(available_depth):
+    """Longest runner (scene units) that fits `available_depth` - the
+    depth left for the box after the minimum rear clearance - or None
+    when even the shortest runner doesn't."""
+    for length_in in BLUM_TANDEM_RUNNER_LENGTHS_IN:
+        if inch(length_in) <= available_depth + 1.0e-5:
+            return inch(length_in)
+    return None
+
+
 # Rollouts riding above a drawer box, behind the same front. The top one
 # hangs this far under the opening top; each box after it - the drawer
 # box included - sits a box gap lower (a rollout's top clearance plus a
@@ -13101,10 +13142,9 @@ class FaceFrameCabinet(GeoNodeCage):
         if not scene_props.include_drawer_boxes:
             return None
 
-        side_clr = scene_props.drawer_box_side_clearance
-        top_clr = scene_props.drawer_box_top_clearance
-        rear_clr = scene_props.drawer_box_rear_clearance
-        bottom_clr = scene_props.drawer_box_bottom_clearance
+        side_clr, top_clr, bottom_clr, rear_clr = drawer_box_clearances(
+            scene_props)
+        blum = uses_blum_tandem_sizing(scene_props)
 
         cage_x = rect['cage_dim_x']
         cage_z = rect['cage_dim_z']
@@ -13134,7 +13174,8 @@ class FaceFrameCabinet(GeoNodeCage):
         # most visibly a pullout behind a tall door, drawn as a drawer
         # nearly the height of the door. The box keeps its bottom
         # clearance and the extra room stays above it.
-        if scene_props.use_stock_drawer_box_heights:
+        # Blum TANDEM boxes are always stock heights.
+        if blum or scene_props.use_stock_drawer_box_heights:
             opening_dz = cage_z - rt - rb
             stock_dz = stock_drawer_box_height(opening_dz)
             if stock_dz is not None:
@@ -13190,6 +13231,12 @@ class FaceFrameCabinet(GeoNodeCage):
         box.obj['hb_part_role'] = PART_ROLE_DRAWER_BOX
         box.obj['CABINET_PART'] = True
         box.obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_drawer_box_commands'
+        # Largest sizes that still keep the minimum clearances, for the
+        # Drawer Box Size dialog to warn against when a size is typed.
+        box.obj['HB_BOX_MAX_WIDTH'] = cage_x - rl - rr - 2.0 * side_clr
+        box.obj['HB_BOX_MAX_HEIGHT'] = cage_z - rt - rb - top_clr - bottom_clr
+        box.obj['HB_BOX_DEPTH_SPACE'] = self._drawer_box_depth_space(
+            rect, front_back_y)
         self._stamp_drawer_box_construction(box.obj, op_props)
         if op_props is not None:
             self._spawn_drawer_inserts(box.obj, box_dx, box_dy, box_dz,
@@ -13515,17 +13562,30 @@ class FaceFrameCabinet(GeoNodeCage):
         the back of the front to the cavity back less the rear
         clearance, or the opening's typed depth. A rollout riding above
         the drawer takes the same depth."""
-        rear_clr = bpy.context.scene.hb_face_frame.drawer_box_rear_clearance
+        scene_props = bpy.context.scene.hb_face_frame
+        rear_clr = drawer_box_clearances(scene_props)[3]
+        space = self._drawer_box_depth_space(rect, front_back_y)
+        if (op_props is not None
+                and getattr(op_props, 'drawer_box_override_depth', False)):
+            return min(op_props.drawer_box_depth, space)
+        available = space - rear_clr
+        if uses_blum_tandem_sizing(scene_props):
+            # As deep as the longest runner that fits; a cavity too
+            # shallow for the shortest runner keeps the clearance fit.
+            runner = blum_tandem_runner_length(available)
+            if runner is not None:
+                return runner
+        return available
+
+    def _drawer_box_depth_space(self, rect, front_back_y):
+        """Depth from the back of the drawer front to the cavity back."""
         cage_y = rect['cage_dim_y']
         # Working face frame panel: the box runs back into the host
         # cabinet's cavity, not the panel's own 3/4 reserve.
         applied_depth = self.obj.get(TAG_APPLIED_BOX_DEPTH)
         if applied_depth:
             cage_y = max(cage_y, float(applied_depth))
-        if (op_props is not None
-                and getattr(op_props, 'drawer_box_override_depth', False)):
-            return min(op_props.drawer_box_depth, cage_y - front_back_y)
-        return (cage_y - rear_clr) - front_back_y
+        return cage_y - front_back_y
 
     def _rollout_above_fit(self, op_props, rect, migrate=True):
         """rollout_above_layout for this opening, or None when it is not
@@ -13546,7 +13606,7 @@ class FaceFrameCabinet(GeoNodeCage):
             rect['reveal_bottom'],
             rect['cage_dim_z'] - max(rect['reveal_top'], 0.0),
             heights,
-            scene_props.drawer_box_bottom_clearance,
+            drawer_box_clearances(scene_props)[2],
             inch(pick_in) if pick_in is not None else None)
 
     def _migrate_rollout_above(self, op_props, rect):
@@ -14176,7 +14236,8 @@ class FaceFrameCabinet(GeoNodeCage):
         # drawer box does -- U-shape it around the chase, or shorten it
         # to clear the covers, per the opening's chase_fit.
         try:
-            rear_clr = bpy.context.scene.hb_face_frame.drawer_box_rear_clearance
+            rear_clr = drawer_box_clearances(
+                bpy.context.scene.hb_face_frame)[3]
         except AttributeError:
             rear_clr = 0.0
         dy, notch_w, notch_d = self._chase_fit_box(

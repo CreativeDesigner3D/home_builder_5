@@ -10408,6 +10408,24 @@ class Face_Frame_Scene_Props(PropertyGroup):
         default=True,
         update=update_include_drawer_boxes,
     )  # type: ignore
+    # How drawer boxes are sized. Blum TANDEM sizes to the slide spec
+    # (types_face_frame.BLUM_TANDEM_*): fixed minimum clearances, stock
+    # heights, and depth to the longest runner that fits. Custom uses
+    # the clearance props below.
+    drawer_box_sizing: EnumProperty(
+        name="Drawer Box Sizing",
+        items=[
+            ('BLUM_TANDEM', "Blum TANDEM",
+             "Size boxes for Blum TANDEM BLUMOTION slides: 3/16\" sides, "
+             "9/16\" bottom, 5/16\" minimum top, stock heights, and "
+             "depth to the longest runner (9-21\") that leaves 15/16\" "
+             "behind the box"),
+            ('CUSTOM', "Custom Clearances",
+             "Size boxes from the clearances below"),
+        ],
+        default='BLUM_TANDEM',
+        update=update_include_drawer_boxes,
+    )  # type: ignore
     drawer_box_side_clearance: FloatProperty(
         name="Drawer Box Side Clearance",
         description="Gap between each side of the drawer box and the opening",
@@ -11699,6 +11717,13 @@ class Face_Frame_Scene_Props(PropertyGroup):
 
         col = layout.column(align=True)
         col.prop(props, 'include_drawer_boxes', text="Include Drawer Boxes")
+        col.prop(props, 'drawer_box_sizing', text="Sizing")
+
+        if props.drawer_box_sizing == 'BLUM_TANDEM':
+            col.separator()
+            col.label(text="Sides 3/16\", Bottom 9/16\", Top 5/16\" min")
+            col.label(text="Stock heights, runner depth (15/16\" rear min)")
+            return
 
         col.prop(props, 'use_stock_drawer_box_heights',
                  text="Stock Box Heights")
