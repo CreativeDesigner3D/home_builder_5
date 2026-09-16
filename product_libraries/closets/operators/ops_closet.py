@@ -565,7 +565,6 @@ class hb_closets_OT_place_starter(bpy.types.Operator,
         if self._is_corner:
             # Corner L units are fixed-footprint singles: no gap fill,
             # no bay tiling.
-            from .. import const_closets as const
             self._cabinet_width = const.L_SHELF_SIZE
             self._cabinet_depth = const.L_SHELF_SIZE
             self.bay_qty = 1
@@ -1654,7 +1653,6 @@ class hb_closets_OT_add_part(bpy.types.Operator,
     _opening = None
 
     def _make_preview(self, opening):
-        from .. import const_closets as const
         if self.part_type == 'ROD':
             obj = types_closets.add_rod(opening, const.ROD_TOP_OFFSET)
         else:
@@ -1689,7 +1687,6 @@ class hb_closets_OT_add_part(bpy.types.Operator,
         """Move the preview into the opening under the cursor at the
         cursor's opening-local height, then relay the starter out so the
         preview part sizes itself like a committed part."""
-        from .. import const_closets as const
         resolved = self._resolve_opening_under_cursor(context)
         if resolved is None:
             return
@@ -3009,7 +3006,6 @@ class hb_closets_OT_add_slanted_shelves(_ClosetInsertDialog,
         default=types_closets.SHOE_FENCE_COLORS[0])  # type: ignore
 
     def invoke(self, context, event):
-        from .. import const_closets as const
         opening = _active_opening_for_insert(context)
         if opening is not None:
             op = opening.hb_closet_opening
@@ -3867,6 +3863,131 @@ class hb_closets_OT_misc_part_prompts(bpy.types.Operator):
         return {'FINISHED'}
 
 
+def _panel_end_side(obj):
+    """Which end of its unit a partition stands at: 'LEFT', 'RIGHT', or
+    None for one standing between openings. A corner unit's wing panels
+    are its ends - the wing along the side wall is the left one - and
+    its back partition is interior, the way a double partition is."""
+    if obj.get('hb_double_partition') or obj.get('hb_l_partition'):
+        return None
+    root = types_closets.find_starter_root(obj)
+    if root is None:
+        return None
+    cls_name = str(root.get('CLASS_NAME', ''))
+    cls = types_closets.WRAP_CLASS_REGISTRY.get(
+        cls_name, types_closets.ClosetStarter)
+    if getattr(cls, 'is_corner', False) or 'LShelf' in cls_name:
+        return {0: 'RIGHT', 1: 'LEFT'}.get(obj.get('hb_panel_index'))
+    panels = sorted(
+        [c for c in root.children
+         if c.get('hb_part_role') == types_closets.PART_ROLE_PANEL
+         and not c.get('hb_double_partition')],
+        key=lambda o: o.get('hb_panel_index', 0))
+    if not panels:
+        return None
+    if obj == panels[0]:
+        return 'LEFT'
+    if obj == panels[-1]:
+        return 'RIGHT'
+    return None
+
+
+class hb_closets_OT_panel_prompts(bpy.types.Operator):
+    """Finish options for the active partition. An end panel reads and
+    writes the run's end options - the same ones the starter's Ends
+    section offers - so the two surfaces never disagree. A partition
+    standing between openings has no run option to read, so its finish
+    is a flag of its own."""
+    bl_idname = "hb_closets.panel_prompts"
+    bl_label = "Panel Properties"
+    bl_options = {'UNDO'}
+
+    finished_end: bpy.props.BoolProperty(
+        name="Finished End",
+        description="This panel is exposed, so it gets an edge "
+                    "treatment and a blind hang-rail notch instead of "
+                    "one routed through")  # type: ignore
+    drill_through: bpy.props.BoolProperty(
+        name="Drill Through",
+        description="Carry the system holes all the way through this "
+                    "end panel instead of stopping partway")  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (obj is not None and obj.get('hb_part_role')
+                == types_closets.PART_ROLE_PANEL)
+
+    def invoke(self, context, event):
+        obj = context.active_object
+        self._side = _panel_end_side(obj)
+        root = types_closets.find_starter_root(obj)
+        sp = root.hb_closet_starter if root is not None else None
+        if self._side == 'LEFT' and sp is not None:
+            self.finished_end = sp.left_finished_end
+            self.drill_through = sp.drill_through_left
+        elif self._side == 'RIGHT' and sp is not None:
+            self.finished_end = sp.right_finished_end
+            self.drill_through = sp.drill_through_right
+        else:
+            self.finished_end = bool(obj.get('hb_finished_end_user'))
+            self.drill_through = False
+        return context.window_manager.invoke_props_dialog(self, width=300)
+
+    def draw(self, context):
+        obj = context.active_object
+        layout = self.layout
+        side = getattr(self, '_side', None)
+        box = layout.box()
+        box.label(text=obj.name if obj is not None else "Panel",
+                  icon='MOD_SOLIDIFY')
+        # Say which panel this is before offering what it can be:
+        # the same checkbox means the run's end on an end panel and
+        # this one board anywhere else.
+        if side == 'LEFT':
+            box.label(text="Left end of the unit")
+        elif side == 'RIGHT':
+            box.label(text="Right end of the unit")
+        else:
+            box.label(text="Stands between openings")
+        col = box.column(align=True)
+        col.prop(self, 'finished_end')
+        if side is not None:
+            col.prop(self, 'drill_through')
+            box.label(text="Also in the starter's Ends section",
+                      icon='INFO')
+
+    def execute(self, context):
+        obj = context.active_object
+        if obj is None:
+            return {'CANCELLED'}
+        root = types_closets.find_starter_root(obj)
+        side = getattr(self, '_side', None)
+        if side in ('LEFT', 'RIGHT') and root is not None:
+            sp = root.hb_closet_starter
+            fin = ('left_finished_end' if side == 'LEFT'
+                   else 'right_finished_end')
+            drill = ('drill_through_left' if side == 'LEFT'
+                     else 'drill_through_right')
+            # Each starter write solves the run through its update
+            # callback; batch the two so it solves once.
+            with types_closets.suspend_recalc():
+                if getattr(sp, fin) != self.finished_end:
+                    setattr(sp, fin, self.finished_end)
+                if getattr(sp, drill) != self.drill_through:
+                    setattr(sp, drill, self.drill_through)
+        else:
+            want = 1 if self.finished_end else 0
+            if want != (1 if obj.get('hb_finished_end_user') else 0):
+                if want:
+                    obj['hb_finished_end_user'] = 1
+                elif 'hb_finished_end_user' in obj:
+                    del obj['hb_finished_end_user']
+                if root is not None:
+                    types_closets.recalculate_closet_starter(root)
+        return {'FINISHED'}
+
+
 # Blender keeps pointers to the strings a dynamic enum hands back
 # but does not take ownership of them, so something on this side has
 # to hold them. A callback that builds its list fresh and returns it
@@ -4281,7 +4402,6 @@ class hb_closets_OT_place_accessory(bpy.types.Operator,
     def _follow_wall(self, context, wall):
         """Carry the cleat along a wall: gridded, held to the wall's
         height, snapped to the floor when it is let go low."""
-        from .. import const_closets as const
         if not self._carry_onto_wall(wall):
             return False
         cage = self._cage
@@ -4842,13 +4962,13 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
                            "is deleted.")
             return
         col = layout.column(align=True)
-        if acc_def is not None and acc_def.bands:
+        if acc_def.bands:
             col.prop(self, 'model')
-        if acc_def is not None and acc_def.family == acc.FAMILY_PANEL:
+        if acc_def.family == acc.FAMILY_PANEL:
             col.prop(self, 'panel_location')
-        if acc_def is not None and acc_def.colors:
+        if acc_def.colors:
             col.prop(self, 'color')
-        if acc_def is not None and acc_def.fabrics:
+        if acc_def.fabrics:
             col.prop(self, 'fabric')
         if acc_def.family == acc.FAMILY_PANEL:
             # Where it sits front to back. It screws to a panel face,
@@ -5193,15 +5313,16 @@ class hb_closets_OT_continuous_top_prompts(bpy.types.Operator):
             except Exception:
                 length = 0.0
         box = layout.box()
-        row = box.row()
-        row.label(text="Length: "
-                  + units.unit_to_string(unit_settings, length))
-        row = box.row()
-        row.prop(self, 'top_depth', text="Depth")
-        row = box.row()
-        row.prop(self, 'left_offset', text="Left Offset")
-        row = box.row()
-        row.prop(self, 'right_offset', text="Right Offset")
+        box.label(text="Continuous Top", icon='MESH_PLANE')
+        # The length is what the offsets come to, so it reads back
+        # rather than being typed.
+        row = box.row(align=True)
+        row.label(text="Length:")
+        row.label(text=units.unit_to_string(unit_settings, length))
+        col = box.column(align=True)
+        col.prop(self, 'top_depth', text="Depth")
+        col.prop(self, 'left_offset', text="Left Offset")
+        col.prop(self, 'right_offset', text="Right Offset")
 
 
 class hb_closets_OT_front_style(bpy.types.Operator):
@@ -5512,20 +5633,50 @@ def _bay_grid(box, bays, rows):
                 cell.prop(bp, prop_name, text="")
 
 
-def _locked_field(parent, bp, attr, unlock_attr, text=""):
-    """One size field and its padlock, drawn the way the face frame
-    library draws them: the field is quiet while the run owns the value
-    and the padlock reads closed; clicking it hands the value to this
-    bay, and the field opens for typing. Returns the row so a caller can
-    keep filling it."""
+def _locked_field(parent, bp, attr, unlock_attr, text="", locked_src=None):
+    """One field and its padlock, drawn the way the face frame library
+    draws them: the field is quiet while something wider owns the value
+    and the padlock reads closed; clicking it hands the value over, and
+    the field opens for typing. Every locked row in the closet dialogs
+    goes through here, so they all read the same.
+
+    text=None keeps the property's own label. locked_src draws its copy
+    of attr while the row is locked - the Thicknesses rows read the
+    room's figure back that way, so there is something to measure
+    against before taking it over. Returns the row so a caller can keep
+    filling it."""
     unlocked = getattr(bp, unlock_attr)
     cell = parent.row(align=True)
     field = cell.row(align=True)
     field.enabled = unlocked
-    field.prop(bp, attr, text=text)
+    src = bp if (unlocked or locked_src is None) else locked_src
+    if text is None:
+        field.prop(src, attr)
+    else:
+        field.prop(src, attr, text=text)
     cell.prop(bp, unlock_attr, text="",
               icon='UNLOCKED' if unlocked else 'LOCKED')
     return cell
+
+
+def _takeover_row(parent, owner, flag, attr, locked_text, label=None,
+                  enabled=True):
+    """A figure an opening can take over from the run or the room: the
+    tick is the label, and until it is ticked the box beside it reads
+    back what the wider setting is doing, so there is something to
+    measure against. Every such row in the dialogs goes through here,
+    so they all read the same."""
+    row = parent.row(align=True)
+    row.enabled = enabled
+    if label is None:
+        row.prop(owner, flag)
+    else:
+        row.prop(owner, flag, text=label)
+    sub = row.row(align=True)
+    if getattr(owner, flag):
+        sub.prop(owner, attr, text="")
+    else:
+        sub.label(text=locked_text)
 
 
 def _section(layout, sp, toggle, label):
@@ -5559,12 +5710,12 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
         return context.window_manager.invoke_props_dialog(self, width=560)
 
     # -- tab bodies ---------------------------------------------------
-    def _draw_sizes(self, layout, root, sp, bays, is_corner):
-        if getattr(self, '_is_filler', False):
+    def _draw_sizes(self, layout, root, sp, bays, is_corner, is_filler):
+        if is_filler:
             # A filler has two boards and a top and nothing else, so
             # what it is cut to is the whole of its sizes page.
             box = layout.box()
-            box.label(text="Filler")
+            box.label(text="Filler", icon='MESH_PLANE')
             col = box.column(align=True)
             col.prop(sp, 'filler_left_width')
             col.prop(sp, 'filler_right_width')
@@ -5572,11 +5723,11 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
         from .. import props_closets
         if props_closets.starter_wall(root) is not None:
             box = layout.box()
-            box.label(text="Location")
+            box.label(text="Location", icon='ORIENTATION_LOCAL')
             box.prop(sp, 'wall_offset')
         if is_corner:
             box = layout.box()
-            box.label(text="Corner")
+            box.label(text="Corner", icon='MOD_BEVEL')
             col = box.column(align=True)
             col.prop(sp, 'l_left_depth')
             col.prop(sp, 'l_right_depth')
@@ -5609,7 +5760,7 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
         if not bays:
             return
         box = layout.box()
-        box.label(text="Bays")
+        box.label(text="Bays", icon='MOD_ARRAY')
         row = box.row(align=True)
         row.label(text="Bay")
         row.label(text="Width")
@@ -5634,7 +5785,8 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
                      icon=('TRIA_DOWN_BAR' if bp.floor_mounted
                            else 'TRIA_UP_BAR'))
 
-    def _draw_construction(self, layout, root, sp, bays, cls, is_corner):
+    def _draw_construction(self, context, layout, root, sp, bays, cls,
+                           is_corner):
         box = _section(layout, sp, 'show_toe_kick', "Toe Kick")
         if box is not None:
             col = box.column(align=True)
@@ -5743,22 +5895,17 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
         # against before taking it over.
         box = _section(layout, sp, 'show_thicknesses', "Thicknesses")
         if box is not None:
-            room = bpy.context.scene.hb_closets
+            room = context.scene.hb_closets
             col = box.column(align=True)
             for attr, label in (('panel_thickness', "Panel"),
                                 ('shelf_thickness', "Shelf"),
                                 ('divider_thickness', "Cubby Divider"),
                                 ('batten_thickness', "Batten"),
                                 ('batten_width', "Batten Width")):
-                unlocked = getattr(sp, 'unlock_' + attr)
                 row = col.row(align=True)
                 row.label(text=label)
-                cell = row.row(align=True)
-                field = cell.row(align=True)
-                field.enabled = unlocked
-                field.prop(sp if unlocked else room, attr, text="")
-                cell.prop(sp, 'unlock_' + attr, text="",
-                          icon='UNLOCKED' if unlocked else 'LOCKED')
+                _locked_field(row, sp, attr, 'unlock_' + attr,
+                              locked_src=room)
 
         # How every door and drawer front on the run sits against what it
         # meets. A half overlay splits what the front shares with its
@@ -5801,7 +5948,7 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
         col.enabled = sp.include_countertop
 
         box = col.box()
-        box.label(text="Countertop")
+        box.label(text="Countertop", icon='MESH_PLANE')
         sub = box.column(align=True)
         sub.prop(sp, 'countertop_thickness')
         sub = box.column(align=True)
@@ -5825,7 +5972,7 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
         row.prop(sp, 'countertop_radius_finished_ends', text="Radius")
 
         box = col.box()
-        box.label(text="Backsplash")
+        box.label(text="Backsplash", icon='MESH_PLANE')
         sub = box.column(align=True)
         sub.prop(sp, 'include_backsplash')
         row = sub.row(align=True)
@@ -5836,18 +5983,21 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
         layout = self.layout
         root = types_closets.find_starter_root(context.active_object)
         if root is None:
+            layout.label(text="No closet starter selected", icon='INFO')
             return
         sp = root.hb_closet_starter
         cls = types_closets.WRAP_CLASS_REGISTRY.get(
             root.get('CLASS_NAME', ''), types_closets.ClosetStarter)
         is_corner = getattr(cls, 'is_corner', False)
-        self._is_filler = bool(getattr(cls, 'is_filler', False))
+        is_filler = bool(getattr(cls, 'is_filler', False))
         bays = _starter_bays(root)
 
         # Overall size stays visible on every tab - it is what people
-        # come here to change most often.
+        # come here to change most often. The name is a field rather
+        # than a caption, the way the face frame dialog heads itself,
+        # so a run can be named where it is edited.
         box = layout.box()
-        box.label(text=root.name, icon='OUTLINER_OB_LATTICE')
+        box.prop(root, 'name', text="", icon='OUTLINER_OB_LATTICE')
         col = box.column(align=True)
         col.prop(sp, 'width')
         # The run height and depth carry to every bay that has not been
@@ -5872,12 +6022,13 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
         tab = sp.prompt_tab
         if tab == 'COUNTERTOP' and not has_countertop:
             tab = 'SIZES'
-        if tab == 'SIZES':
-            self._draw_sizes(layout, root, sp, bays, is_corner)
-        elif tab == 'CONSTRUCTION':
-            self._draw_construction(layout, root, sp, bays, cls, is_corner)
-        else:
+        if tab == 'CONSTRUCTION':
+            self._draw_construction(context, layout, root, sp, bays, cls,
+                                    is_corner)
+        elif tab == 'COUNTERTOP':
             self._draw_countertop(layout, root, sp)
+        else:
+            self._draw_sizes(layout, root, sp, bays, is_corner, is_filler)
 
     def execute(self, context):
         return {'FINISHED'}
@@ -6015,12 +6166,7 @@ class hb_closets_OT_bay_prompts(bpy.types.Operator):
         # Height and depth follow the run until the padlock hands one of
         # them to this bay, so both stay quiet until it does. The custom
         # height only has somewhere to go once the bay owns its height.
-        row = col.row(align=True)
-        field = row.row(align=True)
-        field.enabled = bp.unlock_height
-        field.prop(bp, 'height_preset')
-        row.prop(bp, 'unlock_height', text="",
-                 icon='UNLOCKED' if bp.unlock_height else 'LOCKED')
+        _locked_field(col, bp, 'height_preset', 'unlock_height', text=None)
         if bp.unlock_height and bp.height_preset == 'CUSTOM':
             col.prop(bp, 'height', text="Custom Height")
         _locked_field(col, bp, 'depth', 'unlock_depth', text="Depth")
@@ -6537,7 +6683,6 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
             context.active_object) is not None
 
     def invoke(self, context, event):
-        from .. import const_closets as const
         opening = _active_opening_for_insert(context)
         if opening is None:
             return {'CANCELLED'}
@@ -6731,14 +6876,10 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
             col = box.column(align=True)
             for side, value in zip(('left', 'right', 'top', 'bottom'),
                                    resolved):
-                row = col.row(align=True)
-                row.prop(self, 'unlock_%s_overlay' % side)
-                sub = row.row(align=True)
-                if getattr(self, 'unlock_%s_overlay' % side):
-                    sub.prop(self, '%s_overlay' % side, text="")
-                else:
-                    sub.label(text=units.unit_to_string(
-                        context.scene.unit_settings, value))
+                _takeover_row(col, self, 'unlock_%s_overlay' % side,
+                              '%s_overlay' % side,
+                              units.unit_to_string(
+                                  context.scene.unit_settings, value))
             box.label(text="Unlocked sides are this opening's own",
                       icon='INFO')
 
@@ -6755,19 +6896,6 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
 
         def as_length(value):
             return units.unit_to_string(context.scene.unit_settings, value)
-
-        def unlock_row(parent, flag, figure, label, locked, enabled=True):
-            """A figure the opening can take over: the tick is the label,
-            and until it is ticked the box beside it reads back what the
-            room is doing, so there is something to measure against."""
-            row = parent.row(align=True)
-            row.enabled = enabled
-            row.prop(self, flag, text=label)
-            sub = row.row(align=True)
-            if getattr(self, flag):
-                sub.prop(self, figure, text="")
-            else:
-                sub.label(text=locked)
 
         # Doors and drawer fronts are hung differently and have nothing
         # to say about each other, so they are kept apart - one stack of
@@ -6792,11 +6920,13 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
             # door turns out to work from - the same one number, read
             # the way that convention reads it.
             v_label, v_locked = "From Top/Bottom", "Follows the door"
-        unlock_row(col, 'unlock_door_pull_vertical',
-                   'door_pull_vertical_location', v_label, v_locked)
-        unlock_row(col, 'unlock_door_pull_edge',
-                   'door_pull_horizontal_offset', "From Edge",
-                   as_length(cp.pull_horizontal_offset))
+        _takeover_row(col, self, 'unlock_door_pull_vertical',
+                      'door_pull_vertical_location', v_locked,
+                      label=v_label)
+        _takeover_row(col, self, 'unlock_door_pull_edge',
+                      'door_pull_horizontal_offset',
+                      as_length(cp.pull_horizontal_offset),
+                      label="From Edge")
 
         wbox = body.box()
         wbox.label(text="Drawer Fronts")
@@ -6811,10 +6941,10 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
                       else "Measured")
         centered = (self.center_pull_on_front if self.unlock_center_pull
                     else cp.center_pulls_on_drawer_front)
-        unlock_row(col, 'unlock_pull_location',
-                   'drawer_pull_vertical_location', "From Top",
-                   as_length(cp.pull_vertical_location_drawers),
-                   enabled=not centered)
+        _takeover_row(col, self, 'unlock_pull_location',
+                      'drawer_pull_vertical_location',
+                      as_length(cp.pull_vertical_location_drawers),
+                      label="From Top", enabled=not centered)
         row = col.row(align=True)
         row.prop(self, 'double_pull_on_front', text="Two Per Front")
         sub = row.row(align=True)
@@ -7390,6 +7520,7 @@ classes = (
     hb_closets_OT_continuous_top_prompts,
     hb_closets_OT_rod_prompts,
     hb_closets_OT_misc_part_prompts,
+    hb_closets_OT_panel_prompts,
     hb_closets_OT_add_adj_shelves,
     hb_closets_OT_add_drawers,
     hb_closets_OT_drawer_accessory,

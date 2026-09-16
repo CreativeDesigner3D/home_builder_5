@@ -296,8 +296,9 @@ class HOME_BUILDER_MT_closet_doors_drawers(bpy.types.Menu):
 
 
 class HOME_BUILDER_MT_closet_part_commands(bpy.types.Menu):
-    """Right-click menu for a user-added interior part. Adjustable
-    shelves get Add/Remove Shelf on top of Delete Part."""
+    """Right-click menu for a closet part. Each role adds what it has
+    to offer - a shelf its Add/Remove, a partition its Panel
+    Properties - on top of Delete Part."""
     bl_label = "Closet Part Commands"
 
     def draw(self, context):
@@ -326,6 +327,11 @@ class HOME_BUILDER_MT_closet_part_commands(bpy.types.Menu):
                 == types_closets.PART_ROLE_MISC):
             layout.operator("hb_closets.misc_part_prompts",
                             text="Part Properties...", icon='WINDOW')
+            layout.separator()
+        if (obj is not None and obj.get('hb_part_role')
+                == types_closets.PART_ROLE_PANEL):
+            layout.operator("hb_closets.panel_prompts",
+                            text="Panel Properties...", icon='WINDOW')
             layout.separator()
         if (obj is not None and obj.get('hb_part_role')
                 == types_closets.PART_ROLE_CONTINUOUS_TOP):

@@ -1284,15 +1284,31 @@ class ClosetStarter(GeoNodeCage):
             off = bool(panel.get('hidden'))
             child['hb_panel_off'] = 1 if off else 0
             _set_part_hidden(child, off)
+            # Every partition answers the part menu, so Parts mode has
+            # somewhere to offer Panel Properties. Stamped on every
+            # solve so a closet built before panels had a menu gains
+            # it the next time it recalculates.
+            child['MENU_ID'] = 'HOME_BUILDER_MT_closet_part_commands'
             # End flags recorded on the panel: whether the end is
             # exposed, and whether its system holes run all the way
-            # through. Flags only - they carry no geometry.
+            # through. The machining reads both - a finished end takes
+            # a blind hang-rail notch, and drill-through carries the
+            # system holes out the far face. An end panel reads the
+            # run's end options; a partition standing between bays has
+            # no run option to read, so its finish is its own flag,
+            # set from Panel Properties. Written on every solve so a
+            # panel that changes place - a bay added or deleted -
+            # reads its new position rather than its old one.
             if i == 0:
                 child['hb_finished_end'] = 1 if sp.left_finished_end else 0
                 child['hb_drill_through'] = 1 if sp.drill_through_left else 0
             elif i == last:
                 child['hb_finished_end'] = 1 if sp.right_finished_end else 0
                 child['hb_drill_through'] = 1 if sp.drill_through_right else 0
+            else:
+                child['hb_finished_end'] = (
+                    1 if child.get('hb_finished_end_user') else 0)
+                child['hb_drill_through'] = 0
         self._reconcile_double_panels(layout, scene_props)
 
     def _reconcile_double_panels(self, layout, scene_props):
@@ -1324,6 +1340,10 @@ class ClosetStarter(GeoNodeCage):
                 p.set_input('Mirror Z', True)
                 c = p.obj
             c.location = (d['x'], 0.0, d['z'])
+            # Same menu and finish handling as the interior partitions:
+            # a double stands between bays, so its finish is its own.
+            c['MENU_ID'] = 'HOME_BUILDER_MT_closet_part_commands'
+            c['hb_finished_end'] = 1 if c.get('hb_finished_end_user') else 0
             part = GeoNodeCutpart(c)
             part.set_input('Length', d['length'])
             part.set_input('Width', d['depth'])
@@ -4802,7 +4822,9 @@ class LShelfClosetStarter(GeoNodeCage):
                 # The end flags a run records on its own end panels,
                 # recorded here the same way: whether the end is
                 # exposed, and whether its system holes run all the
-                # way through. Flags only - they carry no geometry.
+                # way through. The machining reads both. The menu is
+                # stamped on every solve, like the run partitions.
+                p['MENU_ID'] = 'HOME_BUILDER_MT_closet_part_commands'
                 p['hb_panel_off'] = 1 if right_off else 0
                 p['hb_finished_end'] = 1 if sp.right_finished_end else 0
                 p['hb_drill_through'] = (
@@ -4819,6 +4841,7 @@ class LShelfClosetStarter(GeoNodeCage):
                 gp.set_input('Width', LD)
                 gp.set_input('Thickness', pt)
                 gp.set_input('Mirror Z', False)
+                p['MENU_ID'] = 'HOME_BUILDER_MT_closet_part_commands'
                 p['hb_panel_off'] = 1 if left_off else 0
                 p['hb_finished_end'] = 1 if sp.left_finished_end else 0
                 p['hb_drill_through'] = 1 if sp.drill_through_left else 0
@@ -4830,6 +4853,12 @@ class LShelfClosetStarter(GeoNodeCage):
             # height; flipped it moves to the side wall - x in
             # [wo, wo + pt], y in [0, -bw].
             partition = self._reconcile_back_partition()
+            # The back partition stands between the wings the way an
+            # interior partition stands between bays: its finish is its
+            # own flag, set from Panel Properties.
+            partition['MENU_ID'] = 'HOME_BUILDER_MT_closet_part_commands'
+            partition['hb_finished_end'] = (
+                1 if partition.get('hb_finished_end_user') else 0)
             gp = GeoNodeCutpart(partition)
             if flip:
                 partition.rotation_euler.z = 0.0
