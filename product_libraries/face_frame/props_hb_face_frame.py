@@ -10158,6 +10158,19 @@ class Face_Frame_Interior_Split_Props(PropertyGroup):
         update=_update_cabinet_dim,
     )  # type: ignore
 
+    include_part: BoolProperty(
+        name="Include Part",
+        description="Build the fixed shelf or division at this split. "
+                    "Off keeps the two regions but builds no part "
+                    "between them, so the regions meet with no gap",
+        default=True, update=_update_cabinet_dim,
+    )  # type: ignore
+
+    def effective_thickness(self):
+        """Gap the split leaves between its two regions: the divider
+        thickness while the part is built, 0 while it is turned off."""
+        return self.divider_thickness if self.include_part else 0.0
+
     add_face_frame: BoolProperty(
         name="Add Face Frame",
         description="Add a face frame rail (fixed shelf) or stile "

@@ -14140,7 +14140,7 @@ class FaceFrameCabinet(GeoNodeCage):
 
         is_h = (sp.axis == 'H')
         parent_dim = rect['cage_dim_z'] if is_h else rect['cage_dim_x']
-        div_t = sp.divider_thickness
+        div_t = sp.effective_thickness()
 
         locked_total = 0.0
         unlocked = []
@@ -14229,7 +14229,7 @@ class FaceFrameCabinet(GeoNodeCage):
         if len(children) != 2:
             return
 
-        div_t = sp.divider_thickness
+        div_t = sp.effective_thickness()
         cage_x = rect['cage_dim_x']
         cage_y = rect['cage_dim_y']
         cage_z = rect['cage_dim_z']

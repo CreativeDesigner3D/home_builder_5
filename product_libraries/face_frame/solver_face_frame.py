@@ -5873,7 +5873,7 @@ def _walk_interior_node(node, rect, origin_offset,
         # the structure well-formed.
         return
 
-    div_t = sp.divider_thickness
+    div_t = sp.effective_thickness()
     cage_x = rect['cage_dim_x']
     cage_y = rect['cage_dim_y']
     cage_z = rect['cage_dim_z']
@@ -5899,14 +5899,15 @@ def _walk_interior_node(node, rect, origin_offset,
         # Horizontal divider (fixed shelf). Children stack in Z.
         ox, oy, oz = origin_offset
         # Divider: HORIZONTAL part flush in X and Y, at z = size_a
-        out.append({
-            'kind':         'INTERIOR_FIXED_SHELF',
-            'role':         'INTERIOR_FIXED_SHELF',
-            'name':         f'Fixed Shelf {len(out) + 1}',
-            'orientation':  'HORIZONTAL',
-            'position':     (ox, oy, oz + size_a),
-            'dims':         (cage_x, cage_y, div_t),
-        })
+        if sp.include_part:
+            out.append({
+                'kind':         'INTERIOR_FIXED_SHELF',
+                'role':         'INTERIOR_FIXED_SHELF',
+                'name':         f'Fixed Shelf {len(out) + 1}',
+                'orientation':  'HORIZONTAL',
+                'position':     (ox, oy, oz + size_a),
+                'dims':         (cage_x, cage_y, div_t),
+            })
         if sp.add_face_frame and sp.face_frame_width > 0.0:
             ffw = sp.face_frame_width
             # Rail inline with the FF plane; its top face is flush
@@ -5946,14 +5947,15 @@ def _walk_interior_node(node, rect, origin_offset,
         # Divider: VERTICAL part. Origin = back face Y, bottom Z; length
         # runs +Z, width runs -Y (mirror_y at materialize), thickness
         # extends in +X from the origin so left face = origin.x.
-        out.append({
-            'kind':         'INTERIOR_DIVISION',
-            'role':         'INTERIOR_DIVISION',
-            'name':         f'Division {len(out) + 1}',
-            'orientation':  'VERTICAL',
-            'position':     (ox + size_a, oy + cage_y, oz),
-            'dims':         (cage_z, cage_y, div_t),
-        })
+        if sp.include_part:
+            out.append({
+                'kind':         'INTERIOR_DIVISION',
+                'role':         'INTERIOR_DIVISION',
+                'name':         f'Division {len(out) + 1}',
+                'orientation':  'VERTICAL',
+                'position':     (ox + size_a, oy + cage_y, oz),
+                'dims':         (cage_z, cage_y, div_t),
+            })
         if sp.add_face_frame and sp.face_frame_width > 0.0:
             ffw = sp.face_frame_width
             # Stile inline with the FF plane, centered on the

@@ -1622,6 +1622,11 @@ def _draw_split_face_frame_props(layout, sp):
     seeds itself from the cabinet mid rail / mid stile width the first
     time the toggle is enabled.
     """
+    part_label = "Build Fixed Shelf" if sp.axis == 'H' else "Build Division"
+    layout.prop(sp, 'include_part', text=part_label)
+    thick_row = layout.row(align=True)
+    thick_row.enabled = sp.include_part
+    thick_row.prop(sp, 'divider_thickness', text="Divider Thickness")
     layout.prop(sp, 'add_face_frame')
     width_row = layout.row(align=True)
     width_row.enabled = sp.add_face_frame
@@ -1677,7 +1682,6 @@ def _draw_interior_tree_inline(layout, opening_obj):
             continue
 
         col = box.column(align=True)
-        col.prop(sp, 'divider_thickness', text="Divider Thickness")
         _draw_split_face_frame_props(col, sp)
 
         # Both children carry an editable size now that sibling
@@ -1739,7 +1743,6 @@ def draw_interior_region_properties(layout, leaf_obj, opening_obj):
     col = layout.column(align=True)
     axis_label = "Fixed Shelf" if sp.axis == 'H' else "Division"
     col.label(text=f"Parent Split: {axis_label}")
-    col.prop(sp, 'divider_thickness', text="Divider Thickness")
     _draw_split_face_frame_props(col, sp)
 
     size_row = col.row(align=True)
