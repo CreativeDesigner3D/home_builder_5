@@ -410,6 +410,10 @@ ADA_SINK_TAG = 'IS_ADA_SINK'
 # ada_angled_front_construction).
 PART_ROLE_ADA_FRONT = 'ADA_FRONT'
 PART_ROLE_ADA_ANGLED_FRONT = 'ADA_ANGLED_FRONT'
+# The slab closing the band's flat underside between the two fronts.
+PART_ROLE_ADA_BOTTOM = 'ADA_BOTTOM'
+ADA_FRONT_PART_ROLES = (PART_ROLE_ADA_FRONT, PART_ROLE_ADA_ANGLED_FRONT,
+                        PART_ROLE_ADA_BOTTOM)
 PART_ROLE_APRON = 'APRON'
 # Drawer-look door: a working DOOR leaf wearing N applied drawer-front
 # panels (proud of the leaf, with reveal gaps that read as faux mid
@@ -7873,7 +7877,7 @@ class FaceFrameCabinet(GeoNodeCage):
             math.hypot(rake_run, rise) / one_inch, 3)
 
     def _reconcile_ada_fronts(self, layout, shape):
-        """Build the accessible sink's two fronts, or take them away.
+        """Build the accessible sink's fronts, or take them away.
 
         The FRONT is the band across the top of the box, in the face
         frame plane; it stands in for the collapsed face frame's top
@@ -7917,11 +7921,24 @@ class FaceFrameCabinet(GeoNodeCage):
                     specs[PART_ROLE_ADA_ANGLED_FRONT] = (
                         'Angled Front', cab.ada_angled_front_construction,
                         basis, origin, width, rake, t)
+                    # The flat underside of the band, from the top of
+                    # the rake forward to the back of the front: a slab
+                    # facing down, its underside flush with the band's.
+                    run_y = -(wall_run + rake_run)
+                    depth = run_y - (-layout.dim_y + fft)
+                    if depth > 0.0:
+                        basis = Matrix(((0.0, -1.0, 0.0),
+                                        (-1.0, 0.0, 0.0),
+                                        (0.0, 0.0, -1.0)))
+                        origin = Vector((x_lo, run_y, floor_z + rise + t))
+                        specs[PART_ROLE_ADA_BOTTOM] = (
+                            'Front Bottom', 'SLAB', basis, origin, width,
+                            depth, t)
 
         existing = {}
         for child in list(self.obj.children):
             role = child.get('hb_part_role')
-            if role in (PART_ROLE_ADA_FRONT, PART_ROLE_ADA_ANGLED_FRONT):
+            if role in ADA_FRONT_PART_ROLES:
                 if role in specs and role not in existing:
                     existing[role] = child
                 else:

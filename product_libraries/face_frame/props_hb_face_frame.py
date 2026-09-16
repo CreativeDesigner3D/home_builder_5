@@ -3045,7 +3045,7 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                         child, finish_mat, finish_mat_rotated)
                 continue
 
-            if role in ('ADA_FRONT', 'ADA_ANGLED_FRONT'):
+            if role in ('ADA_FRONT', 'ADA_ANGLED_FRONT', 'ADA_BOTTOM'):
                 # Python-built accessible sink fronts: slot 0 on a slab
                 # (grain along the band), stile / rail / panel slots on
                 # stiles and rails.
