@@ -373,14 +373,19 @@ def build_mitered_frame(info, width, height, thickness, member_section):
     local space (same space as build_door_mesh; slots index the stile /
     rail / panel materials). Panels are the caller's job.
 
-    The whole member cross-section is one molding profile: a single
-    sweep around the door, mitred at the corners, covers the outer
-    edge, the shaped face, and the opening walls (the section carries
-    all three -- door_profiles.member_section: u across the member from
-    the OUTER edge, v from the front face, both ends closed to the door
-    back). Only the flat BACK face is filled separately: four quads
-    from the door rect to the openings' hull plus strips across any
-    mid members.
+    The whole member cross-section is one molding profile (door_profiles.
+    member_section: u across the member from the OUTER edge, v from the
+    front face, both ends closed to the door back), swept around each
+    opening and mitred at its corners. An opening edge on the door
+    outline sweeps the full section, covering the outer edge, the
+    shaped face and the opening wall. An edge on a mid rail / mid stile
+    sweeps only the section's inner part, half the mid member wide, so
+    the openings either side meet on its centerline and the mid member
+    reads as the profile mirrored. Where a full edge runs past a mid
+    member its outer part stops square on that centerline, and the
+    neighbouring opening's sweep carries on from there. Only the flat
+    BACK face is filled separately: four quads from the door rect to
+    the openings' hull plus strips across any mid members.
     """
     W, H, T = width, height, thickness
     rows = _panel_grid(info, W, H)
@@ -397,18 +402,80 @@ def build_mitered_frame(info, width, height, thickness, member_section):
         return len(verts) - 1
 
     corners = ((0.0, 0.0), (W, 0.0), (W, H), (0.0, H))
-    dirs = ((1.0, 1.0), (-1.0, 1.0), (-1.0, -1.0), (1.0, -1.0))
-    n = len(member_section)
-    base = len(verts)
-    for (cx, cz), (dx, dz) in zip(corners, dirs):
-        for (u, v) in member_section:
-            emit(cx + dx * u, cz + dz * u, v)
-    for c in range(4):
-        a = base + c * n
-        b = base + ((c + 1) % 4) * n
-        for k in range(n - 1):
-            faces.append((a + k, a + k + 1, b + k + 1, b + k))
-            slots.append(side_slots[c])
+    M = max(u for u, v in member_section)
+    eps = 1e-6
+
+    def inner_part(band):
+        # (s, v) points, outer-edge end first, with s measured OUT from
+        # the opening edge (s = M - u), trimmed to s <= band.
+        if band >= M - eps:
+            return [(M - u, v) for (u, v) in member_section]
+        cut = M - band
+        pts = list(member_section)
+        out = []
+        for i in range(len(pts) - 1, -1, -1):
+            u, v = pts[i]
+            if u >= cut - eps:
+                out.append((M - u, v))
+                continue
+            u1, v1 = pts[i + 1]
+            f = (cut - u1) / (u - u1)
+            out.append((band, v1 + (v - v1) * f))
+            break
+        out.reverse()
+        return out if len(out) > 1 else []
+
+    def split_at(sec, cut):
+        # Add a point wherever the section crosses s = cut, so an edge
+        # running past a narrower neighbour bends exactly on its
+        # centerline instead of cutting the corner.
+        if cut >= M - eps:
+            return sec
+        out = [sec[0]]
+        for (s0, v0), (s1, v1) in zip(sec, sec[1:]):
+            if (s0 - cut) * (s1 - cut) < -eps * eps:
+                f = (cut - s0) / (s1 - s0)
+                out.append((cut, v0 + (v1 - v0) * f))
+            out.append((s1, v1))
+        return out
+
+    for r, row in enumerate(rows):
+        for c, (x0, z0, x1, z1) in enumerate(row):
+            # Band each opening edge may sweep: the full member on the
+            # door outline, half the mid member toward a neighbour.
+            bands = (
+                M if r == 0 else min(M, (z0 - rows[r - 1][0][3]) / 2.0),
+                M if c == len(row) - 1 else min(M, (row[c + 1][0] - x1) / 2.0),
+                M if r == len(rows) - 1 else min(M, (rows[r + 1][0][1] - z1) / 2.0),
+                M if c == 0 else min(M, (x0 - row[c - 1][2]) / 2.0),
+            )
+            for e in range(4):
+                sec = inner_part(bands[e])
+                if not sec:
+                    continue
+                prev_b = bands[(e + 3) % 4]
+                next_b = bands[(e + 1) % 4]
+                sec = split_at(split_at(sec, prev_b), next_b)
+                a_ids, b_ids = [], []
+                for (sv, v) in sec:
+                    sp = min(sv, prev_b)
+                    sn = min(sv, next_b)
+                    if e == 0:      # bottom, left -> right
+                        a_ids.append(emit(x0 - sp, z0 - sv, v))
+                        b_ids.append(emit(x1 + sn, z0 - sv, v))
+                    elif e == 1:    # right, bottom -> top
+                        a_ids.append(emit(x1 + sv, z0 - sp, v))
+                        b_ids.append(emit(x1 + sv, z1 + sn, v))
+                    elif e == 2:    # top, right -> left
+                        a_ids.append(emit(x1 + sp, z1 + sv, v))
+                        b_ids.append(emit(x0 - sn, z1 + sv, v))
+                    else:           # left, top -> bottom
+                        a_ids.append(emit(x0 - sv, z1 + sp, v))
+                        b_ids.append(emit(x0 - sv, z0 - sn, v))
+                for k in range(len(sec) - 1):
+                    faces.append((a_ids[k], a_ids[k + 1],
+                                  b_ids[k + 1], b_ids[k]))
+                    slots.append(side_slots[e])
 
     # Flat back face: door rect down to the openings' hull, strips
     # across the mid members.
