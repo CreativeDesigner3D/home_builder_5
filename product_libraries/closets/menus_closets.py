@@ -314,16 +314,36 @@ class HOME_BUILDER_MT_closet_part_commands(bpy.types.Menu):
         obj = context.active_object
         # Add/Remove Shelf steps the count an opening deals out, so it
         # is only offered on a shelf that count owns - not on one put
-        # in at a height of its own.
+        # in at a height of its own. Lock Shelf reaches both: either
+        # kind of clip shelf can be fixed where it stands.
         if (obj is not None and obj.get('hb_part_role')
                 == types_closets.PART_ROLE_ADJ_SHELF
-                and not obj.get(types_closets.PROP_SHELF_HELD)):
-            op = layout.operator("hb_closets.adj_shelf_step",
-                                 text="Add Shelf", icon='ADD')
-            op.delta = 1
-            op = layout.operator("hb_closets.adj_shelf_step",
-                                 text="Remove Shelf", icon='REMOVE')
-            op.delta = -1
+                and obj.get('hb_l_index') is None):
+            if not obj.get(types_closets.PROP_SHELF_HELD):
+                op = layout.operator("hb_closets.adj_shelf_step",
+                                     text="Add Shelf", icon='ADD')
+                op.delta = 1
+                op = layout.operator("hb_closets.adj_shelf_step",
+                                     text="Remove Shelf", icon='REMOVE')
+                op.delta = -1
+            op = layout.operator("hb_closets.lock_shelf",
+                                 text="Lock Shelf",
+                                 icon='DECORATE_LOCKED')
+            op.lock = True
+            layout.separator()
+        # A fixed shelf someone could have locked can be unlocked back
+        # onto clips. The bank's cap shelf and the corner's shelves are
+        # not offered: the cap belongs to its drawers, and the corner
+        # has a lock of its own.
+        if (obj is not None and obj.get('hb_part_role')
+                == types_closets.PART_ROLE_FIXED_SHELF
+                and obj.get('hb_l_index') is None
+                and not obj.get(types_closets.PROP_DRAWER_CAP)
+                and not obj.get('hb_preview')):
+            op = layout.operator("hb_closets.lock_shelf",
+                                 text="Unlock Shelf",
+                                 icon='DECORATE_UNLOCKED')
+            op.lock = False
             layout.separator()
         if (obj is not None and obj.get('hb_part_role')
                 == types_closets.PART_ROLE_ROD):

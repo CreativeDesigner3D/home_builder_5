@@ -1294,11 +1294,12 @@ class ClosetStarter(GeoNodeCage):
             # through. The machining reads both - a finished end takes
             # a blind hang-rail notch, and drill-through carries the
             # system holes out the far face. An end panel reads the
-            # run's end options; a partition standing between bays has
-            # no run option to read, so its finish is its own flag,
-            # set from Panel Properties. Written on every solve so a
-            # panel that changes place - a bay added or deleted -
-            # reads its new position rather than its old one.
+            # run's end options; a partition standing between bays is
+            # never finished - what a middle panel can be is doubled,
+            # which is the junction bay's flag, not a mark on the
+            # board. Written on every solve so a panel that changes
+            # place - a bay added or deleted - reads its new position
+            # rather than its old one.
             if i == 0:
                 child['hb_finished_end'] = 1 if sp.left_finished_end else 0
                 child['hb_drill_through'] = 1 if sp.drill_through_left else 0
@@ -1306,8 +1307,7 @@ class ClosetStarter(GeoNodeCage):
                 child['hb_finished_end'] = 1 if sp.right_finished_end else 0
                 child['hb_drill_through'] = 1 if sp.drill_through_right else 0
             else:
-                child['hb_finished_end'] = (
-                    1 if child.get('hb_finished_end_user') else 0)
+                child['hb_finished_end'] = 0
                 child['hb_drill_through'] = 0
         self._reconcile_double_panels(layout, scene_props)
 
@@ -1340,10 +1340,10 @@ class ClosetStarter(GeoNodeCage):
                 p.set_input('Mirror Z', True)
                 c = p.obj
             c.location = (d['x'], 0.0, d['z'])
-            # Same menu and finish handling as the interior partitions:
-            # a double stands between bays, so its finish is its own.
+            # Same menu as the other partitions; a double is never a
+            # finished end - it IS the junction's doubling.
             c['MENU_ID'] = 'HOME_BUILDER_MT_closet_part_commands'
-            c['hb_finished_end'] = 1 if c.get('hb_finished_end_user') else 0
+            c['hb_finished_end'] = 0
             part = GeoNodeCutpart(c)
             part.set_input('Length', d['length'])
             part.set_input('Width', d['depth'])
@@ -4851,12 +4851,10 @@ class LShelfClosetStarter(GeoNodeCage):
             # height; flipped it moves to the side wall - x in
             # [wo, wo + pt], y in [0, -bw].
             partition = self._reconcile_back_partition()
-            # The back partition stands between the wings the way an
-            # interior partition stands between bays: its finish is its
-            # own flag, set from Panel Properties.
+            # Construction only: it answers the part menu like every
+            # other partition, but there is nothing to choose about it.
             partition['MENU_ID'] = 'HOME_BUILDER_MT_closet_part_commands'
-            partition['hb_finished_end'] = (
-                1 if partition.get('hb_finished_end_user') else 0)
+            partition['hb_finished_end'] = 0
             gp = GeoNodeCutpart(partition)
             if flip:
                 partition.rotation_euler.z = 0.0

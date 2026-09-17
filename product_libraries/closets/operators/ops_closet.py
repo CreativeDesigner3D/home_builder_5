@@ -3928,12 +3928,35 @@ def _panel_end_side(obj):
     return None
 
 
+def _panel_junction_bay(obj):
+    """The bay whose Double Panel flag owns the junction an interior
+    partition stands at, or None. Partition i is the left panel of bay
+    i, so it stands at the junction bay i-1 doubles; a double partition
+    carries its junction index outright."""
+    if obj.get('hb_l_partition'):
+        return None
+    root = types_closets.find_starter_root(obj)
+    if root is None:
+        return None
+    # Junction i is the junction to the LEFT of bay i - the one
+    # partition i stands at - and the solver flags it from bay i-1's
+    # double_panel_right. A double carries the junction index outright.
+    if obj.get('hb_double_partition'):
+        j = int(obj.get('hb_double_index', 0)) - 1
+    else:
+        j = int(obj.get('hb_panel_index', 0)) - 1
+    bays = _starter_bays(root)
+    if 0 <= j < len(bays) - 1:
+        return bays[j]
+    return None
+
+
 class hb_closets_OT_panel_prompts(bpy.types.Operator):
-    """Finish options for the active partition. An end panel reads and
-    writes the run's end options - the same ones the starter's Ends
-    section offers - so the two surfaces never disagree. A partition
-    standing between openings has no run option to read, so its finish
-    is a flag of its own."""
+    """Options for the active partition. An end panel reads and writes
+    the run's end options - the same ones the starter's Panels section
+    offers - so the two surfaces never disagree. A partition standing
+    between bays offers its junction's Double Panel flag instead: what
+    a middle panel can be is doubled, not finished."""
     bl_idname = "hb_closets.panel_prompts"
     bl_label = "Panel Properties"
     bl_options = {'UNDO'}
@@ -3947,6 +3970,10 @@ class hb_closets_OT_panel_prompts(bpy.types.Operator):
         name="Drill Through",
         description="Carry the system holes all the way through this "
                     "end panel instead of stopping partway")  # type: ignore
+    double_panel: bpy.props.BoolProperty(
+        name="Double Panel",
+        description="Stand two partitions back to back at this "
+                    "junction, one serving each bay")  # type: ignore
 
     @classmethod
     def poll(cls, context):
@@ -3957,6 +3984,7 @@ class hb_closets_OT_panel_prompts(bpy.types.Operator):
     def invoke(self, context, event):
         obj = context.active_object
         self._side = _panel_end_side(obj)
+        self._junction_bay = None
         root = types_closets.find_starter_root(obj)
         sp = root.hb_closet_starter if root is not None else None
         if self._side == 'LEFT' and sp is not None:
@@ -3966,8 +3994,12 @@ class hb_closets_OT_panel_prompts(bpy.types.Operator):
             self.finished_end = sp.right_finished_end
             self.drill_through = sp.drill_through_right
         else:
-            self.finished_end = bool(obj.get('hb_finished_end_user'))
-            self.drill_through = False
+            bay = _panel_junction_bay(obj)
+            if bay is not None:
+                # Held by name: a recalc can rebuild parts mid-dialog,
+                # but the bay cages survive it.
+                self._junction_bay = bay.name
+                self.double_panel = bay.hb_closet_bay.double_panel_right
         return context.window_manager.invoke_props_dialog(self, width=300)
 
     def draw(self, context):
@@ -3977,21 +4009,29 @@ class hb_closets_OT_panel_prompts(bpy.types.Operator):
         box = layout.box()
         box.label(text=obj.name if obj is not None else "Panel",
                   icon='MOD_SOLIDIFY')
-        # Say which panel this is before offering what it can be:
-        # the same checkbox means the run's end on an end panel and
-        # this one board anywhere else.
+        # Say which panel this is before offering what it can be: an
+        # end panel offers the run's end options, a middle one its
+        # junction's doubling.
         if side == 'LEFT':
             box.label(text="Left end of the unit")
         elif side == 'RIGHT':
             box.label(text="Right end of the unit")
         else:
-            box.label(text="Stands between openings")
+            box.label(text="Stands between bays")
         col = box.column(align=True)
-        col.prop(self, 'finished_end')
         if side is not None:
+            col.prop(self, 'finished_end')
             col.prop(self, 'drill_through')
             box.label(text="Also in the starter's Panels section",
                       icon='INFO')
+        elif getattr(self, '_junction_bay', None):
+            col.prop(self, 'double_panel')
+            box.label(text="Also in the starter's Per Bay section",
+                      icon='INFO')
+        else:
+            # The corner's back partition: construction, with nothing
+            # to choose about it here.
+            box.label(text="No options for this panel", icon='INFO')
 
     def execute(self, context):
         obj = context.active_object
@@ -4012,15 +4052,14 @@ class hb_closets_OT_panel_prompts(bpy.types.Operator):
                     setattr(sp, fin, self.finished_end)
                 if getattr(sp, drill) != self.drill_through:
                     setattr(sp, drill, self.drill_through)
-        else:
-            want = 1 if self.finished_end else 0
-            if want != (1 if obj.get('hb_finished_end_user') else 0):
-                if want:
-                    obj['hb_finished_end_user'] = 1
-                elif 'hb_finished_end_user' in obj:
-                    del obj['hb_finished_end_user']
-                if root is not None:
-                    types_closets.recalculate_closet_starter(root)
+        elif getattr(self, '_junction_bay', None):
+            bay = bpy.data.objects.get(self._junction_bay)
+            if bay is not None and (bay.hb_closet_bay.double_panel_right
+                                    != self.double_panel):
+                # The bay prop's update solves the run; unchecking on a
+                # double partition removes the very panel that was
+                # clicked, which is the point.
+                bay.hb_closet_bay.double_panel_right = self.double_panel
         return {'FINISHED'}
 
 
@@ -5465,6 +5504,128 @@ class hb_closets_OT_lock_l_shelf(bpy.types.Operator):
         self.report({'INFO'}, "Shelf locked" if self.lock
                     else "Shelf unlocked")
         return {'FINISHED'}
+
+
+def _opening_at_height(bay, side, z):
+    """The opening cage whose segment covers bay-interior height z on
+    one side of a bay, leftmost column first. None where nothing does -
+    a height above the bay, say."""
+    best = None
+    for c in bay.children:
+        if not c.get(types_closets.TAG_OPENING_CAGE):
+            continue
+        if c.get(types_closets.PROP_OPENING_SIDE, 'FRONT') != side:
+            continue
+        bottom = float(c.get('hb_seg_bottom', 0.0))
+        try:
+            height = float(hb_types.GeoNodeCage(c).get_input('Dim Z'))
+        except Exception:
+            height = 0.0
+        if bottom - 1e-6 <= z <= bottom + height + 1e-6:
+            left = float(c.get('hb_seg_left', 0.0))
+            if best is None or left < best[0]:
+                best = (left, c)
+    return best[1] if best is not None else None
+
+
+class hb_closets_OT_lock_shelf(bpy.types.Operator):
+    """Fix an adjustable shelf where it stands, or put a fixed shelf
+    back on clips - the prior library's Lock Shelf / Unlock Shelf.
+
+    Locking replaces the clip shelf with a fixed shelf at the same
+    height, which splits the opening there the way a fixed shelf
+    always does; unlocking removes the fixed shelf - the openings it
+    stood between merge, keeping their contents - and stands a clip
+    shelf at the same height in the merged opening."""
+    bl_idname = "hb_closets.lock_shelf"
+    bl_label = "Lock Shelf"
+    bl_options = {'UNDO'}
+
+    lock: bpy.props.BoolProperty(
+        name="Lock", default=True,
+        options={'SKIP_SAVE'})  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        if obj is None:
+            return False
+        role = obj.get('hb_part_role')
+        if role == types_closets.PART_ROLE_ADJ_SHELF:
+            # Corner shelves have a lock of their own (a flag, not a
+            # different part) - leave them to it.
+            return obj.get('hb_l_index') is None
+        if role == types_closets.PART_ROLE_FIXED_SHELF:
+            if obj.get(types_closets.PROP_DRAWER_CAP):
+                cls.poll_message_set(
+                    "The cap shelf belongs to its drawer bank")
+                return False
+            return (obj.get('hb_l_index') is None
+                    and not obj.get('hb_preview'))
+        return False
+
+    def execute(self, context):
+        obj = context.active_object
+        role = obj.get('hb_part_role')
+        root = types_closets.find_starter_root(obj)
+        if root is None:
+            return {'CANCELLED'}
+
+        if role == types_closets.PART_ROLE_ADJ_SHELF and self.lock:
+            opening = types_closets.find_opening_cage(obj)
+            if opening is None:
+                return {'CANCELLED'}
+            # The layout stands every clip shelf at its opening-local
+            # height, dealt or held, so the location is the height.
+            z = float(obj.location.z)
+            # Take the clip shelf out the way Delete Part does: a dealt
+            # shelf comes off the count, a held one goes on its own.
+            if not obj.get(types_closets.PROP_SHELF_HELD):
+                qty = int(opening.hb_closet_opening.adj_shelf_qty)
+                opening.hb_closet_opening.adj_shelf_qty = max(0, qty - 1)
+            types_closets._remove_part_tree(obj)
+            types_closets.add_fixed_shelf(opening, z)
+            _apply_finish(root)
+            types_closets.recalculate_closet_starter(root)
+            _apply_selection_shading(context, root, keep_active=False)
+            self.report({'INFO'}, "Shelf locked")
+            return {'FINISHED'}
+
+        if role == types_closets.PART_ROLE_FIXED_SHELF and not self.lock:
+            bay = types_closets.find_bay_cage(obj)
+            if bay is None:
+                return {'CANCELLED'}
+            side = obj.get(types_closets.PROP_OPENING_SIDE, 'FRONT')
+            # Bay-interior height. A shelf committed this instant is
+            # still opening-local; convert the way the adoption does.
+            z = float(obj.get('hb_z_offset', 0.0))
+            parent = obj.parent
+            if (parent is not None
+                    and parent.get(types_closets.TAG_OPENING_CAGE)):
+                if obj.get('hb_anchor_top'):
+                    try:
+                        seg_h = float(hb_types.GeoNodeCage(
+                            parent).get_input('Dim Z'))
+                    except Exception:
+                        seg_h = 0.0
+                    z = max(0.0, seg_h - z)
+                z += float(parent.get('hb_seg_bottom', 0.0))
+            types_closets._remove_part_tree(obj)
+            # First solve merges the openings the shelf stood between;
+            # then the merged opening covering that height takes the
+            # clip shelf, and the second solve stands it up.
+            types_closets.recalculate_closet_starter(root)
+            opening = _opening_at_height(bay, side, z)
+            if opening is not None:
+                types_closets.add_opening_shelf(
+                    opening,
+                    z - float(opening.get('hb_seg_bottom', 0.0)))
+                types_closets.recalculate_closet_starter(root)
+            _apply_selection_shading(context, root, keep_active=False)
+            self.report({'INFO'}, "Shelf unlocked")
+            return {'FINISHED'}
+
+        return {'CANCELLED'}
 
 
 class hb_closets_OT_delete_part(bpy.types.Operator):
@@ -7568,6 +7729,7 @@ classes = (
     hb_closets_OT_adj_shelf_step,
     hb_closets_OT_front_style,
     hb_closets_OT_lock_l_shelf,
+    hb_closets_OT_lock_shelf,
     hb_closets_OT_delete_part,
     hb_closets_OT_delete_starter,
     hb_closets_OT_starter_prompts,
