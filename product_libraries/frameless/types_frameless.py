@@ -763,7 +763,8 @@ class Doors(CabinetOpening):
         right_door.obj.rotation_euler.y = math.radians(-90)
         right_door.set_input("Mirror Y", False) 
 
-        self.add_interior(CabinetShelves())
+        if bpy.context.scene.hb_frameless.seed_door_shelves:
+            self.add_interior(CabinetShelves())
 
     def add_interior(self,interior):
         interior.create('Interior')
@@ -795,7 +796,8 @@ class FlipUpDoor(CabinetOpening):
         door.obj.rotation_euler.y = math.radians(-90)
         door.set_input("Mirror Y", True)
 
-        self.add_interior(CabinetShelves())
+        if bpy.context.scene.hb_frameless.seed_door_shelves:
+            self.add_interior(CabinetShelves())
 
     def add_interior(self, interior):
         interior.create('Interior')
@@ -1008,51 +1010,11 @@ class CabinetFront(CabinetPart):
                 self.obj['DOOR_STYLE_NAME'] = style.name
 
     def get_pull_object(self, pull_type='door'):
-        """Get the pull object for doors or drawers based on current selection.
-        
-        Returns None if pulls are disabled (NONE) or no valid object is found.
-        For CUSTOM selection, returns the pointer property object.
-        For bundled pulls, loads from .blend file and caches.
-        """
+        """The source object for this front's pull, or None when pulls
+        are off. The closet library's handle list, loaded and finished
+        by props_hb_frameless.resolve_pull_object."""
         from . import props_hb_frameless
-        from ... import hb_project
-        
-        main_scene = hb_project.get_main_scene()
-        props = main_scene.hb_frameless
-        
-        # Get the selected pull filename
-        if pull_type == 'drawer':
-            pull_filename = props.drawer_pull_selection
-            cached = props.current_drawer_front_pull_object
-        else:
-            pull_filename = props.door_pull_selection
-            cached = props.current_door_pull_object
-        
-        # No pulls selected
-        if pull_filename == 'NONE':
-            return None
-        
-        # Custom pull from scene - use the pointer property directly
-        if pull_filename == 'CUSTOM':
-            return cached  # Returns None if not assigned yet
-        
-        # Bundled pull - check if cached object matches current selection
-        if cached:
-            pull_name = os.path.splitext(pull_filename)[0] if pull_filename else ""
-            if pull_name and pull_name in cached.name:
-                return cached
-        
-        # Load the selected bundled pull
-        pull_obj = props_hb_frameless.load_pull_object(pull_filename)
-        
-        if pull_obj:
-            if pull_type == 'drawer':
-                props.current_drawer_front_pull_object = pull_obj
-            else:
-                props.current_door_pull_object = pull_obj
-            return pull_obj
-        
-        return None
+        return props_hb_frameless.resolve_pull_object(pull_type)
 
 class CabinetDoor(CabinetFront):
 

@@ -20,6 +20,7 @@ from ... import hb_utils
 from ... import hb_project
 from . import types_frameless
 from . import wood_materials
+from . import molding_frameless
 from . import finish_colors
 import bpy.utils.previews
 
@@ -244,12 +245,100 @@ PULL_FINISHES = {
 }
 
 
+# ---- Handles, shared with the closet library ----------------------------
+# The frameless pulls come from the closet library's handle folder and
+# wear its finishes, so a kitchen and the closet beside it offer the
+# same hardware. The loaders above (categories, sample folder, finish
+# colours) stay for older files but nothing draws them now.
+
+CUSTOM_PULL_NAME = 'Frameless Custom Pull'
+
+
+def _closet_pulls():
+    from ..closets import pulls_closets
+    return pulls_closets
+
+
+def get_closet_pull_enum_items(self, context):
+    return _closet_pulls().pull_enum_items(self, context)
+
+
 def get_pull_finish_enum_items(self, context):
-    """Generate enum items for pull finish dropdown"""
-    items = []
-    for key, data in PULL_FINISHES.items():
-        items.append((key, data['name'], f"Apply {data['name']} finish to pulls"))
-    return items
+    return _closet_pulls().PULL_FINISHES
+
+
+def _custom_pull_object(size, finish):
+    """The plain bar pull at the typed centre-to-centre, rebuilt in
+    place when the size changes so every placed instance follows."""
+    pulls = _closet_pulls()
+    obj = bpy.data.objects.get(CUSTOM_PULL_NAME)
+    if obj is None or obj.type != 'MESH':
+        mesh = bpy.data.meshes.new(CUSTOM_PULL_NAME)
+        obj = bpy.data.objects.new(CUSTOM_PULL_NAME, mesh)
+    if abs(float(obj.get('hb_pull_size', -1.0)) - size) > 1e-6:
+        pulls._build_custom_pull(obj.data, size)
+        obj['hb_pull_size'] = size
+    pulls._apply_finish_to_pull(obj, finish)
+    return obj
+
+
+def resolve_pull_object(pull_type='door'):
+    """The source object for the door or drawer pull selection: one of
+    the closet library's handles, the custom bar pull at the typed
+    size, or None for no pulls. A handle is appended once per
+    selection and kept in the scene's pointer, so the two slots can
+    hold different handles without reloading each other; the finish is
+    applied to its mesh, which every placed instance shares."""
+    props = hb_project.get_main_scene().hb_frameless
+    pulls = _closet_pulls()
+    if pull_type == 'drawer':
+        selection = props.drawer_pull_selection
+        attr = 'current_drawer_front_pull_object'
+    else:
+        selection = props.door_pull_selection
+        attr = 'current_door_pull_object'
+    finish = props.pull_finish
+    if not selection or selection == 'NONE':
+        return None
+    if selection == pulls.CUSTOM_PULL:
+        return _custom_pull_object(max(float(props.custom_pull_size), 0.01),
+                                   finish)
+    cached = getattr(props, attr, None)
+    if cached is not None:
+        try:
+            if cached.get('hb_pull_file') == selection:
+                pulls._apply_finish_to_pull(cached, finish)
+                return cached
+        except ReferenceError:
+            pass
+    path = os.path.join(pulls.HANDLES_DIR, selection)
+    if not os.path.exists(path):
+        return None
+    try:
+        with bpy.data.libraries.load(path) as (data_from, data_to):
+            data_to.objects = list(data_from.objects)
+    except Exception:
+        return None
+    obj = next((o for o in data_to.objects if o is not None), None)
+    if obj is None:
+        return None
+    obj['hb_pull_file'] = selection
+    pulls._apply_finish_to_pull(obj, finish)
+    setattr(props, attr, obj)
+    return obj
+
+
+def update_pull_selection(self, context):
+    """A handle or size pick re-hangs every pull in the room."""
+    bpy.ops.hb_frameless.update_cabinet_pulls(pull_type='ALL')
+
+
+def update_pull_finish(self, context):
+    bpy.ops.hb_frameless.update_pull_finish()
+
+
+def update_pull_locations(self, context):
+    bpy.ops.hb_frameless.update_pull_locations(update_type='ALL')
 
 
 def get_or_create_pull_finish_material(finish_key):
@@ -458,6 +547,22 @@ def update_top_cabinet_clearance(self, context):
     # Upper cabinet: fits between wall_cabinet_location and ceiling minus clearance
     self.upper_cabinet_height = hb_props.ceiling_height - self.default_top_cabinet_clearance - self.default_wall_cabinet_location
 
+# ---- Construction defaults -----------------------------------------------
+# Each default also pushes itself onto the cabinets already in the room,
+# so the room follows the field rather than waiting on a refresh button.
+
+def update_material_thickness_default(self, context):
+    bpy.ops.hb_frameless.update_material_thickness_prompts()
+
+
+def update_toe_kick_defaults(self, context):
+    bpy.ops.hb_frameless.update_toe_kick_prompts()
+
+
+def update_base_top_default(self, context):
+    bpy.ops.hb_frameless.update_base_top_construction_prompts()
+
+
 def update_include_drawer_boxes(self,context):
     if self.include_drawer_boxes:
         # Find all drawer fronts in the scene
@@ -522,6 +627,135 @@ def get_paint_color_enum_items(self, context):
     if not items:
         items.append(('Arctic White', "Arctic White", "Arctic White", 0))
     return items
+
+
+# ---- Sheet materials, shared with the closet library ----------------
+# A frameless style names sheet goods from the closet library's
+# materials blend, so a kitchen and the closet beside it pick from one
+# list and read as one job. The interior is always the white melamine
+# unless the cabinet is flagged Finished Interior.
+
+INTERIOR_MATERIAL = 'White'
+
+
+def _sheet_materials():
+    from ..closets import materials_closets
+    return materials_closets
+
+
+def get_sheet_material_enum_items(self, context):
+    return _sheet_materials().material_enum_items(self, context)
+
+
+_match_enum_cache = None
+_match_enum_names = None
+
+
+def get_match_material_enum_items(self, context):
+    """Match Cabinet first, then the library's sheet materials. Cached
+    (Blender keeps only references to a dynamic enum's strings) and
+    rebuilt when the library's name list changes."""
+    global _match_enum_cache, _match_enum_names
+    m = _sheet_materials()
+    names = tuple(m.get_material_names())
+    if _match_enum_cache is None or names != _match_enum_names:
+        items = [(m.MATCH, "Match Cabinet",
+                  "Follow the cabinet material selection")]
+        items += [(n, n, "") for n in names]
+        _match_enum_cache = items
+        _match_enum_names = names
+    return _match_enum_cache
+
+
+def _cabinets_wearing_style(style):
+    """Every cabinet (and loose misc part) in the project assigned this
+    style, by the index it holds in the main scene's pool."""
+    main_scene = hb_project.get_main_scene()
+    styles = main_scene.hb_frameless.cabinet_styles
+    index = next((i for i, s in enumerate(styles)
+                  if s.as_pointer() == style.as_pointer()), None)
+    if index is None:
+        return []
+    found = []
+    for scene in bpy.data.scenes:
+        for obj in scene.objects:
+            if not (obj.get('IS_FRAMELESS_CABINET_CAGE')
+                    or obj.get('IS_FRAMELESS_MISC_PART')):
+                continue
+            if obj.get('CABINET_STYLE_INDEX', 0) == index:
+                found.append(obj)
+    return found
+
+
+def update_style_materials(self, context):
+    """A material pick repaints every cabinet wearing this style, so
+    the room follows the dropdown rather than waiting on Update
+    Cabinets. Materials only -- nothing moves."""
+    for obj in _cabinets_wearing_style(self):
+        self.apply_materials_to_cabinet(obj)
+
+
+def update_style_overlay(self, context):
+    """An overlay pick rebuilds every cabinet wearing this style: the
+    doors and drawer fronts move, so this is the full pass Update
+    Cabinets runs, done at once rather than behind a progress bar."""
+    for obj in _cabinets_wearing_style(self):
+        self.assign_style_to_cabinet(obj)
+        hb_utils.run_calc_fix(context, obj)
+        obj['CABINET_STYLE_NAME'] = self.name
+
+
+def _closet_fronts():
+    from ..closets import fronts_closets
+    return fronts_closets
+
+
+def _fronts_wearing_style(style):
+    """Every door and drawer front in the project assigned this door
+    style, by the index it holds in the main scene's pool."""
+    main_scene = hb_project.get_main_scene()
+    styles = main_scene.hb_frameless.door_styles
+    index = next((i for i, s in enumerate(styles)
+                  if s.as_pointer() == style.as_pointer()), None)
+    if index is None:
+        return []
+    found = []
+    for scene in bpy.data.scenes:
+        for obj in scene.objects:
+            if not (obj.get('IS_DOOR_FRONT') or obj.get('IS_DRAWER_FRONT')):
+                continue
+            if obj.get('DOOR_STYLE_INDEX', 0) == index:
+                found.append(obj)
+    return found
+
+
+def update_door_style_fronts(self, context):
+    """A pick on a door style restyles every front wearing it, so the
+    room follows the dropdown rather than waiting on Update Fronts."""
+    for obj in _fronts_wearing_style(self):
+        self.assign_style_to_front(obj)
+
+
+def front_door_style(front_obj):
+    """The door style a front wears, by the index stamped on it, or
+    None when the pool is empty."""
+    main_scene = hb_project.get_main_scene()
+    styles = main_scene.hb_frameless.door_styles
+    if not len(styles):
+        return None
+    index = front_obj.get('DOOR_STYLE_INDEX', 0)
+    return styles[index] if 0 <= index < len(styles) else styles[0]
+
+
+def front_panel_material(front_obj, front_mat):
+    """The centre-panel material for a front: glass when its door
+    style asks for it, else the fronts material. Asked by every pass
+    that paints a front, so a cabinet repaint cannot put wood back
+    into a glass door."""
+    style = front_door_style(front_obj)
+    if style is None:
+        return front_mat
+    return style.resolve_panel_material(front_obj, front_mat)
 
 
 def update_cabinet_style_name(self, context):
@@ -606,9 +840,42 @@ class Frameless_Cabinet_Style(PropertyGroup):
             ('HALF', "Half Overlay", "Half overlay - partial frame reveal"),
             ('INSET', "Inset", "Inset - doors sit inside frame"),
         ],
-        default='FULL'
+        default='FULL',
+        update=update_style_overlay,
     )  # type: ignore
-    
+
+    # Sheet materials from the closet library's list. These replace the
+    # wood species / stain / paint selection below, which stays declared
+    # so older files still load but is no longer drawn.
+    sheet_material: EnumProperty(
+        name="Cabinet Material",
+        description="Sheet material for the carcass and, unless Fronts "
+                    "says otherwise, the doors and drawer fronts",
+        items=get_sheet_material_enum_items,
+        update=update_style_materials,
+    )  # type: ignore
+    front_material: EnumProperty(
+        name="Front Material",
+        description="Door and drawer front material (Match Cabinet "
+                    "follows the cabinet material)",
+        items=get_match_material_enum_items,
+        update=update_style_materials,
+    )  # type: ignore
+    edge_material: EnumProperty(
+        name="Cabinet Edgebanding",
+        description="Edgebanding on carcass parts (Match = the cabinet "
+                    "material)",
+        items=get_match_material_enum_items,
+        update=update_style_materials,
+    )  # type: ignore
+    front_edge_material: EnumProperty(
+        name="Front Edgebanding",
+        description="Edgebanding on doors and drawer fronts (Match = "
+                    "the fronts material)",
+        items=get_match_material_enum_items,
+        update=update_style_materials,
+    )  # type: ignore
+
     # Additional style options
     edge_banding: EnumProperty(
         name="Edge Banding",
@@ -658,122 +925,122 @@ class Frameless_Cabinet_Style(PropertyGroup):
         default=False
     )  # type: ignore
 
+    # ---- Materials --------------------------------------------------
+
+    def _sheet(self, name, fallback=None):
+        """A named sheet material from the library, or `fallback` when
+        the selection says Match (or the library cannot supply it)."""
+        m = _sheet_materials()
+        if name in ('', m.MATCH):
+            return fallback
+        return m.load_material(name) or fallback
+
     def get_finish_material(self):
-        if self.wood_species == 'CUSTOM':
-            if self.custom_material:
-                return self.custom_material, self.custom_material
-            return None, None
-        if self.wood_species == 'CUSTOM_PROCEDURAL':
-            if not self.material or not self.material_rotated:
-                library_path = os.path.join(os.path.dirname(__file__),'frameless_assets','materials','cabinet_material.blend')
-                with bpy.data.libraries.load(library_path) as (data_from, data_to):
-                    data_to.materials = ["Wood"]
-                material = data_to.materials[0]
-                material.name = self.name + " Finish"
-                self.material = material
-                rotated_mat = material.copy()
-                rotated_mat.name = material.name + " ROTATED"
-                self.material_rotated = rotated_mat
-            wood_materials.update_finish_material_custom_procedural(self)
-            return self.material, self.material_rotated
-        if self.material and self.material_rotated:
-            wood_materials.update_finish_material(self)
-            return self.material,self.material_rotated
-        else:
-            library_path = os.path.join(os.path.dirname(__file__),'frameless_assets','materials','cabinet_material.blend')
-            with bpy.data.libraries.load(library_path) as (data_from, data_to):
-                data_to.materials = ["Wood"]  
-            
-            material = data_to.materials[0]            
-            material.name = self.name + " Finish"
-            self.material = material
-            rotated_mat = material.copy()
-            rotated_mat.name = material.name + " ROTATED"
-            self.material_rotated = rotated_mat
-            wood_materials.update_finish_material(self)
-            return self.material,self.material_rotated
+        """(material, edge variant) for the cabinet's finished faces --
+        the pair every caller that paints a finished end, a crown or a
+        product front asks for."""
+        m = _sheet_materials()
+        mat = self._sheet(self.sheet_material) or m.load_material(
+            m.DEFAULT_MATERIAL)
+        return mat, m.rotated_variant(mat)
 
     def get_interior_material(self):
-        if self.interior_material_type == 'CUSTOM':
-            if self.custom_interior_material:
-                return self.custom_interior_material, self.custom_interior_material
-            return None, None
-        if self.interior_material_type == 'MATCHING':
-            return self.get_finish_material()
-        if self.interior_material and self.interior_material_rotated:
-            return self.interior_material,self.interior_material_rotated
-        else:
-            library_path = os.path.join(os.path.dirname(__file__),'frameless_assets','materials','cabinet_material.blend')
-            with bpy.data.libraries.load(library_path) as (data_from, data_to):
-                data_to.materials = ["Wood"]  
-            
-            material = data_to.materials[0]            
-            material.name = self.name + " Interior"
-            self.interior_material = material
-            rotated_mat = material.copy()
-            rotated_mat.name = material.name + " ROTATED"
-            self.interior_material_rotated = rotated_mat
-            return self.interior_material,self.interior_material_rotated
+        """The interior is always the white melamine; a Finished
+        Interior cabinet runs the cabinet material through instead (see
+        apply_materials_to_cabinet)."""
+        m = _sheet_materials()
+        mat = m.load_material(INTERIOR_MATERIAL)
+        return mat, m.rotated_variant(mat)
+
+    def get_front_material(self):
+        finish, _ = self.get_finish_material()
+        mat = self._sheet(self.front_material, finish)
+        return mat, _sheet_materials().rotated_variant(mat)
+
+    def get_edge_materials(self):
+        """(cabinet edge, front edge): the banding, already turned so
+        the grain runs along the edge."""
+        m = _sheet_materials()
+        finish, _ = self.get_finish_material()
+        front, _ = self.get_front_material()
+        return (m.rotated_variant(self._sheet(self.edge_material, finish)),
+                m.rotated_variant(self._sheet(self.front_edge_material,
+                                              front)))
+
+    def apply_materials_to_cabinet(self, cabinet_obj):
+        """Paint every cutpart under the cabinet. Carcass faces take the
+        cabinet material where the part is flagged finished (Finish Top
+        / Finish Bottom) and the interior material elsewhere -- or the
+        cabinet material throughout on a Finished Interior cabinet.
+        Fronts take the fronts material both sides. Edges take the
+        matching banding. Five-piece fronts also get their stile / rail
+        / panel materials, the rails turned so the grain runs across."""
+        m = _sheet_materials()
+        finish_mat, _ = self.get_finish_material()
+        interior_mat, _ = self.get_interior_material()
+        front_mat, _ = self.get_front_material()
+        carcass_edge, front_edge = self.get_edge_materials()
+        # The library textures read along a part's length. A door is
+        # cut length-up, so the plain material is vertical grain on it
+        # and the in-plane turn is what runs a rail across.
+        front_across = m.vertical_variant(front_mat)
+        finished_interior = cabinet_obj.get('Finished Interior', False)
+
+        parts = [child for child in cabinet_obj.children_recursive
+                 if 'CABINET_PART' in child]
+        if (cabinet_obj.get('IS_FRAMELESS_MISC_PART')
+                and 'CABINET_PART' in cabinet_obj):
+            parts.append(cabinet_obj)
+
+        for child in parts:
+            part = hb_types.GeoNodeObject(child)
+            if child.get('IS_CABINET_FRONT'):
+                top_mat = bottom_mat = front_mat
+                edge = front_edge
+            elif finished_interior:
+                top_mat = bottom_mat = finish_mat
+                edge = carcass_edge
+            else:
+                top_mat = (finish_mat if child.get('Finish Top', False)
+                           else interior_mat)
+                bottom_mat = (finish_mat if child.get('Finish Bottom', True)
+                              else interior_mat)
+                edge = carcass_edge
+
+            part.set_input("Top Surface", top_mat)
+            part.set_input("Bottom Surface", bottom_mat)
+            part.set_input("Edge W1", edge)
+            part.set_input("Edge W2", edge)
+            part.set_input("Edge L1", edge)
+            part.set_input("Edge L2", edge)
+
+            # Shape modifiers (corner notches and the like) carry a
+            # Material socket; five-piece fronts carry their members'.
+            for mod in child.modifiers:
+                if mod.type != 'NODES' or not mod.node_group:
+                    continue
+                tree_items = mod.node_group.interface.items_tree
+                if 'Material' in tree_items:
+                    hb_utils.set_gn_input(
+                        mod, tree_items['Material'].identifier, top_mat)
+                if 'Stile Material' in tree_items:
+                    hb_utils.set_gn_input(
+                        mod, tree_items['Stile Material'].identifier,
+                        front_mat)
+                if 'Rail Material' in tree_items:
+                    hb_utils.set_gn_input(
+                        mod, tree_items['Rail Material'].identifier,
+                        front_across)
+                if 'Panel Material' in tree_items:
+                    hb_utils.set_gn_input(
+                        mod, tree_items['Panel Material'].identifier,
+                        front_panel_material(child, front_mat))
 
     def assign_style_to_cabinet(self, cabinet_obj):
         #Assign Properties to Cabinet done in ops_hb_frameless.py
 
         #Update all cabinet parts with correct materials
-        finish_mat, finish_mat_rotated = self.get_finish_material()
-        interior_mat, interior_mat_rotated = self.get_interior_material()
-
-        # Determine edge material
-        if self.edge_banding == 'CUSTOM' and self.custom_edge_material:
-            edge_material = self.custom_edge_material
-        elif finish_mat_rotated:
-            edge_material = finish_mat_rotated
-        else:
-            edge_material = None
-
-        # Check if this cabinet has a finished interior
-        finished_interior = cabinet_obj.get('Finished Interior', False)
-
-        # Collect parts to update: children with CABINET_PART, plus the object itself if it's a misc part
-        parts_to_update = [child for child in cabinet_obj.children_recursive if 'CABINET_PART' in child]
-        if cabinet_obj.get('IS_FRAMELESS_MISC_PART') and 'CABINET_PART' in cabinet_obj:
-            parts_to_update.append(cabinet_obj)
-
-        for child in parts_to_update:
-            part = hb_types.GeoNodeObject(child)
-
-            if finished_interior:
-                # All surfaces get finish material
-                top_mat = finish_mat
-                bottom_mat = finish_mat
-            else:
-                # Determine material based on Finish Top/Bottom properties
-                finish_top = child.get('Finish Top', False)
-                finish_bottom = child.get('Finish Bottom', True)
-
-                top_mat = finish_mat if finish_top else interior_mat
-                bottom_mat = finish_mat if finish_bottom else interior_mat
-
-            part.set_input("Top Surface", top_mat)
-            part.set_input("Bottom Surface", bottom_mat)
-            part.set_input("Edge W1", edge_material)
-            part.set_input("Edge W2", edge_material)
-            part.set_input("Edge L1", edge_material)
-            part.set_input("Edge L2", edge_material)
-
-            # Also set Material input on any cabinet part modifiers (e.g., CPM_CORNERNOTCH)
-            for mod in child.modifiers:
-                if mod.type == 'NODES' and mod.node_group:
-                    tree_items = mod.node_group.interface.items_tree
-                    if 'Material' in tree_items:
-                        node_input = tree_items['Material']
-                        hb_utils.set_gn_input(mod, node_input.identifier, finish_mat)
-                    # Update 5-piece door materials (Stile, Rail, Panel)
-                    if 'Stile Material' in tree_items:
-                        hb_utils.set_gn_input(mod, tree_items['Stile Material'].identifier, finish_mat)
-                    if 'Rail Material' in tree_items:
-                        hb_utils.set_gn_input(mod, tree_items['Rail Material'].identifier, finish_mat_rotated)
-                    if 'Panel Material' in tree_items:
-                        hb_utils.set_gn_input(mod, tree_items['Panel Material'].identifier, finish_mat)
+        self.apply_materials_to_cabinet(cabinet_obj)
 
         #Update cabinet door and drawer front overlays
         for child in cabinet_obj.children_recursive:
@@ -825,55 +1092,18 @@ class Frameless_Cabinet_Style(PropertyGroup):
     def draw_cabinet_style_ui(self, layout, context):
         box = layout.box()
         box.prop(self, "name", text="Style Name")
-        
-        # Exterior material
+
         col = box.column(align=True)
-        col.prop(self, "wood_species", text="Exterior")
-        if self.wood_species == 'CUSTOM':
-            col.prop(self, "custom_material", text="")
-        elif self.wood_species == 'CUSTOM_PROCEDURAL':
-            col.prop(self, "custom_wood_color_1", text="Color 1")
-            col.prop(self, "custom_wood_color_2", text="Color 2")
-            col.prop(self, "custom_roughness", text="Roughness")
-            col.prop(self, "custom_noise_bump_strength", text="Noise Bump")
-            col.prop(self, "custom_knots_bump_strength", text="Knots Bump")
-            col.prop(self, "custom_wood_bump_strength", text="Wood Bump")
-            row = box.row()
-            row.prop(self, "show_custom_grain_options",
-                     text="Grain Options",
-                     icon='TRIA_DOWN' if self.show_custom_grain_options else 'TRIA_RIGHT',
-                     emboss=False)
-            if self.show_custom_grain_options:
-                grain_col = box.column(align=True)
-                grain_col.prop(self, "custom_noise_scale_1", text="Noise Scale 1")
-                grain_col.prop(self, "custom_noise_scale_2", text="Noise Scale 2")
-                grain_col.prop(self, "custom_texture_variation_1", text="Texture Variation 1")
-                grain_col.prop(self, "custom_texture_variation_2", text="Texture Variation 2")
-                grain_col.prop(self, "custom_noise_detail", text="Noise Detail")
-                grain_col.prop(self, "custom_voronoi_detail_1", text="Voronoi Detail 1")
-                grain_col.prop(self, "custom_voronoi_detail_2", text="Voronoi Detail 2")
-                grain_col.prop(self, "custom_knots_scale", text="Knots Scale")
-                grain_col.prop(self, "custom_knots_darkness", text="Knots Darkness")
-        elif self.wood_species == 'PAINT_GRADE':
-            col.prop(self, "paint_color", text="Paint Color")
-        else:
-            col.prop(self, "stain_color", text="Stain Color")
-        
-        # Interior material
+        col.prop(self, "sheet_material", text="Material")
+        col.prop(self, "front_material", text="Fronts")
+
         col = box.column(align=True)
-        col.prop(self, "interior_material_type", text="Interior")
-        if self.interior_material_type == 'CUSTOM':
-            col.prop(self, "custom_interior_material", text="")
-        
-        # Edge banding
-        col = box.column(align=True)
-        col.prop(self, "edge_banding", text="Edge Banding")
-        if self.edge_banding == 'CUSTOM':
-            col.prop(self, "custom_edge_material", text="")
-        
-        # Door overlay
+        col.label(text="Edgebanding:")
+        col.prop(self, "edge_material", text="Cabinet Edge")
+        col.prop(self, "front_edge_material", text="Front Edge")
+
         box.prop(self, "door_overlay_type", text="Door Overlay")
-        
+
         # Action buttons
         row = box.row()
         row.scale_y = 1.3
@@ -913,7 +1143,38 @@ class HB_UL_door_styles(UIList):
 
 
 class Frameless_Door_Style(PropertyGroup):
-    """Door/Drawer Front style defining construction type, dimensions, and materials."""
+    """Door/Drawer Front style: one of the closet library's front
+    presets, its centre panel, and how its edges are banded.
+
+    The presets (fronts_closets.FRONT_STYLES) carry the frame widths
+    and the miter flag, so a kitchen and the closet beside it offer the
+    same fronts. The construction props further down are the previous
+    per-style dimensions; they stay declared so older files load but
+    are no longer drawn or read."""
+
+    front_style: EnumProperty(
+        name="Front Style",
+        description="Door and drawer front style for every front "
+                    "wearing this style",
+        items=lambda self, context: _closet_fronts().FRONT_STYLES,
+        update=update_door_style_fronts,
+    )  # type: ignore
+    panel_type: EnumProperty(
+        name="Door Panel",
+        description="Center panel on 5-piece doors: wood or glass",
+        items=lambda self, context: _sheet_materials().PANEL_TYPES,
+        update=update_door_style_fronts,
+    )  # type: ignore
+    door_edgeband: EnumProperty(
+        name="Door Edgebanding",
+        description="How thick the fronts' edgebanding is bought. "
+                    "Companion systems read it for what a front's "
+                    "edges cost and how long they take to run",
+        items=[('1MM', "1mm", "Standard 1mm edgebanding"),
+               ('3MM', "3mm", "Heavy 3mm edgebanding")],
+        default='1MM',
+        update=update_door_style_fronts,
+    )  # type: ignore
     
     show_expanded: BoolProperty(
         name="Show Expanded",
@@ -1066,162 +1327,141 @@ class Frameless_Door_Style(PropertyGroup):
         
         return None
 
+    def resolve_panel_material(self, front_obj, front_mat):
+        """The centre-panel material this style gives a front. Drawer
+        fronts always keep the wood panel; on doors a glass pick
+        replaces it. Clear glass reuses the generated door-panel glass
+        (the library's plain glass does not read as glass in render);
+        mirror and frosted come from the materials library."""
+        panel_type = self.panel_type or 'Vertical Grain'
+        is_door = bool(front_obj.get('IS_DOOR_FRONT'))
+        if not is_door or panel_type == 'Vertical Grain':
+            front_obj['hb_panel_type'] = 'Vertical Grain'
+            front_obj['IS_PREP_FOR_GLASS'] = False
+            return front_mat
+        glass = None
+        if panel_type == 'Clear Glass':
+            glass = get_or_create_glass_material()
+        if glass is None:
+            glass = _sheet_materials().load_material(panel_type)
+        front_obj['hb_panel_type'] = panel_type
+        front_obj['IS_PREP_FOR_GLASS'] = glass is not None
+        return glass if glass is not None else front_mat
+
+    def _strip_front(self, front_obj):
+        for mod in list(front_obj.modifiers):
+            if mod.type == 'NODES' and 'Door Style' in mod.name:
+                front_obj.modifiers.remove(mod)
+
     def assign_style_to_front(self, front_obj):
         """Assign this door style to a door or drawer front object.
-        
+
+        Slab strips the 'Door Style' modifier; any other preset adds or
+        updates the shared CPM_5PIECEDOOR modifier with the preset's
+        widths and miter flag, the closet library's quarter-inch flush
+        panel, and grain-correct member materials from the cabinet's
+        style. Doors taller than 45.5" get a centred mid rail.
+
         Returns:
-            True if style was applied successfully
-            False if style could not be applied (e.g., front too small)
-            String with error message if validation failed
+            True if the style was applied
+            False if the object is not a front
+            A message string when the front is too small for the preset
+            (it is left a slab)
         """
         from . import types_frameless
         from ... import hb_types
-        
-        # Get the front wrapper
+
         if 'IS_DOOR_FRONT' in front_obj:
             front = types_frameless.CabinetDoor(front_obj)
+            is_drawer = False
         elif 'IS_DRAWER_FRONT' in front_obj:
             front = types_frameless.CabinetDrawerFront(front_obj)
+            is_drawer = True
         else:
             return False
-        
-        # Apply style based on door type
-        if self.door_type == 'SLAB':
-            # Remove any existing door style modifier
-            for mod in front_obj.modifiers:
-                if mod.type == 'NODES' and 'Door Style' in mod.name:
-                    front_obj.modifiers.remove(mod)
-        else:
-            # For 5-piece doors, validate dimensions first
-            # Length = height, Width = width (due to rotation)
-            try:
-                front_height = front.get_input("Length")
-                front_width = front.get_input("Width")
-            except:
-                return "Could not read front dimensions"
-            
-            print(f"Front height: {units.meter_to_inch(front_height)}, Front width: {units.meter_to_inch(front_width)}")
-            # Calculate minimum dimensions needed
-            min_width = self.stile_width * 2 + units.inch(1) # Left + Right stiles
-            min_height = self.rail_width * 2 + units.inch(1) # Top + Bottom rails
-            
-            # Add mid rail height if enabled in style OR if door is tall enough to auto-add
-            auto_mid_rail_height = units.inch(45.5)
-            if self.add_mid_rail or front_height > auto_mid_rail_height:
-                min_height += self.mid_rail_width
-            
-            # Check if front is large enough
-            if front_width < min_width:
-                return f"Front too narrow ({front_width:.3f}m) for stile widths ({min_width:.3f}m minimum)"
-            
-            if front_height < min_height:
-                return f"Front too short ({front_height:.3f}m) for rail widths ({min_height:.3f}m minimum)"
-            
-            # Check if door style modifier already exists
-            existing_mod = None
-            for mod in front_obj.modifiers:
-                if mod.type == 'NODES' and 'Door Style' in mod.name:
-                    existing_mod = mod
-                    break
-            
-            if existing_mod:
-                # Wrap existing modifier with CabinetPartModifier
-                door_style_mod = hb_types.CabinetPartModifier()
-                door_style_mod.obj = front_obj
-                door_style_mod.mod = existing_mod
-            else:
-                # Add new modifier
-                door_style_mod = front.add_part_modifier('CPM_5PIECEDOOR', 'Door Style')
-            
-            door_style_mod.set_input("Left Stile Width", self.stile_width)
-            door_style_mod.set_input("Right Stile Width", self.stile_width)
-            door_style_mod.set_input("Top Rail Width", self.rail_width)
-            door_style_mod.set_input("Bottom Rail Width", self.rail_width)
-            door_style_mod.set_input("Panel Thickness", self.panel_thickness)
-            door_style_mod.set_input("Panel Inset", self.panel_inset)
-            
-            # Automatically add centered mid rail for doors taller than 45.5"
-            auto_mid_rail_height = units.inch(45.5)
-            needs_auto_mid_rail = front_height > auto_mid_rail_height
-            
-            # Mid rail: auto-add for tall doors, or use style setting
-            if needs_auto_mid_rail or self.add_mid_rail:
-                try:
-                    door_style_mod.set_input("Add Mid Rail", True)
-                    door_style_mod.set_input("Mid Rail Width", self.mid_rail_width)
-                    
-                    if needs_auto_mid_rail:
-                        # Tall doors always get centered mid rail
-                        door_style_mod.set_input("Center Mid Rail", True)
-                    else:
-                        # Use style settings for shorter doors
-                        door_style_mod.set_input("Center Mid Rail", self.center_mid_rail)
-                        if not self.center_mid_rail:
-                            door_style_mod.set_input("Mid Rail Location", self.mid_rail_location)
-                except:
-                    pass  # Input may not exist on all door style modifiers
-            else:
-                # Disable mid rail if not needed
-                try:
-                    door_style_mod.set_input("Add Mid Rail", False)
-                except:
-                    pass
-            
-            # Inherit materials from parent cabinet's style
-            cabinet_style = self.get_parent_cabinet_style(front_obj)
-            if cabinet_style:
-                material, material_rotated = cabinet_style.get_finish_material()
-                # Stiles use regular material (vertical grain)
-                door_style_mod.set_input("Stile Material", material)
-                # Rails use rotated material (horizontal grain)
-                door_style_mod.set_input("Rail Material", material_rotated)
-                # Panel material depends on panel_material setting
-                if self.panel_material == 'GLASS':
-                    glass_mat = get_or_create_glass_material()
-                    door_style_mod.set_input("Panel Material", glass_mat)
-                else:
-                    door_style_mod.set_input("Panel Material", material)
-        
-        # Store style reference on the object (only after successful application)
+
+        fronts = _closet_fronts()
+        style = self.front_style or 'SLAB'
         front_obj['DOOR_STYLE_NAME'] = self.name
+        front_obj['DOOR_EDGEBAND'] = self.door_edgeband
+        spec = fronts._SPECS.get(style)
+        if spec is None:
+            self._strip_front(front_obj)
+            self.resolve_panel_material(front_obj, None)
+            return True
+
+        stile_in, rail_in, drawer_rail_in, miter = spec
+        stile = units.inch(stile_in)
+        rail = units.inch(drawer_rail_in if is_drawer else rail_in)
+
+        # Frameless fronts are cut length-up: Length is the height.
+        try:
+            front_height = front.get_input("Length")
+            front_width = front.get_input("Width")
+        except Exception:
+            return "Could not read front dimensions"
+        min_h, min_w = fronts._MIN_SIZES.get(style, (0.0, 0.0))
+        if (front_height < units.inch(min_h)
+                or front_width < units.inch(min_w)
+                or front_width < 2.0 * stile + units.inch(1.0)
+                or front_height < 2.0 * rail + units.inch(1.0)):
+            self._strip_front(front_obj)
+            return "Front too small for %s" % style
+
+        existing = None
+        for mod in front_obj.modifiers:
+            if mod.type == 'NODES' and 'Door Style' in mod.name:
+                existing = mod
+                break
+        if existing is not None:
+            door_style_mod = hb_types.CabinetPartModifier()
+            door_style_mod.obj = front_obj
+            door_style_mod.mod = existing
+        else:
+            door_style_mod = front.add_part_modifier('CPM_5PIECEDOOR',
+                                                     'Door Style')
+
+        door_style_mod.set_input("Left Stile Width", stile)
+        door_style_mod.set_input("Right Stile Width", stile)
+        door_style_mod.set_input("Top Rail Width", rail)
+        door_style_mod.set_input("Bottom Rail Width", rail)
+        door_style_mod.set_input("Use Miter", miter)
+        door_style_mod.set_input("Panel Thickness", fronts._PANEL_THICKNESS)
+        door_style_mod.set_input("Panel Inset", fronts._PANEL_INSET)
+
+        # A tall door gets a centred mid rail, as a pantry door would.
+        tall = (not is_drawer) and front_height > units.inch(45.5)
+        try:
+            door_style_mod.set_input("Add Mid Rail", tall)
+            if tall:
+                door_style_mod.set_input("Mid Rail Width", rail)
+                door_style_mod.set_input("Center Mid Rail", True)
+        except Exception:
+            pass  # Input may not exist on all door style modifiers
+
+        # Members take the cabinet style's fronts material; the plain
+        # material reads vertical on a length-up door, so the rails get
+        # the in-plane turn. The panel follows this style's pick.
+        cabinet_style = self.get_parent_cabinet_style(front_obj)
+        if cabinet_style:
+            front_mat, _ = cabinet_style.get_front_material()
+            door_style_mod.set_input("Stile Material", front_mat)
+            door_style_mod.set_input(
+                "Rail Material", _sheet_materials().vertical_variant(front_mat))
+            door_style_mod.set_input(
+                "Panel Material", self.resolve_panel_material(front_obj, front_mat))
         return True
 
     def draw_door_style_ui(self, layout, context):
         """Draw the UI for this door style."""
         box = layout.box()
         box.prop(self, "name", text="Style Name")
-        
-        # Door type
+
         col = box.column(align=True)
-        col.label(text="Construction:")
-        col.prop(self, "door_type", text="Type")
-        
-        # Show relevant options based on door type
-        if self.door_type == 'SLAB':
-            col = box.column(align=True)
-            col.label(text="Edge Profile:")
-            col.prop(self, "edge_profile_type", text="")
-        else:
-            # 5-piece options
-            col = box.column(align=True)
-            col.label(text="Frame Dimensions:")
-            col.prop(self, "stile_width", text="Stile Width")
-            col.prop(self, "rail_width", text="Rail Width")
-            col.prop(self, "mid_rail_width", text="Mid Rail Width")
-            
-            col = box.column(align=True)
-            col.label(text="Panel:")
-            col.prop(self, "panel_material", text="Material")
-            col.prop(self, "panel_thickness", text="Thickness")
-            col.prop(self, "panel_inset", text="Inset")
-        
-        # Profile objects
-        col = box.column(align=True)
-        col.label(text="Profiles:")
-        col.prop(self, "outside_profile", text="Outside")
-        if self.door_type != 'SLAB':
-            col.prop(self, "inside_profile", text="Inside")
-        
+        col.prop(self, "front_style", text="Front Style")
+        col.prop(self, "panel_type", text="Door Panel")
+        col.prop(self, "door_edgeband", text="Edgebanding")
+
         # Assign button
         row = box.row()
         row.scale_y = 1.3
@@ -1373,6 +1613,21 @@ class Frameless_Scene_Props(PropertyGroup):
                            ('Parts',"Parts","Parts")],
                     default='Cabinets',
                     update=update_frameless_selection_mode)# type: ignore
+    # Editable size labels drawn by dim_edit_overlay in Cabinets / Bays /
+    # Openings modes. Per scene so a room can hide them; cycled from the
+    # HUD's Sizes pill (All -> Selected -> Off). SELECTED keeps only the
+    # labels whose cage belongs to the current selection. No update
+    # callback -- the HUD's click handler tags the redraw.
+    selection_mode_sizes_scope: EnumProperty(
+        name="Size Labels",
+        items=[
+            ('ALL', "All", "Show size labels on every cabinet"),
+            ('SELECTED', "Selected",
+             "Show size labels only for the selected objects"),
+            ('OFF', "Off", "Hide size labels"),
+        ],
+        default='ALL',
+    )  # type: ignore
 
     #UI OPTIONS
     frameless_tabs: EnumProperty(name="Frameless Tabs",
@@ -1398,6 +1653,7 @@ class Frameless_Scene_Props(PropertyGroup):
     show_front_options: BoolProperty(name="Show Front Options",description="Show Front Options.",default=False)# type: ignore
     show_drawer_options: BoolProperty(name="Show Drawer Options",description="Show Drawer Options.",default=False)# type: ignore
     show_crown_details: BoolProperty(name="Show Crown Details",description="Show Crown Details.",default=False)# type: ignore
+    show_molding: BoolProperty(name="Show Molding",description="Show Molding.",default=False)# type: ignore
     show_toe_kick_details: BoolProperty(name="Show Toe Kick Details",description="Show Toe Kick Details.",default=False)# type: ignore
     show_upper_bottom_details: BoolProperty(name="Show Upper Bottom Details",description="Show Upper Bottom Details.",default=False)# type: ignore
 
@@ -1582,34 +1838,40 @@ class Frameless_Scene_Props(PropertyGroup):
     default_carcass_part_thickness: FloatProperty(name="Default Carcass Part Thickness",
                                                  description="",
                                                  default=units.inch(.75),
-                                                 unit='LENGTH')# type: ignore
+                                                 unit='LENGTH',
+                       update=update_material_thickness_default)# type: ignore
 
     default_toe_kick_height: FloatProperty(name="Default Toe Kick Height",
                                                  description="",
                                                  default=units.inch(4),
-                                                 unit='LENGTH')# type: ignore
+                                                 unit='LENGTH',
+                       update=update_toe_kick_defaults)# type: ignore
     
     default_toe_kick_setback: FloatProperty(name="Default Toe Kick Setback",
                                                  description="",
                                                  default=units.inch(2.5),
-                                                 unit='LENGTH')# type: ignore
+                                                 unit='LENGTH',
+                       update=update_toe_kick_defaults)# type: ignore
     
     default_toe_kick_type: EnumProperty(name="Toe Kick Type",
                        items=[('Notch Ends to Floor',"Notch Ends to Floor","Notch Ends to Floor"),
                               ('Ladder Style',"Ladder Style","Ladder Style"),
                               ('Floating',"Floating","Floating"),
                               ('Leg Levelers',"Leg Levelers","Leg Levelers")],
-                       default='Notch Ends to Floor')# type: ignore
+                       default='Notch Ends to Floor',
+                       update=update_toe_kick_defaults)# type: ignore
 
     default_leg_leveler_inset: FloatProperty(name="Default Leg Leveler Inset",
                                                  description="Distance from edge of cabinet to leg leveler",
                                                  default=units.inch(2.0),
-                                                 unit='LENGTH')# type: ignore
+                                                 unit='LENGTH',
+                       update=update_toe_kick_defaults)# type: ignore
 
     base_top_construction: EnumProperty(name="Base Top Construction",
                        items=[('Stretchers',"Stretchers","Stretchers"),
                               ('Full Top',"Full Top","Full Top")],
-                       default='Stretchers')# type: ignore
+                       default='Stretchers',
+                       update=update_base_top_default)# type: ignore
 
     equal_drawer_stack_heights: BoolProperty(name="Equal Drawer Stack Heights", 
                                              description="Check this make all drawer stack heights equal. Otherwise the Top Drawer Height will be set.", 
@@ -1620,8 +1882,22 @@ class Frameless_Scene_Props(PropertyGroup):
                                            default=units.inch(6.0),
                                            unit='LENGTH')# type: ignore
 
+    # Crown molding: the closet library's profiles, run along every
+    # cabinet tall enough (see molding_frameless).
+    crown_profile: EnumProperty(
+        name="Crown Profile",
+        description="Profile used by Add Crown Molding",
+        items=molding_frameless.profile_enum_items,
+        update=molding_frameless.update_profile)  # type: ignore
+
     door_styles: CollectionProperty(type=Frameless_Door_Style, name="Door Styles")# type: ignore
     active_door_style_index: IntProperty(name="Active Door Style Index", default=0)# type: ignore
+    seed_door_shelves: BoolProperty(
+        name="Shelves Behind Doors",
+        description="Put adjustable shelves behind the doors of a new "
+                    "door opening. Turn this off to add doors and "
+                    "nothing else",
+        default=True)  # type: ignore
 
     selected_template: StringProperty(
         name="Selected Template",
@@ -1650,31 +1926,37 @@ class Frameless_Scene_Props(PropertyGroup):
     pull_dim_from_edge: FloatProperty(name="Pull Distance From Edge",
                                                  description="Distance from Edge of Door to center of pull",
                                                  default=units.inch(2.0),
-                                                 unit='LENGTH')# type: ignore
+                                                 unit='LENGTH',
+                                                 update=update_pull_locations)# type: ignore
 
     pull_vertical_location_base: FloatProperty(name="Pull Vertical Location Base",
                                                  description="Distance from Top of Base Door to Top of Pull",
                                                  default=units.inch(1.5),
-                                                 unit='LENGTH')# type: ignore
+                                                 unit='LENGTH',
+                                                 update=update_pull_locations)# type: ignore
 
     pull_vertical_location_tall: FloatProperty(name="Pull Vertical Location Base",
                                                  description="Distance from Bottom of Tall Door to Center of Pull",
                                                  default=units.inch(45),
-                                                 unit='LENGTH')# type: ignore
+                                                 unit='LENGTH',
+                                                 update=update_pull_locations)# type: ignore
 
     pull_vertical_location_upper: FloatProperty(name="Pull Vertical Location Base",
                                                  description="Distance from Bottom of Upper Door to Bottom of Pull",
                                                  default=units.inch(1.5),
-                                                 unit='LENGTH')# type: ignore
+                                                 unit='LENGTH',
+                                                 update=update_pull_locations)# type: ignore
 
     pull_vertical_location_drawers: FloatProperty(name="Pull Vertical Location Drawers",
                                                  description="Distance from Top of Drawer Front to Center of Pull",
                                                  default=units.inch(1.5),
-                                                 unit='LENGTH')# type: ignore
+                                                 unit='LENGTH',
+                                                 update=update_pull_locations)# type: ignore
     
     center_pulls_on_drawer_front: BoolProperty(name="Center Pulls on Drawer Front", 
                                                         description="Check this to center pulls on drawer fronts. Otherwise vertical location will be used.", 
-                                                        default=True)# type: ignore
+                                                        default=True,
+                                                        update=update_pull_locations)# type: ignore
 
     # Pull selection from library
     pull_category: EnumProperty(
@@ -1685,20 +1967,30 @@ class Frameless_Scene_Props(PropertyGroup):
 
     door_pull_selection: EnumProperty(
         name="Door Pull",
-        description="Select pull style for doors",
-        items=get_pull_enum_items,
+        description="Handle on every door",
+        items=get_closet_pull_enum_items,
+        update=update_pull_selection,
     )# type: ignore
-    
+
     drawer_pull_selection: EnumProperty(
-        name="Drawer Pull", 
-        description="Select pull style for drawers",
-        items=get_pull_enum_items,
+        name="Drawer Pull",
+        description="Handle on every drawer front",
+        items=get_closet_pull_enum_items,
+        update=update_pull_selection,
     )# type: ignore
-    
+
+    custom_pull_size: FloatProperty(
+        name="Pull Size",
+        description="Center to center of the Custom pull's mounting holes",
+        default=0.096, min=0.01, unit='LENGTH', precision=4,
+        update=update_pull_selection,
+    )# type: ignore
+
     pull_finish: EnumProperty(
         name="Pull Finish",
-        description="Select finish for cabinet pulls",
+        description="Finish on every pull",
         items=get_pull_finish_enum_items,
+        update=update_pull_finish,
     )# type: ignore
 
     # COUNTERTOP OPTIONS
@@ -2002,69 +2294,29 @@ class Frameless_Scene_Props(PropertyGroup):
         from ... import hb_project
         main_scene = hb_project.get_main_scene()
         props = main_scene.hb_frameless
-        
-        # Pull Category
-        row = layout.row(align=True)
-        row.label(text="Category:")
-        row.prop(props, 'pull_category', text="")
+        pulls = _closet_pulls()
 
-        # Pull Selection - Side by side
-        row = layout.row(align=True)
-
-        # Door Pull column
-        col = row.column(align=True)
-        col.label(text="Door Pull:")
-        col.prop(props, 'door_pull_selection', text="")
-        if props.door_pull_selection == 'CUSTOM':
-            col.prop(props, 'current_door_pull_object', text="")
-        elif props.door_pull_selection not in ('NONE', 'CUSTOM'):
-            door_pull_name = os.path.splitext(props.door_pull_selection)[0] if props.door_pull_selection else ""
-            if door_pull_name:
-                thumb_path = find_pull_file(door_pull_name + '.png')
-                if thumb_path and os.path.exists(thumb_path):
-                    icon_id = load_library_thumbnail(thumb_path, f"pull_door_{door_pull_name}")
-                    if icon_id:
-                        col.template_icon(icon_value=icon_id, scale=4.0)
-
-        # Drawer Pull column
-        col = row.column(align=True)
-        col.label(text="Drawer Pull:")
-        col.prop(props, 'drawer_pull_selection', text="")
-        if props.drawer_pull_selection == 'CUSTOM':
-            col.prop(props, 'current_drawer_front_pull_object', text="")
-        elif props.drawer_pull_selection not in ('NONE', 'CUSTOM'):
-            drawer_pull_name = os.path.splitext(props.drawer_pull_selection)[0] if props.drawer_pull_selection else ""
-            if drawer_pull_name:
-                thumb_path = find_pull_file(drawer_pull_name + '.png')
-                if thumb_path and os.path.exists(thumb_path):
-                    icon_id = load_library_thumbnail(thumb_path, f"pull_drawer_{drawer_pull_name}")
-                    if icon_id:
-                        col.template_icon(icon_value=icon_id, scale=4.0)
-
-
-        # Finish dropdown inline
-        row = layout.row(align=True)
-        row.label(text="Finish:")
-        row.prop(props, 'pull_finish', text="")
-        
-        # Pull Locations - compact grid
         col = layout.column(align=True)
-        col.label(text="Handle Location:")
-        col.prop(props, 'pull_dim_from_edge', text="Edge Distance")
-        
+        col.prop(props, 'door_pull_selection', text="Door Pull")
+        col.prop(props, 'drawer_pull_selection', text="Drawer Pull")
+        if pulls.CUSTOM_PULL in (props.door_pull_selection,
+                                 props.drawer_pull_selection):
+            col.prop(props, 'custom_pull_size', text="Center to Center")
+        col.prop(props, 'pull_finish', text="Finish")
+
         col.separator()
-        col.label(text="Vertical Location:")
-        row = col.row(align=True)
-        row.prop(props, 'pull_vertical_location_base', text="Base")
-        row.prop(props, 'pull_vertical_location_tall', text="Tall")
-        row.prop(props, 'pull_vertical_location_upper', text="Upper")
-        
-        col.separator()
-        row = col.row(align=True)
-        row.prop(props, 'center_pulls_on_drawer_front', text="Center Drawer Pulls")
-        if not props.center_pulls_on_drawer_front:
-            col.prop(props, 'pull_vertical_location_drawers', text="Drawer Pull Height")
-        
+        col.label(text="Position:")
+        col.prop(props, 'pull_dim_from_edge', text="From Edge")
+        col.prop(props, 'pull_vertical_location_base', text="Base Vertical")
+        col.prop(props, 'pull_vertical_location_tall', text="Tall Vertical")
+        col.prop(props, 'pull_vertical_location_upper', text="Upper Vertical")
+        col.prop(props, 'center_pulls_on_drawer_front',
+                 text="Center Drawer Pulls")
+        sub = col.row()
+        sub.enabled = not props.center_pulls_on_drawer_front
+        sub.prop(props, 'pull_vertical_location_drawers',
+                 text="Drawer Vertical")
+
         row = layout.row()
         row.scale_y = 1.3
         row.operator('hb_frameless.update_all_pulls', text="Update Pulls", icon='FILE_REFRESH')
@@ -2252,17 +2504,21 @@ class Frameless_Scene_Props(PropertyGroup):
             box.label(text="No upper bottom details defined", icon='INFO')
             box.label(text="Create an upper bottom detail to define profiles")
 
+    def draw_molding_ui(self, layout, context):
+        """Crown molding: a profile and the command that runs it."""
+        col = layout.column(align=True)
+        col.label(text="Crown:")
+        col.prop(self, 'crown_profile', text="Profile")
+        row = col.row(align=True)
+        row.scale_y = 1.3
+        row.operator('hb_frameless.add_molding', text="Add Crown Molding",
+                     icon='ADD')
+        row.operator('hb_frameless.delete_molding', text="", icon='X')
+
     def draw_drawer_box_ui(self, layout, context):
         """Draw the drawer box options UI section."""
-        from ... import hb_project
-        
-        # Get props from main scene
-        main_scene = hb_project.get_main_scene()
-        props = main_scene.hb_frameless
-        
-        # Include drawer boxes toggle
         row = layout.row()
-        row.prop(props, 'include_drawer_boxes', text="Include Drawer Boxes in New Cabinets")
+        row.prop(self, 'include_drawer_boxes', text="Include Drawer Boxes in New Cabinets")
 
     def draw_countertop_ui(self, layout, context):
         """Draw the countertop options UI section."""
@@ -2406,24 +2662,10 @@ class Frameless_Scene_Props(PropertyGroup):
                 
             box = col.box()
             row = box.row()
-            row.alignment = 'LEFT'        
-            row.prop(self,'show_crown_details',text="Crown Details",icon='TRIA_DOWN' if self.show_crown_details else 'TRIA_RIGHT',emboss=False)
-            if self.show_crown_details:
-                self.draw_crown_details_ui(box,context)
-
-            box = col.box()
-            row = box.row()
-            row.alignment = 'LEFT'        
-            row.prop(self,'show_toe_kick_details',text="Toe Kick Details",icon='TRIA_DOWN' if self.show_toe_kick_details else 'TRIA_RIGHT',emboss=False)
-            if self.show_toe_kick_details:
-                self.draw_toe_kick_details_ui(box,context)
-
-            box = col.box()
-            row = box.row()
-            row.alignment = 'LEFT'        
-            row.prop(self,'show_upper_bottom_details',text="Upper Bottom Details",icon='TRIA_DOWN' if self.show_upper_bottom_details else 'TRIA_RIGHT',emboss=False)
-            if self.show_upper_bottom_details:
-                self.draw_upper_bottom_details_ui(box,context)
+            row.alignment = 'LEFT'
+            row.prop(self,'show_molding',text="Molding",icon='TRIA_DOWN' if self.show_molding else 'TRIA_RIGHT',emboss=False)
+            if self.show_molding:
+                self.draw_molding_ui(box,context)
 
             box = col.box()
             row = box.row()

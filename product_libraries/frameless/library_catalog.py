@@ -200,12 +200,183 @@ OPTION_FORMS = (
     ("Door and Drawer Front Styles", 'draw_door_styles_ui'),
     ("Handles", 'draw_cabinet_options_handles'),
     ("General Construction", 'draw_cabinet_options_general'),
-    ("Drawer Boxes", 'draw_drawer_box_ui'),
-    ("Crown Details", 'draw_crown_details_ui'),
-    ("Toe Kick Details", 'draw_toe_kick_details_ui'),
-    ("Upper Bottom Details", 'draw_upper_bottom_details_ui'),
+    ("Molding", 'draw_molding_ui'),
     ("Countertops & Backsplash", 'draw_countertop_ui'),
 )
+
+# Sections drawn INSIDE the viewport panel rather than opened as a
+# dialog, keyed by the same draw-method name as OPTION_FORMS: a row
+# named here folds open in place like a library category, and any
+# other row still opens its form. A 'pool' page is a named list you
+# pick from, add to and assign, with the active item's fields and
+# commands below it. Fields are (kind, property, label); actions are
+# rows of (label, operator).
+OPTION_PAGES = {
+    'draw_cabinet_styles_ui': {
+        'kind': 'pool',
+        'title': "Cabinet Styles",
+        'props': 'hb_frameless',
+        'collection': 'cabinet_styles',
+        'index': 'active_cabinet_style_index',
+        'add_op': 'hb_frameless.add_cabinet_style',
+        'remove_op': 'hb_frameless.remove_cabinet_style',
+        'duplicate_op': 'hb_frameless.duplicate_cabinet_style',
+        'fields': (
+            ('enum', 'sheet_material', "Material"),
+            ('enum', 'front_material', "Fronts"),
+            ('enum', 'edge_material', "Cabinet Edge"),
+            ('enum', 'front_edge_material', "Front Edge"),
+            ('enum', 'door_overlay_type', "Door Overlay"),
+        ),
+        'actions': (
+            (("Assign Style",
+              'hb_frameless.assign_cabinet_style_to_selected_cabinets'),
+             ("Update Cabinets", 'hb_frameless.update_cabinets_from_style')),
+        ),
+    },
+    'draw_door_styles_ui': {
+        'kind': 'pool',
+        'title': "Door and Drawer Front Styles",
+        'props': 'hb_frameless',
+        'collection': 'door_styles',
+        'index': 'active_door_style_index',
+        'add_op': 'hb_frameless.add_door_style',
+        'remove_op': 'hb_frameless.remove_door_style',
+        'duplicate_op': 'hb_frameless.duplicate_door_style',
+        'fields': (
+            ('enum', 'front_style', "Front Style"),
+            ('enum', 'panel_type', "Door Panel"),
+            ('enum', 'door_edgeband', "Edgebanding"),
+        ),
+        'actions': (
+            (("Assign Style",
+              'hb_frameless.assign_door_style_to_selected_fronts'),
+             ("Update Fronts", 'hb_frameless.update_fronts_from_style')),
+        ),
+        # Room-level, not per style: what a NEW door opening is seeded
+        # with. Drawn under the style's commands.
+        'scene_fields': (
+            ('bool', 'seed_door_shelves', "Shelves Behind Doors"),
+        ),
+    },
+    # A 'form' page is fields on the library's property group itself
+    # (scope 'main' = the project-wide copy on the main scene). A field
+    # may carry a dict: 'when' hides it unless the callable says so,
+    # 'thumb' gives a 'thumb' field the picture for each choice.
+    'draw_cabinet_options_handles': {
+        'kind': 'form',
+        'title': "Handles",
+        'props': 'hb_frameless',
+        'scope': 'main',
+        'fields': (
+            ('thumb', 'door_pull_selection', "Door Pull",
+             {'thumb': lambda ident: _pull_thumbnail(ident)}),
+            ('thumb', 'drawer_pull_selection', "Drawer Pull",
+             {'thumb': lambda ident: _pull_thumbnail(ident)}),
+            ('distance', 'custom_pull_size', "Center to Center",
+             {'when': lambda p: 'CUSTOM' in (p.door_pull_selection,
+                                             p.drawer_pull_selection)}),
+            ('enum', 'pull_finish', "Finish"),
+            ('gap', None, None),
+            ('distance', 'pull_dim_from_edge', "From Edge"),
+            ('distance', 'pull_vertical_location_base', "Base Vertical"),
+            ('distance', 'pull_vertical_location_tall', "Tall Vertical"),
+            ('distance', 'pull_vertical_location_upper', "Upper Vertical"),
+            ('bool', 'center_pulls_on_drawer_front', "Center Drawer Pulls"),
+            ('distance', 'pull_vertical_location_drawers', "Drawer Vertical",
+             {'when': lambda p: not p.center_pulls_on_drawer_front}),
+        ),
+        'actions': (
+            (("Update Pulls", 'hb_frameless.update_all_pulls'),),
+        ),
+    },
+    # Room-level construction defaults. Every field pushes itself onto
+    # the cabinets already in the room, so there are no refresh buttons.
+    # The drawer stack fields shape NEW drawer stacks only.
+    'draw_cabinet_options_general': {
+        'kind': 'form',
+        'title': "General Construction",
+        'props': 'hb_frameless',
+        'scope': 'scene',
+        'fields': (
+            ('distance', 'default_carcass_part_thickness', "Material Thickness"),
+            ('gap', None, None),
+            ('distance', 'default_toe_kick_height', "Toe Kick Height"),
+            ('distance', 'default_toe_kick_setback', "Toe Kick Setback"),
+            ('enum', 'default_toe_kick_type', "Toe Kick Type"),
+            ('distance', 'default_leg_leveler_inset', "Leveler Inset",
+             {'when': lambda p: p.default_toe_kick_type == 'Leg Levelers'}),
+            ('gap', None, None),
+            ('enum', 'base_top_construction', "Base Top"),
+            ('gap', None, None),
+            ('bool', 'equal_drawer_stack_heights', "Equal Drawer Stack Heights"),
+            ('distance', 'top_drawer_front_height', "Top Drawer Height",
+             {'when': lambda p: not p.equal_drawer_stack_heights}),
+            ('bool', 'include_drawer_boxes', "Include Drawer Boxes"),
+        ),
+    },
+    # Crown molding, the closet library's way: one profile for the room
+    # and a command that runs it along every cabinet tall enough.
+    'draw_molding_ui': {
+        'kind': 'form',
+        'title': "Molding",
+        'props': 'hb_frameless',
+        'scope': 'scene',
+        'fields': (
+            ('thumb', 'crown_profile', "Crown Profile",
+             {'thumb': lambda ident: _crown_thumbnail(ident)}),
+        ),
+        'actions': (
+            (("Add Crown Molding", 'hb_frameless.add_molding'),
+             ("Remove", 'hb_frameless.delete_molding')),
+        ),
+    },
+    # Countertops and backsplash. The sizes shape the NEXT Add
+    # Countertops (rebuilding on every keystroke would throw away sink
+    # cut-outs), so the commands sit right under them.
+    'draw_countertop_ui': {
+        'kind': 'form',
+        'title': "Countertops & Backsplash",
+        'props': 'hb_frameless',
+        'scope': 'main',
+        'fields': (
+            ('label', None, "Countertops"),
+            ('distance', 'countertop_thickness', "Thickness"),
+            ('distance', 'countertop_overhang_front', "Front Overhang"),
+            ('distance', 'countertop_overhang_sides', "Side Overhang"),
+            ('distance', 'countertop_overhang_back', "Back Overhang"),
+            ('actions', (("Add Countertops", 'hb_frameless.add_countertops',
+                          'selected_only', False),
+                         ("Add to Selected", 'hb_frameless.add_countertops',
+                          'selected_only', True)), None),
+            ('actions', (("Cut Hole (Select 2)",
+                          'hb_frameless.countertop_boolean_cut'),
+                         ("Remove", 'hb_frameless.remove_countertops')), None),
+            ('gap', None, None),
+            ('label', None, "Backsplash"),
+            ('actions', (("Add Backsplash", 'home_builder.add_backsplash'),
+                         ("Edit Edges", 'home_builder.edit_backsplash')), None),
+            ('actions', (("Material", 'home_builder.surface_material'),
+                         ("Remove", 'home_builder.remove_backsplash')), None),
+        ),
+    },
+}
+
+
+def _crown_thumbnail(ident):
+    from . import molding_frameless
+    return molding_frameless.profile_thumbnail(ident)
+
+
+def _pull_thumbnail(ident):
+    """The closet library's picture for a handle file, or None for the
+    choices that have none (None, Custom)."""
+    from ..closets import pulls_closets
+    stem, ext = os.path.splitext(ident or '')
+    if ext.lower() != '.blend':
+        return None
+    path = os.path.join(pulls_closets.HANDLES_DIR, stem + '.png')
+    return path if os.path.exists(path) else None
 
 
 def place(context, product):
