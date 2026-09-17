@@ -836,6 +836,21 @@ def _hit_face_of_cabinet(cab_obj, hit_location):
     return candidates[0][0]
 
 
+def _free_standing_cabinet_root(cab_obj):
+    """Outermost cabinet root above cab_obj, or None.
+
+    Applied panels are cabinet roots in their own right, parented to
+    the cabinet they dress, so a cursor over a paneled back resolves to
+    the panel rather than the cabinet behind it. Climb host by host and
+    return the root that stands free; None when the chain ends on
+    something that isn't a cabinet (a wall-parented cabinet included).
+    """
+    node = cab_obj
+    while node is not None and node.parent is not None:
+        node = types_face_frame.find_cabinet_root(node.parent)
+    return node
+
+
 def _resolve_island_run(seed_obj, exclude_obj=None):
     """Free-standing run containing seed_obj. Returns objects sorted
     left-to-right along the run axis.
@@ -2730,14 +2745,15 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
 
         # Back-of-island snap: if the cursor is over the back face of a
         # free-standing face-frame cabinet, treat that cabinet's run as
-        # a snap surface. Falls through to free placement when the hit
-        # isn't on a back face or the cabinet is wall-parented.
-        hit_cab = self.find_cabinet_bp(
+        # a snap surface. A hit on an applied panel resolves to the
+        # cabinet wearing it, so a finished back still snaps. Falls
+        # through to free placement when the hit isn't on a back face or
+        # the cabinet is wall-parented.
+        hit_cab = _free_standing_cabinet_root(self.find_cabinet_bp(
             self.hit_object,
             marker_set=frozenset({types_face_frame.TAG_CABINET_CAGE}),
-        )
+        ))
         if (hit_cab is not None
-                and hit_cab.parent is None
                 and _hit_face_of_cabinet(hit_cab, self.hit_location) == 'BACK'):
             self._position_on_island_back(context, hit_cab)
             return
