@@ -799,7 +799,7 @@ class hb_face_frame_OT_toggle_mode(bpy.types.Operator):
 def _selection_mode_matches(obj, mode):
     """Return True if obj should be highlighted in the given mode."""
     if mode == 'Face Frame':
-        return obj.get('hb_part_role') in types_face_frame.FACE_FRAME_PART_ROLES
+        return types_face_frame.is_face_frame_mode_part(obj)
     # Drawer boxes join Interiors mode BY ROLE, not by carrying
     # IS_FACE_FRAME_INTERIOR_PART: that tag also routes objects into
     # the dashed hidden-line pass on 2D layout views, where drawer

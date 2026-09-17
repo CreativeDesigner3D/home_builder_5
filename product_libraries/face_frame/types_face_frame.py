@@ -422,6 +422,21 @@ PART_ROLE_APRON = 'APRON'
 # it exists). Face_Frame_Cabinet_Props.paneled_top_rail.
 PART_ROLE_PANELED_TOP_RAIL = 'PANELED_TOP_RAIL'
 PANELED_RAIL_HIDDEN_TAG = 'hb_paneled_rail_hidden'
+
+
+def is_face_frame_mode_part(obj):
+    """True for a part Face Frame selection mode offers to be clicked.
+
+    Frame members the recalc has switched off (hide_render: a top rail
+    standing in for a paneled rail or an accessible sink front, a
+    conditional stile) are left out, since highlighting a part also
+    un-hides it. The paneled top rail itself stands in for its rail, so
+    it is offered in the rail's place.
+    """
+    role = obj.get('hb_part_role')
+    if role == PART_ROLE_PANELED_TOP_RAIL:
+        return True
+    return role in FACE_FRAME_PART_ROLES and not obj.hide_render
 # Drawer-look door: a working DOOR leaf wearing N applied drawer-front
 # panels (proud of the leaf, with reveal gaps that read as faux mid
 # rails) so it looks like a drawer stack but opens as one door. Built in
@@ -18691,7 +18706,7 @@ def _reapply_selection_mode_highlights(root):
 
     def matches(obj):
         if mode == 'Face Frame':
-            return obj.get('hb_part_role') in FACE_FRAME_PART_ROLES
+            return is_face_frame_mode_part(obj)
         # Drawer boxes join Interiors mode by role - deliberately NOT
         # tagged IS_FACE_FRAME_INTERIOR_PART, which would also send
         # them to the dashed hidden-line pass on 2D layout views.
