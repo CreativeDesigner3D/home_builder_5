@@ -277,6 +277,7 @@ class BaseCabinet(Cabinet):
         front.half_overlay_bottom = True
         doors = Doors()
         doors.half_overlay_top = True
+        doors.seed_shelves = False
 
         split = SplitterVertical()
         split.splitter_qty = 1
@@ -855,6 +856,9 @@ class CabinetShelves(CabinetInterior):
 class Doors(CabinetOpening):
 
     door_pull_location = "Base"
+    # None follows the room's Shelves Behind Doors setting; a sink base
+    # says False, since the bowl and trap take that space.
+    seed_shelves = None
 
     def create(self):
         super().create("Doors")
@@ -883,9 +887,12 @@ class Doors(CabinetOpening):
         right_door.obj.parent = self.obj
         right_door.obj.rotation_euler.x = math.radians(90)
         right_door.obj.rotation_euler.y = math.radians(-90)
-        right_door.set_input("Mirror Y", False) 
+        right_door.set_input("Mirror Y", False)
 
-        if bpy.context.scene.hb_frameless.seed_door_shelves:
+        seed = self.seed_shelves
+        if seed is None:
+            seed = bpy.context.scene.hb_frameless.seed_door_shelves
+        if seed:
             self.add_interior(CabinetShelves())
 
     def add_interior(self,interior):
