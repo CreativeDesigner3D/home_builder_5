@@ -35,6 +35,7 @@ from . import pulls_closets
 from . import drawer_boxes_closets
 from . import fronts_closets
 from . import molding_closets
+from . import accessories_closets
 from ... import units
 
 
@@ -1140,6 +1141,13 @@ class Closet_Opening_Props(PropertyGroup):
         description="Finish of the metal shoe fence across the front of "
                     "each shelf",
         default='')  # type: ignore
+    # Which line the fences are bought from. Blank is the library's own
+    # fence; a host that sells another line of fences names it here, and
+    # prices and offers it for itself.
+    slant_fence_line: bpy.props.StringProperty(
+        name="Fence Line",
+        description="Which line of shoe fences the shelves carry",
+        default='')  # type: ignore
     # The fence is a bought rail, so it is cut shorter than the shelf and
     # held off each end. Both figures are the prior library's.
     slant_fence_inset: FloatProperty(
@@ -1419,7 +1427,7 @@ class Closet_Opening_Props(PropertyGroup):
         'rollout_qty', 'rollout_height',
         'rollout_inset_front', 'rollout_inset_reveal',
         'slant_qty', 'slant_spacing', 'slant_angle', 'slant_color',
-        'slant_fence_inset', 'slant_back_inset',
+        'slant_fence_line', 'slant_fence_inset', 'slant_back_inset',
         'cubby_cols', 'cubby_rows', 'cubby_setback',
         'door_swing', 'is_hamper',
         'rod_set_from_front', 'rod_from_front', 'rod_from_rear',
@@ -1664,6 +1672,25 @@ class Closets_Scene_Props(PropertyGroup):
         items=pulls_closets.hanger_enum_items,
         update=pulls_closets.update_room)  # type: ignore
 
+    # What accessories are made in unless one is set otherwise: new
+    # ones arrive in it, and changing it re-dresses the room's. One not
+    # made in it is made in black, and the Accessories section says so.
+    default_accessory_color: EnumProperty(
+        name="Accessory Finish",
+        description="Metal finish every closet accessory is made in. "
+                    "One not offered in it is made in black",
+        items=accessories_closets.ACCESSORY_COLOR_ITEMS,
+        default=accessories_closets.FALLBACK_COLOR,
+        update=accessories_closets.update_room_finishes)  # type: ignore
+    default_accessory_fabric: EnumProperty(
+        name="Accessory Fabric",
+        description="Fabric every closet accessory with a fabric is "
+                    "made in. One not offered in it is made in black, "
+                    "or the first fabric it comes in",
+        items=accessories_closets.ACCESSORY_FABRIC_ITEMS,
+        default='Fabric Beach',
+        update=accessories_closets.update_room_finishes)  # type: ignore
+
     closet_drawer_box: EnumProperty(
         name="Drawer Box",
         description="Drawer box system used by every closet drawer",
@@ -1748,6 +1775,8 @@ class Closets_Scene_Props(PropertyGroup):
         name="Show Drawer Boxes", default=False)  # type: ignore
     show_rod_options: BoolProperty(
         name="Show Rods and Hangers", default=False)  # type: ignore
+    show_accessory_options: BoolProperty(
+        name="Show Accessories", default=False)  # type: ignore
     show_countertop_options: BoolProperty(
         name="Show Countertops", default=False)  # type: ignore
     show_molding_options: BoolProperty(
@@ -1968,6 +1997,22 @@ class Closets_Scene_Props(PropertyGroup):
         row.operator('hb_closets.install_model_pack', text="", icon='IMPORT')
 
     # =====================================================================
+    # UI: accessories (Options tab)
+    # =====================================================================
+    def draw_accessory_options_ui(self, layout, context):
+        col = layout.column(align=True)
+        col.prop(self, 'default_accessory_color', text="Metal")
+        col.prop(self, 'default_accessory_fabric', text="Fabric")
+        rows = accessories_closets.unavailable_finishes(context.scene)
+        if not rows:
+            return
+        box = layout.box()
+        box.label(text="Not available in this finish:", icon='ERROR')
+        sub = box.column(align=True)
+        for line in accessories_closets.notice_lines(rows):
+            sub.label(text=line)
+
+    # =====================================================================
     # UI: countertops (Options tab)
     # =====================================================================
     def draw_countertop_options_ui(self, layout, context):
@@ -2045,6 +2090,8 @@ class Closets_Scene_Props(PropertyGroup):
                  self.draw_drawer_box_options_ui),
                 ('show_rod_options', "Rods & Hangers",
                  self.draw_rod_options_ui),
+                ('show_accessory_options', "Accessories",
+                 self.draw_accessory_options_ui),
                 ('show_countertop_options', "Countertops",
                  self.draw_countertop_options_ui),
                 ('show_molding_options', "Molding",

@@ -39,6 +39,27 @@ def exclusion_set(exclude_obj):
         return frozenset((exclude_obj,))
 
 
+def object_shown(obj, space=None):
+    """Whether an object is on screen: not hidden, not under a wall that
+    Hide Wall or Isolate Selected Walls put away, not in a collection
+    that is turned off, and in local view when one is on.
+
+    Placement asks this of every wall it finds by searching the scene
+    rather than by raycast. A raycast already passes hidden things by;
+    a search does not, and a product would otherwise attach to a wall
+    nobody can see."""
+    try:
+        if space is not None and getattr(space, 'type', '') == 'VIEW_3D':
+            return obj.visible_get(viewport=space)
+        return obj.visible_get()
+    except Exception:
+        # Not in this view layer, or no longer valid.
+        try:
+            return not obj.hide_viewport
+        except Exception:
+            return False
+
+
 def pending_world_matrix(obj):
     """World matrix of an object that was just moved this call.
 

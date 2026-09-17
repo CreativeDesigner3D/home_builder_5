@@ -1147,6 +1147,9 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         for obj in context.scene.objects:
             if 'IS_WALL_BP' not in obj:
                 continue
+            # A hidden wall is not somewhere to put anything.
+            if not hb_placement.object_shown(obj, context.space_data):
+                continue
             
             wall = hb_types.GeoNodeWall(obj)
             # Skip walls whose geo node modifier has been applied - they're

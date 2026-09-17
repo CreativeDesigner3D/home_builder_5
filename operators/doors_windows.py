@@ -476,8 +476,12 @@ class WallObjectPlacementMixin(hb_placement.PlacementMixin):
         best_wall = None
         best_dist = threshold
         placed = self.get_placed_object()
+        space = getattr(bpy.context, 'space_data', None)
         for obj in bpy.context.view_layer.objects:
             if 'IS_WALL_BP' not in obj:
+                continue
+            # A door or window is not cut into a wall nobody can see.
+            if not hb_placement.object_shown(obj, space):
                 continue
             wall = hb_types.GeoNodeWall(obj)
             if not wall.has_modifier():

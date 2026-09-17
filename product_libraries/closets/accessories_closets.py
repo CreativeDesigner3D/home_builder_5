@@ -143,6 +143,132 @@ ACCESSORY_COLORS = (
 )
 ACCESSORY_FABRICS = ('Fabric Beach', 'Fabric Slate', 'Fabric Black')
 
+# The room's default finish and fabric, picked in the closet Options.
+# Numbered so a saved file keeps its choice if the list grows.
+ACCESSORY_COLOR_ITEMS = [(c, c, "Metal finish for new and existing "
+                                "accessories", i)
+                         for i, c in enumerate(ACCESSORY_COLORS)]
+ACCESSORY_FABRIC_ITEMS = [(f, f.replace('Fabric ', ''),
+                           "Fabric for new and existing accessories", i)
+                          for i, f in enumerate(ACCESSORY_FABRICS)]
+# What an accessory not offered in the default is made in instead.
+FALLBACK_COLOR = 'Black'
+FALLBACK_FABRIC = 'Fabric Black'
+
+
+def _room_defaults(scene=None):
+    """(finish, fabric) the room asks accessories to be made in."""
+    try:
+        props = (scene or bpy.context.scene).hb_closets
+    except Exception:
+        return '', ''
+    return (getattr(props, 'default_accessory_color', '') or '',
+            getattr(props, 'default_accessory_fabric', '') or '')
+
+
+def _pick(offered, wanted, fallback):
+    """(choice, fell_back) from what an accessory is offered in. Black
+    when the wanted one is not offered; the first offered when black
+    is not offered either."""
+    if not offered:
+        return '', False
+    if not wanted or wanted in offered:
+        return (wanted or offered[0]), False
+    if fallback in offered:
+        return fallback, True
+    return offered[0], True
+
+
+def default_finish(acc_def, scene=None):
+    """(color, fabric, missing) an accessory takes from the room.
+
+    `missing` names what the room asked for that this accessory is not
+    made in - ('Matte Aluminum',) and the like - empty when it is."""
+    want_c, want_f = _room_defaults(scene)
+    color, c_miss = _pick(acc_def.colors, want_c, FALLBACK_COLOR)
+    fabric, f_miss = _pick(acc_def.fabrics, want_f, FALLBACK_FABRIC)
+    missing = tuple(w for w, m in ((want_c, c_miss), (want_f, f_miss))
+                    if m)
+    return color, fabric, missing
+
+
+def unavailable_finishes(scene=None):
+    """The accessory lines in a scene that the room's default finish or
+    fabric is not offered on: (label, missing, used) per line, one row
+    per line however many of it are placed."""
+    from . import types_closets as tc
+    scene = scene or bpy.context.scene
+    rows = {}
+    for obj in scene.objects:
+        if obj.get('hb_part_role') != tc.PART_ROLE_ACCESSORY:
+            continue
+        d = get(obj.get(tc.PROP_ACCESSORY_KEY, ''))
+        if d is None or d.key in rows:
+            continue
+        color, fabric, missing = default_finish(d, scene)
+        if missing:
+            used = [v for v, offered in ((color, d.colors),
+                                         (fabric, d.fabrics))
+                    if offered and v not in _room_defaults(scene)]
+            rows[d.key] = (d.label, missing, tuple(used))
+    return sorted(rows.values())
+
+
+def apply_room_finishes(scene=None):
+    """Put every accessory in the scene into the room's default finish
+    and fabric - black where it is not made in them - and redraw.
+    Hands back what unavailable_finishes() lists."""
+    from . import types_closets as tc
+    scene = scene or bpy.context.scene
+    roots = []
+    walls = []
+    for obj in scene.objects:
+        if obj.get('hb_part_role') != tc.PART_ROLE_ACCESSORY:
+            continue
+        d = get(obj.get(tc.PROP_ACCESSORY_KEY, ''))
+        if d is None:
+            continue
+        color, fabric, _missing = default_finish(d, scene)
+        obj[tc.PROP_ACCESSORY_COLOR] = color
+        obj[tc.PROP_ACCESSORY_FABRIC] = fabric
+        if obj.get(tc.PROP_ACCESSORY_ON_WALL):
+            walls.append(obj)
+        else:
+            root = tc.find_starter_root(obj)
+            if root is not None and root not in roots:
+                roots.append(root)
+    for root in roots:
+        tc.recalculate_closet_starter(root)
+    for cage in walls:
+        tc.layout_wall_accessory(cage)
+    return unavailable_finishes(scene)
+
+
+def notice_lines(rows):
+    """The notice for accessories not made in the room's default, one
+    line per accessory line."""
+    return ["%s: no %s - using %s" % (label, " / ".join(missing),
+                                      " / ".join(used) or "black")
+            for label, missing, used in rows]
+
+
+def update_room_finishes(self, context):
+    """Options dropdown callback: re-dress the room's accessories and
+    say which of them are not made in what was picked."""
+    rows = apply_room_finishes(context.scene)
+    if not rows:
+        return
+    lines = notice_lines(rows)
+
+    def draw(menu, _context):
+        for line in lines:
+            menu.layout.label(text=line)
+    try:
+        context.window_manager.popup_menu(
+            draw, title="Not available in that finish", icon='ERROR')
+    except Exception:
+        pass
+
 # An accessory model is drawn with its origin on its front face and
 # its depth running back down +Y. This library runs the same way, so a
 # model needs no turning, only putting at the front of the opening it
@@ -398,7 +524,8 @@ class AccessoryDef:
                  'depths', 'min_width', 'max_width', 'setback',
                  'center_depth', 'model_y', 'model_z',
                  'floor_snap',
-                 'colors', 'fabrics', 'ready', 'description')
+                 'colors', 'fabrics', 'ready', 'description', 'menu',
+                 'hook_qty')
 
     def __init__(self, key, label, family, model='', model_path='',
                  bands=(), band_axis=BAND_BY_WIDTH, width=0.0, height=0.0,
@@ -408,7 +535,7 @@ class AccessoryDef:
                  max_width=0.0, setback=0.0, center_depth=False,
                  model_y=0.0,
                  model_z=0.0, floor_snap=False, colors=(), fabrics=(),
-                 ready=False, description=""):
+                 ready=False, description="", menu='', hook_qty=0):
         self.key = key
         self.label = label
         self.family = family
@@ -437,6 +564,15 @@ class AccessoryDef:
         self.fabrics = tuple(fabrics)
         self.ready = ready
         self.description = description or label
+        # The menu a line is offered from. Blank for the mounting-family
+        # menus (Opening / Panel / Insert / Cleat); anything else names a
+        # menu a host draws for itself, and that line stays out of the
+        # family menus. The library does not know what the names mean.
+        self.menu = menu or ''
+        # How many models a cleat line starts with. 0 leaves it to the
+        # library's own count; a line whose model is itself a row of hooks
+        # starts with one.
+        self.hook_qty = int(hook_qty or 0)
 
     @property
     def is_sized(self):
@@ -574,7 +710,9 @@ def _def_from_item(item):
         colors=tuple(item.get('colors') or ()),
         fabrics=tuple(item.get('fabrics') or ()),
         ready=bool(item.get('ready')),
-        description=item.get('description') or '')
+        description=item.get('description') or '',
+        menu=item.get('menu') or '',
+        hook_qty=int(item.get('hook_qty') or 0))
 
 
 _catalog_cache = None
@@ -654,15 +792,21 @@ def get(key):
     return catalog_by_key().get(key)
 
 
-def catalog_items(family=None, ready_only=True):
+def catalog_items(family=None, ready_only=True, menu=''):
     """Catalog lines, optionally one family's worth. ready_only keeps
     the not-yet-built entries out of the menu while leaving them in
-    the catalog."""
+    the catalog.
+
+    menu picks which menu's lines: '' (the default) is the mounting-
+    family menus, a name is the lines a host offers from its own menu,
+    and None is every line whatever menu it belongs to."""
     out = []
     for d in catalog():
         if ready_only and not d.ready:
             continue
         if family is not None and d.family != family:
+            continue
+        if menu is not None and d.menu != menu:
             continue
         out.append(d)
     return out
@@ -670,8 +814,11 @@ def catalog_items(family=None, ready_only=True):
 
 def enum_items(family=None):
     """(key, label, description) tuples for a dropdown."""
+    # Every line, whichever menu offers it: this backs the accessory
+    # property on the add / place operators, which must accept a line
+    # picked from a host's own menu as readily as one from a family menu.
     return [(d.key, d.label, d.description)
-            for d in catalog_items(family)]
+            for d in catalog_items(family, menu=None)]
 
 
 def model_is_installed(path):

@@ -444,7 +444,10 @@ SHOE_FENCE_COLOR_ITEMS = [(c, c, c) for c in SHOE_FENCE_COLORS]
 # Colors saved under an earlier spelling, mapped onto the material that
 # carries that finish now, so a shelf stack built before the rename keeps
 # the finish it was given.
-SHOE_FENCE_COLOR_ALIASES = {'Chrome': 'Polished Chrome'}
+SHOE_FENCE_COLOR_ALIASES = {'Chrome': 'Polished Chrome',
+                            # A host fence line sold in "Slate" draws in
+                            # the slate the finishes blend carries.
+                            'Slate': 'Slate Graphite'}
 
 
 def shoe_fence_color(saved):
@@ -1840,9 +1843,17 @@ class ClosetStarter(GeoNodeCage):
             n_w = max(min(float(_shp.back_notch_width), width), 0.001)
             n_h = max(min(float(_shp.back_notch_height), interior_h),
                       0.001)
+            # Left and right are the person's, standing in front of the
+            # opening. On a double island's back side they are standing
+            # on the other side of it, so the opening's own X runs the
+            # other way across their view and the flips swap over -
+            # otherwise Notch Left cuts the right-hand corner for
+            # everyone working from that side.
+            back_side = side == 'BACK'
             for mod_name, flip_x, cuts in (
-                    ('Notch Left', False, _shp.back_notch_left),
-                    ('Notch Right', True, _shp.back_notch_right)):
+                    ('Notch Left', back_side, _shp.back_notch_left),
+                    ('Notch Right', not back_side,
+                     _shp.back_notch_right)):
                 mod = child.modifiers.get(mod_name)
                 if mod is None:
                     continue
@@ -3161,11 +3172,16 @@ class ClosetStarter(GeoNodeCage):
                                     []).append(front)
 
             # Where it sits. A height set close to the floor is taken
-            # to mean the floor.
+            # to mean the floor. One typed below the floor in its
+            # properties is left there, the way the prior library let
+            # it be: a rack or a hook can hang down past the bottom of
+            # a partition. An insert stands on a shelf, so it cannot.
             z = float(cage.get(PROP_ACCESSORY_Z, 0.0))
-            if z < const.ACCESSORY_BOTTOM_SNAP_TOL:
+            if 0.0 <= z < const.ACCESSORY_BOTTOM_SNAP_TOL:
                 z = 0.0
-            z = max(0.0, min(z, max(interior_h - acc_def.height, 0.0)))
+            z = min(z, max(interior_h - acc_def.height, 0.0))
+            if acc_def.family == acc.FAMILY_INSERT:
+                z = max(z, 0.0)
             cage[PROP_ACCESSORY_Z] = z
 
             band = accessory_band(cage, acc_def, width)
@@ -3235,7 +3251,7 @@ class ClosetStarter(GeoNodeCage):
                 pt = scene_props.panel_thickness
                 # It stands its own height rather than the catalog's,
                 # so how far up it can go is settled here.
-                z = max(0.0, min(z, max(interior_h - c_h, 0.0)))
+                z = min(z, max(interior_h - c_h, 0.0))
                 cage[PROP_ACCESSORY_Z] = z
                 cage.location = (c_x, 0.0, z)
                 geo.set_input('Dim X', c_len)
@@ -3623,6 +3639,18 @@ class ClosetStarter(GeoNodeCage):
         # rather than being torn down and built again.
         color = cage.get(PROP_ACCESSORY_COLOR, '')
         fab = cage.get(PROP_ACCESSORY_FABRIC, '')
+        if acc_def.hook_qty:
+            # A line whose model is itself a row of hooks - a hook
+            # panel - is as long as its model along the board, so the
+            # end ones are kept in by half of that and stay on the
+            # board. A single hook keeps the inset it was given.
+            # Read off the mesh rather than the bounding box: the
+            # source is never linked, so its box is never worked out.
+            try:
+                half = max(abs(v.co.y) for v in src.data.vertices)
+            except Exception:
+                half = 0.0
+            inset = min(max(inset, half), length / 2.0)
         for i, obj in enumerate(existing):
             if obj.data is not src.data:
                 obj.data = src.data
@@ -5365,21 +5393,18 @@ def tray_height(tray, stack_h):
 def _distribute_front_heights(avail, fronts):
     """How tall each front in a drawer bank stands.
 
-    `fronts` is (height, pinned) per front, bottom-up. A bank is a bank
-    rather than a fill: a front nobody has pinned stands at the standard
-    drawer height, the bank stops where it stops, and its own shelf caps
-    it - which is what the prior library built, and what a closet drawer
-    bank is. Dividing a full-height opening between three fronts gives
-    three fronts two feet tall, which is not a drawer.
+    `fronts` is (height, pinned) per front, bottom-up. The drawers fill
+    the opening, the way the prior library's Drawers Filled insert did:
+    a pinned front holds the height it was given and the fronts still
+    sharing divide what is left between them equally, down to
+    MIN_DRAWER_FRONT. Four drawers nobody has sized are four equal
+    fronts from the bottom of the opening to the top.
 
-    A pinned front holds the height it was given. Only when the bank
-    would not fit does the opening take over: the fronts still sharing
-    give up what is over, down to MIN_DRAWER_FRONT, and if every front
-    is pinned they scale together.
+    With every front pinned there is nothing to share out: the fronts
+    keep their heights and the bank stops where it stops, under its own
+    shelf. Only when they would not fit do they scale down together.
     """
-    out = [h if lk else const.DRAWER_FRONT_HEIGHT for h, lk in fronts]
-    if sum(out) <= avail:
-        return out
+    out = [h for h, _lk in fronts]
     unlocked = [i for i, (_h, lk) in enumerate(fronts) if not lk]
     if unlocked:
         locked_sum = sum(h for h, lk in fronts if lk)
@@ -5387,11 +5412,25 @@ def _distribute_front_heights(avail, fronts):
         share = max(share, const.MIN_DRAWER_FRONT)
         for i in unlocked:
             out[i] = share
-    else:
+    elif sum(out) > avail:
         total = sum(out) or 1.0
         scale = avail / total
         out = [h * scale for h in out]
     return out
+
+
+def drawer_front_span(opening, qty):
+    """The height a drawer bank of `qty` fronts shares out in an
+    opening: the opening's height, the overlays top and bottom, less a
+    gap between each front and the next. What the solve fills, worked
+    out the same way so a dialog can show the heights before it runs."""
+    root = find_starter_root(opening)
+    if root is None or qty <= 0:
+        return 0.0
+    sp = root.hb_closet_starter
+    _lo, _ro, to, bo = front_overlays(sp, run_sizes(opening), opening)
+    return max(_cage_dim_z(opening) + to + bo
+               - (qty - 1) * sp.vertical_gap, 0.0)
 
 
 # The least a segment stands at once a grab is pushing on it - the
@@ -5402,10 +5441,10 @@ MIN_SEGMENT = inch(1.0)
 def opening_min_interior(root, opening, scene_props):
     """The interior height an opening cannot give up.
 
-    A bank is a bank: each front claims the height it is holding - the
-    height it was pinned at, or the standard drawer height while it is
-    sharing - so the segment carrying a bank stops a grab at the bank
-    instead of letting it mash the drawers flat. Everything else in an
+    Each front claims the height it is holding - the height it was
+    pinned at, or the least a sharing front is squeezed to - so the
+    segment carrying a bank stops a grab at the bank instead of letting
+    it mash the drawers flat. Everything else in an
     opening gives way on its own - adjustable shelves and rollouts
     respace, slanted stacks step aside, fixed shelves and rods clamp -
     and claims nothing here."""
@@ -5420,7 +5459,7 @@ def opening_min_interior(root, opening, scene_props):
     lo, ro, to, bo = front_overlays(sp, scene_props, opening)
     span = sum((float(f.get(PROP_FRONT_HEIGHT, 0.0))
                 if f.get(PROP_UNLOCK_FRONT_HEIGHT, 0)
-                else const.DRAWER_FRONT_HEIGHT) for f in fronts)
+                else const.MIN_DRAWER_FRONT) for f in fronts)
     span += (n - 1) * sp.vertical_gap
     return max(span - to - bo, 0.0)
 
@@ -6484,14 +6523,17 @@ def add_accessory(opening, key):
     cage.obj.parent = opening
     cage.obj['hb_part_role'] = PART_ROLE_ACCESSORY
     cage.obj[PROP_ACCESSORY_KEY] = acc_def.key
-    cage.obj[PROP_ACCESSORY_COLOR] = (acc_def.colors[0]
-                                      if acc_def.colors else '')
-    cage.obj[PROP_ACCESSORY_FABRIC] = (acc_def.fabrics[0]
-                                       if acc_def.fabrics else '')
+    # The room's default finish and fabric, or black where this one is
+    # not made in them.
+    color, fabric, _missing = acc.default_finish(acc_def)
+    cage.obj[PROP_ACCESSORY_COLOR] = color
+    cage.obj[PROP_ACCESSORY_FABRIC] = fabric
     cage.obj[PROP_ACCESSORY_Z] = 0.0
     # An accessory sold in widths arrives as the one nearest the
     # opening it was dropped in; the person can change it after.
     from . import accessories_closets as acc
+    if acc_def.family == acc.FAMILY_CLEAT and acc_def.hook_qty:
+        cage.obj[PROP_HOOK_QTY] = acc_def.hook_qty
     if acc_def.family == acc.FAMILY_PANEL:
         cage.obj[PROP_ACCESSORY_PANEL_LOC] = acc.PANEL_DEFAULT_LOCATION
         band = acc_def.bands[0] if acc_def.bands else None
@@ -6524,14 +6566,17 @@ def add_wall_accessory(wall, key):
     cage.obj['hb_part_role'] = PART_ROLE_ACCESSORY
     cage.obj[PROP_ACCESSORY_KEY] = acc_def.key
     cage.obj[PROP_ACCESSORY_ON_WALL] = 1
-    cage.obj[PROP_ACCESSORY_COLOR] = (acc_def.colors[0]
-                                      if acc_def.colors else '')
-    cage.obj[PROP_ACCESSORY_FABRIC] = (acc_def.fabrics[0]
-                                       if acc_def.fabrics else '')
+    # The room's default finish and fabric, or black where this one is
+    # not made in them.
+    color, fabric, _missing = acc.default_finish(acc_def)
+    cage.obj[PROP_ACCESSORY_COLOR] = color
+    cage.obj[PROP_ACCESSORY_FABRIC] = fabric
     cage.obj[PROP_ACCESSORY_Z] = 0.0
     # The board arrives at a length of its own and keeps it - there
     # is no opening whose width it could follow.
     cage.obj[PROP_CLEAT_LENGTH] = float(acc_def.width or inch(24))
+    if acc_def.hook_qty:
+        cage.obj[PROP_HOOK_QTY] = acc_def.hook_qty
     band = acc_def.bands[0] if acc_def.bands else None
     if band is not None:
         cage.obj[PROP_ACCESSORY_MODEL] = band[2]
