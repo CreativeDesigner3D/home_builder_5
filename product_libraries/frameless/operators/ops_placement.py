@@ -475,6 +475,20 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         if self.preview_cage:
             self.preview_cage.set_input('Dim Z', height)
 
+    def is_blind_corner(self):
+        return self.cabinet_name.startswith('Blind ')
+
+    def blind_side_for_placement(self):
+        """The end of the run that reaches a wall end: that is the end
+        going into the corner. Away from both ends, the left."""
+        if not self.selected_wall:
+            return 'Left'
+        tol = units.inch(1.0)
+        total = self.individual_cabinet_width * self.cabinet_quantity
+        if self.placement_x + total >= self.wall_length - tol:
+            return 'Right'
+        return 'Left'
+
     def get_cabinet_depth(self, context) -> float:
         props = context.scene.hb_frameless
         if self.cabinet_type == 'BASE':
@@ -1018,6 +1032,7 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         return (not self.is_appliance
                 and self.cabinet_name not in PART_CLASS_MAP
                 and 'Corner' not in self.cabinet_name
+                and not self.is_blind_corner()
                 and not self.cursor_z_tracking
                 and not self.align_top_to_base)
 
@@ -1458,6 +1473,17 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         if self.cabinet_name == 'Lap Drawer':
             cabinet = types_frameless.LapDrawerCabinet()
             return cabinet
+        if self.is_blind_corner():
+            # Which end goes into the corner: the end the run was placed
+            # against, or left when placed away from any corner.
+            blind_cls = {
+                'BASE': types_frameless.BlindCornerBaseCabinet,
+                'TALL': types_frameless.BlindCornerTallCabinet,
+                'UPPER': types_frameless.BlindCornerUpperCabinet,
+            }.get(self.cabinet_type, types_frameless.BlindCornerBaseCabinet)
+            cabinet = blind_cls()
+            cabinet.blind_side = self.blind_side_for_placement()
+            return cabinet
         if self.cabinet_type == 'BASE':
             cabinet = types_frameless.BaseCabinet()
             if self.cabinet_name == 'Base Door':
@@ -1466,6 +1492,10 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                 cabinet.default_exterior = "Door Drawer"
             elif self.cabinet_name == 'Base Drawer':
                 cabinet.default_exterior = "3 Drawers"
+            elif self.cabinet_name == 'Sink Base':
+                cabinet.default_exterior = "Sink"
+            elif self.cabinet_name == 'Base Open':
+                cabinet.default_exterior = "Open"
         elif self.cabinet_type == 'TALL':
             if self.cabinet_name == 'Refrigerator Cabinet':
                 cabinet = types_frameless.RefrigeratorCabinet()
@@ -1473,10 +1503,14 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                 cabinet = types_frameless.TallCabinet()
                 if self.cabinet_name == 'Tall Stacked':
                     cabinet.is_stacked = True
+                elif self.cabinet_name == 'Tall Open':
+                    cabinet.default_exterior = "Open"
         elif self.cabinet_type == 'UPPER':
             cabinet = types_frameless.UpperCabinet()
             if self.cabinet_name == 'Upper Stacked':
                 cabinet.is_stacked = True
+            elif self.cabinet_name == 'Upper Open':
+                cabinet.default_exterior = "Open"
         else:
             cabinet = types_frameless.Cabinet()    
         return cabinet    
@@ -1684,6 +1718,13 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             self.fill_mode = True
             part_instance = PART_CLASS_MAP[self.cabinet_name]()
             self.cursor_z_product_height = part_instance.height
+
+        # A blind corner starts at its own width: the door opening plus
+        # the blind, which the room's default cabinet width is too
+        # narrow to hold.
+        if self.is_blind_corner():
+            self.individual_cabinet_width = (units.inch(36) if self.cabinet_type == 'UPPER'
+                                             else units.inch(39))
 
         # Support Frame: top aligns with top of base cabinets, fill gap
         if self.cabinet_name == 'Support Frame':

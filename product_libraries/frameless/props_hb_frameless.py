@@ -1858,7 +1858,7 @@ class Frameless_Scene_Props(PropertyGroup):
                               ('Ladder Style',"Ladder Style","Ladder Style"),
                               ('Floating',"Floating","Floating"),
                               ('Leg Levelers',"Leg Levelers","Leg Levelers")],
-                       default='Notch Ends to Floor',
+                       default='Ladder Style',
                        update=update_toe_kick_defaults)# type: ignore
 
     default_leg_leveler_inset: FloatProperty(name="Default Leg Leveler Inset",
@@ -1870,7 +1870,7 @@ class Frameless_Scene_Props(PropertyGroup):
     base_top_construction: EnumProperty(name="Base Top Construction",
                        items=[('Stretchers',"Stretchers","Stretchers"),
                               ('Full Top',"Full Top","Full Top")],
-                       default='Stretchers',
+                       default='Full Top',
                        update=update_base_top_default)# type: ignore
 
     equal_drawer_stack_heights: BoolProperty(name="Equal Drawer Stack Heights", 
