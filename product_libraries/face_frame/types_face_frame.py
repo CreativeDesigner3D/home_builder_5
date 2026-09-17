@@ -8041,19 +8041,22 @@ class FaceFrameCabinet(GeoNodeCage):
         want = (cab.paneled_top_rail and not self.obj.get(ADA_SINK_TAG)
                 and self._has_carcass())
         rails = {}
-        panels = {}
+        found = []
         for child in list(self.obj.children):
             role = child.get('hb_part_role')
             if role == PART_ROLE_TOP_RAIL:
                 rails[child.get('hb_segment_start_bay')] = child
             elif role == PART_ROLE_PANELED_TOP_RAIL:
-                key = child.get('hb_segment_start_bay')
-                if key in panels or not want or key not in rails:
-                    _remove_part_with_mesh(child)
-                else:
-                    panels[key] = child
-        for key in [k for k in panels if k not in rails]:
-            del panels[key]
+                found.append(child)
+        # Matched only once every rail is known: children come in no set
+        # order, and deleting a panel loses its Set Door Frame edits.
+        panels = {}
+        for child in found:
+            key = child.get('hb_segment_start_bay')
+            if key in panels or not want or key not in rails:
+                _remove_part_with_mesh(child)
+            else:
+                panels[key] = child
 
         # door_builder's front-cutpart space (height up X, width along
         # -Y, face at +Z) in a top rail's local frame: the rail runs its
@@ -8085,6 +8088,8 @@ class FaceFrameCabinet(GeoNodeCage):
                     part.set_input('Length', width)
                     part.set_input('Width', length)
                     part.set_input('Thickness', thickness)
+                    # The front convention the door builders author for.
+                    part.set_input('Mirror Y', True)
                     for mod in panel.modifiers:
                         if mod.type == 'NODES':
                             mod.show_viewport = False
@@ -8096,13 +8101,12 @@ class FaceFrameCabinet(GeoNodeCage):
                                       (0.0, 0.0, 1.0, -thickness),
                                       (0.0, 0.0, 0.0, 1.0)))
                     panel.matrix_basis = rail.matrix_basis @ to_rail
-                    self._build_ada_front_mesh(panel, 'FRAME', length,
-                                               width, thickness)
-                    if panel.get('HB_STATIC_SLAB'):
+                    if self._build_paneled_top_rail_mesh(panel, length,
+                                                         width, thickness):
+                        built = True
+                    else:
                         # Too narrow for stiles and rails: keep the rail.
                         _remove_part_with_mesh(panel)
-                    else:
-                        built = True
             elif panel is not None:
                 _remove_part_with_mesh(panel)
             if built or rail.get(PANELED_RAIL_HIDDEN_TAG):
@@ -8113,6 +8117,28 @@ class FaceFrameCabinet(GeoNodeCage):
                     rail[PANELED_RAIL_HIDDEN_TAG] = True
                 elif PANELED_RAIL_HIDDEN_TAG in rail:
                     del rail[PANELED_RAIL_HIDDEN_TAG]
+
+    def _build_paneled_top_rail_mesh(self, panel, length, width, thickness):
+        """Build a paneled top rail's stiles, rails and panel. Returns
+        False when the rail is too small for a frame.
+
+        With a stiles-and-rails door style on the cabinet the part is
+        built by that style exactly like a door, so Set Door Frame's
+        locked sizes, mid rails, grid and glass panels (stored on the
+        part, which persists across recalcs) apply to it, and the
+        dialog rebuilds it in place through DOOR_STYLE_NAME. Without
+        one it falls back to the plain 2-1/4" frame.
+        """
+        from . import applied_panel_sizing
+        style = applied_panel_sizing._resolve_door_style(self.obj)
+        if style is not None and getattr(style, 'door_type', '') == '5_PIECE':
+            panel['DOOR_STYLE_NAME'] = style.name
+            style.assign_style_to_front(panel)
+            return 'HB_DOOR_FRAME' in panel
+        if 'DOOR_STYLE_NAME' in panel:
+            del panel['DOOR_STYLE_NAME']
+        self._build_ada_front_mesh(panel, 'FRAME', length, width, thickness)
+        return not panel.get('HB_STATIC_SLAB')
 
     def _build_ada_front_mesh(self, obj, construction, width, height,
                               thickness):

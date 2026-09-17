@@ -4409,7 +4409,9 @@ class Face_Frame_Door_Style(PropertyGroup):
     _DOOR_FRONT_ROLES = {'DOOR', 'PULLOUT_FRONT', 'DOOR_LOOK_FRONT'}
     _DRAWER_FRONT_ROLES = {'DRAWER_FRONT', 'FALSE_FRONT', 'TILT_OUT',
                             'DRAWER_LOOK_FRONT'}
-    _STYLEABLE_ROLES = _DOOR_FRONT_ROLES | _DRAWER_FRONT_ROLES
+    # A paneled top rail builds like a door (Set Door Frame edits it too).
+    _STYLEABLE_ROLES = (_DOOR_FRONT_ROLES | _DRAWER_FRONT_ROLES
+                        | {'PANELED_TOP_RAIL'})
 
     def get_parent_cabinet_style(self, front_obj):
         """Walk up from a front object to its face frame cabinet root,
