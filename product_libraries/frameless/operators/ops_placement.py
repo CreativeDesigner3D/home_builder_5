@@ -18,6 +18,7 @@ PART_CLASS_MAP = {
     'Tall Leg': types_products.TallLeg,
     'Upper Leg': types_products.UpperLeg,
     'Panel': types_products.Panel,
+    'Corner Filler': types_products.CornerFiller,
 }
 from .. import props_hb_frameless
 from ...common import types_appliances, appliance_geo
@@ -309,6 +310,104 @@ class WallObjectPlacementMixin(hb_placement.PlacementMixin):
         else:
             return f"Offset (←): {units.unit_to_string(unit_settings, self.placement_x)}"
 
+APPLIANCE_CLASSES = {
+    'RANGE': types_appliances.Range,
+    'DISHWASHER': types_appliances.Dishwasher,
+    'REFRIGERATOR': types_appliances.Refrigerator,
+    'HOOD': types_appliances.Hood,
+    'COOKTOP': types_appliances.Cooktop,
+    'WALL_OVEN': types_appliances.WallOven,
+    'MICROWAVE': types_appliances.Microwave,
+    'SINK': types_appliances.Sink,
+}
+
+
+def appliance_class_for(appliance_type):
+    return APPLIANCE_CLASSES.get(appliance_type)
+
+
+def build_cabinet_for(cabinet_name, cabinet_type, is_appliance=False,
+                      appliance_type='', blind_side='Left'):
+    """The class instance a catalog name stands for -- cabinet, corner
+    cabinet, product or appliance -- ready for create(). The placement
+    operator and the thumbnail renderer both build through here, so a
+    picture in the browser is of the thing that gets placed."""
+    # Handle appliances
+    if is_appliance:
+        appliance_class = appliance_class_for(appliance_type)
+        if appliance_class:
+            return appliance_class()
+        return types_frameless.Cabinet()
+
+    # Handle parts
+    if cabinet_name in PART_CLASS_MAP:
+        return PART_CLASS_MAP[cabinet_name]()
+
+    # Handle corner cabinets first
+    if 'Diagonal Corner' in cabinet_name:
+        if 'Base' in cabinet_name:
+            return types_frameless.DiagonalCornerBaseCabinet()
+        elif 'Tall' in cabinet_name:
+            return types_frameless.DiagonalCornerTallCabinet()
+        elif 'Upper' in cabinet_name:
+            return types_frameless.DiagonalCornerUpperCabinet()
+    
+    if 'Pie Cut Corner' in cabinet_name or 'L-Shape Corner' in cabinet_name:
+        if 'Base' in cabinet_name:
+            return types_frameless.PieCutCornerBaseCabinet()
+        elif 'Tall' in cabinet_name:
+            return types_frameless.PieCutCornerTallCabinet()
+        elif 'Upper' in cabinet_name:
+            return types_frameless.PieCutCornerUpperCabinet()
+    
+    # Handle regular cabinets
+    if cabinet_name == 'Lap Drawer':
+        cabinet = types_frameless.LapDrawerCabinet()
+        return cabinet
+    if cabinet_name.startswith('Blind '):
+        # Which end goes into the corner: the end the run was placed
+        # against, or left when placed away from any corner.
+        blind_cls = {
+            'BASE': types_frameless.BlindCornerBaseCabinet,
+            'TALL': types_frameless.BlindCornerTallCabinet,
+            'UPPER': types_frameless.BlindCornerUpperCabinet,
+        }.get(cabinet_type, types_frameless.BlindCornerBaseCabinet)
+        cabinet = blind_cls()
+        cabinet.blind_side = blind_side
+        return cabinet
+    if cabinet_type == 'BASE':
+        cabinet = types_frameless.BaseCabinet()
+        if cabinet_name == 'Base Door':
+            cabinet.default_exterior = "Doors"
+        elif cabinet_name == 'Base Door Drw':
+            cabinet.default_exterior = "Door Drawer"
+        elif cabinet_name == 'Base Drawer':
+            cabinet.default_exterior = "3 Drawers"
+        elif cabinet_name == 'Sink Base':
+            cabinet.default_exterior = "Sink"
+        elif cabinet_name == 'Base Open':
+            cabinet.default_exterior = "Open"
+    elif cabinet_type == 'TALL':
+        if cabinet_name == 'Refrigerator Cabinet':
+            cabinet = types_frameless.RefrigeratorCabinet()
+        else:
+            cabinet = types_frameless.TallCabinet()
+            if cabinet_name == 'Tall Stacked':
+                cabinet.is_stacked = True
+            elif cabinet_name == 'Tall Open':
+                cabinet.default_exterior = "Open"
+    elif cabinet_type == 'UPPER':
+        cabinet = types_frameless.UpperCabinet()
+        if cabinet_name == 'Upper Stacked':
+            cabinet.is_stacked = True
+        elif cabinet_name == 'Upper Open':
+            cabinet.default_exterior = "Open"
+    else:
+        cabinet = types_frameless.Cabinet()    
+    return cabinet    
+
+
+
 class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin):
     bl_idname = "hb_frameless.place_cabinet"
     bl_label = "Place Cabinet"
@@ -360,16 +459,11 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
     
     # Center snap state: None, 'gap', or 'cage'
     center_snap_state = None
-    centerline_obj = None  # Visual indicator for center snap
     
     # Corner cabinet placement side (right side needs -90° rotation)
     corner_right_side: bool = False
     
     # Placement dimensions
-    dim_total_width = None  # Dimension showing total cabinet width
-    dim_left_offset = None  # Dimension showing left offset from gap edge
-    dim_right_offset = None  # Dimension showing right offset from gap edge
-    dim_height_to_floor = None  # Vertical dim: floor to shelf bottom (cursor-Z products)
 
     def get_placed_object(self):
         return self.preview_cage.obj if self.preview_cage else None
@@ -479,6 +573,20 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         if self.preview_cage:
             self.preview_cage.set_input('Dim Z', height)
 
+    def is_blind_corner(self):
+        return self.cabinet_name.startswith('Blind ')
+
+    def blind_side_for_placement(self):
+        """The end of the run that reaches a wall end: that is the end
+        going into the corner. Away from both ends, the left."""
+        if not self.selected_wall:
+            return 'Left'
+        tol = units.inch(1.0)
+        total = self.individual_cabinet_width * self.cabinet_quantity
+        if self.placement_x + total >= self.wall_length - tol:
+            return 'Right'
+        return 'Left'
+
     def get_cabinet_depth(self, context) -> float:
         props = context.scene.hb_frameless
         if self.cabinet_type == 'BASE':
@@ -502,6 +610,17 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         elif self.cabinet_type == 'UPPER':
             return props.upper_cabinet_height
         return props.base_cabinet_height
+
+    def keeps_natural_z(self) -> bool:
+        """Whether this product sits at its own height off the wall too.
+        Uppers hang at the wall-cabinet height, hoods over the range, a
+        support frame under the base top, and a lap drawer at the top of
+        the base run -- none of them belong on the floor or at a snap
+        target's height."""
+        return (self.align_top_to_base
+                or self.cabinet_type == 'UPPER'
+                or self.cabinet_name == 'Lap Drawer'
+                or (self.is_appliance and self.appliance_type == 'HOOD'))
 
     def get_cabinet_z_location(self, context) -> float:
         # Floating shelves track cursor Z position
@@ -717,328 +836,133 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         
         self.register_placement_object(self.preview_cage.obj)
     
-    def create_dimensions(self, context):
-        """Create dimension annotations for placement feedback."""
-        # Larger text size for placement visibility
-        placement_text_size = units.inch(3)
-        
-        # Total width dimension (above cabinets)
-        self.dim_total_width = hb_types.GeoNodeDimension()
-        self.dim_total_width.create("Dim_Total_Width")
-        self.dim_total_width.set_input("Text Size", placement_text_size)
-        self.dim_total_width.obj.show_in_front = True
-        self.register_placement_object(self.dim_total_width.obj)
-        
-        # Left offset dimension
-        self.dim_left_offset = hb_types.GeoNodeDimension()
-        self.dim_left_offset.create("Dim_Left_Offset")
-        self.dim_left_offset.set_input("Text Size", placement_text_size)
-        self.dim_left_offset.obj.show_in_front = True
-        self.register_placement_object(self.dim_left_offset.obj)
-        
-        # Right offset dimension
-        self.dim_right_offset = hb_types.GeoNodeDimension()
-        self.dim_right_offset.create("Dim_Right_Offset")
-        self.dim_right_offset.set_input("Text Size", placement_text_size)
-        self.dim_right_offset.obj.show_in_front = True
-        self.register_placement_object(self.dim_right_offset.obj)
-        
-        # Height-to-floor dimension (shown for cursor-Z products like shelves)
-        self.dim_height_to_floor = hb_types.GeoNodeDimension()
-        self.dim_height_to_floor.create("Dim_Height_To_Floor")
-        self.dim_height_to_floor.set_input("Text Size", placement_text_size)
-        self.dim_height_to_floor.obj.show_in_front = True
-        self.register_placement_object(self.dim_height_to_floor.obj)
-        
-        # Center snap indicator line (green vertical line)
-        self.create_centerline()
-    
-    def create_centerline(self):
-        """Create a green vertical line to indicate center snap."""
-        # Create a simple curve for the centerline
-        curve_data = bpy.data.curves.new('Centerline', 'CURVE')
-        curve_data.dimensions = '3D'
-        
-        spline = curve_data.splines.new('POLY')
-        spline.points.add(1)  # 2 points total
-        spline.points[0].co = (0, 0, 0, 1)
-        spline.points[1].co = (0, 0, 1, 1)  # Will be scaled to wall height
-        
-        self.centerline_obj = bpy.data.objects.new('Centerline', curve_data)
-        bpy.context.collection.objects.link(self.centerline_obj)
-        
-        # Line thickness
-        curve_data.bevel_depth = 0.008
-        
-        # Create or reuse green material
-        mat = bpy.data.materials.get('Centerline_Green')
-        if mat is None:
-            mat = bpy.data.materials.new('Centerline_Green')
-        mat.diffuse_color = (0.0, 0.9, 0.2, 1.0)  # Viewport solid color
-        mat.use_nodes = True
-        # Set the principled BSDF color to green
-        if mat.node_tree:
-            bsdf = mat.node_tree.nodes.get('Principled BSDF')
-            if bsdf:
-                bsdf.inputs['Base Color'].default_value = (0.0, 0.9, 0.2, 1.0)
-                # Use emission for visibility
-                if 'Emission Color' in bsdf.inputs:
-                    bsdf.inputs['Emission Color'].default_value = (0.0, 0.9, 0.2, 1.0)
-                    bsdf.inputs['Emission Strength'].default_value = 1.0
-                elif 'Emission' in bsdf.inputs:
-                    bsdf.inputs['Emission'].default_value = (0.0, 0.9, 0.2, 1.0)
-        self.centerline_obj.data.materials.append(mat)
-        
-        # Viewport display settings
-        self.centerline_obj.color = (0.0, 0.9, 0.2, 1.0)  # Green in solid mode
-        self.centerline_obj.show_in_front = True
-        self.centerline_obj.hide_set(True)  # Hidden by default
-        
-        self.register_placement_object(self.centerline_obj)
-    
     def cleanup_placement_objects(self):
-        """Remove preview cage, dimensions, and centerline."""
+        """Remove the preview cage and the dimension overlay."""
         if self.preview_cage and self.preview_cage.obj:
             bpy.data.objects.remove(self.preview_cage.obj, do_unlink=True)
-        if self.dim_total_width and self.dim_total_width.obj:
-            bpy.data.objects.remove(self.dim_total_width.obj, do_unlink=True)
-        if self.dim_left_offset and self.dim_left_offset.obj:
-            bpy.data.objects.remove(self.dim_left_offset.obj, do_unlink=True)
-        if self.dim_right_offset and self.dim_right_offset.obj:
-            bpy.data.objects.remove(self.dim_right_offset.obj, do_unlink=True)
-        if self.dim_height_to_floor and self.dim_height_to_floor.obj:
-            bpy.data.objects.remove(self.dim_height_to_floor.obj, do_unlink=True)
-        if self.centerline_obj:
-            bpy.data.objects.remove(self.centerline_obj, do_unlink=True)
-            self.centerline_obj = None
+        self.remove_placement_dim_handler()
         self.placement_objects = []
-    
-    def get_dimension_rotation(self, context, base_rotation_z):
-        """Calculate dimension rotation to face the camera based on view angle.
-        
-        Returns: (rotation_tuple, is_plan_view)
-        """
-        # Get the 3D view
-        region_3d = None
-        for area in context.screen.areas:
-            if area.type == 'VIEW_3D':
-                region_3d = area.spaces.active.region_3d
-                break
-        
-        if not region_3d:
-            return (0, 0, base_rotation_z), True
-        
-        # Get view rotation matrix and extract the view direction
-        view_matrix = region_3d.view_matrix
-        # View direction is the negative Z axis of the view matrix (pointing into screen)
-        view_dir = Vector((view_matrix[2][0], view_matrix[2][1], view_matrix[2][2]))
-        
-        # Check if we're looking more from above (plan view) or from the side (elevation)
-        # view_dir.z close to -1 means looking straight down (plan view)
-        # view_dir.z close to 0 means looking from the side (elevation view)
-        
-        vertical_component = abs(view_dir.z)
-        
-        if vertical_component > 0.7:
-            # Plan view - dimension lies flat (X rotation = 0)
-            return (0, 0, base_rotation_z), True
-        else:
-            # Elevation/3D view - rotate dimension to stand up (X rotation = 90)
-            return (math.radians(90), 0, base_rotation_z), False
-    
+
+    # ---- Placement dimensions ---------------------------------------------
+    # Drawn in screen space by the shared handler (hb_placement), the way
+    # the face frame library annotates placement: a spec list rebuilt
+    # whenever the cage moves, no dimension objects in the scene. Green
+    # marks a snap -- the centre of a gap or a neighbouring cabinet.
+
+    SNAP_GREEN = (0.30, 0.95, 0.40, 1.0)
+
     def update_dimensions(self, context):
-        """Update dimension positions and values."""
-        if not self.preview_cage:
+        """Rebuild the overlay for the cage's current position: the
+        total width, the left / right offsets inside the gap on a wall,
+        and the floor height for cursor-Z products."""
+        if not self.preview_cage or not self.preview_cage.obj:
             return
-        
-        if not self.dim_total_width or not self.dim_left_offset or not self.dim_right_offset:
+        if getattr(self, '_placement_dim_handle', None) is None:
             return
-        
+        if self.selected_wall:
+            specs = self._dim_specs_on_wall(context)
+        else:
+            specs = self._dim_specs_free(context)
+        specs.extend(self._dim_specs_height(context))
+        self._placement_dim_specs = specs
+        if context.area:
+            context.area.tag_redraw()
+
+    def _dim_specs_on_wall(self, context):
+        """Wall case: coordinates are wall-local (the cage is parented to
+        the wall) and the wall matrix maps them into world space. Total
+        width sits 4" above the cabinet top, the offsets 8" above so the
+        two rows stay clear of each other."""
+        cage_obj = self.preview_cage.obj
         total_width = self.individual_cabinet_width * self.cabinet_quantity
         cabinet_height = self.get_cabinet_height(context)
-        
-        # Never parent dimensions to wall - keep in world space
-        self.dim_total_width.obj.parent = None
-        self.dim_left_offset.obj.parent = None
-        self.dim_right_offset.obj.parent = None
-        
-        if self.selected_wall:
-            # Wall placement - show all three dimensions in world space
-            wall = hb_types.GeoNodeWall(self.selected_wall)
-            wall_thickness = wall.get_input('Thickness')
-            wall_matrix = self.selected_wall.matrix_world
-            wall_rotation_z = self.selected_wall.rotation_euler.z
-            
-            left_offset = self.placement_x - self.gap_left_boundary
-            right_offset = self.gap_right_boundary - (self.placement_x + total_width)
+        wall = hb_types.GeoNodeWall(self.selected_wall)
+        wall_thickness = wall.get_input('Thickness')
+        wm = self.selected_wall.matrix_world
+        unit_settings = context.scene.unit_settings
 
-            # Get rotation and view type
-            dim_rotation, is_plan_view = self.get_dimension_rotation(context, wall_rotation_z)
-            
-            # Get cabinet z location (for upper cabinets mounted off floor)
-            cabinet_z_loc = self.preview_cage.obj.location.z
-            
-            # Position dimensions based on view type
-            if is_plan_view:
-                # Plan view - position above cabinet so they don't overlap footprint
-                dim_z = cabinet_z_loc + cabinet_height + units.inch(4)
-                dim_z_offset = units.inch(8)  # Extra offset for left/right dims
-                # Y offset from wall
-                if self.place_on_front:
-                    dim_y = -units.inch(2)
-                else:
-                    dim_y = wall_thickness + units.inch(2)
-            else:
-                # 3D/Elevation view - position at cabinet center height
-                dim_z = cabinet_z_loc + cabinet_height / 2
-                dim_z_offset = 0  # All dims at same height
-                # Y position inline with cabinet (no offset)
-                if self.place_on_front:
-                    dim_y = 0
-                else:
-                    dim_y = wall_thickness
-            
-            # Total width dimension
-            local_pos = Vector((self.placement_x, dim_y, dim_z))
-            self.dim_total_width.obj.location = wall_matrix @ local_pos
-            self.dim_total_width.obj.rotation_euler = dim_rotation
-            self.dim_total_width.obj.data.splines[0].points[1].co = (total_width, 0, 0, 1)
-            self.dim_total_width.set_decimal()
-            self.dim_total_width.obj.hide_set(False)
-            
-            # Left offset dimension - from gap start to cabinet start
-            if left_offset > units.inch(0.5):
-                local_pos = Vector((self.gap_left_boundary, dim_y, dim_z + dim_z_offset))
-                self.dim_left_offset.obj.location = wall_matrix @ local_pos
-                self.dim_left_offset.obj.rotation_euler = dim_rotation
-                self.dim_left_offset.obj.data.splines[0].points[1].co = (left_offset, 0, 0, 1)
-                self.dim_left_offset.set_decimal()
-                self.dim_left_offset.obj.hide_set(False)
-            else:
-                self.dim_left_offset.obj.hide_set(True)
-            
-            # Right offset dimension - from cabinet end to gap end
-            if right_offset > units.inch(0.5):
-                local_pos = Vector((self.placement_x + total_width, dim_y, dim_z + dim_z_offset))
-                self.dim_right_offset.obj.location = wall_matrix @ local_pos
-                self.dim_right_offset.obj.rotation_euler = dim_rotation
-                self.dim_right_offset.obj.data.splines[0].points[1].co = (right_offset, 0, 0, 1)
-                self.dim_right_offset.set_decimal()
-                self.dim_right_offset.obj.hide_set(False)
-            else:
-                self.dim_right_offset.obj.hide_set(True)
+        z_top = cage_obj.location.z + cabinet_height
+        z_total = z_top + units.inch(4.0)
+        z_offset = z_top + units.inch(8.0)
+        # Inset toward the room so the line clears the wall surface.
+        if self.place_on_front:
+            y_dim = -units.inch(2.0)
         else:
-            # Floor placement - just show total width
-            base_rotation_z = self.preview_cage.obj.rotation_euler.z
-            dim_rotation, is_plan_view = self.get_dimension_rotation(context, base_rotation_z)
-            
-            # Get cabinet z location (for upper cabinets mounted off floor)
-            cabinet_z_loc = self.preview_cage.obj.location.z
-            
-            if is_plan_view:
-                dim_z = cabinet_z_loc + cabinet_height + units.inch(4)
-            else:
-                dim_z = cabinet_z_loc + cabinet_height / 2
-            
-            self.dim_total_width.obj.location = self.preview_cage.obj.location.copy()
-            self.dim_total_width.obj.location.z = dim_z
-            self.dim_total_width.obj.rotation_euler = dim_rotation
-            self.dim_total_width.obj.data.splines[0].points[1].co = (total_width, 0, 0, 1)
-            self.dim_total_width.set_decimal()
-            self.dim_total_width.obj.hide_set(False)
-            
-            # Hide offset dimensions on floor
-            self.dim_left_offset.obj.hide_set(True)
-            self.dim_right_offset.obj.hide_set(True)
-        
-        # Update centerline visibility and position
-        self.update_centerline(context, total_width, cabinet_height)
+            y_dim = wall_thickness + units.inch(2.0)
 
-        # Floor-height dimension for cursor-Z products (e.g. Floating Shelves)
-        self.update_height_dimension(context)
+        # Centre snap balances the two offsets, so it tints all three;
+        # a cabinet snap only says where the cabinet is.
+        centred = bool(self.center_snap_state)
+        total_color = self.SNAP_GREEN if (centred or self.snap_cabinet) else None
+        offset_color = self.SNAP_GREEN if centred else None
 
-    def update_height_dimension(self, context):
-        """Vertical dimension from the floor to the shelf bottom.
+        x0 = self.placement_x
+        x1 = x0 + total_width
+        specs = [hb_placement.PlacementDimSpec(
+            wm @ Vector((x0, y_dim, z_total)),
+            wm @ Vector((x1, y_dim, z_total)),
+            units.unit_to_string(unit_settings, total_width),
+            total_color)]
 
-        Only shown for cursor-Z products (Floating Shelves / Valance) and only
-        in elevation/3D views - in plan view the height reads into the screen.
-        """
-        dim = self.dim_height_to_floor
-        if not dim:
-            return
-        if not self.cursor_z_tracking or not self.preview_cage:
-            dim.obj.hide_set(True)
-            return
+        left_offset = x0 - self.gap_left_boundary
+        if left_offset > units.inch(0.5):
+            specs.append(hb_placement.PlacementDimSpec(
+                wm @ Vector((self.gap_left_boundary, y_dim, z_offset)),
+                wm @ Vector((x0, y_dim, z_offset)),
+                units.unit_to_string(unit_settings, left_offset),
+                offset_color))
+        right_offset = self.gap_right_boundary - x1
+        if right_offset > units.inch(0.5):
+            specs.append(hb_placement.PlacementDimSpec(
+                wm @ Vector((x1, y_dim, z_offset)),
+                wm @ Vector((self.gap_right_boundary, y_dim, z_offset)),
+                units.unit_to_string(unit_settings, right_offset),
+                offset_color))
+        return specs
 
-        region = self.region
-        rv3d = region.data
-        view_matrix = rv3d.view_matrix
-        view_dir = Vector((view_matrix[2][0], view_matrix[2][1], view_matrix[2][2]))
-        if abs(view_dir.z) > 0.7:
-            dim.obj.hide_set(True)
-            return
+    def _dim_specs_free(self, context):
+        """Off a wall there is no gap to annotate: just the total width,
+        above the cabinet, green while snapped to a neighbour."""
+        cage_obj = self.preview_cage.obj
+        total_width = self.individual_cabinet_width * self.cabinet_quantity
+        cabinet_height = self.get_cabinet_height(context)
+        # A fresh matrix: the cage was placed this same tick, and
+        # matrix_world would still say where it used to be.
+        m = hb_placement.pending_world_matrix(cage_obj)
+        z = cabinet_height + units.inch(4.0)
+        return [hb_placement.PlacementDimSpec(
+            m @ Vector((0.0, 0.0, z)),
+            m @ Vector((total_width, 0.0, z)),
+            units.unit_to_string(context.scene.unit_settings, total_width),
+            self.SNAP_GREEN if self.snap_cabinet else None)]
 
-        height = self.preview_cage.obj.location.z
-        if height <= units.inch(0.25):
-            dim.obj.hide_set(True)
-            return
-
-        dim.obj.parent = None
+    def _dim_specs_height(self, context):
+        """Floor-to-bottom height for cursor-Z products (floating
+        shelves, valances), beside the cabinet's left edge."""
+        if not self.cursor_z_tracking:
+            return []
+        cage_obj = self.preview_cage.obj
+        height = cage_obj.location.z
+        if height <= units.inch(0.5):
+            return []
+        unit_settings = context.scene.unit_settings
         if self.selected_wall:
             wall = hb_types.GeoNodeWall(self.selected_wall)
             wall_thickness = wall.get_input('Thickness')
-            wall_matrix = self.selected_wall.matrix_world
-            wall_rotation_z = self.selected_wall.rotation_euler.z
+            wm = self.selected_wall.matrix_world
             if self.place_on_front:
-                dim_y = -units.inch(1)
+                y_dim = -units.inch(2.0)
             else:
-                dim_y = wall_thickness + units.inch(1)
-            local_pos = Vector((self.placement_x, dim_y, 0))
-            dim.obj.location = wall_matrix @ local_pos
-            dim.obj.rotation_euler = (0, math.radians(-90), wall_rotation_z)
+                y_dim = wall_thickness + units.inch(2.0)
+            x = self.placement_x - units.inch(2.0)
+            s = wm @ Vector((x, y_dim, 0.0))
+            e = wm @ Vector((x, y_dim, height))
         else:
-            base = self.preview_cage.obj.location
-            dim.obj.location = Vector((base.x, base.y - units.inch(1), 0))
-            dim.obj.rotation_euler = (0, math.radians(-90), 0)
-
-        # Measure along local X; the rotation maps local X to world up so the
-        # printed value is the floor-to-shelf-bottom height.
-        dim.obj.data.splines[0].points[1].co = (height, 0, 0, 1)
-        dim.set_decimal()
-        dim.obj.hide_set(False)
-
-    def update_centerline(self, context, total_width, cabinet_height):
-        """Update centerline indicator position and visibility."""
-        if not self.centerline_obj:
-            return
-        
-        if self.center_snap_state and self.selected_wall:
-            # Show centerline at center of cabinet group
-            wall_matrix = self.selected_wall.matrix_world
-            wall = hb_types.GeoNodeWall(self.selected_wall)
-            wall_thickness = wall.get_input('Thickness')
-            wall_height = wall.get_input('Height')
-            
-            # Center X position
-            center_x = self.placement_x + total_width / 2
-            
-            # Y position based on which side of wall
-            if self.place_on_front:
-                center_y = 0
-            else:
-                center_y = wall_thickness
-            
-            # Position in world space
-            local_pos = Vector((center_x, center_y, 0))
-            self.centerline_obj.location = wall_matrix @ local_pos
-            self.centerline_obj.rotation_euler = self.selected_wall.rotation_euler
-            
-            # Extend to full wall height
-            self.centerline_obj.data.splines[0].points[1].co = (0, 0, wall_height, 1)
-            
-            self.centerline_obj.hide_set(False)
-        else:
-            self.centerline_obj.hide_set(True)
+            m = hb_placement.pending_world_matrix(cage_obj)
+            s = m @ Vector((-units.inch(2.0), 0.0, -height))
+            e = m @ Vector((-units.inch(2.0), 0.0, 0.0))
+        return [hb_placement.PlacementDimSpec(
+            s, e, units.unit_to_string(unit_settings, height), None)]
 
     def update_preview_cage(self):
         """Update preview cage dimensions and array count."""
@@ -1192,6 +1116,118 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         
         return nearest_wall
 
+    # ---- Corner fillers ---------------------------------------------------
+    # A cabinet that lands in an inside corner cannot open its door into
+    # the wall beside it. The corner keeps 1.5" for an L-shaped filler
+    # (types_products.CornerFiller) whose face lines up with the doors;
+    # the reservation moves the gap boundary in, so the placement, the
+    # dims and fill mode all see the corner as already spoken for, and
+    # the commit builds the filler in the space it kept.
+
+    def wants_corner_fillers(self):
+        """Cabinets only: appliances, parts, corner cabinets and the
+        cursor-height products close no corner."""
+        return (not self.is_appliance
+                and self.cabinet_name not in PART_CLASS_MAP
+                and 'Corner' not in self.cabinet_name
+                and not self.is_blind_corner()
+                and not self.cursor_z_tracking
+                and not self.align_top_to_base)
+
+    def inside_corner(self, wall_obj, side):
+        """Whether this wall's `side` end ('left' / 'right') meets a
+        connected wall that turns toward the placement side -- an inside
+        corner from where the cabinet stands. The neighbour's away
+        vector is read in this wall's frame, the way the gap scan does,
+        so wall angles and draw order do not matter."""
+        try:
+            wall = hb_types.GeoNodeWall(wall_obj)
+            adj = wall.get_connected_wall(direction=side, include_loop_seam=True)
+            if not adj:
+                return False
+            adj_obj = adj.obj
+            adj_len = adj.get_input('Length')
+        except Exception:
+            return False
+        away = -1.0 if side == 'left' else 1.0
+        away_world = adj_obj.matrix_world.to_3x3() @ Vector((away, 0.0, 0.0))
+        away_local_y = (wall_obj.matrix_world.inverted().to_3x3() @ away_world).y
+        if self.place_on_front:
+            return away_local_y < -0.001
+        return away_local_y > 0.001
+
+    def reserve_corner_fillers(self, gap_start, gap_end, snap_x):
+        """Move a gap boundary that sits at an inside corner in by the
+        filler width, remembering which ends were reserved for the
+        commit. Returns the adjusted (gap_start, gap_end, snap_x)."""
+        self.corner_filler_left = False
+        self.corner_filler_right = False
+        if not self.wants_corner_fillers() or not self.selected_wall:
+            return gap_start, gap_end, snap_x
+        width = types_products.CORNER_FILLER_WIDTH
+        tol = units.inch(0.05)
+        if gap_start <= tol and self.inside_corner(self.selected_wall, 'left'):
+            gap_start += width
+            self.corner_filler_left = True
+        if (gap_end >= self.wall_length - tol
+                and self.inside_corner(self.selected_wall, 'right')):
+            gap_end -= width
+            self.corner_filler_right = True
+        if gap_end - gap_start < units.inch(1.0):
+            # Too tight to keep either: give the corners back.
+            self.corner_filler_left = self.corner_filler_right = False
+            return gap_start, gap_end, snap_x
+        total = self.individual_cabinet_width * self.cabinet_quantity
+        snap_x = max(gap_start, min(snap_x, gap_end - total))
+        return gap_start, gap_end, snap_x
+
+    def create_corner_filler(self, context, wall_thickness, x, cabinet_on_right):
+        """Build the filler for one corner, standing in the reserved 1.5"
+        that starts at wall-local `x`, sized to the cabinet being placed
+        and reaching out to its door plane."""
+        filler = types_products.CornerFiller()
+        filler.width = types_products.CORNER_FILLER_WIDTH
+        filler.height = self.get_cabinet_height(context)
+        filler.depth = self.get_cabinet_depth(context) + types_products.FRONT_THICKNESS
+        props = context.scene.hb_frameless
+        has_kick = self.cabinet_type in ('BASE', 'TALL')
+        filler.toe_kick_height = props.default_toe_kick_height if has_kick else 0.0
+        filler.toe_kick_setback = props.default_toe_kick_setback if has_kick else 0.0
+        # A back-side run is turned 180, which swaps which local side
+        # the cabinet is on.
+        filler.cabinet_on_right = cabinet_on_right if self.place_on_front else not cabinet_on_right
+        filler.create('Corner Filler')
+        filler.obj.parent = self.selected_wall
+        filler.obj.location.z = self.get_cabinet_z_location(context)
+        if self.place_on_front:
+            filler.obj.location.x = x
+            filler.obj.location.y = 0
+            filler.obj.rotation_euler = (0, 0, 0)
+        else:
+            filler.obj.location.x = x + filler.width
+            filler.obj.location.y = wall_thickness
+            filler.obj.rotation_euler = (0, 0, math.pi)
+        return filler
+
+    def create_corner_fillers(self, context, wall_thickness):
+        """The fillers for the corners the cabinet run actually reaches:
+        one at each reserved end the run touches."""
+        fillers = []
+        if not self.selected_wall:
+            return fillers
+        tol = units.inch(0.05)
+        total = self.individual_cabinet_width * self.cabinet_quantity
+        width = types_products.CORNER_FILLER_WIDTH
+        if (getattr(self, 'corner_filler_left', False)
+                and abs(self.placement_x - self.gap_left_boundary) <= tol):
+            fillers.append(self.create_corner_filler(
+                context, wall_thickness, self.gap_left_boundary - width, True))
+        if (getattr(self, 'corner_filler_right', False)
+                and abs(self.placement_x + total - self.gap_right_boundary) <= tol):
+            fillers.append(self.create_corner_filler(
+                context, wall_thickness, self.gap_right_boundary, False))
+        return fillers
+
     def set_position_on_wall(self, context):
         """Position preview cage on the selected wall."""
         if not self.selected_wall or not self.preview_cage:
@@ -1267,10 +1303,15 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             exclude_obj=self.preview_cage.obj if self.preview_cage else None,
         )
         
+        # An inside corner keeps 1.5" for the filler that closes it, so
+        # the cabinet lands beside the filler rather than in the corner.
+        gap_start, gap_end, snap_x = self.reserve_corner_fillers(
+            gap_start, gap_end, snap_x)
+
         # Store gap boundaries for offset calculations
         self.gap_left_boundary = gap_start
         self.gap_right_boundary = gap_end
-        
+
         gap_width = gap_end - gap_start
         self.current_gap_width = gap_width
         
@@ -1411,7 +1452,7 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             self.preview_cage.obj.parent = None
             self.preview_cage.obj.location = hb_snap.snap_vector_to_grid(Vector(self.hit_location))
             # Set Z location based on cabinet/appliance type
-            if self.align_top_to_base or self.cabinet_type == 'UPPER' or (self.is_appliance and self.appliance_type == 'HOOD'):
+            if self.keeps_natural_z():
                 self.preview_cage.obj.location.z = self.get_cabinet_z_location(bpy.context)
             else:
                 self.preview_cage.obj.location.z = 0
@@ -1445,8 +1486,7 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         # Z override: uppers / align-top-to-base / hoods all need their
         # natural Z, not the snap target's. Otherwise inherit Z from
         # the snap target so a row of cabinets stays at the same height.
-        if (self.align_top_to_base or self.cabinet_type == 'UPPER'
-                or (self.is_appliance and self.appliance_type == 'HOOD')):
+        if self.keeps_natural_z():
             self.preview_cage.obj.location.z = self.get_cabinet_z_location(bpy.context)
         else:
             self.preview_cage.obj.location.z = self.snap_cabinet.location.z
@@ -1482,77 +1522,13 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
 
     def get_appliance_class(self):
         """Get the appliance class based on appliance_type."""
-        
-        appliance_map = {
-            'RANGE': types_appliances.Range,
-            'DISHWASHER': types_appliances.Dishwasher,
-            'REFRIGERATOR': types_appliances.Refrigerator,
-            'HOOD': types_appliances.Hood,
-            'COOKTOP': types_appliances.Cooktop,
-            'WALL_OVEN': types_appliances.WallOven,
-            'MICROWAVE': types_appliances.Microwave,
-            'SINK': types_appliances.Sink,
-        }
-        
-        if self.appliance_type in appliance_map:
-            return appliance_map[self.appliance_type]
-        return None
-    
+        return appliance_class_for(self.appliance_type)
+
     def get_cabinet_class(self):
-        # Handle appliances
-        if self.is_appliance:
-            appliance_class = self.get_appliance_class()
-            if appliance_class:
-                return appliance_class()
-            return types_frameless.Cabinet()
-
-        # Handle parts
-        if self.cabinet_name in PART_CLASS_MAP:
-            return PART_CLASS_MAP[self.cabinet_name]()
-
-        # Handle corner cabinets first
-        if 'Diagonal Corner' in self.cabinet_name:
-            if 'Base' in self.cabinet_name:
-                return types_frameless.DiagonalCornerBaseCabinet()
-            elif 'Tall' in self.cabinet_name:
-                return types_frameless.DiagonalCornerTallCabinet()
-            elif 'Upper' in self.cabinet_name:
-                return types_frameless.DiagonalCornerUpperCabinet()
-        
-        if 'Pie Cut Corner' in self.cabinet_name or 'L-Shape Corner' in self.cabinet_name:
-            if 'Base' in self.cabinet_name:
-                return types_frameless.PieCutCornerBaseCabinet()
-            elif 'Tall' in self.cabinet_name:
-                return types_frameless.PieCutCornerTallCabinet()
-            elif 'Upper' in self.cabinet_name:
-                return types_frameless.PieCutCornerUpperCabinet()
-        
-        # Handle regular cabinets
-        if self.cabinet_name == 'Lap Drawer':
-            cabinet = types_frameless.LapDrawerCabinet()
-            return cabinet
-        if self.cabinet_type == 'BASE':
-            cabinet = types_frameless.BaseCabinet()
-            if self.cabinet_name == 'Base Door':
-                cabinet.default_exterior = "Doors"
-            elif self.cabinet_name == 'Base Door Drw':
-                cabinet.default_exterior = "Door Drawer"
-            elif self.cabinet_name == 'Base Drawer':
-                cabinet.default_exterior = "3 Drawers"
-        elif self.cabinet_type == 'TALL':
-            if self.cabinet_name == 'Refrigerator Cabinet':
-                cabinet = types_frameless.RefrigeratorCabinet()
-            else:
-                cabinet = types_frameless.TallCabinet()
-                if self.cabinet_name == 'Tall Stacked':
-                    cabinet.is_stacked = True
-        elif self.cabinet_type == 'UPPER':
-            cabinet = types_frameless.UpperCabinet()
-            if self.cabinet_name == 'Upper Stacked':
-                cabinet.is_stacked = True
-        else:
-            cabinet = types_frameless.Cabinet()    
-        return cabinet    
+        return build_cabinet_for(
+            self.cabinet_name, self.cabinet_type, self.is_appliance,
+            self.appliance_type,
+            self.blind_side_for_placement() if self.is_blind_corner() else 'Left')
 
     def create_final_cabinets(self, context):
         """Create the actual cabinet objects when user confirms placement."""
@@ -1610,6 +1586,10 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                 
                 cabinets.append(cabinet)
                 current_x += self.individual_cabinet_width
+
+            # The corner fillers the run reaches, styled and shown like
+            # the cabinets beside them.
+            self.placed_fillers = self.create_corner_fillers(context, wall_thickness)
         else:
             # Floor placement (free or snapped)
 
@@ -1648,7 +1628,7 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                 cabinet.obj.rotation_euler = rotation
                 
                 # Set Z location based on cabinet/appliance type
-                if self.align_top_to_base or self.cabinet_type == 'UPPER' or (self.is_appliance and self.appliance_type == 'HOOD'):
+                if self.keeps_natural_z():
                     cabinet.obj.location.z = self.get_cabinet_z_location(context)
                 else:
                     cabinet.obj.location.z = start_loc.z
@@ -1743,12 +1723,7 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         self.snap_cabinet = None
         self.snap_side = None
         self.center_snap_state = None
-        self.centerline_obj = None
         self.corner_right_side = False
-        self.dim_total_width = None
-        self.dim_left_offset = None
-        self.dim_right_offset = None
-        self.dim_height_to_floor = None
 
         # Products that follow cursor Z with inch snapping, fill gap with qty 1
         if self.cabinet_name in ('Floating Shelves', 'Valance'):
@@ -1759,6 +1734,13 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             part_instance = PART_CLASS_MAP[self.cabinet_name]()
             self.cursor_z_product_height = part_instance.height
 
+        # A blind corner starts at its own width: the door opening plus
+        # the blind, which the room's default cabinet width is too
+        # narrow to hold.
+        if self.is_blind_corner():
+            self.individual_cabinet_width = (units.inch(36) if self.cabinet_type == 'UPPER'
+                                             else units.inch(39))
+
         # Support Frame: top aligns with top of base cabinets, fill gap
         if self.cabinet_name == 'Support Frame':
             self.align_top_to_base = True
@@ -1767,7 +1749,7 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             self.cursor_z_product_height = part_instance.height
 
         self.create_preview_cage(context)
-        self.create_dimensions(context)
+        self.add_placement_dim_handler(context)
 
         context.window_manager.modal_handler_add(self)
         return {'RUNNING_MODAL'}
@@ -1802,17 +1784,9 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             self.update_header(context)
             return {'RUNNING_MODAL'}
 
-        # Update snap (hide preview and dimensions during raycast and position calculation)
+        # Update snap (hide the preview during raycast and position calculation)
         self.preview_cage.obj.hide_set(True)
-        if self.dim_total_width:
-            self.dim_total_width.obj.hide_set(True)
-        if self.dim_left_offset:
-            self.dim_left_offset.obj.hide_set(True)
-        if self.dim_right_offset:
-            self.dim_right_offset.obj.hide_set(True)
-        if self.dim_height_to_floor:
-            self.dim_height_to_floor.obj.hide_set(True)
-        
+
         self.update_snap(context, event)
         
         self.preview_cage.obj.hide_set(False)
@@ -1874,7 +1848,12 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                 self.apply_typed_value()
             
             # Create the real cabinets (on wall or floor)
+            self.placed_fillers = []
             cabinets = self.create_final_cabinets(context)
+            for filler in self.placed_fillers:
+                bpy.ops.hb_frameless.assign_cabinet_style(cabinet_name=filler.obj.name)
+                hb_utils.run_calc_fix(context, filler.obj)
+                bpy.ops.hb_frameless.toggle_mode(search_obj_name=filler.obj.name)
             for cabinet in cabinets:
                 if not self.is_appliance:
                     # Cabinet-specific operations (skip for appliances)
