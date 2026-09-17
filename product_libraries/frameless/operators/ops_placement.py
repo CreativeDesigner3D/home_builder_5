@@ -310,6 +310,104 @@ class WallObjectPlacementMixin(hb_placement.PlacementMixin):
         else:
             return f"Offset (←): {units.unit_to_string(unit_settings, self.placement_x)}"
 
+APPLIANCE_CLASSES = {
+    'RANGE': types_appliances.Range,
+    'DISHWASHER': types_appliances.Dishwasher,
+    'REFRIGERATOR': types_appliances.Refrigerator,
+    'HOOD': types_appliances.Hood,
+    'COOKTOP': types_appliances.Cooktop,
+    'WALL_OVEN': types_appliances.WallOven,
+    'MICROWAVE': types_appliances.Microwave,
+    'SINK': types_appliances.Sink,
+}
+
+
+def appliance_class_for(appliance_type):
+    return APPLIANCE_CLASSES.get(appliance_type)
+
+
+def build_cabinet_for(cabinet_name, cabinet_type, is_appliance=False,
+                      appliance_type='', blind_side='Left'):
+    """The class instance a catalog name stands for -- cabinet, corner
+    cabinet, product or appliance -- ready for create(). The placement
+    operator and the thumbnail renderer both build through here, so a
+    picture in the browser is of the thing that gets placed."""
+    # Handle appliances
+    if is_appliance:
+        appliance_class = appliance_class_for(appliance_type)
+        if appliance_class:
+            return appliance_class()
+        return types_frameless.Cabinet()
+
+    # Handle parts
+    if cabinet_name in PART_CLASS_MAP:
+        return PART_CLASS_MAP[cabinet_name]()
+
+    # Handle corner cabinets first
+    if 'Diagonal Corner' in cabinet_name:
+        if 'Base' in cabinet_name:
+            return types_frameless.DiagonalCornerBaseCabinet()
+        elif 'Tall' in cabinet_name:
+            return types_frameless.DiagonalCornerTallCabinet()
+        elif 'Upper' in cabinet_name:
+            return types_frameless.DiagonalCornerUpperCabinet()
+    
+    if 'Pie Cut Corner' in cabinet_name or 'L-Shape Corner' in cabinet_name:
+        if 'Base' in cabinet_name:
+            return types_frameless.PieCutCornerBaseCabinet()
+        elif 'Tall' in cabinet_name:
+            return types_frameless.PieCutCornerTallCabinet()
+        elif 'Upper' in cabinet_name:
+            return types_frameless.PieCutCornerUpperCabinet()
+    
+    # Handle regular cabinets
+    if cabinet_name == 'Lap Drawer':
+        cabinet = types_frameless.LapDrawerCabinet()
+        return cabinet
+    if cabinet_name.startswith('Blind '):
+        # Which end goes into the corner: the end the run was placed
+        # against, or left when placed away from any corner.
+        blind_cls = {
+            'BASE': types_frameless.BlindCornerBaseCabinet,
+            'TALL': types_frameless.BlindCornerTallCabinet,
+            'UPPER': types_frameless.BlindCornerUpperCabinet,
+        }.get(cabinet_type, types_frameless.BlindCornerBaseCabinet)
+        cabinet = blind_cls()
+        cabinet.blind_side = blind_side
+        return cabinet
+    if cabinet_type == 'BASE':
+        cabinet = types_frameless.BaseCabinet()
+        if cabinet_name == 'Base Door':
+            cabinet.default_exterior = "Doors"
+        elif cabinet_name == 'Base Door Drw':
+            cabinet.default_exterior = "Door Drawer"
+        elif cabinet_name == 'Base Drawer':
+            cabinet.default_exterior = "3 Drawers"
+        elif cabinet_name == 'Sink Base':
+            cabinet.default_exterior = "Sink"
+        elif cabinet_name == 'Base Open':
+            cabinet.default_exterior = "Open"
+    elif cabinet_type == 'TALL':
+        if cabinet_name == 'Refrigerator Cabinet':
+            cabinet = types_frameless.RefrigeratorCabinet()
+        else:
+            cabinet = types_frameless.TallCabinet()
+            if cabinet_name == 'Tall Stacked':
+                cabinet.is_stacked = True
+            elif cabinet_name == 'Tall Open':
+                cabinet.default_exterior = "Open"
+    elif cabinet_type == 'UPPER':
+        cabinet = types_frameless.UpperCabinet()
+        if cabinet_name == 'Upper Stacked':
+            cabinet.is_stacked = True
+        elif cabinet_name == 'Upper Open':
+            cabinet.default_exterior = "Open"
+    else:
+        cabinet = types_frameless.Cabinet()    
+    return cabinet    
+
+
+
 class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin):
     bl_idname = "hb_frameless.place_cabinet"
     bl_label = "Place Cabinet"
@@ -1424,96 +1522,13 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
 
     def get_appliance_class(self):
         """Get the appliance class based on appliance_type."""
-        
-        appliance_map = {
-            'RANGE': types_appliances.Range,
-            'DISHWASHER': types_appliances.Dishwasher,
-            'REFRIGERATOR': types_appliances.Refrigerator,
-            'HOOD': types_appliances.Hood,
-            'COOKTOP': types_appliances.Cooktop,
-            'WALL_OVEN': types_appliances.WallOven,
-            'MICROWAVE': types_appliances.Microwave,
-            'SINK': types_appliances.Sink,
-        }
-        
-        if self.appliance_type in appliance_map:
-            return appliance_map[self.appliance_type]
-        return None
-    
+        return appliance_class_for(self.appliance_type)
+
     def get_cabinet_class(self):
-        # Handle appliances
-        if self.is_appliance:
-            appliance_class = self.get_appliance_class()
-            if appliance_class:
-                return appliance_class()
-            return types_frameless.Cabinet()
-
-        # Handle parts
-        if self.cabinet_name in PART_CLASS_MAP:
-            return PART_CLASS_MAP[self.cabinet_name]()
-
-        # Handle corner cabinets first
-        if 'Diagonal Corner' in self.cabinet_name:
-            if 'Base' in self.cabinet_name:
-                return types_frameless.DiagonalCornerBaseCabinet()
-            elif 'Tall' in self.cabinet_name:
-                return types_frameless.DiagonalCornerTallCabinet()
-            elif 'Upper' in self.cabinet_name:
-                return types_frameless.DiagonalCornerUpperCabinet()
-        
-        if 'Pie Cut Corner' in self.cabinet_name or 'L-Shape Corner' in self.cabinet_name:
-            if 'Base' in self.cabinet_name:
-                return types_frameless.PieCutCornerBaseCabinet()
-            elif 'Tall' in self.cabinet_name:
-                return types_frameless.PieCutCornerTallCabinet()
-            elif 'Upper' in self.cabinet_name:
-                return types_frameless.PieCutCornerUpperCabinet()
-        
-        # Handle regular cabinets
-        if self.cabinet_name == 'Lap Drawer':
-            cabinet = types_frameless.LapDrawerCabinet()
-            return cabinet
-        if self.is_blind_corner():
-            # Which end goes into the corner: the end the run was placed
-            # against, or left when placed away from any corner.
-            blind_cls = {
-                'BASE': types_frameless.BlindCornerBaseCabinet,
-                'TALL': types_frameless.BlindCornerTallCabinet,
-                'UPPER': types_frameless.BlindCornerUpperCabinet,
-            }.get(self.cabinet_type, types_frameless.BlindCornerBaseCabinet)
-            cabinet = blind_cls()
-            cabinet.blind_side = self.blind_side_for_placement()
-            return cabinet
-        if self.cabinet_type == 'BASE':
-            cabinet = types_frameless.BaseCabinet()
-            if self.cabinet_name == 'Base Door':
-                cabinet.default_exterior = "Doors"
-            elif self.cabinet_name == 'Base Door Drw':
-                cabinet.default_exterior = "Door Drawer"
-            elif self.cabinet_name == 'Base Drawer':
-                cabinet.default_exterior = "3 Drawers"
-            elif self.cabinet_name == 'Sink Base':
-                cabinet.default_exterior = "Sink"
-            elif self.cabinet_name == 'Base Open':
-                cabinet.default_exterior = "Open"
-        elif self.cabinet_type == 'TALL':
-            if self.cabinet_name == 'Refrigerator Cabinet':
-                cabinet = types_frameless.RefrigeratorCabinet()
-            else:
-                cabinet = types_frameless.TallCabinet()
-                if self.cabinet_name == 'Tall Stacked':
-                    cabinet.is_stacked = True
-                elif self.cabinet_name == 'Tall Open':
-                    cabinet.default_exterior = "Open"
-        elif self.cabinet_type == 'UPPER':
-            cabinet = types_frameless.UpperCabinet()
-            if self.cabinet_name == 'Upper Stacked':
-                cabinet.is_stacked = True
-            elif self.cabinet_name == 'Upper Open':
-                cabinet.default_exterior = "Open"
-        else:
-            cabinet = types_frameless.Cabinet()    
-        return cabinet    
+        return build_cabinet_for(
+            self.cabinet_name, self.cabinet_type, self.is_appliance,
+            self.appliance_type,
+            self.blind_side_for_placement() if self.is_blind_corner() else 'Left')
 
     def create_final_cabinets(self, context):
         """Create the actual cabinet objects when user confirms placement."""

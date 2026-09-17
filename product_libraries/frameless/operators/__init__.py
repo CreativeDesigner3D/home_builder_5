@@ -16,6 +16,7 @@ from . import ops_countertop
 from . import ops_cleanup
 from . import ops_snap_line
 from . import ops_molding
+from . import ops_thumbnails
 
 
 def register():
@@ -37,6 +38,7 @@ def register():
     ops_cleanup.register()
     ops_snap_line.register()
     ops_molding.register()
+    ops_thumbnails.register()
 
 
 def unregister():
@@ -58,3 +60,4 @@ def unregister():
     ops_cleanup.unregister()
     ops_snap_line.unregister()
     ops_molding.unregister()
+    ops_thumbnails.unregister()
