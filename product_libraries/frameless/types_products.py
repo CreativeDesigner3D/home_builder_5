@@ -993,6 +993,99 @@ class Panel(Product):
         self.solve()
 
 
+# ---------------------------------------------------------------------------
+# Corner filler
+# ---------------------------------------------------------------------------
+
+CORNER_FILLER_WIDTH = inch(1.5)
+CORNER_FILLER_RETURN = inch(3.0)
+# How far the door fronts stand off the carcass; the filler's face is
+# set to line up with them.
+FRONT_THICKNESS = inch(0.75)
+
+
+def _solve_corner_filler(root, parts, dim_x, dim_y, dim_z):
+    """An L in plan. The face runs across the front at the door plane
+    (Dim Y reaches from the wall to that plane); the return leg stands
+    behind it against the cabinet's side, on whichever side the cabinet
+    is; a kick piece sits set back below the face on a base or tall."""
+    mt = float(_prompt(root, 'Material Thickness', inch(0.75)))
+    tkh = float(_prompt(root, 'Toe Kick Height', 0.0))
+    tks = float(_prompt(root, 'Toe Kick Setback', 0.0))
+    ret = float(_prompt(root, 'Return Depth', CORNER_FILLER_RETURN))
+    cab_right = bool(root.get('Cabinet On Right', True))
+
+    part = parts.get('FILLER_FACE')
+    if part is not None:
+        _set_part(part, (0.0, -dim_y, tkh),
+                  length=dim_z - tkh, width=dim_x, thickness=mt)
+
+    part = parts.get('FILLER_KICK')
+    if part is not None:
+        _set_part(part, (0.0, -dim_y + tks, 0.0),
+                  length=tkh, width=dim_x, thickness=mt, visible=tkh > 0.0)
+
+    # The return is inside the filler's own width, so it lies against
+    # the cabinet side rather than into the cabinet.
+    for role, x, on in (('FILLER_LEFT_RETURN', 0.0, not cab_right),
+                        ('FILLER_RIGHT_RETURN', dim_x, cab_right)):
+        part = parts.get(role)
+        if part is not None:
+            # A side panel's width runs toward -Y from where it is set,
+            # so it is set at its back edge to run from the face's back
+            # toward the wall.
+            _set_part(part, (x, -dim_y + mt + ret, tkh),
+                      length=dim_z - tkh, width=ret, thickness=mt,
+                      visible=on)
+
+
+class CornerFiller(Product):
+    """The filler that closes an inside corner.
+
+    Where a run meets the wall it stands against, a plain cabinet cannot
+    open its door into the corner. This stands between the cabinet's
+    end and the wall: a 1.5" face in the plane of the doors, with a
+    return leg behind it to fix to the cabinet side. Placement adds one
+    of its own accord when a cabinet lands in an inside corner.
+    Dim X = width, Dim Y = reach from the wall to the door face,
+    Dim Z = height.
+    """
+
+    def __init__(self):
+        super().__init__()
+        props = bpy.context.scene.hb_frameless
+        self.width = CORNER_FILLER_WIDTH
+        self.height = props.base_cabinet_height
+        self.depth = props.base_cabinet_depth + FRONT_THICKNESS
+        self.toe_kick_height = props.default_toe_kick_height
+        self.toe_kick_setback = props.default_toe_kick_setback
+        self.cabinet_on_right = True
+
+    def add_properties(self):
+        self.add_property('Toe Kick Height', 'DISTANCE', self.toe_kick_height)
+        self.add_property('Toe Kick Setback', 'DISTANCE', self.toe_kick_setback)
+        self.add_property('Return Depth', 'DISTANCE', CORNER_FILLER_RETURN)
+        self.add_property('Cabinet On Right', 'CHECKBOX', self.cabinet_on_right)
+
+    def create(self, name="Corner Filler"):
+        self.create_product(name)
+        self.obj['PART_TYPE'] = 'CORNER_FILLER'
+        self.obj['IS_CORNER_FILLER'] = True
+        self.obj['MENU_ID'] = 'HOME_BUILDER_MT_part_commands'
+
+        self.add_properties_common()
+        self.add_properties()
+
+        self.add_part('Filler Face', 'FILLER_FACE', rotation=(-90, -90, 0))
+        self.add_part('Filler Kick', 'FILLER_KICK', rotation=(-90, -90, 0))
+        self.add_part('Left Return', 'FILLER_LEFT_RETURN', rotation=(0, -90, 0),
+                      mirror='ZY')
+        self.add_part('Right Return', 'FILLER_RIGHT_RETURN', rotation=(0, -90, 0),
+                      mirror='Y')
+
+        self.solve()
+
+
 _SOLVERS = {
     'FLOATING_SHELF': _solve_floating_shelf,
     'VALANCE': _solve_valance,
@@ -1001,4 +1094,5 @@ _SOLVERS = {
     'LEG': _solve_leg,
     'UPPER_LEG': _solve_upper_leg,
     'PANEL': _solve_panel,
+    'CORNER_FILLER': _solve_corner_filler,
 }
