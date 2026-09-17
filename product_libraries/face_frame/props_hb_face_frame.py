@@ -5061,11 +5061,6 @@ class Face_Frame_Door_Style(PropertyGroup):
                 mid_center = self.center_mid_rail
                 if not mid_center:
                     mid_loc = self.mid_rail_location
-        if member_sec is not None:
-            # A mitered door is one continuous molding loop -- no mid
-            # rail geometry exists for it.
-            mid_on = False
-
         if door_builder.USE_PYTHON_DOORS:
             # Python-built door: static boxes in the front's own mesh. The
             # cutpart modifier stays for its Length / Width / Thickness
@@ -5096,20 +5091,18 @@ class Face_Frame_Door_Style(PropertyGroup):
             # Mid-member grid override: counts + optional row / column
             # weights (door_layout divides the field; weight strings are
             # parsed leniently, blank / invalid = equal cells). Mitered
-            # doors have no mid-member geometry, matching the single
-            # mid rail above.
-            if member_sec is None:
-                if ovr_grid_rails:
-                    info['mid_rail_count'] = ovr_grid_rails
-                    info['mid_rail_z'] = None
-                    info['mid_rail_fractions'] = door_builder.parse_grid_ratios(
-                        frame_store.get('HB_FRAME_OVR_ROW_RATIOS', ''))
-                if ovr_grid_stiles:
-                    info['mid_stile_count'] = max(
-                        int(info.get('mid_stile_count', 0) or 0),
-                        ovr_grid_stiles)
-                    info['mid_stile_fractions'] = door_builder.parse_grid_ratios(
-                        frame_store.get('HB_FRAME_OVR_COL_RATIOS', ''))
+            # doors sweep their profile along the mid members too.
+            if ovr_grid_rails:
+                info['mid_rail_count'] = ovr_grid_rails
+                info['mid_rail_z'] = None
+                info['mid_rail_fractions'] = door_builder.parse_grid_ratios(
+                    frame_store.get('HB_FRAME_OVR_ROW_RATIOS', ''))
+            if ovr_grid_stiles:
+                info['mid_stile_count'] = max(
+                    int(info.get('mid_stile_count', 0) or 0),
+                    ovr_grid_stiles)
+                info['mid_stile_fractions'] = door_builder.parse_grid_ratios(
+                    frame_store.get('HB_FRAME_OVR_COL_RATIOS', ''))
             if shape_k is not None and shape_k.get('twin') \
                     and not info.get('mid_stile_count'):
                 info['mid_stile_count'] = 1
