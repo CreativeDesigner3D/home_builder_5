@@ -177,8 +177,7 @@ class FaceFrameLayout:
         # Over-stool: drop BOTH sides (not the stiles) - see side_extend_down.
         self.extend_sides_down = getattr(cab, 'extend_sides_down', False)
         self.extend_sides_down_amount = getattr(cab, 'extend_sides_down_amount', 0.0)
-        # Finished bottom (uppers): a finish-faced side stops on top of
-        # the panel, which runs out under it - see finished_bottom_wraps_side.
+        # Finished bottom (uppers) - see finished_bottom_to_frame_edge.
         self.finished_bottom_type = getattr(cab, 'finished_bottom_type', 'NONE')
         self.finished_bottom_bays = getattr(cab, 'finished_bottom_bays', '')
         self.side_front_profile = getattr(cab, 'side_front_profile', False)
@@ -959,53 +958,22 @@ FINISHED_BOTTOM_SPECS = {
 FINISHED_BOTTOM_BAYS_NONE = 'NONE'
 
 
-def finished_bottom_wraps_side(layout, side):
-    """True when an upper's finished bottom runs out to the OUTER face of
-    this end's carcass side, and the side stops on top of it.
+def finished_bottom_to_frame_edge(layout, side):
+    """True when an upper's finished bottom runs out past this end's
+    carcass side to the face frame's outer edge, covering the scribe
+    reveal under the side.
 
-    Only sides that stay full height reach down past the carcass bottom:
-    a captured UNFINISHED side already sits on the bottom panel (which
-    runs out under it), an applied face frame replaces the side, and a
-    side dropped below the box (hutch / over-stool) is a visible leg the
-    finish has to stop inside. The end bay's bottom segment must be in
-    the finished bottom's scope.
+    Only a captured UNFINISHED side qualifies: its bottom panel already
+    runs out under it, so the finish continues to the full cabinet
+    width. Finished, paneled and textured ends stay full height and the
+    finished bottom butts into them; an applied face frame replaces the
+    side, and a side dropped below the box (hutch / over-stool) is a
+    visible leg the finish has to stop inside.
     """
     if layout.cabinet_type != 'UPPER' or layout.is_angled:
         return False
-    if getattr(layout, 'finished_bottom_type', 'NONE') not in FINISHED_BOTTOM_SPECS:
-        return False
-    side_fin = layout.l_fin_end if side == 'LEFT' else layout.r_fin_end
-    if side_fin in ('UNFINISHED', 'FALSE_FF', 'WORKING_FF'):
-        return False
-    if ends_down_drop(layout, side) + side_extend_down(layout, side) > 0.0:
-        return False
     bay_index = 0 if side == 'LEFT' else layout.bay_count - 1
-    bay = layout.bays[bay_index]
-    if bay.get('remove_bottom') or bay.get('remove_carcass'):
-        return False
-    scope = {k.strip() for k in
-             getattr(layout, 'finished_bottom_bays', '').split(',')
-             if k.strip()}
-    if FINISHED_BOTTOM_BAYS_NONE in scope:
-        return False
-    if not scope:
-        return True
-    for seg in carcass_bottom_segments(layout):
-        if seg['start_bay'] <= bay_index <= seg['end_bay']:
-            return str(seg['start_bay']) in scope
-    return False
-
-
-def finished_bottom_top_z(layout, bay_index):
-    """Top face Z of the finished bottom under this bay's carcass bottom
-    (same placement _apply_finished_bottom builds the panel at)."""
-    t_fin, flush = FINISHED_BOTTOM_SPECS[layout.finished_bottom_type]
-    underside = (bay_bottom_z(layout, bay_index)
-                 + layout.bays[bay_index]['bottom_rail_width']
-                 - bottom_thickness(layout))
-    if not flush:
-        return underside
-    return underside - (layout.default_bottom_rail_width - layout.mt) + t_fin
+    return _upper_side_captured(layout, side, bay_index)
 
 
 def side_bottom_z(layout, bay_index, side='LEFT'):
@@ -1040,10 +1008,6 @@ def side_bottom_z(layout, bay_index, side='LEFT'):
         if _upper_side_captured(layout, side, bay_index):
             bay = layout.bays[bay_index]
             return bay_bottom_z(layout, bay_index) + bay['bottom_rail_width']
-        # A finished bottom runs out under a finish-faced side, so the
-        # side stops on its top face.
-        if finished_bottom_wraps_side(layout, side):
-            return finished_bottom_top_z(layout, bay_index)
         return (bay_bottom_z(layout, bay_index)
                 - ends_down_drop(layout, side)
                 - side_extend_down(layout, side))
