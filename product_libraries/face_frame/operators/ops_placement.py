@@ -851,6 +851,38 @@ def _free_standing_cabinet_root(cab_obj):
     return node
 
 
+def _hit_through_top(hit_obj):
+    """True when the raycast hit lands on a top over a run, or on a
+    part of one, anywhere up the parent chain."""
+    node = hit_obj
+    while node is not None:
+        if (node.get('IS_COUNTERTOP')
+                or node.get(types_face_frame.WOOD_TOP_TAG)):
+            return True
+        node = node.parent
+    return False
+
+
+def _is_island_back_hit(cab_obj, hit_obj, hit_location):
+    """True when the cursor sits on the exposed back side of cab_obj.
+
+    A hit on the cabinet's BACK face is the plain case. A hit that
+    arrives through the top covering the run counts too, as long as it
+    lands behind the cabinet's back plane: a seating overhang reaches
+    out over the whole back of the run, so the ray never reaches the box
+    below and the hit reads as the cabinet's TOP.
+    """
+    face = _hit_face_of_cabinet(cab_obj, hit_location)
+    if face == 'BACK':
+        return True
+    if face != 'TOP' or not _hit_through_top(hit_obj):
+        return False
+    # Cabinet bodies extrude -Y from the back plane at y=0, so +Y is
+    # clear of the box - the overhang band behind the run.
+    local = cab_obj.matrix_world.inverted() @ hit_location
+    return local.y > 0.0
+
+
 def _resolve_island_run(seed_obj, exclude_obj=None):
     """Free-standing run containing seed_obj. Returns objects sorted
     left-to-right along the run axis.
@@ -2743,18 +2775,20 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
                 self._position_on_wall(context, wall)
             return
 
-        # Back-of-island snap: if the cursor is over the back face of a
+        # Back-of-island snap: if the cursor is over the back of a
         # free-standing face-frame cabinet, treat that cabinet's run as
         # a snap surface. A hit on an applied panel resolves to the
-        # cabinet wearing it, so a finished back still snaps. Falls
-        # through to free placement when the hit isn't on a back face or
-        # the cabinet is wall-parented.
+        # cabinet wearing it, so a finished back still snaps, and a hit
+        # on the top behind the box counts as a back hit so a seating
+        # overhang doesn't mask the run. Falls through to free placement
+        # otherwise, or when the cabinet is wall-parented.
         hit_cab = _free_standing_cabinet_root(self.find_cabinet_bp(
             self.hit_object,
             marker_set=frozenset({types_face_frame.TAG_CABINET_CAGE}),
         ))
         if (hit_cab is not None
-                and _hit_face_of_cabinet(hit_cab, self.hit_location) == 'BACK'):
+                and _is_island_back_hit(
+                    hit_cab, self.hit_object, self.hit_location)):
             self._position_on_island_back(context, hit_cab)
             return
 
