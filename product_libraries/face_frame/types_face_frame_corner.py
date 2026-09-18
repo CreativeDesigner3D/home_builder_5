@@ -138,6 +138,25 @@ INSET_DOOR_REVEAL = inch(0.125)
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
+def corner_opening_root(obj):
+    """Corner cabinet root above obj whose front is picked by a Config
+    choice (diagonal corners, upper pie cuts), or None.
+
+    Corners carry no opening cages: what fills the front is the
+    cabinet's exterior_config, so that is what Change Opening edits on
+    them, and the cabinet itself stands in for its openings.
+    """
+    cab = ff.find_cabinet_root(obj)
+    if cab is None:
+        return None
+    ctype = getattr(cab.face_frame_cabinet, 'corner_type', 'NONE')
+    if ctype == 'DIAGONAL':
+        return cab
+    if ctype == 'PIE_CUT' and cab.get('CABINET_TYPE') == 'UPPER':
+        return cab
+    return None
+
+
 def _set_mod_input(obj, mod_name, input_name, value):
     """Set one named input on a named modifier of obj. No-op if the
     modifier or its node group or the input is missing.

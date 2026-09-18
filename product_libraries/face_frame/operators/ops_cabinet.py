@@ -819,6 +819,11 @@ def _selection_mode_matches(obj, mode):
         if obj.hide_render:
             return False
         return True
+    if (mode == 'Openings'
+            and types_face_frame_corner.corner_opening_root(obj) is obj):
+        # Corners have no opening cages; the cabinet is the target, and
+        # its right-click menu carries the corner Change Opening.
+        return True
     if mode == 'Cabinets':
         if obj.get('IS_APPLIANCE'):
             # Appliances live alongside cabinets in the catalog and
