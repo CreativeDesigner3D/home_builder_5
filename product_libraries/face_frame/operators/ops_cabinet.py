@@ -5664,12 +5664,21 @@ class hb_face_frame_OT_create_cabinet_group(bpy.types.Operator):
         return {'FINISHED'}
 
     def _calculate_group_bounds(self, roots):
-        """World-space AABB across all roots, returned as the back-left-bottom
+        """Bounding box across all roots, returned as the back-left-bottom
         corner for a Mirror-Y cage (origin at back, +Y is back, geometry
         extends -Y into the room).
+
+        The box is world-aligned unless every root shares one Z rotation
+        (modulo 90 deg) that is off the world axes -- a run turned at an
+        angle in the room. Then the box is fitted in that rotated frame
+        and the rotation is returned, so the group cage sits square to
+        its cabinets instead of wrapping them in an oversized world box.
         """
         if not roots:
             return (Vector((0, 0, 0)), (0, 0, 0), 0, 0, 0)
+
+        theta = _shared_run_z_angle(roots)
+        to_frame = Matrix.Rotation(-theta, 4, 'Z')
 
         min_x = float('inf'); max_x = float('-inf')
         min_y = float('inf'); max_y = float('-inf')
@@ -5705,7 +5714,7 @@ class hb_face_frame_OT_create_cabinet_group(bpy.types.Operator):
                 Vector((cw, -cd, ch)),
             ]
 
-            mw = _resolved_world_matrix(root)
+            mw = to_frame @ _resolved_world_matrix(root)
             for lc in local_corners:
                 wc = mw @ lc
                 min_x = min(min_x, wc.x); max_x = max(max_x, wc.x)
@@ -5717,11 +5726,42 @@ class hb_face_frame_OT_create_cabinet_group(bpy.types.Operator):
         overall_h = max_z - min_z
 
         # The group cage uses Mirror Y, so its origin sits at +Y (back of
-        # the world AABB) and its geometry extends -Y from there.
-        location = Vector((min_x, max_y, min_z))
-        rotation = (0, 0, 0)
+        # the box) and its geometry extends -Y from there.
+        location = to_frame.inverted() @ Vector((min_x, max_y, min_z))
+        rotation = (0, 0, theta)
 
         return (location, rotation, overall_w, overall_d, overall_h)
+
+
+def _shared_run_z_angle(roots, tol_deg=0.5):
+    """Z rotation (radians, in [-45, 45) deg) shared by every root modulo
+    90 deg, or 0.0 when the roots don't agree or already sit square to
+    the world axes. Back-to-back and end-on members still agree: only
+    the angle modulo 90 deg is compared.
+    """
+    import math
+    # Average on the 4x-angle circle so 90-deg-apart members coincide
+    # and the +/-45 deg wrap doesn't split the mean.
+    sx = sy = 0.0
+    quads = []
+    for root in roots:
+        m = _resolved_world_matrix(root)
+        yaw = math.atan2(m[1][0], m[0][0])
+        quads.append(4.0 * yaw)
+        sx += math.cos(4.0 * yaw)
+        sy += math.sin(4.0 * yaw)
+    if not quads or math.hypot(sx, sy) < 1e-9:
+        return 0.0
+    mean = math.atan2(sy, sx)
+    tol = math.radians(4.0 * tol_deg)
+    for q in quads:
+        diff = (q - mean + math.pi) % (2.0 * math.pi) - math.pi
+        if abs(diff) > tol:
+            return 0.0
+    theta = mean / 4.0
+    if abs(theta) < math.radians(tol_deg):
+        return 0.0
+    return theta
 
 
 def _resolved_world_matrix(obj):
