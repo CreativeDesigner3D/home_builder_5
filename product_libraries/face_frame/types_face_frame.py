@@ -16408,14 +16408,31 @@ class FloatingShelfFaceFrameCabinet(FaceFrameCabinet):
                                   width, depth, ft, thickness)
 
         # --- Light groove (Heavy Duty shelves only) ---
-        # A routed LED channel on the top and/or bottom face, set a
-        # distance in from the rear edge. Panel-local Y runs front (0)
-        # -> rear (inner_depth), so measure in from inner_depth.
+        # A routed LED channel on the top and/or bottom face. Panel-local
+        # Y runs front (0) -> rear (inner_depth), so a rear-referenced
+        # distance measures in from inner_depth and a front-referenced
+        # one measures in from the shelf's front face, which sits ft
+        # forward of the panel's front edge.
         hd = shelf.shelf_type == 'HEAVY_DUTY'
         g_w = shelf.groove_width
         g_depth = shelf.groove_depth
-        y_far = inner_depth - shelf.groove_distance_from_rear  # rear edge of groove
-        y_near = y_far - g_w                                   # front edge of groove
+
+        def groove_span(dist, from_front):
+            """Panel-local (near, far) Y for a groove that distance in."""
+            if from_front:
+                near = dist - ft
+            else:
+                near = inner_depth - dist - g_w
+            near = min(max(near, 0.0), max(inner_depth - g_w, 0.0))
+            return near, near + g_w
+
+        y_near, y_far = groove_span(shelf.groove_distance_from_rear,
+                                    shelf.groove_top_from_front)
+        if shelf.groove_bottom_separate:
+            b_near, b_far = groove_span(shelf.groove_bottom_distance,
+                                        shelf.groove_bottom_from_front)
+        else:
+            b_near, b_far = y_near, y_far
         gx0, gx1 = -0.005, inner_len + 0.005                   # span full length
         # Flip Z picks the cut face; top cuts its top face, bottom its
         # bottom. Verify against the render and flip if reversed.
@@ -16426,7 +16443,7 @@ class FloatingShelfFaceFrameCabinet(FaceFrameCabinet):
                              gx0, y_near, gx1, y_far, g_depth, True)
         if not BOTTOM.get('IS_MANUAL_PART'):
             self._set_groove(BOTTOM, hd and shelf.include_groove_bottom,
-                             gx0, y_near, gx1, y_far, g_depth, False)
+                             gx0, b_near, gx1, b_far, g_depth, False)
 
 
 # Per-style standard build for the Mantle product, inches:

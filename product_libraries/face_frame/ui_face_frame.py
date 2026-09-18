@@ -635,7 +635,23 @@ def draw_floating_shelf(layout, root):
         grow.prop(shelf, 'include_groove_bottom', text="Bottom", toggle=True)
         gsub = gbox.column(align=True)
         gsub.enabled = shelf.include_groove_top or shelf.include_groove_bottom
-        gsub.prop(shelf, 'groove_distance_from_rear', text="Distance From Rear")
+        top_label = ("Top Distance From Front" if shelf.groove_top_from_front
+                     else "Top Distance From Rear")
+        gsub.prop(shelf, 'groove_distance_from_rear', text=top_label)
+        gsub.prop(shelf, 'groove_top_from_front', text="Measure From Front")
+        # The bottom groove follows the top unless it is unlocked; the
+        # shop's standard detail runs it in from the front instead.
+        gsub.separator()
+        gsub.prop(shelf, 'groove_bottom_separate',
+                  text="Bottom Groove Separate")
+        bsub = gsub.column(align=True)
+        bsub.enabled = shelf.groove_bottom_separate
+        bot_label = ("Bottom Distance From Front"
+                     if shelf.groove_bottom_from_front
+                     else "Bottom Distance From Rear")
+        bsub.prop(shelf, 'groove_bottom_distance', text=bot_label)
+        bsub.prop(shelf, 'groove_bottom_from_front', text="Measure From Front")
+        gsub.separator()
         gsub.prop(shelf, 'groove_width', text="Width")
         gsub.prop(shelf, 'groove_depth', text="Depth")
 

@@ -12118,7 +12118,9 @@ class Face_Frame_Floating_Shelf_Props(PropertyGroup):
         update=_update_cabinet_dim,
     )  # type: ignore
     # Light groove (Heavy Duty only) - a routed LED channel on the top
-    # and/or bottom face, set a distance in from the rear edge.
+    # and/or bottom face. Each groove is set a distance in from the rear
+    # edge or from the front face; the bottom one follows the top unless
+    # it is given its own location.
     include_groove_top: BoolProperty(
         name="Groove Top", default=False, update=_update_cabinet_dim,
     )  # type: ignore
@@ -12128,6 +12130,30 @@ class Face_Frame_Floating_Shelf_Props(PropertyGroup):
     groove_distance_from_rear: FloatProperty(
         name="Groove Distance From Rear", default=units.inch(2.0),
         unit='LENGTH', precision=4, update=_update_cabinet_dim,
+    )  # type: ignore
+    groove_top_from_front: BoolProperty(
+        name="Top Groove From Front", default=False,
+        description="Measure the top groove in from the front face "
+                    "instead of the rear (wall) edge",
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    groove_bottom_separate: BoolProperty(
+        name="Bottom Groove Separate", default=False,
+        description="Give the bottom groove its own location. Off keeps "
+                    "it in line with the top groove",
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    groove_bottom_distance: FloatProperty(
+        name="Bottom Groove Distance", default=units.inch(1.0), min=0.0,
+        description="Distance to the bottom groove, measured from the "
+                    "front face or the rear (wall) edge",
+        unit='LENGTH', precision=4, update=_update_cabinet_dim,
+    )  # type: ignore
+    groove_bottom_from_front: BoolProperty(
+        name="Bottom Groove From Front", default=True,
+        description="Measure the bottom groove in from the front face "
+                    "instead of the rear (wall) edge",
+        update=_update_cabinet_dim,
     )  # type: ignore
     groove_width: FloatProperty(
         name="Groove Width", default=units.inch(0.5),

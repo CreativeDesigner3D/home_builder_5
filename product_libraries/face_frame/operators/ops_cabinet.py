@@ -6108,7 +6108,9 @@ class hb_face_frame_OT_duplicate_floating_shelf(bpy.types.Operator):
     _SHELF_PROPS = (
         'finish_left', 'finish_right', 'material_thickness', 'shelf_type',
         'include_groove_top', 'include_groove_bottom',
-        'groove_distance_from_rear', 'groove_width', 'groove_depth',
+        'groove_distance_from_rear', 'groove_top_from_front',
+        'groove_bottom_separate', 'groove_bottom_distance',
+        'groove_bottom_from_front', 'groove_width', 'groove_depth',
     )
 
     @classmethod
