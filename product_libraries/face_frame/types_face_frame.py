@@ -38,6 +38,8 @@ from . import solver_face_frame as solver
 from . import island_pair
 from . import shelf_nosing
 from . import wood_top_edge
+from . import wood_top_shape
+from ..common import countertop_common
 from . import decorative_corner
 from . import cabinet_column
 from . import bar_storage
@@ -415,6 +417,26 @@ PART_ROLE_ADA_BOTTOM = 'ADA_BOTTOM'
 ADA_FRONT_PART_ROLES = (PART_ROLE_ADA_FRONT, PART_ROLE_ADA_ANGLED_FRONT,
                         PART_ROLE_ADA_BOTTOM)
 PART_ROLE_APRON = 'APRON'
+# Paneled top rail: stiles and rails around a panel from the door style,
+# built in place of a top rail segment (the plain rail is hidden while
+# it exists). Face_Frame_Cabinet_Props.paneled_top_rail.
+PART_ROLE_PANELED_TOP_RAIL = 'PANELED_TOP_RAIL'
+PANELED_RAIL_HIDDEN_TAG = 'hb_paneled_rail_hidden'
+
+
+def is_face_frame_mode_part(obj):
+    """True for a part Face Frame selection mode offers to be clicked.
+
+    Frame members the recalc has switched off (hide_render: a top rail
+    standing in for a paneled rail or an accessible sink front, a
+    conditional stile) are left out, since highlighting a part also
+    un-hides it. The paneled top rail itself stands in for its rail, so
+    it is offered in the rail's place.
+    """
+    role = obj.get('hb_part_role')
+    if role == PART_ROLE_PANELED_TOP_RAIL:
+        return True
+    return role in FACE_FRAME_PART_ROLES and not obj.hide_render
 # Drawer-look door: a working DOOR leaf wearing N applied drawer-front
 # panels (proud of the leaf, with reveal gaps that read as faux mid
 # rails) so it looks like a drawer stack but opens as one door. Built in
@@ -424,6 +446,10 @@ PART_ROLE_DRAWER_LOOK_FRONT = 'DRAWER_LOOK_FRONT'
 # Faux mid-rail strip between drawer-look fronts, added only for FULL
 # INSET (proud of the inset fronts, like a real inset face frame).
 PART_ROLE_DRAWER_LOOK_RAIL = 'DRAWER_LOOK_RAIL'
+# Door-look door: the same carrier trick sideways - one working leaf
+# wearing N applied door panels side by side (battened pair look), with
+# the double-door center reveal between them. Styled from the door pool.
+PART_ROLE_DOOR_LOOK_FRONT = 'DOOR_LOOK_FRONT'
 DRAWER_LOOK_REVEAL = inch(0.125)            # gap between applied fronts
 DRAWER_LOOK_TALLER_TOP_FACTOR = 1.5         # top front height vs each other
 
@@ -1894,6 +1920,15 @@ def locked_bay_slack(cabinet_obj):
 # ---------------------------------------------------------------------------
 # Base cabinet class
 # ---------------------------------------------------------------------------
+
+def _remove_part_with_mesh(obj):
+    """Delete a python-built part and its mesh once nothing else uses it."""
+    mesh = obj.data
+    bpy.data.objects.remove(obj, do_unlink=True)
+    if mesh is not None and mesh.users == 0:
+        bpy.data.meshes.remove(mesh)
+
+
 class FaceFrameCabinet(GeoNodeCage):
     # When True, the place_cabinet modal pins bay_qty=1 and disables
     # fill-to-gap behavior. Used for single-unit products like sinks
@@ -3726,6 +3761,7 @@ class FaceFrameCabinet(GeoNodeCage):
         # cabinet's tip-up diagonal exceeds the ceiling. Re-applied here so
         # it survives part reconciliation, exactly like the angled cutter.
         self._reconcile_ada_side_shape(layout)
+        self._reconcile_paneled_top_rails()
 
         wedge = solver.wedge_geometry(layout) if self._has_carcass() else None
         if wedge is not None:
@@ -5219,12 +5255,7 @@ class FaceFrameCabinet(GeoNodeCage):
     # with their top against the carcass bottom's underside; flush panels
     # sit with their underside at the bottom-rail bottom (cabinet z=0) -
     # the same placement rule the upper-bottom detail card draws.
-    _FINISHED_BOTTOM_SPECS = {
-        'QUARTER': (inch(0.25), False),
-        'THREE_QUARTER': (inch(0.75), False),
-        'QUARTER_FLUSH': (inch(0.25), True),
-        'THREE_QUARTER_FLUSH': (inch(0.75), True),
-    }
+    _FINISHED_BOTTOM_SPECS = solver.FINISHED_BOTTOM_SPECS
     _FB_ROUTE_WIDTH = inch(0.875)
     _FB_ROUTE_FRONT_INSET = inch(1.5)
     _FB_CUT_MOD_NAME = 'FB LED Route'
@@ -5338,10 +5369,13 @@ class FaceFrameCabinet(GeoNodeCage):
             'thickness': thickness,
         }
 
-    def _fb_bottom_targets(self, cab):
+    def _fb_bottom_targets(self, cab, layout):
         """One target per live carcass-bottom segment, filtered by the
         cabinet's per-bay scope (empty scope = every segment,
-        FINISHED_BOTTOM_BAYS_NONE = none of them)."""
+        FINISHED_BOTTOM_BAYS_NONE = none of them). A segment reaching an
+        unfinished side runs out to the face frame's outer edge; finished
+        and paneled sides stay full height and the panel butts into them
+        (solver.finished_bottom_to_frame_edge)."""
         scope = {s.strip() for s in
                  getattr(cab, 'finished_bottom_bays', '').split(',')
                  if s.strip()}
@@ -5359,8 +5393,19 @@ class FaceFrameCabinet(GeoNodeCage):
             tgt = self._fb_target_from_part(
                 src, key, self.obj, cab.bottom_rail_width,
                 cab.material_thickness)
-            if tgt is not None:
-                targets.append(tgt)
+            if tgt is None:
+                continue
+            eps = 1e-5
+            if (solver.finished_bottom_to_frame_edge(layout, 'LEFT')
+                    and tgt['x'] <= solver.carcass_inner_left_x(layout)
+                    + eps):
+                tgt['length'] += tgt['x']
+                tgt['x'] = 0.0
+            if (solver.finished_bottom_to_frame_edge(layout, 'RIGHT')
+                    and tgt['x'] + tgt['length']
+                    >= solver.carcass_inner_right_x(layout) - eps):
+                tgt['length'] = layout.dim_x - tgt['x']
+            targets.append(tgt)
         return targets
 
     @staticmethod
@@ -5420,9 +5465,8 @@ class FaceFrameCabinet(GeoNodeCage):
         cabinet's finished_bottom_type; ensure it's gone when NONE.
 
         Targets are the live carcass-bottom segments of an upper (one
-        panel each, mirroring that segment's span and height - so the
-        finish stops inside finished ends exactly like the carcass bottom
-        does, follows a raised / dropped bay's own bottom, and skips bays
+        panel each, mirroring that segment's span and height, run out to
+        the face frame's edge past an unfinished side - so it follows a raised / dropped bay's own bottom, and skips bays
         whose bottom is removed) plus any mid-rail shelf switched on for
         it. Each panel gets an LED route cut into its underside near the
         front edge and an optional area light in the route.
@@ -5435,7 +5479,7 @@ class FaceFrameCabinet(GeoNodeCage):
             return
         targets = []
         if layout.cabinet_type == 'UPPER':
-            targets.extend(self._fb_bottom_targets(cab))
+            targets.extend(self._fb_bottom_targets(cab, layout))
         targets.extend(self._fb_shelf_targets())
         if not targets:
             self._cleanup_finished_bottom()
@@ -7980,6 +8024,121 @@ class FaceFrameCabinet(GeoNodeCage):
             obj.matrix_basis = Matrix.Translation(origin) @ basis.to_4x4()
             self._build_ada_front_mesh(obj, construction, width, height,
                                        thickness)
+
+    def _reconcile_paneled_top_rails(self):
+        """Build a paneled part over each top rail segment, or take them
+        away.
+
+        Each part takes its rail's place and size exactly (rail length
+        across, rail width tall, face frame thickness deep) and builds as
+        stiles and rails around a panel from the door style. The rail
+        stays in the file, hidden, so turning the option off - or a rail
+        too narrow for a frame - falls straight back to the plain rail.
+        Accessible sinks already replace the top rail with their own
+        front, so they are left alone.
+        """
+        cab = self.obj.face_frame_cabinet
+        want = (cab.paneled_top_rail and not self.obj.get(ADA_SINK_TAG)
+                and self._has_carcass())
+        rails = {}
+        found = []
+        for child in list(self.obj.children):
+            role = child.get('hb_part_role')
+            if role == PART_ROLE_TOP_RAIL:
+                rails[child.get('hb_segment_start_bay')] = child
+            elif role == PART_ROLE_PANELED_TOP_RAIL:
+                found.append(child)
+        # Matched only once every rail is known: children come in no set
+        # order, and deleting a panel loses its Set Door Frame edits.
+        panels = {}
+        for child in found:
+            key = child.get('hb_segment_start_bay')
+            if key in panels or not want or key not in rails:
+                _remove_part_with_mesh(child)
+            else:
+                panels[key] = child
+
+        # door_builder's front-cutpart space (height up X, width along
+        # -Y, face at +Z) in a top rail's local frame: the rail runs its
+        # length along X, hangs its width down from the origin (mirror
+        # Y) and its thickness back from the face (mirror Z, then the
+        # 90 degree X rotation).
+        for key, rail in rails.items():
+            panel = panels.get(key)
+            built = False
+            if want:
+                rail_part = CabinetPart(rail)
+                length = rail_part.get_input('Length')
+                width = rail_part.get_input('Width')
+                thickness = rail_part.get_input('Thickness')
+                if (not rail.get('hb_ada_hidden') and length > 0.0
+                        and width > 0.0 and thickness > 0.0):
+                    if panel is None:
+                        part = CabinetPart()
+                        part.create(rail.name.replace('Top Rail',
+                                                      'Paneled Top Rail'))
+                        part.obj.parent = self.obj
+                        part.obj['hb_part_role'] = PART_ROLE_PANELED_TOP_RAIL
+                        part.obj['CABINET_PART'] = True
+                        part.obj['hb_segment_start_bay'] = key
+                        part.obj['MENU_ID'] = (
+                            'HOME_BUILDER_MT_face_frame_part_commands')
+                        panel = part.obj
+                    part = CabinetPart(panel)
+                    part.set_input('Length', width)
+                    part.set_input('Width', length)
+                    part.set_input('Thickness', thickness)
+                    # The front convention the door builders author for.
+                    part.set_input('Mirror Y', True)
+                    for mod in panel.modifiers:
+                        if mod.type == 'NODES':
+                            mod.show_viewport = False
+                            mod.show_render = False
+                    if panel.data.users > 1:
+                        panel.data = panel.data.copy()
+                    to_rail = Matrix(((0.0, -1.0, 0.0, 0.0),
+                                      (1.0, 0.0, 0.0, -width),
+                                      (0.0, 0.0, 1.0, -thickness),
+                                      (0.0, 0.0, 0.0, 1.0)))
+                    panel.matrix_basis = rail.matrix_basis @ to_rail
+                    if self._build_paneled_top_rail_mesh(panel, length,
+                                                         width, thickness):
+                        built = True
+                    else:
+                        # Too narrow for stiles and rails: keep the rail.
+                        _remove_part_with_mesh(panel)
+            elif panel is not None:
+                _remove_part_with_mesh(panel)
+            if built or rail.get(PANELED_RAIL_HIDDEN_TAG):
+                hide = built or bool(rail.get('hb_ada_hidden'))
+                rail.hide_viewport = hide
+                rail.hide_render = hide
+                if built:
+                    rail[PANELED_RAIL_HIDDEN_TAG] = True
+                elif PANELED_RAIL_HIDDEN_TAG in rail:
+                    del rail[PANELED_RAIL_HIDDEN_TAG]
+
+    def _build_paneled_top_rail_mesh(self, panel, length, width, thickness):
+        """Build a paneled top rail's stiles, rails and panel. Returns
+        False when the rail is too small for a frame.
+
+        With a stiles-and-rails door style on the cabinet the part is
+        built by that style exactly like a door, so Set Door Frame's
+        locked sizes, mid rails, grid and glass panels (stored on the
+        part, which persists across recalcs) apply to it, and the
+        dialog rebuilds it in place through DOOR_STYLE_NAME. Without
+        one it falls back to the plain 2-1/4" frame.
+        """
+        from . import applied_panel_sizing
+        style = applied_panel_sizing._resolve_door_style(self.obj)
+        if style is not None and getattr(style, 'door_type', '') == '5_PIECE':
+            panel['DOOR_STYLE_NAME'] = style.name
+            style.assign_style_to_front(panel)
+            return 'HB_DOOR_FRAME' in panel
+        if 'DOOR_STYLE_NAME' in panel:
+            del panel['DOOR_STYLE_NAME']
+        self._build_ada_front_mesh(panel, 'FRAME', length, width, thickness)
+        return not panel.get('HB_STATIC_SLAB')
 
     def _build_ada_front_mesh(self, obj, construction, width, height,
                               thickness):
@@ -12236,12 +12395,22 @@ class FaceFrameCabinet(GeoNodeCage):
                 elif _prop in front.obj:
                     del front.obj[_prop]
 
-            # Drawer-look doors swap the single door pull for one pull
-            # per applied drawer front; the panels are added below and
-            # inherit the leaf swing. v1: single-leaf LEFT / RIGHT only.
+            # Drawer-look fronts swap the single pull for one pull per
+            # applied drawer front; the panels are added below and ride
+            # the leaf (swing or slide). Doors: single-leaf LEFT / RIGHT
+            # only. Drawer fronts: one box behind N faces.
             drawer_look = (
-                leaf['role'] == PART_ROLE_DOOR
-                and getattr(op_props, 'drawer_look_divisions', 'NONE') != 'NONE'
+                getattr(op_props, 'drawer_look_divisions', 'NONE') != 'NONE'
+                and (leaf['role'] == PART_ROLE_DRAWER_FRONT
+                     or (leaf['role'] == PART_ROLE_DOOR
+                         and op_props.hinge_side in ('LEFT', 'RIGHT')))
+            )
+            # Door-look door: one leaf shown as N battened doors. Keeps
+            # its normal pull (lifted onto the outer panel below).
+            door_look = (
+                not drawer_look
+                and leaf['role'] == PART_ROLE_DOOR
+                and getattr(op_props, 'door_look_divisions', 'NONE') != 'NONE'
                 and op_props.hinge_side in ('LEFT', 'RIGHT')
             )
             # Tri-view mirror doors carry no pulls (touch-open per the
@@ -12250,12 +12419,15 @@ class FaceFrameCabinet(GeoNodeCage):
             no_pulls = (self.obj.get('HB_NO_DOOR_PULLS')
                         or self.obj.get('HB_TRIVIEW_DOORS'))
             # Bi-fold pairs pull from the lead leaf only.
+            pull = None
             if not drawer_look and not no_pulls and not leaf.get('no_pull'):
-                self._create_pull_for_front(front, leaf['role'], leaf,
-                                            op_props)
+                pull = self._create_pull_for_front(front, leaf['role'], leaf,
+                                                   op_props)
             self._create_drawer_box_for_front(pivot, leaf, rect, op_props)
             if drawer_look:
                 self._build_drawer_look_fronts(front, leaf, op_props)
+            elif door_look:
+                self._build_door_look_fronts(front, leaf, op_props, pull)
 
         # Sink apron: a 1/2" panel across the top of a DOOR opening
         # (apron / farmhouse sink), set 1/8" behind the face frame. The
@@ -12372,12 +12544,16 @@ class FaceFrameCabinet(GeoNodeCage):
         front gets its own drawer pull. The panels live under the front
         pivot, so the per-recalc pivot wipe clears them.
 
-        v1 scope: single-leaf LEFT / RIGHT swing doors.
+        Scope: single-leaf LEFT / RIGHT swing doors, and drawer fronts
+        (one drawer box behind N faces).
         """
         divisions = getattr(op_props, 'drawer_look_divisions', 'NONE')
-        if leaf['role'] != PART_ROLE_DOOR or divisions == 'NONE':
+        if divisions == 'NONE':
             return
-        if op_props.hinge_side not in ('LEFT', 'RIGHT'):
+        if leaf['role'] == PART_ROLE_DOOR:
+            if op_props.hinge_side not in ('LEFT', 'RIGHT'):
+                return
+        elif leaf['role'] != PART_ROLE_DRAWER_FRONT:
             return
         n = int(divisions)
         length, width, thickness = leaf['part_dims']
@@ -12403,6 +12579,8 @@ class FaceFrameCabinet(GeoNodeCage):
         openings = getattr(op_props, 'drawer_look_openings', None)
         if openings is not None and len(openings) == n:
             spec = [(o.size, bool(o.unlock_size)) for o in openings]
+        elif leaf['role'] == PART_ROLE_DRAWER_FRONT:
+            spec = [(0.0, False)] * n
         else:
             top_oh = bpy.context.scene.hb_face_frame.top_drawer_opening_height
             spec = [(0.0, False)] * (n - 1) + [(top_oh, True)]
@@ -12469,6 +12647,54 @@ class FaceFrameCabinet(GeoNodeCage):
                 rail.set_input('Width', width)
                 rail.set_input('Thickness', thickness)
             z += h + reveal
+
+    def _build_door_look_fronts(self, front, leaf, op_props, pull=None):
+        """Lay N applied door panels side by side on one DOOR leaf so it
+        reads like doors battened together but swings as one door.
+
+        Same carrier construction as _build_drawer_look_fronts: the leaf
+        becomes a flat slab recessed one thickness, and the proud panels
+        (DOOR_LOOK_FRONT, styled from the door pool) tile its width with
+        the double-door center reveal between them. The leaf's own pull
+        stays where the pull placer put it - on the unhinged edge, which
+        is the outer panel - lifted onto the panel face.
+        """
+        divisions = getattr(op_props, 'door_look_divisions', 'NONE')
+        if leaf['role'] != PART_ROLE_DOOR or divisions == 'NONE':
+            return
+        if op_props.hinge_side not in ('LEFT', 'RIGHT'):
+            return
+        n = int(divisions)
+        length, width, thickness = leaf['part_dims']
+        cab_props = self.obj.face_frame_cabinet
+        reveal = (solver.INSET_DOUBLE_DOOR_REVEAL
+                  if cab_props.default_door_inset_amount > 0
+                  else solver.DOUBLE_DOOR_REVEAL)
+        panel_w = (width - (n - 1) * reveal) / n
+        if panel_w <= 0.0 or length <= 0.0:
+            return
+
+        carrier = front.obj
+        carrier['HB_DRAWER_LOOK_CARRIER'] = True
+        outward = carrier.rotation_euler.to_matrix() @ Vector((0.0, 0.0, 1.0))
+        carrier.location = carrier.location - outward * thickness
+
+        for i in range(n):
+            panel = CabinetPart()
+            panel.create("Door-Look Panel " + str(i + 1))
+            panel.obj.parent = carrier
+            panel.obj['hb_part_role'] = PART_ROLE_DOOR_LOOK_FRONT
+            panel.obj['CABINET_PART'] = True
+            # Carrier-local frame: X = vertical, -Y = horizontal.
+            panel.obj.rotation_euler = (0.0, 0.0, 0.0)
+            panel.set_input('Mirror Y', True)
+            panel.obj.location = (0.0, -i * (panel_w + reveal), thickness)
+            panel.set_input('Length', length)
+            panel.set_input('Width', panel_w)
+            panel.set_input('Thickness', thickness)
+
+        if pull is not None:
+            pull.location.z += thickness
 
     def _add_drawer_look_pull(self, panel_obj, length, width, thickness,
                               scene_props):
@@ -14057,7 +14283,7 @@ class FaceFrameCabinet(GeoNodeCage):
 
         is_h = (sp.axis == 'H')
         parent_dim = rect['cage_dim_z'] if is_h else rect['cage_dim_x']
-        div_t = sp.divider_thickness
+        div_t = sp.effective_thickness()
 
         locked_total = 0.0
         unlocked = []
@@ -14146,7 +14372,7 @@ class FaceFrameCabinet(GeoNodeCage):
         if len(children) != 2:
             return
 
-        div_t = sp.divider_thickness
+        div_t = sp.effective_thickness()
         cage_x = rect['cage_dim_x']
         cage_y = rect['cage_dim_y']
         cage_z = rect['cage_dim_z']
@@ -17556,6 +17782,9 @@ class WoodTopPart(CabinetPart):
         build the nosed front edge when a nosing style is set."""
         obj = self.obj
         wt = obj.wood_top
+        # A reshaped top keeps its outline and builds from that; the
+        # square top below is the one it started as.
+        shaped = wood_top_shape.is_shaped(obj)
         # An applied edge takes the outer band of the top: the board
         # this object drives becomes the core, the band builds as its
         # own part, and the overhangs still measure to the outside of
@@ -17566,7 +17795,7 @@ class WoodTopPart(CabinetPart):
                  if getattr(wt, 'edge_' + s, False)]
         if (getattr(wt, 'edge_type', 'NONE') == 'NONE'
                 or wt.nosing_style not in (None, '', 'NONE')
-                or edge_t <= 0.0):
+                or edge_t <= 0.0 or shaped):
             edged = []
         anchor = (obj.parent
                   if obj.parent is not None
@@ -17586,6 +17815,9 @@ class WoodTopPart(CabinetPart):
             width = wt.width
             depth = wt.depth
         t = wt.thickness
+        if shaped:
+            self._rebuild_shaped(obj, wt, width, depth, t)
+            return
         core_w = width - edge_t * (('left' in edged) + ('right' in edged))
         core_d = depth - edge_t * (('front' in edged) + ('back' in edged))
         # A band wider than the top itself would invert the core.
@@ -17616,16 +17848,7 @@ class WoodTopPart(CabinetPart):
             mod.show_viewport = False
             mod.show_render = False
         obj[TAG_STATIC_TEXTURED] = True
-        # The static mesh renders its own slots; seed them from the
-        # cutpart's surface input so a finish applied while the top was
-        # a plain board carries over to the nosed display.
-        if obj.data is not None and not obj.data.materials:
-            try:
-                surf = self.get_input('Top Surface')
-            except Exception:
-                surf = None
-            if surf is not None:
-                obj.data.materials.append(surf)
+        self._seed_static_material(obj)
 
     @staticmethod
     def _sync_edge_bands(obj, core_w, core_d, t, wt, edged):
@@ -17697,26 +17920,20 @@ class WoodTopPart(CabinetPart):
                 part.modifiers.remove(bev)
 
     @staticmethod
-    def _write_nosed_mesh(obj, width, depth, t, wt, nosed_sides):
-        """Static mesh: a core board shortened by the nosing stock depth
-        on each nosed side, plus one profiled prism per nosed edge.
-        Prism ends miter at 45 degrees where two nosed edges meet at a
-        corner, and cut square at the board edge otherwise. Local space
-        matches the driven cutpart: X 0..width, Y 0..-depth (Mirror Y),
-        Z 0..thickness with the nosing top flush to the board top
-        (extra-height styles drop below).
-        """
+    def _nosing_section(wt, t):
+        """The milled profile as a prism cross-section, and how deep it
+        runs in from the outer face. (None, 0.0) when the style has no
+        outline."""
         h = (max(t, wt.nosing_height)
              if wt.nosing_style in shelf_nosing.EXTRA_HEIGHT_STYLES
              else t)
         outline = wood_top_edge.edge_outline(wt.nosing_style, t, h)
         if not outline:
-            return
+            return None, 0.0
         # Band depth follows the profile: a shallow one keeps the stock
         # depth and leaves a flat behind it, a deep one grows the band
         # instead of poking out past the top's outer face.
         nose_d = wood_top_edge.stock_depth(outline)
-        nosed = set(nosed_sides)
         # Prism cross-section in (d, z): d grows outward from the core
         # face (0) to the board's outer face (nose_d) -- the outline's
         # forward distance maps to d DIRECTLY (mirroring it through the
@@ -17729,6 +17946,236 @@ class WoodTopPart(CabinetPart):
         sec.append((0.0, min(0.0, t + outline[-1][1])))
         if sec[-1][1] < -1e-9:
             sec.append((0.0, 0.0))
+        return sec, nose_d
+
+    # --- shaped tops ------------------------------------------------------
+    @staticmethod
+    def outer_size(obj):
+        """(width, depth) of the top's outside: the cabinet it is seated
+        on plus the overhangs, or its own width and depth when free."""
+        wt = obj.wood_top
+        anchor = (obj.parent
+                  if obj.parent is not None
+                  and obj.parent.get(TAG_CABINET_CAGE) else None)
+        if anchor is not None:
+            ap = anchor.face_frame_cabinet
+            return (ap.width + wt.overhang_left + wt.overhang_right,
+                    ap.depth + wt.overhang_front + wt.overhang_back)
+        return wt.width, wt.depth
+
+    @staticmethod
+    def start_shape(obj):
+        """Give a square top an outline to reshape, if it has none.
+
+        The four sides' finished flags come from whichever edge
+        treatment is on -- the milled profile's sides, else the applied
+        band's -- so the top looks the same the moment it becomes
+        shaped."""
+        if wood_top_shape.is_shaped(obj):
+            return
+        wt = obj.wood_top
+        if wt.nosing_style in (None, '', 'NONE') and wt.edge_type != 'NONE':
+            flags = (wt.edge_front, wt.edge_right, wt.edge_back,
+                     wt.edge_left)
+        else:
+            flags = (wt.nosing_front, wt.nosing_right, wt.nosing_back,
+                     wt.nosing_left)
+        width, depth = WoodTopPart.outer_size(obj)
+        countertop_common.set_outline(
+            obj, wood_top_shape.rectangle(width, depth),
+            wood_top_shape.seed_corners(*flags))
+        obj[wood_top_shape.BASE_KEY] = [float(width), float(depth)]
+
+    @staticmethod
+    def clear_shape(obj):
+        """Back to the square top."""
+        for key in (countertop_common.OUTLINE_KEY,
+                    countertop_common.CORNERS_KEY,
+                    countertop_common.EDGES_KEY,
+                    wood_top_shape.BASE_KEY,
+                    wood_top_shape.JOINTS_KEY,
+                    wood_top_shape.PIECE_LENGTHS_KEY):
+            if key in obj:
+                del obj[key]
+
+    def _rebuild_shaped(self, obj, wt, width, depth, t):
+        """Build a reshaped top from its outline.
+
+        The outline stretches with the rectangle it was drawn on, so a
+        seated top follows its cabinet. The board is one static mesh: the
+        core, pulled in on each finished edge, plus the milled profile
+        swept along those edges. An applied band builds as parts of its
+        own instead, one per run of edge. Miter and seam joints cut the
+        board into its pieces, which is what draws the joint lines.
+        """
+        points = countertop_common.outline_of(obj)
+        corners = countertop_common.corners_of(obj)
+        joints = wood_top_shape.joints_of(obj)
+        base = obj.get(wood_top_shape.BASE_KEY)
+        base = (tuple(base) if base is not None and len(base) == 2
+                else (width, depth))
+        if abs(base[0] - width) > 1e-6 or abs(base[1] - depth) > 1e-6:
+            points = wood_top_shape.restretch(points, base, (width, depth))
+            joints = wood_top_shape.restretch_joints(joints, base,
+                                                     (width, depth))
+            countertop_common.set_outline(obj, points, corners)
+            points = countertop_common.outline_of(obj)
+            corners = countertop_common.corners_of(obj)
+        obj[wood_top_shape.BASE_KEY] = [float(width), float(depth)]
+
+        outline, values = countertop_common.expand_outline_edges(points,
+                                                                 corners)
+        if len(outline) < 3:
+            return
+        outline, values = wood_top_shape.anticlockwise(outline, values)
+        finished = [v > 0.5 for v in values]
+        joints = wood_top_shape.resolve_joints(outline, joints)
+        wood_top_shape.set_joints(obj, joints)
+        obj[wood_top_shape.PIECE_LENGTHS_KEY] = [
+            float(wood_top_shape.piece_length(piece))
+            for piece in wood_top_shape.split_all(outline, joints)]
+        x0, x1, y0, y1 = wood_top_shape.bounds(outline)
+        # The driven cutpart is hidden, but its size is what anything
+        # reading the part's dimensions sees: the overall extents.
+        self.set_input('Length', x1 - x0)
+        self.set_input('Width', y1 - y0)
+        self.set_input('Thickness', t)
+
+        nosed = wt.nosing_style not in (None, '', 'NONE')
+        edge_t = getattr(wt, 'edge_thickness', 0.0)
+        banded = (not nosed and getattr(wt, 'edge_type', 'NONE') != 'NONE'
+                  and edge_t > 0.0)
+
+        bm = bmesh.new()
+        sec, nose_d = (self._nosing_section(wt, t) if nosed
+                       else (None, 0.0))
+
+        def slab(polygon):
+            for piece in wood_top_shape.split_all(polygon, joints):
+                _add_prism(bm, piece, 0.0, t)
+
+        if sec is not None and any(finished):
+            slab(wood_top_shape.core_outline(outline, finished, nose_d))
+            profile = [(nose_d - d, z) for d, z in sec]
+            for i, fin in enumerate(finished):
+                if fin:
+                    _add_sweep(bm, *wood_top_shape.sweep_rings(
+                        outline, finished, profile, i))
+        elif banded and any(finished):
+            slab(wood_top_shape.core_outline(outline, finished, edge_t))
+        else:
+            slab(outline)
+        bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+        bm.to_mesh(obj.data)
+        bm.free()
+        obj.data.update()
+
+        mod_name = getattr(obj.home_builder, 'mod_name', '')
+        mod = obj.modifiers.get(mod_name) if mod_name else None
+        if mod is not None:
+            mod.show_viewport = False
+            mod.show_render = False
+        obj[TAG_STATIC_TEXTURED] = True
+        self._seed_static_material(obj)
+
+        if banded:
+            self._sync_shaped_bands(obj, outline, finished, t, wt, edge_t)
+        else:
+            self._sync_edge_bands(obj, 0.0, 0.0, t, wt, [])
+
+    def _seed_static_material(self, obj):
+        """The static mesh renders its own slots; seed them from the
+        cutpart's surface input so a finish applied while the top was
+        a plain board carries over."""
+        if obj.data is not None and not obj.data.materials:
+            try:
+                surf = self.get_input('Top Surface')
+            except Exception:
+                surf = None
+            if surf is not None:
+                obj.data.materials.append(surf)
+
+    def _sync_shaped_bands(self, obj, outline, finished, t, wt, edge_t):
+        """One band part per run of finished edge, each a mitred static
+        mesh in the board's own space. Parts left over from a previous
+        shape go."""
+        runs = wood_top_shape.runs(outline, finished)
+        existing = {}
+        for child in list(obj.children):
+            if child.get('hb_part_role') == PART_ROLE_WOOD_TOP_EDGE:
+                existing[child.get('hb_wood_top_edge_side')] = child
+        wanted = {f'run{k}' for k in range(len(runs))}
+        for side, part in existing.items():
+            if side not in wanted:
+                bpy.data.objects.remove(part, do_unlink=True)
+        profile = [(edge_t, 0.0), (0.0, 0.0), (0.0, t), (edge_t, t)]
+        for k, run in enumerate(runs):
+            side = f'run{k}'
+            part = existing.get(side)
+            band = CabinetPart()
+            if part is None:
+                band.create(f'Wood Top Edge {k + 1}')
+                part = band.obj
+                part.parent = obj
+                part['hb_part_role'] = PART_ROLE_WOOD_TOP_EDGE
+                part['hb_wood_top_edge_side'] = side
+                part['CABINET_PART'] = True
+                part['IS_FINISHED'] = True
+                part['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_part_commands'
+                band.set_input('Mirror Y', True)
+            else:
+                band.obj = part
+            part['hb_wood_top_edge_type'] = wt.edge_type
+            band.set_input('Length', wood_top_shape.run_length(outline, run))
+            band.set_input('Width', edge_t)
+            band.set_input('Thickness', t)
+            part.location = (0.0, 0.0, 0.0)
+            part.rotation_euler = (0.0, 0.0, 0.0)
+            bm = bmesh.new()
+            for i in run:
+                _add_sweep(bm, *wood_top_shape.sweep_rings(
+                    outline, finished, profile, i))
+            bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+            bm.to_mesh(part.data)
+            bm.free()
+            part.data.update()
+            mod_name = getattr(part.home_builder, 'mod_name', '')
+            mod = part.modifiers.get(mod_name) if mod_name else None
+            if mod is not None:
+                mod.show_viewport = False
+                mod.show_render = False
+            part[TAG_STATIC_TEXTURED] = True
+            if part.data is not None and not part.data.materials:
+                try:
+                    surf = band.get_input('Top Surface')
+                except Exception:
+                    surf = None
+                if surf is not None:
+                    part.data.materials.append(surf)
+            bev = part.modifiers.get('Eased Edge')
+            if wt.edge_type == 'EASED':
+                if bev is None:
+                    bev = part.modifiers.new('Eased Edge', 'BEVEL')
+                bev.width = inch(0.0625)
+                bev.segments = 3
+                bev.limit_method = 'ANGLE'
+            elif bev is not None:
+                part.modifiers.remove(bev)
+
+    @staticmethod
+    def _write_nosed_mesh(obj, width, depth, t, wt, nosed_sides):
+        """Static mesh: a core board shortened by the nosing stock depth
+        on each nosed side, plus one profiled prism per nosed edge.
+        Prism ends miter at 45 degrees where two nosed edges meet at a
+        corner, and cut square at the board edge otherwise. Local space
+        matches the driven cutpart: X 0..width, Y 0..-depth (Mirror Y),
+        Z 0..thickness with the nosing top flush to the board top
+        (extra-height styles drop below).
+        """
+        sec, nose_d = WoodTopPart._nosing_section(wt, t)
+        if sec is None:
+            return
+        nosed = set(nosed_sides)
 
         # Core box, shrunk on each nosed side (clamped to stay a solid).
         x0 = min(nose_d if 'left' in nosed else 0.0, width * 0.5 - 1e-4)
@@ -17781,6 +18228,46 @@ class WoodTopPart(CabinetPart):
         bm.to_mesh(obj.data)
         bm.free()
         obj.data.update()
+
+
+def _add_prism(bm, polygon, z0, z1):
+    """A closed slab over a 2D outline, z0 to z1."""
+    if len(polygon) < 3:
+        return
+    lower = [bm.verts.new((x, y, z0)) for x, y in polygon]
+    upper = [bm.verts.new((x, y, z1)) for x, y in polygon]
+    try:
+        bm.faces.new(list(reversed(lower)))
+        bm.faces.new(upper)
+    except ValueError:
+        return
+    count = len(polygon)
+    for i in range(count):
+        j = (i + 1) % count
+        try:
+            bm.faces.new((lower[i], lower[j], upper[j], upper[i]))
+        except ValueError:
+            pass
+
+
+def _add_sweep(bm, ring0, ring1):
+    """A closed prism between two matching rings of section points."""
+    if len(ring0) < 3 or len(ring0) != len(ring1):
+        return
+    v0 = [bm.verts.new(p) for p in ring0]
+    v1 = [bm.verts.new(p) for p in ring1]
+    for face in (v0, list(reversed(v1))):
+        try:
+            bm.faces.new(face)
+        except ValueError:
+            pass
+    n = len(v0)
+    for i in range(n):
+        j = (i + 1) % n
+        try:
+            bm.faces.new((v0[i], v0[j], v1[j], v1[i]))
+        except ValueError:
+            pass
 
 
 CABINET_NAME_DISPATCH = {
@@ -18245,7 +18732,7 @@ def _reapply_selection_mode_highlights(root):
 
     def matches(obj):
         if mode == 'Face Frame':
-            return obj.get('hb_part_role') in FACE_FRAME_PART_ROLES
+            return is_face_frame_mode_part(obj)
         # Drawer boxes join Interiors mode by role - deliberately NOT
         # tagged IS_FACE_FRAME_INTERIOR_PART, which would also send
         # them to the dashed hidden-line pass on 2D layout views.

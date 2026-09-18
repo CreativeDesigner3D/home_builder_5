@@ -177,6 +177,9 @@ class FaceFrameLayout:
         # Over-stool: drop BOTH sides (not the stiles) - see side_extend_down.
         self.extend_sides_down = getattr(cab, 'extend_sides_down', False)
         self.extend_sides_down_amount = getattr(cab, 'extend_sides_down_amount', 0.0)
+        # Finished bottom (uppers) - see finished_bottom_to_frame_edge.
+        self.finished_bottom_type = getattr(cab, 'finished_bottom_type', 'NONE')
+        self.finished_bottom_bays = getattr(cab, 'finished_bottom_bays', '')
         self.side_front_profile = getattr(cab, 'side_front_profile', False)
         self.overstool_accessory = getattr(cab, 'overstool_accessory', 'SHELF')
         self.kick_inset_left = (cab.inset_toe_kick_left
@@ -941,6 +944,36 @@ def _upper_side_captured(layout, side, bay_index):
         return False
     bay = layout.bays[bay_index]
     return not (bay.get('remove_bottom') or bay.get('remove_carcass'))
+
+
+# (thickness, flush) per finished_bottom_type. Non-flush panels hang
+# with their top against the carcass bottom's underside; flush panels
+# sit with their underside at the bottom-rail bottom.
+FINISHED_BOTTOM_SPECS = {
+    'QUARTER': (inch(0.25), False),
+    'THREE_QUARTER': (inch(0.75), False),
+    'QUARTER_FLUSH': (inch(0.25), True),
+    'THREE_QUARTER_FLUSH': (inch(0.75), True),
+}
+FINISHED_BOTTOM_BAYS_NONE = 'NONE'
+
+
+def finished_bottom_to_frame_edge(layout, side):
+    """True when an upper's finished bottom runs out past this end's
+    carcass side to the face frame's outer edge, covering the scribe
+    reveal under the side.
+
+    Only a captured UNFINISHED side qualifies: its bottom panel already
+    runs out under it, so the finish continues to the full cabinet
+    width. Finished, paneled and textured ends stay full height and the
+    finished bottom butts into them; an applied face frame replaces the
+    side, and a side dropped below the box (hutch / over-stool) is a
+    visible leg the finish has to stop inside.
+    """
+    if layout.cabinet_type != 'UPPER' or layout.is_angled:
+        return False
+    bay_index = 0 if side == 'LEFT' else layout.bay_count - 1
+    return _upper_side_captured(layout, side, bay_index)
 
 
 def side_bottom_z(layout, bay_index, side='LEFT'):
@@ -5804,7 +5837,7 @@ def _walk_interior_node(node, rect, origin_offset,
         # the structure well-formed.
         return
 
-    div_t = sp.divider_thickness
+    div_t = sp.effective_thickness()
     cage_x = rect['cage_dim_x']
     cage_y = rect['cage_dim_y']
     cage_z = rect['cage_dim_z']
@@ -5830,14 +5863,15 @@ def _walk_interior_node(node, rect, origin_offset,
         # Horizontal divider (fixed shelf). Children stack in Z.
         ox, oy, oz = origin_offset
         # Divider: HORIZONTAL part flush in X and Y, at z = size_a
-        out.append({
-            'kind':         'INTERIOR_FIXED_SHELF',
-            'role':         'INTERIOR_FIXED_SHELF',
-            'name':         f'Fixed Shelf {len(out) + 1}',
-            'orientation':  'HORIZONTAL',
-            'position':     (ox, oy, oz + size_a),
-            'dims':         (cage_x, cage_y, div_t),
-        })
+        if sp.include_part:
+            out.append({
+                'kind':         'INTERIOR_FIXED_SHELF',
+                'role':         'INTERIOR_FIXED_SHELF',
+                'name':         f'Fixed Shelf {len(out) + 1}',
+                'orientation':  'HORIZONTAL',
+                'position':     (ox, oy, oz + size_a),
+                'dims':         (cage_x, cage_y, div_t),
+            })
         if sp.add_face_frame and sp.face_frame_width > 0.0:
             ffw = sp.face_frame_width
             # Rail inline with the FF plane; its top face is flush
@@ -5877,14 +5911,15 @@ def _walk_interior_node(node, rect, origin_offset,
         # Divider: VERTICAL part. Origin = back face Y, bottom Z; length
         # runs +Z, width runs -Y (mirror_y at materialize), thickness
         # extends in +X from the origin so left face = origin.x.
-        out.append({
-            'kind':         'INTERIOR_DIVISION',
-            'role':         'INTERIOR_DIVISION',
-            'name':         f'Division {len(out) + 1}',
-            'orientation':  'VERTICAL',
-            'position':     (ox + size_a, oy + cage_y, oz),
-            'dims':         (cage_z, cage_y, div_t),
-        })
+        if sp.include_part:
+            out.append({
+                'kind':         'INTERIOR_DIVISION',
+                'role':         'INTERIOR_DIVISION',
+                'name':         f'Division {len(out) + 1}',
+                'orientation':  'VERTICAL',
+                'position':     (ox + size_a, oy + cage_y, oz),
+                'dims':         (cage_z, cage_y, div_t),
+            })
         if sp.add_face_frame and sp.face_frame_width > 0.0:
             ffw = sp.face_frame_width
             # Stile inline with the FF plane, centered on the

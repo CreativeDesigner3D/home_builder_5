@@ -25,6 +25,8 @@ class hb_frameless_OT_update_toe_kick_prompts(bpy.types.Operator):
                 obj['Toe Kick Setback'] = frameless_props.default_toe_kick_setback
             if 'Toe Kick Type' in obj:
                 obj['Toe Kick Type'] = new_type_index
+            if 'Leg Leveler Inset' in obj:
+                obj['Leg Leveler Inset'] = frameless_props.default_leg_leveler_inset
             hb_utils.run_calc_fix(context,obj)              
         return {'FINISHED'}
 
@@ -62,7 +64,14 @@ class hb_frameless_OT_update_base_top_construction_prompts(bpy.types.Operator):
     bl_label = "Update Base Top Construction Prompts"
 
     def execute(self, context):
-        print('TODO: Update Base Top Construction Prompts')
+        frameless_props = context.scene.hb_frameless
+        # The cabinet prompt is a combobox: Full Top, Stretchers, Sink.
+        index = {'Full Top': 0, 'Stretchers': 1}.get(
+            frameless_props.base_top_construction, 1)
+        for obj in context.scene.objects:
+            if 'Base Top Construction' in obj:
+                obj['Base Top Construction'] = index
+                hb_utils.run_calc_fix(context, obj)
         return {'FINISHED'}
 
 

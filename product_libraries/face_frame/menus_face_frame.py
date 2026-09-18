@@ -277,6 +277,11 @@ class HOME_BUILDER_MT_face_frame_cabinet_commands(bpy.types.Menu):
 
         _draw_visibility_items(layout, 'PRODUCT', "Cabinet")
 
+        _ex_root = types_face_frame.find_cabinet_root(context.active_object)
+        if _ex_root is not None:
+            layout.separator()
+            layout.prop(_ex_root.face_frame_cabinet, 'existing_cabinet')
+
         layout.separator()
         layout.operator("hb_face_frame.delete_cabinet",
                         text="Delete Cabinet", icon='X')
@@ -500,6 +505,14 @@ class HOME_BUILDER_MT_face_frame_part_commands(bpy.types.Menu):
                 width_text = f"Set Width: {units.unit_to_string(context.scene.unit_settings, current_w)}"
             layout.operator("hb_face_frame.set_part_width",
                             text=width_text, icon='ARROW_LEFTRIGHT')
+
+        # Top rail: build it as stiles and rails around a panel, and
+        # back again from the paneled part.
+        if role in (types_face_frame.PART_ROLE_TOP_RAIL,
+                    types_face_frame.PART_ROLE_PANELED_TOP_RAIL):
+            cab_root = types_face_frame.find_cabinet_root(obj)
+            if cab_root is not None:
+                layout.prop(cab_root.face_frame_cabinet, 'paneled_top_rail')
 
         # Scribe only makes sense at the cabinet's outer edges: end
         # stiles (left / right) and the top rail (top_scribe).
@@ -920,6 +933,10 @@ class HOME_BUILDER_MT_face_frame_change_opening(bpy.types.Menu):
         ('DOUBLE_DOOR',       "Double Door"),
         ('BIFOLD_LEFT_DOOR',  "Bi-fold Doors (Left)"),
         ('BIFOLD_RIGHT_DOOR', "Bi-fold Doors (Right)"),
+        ('DOOR_LOOKS_2_DOOR', "Door - Looks like 2 Doors"),
+        ('DOOR_LOOKS_2_DRAWER', "Door - Looks like 2 Drawers"),
+        ('DOOR_LOOKS_3_DRAWER', "Door - Looks like 3 Drawers"),
+        ('DOOR_LOOKS_4_DRAWER', "Door - Looks like 4 Drawers"),
         ('SEP',),
         ('FLIP_UP_DOOR',      "Flip Up Door"),
         ('FLIP_DOWN_DOOR',    "Flip Down Door"),
@@ -930,6 +947,8 @@ class HOME_BUILDER_MT_face_frame_change_opening(bpy.types.Menu):
         ('TOP_RETRACTING_DOOR',    "Top-Mount Retracting Door"),
         ('SEP',),
         ('DRAWER',            "Drawer"),
+        ('DRAWER_LOOKS_2_DRAWER', "Drawer - Looks like 2 Drawers"),
+        ('DRAWER_LOOKS_3_DRAWER', "Drawer - Looks like 3 Drawers"),
         ('FALSE_FRONT',       "False Front"),
         ('TILT_OUT',          "Tilt-Out"),
         ('PULLOUT',           "Pullout"),
@@ -1206,6 +1225,12 @@ class HOME_BUILDER_MT_face_frame_wood_top_commands(bpy.types.Menu):
         layout = self.layout
         layout.operator("hb_face_frame.wood_top_prompts",
                         text="Wood Top Options...", icon='WINDOW')
+        layout.operator("home_builder.edit_countertop",
+                        text="Edit Shape", icon='MOD_MESHDEFORM')
+        obj = context.active_object
+        if obj is not None and obj.get('ct_outline'):
+            layout.operator("hb_face_frame.wood_top_reset_shape",
+                            text="Reset Shape", icon='LOOP_BACK')
         layout.separator()
         layout.operator("hb_general.delete", text="Delete Wood Top",
                         icon='X')

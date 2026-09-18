@@ -993,6 +993,24 @@ def _is_cage(obj):
     return any(obj.get(tag) for tag in _STYLE_CAGE_TAGS)
 
 
+# Cage stamp for a cabinet that is already on site: drawn for reference,
+# not built and not priced (Face_Frame_Cabinet_Props.existing_cabinet).
+# Downstream consumers read the stamp, so it is checked up the parent
+# chain - anything nested inside an existing cabinet is existing too.
+EXISTING_CABINET_TAG = 'IS_EXISTING_CABINET'
+# Grey an existing cabinet wears in place of its style colour.
+EXISTING_CABINET_COLOR = (0.55, 0.55, 0.55)
+
+
+def is_existing_cabinet(obj):
+    """True when ``obj`` is, or sits inside, a cabinet marked existing."""
+    while obj is not None:
+        if obj.get(EXISTING_CABINET_TAG):
+            return True
+        obj = obj.parent
+    return False
+
+
 def _style_tint_for_cabinet(cabinet_obj, styles):
     """The RGB a cabinet should render as, or None if it has no style.
 
@@ -1002,6 +1020,8 @@ def _style_tint_for_cabinet(cabinet_obj, styles):
     then. The stored swatch is refreshed to match on the way past, so the
     style panel shows the colour its cabinets are wearing.
     """
+    if is_existing_cabinet(cabinet_obj):
+        return EXISTING_CABINET_COLOR
     name = cabinet_obj.get('STYLE_NAME')
     if not name:
         return None
@@ -1125,6 +1145,17 @@ def style_color_for_object(obj, context=None, highlight=None):
         highlight = _is_cage(obj)
     alpha = _STYLE_CAGE_ALPHA if highlight else 1.0
     return (tint[0], tint[1], tint[2], alpha)
+
+
+def _update_existing_cabinet(self, context):
+    """Stamp (or clear) the existing-cabinet tag on the cabinet root and
+    repaint, so the grey shows as soon as the box is ticked."""
+    root = self.id_data
+    if self.existing_cabinet:
+        root[EXISTING_CABINET_TAG] = True
+    elif EXISTING_CABINET_TAG in root:
+        del root[EXISTING_CABINET_TAG]
+    apply_style_colors(context)
 
 
 def update_show_style_colors(self, context):
@@ -2273,7 +2304,7 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         'LEFT_REFRIG_STILE', 'RIGHT_REFRIG_STILE',
         # Drawer-look appliance panels (flat slabs mimicking a drawer
         # stack, plus the inset look's mid rails)
-        'DRAWER_LOOK_FRONT', 'DRAWER_LOOK_RAIL',
+        'DRAWER_LOOK_FRONT', 'DRAWER_LOOK_RAIL', 'DOOR_LOOK_FRONT',
         # Valance product boards
         'VALANCE_BOARD', 'VALANCE_COVER',
         'VALANCE_PANEL_LEFT', 'VALANCE_PANEL_RIGHT',
@@ -2797,7 +2828,7 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
             # rebuild, so painting a beadboard end came undone the next
             # time anything resized the cabinet.
             if ((role in ('BEADBOARD', 'SHIPLAP', 'V_GROOVE', 'WOOD_TOP',
-                          'INSET_PANEL')
+                          'WOOD_TOP_EDGE', 'INSET_PANEL')
                  or child.get('hb_return_member'))
                     and child.get('HB_STATIC_TEXTURED')):
                 slot_mat = ov_mat if ov_mat is not None else finish_mat
@@ -3045,8 +3076,10 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                         child, finish_mat, finish_mat_rotated)
                 continue
 
-            if role in ('ADA_FRONT', 'ADA_ANGLED_FRONT', 'ADA_BOTTOM'):
-                # Python-built accessible sink fronts: slot 0 on a slab
+            if role in ('ADA_FRONT', 'ADA_ANGLED_FRONT', 'ADA_BOTTOM',
+                        'PANELED_TOP_RAIL'):
+                # Python-built accessible sink fronts and paneled top
+                # rails: slot 0 on a slab
                 # (grain along the band), stile / rail / panel slots on
                 # stiles and rails.
                 me = child.data
@@ -3320,7 +3353,7 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         """
         from . import types_face_frame as _tff
 
-        DOOR_ROLES = {'DOOR', 'PULLOUT_FRONT'}
+        DOOR_ROLES = {'DOOR', 'PULLOUT_FRONT', 'DOOR_LOOK_FRONT'}
         DRAWER_ROLES = {'DRAWER_FRONT', 'FALSE_FRONT', 'TILT_OUT',
                         'DRAWER_LOOK_FRONT'}
 
@@ -4373,10 +4406,12 @@ class Face_Frame_Door_Style(PropertyGroup):
     # Front roles this style will act on (DOOR + PULLOUT_FRONT read door_style
     # on the parent cabinet style - a pullout is a door on a slide; the rest
     # read drawer_front_style).
-    _DOOR_FRONT_ROLES = {'DOOR', 'PULLOUT_FRONT'}
+    _DOOR_FRONT_ROLES = {'DOOR', 'PULLOUT_FRONT', 'DOOR_LOOK_FRONT'}
     _DRAWER_FRONT_ROLES = {'DRAWER_FRONT', 'FALSE_FRONT', 'TILT_OUT',
                             'DRAWER_LOOK_FRONT'}
-    _STYLEABLE_ROLES = _DOOR_FRONT_ROLES | _DRAWER_FRONT_ROLES
+    # A paneled top rail builds like a door (Set Door Frame edits it too).
+    _STYLEABLE_ROLES = (_DOOR_FRONT_ROLES | _DRAWER_FRONT_ROLES
+                        | {'PANELED_TOP_RAIL'})
 
     def get_parent_cabinet_style(self, front_obj):
         """Walk up from a front object to its face frame cabinet root,
@@ -5028,11 +5063,6 @@ class Face_Frame_Door_Style(PropertyGroup):
                 mid_center = self.center_mid_rail
                 if not mid_center:
                     mid_loc = self.mid_rail_location
-        if member_sec is not None:
-            # A mitered door is one continuous molding loop -- no mid
-            # rail geometry exists for it.
-            mid_on = False
-
         if door_builder.USE_PYTHON_DOORS:
             # Python-built door: static boxes in the front's own mesh. The
             # cutpart modifier stays for its Length / Width / Thickness
@@ -5063,20 +5093,18 @@ class Face_Frame_Door_Style(PropertyGroup):
             # Mid-member grid override: counts + optional row / column
             # weights (door_layout divides the field; weight strings are
             # parsed leniently, blank / invalid = equal cells). Mitered
-            # doors have no mid-member geometry, matching the single
-            # mid rail above.
-            if member_sec is None:
-                if ovr_grid_rails:
-                    info['mid_rail_count'] = ovr_grid_rails
-                    info['mid_rail_z'] = None
-                    info['mid_rail_fractions'] = door_builder.parse_grid_ratios(
-                        frame_store.get('HB_FRAME_OVR_ROW_RATIOS', ''))
-                if ovr_grid_stiles:
-                    info['mid_stile_count'] = max(
-                        int(info.get('mid_stile_count', 0) or 0),
-                        ovr_grid_stiles)
-                    info['mid_stile_fractions'] = door_builder.parse_grid_ratios(
-                        frame_store.get('HB_FRAME_OVR_COL_RATIOS', ''))
+            # doors sweep their profile along the mid members too.
+            if ovr_grid_rails:
+                info['mid_rail_count'] = ovr_grid_rails
+                info['mid_rail_z'] = None
+                info['mid_rail_fractions'] = door_builder.parse_grid_ratios(
+                    frame_store.get('HB_FRAME_OVR_ROW_RATIOS', ''))
+            if ovr_grid_stiles:
+                info['mid_stile_count'] = max(
+                    int(info.get('mid_stile_count', 0) or 0),
+                    ovr_grid_stiles)
+                info['mid_stile_fractions'] = door_builder.parse_grid_ratios(
+                    frame_store.get('HB_FRAME_OVR_COL_RATIOS', ''))
             if shape_k is not None and shape_k.get('twin') \
                     and not info.get('mid_stile_count'):
                 info['mid_stile_count'] = 1
@@ -7000,6 +7028,14 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         default=False,
     )  # type: ignore
 
+    existing_cabinet: BoolProperty(
+        name="Existing Cabinet",
+        description="This cabinet is already on site and is not being "
+                    "built. It is drawn gray in the model and drawings "
+                    "and left out of pricing",
+        default=False, update=_update_existing_cabinet,
+    )  # type: ignore
+
     cabinet_type: EnumProperty(
         name="Cabinet Type",
         items=[
@@ -7686,6 +7722,14 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
                     "down from the top of the box",
         default=units.inch(5.5), min=0.0, unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
+    )  # type: ignore
+    paneled_top_rail: BoolProperty(
+        name="Paneled Top Rail",
+        description="Build each top rail as stiles and rails around a "
+                    "panel from the door style, for a tall rail that "
+                    "should read like a door. A rail too narrow for a "
+                    "frame stays a plain rail",
+        default=False, update=_update_cabinet_dim,
     )  # type: ignore
     ada_front_construction: EnumProperty(
         name="Front",
@@ -9400,7 +9444,11 @@ def _update_drawer_look_divisions(self, context):
             coll.remove(len(coll) - 1)
         while len(coll) < n:
             coll.add()
-        if n:
+        if n and self.front_type == 'DRAWER_FRONT':
+            # One drawer shown as N: the faces share the drawer equally.
+            for item in coll:
+                item.unlock_size = False
+        elif n:
             top_oh = bpy.context.scene.hb_face_frame.top_drawer_opening_height
             for i, item in enumerate(coll):
                 # index n-1 == top opening: held at the top-drawer height;
@@ -9757,6 +9805,20 @@ class Face_Frame_Opening_Props(PropertyGroup):
     # the division count by _update_drawer_look_divisions; consumed by
     # _build_drawer_look_fronts (front height = opening height + overlays).
     drawer_look_openings: CollectionProperty(type=Face_Frame_Drawer_Look_Opening)  # type: ignore
+    # Door-look door: a single LEFT / RIGHT swing leaf shown as N door
+    # panels side by side (doors battened together), still one door.
+    # Ignored while drawer_look_divisions is set.
+    door_look_divisions: EnumProperty(
+        name="Door-Look Divisions",
+        description="Show this door as N doors battened together (still opens as one door)",
+        items=[
+            ('NONE', "None", "Plain door"),
+            ('2', "2 Doors", "Two door panels side by side"),
+            ('3', "3 Doors", "Three door panels side by side"),
+        ],
+        default='NONE',
+        update=_update_cabinet_dim,
+    )  # type: ignore
 
     HINGE_SIDE_ITEMS = [
         ('LEFT', "Left", "Single door, hinged on the left edge"),
@@ -10139,6 +10201,19 @@ class Face_Frame_Interior_Split_Props(PropertyGroup):
         default=units.inch(0.75), unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
     )  # type: ignore
+
+    include_part: BoolProperty(
+        name="Include Part",
+        description="Build the fixed shelf or division at this split. "
+                    "Off keeps the two regions but builds no part "
+                    "between them, so the regions meet with no gap",
+        default=True, update=_update_cabinet_dim,
+    )  # type: ignore
+
+    def effective_thickness(self):
+        """Gap the split leaves between its two regions: the divider
+        thickness while the part is built, 0 while it is turned off."""
+        return self.divider_thickness if self.include_part else 0.0
 
     add_face_frame: BoolProperty(
         name="Add Face Frame",
@@ -12419,6 +12494,26 @@ class Face_Frame_Wood_Top_Props(PropertyGroup):
         name="Edge Right", default=False,
         description="Apply the edge band to the right end",
         update=_update_wood_top,
+    )  # type: ignore
+    # How plan drawings show the top. Drawn over the cabinets, a top hides
+    # them and their dimensions, so a shaped one is usually drawn as a
+    # view of its own on the sheet with just its outline left on the plan.
+    # Read by drawing tools; nothing in the model depends on it.
+    plan_display: EnumProperty(
+        name="Plan Drawing",
+        items=[
+            ('AUTO', "Auto",
+             "A separate view when the top is shaped, in place when it is "
+             "a plain rectangle"),
+            ('IN_PLACE', "In Place",
+             "Draw the top over the cabinets on the plan"),
+            ('SEPARATE', "Separate View",
+             "Leave a dashed outline on the plan and draw the top, with "
+             "its dimensions, as its own view on the sheet"),
+            ('BOTH', "Both",
+             "Draw the top in place and as its own view"),
+        ],
+        default='AUTO',
     )  # type: ignore
 
 

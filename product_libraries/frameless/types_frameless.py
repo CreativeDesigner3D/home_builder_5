@@ -257,13 +257,38 @@ class BaseCabinet(Cabinet):
             self.add_drawer_stack(3)
         elif self.default_exterior == '4 Drawers':
             self.add_drawer_stack(4)
-        # 'Open' = no exterior
-    
+        elif self.default_exterior == 'Sink':
+            self.add_sink_front()
+        elif self.default_exterior == 'Open':
+            self.add_open_shelves()
+
     def add_doors(self):
         """Add door fronts to the cabinet bay."""
         doors = Doors()
         doors.door_pull_location = "Base"
         self.add_cage_to_bay(doors)
+
+    def add_sink_front(self):
+        """A false front where a drawer would be, doors below: the sink
+        bowl takes the space behind the false front."""
+        props = bpy.context.scene.hb_frameless
+
+        front = FalseFront()
+        front.half_overlay_bottom = True
+        doors = Doors()
+        doors.half_overlay_top = True
+        doors.seed_shelves = False
+
+        split = SplitterVertical()
+        split.splitter_qty = 1
+        split.opening_sizes = [props.top_drawer_front_height, 0]
+        split.opening_inserts = [front, doors]
+        self.add_cage_to_bay(split)
+        self.obj['IS_SINK_CABINET'] = True
+
+    def add_open_shelves(self):
+        """No front at all: the bay stays open with adjustable shelves."""
+        self.add_cage_to_bay(OpenWithShelves())
     
     def add_drawer_door(self):
         """Add a drawer on top and doors below."""
@@ -370,7 +395,10 @@ class TallCabinet(Cabinet):
     def create(self, name="Tall Cabinet"):
         self.create_tall_carcass(name)
         self.obj['CABINET_TYPE'] = 'TALL'
-        self.add_doors()
+        if self.default_exterior == 'Open':
+            self.add_cage_to_bay(OpenWithShelves())
+        else:
+            self.add_doors()
     
     def add_doors(self):
         """Add door fronts to the cabinet bay."""
@@ -468,7 +496,10 @@ class UpperCabinet(Cabinet):
         self.create_upper_carcass(name)
         self.obj['CABINET_TYPE'] = 'UPPER'
         self.obj.display_type = 'WIRE'
-        self.add_doors()
+        if self.default_exterior == 'Open':
+            self.add_cage_to_bay(OpenWithShelves())
+        else:
+            self.add_doors()
     
     def add_doors(self):
         """Add door fronts to the cabinet bay."""
@@ -491,6 +522,98 @@ class UpperCabinet(Cabinet):
             doors = Doors()
             doors.door_pull_location = "Upper"
             self.add_cage_to_bay(doors)
+
+
+# ---------------------------------------------------------------------------
+# Blind corner cabinets
+# ---------------------------------------------------------------------------
+# A blind corner runs into the corner and lets the neighbouring run butt
+# against it. Its front is a blind panel over the part that ends up
+# behind the neighbour and doors over the rest. The bay is split across
+# with no board between the two openings (the blind side stays open
+# inside) and the split's material thickness set to zero so the
+# openings meet.
+
+BLIND_DOOR_OPENING = inch(21.0)
+BLIND_MIN_WIDTH = inch(6.0)
+
+
+class BlindCornerMixin:
+    """Shared front for the three blind corner cabinets."""
+
+    blind_side = 'Left'     # which end goes into the corner
+    blind_width = None      # None: the width less the door opening
+
+    def blind_panel_width(self):
+        if self.blind_width:
+            return self.blind_width
+        return max(self.width - BLIND_DOOR_OPENING, BLIND_MIN_WIDTH)
+
+    def add_blind_exterior(self, pull_location="Base"):
+        panel = FalseFront()
+        doors = Doors()
+        doors.door_pull_location = pull_location
+        blind = self.blind_panel_width()
+
+        split = SplitterHorizontal()
+        split.splitter_qty = 1
+        if self.blind_side == 'Right':
+            split.opening_sizes = [0, blind]
+            split.opening_inserts = [doors, panel]
+        else:
+            split.opening_sizes = [blind, 0]
+            split.opening_inserts = [panel, doors]
+        self.add_cage_to_bay(split)
+
+        # No board between the blind and the doors: the blind side is
+        # open inside, and the two fronts meet.
+        split.obj['Material Thickness'] = 0.0
+        for (role, _index), part in solver_frameless.split_parts(split.obj).items():
+            if role == 'SPLITTER':
+                bpy.data.objects.remove(part, do_unlink=True)
+        self.obj['IS_BLIND_CORNER'] = True
+        self.obj['Blind Side'] = self.blind_side
+        solver_frameless.recalculate_cabinet(self.obj)
+
+
+class BlindCornerBaseCabinet(BlindCornerMixin, BaseCabinet):
+    """Base blind corner: 39" wide by default, doors on the exposed 21"."""
+
+    def __init__(self):
+        super().__init__()
+        self.width = inch(39)
+
+    def create(self, name="Blind Base"):
+        self.create_base_carcass(name)
+        self.obj['CABINET_TYPE'] = 'BASE'
+        self.add_blind_exterior("Base")
+
+
+class BlindCornerTallCabinet(BlindCornerMixin, TallCabinet):
+    """Tall blind corner: full height, doors on the exposed 21"."""
+
+    def __init__(self):
+        super().__init__()
+        self.width = inch(39)
+
+    def create(self, name="Blind Tall"):
+        self.create_tall_carcass(name)
+        self.obj['CABINET_TYPE'] = 'TALL'
+        self.add_blind_exterior("Tall")
+
+
+class BlindCornerUpperCabinet(BlindCornerMixin, UpperCabinet):
+    """Upper blind corner: 36" wide by default, doors on the exposed 21"."""
+
+    def __init__(self):
+        super().__init__()
+        self.width = inch(36)
+
+    def create(self, name="Blind Upper"):
+        self.create_upper_carcass(name)
+        self.obj['CABINET_TYPE'] = 'UPPER'
+        self.obj.display_type = 'WIRE'
+        self.add_blind_exterior("Upper")
 
 
 class CabinetBay(GeoNodeCage):
@@ -733,6 +856,9 @@ class CabinetShelves(CabinetInterior):
 class Doors(CabinetOpening):
 
     door_pull_location = "Base"
+    # None follows the room's Shelves Behind Doors setting; a sink base
+    # says False, since the bowl and trap take that space.
+    seed_shelves = None
 
     def create(self):
         super().create("Doors")
@@ -761,9 +887,13 @@ class Doors(CabinetOpening):
         right_door.obj.parent = self.obj
         right_door.obj.rotation_euler.x = math.radians(90)
         right_door.obj.rotation_euler.y = math.radians(-90)
-        right_door.set_input("Mirror Y", False) 
+        right_door.set_input("Mirror Y", False)
 
-        self.add_interior(CabinetShelves())
+        seed = self.seed_shelves
+        if seed is None:
+            seed = bpy.context.scene.hb_frameless.seed_door_shelves
+        if seed:
+            self.add_interior(CabinetShelves())
 
     def add_interior(self,interior):
         interior.create('Interior')
@@ -795,7 +925,8 @@ class FlipUpDoor(CabinetOpening):
         door.obj.rotation_euler.y = math.radians(-90)
         door.set_input("Mirror Y", True)
 
-        self.add_interior(CabinetShelves())
+        if bpy.context.scene.hb_frameless.seed_door_shelves:
+            self.add_interior(CabinetShelves())
 
     def add_interior(self, interior):
         interior.create('Interior')
@@ -1008,51 +1139,11 @@ class CabinetFront(CabinetPart):
                 self.obj['DOOR_STYLE_NAME'] = style.name
 
     def get_pull_object(self, pull_type='door'):
-        """Get the pull object for doors or drawers based on current selection.
-        
-        Returns None if pulls are disabled (NONE) or no valid object is found.
-        For CUSTOM selection, returns the pointer property object.
-        For bundled pulls, loads from .blend file and caches.
-        """
+        """The source object for this front's pull, or None when pulls
+        are off. The closet library's handle list, loaded and finished
+        by props_hb_frameless.resolve_pull_object."""
         from . import props_hb_frameless
-        from ... import hb_project
-        
-        main_scene = hb_project.get_main_scene()
-        props = main_scene.hb_frameless
-        
-        # Get the selected pull filename
-        if pull_type == 'drawer':
-            pull_filename = props.drawer_pull_selection
-            cached = props.current_drawer_front_pull_object
-        else:
-            pull_filename = props.door_pull_selection
-            cached = props.current_door_pull_object
-        
-        # No pulls selected
-        if pull_filename == 'NONE':
-            return None
-        
-        # Custom pull from scene - use the pointer property directly
-        if pull_filename == 'CUSTOM':
-            return cached  # Returns None if not assigned yet
-        
-        # Bundled pull - check if cached object matches current selection
-        if cached:
-            pull_name = os.path.splitext(pull_filename)[0] if pull_filename else ""
-            if pull_name and pull_name in cached.name:
-                return cached
-        
-        # Load the selected bundled pull
-        pull_obj = props_hb_frameless.load_pull_object(pull_filename)
-        
-        if pull_obj:
-            if pull_type == 'drawer':
-                props.current_drawer_front_pull_object = pull_obj
-            else:
-                props.current_door_pull_object = pull_obj
-            return pull_obj
-        
-        return None
+        return props_hb_frameless.resolve_pull_object(pull_type)
 
 class CabinetDoor(CabinetFront):
 

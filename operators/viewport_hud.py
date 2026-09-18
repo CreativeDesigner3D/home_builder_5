@@ -825,6 +825,33 @@ class _SizesButton:
         props.selection_mode_sizes_scope = nxt
 
 
+class _FramelessSizesButton(_SizesButton):
+    """The Sizes pill for the frameless library: same cycle, same look,
+    reading and writing hb_frameless's scope instead. Frameless has no
+    master enable bool, so it gates on the picked mode alone -- the three
+    modes its dim_edit_overlay draws labels in."""
+
+    MODES = ('Cabinets', 'Bays', 'Openings')
+
+    def _scope(self, context):
+        props = getattr(context.scene, 'hb_frameless', None)
+        return getattr(props, 'selection_mode_sizes_scope', 'OFF') if props else 'OFF'
+
+    def visible(self, context):
+        if not _frameless_ui_visible(context):
+            return False
+        props = getattr(context.scene, 'hb_frameless', None)
+        return getattr(props, 'frameless_selection_mode', '') in self.MODES
+
+    def on_click(self, context, area, region):
+        props = getattr(context.scene, 'hb_frameless', None)
+        if props is None:
+            return
+        nxt = {'ALL': 'SELECTED', 'SELECTED': 'OFF'}.get(
+            self._scope(context), 'ALL')
+        props.selection_mode_sizes_scope = nxt
+
+
 class _ClosetGrabPill(_GrabPill):
     """Grab, for the closet library.
 
@@ -921,6 +948,7 @@ class _ClosetDimsButton:
 
 
 _SIZES_BUTTON = _SizesButton()
+_FRAMELESS_SIZES_BUTTON = _FramelessSizesButton()
 _GRAB_PILL = _GrabPill()
 _CLOSET_GRAB_PILL = _ClosetGrabPill()
 _CLOSET_DIMS_BUTTON = _ClosetDimsButton()
@@ -1386,7 +1414,7 @@ def _rows():
     return [
         [_MODE_BUTTONS,
          [_GRAB_PILL, _CLOSET_GRAB_PILL, _OPEN_DOOR_BUTTON,
-          _SIZES_BUTTON, _CLOSET_DIMS_BUTTON]
+          _SIZES_BUTTON, _FRAMELESS_SIZES_BUTTON, _CLOSET_DIMS_BUTTON]
          + _mode_extra_widgets()],
         [_layout_view_buttons()],
     ]

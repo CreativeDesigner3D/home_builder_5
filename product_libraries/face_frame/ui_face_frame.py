@@ -84,6 +84,10 @@ def draw_identity(layout, root):
     row = layout.row()
     row.prop(root, 'name', text='', icon='MESH_CUBE')
     row.label(text=cab_props.cabinet_type)
+    layout.prop(cab_props, 'existing_cabinet')
+    if cab_props.existing_cabinet:
+        layout.label(text="Already on site: shown gray, not built or priced",
+                     icon='INFO')
 
 
 def draw_dimensions(layout, root):
@@ -963,6 +967,7 @@ def draw_face_frame_defaults(layout, cab_props):
     fcol = fbox.column(align=False)
     _draw_locked_rail_row(fcol, cab_props, 'top_rail_width',
                           'unlock_top_rail', "Top Rail")
+    fcol.prop(cab_props, 'paneled_top_rail')
     srow = fcol.row(align=True)
     _locked_field(srow, cab_props, 'left_stile_width',
                   'unlock_left_stile', "Left Stile")
@@ -1247,10 +1252,15 @@ def draw_opening_properties(layout, opening_obj):
             if op.add_apron:
                 fcol.prop(op, 'apron_height', text="Apron Height")
 
-        # Drawer-look door (single-leaf swing doors): render the leaf as a
-        # stack of applied drawer fronts that still opens as one door.
-        if op.front_type == 'DOOR' and op.hinge_side in ('LEFT', 'RIGHT'):
+        # Drawer-look (single-leaf swing doors and drawer fronts): render
+        # the front as a stack of applied drawer fronts that still opens
+        # as one door / one drawer.
+        single_door = (op.front_type == 'DOOR'
+                       and op.hinge_side in ('LEFT', 'RIGHT'))
+        if single_door or op.front_type == 'DRAWER_FRONT':
             fcol.prop(op, 'drawer_look_divisions', text="Drawer-Look")
+            if single_door and op.drawer_look_divisions == 'NONE':
+                fcol.prop(op, 'door_look_divisions', text="Door-Look")
             if op.drawer_look_divisions != 'NONE':
                 heights_box = fcol.box()
                 heights_box.label(text="Drawer Opening Heights (top to bottom)")
@@ -1617,6 +1627,11 @@ def _draw_split_face_frame_props(layout, sp):
     seeds itself from the cabinet mid rail / mid stile width the first
     time the toggle is enabled.
     """
+    part_label = "Build Fixed Shelf" if sp.axis == 'H' else "Build Division"
+    layout.prop(sp, 'include_part', text=part_label)
+    thick_row = layout.row(align=True)
+    thick_row.enabled = sp.include_part
+    thick_row.prop(sp, 'divider_thickness', text="Divider Thickness")
     layout.prop(sp, 'add_face_frame')
     width_row = layout.row(align=True)
     width_row.enabled = sp.add_face_frame
@@ -1672,7 +1687,6 @@ def _draw_interior_tree_inline(layout, opening_obj):
             continue
 
         col = box.column(align=True)
-        col.prop(sp, 'divider_thickness', text="Divider Thickness")
         _draw_split_face_frame_props(col, sp)
 
         # Both children carry an editable size now that sibling
@@ -1734,7 +1748,6 @@ def draw_interior_region_properties(layout, leaf_obj, opening_obj):
     col = layout.column(align=True)
     axis_label = "Fixed Shelf" if sp.axis == 'H' else "Division"
     col.label(text=f"Parent Split: {axis_label}")
-    col.prop(sp, 'divider_thickness', text="Divider Thickness")
     _draw_split_face_frame_props(col, sp)
 
     size_row = col.row(align=True)

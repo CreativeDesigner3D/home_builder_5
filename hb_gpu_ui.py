@@ -27,6 +27,8 @@ from .hb_gpu_draw import (
     draw_rect_outline,
     draw_lines,
     draw_glyphs,
+    draw_text,
+    vcenter_baseline,
 )
 
 
@@ -459,3 +461,122 @@ class ScrollList:
             if item_bottom >= list_top or item_top <= list_bottom:
                 continue
             yield item, item_top, item_bottom
+
+
+# ---- Form widgets -----------------------------------------------------------
+# The pieces a settings page repeats: a labelled value that opens a
+# picker, and a checkbox. Both are painted here and hit-tested by the
+# caller against the rect this returns, so pixels and hits cannot drift.
+
+def glyph_caret(shader, cx, cy, size, up, color):
+    """Chevron pointing up or down, centred at (cx, cy). The disclosure
+    chevron's shape stood on end; `size` is pre-scaled."""
+    h = size / 2.0
+    if up:
+        pts = [(cx - h, cy - h / 2.0), (cx, cy + h / 2.0),
+               (cx, cy + h / 2.0), (cx + h, cy - h / 2.0)]
+    else:
+        pts = [(cx - h, cy + h / 2.0), (cx, cy - h / 2.0),
+               (cx, cy - h / 2.0), (cx + h, cy + h / 2.0)]
+    draw_lines(shader, pts, color)
+
+
+def glyph_check(shader, rect, color):
+    """A tick inside `rect` (pre-scaled)."""
+    x, y, w, h = rect
+    pts = [(x + w * 0.22, y + h * 0.50), (x + w * 0.42, y + h * 0.28),
+           (x + w * 0.42, y + h * 0.28), (x + w * 0.80, y + h * 0.74)]
+    draw_lines(shader, pts, color)
+
+
+def paint_field(shader, font_id, rect, size, label, value, hovered,
+                label_frac=0.42, pad=6.0, caret=True, active=False,
+                text_inset=0.0):
+    """A labelled value: the label at the left, the current value in a
+    button on the right. With `caret` it says it drops down; without,
+    it is a value you click into and type (`active` while typing).
+    `text_inset` shifts the value text right, for a picture drawn in
+    front of it by the caller. Returns the value button's rect -- the
+    part a click means something on. `size` is the scaled font size;
+    `pad` unscaled, `text_inset` scaled."""
+    s = scale()
+    x, y, w, h = rect
+    label_w = w * label_frac
+    value_rect = (x + label_w, y + 2 * s, w - label_w, h - 4 * s)
+    draw_text(font_id, x + pad * s, vcenter_baseline(rect, font_id, size),
+              size, Theme.TEXT_NORMAL,
+              fit_text(font_id, size, label, label_w - pad * s))
+    paint_button(shader, value_rect, hovered=hovered, active=active)
+    vx, vy, vw, vh = value_rect
+    caret_w = 7 * s if caret else 0.0
+    draw_text(font_id, vx + pad * s + text_inset,
+              vcenter_baseline(value_rect, font_id, size),
+              size, Theme.TEXT_PRIMARY if (hovered or active)
+              else Theme.TEXT_NORMAL,
+              fit_text(font_id, size, value,
+                       vw - caret_w - 3 * pad * s - text_inset))
+    if caret:
+        glyph_caret(shader, vx + vw - pad * s - caret_w / 2.0, vy + vh / 2.0,
+                    caret_w, False,
+                    Theme.GLYPH_HOVER if hovered else Theme.GLYPH)
+    return value_rect
+
+
+def paint_check(shader, font_id, rect, size, label, checked, hovered,
+                pad=6.0):
+    """A checkbox row: the box at the left, the label after it. The
+    whole row is the hit target, so nothing is returned."""
+    s = scale()
+    x, y, w, h = rect
+    if hovered:
+        draw_rect(shader, x, y, w, h, Theme.ROW_HOVER_BG)
+    box = 12 * s
+    box_rect = (x + pad * s, y + (h - box) / 2.0, box, box)
+    paint_button(shader, box_rect, hovered=hovered, active=checked,
+                 border=Theme.BTN_BORDER)
+    if checked:
+        glyph_check(shader, box_rect, Theme.GLYPH_HOVER)
+    draw_text(font_id, x + (pad * 2) * s + box,
+              vcenter_baseline(rect, font_id, size), size,
+              Theme.TEXT_PRIMARY if hovered else Theme.TEXT_NORMAL,
+              fit_text(font_id, size, label, w - box - 3 * pad * s))
+
+
+# ---- Property helpers -------------------------------------------------------
+
+def enum_items(owner, prop):
+    """[(identifier, label)] for an EnumProperty on `owner`, static or
+    dynamic. RNA lists a dynamic enum's items as empty, so those are
+    asked of the items callback the property was declared with."""
+    try:
+        rna = owner.bl_rna.properties[prop]
+    except (KeyError, AttributeError):
+        return []
+    items = [(it.identifier, it.name) for it in rna.enum_items]
+    if items:
+        return items
+    # Assigned onto the class (the way a property is added to, or
+    # replaced on, a registered type at run time -- which wins in
+    # Blender too), else declared as an annotation.
+    deferred = None
+    for cls in type(owner).__mro__:
+        deferred = (cls.__dict__.get(prop)
+                    or getattr(cls, '__annotations__', {}).get(prop))
+        if deferred is not None:
+            break
+    fn = getattr(deferred, 'keywords', {}).get('items')
+    if not callable(fn):
+        return []
+    try:
+        return [(it[0], it[1]) for it in fn(owner, bpy.context)]
+    except Exception:
+        return []
+
+
+def enum_label(owner, prop):
+    """The label of the current value of an EnumProperty."""
+    value = getattr(owner, prop, '')
+    for ident, label in enum_items(owner, prop):
+        if ident == value:
+            return label
+    return str(value)

@@ -19,6 +19,7 @@ from .operators import room_palette
 from .operators import measure_tool
 from .operators import library_panel
 from .operators import options_panel
+from .operators import thumb_picker
 from .operators import layout_lock
 from .operators import viewport_hud
 from .operators import room_dim_overlay
@@ -45,7 +46,7 @@ from bpy.app.handlers import persistent
 bl_info = {
     "name": "Home Builder 5",
     "author": "Andrew Peel",
-    "version": (5, 2, 7),
+    "version": (5, 2, 9),
     "blender": (5, 1, 0),
     "location": "3D Viewport Sidebar",
     "description": "Library for Designing Interior Spaces",
@@ -411,6 +412,7 @@ def register():
     ops_room_dressing.register()  # same: registers the lights option form
     library_panel.register()
     options_panel.register()
+    thumb_picker.register()
     room_dim_overlay.register()
     ops_general.register()
     ops_surfaces.register()
@@ -456,6 +458,7 @@ def unregister():
     details.unregister()
     doors_windows.unregister()
     export.unregister()
+    thumb_picker.unregister()
     options_panel.unregister()
     library_panel.unregister()
     ops_room_dressing.unregister()

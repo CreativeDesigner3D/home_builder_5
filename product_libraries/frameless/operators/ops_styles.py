@@ -3,7 +3,6 @@ import os
 from bpy_extras import view3d_utils
 from .. import types_frameless
 from .. import props_hb_frameless
-from ..props_hb_frameless import get_or_create_pull_finish_material
 from .... import hb_utils, hb_project, hb_types, units
 
 
@@ -124,19 +123,9 @@ class hb_frameless_OT_duplicate_door_style(bpy.types.Operator):
         new_style.name = f"{source.name} Copy"
         
         # Copy all properties
-        new_style.door_type = source.door_type
-        new_style.panel_material = source.panel_material
-        new_style.stile_width = source.stile_width
-        new_style.rail_width = source.rail_width
-        new_style.add_mid_rail = source.add_mid_rail
-        new_style.center_mid_rail = source.center_mid_rail
-        new_style.mid_rail_width = source.mid_rail_width
-        new_style.mid_rail_location = source.mid_rail_location
-        new_style.panel_thickness = source.panel_thickness
-        new_style.panel_inset = source.panel_inset
-        new_style.edge_profile_type = source.edge_profile_type
-        new_style.outside_profile = source.outside_profile
-        new_style.inside_profile = source.inside_profile
+        new_style.front_style = source.front_style
+        new_style.panel_type = source.panel_type
+        new_style.door_edgeband = source.door_edgeband
         
         # Set as active
         props.active_door_style_index = len(props.door_styles) - 1
@@ -451,11 +440,11 @@ class hb_frameless_OT_duplicate_cabinet_style(bpy.types.Operator):
         new_style.name = f"{source.name} Copy"
         
         # Copy all properties
-        new_style.wood_species = source.wood_species
-        new_style.stain_color = source.stain_color
-        new_style.paint_color = source.paint_color
+        new_style.sheet_material = source.sheet_material
+        new_style.front_material = source.front_material
+        new_style.edge_material = source.edge_material
+        new_style.front_edge_material = source.front_edge_material
         new_style.door_overlay_type = source.door_overlay_type
-        new_style.edge_banding = source.edge_banding
         
         # Set as active
         props.active_cabinet_style_index = len(props.cabinet_styles) - 1
@@ -815,18 +804,6 @@ class hb_frameless_OT_update_cabinet_materials(bpy.types.Operator):
         style_index = props.active_cabinet_style_index
         style = props.cabinet_styles[style_index]
 
-        # Get materials once
-        finish_mat, finish_mat_rotated = style.get_finish_material()
-        interior_mat, interior_mat_rotated = style.get_interior_material()
-
-        # Determine edge material
-        if style.edge_banding == 'CUSTOM' and style.custom_edge_material:
-            edge_material = style.custom_edge_material
-        elif finish_mat_rotated:
-            edge_material = finish_mat_rotated
-        else:
-            edge_material = None
-
         # Collect all cabinets that use this style
         cabinets = []
         for scene in bpy.data.scenes:
@@ -840,46 +817,10 @@ class hb_frameless_OT_update_cabinet_materials(bpy.types.Operator):
             self.report({'INFO'}, f"No cabinets found using style '{style.name}'")
             return {'CANCELLED'}
 
-        # Update materials only on all matching cabinets
+        # Materials only: the same pass assign_style_to_cabinet makes,
+        # without the overlay rewrite and recalc.
         for cabinet_obj in cabinets:
-            finished_interior = cabinet_obj.get('Finished Interior', False)
-
-            parts_to_update = [child for child in cabinet_obj.children_recursive if 'CABINET_PART' in child]
-            if cabinet_obj.get('IS_FRAMELESS_MISC_PART') and 'CABINET_PART' in cabinet_obj:
-                parts_to_update.append(cabinet_obj)
-
-            for child in parts_to_update:
-                part = hb_types.GeoNodeObject(child)
-
-                if finished_interior:
-                    top_mat = finish_mat
-                    bottom_mat = finish_mat
-                else:
-                    finish_top = child.get('Finish Top', False)
-                    finish_bottom = child.get('Finish Bottom', True)
-                    top_mat = finish_mat if finish_top else interior_mat
-                    bottom_mat = finish_mat if finish_bottom else interior_mat
-
-                part.set_input("Top Surface", top_mat)
-                part.set_input("Bottom Surface", bottom_mat)
-                part.set_input("Edge W1", edge_material)
-                part.set_input("Edge W2", edge_material)
-                part.set_input("Edge L1", edge_material)
-                part.set_input("Edge L2", edge_material)
-
-                for mod in child.modifiers:
-                    if mod.type == 'NODES' and mod.node_group:
-                        tree_items = mod.node_group.interface.items_tree
-                        if 'Material' in tree_items:
-                            node_input = tree_items['Material']
-                            hb_utils.set_gn_input(mod, node_input.identifier, finish_mat)
-                        # Update 5-piece door materials (Stile, Rail, Panel)
-                        if 'Stile Material' in tree_items:
-                            hb_utils.set_gn_input(mod, tree_items['Stile Material'].identifier, finish_mat)
-                        if 'Rail Material' in tree_items:
-                            hb_utils.set_gn_input(mod, tree_items['Rail Material'].identifier, finish_mat_rotated)
-                        if 'Panel Material' in tree_items:
-                            hb_utils.set_gn_input(mod, tree_items['Panel Material'].identifier, finish_mat)
+            style.apply_materials_to_cabinet(cabinet_obj)
 
         self.report({'INFO'}, f"Updated materials on {len(cabinets)} cabinet(s) with style '{style.name}'")
         return {'FINISHED'}
@@ -907,30 +848,10 @@ class hb_frameless_OT_update_cabinet_pulls(bpy.types.Operator):
     )# type: ignore
 
     def _get_pull_obj(self, props, pull_type):
-        """Get pull object based on current selection. Returns (pull_obj, is_none).
-        is_none=True means pulls should be cleared."""
-        if pull_type == 'drawer':
-            selection = props.drawer_pull_selection
-        else:
-            selection = props.door_pull_selection
-        
-        if selection == 'NONE':
-            return None, True
-        
-        if selection == 'CUSTOM':
-            if pull_type == 'drawer':
-                return props.current_drawer_front_pull_object, False
-            else:
-                return props.current_door_pull_object, False
-        
-        # Bundled pull - load from file
-        pull_obj = props_hb_frameless.load_pull_object(selection)
-        if pull_obj:
-            if pull_type == 'drawer':
-                props.current_drawer_front_pull_object = pull_obj
-            else:
-                props.current_door_pull_object = pull_obj
-        return pull_obj, False
+        """(pull_obj, is_none) for the current selection: the loaded
+        handle, or nothing with is_none set when pulls are off."""
+        pull_obj = props_hb_frameless.resolve_pull_object(pull_type)
+        return pull_obj, pull_obj is None
 
     def execute(self, context):
         main_scene = hb_project.get_main_scene()
@@ -1092,53 +1013,40 @@ class hb_frameless_OT_update_pull_finish(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
     
     def execute(self, context):
-        
         main_scene = hb_project.get_main_scene()
         props = main_scene.hb_frameless
-        
-        # Get or create the finish material
-        finish_mat = get_or_create_pull_finish_material(props.pull_finish)
-        if not finish_mat:
-            self.report({'ERROR'}, "Could not create finish material")
-            return {'CANCELLED'}
-        
-        pull_count = 0
-        updated_sources = set()
-        
-        # Find all pull objects and their source objects
+        from ...closets import pulls_closets
+
+        # The finish goes on the SOURCE handles' meshes, which every
+        # placed pull instances, so the whole room follows at once.
+        sources = {}
+        for attr in ('current_door_pull_object',
+                     'current_drawer_front_pull_object'):
+            obj = getattr(props, attr, None)
+            if obj is not None:
+                sources[obj.name] = obj
+        custom = bpy.data.objects.get(props_hb_frameless.CUSTOM_PULL_NAME)
+        if custom is not None:
+            sources[custom.name] = custom
+        # Older files may still instance a handle that no pointer holds.
         for obj in context.scene.objects:
-            # Check for door/drawer fronts and get their pull children
-            if obj.get('IS_DOOR_FRONT') or obj.get('IS_DRAWER_FRONT'):
-                for child in obj.children:
-                    if 'Pull' in child.name:
-                        # Find the geometry node modifier
-                        for mod in child.modifiers:
-                            if mod.type == 'NODES' and mod.node_group:
-                                # Get the source object from the modifier
-                                for item in mod.node_group.interface.items_tree:
-                                    if (getattr(item, 'item_type', '') != 'SOCKET'
-                                            or getattr(item, 'in_out', '') != 'INPUT'):
-                                        continue
-                                    val = hb_utils.try_get_gn_input(mod, item.identifier)
-                                    if hasattr(val, 'material_slots'):
-                                        # This is the source pull object
-                                        source_obj = val
-                                        if source_obj.name not in updated_sources:
-                                            # Apply material to source object
-                                            if len(source_obj.material_slots) == 0:
-                                                source_obj.data.materials.append(finish_mat)
-                                            else:
-                                                source_obj.material_slots[0].material = finish_mat
-                                            updated_sources.add(source_obj.name)
-                        pull_count += 1
-        
-        # Force viewport update
+            if not obj.get('IS_CABINET_PULL'):
+                continue
+            for mod in obj.modifiers:
+                if mod.type != 'NODES' or not mod.node_group:
+                    continue
+                for item in mod.node_group.interface.items_tree:
+                    if (getattr(item, 'item_type', '') != 'SOCKET'
+                            or getattr(item, 'in_out', '') != 'INPUT'):
+                        continue
+                    val = hb_utils.try_get_gn_input(mod, item.identifier)
+                    if hasattr(val, 'material_slots'):
+                        sources[val.name] = val
+        for obj in sources.values():
+            pulls_closets._apply_finish_to_pull(obj, props.pull_finish)
         context.view_layer.update()
-        
-        self.report({'INFO'}, f"Applied finish to {len(updated_sources)} pull type(s) ({pull_count} total pulls)")
+        self.report({'INFO'}, f"Applied {props.pull_finish} to {len(sources)} pull type(s)")
         return {'FINISHED'}
-
-
 
 
 # ============================================

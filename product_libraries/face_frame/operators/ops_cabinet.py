@@ -799,7 +799,7 @@ class hb_face_frame_OT_toggle_mode(bpy.types.Operator):
 def _selection_mode_matches(obj, mode):
     """Return True if obj should be highlighted in the given mode."""
     if mode == 'Face Frame':
-        return obj.get('hb_part_role') in types_face_frame.FACE_FRAME_PART_ROLES
+        return types_face_frame.is_face_frame_mode_part(obj)
     # Drawer boxes join Interiors mode BY ROLE, not by carrying
     # IS_FACE_FRAME_INTERIOR_PART: that tag also routes objects into
     # the dashed hidden-line pass on 2D layout views, where drawer
@@ -931,6 +931,10 @@ class hb_face_frame_OT_wood_top_prompts(bpy.types.Operator):
             layout.label(text="No wood top selected", icon='INFO')
             return
         wt = obj.wood_top
+        # A shaped top marks its finished edges edge by edge, so the four
+        # side toggles would only mislead; the dialog points at the
+        # shape editor instead.
+        shaped = bool(obj.get('ct_outline'))
         col = layout.column(align=True)
         col.use_property_split = True
         col.use_property_decorate = False
@@ -946,6 +950,7 @@ class hb_face_frame_OT_wood_top_prompts(bpy.types.Operator):
         edge_col.prop(wt, 'edge_type')
         if wt.edge_type != 'NONE':
             edge_col.prop(wt, 'edge_thickness')
+        if wt.edge_type != 'NONE' and not shaped:
             row = edge_col.row(align=True)
             row.label(text="Edge Sides:")
             row = edge_col.row(align=True)
@@ -964,6 +969,7 @@ class hb_face_frame_OT_wood_top_prompts(bpy.types.Operator):
         if wt.nosing_style != 'NONE':
             if wt.nosing_style in types_face_frame.shelf_nosing.EXTRA_HEIGHT_STYLES:
                 nose_col.prop(wt, 'nosing_height')
+        if wt.nosing_style != 'NONE' and not shaped:
             row = nose_col.row(align=True)
             row.label(text="Nosing Sides:")
             row = nose_col.row(align=True)
@@ -975,6 +981,15 @@ class hb_face_frame_OT_wood_top_prompts(bpy.types.Operator):
         anchor = obj.parent
         anchored = (anchor is not None
                     and bool(anchor.get(types_face_frame.TAG_CABINET_CAGE)))
+        if shaped:
+            box = col.box()
+            box.label(text="Shaped top: edges are set in Edit Shape",
+                      icon='MOD_MESHDEFORM')
+            row = box.row(align=True)
+            row.operator("home_builder.edit_countertop", text="Edit Shape")
+            row.operator("hb_face_frame.wood_top_reset_shape",
+                         text="Reset Shape")
+            col.separator()
         if anchored:
             col.label(text=f"Overhangs from {anchor.name}:")
             col.prop(wt, 'overhang_front')
@@ -984,6 +999,30 @@ class hb_face_frame_OT_wood_top_prompts(bpy.types.Operator):
         else:
             col.prop(wt, 'width')
             col.prop(wt, 'depth')
+        col.separator()
+        col.prop(wt, 'plan_display')
+
+
+class hb_face_frame_OT_wood_top_reset_shape(bpy.types.Operator):
+    """Put a reshaped wood top back to the plain rectangle it sizes to"""
+    bl_idname = "hb_face_frame.wood_top_reset_shape"
+    bl_label = "Reset Wood Top Shape"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (obj is not None
+                and bool(obj.get(types_face_frame.WOOD_TOP_TAG))
+                and bool(obj.get('ct_outline')))
+
+    def execute(self, context):
+        obj = context.active_object
+        part = types_face_frame.WoodTopPart()
+        part.obj = obj
+        part.clear_shape(obj)
+        part.rebuild()
+        return {'FINISHED'}
 
 
 # ---------------------------------------------------------------------------
@@ -3878,6 +3917,7 @@ _OPENING_PRESETS = {
     'DOOR_LOOKS_2_DRAWER': {'front_type': 'DOOR', 'hinge_side': 'LEFT', 'drawer_look': '2'},
     'DOOR_LOOKS_3_DRAWER': {'front_type': 'DOOR', 'hinge_side': 'LEFT', 'drawer_look': '3'},
     'DOOR_LOOKS_4_DRAWER': {'front_type': 'DOOR', 'hinge_side': 'LEFT', 'drawer_look': '4'},
+    'DOOR_LOOKS_2_DOOR': {'front_type': 'DOOR', 'hinge_side': 'LEFT', 'door_look': '2'},
     'FLIP_UP_DOOR':      {'front_type': 'DOOR',         'hinge_side': 'TOP'},
     'FLIP_DOWN_DOOR':    {'front_type': 'DOOR',         'hinge_side': 'BOTTOM'},
     # Retracting mechanisms: regular door fronts plus the door_mechanism
@@ -3899,6 +3939,8 @@ _OPENING_PRESETS = {
     'BIFOLD_RIGHT_DOOR':      {'front_type': 'DOOR', 'hinge_side': 'DOUBLE',
                                'mechanism': 'BIFOLD_RIGHT'},
     'DRAWER':            {'front_type': 'DRAWER_FRONT'},
+    'DRAWER_LOOKS_2_DRAWER': {'front_type': 'DRAWER_FRONT', 'drawer_look': '2'},
+    'DRAWER_LOOKS_3_DRAWER': {'front_type': 'DRAWER_FRONT', 'drawer_look': '3'},
     'PULLOUT':           {'front_type': 'PULLOUT'},
     'INSET_PANEL':       {'front_type': 'INSET_PANEL', 'shelves': 'CLEAR'},
     'FALSE_FRONT':       {'front_type': 'FALSE_FRONT'},
@@ -3978,6 +4020,7 @@ def apply_opening_preset(opening_obj, config, **overrides):
     # its update seeds the per-opening height rows. Unconditional so
     # re-applying another preset drops a previous drawer-look.
     op_props.drawer_look_divisions = preset.get('drawer_look', 'NONE')
+    op_props.door_look_divisions = preset.get('door_look', 'NONE')
 
     # Post-front_type shelf strip (see docstring: the DOOR write above
     # re-seeds a shelf, so this must come after it).
@@ -4024,6 +4067,10 @@ class hb_face_frame_OT_change_opening(bpy.types.Operator):
             ('LEFT_DOOR',         "Left Door",         "Single door hinged on the left"),
             ('RIGHT_DOOR',        "Right Door",        "Single door hinged on the right"),
             ('DOUBLE_DOOR',       "Double Door",       "Pair of doors meeting in the middle"),
+            ('DOOR_LOOKS_2_DRAWER', "Door - Looks like 2 Drawers", "One door shown as two drawer fronts"),
+            ('DOOR_LOOKS_3_DRAWER', "Door - Looks like 3 Drawers", "One door shown as three drawer fronts"),
+            ('DOOR_LOOKS_4_DRAWER', "Door - Looks like 4 Drawers", "One door shown as four drawer fronts"),
+            ('DOOR_LOOKS_2_DOOR', "Door - Looks like 2 Doors", "One door shown as two doors battened together"),
             ('FLIP_UP_DOOR',      "Flip Up Door",      "Door hinged on the top edge"),
             ('FLIP_DOWN_DOOR',    "Flip Down Door",    "Door hinged on the bottom edge"),
             ('RETRACTING_DOOR',   "Retracting Door",   "Single door that opens, then slides back into the cabinet"),
@@ -4033,6 +4080,8 @@ class hb_face_frame_OT_change_opening(bpy.types.Operator):
             ('BIFOLD_LEFT_DOOR',  "Bi-fold Doors (Left)",  "Door pair hinged on the left that folds open"),
             ('BIFOLD_RIGHT_DOOR', "Bi-fold Doors (Right)", "Door pair hinged on the right that folds open"),
             ('DRAWER',            "Drawer",            "Drawer front"),
+            ('DRAWER_LOOKS_2_DRAWER', "Drawer - Looks like 2 Drawers", "One drawer shown as two drawer fronts"),
+            ('DRAWER_LOOKS_3_DRAWER', "Drawer - Looks like 3 Drawers", "One drawer shown as three drawer fronts"),
             ('PULLOUT',           "Pullout",           "Door front on a pullout slide"),
             ('INSET_PANEL',       "Inset Panel",       "Recessed 1/4\" panel filling the opening"),
             ('FALSE_FRONT',       "False Front",       "Decorative drawer-style panel; fixed"),
@@ -7074,6 +7123,7 @@ classes = (
     hb_face_frame_OT_equalize_opening_heights,
     hb_face_frame_OT_equalize_front_heights,
     hb_face_frame_OT_wood_top_prompts,
+    hb_face_frame_OT_wood_top_reset_shape,
     hb_face_frame_OT_toggle_mode,
     hb_face_frame_OT_cabinet_prompts,
     hb_face_frame_OT_leg_product_prompts,
