@@ -9366,7 +9366,8 @@ class FaceFrameCabinet(GeoNodeCage):
         1.25\"-wide face-frame part doubled in FRONT of that stile, the
         height of the door front, flush to the cabinet side. Spawn / resize
         / remove per side. Mirrors the end-stile build (rotation + mirror
-        flags) shifted one face-frame thickness forward.
+        flags), standing proud of the frame by the door gap plus the door
+        thickness so its face is flush with the door and drawer fronts.
 
         BLIND corner sides get the same applied part sized to the
         corner detail instead: inner edge a 1/4" reveal off the door
@@ -9391,6 +9392,7 @@ class FaceFrameCabinet(GeoNodeCage):
             and child.get(TAG_FO_STILE_SIDE) in ('LEFT', 'RIGHT')
         }
         wall_width = inch(1.25)
+        thickness = self._fo_stile_thickness(cab)
         for side, stile_type, bi, ff_x in side_specs:
             wants_wall = is_full and stile_type == 'WALL'
             corner_geo = None
@@ -9413,13 +9415,14 @@ class FaceFrameCabinet(GeoNodeCage):
                              - layout.default_bottom_overlay)
             if corner_geo is not None:
                 x_anchor, width, seam = corner_geo
-                pos = (x_anchor, -layout.dim_y - layout.fft, door_bottom_z)
+                pos = (x_anchor, -layout.dim_y - thickness, door_bottom_z)
             else:
                 width = wall_width
-                # One fft FORWARD of the FF outer plane -> right in front
-                # of the stile (perp_offset positive is INTO the cabinet).
+                # Front face level with the door fronts, back face on the
+                # FF outer plane (perp_offset positive is INTO the
+                # cabinet; the part's thickness runs back from pos).
                 pos = solver.ff_perpendicular_offset(
-                    layout, ff_x, -layout.fft, door_bottom_z)
+                    layout, ff_x, -thickness, door_bottom_z)
             if part_obj is None:
                 part = CabinetPart()
                 part.create(f'FO Stile {side[0]}')
@@ -9437,14 +9440,22 @@ class FaceFrameCabinet(GeoNodeCage):
             part_obj.location = pos
             part.set_input('Length', door_h)
             part.set_input('Width', width)
-            part.set_input('Thickness', layout.fft)
+            part.set_input('Thickness', thickness)
             if corner_geo is not None:
-                self._apply_corner_fo_miter(part_obj, layout, side, seam)
+                self._apply_corner_fo_miter(
+                    part_obj, layout, side, seam, thickness)
             else:
                 self._clear_corner_fo_miter(side, part_obj)
 
     FO_CORNER_MITER_MOD_NAME = 'FO Corner Miter'
     FO_CORNER_REVEAL = inch(0.25)
+
+    @staticmethod
+    def _fo_stile_thickness(cab_props):
+        """Thickness of the applied full-overlay stile: the door gap plus
+        the door thickness, so the stile's face is flush with the fronts
+        (3/4" doors -> 7/8")."""
+        return cab_props.door_thickness + solver.DOOR_TO_FRAME_GAP
 
     @staticmethod
     def _settled_world_matrix(obj):
@@ -9507,9 +9518,9 @@ class FaceFrameCabinet(GeoNodeCage):
         front_dir = (mw_inv.to_3x3() @ (mw_p.to_3x3() @ Vector((0.0, -1.0, 0.0))))
         if abs(front_dir.x) < 0.99:
             return None
-        p_fft = pff.face_frame_thickness
+        p_fo = self._fo_stile_thickness(pff)
         x_bff = (mw_inv @ (mw_p @ Vector((0.0, -pff.depth, 0.0)))).x
-        x_bap = (mw_inv @ (mw_p @ Vector((0.0, -pff.depth - p_fft, 0.0)))).x
+        x_bap = (mw_inv @ (mw_p @ Vector((0.0, -pff.depth - p_fo, 0.0)))).x
         pullback = (solver.FULL_CORNER_SIDE_OVERLAY + self.FO_CORNER_REVEAL)
         if side == 'LEFT':
             x_inner = layout.ff_inset_left + layout.lsw - pullback
@@ -9546,7 +9557,8 @@ class FaceFrameCabinet(GeoNodeCage):
             break
         return cutter
 
-    def _apply_corner_fo_miter(self, part_obj, layout, side, seam):
+    def _apply_corner_fo_miter(self, part_obj, layout, side, seam,
+                               thickness):
         """Rebuild the corner side's miter wedge (a vertical prism over
         the triangle between the partner's FF-front and applied-front
         lines) and ensure the boolean on the applied stile."""
@@ -9554,7 +9566,7 @@ class FaceFrameCabinet(GeoNodeCage):
         x_bff, x_bap = seam
         cutter = self._ensure_corner_fo_miter_cutter(side)
         corner = Vector((x_bff, -layout.dim_y))
-        miter_dir = Vector((x_bap - x_bff, -layout.fft)).normalized()
+        miter_dir = Vector((x_bap - x_bff, -thickness)).normalized()
         open_dir = Vector((-1.0, 0.0)) if side == 'LEFT' else Vector((1.0, 0.0))
         self._miter_wedge_mesh(cutter, corner, miter_dir, open_dir,
                                -0.05, layout.dim_z + 0.05)
