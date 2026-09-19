@@ -145,9 +145,181 @@ OPTION_FORMS = (
     ("Pulls", 'draw_pull_options_ui'),
     ("Drawers", 'draw_drawer_box_options_ui'),
     ("Rods & Hangers", 'draw_rod_options_ui'),
+    ("Accessories", 'draw_accessory_options_ui'),
     ("Countertops", 'draw_countertop_options_ui'),
     ("Molding", 'draw_molding_options_ui'),
 )
+
+
+def _asset_thumbnail(directory, ident):
+    """The picture beside a .blend asset, or None for the choices that
+    have none (None, Custom)."""
+    stem, ext = os.path.splitext(ident or '')
+    if ext.lower() != '.blend':
+        return None
+    path = os.path.join(directory, stem + '.png')
+    return path if os.path.exists(path) else None
+
+
+def _pull_thumbnail(ident):
+    from . import pulls_closets
+    return _asset_thumbnail(pulls_closets.HANDLES_DIR, ident)
+
+
+def _crown_thumbnail(ident):
+    from . import molding_closets
+    return _asset_thumbnail(molding_closets.CROWN_DIR, ident)
+
+
+def _base_thumbnail(ident):
+    from . import molding_closets
+    return _asset_thumbnail(molding_closets.BASE_DIR, ident)
+
+
+def _accessory_notes(context):
+    """The accessories the room's finish does not come in, as lines."""
+    from . import accessories_closets
+    rows = accessories_closets.unavailable_finishes(context.scene)
+    if not rows:
+        return ()
+    return (("Not available in this finish:",)
+            + tuple(accessories_closets.notice_lines(rows)))
+
+
+# Every section is drawn INSIDE the viewport panel, as a 'form' page on
+# the room's own copy of the group: the closet options are room-wide and
+# each one re-applies itself to the room as it changes. See the
+# frameless catalog for the page contract. Where the sidebar greys a
+# field out, the page leaves it out.
+OPTION_PAGES = {
+    'draw_material_options_ui': {
+        'kind': 'form',
+        'title': "Materials",
+        'props': 'hb_closets',
+        'scope': 'scene',
+        'fields': (
+            ('enum', 'closet_material', "Closet"),
+            ('enum', 'closet_front_material', "Fronts"),
+            ('gap', None, None),
+            ('label', None, "Edgebanding"),
+            ('enum', 'closet_edge_material', "Closet Edge"),
+            ('enum', 'closet_front_edge_material', "Front Edge"),
+        ),
+    },
+    'draw_front_options_ui': {
+        'kind': 'form',
+        'title': "Door & Drawer Front Styles",
+        'props': 'hb_closets',
+        'scope': 'scene',
+        'fields': (
+            ('enum', 'closet_front_style', "Front Style"),
+            ('enum', 'closet_panel_type', "Door Panel"),
+            ('enum', 'closet_door_edgeband', "Edgebanding"),
+            ('gap', None, None),
+            ('bool', 'closet_seed_door_shelves', "Shelves Behind Doors"),
+        ),
+    },
+    'draw_pull_options_ui': {
+        'kind': 'form',
+        'title': "Pulls",
+        'props': 'hb_closets',
+        'scope': 'scene',
+        'fields': (
+            ('thumb', 'closet_pull', "Pull",
+             {'thumb': lambda ident: _pull_thumbnail(ident)}),
+            ('distance', 'closet_custom_pull_size', "Center to Center",
+             {'when': lambda p: p.closet_pull == 'CUSTOM'}),
+            ('enum', 'closet_pull_finish', "Finish"),
+            ('gap', None, None),
+            ('label', None, "Position"),
+            ('distance', 'pull_horizontal_offset', "From Edge"),
+            ('distance', 'pull_vertical_location_base', "Base Vertical"),
+            ('distance', 'pull_vertical_location_tall', "Tall Vertical"),
+            ('distance', 'pull_vertical_location_upper', "Upper Vertical"),
+            ('bool', 'center_pulls_on_drawer_front', "Center Drawer Pulls"),
+            ('distance', 'pull_vertical_location_drawers', "Drawer Vertical",
+             {'when': lambda p: not p.center_pulls_on_drawer_front}),
+        ),
+    },
+    'draw_drawer_box_options_ui': {
+        'kind': 'form',
+        'title': "Drawers",
+        'props': 'hb_closets',
+        'scope': 'scene',
+        'fields': (
+            ('enum', 'closet_drawer_box', "Drawer Box"),
+            ('bool', 'closet_drawer_vertical_grain', "Vertical Grain"),
+        ),
+    },
+    'draw_rod_options_ui': {
+        'kind': 'form',
+        'title': "Rods & Hangers",
+        'props': 'hb_closets',
+        'scope': 'scene',
+        'fields': (
+            ('label', None, "Hanging Rods"),
+            ('enum', 'closet_rod_type', "Type"),
+            ('enum', 'closet_rod_finish', "Finish"),
+            ('gap', None, None),
+            ('label', None, "Hangers"),
+            ('enum', 'closet_hanger_model', "Model"),
+            ('actions', (("Randomize Hangers",
+                          'hb_closets.randomize_hangers'),
+                         ("Install Model Pack",
+                          'hb_closets.install_model_pack')), None),
+        ),
+    },
+    'draw_accessory_options_ui': {
+        'kind': 'form',
+        'title': "Accessories",
+        'props': 'hb_closets',
+        'scope': 'scene',
+        'fields': (
+            ('enum', 'default_accessory_color', "Metal"),
+            ('enum', 'default_accessory_fabric', "Fabric"),
+            ('notes', _accessory_notes, None),
+        ),
+    },
+    # With the toggle on, tops take the closet material and the shelf
+    # thickness, so neither field below it applies.
+    'draw_countertop_options_ui': {
+        'kind': 'form',
+        'title': "Countertops",
+        'props': 'hb_closets',
+        'scope': 'scene',
+        'fields': (
+            ('bool', 'use_closet_material_for_countertops',
+             "Use Closet Material for Tops"),
+            ('enum', 'closet_countertop_material', "Material",
+             {'when': lambda p: not p.use_closet_material_for_countertops}),
+            ('distance', 'countertop_thickness', "Thickness",
+             {'when': lambda p: not p.use_closet_material_for_countertops}),
+        ),
+    },
+    'draw_molding_options_ui': {
+        'kind': 'form',
+        'title': "Molding",
+        'props': 'hb_closets',
+        'scope': 'scene',
+        'fields': (
+            ('label', None, "Crown"),
+            ('thumb', 'closet_crown_profile', "Profile",
+             {'thumb': lambda ident: _crown_thumbnail(ident)}),
+            ('actions', (("Add Crown Molding", 'hb_closets.add_molding',
+                          'molding_kind', 'CROWN'),
+                         ("Remove", 'hb_closets.delete_molding',
+                          'molding_kind', 'CROWN')), None),
+            ('gap', None, None),
+            ('label', None, "Base"),
+            ('thumb', 'closet_base_profile', "Profile",
+             {'thumb': lambda ident: _base_thumbnail(ident)}),
+            ('actions', (("Add Base Molding", 'hb_closets.add_molding',
+                          'molding_kind', 'BASE'),
+                         ("Remove", 'hb_closets.delete_molding',
+                          'molding_kind', 'BASE')), None),
+        ),
+    },
+}
 
 
 def place(context, product):

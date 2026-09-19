@@ -31,8 +31,9 @@ the drawing code is the same either way.
 
 Field kinds: ``enum`` (a dropdown), ``bool`` (a checkbox), ``distance``
 (a value you click into and type, in the placement typing grammar),
-``thumb`` (an enum picked from a grid of pictures -- see thumb_picker)
-and ``gap`` (space). A field may carry a dict after its label: ``when``
+``thumb`` (an enum picked from a grid of pictures -- see thumb_picker),
+``notes`` (lines of text a callable works out from the context) and
+``gap`` (space). A field may carry a dict after its label: ``when``
 hides it unless the callable, given the owner, says so; ``thumb`` maps
 a choice to its picture.
 """
@@ -389,6 +390,15 @@ def _form_blocks(context, spec):
         if field[0] == 'label':
             blocks.append(('label', field[2]))
             continue
+        if field[0] == 'notes':
+            # Lines the form works out as it is drawn: the callable is
+            # given the context and returns the text, or nothing.
+            try:
+                lines = field[1](context) or ()
+            except Exception:
+                lines = ()
+            blocks.extend(('note', line) for line in lines)
+            continue
         if field[0] == 'actions':
             # A row of commands placed among the fields, so a form can
             # group its commands under the label they belong to.
@@ -495,6 +505,9 @@ def build(rect, context):
                             (x, block_top - sect_h, row_w, sect_h), expanded))
         elif kind == 'label':
             entries.append(('label_row', payload,
+                            (x, block_top - row_h, row_w, row_h)))
+        elif kind == 'note':
+            entries.append(('note_row', payload,
                             (x, block_top - row_h, row_w, row_h)))
         elif kind == 'head':
             label, with_add, pool = payload
@@ -647,6 +660,12 @@ def paint(entries, mx, my):
                 rx, ry, rw, rh = rect
                 draw_text(font_id, rx + 8 * s, ry + rh * 0.28, FONT * s,
                           Theme.TEXT_HEADER, label.upper())
+            elif kind == 'note_row':
+                _, text, rect = entry
+                rx, ry, rw, rh = rect
+                draw_text(font_id, rx + 8 * s, ry + rh * 0.28, FONT * s,
+                          Theme.TEXT_NORMAL,
+                          fit_text(font_id, FONT * s, text, rw - 12 * s))
             elif kind == 'styles_head':
                 _, label, rect, add_rect, _pool = entry
                 _paint_head(shader, font_id, s, mx, my, label, rect, add_rect)
