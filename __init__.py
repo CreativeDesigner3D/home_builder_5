@@ -81,6 +81,8 @@ def load_file_post(scene):
     # msgbus subscriptions do not survive a .blend load either.
     from .product_libraries.face_frame import quiet_cages
     quiet_cages.ensure_subscriptions()
+    from .product_libraries.frameless import quiet_cages as frameless_quiet_cages
+    frameless_quiet_cages.ensure_subscriptions()
 
     # Door/window boolean cutters saved while still visible in the
     # viewport would cover their own opening in rendered shading.

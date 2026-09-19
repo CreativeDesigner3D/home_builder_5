@@ -21,6 +21,7 @@ PART_CLASS_MAP = {
     'Corner Filler': types_products.CornerFiller,
 }
 from .. import props_hb_frameless
+from .. import quiet_cages
 from ...common import types_appliances, appliance_geo
 from .... import hb_utils, hb_project, hb_snap, hb_placement, hb_details, hb_types, units
 
@@ -1890,6 +1891,57 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         return {'RUNNING_MODAL'}
 
 
+# Object-marker tag each selection mode offers. 'Parts' offers no cage:
+# every part renders at its default colour and is clicked directly.
+SELECTION_MODE_TAGS = {
+    'Cabinets': 'IS_FRAMELESS_CABINET_CAGE',
+    'Bays': 'IS_FRAMELESS_BAY_CAGE',
+    'Openings': 'IS_FRAMELESS_OPENING_CAGE',
+    'Interiors': 'IS_FRAMELESS_INTERIOR_PART',
+    'Parts': 'NO_TYPE',
+}
+
+# Markers that should be treated like cabinets for selection purposes
+CABINET_LIKE_MARKERS = ['IS_FRAMELESS_CABINET_CAGE', 'IS_FRAMELESS_PRODUCT_CAGE', 'IS_APPLIANCE']
+
+
+def selection_mode_matches(obj, mode):
+    """True if ``obj`` is what the given selection mode offers."""
+    if mode == 'Cabinets':
+        return any(marker in obj for marker in CABINET_LIKE_MARKERS)
+    return SELECTION_MODE_TAGS.get(mode, 'NO_TYPE') in obj
+
+
+def _selection_mode_toggle_one(obj, mode):
+    if 'IS_WALL_BP' in obj or 'IS_ENTRY_DOOR_BP' in obj or 'IS_WINDOW_BP' in obj or 'IS_CUTTING_OBJ' in obj:
+        return
+    type_name = SELECTION_MODE_TAGS.get(mode, 'NO_TYPE')
+    if selection_mode_matches(obj, mode):
+        # Material Preview / Rendered: a cage the mode offers stays
+        # hidden unless it is selected (see quiet_cages).
+        if quiet_cages.keep_hidden(obj, mode):
+            toggle_cabinet_color(obj, False, type_name=type_name)
+            return
+        toggle_cabinet_color(obj, True, type_name=type_name)
+    else:
+        toggle_cabinet_color(obj, False, type_name=type_name)
+
+
+def apply_frameless_selection_mode(context, root_obj=None):
+    """Re-apply the current frameless selection mode: to ``root_obj``'s
+    subtree when given, else every object in the scene. Leaves the
+    selection to the caller."""
+    mode = context.scene.hb_frameless.frameless_selection_mode
+    if root_obj is not None:
+        objs = [root_obj, *root_obj.children_recursive]
+    else:
+        objs = list(context.scene.objects)
+    with hb_utils.children_index():
+        for obj in objs:
+            _selection_mode_toggle_one(obj, mode)
+    quiet_cages.after_mode_applied()
+
+
 class hb_frameless_OT_toggle_mode(bpy.types.Operator):
     """Toggle Cabinet Openings"""
     bl_idname = "hb_frameless.toggle_mode"
@@ -1899,54 +1951,10 @@ class hb_frameless_OT_toggle_mode(bpy.types.Operator):
     search_obj_name: bpy.props.StringProperty(name="Search Object Name",default="")# type: ignore
     toggle_type: bpy.props.StringProperty(name="Toggle Type",default="")# type: ignore
     toggle_on: bpy.props.BoolProperty(name="Toggle On",default=False)# type: ignore
-    
-    # Markers that should be treated like cabinets for selection purposes
-    CABINET_LIKE_MARKERS = ['IS_FRAMELESS_CABINET_CAGE', 'IS_FRAMELESS_PRODUCT_CAGE', 'IS_APPLIANCE']
-
-    def is_cabinet_like(self, obj):
-        """Check if object has any cabinet-like marker."""
-        for marker in self.CABINET_LIKE_MARKERS:
-            if marker in obj:
-                return True
-        return False
-
-    def toggle_obj(self, obj):
-        if 'IS_WALL_BP' in obj or 'IS_ENTRY_DOOR_BP' in obj or 'IS_WINDOW_BP' in obj or 'IS_CUTTING_OBJ' in obj:
-            return
-        
-        # Special handling for cabinet-like objects (cabinets, appliances, etc.)
-        if self.toggle_type == "IS_FRAMELESS_CABINET_CAGE":
-            if self.is_cabinet_like(obj):
-                toggle_cabinet_color(obj, True, type_name=self.toggle_type)
-            else:
-                toggle_cabinet_color(obj, False, type_name=self.toggle_type)
-        else:
-            if self.toggle_type in obj:
-                toggle_cabinet_color(obj, True, type_name=self.toggle_type)
-            else:
-                toggle_cabinet_color(obj, False, type_name=self.toggle_type)
 
     def execute(self, context):
-        props = context.scene.hb_frameless
-        if props.frameless_selection_mode == 'Cabinets':
-            self.toggle_type="IS_FRAMELESS_CABINET_CAGE"
-        elif props.frameless_selection_mode == 'Bays':
-            self.toggle_type="IS_FRAMELESS_BAY_CAGE"            
-        elif props.frameless_selection_mode == 'Openings':
-            self.toggle_type="IS_FRAMELESS_OPENING_CAGE"
-        elif props.frameless_selection_mode == 'Interiors':
-            self.toggle_type="IS_FRAMELESS_INTERIOR_PART"
-        elif props.frameless_selection_mode == 'Parts':
-            self.toggle_type="NO_TYPE"      
-
-        if self.search_obj_name in bpy.data.objects:
-            obj = bpy.data.objects[self.search_obj_name]
-            self.toggle_obj(obj)
-            for child in obj.children_recursive:
-                self.toggle_obj(child)
-        else:
-            for obj in context.scene.objects:
-                self.toggle_obj(obj)
+        apply_frameless_selection_mode(
+            context, bpy.data.objects.get(self.search_obj_name))
         bpy.ops.object.select_all(action='DESELECT')
         return {'FINISHED'}
 
