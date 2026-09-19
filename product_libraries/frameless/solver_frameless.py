@@ -674,6 +674,35 @@ def _solve_corner_upper(root, parts, p, dim_x, dim_y, dim_z):
     _solve_corner_doors(root, parts, p, dim_x, dim_y, dim_z)
 
 
+# The least a blind corner keeps for its doors, whatever the blind asks.
+BLIND_MIN_DOOR_OPENING = inch(9.0)
+
+
+def _solve_blind_corner(root, parts, p, dim_x, dim_y, dim_z):
+    """A blind corner's captured panel, and the bay narrowed to the door
+    opening beside it. Blind Width runs from the corner-side end of the
+    cabinet to the edge of the doors; the panel carries on one material
+    thickness past that, standing in for the side the doors overlay."""
+    panel = parts.get('BLIND_PANEL')
+    bay = parts.get('BAY')
+    if panel is None or bay is None:
+        return
+    mt = p.mt
+    inner = dim_x - mt * 2.0
+    blind = float(prompt(root, 'Blind Width', dim_x / 2.0))
+    span = max(min(blind, inner - BLIND_MIN_DOOR_OPENING), 0.0)
+    bay_x, bay_y, bay_z = bay.location
+    bay_h = GeoNodeCage(bay).get_input('Dim Z')
+    if root.get('Blind Side') == 'Right':
+        panel_x = dim_x - mt - span
+    else:
+        panel_x = mt
+        bay_x = mt + span
+    set_part(panel, (panel_x, -dim_y + mt, bay_z), length=bay_h, width=span,
+             thickness=mt)
+    set_cage(bay, (bay_x, bay_y, bay_z), dim_x=inner - span)
+
+
 _SOLVERS = {
     'BASE': _solve_base,
     'TALL': _solve_tall,
@@ -710,6 +739,7 @@ def recalculate_cabinet(obj):
     dims = (cage.get_input('Dim X'), cage.get_input('Dim Y'),
             cage.get_input('Dim Z'))
     _SOLVERS[kind](root, parts, prompts, *dims)
+    _solve_blind_corner(root, parts, prompts, *dims)
     _solve_applied_ends(root, parts, prompts, *dims)
 
     bay = parts.get('BAY')

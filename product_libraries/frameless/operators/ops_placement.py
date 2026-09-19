@@ -782,6 +782,16 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                 self.individual_cabinet_width = props.range_width
                 self.fill_mode = False
                 self.auto_quantity = False
+            elif self.is_blind_corner():
+                # One cabinet at its own width: the blind is sized for
+                # the adjacent wall, so it neither fills nor repeats.
+                self.individual_cabinet_width = {
+                    'TALL': props.tall_width_blind,
+                    'UPPER': props.upper_width_blind,
+                }.get(self.cabinet_type, props.base_width_blind)
+                self.fill_mode = False
+                self.auto_quantity = False
+                self.cabinet_quantity = 1
             elif 'Corner' in self.cabinet_name:
                 # Corner cabinets use corner size for both width and depth
                 if 'Base' in self.cabinet_name:
@@ -1049,6 +1059,8 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
     def update_cabinet_quantity(self, context, new_quantity: int):
         """Update the number of cabinets and recalculate widths if position is locked."""
         new_quantity = max(1, new_quantity)
+        if self.is_blind_corner():
+            new_quantity = 1
         if new_quantity != self.cabinet_quantity:
             self.cabinet_quantity = new_quantity
             self.array_modifier.count = self.cabinet_quantity
@@ -1173,8 +1185,43 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             return away_local_y < -0.001
         return away_local_y > 0.001
 
-    def reserve_corner_fillers(self, gap_start, gap_end, snap_x):
-        """Move a gap boundary that sits at an inside corner in by the
+    def blind_corner_reach(self, context, side):
+        """How far a blind corner cabinet on the wall connected at this
+        wall's `side` end reaches into this wall, or 0.0 with none there.
+        Its blind panel is the corner as far as the run on this wall is
+        concerned, so the run keeps a filler against it the way it does
+        against a wall. The footprint is mapped into this wall's frame
+        the way the gap scan maps its adjacent-wall intrusions."""
+        try:
+            adj = hb_types.GeoNodeWall(self.selected_wall).get_connected_wall(
+                direction=side, include_loop_seam=True)
+        except Exception:
+            return 0.0
+        if not adj:
+            return 0.0
+        z0 = self.get_cabinet_z_location(context)
+        z1 = z0 + self.get_cabinet_height(context)
+        to_wall = self.selected_wall.matrix_world.inverted()
+        reach = 0.0
+        for child in adj.obj.children:
+            if not child.get('IS_BLIND_CORNER'):
+                continue
+            cage = hb_types.GeoNodeCage(child)
+            dim_x, dim_y, dim_z = (cage.get_input('Dim X'), cage.get_input('Dim Y'),
+                                   cage.get_input('Dim Z'))
+            if not (z0 < child.location.z + dim_z and child.location.z < z1):
+                continue
+            for corner in ((0, 0, 0), (dim_x, 0, 0), (0, -dim_y, 0), (dim_x, -dim_y, 0)):
+                x = (to_wall @ (child.matrix_world @ Vector(corner))).x
+                if side == 'left':
+                    reach = max(reach, x)
+                else:
+                    reach = max(reach, self.wall_length - x)
+        return reach
+
+    def reserve_corner_fillers(self, context, gap_start, gap_end, snap_x):
+        """Move a gap boundary that sits at an inside corner -- the wall
+        itself, or a blind corner cabinet standing in it -- in by the
         filler width, remembering which ends were reserved for the
         commit. Returns the adjusted (gap_start, gap_end, snap_x)."""
         self.corner_filler_left = False
@@ -1183,10 +1230,19 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             return gap_start, gap_end, snap_x
         width = types_products.CORNER_FILLER_WIDTH
         tol = units.inch(0.05)
-        if gap_start <= tol and self.inside_corner(self.selected_wall, 'left'):
+
+        def at_corner(distance, side):
+            """`distance` is the gap boundary's from that end of the wall."""
+            if distance <= tol:
+                return True
+            reach = self.blind_corner_reach(context, side)
+            return reach > 0.0 and abs(distance - reach) <= tol
+
+        if (at_corner(gap_start, 'left')
+                and self.inside_corner(self.selected_wall, 'left')):
             gap_start += width
             self.corner_filler_left = True
-        if (gap_end >= self.wall_length - tol
+        if (at_corner(self.wall_length - gap_end, 'right')
                 and self.inside_corner(self.selected_wall, 'right')):
             gap_end -= width
             self.corner_filler_right = True
@@ -1331,7 +1387,7 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         # An inside corner keeps 1.5" for the filler that closes it, so
         # the cabinet lands beside the filler rather than in the corner.
         gap_start, gap_end, snap_x = self.reserve_corner_fillers(
-            gap_start, gap_end, snap_x)
+            context, gap_start, gap_end, snap_x)
 
         # Store gap boundaries for offset calculations
         self.gap_left_boundary = gap_start
@@ -1768,13 +1824,6 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             self.fill_mode = True
             part_instance = PART_CLASS_MAP[self.cabinet_name]()
             self.cursor_z_product_height = part_instance.height
-
-        # A blind corner starts at its own width: the door opening plus
-        # the blind, which the room's default cabinet width is too
-        # narrow to hold.
-        if self.is_blind_corner():
-            self.individual_cabinet_width = (units.inch(36) if self.cabinet_type == 'UPPER'
-                                             else units.inch(39))
 
         # Support Frame: top aligns with top of base cabinets, fill gap
         if self.cabinet_name == 'Support Frame':
