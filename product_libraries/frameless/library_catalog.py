@@ -96,6 +96,7 @@ SECTIONS = (
                    "Floating Shelves"),
                   ("Valance", "Valance", "Valance"),
                   ("Support Frame", "Support Frame", "Support Frame"),
+                  ("Base Assembly", "Base Assembly", "Base Assembly"),
                   ("Half Wall", "Half Wall", "Half Wall"),
                   ("Misc Part", "Misc Part", "Misc Part"),
                   ("Leg", "Leg", "Leg"),

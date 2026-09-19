@@ -1095,7 +1095,7 @@ BASE_ASSEMBLY_SUPPORT_SPACING = inch(16)
 
 def _solve_base_assembly(root, parts, dim_x, dim_y, dim_z):
     """A ladder in plan: the kick face and a back rail run the length,
-    the ends stand between them, and cross supports repeat along it."""
+    the ends stand between them, and cross supports divide it evenly."""
     mt = float(_prompt(root, 'Material Thickness', inch(0.75)))
     spacing = float(_prompt(root, 'Support Spacing',
                             BASE_ASSEMBLY_SUPPORT_SPACING))
@@ -1118,16 +1118,18 @@ def _solve_base_assembly(root, parts, dim_x, dim_y, dim_z):
 
     part = parts.get('BASE_SUPPORT')
     if part is not None:
-        # One part arrayed along the base, so the count is how many
-        # whole spacings fit between the ends.
-        count = 0
+        # One part arrayed along the base. The supports divide it into
+        # equal bays no wider than the spacing, so a base never ends on
+        # a sliver of a bay.
+        bays = 1
         if spacing > 0.0:
-            count = int(math.floor((dim_x - mt * 2.0 - spacing) / spacing)) + 1
-            count = max(count, 0)
-        _set_part(part, (spacing, -mt, 0.0),
+            bays = max(int(math.ceil((dim_x - mt) / spacing - 1e-6)), 1)
+        pitch = (dim_x - mt) / bays
+        count = bays - 1
+        _set_part(part, (pitch, -mt, 0.0),
                   length=dim_y - mt * 2.0, width=dim_z, thickness=mt,
                   visible=count > 0)
-        _set_array(part, count, -spacing)
+        _set_array(part, count, -pitch)
 
 
 class BaseAssembly(Product):

@@ -32,8 +32,8 @@ ALIGN_TOL = units.inch(0.0625)      # same back line / depth / floor
 WALL_END_REACH = units.inch(2.0)    # a corner filler's worth of wall end
 
 MEMBERS_KEY = 'BASE_ASSEMBLY_MEMBERS'
-# Set once a base has been resized by hand: Add Base Assemblies then
-# leaves it, and the cabinets it carries, as they are.
+# Set once a base has been placed or resized by hand: Add Base
+# Assemblies then leaves it, and the cabinets standing on it, as they are.
 EDITED_KEY = 'BASE_ASSEMBLY_EDITED'
 
 # What can stand against the end of a run and close it.
@@ -255,6 +255,19 @@ def create_base_assembly(context, frame, members):
     return obj
 
 
+def stands_on(cabinet, base):
+    """True when the middle of the cabinet's footprint is over the base.
+    Read from where things are rather than from the base's member list:
+    a base placed by hand has none, and cabinets get renamed."""
+    cage = hb_types.GeoNodeCage(cabinet)
+    middle = cabinet.matrix_world @ Vector((cage.get_input('Dim X') / 2.0,
+                                            -cage.get_input('Dim Y') / 2.0, 0.0))
+    local = base.matrix_world.inverted() @ middle
+    dim_x, dim_y, dim_z = _dims_of(base)
+    return (0.0 <= local.x <= dim_x and -dim_y <= local.y <= 0.0
+            and abs(local.z) <= dim_z + ALIGN_TOL)
+
+
 def remove_base_assemblies(objs):
     removed = 0
     for obj in objs:
@@ -306,8 +319,8 @@ class hb_frameless_OT_add_base_assemblies(bpy.types.Operator):
         else:
             kept = [o for o in existing if o.get(EDITED_KEY)]
             stale = [o for o in existing if not o.get(EDITED_KEY)]
-        carried = {n for o in kept for n in (o.get(MEMBERS_KEY) or ())}
-        cabinets = [c for c in cabinets if c.name not in carried]
+        cabinets = [c for c in cabinets
+                    if not any(stands_on(c, base) for base in kept)]
         remove_base_assemblies(stale)
 
         created = []

@@ -19,9 +19,11 @@ PART_CLASS_MAP = {
     'Upper Leg': types_products.UpperLeg,
     'Panel': types_products.Panel,
     'Corner Filler': types_products.CornerFiller,
+    'Base Assembly': types_products.BaseAssembly,
 }
 from .. import props_hb_frameless
 from .. import quiet_cages
+from . import ops_base_assembly
 from ...common import types_appliances, appliance_geo
 from .... import hb_utils, hb_project, hb_snap, hb_placement, hb_details, hb_types, units
 
@@ -577,6 +579,19 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
     def is_blind_corner(self):
         return self.cabinet_name.startswith('Blind ')
 
+    def is_base_assembly(self):
+        return self.cabinet_name == 'Base Assembly'
+
+    # What stops a base assembly running along a wall. Cabinets do not:
+    # the base goes under them.
+    BASE_ASSEMBLY_OBSTACLES = ('IS_BASE_ASSEMBLY', 'IS_APPLIANCE',
+                               'IS_ENTRY_DOOR_BP', 'IS_CLOSET_STARTER_CAGE')
+
+    def blocks_placement(self, obj):
+        if self.is_base_assembly():
+            return any(obj.get(tag) for tag in self.BASE_ASSEMBLY_OBSTACLES)
+        return super().blocks_placement(obj)
+
     def blind_side_for_placement(self):
         """The end of the run that reaches a wall end: that is the end
         going into the corner. Away from both ends, the left."""
@@ -604,6 +619,8 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         props = context.scene.hb_frameless
         if self.cabinet_name == 'Lap Drawer':
             return props.top_drawer_front_height
+        if self.is_base_assembly():
+            return props.default_toe_kick_height
         if self.cabinet_type == 'BASE':
             return props.base_cabinet_height
         elif self.cabinet_type == 'TALL':
@@ -810,7 +827,8 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                 # Parts use their own default dimensions
                 part_instance = PART_CLASS_MAP[self.cabinet_name]()
                 self.individual_cabinet_width = part_instance.width
-                if self.cursor_z_tracking or self.align_top_to_base:
+                if (self.cursor_z_tracking or self.align_top_to_base
+                        or self.is_base_assembly()):
                     # Fill-gap products (Floating Shelves, Support Frame, etc.) with qty 1
                     self.auto_quantity = False
                     self.cabinet_quantity = 1
@@ -1825,6 +1843,11 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             part_instance = PART_CLASS_MAP[self.cabinet_name]()
             self.cursor_z_product_height = part_instance.height
 
+        # Base Assembly: one base along whatever of the wall is free of
+        # other bases, appliances and doors; cabinets go over it.
+        if self.is_base_assembly():
+            self.fill_mode = True
+
         # Support Frame: top aligns with top of base cabinets, fill gap
         if self.cabinet_name == 'Support Frame':
             self.align_top_to_base = True
@@ -1939,6 +1962,10 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                 hb_utils.run_calc_fix(context, filler.obj)
                 bpy.ops.hb_frameless.toggle_mode(search_obj_name=filler.obj.name)
             for cabinet in cabinets:
+                if cabinet.obj.get('IS_BASE_ASSEMBLY'):
+                    # Placed by hand, so rebuilding the room's bases
+                    # leaves it and whatever stands on it alone.
+                    cabinet.obj[ops_base_assembly.EDITED_KEY] = True
                 if not self.is_appliance:
                     # Cabinet-specific operations (skip for appliances)
                     # Assign the active cabinet style to the cabinet
