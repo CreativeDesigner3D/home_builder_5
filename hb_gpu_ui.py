@@ -29,6 +29,7 @@ from .hb_gpu_draw import (
     draw_glyphs,
     draw_text,
     vcenter_baseline,
+    point_in_rect,
 )
 
 
@@ -304,7 +305,76 @@ def panel_box(bounds, needed_w, panel_h, min_w, max_w, margin,
     return (x, top - panel_h, w, panel_h)
 
 
-# ---- Scrolling list ---------------------------------------------------------
+# ---- Inline text editing ----------------------------------------------------
+
+def _prefix_width(font_id, size, text):
+    """Width of `text` as the start of a longer line. Measured with a
+    sentinel after it, because a trailing space has no ink and would
+    otherwise measure as nothing -- and the caret would not move when
+    a space is typed."""
+    return (text_width(font_id, size, text + ".")
+            - text_width(font_id, size, "."))
+
+
+def begin_clip_nested(rect):
+    """begin_clip for use INSIDE another clip: the box is the part of
+    `rect` that is also inside the clip already current, and that
+    current box is what end_clip_nested puts back. begin_clip cannot
+    nest, because it reads the current box as the region's origin."""
+    prev = gpu.state.scissor_get()
+    origin = gpu.state.viewport_get()
+    x, y, w, h = rect
+    x0 = max(int(math.floor(origin[0] + x)), prev[0])
+    y0 = max(int(math.floor(origin[1] + y)), prev[1])
+    x1 = min(int(math.floor(origin[0] + x + w)) + 1, prev[0] + prev[2])
+    y1 = min(int(math.floor(origin[1] + y + h)) + 1, prev[1] + prev[3])
+    gpu.state.scissor_test_set(True)
+    gpu.state.scissor_set(x0, y0, max(x1 - x0, 0), max(y1 - y0, 0))
+    return prev
+
+
+def end_clip_nested(prev):
+    gpu.state.scissor_set(*prev)
+
+
+def paint_inline_edit(shader, font_id, rect, size, edit, pad=0.0):
+    """The text of an InlineEdit inside `rect`: its selection, the text,
+    and the caret. A text longer than the field scrolls sideways to keep
+    the cursor in view, clipped to the field. Records where it painted
+    on the edit, so a mouse position can be turned back into a
+    character. `pad` is scaled."""
+    s = scale()
+    x, y, w, h = rect
+    avail = max(w - 2 * pad, 1.0)
+    room = max(avail - 2 * s, 1.0)      # leaves the caret inside the clip
+    text = edit.text
+    cx = _prefix_width(font_id, size, edit.before())
+    total = _prefix_width(font_id, size, text)
+    scroll = edit.scroll_x
+    if cx < scroll:
+        scroll = cx
+    elif cx > scroll + room:
+        scroll = cx - room
+    scroll = max(0.0, min(scroll, max(total - room, 0.0)))
+    edit.scroll_x = scroll
+    x0 = x + pad - scroll
+    edit.layout = (font_id, size, x0, rect)
+    prev = begin_clip_nested((x + pad - 1 * s, y, avail + 2 * s, h))
+    try:
+        rng = edit.sel_range()
+        if rng is not None:
+            ax = _prefix_width(font_id, size, text[:rng[0]])
+            bx = _prefix_width(font_id, size, text[:rng[1]])
+            draw_rect(shader, x0 + ax, y + 3 * s, bx - ax, h - 6 * s,
+                      Theme.ACCENT_BG)
+        draw_text(font_id, x0, vcenter_baseline(rect, font_id, size), size,
+                  Theme.TEXT_PRIMARY, text)
+        if rng is None:
+            draw_rect(shader, x0 + cx, y + 4 * s, 1.5 * s, h - 8 * s,
+                      Theme.TEXT_PRIMARY)
+    finally:
+        end_clip_nested(prev)
+
 
 class InlineEdit:
     """A one-line text field for a row of a GPU panel.
@@ -318,19 +388,42 @@ class InlineEdit:
     small but it is exactly the kind of thing that drifts: one copy
     handling Backspace and another not is how two lists that look
     identical stop behaving identically.
+
+    The grammar: a cursor moved by the arrows, Home and End, which
+    select with Shift held; Backspace and Delete; Ctrl+A, C, X and V;
+    any printable character, not only ASCII; and the mouse -- a press
+    places the cursor, a drag selects, a double click takes the word.
+    paint_inline_edit draws it.
     """
 
     def __init__(self):
         self.key = None
         self.text = ''
+        self.cursor = 0
+        # The other end of the selection, or None. What is selected is
+        # whatever lies between it and the cursor.
+        self.anchor = None
+        # Sideways scroll of a text longer than its field, and where the
+        # field was last painted -- kept for paint_inline_edit and for
+        # turning a mouse position back into a character.
+        self.scroll_x = 0.0
+        self.layout = None
+        self.dragging = False
 
-    def begin(self, key, text=''):
+    def begin(self, key, text='', select=False):
+        """Start editing `key` from `text`, the cursor at its end. With
+        `select` the whole of it starts selected, so typing replaces it
+        and an arrow key keeps it -- what clicking into a field does."""
         self.key = key
         self.text = text
+        self.cursor = len(text)
+        self.anchor = 0 if (select and text) else None
+        self.scroll_x = 0.0
+        self.layout = None
+        self.dragging = False
 
     def cancel(self):
-        self.key = None
-        self.text = ''
+        self.begin(None)
 
     @property
     def active(self):
@@ -340,20 +433,169 @@ class InlineEdit:
         """Whether THIS row is the one being edited."""
         return self.key is not None and self.key == key
 
+    def sel_range(self):
+        """(start, end) of the selection, or None when nothing is."""
+        if self.anchor is None or self.anchor == self.cursor:
+            return None
+        return (min(self.anchor, self.cursor), max(self.anchor, self.cursor))
+
+    @property
+    def selected(self):
+        return self.sel_range() is not None
+
+    def before(self):
+        """The text left of the cursor -- what a caller measures to put
+        a caret of its own in the right place."""
+        return self.text[:self.cursor]
+
+    def display(self, caret="|"):
+        """The text with the caret in it, for a caller that draws the
+        edit as one string; none while there is a selection."""
+        if self.selected:
+            return self.text
+        return self.text[:self.cursor] + caret + self.text[self.cursor:]
+
+    def _delete_selection(self):
+        rng = self.sel_range()
+        self.anchor = None
+        if rng is None:
+            return False
+        self.text = self.text[:rng[0]] + self.text[rng[1]:]
+        self.cursor = rng[0]
+        return True
+
+    def _insert(self, chars):
+        self._delete_selection()
+        self.text = (self.text[:self.cursor] + chars
+                     + self.text[self.cursor:])
+        self.cursor += len(chars)
+
+    def _move(self, index, extend):
+        """Put the cursor at `index`; with `extend` (Shift, or a drag)
+        the selection stretches to it from where it started."""
+        if extend:
+            if self.anchor is None:
+                self.anchor = self.cursor
+        else:
+            self.anchor = None
+        self.cursor = min(max(index, 0), len(self.text))
+
+    def _word_bounds(self, index):
+        text = self.text
+        index = min(max(index, 0), len(text))
+        a = b = index
+        while a > 0 and not text[a - 1].isspace():
+            a -= 1
+        while b < len(text) and not text[b].isspace():
+            b += 1
+        return a, b
+
+    # ---- Mouse ----
+
+    def index_at(self, px):
+        """The character boundary nearest region x `px`, by where the
+        text was last painted; the end of the text when it has not
+        been."""
+        if self.layout is None:
+            return len(self.text)
+        font_id, size, x0, _rect = self.layout
+        rel = px - x0
+        best, best_d = 0, None
+        for i in range(len(self.text) + 1):
+            d = abs(_prefix_width(font_id, size, self.text[:i]) - rel)
+            if best_d is None or d < best_d:
+                best, best_d = i, d
+        return best
+
+    def contains(self, mx, my):
+        """Whether a region point is inside the painted field."""
+        return (self.layout is not None
+                and point_in_rect(mx, my, self.layout[3]))
+
+    def mouse(self, event, mx, my):
+        """Take one mouse event with its region position. True when the
+        edit used it; False for a press outside the field, which the
+        caller treats as the field losing focus. A press places the
+        cursor (Shift extends), a drag selects, a double click takes
+        the word."""
+        if event.type == 'LEFTMOUSE':
+            if event.value == 'RELEASE':
+                was, self.dragging = self.dragging, False
+                return was
+            if not self.contains(mx, my):
+                return False
+            index = self.index_at(mx)
+            if event.value == 'DOUBLE_CLICK':
+                self.anchor, self.cursor = self._word_bounds(index)
+                self.dragging = False
+            elif event.value == 'PRESS':
+                self._move(index, event.shift)
+                if self.anchor is None:
+                    self.anchor = self.cursor
+                self.dragging = True
+            return True
+        if event.type in {'MOUSEMOVE', 'INBETWEEN_MOUSEMOVE'}:
+            if self.dragging:
+                self.cursor = self.index_at(mx)
+                return True
+        return False
+
+    # ---- Keys ----
+
     def feed(self, event):
-        """Take one key event. Returns 'COMMIT', 'CANCEL', or None while
-        the user is still typing."""
+        """Take one key event. Returns 'COMMIT', 'CANCEL', 'NEXT' or
+        'PREV' (Tab and Shift+Tab, for a caller with a next field to go
+        to), or None while the user is still typing."""
         if event.value != 'PRESS':
             return None
-        if event.type in {'RET', 'NUMPAD_ENTER'}:
+        kind = event.type
+        if kind in {'RET', 'NUMPAD_ENTER'}:
             return 'COMMIT'
-        if event.type == 'ESC':
+        if kind == 'ESC':
             return 'CANCEL'
-        if event.type == 'BACK_SPACE':
-            self.text = self.text[:-1]
+        if kind == 'TAB':
+            return 'PREV' if event.shift else 'NEXT'
+        rng = self.sel_range()
+        if event.ctrl or event.oskey:
+            if kind == 'A':
+                self.anchor, self.cursor = 0, len(self.text)
+            elif kind in {'C', 'X'}:
+                # With nothing selected, the whole value.
+                bpy.context.window_manager.clipboard = (
+                    self.text[rng[0]:rng[1]] if rng else self.text)
+                if kind == 'X':
+                    if rng is None:
+                        self.anchor, self.cursor = 0, len(self.text)
+                    self._delete_selection()
+            elif kind == 'V':
+                pasted = bpy.context.window_manager.clipboard or ''
+                line = pasted.splitlines()[0] if pasted.strip() else ''
+                self._insert(''.join(c for c in line if c.isprintable()))
             return None
-        if event.ascii and event.ascii.isprintable():
-            self.text += event.ascii
+        if kind in {'LEFT_ARROW', 'RIGHT_ARROW'}:
+            step = -1 if kind == 'LEFT_ARROW' else 1
+            if rng and not event.shift:
+                # An arrow collapses a selection to the end it points at.
+                self._move(rng[0] if step < 0 else rng[1], False)
+            else:
+                self._move(self.cursor + step, event.shift)
+        elif kind == 'HOME':
+            self._move(0, event.shift)
+        elif kind == 'END':
+            self._move(len(self.text), event.shift)
+        elif kind in {'BACK_SPACE', 'DEL'}:
+            if not self._delete_selection():
+                if kind == 'BACK_SPACE' and self.cursor > 0:
+                    self.text = (self.text[:self.cursor - 1]
+                                 + self.text[self.cursor:])
+                    self.cursor -= 1
+                elif kind == 'DEL':
+                    self.text = (self.text[:self.cursor]
+                                 + self.text[self.cursor + 1:])
+        else:
+            char = event.unicode or event.ascii
+            if char and char.isprintable() and not event.alt:
+                self._insert(char)
         return None
 
     def take(self):
@@ -491,27 +733,35 @@ def glyph_check(shader, rect, color):
 
 def paint_field(shader, font_id, rect, size, label, value, hovered,
                 label_frac=0.42, pad=6.0, caret=True, active=False,
-                text_inset=0.0):
+                text_inset=0.0, enabled=True):
     """A labelled value: the label at the left, the current value in a
     button on the right. With `caret` it says it drops down; without,
     it is a value you click into and type (`active` while typing).
     `text_inset` shifts the value text right, for a picture drawn in
-    front of it by the caller. Returns the value button's rect -- the
+    front of it by the caller. Not `enabled`, it is a value to read and
+    not to change: greyed, flat, and deaf to the pointer. Returns the value button's rect -- the
     part a click means something on. `size` is the scaled font size;
     `pad` unscaled, `text_inset` scaled."""
     s = scale()
     x, y, w, h = rect
     label_w = w * label_frac
     value_rect = (x + label_w, y + 2 * s, w - label_w, h - 4 * s)
+    if not enabled:
+        hovered = active = False
     draw_text(font_id, x + pad * s, vcenter_baseline(rect, font_id, size),
-              size, Theme.TEXT_NORMAL,
+              size, Theme.TEXT_NORMAL if enabled else Theme.TEXT_DIM,
               fit_text(font_id, size, label, label_w - pad * s))
-    paint_button(shader, value_rect, hovered=hovered, active=active)
+    if enabled:
+        paint_button(shader, value_rect, hovered=hovered, active=active)
+    else:
+        # No fill: a well with only its outline reads as not pressable.
+        draw_rect_outline(shader, *value_rect, Theme.PANEL_BORDER)
     vx, vy, vw, vh = value_rect
     caret_w = 7 * s if caret else 0.0
     draw_text(font_id, vx + pad * s + text_inset,
               vcenter_baseline(value_rect, font_id, size),
-              size, Theme.TEXT_PRIMARY if (hovered or active)
+              size, Theme.TEXT_DIM if not enabled
+              else Theme.TEXT_PRIMARY if (hovered or active)
               else Theme.TEXT_NORMAL,
               fit_text(font_id, size, value,
                        vw - caret_w - 3 * pad * s - text_inset))

@@ -25,15 +25,20 @@ A section is reached one of two ways:
 A ``pool`` page is a named list you pick from, add to and assign (the
 cabinet styles), with the active item's fields and commands below it.
 A ``form`` page is fields on the library's own property group (the
-handles). The face frame library draws its pool at the root of the tab
-instead of under a header, because that pool is reached for mid-design;
-the drawing code is the same either way.
+handles).
 
 Field kinds: ``enum`` (a dropdown), ``bool`` (a checkbox), ``distance``
 (a value you click into and type, in the placement typing grammar),
 ``thumb`` (an enum picked from a grid of pictures -- see thumb_picker),
-``notes`` (lines of text a callable works out from the context) and
-``gap`` (space). A field may carry a dict after its label: ``when``
+``text`` (a string you click into and type), ``choice`` (a dropdown
+with a chip that turns it into typed text, for a value outside the
+list), ``locked`` (a distance that follows its source until its padlock
+chip is opened), ``native`` (a colour or datablock, edited through Blender's
+own field in a popover), ``file`` (a path, chosen in Blender's file
+browser and cleared by the chip on its row), ``items`` (a row per item of a
+collection, each with a remove chip), ``pick`` (a button opening a menu
+of commands worked out as it opens), ``notes`` (lines of text a callable
+works out from the context) and ``gap`` (space). A field may carry a dict after its label: ``when``
 hides it unless the callable, given the owner, says so; ``thumb`` maps
 a choice to its picture.
 """
@@ -44,6 +49,7 @@ from .. import units
 from .. import hb_placement
 from ..hb_gpu_draw import (
     draw_rect,
+    draw_rect_outline,
     draw_rects,
     draw_text,
     point_in_rect,
@@ -57,7 +63,11 @@ from ..hb_gpu_ui import (
     text_width,
     fit_text,
     draw_centered_text,
+    draw_polyline,
+    arc_points,
     paint_button,
+    glyph_rename,
+    glyph_delete,
     glyph_plus,
     glyph_chevron,
     glyph_caret,
@@ -66,6 +76,7 @@ from ..hb_gpu_ui import (
     enum_items,
     enum_label,
     InlineEdit,
+    paint_inline_edit,
 )
 
 PREFERRED_WIDTH = 300       # unscaled
@@ -81,30 +92,14 @@ BTN = 18
 PAD = 4
 FONT = 10
 ACCENT_W = 3
-GEAR = 18           # the per-style settings button on a row
+GEAR = 18           # the delete chip on the active style's row
+CONFIRM_TEXT = "Delete?"    # what that chip says once clicked
 ARROW = 14          # a move up / move down chip on the active row
 ARROW_GAP = 2       # between the two chips and the settings button
 PLUS_SPAN = 8       # full width of the plus mark, not half
 PLUS_GAP = 4        # plus mark to the word NEW
 INDENT = 8          # an unfolded section's content, in from its header
-
-# Commands that act on the active face frame style. Drawn as buttons
-# rather than hidden in a popup: these are the things you DO with a
-# style, and the painting ones want to be one click from the list.
-#
-# Three, not the sidebar's seven. Assign, Update and Reset stay in the
-# sidebar, which still has all of them; the style's own settings are
-# behind the menu glyph on its row, so a button for them here would be
-# a second door onto the same thing. What is left is the three brushes,
-# named for what each one paints: the whole cabinet, one part's finish,
-# one part's interior.
-ACTIONS = (
-    (("Paint Cabinet", "hb_face_frame.paint_assign_cabinet_style",
-      None, None),
-     ("Paint Part", "hb_face_frame.paint_part_material", "brush", "FINISH"),
-     ("Paint Interior", "hb_face_frame.paint_part_material",
-      "brush", "INTERIOR")),
-)
+CHIP = 18            # a toggle or remove chip at the end of a field row
 
 
 def form_sections(context):
@@ -124,14 +119,6 @@ def page_specs(context):
     return dict(getattr(cat, 'OPTION_PAGES', None) or {}) if cat else {}
 
 
-def has_style_list(context):
-    """Whether this library's style pool is drawn at the tab's root.
-    Only the face frame library's is; the others reach theirs through a
-    page or a form row like any other setting."""
-    from . import library_panel
-    return library_panel.active_tab(context) == 'FACE FRAME'
-
-
 _list = ScrollList(bar_width=4, bar_pad=4, min_rows=3)
 # Inline rename, keyed by style index -- the same field the scene
 # navigator renames rooms with, so the two lists behave alike. The pool
@@ -139,6 +126,10 @@ _list = ScrollList(bar_width=4, bar_pad=4, min_rows=3)
 # say which list the index counts.
 _edit = InlineEdit()
 _edit_pool = None
+# The style whose delete chip has been clicked once, as (pool key,
+# index). The chip then reads "Delete?" and the next click on it is the
+# one that removes; a click anywhere else in the tab stands it down.
+_armed_delete = None
 # Inline value typing for a distance field, keyed by (ID, path, prop).
 _value_edit = InlineEdit()
 
@@ -209,8 +200,9 @@ def _main_group(name, context):
 
 
 def _norm_action(action):
-    """(label, operator, prop, value) from either the four-tuple the
-    face frame actions use or a catalog's (label, operator) pair."""
+    """(label, operator, prop, value) from a catalog's (label, operator)
+    pair or its four-tuple naming one operator property and its value.
+    A dict in the prop slot is the operator's keyword arguments whole."""
     if len(action) >= 4:
         return tuple(action[:4])
     label, op = action[0], action[1]
@@ -224,13 +216,16 @@ class PoolSpec:
     collection; `fields` are (kind, property, label) drawn for the
     active item; `actions` are rows of commands; `scene_fields` are
     fields of the same shape on the ROOM's copy of the group -- a
-    setting that belongs to the section but not to any one item. Any
-    operator left None simply leaves that control out.
+    setting that belongs to the section but not to any one item.
+    `actions_first` puts the commands straight under the list, for a
+    pool whose item has more fields than fit on screen.
+    Any operator left None simply leaves that control out.
     """
 
     def __init__(self, title, props, collection, index, add_op=None,
                  remove_op=None, duplicate_op=None, move_op=None,
-                 settings_op=None, fields=(), actions=(), scene_fields=()):
+                 fields=(), actions=(), scene_fields=(),
+                 actions_first=False):
         self.title = title
         self.props = props
         self.collection = collection
@@ -239,11 +234,17 @@ class PoolSpec:
         self.remove_op = remove_op
         self.duplicate_op = duplicate_op
         self.move_op = move_op
-        self.settings_op = settings_op
         self.fields = tuple(fields)
         self.actions = tuple(tuple(_norm_action(a) for a in row)
                              for row in actions)
         self.scene_fields = tuple(scene_fields)
+        self.actions_first = actions_first
+
+    @property
+    def key(self):
+        """What this pool is, for telling two specs of it alike: a
+        page's spec is built afresh on every draw."""
+        return (self.props, self.collection)
 
     def owner(self, context):
         return _main_group(self.props, context)
@@ -281,47 +282,60 @@ def _pool_from_spec(spec):
         remove_op=spec.get('remove_op'),
         duplicate_op=spec.get('duplicate_op'),
         move_op=spec.get('move_op'),
-        settings_op=spec.get('settings_op'),
         fields=spec.get('fields', ()),
         actions=spec.get('actions', ()),
         scene_fields=spec.get('scene_fields', ()),
+        actions_first=spec.get('actions_first', False),
     )
-
-
-# The face frame pool, drawn at the root of the tab. Its per-style
-# settings are behind the glyph on each row (a dialog, until that
-# library gets a page of its own).
-FF_POOL = PoolSpec(
-    title="Cabinet Styles",
-    props='hb_face_frame',
-    collection='cabinet_styles',
-    index='active_cabinet_style_index',
-    add_op='hb_face_frame.add_cabinet_style',
-    move_op='hb_face_frame.move_cabinet_style',
-    settings_op='home_builder.cabinet_style_settings',
-    actions=ACTIONS,
-)
-
-
-def _style_props(context):
-    """The face frame style pool (it lives on the main scene)."""
-    return FF_POOL.owner(context)
-
-
-def cabinet_styles(context):
-    return FF_POOL.items(context)
-
-
-def active_style_index(context):
-    return FF_POOL.active_index(context)
 
 
 # ---- Sections ----------------------------------------------------------------
 # Which sections are unfolded, keyed by (product tab, draw method) so a
 # section left open on one library does not open a same-named one on
-# another. Session state, like the library grid's folded categories.
+# another. Kept in the user's folder for this extension, so the tab
+# comes back the way it was left rather than folded shut every session.
+# Until something has been saved, the face frame cabinet styles start
+# open: that pool is reached for mid-design, so its list should be there
+# when the tab is.
 
-_expanded = set()
+_DEFAULT_EXPANDED = (('FACE FRAME', 'draw_cabinet_styles_ui'),)
+_STATE_FILE = 'options_panel.json'
+_expanded = None        # loaded the first time it is asked for
+
+
+def _state_path(create=False):
+    import os
+    addon_pkg = __package__.rsplit('.operators', 1)[0]
+    try:
+        folder = bpy.utils.extension_path_user(addon_pkg, create=create)
+    except Exception:
+        folder = bpy.utils.user_resource('CONFIG', path='home_builder_5',
+                                         create=create)
+    return os.path.join(folder, _STATE_FILE) if folder else None
+
+
+def _expanded_sections():
+    global _expanded
+    if _expanded is None:
+        import json
+        _expanded = set(_DEFAULT_EXPANDED)
+        try:
+            with open(_state_path(), encoding='utf-8') as fh:
+                saved = json.load(fh).get('expanded')
+            _expanded = {(str(tab), str(method)) for tab, method in saved}
+        except Exception:
+            pass        # no file yet, or one that cannot be read
+    return _expanded
+
+
+def _save_expanded():
+    import json
+    try:
+        with open(_state_path(create=True), 'w', encoding='utf-8') as fh:
+            json.dump({'expanded': sorted(_expanded_sections())}, fh,
+                      indent=1)
+    except Exception as ex:
+        print('Home Builder: could not save the options layout: %s' % ex)
 
 
 def _section_key(context, method):
@@ -331,15 +345,17 @@ def _section_key(context, method):
 
 def toggle_section(context, method):
     key = _section_key(context, method)
-    if key in _expanded:
-        _expanded.discard(key)
+    expanded = _expanded_sections()
+    if key in expanded:
+        expanded.discard(key)
     else:
-        _expanded.add(key)
+        expanded.add(key)
+    _save_expanded()
     _tag()
 
 
 def section_expanded(context, method):
-    return _section_key(context, method) in _expanded
+    return _section_key(context, method) in _expanded_sections()
 
 
 def _pool_blocks(context, pool):
@@ -349,26 +365,89 @@ def _pool_blocks(context, pool):
     active = pool.active_index(context)
     for i, item in enumerate(pool.items(context)):
         blocks.append(('style', (i, item.name, i == active, pool)))
+    commands = []
+    if pool.actions:
+        commands.append(('gap', None))
+        for row in pool.actions:
+            commands.append(('actions', row))
+    if pool.duplicate_op:
+        commands.append(('actions',
+                         (("Duplicate", pool.duplicate_op, None, None),)))
+    if pool.actions_first:
+        blocks.extend(commands)
     item = pool.active(context)
     if item is not None and pool.fields:
         blocks.append(('gap', None))
-        for field in pool.fields:
-            blocks.append(('field', (field, item)))
-    if pool.actions:
-        blocks.append(('gap', None))
-        for row in pool.actions:
-            blocks.append(('actions', row))
-    edit_row = [(label, op, None, None)
-                for label, op in (("Duplicate", pool.duplicate_op),
-                                  ("Delete", pool.remove_op))
-                if op]
-    if edit_row:
-        blocks.append(('actions', tuple(edit_row)))
+        blocks.extend(_field_blocks(context, pool.fields, item))
+    if not pool.actions_first:
+        blocks.extend(commands)
     scene_owner = pool.scene_owner(context) if pool.scene_fields else None
     if scene_owner is not None:
         blocks.append(('gap', None))
-        for field in pool.scene_fields:
-            blocks.append(('field', (field, scene_owner)))
+        blocks.extend(_field_blocks(context, pool.scene_fields, scene_owner))
+    return blocks
+
+
+def _field_blocks(context, fields, owner):
+    """Blocks for a run of fields on one owner -- a form's group or a
+    pool's active item. ``when`` applies to every kind, so a caption or
+    a row of commands can come and go with the values around it."""
+    blocks = []
+    for field in fields:
+        if not _field_shown(field, owner):
+            continue
+        if field[0] == 'gap':
+            blocks.append(('gap', None))
+        elif field[0] == 'label':
+            blocks.append(('label', field[2]))
+        elif field[0] == 'notes':
+            # Lines worked out as the section is drawn: the callable is
+            # given the context (and the owner, where it asks for it)
+            # and returns the text, or nothing.
+            try:
+                if _field_parts(field)[3].get('owner'):
+                    lines = field[1](context, owner) or ()
+                else:
+                    lines = field[1](context) or ()
+            except Exception:
+                lines = ()
+            blocks.extend(('note', line) for line in lines)
+        elif field[0] == 'actions':
+            # A row of commands placed among the fields, so a section
+            # can group its commands under the label they belong to.
+            blocks.append(('actions', tuple(_norm_action(a) for a in field[1])))
+        elif field[0] == 'pick':
+            blocks.append(('pick', (field[2], field[1])))
+        elif field[0] == 'items':
+            blocks.extend(_item_blocks(context, field, owner))
+        else:
+            blocks.append(('field', (field, owner)))
+    return blocks
+
+
+def _item_blocks(context, field, owner):
+    """One row per item of a collection on `owner`: the item's value
+    across the row with a remove chip at its end, then whatever fields
+    the list says each item carries beneath it."""
+    _kind, collection, _label, options = _field_parts(field)
+    blocks = []
+    remove = options.get('remove')
+    extra = options.get('fields')
+    for i, item in enumerate(getattr(owner, collection, ()) or ()):
+        row = dict(options.get('row') or {})
+        row['full'] = True
+        if remove is not None:
+            op_id, kwargs_fn = remove
+            row['remove'] = (op_id, dict(kwargs_fn(i, item)))
+        blocks.append(('field', ((options.get('kind', 'text'),
+                                  options.get('prop', 'name'), "", row),
+                                 item)))
+        if extra is not None:
+            try:
+                more = extra(owner, item) or ()
+            except Exception:
+                more = ()
+            blocks.extend(_field_blocks(context, more, item))
     return blocks
 
 
@@ -382,30 +461,7 @@ def _form_blocks(context, spec):
         owner = _main_group(group, context)
     if owner is None:
         return []
-    blocks = []
-    for field in spec.get('fields', ()):
-        if field[0] == 'gap':
-            blocks.append(('gap', None))
-            continue
-        if field[0] == 'label':
-            blocks.append(('label', field[2]))
-            continue
-        if field[0] == 'notes':
-            # Lines the form works out as it is drawn: the callable is
-            # given the context and returns the text, or nothing.
-            try:
-                lines = field[1](context) or ()
-            except Exception:
-                lines = ()
-            blocks.extend(('note', line) for line in lines)
-            continue
-        if field[0] == 'actions':
-            # A row of commands placed among the fields, so a form can
-            # group its commands under the label they belong to.
-            blocks.append(('actions', tuple(_norm_action(a) for a in field[1])))
-            continue
-        if _field_shown(field, owner):
-            blocks.append(('field', (field, owner)))
+    blocks = _field_blocks(context, spec.get('fields', ()), owner)
     actions = spec.get('actions', ())
     if actions:
         blocks.append(('gap', None))
@@ -419,18 +475,6 @@ def _form_blocks(context, spec):
 def _blocks(context):
     """The tab's content as (kind, payload) blocks, top to bottom."""
     blocks = []
-    if has_style_list(context):
-        # The header carries New rather than a full-width row of its own:
-        # it is the one command that makes a list item, so it belongs to
-        # the list's caption, not to the stack of commands that act on a
-        # style.
-        blocks.append(('head', ("Cabinet Styles", True, FF_POOL)))
-        active = FF_POOL.active_index(context)
-        for i, style in enumerate(FF_POOL.items(context)):
-            blocks.append(('style', (i, style.name, i == active, FF_POOL)))
-        for row in FF_POOL.actions:
-            blocks.append(('actions', row))
-        blocks.append(('gap', None))
     blocks.append(('head', ("Options", False, None)))
     pages = page_specs(context)
     for label, method in form_sections(context):
@@ -451,6 +495,70 @@ def _blocks(context):
     return blocks
 
 
+def _block_h(block, s):
+    kind = block[0]
+    if kind == 'indent':
+        return _block_h(block[1], s)
+    if kind in ('head', 'section'):
+        return SECTION_H * s
+    if kind == 'gap':
+        return GROUP_GAP * s
+    return (ROW_H + ROW_GAP) * s
+
+
+_last_list_h = 0.0      # the list's height at the last build, for Tab
+
+
+def _typed_fields(context):
+    """Every field that is typed into, top to bottom, on screen or
+    not: (key, kind, owner, prop, offset from the top, height)."""
+    s = scale()
+    out, y = [], 0.0
+    for block in _blocks(context):
+        h = _block_h(block, s)
+        inner = block[1] if block[0] == 'indent' else block
+        if inner[0] == 'field':
+            row = _field_entries(context, inner[1][0], inner[1][1],
+                                 0.0, 0.0, 100.0, ROW_H * s, s)[0]
+            if row[1] in ('distance', 'text') and not row[8].get('readonly'):
+                out.append((_owner_key(row[4], row[2]), row[1], row[4],
+                            row[2], y, h))
+        y += h
+    return out
+
+
+def _begin_typing(kind, owner, prop):
+    """A distance is typed fresh; text is edited from what is there,
+    all of it selected so that typing replaces it."""
+    key = _owner_key(owner, prop)
+    if key is None:
+        return False
+    if kind == 'text':
+        _value_edit.begin(key, str(getattr(owner, prop, "") or ""),
+                          select=True)
+    else:
+        _value_edit.begin(key, '')
+    return True
+
+
+def _begin_neighbour(context, key, step):
+    """Move typing to the field after (or before) `key`, scrolling it
+    into view. False at either end of the tab."""
+    fields = _typed_fields(context)
+    keys = [f[0] for f in fields]
+    if key not in keys:
+        return False
+    i = keys.index(key) + step
+    if not 0 <= i < len(fields):
+        return False
+    _key, kind, owner, prop, offset, height = fields[i]
+    if not _begin_typing(kind, owner, prop):
+        return False
+    if _last_list_h > 0:
+        _list.scroll_into_view(offset, height, _last_list_h)
+    return True
+
+
 def build(rect, context):
     """Rows inside `rect`. Entries:
 
@@ -459,7 +567,7 @@ def build(rect, context):
         ('style_row', index, name, rect, is_active, gear_rect,
                       up_rect, down_rect, pool)
         ('field_row', kind, prop, label, owner, value, rect, value_rect)
-        ('action_btn', label, op_id, prop, value, rect)
+        ('action_btn', label, op_id, prop, value, rect, enabled)
         ('form_row', label, method_name, rect)
         ('styles_clip', clip_rect, track, thumb)
     """
@@ -469,20 +577,16 @@ def build(rect, context):
     sect_h = SECTION_H * s
     gap = ROW_GAP * s
 
+    global _last_list_h
     blocks = _blocks(context)
+    polled = {}
 
     def _h(block):
-        kind = block[0]
-        if kind == 'indent':
-            return _h(block[1])
-        if kind in ('head', 'section'):
-            return sect_h
-        if kind == 'gap':
-            return GROUP_GAP * s
-        return row_h + gap
+        return _block_h(block, s)
 
     content_h = sum(_h(b) for b in blocks)
     list_h, _scrollable, reserve = _list.measure(content_h, h, row_h)
+    _last_list_h = list_h
     _list.clamp(content_h, list_h)
     top = bottom + h
     track, thumb = _list.bar_rects(x0, w, top, list_h, content_h, row_h)
@@ -523,13 +627,20 @@ def build(rect, context):
         elif kind == 'style':
             i, name, is_active, pool = payload
             rect = (x, block_top - row_h, row_w, row_h)
+            # Delete, on the ACTIVE row only and never for the last
+            # style: it removes the style you are on, beside its name,
+            # and a pool is not allowed to run empty.
+            count = len(pool.items(context))
             gear_rect = None
             right = x + row_w - 2 * s
-            if pool.settings_op:
+            if pool.remove_op and is_active and count > 1:
                 gear = GEAR * s
-                gear_rect = (right - gear,
+                gear_w = gear
+                if _armed_delete == (pool.key, i):
+                    gear_w = text_width(0, FONT * s, CONFIRM_TEXT) + 12 * s
+                gear_rect = (right - gear_w,
                              block_top - row_h + (row_h - gear) / 2.0,
-                             gear, gear)
+                             gear_w, gear)
                 right = gear_rect[0]
             # Move up / move down, on the ACTIVE row only. Order is what
             # the list means -- the first style is the one drawings leave
@@ -538,7 +649,6 @@ def build(rect, context):
             # Both slots stay reserved at the ends of the list so the
             # remaining chip does not slide sideways.
             up_rect = down_rect = None
-            count = len(pool.items(context))
             if pool.move_op and is_active and count > 1:
                 aw = ARROW * s
                 ay = block_top - row_h + (row_h - aw) / 2.0
@@ -555,34 +665,128 @@ def build(rect, context):
             for j, (label, op_id, prop, value) in enumerate(payload):
                 entries.append((
                     'action_btn', label, op_id, prop, value,
-                    (x + j * (bw + gap), block_top - row_h, bw, row_h)))
+                    (x + j * (bw + gap), block_top - row_h, bw, row_h),
+                    _can_run(op_id, polled)))
         elif kind == 'field':
             field, owner = payload
-            fkind, prop, label, options = _field_parts(field)
-            rect = (x, block_top - row_h, row_w, row_h)
-            lw = row_w * 0.42
-            value_rect = (x + lw, rect[1] + 2 * s, row_w - lw,
-                          row_h - 4 * s)
-            if fkind == 'bool':
-                value = bool(getattr(owner, prop, False))
-                value_rect = rect
-            elif fkind == 'distance':
-                key = _owner_key(owner, prop)
-                if _value_edit.editing(key):
-                    value = _value_edit.text + "|"
-                else:
-                    value = units.unit_to_string(
-                        context.scene.unit_settings,
-                        float(getattr(owner, prop, 0.0) or 0.0))
-            else:
-                value = enum_label(owner, prop)
-            entries.append(('field_row', fkind, prop, label, owner, value,
-                            rect, value_rect, options))
+            entries.extend(_field_entries(context, field, owner, x,
+                                          block_top, row_w, row_h, s))
+        elif kind == 'pick':
+            label, fn = payload
+            entries.append(('pick_btn', label, fn,
+                            (x, block_top - row_h, row_w, row_h)))
         elif kind == 'form':
             label, method = payload
             entries.append(('form_row', label, method,
                             (x, block_top - row_h, row_w, row_h)))
     return entries
+
+
+def _native_value(owner, prop):
+    """What a 'native' field's button says: a datablock's name, a file's
+    name, or nothing for a colour (which is painted instead)."""
+    value = getattr(owner, prop, None)
+    if value is None or value == "":
+        return "None"
+    if isinstance(value, str):
+        import os
+        return os.path.basename(value.rstrip('/\\')) or value
+    name = getattr(value, 'name', None)
+    return name if isinstance(name, str) else ""
+
+
+def _field_entries(context, field, owner, x, top, row_w, row_h, s):
+    """The entries of one field row: the field, and the chip at its end
+    where it has one. 'choice' and 'locked' resolve here to the kind the
+    row is being right now -- a dropdown or typed text, a value that can
+    be typed into or only read."""
+    fkind, prop, label, options = _field_parts(field)
+    options = dict(options)
+    chip_prop = glyph = None
+    if fkind == 'choice':
+        base = options.get('custom') or prop
+        chip_prop, glyph = base + '_is_custom', 'text'
+        if getattr(owner, chip_prop, False):
+            fkind, prop = 'text', base + '_custom'
+        else:
+            fkind = 'enum'
+    elif fkind == 'locked':
+        chip_prop, glyph = options.get('unlock'), 'lock'
+        fkind = 'distance'
+        options['readonly'] = not getattr(owner, chip_prop, False)
+    remove = options.get('remove')
+    # A file that has been set can be cleared again from its row.
+    clear = fkind == 'file' and bool(getattr(owner, prop, ""))
+    chip_room = ((CHIP + ARROW_GAP) * s
+                 if (chip_prop or remove or clear) else 0.0)
+    rect = (x, top - row_h, row_w - chip_room, row_h)
+    # The label column is measured on the full row, so a row that gives
+    # up room to a chip still lines its value up with its neighbours.
+    lw = 0.0 if options.get('full') else row_w * 0.42
+    options['frac'] = lw / rect[2] if rect[2] > 0 else 0.0
+    value_rect = (x + lw, rect[1] + 2 * s, rect[2] - lw, row_h - 4 * s)
+    if fkind == 'bool':
+        value = bool(getattr(owner, prop, False))
+        value_rect = rect
+    elif fkind == 'distance':
+        if _value_edit.editing(_owner_key(owner, prop)):
+            value = ""      # the edit paints itself over the field
+        else:
+            value = units.unit_to_string(
+                context.scene.unit_settings,
+                float(getattr(owner, prop, 0.0) or 0.0))
+    elif fkind == 'text':
+        if _value_edit.editing(_owner_key(owner, prop)):
+            value = ""
+        else:
+            value = str(getattr(owner, prop, "") or "")
+    elif fkind in ('native', 'file'):
+        value = _native_value(owner, prop)
+    else:
+        value = enum_label(owner, prop)
+    out = [('field_row', fkind, prop, label, owner, value, rect, value_rect,
+            options)]
+    chip = CHIP * s
+    chip_rect = (x + row_w - chip, top - row_h + (row_h - chip) / 2.0,
+                 chip, chip)
+    if chip_prop:
+        out.append(('toggle_chip', owner, chip_prop, chip_rect,
+                    bool(getattr(owner, chip_prop, False)), glyph))
+    elif remove:
+        out.append(('op_chip', remove[0], remove[1], chip_rect))
+    elif clear:
+        out.append(('clear_chip', owner, prop, chip_rect))
+    return out
+
+
+def _glyph_lock(shader, rect, locked, color):
+    """A padlock: closed when the value follows its source, its shackle
+    swung open when it has been taken over by hand."""
+    import math
+    x, y, w, h = rect
+    bw, bh = w * 0.44, h * 0.30
+    bx, by = x + (w - bw) / 2.0, y + h * 0.24
+    draw_rect(shader, bx, by, bw, bh, color)
+    r = bw * 0.34
+    cx = bx + bw / 2.0 + (0.0 if locked else r * 1.1)
+    cy = by + bh + h * 0.06
+    pts = [(cx - r, by + bh)] + arc_points(cx, cy, r, math.pi, 0.0, 8)
+    if locked:
+        pts.append((cx + r, by + bh))
+    draw_polyline(shader, pts, color)
+
+
+def _can_run(op_id, cache):
+    """Whether the operator's poll passes here and now. Asked once per
+    operator per build; an operator that cannot be asked counts as
+    runnable, so a mistake here never locks a command away."""
+    if op_id not in cache:
+        try:
+            mod, name = op_id.split('.', 1)
+            cache[op_id] = bool(getattr(getattr(bpy.ops, mod), name).poll())
+        except Exception:
+            cache[op_id] = True
+    return cache[op_id]
 
 
 def _clip(entries):
@@ -675,10 +879,11 @@ def paint(entries, mx, my):
                 arrows = is_active and (up_rect is not None
                                         or down_rect is not None)
                 arrow_room = (2 * ARROW + ARROW_GAP) * s if arrows else 0.0
-                gear_room = GEAR * s if gear_rect is not None else 0.0
+                gear_room = gear_rect[2] if gear_rect is not None else 0.0
                 hovered = point_in_rect(mx, my, rect)
                 rx, ry, rw, rh = rect
-                renaming = _edit.editing(_i) and _edit_pool is pool
+                renaming = (_edit.editing(_i) and _edit_pool is not None
+                            and _edit_pool.key == pool.key)
                 if hovered and not renaming:
                     draw_rects(shader, [rect], Theme.ROW_HOVER_BG)
                 if is_active:
@@ -691,28 +896,33 @@ def paint(entries, mx, my):
                     # selected -- the navigator's rename looks the same.
                     field_w = (rw - gear_room - arrow_room - 12 * s
                                - (text_x - rx))
-                    draw_rects(shader, [(text_x - 3 * s, ry + 3 * s,
-                                         field_w + 6 * s, rh - 6 * s)],
-                               (0.0, 0.0, 0.0, 0.55))
-                    shown = fit_text(font_id, FONT * s, _edit.text + "|",
-                                     field_w)
+                    box = (text_x - 3 * s, ry + 3 * s,
+                           field_w + 6 * s, rh - 6 * s)
+                    draw_rects(shader, [box], (0.0, 0.0, 0.0, 0.55))
+                    paint_inline_edit(shader, font_id, box, FONT * s,
+                                      _edit, pad=3 * s)
+                    shown = ""
                 else:
                     shown = fit_text(font_id, FONT * s, name,
                                      rw - gear_room - arrow_room - 16 * s)
                 draw_text(font_id, text_x, ry + rh * 0.28, FONT * s,
                           Theme.TEXT_PRIMARY if (is_active or renaming)
                           else Theme.TEXT_NORMAL, shown)
-                if gear_rect is not None:
-                    # Settings glyph: three bars, matching the library's.
-                    gx, gy, gw, gh = gear_rect
+                if gear_rect is not None and not renaming:
                     g_hot = point_in_rect(mx, my, gear_rect)
-                    if g_hot:
-                        paint_button(shader, gear_rect, hovered=True)
-                    for k in range(3):
-                        draw_rects(shader, [(gx + 4 * s,
-                                             gy + gh * (0.32 + k * 0.18),
-                                             gw - 8 * s, 1.4 * s)],
-                                   Theme.GLYPH_HOVER if g_hot else Theme.GLYPH)
+                    if _armed_delete == (pool.key, _i):
+                        danger = Theme.ACTION_DANGER_BG
+                        paint_button(shader, gear_rect, hovered=g_hot,
+                                     bg=danger,
+                                     hover_bg=danger[:3] + (0.95,))
+                        draw_centered_text(font_id, gear_rect, FONT * s,
+                                           Theme.TEXT_PRIMARY, CONFIRM_TEXT)
+                    else:
+                        if g_hot:
+                            paint_button(shader, gear_rect, hovered=True)
+                        glyph_delete(shader, gear_rect,
+                                     Theme.GLYPH_HOVER if g_hot
+                                     else Theme.GLYPH)
                 for a_rect, up in ((up_rect, True), (down_rect, False)):
                     if a_rect is None:
                         continue
@@ -726,14 +936,43 @@ def paint(entries, mx, my):
             elif kind == 'field_row':
                 (_, fkind, prop, label, owner, value, rect, value_rect,
                  options) = entry
-                hot = point_in_rect(mx, my, value_rect)
+                readonly = options.get('readonly', False)
+                hot = point_in_rect(mx, my, value_rect) and not readonly
+                frac = options.get('frac', 0.42)
                 if fkind == 'bool':
                     paint_check(shader, font_id, rect, FONT * s, label,
                                 bool(value), point_in_rect(mx, my, rect))
-                elif fkind == 'distance':
+                elif fkind in ('distance', 'text'):
                     editing = _value_edit.editing(_owner_key(owner, prop))
                     paint_field(shader, font_id, rect, FONT * s, label,
-                                str(value), hot, caret=False, active=editing)
+                                str(value), hot, label_frac=frac,
+                                caret=False,
+                                enabled=(not readonly
+                                         or options.get('plain', False)))
+                    if editing:
+                        # A dark well with the accent round it, so the
+                        # accent is free to mean "selected" inside it.
+                        draw_rect(shader, *value_rect, (0.0, 0.0, 0.0, 0.55))
+                        draw_rect_outline(shader, *value_rect,
+                                          Theme.ACCENT_BG)
+                        paint_inline_edit(shader, font_id, value_rect,
+                                          FONT * s, _value_edit, pad=6 * s)
+                elif fkind == 'file':
+                    paint_field(shader, font_id, rect, FONT * s, label,
+                                str(value), hot, label_frac=frac,
+                                caret=False)
+                elif fkind == 'native':
+                    paint_field(shader, font_id, rect, FONT * s, label,
+                                str(value), hot, label_frac=frac,
+                                caret=False)
+                    color = getattr(owner, prop, None)
+                    if (not isinstance(color, str) and color is not None
+                            and hasattr(color, '__len__')
+                            and len(color) >= 3):
+                        vx, vy, vw, vh = value_rect
+                        draw_rect(shader, vx + 3 * s, vy + 3 * s,
+                                  vw - 6 * s, vh - 6 * s,
+                                  (color[0], color[1], color[2], 1.0))
                 elif fkind == 'thumb':
                     # The current pick's picture rides in the button,
                     # in front of its name.
@@ -749,7 +988,8 @@ def paint(entries, mx, my):
                     vx, vy, vw, vh = value_rect
                     inset = (vh + 4 * s) if tex is not None else 0.0
                     paint_field(shader, font_id, rect, FONT * s, label,
-                                str(value), hot, text_inset=inset)
+                                str(value), hot, label_frac=frac,
+                                text_inset=inset)
                     if tex is not None:
                         gpu.state.blend_set('ALPHA')
                         thumb_picker.draw_texture(
@@ -757,13 +997,45 @@ def paint(entries, mx, my):
                         shader.bind()
                 else:
                     paint_field(shader, font_id, rect, FONT * s, label,
-                                str(value), hot)
-            elif kind == 'action_btn':
-                _, label, _op, _prop, _val, rect = entry
+                                str(value), hot, label_frac=frac)
+            elif kind == 'toggle_chip':
+                _, _owner, _prop, rect, on, glyph = entry
+                c_hot = point_in_rect(mx, my, rect)
+                paint_button(shader, rect, hovered=c_hot,
+                             active=on and glyph == 'text')
+                color = Theme.GLYPH_HOVER if (c_hot or on) else Theme.GLYPH
+                if glyph == 'lock':
+                    _glyph_lock(shader, rect, not on, color)
+                else:
+                    glyph_rename(shader, rect, color)
+            elif kind == 'clear_chip':
+                rect = entry[3]
+                c_hot = point_in_rect(mx, my, rect)
+                if c_hot:
+                    paint_button(shader, rect, hovered=True)
+                glyph_delete(shader, rect,
+                             Theme.GLYPH_HOVER if c_hot else Theme.GLYPH)
+            elif kind == 'op_chip':
+                _, _op, _kwargs, rect = entry
+                c_hot = point_in_rect(mx, my, rect)
+                if c_hot:
+                    paint_button(shader, rect, hovered=True)
+                glyph_delete(shader, rect,
+                             Theme.GLYPH_HOVER if c_hot else Theme.GLYPH)
+            elif kind == 'pick_btn':
+                _, label, _fn, rect = entry
                 hovered = point_in_rect(mx, my, rect)
                 paint_button(shader, rect, hovered=hovered)
                 draw_centered_text(font_id, rect, FONT * s,
                                    Theme.TEXT_PRIMARY if hovered
+                                   else Theme.TEXT_NORMAL, label)
+            elif kind == 'action_btn':
+                _, label, _op, _prop, _val, rect, enabled = entry
+                hovered = enabled and point_in_rect(mx, my, rect)
+                paint_button(shader, rect, hovered=hovered)
+                draw_centered_text(font_id, rect, FONT * s,
+                                   Theme.TEXT_DIM if not enabled
+                                   else Theme.TEXT_PRIMARY if hovered
                                    else Theme.TEXT_NORMAL, label)
             elif kind == 'form_row':
                 _, label, _method, rect = entry
@@ -792,7 +1064,10 @@ def _run(op_id, **kwargs):
 
 
 def hit(context, mx, my, entries):
-    global _edit_pool
+    global _edit_pool, _armed_delete
+    # Any click stands a pending delete down; only a second click on the
+    # same chip, below, goes through with it.
+    armed, _armed_delete = _armed_delete, None
     clip = _clip(entries)
     if clip is not None and not point_in_rect(mx, my, clip[1]):
         return False
@@ -813,11 +1088,15 @@ def hit(context, mx, my, entries):
                         _run(pool.move_op, direction=direction)
                     _tag()
                     return True
-            # Gear next: it sits inside the row, so a hit there must
-            # not also re-activate the style underneath it.
+            # Delete next: it sits inside the row, so a hit there must
+            # not also rename the style underneath it.
             if entry[5] is not None and point_in_rect(mx, my, entry[5]):
-                if pool.settings_op:
-                    _run(pool.settings_op, index=entry[1])
+                if armed == (pool.key, entry[1]):
+                    if pool.remove_op:
+                        _run(pool.remove_op)
+                else:
+                    _armed_delete = (pool.key, entry[1])
+                _tag()
                 return True
             if point_in_rect(mx, my, entry[3]):
                 index = entry[1]
@@ -841,6 +1120,8 @@ def hit(context, mx, my, entries):
         if kind == 'field_row':
             (_, fkind, prop, label, owner, _value, rect, value_rect,
              options) = entry
+            if options.get('readonly'):
+                continue
             if fkind == 'bool' and point_in_rect(mx, my, rect):
                 try:
                     setattr(owner, prop, not getattr(owner, prop))
@@ -865,16 +1146,47 @@ def hit(context, mx, my, entries):
                     items.append((ident, item_label, png))
                 thumb_picker.open_picker(context, owner, prop, items, label)
                 return True
-            if fkind == 'distance' and point_in_rect(mx, my, value_rect):
-                key = _owner_key(owner, prop)
-                if key is None:
+            if fkind == 'file' and point_in_rect(mx, my, value_rect):
+                open_file_browser(context, owner, prop)
+                return True
+            if fkind == 'native' and point_in_rect(mx, my, value_rect):
+                open_native(context, owner, prop, label, options.get('draw'))
+                return True
+            if (fkind in ('distance', 'text')
+                    and point_in_rect(mx, my, value_rect)):
+                if not _begin_typing(fkind, owner, prop):
                     return True
-                _value_edit.begin(key, '')
                 bpy.ops.home_builder.options_edit_value('INVOKE_DEFAULT')
                 _tag()
                 return True
+        if kind == 'toggle_chip' and point_in_rect(mx, my, entry[3]):
+            try:
+                setattr(entry[1], entry[2], not getattr(entry[1], entry[2]))
+            except Exception as ex:
+                print('Home Builder: %s failed: %s' % (entry[2], ex))
+            _tag()
+            return True
+        if kind == 'clear_chip' and point_in_rect(mx, my, entry[3]):
+            try:
+                setattr(entry[1], entry[2], "")
+            except Exception as ex:
+                print('Home Builder: %s failed: %s' % (entry[2], ex))
+            _tag()
+            return True
+        if kind == 'op_chip' and point_in_rect(mx, my, entry[3]):
+            _run(entry[1], **entry[2])
+            _tag()
+            return True
+        if kind == 'pick_btn' and point_in_rect(mx, my, entry[3]):
+            open_pick_menu(context, entry[2], entry[1])
+            return True
         if kind == 'action_btn' and point_in_rect(mx, my, entry[5]):
-            kwargs = {entry[3]: entry[4]} if entry[3] else {}
+            if not entry[6]:
+                return True
+            if isinstance(entry[3], dict):
+                kwargs = dict(entry[3])
+            else:
+                kwargs = {entry[3]: entry[4]} if entry[3] else {}
             _run(entry[2], **kwargs)
             _tag()
             return True
@@ -910,16 +1222,63 @@ def _tag():
 # temporary wrapper that must not be held across the menu's lifetime.
 
 _menu_target = None     # (id_data, path_from_id, prop)
+# What the release opens: the draw function, and whether it goes in a
+# menu or a popover. A popover is for the few values no GPU widget here
+# can edit -- a colour, a datablock -- drawn as Blender's own
+# field so its own picker opens from it.
+_popup_draw = None
+_popup_kind = 'MENU'
+_native_draw = None     # a 'native' field's own draw(layout, owner)
+_pick_entries = ()      # [(label, operator, kwargs)] for a pick menu
 
 
-def open_enum_menu(context, owner, prop, title=""):
+def _open_popup(title, draw, kind='MENU'):
+    global _popup_draw, _popup_kind
+    _popup_draw, _popup_kind = draw, kind
+    bpy.ops.home_builder.options_open_enum('INVOKE_DEFAULT', title=title)
+
+
+def _set_target(owner, prop):
     global _menu_target
     try:
         _menu_target = (owner.id_data, owner.path_from_id(), prop)
     except Exception as ex:
         print('Home Builder: cannot open %s: %s' % (prop, ex))
-        return
-    bpy.ops.home_builder.options_open_enum('INVOKE_DEFAULT', title=title)
+        return False
+    return True
+
+
+def open_enum_menu(context, owner, prop, title=""):
+    if _set_target(owner, prop):
+        _open_popup(title, _draw_enum_menu)
+
+
+def open_native(context, owner, prop, title="", draw=None):
+    global _native_draw
+    if _set_target(owner, prop):
+        _native_draw = draw
+        _open_popup(title, _draw_native, 'POPOVER')
+
+
+def open_file_browser(context, owner, prop):
+    """A path is the one value that does open a Blender window: there
+    is no picking a file without a file browser."""
+    if _set_target(owner, prop):
+        current = getattr(owner, prop, "") or ""
+        bpy.ops.home_builder.options_pick_file('INVOKE_DEFAULT',
+                                               filepath=current)
+
+
+def open_pick_menu(context, entries_fn, title=""):
+    """A menu of commands worked out as it opens -- what can be added
+    to a list depends on what is already in it."""
+    global _pick_entries
+    try:
+        _pick_entries = tuple(entries_fn(context) or ())
+    except Exception as ex:
+        print('Home Builder: %s failed: %s' % (title, ex))
+        _pick_entries = ()
+    _open_popup(title, _draw_pick_menu)
 
 
 class home_builder_OT_options_open_enum(bpy.types.Operator):
@@ -948,7 +1307,13 @@ class home_builder_OT_options_open_enum(bpy.types.Operator):
         return {'RUNNING_MODAL'}
 
     def _open(self, context):
-        context.window_manager.popup_menu(_draw_enum_menu, title=self.title)
+        wm = context.window_manager
+        if _popup_draw is None:
+            return {'CANCELLED'}
+        if _popup_kind == 'POPOVER':
+            wm.popover(_popup_draw, ui_units_x=14)
+        else:
+            wm.popup_menu(_popup_draw, title=self.title)
         return {'FINISHED'}
 
 
@@ -962,6 +1327,22 @@ def _menu_owner():
         return None, None
 
 
+MENU_ROWS = 18          # a menu longer than this breaks into columns
+MENU_MAX_COLS = 6
+
+
+def _menu_columns(layout, count):
+    """(columns, rows per column) for a menu of `count` entries. A long
+    list runs across in columns, read down each one, so the whole of it
+    is on screen at once instead of behind a scroll arrow."""
+    if count <= MENU_ROWS:
+        return [layout.column()], max(count, 1)
+    cols = min(-(-count // MENU_ROWS), MENU_MAX_COLS)
+    per_col = -(-count // cols)
+    row = layout.row()
+    return [row.column() for _ in range(cols)], per_col
+
+
 def _draw_enum_menu(menu, context):
     layout = menu.layout
     owner, prop = _menu_owner()
@@ -969,10 +1350,37 @@ def _draw_enum_menu(menu, context):
         layout.label(text="Unavailable", icon='ERROR')
         return
     current = getattr(owner, prop, None)
-    for ident, label in enum_items(owner, prop):
-        op = layout.operator('home_builder.options_set_enum', text=label,
-                             icon='CHECKMARK' if ident == current else 'BLANK1')
+    items = enum_items(owner, prop)
+    columns, per_col = _menu_columns(layout, len(items))
+    for i, (ident, label) in enumerate(items):
+        op = columns[i // per_col].operator(
+            'home_builder.options_set_enum', text=label,
+            icon='CHECKMARK' if ident == current else 'BLANK1')
         op.value = ident
+
+
+def _draw_native(popover, context):
+    layout = popover.layout
+    owner, prop = _menu_owner()
+    if owner is None:
+        layout.label(text="Unavailable", icon='ERROR')
+        return
+    if _native_draw is not None:
+        _native_draw(layout, owner)
+    else:
+        layout.prop(owner, prop, text="")
+
+
+def _draw_pick_menu(menu, context):
+    layout = menu.layout
+    if not _pick_entries:
+        layout.label(text="Nothing more to add")
+        return
+    columns, per_col = _menu_columns(layout, len(_pick_entries))
+    for i, (label, op_id, kwargs) in enumerate(_pick_entries):
+        op = columns[i // per_col].operator(op_id, text=label)
+        for key, value in kwargs.items():
+            setattr(op, key, value)
 
 
 class home_builder_OT_options_set_enum(bpy.types.Operator):
@@ -996,22 +1404,56 @@ class home_builder_OT_options_set_enum(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class home_builder_OT_options_pick_file(bpy.types.Operator):
+    """Choose the image file for this field"""
+    bl_idname = "home_builder.options_pick_file"
+    bl_label = "Choose Image"
+    bl_options = {'INTERNAL', 'UNDO'}
+
+    filepath: bpy.props.StringProperty(subtype='FILE_PATH')  # type: ignore
+    filter_image: bpy.props.BoolProperty(
+        default=True, options={'HIDDEN'})  # type: ignore
+    filter_folder: bpy.props.BoolProperty(
+        default=True, options={'HIDDEN'})  # type: ignore
+
+    def invoke(self, context, event):
+        context.window_manager.fileselect_add(self)
+        return {'RUNNING_MODAL'}
+
+    def execute(self, context):
+        owner, prop = _menu_owner()
+        if owner is None:
+            return {'CANCELLED'}
+        try:
+            setattr(owner, prop, self.filepath)
+        except Exception as ex:
+            self.report({'WARNING'}, str(ex))
+            return {'CANCELLED'}
+        _tag()
+        return {'FINISHED'}
+
+
 # ---- Typed values -------------------------------------------------------------
 
 def commit_value(context):
-    """Parse what was typed into the distance field and write it. An
-    empty or unreadable entry leaves the value alone."""
+    """Write what was typed into the field. A distance is parsed, and an
+    empty or unreadable entry leaves it alone; text is taken as typed,
+    and may be emptied."""
     key, text = _value_edit.take()
-    if key is None or not text:
+    if key is None:
         return False
     id_data, path, prop = key
     try:
         owner = id_data.path_resolve(path)
+        is_text = owner.bl_rna.properties[prop].type == 'STRING'
     except Exception:
         return False
-    value = parse_distance(text)
-    if value is None:
-        return False
+    if is_text:
+        value = text
+    else:
+        value = parse_distance(text) if text else None
+        if value is None:
+            return False
     try:
         setattr(owner, prop, value)
     except Exception as ex:
@@ -1024,7 +1466,8 @@ class home_builder_OT_options_edit_value(bpy.types.Operator):
     """Type a new value into the field.
 
     A modal only while the user is typing: Enter commits, Esc cancels,
-    a click anywhere commits what was typed and ends it. It must never
+    Tab commits and moves to the next typed field (Shift+Tab the one
+    before), a click anywhere commits what was typed and ends it. It must never
     outlive the interaction, because Blender skips autosave while a
     modal is live.
     """
@@ -1042,11 +1485,26 @@ class home_builder_OT_options_edit_value(bpy.types.Operator):
         return {'RUNNING_MODAL'}
 
     def modal(self, context, event):
+        # Inside the field the mouse edits: a press places the cursor,
+        # a drag selects, a double click takes the word.
+        if _value_edit.mouse(event, event.mouse_region_x,
+                             event.mouse_region_y):
+            _tag()
+            return {'RUNNING_MODAL'}
         # Navigation stays live so the user can look while typing.
         if event.type in {'MIDDLEMOUSE', 'WHEELUPMOUSE', 'WHEELDOWNMOUSE',
                           'MOUSEMOVE', 'INBETWEEN_MOUSEMOVE', 'TIMER'}:
             return {'PASS_THROUGH'}
         result = _value_edit.feed(event)
+        if result in ('NEXT', 'PREV'):
+            # Tab commits and carries on in the next typed field, so a
+            # run of sizes is filled without reaching for the mouse.
+            key = _value_edit.key
+            commit_value(context)
+            moved = _begin_neighbour(context, key,
+                                     1 if result == 'NEXT' else -1)
+            _tag()
+            return {'RUNNING_MODAL'} if moved else {'FINISHED'}
         if result == 'COMMIT':
             commit_value(context)
             _tag()
@@ -1137,6 +1595,9 @@ class home_builder_OT_style_rename(bpy.types.Operator):
 
     def modal(self, context, event):
         global _edit_pool
+        if _edit.mouse(event, event.mouse_region_x, event.mouse_region_y):
+            _tag()
+            return {'RUNNING_MODAL'}
         result = _edit.feed(event)
         if result == 'COMMIT':
             commit_rename(context)
@@ -1157,70 +1618,11 @@ class home_builder_OT_style_rename(bpy.types.Operator):
         return {'RUNNING_MODAL'}
 
 
-class home_builder_OT_cabinet_style_settings(bpy.types.Operator):
-    """Settings for this cabinet style: name, wood, finish, overlay,
-    fronts and edge profiles"""
-    bl_idname = "home_builder.cabinet_style_settings"
-    bl_label = "Cabinet Style"
-
-    index: bpy.props.IntProperty(default=-1)  # type: ignore
-
-    def _index(self, context):
-        """Index of the style this dialog is showing, or -1."""
-        styles = cabinet_styles(context)
-        if not styles:
-            return -1
-        if 0 <= self.index < len(styles):
-            return self.index
-        active = active_style_index(context)
-        return active if 0 <= active < len(styles) else 0
-
-    def _style(self, context):
-        styles = cabinet_styles(context)
-        if not styles:
-            return None
-        if 0 <= self.index < len(styles):
-            return styles[self.index]
-        # No usable index: the active style, which is the one the panel
-        # is showing. Falling back to the first would open a different
-        # style from the highlighted one whenever Show Settings is used.
-        active = active_style_index(context)
-        if not 0 <= active < len(styles):
-            active = 0
-        return styles[active]
-
-    def invoke(self, context, event):
-        return context.window_manager.invoke_props_dialog(self, width=460)
-
-    def draw(self, context):
-        layout = self.layout
-        style = self._style(context)
-        if style is None:
-            layout.label(text="No cabinet styles defined.", icon='INFO')
-            return
-        # The sidebar's own per-style form, verbatim. It opens with the
-        # Style Name field, so this is also how a style gets renamed.
-        style.draw_cabinet_style_ui(layout, context)
-        # Delete lives here rather than as a third chip on the row: the
-        # row already carries the gear and the move arrows, and removing
-        # a style is not something to put one stray click away.
-        styles = cabinet_styles(context)
-        layout.separator()
-        row = layout.row()
-        row.enabled = bool(styles) and len(styles) > 1
-        op = row.operator("hb_face_frame.remove_cabinet_style",
-                          text="Delete Style", icon='TRASH')
-        op.index = self._index(context)
-
-    def execute(self, context):
-        return {'FINISHED'}
-
-
 classes = (home_builder_OT_style_options_popup,
-           home_builder_OT_cabinet_style_settings,
            home_builder_OT_style_rename,
            home_builder_OT_options_open_enum,
            home_builder_OT_options_set_enum,
+           home_builder_OT_options_pick_file,
            home_builder_OT_options_edit_value,)
 
 
