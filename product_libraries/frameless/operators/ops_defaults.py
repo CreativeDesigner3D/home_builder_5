@@ -69,7 +69,8 @@ class hb_frameless_OT_update_base_top_construction_prompts(bpy.types.Operator):
         index = {'Full Top': 0, 'Stretchers': 1}.get(
             frameless_props.base_top_construction, 1)
         for obj in context.scene.objects:
-            if 'Base Top Construction' in obj:
+            # A sink base keeps its sink top whatever the room default.
+            if 'Base Top Construction' in obj and not obj.get('IS_SINK_CABINET'):
                 obj['Base Top Construction'] = index
                 hb_utils.run_calc_fix(context, obj)
         return {'FINISHED'}

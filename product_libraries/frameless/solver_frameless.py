@@ -384,8 +384,19 @@ def _solve_base(root, parts, p, dim_x, dim_y, dim_z):
     if part is not None:
         set_cage(part, (mt, -dim_y, tkh + bottom_t), dim_x=inner,
                  dim_y=dim_y - mt, dim_z=dim_z - tkh - bottom_t - mt)
+        _sync_bay_sink(root, part, dim_z - tkh - bottom_t)
 
     _solve_toe_kick_extras(parts, p, dim_x, dim_y)
+
+
+def _sync_bay_sink(root, bay_obj, top_z):
+    """A sink base carries the sink model in its bay, hung from the
+    cabinet top; the Show Appliance Models switch decides whether it
+    comes in modeled or as a cage."""
+    if not root.get('IS_SINK_CABINET'):
+        return
+    from ..common import appliance_geo
+    appliance_geo.sync_bay_sink(bay_obj, top_z)
 
 
 def _solve_tall(root, parts, p, dim_x, dim_y, dim_z):

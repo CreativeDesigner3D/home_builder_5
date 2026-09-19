@@ -285,6 +285,10 @@ class BaseCabinet(Cabinet):
         split.opening_inserts = [front, doors]
         self.add_cage_to_bay(split)
         self.obj['IS_SINK_CABINET'] = True
+        # A sink base is built for the bowl whatever the room default:
+        # apron top, and the solver hangs the sink model in the bay.
+        self.obj['Base Top Construction'] = solver_frameless.TOP_SINK
+        solver_frameless.recalculate_cabinet(self.obj)
 
     def add_open_shelves(self):
         """No front at all: the bay stays open with adjustable shelves."""
