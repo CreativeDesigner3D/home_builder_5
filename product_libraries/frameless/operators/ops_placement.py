@@ -919,6 +919,22 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                 wm @ Vector((self.gap_right_boundary, y_dim, z_offset)),
                 units.unit_to_string(unit_settings, right_offset),
                 offset_color))
+
+        # The corner fillers the commit will build, where the offsets
+        # would be: a run that reaches a corner has no offset there.
+        filler_w = types_products.CORNER_FILLER_WIDTH
+        filler_text = units.unit_to_string(unit_settings, filler_w) + " Filler"
+        reaches_left, reaches_right = self.corner_fillers_reached()
+        if reaches_left:
+            specs.append(hb_placement.PlacementDimSpec(
+                wm @ Vector((self.gap_left_boundary - filler_w, y_dim, z_offset)),
+                wm @ Vector((self.gap_left_boundary, y_dim, z_offset)),
+                filler_text, self.SNAP_GREEN))
+        if reaches_right:
+            specs.append(hb_placement.PlacementDimSpec(
+                wm @ Vector((self.gap_right_boundary, y_dim, z_offset)),
+                wm @ Vector((self.gap_right_boundary + filler_w, y_dim, z_offset)),
+                filler_text, self.SNAP_GREEN))
         return specs
 
     def _dim_specs_free(self, context):
@@ -1210,21 +1226,29 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             filler.obj.rotation_euler = (0, 0, math.pi)
         return filler
 
+    def corner_fillers_reached(self):
+        """(left, right): the reserved corners the cabinet run actually
+        touches, which are the ones that get a filler."""
+        if not self.selected_wall:
+            return False, False
+        tol = units.inch(0.05)
+        total = self.individual_cabinet_width * self.cabinet_quantity
+        left = (getattr(self, 'corner_filler_left', False)
+                and abs(self.placement_x - self.gap_left_boundary) <= tol)
+        right = (getattr(self, 'corner_filler_right', False)
+                 and abs(self.placement_x + total - self.gap_right_boundary) <= tol)
+        return left, right
+
     def create_corner_fillers(self, context, wall_thickness):
         """The fillers for the corners the cabinet run actually reaches:
         one at each reserved end the run touches."""
         fillers = []
-        if not self.selected_wall:
-            return fillers
-        tol = units.inch(0.05)
-        total = self.individual_cabinet_width * self.cabinet_quantity
         width = types_products.CORNER_FILLER_WIDTH
-        if (getattr(self, 'corner_filler_left', False)
-                and abs(self.placement_x - self.gap_left_boundary) <= tol):
+        reaches_left, reaches_right = self.corner_fillers_reached()
+        if reaches_left:
             fillers.append(self.create_corner_filler(
                 context, wall_thickness, self.gap_left_boundary - width, True))
-        if (getattr(self, 'corner_filler_right', False)
-                and abs(self.placement_x + total - self.gap_right_boundary) <= tol):
+        if reaches_right:
             fillers.append(self.create_corner_filler(
                 context, wall_thickness, self.gap_right_boundary, False))
         return fillers
@@ -1353,6 +1377,9 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                 # Snap to left if within 4 inches of left boundary
                 elif left_gap < units.inch(4) and left_gap > 0:
                     snap_x = gap_start
+                # Snap to right if within 4 inches of right boundary
+                elif 0 < gap_end - (snap_x + total_width) < units.inch(4):
+                    snap_x = gap_end - total_width
         
         # Corner cabinet special handling
         is_corner = 'Corner' in self.cabinet_name
@@ -1399,11 +1426,18 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             
             # Apply grid snapping when not using special snap modes
             # (center snap, cage snap, fill mode all set snap_x precisely)
-            if not self.center_snap_state and not self.fill_mode:
+            # A cabinet sitting on a gap boundary stays there: the
+            # boundary beside a corner filler is off the grid, and a
+            # cabinet nudged off it would lose its filler.
+            total_width = self.individual_cabinet_width * self.cabinet_quantity
+            tol = units.inch(0.05)
+            on_boundary = (abs(snap_x - gap_start) <= tol
+                           or abs(snap_x + total_width - gap_end) <= tol)
+            if not self.center_snap_state and not self.fill_mode and not on_boundary:
                 snap_x = hb_snap.snap_value_to_grid(snap_x)
+                snap_x = max(gap_start, min(snap_x, gap_end - total_width))
             
             # Clamp snap_x to wall bounds
-            total_width = self.individual_cabinet_width * self.cabinet_quantity
             snap_x = max(0, min(snap_x, self.wall_length - total_width))
             
             self.placement_x = snap_x
