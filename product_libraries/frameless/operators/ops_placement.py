@@ -888,12 +888,21 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             return
         if getattr(self, '_placement_dim_handle', None) is None:
             return
-        if self.selected_wall:
+        if self.selected_wall and not self.free_standing:
             specs = self._dim_specs_on_wall(context)
         else:
             specs = self._dim_specs_free(context)
+            if self.facing_aisle is not None:
+                start, end = self.facing_aisle
+                lift = Vector((0.0, 0.0, self.get_cabinet_height(context) + units.inch(4.0)))
+                specs.append(hb_placement.PlacementDimSpec(
+                    start + lift, end + lift,
+                    units.unit_to_string(context.scene.unit_settings,
+                                         (end - start).length),
+                    self.SNAP_GREEN))
         specs.extend(self._dim_specs_height(context))
         self._placement_dim_specs = specs
+        self._facing_arrow_segments = self.build_facing_arrow()
         if context.area:
             context.area.tag_redraw()
 
@@ -1349,9 +1358,27 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             z_inches = max(0, z_inches)  # Don't go below floor
             self.cursor_z = units.inch(z_inches)
         
-        # Determine which side of wall based on cursor position
-        # Use different methods for plan view vs 3D view
-        
+        self.update_place_on_front(wall_thickness, cursor_y)
+
+        # Find available gap, filtering by which side we're placing on
+        gap_start, gap_end, snap_x = self.find_placement_gap_by_side(
+            self.selected_wall,
+            cursor_x,
+            self.individual_cabinet_width,
+            self.place_on_front,
+            wall_thickness,
+            object_z_start=self.get_cabinet_z_location(context),
+            object_height=self.get_cabinet_height(context),
+            object_depth=self.get_cabinet_depth(context),
+            exclude_obj=self.preview_cage.obj if self.preview_cage else None,
+        )
+        self.finish_position_on_wall(context, wall_thickness, cursor_x,
+                                     gap_start, gap_end, snap_x)
+
+    def update_place_on_front(self, wall_thickness, cursor_y):
+        """Which side of the selected wall the cursor is on, with an inch
+        of hysteresis so the cabinet does not flip sides at the centre.
+        Plan view and 3D view read the cursor differently."""
         # Detect if we're in plan view (looking down) or 3D view
         region = self.region
         rv3d = region.data
@@ -1388,20 +1415,11 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             elif cursor_y > wall_center_y + hysteresis:
                 self.place_on_front = False
             # Otherwise keep current side
-        
-        # Find available gap, filtering by which side we're placing on
-        gap_start, gap_end, snap_x = self.find_placement_gap_by_side(
-            self.selected_wall,
-            cursor_x,
-            self.individual_cabinet_width,
-            self.place_on_front,
-            wall_thickness,
-            object_z_start=self.get_cabinet_z_location(context),
-            object_height=self.get_cabinet_height(context),
-            object_depth=self.get_cabinet_depth(context),
-            exclude_obj=self.preview_cage.obj if self.preview_cage else None,
-        )
-        
+
+    def finish_position_on_wall(self, context, wall_thickness, cursor_x,
+                                gap_start, gap_end, snap_x):
+        """The rest of wall placement once the gap under the cursor is
+        known: corner fillers, fill or snap, and the preview cage."""
         # An inside corner keeps 1.5" for the filler that closes it, so
         # the cabinet lands beside the filler rather than in the corner.
         gap_start, gap_end, snap_x = self.reserve_corner_fillers(
@@ -1537,6 +1555,177 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         # Update dimensions
         self.update_dimensions(context)
 
+    # ---- Free-standing placement -------------------------------------------
+    # R turns the cabinet a quarter turn at a time. On the floor that is
+    # simply its heading. Against a wall a quarter turn means peninsula:
+    # the cabinet's END goes flush to the wall and the run projects into
+    # the room. A Sink Base over a Range -- or any turned cabinet over a
+    # range or a base cabinet -- stands as an island facing it across an
+    # aisle. All three finish unparented, the way an island does, because
+    # everything downstream reads a wall's children as running along it.
+
+    FACING_AISLE = units.inch(48.0)
+
+    def is_quarter_turned(self):
+        """A quarter turn (90 / 270) is the signal that wall placement
+        should go peninsula; 0 / 180 stay on the wall, which owns facing."""
+        return abs((self.free_rotation_z % math.pi) - math.pi / 2.0) < 0.01
+
+    def facing_target(self):
+        """The range or base cabinet under the cursor that this cabinet
+        should stand facing, or None. A Sink Base takes a range of its
+        own accord; anything else asks by being turned with R first."""
+        turned = self.free_rotation_z != 0.0
+        if self.cabinet_name != 'Sink Base' and not turned:
+            return None
+        if self.is_appliance or self.cabinet_name in PART_CLASS_MAP:
+            return None
+        current = self.hit_object
+        while current is not None:
+            if (current.get('IS_APPLIANCE')
+                    and current.get('APPLIANCE_TYPE') == 'RANGE'
+                    and not current.get('IS_CABINET_APPLIANCE')):
+                return current
+            if (turned and current.get('IS_FRAMELESS_CABINET_CAGE')
+                    and current.get('CABINET_TYPE') == 'BASE'):
+                return current
+            current = current.parent
+        return None
+
+    def release_wall_state(self, context):
+        """Going free-standing drops everything that belongs to a wall
+        gap: fillers, offsets, centre snaps, and a gap-filled width."""
+        self.free_standing = True
+        self.corner_filler_left = False
+        self.corner_filler_right = False
+        self.left_offset = None
+        self.right_offset = None
+        self.position_locked = False
+        self.center_snap_state = None
+        self.snap_cabinet = None
+        self.snap_side = None
+        if self.fill_mode:
+            # Nothing to fill off the wall: back to the width it came in at.
+            if self.auto_quantity:
+                self.cabinet_quantity = 1
+                self.array_modifier.count = 1
+            self.individual_cabinet_width = self.default_width
+            self.preview_cage.set_input('Dim X', self.individual_cabinet_width)
+
+    def stand_free(self, context, location, rotation_z):
+        cage_obj = self.preview_cage.obj
+        cage_obj.parent = None
+        cage_obj.location = location
+        cage_obj.rotation_euler = (0.0, 0.0, rotation_z)
+        total = self.individual_cabinet_width * self.cabinet_quantity
+        self.gap_left_boundary = 0
+        self.gap_right_boundary = total
+        self.current_gap_width = total
+
+    def set_position_peninsula(self, context):
+        """The cabinet's end flush against the wall, the run projecting
+        into the room. Its footprint ALONG the wall is its depth, which
+        follows the cursor and stops at whatever already stands on the
+        wall, through the same gap scan ordinary placement uses."""
+        self.release_wall_state(context)
+        wall_obj = self.selected_wall
+        wall = hb_types.GeoNodeWall(wall_obj)
+        wall_thickness = wall.get_input('Thickness')
+        wall_length = wall.get_input('Length')
+        local_hit = wall_obj.matrix_world.inverted() @ Vector(self.hit_location)
+        self.update_place_on_front(wall_thickness, local_hit.y)
+        room_dir = -1.0 if self.place_on_front else 1.0
+        flush_y = 0.0 if self.place_on_front else wall_thickness
+
+        total = self.individual_cabinet_width * self.cabinet_quantity
+        depth = self.get_cabinet_depth(context)
+        z = self.get_cabinet_z_location(context)
+
+        gap_start, gap_end, span_start = self.find_placement_gap_by_side(
+            wall_obj, local_hit.x, depth, self.place_on_front, wall_thickness,
+            object_z_start=z, object_height=self.get_cabinet_height(context),
+            object_depth=total, exclude_obj=self.preview_cage.obj)
+        if gap_start is None:
+            gap_start, gap_end = 0.0, wall_length
+        span_start = hb_snap.snap_value_to_grid(local_hit.x - depth / 2.0)
+        span_start = max(gap_start, min(span_start, gap_end - depth))
+        span_end = span_start + depth
+
+        # Two headings stand square to the wall. R is read against the
+        # wall rather than the room: one press faces one way along it,
+        # three the other, whichever way the wall itself runs.
+        wall_rot_z = wall_obj.matrix_world.to_euler().z
+        half_pi = math.pi / 2.0
+        theta = (half_pi if (self.free_rotation_z % (2.0 * math.pi)) < math.pi
+                 else -half_pi)
+        # The cabinet's width runs along wall-local Y. Pointing into the
+        # room, the origin end meets the wall; pointing at the wall, the
+        # far end does and the origin stands out in the room.
+        width_dir = 1.0 if theta > 0 else -1.0
+        origin_x = span_start if theta > 0 else span_end
+        origin_y = flush_y if width_dir == room_dir else flush_y + room_dir * total
+        origin = wall_obj.matrix_world @ Vector((origin_x, origin_y, 0.0))
+        self.stand_free(context, Vector((origin.x, origin.y, z)),
+                        wall_rot_z + theta)
+        self.update_dimensions(context)
+
+    def set_position_facing(self, context, target):
+        """An island facing ``target`` across the aisle, centred on it."""
+        self.release_wall_state(context)
+        cage = hb_types.GeoNodeCage(target)
+        target_w = cage.get_input('Dim X')
+        target_d = cage.get_input('Dim Y')
+        m3 = target.matrix_world.to_3x3()
+        front_dir = m3 @ Vector((0.0, -1.0, 0.0))
+        width_dir = m3 @ Vector((1.0, 0.0, 0.0))
+        for axis in (front_dir, width_dir):
+            axis.z = 0.0
+            axis.normalize()
+        front_center = target.matrix_world @ Vector((target_w / 2.0, -target_d, 0.0))
+
+        total = self.individual_cabinet_width * self.cabinet_quantity
+        depth = self.get_cabinet_depth(context)
+        # Origin is the back-left corner. Turned to face the target its
+        # own +X runs against width_dir, so stepping half a width along
+        # width_dir centres it.
+        location = (front_center + front_dir * (self.FACING_AISLE + depth)
+                    + width_dir * (total / 2.0))
+        location.z = (self.get_cabinet_z_location(context)
+                      if self.keeps_natural_z()
+                      else target.matrix_world.translation.z)
+        self.stand_free(context, location,
+                        math.atan2(-front_dir.x, front_dir.y))
+        self.facing_aisle = (front_center,
+                             front_center + front_dir * self.FACING_AISLE)
+        self.update_dimensions(context)
+
+    def build_facing_arrow(self):
+        """World-space segments for the arrow out of the cage's front,
+        drawn by the shared placement-dim handler. Read from the cage's
+        pending matrix: matrix_world lags a cage moved this same tick."""
+        if not self.preview_cage or not self.preview_cage.obj:
+            return None
+        width = self.individual_cabinet_width * self.cabinet_quantity
+        depth = self.preview_cage.get_input('Dim Y')
+        height = self.preview_cage.get_input('Dim Z')
+        if width <= 0 or depth <= 0:
+            return None
+        m = hb_placement.pending_world_matrix(self.preview_cage.obj)
+        base = m @ Vector((width / 2.0, -depth / 2.0, height / 2.0))
+        direction = m.to_3x3() @ Vector((0.0, -1.0, 0.0))
+        direction.z = 0.0
+        if direction.length < 1e-6:
+            return None
+        direction.normalize()
+        # By depth, not width: the tip lands just past the front face
+        # however wide a gap-filling run gets.
+        length = min(max(depth * 0.75, units.inch(6.0)), units.inch(18.0))
+        tip = base + direction * length
+        perp = Vector((-direction.y, direction.x, 0.0))
+        back = tip - direction * (length * 0.28)
+        head = length * 0.16
+        return [(base, tip), (tip, back + perp * head), (tip, back - perp * head)]
+
     def set_position_free(self):
         """Position cabinet(s) on the floor, snapping to nearby cabinets."""
         if not self.preview_cage or not self.hit_location:
@@ -1565,7 +1754,7 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                 self.preview_cage.obj.location.z = self.get_cabinet_z_location(bpy.context)
             else:
                 self.preview_cage.obj.location.z = 0
-            self.preview_cage.obj.rotation_euler = (0, 0, 0)
+            self.preview_cage.obj.rotation_euler = (0, 0, self.free_rotation_z)
         
         # Reset gap boundaries for floor placement
         self.gap_left_boundary = 0
@@ -1643,8 +1832,8 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         """Create the actual cabinet objects when user confirms placement."""
         cabinets = []
         cabinet_depth = self.get_cabinet_depth(context)
-        
-        if self.selected_wall:
+
+        if self.selected_wall and not self.free_standing:
             # Wall placement
             wall = hb_types.GeoNodeWall(self.selected_wall)
             wall_thickness = wall.get_input('Thickness')
@@ -1758,7 +1947,7 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                 hb_placement.TypingTarget.HEIGHT: "Height",
             }.get(self.typing_target, "Value")
             text = f"{target_name}: {self.typed_value}_ | ↑/↓ qty | ←/→ offset | Enter place | Esc cancel"
-        elif self.selected_wall:
+        elif self.selected_wall and not getattr(self, 'free_standing', False):
             # Show which side of wall
             side_str = "Front" if self.place_on_front else "Back"
             
@@ -1788,7 +1977,7 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             elif self.center_snap_state == 'cage':
                 center_str = " | ↔ CENTERED"
             
-            text = f"{side_str} | {gap_str} | {offset_str} | {qty_str} × {individual_str} = {total_str}{center_str} | ↑/↓ qty | ←/→ offset | Enter place | Esc cancel"
+            text = f"{side_str} | {gap_str} | {offset_str} | {qty_str} × {individual_str} = {total_str}{center_str} | ↑/↓ qty | ←/→ offset | R peninsula | Enter place | Esc cancel"
         else:
             # Floor placement
             unit_settings = context.scene.unit_settings
@@ -1796,11 +1985,17 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             total_str = units.unit_to_string(unit_settings, total_width)
             individual_str = units.unit_to_string(unit_settings, self.individual_cabinet_width)
             qty_str = f"{self.cabinet_quantity}"
+            if getattr(self, 'facing_aisle', None) is not None:
+                where = "Island facing"
+            elif getattr(self, 'free_standing', False):
+                where = "Peninsula"
+            else:
+                where = "Floor"
             if self.snap_cabinet:
                 snap_str = f"Snap {self.snap_side}"
-                text = f"Floor | {snap_str} | {qty_str} × {individual_str} = {total_str} | ↑/↓ qty | Click place | Esc cancel"
+                text = f"{where} | {snap_str} | {qty_str} × {individual_str} = {total_str} | ↑/↓ qty | R rotate | Click place | Esc cancel"
             else:
-                text = f"Floor | {qty_str} × {individual_str} = {total_str} | ↑/↓ qty | Click place | Esc cancel"
+                text = f"{where} | {qty_str} × {individual_str} = {total_str} | ↑/↓ qty | R rotate | Click place | Esc cancel"
         
         hb_placement.draw_header_text(context, text)
 
@@ -1833,6 +2028,10 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         self.snap_side = None
         self.center_snap_state = None
         self.corner_right_side = False
+        self.free_rotation_z = 0.0
+        self.free_standing = False
+        self.facing_aisle = None
+        self._facing_arrow_segments = None
 
         # Products that follow cursor Z with inch snapping, fill gap with qty 1
         if self.cabinet_name in ('Floating Shelves', 'Valance'):
@@ -1856,6 +2055,9 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             self.cursor_z_product_height = part_instance.height
 
         self.create_preview_cage(context)
+        # The width it comes in at, for when a free-standing placement
+        # gives up a width it took from filling a wall gap.
+        self.default_width = self.individual_cabinet_width
         self.add_placement_dim_handler(context)
 
         context.window_manager.modal_handler_add(self)
@@ -1885,6 +2087,13 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             self.update_cabinet_quantity(context, self.cabinet_quantity - 1)
             # Don't reset position_locked - keep user's offset when changing quantity
             return {'RUNNING_MODAL'}
+
+        # R turns the cabinet a quarter turn. The turn takes effect in the
+        # positioning below, so the preview and its arrow follow at once.
+        if (event.type == 'R' and event.value == 'PRESS'
+                and self.placement_state != hb_placement.PlacementState.TYPING):
+            self.free_rotation_z = ((self.free_rotation_z + math.radians(90))
+                                    % math.radians(360))
 
         # Let mixin handle typing events
         if self.handle_typing_event(event):
@@ -1936,7 +2145,15 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         )
         
         if typing_allows_movement:
-            if self.selected_wall:
+            self.free_standing = False
+            self.facing_aisle = None
+            target = self.facing_target()
+            if target is not None:
+                self.set_position_facing(context, target)
+            elif (self.selected_wall and self.is_quarter_turned()
+                  and 'Corner' not in self.cabinet_name):
+                self.set_position_peninsula(context)
+            elif self.selected_wall:
                 if not self.position_locked:
                     self.set_position_on_wall(context)
             else:
