@@ -676,6 +676,25 @@ def _solve_corner_upper(root, parts, p, dim_x, dim_y, dim_z):
 
 # The least a blind corner keeps for its doors, whatever the blind asks.
 BLIND_MIN_DOOR_OPENING = inch(9.0)
+# Written on a blind corner's bay: how far the blind runs beside the door
+# opening, and how thick the panel closing it is.
+BLIND_SPAN_KEY = 'Blind Span'
+BLIND_PANEL_THICKNESS_KEY = 'Blind Panel Thickness'
+
+
+def blind_reach(insert_obj):
+    """(span, on_left, panel_thickness) for an insert standing directly
+    in a blind corner's bay, else None. An insert under a splitter fills
+    its own opening only: the blind belongs to the bay as a whole."""
+    bay = insert_obj.parent if insert_obj is not None else None
+    if bay is None or BLIND_SPAN_KEY not in bay:
+        return None
+    span = float(bay[BLIND_SPAN_KEY])
+    if span <= 0.0:
+        return None
+    root = cabinet_root(bay)
+    on_left = root is None or root.get('Blind Side') != 'Right'
+    return span, on_left, float(bay.get(BLIND_PANEL_THICKNESS_KEY, 0.0))
 
 
 def _solve_blind_corner(root, parts, p, dim_x, dim_y, dim_z):
@@ -701,6 +720,10 @@ def _solve_blind_corner(root, parts, p, dim_x, dim_y, dim_z):
     set_part(panel, (panel_x, -dim_y + mt, bay_z), length=bay_h, width=span,
              thickness=mt)
     set_cage(bay, (bay_x, bay_y, bay_z), dim_x=inner - span)
+    # The bay is the door opening, but the inside of the box is open
+    # right across: the interior reads these to reach behind the panel.
+    bay[BLIND_SPAN_KEY] = span
+    bay[BLIND_PANEL_THICKNESS_KEY] = mt
 
 
 _SOLVERS = {
@@ -916,14 +939,22 @@ def _solve_splitter(splitter_obj, vertical):
 
 def link_dims(parent_obj, child_obj, dims):
     """Where a linked child sits in its parent and how big it is. An
-    interior behind an inset front starts behind the front."""
+    interior behind an inset front starts behind the front, and one in
+    a blind corner reaches across behind the blind panel."""
     dim_x, dim_y, dim_z = dims
-    if child_obj.get('IS_FRAMELESS_INTERIOR_CAGE') and 'Inset Front' in parent_obj:
-        offset = 0.0
-        if parent_obj.get('Inset Front'):
-            offset = float(prompt(parent_obj, 'Front Thickness', 0.0))
-        return (0.0, offset, 0.0), (dim_x, dim_y - offset, dim_z)
-    return (0.0, 0.0, 0.0), (dim_x, dim_y, dim_z)
+    if not child_obj.get('IS_FRAMELESS_INTERIOR_CAGE'):
+        return (0.0, 0.0, 0.0), (dim_x, dim_y, dim_z)
+    x = 0.0
+    blind = blind_reach(parent_obj)
+    if blind is not None:
+        span, on_left, _panel_t = blind
+        dim_x += span
+        if on_left:
+            x = -span
+    offset = 0.0
+    if parent_obj.get('Inset Front'):
+        offset = float(prompt(parent_obj, 'Front Thickness', 0.0))
+    return (x, offset, 0.0), (dim_x, dim_y - offset, dim_z)
 
 
 def _sync_opening_appliance(opening_obj):
@@ -979,6 +1010,11 @@ def _solve_shelves(interior_obj):
     qty = int(prompt(interior_obj, 'Shelf Quantity', 1))
     clip_gap = float(prompt(interior_obj, 'Shelf Clip Gap', inch(0.125)))
     setback = float(prompt(interior_obj, 'Shelf Setback', inch(0.25)))
+    blind = blind_reach(interior_obj.parent)
+    if blind is not None:
+        # One shelf runs behind the doors and the blind panel alike, so
+        # it stands back far enough to clear the panel.
+        setback += blind[2]
     spacing = (dim_z - mt * qty) / (qty + 1)
     # A quantity of zero means no shelves, which the array's own minimum
     # of one could not express.
