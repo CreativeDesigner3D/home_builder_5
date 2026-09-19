@@ -299,6 +299,14 @@ DOOR_PULL_LOCATION_ITEMS = [
     ('UPPER', "Upper",
      "Hold the pull up from the bottom edge of the door"),
 ]
+# Catalog door-front limits, ported from the prior library: a swing
+# door is made up to 24 5/8" wide by 84" tall, and a lift-up - lying on
+# its side - up to 84" wide by 24 5/8" tall. Lift-up hardware also will
+# not work a door shorter than 11 1/4" (measured against 11.2" the way
+# the prior library did, so a door built right at the minimum clears).
+DOOR_MAX_NARROW = inch(24.626)
+DOOR_MAX_LONG = inch(84.0)
+LIFT_UP_MIN_HEIGHT = inch(11.2)
 DRAWER_FRONT_HEIGHT = millimeter(156.82)   # 6 1/4" front
 # Minimum height the redistributor will assign to an unlocked drawer front
 # when the stack fills its opening (mirrors MIN_BAY_WIDTH for widths).
@@ -448,6 +456,9 @@ SLANT_SHELF_SPACING = inch(8.0)       # Distance Between Shelves
 SLANT_SHELF_ANGLE_DEG = 17.25         # Shelf Angle (degrees)
 SLANT_SHELF_SETBACK = inch(0.125)     # front setback with the metal fence
 SHOE_FENCE_INSET = millimeter(19.0)   # fence inset from each side
+# The longest fence the catalog sells. The prior library bought fences
+# from bands ending at 35" and called anything past that TOO BIG.
+SHOE_FENCE_MAX_LENGTH = inch(35.0)
 SHOE_FENCE_DEPTH = inch(0.5)          # fence front-to-back size
 SHOE_FENCE_HEIGHT = inch(1.5)         # fence height above the shelf
 # How far back from the shelf's front edge the fence stands. The prior
