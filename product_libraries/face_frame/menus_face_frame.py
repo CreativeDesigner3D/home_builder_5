@@ -1040,6 +1040,7 @@ class HOME_BUILDER_MT_face_frame_add_appliance(bpy.types.Menu):
         layout = self.layout
         for kind, label, icon in (
             ('KITCHEN_SINK', "Add Kitchen Sink", 'MOD_FLUIDSIM'),
+            ('FARM_SINK',    "Add Farm Sink",    'MOD_FLUIDSIM'),
             ('VANITY_SINK',  "Add Vanity Sink",  'MOD_FLUIDSIM'),
             ('COOKTOP',      "Add Cooktop",      'VOLUME_DATA'),
         ):

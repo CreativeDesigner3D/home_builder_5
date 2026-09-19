@@ -6516,6 +6516,7 @@ class hb_face_frame_OT_add_appliance_to_bay(bpy.types.Operator):
         name="Appliance",
         items=[
             ('KITCHEN_SINK', "Kitchen Sink", "Kitchen sink bay"),
+            ('FARM_SINK',    "Farm Sink",    "Farm (apron-front) sink bay"),
             ('VANITY_SINK',  "Vanity Sink",  "Vanity sink bay"),
             ('COOKTOP',      "Cooktop",      "Cooktop bay"),
         ],
@@ -6573,6 +6574,12 @@ class hb_face_frame_OT_add_appliance_to_bay(bpy.types.Operator):
         default=0.0, min=0.0,
         description="Width of the right drop filler stile (used directly "
                     "when Set Appliance Width is off)",
+    )  # type: ignore
+    # Farm sink only; written through to the bay's farm_sink_custom_fit.
+    custom_fit: bpy.props.BoolProperty(
+        name="Custom Fit by Shop", default=False,
+        description="The sink is sent to the shop and hand-fitted into the "
+                    "opening. Off prepares the opening only",
     )  # type: ignore
     config: bpy.props.EnumProperty(
         name="Configuration",
@@ -6692,6 +6699,14 @@ class hb_face_frame_OT_add_appliance_to_bay(bpy.types.Operator):
         self.appliance_width = bp.front_drop_appliance_width
         self.left_filler_amount = bp.front_drop_left_filler
         self.right_filler_amount = bp.front_drop_right_filler
+        # A farm sink sits in a dropped front, so a fresh one starts
+        # dropped; re-editing keeps the bay's own drop.
+        if (self.appliance_kind == 'FARM_SINK' and not already_appliance
+                and self.drop_bay_amount <= 0.0):
+            self.drop_bay_amount = inch(9.0)
+        self.custom_fit = (bp.farm_sink_custom_fit
+                           if bay.get('APPLIANCE_BAY_KIND') == 'FARM_SINK'
+                           else False)
         # Snapshot everything the live preview may touch so Cancel can
         # put it back. (The front-layout preset is NOT previewed -- it
         # only applies on OK -- so the snapshot stays scalar.)
@@ -6706,6 +6721,7 @@ class hb_face_frame_OT_add_appliance_to_bay(bpy.types.Operator):
             'appliance_width': bp.front_drop_appliance_width,
             'left_filler': bp.front_drop_left_filler,
             'right_filler': bp.front_drop_right_filler,
+            'custom_fit': bp.farm_sink_custom_fit,
         }
         # A true dialog (OK / Cancel), NOT invoke_props_popup: the popup
         # re-runs execute through the operator-repeat machinery, whose
@@ -6751,6 +6767,7 @@ class hb_face_frame_OT_add_appliance_to_bay(bpy.types.Operator):
             bp.front_drop_appliance_width = snap['appliance_width']
             bp.front_drop_left_filler = snap['left_filler']
             bp.front_drop_right_filler = snap['right_filler']
+            bp.farm_sink_custom_fit = snap['custom_fit']
             if root is not None:
                 types_face_frame.recalculate_face_frame_cabinet(root)
 
@@ -6793,6 +6810,9 @@ class hb_face_frame_OT_add_appliance_to_bay(bpy.types.Operator):
             bp.front_drop_appliance_width = self.appliance_width
             bp.front_drop_left_filler = self.left_filler_amount
             bp.front_drop_right_filler = self.right_filler_amount
+            # Only a farm sink bay can carry the custom fit.
+            bp.farm_sink_custom_fit = (self.appliance_kind == 'FARM_SINK'
+                                       and self.custom_fit)
             types_face_frame.recalculate_face_frame_cabinet(root)
         return bay, root
 
@@ -6817,6 +6837,8 @@ class hb_face_frame_OT_add_appliance_to_bay(bpy.types.Operator):
                     row.prop(self, 'left_filler_amount', text="")
                     row = fbox.row(); row.label(text="Right Filler:")
                     row.prop(self, 'right_filler_amount', text="")
+        if self.appliance_kind == 'FARM_SINK':
+            box.prop(self, 'custom_fit')
         box.label(text="Configuration:")
         box.prop(self, 'config', expand=True)
         box.label(text="Interior:")
@@ -6947,6 +6969,7 @@ class hb_face_frame_OT_remove_appliance_from_bay(bpy.types.Operator):
 
         with types_face_frame.suspend_recalc():
             bay['APPLIANCE_BAY'] = 'NONE'
+            bay.face_frame_bay.farm_sink_custom_fit = False
             for child in bay.children_recursive:
                 if not child.get(types_face_frame.TAG_OPENING_CAGE):
                     continue

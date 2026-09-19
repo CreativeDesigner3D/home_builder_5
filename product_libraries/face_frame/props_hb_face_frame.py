@@ -8756,6 +8756,16 @@ class Face_Frame_Bay_Props(PropertyGroup):
         default=0.0, unit='LENGTH', precision=4, min=0.0,
         update=_update_cabinet_dim,
     )  # type: ignore
+    # Farm sink bays (APPLIANCE_BAY_KIND 'FARM_SINK'): the opening is
+    # always prepared for the sink; this asks the shop to hand-fit the
+    # customer's sink into it. No geometry - an order option downstream
+    # consumers (pricing, order forms) read.
+    farm_sink_custom_fit: BoolProperty(
+        name="Custom Fit by Shop",
+        description="The sink is sent to the shop and hand-fitted into the "
+                    "opening. Off prepares the opening only",
+        default=False,
+    )  # type: ignore
 
     top_rail_width: FloatProperty(
         name="Top Rail Width", default=units.inch(1.5), unit='LENGTH', precision=4,
