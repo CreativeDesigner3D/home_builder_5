@@ -2275,6 +2275,12 @@ class Frameless_Scene_Props(PropertyGroup):
         if self.default_toe_kick_type == 'Leg Levelers':
             row = size_box.row()
             row.prop(self,'default_leg_leveler_inset',text="Leveler Inset")
+        row = size_box.row(align=True)
+        row.operator('hb_frameless.add_base_assemblies',text="Add Base Assemblies").selected_only = False
+        row.operator('hb_frameless.add_base_assemblies',text="Selected").selected_only = True
+        row.operator('hb_frameless.remove_base_assemblies',text="",icon='X')
+        row = size_box.row()
+        row.operator('hb_frameless.edit_base_assemblies',text="Edit Base Assemblies",icon='EDITMODE_HLT')
         size_box = layout.box()
         row = size_box.row()
         row.label(text="Base Top Construction:")

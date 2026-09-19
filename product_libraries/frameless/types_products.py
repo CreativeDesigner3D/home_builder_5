@@ -1086,7 +1086,100 @@ class CornerFiller(Product):
         self.solve()
 
 
+# ---------------------------------------------------------------------------
+# Base assembly
+# ---------------------------------------------------------------------------
+
+BASE_ASSEMBLY_SUPPORT_SPACING = inch(16)
+
+
+def _solve_base_assembly(root, parts, dim_x, dim_y, dim_z):
+    """A ladder in plan: the kick face and a back rail run the length,
+    the ends stand between them, and cross supports repeat along it."""
+    mt = float(_prompt(root, 'Material Thickness', inch(0.75)))
+    spacing = float(_prompt(root, 'Support Spacing',
+                            BASE_ASSEMBLY_SUPPORT_SPACING))
+
+    part = parts.get('BASE_FRONT')
+    if part is not None:
+        _set_part(part, (0.0, -dim_y, 0.0),
+                  length=dim_x, width=dim_z, thickness=mt)
+
+    part = parts.get('BASE_BACK')
+    if part is not None:
+        _set_part(part, (0.0, 0.0, 0.0),
+                  length=dim_x, width=dim_z, thickness=mt)
+
+    for role, x in (('BASE_LEFT_END', 0.0), ('BASE_RIGHT_END', dim_x)):
+        part = parts.get(role)
+        if part is not None:
+            _set_part(part, (x, -mt, 0.0),
+                      length=dim_y - mt * 2.0, width=dim_z, thickness=mt)
+
+    part = parts.get('BASE_SUPPORT')
+    if part is not None:
+        # One part arrayed along the base, so the count is how many
+        # whole spacings fit between the ends.
+        count = 0
+        if spacing > 0.0:
+            count = int(math.floor((dim_x - mt * 2.0 - spacing) / spacing)) + 1
+            count = max(count, 0)
+        _set_part(part, (spacing, -mt, 0.0),
+                  length=dim_y - mt * 2.0, width=dim_z, thickness=mt,
+                  visible=count > 0)
+        _set_array(part, count, -spacing)
+
+
+class BaseAssembly(Product):
+    """The ladder base a run of base and tall cabinets stands on.
+
+    One assembly carries every cabinet of a straight run rather than
+    each cabinet bringing its own, so it is built from the run: Add Base
+    Assemblies measures the cabinets set to the Ladder Style toe kick
+    and stands one of these under each stretch of them.
+    Dim X = length along the run, Dim Y = back of the cabinets to the
+    kick face, Dim Z = toe kick height.
+    """
+
+    def __init__(self):
+        super().__init__()
+        props = bpy.context.scene.hb_frameless
+        self.width = inch(36)
+        self.height = props.default_toe_kick_height
+        self.depth = props.base_cabinet_depth - props.default_toe_kick_setback
+
+    def create(self, name="Base Assembly"):
+        self.create_product(name)
+        self.obj['PART_TYPE'] = 'BASE_ASSEMBLY'
+        self.obj['IS_BASE_ASSEMBLY'] = True
+
+        self.add_properties_common()
+        self.add_property('Support Spacing', 'DISTANCE',
+                          BASE_ASSEMBLY_SUPPORT_SPACING)
+
+        self.add_part('Front', 'BASE_FRONT', rotation=(90, 0, 0), mirror='Z',
+                      finish=(True, False))
+        self.add_part('Back', 'BASE_BACK', rotation=(90, 0, 0),
+                      finish=(False, False))
+        self.add_part('Left End', 'BASE_LEFT_END', rotation=(-90, 0, 90),
+                      mirror='XYZ', finish=(True, False))
+        self.add_part('Right End', 'BASE_RIGHT_END', rotation=(-90, 0, 90),
+                      mirror='XY', finish=(True, False))
+
+        support = self.add_part('Support', 'BASE_SUPPORT',
+                                rotation=(-90, 0, 90), mirror='XYZ',
+                                finish=(False, False))
+        array_mod = support.obj.modifiers.new(ARRAY_MOD_NAME, 'ARRAY')
+        array_mod.count = 1
+        array_mod.use_relative_offset = False
+        array_mod.use_constant_offset = True
+        array_mod.constant_offset_displace = (0, 0, 0)
+
+        self.solve()
+
+
 _SOLVERS = {
+    'BASE_ASSEMBLY': _solve_base_assembly,
     'FLOATING_SHELF': _solve_floating_shelf,
     'VALANCE': _solve_valance,
     'SUPPORT_FRAME': _solve_support_frame,
