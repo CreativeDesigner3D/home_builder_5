@@ -6253,8 +6253,9 @@ class hb_face_frame_OT_column_beam_properties(bpy.types.Operator):
 class hb_face_frame_OT_duplicate_floating_shelf(bpy.types.Operator):
     """Stack copies of the selected floating shelf above it by a total
     count + spacing. The count includes the selected shelf, so 3 adds two
-    copies. Each copy is an independent, separately-editable shelf that
-    inherits the source's dimensions, type, finish, and groove."""
+    copies. The copies join the selected shelf's linked group (a new one
+    if it has none), so an edit to any of them carries to all; Unlink
+    From Group frees one."""
     bl_idname = "hb_face_frame.duplicate_floating_shelf"
     bl_label = "Duplicate Floating Shelf"
     bl_description = ("Stack copies of this floating shelf above it at a "
@@ -6270,14 +6271,7 @@ class hb_face_frame_OT_duplicate_floating_shelf(bpy.types.Operator):
         name="Spacing Between Shelves", default=inch(12.0),
         unit='LENGTH', precision=4)  # type: ignore
 
-    _SHELF_PROPS = (
-        'finish_left', 'finish_right', 'material_thickness', 'shelf_type',
-        'edge_profile',
-        'include_groove_top', 'include_groove_bottom',
-        'groove_distance_from_rear', 'groove_top_from_front',
-        'groove_bottom_separate', 'groove_bottom_distance',
-        'groove_bottom_from_front', 'groove_width', 'groove_depth',
-    )
+    _SHELF_PROPS = types_face_frame.FLOATING_SHELF_SYNC_PROPS
 
     @classmethod
     def poll(cls, context):
@@ -6310,6 +6304,12 @@ class hb_face_frame_OT_duplicate_floating_shelf(bpy.types.Operator):
             sp = props_hb_face_frame.get_style_props(context)
             style = next((s for s in sp.cabinet_styles if s.name == style_name), None)
 
+        gid = src.get(types_face_frame.SHELF_GROUP_TAG)
+        if not gid:
+            import uuid
+            gid = uuid.uuid4().hex[:12]
+            src[types_face_frame.SHELF_GROUP_TAG] = gid
+
         new_objs = []
         # quantity counts the selected shelf, which stays at i = 0.
         for i in range(1, self.quantity):
@@ -6330,8 +6330,11 @@ class hb_face_frame_OT_duplicate_floating_shelf(bpy.types.Operator):
                 n.matrix_parent_inverse = src.matrix_parent_inverse.copy()
             n.location = src.location.copy()
             n.location.z = src.location.z + step * i
+            # Tagged after the style so the copy's own rebuilds find its
+            # settings already equal to the group's.
             if style is not None:
                 style.assign_style_to_cabinet(n)
+            n[types_face_frame.SHELF_GROUP_TAG] = gid
             new_objs.append(n)
 
         for o in context.selected_objects:
@@ -6342,6 +6345,77 @@ class hb_face_frame_OT_duplicate_floating_shelf(bpy.types.Operator):
         self.report({'INFO'},
                     f"Added {len(new_objs)} floating shelf(s), "
                     f"{self.quantity} in the stack")
+        return {'FINISHED'}
+
+
+class hb_face_frame_OT_unlink_floating_shelf(bpy.types.Operator):
+    """Take the selected floating shelf out of its linked group so it can
+    be edited on its own. A group left with one shelf dissolves."""
+    bl_idname = "hb_face_frame.unlink_floating_shelf"
+    bl_label = "Unlink From Group"
+    bl_description = ("Stop this shelf following the other shelves in its "
+                      "group, so it can be edited on its own")
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        root = types_face_frame.find_cabinet_root(context.active_object)
+        return (root is not None and bool(root.get('IS_FLOATING_SHELF'))
+                and bool(root.get(types_face_frame.SHELF_GROUP_TAG)))
+
+    def execute(self, context):
+        tag = types_face_frame.SHELF_GROUP_TAG
+        root = types_face_frame.find_cabinet_root(context.active_object)
+        rest = types_face_frame.floating_shelf_group_members(root)
+        del root[tag]
+        if len(rest) == 1:
+            del rest[0][tag]
+        self.report({'INFO'}, "Shelf unlinked from its group")
+        return {'FINISHED'}
+
+
+class hb_face_frame_OT_link_floating_shelves(bpy.types.Operator):
+    """Link the selected floating shelves into one group. They take the
+    active shelf's size, options and finish; any group a selected shelf
+    was in is merged into the new one."""
+    bl_idname = "hb_face_frame.link_floating_shelves"
+    bl_label = "Link Selected Shelves"
+    bl_description = ("Link the selected shelves so an edit to one carries "
+                      "to all; they take the active shelf's settings")
+    bl_options = {'UNDO'}
+
+    @staticmethod
+    def _shelves(context):
+        roots = []
+        for o in context.selected_objects:
+            r = types_face_frame.find_cabinet_root(o)
+            if r is not None and r.get('IS_FLOATING_SHELF') and r not in roots:
+                roots.append(r)
+        return roots
+
+    @classmethod
+    def poll(cls, context):
+        return len(cls._shelves(context)) >= 2
+
+    def execute(self, context):
+        tag = types_face_frame.SHELF_GROUP_TAG
+        shelves = self._shelves(context)
+        active = types_face_frame.find_cabinet_root(context.active_object)
+        if active not in shelves:
+            active = shelves[0]
+        gid = active.get(tag)
+        if not gid:
+            import uuid
+            gid = uuid.uuid4().hex[:12]
+        # Whole groups come along, not just the selected shelves in them.
+        joined = set(shelves)
+        for s in shelves:
+            joined.update(types_face_frame.floating_shelf_group_members(s))
+        for s in joined:
+            s[tag] = gid
+        # Push the active shelf's settings out to the group.
+        types_face_frame.sync_floating_shelf_group(active)
+        self.report({'INFO'}, f"Linked {len(joined)} shelves")
         return {'FINISHED'}
 
 
@@ -7336,6 +7410,8 @@ classes = (
     hb_face_frame_OT_set_drawer_slides,
     hb_face_frame_OT_drawer_interior,
     hb_face_frame_OT_duplicate_floating_shelf,
+    hb_face_frame_OT_unlink_floating_shelf,
+    hb_face_frame_OT_link_floating_shelves,
     hb_face_frame_OT_adjust_floating_shelves,
     hb_face_frame_OT_bay_prompts,
     hb_face_frame_OT_opening_prompts,

@@ -1109,6 +1109,12 @@ class HOME_BUILDER_MT_face_frame_floating_shelf_commands(bpy.types.Menu):
         if len(roots) > 1:
             layout.operator("hb_face_frame.adjust_floating_shelves",
                             text="Adjust Spacing & Heights...", icon='LINENUMBERS_ON')
+            layout.operator("hb_face_frame.link_floating_shelves",
+                            text="Link Selected Shelves", icon='LINKED')
+        root = types_face_frame.find_cabinet_root(context.active_object)
+        if root is not None and root.get(types_face_frame.SHELF_GROUP_TAG):
+            layout.operator("hb_face_frame.unlink_floating_shelf",
+                            text="Unlink From Group", icon='UNLINKED')
         layout.separator()
         layout.operator("hb_face_frame.delete_cabinet",
                         text="Delete Shelf", icon='X')

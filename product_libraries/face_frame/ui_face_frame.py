@@ -600,6 +600,16 @@ def draw_floating_shelf(layout, root):
     cab = root.face_frame_cabinet
     shelf = root.floating_shelf
 
+    # Linked group: every edit below carries to the other shelves.
+    others = types_face_frame.floating_shelf_group_members(root)
+    if others:
+        row = layout.row(align=True)
+        row.label(text=f"Linked with {len(others)} other shelf"
+                       f"{'' if len(others) == 1 else 'ves'}",
+                  icon='LINKED')
+        row.operator("hb_face_frame.unlink_floating_shelf",
+                     text="Unlink", icon='UNLINKED')
+
     layout.prop(shelf, 'shelf_type', text="Type")
 
     col = layout.column(align=True)

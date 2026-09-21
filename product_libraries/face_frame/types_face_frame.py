@@ -16372,6 +16372,80 @@ class LegProductFaceFrameCabinet(FaceFrameCabinet):
             self._set_notch(part_obj, notch_on, tkh, notch_y, thickness)
 
 
+# ---- Linked floating shelf groups ----------------------------------------
+# Shelves stacked with Set Quantity & Spacing (or linked by hand) share a
+# group id; an edit to any one carries to the rest. Shared: size, every
+# floating_shelf option and the cabinet style (finish). Not shared: the
+# placement, so each shelf keeps its own height on the wall.
+SHELF_GROUP_TAG = 'hb_shelf_group'
+FLOATING_SHELF_SYNC_PROPS = (
+    'finish_left', 'finish_right', 'material_thickness', 'shelf_type',
+    'edge_profile',
+    'include_groove_top', 'include_groove_bottom',
+    'groove_distance_from_rear', 'groove_top_from_front',
+    'groove_bottom_separate', 'groove_bottom_distance',
+    'groove_bottom_from_front', 'groove_width', 'groove_depth',
+)
+_FLOATING_SHELF_SIZE_PROPS = ('width', 'depth', 'height')
+# Set while one shelf pushes its settings to its group, so the members'
+# own rebuilds don't push back.
+_shelf_group_syncing = False
+
+
+def floating_shelf_group_members(root):
+    """The other live shelves in root's group (empty when ungrouped)."""
+    gid = root.get(SHELF_GROUP_TAG) if root is not None else None
+    if not gid:
+        return []
+    return [o for o in bpy.data.objects
+            if o is not root and o.get(SHELF_GROUP_TAG) == gid
+            and o.get(FLOATING_SHELF_TAG) and o.users_collection]
+
+
+def sync_floating_shelf_group(src):
+    """Copy src's shared settings onto every other shelf in its group.
+    Only values that differ are written, so a member already matching
+    triggers nothing, and the members' rebuilds (queued under
+    suspend_recalc) find nothing left to push."""
+    global _shelf_group_syncing
+    if _shelf_group_syncing:
+        return
+    members = floating_shelf_group_members(src)
+    if not members:
+        return
+    src_cab = src.face_frame_cabinet
+    src_shelf = src.floating_shelf
+    style_name = src.get('STYLE_NAME')
+    style = None
+    _shelf_group_syncing = True
+    try:
+        with suspend_recalc():
+            for m in members:
+                for attr in _FLOATING_SHELF_SIZE_PROPS:
+                    v = getattr(src_cab, attr)
+                    if abs(getattr(m.face_frame_cabinet, attr) - v) > 1e-7:
+                        setattr(m.face_frame_cabinet, attr, v)
+                for attr in FLOATING_SHELF_SYNC_PROPS:
+                    if not hasattr(src_shelf, attr):
+                        continue
+                    v = getattr(src_shelf, attr)
+                    cur = getattr(m.floating_shelf, attr)
+                    same = (abs(cur - v) <= 1e-7
+                            if isinstance(v, float) else cur == v)
+                    if not same:
+                        setattr(m.floating_shelf, attr, v)
+                if style_name and m.get('STYLE_NAME') != style_name:
+                    if style is None:
+                        from .props_hb_face_frame import get_style_props
+                        ff = get_style_props()
+                        style = next((s for s in ff.cabinet_styles
+                                      if s.name == style_name), None)
+                    if style is not None:
+                        style.assign_style_to_cabinet(m)
+    finally:
+        _shelf_group_syncing = False
+
+
 class FloatingShelfFaceFrameCabinet(FaceFrameCabinet):
     """Wall-mounted floating shelf (a hollow finished slab).
 
@@ -16590,6 +16664,9 @@ class FloatingShelfFaceFrameCabinet(FaceFrameCabinet):
 
         self._apply_shelf_edge_profile(FRONT, LP, RP, width, depth,
                                        thickness, fl, fr)
+
+        # A linked shelf's edit carries to the rest of its group.
+        sync_floating_shelf_group(self.obj)
 
     # ---- Edge profile ---------------------------------------------------
     # Shelf-local frame: x across the width (0 -> width), y from the front
