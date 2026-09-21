@@ -468,8 +468,9 @@ def _cabinet_style_fields():
         ('gap', None, None),
         ('label', None, "Fronts"),
         ('choice', 'door_style', "Door", {'custom': 'ss_door'}),
-        # Extra styles only document the other fronts in use on the
-        # Style Section page; they have no geometric effect.
+        # Extra styles document the other fronts in use on the Style
+        # Section page; only the first extra drawer style has a geometric
+        # effect (the Use Extra Style At height below).
         ('items', 'extra_door_styles', None,
          {'kind': 'enum', 'prop': 'style',
           'remove': ('hb_face_frame.remove_cabinet_extra_front_style',
@@ -486,6 +487,9 @@ def _cabinet_style_fields():
         ('actions', (("Add Drawer Front Style",
                       'hb_face_frame.add_cabinet_extra_front_style',
                       'kind', 'DRAWER'),), None),
+        # Drawer fronts this tall take the first extra style (0 = off).
+        ('distance', 'extra_drawer_front_height', "Use Extra Style At",
+         {'when': lambda p: len(p.extra_drawer_front_styles) > 0}),
         ('gap', None, None),
         ('label', None, "Doors"),
         ('choice', 'finish_hinge', "Hinge", {'custom': 'ss_hinge'}),

@@ -1274,20 +1274,41 @@ def get_cabinet_extra_front_style_items(self, context):
     return items
 
 
+def _update_cabinet_extra_front_style(self, context):
+    """A drawer-front extra row can drive geometry (the tall-drawer style,
+    see extra_drawer_front_height), so re-propagate the owning cabinet
+    style. Door rows stay documentation only."""
+    try:
+        path = self.path_from_id()
+    except Exception:
+        return
+    if ".extra_drawer_front_styles[" not in path:
+        return
+    try:
+        style = self.id_data.path_resolve(
+            path.rsplit(".extra_drawer_front_styles[", 1)[0])
+    except Exception:
+        return
+    if style.extra_drawer_front_height > 0.0:
+        _propagate_cabinet_style(style, context)
+
+
 class Face_Frame_Cabinet_Extra_Front_Style(PropertyGroup):
     """One additional door- or drawer-front style listed on a cabinet style.
 
     The primary door_style / drawer_front_style drives the geometry; these
     extra entries document the OTHER front styles a designer assigns to this
     cabinet style's cabinets in 3D, so the Style Section page can list every
-    front style in use, not just the primary. Pure documentation -- no
-    geometric effect. The pool (door vs drawer front) is fixed by which
-    collection the row lives in.
+    front style in use, not just the primary. Documentation only, except the
+    first drawer-front row, which the cabinet style's
+    extra_drawer_front_height applies to tall drawer fronts. The pool (door
+    vs drawer front) is fixed by which collection the row lives in.
     """
     style: EnumProperty(
         name="Front Style",
         description="Additional front style shown on the Style Section page",
         items=get_cabinet_extra_front_style_items,
+        update=_update_cabinet_extra_front_style,
     )  # type: ignore
 
 
@@ -1954,7 +1975,9 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
     # The primary door_style / drawer_front_style drives geometry; these list
     # the ADDITIONAL door / drawer-front styles a designer has assigned to this
     # cabinet style's cabinets in 3D, so the Style Section page documents every
-    # front style in use. Pure documentation -- no geometric effect.
+    # front style in use. Documentation only, except that the FIRST extra
+    # drawer-front style becomes the tall-drawer style when
+    # extra_drawer_front_height is set (see _apply_door_styles_to_fronts).
     extra_door_styles: CollectionProperty(
         name="Extra Door Styles",
         type=Face_Frame_Cabinet_Extra_Front_Style,
@@ -1962,6 +1985,19 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
     extra_drawer_front_styles: CollectionProperty(
         name="Extra Drawer Front Styles",
         type=Face_Frame_Cabinet_Extra_Front_Style,
+    )  # type: ignore
+    # Drawer fronts at least this tall take the first extra drawer-front
+    # style instead of drawer_front_style (e.g. a slab top drawer over
+    # 5-piece lower drawers). 0 turns the rule off.
+    extra_drawer_front_height: FloatProperty(
+        name="Use Extra Style At",
+        description="Drawer fronts this tall or taller use the first extra "
+                    "drawer front style; shorter ones use the main Drawer "
+                    "Front style. 0 turns this off. A style painted onto a "
+                    "front still wins",
+        default=0.0, min=0.0,
+        unit='LENGTH', precision=4,
+        update=_propagate_cabinet_style,
     )  # type: ignore
 
     # ---- Cached materials (lazy-loaded from face_frame_assets/materials/cabinet_material.blend) ----
@@ -3374,6 +3410,23 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         door_ds = resolve(self.door_style, ff.door_styles)
         drawer_ds = resolve(self.drawer_front_style, ff.drawer_front_styles)
 
+        # Tall-drawer default: fronts at or above extra_drawer_front_height
+        # take the first extra drawer-front style (slab top drawer over
+        # 5-piece lowers). It only replaces the cabinet default - a per-front
+        # assignment still wins.
+        tall_drawer_ds = None
+        tall_min = self.extra_drawer_front_height
+        if tall_min > 0.0 and len(self.extra_drawer_front_styles) > 0:
+            tall_drawer_ds = resolve(self.extra_drawer_front_styles[0].style,
+                                     ff.drawer_front_styles)
+
+        def front_height(obj):
+            from ... import hb_types
+            try:
+                return hb_types.GeoNodeCutpart(obj).get_input("Length")
+            except Exception:
+                return None
+
         for child in cabinet_obj.children_recursive:
             if 'CABINET_PART' not in child:
                 continue
@@ -3394,6 +3447,12 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                 pool, default_ds = ff.door_styles, door_ds
             else:
                 pool, default_ds = ff.drawer_front_styles, drawer_ds
+                if tall_drawer_ds is not None:
+                    h = front_height(child)
+                    # Small tolerance so a front sized exactly at the
+                    # cutoff is not lost to float error.
+                    if h is not None and h >= tall_min - 1e-5:
+                        default_ds = tall_drawer_ds
             # The solver wipes and rebuilds every front on each recalc, so an
             # opening-size edit (or any cabinet alteration) lands here. Prefer a
             # per-front override the user explicitly assigned, persisted on the
@@ -3637,6 +3696,8 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                           text="Add Drawer Front Style", icon='ADD')
         op.kind = 'DRAWER'
         op.style_index = style_index
+        if len(self.extra_drawer_front_styles) > 0:
+            col.prop(self, "extra_drawer_front_height")
 
         box = main.box()
         row = box.row()

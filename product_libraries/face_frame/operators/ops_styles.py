@@ -1209,6 +1209,14 @@ class hb_face_frame_OT_remove_special_effect(Operator):
         return {'FINISHED'}
 
 
+def _repropagate_tall_drawer(context, style, kind):
+    """The first extra drawer-front style is the tall-drawer style when the
+    cabinet style's extra_drawer_front_height is set, so a row add / remove
+    can restyle fronts. Door rows are documentation only."""
+    if kind == 'DRAWER' and style.extra_drawer_front_height > 0.0:
+        props_hb_face_frame._propagate_cabinet_style(style, context)
+
+
 class hb_face_frame_OT_add_cabinet_extra_front_style(Operator):
     """Add an extra door- or drawer-front style row to the active cabinet
     style. The row is shown on the Style Section page (DOORS / DRAWERS); it
@@ -1235,6 +1243,7 @@ class hb_face_frame_OT_add_cabinet_extra_front_style(Operator):
         coll = (style.extra_drawer_front_styles if self.kind == 'DRAWER'
                 else style.extra_door_styles)
         coll.add()
+        _repropagate_tall_drawer(context, style, self.kind)
         return {'FINISHED'}
 
 
@@ -1261,6 +1270,7 @@ class hb_face_frame_OT_remove_cabinet_extra_front_style(Operator):
                 else style.extra_door_styles)
         if 0 <= self.index < len(coll):
             coll.remove(self.index)
+            _repropagate_tall_drawer(context, style, self.kind)
         return {'FINISHED'}
 
 
