@@ -2248,6 +2248,18 @@ class hb_face_frame_OT_finish_opening_prompts(bpy.types.Operator):
     opening_name: bpy.props.StringProperty(
         default='', options={'HIDDEN', 'SKIP_SAVE'},
     )  # type: ignore
+    # Other selected openings (newline-joined names), captured at invoke
+    # before the first rebuild kills the selected parts. OK copies the
+    # active opening's finish settings onto each of them.
+    other_opening_names: bpy.props.StringProperty(
+        default='', options={'HIDDEN', 'SKIP_SAVE'},
+    )  # type: ignore
+
+    _FINISH_PROPS = (
+        'finish_opening_material', 'finish_opening_texture',
+        'finish_opening_flush', 'finish_opening_flush_depth',
+        'finish_opening',
+    )
 
     @classmethod
     def poll(cls, context):
@@ -2266,9 +2278,29 @@ class hb_face_frame_OT_finish_opening_prompts(bpy.types.Operator):
             self.report({'WARNING'}, "No opening selected")
             return {'CANCELLED'}
         self.opening_name = opening_obj.name
+        others = []
+        for obj in context.selected_objects:
+            other = _find_owning_opening(obj)
+            if (other is not None and other is not opening_obj
+                    and other.name not in others):
+                others.append(other.name)
+        self.other_opening_names = "\n".join(others)
         return context.window_manager.invoke_props_dialog(self, width=300)
 
     def execute(self, context):
+        src_obj = bpy.data.objects.get(self.opening_name)
+        if src_obj is None or not self.other_opening_names:
+            return {'FINISHED'}
+        src = src_obj.face_frame_opening
+        for name in self.other_opening_names.split("\n"):
+            obj = bpy.data.objects.get(name)
+            if obj is None or not obj.get(types_face_frame.TAG_OPENING_CAGE):
+                continue
+            dst = obj.face_frame_opening
+            for prop in self._FINISH_PROPS:
+                value = getattr(src, prop)
+                if getattr(dst, prop) != value:
+                    setattr(dst, prop, value)
         return {'FINISHED'}
 
     def draw(self, context):
