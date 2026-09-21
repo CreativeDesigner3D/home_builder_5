@@ -433,9 +433,10 @@ def build_mitered_frame(info, width, height, thickness, member_section):
             if u >= cut - eps:
                 out.append((M - u, v))
                 continue
-            u1, v1 = pts[i + 1]
-            f = (cut - u1) / (u - u1)
-            out.append((band, v1 + (v - v1) * f))
+            if abs(out[-1][0] - band) > eps:
+                u1, v1 = pts[i + 1]
+                f = (cut - u1) / (u - u1)
+                out.append((band, v1 + (v - v1) * f))
             break
         out.reverse()
         return out if len(out) > 1 else []
@@ -452,9 +453,10 @@ def build_mitered_frame(info, width, height, thickness, member_section):
             if u <= cut + eps:
                 out.append((M - u, v))
                 continue
-            u0, v0 = pts[i - 1]
-            f = (cut - u0) / (u - u0)
-            out.append((band, v0 + (v - v0) * f))
+            if out and abs(out[-1][0] - band) > eps:
+                u0, v0 = pts[i - 1]
+                f = (cut - u0) / (u - u0)
+                out.append((band, v0 + (v - v0) * f))
             break
         return out if len(out) > 1 else []
 
