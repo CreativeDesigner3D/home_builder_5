@@ -2263,7 +2263,12 @@ class hb_face_frame_OT_finish_opening_prompts(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return _find_owning_opening(context.active_object) is not None
+        # Switching the finish on rebuilds the cabinet and clears the
+        # active object when the dialog came from a part, and OK
+        # re-checks poll; execute resolves openings by name, so no
+        # active object is fine.
+        obj = context.active_object
+        return obj is None or _find_owning_opening(obj) is not None
 
     def _resolve_opening(self, context):
         if self.opening_name:
