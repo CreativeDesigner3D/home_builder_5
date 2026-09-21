@@ -16588,6 +16588,122 @@ class FloatingShelfFaceFrameCabinet(FaceFrameCabinet):
             self._set_groove(BOTTOM, hd and shelf.include_groove_bottom,
                              gx0, b_near, gx1, b_far, g_depth, False)
 
+        self._apply_shelf_edge_profile(FRONT, LP, RP, width, depth,
+                                       thickness, fl, fr)
+
+    # ---- Edge profile ---------------------------------------------------
+    # Shelf-local frame: x across the width (0 -> width), y from the front
+    # face (-depth) back to the wall (0), z up the thickness (0 -> T). Each
+    # exposed edge is (point on the edge, sweep axis, the two in-face
+    # directions away from the arris: u across one face, v across the
+    # other). The run's shapes are symmetric, so which face is u only
+    # matters for the unequal ones, where u is the front / end face.
+    _SHELF_EDGE_MOD_PREFIX = 'Edge Profile '
+
+    def _shelf_edge_run(self):
+        shelf = self.obj.floating_shelf
+        choice = getattr(shelf, 'edge_profile', 'STYLE')
+        if choice == 'STYLE':
+            return self._corner_treatment_run()
+        from ..common import door_profiles
+        return door_profiles.named_edge_run(choice)
+
+    def _apply_shelf_edge_profile(self, FRONT, LP, RP, width, depth,
+                                  thickness, fl, fr):
+        """Mill the edge profile into the exposed arrises: the front top
+        and bottom edges, and on a finished end its top and bottom edges
+        and the front corner. One swept cutter per edge; each cuts the
+        boards it runs along (the front board and the end panels, which
+        miter at the corners), so the corners come out the way a router
+        run around the edges leaves them."""
+        run = self._shelf_edge_run()
+        D, W, T = depth, width, thickness
+        X = Vector((1.0, 0.0, 0.0))
+        Y = Vector((0.0, 1.0, 0.0))
+        Z = Vector((0.0, 0.0, 1.0))
+        edges = {}   # key -> (origin, axis, span, udir, vdir, parts)
+        if run is not None:
+            front_parts = [FRONT] + ([LP] if fl else []) + ([RP] if fr else [])
+            edges['FRONT_TOP'] = (Vector((0.0, -D, T)), X, W, -Z, Y,
+                                  front_parts)
+            edges['FRONT_BOTTOM'] = (Vector((0.0, -D, 0.0)), X, W, Z, Y,
+                                     front_parts)
+            for side, on, panel, x, inward in (('LEFT', fl, LP, 0.0, X),
+                                               ('RIGHT', fr, RP, W, -X)):
+                if not on:
+                    continue
+                edges[side + '_TOP'] = (Vector((x, -D, T)), Y, D, -Z,
+                                        inward, [panel, FRONT])
+                edges[side + '_BOTTOM'] = (Vector((x, -D, 0.0)), Y, D, Z,
+                                           inward, [panel, FRONT])
+                edges[side + '_CORNER'] = (Vector((x, -D, 0.0)), Z, T,
+                                           inward, Y, [panel, FRONT])
+
+        live_mods = set()   # (part name, modifier name)
+        for key, (origin, axis, span, udir, vdir, parts) in edges.items():
+            cutter = self._ensure_corner_treatment_cutter('SHELF_' + key)
+            self._build_shelf_edge_cutter(cutter, run, origin, axis, span,
+                                          udir, vdir)
+            mod_name = self._SHELF_EDGE_MOD_PREFIX + key
+            for part_obj in parts:
+                # A Make Editable part keeps whatever it was applied with.
+                if part_obj.get('IS_MANUAL_PART'):
+                    continue
+                mod = part_obj.modifiers.get(mod_name)
+                if mod is None:
+                    mod = part_obj.modifiers.new(name=mod_name, type='BOOLEAN')
+                    mod.operation = 'DIFFERENCE'
+                    mod.solver = 'EXACT'
+                mod.material_mode = 'TRANSFER'
+                if mod.object is not cutter:
+                    mod.object = cutter
+                live_mods.add((part_obj.name, mod_name))
+
+        # Drop edges no longer wanted (Square, an end unfinished).
+        for part_obj in (FRONT, LP, RP):
+            if part_obj.get('IS_MANUAL_PART'):
+                continue
+            for mod in list(part_obj.modifiers):
+                if (mod.name.startswith(self._SHELF_EDGE_MOD_PREFIX)
+                        and (part_obj.name, mod.name) not in live_mods):
+                    part_obj.modifiers.remove(mod)
+        wanted = {'SHELF_' + k for k in edges}
+        for cutter in list(self._corner_treatment_cutters()):
+            if cutter.get('hb_ct_key') in wanted:
+                continue
+            mesh = cutter.data
+            bpy.data.objects.remove(cutter, do_unlink=True)
+            if mesh is not None and mesh.users == 0:
+                bpy.data.meshes.remove(mesh)
+
+    @staticmethod
+    def _build_shelf_edge_cutter(cutter, run, origin, axis, span, udir,
+                                 vdir):
+        """Rebuild the cutter as the removed-corner outline swept along one
+        shelf edge, in shelf-local coords, padded past both faces and both
+        ends so the boolean never lands on a coplanar face."""
+        eps = inch(0.05)
+        umax = max(u for u, v in run)
+        vmax = max(v for u, v in run)
+        outline = [(-eps, -eps), (umax, -eps)] + list(run) + [(-eps, vmax)]
+        bm = bmesh.new()
+        loops = []
+        for s in (-eps, span + eps):
+            base = origin + axis * s
+            loops.append([bm.verts.new(base + udir * u + vdir * v)
+                          for (u, v) in outline])
+        bm.faces.new(loops[0])
+        bm.faces.new(list(reversed(loops[1])))
+        n = len(outline)
+        for i in range(n):
+            j = (i + 1) % n
+            bm.faces.new((loops[0][i], loops[0][j], loops[1][j], loops[1][i]))
+        bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+        bm.to_mesh(cutter.data)
+        bm.free()
+        cutter.location = (0.0, 0.0, 0.0)
+        cutter.rotation_euler = (0.0, 0.0, 0.0)
+
 
 # Per-style standard build for the Mantle product, inches:
 # (overall_height, crown_projection). Contemporary is a plain hollow box

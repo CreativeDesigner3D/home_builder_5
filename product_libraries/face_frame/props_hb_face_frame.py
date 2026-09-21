@@ -12188,6 +12188,24 @@ class Face_Frame_Floating_Shelf_Props(PropertyGroup):
                     "board and finished ends are always 3/4\"",
         unit='LENGTH', precision=4, update=_update_cabinet_dim,
     )  # type: ignore
+    # Profile on the exposed edges (front top / bottom, and each finished
+    # end's top, bottom and front corner). STYLE follows the cabinet
+    # style's corner treatment; the rest match its identifiers.
+    edge_profile: EnumProperty(
+        name="Edge",
+        description="Profile on the shelf's exposed edges",
+        items=[
+            ('STYLE', "Same as Corner Treatment",
+             "Follow the cabinet style's corner treatment"),
+            ('Square', 'Square', ''),
+            ('1/8" Radius', '1/8" Radius', ''),
+            ('1/4" Radius', '1/4" Radius', ''),
+            ('3/8" Radius', '3/8" Radius', ''),
+            ('Cove', '1/4" Cove', ''),
+            ('1/4" x 1/4" Chamfer', '1/4" x 1/4" Chamfer', ''),
+        ],
+        default='STYLE', update=_update_cabinet_dim,
+    )  # type: ignore
     # Item numbers are pinned: files store the number, and Medium Duty was
     # added after Heavy Duty but lists before it.
     shelf_type: EnumProperty(

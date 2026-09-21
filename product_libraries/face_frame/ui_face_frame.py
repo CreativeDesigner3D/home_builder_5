@@ -620,6 +620,8 @@ def draw_floating_shelf(layout, root):
     row.prop(shelf, 'finish_left', text="Left", toggle=True)
     row.prop(shelf, 'finish_right', text="Right", toggle=True)
 
+    # Front edges, plus the finished ends' edges.
+    layout.prop(shelf, 'edge_profile', text="Edge")
     layout.prop(shelf, 'material_thickness', text="Top & Bottom Thickness")
 
     layout.separator()
