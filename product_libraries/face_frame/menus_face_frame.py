@@ -908,9 +908,19 @@ class HOME_BUILDER_MT_face_frame_opening_commands(bpy.types.Menu):
         layout.operator("hb_face_frame.equalize_opening_heights",
                         text="Equalize Opening Heights",
                         icon='ALIGN_JUSTIFY')
-        layout.operator("hb_face_frame.equalize_front_heights",
-                        text="Equalize Drawer Front Heights",
-                        icon='ALIGN_JUSTIFY')
+        # The ratio / basis are remembered between runs; pin them here so
+        # this entry always equalizes fronts.
+        op = layout.operator("hb_face_frame.equalize_front_heights",
+                             text="Equalize Drawer Front Heights",
+                             icon='ALIGN_JUSTIFY')
+        op.ratio = ""
+        op.basis = 'FRONTS'
+        # Same stack re-divide with a ratio (e.g. 1:2) and a front / opening
+        # basis, set in a dialog.
+        op = layout.operator("hb_face_frame.equalize_front_heights",
+                             text="Divide by Ratio...",
+                             icon='ALIGN_JUSTIFY')
+        op.show_dialog = True
 
         layout.separator()
         op = layout.operator("hb_face_frame.split_opening",

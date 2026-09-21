@@ -1,3 +1,4 @@
+import re
 import bpy
 from mathutils import Vector, Matrix, Euler
 
@@ -604,7 +605,12 @@ class hb_face_frame_OT_equalize_front_heights(bpy.types.Operator):
     are equalized; with fewer than two selected, every opening in it that
     carries an overlay front is. The new heights are locked, and a nested
     split grows or shrinks by its children's change, so the column's total
-    and everything beside it stay put."""
+    and everything beside it stay put.
+
+    ratio divides the space unequally instead (top to bottom, e.g. 1:2 for
+    a one-third / two-thirds stack), and basis picks whether the ratio
+    applies to the fronts (overlays counted, so a door running down over a
+    light rail is sized by what shows) or to the bare openings."""
     bl_idname = "hb_face_frame.equalize_front_heights"
     bl_label = "Equalize Drawer Front Heights"
     bl_description = (
@@ -613,8 +619,39 @@ class hb_face_frame_OT_equalize_front_heights(bpy.types.Operator):
     )
     bl_options = {'REGISTER', 'UNDO'}
 
+    ratio: bpy.props.StringProperty(
+        name="Ratio",
+        description="Heights top to bottom, e.g. 1:2 for one-third over "
+                    "two-thirds. Leave blank for equal heights",
+        default="",
+    )  # type: ignore
+    basis: bpy.props.EnumProperty(
+        name="Basis",
+        items=[('FRONTS', "Front Heights",
+                "Divide by the visible door / drawer front heights "
+                "(overlays counted)"),
+               ('OPENINGS', "Opening Heights",
+                "Divide by the openings between the rails")],
+        default='FRONTS',
+    )  # type: ignore
+    show_dialog: bpy.props.BoolProperty(
+        default=False, options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+
     # Fronts that are not an opening plus overlays: nothing to equalize.
     _SKIP_FRONT_TYPES = frozenset({'NONE', 'APPLIANCE', 'INSET_PANEL'})
+
+    @staticmethod
+    def _parse_ratio(text):
+        """'1:2' / '1 2' / '1,2' -> [1.0, 2.0]; blank -> []; None if
+        malformed or any part is not a positive number."""
+        parts = [p for p in re.split(r"[:/,\s]+", text.strip()) if p]
+        try:
+            weights = [float(p) for p in parts]
+        except ValueError:
+            return None
+        if any(w <= 0.0 for w in weights):
+            return None
+        return weights
 
     @staticmethod
     def _is_h_split(obj):
@@ -630,8 +667,10 @@ class hb_face_frame_OT_equalize_front_heights(bpy.types.Operator):
                 and bool(cls._is_h_split(obj.parent)))
 
     def _stack(self, node):
-        """Front-carrying openings in a column, top to bottom, through
-        nested horizontal splits (a vertical split starts a new column)."""
+        """Openings in a column, top to bottom, through nested horizontal
+        splits (a vertical split starts a new column). By front height only
+        front-carrying openings count; by opening height every one does
+        (an open or glass top in a stacked cabinet still takes its share)."""
         kids = sorted(
             [c for c in node.children
              if c.get('IS_FACE_FRAME_OPENING_CAGE')
@@ -639,11 +678,24 @@ class hb_face_frame_OT_equalize_front_heights(bpy.types.Operator):
             key=lambda c: c.get('hb_split_child_index', 0))
         for c in kids:
             if c.get('IS_FACE_FRAME_OPENING_CAGE'):
-                if (c.face_frame_opening.front_type
+                if (self.basis == 'OPENINGS'
+                        or c.face_frame_opening.front_type
                         not in self._SKIP_FRONT_TYPES):
                     yield c
             elif self._is_h_split(c):
                 yield from self._stack(c)
+
+    def invoke(self, context, event):
+        if self.show_dialog:
+            return context.window_manager.invoke_props_dialog(
+                self, title="Divide by Ratio")
+        return self.execute(context)
+
+    def draw(self, context):
+        layout = self.layout
+        layout.use_property_split = True
+        layout.prop(self, "ratio")
+        layout.prop(self, "basis")
 
     def execute(self, context):
         from .. import solver_face_frame as solver
@@ -662,7 +714,21 @@ class hb_face_frame_OT_equalize_front_heights(bpy.types.Operator):
         targets = picked if len(picked) >= 2 else stack
         if len(targets) < 2:
             self.report({'WARNING'},
-                        "Need two or more openings with fronts in this stack")
+                        "Need two or more openings with fronts in this stack"
+                        if self.basis == 'FRONTS' else
+                        "Need two or more openings in this stack")
+            return {'CANCELLED'}
+        weights = self._parse_ratio(self.ratio)
+        if weights is None:
+            self.report({'WARNING'},
+                        "Ratio must be positive numbers like 1:2")
+            return {'CANCELLED'}
+        if not weights:
+            weights = [1.0] * len(targets)
+        if len(weights) != len(targets):
+            self.report({'WARNING'},
+                        f"Ratio has {len(weights)} parts but there are "
+                        f"{len(targets)} openings to divide")
             return {'CANCELLED'}
 
         root = types_face_frame.find_cabinet_root(active)
@@ -685,22 +751,28 @@ class hb_face_frame_OT_equalize_front_heights(bpy.types.Operator):
                 return {'CANCELLED'}
             op = cage.face_frame_opening
             height = rect['cage_dim_z'] - rect['reveal_top'] - rect['reveal_bottom']
-            overlays = (solver.front_overlay(rect, cab_props, op, 'top')
-                        + solver.front_overlay(rect, cab_props, op, 'bottom'))
+            overlays = 0.0
+            if self.basis == 'FRONTS':
+                overlays = (solver.front_overlay(rect, cab_props, op, 'top')
+                            + solver.front_overlay(rect, cab_props, op, 'bottom'))
             spans.append((cage, height, overlays))
 
-        front_h = (sum(h for _c, h, _o in spans)
-                   + sum(o for _c, _h, o in spans)) / len(spans)
-        if any(front_h - o <= 0.0 for _c, _h, o in spans):
-            self.report({'WARNING'}, "Not enough room to equalize the fronts")
+        # Each opening's share of the column (opening + its overlays when
+        # dividing by fronts), split by the ratio weights.
+        total = (sum(h for _c, h, _o in spans)
+                 + sum(o for _c, _h, o in spans))
+        weight_sum = sum(weights)
+        shares = [total * w / weight_sum for w in weights]
+        if any(s - o <= 0.0 for s, (_c, _h, o) in zip(shares, spans)):
+            self.report({'WARNING'}, "Not enough room to divide the openings")
             return {'CANCELLED'}
 
         with types_face_frame.suspend_recalc():
             # A nested split holds its own size in the column above it, so
             # it takes its children's change to keep the column total.
             node_delta = {}
-            for cage, height, overlays in spans:
-                new_size = front_h - overlays
+            for share, (cage, height, overlays) in zip(shares, spans):
+                new_size = share - overlays
                 node = cage.parent
                 while node is not top:
                     node_delta[node] = (node_delta.get(node, 0.0)
@@ -714,9 +786,15 @@ class hb_face_frame_OT_equalize_front_heights(bpy.types.Operator):
                 sp.unlock_size = True
                 sp.size = sp.size + delta
         types_face_frame.recalculate_face_frame_cabinet(root)
-        self.report({'INFO'},
-                    f"Equalized {len(spans)} front(s) at "
-                    f"{meter_to_inch(front_h):.4f}\"")
+        what = "front(s)" if self.basis == 'FRONTS' else "opening(s)"
+        if len(set(weights)) == 1:
+            self.report({'INFO'},
+                        f"Equalized {len(spans)} {what} at "
+                        f"{meter_to_inch(shares[0]):.4f}\"")
+        else:
+            sizes = ", ".join(f"{meter_to_inch(s):.4f}\"" for s in shares)
+            self.report({'INFO'},
+                        f"Divided {len(spans)} {what}: {sizes}")
         return {'FINISHED'}
 
 
