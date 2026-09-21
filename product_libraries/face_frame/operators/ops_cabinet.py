@@ -6251,16 +6251,21 @@ class hb_face_frame_OT_column_beam_properties(bpy.types.Operator):
 
 
 class hb_face_frame_OT_duplicate_floating_shelf(bpy.types.Operator):
-    """Duplicate the selected floating shelf vertically by a quantity +
-    spacing. Each copy is an independent, separately-editable shelf that
+    """Stack copies of the selected floating shelf above it by a total
+    count + spacing. The count includes the selected shelf, so 3 adds two
+    copies. Each copy is an independent, separately-editable shelf that
     inherits the source's dimensions, type, finish, and groove."""
     bl_idname = "hb_face_frame.duplicate_floating_shelf"
     bl_label = "Duplicate Floating Shelf"
-    bl_description = "Add stacked copies of this floating shelf at a set spacing"
+    bl_description = ("Stack copies of this floating shelf above it at a "
+                      "set spacing, up to a total number of shelves")
     bl_options = {'UNDO'}
 
     quantity: bpy.props.IntProperty(
-        name="Quantity to Add", default=1, min=1, max=20)  # type: ignore
+        name="Total Shelves",
+        description="How many shelves in the stack, counting the "
+                    "selected one",
+        default=2, min=2, max=21)  # type: ignore
     spacing: bpy.props.FloatProperty(
         name="Spacing Between Shelves", default=inch(12.0),
         unit='LENGTH', precision=4)  # type: ignore
@@ -6305,7 +6310,8 @@ class hb_face_frame_OT_duplicate_floating_shelf(bpy.types.Operator):
             style = next((s for s in sp.cabinet_styles if s.name == style_name), None)
 
         new_objs = []
-        for i in range(1, self.quantity + 1):
+        # quantity counts the selected shelf, which stays at i = 0.
+        for i in range(1, self.quantity):
             shelf = types_face_frame.FloatingShelfFaceFrameCabinet()
             shelf.create("Floating Shelf")
             n = shelf.obj
@@ -6332,7 +6338,9 @@ class hb_face_frame_OT_duplicate_floating_shelf(bpy.types.Operator):
         if new_objs:
             new_objs[-1].select_set(True)
             context.view_layer.objects.active = new_objs[-1]
-        self.report({'INFO'}, f"Added {self.quantity} floating shelf(s)")
+        self.report({'INFO'},
+                    f"Added {len(new_objs)} floating shelf(s), "
+                    f"{self.quantity} in the stack")
         return {'FINISHED'}
 
 
