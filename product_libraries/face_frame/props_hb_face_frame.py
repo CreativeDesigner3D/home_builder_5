@@ -9646,6 +9646,19 @@ class Face_Frame_Opening_Props(PropertyGroup):
         description="Build the left/right filler stiles; off reserves the opening as an appliance with no fillers",
         default=False, update=_update_cabinet_dim,
     )  # type: ignore
+    # How the opening is fitted to the appliance: FILLERS narrow it
+    # (include_fillers gates them); NOTCH widens it by cutting the stiles
+    # either side back over the opening's height. Both read
+    # set_appliance_width, and the left/right amounts double as the notch
+    # depths in NOTCH mode.
+    appliance_fit: EnumProperty(
+        name="Fit With",
+        items=[
+            ('FILLERS', "Fillers", "Narrow the opening with filler stiles"),
+            ('NOTCH', "Notch Stiles", "Widen the opening by notching the stiles on either side over the opening's height"),
+        ],
+        default='FILLERS', update=_update_cabinet_dim,
+    )  # type: ignore
     left_filler_amount: FloatProperty(
         name="Left Filler",
         description="Width of the left filler stile (used directly when Set Appliance Width is off)",

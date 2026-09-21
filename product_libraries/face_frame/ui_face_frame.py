@@ -1305,8 +1305,20 @@ def draw_opening_properties(layout, opening_obj):
         # toggled by Set Appliance Width (see Face_Frame_Opening_Props).
         if op.front_type == 'APPLIANCE':
             fcol.prop(op, 'appliance_kind', text="Appliance")
-            fcol.prop(op, 'include_fillers', text="Include Fillers")
-            if op.include_fillers:
+            fcol.prop(op, 'appliance_fit', text="Fit With")
+            if op.appliance_fit == 'NOTCH':
+                # Same two input modes as the fillers; the left / right
+                # amounts are the notch depths here.
+                fcol.prop(op, 'set_appliance_width', text="Set Appliance Width")
+                if op.set_appliance_width:
+                    fcol.prop(op, 'appliance_width', text="Appliance Width")
+                else:
+                    frow = fcol.row(align=True)
+                    frow.prop(op, 'left_filler_amount', text="Left Notch")
+                    frow.prop(op, 'right_filler_amount', text="Right Notch")
+            else:
+                fcol.prop(op, 'include_fillers', text="Include Fillers")
+            if op.appliance_fit != 'NOTCH' and op.include_fillers:
                 fcol.prop(op, 'set_appliance_width', text="Set Appliance Width")
                 if op.set_appliance_width:
                     fcol.prop(op, 'appliance_width', text="Appliance Width")

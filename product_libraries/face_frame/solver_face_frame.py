@@ -5021,7 +5021,10 @@ def appliance_filler_widths(rect, opening_props):
     include_fillers OFF returns (0, 0) so the opening can be reserved as an
     appliance with no fillers built yet. Widths are clamped to be >= 0 and to
     never exceed the clear opening (scaled down together if they would).
+    A NOTCH-fit opening has no fillers (see appliance_notch_depths).
     """
+    if getattr(opening_props, 'appliance_fit', 'FILLERS') == 'NOTCH':
+        return (0.0, 0.0)
     if not getattr(opening_props, 'include_fillers', True):
         return (0.0, 0.0)
     clear = rect['cage_dim_x'] - rect['reveal_left'] - rect['reveal_right']
@@ -5039,6 +5042,27 @@ def appliance_filler_widths(rect, opening_props):
         left *= scale
         right *= scale
     return (left, right)
+
+
+def appliance_notch_depths(rect, opening_props):
+    """Return (left_depth, right_depth) cut into the stiles either side of
+    a NOTCH-fit APPLIANCE opening - the widening counterpart of
+    appliance_filler_widths, reading the same two input modes:
+      * set_appliance_width ON  -> the appliance is wider than the clear
+        opening; the excess is split evenly between the two stiles.
+      * set_appliance_width OFF -> the left / right amounts are the notch
+        depths.
+    (0, 0) for any other opening. The stile update clamps each depth to
+    what its stile can give up."""
+    if (getattr(opening_props, 'front_type', '') != 'APPLIANCE'
+            or getattr(opening_props, 'appliance_fit', 'FILLERS') != 'NOTCH'):
+        return (0.0, 0.0)
+    if getattr(opening_props, 'set_appliance_width', True):
+        clear = rect['cage_dim_x'] - rect['reveal_left'] - rect['reveal_right']
+        each = max(0.0, (opening_props.appliance_width - clear) / 2.0)
+        return (each, each)
+    return (max(0.0, opening_props.left_filler_amount),
+            max(0.0, opening_props.right_filler_amount))
 
 
 # ---------------------------------------------------------------------------

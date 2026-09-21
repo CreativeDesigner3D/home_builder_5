@@ -3073,6 +3073,19 @@ class FaceFrameCabinet(GeoNodeCage):
             if _part_obj.get('hb_part_role') and not _part_obj.get('MENU_ID'):
                 _part_obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_part_commands'
 
+        # Stile notches for appliance openings fitted by notching. Only
+        # walked when the layout holds an appliance opening at all.
+        def _has_appliance_leaf(node):
+            if not node:
+                return False
+            if node.get('kind') == 'leaf':
+                return node.get('front_type') == 'APPLIANCE'
+            return any(_has_appliance_leaf(c)
+                       for c in node.get('children', ()))
+        appl_notches = (self._appliance_stile_notches(layout)
+                        if any(_has_appliance_leaf(b.get('tree'))
+                               for b in layout.bays) else {})
+
         for child in self.obj.children:
             role = child.get('hb_part_role')
             bay_index = child.get('hb_bay_index', 0)
@@ -3266,6 +3279,9 @@ class FaceFrameCabinet(GeoNodeCage):
                 part.set_input('Length', length)
                 part.set_input('Width', width)
                 part.set_input('Thickness', thickness)
+                self._apply_appliance_notches(
+                    child, part, appl_notches.get('LEFT'), pos[2],
+                    length, width)
 
             elif role == PART_ROLE_RIGHT_STILE:
                 length, width, thickness = solver.right_end_stile_dims(layout)
@@ -3279,6 +3295,9 @@ class FaceFrameCabinet(GeoNodeCage):
                 part.set_input('Length', length)
                 part.set_input('Width', width)
                 part.set_input('Thickness', thickness)
+                self._apply_appliance_notches(
+                    child, part, appl_notches.get('RIGHT'), pos[2],
+                    length, width)
 
             # ---- Refrigerator 'stile in lieu of leg' (floor -> opening top) ----
             elif role == PART_ROLE_LEFT_REFRIG_STILE:
@@ -3554,6 +3573,10 @@ class FaceFrameCabinet(GeoNodeCage):
                     part.set_input('Thickness', halves['thickness'])
                     self._apply_mid_stile_miter(child, layout, msi,
                                                 'LEFT', halves)
+                    # A stile on a bend is two mitered halves; appliance
+                    # notches are left to flat stiles.
+                    self._apply_appliance_notches(child, part, None, 0.0,
+                                                  0.0, 0.0)
                     continue
                 self._clear_mid_stile_miter(child)
                 child.rotation_euler.z = math.pi / 2
@@ -3564,6 +3587,9 @@ class FaceFrameCabinet(GeoNodeCage):
                 part.set_input('Width', width)
                 part.set_input('Thickness', thickness)
                 self._apply_mid_stile_step_notches(child, part, layout, msi)
+                self._apply_appliance_notches(
+                    child, part, appl_notches.get(('MID', msi)), pos[2],
+                    length, width)
 
             elif role == PART_ROLE_MID_STILE_HALF:
                 msi = child.get('hb_mid_stile_index', 0)
@@ -4507,6 +4533,119 @@ class FaceFrameCabinet(GeoNodeCage):
                     hb_utils.set_gn_input(mod, ni.identifier, val)
             mod.show_viewport = True
             mod.show_render = True
+
+    # Appliance-opening stile notches (Fit With: Notch Stiles). With the
+    # stile part config (rot Y=-90 Z=90, Mirror Y) the cutout's Y runs
+    # toward the cabinet's LEFT on every stile: the LOW end of the width
+    # is the stile's right edge, the HIGH end its left edge.
+    _APPLIANCE_NOTCH_MOD = 'Appliance Notch'
+    # Wood a notched stile always keeps, so a notch never cuts it in two.
+    _APPLIANCE_NOTCH_MIN_KEEP = inch(0.25)
+
+    def _appliance_stile_notches(self, layout):
+        """{stile key: [notch, ...]} for every NOTCH-fit appliance opening.
+
+        Keys are 'LEFT', 'RIGHT' (end stiles) or ('MID', gap_index). A
+        notch is {'z0', 'z1' (cabinet Z of the opening's clear bottom /
+        top), 'depth', 'edge' ('LOW' / 'HIGH' end of the stile's width)}.
+        Only an opening on its bay's left or right edge borders a stile
+        that can be notched; one beside a mid stile inside the bay (a
+        vertical split) keeps its fillers-free clear width."""
+        out = {}
+        if layout.cabinet_type == 'PANEL':
+            return out
+        eps = inch(1.0 / 64.0)
+        for bi in range(layout.bay_count):
+            leaves = solver.bay_openings(layout, bi).get('leaves', [])
+            if not leaves:
+                continue
+            bay_w = max(r['cage_x'] + r['cage_dim_x'] for r in leaves)
+            cage_z = solver.bay_cage_position(layout, bi)[2]
+            for r in leaves:
+                cage = bpy.data.objects.get(r['obj_name'])
+                if cage is None or not hasattr(cage, 'face_frame_opening'):
+                    continue
+                left, right = solver.appliance_notch_depths(
+                    r, cage.face_frame_opening)
+                if left <= 0.0 and right <= 0.0:
+                    continue
+                z0 = cage_z + r['cage_z'] + r['reveal_bottom']
+                z1 = cage_z + r['cage_z'] + r['cage_dim_z'] - r['reveal_top']
+                if z1 - z0 <= eps:
+                    continue
+                # The stile left of the opening loses its right edge
+                # (LOW), the one right of it its left edge (HIGH).
+                if left > 0.0 and r['cage_x'] < eps:
+                    key = 'LEFT' if bi == 0 else ('MID', bi - 1)
+                    out.setdefault(key, []).append(
+                        {'z0': z0, 'z1': z1, 'depth': left, 'edge': 'LOW'})
+                if (right > 0.0
+                        and r['cage_x'] + r['cage_dim_x'] > bay_w - eps):
+                    last = bi == layout.bay_count - 1
+                    key = 'RIGHT' if last else ('MID', bi)
+                    out.setdefault(key, []).append(
+                        {'z0': z0, 'z1': z1, 'depth': right, 'edge': 'HIGH'})
+        return out
+
+    def _apply_appliance_notches(self, child, part, notches, bottom_z,
+                                 length, width):
+        """Cut this stile's appliance notches (CPM_CUTOUT, one modifier per
+        notch, named apart from user Cutouts) and hide any left over from
+        an earlier recalc. X runs along the stile's length from its bottom
+        (bottom_z in cabinet Z), Y across its width."""
+        over = inch(0.1)     # run the cut past the faces it opens
+        keep = min(self._APPLIANCE_NOTCH_MIN_KEEP, width / 2.0)
+        used = 0
+        if notches:
+            try:
+                thickness = part.get_input('Thickness')
+            except Exception:
+                thickness = inch(0.75)
+        for n in notches or ():
+            x0 = max(0.0, n['z0'] - bottom_z)
+            x1 = min(length, n['z1'] - bottom_z)
+            depth = min(n['depth'], width - keep)
+            if x1 - x0 <= 1e-6 or depth <= 1e-6:
+                continue
+            if n['edge'] == 'HIGH':
+                y0, y1 = width - depth, width + over
+            else:
+                y0, y1 = -over, depth
+            # A cut reaching a stile end runs past it too.
+            if x0 <= 1e-6:
+                x0 = -over
+            if x1 >= length - 1e-6:
+                x1 = length + over
+            name = (self._APPLIANCE_NOTCH_MOD if used == 0
+                    else f"{self._APPLIANCE_NOTCH_MOD} {used + 1}")
+            used += 1
+            mod = child.modifiers.get(name)
+            if mod is None:
+                part.add_part_modifier('CPM_CUTOUT', name)
+                mod = child.modifiers.get(name)
+                if mod is None:      # unexpected node-group failure
+                    continue
+            ng = mod.node_group
+            if ng is None:
+                continue
+            for iname, val in (('X', x0), ('End X', x1),
+                               ('Y', y0), ('End Y', y1),
+                               ('Route Depth', thickness + over),
+                               ('Flip Z', False)):
+                ni = ng.interface.items_tree.get(iname)
+                if ni is not None:
+                    hb_utils.set_gn_input(mod, ni.identifier, val)
+            mod.show_viewport = True
+            mod.show_render = True
+        for mod in child.modifiers:
+            base = mod.name
+            if not base.startswith(self._APPLIANCE_NOTCH_MOD):
+                continue
+            suffix = base[len(self._APPLIANCE_NOTCH_MOD):].strip()
+            idx = int(suffix) if suffix.isdigit() else 1
+            if idx > used:
+                mod.show_viewport = False
+                mod.show_render = False
 
     def _create_mid_stile_half(self, gap_index):
         """Right-half companion board; same part config as the mid
@@ -12298,6 +12437,10 @@ class FaceFrameCabinet(GeoNodeCage):
                 left, right = solver.appliance_filler_widths(rect, props)
                 x0 += left
                 width -= left + right
+                # Notched stiles widen the opening past the stiles.
+                n_left, n_right = solver.appliance_notch_depths(rect, props)
+                x0 -= n_left
+                width += n_left + n_right
             span = (x0, width, z0, height)
         if kind is not None:
             appliance_geo.sync_opening_appliance(opening_obj, kind, span)
