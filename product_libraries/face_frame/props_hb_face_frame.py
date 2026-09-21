@@ -12188,20 +12188,26 @@ class Face_Frame_Floating_Shelf_Props(PropertyGroup):
                     "board and finished ends are always 3/4\"",
         unit='LENGTH', precision=4, update=_update_cabinet_dim,
     )  # type: ignore
+    # Item numbers are pinned: files store the number, and Medium Duty was
+    # added after Heavy Duty but lists before it.
     shelf_type: EnumProperty(
         name="Shelf Type",
         items=[
             ('FLOATING', "Floating Shelves",
-             "Cantilevered floating shelf"),
+             "Cantilevered floating shelf", 0),
             ('NON_FLOATING', "Non-Floating Shelves",
-             "Shelf with visible support"),
+             "Shelf with visible support", 1),
+            ('MEDIUM_DUTY', "Medium Duty Floating Shelves",
+             "Floating shelf on medium duty concealed metal brackets; "
+             "supports a light groove", 3),
             ('HEAVY_DUTY', "Heavy Duty Floating Shelves",
-             "Heavy duty floating shelf; supports a light groove"),
+             "Floating shelf on heavy duty concealed metal brackets; "
+             "supports a light groove", 2),
         ],
         default='FLOATING',
         update=_update_cabinet_dim,
     )  # type: ignore
-    # Light groove (Heavy Duty only) - a routed LED channel on the top
+    # Light groove (Medium / Heavy Duty) - a routed LED channel on the top
     # and/or bottom face. Each groove is set a distance in from the rear
     # edge or from the front face; the bottom one follows the top unless
     # it is given its own location.

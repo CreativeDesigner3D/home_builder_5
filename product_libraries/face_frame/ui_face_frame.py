@@ -626,8 +626,8 @@ def draw_floating_shelf(layout, root):
     layout.operator("hb_face_frame.duplicate_floating_shelf",
                     text="Set Quantity & Spacing...", icon='LINENUMBERS_ON')
 
-    # Light groove - Heavy Duty shelves only.
-    if shelf.shelf_type == 'HEAVY_DUTY':
+    # Light groove - Medium / Heavy Duty shelves only.
+    if shelf.shelf_type in ('MEDIUM_DUTY', 'HEAVY_DUTY'):
         gbox = layout.box()
         gbox.label(text="Light Groove")
         grow = gbox.row(align=True)

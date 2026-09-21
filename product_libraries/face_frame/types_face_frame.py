@@ -16427,7 +16427,7 @@ class FloatingShelfFaceFrameCabinet(FaceFrameCabinet):
         part.obj['CABINET_PART'] = True
         part.obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_part_commands'
         if add_groove:
-            # Light groove (LED channel) for Heavy Duty shelves; driven
+            # Light groove (LED channel) for duty-rated shelves; driven
             # + toggled in recalculate().
             part.add_part_modifier('CPM_CUTOUT', 'Groove')
         return part.obj
@@ -16550,13 +16550,13 @@ class FloatingShelfFaceFrameCabinet(FaceFrameCabinet):
         self._apply_box_end_miter('RIGHT', fr, FRONT, RP,
                                   width, depth, ft, thickness)
 
-        # --- Light groove (Heavy Duty shelves only) ---
+        # --- Light groove (Medium / Heavy Duty shelves only) ---
         # A routed LED channel on the top and/or bottom face. Panel-local
         # Y runs front (0) -> rear (inner_depth), so a rear-referenced
         # distance measures in from inner_depth and a front-referenced
         # one measures in from the shelf's front face, which sits ft
         # forward of the panel's front edge.
-        hd = shelf.shelf_type == 'HEAVY_DUTY'
+        hd = shelf.shelf_type in ('MEDIUM_DUTY', 'HEAVY_DUTY')
         g_w = shelf.groove_width
         g_depth = shelf.groove_depth
 
