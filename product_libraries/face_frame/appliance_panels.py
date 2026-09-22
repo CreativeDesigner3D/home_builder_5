@@ -554,6 +554,72 @@ def remove_column(appliance_obj, index):
     return True
 
 
+# ----------------------------------------------------------------------
+# Preset preview
+# ----------------------------------------------------------------------
+# What a preset WOULD build, without building it: enough of a run for
+# the solver to lay out, so a picture of a preset is drawn by the same
+# code that draws the real thing and cannot show a layout the preset
+# does not produce.
+
+class _PreviewSection:
+    def __init__(self, label, kind, column, height, hold):
+        self.label, self.kind, self.column = label, kind, column
+        self.height, self.height_hold = height, hold
+        self.z_bottom, self.z_hold = 0.0, False
+        self.backer = 'NONE'            # a preview needs faces, not backers
+        self.backer_width = self.backer_height = _I(24)
+        self.backer_width_hold = self.backer_height_hold = False
+
+
+class _PreviewColumn:
+    def __init__(self):
+        self.width, self.width_hold = _I(18), False
+
+
+class _PreviewProps:
+    """A stand-in run: the preset's columns and sections, with the gaps
+    and toe kick of the run it would replace."""
+
+    def __init__(self, config, like=None):
+        preset = PRESETS.get(config, PRESETS['SINGLE'])
+        self.columns = [_PreviewColumn() for _ in preset['cols']]
+        self.sections = []
+        for label, kind, h, hold in preset.get('bottom', ()):
+            self.sections.append(_PreviewSection(label, kind, -1,
+                                                 h if h > 0 else _I(8), hold))
+        for ci, col in enumerate(preset['cols']):
+            for label, kind, h, hold in col:
+                self.sections.append(_PreviewSection(label, kind, ci,
+                                                     h if h > 0 else _I(8), hold))
+        for label, kind, h, hold in preset.get('top', ()):
+            self.sections.append(_PreviewSection(label, kind, -1,
+                                                 h if h > 0 else _I(8), hold))
+        for name, default in (('toe_kick', 0.0), ('end_reveal', _I(1)),
+                              ('section_gap', _I(1)), ('backer_reveal', _I(1)),
+                              ('panel_type', 'A'), ('rail_width', _I(1.5)),
+                              ('reveal_top', -1.0), ('reveal_bottom', -1.0),
+                              ('reveal_left', -1.0), ('reveal_right', -1.0),
+                              ('column_gap', -1.0)):
+            setattr(self, name, getattr(like, name, default) if like is not None
+                    else default)
+        self.rail_top = self.rail_bottom = self.rail_between = False
+
+    def has_rails(self):
+        return False
+
+
+def preview_faces(config, dim_x, dim_z, like=None):
+    """(sections, {index: (x0, x1, z0, z1)}) for a preset at this size.
+    Nothing is touched; the appliance does not have to be panelled."""
+    props = _PreviewProps(config, like)
+    try:
+        faces = solve(props, dim_x, dim_z)[0]
+    except Exception:
+        return [], {}
+    return props.sections, faces
+
+
 def seed_from_legacy(appliance_obj):
     """Files built before the section model: rebuild the lists from the
     APPLIANCE_PANEL_LAYOUT stamp so the appliance edits without a reset.

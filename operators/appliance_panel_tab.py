@@ -43,6 +43,7 @@ from ..hb_gpu_draw import (
     draw_rect,
     draw_rects,
     draw_rect_outline,
+    draw_rect_outlines,
     draw_text,
     draw_lines,
     point_in_rect,
@@ -119,6 +120,10 @@ _selected = {}
 # field. Rebuilt every build; never read without checking the name.
 _solved = {'name': None, 'faces': {}}
 
+# Whether the layout picker is showing its grid. One tab, one
+# appliance at a time, so one flag.
+_grid_open = False
+
 # The field being typed into, and what it writes to. The target is a
 # key rather than the property group: a group is a temporary wrapper
 # that must not be held across a modal.
@@ -185,6 +190,15 @@ def select(bp, index):
     _selected[bp.name] = max(0, int(index))
 
 
+def _set_grid(open_):
+    """Show or hide the layout grid. Scrolled back to the top when it
+    opens, so the tiles are where the row that opened them is."""
+    global _grid_open
+    _grid_open = bool(open_)
+    if _grid_open:
+        _list.offset = 0.0
+
+
 def _fmt(value):
     """A size the way the rest of the add-on writes one."""
     scene = bpy.context.scene
@@ -221,6 +235,12 @@ def _blocks(context, bp):
     if index < 0:
         return out
     sec = props.sections[index]
+
+    # The layout comes first: it is what the run IS, and picking one
+    # replaces everything below it.
+    out.append(('pick', ('CONFIG', "Layout", _config_label(bp, props))))
+    if _grid_open:
+        out.append(('grid', _preset_items(bp)))
 
     place = _face_place(props, index)
     out.append(('head', "%s (%s)" % (_kind_label(sec), place) if place
@@ -269,8 +289,7 @@ def _blocks(context, bp):
     # Starting over comes last: a preset or a manufacturer's guide
     # REPLACES the layout above, so it is not what the tab opens on.
     out.append(('gap', None))
-    out.append(('head', "Start From"))
-    out.append(('pick', ('CONFIG', "Layout", _config_label(bp, props))))
+    out.append(('head', "Manufacturer"))
     provider = _spec_provider()
     if provider is not None:
         out.append(('pick', ('MFR', "Make", props.manufacturer or "Manual")))
@@ -310,6 +329,9 @@ def _block_h(block, s):
         return (BTN_H + ROW_GAP) * s
     if kind == 'run_cmds':
         return (BTN_H + ROW_GAP) * 2 * s
+    if kind == 'grid':
+        rows = _grid_rows(len(block[1]))
+        return rows * (GRID_CELL_H + GRID_PAD) * s + ROW_GAP * s
     return (ROW_H + ROW_GAP) * s
 
 
@@ -431,6 +453,8 @@ def _block_entries(context, bp, block, x0, top, w, s):
         return _field_entries(bp, payload, x0, top, w, s)
     if kind == 'pick':
         return _pick_entries(payload, x0, top, w, s)
+    if kind == 'grid':
+        return _grid_entries(bp, payload, x0, top, w, s)
     if kind == 'note':
         return [('note', (x0, top - ROW_H * s, w, ROW_H * s), payload)]
     if kind == 'face_cmds':
@@ -498,6 +522,64 @@ def _field_entries(bp, payload, x0, top, w, s):
                   rect[2] - label_w, row_h - 4 * s)
     return [('field', rect, key, label, value, value_rect, chip_rect, mode,
              frac)]
+
+
+# ---- The layout grid ---------------------------------------------------------
+# A preset is a shape, so it is picked from pictures of the shapes -- the
+# same idea as picking a handle from the handles. The pictures are drawn
+# from the solver rather than loaded: a preset's tile is laid out by the
+# code that lays out the real run, so the two cannot disagree, and there
+# are no thumbnails to keep up to date as the presets change.
+
+GRID_COLS = 2
+GRID_CELL_H = 118       # unscaled: the picture, plus its name under it
+GRID_LABEL_H = 16
+GRID_PAD = 4
+
+
+def _preset_items(bp):
+    """[(config, label)] this appliance can be laid out as, Custom
+    excluded -- it is what a run BECOMES, never what it is set to."""
+    items = ap.CONFIG_ITEMS.get(bp.get('APPLIANCE_TYPE'), ap.DEFAULT_CONFIG_ITEMS)
+    return [(item[0], item[1]) for item in items if item[0] != ap.CUSTOM_CONFIG]
+
+
+def _grid_rows(count):
+    return max(1, (count + GRID_COLS - 1) // GRID_COLS)
+
+
+def _grid_entries(bp, items, x0, top, w, s):
+    """A cell per preset: its faces drawn to scale inside the tile."""
+    props = _props(bp)
+    dim_x, dim_z = _cage(bp)
+    if dim_x <= 0 or dim_z <= 0:
+        return []
+    cell_w = (w - GRID_PAD * s * (GRID_COLS - 1)) / GRID_COLS
+    cell_h = GRID_CELL_H * s
+    out = []
+    for i, (config, label) in enumerate(items):
+        row, col = divmod(i, GRID_COLS)
+        cx = x0 + col * (cell_w + GRID_PAD * s)
+        cy = top - (row + 1) * cell_h - row * GRID_PAD * s
+        cell = (cx, cy, cell_w, cell_h)
+        # The picture sits above the name, at the appliance's own shape.
+        pic = (cx + GRID_PAD * s, cy + GRID_LABEL_H * s,
+               cell_w - 2 * GRID_PAD * s,
+               cell_h - (GRID_LABEL_H + GRID_PAD) * s)
+        sections, faces = ap.preview_faces(config, dim_x, dim_z, props)
+        px = min(pic[2] / dim_x, pic[3] / dim_z)
+        fw, fh = dim_x * px, dim_z * px
+        fx = pic[0] + (pic[2] - fw) / 2.0
+        fy = pic[1] + (pic[3] - fh) / 2.0
+        tiles = []
+        for index, box in faces.items():
+            kind = sections[index].kind if index < len(sections) else 'DOOR'
+            tiles.append(((fx + box[0] * px, fy + box[2] * px,
+                           (box[1] - box[0]) * px, (box[3] - box[2]) * px),
+                          kind))
+        out.append(('preset', cell, config, label,
+                    props.config == config, (fx, fy, fw, fh), tiles))
+    return out
 
 
 def _pick_entries(payload, x0, top, w, s):
@@ -714,6 +796,8 @@ def paint(entries, mx, my):
                             point_in_rect(mx, my, rect), pad=3.0)
             elif kind == 'field':
                 _paint_field(shader, font_id, entry, mx, my, s, bp)
+            elif kind == 'preset':
+                _paint_preset(shader, font_id, entry, mx, my, s)
             elif kind == 'pick':
                 _, rect, _which, label, value, value_rect = entry
                 paint_field(shader, font_id, rect, FONT * s, label, value,
@@ -771,6 +855,27 @@ def _paint_face_mark(shader, rect, kind, s):
         draw_lines(shader, [(x + i, y + i), (x + w - i, y + h - i),
                             (x + i, y + h - i), (x + w - i, y + i)],
                    (1.0, 1.0, 1.0, 0.18))
+
+
+def _paint_preset(shader, font_id, entry, mx, my, s):
+    """One layout tile: the shape it builds, drawn small, with its name
+    under it. The current layout reads as pressed."""
+    _, cell, _config, label, active, well, tiles = entry
+    hot = point_in_rect(mx, my, cell)
+    paint_button(shader, cell, hovered=hot, active=active)
+    draw_rect(shader, *well, ELEV_BG)
+    draw_rect_outline(shader, *well, ELEV_BORDER)
+    fills = [rect for rect, _kind in tiles]
+    if fills:
+        draw_rects(shader, fills, FACE_SEL if active else FACE_BG)
+        draw_rect_outlines(shader, fills, FACE_BORDER)
+    for rect, kind in tiles:
+        _paint_face_mark(shader, rect, kind, s)
+    label_rect = (cell[0], cell[1], cell[2], GRID_LABEL_H * s)
+    draw_centered_text(font_id, label_rect, SMALL * s,
+                       Theme.TEXT_PRIMARY if (hot or active)
+                       else Theme.TEXT_NORMAL,
+                       fit_text(font_id, SMALL * s, label, cell[2] - 6 * s))
 
 
 def _paint_field(shader, font_id, entry, mx, my, s, bp):
@@ -834,8 +939,17 @@ def hit(context, mx, my, entries):
         if kind == 'check' and point_in_rect(mx, my, entry[1]):
             _run(entry[2])
             return True
+        if kind == 'preset' and point_in_rect(mx, my, entry[1]):
+            _set_grid(False)
+            _run('CONFIG', value=entry[2])
+            return True
         if kind == 'pick' and point_in_rect(mx, my, entry[5]):
-            _open_pick(context, bp, entry[2], entry[3])
+            if entry[2] == 'CONFIG':
+                # The layout is picked from the grid of shapes, not a
+                # list of their names.
+                _set_grid(not _grid_open)
+            else:
+                _open_pick(context, bp, entry[2], entry[3])
             return True
         if kind == 'field':
             (_, _rect, key, _label, _value, value_rect, chip_rect, mode,
