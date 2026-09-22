@@ -165,6 +165,18 @@ def _props(bp):
     return bp.appliance_panels
 
 
+def _panelled(bp):
+    """Whether the appliance is wearing panels now.
+
+    Asked of the appliance, not of the section list: taking the panels
+    off deliberately keeps the layout, so that turning them back on
+    comes back to the run that was there rather than a fresh preset.
+    """
+    if bp.get('Panel Ready'):
+        return True
+    return any(c.get(ap.TAG_FRONT) for c in bp.children)
+
+
 def _cage(bp):
     """(width, height) of the appliance front, in metres."""
     cage = hb_types.GeoNodeCage(bp)
@@ -210,20 +222,6 @@ def _fmt(value):
 
 def _kind_label(section):
     return enum_label(section, 'kind')
-
-
-def pull_side(props, section):
-    """Which edge a door's pull sits on -- the opening edge, away from
-    its hinge. Follows the appliance model's own convention: a pair of
-    doors hinges on the outside so the pulls meet in the middle, and a
-    lone door hinges on the right."""
-    if getattr(section, 'kind', '') != 'DOOR':
-        return 'R'
-    column = getattr(section, 'column', -1)
-    ncol = len(props.columns)
-    if column < 0 or ncol <= 1:
-        return 'L'
-    return 'L' if column == ncol - 1 else 'R'
 
 
 def _face_place(props, index):
@@ -360,7 +358,7 @@ def _block_h(block, s):
     if kind == 'face_cmds':
         return (BTN_H + ROW_GAP) * s
     if kind == 'run_cmds':
-        return (BTN_H + ROW_GAP) * 2 * s
+        return (BTN_H + ROW_GAP) * 3 * s
     if kind == 'grid':
         rows = _grid_rows(len(block[1]))
         return rows * (GRID_CELL_H + GRID_PAD) * s + ROW_GAP * s
@@ -393,8 +391,8 @@ def build(rect, context):
         return [('note', (x0, top - ROW_H * s, w, ROW_H * s),
                  "Select an appliance.")]
     props = _props(bp)
-    if not props.sections:
-        return _build_empty(x0, top, w, s)
+    if not _panelled(bp):
+        return _build_empty(x0, top, w, s, bool(props.sections))
 
     entries = []
     dim_x, dim_z = _cage(bp)
@@ -427,17 +425,21 @@ def build(rect, context):
     return entries
 
 
-def _build_empty(x0, top, w, s):
-    """Nothing built yet: say what the command does, and offer it."""
+def _build_empty(x0, top, w, s, has_layout=False):
+    """Not panelled: say what the command does, and offer it. A layout
+    left behind by Remove Panels is waiting, so say that too."""
     y = top - (ROW_H + ROW_GAP) * s
     entries = [('note', (x0, y, w, ROW_H * s),
-                "This appliance has no panels yet.")]
+                "This appliance wears its own front."
+                if has_layout else "This appliance has no panels yet.")]
     y -= (BTN_H + ROW_GAP) * s
     entries.append(('btn', (x0, y, w, BTN_H * s), 'ADD_PANELS',
                     "Build Panels", True, -1))
     y -= (ROW_H + ROW_GAP) * s
     entries.append(('note', (x0, y, w, ROW_H * s),
-                    "Doors and drawer fronts in the cabinet style."))
+                    "The last layout is kept, and comes back."
+                    if has_layout
+                    else "Doors and drawer fronts in the cabinet style."))
     return entries
 
 
@@ -608,7 +610,7 @@ def _grid_entries(bp, items, x0, top, w, s):
         for index, box in faces.items():
             section = sections[index] if index < len(sections) else None
             kind = section.kind if section is not None else 'DOOR'
-            side = pull_side(preview, section) if section is not None else 'R'
+            side = ap.pull_side(preview, section) if section is not None else 'R'
             tiles.append(((fx + box[0] * px, fy + box[2] * px,
                            (box[1] - box[0]) * px, (box[3] - box[2]) * px),
                           kind, side))
@@ -674,11 +676,13 @@ def _face_cmd_entries(props, index, x0, top, w, s):
 
 
 def _run_cmd_entries(props, x0, top, w, s):
-    """Two rows: what the run is made of sideways, then the faces that
-    cross every column."""
+    """Three rows: what the run is made of sideways, the faces that
+    cross every column, and the way back to the appliance's own
+    front."""
     top_row = _row_rects(x0, top, w, s, 2, BTN_H * s)
     low = top - (BTN_H + ROW_GAP) * s
     low_row = _row_rects(x0, low, w, s, 2, BTN_H * s)
+    last = low - (BTN_H + ROW_GAP) * s
     return [
         ('btn', top_row[0], 'ADD_COLUMN', "Add Column",
          len(props.columns) < ap.MAX_COLUMNS, -1),
@@ -686,6 +690,8 @@ def _run_cmd_entries(props, x0, top, w, s):
          len(props.columns) > 1, -1),
         ('btn', low_row[0], 'ADD_BANNER_TOP', "Full Face Above", True, -1),
         ('btn', low_row[1], 'ADD_BANNER_BOTTOM', "Full Face Below", True, -1),
+        ('btn', (x0, last - BTN_H * s, w, BTN_H * s), 'REMOVE_PANELS',
+         "Remove Panels", True, -1),
     ]
 
 
@@ -859,7 +865,7 @@ def _paint_face(shader, font_id, entry, mx, my, s, bp, selected_i):
     if props is not None and 0 <= index < len(props.sections):
         section = props.sections[index]
         _paint_face_mark(shader, rect, section.kind, s,
-                         pull_side(props, section))
+                         ap.pull_side(props, section))
     if rect[3] < FACE_MIN_LABEL_H * s:
         return
     x, y, w, h = rect
@@ -1197,6 +1203,12 @@ class home_builder_OT_appliance_panel_edit(bpy.types.Operator):
             props.model = ""
         elif act == 'SPEC':
             self._apply_spec(context, bp)
+        elif act == 'REMOVE_PANELS':
+            # The layout stays on the appliance; turning panels back on
+            # comes back to it. ap.remove rebuilds the appliance's own
+            # model, so its doors and handles return with it.
+            ap.remove(bp)
+            self.report({'INFO'}, "Panels removed; the layout is kept")
         elif act == 'BACKER_ALL':
             props.panel_type = self.value
             for section in props.sections:

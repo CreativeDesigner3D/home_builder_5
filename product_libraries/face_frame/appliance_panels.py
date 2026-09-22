@@ -957,6 +957,101 @@ def _sync_model(appliance_obj):
         print('Home Builder: appliance model rebuild failed: %s' % ex)
 
 
+def pull_side(props, section):
+    """Which edge a door's pull sits on -- the opening edge, away from
+    its hinge. A pair of doors hinges on the outside so the pulls meet
+    in the middle; a lone door hinges on the right. The drawn elevation
+    and the built pull both ask this, so the picture and the model
+    cannot disagree about which way a door opens."""
+    if getattr(section, 'kind', '') != 'DOOR':
+        return 'R'
+    column = getattr(section, 'column', -1)
+    ncol = len(props.columns)
+    if column < 0 or ncol <= 1:
+        return 'L'
+    return 'L' if column == ncol - 1 else 'R'
+
+
+# An appliance's panels are cabinet fronts, so they wear the cabinetry's
+# hardware: the same pull, from the same settings, placed by the same
+# rules. Which set of rules depends on how the appliance stands -- a
+# fridge is a tall run, a dishwasher a base one.
+_PULL_CABINET_TYPE = {'REFRIGERATOR': 'TALL', 'DISHWASHER': 'BASE',
+                      'UNDER_COUNTER': 'BASE'}
+
+
+def _drop_pulls(front_obj):
+    for child in list(front_obj.children):
+        if child.get('IS_CABINET_PULL'):
+            bpy.data.objects.remove(child, do_unlink=True)
+
+
+def _build_pulls(appliance_obj, props, fronts, order, faces):
+    """Put a pull on every door and drawer face. Fixed panels -- a
+    grille, a filler -- get none, the way an inset panel does not.
+
+    Placement is in the front part's own space, exactly as it is for a
+    cabinet door: X runs up the face, Y across it (the face lying on
+    the -Y side of the origin), Z out of its front. Measured: a pull at
+    local Y lands at the face's low world edge plus -Y, so across-face
+    distances are negative here as they are on a cabinet front -- the
+    Mirror Y these parts are built with does not move this axis.
+    """
+    from . import pulls as pull_lib
+    scene_props = getattr(bpy.context.scene, 'hb_face_frame', None)
+    for front in fronts:
+        _drop_pulls(front)
+    if scene_props is None:
+        return
+    cabinet_type = _PULL_CABINET_TYPE.get(appliance_obj.get('APPLIANCE_TYPE'),
+                                          'TALL')
+    h_offset = scene_props.pull_horizontal_offset
+    for k, i in enumerate(order):
+        if k >= len(fronts):
+            break
+        section = props.sections[i]
+        if section.kind == 'PANEL':
+            continue
+        kind = 'drawer' if section.kind == 'DRAWER' else 'door'
+        pull_obj = pull_lib.resolve_pull_for(scene_props, kind, cabinet_type)
+        if pull_obj is None:
+            continue
+        box = faces.get(i)
+        if box is None:
+            continue
+        width, length = box[1] - box[0], box[3] - box[2]
+        half = pull_lib.pull_length(pull_obj) / 2.0
+        if kind == 'drawer':
+            x = (length / 2.0 if scene_props.center_pulls_on_drawer_front
+                 else length - scene_props.pull_vertical_location_base - half)
+            y = -width / 2.0
+        else:
+            # The same zones a cabinet door follows, measured from the
+            # appliance's own base -- which is the floor for the
+            # appliances that take panels.
+            tall = scene_props.pull_vertical_location_tall
+            if box[2] >= tall:
+                x = scene_props.pull_vertical_location_upper + half
+            elif length >= tall + 2.0 * half:
+                x = tall + half
+            else:
+                x = length - scene_props.pull_vertical_location_base - half
+            # 'L' is the pull on the face's left edge -- nearest the
+            # part's origin -- and 'R' the far one.
+            near_origin = pull_side(props, section) == 'L'
+            y = -h_offset if near_origin else -(width - h_offset)
+        instance = bpy.data.objects.new("Pull - %s" % fronts[k].name,
+                                        pull_obj.data)
+        bpy.context.scene.collection.objects.link(instance)
+        instance.parent = fronts[k]
+        instance.location = (x, y, section.face_thickness)
+        instance.rotation_euler = (math.radians(-90.0), 0.0,
+                                   math.radians(90.0) if kind == 'drawer'
+                                   else 0.0)
+        instance['hb_part_role'] = 'PULL'
+        instance['IS_CABINET_PULL'] = True
+
+
 def _structure_key(props, backers):
     return json.dumps({'config': props.config, 'n': len(props.sections),
                        'backers': sorted(int(i) for i in backers)})
@@ -1021,6 +1116,8 @@ def rebuild(appliance_obj):
                     _rout_flange(bobj, bx1 - bx0, bz1 - bz0, t,
                                  getattr(props, 'flange_inset', None),
                                  getattr(props, 'flange_depth', None))
+
+    _build_pulls(appliance_obj, props, fronts, order, faces)
 
     # Rails: reuse by index, drop extras.
     rail_objs = _parts(appliance_obj, TAG_RAIL, 'AP_RAIL_INDEX')
