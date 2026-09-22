@@ -433,6 +433,41 @@ def add_section(appliance_obj, column, kind='DOOR', where='BOTTOM'):
     return dst
 
 
+def split_section(appliance_obj, index, height=None):
+    """Cut a face in two and return the new face's index (-1 if it
+    could not be cut).
+
+    The new face is the same kind, in the same place in the run, and
+    goes directly BELOW the one that was split -- the pair between them
+    occupy what the one had. A face that holds its height splits that
+    height; a face that shares keeps sharing, and both halves do, which
+    is the same thing one level down. `height` is what the face
+    measures now, for the caller that has already solved the run.
+    """
+    props = appliance_obj.appliance_panels
+    if not (0 <= index < len(props.sections)):
+        return -1
+    sec = props.sections[index]
+    kind, column, backer = sec.kind, sec.column, sec.backer
+    held, own_height = sec.height_hold, sec.height
+    label = _auto_label(props, kind)
+    current = own_height if held else (height or own_height)
+    half = max(_I(0.5), (current - props.section_gap) / 2.0)
+    with suspended():
+        new = props.sections.add()
+        new.label, new.kind, new.column = label, kind, column
+        new.backer = backer
+        new.height, new.height_hold = half, held
+        props.sections.move(len(props.sections) - 1, index)
+        if held:
+            # The one that was split keeps the other half; a sharing
+            # face is left alone, because sharing is what sizes it.
+            props.sections[index + 1].height = half
+        props.config = CUSTOM_CONFIG
+    rebuild(appliance_obj)
+    return index
+
+
 def remove_section(appliance_obj, index):
     """Remove a face. The last face in a column stays (remove the column
     instead), and so does the last face on the appliance."""

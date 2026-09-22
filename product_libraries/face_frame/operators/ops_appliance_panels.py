@@ -80,6 +80,36 @@ def _fmt(v):
     return "%.3f\"" % units.meter_to_inch(v)
 
 
+def _open_in_viewport(context, bp):
+    """Show the run in the viewport panel instead of this dialog, when
+    that panel is switched on. True when it took the job.
+
+    The panel draws the appliance front and is edited on the picture;
+    this dialog is the same model as a list of rows. One command opens
+    whichever the user has, so there is no second menu entry and no
+    choice to make.
+    """
+    try:
+        from ....operators import (scene_navigator, appliance_panel_tab,
+                                   viewport_hud)
+    except ImportError:
+        return False
+    if not viewport_hud.enabled() or appliance_panel_tab.target(context) is None:
+        return False
+    if appliance_panel_tab.TAB_KEY not in scene_navigator.available_tabs(
+            context.scene):
+        return False
+    if not bp.appliance_panels.sections:
+        ap.seed_preset(bp, appliance_panel_tab.default_config(bp),
+                       keep_options=False)
+        ap.rebuild(bp)
+    appliance_panel_tab.select(bp, 0)
+    scene_navigator.set_active_tab(appliance_panel_tab.TAB_KEY)
+    scene_navigator.open_panel()
+    appliance_panel_tab.tag_redraw()
+    return True
+
+
 # --- Layout editing: the add / remove / reorder buttons in the dialog.
 # They edit the appliance's property groups straight off context.object, so
 # the dialog just draws them; the model does the list bookkeeping (ordering,
@@ -206,6 +236,11 @@ class hb_face_frame_OT_add_appliance_panels(bpy.types.Operator):
         props = bp.appliance_panels
         # Older files: rebuild the section list from the flat stamp once.
         ap.seed_from_legacy(bp)
+        if _open_in_viewport(context, bp):
+            # The viewport panel draws the run rather than listing it,
+            # so the command opens THAT and there is no dialog. Without
+            # the panel switched on, the dialog below is the whole UI.
+            return {'FINISHED'}
         cfg = props.config or bp.get('APPLIANCE_PANEL_CONFIG')
         if cfg:
             try:

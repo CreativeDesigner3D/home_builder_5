@@ -98,6 +98,13 @@ def _hud_enabled():
     return bool(p and getattr(p, "use_viewport_hud", False))
 
 
+def enabled():
+    """Whether the viewport interface is switched on -- the public form,
+    for a command deciding whether to open its own dialog or hand the
+    job to a tab."""
+    return _hud_enabled()
+
+
 def _product_ui_visible(context, product_tab):
     """Selection-mode widgets show only on the matching product tab and
     only in a real room scene -- mirrors the sidebar panels' gating."""
