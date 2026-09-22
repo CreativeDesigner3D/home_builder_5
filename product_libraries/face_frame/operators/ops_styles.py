@@ -1213,7 +1213,16 @@ def _repropagate_tall_drawer(context, style, kind):
     """The first extra drawer-front style is the tall-drawer style when the
     cabinet style's extra_drawer_front_height is set, so a row add / remove
     can restyle fronts. Door rows are documentation only."""
-    if kind == 'DRAWER' and style.extra_drawer_front_height > 0.0:
+    if kind != 'DRAWER':
+        return
+    # A first drawer row is the new alternate style: start its height
+    # at that style's minimum (the write re-propagates).
+    if (len(style.extra_drawer_front_styles) == 1
+            and style.extra_drawer_front_height <= 0.0
+            and props_hb_face_frame.fill_alternate_drawer_height(
+                style, context)):
+        return
+    if style.extra_drawer_front_height > 0.0:
         props_hb_face_frame._propagate_cabinet_style(style, context)
 
 

@@ -399,6 +399,11 @@ def _stile_size_notes(context, style):
     return lines
 
 
+def _alternate_drawer_notes(context, style):
+    from . import props_hb_face_frame
+    return props_hb_face_frame.alternate_drawer_notes(style, context)
+
+
 def _cabinet_style_fields():
     """The fields of one cabinet style, in the sidebar form's order.
     A 'choice' is a dropdown whose chip turns it into typed text, for a
@@ -488,8 +493,9 @@ def _cabinet_style_fields():
                       'hb_face_frame.add_cabinet_extra_front_style',
                       'kind', 'DRAWER'),), None),
         # Drawer fronts this tall take the first extra style (0 = off).
-        ('distance', 'extra_drawer_front_height', "Use Extra Style At",
+        ('distance', 'extra_drawer_front_height', "Alternate Style Over",
          {'when': lambda p: len(p.extra_drawer_front_styles) > 0}),
+        ('notes', _alternate_drawer_notes, None, {'owner': True}),
         ('gap', None, None),
         ('label', None, "Doors"),
         ('choice', 'finish_hinge', "Hinge", {'custom': 'ss_hinge'}),

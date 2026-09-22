@@ -5374,6 +5374,75 @@ def shape_kind(name):
     return SHAPE_KINDS.get((name or '').strip())
 
 
+# === Minimum drawer face heights (INCHES, from the series styling pages) ===
+# Standard stiles and rails, 1" flat on raised panels. A series lists
+# (recessed, raised); raised is None where the series has no raised
+# panel. Beadboard / grooved / flat MDF panels read as recessed.
+DRAWER_MIN_HEIGHT = {
+    'Beckony': (7.25, 9.75), 'Benton': (5.25, 7.75),
+    'Bristol': (5.25, None), 'Brunswick': (6.75, None),
+    'Century': (5.25, 7.75), 'Classic': (5.25, 7.75),
+    'Clover': (7.25, 8.75), 'Colonial': (5.25, 8.75),
+    'Craftsman': (5.25, None), 'Fairway': (5.25, 7.75),
+    'Hampton': (5.25, None), 'Havana': (5.25, 7.75),
+    'Highlander': (5.25, 7.75), 'Joviso': (5.25, 8.75),
+    'Kelli': (6.75, None), 'Marketplace': (5.25, None),
+    'Metro': (5.25, None), 'Montana': (5.25, 8.75),
+    'Montauk': (5.25, None), 'Shaker': (5.25, None),
+    'Traditional': (5.25, 7.75), 'Victorian': (6.25, None),
+}
+
+# Series whose SHAPE names the member width: (recessed, raised) per shape.
+DRAWER_SHAPE_MIN_HEIGHT = {
+    'Konza': {'1/2': (4.0, None), '3/4': (4.0, None),
+              '1 1/4': (5.0, None), '2': (6.5, None)},
+    'Harmony': {'1 1/2': (4.75, 6.5), '2 1/4': (6.25, 8.0),
+                '3': (7.75, 9.5)},
+    'Melville': {'2 1/4': (6.25, None), '3': (7.75, None)},
+    'Nantucket': {'1 1/2': (4.75, 6.5), '2 1/4': (6.25, 8.0),
+                  '3': (7.75, 9.5)},
+    'Providence': {'1 1/2': (4.75, 6.5), '2 1/4': (6.25, 8.0),
+                   '3': (7.75, 9.5)},
+}
+
+# Slab fronts. Slab series by series; the slab drawer-face series by
+# panel. Deluxe Joviso / Melville vary with the edge profile, so they
+# have no single minimum.
+SLAB_MIN_HEIGHT = 4.25
+DRAWER_SLAB_SERIES_MIN_HEIGHT = {
+    'Bezel': 4.5, 'Brink': 4.25, 'Notable': 4.5, 'Skyline': 5.5,
+}
+DRAWER_SLAB_PANEL_MIN_HEIGHT = {
+    'Deluxe Colonial Slab': 4.5, 'Deluxe Havana Slab': 4.75,
+    'Deluxe Waterford Slab': 4.5,
+    'Deluxe Joviso Slab': None, 'Deluxe Melville Slab': None,
+}
+
+
+def drawer_min_height(series, shape=None, panel=None, slab=False):
+    """Smallest drawer face height (inches) the series builds with this
+    shape / panel, or None when the catalog gives no single figure.
+    ``slab`` marks a front built as a slab whatever its series."""
+    series = (series or '').strip()
+    shape = (shape or '').strip()
+    panel = (panel or '').strip()
+    if series in DRAWER_SLAB_SERIES_MIN_HEIGHT:
+        return DRAWER_SLAB_SERIES_MIN_HEIGHT[series]
+    if series == 'Slab Drawers':
+        return DRAWER_SLAB_PANEL_MIN_HEIGHT.get(panel, SLAB_MIN_HEIGHT)
+    if slab or series == 'Slab':
+        return SLAB_MIN_HEIGHT
+    pair = DRAWER_SHAPE_MIN_HEIGHT.get(series, {}).get(shape)
+    if pair is None:
+        pair = DRAWER_MIN_HEIGHT.get(series)
+    if pair is None:
+        return None
+    recessed, raised = pair
+    if panel_kind(panel).get('kind') == 'RAISED':
+        return raised if raised is not None else recessed
+    return recessed
+
+
 # === Special effects (baked from the upcharge compatibility matrix) ===
 # Available effects are gated by the style's wood AND color; the Add
 # Special Effects dialog shows the intersection of the two.

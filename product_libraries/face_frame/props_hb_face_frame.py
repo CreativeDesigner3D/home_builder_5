@@ -5,6 +5,7 @@ section toggles. Construction logic and per-cabinet PropertyGroups land in
 Phase 3 (types_face_frame.py).
 """
 import bpy
+import math
 import os
 import re
 from contextlib import contextmanager
@@ -1332,8 +1333,77 @@ def _update_cabinet_extra_front_style(self, context):
             path.rsplit(".extra_drawer_front_styles[", 1)[0])
     except Exception:
         return
+    # Picking the alternate style (the first row) fills in its minimum
+    # drawer height, which re-propagates through the height's update.
+    if path.endswith(".extra_drawer_front_styles[0]"):
+        if fill_alternate_drawer_height(style, context):
+            return
     if style.extra_drawer_front_height > 0.0:
         _propagate_cabinet_style(style, context)
+
+
+def front_style_min_height(ds):
+    """Smallest drawer face height (meters) a drawer-front style builds
+    at, or None when its series gives no single figure."""
+    if ds is None:
+        return None
+    h = style_options.drawer_min_height(
+        ds.front_series, ds.front_shape, ds.front_panel,
+        slab=getattr(ds, 'door_type', '') == 'SLAB')
+    return units.inch(h) if h else None
+
+
+def alternate_drawer_style(style, context=None):
+    """The drawer-front style the cabinet style's first extra drawer row
+    names (the alternate style for taller drawers), or None."""
+    if len(style.extra_drawer_front_styles) == 0:
+        return None
+    name = style.extra_drawer_front_styles[0].style
+    if not name or name == 'NONE':
+        return None
+    ff = get_style_props(context)
+    for ds in ff.drawer_front_styles:
+        if ds.name == name:
+            return ds
+    return None
+
+
+def fill_alternate_drawer_height(style, context=None):
+    """Set the alternate-style height to the alternate style's minimum
+    drawer height. Returns True when it wrote a value (the write itself
+    re-propagates the cabinet style)."""
+    h = front_style_min_height(alternate_drawer_style(style, context))
+    if not h:
+        return False
+    style.extra_drawer_front_height = h
+    return True
+
+
+def _inches_text(meters):
+    sixteenths = round(meters / 0.0254 * 16)
+    whole, rem = divmod(sixteenths, 16)
+    if rem == 0:
+        return '%d"' % whole
+    g = math.gcd(rem, 16)
+    frac = '%d/%d' % (rem // g, 16 // g)
+    return ('%d-%s"' % (whole, frac)) if whole else (frac + '"')
+
+
+def alternate_drawer_notes(style, context=None):
+    """Lines explaining the alternate drawer style rule, plus a warning
+    when the height is below what the alternate style can build."""
+    ds = alternate_drawer_style(style, context)
+    if ds is None:
+        return []
+    h = style.extra_drawer_front_height
+    if h <= 0.0:
+        return ['Set a height to use %s on taller drawers' % ds.name]
+    lines = ['Drawers %s and up use %s' % (_inches_text(h), ds.name)]
+    min_h = front_style_min_height(ds)
+    if min_h and h < min_h - 1e-5:
+        lines.append('Below the %s minimum of %s'
+                     % (ds.name, _inches_text(min_h)))
+    return lines
 
 
 class Face_Frame_Cabinet_Extra_Front_Style(PropertyGroup):
@@ -2033,10 +2103,12 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
     # style instead of drawer_front_style (e.g. a slab top drawer over
     # 5-piece lower drawers). 0 turns the rule off.
     extra_drawer_front_height: FloatProperty(
-        name="Use Extra Style At",
-        description="Drawer fronts this tall or taller use the first extra "
-                    "drawer front style; shorter ones use the main Drawer "
-                    "Front style. 0 turns this off. A style painted onto a "
+        name="Alternate Style Over",
+        description="Drawer fronts this tall or taller use the alternate "
+                    "drawer style (the first extra drawer front style); "
+                    "shorter ones use the main Drawer Front style. Filled "
+                    "in with the alternate style's minimum height when it "
+                    "is picked. 0 turns this off. A style painted onto a "
                     "front still wins",
         default=0.0, min=0.0,
         unit='LENGTH', precision=4,
@@ -3741,6 +3813,10 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         op.style_index = style_index
         if len(self.extra_drawer_front_styles) > 0:
             col.prop(self, "extra_drawer_front_height")
+            notes = alternate_drawer_notes(self, context)
+            for i, line in enumerate(notes):
+                col.label(text=line,
+                          icon='ERROR' if i > 0 else 'INFO')
 
         box = main.box()
         row = box.row()
