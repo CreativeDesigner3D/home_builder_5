@@ -16105,8 +16105,11 @@ class LegProductFaceFrameCabinet(FaceFrameCabinet):
             l_x = width - mt
         else:  # FINISH_LEFT / FINISH_BOTH
             l_x = 0.0
-        l_depth = olp if olp > 0.0 else depth - fft
-        l_y = (0.0 if olp <= 0.0 else -depth + olp + fft) - back_off
+        # The back takes its thickness off the panel's back edge; the
+        # front edge stays on the face frame's back face.
+        panel_max = depth - fft - back_off
+        l_depth = min(olp, panel_max) if olp > 0.0 else panel_max
+        l_y = -depth + fft + l_depth
         place(L, height, l_depth, mt, (l_x, l_y, 0.0),
               (0.0, math.radians(-90), 0.0),
               {'Mirror Y': True, 'Mirror Z': True})
@@ -16116,8 +16119,8 @@ class LegProductFaceFrameCabinet(FaceFrameCabinet):
         L['IS_FINISHED'] = (finish != 'INTERMEDIATE')
 
         # --- Right side panel ---
-        r_depth = orp if orp > 0.0 else depth - fft
-        r_y = (0.0 if orp <= 0.0 else -depth + orp + fft) - back_off
+        r_depth = min(orp, panel_max) if orp > 0.0 else panel_max
+        r_y = -depth + fft + r_depth
         place(R, height, r_depth, mt, (width, r_y, 0.0),
               (0.0, math.radians(-90), 0.0),
               {'Mirror Y': True, 'Mirror Z': False})
