@@ -86,6 +86,13 @@ _SUSPEND = [0]      # > 0 while seeding: property updates don't rebuild
 # ----------------------------------------------------------------------
 # Presets (seed the section list; the user / spec edits from there)
 # ----------------------------------------------------------------------
+# A layout built or reshaped by hand carries this instead of a preset key:
+# it no longer matches the preset it started from, so re-picking that preset
+# seeds again rather than looking like a no-op.
+CUSTOM_CONFIG = 'CUSTOM'
+# Appliance_Panel_Section.column caps at 3.
+MAX_COLUMNS = 4
+
 # config -> columns of (label, kind, default_height, hold) bottom-to-top,
 # plus optional full-width banners (bottom / top).
 PRESETS = {
@@ -131,25 +138,30 @@ CONFIG_ITEMS = {
         ('TOP_FREEZER', "Top Freezer", "Freezer face over a fridge door"),
         ('DRAWER_DOOR_DRAWER', "Drawer / Door / Drawer", "Drawer face, tall door, drawer face"),
         ('SIDE_BY_SIDE_SPLIT', "Side-by-Side, Split Left", "Tall right door, drawer over door on the left"),
+        (CUSTOM_CONFIG, "Custom", "Columns and faces built by hand"),
     ],
     'DISHWASHER': [
         ('SINGLE', "Standard (Single)", "One full-height panel"),
         ('DW_DRAWER_DOOR', "Drawer / Door", "Drawer face over a door"),
         ('DW_3_DRAWER', "3-Drawer", "Three equal drawer faces"),
         ('DW_4_DRAWER', "4-Drawer", "Four equal drawer faces"),
+        (CUSTOM_CONFIG, "Custom", "Columns and faces built by hand"),
     ],
 }
-DEFAULT_CONFIG_ITEMS = [('SINGLE', "Single", "One full-height panel")]
+DEFAULT_CONFIG_ITEMS = [('SINGLE', "Single", "One full-height panel"),
+                        (CUSTOM_CONFIG, "Custom", "Columns and faces built by hand")]
 
 PANEL_TYPE_ITEMS = [
     ('A', "Type A", "Face only, no backer"),
     ('B', "Type B", "Face applied to a 1/4\" backer"),
     ('C', "Type C", "Face on a .35\" backer routed for an install flange"),
 ]
+# Icons so the kind reads as a picker in the section rows. The numbers are
+# explicit and in the original order: they are what a .blend stores.
 SECTION_KIND_ITEMS = [
-    ('DOOR', "Door", "Door face"),
-    ('DRAWER', "Drawer", "Drawer face"),
-    ('PANEL', "Panel", "Fixed panel (grille, filler)"),
+    ('DOOR', "Door", "Door face", 'MESH_PLANE', 0),
+    ('DRAWER', "Drawer", "Drawer face", 'SNAP_FACE', 1),
+    ('PANEL', "Panel", "Fixed panel (grille, filler)", 'MOD_LATTICE', 2),
 ]
 SECTION_BACKER_ITEMS = [
     ('DEFAULT', "Default", "Follow the appliance's panel type"),
@@ -174,6 +186,18 @@ def _on_change(self, context):
         rebuild(obj)
 
 
+def _on_shape_change(self, context):
+    """A section edit that changes the layout's shape rather than a size:
+    the run stops being the preset it was seeded from (sizes don't - a
+    resized preset is still that preset)."""
+    if _SUSPEND[0]:
+        return
+    obj = self.id_data
+    if isinstance(obj, bpy.types.Object) and obj.get('IS_APPLIANCE'):
+        obj.appliance_panels.config = CUSTOM_CONFIG
+    _on_change(self, context)
+
+
 class Appliance_Panel_Column(PropertyGroup):
     width: FloatProperty(name="Width", unit='LENGTH', default=_I(18), min=_I(1),
                          update=_on_change)  # type: ignore
@@ -181,9 +205,10 @@ class Appliance_Panel_Column(PropertyGroup):
 
 
 class Appliance_Panel_Section(PropertyGroup):
-    label: StringProperty(name="Label", default="Door")  # type: ignore
+    label: StringProperty(name="Label", default="Door",
+                          update=_on_change)  # type: ignore
     kind: EnumProperty(name="Kind", items=SECTION_KIND_ITEMS, default='DOOR',
-                       update=_on_change)  # type: ignore
+                       update=_on_shape_change)  # type: ignore
     column: IntProperty(name="Column", default=0, min=-1, max=3,
                         description="Column index; -1 spans every column "
                                     "(a full-width banner)",
@@ -287,8 +312,18 @@ def default_rail_width():
 def seed_preset(appliance_obj, config, keep_options=True):
     """Reset the section / column lists to a preset. Appliance-level options
     (toe kick, reveals, rails, panel type) are kept unless keep_options is
-    False, in which case they seed from the defaults."""
+    False, in which case they seed from the defaults.
+
+    CUSTOM keeps the layout that is there (it IS the layout); on an empty
+    appliance it falls back to the single panel, so the dialog always opens
+    on something to edit."""
     props = appliance_obj.appliance_panels
+    if config == CUSTOM_CONFIG:
+        if props.sections:
+            with suspended():
+                props.config = CUSTOM_CONFIG
+            return
+        config = 'SINGLE'
     preset = PRESETS.get(config, PRESETS['SINGLE'])
     with suspended():
         props.config = config
@@ -312,6 +347,160 @@ def seed_preset(appliance_obj, config, keep_options=True):
             sec = props.sections.add()
             sec.label, sec.kind, sec.column = label, kind, -1
             sec.height, sec.height_hold = (h if h > 0 else _I(8)), hold
+
+
+# ----------------------------------------------------------------------
+# Hand editing (the dialog's add / remove / reorder buttons)
+# ----------------------------------------------------------------------
+# The solver reads the section list's ORDER: sections before the first
+# column section are bottom banners, after the last are top banners, and a
+# column stacks its own sections bottom-to-top. So every insert has to land
+# in the right place in the list, not just at the end.
+def column_bounds(props):
+    """(first, last) list index of the column sections; (n, -1) when there
+    are none."""
+    idx = [i for i, s in enumerate(props.sections) if s.column >= 0]
+    return (idx[0], idx[-1]) if idx else (len(props.sections), -1)
+
+
+def peer_indices(props, index):
+    """The sections ``index`` stacks with: its own column, or the banners at
+    its end of the run. In list order, so bottom-to-top."""
+    first, last = column_bounds(props)
+    sec = props.sections[index]
+    if sec.column >= 0:
+        return [i for i, s in enumerate(props.sections) if s.column == sec.column]
+    if index < first:
+        return [i for i, s in enumerate(props.sections) if s.column < 0 and i < first]
+    return [i for i, s in enumerate(props.sections) if s.column < 0 and i > last]
+
+
+def _auto_label(props, kind):
+    """A free display name for a new face: Door, Door 2, ..."""
+    base = kind.title()
+    used = {s.label for s in props.sections}
+    if base not in used:
+        return base
+    n = 2
+    while "%s %d" % (base, n) in used:
+        n += 1
+    return "%s %d" % (base, n)
+
+
+def _swap(coll, a, b):
+    """Swap two entries of a collection, leaving everything else in place."""
+    lo, hi = (a, b) if a < b else (b, a)
+    if lo == hi:
+        return
+    coll.move(lo, hi)
+    coll.move(hi - 1, lo)
+
+
+def add_section(appliance_obj, column, kind='DOOR', where='BOTTOM'):
+    """Add a face and return its index (-1 if it could not be added).
+
+    ``column`` >= 0 puts it in that column, at the bottom of the stack or on
+    top of it; ``column`` < 0 makes it a full-width face below every column
+    (where='BOTTOM') or above them ('TOP').
+
+    A drawer or fixed panel comes in holding its height so the door beside
+    it absorbs the change, and a door comes in sharing whatever is left -
+    the way the presets are written. A column with nothing sharing yet gets
+    a sharing face whatever its kind, or the stack would leave a gap."""
+    props = appliance_obj.appliance_panels
+    if column >= len(props.columns):
+        return -1
+    first, last = column_bounds(props)
+    if column >= 0:
+        col_idx = [i for i, s in enumerate(props.sections) if s.column == column]
+        if col_idx:
+            dst = col_idx[0] if where == 'BOTTOM' else col_idx[-1] + 1
+        else:
+            dst = (last + 1) if last >= 0 else first
+        shares = any(not props.sections[i].height_hold for i in col_idx)
+        hold = kind != 'DOOR' and shares
+    else:
+        dst = first if where == 'BOTTOM' else len(props.sections)
+        hold = True
+    label = _auto_label(props, kind)
+    with suspended():
+        sec = props.sections.add()
+        sec.label, sec.kind, sec.column = label, kind, max(-1, column)
+        sec.height, sec.height_hold = _I(8), hold
+        props.sections.move(len(props.sections) - 1, dst)
+        props.config = CUSTOM_CONFIG
+    rebuild(appliance_obj)
+    return dst
+
+
+def remove_section(appliance_obj, index):
+    """Remove a face. The last face in a column stays (remove the column
+    instead), and so does the last face on the appliance."""
+    props = appliance_obj.appliance_panels
+    if not (0 <= index < len(props.sections)) or len(props.sections) <= 1:
+        return False
+    sec = props.sections[index]
+    if sec.column >= 0 and len(peer_indices(props, index)) <= 1:
+        return False
+    with suspended():
+        props.sections.remove(index)
+        props.config = CUSTOM_CONFIG
+    rebuild(appliance_obj)
+    return True
+
+
+def move_section(appliance_obj, index, delta):
+    """Move a face up (delta > 0) or down within its own column, or among
+    the full-width faces at its end of the run."""
+    props = appliance_obj.appliance_panels
+    if not (0 <= index < len(props.sections)):
+        return False
+    peers = peer_indices(props, index)
+    target = peers.index(index) + (1 if delta > 0 else -1)
+    if not 0 <= target < len(peers):
+        return False
+    with suspended():
+        _swap(props.sections, index, peers[target])
+        props.config = CUSTOM_CONFIG
+    rebuild(appliance_obj)
+    return True
+
+
+def add_column(appliance_obj, kind='DOOR'):
+    """Add a column on the right of the run with one face in it, and return
+    the new column's index (-1 when the run is already at MAX_COLUMNS). The
+    new column shares the appliance width with the others until it is held."""
+    props = appliance_obj.appliance_panels
+    if len(props.columns) >= MAX_COLUMNS:
+        return -1
+    with suspended():
+        col = props.columns.add()
+        col.width_hold = False
+    ci = len(props.columns) - 1
+    if add_section(appliance_obj, ci, kind) < 0:      # rebuilds
+        return -1
+    return ci
+
+
+def remove_column(appliance_obj, index):
+    """Remove a column and every face in it; the rest share the width. The
+    last column stays, and so does the last face on the appliance."""
+    props = appliance_obj.appliance_panels
+    if not (0 <= index < len(props.columns)) or len(props.columns) <= 1:
+        return False
+    doomed = [i for i, s in enumerate(props.sections) if s.column == index]
+    if len(doomed) >= len(props.sections):
+        return False
+    with suspended():
+        for i in reversed(doomed):
+            props.sections.remove(i)
+        for sec in props.sections:
+            if sec.column > index:
+                sec.column -= 1
+        props.columns.remove(index)
+        props.config = CUSTOM_CONFIG
+    rebuild(appliance_obj)
+    return True
 
 
 def seed_from_legacy(appliance_obj):
