@@ -523,9 +523,14 @@ def offset_wall_perpendicular(wall_obj, offset, tolerance_deg=None):
 
 
 def _draw_dim_text(x, y, text, color):
-    """Draw centered text at screen position."""
+    """Draw centered text at screen position, sized to the UI scale so
+    it stays readable on high-DPI displays."""
     font_id = 0
-    blf.size(font_id, 13)
+    try:
+        s = bpy.context.preferences.system.ui_scale
+    except AttributeError:
+        s = 1.0
+    blf.size(font_id, 13 * s)
     blf.color(font_id, *color)
     w, h = blf.dimensions(font_id, text)
     blf.position(font_id, x - w / 2, y - h / 2, 0)
