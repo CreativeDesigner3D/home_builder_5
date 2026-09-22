@@ -6,7 +6,8 @@ or 'Face Frame', a POST_PIXEL draw handler paints a value label on
 every cabinet root (W / H / D, like the closet starter overlay), every
 bay (its width), every leaf opening (its height), or every face-frame
 member (its width -- stiles, rails, bay splitters) of every face-frame
-cabinet in the viewport. Clicking a label starts a short-lived modal that captures
+cabinet in the viewport. Every label names its dimension -- H 19.5",
+W 1.5" -- so a number on a part says what it measures. Clicking a label starts a short-lived modal that captures
 typed input (same distance grammar as placement typing: inches,
 fractions, feet'inches"); Enter commits the value through the same
 properties the sidebar edits, so redistribution and auto-hold behave
@@ -399,7 +400,7 @@ def _ap_targets(appliance, unit_settings):
             continue
         sec = props.sections[index]
         value = sec.height if sec.height_hold else (box[3] - box[2])
-        targets.append((part, 'AP_FACE', True, sec.height_hold, value, "",
+        targets.append((part, 'AP_FACE', True, sec.height_hold, value, "H ",
                         _ap_anchor(appliance, dims, box, 0.5)))
     targets.extend(_ap_gap_targets(appliance, props, dims, faces, parts))
     # The width over each column, on its top face, where a column's
@@ -693,7 +694,7 @@ def compute_labels(context, region, rv3d):
                                  split_preview._cage_dims(op)[1]))
                     targets.append((op, 'OPENING', editable,
                                     editable and props.unlock_size,
-                                    value, "", None))
+                                    value, "H ", None))
         else:
             # Face Frame: member widths. Editable labels read
             # _get_current_width -- the same per-role props the Set Width
@@ -715,7 +716,7 @@ def compute_labels(context, region, rv3d):
                 except Exception:
                     continue
                 targets.append((part, 'PART', editable, locked,
-                                value, "", None))
+                                value, "W ", None))
         # SELECTED scope: keep only labels whose cage is part of the
         # current selection. The click handlers hit-test against this
         # same list, so filtered labels are not clickable either.
