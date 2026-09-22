@@ -793,6 +793,38 @@ def _rout_flange(backer_obj, w, h, backer_t):
         cpm.mod.show_render = True
 
 
+def _model_out_of_step(appliance_obj):
+    """Whether the appliance's own model still has to catch up with the
+    panels. Its doors, drawer fronts and handles are built only when it
+    is NOT panelled, so a run that has just appeared (or gone) leaves
+    the model a step behind -- the factory fronts standing behind the
+    cabinet ones, or missing after the panels are taken off."""
+    try:
+        from ..common import appliance_geo
+    except Exception:
+        return False
+    built_for = appliance_obj.get(appliance_geo.MODEL_PANEL_READY_FLAG)
+    # No flag: built before the model recorded what it was built for, so
+    # it cannot say it agrees. One rebuild settles it.
+    if built_for is None:
+        return True
+    return bool(built_for) != bool(appliance_obj.get('Panel Ready'))
+
+
+def _sync_model(appliance_obj):
+    """Build the appliance's own model again so its front matches
+    whether it is panelled. Panels are not model parts, so the run
+    itself survives the rebuild untouched."""
+    try:
+        from ..common import appliance_geo
+    except Exception:
+        return
+    try:
+        appliance_geo.build_geometry(appliance_obj)
+    except Exception as ex:      # a model problem must not break the run
+        print('Home Builder: appliance model rebuild failed: %s' % ex)
+
+
 def _structure_key(props, backers):
     return json.dumps({'config': props.config, 'n': len(props.sections),
                        'backers': sorted(int(i) for i in backers)})
@@ -883,6 +915,14 @@ def rebuild(appliance_obj):
                 child.hide_render = True
 
     _stamp(appliance_obj, props, key, faces, backers, rails)
+    # Panels can be built from the panel tab, the command or the prompts
+    # dialog; only the dialog used to rebuild the model afterwards, so
+    # the appliance kept its own doors and handles behind the panels.
+    # Checked against what the model was built for rather than against a
+    # transition, so an appliance panelled before this existed sorts
+    # itself out the first time its run is built.
+    if _model_out_of_step(appliance_obj):
+        _sync_model(appliance_obj)
 
 
 def remove(appliance_obj):
@@ -917,6 +957,10 @@ def remove(appliance_obj):
             del appliance_obj[key]
     if 'Panel Ready' in appliance_obj:
         appliance_obj['Panel Ready'] = False
+    # The appliance wears its own front again, so the model has to build
+    # the doors and handles it left out while it was panelled.
+    if _model_out_of_step(appliance_obj):
+        _sync_model(appliance_obj)
     return removed
 
 

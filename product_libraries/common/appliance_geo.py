@@ -60,6 +60,12 @@ from ...units import inch
 
 GEO_OPTS_PROP = "APPLIANCE_GEO_OPTS"
 GEO_CHILD_FLAG = "IS_APPLIANCE_GEO"
+# Whether the model standing on the cage was built panelled -- that is,
+# without the appliance's own doors and handles. The panels read it to
+# tell when the model no longer matches them and has to be built again;
+# without it, panels added from anywhere but the prompts dialog left the
+# factory fronts standing behind the cabinet ones.
+MODEL_PANEL_READY_FLAG = "APPLIANCE_MODEL_PANEL_READY"
 
 SUPPORTED_TYPES = {'REFRIGERATOR', 'RANGE', 'DISHWASHER', 'UNDER_COUNTER',
                    'HOOD', 'SINK', 'WALL_OVEN', 'MICROWAVE', 'COOKTOP'}
@@ -2576,6 +2582,10 @@ def build_geometry(cage_obj):
     if cage_obj is None:
         return False
     remove_geometry(cage_obj)
+    # Record what this build is for before anything can return early: a
+    # cage with no model has no front of its own either way, so it
+    # matches whatever the panels are doing.
+    cage_obj[MODEL_PANEL_READY_FLAG] = is_panel_ready(cage_obj)
     if not supports(cage_obj) or stored_opts(cage_obj) is None:
         _refresh_own_clearance(cage_obj)
         return False
