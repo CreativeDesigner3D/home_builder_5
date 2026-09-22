@@ -212,6 +212,20 @@ def _kind_label(section):
     return enum_label(section, 'kind')
 
 
+def pull_side(props, section):
+    """Which edge a door's pull sits on -- the opening edge, away from
+    its hinge. Follows the appliance model's own convention: a pair of
+    doors hinges on the outside so the pulls meet in the middle, and a
+    lone door hinges on the right."""
+    if getattr(section, 'kind', '') != 'DOOR':
+        return 'R'
+    column = getattr(section, 'column', -1)
+    ncol = len(props.columns)
+    if column < 0 or ncol <= 1:
+        return 'L'
+    return 'L' if column == ncol - 1 else 'R'
+
+
 def _face_place(props, index):
     """Where a face sits, in words -- empty when the run is one column
     and there is nothing to say about where it is."""
@@ -275,7 +289,11 @@ def _blocks(context, bp):
     out.append(('field', (('run', 0, 'reveal_right'), "Gap Right", 'SIZE')))
     out.append(('field', (('run', 0, 'column_gap'), "Between Columns", 'SIZE')))
     out.append(('field', (('run', 0, 'section_gap'), "Between Faces", 'SIZE')))
-    out.append(('field', (('run', 0, 'panel_type'), "Backers", 'MENU')))
+    # One backer type for the whole run: they are nearly always the
+    # same, so this sets every panel and clears any face that had been
+    # given its own. A single face can still differ afterwards, from
+    # its own Backer row.
+    out.append(('pick', ('BACKER', "Backers", enum_label(props, 'panel_type'))))
     out.append(('field', (('run', 0, 'backer_reveal'), "Backer Edge", 'SIZE')))
 
     out.append(('field', (('run', 0, 'install_type'), "Install", 'MENU')))
@@ -571,12 +589,15 @@ def _grid_entries(bp, items, x0, top, w, s):
         fw, fh = dim_x * px, dim_z * px
         fx = pic[0] + (pic[2] - fw) / 2.0
         fy = pic[1] + (pic[3] - fh) / 2.0
+        preview = ap._PreviewProps(config, props)
         tiles = []
         for index, box in faces.items():
-            kind = sections[index].kind if index < len(sections) else 'DOOR'
+            section = sections[index] if index < len(sections) else None
+            kind = section.kind if section is not None else 'DOOR'
+            side = pull_side(preview, section) if section is not None else 'R'
             tiles.append(((fx + box[0] * px, fy + box[2] * px,
                            (box[1] - box[0]) * px, (box[3] - box[2]) * px),
-                          kind))
+                          kind, side))
         out.append(('preset', cell, config, label,
                     props.config == config, (fx, fy, fw, fh), tiles))
     return out
@@ -822,7 +843,9 @@ def _paint_face(shader, font_id, entry, mx, my, s, bp, selected_i):
                           rect[2] - 2 * s, rect[3] - 2 * s, Theme.GLYPH_HOVER)
     props = _props(bp) if bp is not None else None
     if props is not None and 0 <= index < len(props.sections):
-        _paint_face_mark(shader, rect, props.sections[index].kind, s)
+        section = props.sections[index]
+        _paint_face_mark(shader, rect, section.kind, s,
+                         pull_side(props, section))
     if rect[3] < FACE_MIN_LABEL_H * s:
         return
     x, y, w, h = rect
@@ -835,14 +858,15 @@ def _paint_face(shader, font_id, entry, mx, my, s, bp, selected_i):
                   fit_text(font_id, SMALL * s, size, w - 2 * pad))
 
 
-def _paint_face_mark(shader, rect, kind, s):
+def _paint_face_mark(shader, rect, kind, s, side='R'):
     """The mark that says door, drawer or fixed panel at a glance: a
-    pull on the hinge side, a pull across the middle, or a cross."""
+    pull on the door's opening edge, a pull across the middle, or a
+    cross."""
     x, y, w, h = rect
     if w < 14 * s or h < 14 * s:
         return
     if kind == 'DOOR':
-        px = x + w - 7 * s
+        px = (x + 7 * s) if side == 'L' else (x + w - 7 * s)
         half = min(h * 0.18, 14 * s)
         cy = y + h / 2.0
         draw_lines(shader, [(px, cy - half), (px, cy + half)], FACE_MARK)
@@ -865,12 +889,12 @@ def _paint_preset(shader, font_id, entry, mx, my, s):
     paint_button(shader, cell, hovered=hot, active=active)
     draw_rect(shader, *well, ELEV_BG)
     draw_rect_outline(shader, *well, ELEV_BORDER)
-    fills = [rect for rect, _kind in tiles]
+    fills = [rect for rect, _kind, _side in tiles]
     if fills:
         draw_rects(shader, fills, FACE_SEL if active else FACE_BG)
         draw_rect_outlines(shader, fills, FACE_BORDER)
-    for rect, kind in tiles:
-        _paint_face_mark(shader, rect, kind, s)
+    for rect, kind, side in tiles:
+        _paint_face_mark(shader, rect, kind, s, side)
     label_rect = (cell[0], cell[1], cell[2], GRID_LABEL_H * s)
     draw_centered_text(font_id, label_rect, SMALL * s,
                        Theme.TEXT_PRIMARY if (hot or active)
@@ -979,6 +1003,9 @@ def _open_pick(context, bp, which, label):
                                         ap.DEFAULT_CONFIG_ITEMS)
             return [(item[1], op, {'action': 'CONFIG', 'value': item[0]})
                     for item in items if item[0] != ap.CUSTOM_CONFIG]
+        if which == 'BACKER':
+            return [(item[1], op, {'action': 'BACKER_ALL', 'value': item[0]})
+                    for item in ap.PANEL_TYPE_ITEMS]
         provider = _spec_provider()
         if provider is None:
             return []
@@ -1156,6 +1183,11 @@ class home_builder_OT_appliance_panel_edit(bpy.types.Operator):
             props.model = ""
         elif act == 'SPEC':
             self._apply_spec(context, bp)
+        elif act == 'BACKER_ALL':
+            props.panel_type = self.value
+            for section in props.sections:
+                if section.backer != 'DEFAULT':
+                    section.backer = 'DEFAULT'
         elif act == 'GAP_AUTO':
             owner, prop = _resolve(bp, _key_from_str(self.value))
             if owner is not None and prop in AUTO_GAP_PROPS:
