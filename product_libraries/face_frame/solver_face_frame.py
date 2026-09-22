@@ -1291,6 +1291,8 @@ def finish_kick_segments(layout):
     on that side; the corner finish kick part fills the X stretch
     behind the stile separately.
     """
+    if loose_kick_has_finish(layout):
+        return [loose_kick_finish_segment(layout)]
     if not has_finish_kick(layout):
         return []
     segments = []
@@ -1653,6 +1655,36 @@ def loose_kick_front_rail(layout):
         'length': length,
         'width':  layout.tkh,
         'thickness': layout.tkt,
+    }
+
+
+def loose_kick_has_finish(layout):
+    """A recessed loose ladder takes the finish toe kick face on its
+    front, the same way a notched kick applies it to the subfront.
+    LOOSE_FLUSH is left bare: its ladder front is already flush with
+    the cabinet front, so a skin there would stand proud of it."""
+    return (has_loose_kick(layout)
+            and layout.toe_kick_type == 'LOOSE'
+            and layout.include_finish_kick)
+
+
+def loose_kick_finish_segment(layout):
+    """Finish toe kick on a loose ladder. Spans the full ladder width
+    (covering the end boards' front edges as well as the front rail)
+    with its back face flush to the ladder front, so its offset from
+    the cabinet front matches the notched kick's (tks - finish_t).
+    Keyed to bay 0 - the ladder is one piece per cabinet."""
+    x_left, x_right = loose_kick_x_bounds(layout)
+    finish_t = layout.finish_kick_thickness
+    return {
+        'start_bay':  0,
+        'end_bay':    layout.bay_count - 1,
+        'x':          x_left,
+        'y':          -layout.dim_y + loose_kick_setback(layout) - finish_t,
+        'z':          0.0,
+        'length':     x_right - x_left,
+        'width':      layout.tkh,
+        'thickness':  finish_t,
     }
 
 
