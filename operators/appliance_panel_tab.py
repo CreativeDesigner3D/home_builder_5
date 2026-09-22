@@ -244,8 +244,17 @@ def _blocks(context, bp):
     out.append(('run_cmds', None))
     if bp.get('APPLIANCE_TYPE') in ap.KICK_APPLIANCE_TYPES:
         out.append(('field', (('run', 0, 'toe_kick'), "Toe Kick", 'SIZE')))
-    out.append(('field', (('run', 0, 'end_reveal'), "Edge Gap", 'SIZE')))
-    out.append(('field', (('run', 0, 'section_gap'), "Gap Between", 'SIZE')))
+    # The gaps, one row each and in the order they read on the model:
+    # around the outside, then between the columns and between the faces
+    # stacked in them. An edge with no size of its own follows Edge Gap,
+    # so its row shows what it currently measures and its chip gives the
+    # size back.
+    out.append(('field', (('run', 0, 'reveal_top'), "Gap Top", 'SIZE')))
+    out.append(('field', (('run', 0, 'reveal_bottom'), "Gap Bottom", 'SIZE')))
+    out.append(('field', (('run', 0, 'reveal_left'), "Gap Left", 'SIZE')))
+    out.append(('field', (('run', 0, 'reveal_right'), "Gap Right", 'SIZE')))
+    out.append(('field', (('run', 0, 'column_gap'), "Between Columns", 'SIZE')))
+    out.append(('field', (('run', 0, 'section_gap'), "Between Faces", 'SIZE')))
     out.append(('field', (('run', 0, 'panel_type'), "Backers", 'MENU')))
     out.append(('field', (('run', 0, 'backer_reveal'), "Backer Edge", 'SIZE')))
 
@@ -465,13 +474,18 @@ def _field_entries(bp, payload, x0, top, w, s):
         return []
     row_h = ROW_H * s
     held_prop = _hold_prop(prop)
-    chip_room = (CHIP_W + BTN_GAP) * s if (mode == 'SIZE' and held_prop) else 0.0
+    gap_auto = prop in AUTO_GAP_PROPS
+    own_gap = gap_auto and getattr(owner, prop, -1.0) >= 0.0
+    chip_room = ((CHIP_W + BTN_GAP) * s
+                 if (mode == 'SIZE' and (held_prop or own_gap)) else 0.0)
     rect = (x0, top - row_h, w - chip_room, row_h)
     chip_rect = None
     if chip_room:
         chip_rect = (x0 + w - CHIP_W * s, rect[1] + 2 * s,
                      CHIP_W * s, row_h - 4 * s)
-    if mode == 'SIZE':
+    if mode == 'SIZE' and gap_auto:
+        value = _fmt(_gap_value(_props(bp), prop))
+    elif mode == 'SIZE':
         held = bool(getattr(owner, held_prop, False)) if held_prop else True
         value = _fmt(getattr(owner, prop, 0.0)) if held else _solved_text(bp, key)
     elif mode == 'MENU':
@@ -583,6 +597,21 @@ def _resolve(bp, key):
         return props, prop
     except (IndexError, KeyError):
         return None, None
+
+
+# The gaps that can either carry their own size or follow the run's
+# single one. -1 in the model means "following", which is never a size
+# to show: the row shows what the gap measures, and its chip gives the
+# size back.
+AUTO_GAP_PROPS = {'reveal_top', 'reveal_bottom', 'reveal_left',
+                  'reveal_right', 'column_gap'}
+
+
+def _gap_value(props, prop):
+    """What one of those gaps measures now."""
+    if prop == 'column_gap':
+        return ap.column_gap(props)
+    return ap.reveal(props, prop.split('_', 1)[1])
 
 
 def _hold_prop(prop):
@@ -755,15 +784,17 @@ def _paint_field(shader, font_id, entry, mx, my, s, bp):
         paint_inline_edit(shader, font_id, value_rect, FONT * s, _edit,
                           pad=6.0 * s)
     if chip_rect is not None:
-        # A held size says Fill (give it back to the sharing); a shared
-        # one says Hold (keep what it measures now).
-        held = _is_held(bp, key)
+        # A gap that carries its own size says Auto (follow the run's
+        # again). A held face size says Fill (give it back to the
+        # sharing); a shared one says Hold (keep what it measures now).
+        gap = key[2] in AUTO_GAP_PROPS
+        held = True if gap else _is_held(bp, key)
         hot = point_in_rect(mx, my, chip_rect)
         paint_button(shader, chip_rect, hovered=hot, active=held)
         draw_centered_text(font_id, chip_rect, SMALL * s,
                            Theme.TEXT_PRIMARY if (hot or held)
                            else Theme.TEXT_NORMAL,
-                           "Fill" if held else "Hold")
+                           "Auto" if gap else "Fill" if held else "Hold")
 
 
 def _is_held(bp, key):
@@ -810,7 +841,8 @@ def hit(context, mx, my, entries):
             (_, _rect, key, _label, _value, value_rect, chip_rect, mode,
              _frac) = entry
             if chip_rect is not None and point_in_rect(mx, my, chip_rect):
-                _run('HOLD', index=0, value=_key_str(key))
+                _run('GAP_AUTO' if key[2] in AUTO_GAP_PROPS else 'HOLD',
+                     index=0, value=_key_str(key))
                 return True
             if point_in_rect(mx, my, value_rect):
                 if mode == 'MENU':
@@ -1010,6 +1042,10 @@ class home_builder_OT_appliance_panel_edit(bpy.types.Operator):
             props.model = ""
         elif act == 'SPEC':
             self._apply_spec(context, bp)
+        elif act == 'GAP_AUTO':
+            owner, prop = _resolve(bp, _key_from_str(self.value))
+            if owner is not None and prop in AUTO_GAP_PROPS:
+                setattr(owner, prop, -1.0)
         elif act == 'HOLD':
             self._toggle_hold(bp)
         elif act == 'SET':

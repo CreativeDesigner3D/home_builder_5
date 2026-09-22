@@ -242,6 +242,22 @@ class Appliance_Panel_Props(PropertyGroup):
     end_reveal: FloatProperty(name="End Reveal", unit='LENGTH', default=_I(1.0), min=0.0,
                               description="Margin from the run's ends to the first / last panel",
                               update=_on_change)  # type: ignore
+    # Per-edge gaps. -1 means "follow End Reveal", which is what every
+    # end did before they could be set apart -- so a file saved without
+    # these solves exactly as it did, and an edge only goes its own way
+    # once someone gives it a size.
+    reveal_left: FloatProperty(name="Left", unit='LENGTH', default=-1.0, min=-1.0,
+                               update=_on_change)  # type: ignore
+    reveal_right: FloatProperty(name="Right", unit='LENGTH', default=-1.0, min=-1.0,
+                                update=_on_change)  # type: ignore
+    reveal_top: FloatProperty(name="Top", unit='LENGTH', default=-1.0, min=-1.0,
+                              update=_on_change)  # type: ignore
+    reveal_bottom: FloatProperty(name="Bottom", unit='LENGTH', default=-1.0, min=-1.0,
+                                 update=_on_change)  # type: ignore
+    column_gap: FloatProperty(name="Between Columns", unit='LENGTH', default=-1.0,
+                              min=-1.0,
+                              description="Gap between columns; follows Gap when unset",
+                              update=_on_change)  # type: ignore
     section_gap: FloatProperty(name="Gap", unit='LENGTH', default=_I(1.0), min=0.0,
                                description="Gap between adjacent panels",
                                update=_on_change)  # type: ignore
@@ -582,6 +598,29 @@ def seed_from_legacy(appliance_obj):
 # ----------------------------------------------------------------------
 # Solver
 # ----------------------------------------------------------------------
+# ---- The run's gaps ---------------------------------------------------
+# One number used to set every end of the run, and one every gap inside
+# it. Both are still the fallback; an edge or the column gap can now
+# carry its own size. Read through getattr so a property group that
+# predates them -- an older file, or a card mirroring the fields it knew
+# about -- solves on the single value the way it always did.
+
+GAP_EDGES = ('top', 'bottom', 'left', 'right')
+
+
+def reveal(props, edge):
+    """The gap at one end of the run: that edge's own size, or the End
+    Reveal every end follows until it is given one."""
+    value = getattr(props, 'reveal_' + edge, -1.0)
+    return value if value >= 0.0 else props.end_reveal
+
+
+def column_gap(props):
+    """The gap between columns: its own size, or the section gap."""
+    value = getattr(props, 'column_gap', -1.0)
+    return value if value >= 0.0 else props.section_gap
+
+
 def _share(total, holds, sizes, gap):
     n = len(holds)
     usable = total - gap * max(0, n - 1)
@@ -602,8 +641,10 @@ def _stack(z_lo, z_hi, secs, props, bottom_free=True, top_free=True):
     r_top = bool(rw and props.rail_top and top_free)
     r_bot = bool(rw and props.rail_bottom and bottom_free)
     r_mid = bool(rw and props.rail_between)
-    bottom_margin = ((rw + RAIL_REVEAL) if r_bot else props.end_reveal) if bottom_free else 0.0
-    top_margin = ((rw + RAIL_REVEAL) if r_top else props.end_reveal) if top_free else 0.0
+    bottom_margin = ((rw + RAIL_REVEAL) if r_bot
+                     else reveal(props, 'bottom')) if bottom_free else 0.0
+    top_margin = ((rw + RAIL_REVEAL) if r_top
+                  else reveal(props, 'top')) if top_free else 0.0
     gap = (rw + 2.0 * RAIL_REVEAL) if r_mid else props.section_gap
     run_lo, run_hi = z_lo + bottom_margin, z_hi - top_margin
 
@@ -643,14 +684,16 @@ def solve(props, dim_x, dim_z):
         rails   [(x0, x1, z0, z1)]
     all in appliance-local X (across) / Z (up), metres."""
     ncol = max(1, len(props.columns))
-    col_w = _share(dim_x - 2.0 * props.end_reveal,
+    left, right = reveal(props, 'left'), reveal(props, 'right')
+    col_gap = column_gap(props)
+    col_w = _share(dim_x - left - right,
                    [c.width_hold for c in props.columns] or [False],
-                   [c.width for c in props.columns] or [dim_x], props.section_gap)
+                   [c.width for c in props.columns] or [dim_x], col_gap)
     col_x = []
-    x = props.end_reveal
+    x = left
     for w in col_w:
         col_x.append((x, x + w))
-        x += w + props.section_gap
+        x += w + col_gap
     z_lo, z_hi = max(0.0, props.toe_kick), dim_z
 
     secs = list(props.sections)
@@ -665,17 +708,18 @@ def solve(props, dim_x, dim_z):
     # Vertical: bottom banners + [column region] + top banners share the run.
     v_holds = [secs[i].height_hold for i in bottom] + [False] + [secs[i].height_hold for i in top]
     v_sizes = [secs[i].height for i in bottom] + [0.0] + [secs[i].height for i in top]
-    v = _share(z_hi - z_lo - 2.0 * props.end_reveal, v_holds, v_sizes, props.section_gap)
-    z = z_lo + props.end_reveal
+    v = _share(z_hi - z_lo - reveal(props, 'bottom') - reveal(props, 'top'),
+               v_holds, v_sizes, props.section_gap)
+    z = z_lo + reveal(props, 'bottom')
     for k, i in enumerate(bottom):
-        faces[i] = (props.end_reveal, dim_x - props.end_reveal, z, z + v[k])
+        faces[i] = (left, dim_x - right, z, z + v[k])
         z += v[k] + props.section_gap
     region_lo = z
     region_h = v[len(bottom)]
     z = region_lo + region_h + props.section_gap
     for k, i in enumerate(top):
         h = v[len(bottom) + 1 + k]
-        faces[i] = (props.end_reveal, dim_x - props.end_reveal, z, z + h)
+        faces[i] = (left, dim_x - right, z, z + h)
         z += h + props.section_gap
     # Columns stack inside the region. With no banners the region IS the run
     # (its margins are the end reveals / rails); with a banner at an end the

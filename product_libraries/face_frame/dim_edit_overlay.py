@@ -401,6 +401,7 @@ def _ap_targets(appliance, unit_settings):
         value = sec.height if sec.height_hold else (box[3] - box[2])
         targets.append((part, 'AP_FACE', True, sec.height_hold, value, "",
                         _ap_anchor(appliance, dims, box, 0.5)))
+    targets.extend(_ap_gap_targets(appliance, props, dims, faces, parts))
     # The width over each column, on its top face, where a column's
     # width is a thing the run has more than one of.
     if len(props.columns) > 1:
@@ -416,6 +417,99 @@ def _ap_targets(appliance, unit_settings):
                             value, "W ",
                             _ap_anchor(appliance, dims, box, 0.92)))
     return targets
+
+
+# The run's gaps, labelled where they are: the four around the outside,
+# the one between columns, and the one between stacked faces. The last
+# two are ONE size each in the model, so every gap of a kind reads and
+# writes the same number -- typing into the gap you are looking at is
+# just the nearest way to reach it.
+_GAP_PROP = {
+    'AP_GAP_T': 'reveal_top',
+    'AP_GAP_B': 'reveal_bottom',
+    'AP_GAP_L': 'reveal_left',
+    'AP_GAP_R': 'reveal_right',
+    'AP_GAP_C': 'column_gap',
+    'AP_GAP_S': 'section_gap',
+}
+# The five that can hand their size back to the one every gap follows;
+# the section gap IS that number for the inside of the run.
+_GAP_AUTO = set(_GAP_PROP) - {'AP_GAP_S'}
+
+
+def _gap_value(props, kind):
+    """What a gap measures now, following the run's single size when the
+    edge has not been given one of its own."""
+    if kind == 'AP_GAP_C':
+        return appliance_panels.column_gap(props)
+    if kind == 'AP_GAP_S':
+        return props.section_gap
+    edge = _GAP_PROP[kind].split('_', 1)[1]
+    return appliance_panels.reveal(props, edge)
+
+
+def _gap_is_own(props, kind):
+    """Whether this gap carries its own size rather than following."""
+    if kind not in _GAP_AUTO:
+        return False
+    return getattr(props, _GAP_PROP[kind], -1.0) >= 0.0
+
+
+def _ap_gap_targets(appliance, props, dims, faces, parts):
+    """A label in each gap of the run. Positions come from the solved
+    faces, so a gap is labelled where it actually opens up."""
+    if not faces:
+        return []
+    dim_x, dim_y, dim_z = dims
+    xs0 = min(b[0] for b in faces.values())
+    xs1 = max(b[1] for b in faces.values())
+    zs0 = min(b[2] for b in faces.values())
+    zs1 = max(b[3] for b in faces.values())
+    mid_x, mid_z = (xs0 + xs1) / 2.0, (zs0 + zs1) / 2.0
+    kick = max(0.0, props.toe_kick)
+
+    def target(kind, x, z):
+        box = (x, x, z, z)      # a point; _ap_anchor reads the centre
+        return (appliance, kind, True, _gap_is_own(props, kind),
+                _gap_value(props, kind), "",
+                _ap_anchor(appliance, dims, box, 0.5))
+
+    out = [target('AP_GAP_T', mid_x, (zs1 + dim_z) / 2.0),
+           target('AP_GAP_B', mid_x, (kick + zs0) / 2.0),
+           target('AP_GAP_L', xs0 / 2.0, mid_z),
+           target('AP_GAP_R', (xs1 + dim_x) / 2.0, mid_z)]
+
+    # Between the columns, and between the faces stacked in each.
+    bands = {}
+    for i, box in faces.items():
+        column = props.sections[i].column
+        if column < 0:
+            continue
+        lo, hi = bands.get(column, (box[0], box[1]))
+        bands[column] = (min(lo, box[0]), max(hi, box[1]))
+    ordered = [bands[c] for c in sorted(bands)]
+    for (a_lo, a_hi), (b_lo, b_hi) in zip(ordered, ordered[1:]):
+        if b_lo - a_hi > 1e-6:
+            out.append(target('AP_GAP_C', (a_hi + b_lo) / 2.0, mid_z))
+    for column in sorted(bands):
+        stack = sorted((faces[i] for i, s in enumerate(props.sections)
+                        if s.column == column and i in faces),
+                       key=lambda b: b[2])
+        centre = (bands[column][0] + bands[column][1]) / 2.0
+        for lower, upper in zip(stack, stack[1:]):
+            if upper[2] - lower[3] > 1e-6:
+                out.append(target('AP_GAP_S', centre,
+                                  (lower[3] + upper[2]) / 2.0))
+    # A full-width face has the same gap above or below it, on the
+    # appliance's centre line so it is not labelled once per column.
+    for i, box in faces.items():
+        if props.sections[i].column >= 0:
+            continue
+        for edge, z in ((box[3], box[3] + props.section_gap / 2.0),
+                        (box[2], box[2] - props.section_gap / 2.0)):
+            if zs0 < edge < zs1:
+                out.append(target('AP_GAP_S', mid_x, z))
+    return out
 
 
 def _select_in_panel_tab(part_name):
@@ -712,6 +806,21 @@ def _draw():
 
 def _commit(obj, kind, value):
     """Write the typed value through the sidebar's own property paths."""
+    if kind in _GAP_PROP:
+        # The label carries the appliance itself: a gap belongs to the
+        # run, not to any one face.
+        props = getattr(obj, 'appliance_panels', None)
+        prop = _GAP_PROP[kind]
+        if props is None:
+            return False
+        # Asked of the RNA, not with hasattr: setting a name a property
+        # group does not have succeeds silently on the Python side and
+        # writes nothing, so a run from before the gaps could be set
+        # apart would read as edited without changing.
+        if prop not in props.bl_rna.properties:
+            return False
+        setattr(props, prop, value)
+        return True
     if kind in ('AP_FACE', 'AP_COL'):
         # A panel size that is typed is a size that is wanted, so it
         # holds itself and the rest of the run shares what is left --
@@ -789,6 +898,13 @@ def _reset_to_auto(obj, kind):
     value again (the flag write's update callback runs the recalc). The
     inverse of the auto-lock a typed edit applies. No-op when already
     auto."""
+    if kind in _GAP_AUTO:
+        # Back to following the run's single gap.
+        props = getattr(obj, 'appliance_panels', None)
+        if props is None or getattr(props, _GAP_PROP[kind], -1.0) < 0.0:
+            return False
+        setattr(props, _GAP_PROP[kind], -1.0)
+        return True
     if kind in ('AP_FACE', 'AP_COL'):
         # Back to sharing -- the editor's Fill chip, from the model.
         appliance, index = _ap_section(obj)
@@ -860,7 +976,13 @@ class hb_face_frame_OT_edit_dim_label(bpy.types.Operator):
                ('BAY_H', "Bay Height", ""),
                ('BAY_D', "Bay Depth", ""),
                ('AP_FACE', "Panel Height", ""),
-               ('AP_COL', "Panel Column Width", "")],
+               ('AP_COL', "Panel Column Width", ""),
+               ('AP_GAP_T', "Panel Gap Top", ""),
+               ('AP_GAP_B', "Panel Gap Bottom", ""),
+               ('AP_GAP_L', "Panel Gap Left", ""),
+               ('AP_GAP_R', "Panel Gap Right", ""),
+               ('AP_GAP_C', "Panel Gap Between Columns", ""),
+               ('AP_GAP_S', "Panel Gap Between Faces", "")],
         options={'HIDDEN'})  # type: ignore
 
     def invoke(self, context, event):
