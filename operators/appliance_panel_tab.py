@@ -295,6 +295,13 @@ def _blocks(context, bp):
     # its own Backer row.
     out.append(('pick', ('BACKER', "Backers", enum_label(props, 'panel_type'))))
     out.append(('field', (('run', 0, 'backer_reveal'), "Backer Edge", 'SIZE')))
+    # The flange rout is Type C's alone, so it is only worth a row when
+    # some backer in the run is one.
+    if _has_type_c(props):
+        out.append(('field', (('run', 0, 'flange_inset'),
+                              "Flange Width", 'SIZE')))
+        out.append(('field', (('run', 0, 'flange_depth'),
+                              "Flange Depth", 'SIZE')))
 
     out.append(('field', (('run', 0, 'install_type'), "Install", 'MENU')))
 
@@ -316,6 +323,13 @@ def _blocks(context, bp):
         if props.weight_max_lb:
             out.append(('note', "Max panel weight %g lb" % props.weight_max_lb))
     return out
+
+
+def _has_type_c(props):
+    """Whether anything in the run is routed for an install flange: the
+    run's own type, or a face that carries C itself."""
+    return (props.panel_type == 'C'
+            or any(s.backer == 'C' for s in props.sections))
 
 
 def _spec_provider():

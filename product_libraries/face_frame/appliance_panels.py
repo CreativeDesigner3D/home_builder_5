@@ -63,10 +63,13 @@ KICK_APPLIANCE_TYPES = {'DISHWASHER', 'UNDER_COUNTER'}
 
 FACE_THICKNESS = _I(0.75)
 BACKER_THICKNESS = {'B': _I(0.25), 'C': _I(0.35)}
-# Type C installation-flange rout (representative; tune in Blender): a recess
-# around the back-face perimeter where the appliance mounting flange seats.
-FLANGE_INSET = _I(1.5)
-FLANGE_DEPTH = _I(0.2)
+# Type C installation-flange rout: a recess around the back-face
+# perimeter where the appliance mounting flange seats. Off the shop's
+# own drawing of the joint -- 5/16" wide, .10" deep, which leaves .25"
+# of the .35" backer under it. A run can carry its own numbers; these
+# are the defaults and the fallback.
+FLANGE_INSET = _I(5.0 / 16.0)
+FLANGE_DEPTH = _I(0.10)
 # Full-inset integral rails: face-frame members fastened across the panel run
 # (top / bottom) and between stacked sections. 3/4" stock, face flush with
 # the inset panel faces; a panel meeting a rail keeps the inset reveal.
@@ -267,6 +270,20 @@ class Appliance_Panel_Props(PropertyGroup):
                                              "side (negative = smaller than the face)",
                                  update=_on_change)  # type: ignore
     install_type: EnumProperty(name="Install", items=INSTALL_TYPE_ITEMS, default='OVERLAY')  # type: ignore
+    # The Type C flange rout. Defaults are the constants this was built
+    # with; the shop's own drawing of the joint is narrower and
+    # shallower (see the backer detail), so this is per run rather than
+    # a number in the code.
+    flange_inset: FloatProperty(name="Flange Rout Width", unit='LENGTH',
+                                default=FLANGE_INSET, min=0.0,
+                                description="How far in from the backer's "
+                                            "edge the flange rout runs",
+                                update=_on_change)  # type: ignore
+    flange_depth: FloatProperty(name="Flange Rout Depth", unit='LENGTH',
+                                default=FLANGE_DEPTH, min=0.0,
+                                description="How deep the backer is routed "
+                                            "for the appliance's flange",
+                                update=_on_change)  # type: ignore
     rail_width: FloatProperty(name="Rail Width", unit='LENGTH', default=_I(1.5), min=_I(0.5),
                               update=_on_change)  # type: ignore
     rail_top: BoolProperty(name="Top", default=False, update=_on_change)  # type: ignore
@@ -879,14 +896,19 @@ def _finish_part(obj):
     obj['STYLE_NAME'] = cs.name
 
 
-def _rout_flange(backer_obj, w, h, backer_t):
+def _rout_flange(backer_obj, w, h, backer_t, inset=None, depth=None):
     """Type C: rout a recess around the appliance-facing perimeter for the
-    installation flange, as four CPM_CUTOUT edge strips (a rabbet frame)."""
+    installation flange, as four CPM_CUTOUT edge strips (a rabbet frame).
+    The run says how wide and deep; the module constants are only the
+    fallback for a caller that has no run to ask."""
     part = hb_types.GeoNodeCutpart(backer_obj)
     for mod in list(backer_obj.modifiers):
         if mod.name.startswith('Flange '):
             backer_obj.modifiers.remove(mod)
-    inset, depth = FLANGE_INSET, FLANGE_DEPTH
+    inset = FLANGE_INSET if inset is None else inset
+    depth = FLANGE_DEPTH if depth is None else depth
+    if inset <= 0.0 or depth <= 0.0:
+        return              # no rout asked for; the strips would be empty
     strips = (('Flange Left', 0.0, 0.0, h, inset),
               ('Flange Right', 0.0, w - inset, h, w),
               ('Flange Bottom', 0.0, 0.0, inset, w),
@@ -996,7 +1018,9 @@ def rebuild(appliance_obj):
                 _place(bobj, bx0, bx1, bz0, bz1, -dim_y, t)
                 _finish_part(bobj)
                 if bobj.get('APPLIANCE_PANEL_BACKER_TYPE') == 'C':
-                    _rout_flange(bobj, bx1 - bx0, bz1 - bz0, t)
+                    _rout_flange(bobj, bx1 - bx0, bz1 - bz0, t,
+                                 getattr(props, 'flange_inset', None),
+                                 getattr(props, 'flange_depth', None))
 
     # Rails: reuse by index, drop extras.
     rail_objs = _parts(appliance_obj, TAG_RAIL, 'AP_RAIL_INDEX')
