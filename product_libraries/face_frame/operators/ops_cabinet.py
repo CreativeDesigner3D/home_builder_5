@@ -2823,17 +2823,55 @@ class hb_face_frame_OT_sink_duo_rollout_prompts(bpy.types.Operator):
         return {'FINISHED'}
 
 
+def _bay_siblings(bay_obj):
+    """The bay cages under bay_obj's cabinet in index order."""
+    cabinet = bay_obj.parent
+    if cabinet is None:
+        return [bay_obj]
+    return sorted(
+        [c for c in cabinet.children
+         if c.get(types_face_frame.TAG_BAY_CAGE)],
+        key=lambda c: c.get('hb_bay_index', 0),
+    )
+
+
+def _on_bay_prompts_nav(self, context):
+    """Previous / Next on the Bay Properties dialog. Retargets this same
+    dialog at the sibling bay (draw() follows bay_name), then resets
+    nav so the next click on the same button registers as a change."""
+    step = {'PREV': -1, 'NEXT': 1}.get(self.nav, 0)
+    if not step:
+        return
+    self.nav = 'NONE'
+    bay_obj = bpy.data.objects.get(self.bay_name)
+    if bay_obj is None or not bay_obj.get(types_face_frame.TAG_BAY_CAGE):
+        return
+    siblings = _bay_siblings(bay_obj)
+    try:
+        pos = siblings.index(bay_obj)
+    except ValueError:
+        return
+    new_pos = pos + step
+    if not 0 <= new_pos < len(siblings):
+        return
+    target = siblings[new_pos]
+    self.bay_name = target.name
+    for o in context.selected_objects:
+        o.select_set(False)
+    target.select_set(True)
+    context.view_layer.objects.active = target
+
+
 class hb_face_frame_OT_bay_prompts(bpy.types.Operator):
     """Open a focused properties dialog for a single bay.
 
     Targets the bay named by bay_name; when that is empty (the normal
     right-click / selection entry point) it resolves from the active
-    object. The dialog's Previous / Next buttons re-invoke this same
-    operator with bay_name set to a sibling, so Blender closes the
-    current popup and opens a fresh one on that bay - no manual
-    re-invoke needed. invoke() also makes the resolved bay the active
-    selection so the viewport tracks the dialog as the user pages
-    through bays.
+    object. The dialog's Previous / Next buttons set the nav property,
+    whose update retargets this same dialog at the sibling bay, so
+    paging never stacks a second popup. invoke() and the nav update
+    also make the target bay the active selection so the viewport
+    tracks the dialog as the user pages through bays.
     """
     bl_idname = "hb_face_frame.bay_prompts"
     bl_label = "Bay Properties"
@@ -2849,6 +2887,18 @@ class hb_face_frame_OT_bay_prompts(bpy.types.Operator):
                      "resolves from the active object"),
         default="",
         options={'SKIP_SAVE'},
+    )  # type: ignore
+
+    nav: bpy.props.EnumProperty(
+        name="Navigate",
+        items=[
+            ('NONE', "None", ""),
+            ('PREV', "Previous", "Show the previous bay"),
+            ('NEXT', "Next", "Show the next bay"),
+        ],
+        default='NONE',
+        options={'SKIP_SAVE'},
+        update=_on_bay_prompts_nav,
     )  # type: ignore
 
     @classmethod
@@ -2900,35 +2950,24 @@ class hb_face_frame_OT_bay_prompts(bpy.types.Operator):
             return
 
         # Sibling bays in index order, for the Previous / Next nav row.
-        cabinet = bay_obj.parent
-        siblings = sorted(
-            [c for c in cabinet.children
-             if c.get(types_face_frame.TAG_BAY_CAGE)],
-            key=lambda c: c.get('hb_bay_index', 0),
-        ) if cabinet else [bay_obj]
+        siblings = _bay_siblings(bay_obj)
         try:
             pos = siblings.index(bay_obj)
         except ValueError:
             pos = 0
 
-        # Each nav button is another bay_prompts invocation with
-        # bay_name pre-set: clicking it closes this popup and Blender
-        # opens a fresh dialog on the sibling. Clamped at the ends.
+        # Nav buttons flip this dialog's nav property; its update
+        # retargets the dialog in place. Clamped at the ends.
         nav = self.layout.row(align=True)
         prev_btn = nav.row(align=True)
         prev_btn.enabled = pos > 0
-        op = prev_btn.operator(
-            'hb_face_frame.bay_prompts', text="Previous", icon='TRIA_LEFT',
-        )
-        op.bay_name = siblings[pos - 1].name if pos > 0 else ""
+        prev_btn.prop_enum(self, 'nav', 'PREV', text="Previous",
+                           icon='TRIA_LEFT')
         nav.label(text=f"Bay {pos + 1} of {len(siblings)}")
         next_btn = nav.row(align=True)
         next_btn.enabled = pos < len(siblings) - 1
-        op = next_btn.operator(
-            'hb_face_frame.bay_prompts', text="Next", icon='TRIA_RIGHT',
-        )
-        op.bay_name = (siblings[pos + 1].name
-                       if pos < len(siblings) - 1 else "")
+        next_btn.prop_enum(self, 'nav', 'NEXT', text="Next",
+                           icon='TRIA_RIGHT')
         self.layout.separator()
 
         ui_face_frame.draw_bay_properties(self.layout, bay_obj)
