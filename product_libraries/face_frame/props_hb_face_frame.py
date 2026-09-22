@@ -347,12 +347,55 @@ def get_finish_hinge_items(self, context):
     return _items_or_none(_FINISH_HINGE_ITEMS.get(self.finish_overlay, []))
 
 
+# Wood specie -> default flat panel for the style's door + drawer fronts.
+# Paint-grade woods take the MDF flat panel, stain-grade woods the veneer
+# panel. Only a style already on one of the flat recessed panels follows
+# the wood; raised, grooved, glass and slab picks are left alone. Woods
+# not listed either way (laminates, quoted / placeholder entries) leave
+# the panel as is.
+_PAINT_GRADE_WOODS = {'Paint Grade', 'Alder, Paint Grade'}
+_NON_WOOD_SPECIES = {'Euro Laminate', 'Euro TFL', 'N/A', 'Other',
+                     'Non-Stock Wood Specie', 'Quoted Wood Specie'}
+_WOOD_FOLLOWS_PANELS = {'Veneer', 'MDF Flat Panel', 'Solid Wood Recessed'}
+
+
+def _panel_for_wood(wood):
+    if wood in _PAINT_GRADE_WOODS:
+        return 'MDF Flat Panel'
+    if wood in _NON_WOOD_SPECIES or wood not in style_options.WOOD_SPECIES:
+        return None
+    return 'Veneer'
+
+
+def _apply_wood_to_front_panels(cab_style, context):
+    """Move the cabinet style's door + drawer-front styles onto the wood's
+    default flat panel. Setting front_panel runs update_front_panel, which
+    re-derives the frame and restyles the assigned fronts."""
+    panel = _panel_for_wood(cab_style.finish_wood)
+    if panel is None:
+        return
+    ff = get_style_props(context)
+    for pool, name in ((ff.door_styles, cab_style.door_style),
+                       (ff.drawer_front_styles, cab_style.drawer_front_style)):
+        ds = next((s for s in pool if s.name == name), None)
+        if ds is None or ds.front_panel == panel:
+            continue
+        if ds.front_panel not in _WOOD_FOLLOWS_PANELS:
+            continue
+        table = _DRAWER_PANEL_ITEMS if _front_is_drawer(ds) else _DOOR_PANEL_ITEMS
+        offered = {i[0] for i in table.get((ds.front_series, ds.front_shape), [])}
+        if panel in offered:
+            _set_enum_safe(ds, "front_panel", panel)
+
+
 def update_finish_wood(self, context):
     """Wood gates color: reset to the first compatible color (which cascades
-    on to varnish + glaze through update_finish_color)."""
+    on to varnish + glaze through update_finish_color), and moves the door +
+    drawer fronts onto the wood's default flat panel."""
     items = _FINISH_COLOR_ITEMS.get(self.finish_wood, [])
     if items:
         _set_enum_safe(self, "finish_color", items[0][0])
+    _apply_wood_to_front_panels(self, context)
     _propagate_cabinet_style(self, context)
 
 
