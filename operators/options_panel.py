@@ -27,9 +27,17 @@ cabinet styles), with the active item's fields and commands below it.
 A ``form`` page is fields on the library's own property group (the
 handles).
 
+Another tab can draw its own page with these widgets: ``build_page``
+takes a blocks function and that tab's ScrollList, and
+``field_blocks`` / ``pool_blocks`` / ``form_blocks`` build the blocks.
+A ``section`` block it builds may carry a fourth item, a callable that
+folds it, so the page keeps its own fold state.
+
 Field kinds: ``enum`` (a dropdown), ``bool`` (a checkbox), ``distance``
 (a value you click into and type, in the placement typing grammar),
-``thumb`` (an enum picked from a grid of pictures -- see thumb_picker),
+``number`` (a plain number typed the same way -- a scale, a count, an
+angle in degrees), ``value`` (a labelled value to read, from a callable
+given the owner), ``thumb`` (an enum picked from a grid of pictures -- see thumb_picker),
 ``text`` (a string you click into and type), ``choice`` (a dropdown
 with a chip that turns it into typed text, for a value outside the
 list), ``locked`` (a distance that follows its source until its padlock
@@ -132,6 +140,7 @@ _edit_pool = None
 _armed_delete = None
 # Inline value typing for a distance field, keyed by (ID, path, prop).
 _value_edit = InlineEdit()
+_edit_kind = None       # the field kind being typed into
 
 
 # ---- Typed-distance parsing (borrowed from PlacementMixin) --------------
@@ -158,6 +167,54 @@ def parse_distance(text):
         return None
 
 
+# Field kinds a click types into; Tab walks from one to the next.
+TYPED_KINDS = ('distance', 'text', 'number')
+
+
+def _is_angle(owner, prop):
+    try:
+        p = owner.bl_rna.properties[prop]
+        return p.type == 'FLOAT' and p.unit == 'ROTATION'
+    except Exception:
+        return False
+
+
+def number_text(owner, prop):
+    """A 'number' field's value as it reads: an int as is, an angle in
+    degrees, any other float to the property's own precision."""
+    import math
+    value = getattr(owner, prop, 0) or 0
+    if isinstance(value, int):
+        return str(value)
+    if _is_angle(owner, prop):
+        return "%g°" % round(math.degrees(value), 2)
+    try:
+        digits = max(int(owner.bl_rna.properties[prop].precision), 2)
+    except Exception:
+        digits = 3
+    return "%g" % round(float(value), digits)
+
+
+def parse_number(text):
+    """Typed string -> float, or None. Takes a fraction ("3/8") or a
+    whole and a fraction ("2 1/2", "2-1/2"), and ignores a trailing
+    degree or inch mark."""
+    from fractions import Fraction
+    text = text.strip().rstrip('°"').strip()
+    if not text:
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        pass
+    sign = -1.0 if text.startswith('-') else 1.0
+    parts = text.lstrip('-').replace('-', ' ').split()
+    try:
+        return sign * float(sum(Fraction(p) for p in parts))
+    except (ValueError, ZeroDivisionError):
+        return None
+
+
 def _field_parts(field):
     """(kind, prop, label, options) from a field tuple, options being the
     optional trailing dict."""
@@ -176,8 +233,16 @@ def _field_shown(field, owner):
         return True
 
 
+def _resolve(id_data, path):
+    """The owner an (ID, path) key names. A prop on the ID itself has
+    an empty path, which path_resolve does not take."""
+    return id_data.path_resolve(path) if path else id_data
+
+
 def _owner_key(owner, prop):
     try:
+        if owner.id_data == owner:
+            return (owner, "", prop)        # a prop on the ID itself
         return (owner.id_data, owner.path_from_id(), prop)
     except Exception:
         return None
@@ -219,13 +284,19 @@ class PoolSpec:
     setting that belongs to the section but not to any one item.
     `actions_first` puts the commands straight under the list, for a
     pool whose item has more fields than fit on screen.
+    `scope` 'scene' reads the group off the open scene instead of the
+    main one; `list_label` heads the list; `row_text` says what a row
+    shows (the item's name by default); `rename_prop` is what a second
+    click on the active row types into, None for no rename; and
+    `allow_empty` lets the last item be removed.
     Any operator left None simply leaves that control out.
     """
 
     def __init__(self, title, props, collection, index, add_op=None,
                  remove_op=None, duplicate_op=None, move_op=None,
                  fields=(), actions=(), scene_fields=(),
-                 actions_first=False):
+                 actions_first=False, scope='main', list_label="Styles",
+                 row_text=None, rename_prop='name', allow_empty=False):
         self.title = title
         self.props = props
         self.collection = collection
@@ -239,6 +310,11 @@ class PoolSpec:
                              for row in actions)
         self.scene_fields = tuple(scene_fields)
         self.actions_first = actions_first
+        self.scope = scope
+        self.list_label = list_label
+        self.row_text = row_text
+        self.rename_prop = rename_prop
+        self.allow_empty = allow_empty
 
     @property
     def key(self):
@@ -247,7 +323,18 @@ class PoolSpec:
         return (self.props, self.collection)
 
     def owner(self, context):
+        if self.scope == 'scene':
+            return getattr(context.scene, self.props, None)
         return _main_group(self.props, context)
+
+    def text(self, item):
+        """What the item's row says."""
+        if self.row_text is not None:
+            try:
+                return str(self.row_text(item) or "")
+            except Exception:
+                pass
+        return str(getattr(item, 'name', "") or "")
 
     def scene_owner(self, context):
         """The room's own copy of the group, for scene_fields."""
@@ -286,6 +373,11 @@ def _pool_from_spec(spec):
         actions=spec.get('actions', ()),
         scene_fields=spec.get('scene_fields', ()),
         actions_first=spec.get('actions_first', False),
+        scope=spec.get('scope', 'main'),
+        list_label=spec.get('list_label', "Styles"),
+        row_text=spec.get('row_text'),
+        rename_prop=spec.get('rename_prop', 'name'),
+        allow_empty=spec.get('allow_empty', False),
     )
 
 
@@ -361,10 +453,10 @@ def section_expanded(context, method):
 def _pool_blocks(context, pool):
     """The blocks of one pool: its list, the active item's fields, and
     the commands that act on it."""
-    blocks = [('head', ("Styles", pool.add_op is not None, pool))]
+    blocks = [('head', (pool.list_label, pool.add_op is not None, pool))]
     active = pool.active_index(context)
     for i, item in enumerate(pool.items(context)):
-        blocks.append(('style', (i, item.name, i == active, pool)))
+        blocks.append(('style', (i, pool.text(item), i == active, pool)))
     commands = []
     if pool.actions:
         commands.append(('gap', None))
@@ -412,6 +504,15 @@ def _field_blocks(context, fields, owner):
             except Exception:
                 lines = ()
             blocks.extend(('note', line) for line in lines)
+        elif field[0] == 'value':
+            # A labelled value to read, worked out by a callable given
+            # the owner -- a count, a source, what the thing is.
+            try:
+                text = field[1](owner)
+            except Exception:
+                text = None
+            if text is not None and text != "":
+                blocks.append(('value', (field[2], str(text))))
         elif field[0] == 'actions':
             # A row of commands placed among the fields, so a section
             # can group its commands under the label they belong to.
@@ -509,18 +610,28 @@ def _block_h(block, s):
 _last_list_h = 0.0      # the list's height at the last build, for Tab
 
 
+_page = None            # (blocks function, ScrollList) last built
+
+
+def _current_page():
+    """The page on screen: this tab's own, or one another tab hosts
+    through build_page. Tab walks its fields."""
+    return _page or (_blocks, _list)
+
+
 def _typed_fields(context):
     """Every field that is typed into, top to bottom, on screen or
     not: (key, kind, owner, prop, offset from the top, height)."""
     s = scale()
     out, y = [], 0.0
-    for block in _blocks(context):
+    for block in _current_page()[0](context):
         h = _block_h(block, s)
         inner = block[1] if block[0] == 'indent' else block
         if inner[0] == 'field':
             row = _field_entries(context, inner[1][0], inner[1][1],
                                  0.0, 0.0, 100.0, ROW_H * s, s)[0]
-            if row[1] in ('distance', 'text') and not row[8].get('readonly'):
+            if (row[1] in TYPED_KINDS
+                    and not row[8].get('readonly')):
                 out.append((_owner_key(row[4], row[2]), row[1], row[4],
                             row[2], y, h))
         y += h
@@ -530,9 +641,11 @@ def _typed_fields(context):
 def _begin_typing(kind, owner, prop):
     """A distance is typed fresh; text is edited from what is there,
     all of it selected so that typing replaces it."""
+    global _edit_kind
     key = _owner_key(owner, prop)
     if key is None:
         return False
+    _edit_kind = kind
     if kind == 'text':
         _value_edit.begin(key, str(getattr(owner, prop, "") or ""),
                           select=True)
@@ -555,14 +668,27 @@ def _begin_neighbour(context, key, step):
     if not _begin_typing(kind, owner, prop):
         return False
     if _last_list_h > 0:
-        _list.scroll_into_view(offset, height, _last_list_h)
+        _current_page()[1].scroll_into_view(offset, height, _last_list_h)
     return True
 
 
 def build(rect, context):
-    """Rows inside `rect`. Entries:
+    return build_page(rect, context, _blocks, _list)
 
-        ('section_row', label, method_name, rect, expanded)
+
+def build_page(rect, context, blocks_fn, lst):
+    """Lay out another tab's page with this tab's widgets.
+
+    `blocks_fn(context)` returns the page as blocks -- field_blocks,
+    pool_blocks and form_blocks build them -- and `lst` is that tab's
+    own ScrollList, so each page keeps its scroll. paint and hit take
+    the entries as they are; scroll_page scrolls them.
+
+    Rows inside `rect`. Entries:
+
+        ('section_row', label, method_name, rect, expanded, toggle)
+                      toggle None for a library section, else a callable
+        ('value_row', label, text, rect)
         ('styles_head', label, rect, add_rect, pool)   add_rect None on most
         ('style_row', index, name, rect, is_active, gear_rect,
                       up_rect, down_rect, pool)
@@ -577,23 +703,24 @@ def build(rect, context):
     sect_h = SECTION_H * s
     gap = ROW_GAP * s
 
-    global _last_list_h
-    blocks = _blocks(context)
+    global _last_list_h, _page
+    _page = (blocks_fn, lst)
+    blocks = blocks_fn(context)
     polled = {}
 
     def _h(block):
         return _block_h(block, s)
 
     content_h = sum(_h(b) for b in blocks)
-    list_h, _scrollable, reserve = _list.measure(content_h, h, row_h)
+    list_h, _scrollable, reserve = lst.measure(content_h, h, row_h)
     _last_list_h = list_h
-    _list.clamp(content_h, list_h)
+    lst.clamp(content_h, list_h)
     top = bottom + h
-    track, thumb = _list.bar_rects(x0, w, top, list_h, content_h, row_h)
+    track, thumb = lst.bar_rects(x0, w, top, list_h, content_h, row_h)
     full_w = w - reserve
 
     entries = [('styles_clip', (x0, top - list_h, w, list_h), track, thumb)]
-    for block, block_top, _bb in _list.visible(blocks, top, top - list_h, _h):
+    for block, block_top, _bb in lst.visible(blocks, top, top - list_h, _h):
         kind, payload = block
         # Content under an unfolded section steps in from its header,
         # so the eye can tell what belongs to it.
@@ -604,9 +731,15 @@ def build(rect, context):
         if kind == 'gap':
             continue
         if kind == 'section':
-            label, method, expanded = payload
+            label, method, expanded = payload[:3]
+            toggle = payload[3] if len(payload) > 3 else None
             entries.append(('section_row', label, method,
-                            (x, block_top - sect_h, row_w, sect_h), expanded))
+                            (x, block_top - sect_h, row_w, sect_h), expanded,
+                            toggle))
+        elif kind == 'value':
+            label, text = payload
+            entries.append(('value_row', label, text,
+                            (x, block_top - row_h, row_w, row_h)))
         elif kind == 'label':
             entries.append(('label_row', payload,
                             (x, block_top - row_h, row_w, row_h)))
@@ -633,7 +766,8 @@ def build(rect, context):
             count = len(pool.items(context))
             gear_rect = None
             right = x + row_w - 2 * s
-            if pool.remove_op and is_active and count > 1:
+            if (pool.remove_op and is_active
+                    and count > (0 if pool.allow_empty else 1)):
                 gear = GEAR * s
                 gear_w = gear
                 if _armed_delete == (pool.key, i):
@@ -740,6 +874,11 @@ def _field_entries(context, field, owner, x, top, row_w, row_h, s):
             value = ""
         else:
             value = str(getattr(owner, prop, "") or "")
+    elif fkind == 'number':
+        if _value_edit.editing(_owner_key(owner, prop)):
+            value = ""
+        else:
+            value = number_text(owner, prop)
     elif fkind in ('native', 'file'):
         value = _native_value(owner, prop)
     else:
@@ -844,7 +983,7 @@ def paint(entries, mx, my):
                 # A header that folds: the library's category headers,
                 # so the two panels fold the same way. Chevron on the
                 # left pointing right when folded, down when open.
-                _, label, _method, rect, expanded = entry
+                label, rect, expanded = entry[1], entry[3], entry[4]
                 rx, ry, rw, rh = rect
                 hot = point_in_rect(mx, my, rect)
                 if hot:
@@ -864,6 +1003,18 @@ def paint(entries, mx, my):
                 rx, ry, rw, rh = rect
                 draw_text(font_id, rx + 8 * s, ry + rh * 0.28, FONT * s,
                           Theme.TEXT_HEADER, label.upper())
+            elif kind == 'value_row':
+                # Read, not edited: the label where a field's is, the
+                # value where a field's would be, with no well round it.
+                _, label, text, rect = entry
+                rx, ry, rw, rh = rect
+                lw = rw * 0.42
+                draw_text(font_id, rx + 6 * s, ry + rh * 0.28, FONT * s,
+                          Theme.TEXT_NORMAL,
+                          fit_text(font_id, FONT * s, label, lw - 6 * s))
+                draw_text(font_id, rx + lw + 6 * s, ry + rh * 0.28, FONT * s,
+                          Theme.TEXT_PRIMARY,
+                          fit_text(font_id, FONT * s, text, rw - lw - 12 * s))
             elif kind == 'note_row':
                 _, text, rect = entry
                 rx, ry, rw, rh = rect
@@ -942,7 +1093,7 @@ def paint(entries, mx, my):
                 if fkind == 'bool':
                     paint_check(shader, font_id, rect, FONT * s, label,
                                 bool(value), point_in_rect(mx, my, rect))
-                elif fkind in ('distance', 'text'):
+                elif fkind in TYPED_KINDS:
                     editing = _value_edit.editing(_owner_key(owner, prop))
                     paint_field(shader, font_id, rect, FONT * s, label,
                                 str(value), hot, label_frac=frac,
@@ -1063,6 +1214,54 @@ def _run(op_id, **kwargs):
         print('Home Builder: %s failed: %s' % (op_id, ex))
 
 
+_pending_action = None  # (operator, kwargs) waiting for the release
+
+
+def _run_on_release(op_id, kwargs):
+    """Run a command button's operator once the click is released. A
+    press runs the hit, and an operator that asks first (a confirm, a
+    dialog) would otherwise open under a button still held down -- the
+    release then lands on it and answers for the user."""
+    global _pending_action
+    _pending_action = (op_id, dict(kwargs))
+    try:
+        bpy.ops.home_builder.options_run_action('INVOKE_DEFAULT')
+    except Exception as ex:
+        _pending_action = None
+        print('Home Builder: %s failed: %s' % (op_id, ex))
+
+
+class home_builder_OT_options_run_action(bpy.types.Operator):
+    """Run the command button under the cursor"""
+    bl_idname = "home_builder.options_run_action"
+    bl_label = "Run Option Command"
+    bl_options = {'INTERNAL'}
+
+    def invoke(self, context, event):
+        if event.type == 'LEFTMOUSE' and event.value == 'RELEASE':
+            return self._go()
+        context.window_manager.modal_handler_add(self)
+        return {'RUNNING_MODAL'}
+
+    def modal(self, context, event):
+        if event.type == 'LEFTMOUSE' and event.value == 'RELEASE':
+            return self._go()
+        if event.type in {'ESC', 'RIGHTMOUSE'} and event.value == 'PRESS':
+            global _pending_action
+            _pending_action = None
+            return {'CANCELLED'}
+        return {'RUNNING_MODAL'}
+
+    def _go(self):
+        global _pending_action
+        action, _pending_action = _pending_action, None
+        if action is None:
+            return {'CANCELLED'}
+        _run(action[0], **action[1])
+        _tag()
+        return {'FINISHED'}
+
+
 def hit(context, mx, my, entries):
     global _edit_pool, _armed_delete
     # Any click stands a pending delete down; only a second click on the
@@ -1074,7 +1273,15 @@ def hit(context, mx, my, entries):
     for entry in entries:
         kind = entry[0]
         if kind == 'section_row' and point_in_rect(mx, my, entry[3]):
-            toggle_section(context, entry[2])
+            if entry[5] is not None:
+                # A hosted page folds its own sections.
+                try:
+                    entry[5]()
+                except Exception as ex:
+                    print('Home Builder: %s failed: %s' % (entry[1], ex))
+                _tag()
+            else:
+                toggle_section(context, entry[2])
             return True
         if kind == 'style_row':
             pool = entry[8]
@@ -1102,11 +1309,13 @@ def hit(context, mx, my, entries):
                 index = entry[1]
                 if pool.active_index(context) != index:
                     pool.set_active(context, index)
-                else:
+                elif pool.rename_prop:
                     # Clicking the style you are already on renames it,
                     # the same second click that renames a room.
+                    item = pool.active(context)
                     _edit_pool = pool
-                    _edit.begin(index, entry[2])
+                    _edit.begin(index, str(getattr(item, pool.rename_prop,
+                                                   "") or ""))
                     bpy.ops.home_builder.style_rename('INVOKE_DEFAULT')
                 _tag()
                 return True
@@ -1152,7 +1361,7 @@ def hit(context, mx, my, entries):
             if fkind == 'native' and point_in_rect(mx, my, value_rect):
                 open_native(context, owner, prop, label, options.get('draw'))
                 return True
-            if (fkind in ('distance', 'text')
+            if (fkind in TYPED_KINDS
                     and point_in_rect(mx, my, value_rect)):
                 if not _begin_typing(fkind, owner, prop):
                     return True
@@ -1187,7 +1396,7 @@ def hit(context, mx, my, entries):
                 kwargs = dict(entry[3])
             else:
                 kwargs = {entry[3]: entry[4]} if entry[3] else {}
-            _run(entry[2], **kwargs)
+            _run_on_release(entry[2], kwargs)
             _tag()
             return True
         if kind == 'form_row' and point_in_rect(mx, my, entry[3]):
@@ -1198,12 +1407,40 @@ def hit(context, mx, my, entries):
 
 
 def scroll(mx, my, entries, rows):
+    return scroll_page(mx, my, entries, rows, _list)
+
+
+def scroll_page(mx, my, entries, rows, lst):
     clip = _clip(entries)
     if clip is None or not point_in_rect(mx, my, clip[1]):
         return False
-    _list.scroll_by(rows, ROW_H * scale())
+    lst.scroll_by(rows, ROW_H * scale())
     _tag()
     return True
+
+
+# ---- Hosting another tab's page ---------------------------------------------
+# What a tab passes build_page: the same blocks this tab is made of.
+
+def field_blocks(context, fields, owner):
+    """Blocks for a run of fields on `owner`, in the OPTION_PAGES field
+    vocabulary, plus ('value', text_fn, label) for a value to read."""
+    return _field_blocks(context, fields, owner)
+
+
+def pool_blocks(context, spec):
+    """Blocks for a 'pool' spec dict, as OPTION_PAGES writes one."""
+    return _pool_blocks(context, _pool_from_spec(spec))
+
+
+def form_blocks(context, spec):
+    """Blocks for a 'form' spec dict, as OPTION_PAGES writes one."""
+    return _form_blocks(context, spec)
+
+
+def new_scroll_list():
+    """A ScrollList set up the way this tab's own is."""
+    return ScrollList(bar_width=4, bar_pad=4, min_rows=3)
 
 
 def _tag():
@@ -1240,10 +1477,9 @@ def _open_popup(title, draw, kind='MENU'):
 
 def _set_target(owner, prop):
     global _menu_target
-    try:
-        _menu_target = (owner.id_data, owner.path_from_id(), prop)
-    except Exception as ex:
-        print('Home Builder: cannot open %s: %s' % (prop, ex))
+    _menu_target = _owner_key(owner, prop)
+    if _menu_target is None:
+        print('Home Builder: cannot open %s' % prop)
         return False
     return True
 
@@ -1322,7 +1558,7 @@ def _menu_owner():
         return None, None
     id_data, path, prop = _menu_target
     try:
-        return id_data.path_resolve(path), prop
+        return _resolve(id_data, path), prop
     except Exception:
         return None, None
 
@@ -1444,12 +1680,22 @@ def commit_value(context):
         return False
     id_data, path, prop = key
     try:
-        owner = id_data.path_resolve(path)
+        owner = _resolve(id_data, path)
         is_text = owner.bl_rna.properties[prop].type == 'STRING'
     except Exception:
         return False
     if is_text:
         value = text
+    elif _edit_kind == 'number':
+        # A 'number' field: a count, a scale, an angle typed in degrees.
+        import math
+        value = parse_number(text) if text else None
+        if value is None:
+            return False
+        if owner.bl_rna.properties[prop].type == 'INT':
+            value = int(round(value))
+        elif _is_angle(owner, prop):
+            value = math.radians(value)
     else:
         value = parse_distance(text) if text else None
         if value is None:
@@ -1567,22 +1813,23 @@ def commit_rename(context):
     if not 0 <= index < len(styles):
         return None
     style = styles[index]
-    if name != style.name:
-        style.name = name
+    prop = pool.rename_prop or 'name'
+    if name != getattr(style, prop, None):
+        setattr(style, prop, name)
     return style
 
 
 class home_builder_OT_style_rename(bpy.types.Operator):
-    """Rename the cabinet style in place in the list.
+    """Rename the item in place in the list.
 
     A modal only for as long as the user is typing -- it ends on Enter,
     Esc, or a click anywhere. What must never happen is a modal that
     outlives the interaction, because Blender skips autosave while one
-    is live.
+    is live. Any list's rows rename through it, so the label names none.
     """
     bl_idname = "home_builder.style_rename"
-    bl_label = "Rename Cabinet Style"
-    bl_options = {'INTERNAL'}
+    bl_label = "Rename List Item"
+    bl_options = {'INTERNAL', 'UNDO'}
 
     @classmethod
     def poll(cls, context):
@@ -1623,7 +1870,8 @@ classes = (home_builder_OT_style_options_popup,
            home_builder_OT_options_open_enum,
            home_builder_OT_options_set_enum,
            home_builder_OT_options_pick_file,
-           home_builder_OT_options_edit_value,)
+           home_builder_OT_options_edit_value,
+           home_builder_OT_options_run_action,)
 
 
 def register():
