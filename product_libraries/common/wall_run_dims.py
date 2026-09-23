@@ -2,11 +2,19 @@
 
 Both cabinet overlays (face frame and frameless dim_edit_overlay) show,
 beside a cabinet's own W / H / D, how it sits in its run: on each side,
-a dimension to the nearest thing there -- the next product or appliance
-whose height range overlaps the cabinet's (so a window above a base
-cabinet isn't its neighbor), or the end of the wall when nothing is
-between. A dimension never runs across another product, and a flush
-side gets none.
+a dimension to each thing the cabinet can see there -- the next product
+or appliance whose height range overlaps the cabinet's (so an upper
+above a base cabinet isn't its neighbor; windows and doors never are),
+or the end of the wall when nothing is on that side. A dimension never runs across another product,
+and a flush side gets none.
+
+A tall cabinet can see more than one neighbor on a side -- a base
+cabinet low and an upper high -- so it gets a gap to each, drawn at the
+height where that neighbor is the nearest thing. A neighbor hidden
+behind a nearer one at every height gets none.
+
+Every one of these is editable: typing a value slides the cabinet along
+its wall so that dimension becomes the typed size (see commit()).
 
 The neighbor scan is the placement system's own
 (PlacementMixin.get_wall_children_sorted), so the overlay reports the
@@ -20,8 +28,23 @@ from ...units import inch
 # At or below this a side is flush -- no label. Small on purpose: an
 # 1/8" reveal beside an appliance is exactly what should show.
 MIN_SHOWN = inch(1.0 / 32.0)
+# A neighbor has to be the nearest thing over at least this much of the
+# cabinet's height to get its own gap.
+MIN_BAND = inch(1.0)
+# Most neighbors one side can report (the label kinds are fixed).
+MAX_PER_SIDE = 4
 
-KINDS = ('CAB_GAP_L', 'CAB_GAP_R', 'CAB_END_L', 'CAB_END_R')
+GAP_KINDS = tuple(f'CAB_GAP_{side}{i}' for side in 'LR'
+                  for i in range(MAX_PER_SIDE))
+KINDS = GAP_KINDS + ('CAB_END_L', 'CAB_END_R')
+
+
+def enum_items():
+    """EnumProperty items for the edit operators' ``kind``."""
+    items = [(k, f"Gap {'Left' if k[-2] == 'L' else 'Right'} {k[-1]}", "")
+             for k in GAP_KINDS]
+    items += [('CAB_END_L', "Wall Left", ""), ('CAB_END_R', "Wall Right", "")]
+    return items
 
 
 def _wall_length(wall_obj):
@@ -34,50 +57,164 @@ def _wall_length(wall_obj):
         return None
 
 
-def run_dims(cabinet, width, height):
-    """[(kind, value, prefix, (x0, z), (x1, z), key)] for ``cabinet``,
-    the endpoints in cabinet-local X / Z with x0 < x1, at mid height.
-    Empty unless the cabinet hangs straight off a wall (not grouped,
-    not turned on it).
+def _z_range(obj):
+    z = obj.location.z
+    try:
+        return z, z + hb_types.GeoNodeObject(obj).get_input('Dim Z')
+    except Exception:
+        return z, z
 
-    CAB_GAP_* runs to a neighbor, CAB_END_* to the wall end. ``key``
-    names the span on the wall: two cabinets either side of one gap
-    both report it, and the caller shows it once.
-    """
+
+def _subtract(bands, lo, hi):
+    """Parts of [lo, hi] not covered by any of ``bands``."""
+    pieces = [(lo, hi)]
+    for b_lo, b_hi in bands:
+        nxt = []
+        for p_lo, p_hi in pieces:
+            if b_hi <= p_lo or b_lo >= p_hi:
+                nxt.append((p_lo, p_hi))
+                continue
+            if b_lo > p_lo:
+                nxt.append((p_lo, b_lo))
+            if b_hi < p_hi:
+                nxt.append((b_hi, p_hi))
+        pieces = nxt
+    return pieces
+
+
+def _visible(cands, z0, z1):
+    """[(edge_x, neighbor, band_mid_z)] for the neighbors on one side
+    that are the nearest thing over some band of [z0, z1].
+    ``cands`` is [(edge_x, neighbor)], nearest first."""
+    covered = []
+    out = []
+    for edge, obj in cands:
+        lo, hi = _z_range(obj)
+        lo, hi = max(lo, z0), min(hi, z1)
+        if hi - lo < MIN_BAND:
+            continue
+        free = [p for p in _subtract(covered, lo, hi)
+                if p[1] - p[0] >= MIN_BAND]
+        covered.append((lo, hi))
+        if not free:
+            continue
+        best = max(free, key=lambda p: p[1] - p[0])
+        out.append((edge, obj, (best[0] + best[1]) / 2.0))
+    # Bottom up, so the label kinds are numbered in a stable order.
+    out.sort(key=lambda t: t[2])
+    return out[:MAX_PER_SIDE]
+
+
+def _side_edges(cabinet, width, height):
+    """(wall_obj, wall_len, x0, left, right) where left / right are the
+    _visible lists for each side, or None when the cabinet isn't hung
+    straight off a wall."""
     wall_obj = cabinet.parent
     if wall_obj is None or not wall_obj.get('IS_WALL_BP'):
-        return []
+        return None
     if abs(cabinet.rotation_euler.z) > 1e-3:
-        return []
+        return None
     wall_len = _wall_length(wall_obj)
     if not wall_len or width <= 0.0 or height <= 0.0:
-        return []
-
+        return None
     x0 = cabinet.location.x
     x1 = x0 + width
     z0 = cabinet.location.z
     neighbors = hb_placement.PlacementMixin.get_wall_children_sorted(
         None, wall_obj, exclude_obj=cabinet,
         object_z_start=z0, object_height=height)
+    # Windows and doors are openings in the wall, not things standing on
+    # it: placement avoids them, but a gap to one isn't a cabinet gap.
+    neighbors = [n for n in neighbors
+                 if not (n[2].get('IS_WINDOW_BP')
+                         or n[2].get('IS_ENTRY_DOOR_BP'))]
     eps = inch(1.0 / 32.0)
-    left = [e for s, e, _o in neighbors if e <= x0 + eps]
-    right = [s for s, e, _o in neighbors if s >= x1 - eps]
+    left = sorted(((e, o) for s, e, o in neighbors if e <= x0 + eps),
+                  key=lambda t: -t[0])
+    right = sorted(((s, o) for s, e, o in neighbors if s >= x1 - eps),
+                   key=lambda t: t[0])
+    z1 = z0 + height
+    return (wall_obj, wall_len, x0,
+            _visible(left, z0, z1), _visible(right, z0, z1))
 
-    def key(a, b):
-        return (wall_obj.name, round(a, 4), round(b, 4))
 
-    out = []
+def run_dims(cabinet, width, height):
+    """[(kind, value, prefix, (x0, z), (x1, z), key)] for ``cabinet``,
+    the endpoints in cabinet-local X / Z with x0 < x1.
+
+    CAB_GAP_{L|R}{n} runs to a neighbor at the height where it is the
+    nearest thing; CAB_END_* runs to the wall end at mid height when
+    that side has no neighbor. ``key`` names the span: the cabinets
+    either side of one gap both report it, and the caller shows it once.
+    Empty unless the cabinet hangs straight off a wall (not grouped, not
+    turned on it).
+    """
+    sides = _side_edges(cabinet, width, height)
+    if sides is None:
+        return []
+    wall_obj, wall_len, x0, left, right = sides
+    x1 = x0 + width
+    z0 = cabinet.location.z
     mid = height / 2.0
-    start = max(left) if left else 0.0
-    gap = x0 - start
-    if gap > MIN_SHOWN:
-        out.append(('CAB_GAP_L' if left else 'CAB_END_L', gap,
-                    "← " if left else "Wall ← ",
-                    (-gap, mid), (0.0, mid), key(start, x0)))
-    end = min(right) if right else wall_len
-    gap = end - x1
-    if gap > MIN_SHOWN:
-        out.append(('CAB_GAP_R' if right else 'CAB_END_R', gap,
-                    "→ " if right else "Wall → ",
-                    (width, mid), (width + gap, mid), key(x1, end)))
+    out = []
+
+    def pair_key(neighbor):
+        return (wall_obj.name,) + tuple(sorted((cabinet.name, neighbor.name)))
+
+    for i, (edge, obj, z) in enumerate(left):
+        gap = x0 - edge
+        if gap > MIN_SHOWN:
+            out.append((f'CAB_GAP_L{i}', gap, "← ",
+                        (-gap, z - z0), (0.0, z - z0), pair_key(obj)))
+    if not left and x0 > MIN_SHOWN:
+        out.append(('CAB_END_L', x0, "Wall ← ", (-x0, mid), (0.0, mid),
+                    (wall_obj.name, 'END', cabinet.name, 'L')))
+    for i, (edge, obj, z) in enumerate(right):
+        gap = edge - x1
+        if gap > MIN_SHOWN:
+            out.append((f'CAB_GAP_R{i}', gap, "→ ",
+                        (width, z - z0), (width + gap, z - z0),
+                        pair_key(obj)))
+    if not right and wall_len - x1 > MIN_SHOWN:
+        gap = wall_len - x1
+        out.append(('CAB_END_R', gap, "Wall → ",
+                    (width, mid), (width + gap, mid),
+                    (wall_obj.name, 'END', cabinet.name, 'R')))
     return out
+
+
+def commit(cabinet, kind, value, width, height):
+    """Slide ``cabinet`` along its wall so the ``kind`` dimension reads
+    ``value``. The neighbor is looked up again the same way run_dims
+    numbered it, so the label typed into is the one that moves. Clamped
+    to the open space between the neighbors. True when the cabinet
+    moved."""
+    sides = _side_edges(cabinet, width, height)
+    if sides is None or value < 0.0:
+        return False
+    wall_obj, wall_len, x0, left, right = sides
+    if kind == 'CAB_END_L':
+        new_x = value
+    elif kind == 'CAB_END_R':
+        new_x = wall_len - value - width
+    elif kind in GAP_KINDS:
+        side, index = kind[-2], int(kind[-1])
+        edges = left if side == 'L' else right
+        if index >= len(edges):
+            return False
+        edge = edges[index][0]
+        new_x = edge + value if side == 'L' else edge - value - width
+    else:
+        return False
+    # Stay in the open space between the neighbors: a gap too big for
+    # the room left stops the cabinet flush against the other side
+    # rather than driving it into what's there.
+    lo = max([e for e, _o, _z in left], default=0.0)
+    hi = min([e for e, _o, _z in right], default=wall_len) - width
+    if lo > hi:
+        lo, hi = 0.0, wall_len - width
+    new_x = max(lo, min(new_x, hi))
+    if abs(new_x - x0) < 1e-6:
+        return False
+    cabinet.location.x = new_x
+    return True

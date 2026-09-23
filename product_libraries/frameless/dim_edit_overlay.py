@@ -427,7 +427,8 @@ def compute_labels(context, region, rv3d, lines_out=None):
             ]
             if scope != 'SELECTED' or cabinet.name in sel_names:
                 # Where the cabinet sits on its wall, on its front plane
-                # (the root's local Y = 0 is its back). Read-only.
+                # (the root's local Y = 0 is its back). A typed value
+                # slides the cabinet along the wall.
                 mw = _world_matrix(cabinet)
                 fy = -dim_y - 0.003
                 for kind, value, prefix, a, b, key in wall_run_dims.run_dims(
@@ -437,7 +438,7 @@ def compute_labels(context, region, rv3d, lines_out=None):
                     seen_spans.add(key)
                     wa = mw @ Vector((a[0], fy, a[1]))
                     wb = mw @ Vector((b[0], fy, b[1]))
-                    targets.append((cabinet, kind, False, False, value,
+                    targets.append((cabinet, kind, editable, False, value,
                                     prefix, (wa + wb) / 2.0, (wa, wb)))
         elif mode == 'Bays':
             # Bay size is the solver's (carcass minus sides / bottom /
@@ -614,6 +615,10 @@ def _resolve_after_split_edit(context, cabinet_bp, calc):
 
 def _commit(context, obj, kind, value):
     """Write the typed value through the dialogs' own paths."""
+    if kind in wall_run_dims.KINDS:
+        # A gap / wall-end dim: slide the cabinet along its wall.
+        dim_x, _dim_y, dim_z = _cage_dims(obj)
+        return wall_run_dims.commit(obj, kind, value, dim_x, dim_z)
     if kind in ('CAB_W', 'CAB_H', 'CAB_D'):
         # Same inputs cabinet_prompts writes, then the same re-solve.
         cage = GeoNodeCage(obj)
@@ -665,7 +670,8 @@ class hb_frameless_OT_edit_dim_label(bpy.types.Operator):
                ('CAB_H', "Cabinet Height", ""),
                ('CAB_D', "Cabinet Depth", ""),
                ('OPENING_H', "Opening Height", ""),
-               ('OPENING_W', "Opening Width", "")],
+               ('OPENING_W', "Opening Width", "")]
+        + wall_run_dims.enum_items(),
         options={'HIDDEN'})  # type: ignore
 
     def invoke(self, context, event):

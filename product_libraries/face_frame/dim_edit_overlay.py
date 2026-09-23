@@ -380,10 +380,10 @@ def _cabinet_label_targets(cabinet):
 
 
 def _run_targets(cabinet, seen_spans):
-    """Read-only Cabinets-mode targets for where ``cabinet`` sits on
-    its wall (see common/wall_run_dims), on its front plane, each with
-    its own dimension line. Spans already in ``seen_spans`` are skipped
-    and new ones added."""
+    """Cabinets-mode targets for where ``cabinet`` sits on its wall
+    (see common/wall_run_dims), on its front plane, each with its own
+    dimension line. Editable: a typed value slides the cabinet. Spans
+    already in ``seen_spans`` are skipped and new ones added."""
     dim_x, dim_z = split_preview._cage_dims(cabinet)
     mw = split_preview._world_matrix(cabinet)
     fy = -cabinet.face_frame_cabinet.depth - 0.003
@@ -395,7 +395,7 @@ def _run_targets(cabinet, seen_spans):
         seen_spans.add(key)
         wa = mw @ Vector((a[0], fy, a[1]))
         wb = mw @ Vector((b[0], fy, b[1]))
-        out.append((cabinet, kind, False, False, value, prefix,
+        out.append((cabinet, kind, True, False, value, prefix,
                     (wa + wb) / 2.0, (wa, wb)))
     return out
 
@@ -986,6 +986,10 @@ def _draw():
 
 def _commit(obj, kind, value):
     """Write the typed value through the sidebar's own property paths."""
+    if kind in wall_run_dims.KINDS:
+        # A gap / wall-end dim: slide the cabinet along its wall.
+        dim_x, dim_z = split_preview._cage_dims(obj)
+        return wall_run_dims.commit(obj, kind, value, dim_x, dim_z)
     if kind in _GAP_PROP:
         # The label carries the appliance itself: a gap belongs to the
         # run, not to any one face.
@@ -1162,7 +1166,8 @@ class hb_face_frame_OT_edit_dim_label(bpy.types.Operator):
                ('AP_GAP_L', "Panel Gap Left", ""),
                ('AP_GAP_R', "Panel Gap Right", ""),
                ('AP_GAP_C', "Panel Gap Between Columns", ""),
-               ('AP_GAP_S', "Panel Gap Between Faces", "")],
+               ('AP_GAP_S', "Panel Gap Between Faces", "")]
+        + wall_run_dims.enum_items(),
         options={'HIDDEN'})  # type: ignore
 
     def invoke(self, context, event):
