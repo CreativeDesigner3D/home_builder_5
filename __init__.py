@@ -19,7 +19,6 @@ from .operators import room_palette
 from .operators import measure_tool
 from .operators import library_panel
 from .operators import options_panel
-from .operators import appliance_panel_tab
 from .operators import thumb_picker
 from .operators import layout_lock
 from .operators import viewport_hud
@@ -33,6 +32,10 @@ from .product_libraries import frameless
 from .product_libraries.common import wood_hoods
 from .product_libraries.common import door_window_geo
 from .product_libraries.common import appliance_geo
+# Must stay below the product libraries: this tab imports the face frame
+# library, and pulling that in earlier starts it mid-way through its own
+# import graph, which breaks the cabinet types.
+from .operators import appliance_panel_tab
 from . import molding
 # Catalog browser - intentionally disabled. The package lives at
 # home_builder_5/catalog/ for future revisit. Re-enable by uncommenting
