@@ -379,7 +379,7 @@ def _cabinet_label_targets(cabinet):
     ]
 
 
-def _run_targets(cabinet, picked, seen_spans):
+def _run_targets(cabinet, seen_spans):
     """Read-only Cabinets-mode targets for where ``cabinet`` sits on
     its wall (see common/wall_run_dims), on its front plane, each with
     its own dimension line. Spans already in ``seen_spans`` are skipped
@@ -389,7 +389,7 @@ def _run_targets(cabinet, picked, seen_spans):
     fy = -cabinet.face_frame_cabinet.depth - 0.003
     out = []
     for kind, value, prefix, a, b, key in wall_run_dims.run_dims(
-            cabinet, dim_x, dim_z, ends=cabinet.name in picked):
+            cabinet, dim_x, dim_z):
         if key in seen_spans:
             continue
         seen_spans.add(key)
@@ -735,9 +735,7 @@ def compute_labels(context, region, rv3d, lines_out=None):
 
     labels = []
     space = getattr(context, 'space_data', None)
-    # Wall-run dims: wall-end distances only on a selected cabinet, and
-    # a gap two neighbors both report is drawn once.
-    picked = _selected_label_names(context)
+    # Wall-run dims: a gap two neighbors both report is drawn once.
     seen_spans = set()
 
     def _emit(targets):
@@ -807,7 +805,7 @@ def compute_labels(context, region, rv3d, lines_out=None):
                 in _cabinet_label_targets(cabinet)
             ]
             if scope != 'SELECTED' or cabinet.name in sel_names:
-                targets.extend(_run_targets(cabinet, picked, seen_spans))
+                targets.extend(_run_targets(cabinet, seen_spans))
         elif mode == 'Bays':
             targets = []
             for bay in _iter_bay_cages(cabinet):

@@ -391,9 +391,7 @@ def compute_labels(context, region, rv3d, lines_out=None):
 
     labels = []
     space = getattr(context, 'space_data', None)
-    # Wall-run dims: wall-end distances only on a selected cabinet, and
-    # a gap two neighbors both report is drawn once.
-    picked = _selected_label_names(context)
+    # Wall-run dims: a gap two neighbors both report is drawn once.
     seen_spans = set()
     for cabinet in _iter_cabinet_roots(scene):
         if not _cabinet_shown(cabinet, space):
@@ -433,7 +431,7 @@ def compute_labels(context, region, rv3d, lines_out=None):
                 mw = _world_matrix(cabinet)
                 fy = -dim_y - 0.003
                 for kind, value, prefix, a, b, key in wall_run_dims.run_dims(
-                        cabinet, dim_x, dim_z, ends=cabinet.name in picked):
+                        cabinet, dim_x, dim_z):
                     if key in seen_spans:
                         continue
                     seen_spans.add(key)
