@@ -5,7 +5,8 @@ children) is selected in a room scene, a POST_PIXEL draw handler paints
 value labels on it:
 
 - Door / window: width, height, and the offsets to each end of its
-  wall; windows also show the sill height (height from floor).
+  wall; windows also show the sill height (height from floor) and a
+  dashed centerline with its distance to each end of the wall.
 - Wall: length and height.
 - Entry door with built 3D geometry: an Open / Close button that swings
   the leaf, the quick version of the door prompts' Open Angle -- the
@@ -48,6 +49,8 @@ EDIT_BG         = (0.20, 0.43, 0.70, 0.95)
 ACTION_BG       = (0.20, 0.43, 0.70, 0.75)   # a label that is a button
 TEXT_COLOR      = (0.95, 0.95, 0.95, 1.0)
 EDIT_TEXT_COLOR = (1.0, 1.0, 1.0, 1.0)
+CL_COLOR        = (1.0, 0.56, 0.16, 0.95)
+CL_DASH_PX      = 8
 
 _INPUT_CHARS = set("0123456789./-'\" ")
 
@@ -176,7 +179,51 @@ def _cage_label_targets(cage_obj):
             if gap_r > inch(0.5):
                 out.append(('CAGE_OFF_R', gap_r, "→ ",
                             Vector((w + gap_r / 2.0, 0.0, h / 2.0))))
+            if cage_obj.get('IS_WINDOW_BP') and wall_len > 0.0:
+                # Centerline to each wall end, along the window's bottom
+                # edge so the labels clear the gap labels above.
+                cl_l = gap_l + w / 2.0
+                cl_r = gap_r + w / 2.0
+                out.append(('CAGE_CL_L', cl_l, "CL ← ",
+                            Vector((w / 2.0 - cl_l / 2.0, 0.0, 0.0))))
+                out.append(('CAGE_CL_R', cl_r, "CL → ",
+                            Vector((w / 2.0 + cl_r / 2.0, 0.0, 0.0))))
     return out
+
+
+def _centerline_segments(context, region, rv3d, s=1.0):
+    """Region-space dash endpoints for each selected window's
+    centerline, from just below the sill to above the head."""
+    pts = []
+    for tag, obj in _selected_targets(context).values():
+        if tag != 'CAGE' or not obj.get('IS_WINDOW_BP'):
+            continue
+        cage = hb_types.GeoNodeCage(obj)
+        if not cage.has_modifier():
+            continue
+        try:
+            w = cage.get_input('Dim X')
+            h = cage.get_input('Dim Z')
+        except Exception:
+            continue
+        mw = obj.matrix_world
+        a = view3d_utils.location_3d_to_region_2d(
+            region, rv3d, mw @ Vector((w / 2.0, 0.0, -inch(2.0))))
+        b = view3d_utils.location_3d_to_region_2d(
+            region, rv3d, mw @ Vector((w / 2.0, 0.0, h + inch(6.0))))
+        if a is None or b is None:
+            continue
+        d = b - a
+        length = d.length
+        if length < 1e-6:
+            continue
+        dash = CL_DASH_PX * s
+        step = d / length * dash
+        n = int(length / dash)
+        for i in range(0, n, 2):
+            pts.append(tuple(a + step * i))
+            pts.append(tuple(a + step * min(i + 1, length / dash)))
+    return pts
 
 
 def _wall_label_targets(wall_obj):
@@ -294,6 +341,12 @@ def _draw():
     gpu.state.blend_set('ALPHA')
     shader = gpu.shader.from_builtin('UNIFORM_COLOR')
     shader.bind()
+    cl_pts = _centerline_segments(context, region,
+                                  context.region_data, s)
+    if cl_pts:
+        from gpu_extras.batch import batch_for_shader
+        shader.uniform_float("color", CL_COLOR)
+        batch_for_shader(shader, 'LINES', {"pos": cl_pts}).draw(shader)
     for name, kind, rect, text in labels:
         editing = (_edit is not None and _edit['name'] == name
                    and _edit['kind'] == kind)
@@ -360,6 +413,16 @@ def _commit(obj, kind, value):
             return False
         obj.location.x = max(0.0, min(wall_len - width - value,
                                       wall_len - width))
+    elif kind == 'CAGE_CL_L':
+        if wall_len is None:
+            return False
+        obj.location.x = max(0.0, min(value - width / 2.0,
+                                      wall_len - width))
+    elif kind == 'CAGE_CL_R':
+        if wall_len is None:
+            return False
+        obj.location.x = max(0.0, min(wall_len - value - width / 2.0,
+                                      wall_len - width))
     else:
         return False
     door_window_geo.build_geometry(obj)
@@ -409,6 +472,8 @@ class home_builder_OT_edit_room_dim_label(bpy.types.Operator):
                ('CAGE_SILL', "Sill Height", ""),
                ('CAGE_OFF_L', "Offset Left", ""),
                ('CAGE_OFF_R', "Offset Right", ""),
+               ('CAGE_CL_L', "Centerline From Left", ""),
+               ('CAGE_CL_R', "Centerline From Right", ""),
                ('WALL_LEN', "Wall Length", ""),
                ('WALL_H', "Wall Height", "")],
         options={'HIDDEN'})  # type: ignore
