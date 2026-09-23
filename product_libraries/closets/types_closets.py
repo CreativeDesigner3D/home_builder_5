@@ -1451,6 +1451,14 @@ class ClosetStarter(GeoNodeCage):
     def _layout_bays(self, layout, scene_props, sp):
         st = scene_props.shelf_thickness
         n_bays = len(layout['bays'])
+        # Where each bay's rail hangs, in run space, and which junctions
+        # are doubled - what decides whether a rail end shares its claw
+        # with the next bay's (see the covers below).
+        rail_z = [sp.hang_rail_height_location
+                  if sp.use_one_hang_rail_height
+                  else b['z0'] + b['height'] - const.HANG_RAIL_DROP
+                  for b in layout['bays']]
+        doubled = {d['junction'] for d in layout.get('doubles', ())}
         for bay_i, (bay_obj, bay) in enumerate(
                 zip(self._sorted_bays(), layout['bays'])):
             cage = GeoNodeCage(bay_obj)
@@ -1565,14 +1573,22 @@ class ClosetStarter(GeoNodeCage):
                 # panel. Two bays side by side share the panel between
                 # them and so share the one claw, which is why a bay
                 # covers its left end only - the last bay in the run
-                # covers its right end as well. An end lengthened
-                # toward the wall runs out past the last panel, so its
+                # covers its right end as well. So does a bay whose
+                # right end has a claw of its own: a doubled junction
+                # gives each bay its own panel, and two rails at
+                # different heights cannot share one claw. An end
+                # lengthened toward the wall runs out past the last
+                # panel, so its
                 # cover stays back at the panel. It sits an inch out
                 # from the wall, in front of the rail rather than
                 # around it, because the claw is what it covers.
                 cover_z = _hang_rail_cover_z(local_z, st)
                 hide_cover = ((not self.has_hang_rail)
                               or sp.remove_hang_rail)
+                own_right_claw = (
+                    bay_i == n_bays - 1
+                    or (bay_i + 1) in doubled
+                    or abs(rail_z[bay_i] - rail_z[bay_i + 1]) > 1e-4)
                 for side in ('LEFT', 'RIGHT'):
                     cover = self._bay_cover(bay_obj, side)
                     if cover is None:
@@ -1592,7 +1608,7 @@ class ClosetStarter(GeoNodeCage):
                                     const.HANG_RAIL_COVER_DEPTH)
                     _set_part_hidden(
                         cover, hide_cover
-                        or (side == 'RIGHT' and bay_i != n_bays - 1))
+                        or (side == 'RIGHT' and not own_right_claw))
 
             back = self._bay_part(bay_obj, PART_ROLE_APPLIED_BACK)
             if back is not None:
