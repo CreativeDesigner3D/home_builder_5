@@ -778,7 +778,9 @@ class _GrabPill:
 
 
 class _SizesButton:
-    """Cycles the dimension-label scope: All -> Selected -> Off.
+    """Cycles the dimension-label scope: All -> Cabinet (every label on
+    the selected cabinets) -> Selected (only the selected objects'
+    labels) -> None.
 
     It used to draw itself, in the overlay module, from a private copy
     of this file's layout constants and a guess at which HUD row was
@@ -787,19 +789,18 @@ class _SizesButton:
     modify what the selection mode shows you.
     """
 
-    SCOPES = ('ALL', 'SELECTED', 'OFF')
+    SCOPES = ('ALL', 'SELECTED_CABINET', 'SELECTED', 'OFF')
+    NEXT = {'ALL': 'SELECTED_CABINET', 'SELECTED_CABINET': 'SELECTED',
+            'SELECTED': 'OFF'}
+    LABELS = {'ALL': 'Sizes: All', 'SELECTED_CABINET': 'Sizes: Cab',
+              'SELECTED': 'Sizes: Sel'}
 
     def _scope(self, context):
         props = getattr(context.scene, 'hb_face_frame', None)
         return getattr(props, 'selection_mode_sizes_scope', 'OFF') if props else 'OFF'
 
     def _label(self, context):
-        scope = self._scope(context)
-        if scope == 'ALL':
-            return 'Sizes: All'
-        if scope == 'SELECTED':
-            return 'Sizes: Sel'
-        return 'Sizes'
+        return self.LABELS.get(self._scope(context), 'Sizes')
 
     @property
     def width(self):
@@ -807,7 +808,8 @@ class _SizesButton:
         blf.size(0, FONT_SIZE * s)
         # Sized to the longest label so the row does not jitter as the
         # scope cycles.
-        return int(blf.dimensions(0, 'Sizes: Sel')[0] + 24 * s)
+        return int(max(blf.dimensions(0, t)[0]
+                       for t in self.LABELS.values()) + 24 * s)
 
     def visible(self, context):
         return _face_frame_ui_visible(context)
@@ -827,9 +829,8 @@ class _SizesButton:
         props = getattr(context.scene, 'hb_face_frame', None)
         if props is None:
             return
-        nxt = {'ALL': 'SELECTED', 'SELECTED': 'OFF'}.get(
+        props.selection_mode_sizes_scope = self.NEXT.get(
             self._scope(context), 'ALL')
-        props.selection_mode_sizes_scope = nxt
 
 
 class _FramelessSizesButton(_SizesButton):
@@ -854,9 +855,8 @@ class _FramelessSizesButton(_SizesButton):
         props = getattr(context.scene, 'hb_frameless', None)
         if props is None:
             return
-        nxt = {'ALL': 'SELECTED', 'SELECTED': 'OFF'}.get(
+        props.selection_mode_sizes_scope = self.NEXT.get(
             self._scope(context), 'ALL')
-        props.selection_mode_sizes_scope = nxt
 
 
 class _ClosetGrabPill(_GrabPill):

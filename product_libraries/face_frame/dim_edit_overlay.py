@@ -162,8 +162,9 @@ def _appliance_target(context):
 
 
 def _sizes_scope(context):
-    """Size-label scope from the scene prop: 'ALL', 'SELECTED' (labels
-    only for cages in the current selection), or 'OFF'."""
+    """Size-label scope from the scene prop: 'ALL', 'SELECTED_CABINET'
+    (every label on a cabinet the selection belongs to), 'SELECTED'
+    (labels only for cages in the current selection), or 'OFF'."""
     ff = getattr(context.scene, 'hb_face_frame', None)
     return getattr(ff, 'selection_mode_sizes_scope', 'ALL')
 
@@ -699,7 +700,7 @@ def compute_labels(context, region, rv3d, lines_out=None):
         return []
     scope = _sizes_scope(context)
     sel_names = (_selected_label_names(context)
-                 if scope == 'SELECTED' else None)
+                 if scope in ('SELECTED', 'SELECTED_CABINET') else None)
     scene = context.scene
     unit_settings = scene.unit_settings
     s = 1.0
@@ -751,6 +752,11 @@ def compute_labels(context, region, rv3d, lines_out=None):
 
     for cabinet in (_iter_cabinet_roots(scene) if mode is not None else ()):
         if not _cabinet_shown(cabinet, space):
+            continue
+        # Cabinet scope: the whole cabinet's labels once anything in it
+        # is selected (sel_names carries each selected object's
+        # ancestors, so the root is in it).
+        if scope == 'SELECTED_CABINET' and cabinet.name not in sel_names:
             continue
         # Displayed values come from the SAME properties a commit writes
         # (face_frame_bay.width / face_frame_opening.size), never the cage
@@ -854,7 +860,7 @@ def compute_labels(context, region, rv3d, lines_out=None):
         # SELECTED scope: keep only labels whose cage is part of the
         # current selection. The click handlers hit-test against this
         # same list, so filtered labels are not clickable either.
-        if sel_names is not None:
+        if scope == 'SELECTED':
             targets = [t for t in targets if t[0].name in sel_names]
         _emit(targets)
 
