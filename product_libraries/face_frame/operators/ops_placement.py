@@ -2114,6 +2114,7 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         description="When set, duplicate this existing cabinet root "
                     "instead of building a new cabinet from defaults",
         default="",
+        options={'SKIP_SAVE'},
     )  # type: ignore
 
     mirror: bpy.props.BoolProperty(
@@ -2121,6 +2122,7 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         description="Duplicate mode only: flip the copy left-to-right "
                     "(bay order, door swings, finished ends, stiles)",
         default=False,
+        options={'SKIP_SAVE'},
     )  # type: ignore
 
     move_source: bpy.props.BoolProperty(
@@ -2130,6 +2132,7 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
                     "(wall snap, gap fill, typed width) applied to a "
                     "cabinet that already exists",
         default=False,
+        options={'SKIP_SAVE'},
     )  # type: ignore
 
     # Live state during modal session. Reset on FINISHED/CANCELLED.
