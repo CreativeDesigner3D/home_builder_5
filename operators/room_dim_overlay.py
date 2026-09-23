@@ -6,9 +6,11 @@ value labels on it:
 
 - Door / window: width, height, and the offsets to each end of its
   wall; windows also show the sill height (height from floor) and a
-  dashed centerline with its distance to each end of the wall. Each
-  label sits on a ticked dimension line (orange for the centerline).
+  dashed centerline with its distance to each end of the wall.
 - Wall: length and height.
+
+Each value label sits on a ticked dimension line (orange for a
+window's centerline).
 - Entry door with built 3D geometry: an Open / Close button that swings
   the leaf, the quick version of the door prompts' Open Angle -- the
   same idea as Open Door mode for cabinet fronts.
@@ -201,8 +203,10 @@ def _cage_label_targets(cage_obj):
 
 def _dim_segments(context, region, rv3d, s=1.0):
     """Region-space line endpoints ``(dims, centerline)`` for each
-    selected door / window, drawn under its labels so every value
-    reads as a dimension: a ticked line for the width (above the head),
+    selected wall / door / window, drawn under its labels so every value
+    reads as a dimension. A wall gets its length (above the top) and
+    height (up the middle). A door / window gets a ticked line for the
+    width (above the head),
     height (up the left jamb), the gap from each wall end (at mid
     height) and a window's sill (floor to sill). A window adds its
     centerline -- dashed from below the sill to above the head -- and a
@@ -211,18 +215,7 @@ def _dim_segments(context, region, rv3d, s=1.0):
     dims = []
     cls = []
     for tag, obj in _selected_targets(context).values():
-        if tag != 'CAGE':
-            continue
-        cage = hb_types.GeoNodeCage(obj)
-        if not cage.has_modifier():
-            continue
-        try:
-            w = cage.get_input('Dim X')
-            h = cage.get_input('Dim Z')
-        except Exception:
-            continue
         mw = obj.matrix_world
-        is_window = bool(obj.get('IS_WINDOW_BP'))
 
         def to2d(x, z):
             return view3d_utils.location_3d_to_region_2d(
@@ -239,6 +232,31 @@ def _dim_segments(context, region, rv3d, s=1.0):
             tick = Vector((-d.y, d.x)).normalized() * CL_TICK_PX * s
             for p in (a, b, a - tick, a + tick, b - tick, b + tick):
                 out.append(tuple(p))
+
+        if tag == 'WALL':
+            wall = hb_types.GeoNodeWall(obj)
+            if not wall.has_modifier():
+                continue
+            try:
+                length = wall.get_input('Length')
+                height = wall.get_input('Height')
+            except Exception:
+                continue
+            # Same anchors as _wall_label_targets.
+            dim(dims, 0.0, height + inch(3.0), length, height + inch(3.0))
+            dim(dims, length / 2.0, 0.0, length / 2.0, height)
+            continue
+        if tag != 'CAGE':
+            continue
+        cage = hb_types.GeoNodeCage(obj)
+        if not cage.has_modifier():
+            continue
+        try:
+            w = cage.get_input('Dim X')
+            h = cage.get_input('Dim Z')
+        except Exception:
+            continue
+        is_window = bool(obj.get('IS_WINDOW_BP'))
 
         dim(dims, 0.0, h + inch(3.0), w, h + inch(3.0))
         dim(dims, inch(3.0), 0.0, inch(3.0), h)
