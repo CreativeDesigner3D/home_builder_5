@@ -89,11 +89,13 @@ BASE_PRESETS = {
                                      no_shelves=True),
                                    H(L('DRAWER'), L('DRAWER')))),
     # Vanity Combination: a top row of drawer / sink false front / drawer
-    # over a double door. The false front pins to a fixed sink width
-    # (VANITY_SINK_WIDTH); the flanking drawers absorb width changes. The
-    # top row height pins to top_drawer_opening_height via the V node.
+    # over a double door. The false front pins to a fixed 17" sink opening
+    # (VANITY_COMBINATION_SINK_WIDTH); the flanking drawers absorb width
+    # changes. The top row height pins to top_drawer_opening_height via
+    # the V node.
     'VANITY_COMBINATION':      H(V(L('DRAWER'),
-                                   L('FALSE_FRONT', size_role='VANITY_SINK_WIDTH'),
+                                   L('FALSE_FRONT',
+                                     size_role='VANITY_COMBINATION_SINK_WIDTH'),
                                    L('DRAWER'),
                                    size_role='TOP_DRAWER'),
                                  L('DOUBLE_DOOR', no_shelves=True)),
