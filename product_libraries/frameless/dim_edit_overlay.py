@@ -41,6 +41,7 @@ from ... import hb_placement
 from ... import hb_utils
 from ...hb_types import GeoNodeCage
 from . import solver_frameless
+from ..common import wall_run_dims
 
 # ---- Style (matches face_frame/dim_edit_overlay.py) ----------------------
 
@@ -390,6 +391,10 @@ def compute_labels(context, region, rv3d, lines_out=None):
 
     labels = []
     space = getattr(context, 'space_data', None)
+    # Wall-run dims: wall-end distances only on a selected cabinet, and
+    # a gap two neighbors both report is drawn once.
+    picked = _selected_label_names(context)
+    seen_spans = set()
     for cabinet in _iter_cabinet_roots(scene):
         if not _cabinet_shown(cabinet, space):
             continue
@@ -422,6 +427,20 @@ def compute_labels(context, region, rv3d, lines_out=None):
                  depth_pts[1] if depth_pts else None,
                  (depth_pts[0], depth_pts[2]) if depth_pts else None),
             ]
+            if scope != 'SELECTED' or cabinet.name in sel_names:
+                # Where the cabinet sits on its wall, on its front plane
+                # (the root's local Y = 0 is its back). Read-only.
+                mw = _world_matrix(cabinet)
+                fy = -dim_y - 0.003
+                for kind, value, prefix, a, b, key in wall_run_dims.run_dims(
+                        cabinet, dim_x, dim_z, ends=cabinet.name in picked):
+                    if key in seen_spans:
+                        continue
+                    seen_spans.add(key)
+                    wa = mw @ Vector((a[0], fy, a[1]))
+                    wb = mw @ Vector((b[0], fy, b[1]))
+                    targets.append((cabinet, kind, False, False, value,
+                                    prefix, (wa + wb) / 2.0, (wa, wb)))
         elif mode == 'Bays':
             # Bay size is the solver's (carcass minus sides / bottom /
             # top), so these are readouts, not inputs.

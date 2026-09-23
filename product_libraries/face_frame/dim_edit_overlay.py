@@ -55,6 +55,7 @@ from ...hb_types import GeoNodeCage, GeoNodeCutpart
 from . import types_face_frame
 from . import split_preview
 from . import appliance_panels
+from ..common import wall_run_dims
 from .operators import ops_part_commands
 
 # ---- Style -------------------------------------------------------------
@@ -376,6 +377,27 @@ def _cabinet_label_targets(cabinet):
         ('CAB_W', _root_anchor_world(cabinet, 0.5, 0.5), props.width, "W "),
         ('CAB_D', depth_pts[1] if depth_pts else None, props.depth, "D "),
     ]
+
+
+def _run_targets(cabinet, picked, seen_spans):
+    """Read-only Cabinets-mode targets for where ``cabinet`` sits on
+    its wall (see common/wall_run_dims), on its front plane, each with
+    its own dimension line. Spans already in ``seen_spans`` are skipped
+    and new ones added."""
+    dim_x, dim_z = split_preview._cage_dims(cabinet)
+    mw = split_preview._world_matrix(cabinet)
+    fy = -cabinet.face_frame_cabinet.depth - 0.003
+    out = []
+    for kind, value, prefix, a, b, key in wall_run_dims.run_dims(
+            cabinet, dim_x, dim_z, ends=cabinet.name in picked):
+        if key in seen_spans:
+            continue
+        seen_spans.add(key)
+        wa = mw @ Vector((a[0], fy, a[1]))
+        wb = mw @ Vector((b[0], fy, b[1]))
+        out.append((cabinet, kind, False, False, value, prefix,
+                    (wa + wb) / 2.0, (wa, wb)))
+    return out
 
 
 def _part_width_line(part, value):
@@ -713,12 +735,20 @@ def compute_labels(context, region, rv3d, lines_out=None):
 
     labels = []
     space = getattr(context, 'space_data', None)
+    # Wall-run dims: wall-end distances only on a selected cabinet, and
+    # a gap two neighbors both report is drawn once.
+    picked = _selected_label_names(context)
+    seen_spans = set()
 
     def _emit(targets):
         """Project a product's targets and add the ones on screen. One
         copy, so a cabinet label and an appliance label can't drift
         apart in size, marker or hit rect."""
-        for cage, kind, editable, locked, value, prefix, anchor in targets:
+        for target in targets:
+            # An optional 8th element carries the target's own world
+            # dimension line (wall-run dims); else _dim_line_world.
+            cage, kind, editable, locked, value, prefix, anchor = target[:7]
+            own_line = target[7] if len(target) > 7 else None
             if anchor is None:
                 anchor = (_part_anchor_world(cage) if kind == 'PART'
                           else _label_anchor_world(cage))
@@ -744,7 +774,7 @@ def compute_labels(context, region, rv3d, lines_out=None):
                 continue
             labels.append((cage.name, kind, editable, locked, rect, text))
             if lines_out is not None:
-                line = _dim_line_world(cage, kind, value)
+                line = own_line or _dim_line_world(cage, kind, value)
                 if line is not None:
                     pts = _project_dim_line(region, rv3d, line, s)
                     if pts:
@@ -776,6 +806,8 @@ def compute_labels(context, region, rv3d, lines_out=None):
                 for kind, anchor, value, prefix
                 in _cabinet_label_targets(cabinet)
             ]
+            if scope != 'SELECTED' or cabinet.name in sel_names:
+                targets.extend(_run_targets(cabinet, picked, seen_spans))
         elif mode == 'Bays':
             targets = []
             for bay in _iter_bay_cages(cabinet):
