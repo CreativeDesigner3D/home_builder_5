@@ -63,10 +63,13 @@ KICK_APPLIANCE_TYPES = {'DISHWASHER', 'UNDER_COUNTER'}
 
 FACE_THICKNESS = _I(0.75)
 BACKER_THICKNESS = {'B': _I(0.25), 'C': _I(0.35)}
-# Type C installation-flange rout (representative; tune in Blender): a recess
-# around the back-face perimeter where the appliance mounting flange seats.
-FLANGE_INSET = _I(1.5)
-FLANGE_DEPTH = _I(0.2)
+# Type C installation-flange rout: a recess around the back-face
+# perimeter where the appliance mounting flange seats. Off the shop's
+# own drawing of the joint -- 5/16" wide, .10" deep, which leaves .25"
+# of the .35" backer under it. A run can carry its own numbers; these
+# are the defaults and the fallback.
+FLANGE_INSET = _I(5.0 / 16.0)
+FLANGE_DEPTH = _I(0.10)
 # Full-inset integral rails: face-frame members fastened across the panel run
 # (top / bottom) and between stacked sections. 3/4" stock, face flush with
 # the inset panel faces; a panel meeting a rail keeps the inset reveal.
@@ -86,6 +89,13 @@ _SUSPEND = [0]      # > 0 while seeding: property updates don't rebuild
 # ----------------------------------------------------------------------
 # Presets (seed the section list; the user / spec edits from there)
 # ----------------------------------------------------------------------
+# A layout built or reshaped by hand carries this instead of a preset key:
+# it no longer matches the preset it started from, so re-picking that preset
+# seeds again rather than looking like a no-op.
+CUSTOM_CONFIG = 'CUSTOM'
+# Appliance_Panel_Section.column caps at 3.
+MAX_COLUMNS = 4
+
 # config -> columns of (label, kind, default_height, hold) bottom-to-top,
 # plus optional full-width banners (bottom / top).
 PRESETS = {
@@ -131,25 +141,30 @@ CONFIG_ITEMS = {
         ('TOP_FREEZER', "Top Freezer", "Freezer face over a fridge door"),
         ('DRAWER_DOOR_DRAWER', "Drawer / Door / Drawer", "Drawer face, tall door, drawer face"),
         ('SIDE_BY_SIDE_SPLIT', "Side-by-Side, Split Left", "Tall right door, drawer over door on the left"),
+        (CUSTOM_CONFIG, "Custom", "Columns and faces built by hand"),
     ],
     'DISHWASHER': [
         ('SINGLE', "Standard (Single)", "One full-height panel"),
         ('DW_DRAWER_DOOR', "Drawer / Door", "Drawer face over a door"),
         ('DW_3_DRAWER', "3-Drawer", "Three equal drawer faces"),
         ('DW_4_DRAWER', "4-Drawer", "Four equal drawer faces"),
+        (CUSTOM_CONFIG, "Custom", "Columns and faces built by hand"),
     ],
 }
-DEFAULT_CONFIG_ITEMS = [('SINGLE', "Single", "One full-height panel")]
+DEFAULT_CONFIG_ITEMS = [('SINGLE', "Single", "One full-height panel"),
+                        (CUSTOM_CONFIG, "Custom", "Columns and faces built by hand")]
 
 PANEL_TYPE_ITEMS = [
     ('A', "Type A", "Face only, no backer"),
     ('B', "Type B", "Face applied to a 1/4\" backer"),
     ('C', "Type C", "Face on a .35\" backer routed for an install flange"),
 ]
+# Icons so the kind reads as a picker in the section rows. The numbers are
+# explicit and in the original order: they are what a .blend stores.
 SECTION_KIND_ITEMS = [
-    ('DOOR', "Door", "Door face"),
-    ('DRAWER', "Drawer", "Drawer face"),
-    ('PANEL', "Panel", "Fixed panel (grille, filler)"),
+    ('DOOR', "Door", "Door face", 'MESH_PLANE', 0),
+    ('DRAWER', "Drawer", "Drawer face", 'SNAP_FACE', 1),
+    ('PANEL', "Panel", "Fixed panel (grille, filler)", 'MOD_LATTICE', 2),
 ]
 SECTION_BACKER_ITEMS = [
     ('DEFAULT', "Default", "Follow the appliance's panel type"),
@@ -174,6 +189,18 @@ def _on_change(self, context):
         rebuild(obj)
 
 
+def _on_shape_change(self, context):
+    """A section edit that changes the layout's shape rather than a size:
+    the run stops being the preset it was seeded from (sizes don't - a
+    resized preset is still that preset)."""
+    if _SUSPEND[0]:
+        return
+    obj = self.id_data
+    if isinstance(obj, bpy.types.Object) and obj.get('IS_APPLIANCE'):
+        obj.appliance_panels.config = CUSTOM_CONFIG
+    _on_change(self, context)
+
+
 class Appliance_Panel_Column(PropertyGroup):
     width: FloatProperty(name="Width", unit='LENGTH', default=_I(18), min=_I(1),
                          update=_on_change)  # type: ignore
@@ -181,9 +208,10 @@ class Appliance_Panel_Column(PropertyGroup):
 
 
 class Appliance_Panel_Section(PropertyGroup):
-    label: StringProperty(name="Label", default="Door")  # type: ignore
+    label: StringProperty(name="Label", default="Door",
+                          update=_on_change)  # type: ignore
     kind: EnumProperty(name="Kind", items=SECTION_KIND_ITEMS, default='DOOR',
-                       update=_on_change)  # type: ignore
+                       update=_on_shape_change)  # type: ignore
     column: IntProperty(name="Column", default=0, min=-1, max=3,
                         description="Column index; -1 spans every column "
                                     "(a full-width banner)",
@@ -217,6 +245,22 @@ class Appliance_Panel_Props(PropertyGroup):
     end_reveal: FloatProperty(name="End Reveal", unit='LENGTH', default=_I(1.0), min=0.0,
                               description="Margin from the run's ends to the first / last panel",
                               update=_on_change)  # type: ignore
+    # Per-edge gaps. -1 means "follow End Reveal", which is what every
+    # end did before they could be set apart -- so a file saved without
+    # these solves exactly as it did, and an edge only goes its own way
+    # once someone gives it a size.
+    reveal_left: FloatProperty(name="Left", unit='LENGTH', default=-1.0, min=-1.0,
+                               update=_on_change)  # type: ignore
+    reveal_right: FloatProperty(name="Right", unit='LENGTH', default=-1.0, min=-1.0,
+                                update=_on_change)  # type: ignore
+    reveal_top: FloatProperty(name="Top", unit='LENGTH', default=-1.0, min=-1.0,
+                              update=_on_change)  # type: ignore
+    reveal_bottom: FloatProperty(name="Bottom", unit='LENGTH', default=-1.0, min=-1.0,
+                                 update=_on_change)  # type: ignore
+    column_gap: FloatProperty(name="Between Columns", unit='LENGTH', default=-1.0,
+                              min=-1.0,
+                              description="Gap between columns; follows Gap when unset",
+                              update=_on_change)  # type: ignore
     section_gap: FloatProperty(name="Gap", unit='LENGTH', default=_I(1.0), min=0.0,
                                description="Gap between adjacent panels",
                                update=_on_change)  # type: ignore
@@ -226,6 +270,20 @@ class Appliance_Panel_Props(PropertyGroup):
                                              "side (negative = smaller than the face)",
                                  update=_on_change)  # type: ignore
     install_type: EnumProperty(name="Install", items=INSTALL_TYPE_ITEMS, default='OVERLAY')  # type: ignore
+    # The Type C flange rout. Defaults are the constants this was built
+    # with; the shop's own drawing of the joint is narrower and
+    # shallower (see the backer detail), so this is per run rather than
+    # a number in the code.
+    flange_inset: FloatProperty(name="Flange Rout Width", unit='LENGTH',
+                                default=FLANGE_INSET, min=0.0,
+                                description="How far in from the backer's "
+                                            "edge the flange rout runs",
+                                update=_on_change)  # type: ignore
+    flange_depth: FloatProperty(name="Flange Rout Depth", unit='LENGTH',
+                                default=FLANGE_DEPTH, min=0.0,
+                                description="How deep the backer is routed "
+                                            "for the appliance's flange",
+                                update=_on_change)  # type: ignore
     rail_width: FloatProperty(name="Rail Width", unit='LENGTH', default=_I(1.5), min=_I(0.5),
                               update=_on_change)  # type: ignore
     rail_top: BoolProperty(name="Top", default=False, update=_on_change)  # type: ignore
@@ -287,8 +345,18 @@ def default_rail_width():
 def seed_preset(appliance_obj, config, keep_options=True):
     """Reset the section / column lists to a preset. Appliance-level options
     (toe kick, reveals, rails, panel type) are kept unless keep_options is
-    False, in which case they seed from the defaults."""
+    False, in which case they seed from the defaults.
+
+    CUSTOM keeps the layout that is there (it IS the layout); on an empty
+    appliance it falls back to the single panel, so the dialog always opens
+    on something to edit."""
     props = appliance_obj.appliance_panels
+    if config == CUSTOM_CONFIG:
+        if props.sections:
+            with suspended():
+                props.config = CUSTOM_CONFIG
+            return
+        config = 'SINGLE'
     preset = PRESETS.get(config, PRESETS['SINGLE'])
     with suspended():
         props.config = config
@@ -312,6 +380,261 @@ def seed_preset(appliance_obj, config, keep_options=True):
             sec = props.sections.add()
             sec.label, sec.kind, sec.column = label, kind, -1
             sec.height, sec.height_hold = (h if h > 0 else _I(8)), hold
+
+
+# ----------------------------------------------------------------------
+# Hand editing (the dialog's add / remove / reorder buttons)
+# ----------------------------------------------------------------------
+# The solver reads the section list's ORDER: sections before the first
+# column section are bottom banners, after the last are top banners, and a
+# column stacks its own sections bottom-to-top. So every insert has to land
+# in the right place in the list, not just at the end.
+def column_bounds(props):
+    """(first, last) list index of the column sections; (n, -1) when there
+    are none."""
+    idx = [i for i, s in enumerate(props.sections) if s.column >= 0]
+    return (idx[0], idx[-1]) if idx else (len(props.sections), -1)
+
+
+def peer_indices(props, index):
+    """The sections ``index`` stacks with: its own column, or the banners at
+    its end of the run. In list order, so bottom-to-top."""
+    first, last = column_bounds(props)
+    sec = props.sections[index]
+    if sec.column >= 0:
+        return [i for i, s in enumerate(props.sections) if s.column == sec.column]
+    if index < first:
+        return [i for i, s in enumerate(props.sections) if s.column < 0 and i < first]
+    return [i for i, s in enumerate(props.sections) if s.column < 0 and i > last]
+
+
+def _auto_label(props, kind):
+    """A free display name for a new face: Door, Door 2, ..."""
+    base = kind.title()
+    used = {s.label for s in props.sections}
+    if base not in used:
+        return base
+    n = 2
+    while "%s %d" % (base, n) in used:
+        n += 1
+    return "%s %d" % (base, n)
+
+
+def _swap(coll, a, b):
+    """Swap two entries of a collection, leaving everything else in place."""
+    lo, hi = (a, b) if a < b else (b, a)
+    if lo == hi:
+        return
+    coll.move(lo, hi)
+    coll.move(hi - 1, lo)
+
+
+def add_section(appliance_obj, column, kind='DOOR', where='BOTTOM'):
+    """Add a face and return its index (-1 if it could not be added).
+
+    ``column`` >= 0 puts it in that column, at the bottom of the stack or on
+    top of it; ``column`` < 0 makes it a full-width face below every column
+    (where='BOTTOM') or above them ('TOP').
+
+    A drawer or fixed panel comes in holding its height so the door beside
+    it absorbs the change, and a door comes in sharing whatever is left -
+    the way the presets are written. A column with nothing sharing yet gets
+    a sharing face whatever its kind, or the stack would leave a gap."""
+    props = appliance_obj.appliance_panels
+    if column >= len(props.columns):
+        return -1
+    first, last = column_bounds(props)
+    if column >= 0:
+        col_idx = [i for i, s in enumerate(props.sections) if s.column == column]
+        if col_idx:
+            dst = col_idx[0] if where == 'BOTTOM' else col_idx[-1] + 1
+        else:
+            dst = (last + 1) if last >= 0 else first
+        shares = any(not props.sections[i].height_hold for i in col_idx)
+        hold = kind != 'DOOR' and shares
+    else:
+        dst = first if where == 'BOTTOM' else len(props.sections)
+        hold = True
+    label = _auto_label(props, kind)
+    with suspended():
+        sec = props.sections.add()
+        sec.label, sec.kind, sec.column = label, kind, max(-1, column)
+        sec.height, sec.height_hold = _I(8), hold
+        props.sections.move(len(props.sections) - 1, dst)
+        props.config = CUSTOM_CONFIG
+    rebuild(appliance_obj)
+    return dst
+
+
+def split_section(appliance_obj, index, height=None):
+    """Cut a face in two and return the new face's index (-1 if it
+    could not be cut).
+
+    The new face is the same kind, in the same place in the run, and
+    goes directly BELOW the one that was split -- the pair between them
+    occupy what the one had. A face that holds its height splits that
+    height; a face that shares keeps sharing, and both halves do, which
+    is the same thing one level down. `height` is what the face
+    measures now, for the caller that has already solved the run.
+    """
+    props = appliance_obj.appliance_panels
+    if not (0 <= index < len(props.sections)):
+        return -1
+    sec = props.sections[index]
+    kind, column, backer = sec.kind, sec.column, sec.backer
+    held, own_height = sec.height_hold, sec.height
+    label = _auto_label(props, kind)
+    current = own_height if held else (height or own_height)
+    half = max(_I(0.5), (current - props.section_gap) / 2.0)
+    with suspended():
+        new = props.sections.add()
+        new.label, new.kind, new.column = label, kind, column
+        new.backer = backer
+        new.height, new.height_hold = half, held
+        props.sections.move(len(props.sections) - 1, index)
+        if held:
+            # The one that was split keeps the other half; a sharing
+            # face is left alone, because sharing is what sizes it.
+            props.sections[index + 1].height = half
+        props.config = CUSTOM_CONFIG
+    rebuild(appliance_obj)
+    return index
+
+
+def remove_section(appliance_obj, index):
+    """Remove a face. The last face in a column stays (remove the column
+    instead), and so does the last face on the appliance."""
+    props = appliance_obj.appliance_panels
+    if not (0 <= index < len(props.sections)) or len(props.sections) <= 1:
+        return False
+    sec = props.sections[index]
+    if sec.column >= 0 and len(peer_indices(props, index)) <= 1:
+        return False
+    with suspended():
+        props.sections.remove(index)
+        props.config = CUSTOM_CONFIG
+    rebuild(appliance_obj)
+    return True
+
+
+def move_section(appliance_obj, index, delta):
+    """Move a face up (delta > 0) or down within its own column, or among
+    the full-width faces at its end of the run."""
+    props = appliance_obj.appliance_panels
+    if not (0 <= index < len(props.sections)):
+        return False
+    peers = peer_indices(props, index)
+    target = peers.index(index) + (1 if delta > 0 else -1)
+    if not 0 <= target < len(peers):
+        return False
+    with suspended():
+        _swap(props.sections, index, peers[target])
+        props.config = CUSTOM_CONFIG
+    rebuild(appliance_obj)
+    return True
+
+
+def add_column(appliance_obj, kind='DOOR'):
+    """Add a column on the right of the run with one face in it, and return
+    the new column's index (-1 when the run is already at MAX_COLUMNS). The
+    new column shares the appliance width with the others until it is held."""
+    props = appliance_obj.appliance_panels
+    if len(props.columns) >= MAX_COLUMNS:
+        return -1
+    with suspended():
+        col = props.columns.add()
+        col.width_hold = False
+    ci = len(props.columns) - 1
+    if add_section(appliance_obj, ci, kind) < 0:      # rebuilds
+        return -1
+    return ci
+
+
+def remove_column(appliance_obj, index):
+    """Remove a column and every face in it; the rest share the width. The
+    last column stays, and so does the last face on the appliance."""
+    props = appliance_obj.appliance_panels
+    if not (0 <= index < len(props.columns)) or len(props.columns) <= 1:
+        return False
+    doomed = [i for i, s in enumerate(props.sections) if s.column == index]
+    if len(doomed) >= len(props.sections):
+        return False
+    with suspended():
+        for i in reversed(doomed):
+            props.sections.remove(i)
+        for sec in props.sections:
+            if sec.column > index:
+                sec.column -= 1
+        props.columns.remove(index)
+        props.config = CUSTOM_CONFIG
+    rebuild(appliance_obj)
+    return True
+
+
+# ----------------------------------------------------------------------
+# Preset preview
+# ----------------------------------------------------------------------
+# What a preset WOULD build, without building it: enough of a run for
+# the solver to lay out, so a picture of a preset is drawn by the same
+# code that draws the real thing and cannot show a layout the preset
+# does not produce.
+
+class _PreviewSection:
+    def __init__(self, label, kind, column, height, hold):
+        self.label, self.kind, self.column = label, kind, column
+        self.height, self.height_hold = height, hold
+        self.z_bottom, self.z_hold = 0.0, False
+        self.backer = 'NONE'            # a preview needs faces, not backers
+        self.backer_width = self.backer_height = _I(24)
+        self.backer_width_hold = self.backer_height_hold = False
+
+
+class _PreviewColumn:
+    def __init__(self):
+        self.width, self.width_hold = _I(18), False
+
+
+class _PreviewProps:
+    """A stand-in run: the preset's columns and sections, with the gaps
+    and toe kick of the run it would replace."""
+
+    def __init__(self, config, like=None):
+        preset = PRESETS.get(config, PRESETS['SINGLE'])
+        self.columns = [_PreviewColumn() for _ in preset['cols']]
+        self.sections = []
+        for label, kind, h, hold in preset.get('bottom', ()):
+            self.sections.append(_PreviewSection(label, kind, -1,
+                                                 h if h > 0 else _I(8), hold))
+        for ci, col in enumerate(preset['cols']):
+            for label, kind, h, hold in col:
+                self.sections.append(_PreviewSection(label, kind, ci,
+                                                     h if h > 0 else _I(8), hold))
+        for label, kind, h, hold in preset.get('top', ()):
+            self.sections.append(_PreviewSection(label, kind, -1,
+                                                 h if h > 0 else _I(8), hold))
+        for name, default in (('toe_kick', 0.0), ('end_reveal', _I(1)),
+                              ('section_gap', _I(1)), ('backer_reveal', _I(1)),
+                              ('panel_type', 'A'), ('rail_width', _I(1.5)),
+                              ('reveal_top', -1.0), ('reveal_bottom', -1.0),
+                              ('reveal_left', -1.0), ('reveal_right', -1.0),
+                              ('column_gap', -1.0)):
+            setattr(self, name, getattr(like, name, default) if like is not None
+                    else default)
+        self.rail_top = self.rail_bottom = self.rail_between = False
+
+    def has_rails(self):
+        return False
+
+
+def preview_faces(config, dim_x, dim_z, like=None):
+    """(sections, {index: (x0, x1, z0, z1)}) for a preset at this size.
+    Nothing is touched; the appliance does not have to be panelled."""
+    props = _PreviewProps(config, like)
+    try:
+        faces = solve(props, dim_x, dim_z)[0]
+    except Exception:
+        return [], {}
+    return props.sections, faces
 
 
 def seed_from_legacy(appliance_obj):
@@ -358,6 +681,29 @@ def seed_from_legacy(appliance_obj):
 # ----------------------------------------------------------------------
 # Solver
 # ----------------------------------------------------------------------
+# ---- The run's gaps ---------------------------------------------------
+# One number used to set every end of the run, and one every gap inside
+# it. Both are still the fallback; an edge or the column gap can now
+# carry its own size. Read through getattr so a property group that
+# predates them -- an older file, or a card mirroring the fields it knew
+# about -- solves on the single value the way it always did.
+
+GAP_EDGES = ('top', 'bottom', 'left', 'right')
+
+
+def reveal(props, edge):
+    """The gap at one end of the run: that edge's own size, or the End
+    Reveal every end follows until it is given one."""
+    value = getattr(props, 'reveal_' + edge, -1.0)
+    return value if value >= 0.0 else props.end_reveal
+
+
+def column_gap(props):
+    """The gap between columns: its own size, or the section gap."""
+    value = getattr(props, 'column_gap', -1.0)
+    return value if value >= 0.0 else props.section_gap
+
+
 def _share(total, holds, sizes, gap):
     n = len(holds)
     usable = total - gap * max(0, n - 1)
@@ -378,8 +724,10 @@ def _stack(z_lo, z_hi, secs, props, bottom_free=True, top_free=True):
     r_top = bool(rw and props.rail_top and top_free)
     r_bot = bool(rw and props.rail_bottom and bottom_free)
     r_mid = bool(rw and props.rail_between)
-    bottom_margin = ((rw + RAIL_REVEAL) if r_bot else props.end_reveal) if bottom_free else 0.0
-    top_margin = ((rw + RAIL_REVEAL) if r_top else props.end_reveal) if top_free else 0.0
+    bottom_margin = ((rw + RAIL_REVEAL) if r_bot
+                     else reveal(props, 'bottom')) if bottom_free else 0.0
+    top_margin = ((rw + RAIL_REVEAL) if r_top
+                  else reveal(props, 'top')) if top_free else 0.0
     gap = (rw + 2.0 * RAIL_REVEAL) if r_mid else props.section_gap
     run_lo, run_hi = z_lo + bottom_margin, z_hi - top_margin
 
@@ -419,14 +767,16 @@ def solve(props, dim_x, dim_z):
         rails   [(x0, x1, z0, z1)]
     all in appliance-local X (across) / Z (up), metres."""
     ncol = max(1, len(props.columns))
-    col_w = _share(dim_x - 2.0 * props.end_reveal,
+    left, right = reveal(props, 'left'), reveal(props, 'right')
+    col_gap = column_gap(props)
+    col_w = _share(dim_x - left - right,
                    [c.width_hold for c in props.columns] or [False],
-                   [c.width for c in props.columns] or [dim_x], props.section_gap)
+                   [c.width for c in props.columns] or [dim_x], col_gap)
     col_x = []
-    x = props.end_reveal
+    x = left
     for w in col_w:
         col_x.append((x, x + w))
-        x += w + props.section_gap
+        x += w + col_gap
     z_lo, z_hi = max(0.0, props.toe_kick), dim_z
 
     secs = list(props.sections)
@@ -441,17 +791,18 @@ def solve(props, dim_x, dim_z):
     # Vertical: bottom banners + [column region] + top banners share the run.
     v_holds = [secs[i].height_hold for i in bottom] + [False] + [secs[i].height_hold for i in top]
     v_sizes = [secs[i].height for i in bottom] + [0.0] + [secs[i].height for i in top]
-    v = _share(z_hi - z_lo - 2.0 * props.end_reveal, v_holds, v_sizes, props.section_gap)
-    z = z_lo + props.end_reveal
+    v = _share(z_hi - z_lo - reveal(props, 'bottom') - reveal(props, 'top'),
+               v_holds, v_sizes, props.section_gap)
+    z = z_lo + reveal(props, 'bottom')
     for k, i in enumerate(bottom):
-        faces[i] = (props.end_reveal, dim_x - props.end_reveal, z, z + v[k])
+        faces[i] = (left, dim_x - right, z, z + v[k])
         z += v[k] + props.section_gap
     region_lo = z
     region_h = v[len(bottom)]
     z = region_lo + region_h + props.section_gap
     for k, i in enumerate(top):
         h = v[len(bottom) + 1 + k]
-        faces[i] = (props.end_reveal, dim_x - props.end_reveal, z, z + h)
+        faces[i] = (left, dim_x - right, z, z + h)
         z += h + props.section_gap
     # Columns stack inside the region. With no banners the region IS the run
     # (its margins are the end reveals / rails); with a banner at an end the
@@ -545,14 +896,19 @@ def _finish_part(obj):
     obj['STYLE_NAME'] = cs.name
 
 
-def _rout_flange(backer_obj, w, h, backer_t):
+def _rout_flange(backer_obj, w, h, backer_t, inset=None, depth=None):
     """Type C: rout a recess around the appliance-facing perimeter for the
-    installation flange, as four CPM_CUTOUT edge strips (a rabbet frame)."""
+    installation flange, as four CPM_CUTOUT edge strips (a rabbet frame).
+    The run says how wide and deep; the module constants are only the
+    fallback for a caller that has no run to ask."""
     part = hb_types.GeoNodeCutpart(backer_obj)
     for mod in list(backer_obj.modifiers):
         if mod.name.startswith('Flange '):
             backer_obj.modifiers.remove(mod)
-    inset, depth = FLANGE_INSET, FLANGE_DEPTH
+    inset = FLANGE_INSET if inset is None else inset
+    depth = FLANGE_DEPTH if depth is None else depth
+    if inset <= 0.0 or depth <= 0.0:
+        return              # no rout asked for; the strips would be empty
     strips = (('Flange Left', 0.0, 0.0, h, inset),
               ('Flange Right', 0.0, w - inset, h, w),
               ('Flange Bottom', 0.0, 0.0, inset, w),
@@ -567,6 +923,133 @@ def _rout_flange(backer_obj, w, h, backer_t):
         cpm.set_input('Flip Z', True)
         cpm.mod.show_viewport = True
         cpm.mod.show_render = True
+
+
+def _model_out_of_step(appliance_obj):
+    """Whether the appliance's own model still has to catch up with the
+    panels. Its doors, drawer fronts and handles are built only when it
+    is NOT panelled, so a run that has just appeared (or gone) leaves
+    the model a step behind -- the factory fronts standing behind the
+    cabinet ones, or missing after the panels are taken off."""
+    try:
+        from ..common import appliance_geo
+    except Exception:
+        return False
+    built_for = appliance_obj.get(appliance_geo.MODEL_PANEL_READY_FLAG)
+    # No flag: built before the model recorded what it was built for, so
+    # it cannot say it agrees. One rebuild settles it.
+    if built_for is None:
+        return True
+    return bool(built_for) != bool(appliance_obj.get('Panel Ready'))
+
+
+def _sync_model(appliance_obj):
+    """Build the appliance's own model again so its front matches
+    whether it is panelled. Panels are not model parts, so the run
+    itself survives the rebuild untouched."""
+    try:
+        from ..common import appliance_geo
+    except Exception:
+        return
+    try:
+        appliance_geo.build_geometry(appliance_obj)
+    except Exception as ex:      # a model problem must not break the run
+        print('Home Builder: appliance model rebuild failed: %s' % ex)
+
+
+def pull_side(props, section):
+    """Which edge a door's pull sits on -- the opening edge, away from
+    its hinge. A pair of doors hinges on the outside so the pulls meet
+    in the middle; a lone door hinges on the right. The drawn elevation
+    and the built pull both ask this, so the picture and the model
+    cannot disagree about which way a door opens."""
+    if getattr(section, 'kind', '') != 'DOOR':
+        return 'R'
+    column = getattr(section, 'column', -1)
+    ncol = len(props.columns)
+    if column < 0 or ncol <= 1:
+        return 'L'
+    return 'L' if column == ncol - 1 else 'R'
+
+
+# An appliance's panels are cabinet fronts, so they wear the cabinetry's
+# hardware: the same pull, from the same settings, placed by the same
+# rules. Which set of rules depends on how the appliance stands -- a
+# fridge is a tall run, a dishwasher a base one.
+_PULL_CABINET_TYPE = {'REFRIGERATOR': 'TALL', 'DISHWASHER': 'BASE',
+                      'UNDER_COUNTER': 'BASE'}
+
+
+def _drop_pulls(front_obj):
+    for child in list(front_obj.children):
+        if child.get('IS_CABINET_PULL'):
+            bpy.data.objects.remove(child, do_unlink=True)
+
+
+def _build_pulls(appliance_obj, props, fronts, order, faces):
+    """Put a pull on every door and drawer face. Fixed panels -- a
+    grille, a filler -- get none, the way an inset panel does not.
+
+    Placement is in the front part's own space, exactly as it is for a
+    cabinet door: X runs up the face, Y across it (the face lying on
+    the -Y side of the origin), Z out of its front. Measured: a pull at
+    local Y lands at the face's low world edge plus -Y, so across-face
+    distances are negative here as they are on a cabinet front -- the
+    Mirror Y these parts are built with does not move this axis.
+    """
+    from . import pulls as pull_lib
+    scene_props = getattr(bpy.context.scene, 'hb_face_frame', None)
+    for front in fronts:
+        _drop_pulls(front)
+    if scene_props is None:
+        return
+    cabinet_type = _PULL_CABINET_TYPE.get(appliance_obj.get('APPLIANCE_TYPE'),
+                                          'TALL')
+    h_offset = scene_props.pull_horizontal_offset
+    for k, i in enumerate(order):
+        if k >= len(fronts):
+            break
+        section = props.sections[i]
+        if section.kind == 'PANEL':
+            continue
+        kind = 'drawer' if section.kind == 'DRAWER' else 'door'
+        pull_obj = pull_lib.resolve_pull_for(scene_props, kind, cabinet_type)
+        if pull_obj is None:
+            continue
+        box = faces.get(i)
+        if box is None:
+            continue
+        width, length = box[1] - box[0], box[3] - box[2]
+        half = pull_lib.pull_length(pull_obj) / 2.0
+        if kind == 'drawer':
+            x = (length / 2.0 if scene_props.center_pulls_on_drawer_front
+                 else length - scene_props.pull_vertical_location_base - half)
+            y = -width / 2.0
+        else:
+            # The same zones a cabinet door follows, measured from the
+            # appliance's own base -- which is the floor for the
+            # appliances that take panels.
+            tall = scene_props.pull_vertical_location_tall
+            if box[2] >= tall:
+                x = scene_props.pull_vertical_location_upper + half
+            elif length >= tall + 2.0 * half:
+                x = tall + half
+            else:
+                x = length - scene_props.pull_vertical_location_base - half
+            # 'L' is the pull on the face's left edge -- nearest the
+            # part's origin -- and 'R' the far one.
+            near_origin = pull_side(props, section) == 'L'
+            y = -h_offset if near_origin else -(width - h_offset)
+        instance = bpy.data.objects.new("Pull - %s" % fronts[k].name,
+                                        pull_obj.data)
+        bpy.context.scene.collection.objects.link(instance)
+        instance.parent = fronts[k]
+        instance.location = (x, y, section.face_thickness)
+        instance.rotation_euler = (math.radians(-90.0), 0.0,
+                                   math.radians(90.0) if kind == 'drawer'
+                                   else 0.0)
+        instance['hb_part_role'] = 'PULL'
+        instance['IS_CABINET_PULL'] = True
 
 
 def _structure_key(props, backers):
@@ -630,7 +1113,11 @@ def rebuild(appliance_obj):
                 _place(bobj, bx0, bx1, bz0, bz1, -dim_y, t)
                 _finish_part(bobj)
                 if bobj.get('APPLIANCE_PANEL_BACKER_TYPE') == 'C':
-                    _rout_flange(bobj, bx1 - bx0, bz1 - bz0, t)
+                    _rout_flange(bobj, bx1 - bx0, bz1 - bz0, t,
+                                 getattr(props, 'flange_inset', None),
+                                 getattr(props, 'flange_depth', None))
+
+    _build_pulls(appliance_obj, props, fronts, order, faces)
 
     # Rails: reuse by index, drop extras.
     rail_objs = _parts(appliance_obj, TAG_RAIL, 'AP_RAIL_INDEX')
@@ -659,6 +1146,14 @@ def rebuild(appliance_obj):
                 child.hide_render = True
 
     _stamp(appliance_obj, props, key, faces, backers, rails)
+    # Panels can be built from the panel tab, the command or the prompts
+    # dialog; only the dialog used to rebuild the model afterwards, so
+    # the appliance kept its own doors and handles behind the panels.
+    # Checked against what the model was built for rather than against a
+    # transition, so an appliance panelled before this existed sorts
+    # itself out the first time its run is built.
+    if _model_out_of_step(appliance_obj):
+        _sync_model(appliance_obj)
 
 
 def remove(appliance_obj):
@@ -693,6 +1188,10 @@ def remove(appliance_obj):
             del appliance_obj[key]
     if 'Panel Ready' in appliance_obj:
         appliance_obj['Panel Ready'] = False
+    # The appliance wears its own front again, so the model has to build
+    # the doors and handles it left out while it was panelled.
+    if _model_out_of_step(appliance_obj):
+        _sync_model(appliance_obj)
     return removed
 
 

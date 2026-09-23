@@ -836,19 +836,110 @@ def _hit_face_of_cabinet(cab_obj, hit_location):
     return candidates[0][0]
 
 
+def _is_free_group(obj):
+    """True for a top-level cabinet group cage (an island / peninsula
+    run wrapped by the Group command or by automatic grouping)."""
+    return (obj is not None and bool(obj.get('IS_CAGE_GROUP'))
+            and obj.parent is None)
+
+
+def _stands_free(obj):
+    """True when obj is off every wall: unparented, or a direct member
+    of a top-level cabinet group. Grouping a run only wraps it in a
+    cage - it still stands free."""
+    return obj.parent is None or _is_free_group(obj.parent)
+
+
 def _free_standing_cabinet_root(cab_obj):
     """Outermost cabinet root above cab_obj, or None.
 
     Applied panels are cabinet roots in their own right, parented to
     the cabinet they dress, so a cursor over a paneled back resolves to
     the panel rather than the cabinet behind it. Climb host by host and
-    return the root that stands free; None when the chain ends on
-    something that isn't a cabinet (a wall-parented cabinet included).
+    return the root that stands free (unparented or a cabinet group
+    member); None when the chain ends on something that isn't a cabinet
+    (a wall-parented cabinet included).
     """
     node = cab_obj
-    while node is not None and node.parent is not None:
+    while node is not None and not _stands_free(node):
         node = types_face_frame.find_cabinet_root(node.parent)
     return node
+
+
+def _group_member_at(hit_obj, hit_location):
+    """Cabinet member of the free cabinet group hit_obj belongs to that
+    sits nearest hit_location, or None.
+
+    A collapsed group shows its own cage over the members, so the ray
+    lands on the group cage and never reaches a cabinet. Pick the member
+    whose box is closest to the hit point instead.
+    """
+    group = hit_obj
+    while group is not None and not _is_free_group(group):
+        group = group.parent
+    if group is None or hit_location is None:
+        return None
+    best = None
+    best_dist = None
+    for obj in group.children:
+        if not obj.get(types_face_frame.TAG_CABINET_CAGE):
+            continue
+        props = obj.face_frame_cabinet
+        local = hb_utils.world_matrix(obj).inverted() @ hit_location
+        # Distance from the box [0, w] x [-d, 0] x [0, h] (cabinet
+        # local frame: origin back-left-bottom, body extruding -Y).
+        dx = max(0.0, -local.x, local.x - props.width)
+        dy = max(0.0, local.y, -props.depth - local.y)
+        dz = max(0.0, -local.z, local.z - props.height)
+        dist = dx * dx + dy * dy + dz * dz
+        if best_dist is None or dist < best_dist:
+            best, best_dist = obj, dist
+    return best
+
+
+def _join_island_group(group_obj, root):
+    """Parent root into an existing cabinet group and refit the group
+    cage to cover every member, keeping all world transforms.
+
+    A cabinet dropped on the back of a grouped run belongs to that run;
+    left loose it would be grouped on its own later and split the run.
+    """
+    if group_obj is None or root is None or root.parent is not None:
+        return
+    try:
+        group_obj.name
+    except ReferenceError:
+        return
+    children = list(group_obj.children)
+    worlds = {c: hb_utils.world_matrix(c) for c in children}
+    worlds[root] = hb_utils.world_matrix(root)
+    members = [c for c in children
+               if ops_cabinet._find_group_member_root(c) is c]
+    peers = [m for m in members
+             if m.get(types_face_frame.TAG_CABINET_CAGE)]
+    members.append(root)
+
+    loc, rot, w, d, h = (ops_cabinet.hb_face_frame_OT_create_cabinet_group
+                         ._calculate_group_bounds(None, members))
+    group = hb_types.GeoNodeCage(group_obj)
+    group_obj.location = loc
+    group_obj.rotation_euler = rot
+    group.set_input('Dim X', w)
+    group.set_input('Dim Y', d)
+    group.set_input('Dim Z', h)
+
+    root.parent = group_obj
+    hb_utils.note_parent_change()
+    root.matrix_parent_inverse = Matrix.Identity(4)
+    # Group cages are unparented, so their basis is their world matrix;
+    # compose it here rather than wait on the depsgraph.
+    group_world = group_obj.matrix_basis.copy()
+    for child, world in worlds.items():
+        child.matrix_basis = ((group_world @ child.matrix_parent_inverse)
+                              .inverted_safe() @ world)
+    # Match the other members: the group cage stands in for their cages.
+    if peers and root.get(types_face_frame.TAG_CABINET_CAGE):
+        root.hide_viewport = peers[0].hide_viewport
 
 
 def _hit_through_top(hit_obj):
@@ -900,7 +991,7 @@ def _resolve_island_run(seed_obj, exclude_obj=None):
     seed isn't free-standing or when its run can't be resolved.
     """
     excluded = hb_placement.exclusion_set(exclude_obj)
-    if seed_obj is None or seed_obj.parent is not None:
+    if seed_obj is None or not _stands_free(seed_obj):
         return [seed_obj] if seed_obj is not None else []
     seed_axis = seed_obj.matrix_world.to_3x3() @ Vector((1.0, 0.0, 0.0))
     seed_axis.z = 0.0
@@ -914,7 +1005,7 @@ def _resolve_island_run(seed_obj, exclude_obj=None):
 
     found = []
     for obj in bpy.context.scene.objects:
-        if obj.parent is not None:
+        if not _stands_free(obj):
             continue
         if obj in excluded:
             continue
@@ -1051,7 +1142,7 @@ def _find_back_row_gap(run_origin, run_axis, run_length, world_z,
     for obj in bpy.context.scene.objects:
         if obj in excluded:
             continue
-        if obj.parent is not None:
+        if not _stands_free(obj):
             continue
         if not obj.get(types_face_frame.TAG_CABINET_CAGE):
             continue
@@ -2650,6 +2741,9 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
     def _position_from_hit(self, context):
         """Route the last hit to a positioning strategy, then refresh
         the facing arrow to match wherever the cage landed."""
+        # Only _position_on_island_back sets this; any other landing
+        # commits outside a cabinet group.
+        self._island_back_group = None
         self._route_position_from_hit(context)
         self._facing_arrow_segments = self._build_facing_arrow()
 
@@ -2780,12 +2874,16 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         # a snap surface. A hit on an applied panel resolves to the
         # cabinet wearing it, so a finished back still snaps, and a hit
         # on the top behind the box counts as a back hit so a seating
-        # overhang doesn't mask the run. Falls through to free placement
-        # otherwise, or when the cabinet is wall-parented.
+        # overhang doesn't mask the run. A grouped island counts as
+        # free-standing, and a hit on a collapsed group's own cage
+        # resolves to the member under it. Falls through to free
+        # placement otherwise, or when the cabinet is wall-parented.
         hit_cab = _free_standing_cabinet_root(self.find_cabinet_bp(
             self.hit_object,
             marker_set=frozenset({types_face_frame.TAG_CABINET_CAGE}),
         ))
+        if hit_cab is None:
+            hit_cab = _group_member_at(self.hit_object, self.hit_location)
         if (hit_cab is not None
                 and _is_island_back_hit(
                     hit_cab, self.hit_object, self.hit_location)):
@@ -3434,6 +3532,9 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
             self._position_free(context)
             return
         run_origin, run_axis, run_length, world_z = run_geo
+        # A grouped run keeps its back row in the group on commit.
+        self._island_back_group = next(
+            (o.parent for o in run if _is_free_group(o.parent)), None)
 
         # Detach cage from any previous parent and put it in world coords.
         if cage_obj.parent is not None:
@@ -4163,6 +4264,8 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
             cab_obj.rotation_euler = captured_local_rot
         else:
             cab_obj.matrix_world = captured_world
+            _join_island_group(
+                getattr(self, '_island_back_group', None), cab_obj)
 
         # Bare parts (Misc Part, etc.) are a lone GeoNodeCutpart with no
         # cabinet cage. None of the carcass / bay / style / merge / corner
@@ -4391,6 +4494,8 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
             src.parent = None
             hb_utils.note_parent_change()
             src.matrix_world = captured_world
+            _join_island_group(
+                getattr(self, '_island_back_group', None), src)
 
         # Fill-the-gap commit: the same width push a duplicate gets, so
         # dropping it into a gap stretches the bays to suit.
@@ -4474,6 +4579,8 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
             cab_obj.parent = None
             hb_utils.note_parent_change()
             cab_obj.matrix_world = captured_world
+            _join_island_group(
+                getattr(self, '_island_back_group', None), cab_obj)
 
         # Mirror before the width push so the fill recalc lays out the
         # already-flipped bay order.

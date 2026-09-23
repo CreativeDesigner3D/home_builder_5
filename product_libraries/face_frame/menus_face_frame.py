@@ -151,6 +151,12 @@ class HOME_BUILDER_MT_face_frame_cabinet_commands(bpy.types.Menu):
         layout = self.layout
         layout.operator("hb_face_frame.cabinet_prompts",
                         text="Cabinet Properties...", icon='WINDOW')
+        # Corners have no opening cages; their Config is the opening
+        # choice, offered under the same name as on other cabinets.
+        if types_face_frame_corner.corner_opening_root(
+                context.active_object) is not None:
+            layout.menu("HOME_BUILDER_MT_face_frame_corner_change_opening",
+                        text="Change Opening")
         # Blind corner: shown when this cabinet participates in a
         # configured square blind corner (pair stamp, void-owner marker,
         # or a legacy BLIND-typed stile). The operator re-resolves and
@@ -902,9 +908,19 @@ class HOME_BUILDER_MT_face_frame_opening_commands(bpy.types.Menu):
         layout.operator("hb_face_frame.equalize_opening_heights",
                         text="Equalize Opening Heights",
                         icon='ALIGN_JUSTIFY')
-        layout.operator("hb_face_frame.equalize_front_heights",
-                        text="Equalize Drawer Front Heights",
-                        icon='ALIGN_JUSTIFY')
+        # The ratio / basis are remembered between runs; pin them here so
+        # this entry always equalizes fronts.
+        op = layout.operator("hb_face_frame.equalize_front_heights",
+                             text="Equalize Drawer Front Heights",
+                             icon='ALIGN_JUSTIFY')
+        op.ratio = ""
+        op.basis = 'FRONTS'
+        # Same stack re-divide with a ratio (e.g. 1:2) and a front / opening
+        # basis, set in a dialog.
+        op = layout.operator("hb_face_frame.equalize_front_heights",
+                             text="Divide by Ratio...",
+                             icon='ALIGN_JUSTIFY')
+        op.show_dialog = True
 
         layout.separator()
         op = layout.operator("hb_face_frame.split_opening",
@@ -968,6 +984,28 @@ class HOME_BUILDER_MT_face_frame_change_opening(bpy.types.Menu):
             op.config = config
 
 
+class HOME_BUILDER_MT_face_frame_corner_change_opening(bpy.types.Menu):
+    """Change Opening for a corner cabinet: the Config choices (doors,
+    hutch, open shelves, ...) and the door swing, the settings that
+    decide what fills a corner's front."""
+    bl_label = "Change Opening"
+
+    def draw(self, context):
+        layout = self.layout
+        cab = types_face_frame_corner.corner_opening_root(
+            context.active_object)
+        if cab is None:
+            return
+        cab_props = cab.face_frame_cabinet
+        layout.props_enum(cab_props, 'exterior_config')
+        layout.separator()
+        layout.label(text="Door Swing")
+        if cab_props.corner_type == 'DIAGONAL':
+            layout.props_enum(cab_props, 'diag_door_swing')
+        else:
+            layout.props_enum(cab_props, 'exterior_option')
+
+
 class HOME_BUILDER_MT_face_frame_change_bay(bpy.types.Menu):
     """Submenu of bay configuration presets. Reads the active bay's
     cabinet type to pick which entry list to render. Each entry calls
@@ -1012,6 +1050,7 @@ class HOME_BUILDER_MT_face_frame_add_appliance(bpy.types.Menu):
         layout = self.layout
         for kind, label, icon in (
             ('KITCHEN_SINK', "Add Kitchen Sink", 'MOD_FLUIDSIM'),
+            ('FARM_SINK',    "Add Farm Sink",    'MOD_FLUIDSIM'),
             ('VANITY_SINK',  "Add Vanity Sink",  'MOD_FLUIDSIM'),
             ('COOKTOP',      "Add Cooktop",      'VOLUME_DATA'),
         ):
@@ -1070,6 +1109,12 @@ class HOME_BUILDER_MT_face_frame_floating_shelf_commands(bpy.types.Menu):
         if len(roots) > 1:
             layout.operator("hb_face_frame.adjust_floating_shelves",
                             text="Adjust Spacing & Heights...", icon='LINENUMBERS_ON')
+            layout.operator("hb_face_frame.link_floating_shelves",
+                            text="Link Selected Shelves", icon='LINKED')
+        root = types_face_frame.find_cabinet_root(context.active_object)
+        if root is not None and root.get(types_face_frame.SHELF_GROUP_TAG):
+            layout.operator("hb_face_frame.unlink_floating_shelf",
+                            text="Unlink From Group", icon='UNLINKED')
         layout.separator()
         layout.operator("hb_face_frame.delete_cabinet",
                         text="Delete Shelf", icon='X')
@@ -1293,6 +1338,7 @@ classes = (
     HOME_BUILDER_MT_face_frame_drawer_box_commands,
     HOME_BUILDER_MT_face_frame_opening_commands,
     HOME_BUILDER_MT_face_frame_change_opening,
+    HOME_BUILDER_MT_face_frame_corner_change_opening,
     HOME_BUILDER_MT_face_frame_change_bay,
     HOME_BUILDER_MT_face_frame_add_appliance,
     HOME_BUILDER_MT_face_frame_wood_top_commands,

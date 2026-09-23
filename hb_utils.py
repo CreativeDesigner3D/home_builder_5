@@ -710,6 +710,21 @@ def set_camera_view():
     return False
 
 
+def frame_camera_view():
+    """Fit the camera frame to the 3D viewport (what Home does in camera
+    view). The camera view's zoom and pan belong to the viewport, not the
+    scene, so without this a page opens at whatever framing the last one
+    was left at - off screen or tiny."""
+    for area in bpy.context.screen.areas:
+        if area.type == 'VIEW_3D':
+            for region in area.regions:
+                if region.type == 'WINDOW':
+                    with bpy.context.temp_override(area=area, region=region):
+                        bpy.ops.view3d.view_center_camera()
+                    return True
+    return False
+
+
 def set_top_down_view():
     """Set the 3D viewport to top-down orthographic view."""
     

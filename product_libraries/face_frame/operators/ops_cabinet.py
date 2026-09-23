@@ -1,3 +1,4 @@
+import re
 import bpy
 from mathutils import Vector, Matrix, Euler
 
@@ -604,7 +605,12 @@ class hb_face_frame_OT_equalize_front_heights(bpy.types.Operator):
     are equalized; with fewer than two selected, every opening in it that
     carries an overlay front is. The new heights are locked, and a nested
     split grows or shrinks by its children's change, so the column's total
-    and everything beside it stay put."""
+    and everything beside it stay put.
+
+    ratio divides the space unequally instead (top to bottom, e.g. 1:2 for
+    a one-third / two-thirds stack), and basis picks whether the ratio
+    applies to the fronts (overlays counted, so a door running down over a
+    light rail is sized by what shows) or to the bare openings."""
     bl_idname = "hb_face_frame.equalize_front_heights"
     bl_label = "Equalize Drawer Front Heights"
     bl_description = (
@@ -613,8 +619,39 @@ class hb_face_frame_OT_equalize_front_heights(bpy.types.Operator):
     )
     bl_options = {'REGISTER', 'UNDO'}
 
+    ratio: bpy.props.StringProperty(
+        name="Ratio",
+        description="Heights top to bottom, e.g. 1:2 for one-third over "
+                    "two-thirds. Leave blank for equal heights",
+        default="",
+    )  # type: ignore
+    basis: bpy.props.EnumProperty(
+        name="Basis",
+        items=[('FRONTS', "Front Heights",
+                "Divide by the visible door / drawer front heights "
+                "(overlays counted)"),
+               ('OPENINGS', "Opening Heights",
+                "Divide by the openings between the rails")],
+        default='FRONTS',
+    )  # type: ignore
+    show_dialog: bpy.props.BoolProperty(
+        default=False, options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+
     # Fronts that are not an opening plus overlays: nothing to equalize.
     _SKIP_FRONT_TYPES = frozenset({'NONE', 'APPLIANCE', 'INSET_PANEL'})
+
+    @staticmethod
+    def _parse_ratio(text):
+        """'1:2' / '1 2' / '1,2' -> [1.0, 2.0]; blank -> []; None if
+        malformed or any part is not a positive number."""
+        parts = [p for p in re.split(r"[:/,\s]+", text.strip()) if p]
+        try:
+            weights = [float(p) for p in parts]
+        except ValueError:
+            return None
+        if any(w <= 0.0 for w in weights):
+            return None
+        return weights
 
     @staticmethod
     def _is_h_split(obj):
@@ -630,8 +667,10 @@ class hb_face_frame_OT_equalize_front_heights(bpy.types.Operator):
                 and bool(cls._is_h_split(obj.parent)))
 
     def _stack(self, node):
-        """Front-carrying openings in a column, top to bottom, through
-        nested horizontal splits (a vertical split starts a new column)."""
+        """Openings in a column, top to bottom, through nested horizontal
+        splits (a vertical split starts a new column). By front height only
+        front-carrying openings count; by opening height every one does
+        (an open or glass top in a stacked cabinet still takes its share)."""
         kids = sorted(
             [c for c in node.children
              if c.get('IS_FACE_FRAME_OPENING_CAGE')
@@ -639,11 +678,24 @@ class hb_face_frame_OT_equalize_front_heights(bpy.types.Operator):
             key=lambda c: c.get('hb_split_child_index', 0))
         for c in kids:
             if c.get('IS_FACE_FRAME_OPENING_CAGE'):
-                if (c.face_frame_opening.front_type
+                if (self.basis == 'OPENINGS'
+                        or c.face_frame_opening.front_type
                         not in self._SKIP_FRONT_TYPES):
                     yield c
             elif self._is_h_split(c):
                 yield from self._stack(c)
+
+    def invoke(self, context, event):
+        if self.show_dialog:
+            return context.window_manager.invoke_props_dialog(
+                self, title="Divide by Ratio")
+        return self.execute(context)
+
+    def draw(self, context):
+        layout = self.layout
+        layout.use_property_split = True
+        layout.prop(self, "ratio")
+        layout.prop(self, "basis")
 
     def execute(self, context):
         from .. import solver_face_frame as solver
@@ -662,7 +714,21 @@ class hb_face_frame_OT_equalize_front_heights(bpy.types.Operator):
         targets = picked if len(picked) >= 2 else stack
         if len(targets) < 2:
             self.report({'WARNING'},
-                        "Need two or more openings with fronts in this stack")
+                        "Need two or more openings with fronts in this stack"
+                        if self.basis == 'FRONTS' else
+                        "Need two or more openings in this stack")
+            return {'CANCELLED'}
+        weights = self._parse_ratio(self.ratio)
+        if weights is None:
+            self.report({'WARNING'},
+                        "Ratio must be positive numbers like 1:2")
+            return {'CANCELLED'}
+        if not weights:
+            weights = [1.0] * len(targets)
+        if len(weights) != len(targets):
+            self.report({'WARNING'},
+                        f"Ratio has {len(weights)} parts but there are "
+                        f"{len(targets)} openings to divide")
             return {'CANCELLED'}
 
         root = types_face_frame.find_cabinet_root(active)
@@ -685,22 +751,28 @@ class hb_face_frame_OT_equalize_front_heights(bpy.types.Operator):
                 return {'CANCELLED'}
             op = cage.face_frame_opening
             height = rect['cage_dim_z'] - rect['reveal_top'] - rect['reveal_bottom']
-            overlays = (solver.front_overlay(rect, cab_props, op, 'top')
-                        + solver.front_overlay(rect, cab_props, op, 'bottom'))
+            overlays = 0.0
+            if self.basis == 'FRONTS':
+                overlays = (solver.front_overlay(rect, cab_props, op, 'top')
+                            + solver.front_overlay(rect, cab_props, op, 'bottom'))
             spans.append((cage, height, overlays))
 
-        front_h = (sum(h for _c, h, _o in spans)
-                   + sum(o for _c, _h, o in spans)) / len(spans)
-        if any(front_h - o <= 0.0 for _c, _h, o in spans):
-            self.report({'WARNING'}, "Not enough room to equalize the fronts")
+        # Each opening's share of the column (opening + its overlays when
+        # dividing by fronts), split by the ratio weights.
+        total = (sum(h for _c, h, _o in spans)
+                 + sum(o for _c, _h, o in spans))
+        weight_sum = sum(weights)
+        shares = [total * w / weight_sum for w in weights]
+        if any(s - o <= 0.0 for s, (_c, _h, o) in zip(shares, spans)):
+            self.report({'WARNING'}, "Not enough room to divide the openings")
             return {'CANCELLED'}
 
         with types_face_frame.suspend_recalc():
             # A nested split holds its own size in the column above it, so
             # it takes its children's change to keep the column total.
             node_delta = {}
-            for cage, height, overlays in spans:
-                new_size = front_h - overlays
+            for share, (cage, height, overlays) in zip(shares, spans):
+                new_size = share - overlays
                 node = cage.parent
                 while node is not top:
                     node_delta[node] = (node_delta.get(node, 0.0)
@@ -714,9 +786,15 @@ class hb_face_frame_OT_equalize_front_heights(bpy.types.Operator):
                 sp.unlock_size = True
                 sp.size = sp.size + delta
         types_face_frame.recalculate_face_frame_cabinet(root)
-        self.report({'INFO'},
-                    f"Equalized {len(spans)} front(s) at "
-                    f"{meter_to_inch(front_h):.4f}\"")
+        what = "front(s)" if self.basis == 'FRONTS' else "opening(s)"
+        if len(set(weights)) == 1:
+            self.report({'INFO'},
+                        f"Equalized {len(spans)} {what} at "
+                        f"{meter_to_inch(shares[0]):.4f}\"")
+        else:
+            sizes = ", ".join(f"{meter_to_inch(s):.4f}\"" for s in shares)
+            self.report({'INFO'},
+                        f"Divided {len(spans)} {what}: {sizes}")
         return {'FINISHED'}
 
 
@@ -818,6 +896,11 @@ def _selection_mode_matches(obj, mode):
         # surface them as zero-geometry phantom selections.
         if obj.hide_render:
             return False
+        return True
+    if (mode == 'Openings'
+            and types_face_frame_corner.corner_opening_root(obj) is obj):
+        # Corners have no opening cages; the cabinet is the target, and
+        # its right-click menu carries the corner Change Opening.
         return True
     if mode == 'Cabinets':
         if obj.get('IS_APPLIANCE'):
@@ -2243,10 +2326,27 @@ class hb_face_frame_OT_finish_opening_prompts(bpy.types.Operator):
     opening_name: bpy.props.StringProperty(
         default='', options={'HIDDEN', 'SKIP_SAVE'},
     )  # type: ignore
+    # Other selected openings (newline-joined names), captured at invoke
+    # before the first rebuild kills the selected parts. OK copies the
+    # active opening's finish settings onto each of them.
+    other_opening_names: bpy.props.StringProperty(
+        default='', options={'HIDDEN', 'SKIP_SAVE'},
+    )  # type: ignore
+
+    _FINISH_PROPS = (
+        'finish_opening_material', 'finish_opening_texture',
+        'finish_opening_flush', 'finish_opening_flush_depth',
+        'finish_opening',
+    )
 
     @classmethod
     def poll(cls, context):
-        return _find_owning_opening(context.active_object) is not None
+        # Switching the finish on rebuilds the cabinet and clears the
+        # active object when the dialog came from a part, and OK
+        # re-checks poll; execute resolves openings by name, so no
+        # active object is fine.
+        obj = context.active_object
+        return obj is None or _find_owning_opening(obj) is not None
 
     def _resolve_opening(self, context):
         if self.opening_name:
@@ -2261,9 +2361,29 @@ class hb_face_frame_OT_finish_opening_prompts(bpy.types.Operator):
             self.report({'WARNING'}, "No opening selected")
             return {'CANCELLED'}
         self.opening_name = opening_obj.name
+        others = []
+        for obj in context.selected_objects:
+            other = _find_owning_opening(obj)
+            if (other is not None and other is not opening_obj
+                    and other.name not in others):
+                others.append(other.name)
+        self.other_opening_names = "\n".join(others)
         return context.window_manager.invoke_props_dialog(self, width=300)
 
     def execute(self, context):
+        src_obj = bpy.data.objects.get(self.opening_name)
+        if src_obj is None or not self.other_opening_names:
+            return {'FINISHED'}
+        src = src_obj.face_frame_opening
+        for name in self.other_opening_names.split("\n"):
+            obj = bpy.data.objects.get(name)
+            if obj is None or not obj.get(types_face_frame.TAG_OPENING_CAGE):
+                continue
+            dst = obj.face_frame_opening
+            for prop in self._FINISH_PROPS:
+                value = getattr(src, prop)
+                if getattr(dst, prop) != value:
+                    setattr(dst, prop, value)
         return {'FINISHED'}
 
     def draw(self, context):
@@ -2703,17 +2823,55 @@ class hb_face_frame_OT_sink_duo_rollout_prompts(bpy.types.Operator):
         return {'FINISHED'}
 
 
+def _bay_siblings(bay_obj):
+    """The bay cages under bay_obj's cabinet in index order."""
+    cabinet = bay_obj.parent
+    if cabinet is None:
+        return [bay_obj]
+    return sorted(
+        [c for c in cabinet.children
+         if c.get(types_face_frame.TAG_BAY_CAGE)],
+        key=lambda c: c.get('hb_bay_index', 0),
+    )
+
+
+def _on_bay_prompts_nav(self, context):
+    """Previous / Next on the Bay Properties dialog. Retargets this same
+    dialog at the sibling bay (draw() follows bay_name), then resets
+    nav so the next click on the same button registers as a change."""
+    step = {'PREV': -1, 'NEXT': 1}.get(self.nav, 0)
+    if not step:
+        return
+    self.nav = 'NONE'
+    bay_obj = bpy.data.objects.get(self.bay_name)
+    if bay_obj is None or not bay_obj.get(types_face_frame.TAG_BAY_CAGE):
+        return
+    siblings = _bay_siblings(bay_obj)
+    try:
+        pos = siblings.index(bay_obj)
+    except ValueError:
+        return
+    new_pos = pos + step
+    if not 0 <= new_pos < len(siblings):
+        return
+    target = siblings[new_pos]
+    self.bay_name = target.name
+    for o in context.selected_objects:
+        o.select_set(False)
+    target.select_set(True)
+    context.view_layer.objects.active = target
+
+
 class hb_face_frame_OT_bay_prompts(bpy.types.Operator):
     """Open a focused properties dialog for a single bay.
 
     Targets the bay named by bay_name; when that is empty (the normal
     right-click / selection entry point) it resolves from the active
-    object. The dialog's Previous / Next buttons re-invoke this same
-    operator with bay_name set to a sibling, so Blender closes the
-    current popup and opens a fresh one on that bay - no manual
-    re-invoke needed. invoke() also makes the resolved bay the active
-    selection so the viewport tracks the dialog as the user pages
-    through bays.
+    object. The dialog's Previous / Next buttons set the nav property,
+    whose update retargets this same dialog at the sibling bay, so
+    paging never stacks a second popup. invoke() and the nav update
+    also make the target bay the active selection so the viewport
+    tracks the dialog as the user pages through bays.
     """
     bl_idname = "hb_face_frame.bay_prompts"
     bl_label = "Bay Properties"
@@ -2729,6 +2887,18 @@ class hb_face_frame_OT_bay_prompts(bpy.types.Operator):
                      "resolves from the active object"),
         default="",
         options={'SKIP_SAVE'},
+    )  # type: ignore
+
+    nav: bpy.props.EnumProperty(
+        name="Navigate",
+        items=[
+            ('NONE', "None", ""),
+            ('PREV', "Previous", "Show the previous bay"),
+            ('NEXT', "Next", "Show the next bay"),
+        ],
+        default='NONE',
+        options={'SKIP_SAVE'},
+        update=_on_bay_prompts_nav,
     )  # type: ignore
 
     @classmethod
@@ -2780,35 +2950,24 @@ class hb_face_frame_OT_bay_prompts(bpy.types.Operator):
             return
 
         # Sibling bays in index order, for the Previous / Next nav row.
-        cabinet = bay_obj.parent
-        siblings = sorted(
-            [c for c in cabinet.children
-             if c.get(types_face_frame.TAG_BAY_CAGE)],
-            key=lambda c: c.get('hb_bay_index', 0),
-        ) if cabinet else [bay_obj]
+        siblings = _bay_siblings(bay_obj)
         try:
             pos = siblings.index(bay_obj)
         except ValueError:
             pos = 0
 
-        # Each nav button is another bay_prompts invocation with
-        # bay_name pre-set: clicking it closes this popup and Blender
-        # opens a fresh dialog on the sibling. Clamped at the ends.
+        # Nav buttons flip this dialog's nav property; its update
+        # retargets the dialog in place. Clamped at the ends.
         nav = self.layout.row(align=True)
         prev_btn = nav.row(align=True)
         prev_btn.enabled = pos > 0
-        op = prev_btn.operator(
-            'hb_face_frame.bay_prompts', text="Previous", icon='TRIA_LEFT',
-        )
-        op.bay_name = siblings[pos - 1].name if pos > 0 else ""
+        prev_btn.prop_enum(self, 'nav', 'PREV', text="Previous",
+                           icon='TRIA_LEFT')
         nav.label(text=f"Bay {pos + 1} of {len(siblings)}")
         next_btn = nav.row(align=True)
         next_btn.enabled = pos < len(siblings) - 1
-        op = next_btn.operator(
-            'hb_face_frame.bay_prompts', text="Next", icon='TRIA_RIGHT',
-        )
-        op.bay_name = (siblings[pos + 1].name
-                       if pos < len(siblings) - 1 else "")
+        next_btn.prop_enum(self, 'nav', 'NEXT', text="Next",
+                           icon='TRIA_RIGHT')
         self.layout.separator()
 
         ui_face_frame.draw_bay_properties(self.layout, bay_obj)
@@ -5659,12 +5818,21 @@ class hb_face_frame_OT_create_cabinet_group(bpy.types.Operator):
         return {'FINISHED'}
 
     def _calculate_group_bounds(self, roots):
-        """World-space AABB across all roots, returned as the back-left-bottom
+        """Bounding box across all roots, returned as the back-left-bottom
         corner for a Mirror-Y cage (origin at back, +Y is back, geometry
         extends -Y into the room).
+
+        The box is world-aligned unless every root shares one Z rotation
+        (modulo 90 deg) that is off the world axes -- a run turned at an
+        angle in the room. Then the box is fitted in that rotated frame
+        and the rotation is returned, so the group cage sits square to
+        its cabinets instead of wrapping them in an oversized world box.
         """
         if not roots:
             return (Vector((0, 0, 0)), (0, 0, 0), 0, 0, 0)
+
+        theta = _shared_run_z_angle(roots)
+        to_frame = Matrix.Rotation(-theta, 4, 'Z')
 
         min_x = float('inf'); max_x = float('-inf')
         min_y = float('inf'); max_y = float('-inf')
@@ -5700,7 +5868,7 @@ class hb_face_frame_OT_create_cabinet_group(bpy.types.Operator):
                 Vector((cw, -cd, ch)),
             ]
 
-            mw = _resolved_world_matrix(root)
+            mw = to_frame @ _resolved_world_matrix(root)
             for lc in local_corners:
                 wc = mw @ lc
                 min_x = min(min_x, wc.x); max_x = max(max_x, wc.x)
@@ -5712,11 +5880,42 @@ class hb_face_frame_OT_create_cabinet_group(bpy.types.Operator):
         overall_h = max_z - min_z
 
         # The group cage uses Mirror Y, so its origin sits at +Y (back of
-        # the world AABB) and its geometry extends -Y from there.
-        location = Vector((min_x, max_y, min_z))
-        rotation = (0, 0, 0)
+        # the box) and its geometry extends -Y from there.
+        location = to_frame.inverted() @ Vector((min_x, max_y, min_z))
+        rotation = (0, 0, theta)
 
         return (location, rotation, overall_w, overall_d, overall_h)
+
+
+def _shared_run_z_angle(roots, tol_deg=0.5):
+    """Z rotation (radians, in [-45, 45) deg) shared by every root modulo
+    90 deg, or 0.0 when the roots don't agree or already sit square to
+    the world axes. Back-to-back and end-on members still agree: only
+    the angle modulo 90 deg is compared.
+    """
+    import math
+    # Average on the 4x-angle circle so 90-deg-apart members coincide
+    # and the +/-45 deg wrap doesn't split the mean.
+    sx = sy = 0.0
+    quads = []
+    for root in roots:
+        m = _resolved_world_matrix(root)
+        yaw = math.atan2(m[1][0], m[0][0])
+        quads.append(4.0 * yaw)
+        sx += math.cos(4.0 * yaw)
+        sy += math.sin(4.0 * yaw)
+    if not quads or math.hypot(sx, sy) < 1e-9:
+        return 0.0
+    mean = math.atan2(sy, sx)
+    tol = math.radians(4.0 * tol_deg)
+    for q in quads:
+        diff = (q - mean + math.pi) % (2.0 * math.pi) - math.pi
+        if abs(diff) > tol:
+            return 0.0
+    theta = mean / 4.0
+    if abs(theta) < math.radians(tol_deg):
+        return 0.0
+    return theta
 
 
 def _resolved_world_matrix(obj):
@@ -6091,25 +6290,27 @@ class hb_face_frame_OT_column_beam_properties(bpy.types.Operator):
 
 
 class hb_face_frame_OT_duplicate_floating_shelf(bpy.types.Operator):
-    """Duplicate the selected floating shelf vertically by a quantity +
-    spacing. Each copy is an independent, separately-editable shelf that
-    inherits the source's dimensions, type, finish, and groove."""
+    """Stack copies of the selected floating shelf above it by a total
+    count + spacing. The count includes the selected shelf, so 3 adds two
+    copies. The copies join the selected shelf's linked group (a new one
+    if it has none), so an edit to any of them carries to all; Unlink
+    From Group frees one."""
     bl_idname = "hb_face_frame.duplicate_floating_shelf"
     bl_label = "Duplicate Floating Shelf"
-    bl_description = "Add stacked copies of this floating shelf at a set spacing"
+    bl_description = ("Stack copies of this floating shelf above it at a "
+                      "set spacing, up to a total number of shelves")
     bl_options = {'UNDO'}
 
     quantity: bpy.props.IntProperty(
-        name="Quantity to Add", default=1, min=1, max=20)  # type: ignore
+        name="Total Shelves",
+        description="How many shelves in the stack, counting the "
+                    "selected one",
+        default=2, min=2, max=21)  # type: ignore
     spacing: bpy.props.FloatProperty(
         name="Spacing Between Shelves", default=inch(12.0),
         unit='LENGTH', precision=4)  # type: ignore
 
-    _SHELF_PROPS = (
-        'finish_left', 'finish_right', 'material_thickness', 'shelf_type',
-        'include_groove_top', 'include_groove_bottom',
-        'groove_distance_from_rear', 'groove_width', 'groove_depth',
-    )
+    _SHELF_PROPS = types_face_frame.FLOATING_SHELF_SYNC_PROPS
 
     @classmethod
     def poll(cls, context):
@@ -6142,8 +6343,15 @@ class hb_face_frame_OT_duplicate_floating_shelf(bpy.types.Operator):
             sp = props_hb_face_frame.get_style_props(context)
             style = next((s for s in sp.cabinet_styles if s.name == style_name), None)
 
+        gid = src.get(types_face_frame.SHELF_GROUP_TAG)
+        if not gid:
+            import uuid
+            gid = uuid.uuid4().hex[:12]
+            src[types_face_frame.SHELF_GROUP_TAG] = gid
+
         new_objs = []
-        for i in range(1, self.quantity + 1):
+        # quantity counts the selected shelf, which stays at i = 0.
+        for i in range(1, self.quantity):
             shelf = types_face_frame.FloatingShelfFaceFrameCabinet()
             shelf.create("Floating Shelf")
             n = shelf.obj
@@ -6161,8 +6369,11 @@ class hb_face_frame_OT_duplicate_floating_shelf(bpy.types.Operator):
                 n.matrix_parent_inverse = src.matrix_parent_inverse.copy()
             n.location = src.location.copy()
             n.location.z = src.location.z + step * i
+            # Tagged after the style so the copy's own rebuilds find its
+            # settings already equal to the group's.
             if style is not None:
                 style.assign_style_to_cabinet(n)
+            n[types_face_frame.SHELF_GROUP_TAG] = gid
             new_objs.append(n)
 
         for o in context.selected_objects:
@@ -6170,7 +6381,80 @@ class hb_face_frame_OT_duplicate_floating_shelf(bpy.types.Operator):
         if new_objs:
             new_objs[-1].select_set(True)
             context.view_layer.objects.active = new_objs[-1]
-        self.report({'INFO'}, f"Added {self.quantity} floating shelf(s)")
+        self.report({'INFO'},
+                    f"Added {len(new_objs)} floating shelf(s), "
+                    f"{self.quantity} in the stack")
+        return {'FINISHED'}
+
+
+class hb_face_frame_OT_unlink_floating_shelf(bpy.types.Operator):
+    """Take the selected floating shelf out of its linked group so it can
+    be edited on its own. A group left with one shelf dissolves."""
+    bl_idname = "hb_face_frame.unlink_floating_shelf"
+    bl_label = "Unlink From Group"
+    bl_description = ("Stop this shelf following the other shelves in its "
+                      "group, so it can be edited on its own")
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        root = types_face_frame.find_cabinet_root(context.active_object)
+        return (root is not None and bool(root.get('IS_FLOATING_SHELF'))
+                and bool(root.get(types_face_frame.SHELF_GROUP_TAG)))
+
+    def execute(self, context):
+        tag = types_face_frame.SHELF_GROUP_TAG
+        root = types_face_frame.find_cabinet_root(context.active_object)
+        rest = types_face_frame.floating_shelf_group_members(root)
+        del root[tag]
+        if len(rest) == 1:
+            del rest[0][tag]
+        self.report({'INFO'}, "Shelf unlinked from its group")
+        return {'FINISHED'}
+
+
+class hb_face_frame_OT_link_floating_shelves(bpy.types.Operator):
+    """Link the selected floating shelves into one group. They take the
+    active shelf's size, options and finish; any group a selected shelf
+    was in is merged into the new one."""
+    bl_idname = "hb_face_frame.link_floating_shelves"
+    bl_label = "Link Selected Shelves"
+    bl_description = ("Link the selected shelves so an edit to one carries "
+                      "to all; they take the active shelf's settings")
+    bl_options = {'UNDO'}
+
+    @staticmethod
+    def _shelves(context):
+        roots = []
+        for o in context.selected_objects:
+            r = types_face_frame.find_cabinet_root(o)
+            if r is not None and r.get('IS_FLOATING_SHELF') and r not in roots:
+                roots.append(r)
+        return roots
+
+    @classmethod
+    def poll(cls, context):
+        return len(cls._shelves(context)) >= 2
+
+    def execute(self, context):
+        tag = types_face_frame.SHELF_GROUP_TAG
+        shelves = self._shelves(context)
+        active = types_face_frame.find_cabinet_root(context.active_object)
+        if active not in shelves:
+            active = shelves[0]
+        gid = active.get(tag)
+        if not gid:
+            import uuid
+            gid = uuid.uuid4().hex[:12]
+        # Whole groups come along, not just the selected shelves in them.
+        joined = set(shelves)
+        for s in shelves:
+            joined.update(types_face_frame.floating_shelf_group_members(s))
+        for s in joined:
+            s[tag] = gid
+        # Push the active shelf's settings out to the group.
+        types_face_frame.sync_floating_shelf_group(active)
+        self.report({'INFO'}, f"Linked {len(joined)} shelves")
         return {'FINISHED'}
 
 
@@ -6469,6 +6753,7 @@ class hb_face_frame_OT_add_appliance_to_bay(bpy.types.Operator):
         name="Appliance",
         items=[
             ('KITCHEN_SINK', "Kitchen Sink", "Kitchen sink bay"),
+            ('FARM_SINK',    "Farm Sink",    "Farm (apron-front) sink bay"),
             ('VANITY_SINK',  "Vanity Sink",  "Vanity sink bay"),
             ('COOKTOP',      "Cooktop",      "Cooktop bay"),
         ],
@@ -6526,6 +6811,12 @@ class hb_face_frame_OT_add_appliance_to_bay(bpy.types.Operator):
         default=0.0, min=0.0,
         description="Width of the right drop filler stile (used directly "
                     "when Set Appliance Width is off)",
+    )  # type: ignore
+    # Farm sink only; written through to the bay's farm_sink_custom_fit.
+    custom_fit: bpy.props.BoolProperty(
+        name="Custom Fit by Shop", default=False,
+        description="The sink is sent to the shop and hand-fitted into the "
+                    "opening. Off prepares the opening only",
     )  # type: ignore
     config: bpy.props.EnumProperty(
         name="Configuration",
@@ -6645,6 +6936,14 @@ class hb_face_frame_OT_add_appliance_to_bay(bpy.types.Operator):
         self.appliance_width = bp.front_drop_appliance_width
         self.left_filler_amount = bp.front_drop_left_filler
         self.right_filler_amount = bp.front_drop_right_filler
+        # A farm sink sits in a dropped front, so a fresh one starts
+        # dropped; re-editing keeps the bay's own drop.
+        if (self.appliance_kind == 'FARM_SINK' and not already_appliance
+                and self.drop_bay_amount <= 0.0):
+            self.drop_bay_amount = inch(9.0)
+        self.custom_fit = (bp.farm_sink_custom_fit
+                           if bay.get('APPLIANCE_BAY_KIND') == 'FARM_SINK'
+                           else False)
         # Snapshot everything the live preview may touch so Cancel can
         # put it back. (The front-layout preset is NOT previewed -- it
         # only applies on OK -- so the snapshot stays scalar.)
@@ -6659,6 +6958,7 @@ class hb_face_frame_OT_add_appliance_to_bay(bpy.types.Operator):
             'appliance_width': bp.front_drop_appliance_width,
             'left_filler': bp.front_drop_left_filler,
             'right_filler': bp.front_drop_right_filler,
+            'custom_fit': bp.farm_sink_custom_fit,
         }
         # A true dialog (OK / Cancel), NOT invoke_props_popup: the popup
         # re-runs execute through the operator-repeat machinery, whose
@@ -6704,6 +7004,7 @@ class hb_face_frame_OT_add_appliance_to_bay(bpy.types.Operator):
             bp.front_drop_appliance_width = snap['appliance_width']
             bp.front_drop_left_filler = snap['left_filler']
             bp.front_drop_right_filler = snap['right_filler']
+            bp.farm_sink_custom_fit = snap['custom_fit']
             if root is not None:
                 types_face_frame.recalculate_face_frame_cabinet(root)
 
@@ -6746,6 +7047,9 @@ class hb_face_frame_OT_add_appliance_to_bay(bpy.types.Operator):
             bp.front_drop_appliance_width = self.appliance_width
             bp.front_drop_left_filler = self.left_filler_amount
             bp.front_drop_right_filler = self.right_filler_amount
+            # Only a farm sink bay can carry the custom fit.
+            bp.farm_sink_custom_fit = (self.appliance_kind == 'FARM_SINK'
+                                       and self.custom_fit)
             types_face_frame.recalculate_face_frame_cabinet(root)
         return bay, root
 
@@ -6770,6 +7074,8 @@ class hb_face_frame_OT_add_appliance_to_bay(bpy.types.Operator):
                     row.prop(self, 'left_filler_amount', text="")
                     row = fbox.row(); row.label(text="Right Filler:")
                     row.prop(self, 'right_filler_amount', text="")
+        if self.appliance_kind == 'FARM_SINK':
+            box.prop(self, 'custom_fit')
         box.label(text="Configuration:")
         box.prop(self, 'config', expand=True)
         box.label(text="Interior:")
@@ -6900,6 +7206,7 @@ class hb_face_frame_OT_remove_appliance_from_bay(bpy.types.Operator):
 
         with types_face_frame.suspend_recalc():
             bay['APPLIANCE_BAY'] = 'NONE'
+            bay.face_frame_bay.farm_sink_custom_fit = False
             for child in bay.children_recursive:
                 if not child.get(types_face_frame.TAG_OPENING_CAGE):
                     continue
@@ -7142,6 +7449,8 @@ classes = (
     hb_face_frame_OT_set_drawer_slides,
     hb_face_frame_OT_drawer_interior,
     hb_face_frame_OT_duplicate_floating_shelf,
+    hb_face_frame_OT_unlink_floating_shelf,
+    hb_face_frame_OT_link_floating_shelves,
     hb_face_frame_OT_adjust_floating_shelves,
     hb_face_frame_OT_bay_prompts,
     hb_face_frame_OT_opening_prompts,

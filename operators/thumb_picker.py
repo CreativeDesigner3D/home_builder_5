@@ -32,6 +32,8 @@ from ..hb_gpu_draw import (
 )
 from ..hb_gpu_ui import (
     Theme,
+    begin_clip,
+    end_clip,
     scale,
     fit_text,
     paint_frame,
@@ -208,7 +210,8 @@ def _layout(context, area):
     x = _strip_right_edge(context, area) + GAP_FROM_STRIP * s
     x = min(x, x_max - width - 4 * s)
     max_h = top - y_min - 12 * s
-    height = min(pad * 2 + header_h + content_h, max_h)
+    # The gap is the one under the header, which the grid starts below.
+    height = min(pad * 2 + header_h + gap + content_h, max_h)
     panel = (x, top - height, width, height)
 
     header = (x + pad, top - pad - header_h, width - pad * 2, header_h)
@@ -261,10 +264,7 @@ def _draw():
     draw_rect(shader, hx, hy, hw, 1 * s, Theme.SEPARATOR)
 
     # Scissor the grid so a scrolled row cuts off under the header.
-    cx, cy, cw, ch = clip
-    prev = gpu.state.scissor_get()
-    gpu.state.scissor_test_set(True)
-    gpu.state.scissor_set(int(cx), int(cy), int(cw) + 1, int(ch) + 1)
+    prev = begin_clip(clip)
     try:
         items = _state['items']
         for i, tile_rect, img_rect, label_rect in tiles:
@@ -295,8 +295,7 @@ def _draw():
                                fit_text(font_id, (FONT - 1) * s, label,
                                         label_rect[2] - 4 * s))
     finally:
-        gpu.state.scissor_set(*prev)
-        gpu.state.scissor_test_set(False)
+        end_clip(prev)
     gpu.state.blend_set('NONE')
 
 

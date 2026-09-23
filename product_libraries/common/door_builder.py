@@ -375,17 +375,25 @@ def build_mitered_frame(info, width, height, thickness, member_section):
 
     The whole member cross-section is one molding profile (door_profiles.
     member_section: u across the member from the OUTER edge, v from the
-    front face, both ends closed to the door back), swept around each
-    opening and mitred at its corners. An opening edge on the door
-    outline sweeps the full section, covering the outer edge, the
-    shaped face and the opening wall. An edge on a mid rail / mid stile
-    sweeps only the section's inner part, half the mid member wide, so
-    the openings either side meet on its centerline and the mid member
-    reads as the profile mirrored. Where a full edge runs past a mid
-    member its outer part stops square on that centerline, and the
-    neighbouring opening's sweep carries on from there. Only the flat
-    BACK face is filled separately: four quads from the door rect to
-    the openings' hull plus strips across any mid members.
+    front face, both ends closed to the door back). The section splits
+    at its crest (the inner end of the front-most face) into an OUTER
+    part and the INSIDE PROFILE:
+
+    - the outer part sweeps once around the door outline, mitred only
+      at the four outside corners, so the stiles and top / bottom rails
+      run straight past any mid member;
+    - the inside profile sweeps around each opening, mitred at the
+      opening's own corners;
+    - mid rails and mid stiles are flat members at the crest depth,
+      butted between the stiles and haunched to the depth of the inside
+      profile, so only that profile turns the corner at a junction.
+
+    A mid member narrower than two inside profiles trims them to meet on
+    its centerline. A section whose crest is its outer edge (the whole
+    face is the inside profile) builds every mid member as the profile
+    mirrored. The flat BACK face is filled separately: four quads from
+    the door rect to the openings' hull plus strips across any mid
+    members.
     """
     W, H, T = width, height, thickness
     rows = _panel_grid(info, W, H)
@@ -405,6 +413,13 @@ def build_mitered_frame(info, width, height, thickness, member_section):
     M = max(u for u, v in member_section)
     eps = 1e-6
 
+    # Inside profile width P: from the opening edge out to the crest,
+    # the inner end of the front-most face. v_crest is the depth the
+    # flat mid members sit at.
+    v_crest = min(v for u, v in member_section)
+    u_crest = max(u for u, v in member_section if v <= v_crest + 1e-5)
+    P = max(M - u_crest, 0.0)
+
     def inner_part(band):
         # (s, v) points, outer-edge end first, with s measured OUT from
         # the opening edge (s = M - u), trimmed to s <= band.
@@ -418,11 +433,31 @@ def build_mitered_frame(info, width, height, thickness, member_section):
             if u >= cut - eps:
                 out.append((M - u, v))
                 continue
-            u1, v1 = pts[i + 1]
-            f = (cut - u1) / (u - u1)
-            out.append((band, v1 + (v - v1) * f))
+            if abs(out[-1][0] - band) > eps:
+                u1, v1 = pts[i + 1]
+                f = (cut - u1) / (u - u1)
+                out.append((band, v1 + (v - v1) * f))
             break
         out.reverse()
+        return out if len(out) > 1 else []
+
+    def outer_part(band):
+        # The rest of the section beyond inner_part(band): (s, v)
+        # points from the outer edge (s = M) in to s = band.
+        if band >= M - eps:
+            return []
+        cut = M - band
+        pts = list(member_section)
+        out = []
+        for i, (u, v) in enumerate(pts):
+            if u <= cut + eps:
+                out.append((M - u, v))
+                continue
+            if out and abs(out[-1][0] - band) > eps:
+                u0, v0 = pts[i - 1]
+                f = (cut - u0) / (u - u0)
+                out.append((band, v0 + (v - v0) * f))
+            break
         return out if len(out) > 1 else []
 
     def split_at(sec, cut):
@@ -439,16 +474,59 @@ def build_mitered_frame(info, width, height, thickness, member_section):
             out.append((s1, v1))
         return out
 
+    def sweep(x0, z0, x1, z1, e, sec, prev_b, next_b):
+        # One side of a rect: the section swept along edge e, each end
+        # mitred up to the neighbouring edge's band and square beyond.
+        a_ids, b_ids = [], []
+        for (sv, v) in sec:
+            sp = min(sv, prev_b)
+            sn = min(sv, next_b)
+            if e == 0:      # bottom, left -> right
+                a_ids.append(emit(x0 - sp, z0 - sv, v))
+                b_ids.append(emit(x1 + sn, z0 - sv, v))
+            elif e == 1:    # right, bottom -> top
+                a_ids.append(emit(x1 + sv, z0 - sp, v))
+                b_ids.append(emit(x1 + sv, z1 + sn, v))
+            elif e == 2:    # top, right -> left
+                a_ids.append(emit(x1 + sp, z1 + sv, v))
+                b_ids.append(emit(x0 - sn, z1 + sv, v))
+            else:           # left, top -> bottom
+                a_ids.append(emit(x0 - sv, z1 + sp, v))
+                b_ids.append(emit(x0 - sv, z0 - sn, v))
+        for k in range(len(sec) - 1):
+            faces.append((a_ids[k], a_ids[k + 1],
+                          b_ids[k + 1], b_ids[k]))
+            slots.append(side_slots[e])
+
+    fx0 = min(c[0] for r in rows for c in r)
+    fx1 = max(c[2] for r in rows for c in r)
+    fz0 = rows[0][0][1]
+    fz1 = rows[-1][0][3]
+
+    # Outer part: once around the openings' hull, mitred at the four
+    # outside corners only.
+    outer = outer_part(P)
+    if outer:
+        for e in range(4):
+            sweep(fx0, fz0, fx1, fz1, e, outer, M, M)
+
+    # Inside profile around each opening. Each opening covers its rect
+    # grown by its per-edge bands; whatever the hull grown by P leaves
+    # uncovered is flat mid member at the crest.
+    covered = []
     for r, row in enumerate(rows):
         for c, (x0, z0, x1, z1) in enumerate(row):
-            # Band each opening edge may sweep: the full member on the
-            # door outline, half the mid member toward a neighbour.
+            # Band each opening edge may sweep: the full inside profile
+            # on the door outline, at most half the mid member toward a
+            # neighbour.
             bands = (
-                M if r == 0 else min(M, (z0 - rows[r - 1][0][3]) / 2.0),
-                M if c == len(row) - 1 else min(M, (row[c + 1][0] - x1) / 2.0),
-                M if r == len(rows) - 1 else min(M, (rows[r + 1][0][1] - z1) / 2.0),
-                M if c == 0 else min(M, (x0 - row[c - 1][2]) / 2.0),
+                P if r == 0 else min(P, (z0 - rows[r - 1][0][3]) / 2.0),
+                P if c == len(row) - 1 else min(P, (row[c + 1][0] - x1) / 2.0),
+                P if r == len(rows) - 1 else min(P, (rows[r + 1][0][1] - z1) / 2.0),
+                P if c == 0 else min(P, (x0 - row[c - 1][2]) / 2.0),
             )
+            covered.append((x0 - bands[3], z0 - bands[0],
+                            x1 + bands[1], z1 + bands[2]))
             for e in range(4):
                 sec = inner_part(bands[e])
                 if not sec:
@@ -456,43 +534,41 @@ def build_mitered_frame(info, width, height, thickness, member_section):
                 prev_b = bands[(e + 3) % 4]
                 next_b = bands[(e + 1) % 4]
                 sec = split_at(split_at(sec, prev_b), next_b)
-                a_ids, b_ids = [], []
-                for (sv, v) in sec:
-                    sp = min(sv, prev_b)
-                    sn = min(sv, next_b)
-                    if e == 0:      # bottom, left -> right
-                        a_ids.append(emit(x0 - sp, z0 - sv, v))
-                        b_ids.append(emit(x1 + sn, z0 - sv, v))
-                    elif e == 1:    # right, bottom -> top
-                        a_ids.append(emit(x1 + sv, z0 - sp, v))
-                        b_ids.append(emit(x1 + sv, z1 + sn, v))
-                    elif e == 2:    # top, right -> left
-                        a_ids.append(emit(x1 + sp, z1 + sv, v))
-                        b_ids.append(emit(x0 - sn, z1 + sv, v))
-                    else:           # left, top -> bottom
-                        a_ids.append(emit(x0 - sv, z1 + sp, v))
-                        b_ids.append(emit(x0 - sv, z0 - sn, v))
-                for k in range(len(sec) - 1):
-                    faces.append((a_ids[k], a_ids[k + 1],
-                                  b_ids[k + 1], b_ids[k]))
-                    slots.append(side_slots[e])
+                sweep(x0, z0, x1, z1, e, sec, prev_b, next_b)
 
-    # Flat back face: door rect down to the openings' hull, strips
-    # across the mid members.
-    def back_quad(x0, z0, x1, z1, slot):
+    def quad(x0, z0, x1, z1, v, slot):
         if x1 - x0 <= 1e-9 or z1 - z0 <= 1e-9:
             return
-        a = emit(x0, z0, T)
-        b = emit(x1, z0, T)
-        c = emit(x1, z1, T)
-        d = emit(x0, z1, T)
+        a = emit(x0, z0, v)
+        b = emit(x1, z0, v)
+        c = emit(x1, z1, v)
+        d = emit(x0, z1, v)
         faces.append((d, c, b, a))
         slots.append(slot)
 
-    fx0 = min(c[0] for r in rows for c in r)
-    fx1 = max(c[2] for r in rows for c in r)
-    fz0 = rows[0][0][1]
-    fz1 = rows[-1][0][3]
+    # Flat mid members: split the hull grown by P on every covered-rect
+    # edge and fill the cells no opening covers. Cells in a mid rail
+    # band take the rail material, the rest (mid stiles) the stile.
+    gx0, gz0, gx1, gz1 = fx0 - P, fz0 - P, fx1 + P, fz1 + P
+    xs = sorted({gx0, gx1} | {x for rc in covered for x in (rc[0], rc[2])
+                              if gx0 < x < gx1})
+    zs = sorted({gz0, gz1} | {z for rc in covered for z in (rc[1], rc[3])
+                              if gz0 < z < gz1})
+    rail_bands = [(rows[r][0][3], rows[r + 1][0][1])
+                  for r in range(len(rows) - 1)]
+    for i in range(len(xs) - 1):
+        for j in range(len(zs) - 1):
+            cx = (xs[i] + xs[i + 1]) / 2.0
+            cz = (zs[j] + zs[j + 1]) / 2.0
+            if any(rc[0] < cx < rc[2] and rc[1] < cz < rc[3]
+                   for rc in covered):
+                continue
+            on_rail = any(lo < cz < hi for lo, hi in rail_bands)
+            quad(xs[i], zs[j], xs[i + 1], zs[j + 1], v_crest,
+                 1 if on_rail else 0)
+
+    # Flat back face: door rect down to the openings' hull, strips
+    # across the mid members.
     Bc = ((fx0, fz0), (fx1, fz0), (fx1, fz1), (fx0, fz1))
     for c in range(4):
         a0 = emit(*corners[c], T)
@@ -502,10 +578,10 @@ def build_mitered_frame(info, width, height, thickness, member_section):
         faces.append((b0, b1, a1, a0))
         slots.append(side_slots[c])
     for r in range(len(rows) - 1):
-        back_quad(fx0, rows[r][0][3], fx1, rows[r + 1][0][1], 1)
+        quad(fx0, rows[r][0][3], fx1, rows[r + 1][0][1], T, 1)
     for row in rows:
         for c in range(len(row) - 1):
-            back_quad(row[c][2], row[c][1], row[c + 1][0], row[c][3], 0)
+            quad(row[c][2], row[c][1], row[c + 1][0], row[c][3], T, 0)
     return verts, faces, slots
 
 

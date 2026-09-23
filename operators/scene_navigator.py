@@ -49,6 +49,7 @@ from ..hb_gpu_ui import (
     begin_clip as _begin_clip,
     end_clip as _end_clip,
     InlineEdit as _InlineEdit,
+    paint_inline_edit as _paint_inline_edit,
 )
 
 
@@ -999,12 +1000,12 @@ def _draw_row(shader, font_id, entry, mx, my):
                    field_w + 6 * s, rh - 6 * s, (0.0, 0.0, 0.0, 0.55))
         _draw_rect_outline(shader, text_x - 3 * s, ry + 3 * s,
                            field_w + 6 * s, rh - 6 * s, FIELD_ACTIVE_BG)
-        shown = _fit_text(font_id, row_font, _edit.text, field_w - 6 * s)
-        _draw_text(font_id, text_x, baseline, row_font,
-                   TEXT_PRIMARY, shown)
-        caret_x = text_x + _text_w(font_id, row_font, shown) + 1 * s
-        _draw_rect(shader, caret_x, ry + 5 * s, 1.5 * s, rh - 10 * s,
-                   TEXT_PRIMARY)
+        # Selection, text and caret, scrolling a name too long for the
+        # field -- the same painter the options tab types into.
+        _paint_inline_edit(shader, font_id,
+                           (text_x - 3 * s, ry + 3 * s,
+                            field_w + 6 * s, rh - 6 * s),
+                           row_font, _edit, pad=3 * s)
         return
 
     # Text must stop short of the action buttons (room rows) or the row's

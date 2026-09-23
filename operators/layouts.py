@@ -614,6 +614,7 @@ class home_builder_layouts_OT_go_to_layout_view(bpy.types.Operator):
                 hb_utils.set_layout_shading()
                 hb_utils.set_camera_view()
                 lock_layout_camera(target_scene)
+                hb_utils.frame_camera_view()
             elif target_scene.get('IS_DETAIL_VIEW') or target_scene.get('IS_CROWN_DETAIL'):
                 # Detail views use top-down orthographic and frame all
                 hb_utils.set_layout_shading()

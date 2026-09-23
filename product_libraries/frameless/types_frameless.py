@@ -285,6 +285,10 @@ class BaseCabinet(Cabinet):
         split.opening_inserts = [front, doors]
         self.add_cage_to_bay(split)
         self.obj['IS_SINK_CABINET'] = True
+        # A sink base is built for the bowl whatever the room default:
+        # apron top, and the solver hangs the sink model in the bay.
+        self.obj['Base Top Construction'] = solver_frameless.TOP_SINK
+        solver_frameless.recalculate_cabinet(self.obj)
 
     def add_open_shelves(self):
         """No front at all: the bay stays open with adjustable shelves."""
@@ -528,60 +532,54 @@ class UpperCabinet(Cabinet):
 # Blind corner cabinets
 # ---------------------------------------------------------------------------
 # A blind corner runs into the corner and lets the neighbouring run butt
-# against it. Its front is a blind panel over the part that ends up
-# behind the neighbour and doors over the rest. The bay is split across
-# with no board between the two openings (the blind side stays open
-# inside) and the split's material thickness set to zero so the
-# openings meet.
+# against it. The part that ends up behind the neighbour is closed by a
+# blind panel captured in the carcass -- between the top and bottom,
+# against the corner-side end, flush with the front edges -- and the
+# doors overlay the rest. The panel reaches far enough out of the corner
+# for a cabinet on the adjacent wall to land on it: that cabinet's
+# depth, its fronts, and the corner filler that lets the doors clear.
 
-BLIND_DOOR_OPENING = inch(21.0)
-BLIND_MIN_WIDTH = inch(6.0)
+BLIND_NEIGHBOR_FRONT = inch(0.875)   # door gap plus front thickness
+BLIND_FILLER_WIDTH = inch(1.5)       # types_products.CORNER_FILLER_WIDTH
 
 
 class BlindCornerMixin:
     """Shared front for the three blind corner cabinets."""
 
     blind_side = 'Left'     # which end goes into the corner
-    blind_width = None      # None: the width less the door opening
+    blind_width = None      # None: sized for the adjacent wall's cabinet
 
     def blind_panel_width(self):
+        """Corner-side end of the cabinet to the edge of the doors."""
         if self.blind_width:
             return self.blind_width
-        return max(self.width - BLIND_DOOR_OPENING, BLIND_MIN_WIDTH)
+        props = bpy.context.scene.hb_frameless
+        neighbor_depth = {
+            'TALL': props.tall_cabinet_depth,
+            'UPPER': props.upper_cabinet_depth,
+        }.get(self.obj.get('CABINET_TYPE'), props.base_cabinet_depth)
+        return neighbor_depth + BLIND_NEIGHBOR_FRONT + BLIND_FILLER_WIDTH
 
     def add_blind_exterior(self, pull_location="Base"):
-        panel = FalseFront()
-        doors = Doors()
-        doors.door_pull_location = pull_location
-        blind = self.blind_panel_width()
-
-        split = SplitterHorizontal()
-        split.splitter_qty = 1
-        if self.blind_side == 'Right':
-            split.opening_sizes = [0, blind]
-            split.opening_inserts = [doors, panel]
-        else:
-            split.opening_sizes = [blind, 0]
-            split.opening_inserts = [panel, doors]
-        self.add_cage_to_bay(split)
-
-        # No board between the blind and the doors: the blind side is
-        # open inside, and the two fronts meet.
-        split.obj['Material Thickness'] = 0.0
-        for (role, _index), part in solver_frameless.split_parts(split.obj).items():
-            if role == 'SPLITTER':
-                bpy.data.objects.remove(part, do_unlink=True)
         self.obj['IS_BLIND_CORNER'] = True
         self.obj['Blind Side'] = self.blind_side
+        self.add_property('Blind Width', 'DISTANCE', self.blind_panel_width())
+        self._add_carcass_part('Blind Panel', 'BLIND_PANEL',
+                               rotation=(90, -90, 0), mirror='Y')
+
+        # The solver narrows the bay to what the blind panel leaves.
+        doors = Doors()
+        doors.door_pull_location = pull_location
+        self.add_cage_to_bay(doors)
         solver_frameless.recalculate_cabinet(self.obj)
 
 
 class BlindCornerBaseCabinet(BlindCornerMixin, BaseCabinet):
-    """Base blind corner: 39" wide by default, doors on the exposed 21"."""
+    """Base blind corner: doors on what the blind panel leaves."""
 
     def __init__(self):
         super().__init__()
-        self.width = inch(39)
+        self.width = bpy.context.scene.hb_frameless.base_width_blind
 
     def create(self, name="Blind Base"):
         self.create_base_carcass(name)
@@ -590,11 +588,11 @@ class BlindCornerBaseCabinet(BlindCornerMixin, BaseCabinet):
 
 
 class BlindCornerTallCabinet(BlindCornerMixin, TallCabinet):
-    """Tall blind corner: full height, doors on the exposed 21"."""
+    """Tall blind corner: full height, doors on what the blind panel leaves."""
 
     def __init__(self):
         super().__init__()
-        self.width = inch(39)
+        self.width = bpy.context.scene.hb_frameless.tall_width_blind
 
     def create(self, name="Blind Tall"):
         self.create_tall_carcass(name)
@@ -603,11 +601,11 @@ class BlindCornerTallCabinet(BlindCornerMixin, TallCabinet):
 
 
 class BlindCornerUpperCabinet(BlindCornerMixin, UpperCabinet):
-    """Upper blind corner: 36" wide by default, doors on the exposed 21"."""
+    """Upper blind corner: doors on what the blind panel leaves."""
 
     def __init__(self):
         super().__init__()
-        self.width = inch(36)
+        self.width = bpy.context.scene.hb_frameless.upper_width_blind
 
     def create(self, name="Blind Upper"):
         self.create_upper_carcass(name)

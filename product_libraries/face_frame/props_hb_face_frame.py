@@ -5,6 +5,7 @@ section toggles. Construction logic and per-cabinet PropertyGroups land in
 Phase 3 (types_face_frame.py).
 """
 import bpy
+import math
 import os
 import re
 from contextlib import contextmanager
@@ -347,12 +348,55 @@ def get_finish_hinge_items(self, context):
     return _items_or_none(_FINISH_HINGE_ITEMS.get(self.finish_overlay, []))
 
 
+# Wood specie -> default flat panel for the style's door + drawer fronts.
+# Paint-grade woods take the MDF flat panel, stain-grade woods the veneer
+# panel. Only a style already on one of the flat recessed panels follows
+# the wood; raised, grooved, glass and slab picks are left alone. Woods
+# not listed either way (laminates, quoted / placeholder entries) leave
+# the panel as is.
+_PAINT_GRADE_WOODS = {'Paint Grade', 'Alder, Paint Grade'}
+_NON_WOOD_SPECIES = {'Euro Laminate', 'Euro TFL', 'N/A', 'Other',
+                     'Non-Stock Wood Specie', 'Quoted Wood Specie'}
+_WOOD_FOLLOWS_PANELS = {'Veneer', 'MDF Flat Panel', 'Solid Wood Recessed'}
+
+
+def _panel_for_wood(wood):
+    if wood in _PAINT_GRADE_WOODS:
+        return 'MDF Flat Panel'
+    if wood in _NON_WOOD_SPECIES or wood not in style_options.WOOD_SPECIES:
+        return None
+    return 'Veneer'
+
+
+def _apply_wood_to_front_panels(cab_style, context):
+    """Move the cabinet style's door + drawer-front styles onto the wood's
+    default flat panel. Setting front_panel runs update_front_panel, which
+    re-derives the frame and restyles the assigned fronts."""
+    panel = _panel_for_wood(cab_style.finish_wood)
+    if panel is None:
+        return
+    ff = get_style_props(context)
+    for pool, name in ((ff.door_styles, cab_style.door_style),
+                       (ff.drawer_front_styles, cab_style.drawer_front_style)):
+        ds = next((s for s in pool if s.name == name), None)
+        if ds is None or ds.front_panel == panel:
+            continue
+        if ds.front_panel not in _WOOD_FOLLOWS_PANELS:
+            continue
+        table = _DRAWER_PANEL_ITEMS if _front_is_drawer(ds) else _DOOR_PANEL_ITEMS
+        offered = {i[0] for i in table.get((ds.front_series, ds.front_shape), [])}
+        if panel in offered:
+            _set_enum_safe(ds, "front_panel", panel)
+
+
 def update_finish_wood(self, context):
     """Wood gates color: reset to the first compatible color (which cascades
-    on to varnish + glaze through update_finish_color)."""
+    on to varnish + glaze through update_finish_color), and moves the door +
+    drawer fronts onto the wood's default flat panel."""
     items = _FINISH_COLOR_ITEMS.get(self.finish_wood, [])
     if items:
         _set_enum_safe(self, "finish_color", items[0][0])
+    _apply_wood_to_front_panels(self, context)
     _propagate_cabinet_style(self, context)
 
 
@@ -1274,20 +1318,110 @@ def get_cabinet_extra_front_style_items(self, context):
     return items
 
 
+def _update_cabinet_extra_front_style(self, context):
+    """A drawer-front extra row can drive geometry (the tall-drawer style,
+    see extra_drawer_front_height), so re-propagate the owning cabinet
+    style. Door rows stay documentation only."""
+    try:
+        path = self.path_from_id()
+    except Exception:
+        return
+    if ".extra_drawer_front_styles[" not in path:
+        return
+    try:
+        style = self.id_data.path_resolve(
+            path.rsplit(".extra_drawer_front_styles[", 1)[0])
+    except Exception:
+        return
+    # Picking the alternate style (the first row) fills in its minimum
+    # drawer height, which re-propagates through the height's update.
+    if path.endswith(".extra_drawer_front_styles[0]"):
+        if fill_alternate_drawer_height(style, context):
+            return
+    if style.extra_drawer_front_height > 0.0:
+        _propagate_cabinet_style(style, context)
+
+
+def front_style_min_height(ds):
+    """Smallest drawer face height (meters) a drawer-front style builds
+    at, or None when its series gives no single figure."""
+    if ds is None:
+        return None
+    h = style_options.drawer_min_height(
+        ds.front_series, ds.front_shape, ds.front_panel,
+        slab=getattr(ds, 'door_type', '') == 'SLAB')
+    return units.inch(h) if h else None
+
+
+def alternate_drawer_style(style, context=None):
+    """The drawer-front style the cabinet style's first extra drawer row
+    names (the alternate style for taller drawers), or None."""
+    if len(style.extra_drawer_front_styles) == 0:
+        return None
+    name = style.extra_drawer_front_styles[0].style
+    if not name or name == 'NONE':
+        return None
+    ff = get_style_props(context)
+    for ds in ff.drawer_front_styles:
+        if ds.name == name:
+            return ds
+    return None
+
+
+def fill_alternate_drawer_height(style, context=None):
+    """Set the alternate-style height to the alternate style's minimum
+    drawer height. Returns True when it wrote a value (the write itself
+    re-propagates the cabinet style)."""
+    h = front_style_min_height(alternate_drawer_style(style, context))
+    if not h:
+        return False
+    style.extra_drawer_front_height = h
+    return True
+
+
+def _inches_text(meters):
+    sixteenths = round(meters / 0.0254 * 16)
+    whole, rem = divmod(sixteenths, 16)
+    if rem == 0:
+        return '%d"' % whole
+    g = math.gcd(rem, 16)
+    frac = '%d/%d' % (rem // g, 16 // g)
+    return ('%d-%s"' % (whole, frac)) if whole else (frac + '"')
+
+
+def alternate_drawer_notes(style, context=None):
+    """Lines explaining the alternate drawer style rule, plus a warning
+    when the height is below what the alternate style can build."""
+    ds = alternate_drawer_style(style, context)
+    if ds is None:
+        return []
+    h = style.extra_drawer_front_height
+    if h <= 0.0:
+        return ['Set a height to use %s on taller drawers' % ds.name]
+    lines = ['Drawers %s and up use %s' % (_inches_text(h), ds.name)]
+    min_h = front_style_min_height(ds)
+    if min_h and h < min_h - 1e-5:
+        lines.append('Below the %s minimum of %s'
+                     % (ds.name, _inches_text(min_h)))
+    return lines
+
+
 class Face_Frame_Cabinet_Extra_Front_Style(PropertyGroup):
     """One additional door- or drawer-front style listed on a cabinet style.
 
     The primary door_style / drawer_front_style drives the geometry; these
     extra entries document the OTHER front styles a designer assigns to this
     cabinet style's cabinets in 3D, so the Style Section page can list every
-    front style in use, not just the primary. Pure documentation -- no
-    geometric effect. The pool (door vs drawer front) is fixed by which
-    collection the row lives in.
+    front style in use, not just the primary. Documentation only, except the
+    first drawer-front row, which the cabinet style's
+    extra_drawer_front_height applies to tall drawer fronts. The pool (door
+    vs drawer front) is fixed by which collection the row lives in.
     """
     style: EnumProperty(
         name="Front Style",
         description="Additional front style shown on the Style Section page",
         items=get_cabinet_extra_front_style_items,
+        update=_update_cabinet_extra_front_style,
     )  # type: ignore
 
 
@@ -1954,7 +2088,9 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
     # The primary door_style / drawer_front_style drives geometry; these list
     # the ADDITIONAL door / drawer-front styles a designer has assigned to this
     # cabinet style's cabinets in 3D, so the Style Section page documents every
-    # front style in use. Pure documentation -- no geometric effect.
+    # front style in use. Documentation only, except that the FIRST extra
+    # drawer-front style becomes the tall-drawer style when
+    # extra_drawer_front_height is set (see _apply_door_styles_to_fronts).
     extra_door_styles: CollectionProperty(
         name="Extra Door Styles",
         type=Face_Frame_Cabinet_Extra_Front_Style,
@@ -1962,6 +2098,21 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
     extra_drawer_front_styles: CollectionProperty(
         name="Extra Drawer Front Styles",
         type=Face_Frame_Cabinet_Extra_Front_Style,
+    )  # type: ignore
+    # Drawer fronts at least this tall take the first extra drawer-front
+    # style instead of drawer_front_style (e.g. a slab top drawer over
+    # 5-piece lower drawers). 0 turns the rule off.
+    extra_drawer_front_height: FloatProperty(
+        name="Alternate Style Over",
+        description="Drawer fronts this tall or taller use the alternate "
+                    "drawer style (the first extra drawer front style); "
+                    "shorter ones use the main Drawer Front style. Filled "
+                    "in with the alternate style's minimum height when it "
+                    "is picked. 0 turns this off. A style painted onto a "
+                    "front still wins",
+        default=0.0, min=0.0,
+        unit='LENGTH', precision=4,
+        update=_propagate_cabinet_style,
     )  # type: ignore
 
     # ---- Cached materials (lazy-loaded from face_frame_assets/materials/cabinet_material.blend) ----
@@ -3374,6 +3525,23 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         door_ds = resolve(self.door_style, ff.door_styles)
         drawer_ds = resolve(self.drawer_front_style, ff.drawer_front_styles)
 
+        # Tall-drawer default: fronts at or above extra_drawer_front_height
+        # take the first extra drawer-front style (slab top drawer over
+        # 5-piece lowers). It only replaces the cabinet default - a per-front
+        # assignment still wins.
+        tall_drawer_ds = None
+        tall_min = self.extra_drawer_front_height
+        if tall_min > 0.0 and len(self.extra_drawer_front_styles) > 0:
+            tall_drawer_ds = resolve(self.extra_drawer_front_styles[0].style,
+                                     ff.drawer_front_styles)
+
+        def front_height(obj):
+            from ... import hb_types
+            try:
+                return hb_types.GeoNodeCutpart(obj).get_input("Length")
+            except Exception:
+                return None
+
         for child in cabinet_obj.children_recursive:
             if 'CABINET_PART' not in child:
                 continue
@@ -3394,6 +3562,12 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                 pool, default_ds = ff.door_styles, door_ds
             else:
                 pool, default_ds = ff.drawer_front_styles, drawer_ds
+                if tall_drawer_ds is not None:
+                    h = front_height(child)
+                    # Small tolerance so a front sized exactly at the
+                    # cutoff is not lost to float error.
+                    if h is not None and h >= tall_min - 1e-5:
+                        default_ds = tall_drawer_ds
             # The solver wipes and rebuilds every front on each recalc, so an
             # opening-size edit (or any cabinet alteration) lands here. Prefer a
             # per-front override the user explicitly assigned, persisted on the
@@ -3637,6 +3811,12 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                           text="Add Drawer Front Style", icon='ADD')
         op.kind = 'DRAWER'
         op.style_index = style_index
+        if len(self.extra_drawer_front_styles) > 0:
+            col.prop(self, "extra_drawer_front_height")
+            notes = alternate_drawer_notes(self, context)
+            for i, line in enumerate(notes):
+                col.label(text=line,
+                          icon='ERROR' if i > 0 else 'INFO')
 
         box = main.box()
         row = box.row()
@@ -8756,6 +8936,16 @@ class Face_Frame_Bay_Props(PropertyGroup):
         default=0.0, unit='LENGTH', precision=4, min=0.0,
         update=_update_cabinet_dim,
     )  # type: ignore
+    # Farm sink bays (APPLIANCE_BAY_KIND 'FARM_SINK'): the opening is
+    # always prepared for the sink; this asks the shop to hand-fit the
+    # customer's sink into it. No geometry - an order option downstream
+    # consumers (pricing, order forms) read.
+    farm_sink_custom_fit: BoolProperty(
+        name="Custom Fit by Shop",
+        description="The sink is sent to the shop and hand-fitted into the "
+                    "opening. Off prepares the opening only",
+        default=False,
+    )  # type: ignore
 
     top_rail_width: FloatProperty(
         name="Top Rail Width", default=units.inch(1.5), unit='LENGTH', precision=4,
@@ -9574,6 +9764,19 @@ class Face_Frame_Opening_Props(PropertyGroup):
         name="Include Fillers",
         description="Build the left/right filler stiles; off reserves the opening as an appliance with no fillers",
         default=False, update=_update_cabinet_dim,
+    )  # type: ignore
+    # How the opening is fitted to the appliance: FILLERS narrow it
+    # (include_fillers gates them); NOTCH widens it by cutting the stiles
+    # either side back over the opening's height. Both read
+    # set_appliance_width, and the left/right amounts double as the notch
+    # depths in NOTCH mode.
+    appliance_fit: EnumProperty(
+        name="Fit With",
+        items=[
+            ('FILLERS', "Fillers", "Narrow the opening with filler stiles"),
+            ('NOTCH', "Notch Stiles", "Widen the opening by notching the stiles on either side over the opening's height"),
+        ],
+        default='FILLERS', update=_update_cabinet_dim,
     )  # type: ignore
     left_filler_amount: FloatProperty(
         name="Left Filler",
@@ -12104,21 +12307,47 @@ class Face_Frame_Floating_Shelf_Props(PropertyGroup):
                     "board and finished ends are always 3/4\"",
         unit='LENGTH', precision=4, update=_update_cabinet_dim,
     )  # type: ignore
+    # Profile on the exposed edges (front top / bottom, and each finished
+    # end's top, bottom and front corner). STYLE follows the cabinet
+    # style's corner treatment; the rest match its identifiers.
+    edge_profile: EnumProperty(
+        name="Edge",
+        description="Profile on the shelf's exposed edges",
+        items=[
+            ('STYLE', "Same as Corner Treatment",
+             "Follow the cabinet style's corner treatment"),
+            ('Square', 'Square', ''),
+            ('1/8" Radius', '1/8" Radius', ''),
+            ('1/4" Radius', '1/4" Radius', ''),
+            ('3/8" Radius', '3/8" Radius', ''),
+            ('Cove', '1/4" Cove', ''),
+            ('1/4" x 1/4" Chamfer', '1/4" x 1/4" Chamfer', ''),
+        ],
+        default='STYLE', update=_update_cabinet_dim,
+    )  # type: ignore
+    # Item numbers are pinned: files store the number, and Medium Duty was
+    # added after Heavy Duty but lists before it.
     shelf_type: EnumProperty(
         name="Shelf Type",
         items=[
             ('FLOATING', "Floating Shelves",
-             "Cantilevered floating shelf"),
+             "Cantilevered floating shelf", 0),
             ('NON_FLOATING', "Non-Floating Shelves",
-             "Shelf with visible support"),
+             "Shelf with visible support", 1),
+            ('MEDIUM_DUTY', "Medium Duty Floating Shelves",
+             "Floating shelf on medium duty concealed metal brackets; "
+             "supports a light groove", 3),
             ('HEAVY_DUTY', "Heavy Duty Floating Shelves",
-             "Heavy duty floating shelf; supports a light groove"),
+             "Floating shelf on heavy duty concealed metal brackets; "
+             "supports a light groove", 2),
         ],
         default='FLOATING',
         update=_update_cabinet_dim,
     )  # type: ignore
-    # Light groove (Heavy Duty only) - a routed LED channel on the top
-    # and/or bottom face, set a distance in from the rear edge.
+    # Light groove (Medium / Heavy Duty) - a routed LED channel on the top
+    # and/or bottom face. Each groove is set a distance in from the rear
+    # edge or from the front face; the bottom one follows the top unless
+    # it is given its own location.
     include_groove_top: BoolProperty(
         name="Groove Top", default=False, update=_update_cabinet_dim,
     )  # type: ignore
@@ -12128,6 +12357,30 @@ class Face_Frame_Floating_Shelf_Props(PropertyGroup):
     groove_distance_from_rear: FloatProperty(
         name="Groove Distance From Rear", default=units.inch(2.0),
         unit='LENGTH', precision=4, update=_update_cabinet_dim,
+    )  # type: ignore
+    groove_top_from_front: BoolProperty(
+        name="Top Groove From Front", default=False,
+        description="Measure the top groove in from the front face "
+                    "instead of the rear (wall) edge",
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    groove_bottom_separate: BoolProperty(
+        name="Bottom Groove Separate", default=False,
+        description="Give the bottom groove its own location. Off keeps "
+                    "it in line with the top groove",
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    groove_bottom_distance: FloatProperty(
+        name="Bottom Groove Distance", default=units.inch(1.0), min=0.0,
+        description="Distance to the bottom groove, measured from the "
+                    "front face or the rear (wall) edge",
+        unit='LENGTH', precision=4, update=_update_cabinet_dim,
+    )  # type: ignore
+    groove_bottom_from_front: BoolProperty(
+        name="Bottom Groove From Front", default=True,
+        description="Measure the bottom groove in from the front face "
+                    "instead of the rear (wall) edge",
+        update=_update_cabinet_dim,
     )  # type: ignore
     groove_width: FloatProperty(
         name="Groove Width", default=units.inch(0.5),

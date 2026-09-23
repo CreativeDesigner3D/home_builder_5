@@ -216,6 +216,28 @@ def _finished_back_offset(obj):
     return best
 
 
+def _finished_back_span(obj):
+    """(x0, x1) in the cage's local X that its finished back covers,
+    or None. The panel can run past the cage's own width - stretched
+    across a dishwasher or leg standing beside it - and the island
+    molding follows it there too."""
+    inv = obj.matrix_world.inverted()
+    span = None
+    for child in _own_parts(obj):
+        if child.get('hb_part_role') != 'FINISHED_BACK':
+            continue
+        corners = [inv @ (child.matrix_world @ mathutils.Vector(c))
+                   for c in child.bound_box]
+        x0 = min(c.x for c in corners)
+        x1 = max(c.x for c in corners)
+        if (max(c.z for c in corners) - min(c.z for c in corners) < 0.01
+                or x1 - x0 < 0.01):
+            continue  # dormant zero-size part
+        span = (x0, x1) if span is None else (min(span[0], x0),
+                                              max(span[1], x1))
+    return span
+
+
 def _rail_bays(cage):
     """Per-zone light-rail data for an upper: sorted (x0, x1, dz)
     zones partitioning the cabinet width. dz is the zone's bottom line
@@ -452,6 +474,7 @@ def build_facts(scene, members):
                               'kick': kick,
                               'crown_mount': crown_mount,
                               'back_off': _finished_back_offset(obj),
+                              'back_span': _finished_back_span(obj),
                               'finished_left': fin_l,
                               'finished_right': fin_r}
             if ffc.cabinet_type == 'UPPER':
@@ -472,6 +495,7 @@ def build_facts(scene, members):
         facts[id(obj)] = {
             'role': 'CABINET', 'corner': corner, 'kick': kick,
             'back_off': _finished_back_offset(obj),
+            'back_span': _finished_back_span(obj),
             'finished_left': _frameless_end_finished(obj, 'left',
                                                      wall_bounds),
             'finished_right': _frameless_end_finished(obj, 'right',

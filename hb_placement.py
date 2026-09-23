@@ -986,6 +986,14 @@ class PlacementMixin:
                               min(wall_length, max(xa, xb))))
         return spans
 
+    def blocks_placement(self, obj) -> bool:
+        """Whether ``obj`` takes up room along the wall as far as the
+        thing being placed is concerned. A base assembly never does:
+        it is what cabinets stand on, so they are placed over it. An
+        operator placing something with its own idea of an obstacle
+        overrides this."""
+        return not obj.get('IS_BASE_ASSEMBLY')
+
     def find_placement_gap_by_side(self, wall_obj, cursor_x: float,
                                    object_width: float,
                                    place_on_front: bool,
@@ -1041,6 +1049,8 @@ class PlacementMixin:
                 continue
             if child.get('IS_SNAP_LINE'):
                 continue  # handled separately as zero-width boundaries
+            if not self.blocks_placement(child):
+                continue
 
             # Doors/windows cut through both sides - always an obstacle.
             is_opening = ('IS_ENTRY_DOOR_BP' in child or
@@ -1134,6 +1144,8 @@ class PlacementMixin:
             if obj in excluded:
                 continue
             if not any(obj.get(t) for t in FREE_CABINET_TAGS):
+                continue
+            if not self.blocks_placement(obj):
                 continue
             try:
                 geo = hb_types.GeoNodeObject(obj)

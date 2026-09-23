@@ -7,9 +7,9 @@ profile set serves both. The set extends the shelf-nosing styles --
 those already cover the roundover / radius family and a top can be
 nosed with the same stock -- with the shapes that only show up on a top
 edge: ogee and bullnose, the decorative nosing set (regal, traditional,
-roman ogee, chamfer, door bevel, deluxe), and applied-edge builds (a bar
-rail lapped over the top face, a wide bullnose trim for a hinged lid, a
-crown hung under a step-back top, a library moulding).
+roman ogee, 1/4" radius, chamfer, door bevel, deluxe), and applied-edge
+builds (a bar rail lapped over the top face, a wide bullnose trim for a
+hinged lid, a crown hung under a step-back top, a library moulding).
 
 Outlines follow the shelf-nosing contract: (d, z) points in meters,
 d forward from the profile's back face and z down from the top face
@@ -53,6 +53,7 @@ _TOP_ONLY_ITEMS = [
      "Sets a 3/4\" top"),
     ('LIBRARY', "Library Moulding",
      "Library moulding on the top edge. Sets a 1-3/4\" top"),
+    ('RADIUS_14', "1/4\" Radius", "1/4\" radius on the top and bottom arris"),
 ]
 
 EDGE_STYLE_ITEMS = shelf_nosing.NOSING_STYLE_ITEMS + _TOP_ONLY_ITEMS
@@ -110,6 +111,13 @@ def _generated_outline(style, thickness):
         r = t / 2.0
         return ([(0.0, 0.0)] + _arc(reach - r, -r, r, 90, -90)
                 + [(0.0, -t)])
+    if style == 'RADIUS_14':
+        r = min(inch(0.25), t * 0.5)
+        pts = [(0.0, 0.0), (stock - r, 0.0)]
+        pts += _arc(stock - r, -r, r, 90, 0, skip_first=True)
+        pts += _arc(stock - r, -(t - r), r, 0, -90)
+        pts.append((0.0, -t))
+        return pts
     if style == 'CHAMFER':
         c = min(inch(0.25), t * 0.5)
         return [(0.0, 0.0), (stock - c, 0.0), (stock, -c), (stock, -t),

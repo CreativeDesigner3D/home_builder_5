@@ -3073,6 +3073,19 @@ class FaceFrameCabinet(GeoNodeCage):
             if _part_obj.get('hb_part_role') and not _part_obj.get('MENU_ID'):
                 _part_obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_part_commands'
 
+        # Stile notches for appliance openings fitted by notching. Only
+        # walked when the layout holds an appliance opening at all.
+        def _has_appliance_leaf(node):
+            if not node:
+                return False
+            if node.get('kind') == 'leaf':
+                return node.get('front_type') == 'APPLIANCE'
+            return any(_has_appliance_leaf(c)
+                       for c in node.get('children', ()))
+        appl_notches = (self._appliance_stile_notches(layout)
+                        if any(_has_appliance_leaf(b.get('tree'))
+                               for b in layout.bays) else {})
+
         for child in self.obj.children:
             role = child.get('hb_part_role')
             bay_index = child.get('hb_bay_index', 0)
@@ -3266,6 +3279,9 @@ class FaceFrameCabinet(GeoNodeCage):
                 part.set_input('Length', length)
                 part.set_input('Width', width)
                 part.set_input('Thickness', thickness)
+                self._apply_appliance_notches(
+                    child, part, appl_notches.get('LEFT'), pos[2],
+                    length, width)
 
             elif role == PART_ROLE_RIGHT_STILE:
                 length, width, thickness = solver.right_end_stile_dims(layout)
@@ -3279,6 +3295,9 @@ class FaceFrameCabinet(GeoNodeCage):
                 part.set_input('Length', length)
                 part.set_input('Width', width)
                 part.set_input('Thickness', thickness)
+                self._apply_appliance_notches(
+                    child, part, appl_notches.get('RIGHT'), pos[2],
+                    length, width)
 
             # ---- Refrigerator 'stile in lieu of leg' (floor -> opening top) ----
             elif role == PART_ROLE_LEFT_REFRIG_STILE:
@@ -3554,6 +3573,10 @@ class FaceFrameCabinet(GeoNodeCage):
                     part.set_input('Thickness', halves['thickness'])
                     self._apply_mid_stile_miter(child, layout, msi,
                                                 'LEFT', halves)
+                    # A stile on a bend is two mitered halves; appliance
+                    # notches are left to flat stiles.
+                    self._apply_appliance_notches(child, part, None, 0.0,
+                                                  0.0, 0.0)
                     continue
                 self._clear_mid_stile_miter(child)
                 child.rotation_euler.z = math.pi / 2
@@ -3564,6 +3587,9 @@ class FaceFrameCabinet(GeoNodeCage):
                 part.set_input('Width', width)
                 part.set_input('Thickness', thickness)
                 self._apply_mid_stile_step_notches(child, part, layout, msi)
+                self._apply_appliance_notches(
+                    child, part, appl_notches.get(('MID', msi)), pos[2],
+                    length, width)
 
             elif role == PART_ROLE_MID_STILE_HALF:
                 msi = child.get('hb_mid_stile_index', 0)
@@ -4507,6 +4533,119 @@ class FaceFrameCabinet(GeoNodeCage):
                     hb_utils.set_gn_input(mod, ni.identifier, val)
             mod.show_viewport = True
             mod.show_render = True
+
+    # Appliance-opening stile notches (Fit With: Notch Stiles). With the
+    # stile part config (rot Y=-90 Z=90, Mirror Y) the cutout's Y runs
+    # toward the cabinet's LEFT on every stile: the LOW end of the width
+    # is the stile's right edge, the HIGH end its left edge.
+    _APPLIANCE_NOTCH_MOD = 'Appliance Notch'
+    # Wood a notched stile always keeps, so a notch never cuts it in two.
+    _APPLIANCE_NOTCH_MIN_KEEP = inch(0.25)
+
+    def _appliance_stile_notches(self, layout):
+        """{stile key: [notch, ...]} for every NOTCH-fit appliance opening.
+
+        Keys are 'LEFT', 'RIGHT' (end stiles) or ('MID', gap_index). A
+        notch is {'z0', 'z1' (cabinet Z of the opening's clear bottom /
+        top), 'depth', 'edge' ('LOW' / 'HIGH' end of the stile's width)}.
+        Only an opening on its bay's left or right edge borders a stile
+        that can be notched; one beside a mid stile inside the bay (a
+        vertical split) keeps its fillers-free clear width."""
+        out = {}
+        if layout.cabinet_type == 'PANEL':
+            return out
+        eps = inch(1.0 / 64.0)
+        for bi in range(layout.bay_count):
+            leaves = solver.bay_openings(layout, bi).get('leaves', [])
+            if not leaves:
+                continue
+            bay_w = max(r['cage_x'] + r['cage_dim_x'] for r in leaves)
+            cage_z = solver.bay_cage_position(layout, bi)[2]
+            for r in leaves:
+                cage = bpy.data.objects.get(r['obj_name'])
+                if cage is None or not hasattr(cage, 'face_frame_opening'):
+                    continue
+                left, right = solver.appliance_notch_depths(
+                    r, cage.face_frame_opening)
+                if left <= 0.0 and right <= 0.0:
+                    continue
+                z0 = cage_z + r['cage_z'] + r['reveal_bottom']
+                z1 = cage_z + r['cage_z'] + r['cage_dim_z'] - r['reveal_top']
+                if z1 - z0 <= eps:
+                    continue
+                # The stile left of the opening loses its right edge
+                # (LOW), the one right of it its left edge (HIGH).
+                if left > 0.0 and r['cage_x'] < eps:
+                    key = 'LEFT' if bi == 0 else ('MID', bi - 1)
+                    out.setdefault(key, []).append(
+                        {'z0': z0, 'z1': z1, 'depth': left, 'edge': 'LOW'})
+                if (right > 0.0
+                        and r['cage_x'] + r['cage_dim_x'] > bay_w - eps):
+                    last = bi == layout.bay_count - 1
+                    key = 'RIGHT' if last else ('MID', bi)
+                    out.setdefault(key, []).append(
+                        {'z0': z0, 'z1': z1, 'depth': right, 'edge': 'HIGH'})
+        return out
+
+    def _apply_appliance_notches(self, child, part, notches, bottom_z,
+                                 length, width):
+        """Cut this stile's appliance notches (CPM_CUTOUT, one modifier per
+        notch, named apart from user Cutouts) and hide any left over from
+        an earlier recalc. X runs along the stile's length from its bottom
+        (bottom_z in cabinet Z), Y across its width."""
+        over = inch(0.1)     # run the cut past the faces it opens
+        keep = min(self._APPLIANCE_NOTCH_MIN_KEEP, width / 2.0)
+        used = 0
+        if notches:
+            try:
+                thickness = part.get_input('Thickness')
+            except Exception:
+                thickness = inch(0.75)
+        for n in notches or ():
+            x0 = max(0.0, n['z0'] - bottom_z)
+            x1 = min(length, n['z1'] - bottom_z)
+            depth = min(n['depth'], width - keep)
+            if x1 - x0 <= 1e-6 or depth <= 1e-6:
+                continue
+            if n['edge'] == 'HIGH':
+                y0, y1 = width - depth, width + over
+            else:
+                y0, y1 = -over, depth
+            # A cut reaching a stile end runs past it too.
+            if x0 <= 1e-6:
+                x0 = -over
+            if x1 >= length - 1e-6:
+                x1 = length + over
+            name = (self._APPLIANCE_NOTCH_MOD if used == 0
+                    else f"{self._APPLIANCE_NOTCH_MOD} {used + 1}")
+            used += 1
+            mod = child.modifiers.get(name)
+            if mod is None:
+                part.add_part_modifier('CPM_CUTOUT', name)
+                mod = child.modifiers.get(name)
+                if mod is None:      # unexpected node-group failure
+                    continue
+            ng = mod.node_group
+            if ng is None:
+                continue
+            for iname, val in (('X', x0), ('End X', x1),
+                               ('Y', y0), ('End Y', y1),
+                               ('Route Depth', thickness + over),
+                               ('Flip Z', False)):
+                ni = ng.interface.items_tree.get(iname)
+                if ni is not None:
+                    hb_utils.set_gn_input(mod, ni.identifier, val)
+            mod.show_viewport = True
+            mod.show_render = True
+        for mod in child.modifiers:
+            base = mod.name
+            if not base.startswith(self._APPLIANCE_NOTCH_MOD):
+                continue
+            suffix = base[len(self._APPLIANCE_NOTCH_MOD):].strip()
+            idx = int(suffix) if suffix.isdigit() else 1
+            if idx > used:
+                mod.show_viewport = False
+                mod.show_render = False
 
     def _create_mid_stile_half(self, gap_index):
         """Right-half companion board; same part config as the mid
@@ -9366,7 +9505,8 @@ class FaceFrameCabinet(GeoNodeCage):
         1.25\"-wide face-frame part doubled in FRONT of that stile, the
         height of the door front, flush to the cabinet side. Spawn / resize
         / remove per side. Mirrors the end-stile build (rotation + mirror
-        flags) shifted one face-frame thickness forward.
+        flags), standing proud of the frame by the door gap plus the door
+        thickness so its face is flush with the door and drawer fronts.
 
         BLIND corner sides get the same applied part sized to the
         corner detail instead: inner edge a 1/4" reveal off the door
@@ -9391,6 +9531,7 @@ class FaceFrameCabinet(GeoNodeCage):
             and child.get(TAG_FO_STILE_SIDE) in ('LEFT', 'RIGHT')
         }
         wall_width = inch(1.25)
+        thickness = self._fo_stile_thickness(cab)
         for side, stile_type, bi, ff_x in side_specs:
             wants_wall = is_full and stile_type == 'WALL'
             corner_geo = None
@@ -9413,13 +9554,14 @@ class FaceFrameCabinet(GeoNodeCage):
                              - layout.default_bottom_overlay)
             if corner_geo is not None:
                 x_anchor, width, seam = corner_geo
-                pos = (x_anchor, -layout.dim_y - layout.fft, door_bottom_z)
+                pos = (x_anchor, -layout.dim_y - thickness, door_bottom_z)
             else:
                 width = wall_width
-                # One fft FORWARD of the FF outer plane -> right in front
-                # of the stile (perp_offset positive is INTO the cabinet).
+                # Front face level with the door fronts, back face on the
+                # FF outer plane (perp_offset positive is INTO the
+                # cabinet; the part's thickness runs back from pos).
                 pos = solver.ff_perpendicular_offset(
-                    layout, ff_x, -layout.fft, door_bottom_z)
+                    layout, ff_x, -thickness, door_bottom_z)
             if part_obj is None:
                 part = CabinetPart()
                 part.create(f'FO Stile {side[0]}')
@@ -9437,14 +9579,22 @@ class FaceFrameCabinet(GeoNodeCage):
             part_obj.location = pos
             part.set_input('Length', door_h)
             part.set_input('Width', width)
-            part.set_input('Thickness', layout.fft)
+            part.set_input('Thickness', thickness)
             if corner_geo is not None:
-                self._apply_corner_fo_miter(part_obj, layout, side, seam)
+                self._apply_corner_fo_miter(
+                    part_obj, layout, side, seam, thickness)
             else:
                 self._clear_corner_fo_miter(side, part_obj)
 
     FO_CORNER_MITER_MOD_NAME = 'FO Corner Miter'
     FO_CORNER_REVEAL = inch(0.25)
+
+    @staticmethod
+    def _fo_stile_thickness(cab_props):
+        """Thickness of the applied full-overlay stile: the door gap plus
+        the door thickness, so the stile's face is flush with the fronts
+        (3/4" doors -> 7/8")."""
+        return cab_props.door_thickness + solver.DOOR_TO_FRAME_GAP
 
     @staticmethod
     def _settled_world_matrix(obj):
@@ -9507,9 +9657,9 @@ class FaceFrameCabinet(GeoNodeCage):
         front_dir = (mw_inv.to_3x3() @ (mw_p.to_3x3() @ Vector((0.0, -1.0, 0.0))))
         if abs(front_dir.x) < 0.99:
             return None
-        p_fft = pff.face_frame_thickness
+        p_fo = self._fo_stile_thickness(pff)
         x_bff = (mw_inv @ (mw_p @ Vector((0.0, -pff.depth, 0.0)))).x
-        x_bap = (mw_inv @ (mw_p @ Vector((0.0, -pff.depth - p_fft, 0.0)))).x
+        x_bap = (mw_inv @ (mw_p @ Vector((0.0, -pff.depth - p_fo, 0.0)))).x
         pullback = (solver.FULL_CORNER_SIDE_OVERLAY + self.FO_CORNER_REVEAL)
         if side == 'LEFT':
             x_inner = layout.ff_inset_left + layout.lsw - pullback
@@ -9546,7 +9696,8 @@ class FaceFrameCabinet(GeoNodeCage):
             break
         return cutter
 
-    def _apply_corner_fo_miter(self, part_obj, layout, side, seam):
+    def _apply_corner_fo_miter(self, part_obj, layout, side, seam,
+                               thickness):
         """Rebuild the corner side's miter wedge (a vertical prism over
         the triangle between the partner's FF-front and applied-front
         lines) and ensure the boolean on the applied stile."""
@@ -9554,7 +9705,7 @@ class FaceFrameCabinet(GeoNodeCage):
         x_bff, x_bap = seam
         cutter = self._ensure_corner_fo_miter_cutter(side)
         corner = Vector((x_bff, -layout.dim_y))
-        miter_dir = Vector((x_bap - x_bff, -layout.fft)).normalized()
+        miter_dir = Vector((x_bap - x_bff, -thickness)).normalized()
         open_dir = Vector((-1.0, 0.0)) if side == 'LEFT' else Vector((1.0, 0.0))
         self._miter_wedge_mesh(cutter, corner, miter_dir, open_dir,
                                -0.05, layout.dim_z + 0.05)
@@ -12286,6 +12437,10 @@ class FaceFrameCabinet(GeoNodeCage):
                 left, right = solver.appliance_filler_widths(rect, props)
                 x0 += left
                 width -= left + right
+                # Notched stiles widen the opening past the stiles.
+                n_left, n_right = solver.appliance_notch_depths(rect, props)
+                x0 -= n_left
+                width += n_left + n_right
             span = (x0, width, z0, height)
         if kind is not None:
             appliance_geo.sync_opening_appliance(opening_obj, kind, span)
@@ -15950,8 +16105,11 @@ class LegProductFaceFrameCabinet(FaceFrameCabinet):
             l_x = width - mt
         else:  # FINISH_LEFT / FINISH_BOTH
             l_x = 0.0
-        l_depth = olp if olp > 0.0 else depth - fft
-        l_y = (0.0 if olp <= 0.0 else -depth + olp + fft) - back_off
+        # The back takes its thickness off the panel's back edge; the
+        # front edge stays on the face frame's back face.
+        panel_max = depth - fft - back_off
+        l_depth = min(olp, panel_max) if olp > 0.0 else panel_max
+        l_y = -depth + fft + l_depth
         place(L, height, l_depth, mt, (l_x, l_y, 0.0),
               (0.0, math.radians(-90), 0.0),
               {'Mirror Y': True, 'Mirror Z': True})
@@ -15961,8 +16119,8 @@ class LegProductFaceFrameCabinet(FaceFrameCabinet):
         L['IS_FINISHED'] = (finish != 'INTERMEDIATE')
 
         # --- Right side panel ---
-        r_depth = orp if orp > 0.0 else depth - fft
-        r_y = (0.0 if orp <= 0.0 else -depth + orp + fft) - back_off
+        r_depth = min(orp, panel_max) if orp > 0.0 else panel_max
+        r_y = -depth + fft + r_depth
         place(R, height, r_depth, mt, (width, r_y, 0.0),
               (0.0, math.radians(-90), 0.0),
               {'Mirror Y': True, 'Mirror Z': False})
@@ -16217,6 +16375,80 @@ class LegProductFaceFrameCabinet(FaceFrameCabinet):
             self._set_notch(part_obj, notch_on, tkh, notch_y, thickness)
 
 
+# ---- Linked floating shelf groups ----------------------------------------
+# Shelves stacked with Set Quantity & Spacing (or linked by hand) share a
+# group id; an edit to any one carries to the rest. Shared: size, every
+# floating_shelf option and the cabinet style (finish). Not shared: the
+# placement, so each shelf keeps its own height on the wall.
+SHELF_GROUP_TAG = 'hb_shelf_group'
+FLOATING_SHELF_SYNC_PROPS = (
+    'finish_left', 'finish_right', 'material_thickness', 'shelf_type',
+    'edge_profile',
+    'include_groove_top', 'include_groove_bottom',
+    'groove_distance_from_rear', 'groove_top_from_front',
+    'groove_bottom_separate', 'groove_bottom_distance',
+    'groove_bottom_from_front', 'groove_width', 'groove_depth',
+)
+_FLOATING_SHELF_SIZE_PROPS = ('width', 'depth', 'height')
+# Set while one shelf pushes its settings to its group, so the members'
+# own rebuilds don't push back.
+_shelf_group_syncing = False
+
+
+def floating_shelf_group_members(root):
+    """The other live shelves in root's group (empty when ungrouped)."""
+    gid = root.get(SHELF_GROUP_TAG) if root is not None else None
+    if not gid:
+        return []
+    return [o for o in bpy.data.objects
+            if o is not root and o.get(SHELF_GROUP_TAG) == gid
+            and o.get(FLOATING_SHELF_TAG) and o.users_collection]
+
+
+def sync_floating_shelf_group(src):
+    """Copy src's shared settings onto every other shelf in its group.
+    Only values that differ are written, so a member already matching
+    triggers nothing, and the members' rebuilds (queued under
+    suspend_recalc) find nothing left to push."""
+    global _shelf_group_syncing
+    if _shelf_group_syncing:
+        return
+    members = floating_shelf_group_members(src)
+    if not members:
+        return
+    src_cab = src.face_frame_cabinet
+    src_shelf = src.floating_shelf
+    style_name = src.get('STYLE_NAME')
+    style = None
+    _shelf_group_syncing = True
+    try:
+        with suspend_recalc():
+            for m in members:
+                for attr in _FLOATING_SHELF_SIZE_PROPS:
+                    v = getattr(src_cab, attr)
+                    if abs(getattr(m.face_frame_cabinet, attr) - v) > 1e-7:
+                        setattr(m.face_frame_cabinet, attr, v)
+                for attr in FLOATING_SHELF_SYNC_PROPS:
+                    if not hasattr(src_shelf, attr):
+                        continue
+                    v = getattr(src_shelf, attr)
+                    cur = getattr(m.floating_shelf, attr)
+                    same = (abs(cur - v) <= 1e-7
+                            if isinstance(v, float) else cur == v)
+                    if not same:
+                        setattr(m.floating_shelf, attr, v)
+                if style_name and m.get('STYLE_NAME') != style_name:
+                    if style is None:
+                        from .props_hb_face_frame import get_style_props
+                        ff = get_style_props()
+                        style = next((s for s in ff.cabinet_styles
+                                      if s.name == style_name), None)
+                    if style is not None:
+                        style.assign_style_to_cabinet(m)
+    finally:
+        _shelf_group_syncing = False
+
+
 class FloatingShelfFaceFrameCabinet(FaceFrameCabinet):
     """Wall-mounted floating shelf (a hollow finished slab).
 
@@ -16272,7 +16504,7 @@ class FloatingShelfFaceFrameCabinet(FaceFrameCabinet):
         part.obj['CABINET_PART'] = True
         part.obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_part_commands'
         if add_groove:
-            # Light groove (LED channel) for Heavy Duty shelves; driven
+            # Light groove (LED channel) for duty-rated shelves; driven
             # + toggled in recalculate().
             part.add_part_modifier('CPM_CUTOUT', 'Groove')
         return part.obj
@@ -16395,15 +16627,32 @@ class FloatingShelfFaceFrameCabinet(FaceFrameCabinet):
         self._apply_box_end_miter('RIGHT', fr, FRONT, RP,
                                   width, depth, ft, thickness)
 
-        # --- Light groove (Heavy Duty shelves only) ---
-        # A routed LED channel on the top and/or bottom face, set a
-        # distance in from the rear edge. Panel-local Y runs front (0)
-        # -> rear (inner_depth), so measure in from inner_depth.
-        hd = shelf.shelf_type == 'HEAVY_DUTY'
+        # --- Light groove (Medium / Heavy Duty shelves only) ---
+        # A routed LED channel on the top and/or bottom face. Panel-local
+        # Y runs front (0) -> rear (inner_depth), so a rear-referenced
+        # distance measures in from inner_depth and a front-referenced
+        # one measures in from the shelf's front face, which sits ft
+        # forward of the panel's front edge.
+        hd = shelf.shelf_type in ('MEDIUM_DUTY', 'HEAVY_DUTY')
         g_w = shelf.groove_width
         g_depth = shelf.groove_depth
-        y_far = inner_depth - shelf.groove_distance_from_rear  # rear edge of groove
-        y_near = y_far - g_w                                   # front edge of groove
+
+        def groove_span(dist, from_front):
+            """Panel-local (near, far) Y for a groove that distance in."""
+            if from_front:
+                near = dist - ft
+            else:
+                near = inner_depth - dist - g_w
+            near = min(max(near, 0.0), max(inner_depth - g_w, 0.0))
+            return near, near + g_w
+
+        y_near, y_far = groove_span(shelf.groove_distance_from_rear,
+                                    shelf.groove_top_from_front)
+        if shelf.groove_bottom_separate:
+            b_near, b_far = groove_span(shelf.groove_bottom_distance,
+                                        shelf.groove_bottom_from_front)
+        else:
+            b_near, b_far = y_near, y_far
         gx0, gx1 = -0.005, inner_len + 0.005                   # span full length
         # Flip Z picks the cut face; top cuts its top face, bottom its
         # bottom. Verify against the render and flip if reversed.
@@ -16414,7 +16663,126 @@ class FloatingShelfFaceFrameCabinet(FaceFrameCabinet):
                              gx0, y_near, gx1, y_far, g_depth, True)
         if not BOTTOM.get('IS_MANUAL_PART'):
             self._set_groove(BOTTOM, hd and shelf.include_groove_bottom,
-                             gx0, y_near, gx1, y_far, g_depth, False)
+                             gx0, b_near, gx1, b_far, g_depth, False)
+
+        self._apply_shelf_edge_profile(FRONT, LP, RP, width, depth,
+                                       thickness, fl, fr)
+
+        # A linked shelf's edit carries to the rest of its group.
+        sync_floating_shelf_group(self.obj)
+
+    # ---- Edge profile ---------------------------------------------------
+    # Shelf-local frame: x across the width (0 -> width), y from the front
+    # face (-depth) back to the wall (0), z up the thickness (0 -> T). Each
+    # exposed edge is (point on the edge, sweep axis, the two in-face
+    # directions away from the arris: u across one face, v across the
+    # other). The run's shapes are symmetric, so which face is u only
+    # matters for the unequal ones, where u is the front / end face.
+    _SHELF_EDGE_MOD_PREFIX = 'Edge Profile '
+
+    def _shelf_edge_run(self):
+        shelf = self.obj.floating_shelf
+        choice = getattr(shelf, 'edge_profile', 'STYLE')
+        if choice == 'STYLE':
+            return self._corner_treatment_run()
+        from ..common import door_profiles
+        return door_profiles.named_edge_run(choice)
+
+    def _apply_shelf_edge_profile(self, FRONT, LP, RP, width, depth,
+                                  thickness, fl, fr):
+        """Mill the edge profile into the exposed arrises: the front top
+        and bottom edges, and on a finished end its top and bottom edges
+        and the front corner. One swept cutter per edge; each cuts the
+        boards it runs along (the front board and the end panels, which
+        miter at the corners), so the corners come out the way a router
+        run around the edges leaves them."""
+        run = self._shelf_edge_run()
+        D, W, T = depth, width, thickness
+        X = Vector((1.0, 0.0, 0.0))
+        Y = Vector((0.0, 1.0, 0.0))
+        Z = Vector((0.0, 0.0, 1.0))
+        edges = {}   # key -> (origin, axis, span, udir, vdir, parts)
+        if run is not None:
+            front_parts = [FRONT] + ([LP] if fl else []) + ([RP] if fr else [])
+            edges['FRONT_TOP'] = (Vector((0.0, -D, T)), X, W, -Z, Y,
+                                  front_parts)
+            edges['FRONT_BOTTOM'] = (Vector((0.0, -D, 0.0)), X, W, Z, Y,
+                                     front_parts)
+            for side, on, panel, x, inward in (('LEFT', fl, LP, 0.0, X),
+                                               ('RIGHT', fr, RP, W, -X)):
+                if not on:
+                    continue
+                edges[side + '_TOP'] = (Vector((x, -D, T)), Y, D, -Z,
+                                        inward, [panel, FRONT])
+                edges[side + '_BOTTOM'] = (Vector((x, -D, 0.0)), Y, D, Z,
+                                           inward, [panel, FRONT])
+                edges[side + '_CORNER'] = (Vector((x, -D, 0.0)), Z, T,
+                                           inward, Y, [panel, FRONT])
+
+        live_mods = set()   # (part name, modifier name)
+        for key, (origin, axis, span, udir, vdir, parts) in edges.items():
+            cutter = self._ensure_corner_treatment_cutter('SHELF_' + key)
+            self._build_shelf_edge_cutter(cutter, run, origin, axis, span,
+                                          udir, vdir)
+            mod_name = self._SHELF_EDGE_MOD_PREFIX + key
+            for part_obj in parts:
+                # A Make Editable part keeps whatever it was applied with.
+                if part_obj.get('IS_MANUAL_PART'):
+                    continue
+                mod = part_obj.modifiers.get(mod_name)
+                if mod is None:
+                    mod = part_obj.modifiers.new(name=mod_name, type='BOOLEAN')
+                    mod.operation = 'DIFFERENCE'
+                    mod.solver = 'EXACT'
+                mod.material_mode = 'TRANSFER'
+                if mod.object is not cutter:
+                    mod.object = cutter
+                live_mods.add((part_obj.name, mod_name))
+
+        # Drop edges no longer wanted (Square, an end unfinished).
+        for part_obj in (FRONT, LP, RP):
+            if part_obj.get('IS_MANUAL_PART'):
+                continue
+            for mod in list(part_obj.modifiers):
+                if (mod.name.startswith(self._SHELF_EDGE_MOD_PREFIX)
+                        and (part_obj.name, mod.name) not in live_mods):
+                    part_obj.modifiers.remove(mod)
+        wanted = {'SHELF_' + k for k in edges}
+        for cutter in list(self._corner_treatment_cutters()):
+            if cutter.get('hb_ct_key') in wanted:
+                continue
+            mesh = cutter.data
+            bpy.data.objects.remove(cutter, do_unlink=True)
+            if mesh is not None and mesh.users == 0:
+                bpy.data.meshes.remove(mesh)
+
+    @staticmethod
+    def _build_shelf_edge_cutter(cutter, run, origin, axis, span, udir,
+                                 vdir):
+        """Rebuild the cutter as the removed-corner outline swept along one
+        shelf edge, in shelf-local coords, padded past both faces and both
+        ends so the boolean never lands on a coplanar face."""
+        eps = inch(0.05)
+        umax = max(u for u, v in run)
+        vmax = max(v for u, v in run)
+        outline = [(-eps, -eps), (umax, -eps)] + list(run) + [(-eps, vmax)]
+        bm = bmesh.new()
+        loops = []
+        for s in (-eps, span + eps):
+            base = origin + axis * s
+            loops.append([bm.verts.new(base + udir * u + vdir * v)
+                          for (u, v) in outline])
+        bm.faces.new(loops[0])
+        bm.faces.new(list(reversed(loops[1])))
+        n = len(outline)
+        for i in range(n):
+            j = (i + 1) % n
+            bm.faces.new((loops[0][i], loops[0][j], loops[1][j], loops[1][i]))
+        bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+        bm.to_mesh(cutter.data)
+        bm.free()
+        cutter.location = (0.0, 0.0, 0.0)
+        cutter.rotation_euler = (0.0, 0.0, 0.0)
 
 
 # Per-style standard build for the Mantle product, inches:

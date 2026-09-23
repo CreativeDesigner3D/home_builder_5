@@ -6,7 +6,8 @@ or 'Face Frame', a POST_PIXEL draw handler paints a value label on
 every cabinet root (W / H / D, like the closet starter overlay), every
 bay (its width), every leaf opening (its height), or every face-frame
 member (its width -- stiles, rails, bay splitters) of every face-frame
-cabinet in the viewport. Clicking a label starts a short-lived modal that captures
+cabinet in the viewport. Every label names its dimension -- H 19.5",
+W 1.5" -- so a number on a part says what it measures. Clicking a label starts a short-lived modal that captures
 typed input (same distance grammar as placement typing: inches,
 fractions, feet'inches"); Enter commits the value through the same
 properties the sidebar edits, so redistribution and auto-hold behave
@@ -50,9 +51,10 @@ from bpy_extras import view3d_utils
 from ... import units
 from ... import hb_placement
 from ...hb_gpu_draw import get_visible_window_bounds
-from ...hb_types import GeoNodeCutpart
+from ...hb_types import GeoNodeCage, GeoNodeCutpart
 from . import types_face_frame
 from . import split_preview
+from . import appliance_panels
 from .operators import ops_part_commands
 
 # ---- Style -------------------------------------------------------------
@@ -125,6 +127,32 @@ def _active_mode(context):
     mode = getattr(ff, 'face_frame_selection_mode', '')
     return (mode if mode in ('Cabinets', 'Bays', 'Openings', 'Face Frame')
             else None)
+
+
+def _appliance_target(context):
+    """The panelled appliance the active object belongs to, when its
+    labels should draw: a room scene, sizes not switched off, and a
+    panelled appliance under the cursor's selection.
+
+    Deliberately NOT gated on the face-frame selection mode the cabinet
+    labels use. An appliance has no bays, openings or frame members, and
+    its panels are edited from the panel tab, which asks only that the
+    appliance be selected -- so the labels on the model appear on the
+    same terms as the tab rather than depending on which product tab
+    the room happens to be showing.
+    """
+    scene = context.scene
+    if scene is None or scene.get('IS_LAYOUT_VIEW') or scene.get('IS_DETAIL_VIEW'):
+        return None
+    if not _sizes_shown(context):
+        return None
+    obj = getattr(context, 'object', None)
+    while obj is not None:
+        if obj.get('IS_APPLIANCE'):
+            props = getattr(obj, 'appliance_panels', None)
+            return obj if (props is not None and len(props.sections)) else None
+        obj = obj.parent
+    return None
 
 
 def _sizes_scope(context):
@@ -302,6 +330,231 @@ def _cabinet_label_targets(cabinet):
     ]
 
 
+# ---- Appliance panels ----------------------------------------------------
+# A panelled appliance carries the same kind of run a cabinet front does:
+# faces that hold a size, and faces that share whatever is left. So its
+# faces get labels on the same terms -- the height on each face, the
+# width over each column -- and a typed value holds itself, exactly as
+# it does in the panel editor.
+#
+# Gated on SELECTION rather than the Sizes scope's ALL: a fridge is a
+# wall of faces, and labelling every one of them on every appliance in
+# the room while you work on something else is noise. Selected is also
+# the gate the PANELS tab uses, so the model and the tab light up
+# together.
+
+def _iter_panelled_appliances(scene):
+    for obj in scene.objects:
+        if not obj.get('IS_APPLIANCE'):
+            continue
+        props = getattr(obj, 'appliance_panels', None)
+        if props is not None and len(props.sections):
+            yield obj
+
+
+def _ap_front_parts(appliance):
+    """{section index: built front} -- a face nobody can see gets no
+    label, which is also what keeps a stale index off the screen."""
+    out = {}
+    for child in appliance.children:
+        if not child.get(appliance_panels.TAG_FRONT):
+            continue
+        index = child.get('AP_SECTION_INDEX')
+        if index is not None:
+            out[int(index)] = child
+    return out
+
+
+def _ap_anchor(appliance, dims, box, fz):
+    """A world point on the panel plane of `box` (a solved face rect) at
+    fractional height `fz`. Read off the appliance's own matrix rather
+    than the part's bounding box, so it stays right whichever way the
+    appliance is turned."""
+    dim_x, dim_y, dim_z = dims
+    x0, x1, z0, z1 = box[:4]
+    return appliance.matrix_world @ Vector(
+        ((x0 + x1) / 2.0, -dim_y - 0.01, z0 + (z1 - z0) * fz))
+
+
+def _ap_targets(appliance, unit_settings):
+    """(part, kind, editable, locked, value, prefix, anchor) for one
+    appliance's faces, and for its columns when it has more than one."""
+    props = appliance.appliance_panels
+    cage = GeoNodeCage(appliance)
+    dims = (cage.get_input('Dim X') or 0.0, cage.get_input('Dim Y') or 0.0,
+            cage.get_input('Dim Z') or 0.0)
+    if dims[0] <= 0.0 or dims[2] <= 0.0:
+        return []
+    try:
+        faces = appliance_panels.solve(props, dims[0], dims[2])[0]
+    except Exception:
+        return []
+    parts = _ap_front_parts(appliance)
+    targets = []
+    # The height on each face: what it holds, or what it currently
+    # works out to -- typing either back holds that size, which is what
+    # the editor's Hold chip does.
+    for index, box in faces.items():
+        part = parts.get(index)
+        if part is None:
+            continue
+        sec = props.sections[index]
+        value = sec.height if sec.height_hold else (box[3] - box[2])
+        targets.append((part, 'AP_FACE', True, sec.height_hold, value, "H ",
+                        _ap_anchor(appliance, dims, box, 0.5)))
+    targets.extend(_ap_gap_targets(appliance, props, dims, faces, parts))
+    # The width over each column, on its top face, where a column's
+    # width is a thing the run has more than one of.
+    if len(props.columns) > 1:
+        for ci, column in enumerate(props.columns):
+            top = max((i for i, s in enumerate(props.sections)
+                       if s.column == ci and i in faces and i in parts),
+                      key=lambda i: faces[i][3], default=None)
+            if top is None:
+                continue
+            box = faces[top]
+            value = column.width if column.width_hold else (box[1] - box[0])
+            targets.append((parts[top], 'AP_COL', True, column.width_hold,
+                            value, "W ",
+                            _ap_anchor(appliance, dims, box, 0.92)))
+    return targets
+
+
+# The run's gaps, labelled where they are: the four around the outside,
+# the one between columns, and the one between stacked faces. The last
+# two are ONE size each in the model, so every gap of a kind reads and
+# writes the same number -- typing into the gap you are looking at is
+# just the nearest way to reach it.
+_GAP_PROP = {
+    'AP_GAP_T': 'reveal_top',
+    'AP_GAP_B': 'reveal_bottom',
+    'AP_GAP_L': 'reveal_left',
+    'AP_GAP_R': 'reveal_right',
+    'AP_GAP_C': 'column_gap',
+    'AP_GAP_S': 'section_gap',
+}
+# The five that can hand their size back to the one every gap follows;
+# the section gap IS that number for the inside of the run.
+_GAP_AUTO = set(_GAP_PROP) - {'AP_GAP_S'}
+
+
+def _gap_value(props, kind):
+    """What a gap measures now, following the run's single size when the
+    edge has not been given one of its own."""
+    if kind == 'AP_GAP_C':
+        return appliance_panels.column_gap(props)
+    if kind == 'AP_GAP_S':
+        return props.section_gap
+    edge = _GAP_PROP[kind].split('_', 1)[1]
+    return appliance_panels.reveal(props, edge)
+
+
+def _gap_is_own(props, kind):
+    """Whether this gap carries its own size rather than following."""
+    if kind not in _GAP_AUTO:
+        return False
+    return getattr(props, _GAP_PROP[kind], -1.0) >= 0.0
+
+
+def _ap_gap_targets(appliance, props, dims, faces, parts):
+    """A label in each gap of the run. Positions come from the solved
+    faces, so a gap is labelled where it actually opens up."""
+    if not faces:
+        return []
+    dim_x, dim_y, dim_z = dims
+    xs0 = min(b[0] for b in faces.values())
+    xs1 = max(b[1] for b in faces.values())
+    zs0 = min(b[2] for b in faces.values())
+    zs1 = max(b[3] for b in faces.values())
+    mid_x, mid_z = (xs0 + xs1) / 2.0, (zs0 + zs1) / 2.0
+    kick = max(0.0, props.toe_kick)
+
+    def target(kind, x, z):
+        box = (x, x, z, z)      # a point; _ap_anchor reads the centre
+        return (appliance, kind, True, _gap_is_own(props, kind),
+                _gap_value(props, kind), "",
+                _ap_anchor(appliance, dims, box, 0.5))
+
+    out = [target('AP_GAP_T', mid_x, (zs1 + dim_z) / 2.0),
+           target('AP_GAP_B', mid_x, (kick + zs0) / 2.0),
+           target('AP_GAP_L', xs0 / 2.0, mid_z),
+           target('AP_GAP_R', (xs1 + dim_x) / 2.0, mid_z)]
+
+    # Between the columns, and between the faces stacked in each.
+    bands = {}
+    for i, box in faces.items():
+        column = props.sections[i].column
+        if column < 0:
+            continue
+        lo, hi = bands.get(column, (box[0], box[1]))
+        bands[column] = (min(lo, box[0]), max(hi, box[1]))
+    ordered = [bands[c] for c in sorted(bands)]
+    for (a_lo, a_hi), (b_lo, b_hi) in zip(ordered, ordered[1:]):
+        if b_lo - a_hi > 1e-6:
+            out.append(target('AP_GAP_C', (a_hi + b_lo) / 2.0, mid_z))
+    for column in sorted(bands):
+        stack = sorted((faces[i] for i, s in enumerate(props.sections)
+                        if s.column == column and i in faces),
+                       key=lambda b: b[2])
+        centre = (bands[column][0] + bands[column][1]) / 2.0
+        for lower, upper in zip(stack, stack[1:]):
+            if upper[2] - lower[3] > 1e-6:
+                out.append(target('AP_GAP_S', centre,
+                                  (lower[3] + upper[2]) / 2.0))
+    # A full-width face has the same gap above or below it, on the
+    # appliance's centre line so it is not labelled once per column.
+    for i, box in faces.items():
+        if props.sections[i].column >= 0:
+            continue
+        for edge, z in ((box[3], box[3] + props.section_gap / 2.0),
+                        (box[2], box[2] - props.section_gap / 2.0)):
+            if zs0 < edge < zs1:
+                out.append(target('AP_GAP_S', mid_x, z))
+    return out
+
+
+def _select_in_panel_tab(part_name):
+    """Clicking a face on the model selects that face in the panel tab,
+    so the picture, the model and the rows underneath are all looking at
+    the same face. Silent where the tab isn't there."""
+    try:
+        from ...operators import appliance_panel_tab
+    except ImportError:
+        return
+    appliance, index = _ap_section(bpy.data.objects.get(part_name))
+    if appliance is not None:
+        appliance_panel_tab.select(appliance, index)
+        appliance_panel_tab.tag_redraw()
+
+
+def _ap_shown(appliance, space=None):
+    """False when the appliance is hidden, so its labels vanish -- and
+    stop catching clicks -- with it. Probes a built front, the same way
+    _cabinet_shown probes a frame member: the appliance root is a cage
+    and carries hide flags of its own."""
+    probe = next(iter(_ap_front_parts(appliance).values()), None)
+    if probe is None:
+        return False
+    try:
+        if space is not None and getattr(space, 'type', '') == 'VIEW_3D':
+            return probe.visible_get(viewport=space)
+        return probe.visible_get()
+    except Exception:
+        return True
+
+
+def _ap_section(part):
+    """(appliance, section index) behind a face label, or (None, -1)."""
+    appliance = part.parent if part is not None else None
+    index = part.get('AP_SECTION_INDEX') if part is not None else None
+    if appliance is None or index is None:
+        return None, -1
+    props = getattr(appliance, 'appliance_panels', None)
+    if props is None or not 0 <= int(index) < len(props.sections):
+        return None, -1
+    return appliance, int(index)
+
+
 def compute_labels(context, region, rv3d):
     """[(obj_name, kind, editable, locked, rect, text)] for every label
     currently on screen. rect is (x, y, w, h) region-local. ``locked``
@@ -310,7 +563,9 @@ def compute_labels(context, region, rv3d):
     see which values are pinned vs auto-calculated. Shared by the draw
     handler and the click operators so hits can't drift from pixels."""
     mode = _active_mode(context)
-    if mode is None or rv3d is None:
+    # Either half can light up on its own: the cabinet labels follow the
+    # face-frame selection mode, the appliance's follow the selection.
+    if (mode is None and _appliance_target(context) is None) or rv3d is None:
         return []
     if not _sizes_shown(context):
         # Sizes toggled off: no labels drawn or clickable; the Sizes
@@ -331,7 +586,38 @@ def compute_labels(context, region, rv3d):
 
     labels = []
     space = getattr(context, 'space_data', None)
-    for cabinet in _iter_cabinet_roots(scene):
+
+    def _emit(targets):
+        """Project a product's targets and add the ones on screen. One
+        copy, so a cabinet label and an appliance label can't drift
+        apart in size, marker or hit rect."""
+        for cage, kind, editable, locked, value, prefix, anchor in targets:
+            if anchor is None:
+                anchor = (_part_anchor_world(cage) if kind == 'PART'
+                          else _label_anchor_world(cage))
+            if anchor is None:
+                continue
+            pt = view3d_utils.location_3d_to_region_2d(region, rv3d, anchor)
+            if pt is None:
+                continue
+            text = prefix + units.unit_to_string(unit_settings, value)
+            if locked:
+                # Pinned (user-typed, held during redistribution). The
+                # marker doubles as the affordance for "this one can be
+                # reset to auto" (right-click, or X / 0 while editing).
+                text = "• " + text
+            tw, th = blf.dimensions(0, text)
+            w = tw + 2 * PAD_X * s
+            h = th + 2 * PAD_Y * s
+            rect = (pt.x - w / 2.0, pt.y - h / 2.0, w, h)
+            # Skip labels fully outside the region.
+            if rect[0] + w < 0 or rect[0] > region.width:
+                continue
+            if rect[1] + h < 0 or rect[1] > region.height:
+                continue
+            labels.append((cage.name, kind, editable, locked, rect, text))
+
+    for cabinet in (_iter_cabinet_roots(scene) if mode is not None else ()):
         if not _cabinet_shown(cabinet, space):
             continue
         # Displayed values come from the SAME properties a commit writes
@@ -408,7 +694,7 @@ def compute_labels(context, region, rv3d):
                                  split_preview._cage_dims(op)[1]))
                     targets.append((op, 'OPENING', editable,
                                     editable and props.unlock_size,
-                                    value, "", None))
+                                    value, "H ", None))
         else:
             # Face Frame: member widths. Editable labels read
             # _get_current_width -- the same per-role props the Set Width
@@ -430,37 +716,24 @@ def compute_labels(context, region, rv3d):
                 except Exception:
                     continue
                 targets.append((part, 'PART', editable, locked,
-                                value, "", None))
+                                value, "W ", None))
         # SELECTED scope: keep only labels whose cage is part of the
         # current selection. The click handlers hit-test against this
         # same list, so filtered labels are not clickable either.
         if sel_names is not None:
             targets = [t for t in targets if t[0].name in sel_names]
-        for cage, kind, editable, locked, value, prefix, anchor in targets:
-            if anchor is None:
-                anchor = (_part_anchor_world(cage) if kind == 'PART'
-                          else _label_anchor_world(cage))
-            if anchor is None:
-                continue
-            pt = view3d_utils.location_3d_to_region_2d(region, rv3d, anchor)
-            if pt is None:
-                continue
-            text = prefix + units.unit_to_string(unit_settings, value)
-            if locked:
-                # Pinned (user-typed, held during redistribution). The
-                # marker doubles as the affordance for "this one can be
-                # reset to auto" (right-click, or X / 0 while editing).
-                text = "• " + text
-            tw, th = blf.dimensions(0, text)
-            w = tw + 2 * PAD_X * s
-            h = th + 2 * PAD_Y * s
-            rect = (pt.x - w / 2.0, pt.y - h / 2.0, w, h)
-            # Skip labels fully outside the region.
-            if rect[0] + w < 0 or rect[0] > region.width:
-                continue
-            if rect[1] + h < 0 or rect[1] > region.height:
-                continue
-            labels.append((cage.name, kind, editable, locked, rect, text))
+        _emit(targets)
+
+    # Appliance panels: the selected appliance's own faces, in every
+    # mode -- an appliance has no bays, openings or frame members of its
+    # own, so its faces are the only thing it could label.
+    ap_names = _selected_label_names(context)
+    for appliance in _iter_panelled_appliances(scene):
+        if appliance.name not in ap_names:
+            continue
+        if not _ap_shown(appliance, space):
+            continue
+        _emit(_ap_targets(appliance, unit_settings))
     return labels
 
 
@@ -488,7 +761,10 @@ def _draw():
         return
     if region is None or region.type != 'WINDOW':
         return
-    if _active_mode(context) is None:
+    # Same two gates as compute_labels: the cabinet labels follow the
+    # face-frame selection mode, a panelled appliance's follow the
+    # selection, and either on its own is reason enough to draw.
+    if _active_mode(context) is None and _appliance_target(context) is None:
         return
     labels = compute_labels(context, region, context.region_data)
 
@@ -531,6 +807,40 @@ def _draw():
 
 def _commit(obj, kind, value):
     """Write the typed value through the sidebar's own property paths."""
+    if kind in _GAP_PROP:
+        # The label carries the appliance itself: a gap belongs to the
+        # run, not to any one face.
+        props = getattr(obj, 'appliance_panels', None)
+        prop = _GAP_PROP[kind]
+        if props is None:
+            return False
+        # Asked of the RNA, not with hasattr: setting a name a property
+        # group does not have succeeds silently on the Python side and
+        # writes nothing, so a run from before the gaps could be set
+        # apart would read as edited without changing.
+        if prop not in props.bl_rna.properties:
+            return False
+        setattr(props, prop, value)
+        return True
+    if kind in ('AP_FACE', 'AP_COL'):
+        # A panel size that is typed is a size that is wanted, so it
+        # holds itself and the rest of the run shares what is left --
+        # the same rule the panel editor's typed fields follow.
+        appliance, index = _ap_section(obj)
+        if appliance is None:
+            return False
+        props = appliance.appliance_panels
+        if kind == 'AP_FACE':
+            sec = props.sections[index]
+            sec.height = value
+            sec.height_hold = True
+            return True
+        column = props.sections[index].column
+        if not 0 <= column < len(props.columns):
+            return False
+        props.columns[column].width = value
+        props.columns[column].width_hold = True
+        return True
     if kind in ('CAB_W', 'CAB_H', 'CAB_D'):
         # Same props the Cabinet Properties dialog edits; the update
         # callbacks run the recalc and bay redistribution.
@@ -589,6 +899,29 @@ def _reset_to_auto(obj, kind):
     value again (the flag write's update callback runs the recalc). The
     inverse of the auto-lock a typed edit applies. No-op when already
     auto."""
+    if kind in _GAP_AUTO:
+        # Back to following the run's single gap.
+        props = getattr(obj, 'appliance_panels', None)
+        if props is None or getattr(props, _GAP_PROP[kind], -1.0) < 0.0:
+            return False
+        setattr(props, _GAP_PROP[kind], -1.0)
+        return True
+    if kind in ('AP_FACE', 'AP_COL'):
+        # Back to sharing -- the editor's Fill chip, from the model.
+        appliance, index = _ap_section(obj)
+        if appliance is None:
+            return False
+        props = appliance.appliance_panels
+        if kind == 'AP_FACE':
+            if props.sections[index].height_hold:
+                props.sections[index].height_hold = False
+                return True
+            return False
+        column = props.sections[index].column
+        if 0 <= column < len(props.columns) and props.columns[column].width_hold:
+            props.columns[column].width_hold = False
+            return True
+        return False
     if kind == 'BAY':
         if obj.face_frame_bay.unlock_width:
             obj.face_frame_bay.unlock_width = False
@@ -642,7 +975,15 @@ class hb_face_frame_OT_edit_dim_label(bpy.types.Operator):
                ('CAB_H', "Cabinet Height", ""),
                ('CAB_D', "Cabinet Depth", ""),
                ('BAY_H', "Bay Height", ""),
-               ('BAY_D', "Bay Depth", "")],
+               ('BAY_D', "Bay Depth", ""),
+               ('AP_FACE', "Panel Height", ""),
+               ('AP_COL', "Panel Column Width", ""),
+               ('AP_GAP_T', "Panel Gap Top", ""),
+               ('AP_GAP_B', "Panel Gap Bottom", ""),
+               ('AP_GAP_L', "Panel Gap Left", ""),
+               ('AP_GAP_R', "Panel Gap Right", ""),
+               ('AP_GAP_C', "Panel Gap Between Columns", ""),
+               ('AP_GAP_S', "Panel Gap Between Faces", "")],
         options={'HIDDEN'})  # type: ignore
 
     def invoke(self, context, event):
@@ -758,7 +1099,8 @@ class hb_face_frame_OT_dim_label_click(bpy.types.Operator):
                 and context.area.type == 'VIEW_3D'
                 and context.region is not None
                 and context.region.type == 'WINDOW'
-                and _active_mode(context) is not None)
+                and (_active_mode(context) is not None
+                     or _appliance_target(context) is not None))
 
     def invoke(self, context, event):
         if _edit is not None:
@@ -782,6 +1124,8 @@ class hb_face_frame_OT_dim_label_click(bpy.types.Operator):
                 continue
             if not editable:
                 return {'PASS_THROUGH'}
+            if kind in ('AP_FACE', 'AP_COL'):
+                _select_in_panel_tab(name)
             bpy.ops.hb_face_frame.edit_dim_label(
                 'INVOKE_DEFAULT', target_name=name, kind=kind)
             return {'FINISHED'}

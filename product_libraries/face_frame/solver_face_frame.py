@@ -1291,6 +1291,8 @@ def finish_kick_segments(layout):
     on that side; the corner finish kick part fills the X stretch
     behind the stile separately.
     """
+    if loose_kick_has_finish(layout):
+        return [loose_kick_finish_segment(layout)]
     if not has_finish_kick(layout):
         return []
     segments = []
@@ -1653,6 +1655,36 @@ def loose_kick_front_rail(layout):
         'length': length,
         'width':  layout.tkh,
         'thickness': layout.tkt,
+    }
+
+
+def loose_kick_has_finish(layout):
+    """A recessed loose ladder takes the finish toe kick face on its
+    front, the same way a notched kick applies it to the subfront.
+    LOOSE_FLUSH is left bare: its ladder front is already flush with
+    the cabinet front, so a skin there would stand proud of it."""
+    return (has_loose_kick(layout)
+            and layout.toe_kick_type == 'LOOSE'
+            and layout.include_finish_kick)
+
+
+def loose_kick_finish_segment(layout):
+    """Finish toe kick on a loose ladder. Spans the full ladder width
+    (covering the end boards' front edges as well as the front rail)
+    with its back face flush to the ladder front, so its offset from
+    the cabinet front matches the notched kick's (tks - finish_t).
+    Keyed to bay 0 - the ladder is one piece per cabinet."""
+    x_left, x_right = loose_kick_x_bounds(layout)
+    finish_t = layout.finish_kick_thickness
+    return {
+        'start_bay':  0,
+        'end_bay':    layout.bay_count - 1,
+        'x':          x_left,
+        'y':          -layout.dim_y + loose_kick_setback(layout) - finish_t,
+        'z':          0.0,
+        'length':     x_right - x_left,
+        'width':      layout.tkh,
+        'thickness':  finish_t,
     }
 
 
@@ -5021,7 +5053,10 @@ def appliance_filler_widths(rect, opening_props):
     include_fillers OFF returns (0, 0) so the opening can be reserved as an
     appliance with no fillers built yet. Widths are clamped to be >= 0 and to
     never exceed the clear opening (scaled down together if they would).
+    A NOTCH-fit opening has no fillers (see appliance_notch_depths).
     """
+    if getattr(opening_props, 'appliance_fit', 'FILLERS') == 'NOTCH':
+        return (0.0, 0.0)
     if not getattr(opening_props, 'include_fillers', True):
         return (0.0, 0.0)
     clear = rect['cage_dim_x'] - rect['reveal_left'] - rect['reveal_right']
@@ -5039,6 +5074,27 @@ def appliance_filler_widths(rect, opening_props):
         left *= scale
         right *= scale
     return (left, right)
+
+
+def appliance_notch_depths(rect, opening_props):
+    """Return (left_depth, right_depth) cut into the stiles either side of
+    a NOTCH-fit APPLIANCE opening - the widening counterpart of
+    appliance_filler_widths, reading the same two input modes:
+      * set_appliance_width ON  -> the appliance is wider than the clear
+        opening; the excess is split evenly between the two stiles.
+      * set_appliance_width OFF -> the left / right amounts are the notch
+        depths.
+    (0, 0) for any other opening. The stile update clamps each depth to
+    what its stile can give up."""
+    if (getattr(opening_props, 'front_type', '') != 'APPLIANCE'
+            or getattr(opening_props, 'appliance_fit', 'FILLERS') != 'NOTCH'):
+        return (0.0, 0.0)
+    if getattr(opening_props, 'set_appliance_width', True):
+        clear = rect['cage_dim_x'] - rect['reveal_left'] - rect['reveal_right']
+        each = max(0.0, (opening_props.appliance_width - clear) / 2.0)
+        return (each, each)
+    return (max(0.0, opening_props.left_filler_amount),
+            max(0.0, opening_props.right_filler_amount))
 
 
 # ---------------------------------------------------------------------------

@@ -600,6 +600,16 @@ def draw_floating_shelf(layout, root):
     cab = root.face_frame_cabinet
     shelf = root.floating_shelf
 
+    # Linked group: every edit below carries to the other shelves.
+    others = types_face_frame.floating_shelf_group_members(root)
+    if others:
+        row = layout.row(align=True)
+        row.label(text=f"Linked with {len(others)} other shelf"
+                       f"{'' if len(others) == 1 else 'ves'}",
+                  icon='LINKED')
+        row.operator("hb_face_frame.unlink_floating_shelf",
+                     text="Unlink", icon='UNLINKED')
+
     layout.prop(shelf, 'shelf_type', text="Type")
 
     col = layout.column(align=True)
@@ -620,14 +630,16 @@ def draw_floating_shelf(layout, root):
     row.prop(shelf, 'finish_left', text="Left", toggle=True)
     row.prop(shelf, 'finish_right', text="Right", toggle=True)
 
+    # Front edges, plus the finished ends' edges.
+    layout.prop(shelf, 'edge_profile', text="Edge")
     layout.prop(shelf, 'material_thickness', text="Top & Bottom Thickness")
 
     layout.separator()
     layout.operator("hb_face_frame.duplicate_floating_shelf",
                     text="Set Quantity & Spacing...", icon='LINENUMBERS_ON')
 
-    # Light groove - Heavy Duty shelves only.
-    if shelf.shelf_type == 'HEAVY_DUTY':
+    # Light groove - Medium / Heavy Duty shelves only.
+    if shelf.shelf_type in ('MEDIUM_DUTY', 'HEAVY_DUTY'):
         gbox = layout.box()
         gbox.label(text="Light Groove")
         grow = gbox.row(align=True)
@@ -635,7 +647,23 @@ def draw_floating_shelf(layout, root):
         grow.prop(shelf, 'include_groove_bottom', text="Bottom", toggle=True)
         gsub = gbox.column(align=True)
         gsub.enabled = shelf.include_groove_top or shelf.include_groove_bottom
-        gsub.prop(shelf, 'groove_distance_from_rear', text="Distance From Rear")
+        top_label = ("Top Distance From Front" if shelf.groove_top_from_front
+                     else "Top Distance From Rear")
+        gsub.prop(shelf, 'groove_distance_from_rear', text=top_label)
+        gsub.prop(shelf, 'groove_top_from_front', text="Measure From Front")
+        # The bottom groove follows the top unless it is unlocked; the
+        # shop's standard detail runs it in from the front instead.
+        gsub.separator()
+        gsub.prop(shelf, 'groove_bottom_separate',
+                  text="Bottom Groove Separate")
+        bsub = gsub.column(align=True)
+        bsub.enabled = shelf.groove_bottom_separate
+        bot_label = ("Bottom Distance From Front"
+                     if shelf.groove_bottom_from_front
+                     else "Bottom Distance From Rear")
+        bsub.prop(shelf, 'groove_bottom_distance', text=bot_label)
+        bsub.prop(shelf, 'groove_bottom_from_front', text="Measure From Front")
+        gsub.separator()
         gsub.prop(shelf, 'groove_width', text="Width")
         gsub.prop(shelf, 'groove_depth', text="Depth")
 
@@ -1289,8 +1317,20 @@ def draw_opening_properties(layout, opening_obj):
         # toggled by Set Appliance Width (see Face_Frame_Opening_Props).
         if op.front_type == 'APPLIANCE':
             fcol.prop(op, 'appliance_kind', text="Appliance")
-            fcol.prop(op, 'include_fillers', text="Include Fillers")
-            if op.include_fillers:
+            fcol.prop(op, 'appliance_fit', text="Fit With")
+            if op.appliance_fit == 'NOTCH':
+                # Same two input modes as the fillers; the left / right
+                # amounts are the notch depths here.
+                fcol.prop(op, 'set_appliance_width', text="Set Appliance Width")
+                if op.set_appliance_width:
+                    fcol.prop(op, 'appliance_width', text="Appliance Width")
+                else:
+                    frow = fcol.row(align=True)
+                    frow.prop(op, 'left_filler_amount', text="Left Notch")
+                    frow.prop(op, 'right_filler_amount', text="Right Notch")
+            else:
+                fcol.prop(op, 'include_fillers', text="Include Fillers")
+            if op.appliance_fit != 'NOTCH' and op.include_fillers:
                 fcol.prop(op, 'set_appliance_width', text="Set Appliance Width")
                 if op.set_appliance_width:
                     fcol.prop(op, 'appliance_width', text="Appliance Width")

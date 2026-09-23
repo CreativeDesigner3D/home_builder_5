@@ -1106,12 +1106,34 @@ def _island_perimeter_spans(members, facts):
              else -d + kick.get('setback', 0.0))
         return _xy(mw @ mathutils.Vector((w if at_right else 0.0, y, 0.0)))
 
+    def _covering_back_off(m):
+        # A neighbour's finished back can be stretched across this
+        # member too (a dishwasher or leg beside the cabinet that owns
+        # the panel); the run then stays on that panel's face instead
+        # of stepping back to the bare cage plane behind it.
+        w, _d, _ = cage_dims(m)
+        mid = m.matrix_world @ mathutils.Vector((w / 2.0, 0.0, 0.0))
+        best = facts[id(m)].get('back_off', 0.0)
+        for other in members:
+            if other is m:
+                continue
+            f = facts[id(other)]
+            span = f.get('back_span')
+            off = f.get('back_off', 0.0)
+            if not span or off <= best:
+                continue
+            local = other.matrix_world.inverted() @ mid
+            if (abs(local.y) < 0.003
+                    and span[0] - 1e-4 <= local.x <= span[1] + 1e-4):
+                best = off
+        return best
+
     def _back_corners(m):
         # A finished back is a separate 3/4 panel layered behind the
         # carcass, so the molding wraps ITS face - on the cage plane
         # the back run ends up buried inside the panel.
         w, _d, _ = cage_dims(m)
-        b = facts[id(m)].get('back_off', 0.0)
+        b = _covering_back_off(m)
         mw = m.matrix_world
         return (_xy(mw @ mathutils.Vector((0.0, b, 0.0))),
                 _xy(mw @ mathutils.Vector((w, b, 0.0))))

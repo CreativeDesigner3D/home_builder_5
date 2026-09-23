@@ -32,6 +32,10 @@ from .product_libraries import frameless
 from .product_libraries.common import wood_hoods
 from .product_libraries.common import door_window_geo
 from .product_libraries.common import appliance_geo
+# Must stay below the product libraries: this tab imports the face frame
+# library, and pulling that in earlier starts it mid-way through its own
+# import graph, which breaks the cabinet types.
+from .operators import appliance_panel_tab
 from . import molding
 # Catalog browser - intentionally disabled. The package lives at
 # home_builder_5/catalog/ for future revisit. Re-enable by uncommenting
@@ -46,7 +50,7 @@ from bpy.app.handlers import persistent
 bl_info = {
     "name": "Home Builder 5",
     "author": "Andrew Peel",
-    "version": (5, 2, 9),
+    "version": (5, 2, 14),
     "blender": (5, 1, 0),
     "location": "3D Viewport Sidebar",
     "description": "Library for Designing Interior Spaces",
@@ -81,6 +85,8 @@ def load_file_post(scene):
     # msgbus subscriptions do not survive a .blend load either.
     from .product_libraries.face_frame import quiet_cages
     quiet_cages.ensure_subscriptions()
+    from .product_libraries.frameless import quiet_cages as frameless_quiet_cages
+    frameless_quiet_cages.ensure_subscriptions()
 
     # Door/window boolean cutters saved while still visible in the
     # viewport would cover their own opening in rendered shading.
@@ -412,6 +418,7 @@ def register():
     ops_room_dressing.register()  # same: registers the lights option form
     library_panel.register()
     options_panel.register()
+    appliance_panel_tab.register()   # after the navigator: it adds a tab
     thumb_picker.register()
     room_dim_overlay.register()
     ops_general.register()
@@ -459,6 +466,7 @@ def unregister():
     doors_windows.unregister()
     export.unregister()
     thumb_picker.unregister()
+    appliance_panel_tab.unregister()   # before the navigator: empties its tab
     options_panel.unregister()
     library_panel.unregister()
     ops_room_dressing.unregister()

@@ -1165,6 +1165,28 @@ class hb_face_frame_OT_add_special_effects(Operator):
         return {'FINISHED'}
 
 
+class hb_face_frame_OT_add_special_effect(Operator):
+    """Add one finish special effect to the active cabinet style -- the
+    viewport panel's menu lists the compatible ones and adds the one
+    picked, where the sidebar's dialog ticks several at once."""
+    bl_idname = "hb_face_frame.add_special_effect"
+    bl_label = "Add Special Effect"
+    bl_description = "Add this special effect to the cabinet style"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    effect_name: bpy.props.StringProperty(name="Name")  # type: ignore
+    style_index: bpy.props.IntProperty(
+        name="Style Index", default=-1, options={'HIDDEN'})  # type: ignore
+
+    def execute(self, context):
+        style = _active_cabinet_style(context, self.style_index)
+        if style is None or not self.effect_name:
+            return {'CANCELLED'}
+        if self.effect_name not in {e.name for e in style.special_effects}:
+            style.special_effects.add().name = self.effect_name
+        return {'FINISHED'}
+
+
 class hb_face_frame_OT_remove_special_effect(Operator):
     """Remove a special effect from the active cabinet style."""
     bl_idname = "hb_face_frame.remove_special_effect"
@@ -1185,6 +1207,23 @@ class hb_face_frame_OT_remove_special_effect(Operator):
                 style.special_effects.remove(i)
                 break
         return {'FINISHED'}
+
+
+def _repropagate_tall_drawer(context, style, kind):
+    """The first extra drawer-front style is the tall-drawer style when the
+    cabinet style's extra_drawer_front_height is set, so a row add / remove
+    can restyle fronts. Door rows are documentation only."""
+    if kind != 'DRAWER':
+        return
+    # A first drawer row is the new alternate style: start its height
+    # at that style's minimum (the write re-propagates).
+    if (len(style.extra_drawer_front_styles) == 1
+            and style.extra_drawer_front_height <= 0.0
+            and props_hb_face_frame.fill_alternate_drawer_height(
+                style, context)):
+        return
+    if style.extra_drawer_front_height > 0.0:
+        props_hb_face_frame._propagate_cabinet_style(style, context)
 
 
 class hb_face_frame_OT_add_cabinet_extra_front_style(Operator):
@@ -1213,6 +1252,7 @@ class hb_face_frame_OT_add_cabinet_extra_front_style(Operator):
         coll = (style.extra_drawer_front_styles if self.kind == 'DRAWER'
                 else style.extra_door_styles)
         coll.add()
+        _repropagate_tall_drawer(context, style, self.kind)
         return {'FINISHED'}
 
 
@@ -1239,6 +1279,7 @@ class hb_face_frame_OT_remove_cabinet_extra_front_style(Operator):
                 else style.extra_door_styles)
         if 0 <= self.index < len(coll):
             coll.remove(self.index)
+            _repropagate_tall_drawer(context, style, self.kind)
         return {'FINISHED'}
 
 
@@ -1571,6 +1612,7 @@ class hb_face_frame_OT_paint_part_material(bpy.types.Operator):
 classes = (
     hb_face_frame_PG_temp_special_effect,
     hb_face_frame_OT_add_special_effects,
+    hb_face_frame_OT_add_special_effect,
     hb_face_frame_OT_remove_special_effect,
     hb_face_frame_OT_add_cabinet_extra_front_style,
     hb_face_frame_OT_remove_cabinet_extra_front_style,
