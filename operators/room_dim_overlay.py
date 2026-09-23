@@ -6,7 +6,8 @@ value labels on it:
 
 - Door / window: width, height, and the offsets to each end of its
   wall; windows also show the sill height (height from floor) and a
-  dashed centerline with its distance to each end of the wall.
+  dashed centerline with its distance to each end of the wall. Each
+  label sits on a ticked dimension line (orange for the centerline).
 - Wall: length and height.
 - Entry door with built 3D geometry: an Open / Close button that swings
   the leaf, the quick version of the door prompts' Open Angle -- the
@@ -49,6 +50,7 @@ EDIT_BG         = (0.20, 0.43, 0.70, 0.95)
 ACTION_BG       = (0.20, 0.43, 0.70, 0.75)   # a label that is a button
 TEXT_COLOR      = (0.95, 0.95, 0.95, 1.0)
 EDIT_TEXT_COLOR = (1.0, 1.0, 1.0, 1.0)
+DIM_LINE_COLOR  = (0.90, 0.90, 0.90, 0.80)
 CL_COLOR        = (1.0, 0.56, 0.16, 0.95)
 CL_BORDER       = (1.0, 0.56, 0.16, 0.55)
 CL_TEXT_COLOR   = (1.0, 0.70, 0.40, 1.0)
@@ -197,14 +199,19 @@ def _cage_label_targets(cage_obj):
     return out
 
 
-def _centerline_segments(context, region, rv3d, s=1.0):
-    """Region-space line endpoints for each selected window's
-    centerline: the dashed CL from just below the sill to above the
-    head, plus a ticked dimension line from each wall end to it along
-    the window's bottom edge (where the CL labels sit)."""
-    pts = []
+def _dim_segments(context, region, rv3d, s=1.0):
+    """Region-space line endpoints ``(dims, centerline)`` for each
+    selected door / window, drawn under its labels so every value
+    reads as a dimension: a ticked line for the width (above the head),
+    height (up the left jamb), the gap from each wall end (at mid
+    height) and a window's sill (floor to sill). A window adds its
+    centerline -- dashed from below the sill to above the head -- and a
+    ticked line from each wall end to it along the window's bottom
+    edge, where the CL labels sit."""
+    dims = []
+    cls = []
     for tag, obj in _selected_targets(context).values():
-        if tag != 'CAGE' or not obj.get('IS_WINDOW_BP'):
+        if tag != 'CAGE':
             continue
         cage = hb_types.GeoNodeCage(obj)
         if not cage.has_modifier():
@@ -215,11 +222,49 @@ def _centerline_segments(context, region, rv3d, s=1.0):
         except Exception:
             continue
         mw = obj.matrix_world
+        is_window = bool(obj.get('IS_WINDOW_BP'))
 
         def to2d(x, z):
             return view3d_utils.location_3d_to_region_2d(
                 region, rv3d, mw @ Vector((x, 0.0, z)))
 
+        def dim(out, x0, z0, x1, z1):
+            a = to2d(x0, z0)
+            b = to2d(x1, z1)
+            if a is None or b is None:
+                return
+            d = b - a
+            if d.length < 1e-6:
+                return
+            tick = Vector((-d.y, d.x)).normalized() * CL_TICK_PX * s
+            for p in (a, b, a - tick, a + tick, b - tick, b + tick):
+                out.append(tuple(p))
+
+        dim(dims, 0.0, h + inch(3.0), w, h + inch(3.0))
+        dim(dims, inch(3.0), 0.0, inch(3.0), h)
+        if is_window and obj.location.z > inch(0.25):
+            dim(dims, w / 2.0, -obj.location.z, w / 2.0, 0.0)
+
+        wall_len = None
+        wall_obj = obj.parent
+        if wall_obj is not None and wall_obj.get('IS_WALL_BP'):
+            wall = hb_types.GeoNodeWall(wall_obj)
+            if wall.has_modifier():
+                try:
+                    wall_len = wall.get_input('Length')
+                except Exception:
+                    wall_len = None
+        left_end = -obj.location.x
+        if wall_len is not None:
+            right_end = wall_len - obj.location.x
+            # Same gates as the gap labels in _cage_label_targets.
+            if obj.location.x > inch(0.5):
+                dim(dims, left_end, h / 2.0, 0.0, h / 2.0)
+            if right_end - w > inch(0.5):
+                dim(dims, w, h / 2.0, right_end, h / 2.0)
+
+        if not is_window:
+            continue
         a = to2d(w / 2.0, -inch(2.0))
         b = to2d(w / 2.0, h + inch(6.0))
         if a is not None and b is not None:
@@ -230,32 +275,12 @@ def _centerline_segments(context, region, rv3d, s=1.0):
                 step = d / length * dash
                 n = int(length / dash)
                 for i in range(0, n, 2):
-                    pts.append(tuple(a + step * i))
-                    pts.append(tuple(a + step * min(i + 1, length / dash)))
-
-        wall_obj = obj.parent
-        if wall_obj is None or not wall_obj.get('IS_WALL_BP'):
-            continue
-        wall = hb_types.GeoNodeWall(wall_obj)
-        if not wall.has_modifier():
-            continue
-        try:
-            wall_len = wall.get_input('Length')
-        except Exception:
-            continue
-        cx = w / 2.0
-        for end_x in (-obj.location.x, wall_len - obj.location.x):
-            a = to2d(end_x, 0.0)
-            b = to2d(cx, 0.0)
-            if a is None or b is None:
-                continue
-            d = b - a
-            if d.length < 1e-6:
-                continue
-            tick = Vector((-d.y, d.x)).normalized() * CL_TICK_PX * s
-            for p in (a, b, a - tick, a + tick, b - tick, b + tick):
-                pts.append(tuple(p))
-    return pts
+                    cls.append(tuple(a + step * i))
+                    cls.append(tuple(a + step * min(i + 1, length / dash)))
+        if wall_len is not None and wall_len > 0.0:
+            dim(cls, left_end, 0.0, w / 2.0, 0.0)
+            dim(cls, w / 2.0, 0.0, right_end, 0.0)
+    return dims, cls
 
 
 def _wall_label_targets(wall_obj):
@@ -373,12 +398,13 @@ def _draw():
     gpu.state.blend_set('ALPHA')
     shader = gpu.shader.from_builtin('UNIFORM_COLOR')
     shader.bind()
-    cl_pts = _centerline_segments(context, region,
-                                  context.region_data, s)
-    if cl_pts:
-        from gpu_extras.batch import batch_for_shader
-        shader.uniform_float("color", CL_COLOR)
-        batch_for_shader(shader, 'LINES', {"pos": cl_pts}).draw(shader)
+    dim_pts, cl_pts = _dim_segments(context, region,
+                                    context.region_data, s)
+    from gpu_extras.batch import batch_for_shader
+    for pts, color in ((dim_pts, DIM_LINE_COLOR), (cl_pts, CL_COLOR)):
+        if pts:
+            shader.uniform_float("color", color)
+            batch_for_shader(shader, 'LINES', {"pos": pts}).draw(shader)
     for name, kind, rect, text in labels:
         editing = (_edit is not None and _edit['name'] == name
                    and _edit['kind'] == kind)
