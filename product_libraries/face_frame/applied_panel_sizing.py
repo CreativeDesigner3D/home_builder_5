@@ -867,6 +867,16 @@ _CONDITION_FRONT_TYPE = {
     'WORKING_FF': 'DOOR',
 }
 
+# Per-opening settings carried across the wipe-and-rebuild alongside the
+# front type: door hinging and pull choices made through the opening UI
+# (Double doors with No Pull must not come back as a single right-hinged
+# door with a pull on the next host recalc). front_type goes first.
+_PRESERVED_OPENING_PROPS = (
+    'front_type', 'inset_panel_type', 'hinge_side', 'door_mechanism',
+    'door_look_divisions', 'is_tilt_out', 'pull_override',
+    'pull_override_category', 'false_front_pull', 'pull_location_override',
+)
+
 
 def apply_panel_split_structure(cab_obj, panel_obj, side,
                                 condition='PANELED'):
@@ -969,8 +979,9 @@ def apply_panel_split_structure(cab_obj, panel_obj, side,
         for c in panel_obj.children_recursive:
             if c.get(types_face_frame.TAG_OPENING_CAGE):
                 op = c.face_frame_opening
-                preserved_fronts[_opening_key(c)] = (
-                    op.front_type, op.inset_panel_type)
+                preserved_fronts[_opening_key(c)] = {
+                    name: getattr(op, name)
+                    for name in _PRESERVED_OPENING_PROPS}
     panel_obj[types_face_frame.TAG_APPLIED_PANEL_CONDITION] = condition
 
     # Bay quantity: real-bay mid stile only when no rails are in play.
@@ -1068,7 +1079,7 @@ def apply_panel_split_structure(cab_obj, panel_obj, side,
                 vsplit_first_size=vsplit_first_size,
             )
 
-        # Reapply per-opening front overrides (same-condition rebuild
+        # Reapply per-opening overrides (same-condition rebuild
         # only; keys are stable while the structure is unchanged).
         if preserved_fronts:
             for c in panel_obj.children_recursive:
@@ -1078,11 +1089,10 @@ def apply_panel_split_structure(cab_obj, panel_obj, side,
                 prev = preserved_fronts.get(_opening_key(c))
                 if not prev:
                     continue
-                ft, pt = prev
-                if ft and ft != op.front_type:
-                    op.front_type = ft
-                if pt and pt != op.inset_panel_type:
-                    op.inset_panel_type = pt
+                for name in _PRESERVED_OPENING_PROPS:
+                    val = prev[name]
+                    if val != getattr(op, name):
+                        setattr(op, name, val)
 
 
 def _opening_key(opening_obj):
