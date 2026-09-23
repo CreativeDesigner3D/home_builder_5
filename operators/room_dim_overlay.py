@@ -58,6 +58,8 @@ CL_BORDER       = (1.0, 0.56, 0.16, 0.55)
 CL_TEXT_COLOR   = (1.0, 0.70, 0.40, 1.0)
 CL_DASH_PX      = 8
 CL_TICK_PX      = 5
+# Wall height dim runs up the wall's left end, just inside it.
+WALL_H_INSET    = inch(6.0)
 
 # Window centerline dims: drawn with an orange dimension line.
 _CL_KINDS = {'CAGE_CL_L', 'CAGE_CL_R'}
@@ -205,7 +207,7 @@ def _dim_segments(context, region, rv3d, s=1.0):
     """Region-space line endpoints ``(dims, centerline)`` for each
     selected wall / door / window, drawn under its labels so every value
     reads as a dimension. A wall gets its length (above the top) and
-    height (up the middle). A door / window gets a ticked line for the
+    height (up its left end). A door / window gets a ticked line for the
     width (above the head),
     height (up the left jamb), the gap from each wall end (at mid
     height) and a window's sill (floor to sill). A window adds its
@@ -244,7 +246,7 @@ def _dim_segments(context, region, rv3d, s=1.0):
                 continue
             # Same anchors as _wall_label_targets.
             dim(dims, 0.0, height + inch(3.0), length, height + inch(3.0))
-            dim(dims, length / 2.0, 0.0, length / 2.0, height)
+            dim(dims, WALL_H_INSET, 0.0, WALL_H_INSET, height)
             continue
         if tag != 'CAGE':
             continue
@@ -314,7 +316,7 @@ def _wall_label_targets(wall_obj):
         ('WALL_LEN', length, "L ",
          Vector((length / 2.0, 0.0, height + inch(3.0)))),
         ('WALL_H', height, "H ",
-         Vector((length / 2.0, 0.0, height / 2.0))),
+         Vector((WALL_H_INSET, 0.0, height / 2.0))),
     ]
 
 
