@@ -58,8 +58,9 @@ CL_BORDER       = (1.0, 0.56, 0.16, 0.55)
 CL_TEXT_COLOR   = (1.0, 0.70, 0.40, 1.0)
 CL_DASH_PX      = 8
 CL_TICK_PX      = 5
-# Wall height dim runs up the wall's left end, just inside it.
-WALL_H_INSET    = inch(6.0)
+# Labels drawn beside their anchor, not centered on it: the wall
+# height sits just left of its dim line up the wall's base point.
+_LEFT_OF_ANCHOR_KINDS = {'WALL_H'}
 
 # Window centerline dims: drawn with an orange dimension line.
 _CL_KINDS = {'CAGE_CL_L', 'CAGE_CL_R'}
@@ -207,9 +208,9 @@ def _dim_segments(context, region, rv3d, s=1.0):
     """Region-space line endpoints ``(dims, centerline)`` for each
     selected wall / door / window, drawn under its labels so every value
     reads as a dimension. A wall gets its length (above the top) and
-    height (up its left end). A door / window gets a ticked line for the
-    width (above the head),
-    height (up the left jamb), the gap from each wall end (at mid
+    height (up its base point, label to the left). A door / window
+    gets a ticked line for the width (above the head), height (up the
+    left jamb), the gap from each wall end (at mid
     height) and a window's sill (floor to sill). A window adds its
     centerline -- dashed from below the sill to above the head -- and a
     ticked line from each wall end to it along the window's bottom
@@ -246,7 +247,7 @@ def _dim_segments(context, region, rv3d, s=1.0):
                 continue
             # Same anchors as _wall_label_targets.
             dim(dims, 0.0, height + inch(3.0), length, height + inch(3.0))
-            dim(dims, WALL_H_INSET, 0.0, WALL_H_INSET, height)
+            dim(dims, 0.0, 0.0, 0.0, height)
             continue
         if tag != 'CAGE':
             continue
@@ -316,7 +317,7 @@ def _wall_label_targets(wall_obj):
         ('WALL_LEN', length, "L ",
          Vector((length / 2.0, 0.0, height + inch(3.0)))),
         ('WALL_H', height, "H ",
-         Vector((WALL_H_INSET, 0.0, height / 2.0))),
+         Vector((0.0, 0.0, height / 2.0))),
     ]
 
 
@@ -373,7 +374,10 @@ def compute_labels(context, region, rv3d):
             tw, th = blf.dimensions(0, text)
             w = tw + 2 * PAD_X * s
             h = th + 2 * PAD_Y * s
-            rect = (pt.x - w / 2.0, pt.y - h / 2.0, w, h)
+            if kind in _LEFT_OF_ANCHOR_KINDS:
+                rect = (pt.x - w - PAD_X * s, pt.y - h / 2.0, w, h)
+            else:
+                rect = (pt.x - w / 2.0, pt.y - h / 2.0, w, h)
             if rect[0] + w < 0 or rect[0] > region.width:
                 continue
             if rect[1] + h < 0 or rect[1] > region.height:
