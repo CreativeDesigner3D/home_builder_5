@@ -54,6 +54,12 @@ EDIT_BG         = (0.20, 0.43, 0.70, 0.95)   # matches HUD active blue
 TEXT_COLOR      = (0.95, 0.95, 0.95, 1.0)
 TEXT_COLOR_DIM  = (0.95, 0.95, 0.95, 0.45)
 EDIT_TEXT_COLOR = (1.0, 1.0, 1.0, 1.0)
+DIM_LINE_COLOR     = (0.90, 0.90, 0.90, 0.80)
+DIM_LINE_COLOR_DIM = (0.90, 0.90, 0.90, 0.35)
+TICK_PX         = 5
+# Height dims run up the cage's left side this far in (capped at a
+# quarter of the width for narrow cages).
+HEIGHT_DIM_INSET = 0.0762
 
 # Characters accepted by the typed-distance grammar (parse_typed_distance):
 # digits, decimal point, fractions, feet/inch marks, embedded spaces.
@@ -217,6 +223,46 @@ def _root_anchor_world(cabinet, fx, fz):
     return mw @ Vector((dim_x * fx, -dim_y - 0.003, dim_z * fz))
 
 
+def _height_dim_fx(cage):
+    """Fractional X of a cage's height dim line (HEIGHT_DIM_INSET in
+    from its left side)."""
+    dim_x, _dim_y, _dim_z = _cage_dims(cage)
+    if dim_x <= 0.0:
+        return 0.5
+    return min(HEIGHT_DIM_INSET / dim_x, 0.25)
+
+
+def _root_depth_points(cabinet):
+    """(front, middle, back) world points of the cabinet's depth dim,
+    across the top at mid width. The root's local Y = 0 is its BACK
+    (see _root_anchor_world)."""
+    dim_x, dim_y, dim_z = _cage_dims(cabinet)
+    if dim_x <= 0.0 or dim_z <= 0.0:
+        return None
+    mw = _world_matrix(cabinet)
+    return (mw @ Vector((dim_x / 2.0, -dim_y, dim_z)),
+            mw @ Vector((dim_x / 2.0, -dim_y / 2.0, dim_z)),
+            mw @ Vector((dim_x / 2.0, 0.0, dim_z)))
+
+
+def _pair(a, b):
+    return None if a is None or b is None else (a, b)
+
+
+def _project_dim_line(region, rv3d, line, s):
+    """Region-space LINES points (the line plus an end tick at each
+    end) for a world-space dimension line, or []."""
+    a = view3d_utils.location_3d_to_region_2d(region, rv3d, line[0])
+    b = view3d_utils.location_3d_to_region_2d(region, rv3d, line[1])
+    if a is None or b is None:
+        return []
+    d = b - a
+    if d.length < 1e-6:
+        return []
+    tick = Vector((-d.y, d.x)).normalized() * TICK_PX * s
+    return [tuple(p) for p in (a, b, a - tick, a + tick, b - tick, b + tick)]
+
+
 # ---- Label collection ----------------------------------------------------
 
 def _iter_cabinet_roots(scene):
@@ -312,9 +358,11 @@ def _cabinet_editable(cabinet):
         return False
 
 
-def compute_labels(context, region, rv3d):
+def compute_labels(context, region, rv3d, lines_out=None):
     """[(obj_name, kind, editable, locked, rect, text)] for every label
-    currently on screen. rect is (x, y, w, h) region-local. ``locked``
+    currently on screen. When ``lines_out`` is a list, the region-space
+    dimension line under each label is appended to it as
+    ``(points, editable)``. rect is (x, y, w, h) region-local. ``locked``
     marks a split opening whose prompt is held (equal cleared); locked
     labels carry a bullet so users can see which values are pinned vs
     shared. obj_name is the object a commit writes -- for an editable
@@ -344,30 +392,44 @@ def compute_labels(context, region, rv3d):
     for cabinet in _iter_cabinet_roots(scene):
         if not _cabinet_shown(cabinet, space):
             continue
-        # targets: (write_obj, kind, editable, locked, value, prefix, anchor)
+        # targets: (write_obj, kind, editable, locked, value, prefix,
+        #           anchor, line) -- line is the (a, b) world dimension
+        #           line the label sits at the middle of, or None.
         targets = []
         if mode == 'Cabinets':
             dim_x, dim_y, dim_z = _cage_dims(cabinet)
             editable = _cabinet_editable(cabinet)
-            # Each label sits where its edit ACTS: H at the top edge, W
-            # dead-centre of the front, D at the bottom-front edge.
+            # W across the middle of the front, H up the left side, D
+            # front to back across the top.
+            fx = _height_dim_fx(cabinet)
+            depth_pts = _root_depth_points(cabinet)
             targets = [
                 (cabinet, 'CAB_H', editable, False, dim_z, "H ",
-                 _root_anchor_world(cabinet, 0.5, 1.0)),
+                 _root_anchor_world(cabinet, fx, 0.5),
+                 _pair(_root_anchor_world(cabinet, fx, 0.0),
+                       _root_anchor_world(cabinet, fx, 1.0))),
                 (cabinet, 'CAB_W', editable, False, dim_x, "W ",
-                 _root_anchor_world(cabinet, 0.5, 0.5)),
+                 _root_anchor_world(cabinet, 0.5, 0.5),
+                 _pair(_root_anchor_world(cabinet, 0.0, 0.5),
+                       _root_anchor_world(cabinet, 1.0, 0.5))),
                 (cabinet, 'CAB_D', editable, False, dim_y, "D ",
-                 _root_anchor_world(cabinet, 0.5, 0.0)),
+                 depth_pts[1] if depth_pts else None,
+                 (depth_pts[0], depth_pts[2]) if depth_pts else None),
             ]
         elif mode == 'Bays':
             # Bay size is the solver's (carcass minus sides / bottom /
             # top), so these are readouts, not inputs.
             for bay in _iter_bay_cages(cabinet):
                 dim_x, _dim_y, dim_z = _cage_dims(bay)
+                fx = _height_dim_fx(bay)
                 targets.append((bay, 'BAY_W', False, False, dim_x, "W ",
-                                _anchor_world(bay, 0.5, 0.5)))
+                                _anchor_world(bay, 0.5, 0.5),
+                                _pair(_anchor_world(bay, 0.0, 0.5),
+                                      _anchor_world(bay, 1.0, 0.5))))
                 targets.append((bay, 'BAY_H', False, False, dim_z, "H ",
-                                _anchor_world(bay, 0.5, 1.0)))
+                                _anchor_world(bay, fx, 0.5),
+                                _pair(_anchor_world(bay, fx, 0.0),
+                                      _anchor_world(bay, fx, 1.0))))
         else:
             for bay in _iter_bay_cages(cabinet):
                 for leaf in _iter_leaf_openings(bay):
@@ -375,25 +437,33 @@ def compute_labels(context, region, rv3d):
                     prompt = (_split_prompt(split, kind)
                               if split is not None else None)
                     anchor = _anchor_world(leaf, 0.5, 0.5)
+                    # Drawn on the leaf cage even when the label writes
+                    # to a split above it.
+                    height_line = _pair(_anchor_world(leaf, 0.5, 0.0),
+                                        _anchor_world(leaf, 0.5, 1.0))
                     if prompt is not None:
                         # Displayed value is the prompt itself -- what
                         # the solver reads and a commit writes -- so
                         # typing back the shown value is a no-op.
                         prefix = "H " if kind == 'OPENING_H' else "W "
+                        line = (height_line if kind == 'OPENING_H'
+                                else _pair(_anchor_world(leaf, 0.0, 0.5),
+                                           _anchor_world(leaf, 1.0, 0.5)))
                         targets.append((split, kind, True,
                                         not prompt.equal,
                                         prompt.distance_value, prefix,
-                                        anchor))
+                                        anchor, line))
                     else:
                         _dx, _dy, dim_z = _cage_dims(leaf)
                         targets.append((leaf, 'OPENING', False, False,
-                                        dim_z, "H ", anchor))
+                                        dim_z, "H ", anchor, height_line))
         # SELECTED scope: keep only labels whose cage is part of the
         # current selection. The click handlers hit-test against this
         # same list, so filtered labels are not clickable either.
         if sel_names is not None:
             targets = [t for t in targets if t[0].name in sel_names]
-        for obj, kind, editable, locked, value, prefix, anchor in targets:
+        for (obj, kind, editable, locked, value, prefix, anchor,
+             line) in targets:
             if anchor is None or value is None:
                 continue
             pt = view3d_utils.location_3d_to_region_2d(region, rv3d, anchor)
@@ -416,6 +486,10 @@ def compute_labels(context, region, rv3d):
             if rect[1] + h < 0 or rect[1] > region.height:
                 continue
             labels.append((obj.name, kind, editable, locked, rect, text))
+            if lines_out is not None and line is not None:
+                pts = _project_dim_line(region, rv3d, line, s)
+                if pts:
+                    lines_out.append((pts, editable))
     return labels
 
 
@@ -445,7 +519,9 @@ def _draw():
         return
     if _active_mode(context) is None:
         return
-    labels = compute_labels(context, region, context.region_data)
+    dim_lines = []
+    labels = compute_labels(context, region, context.region_data,
+                            dim_lines)
 
     s = 1.0
     try:
@@ -456,6 +532,13 @@ def _draw():
     gpu.state.blend_set('ALPHA')
     shader = gpu.shader.from_builtin('UNIFORM_COLOR')
     shader.bind()
+    from gpu_extras.batch import batch_for_shader
+    for editable in (True, False):
+        pts = [p for line, ed in dim_lines if ed == editable for p in line]
+        if pts:
+            shader.uniform_float(
+                "color", DIM_LINE_COLOR if editable else DIM_LINE_COLOR_DIM)
+            batch_for_shader(shader, 'LINES', {"pos": pts}).draw(shader)
     for name, kind, editable, _locked, rect, text in labels:
         editing = (_edit is not None and _edit['name'] == name
                    and _edit['kind'] == kind)

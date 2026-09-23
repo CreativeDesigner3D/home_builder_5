@@ -69,6 +69,12 @@ EDIT_BG         = (0.20, 0.43, 0.70, 0.95)   # matches HUD active blue
 TEXT_COLOR      = (0.95, 0.95, 0.95, 1.0)
 TEXT_COLOR_DIM  = (0.95, 0.95, 0.95, 0.45)
 EDIT_TEXT_COLOR = (1.0, 1.0, 1.0, 1.0)
+DIM_LINE_COLOR     = (0.90, 0.90, 0.90, 0.80)
+DIM_LINE_COLOR_DIM = (0.90, 0.90, 0.90, 0.35)
+TICK_PX         = 5
+# Height dims run up the cage's left side this far in (capped at a
+# quarter of the width for narrow cages).
+HEIGHT_DIM_INSET = 0.0762
 
 # Characters accepted by the typed-distance grammar (parse_typed_distance):
 # digits, decimal point, fractions, feet/inch marks, embedded spaces.
@@ -313,21 +319,139 @@ def _root_anchor_world(cabinet, fx, fz):
     return mw @ Vector((dim_x * fx, -depth - 0.003, dim_z * fz))
 
 
+def _height_dim_fx(cage):
+    """Fractional X of a cage's height dim line (HEIGHT_DIM_INSET in
+    from its left side)."""
+    dim_x, _dim_z = split_preview._cage_dims(cage)
+    if dim_x <= 0.0:
+        return 0.5
+    return min(HEIGHT_DIM_INSET / dim_x, 0.25)
+
+
+def _root_depth_points(cabinet):
+    """(front, middle, back) world points of the cabinet's depth dim,
+    across the top at mid width. None when the cage has no size."""
+    dim_x, dim_z = split_preview._cage_dims(cabinet)
+    if dim_x <= 0.0 or dim_z <= 0.0:
+        return None
+    mw = split_preview._world_matrix(cabinet)
+    depth = cabinet.face_frame_cabinet.depth
+    return (mw @ Vector((dim_x / 2.0, -depth, dim_z)),
+            mw @ Vector((dim_x / 2.0, -depth / 2.0, dim_z)),
+            mw @ Vector((dim_x / 2.0, 0.0, dim_z)))
+
+
+def _bay_depth_points(bay):
+    """(front, middle, back) world points of a bay's depth dim, across
+    the top of the bay at mid width. Measured in the cabinet root's
+    frame -- the bay depth runs from the face frame's front (root
+    Y = -depth) to the cabinet back (root Y = 0), while the bay cage
+    itself starts behind the frame."""
+    cabinet = bay.parent
+    top = _anchor_world(bay, 0.5, 1.0)
+    if cabinet is None or top is None:
+        return None
+    cmw = split_preview._world_matrix(cabinet)
+    local = cmw.inverted() @ top
+    depth = bay.face_frame_bay.depth
+    return tuple(cmw @ Vector((local.x, y, local.z))
+                 for y in (-depth, -depth / 2.0, 0.0))
+
+
 def _cabinet_label_targets(cabinet):
     """(kind, anchor, value, prefix) for a cabinet root's three dims.
-    Mirrors the closet starter overlay: each label sits where its edit
-    ACTS - H at the top edge (the edge that moves), W dead-center of
-    the front face, D at the bottom-front edge. All three anchor on the
+    Each label sits at the middle of its dimension line (see
+    _dim_line_world): W across the middle of the front face, H up the
+    left side, D front to back across the top. W and H anchor on the
     cabinet's FRONT plane (via _root_anchor_world) to match bay-mode
     labels. Values come from the SAME props a commit writes
     (face_frame_cabinet.width / height / depth) so typing back the
     shown value is a no-op."""
     props = cabinet.face_frame_cabinet
+    depth_pts = _root_depth_points(cabinet)
     return [
-        ('CAB_H', _root_anchor_world(cabinet, 0.5, 1.0), props.height, "H "),
+        ('CAB_H', _root_anchor_world(cabinet, _height_dim_fx(cabinet), 0.5),
+         props.height, "H "),
         ('CAB_W', _root_anchor_world(cabinet, 0.5, 0.5), props.width, "W "),
-        ('CAB_D', _root_anchor_world(cabinet, 0.5, 0.0), props.depth, "D "),
+        ('CAB_D', depth_pts[1] if depth_pts else None, props.depth, "D "),
     ]
+
+
+def _part_width_line(part, value):
+    """World endpoints across a face-frame member's width: through its
+    bounding-box centre along whichever local axis measures ``value``
+    (stiles are wide in X, rails in Z)."""
+    bb = part.bound_box
+    lo = Vector((min(c[0] for c in bb), min(c[1] for c in bb),
+                 min(c[2] for c in bb)))
+    hi = Vector((max(c[0] for c in bb), max(c[1] for c in bb),
+                 max(c[2] for c in bb)))
+    centre = (lo + hi) / 2.0
+    rot = part.matrix_world.to_3x3()
+    best = None
+    for axis in range(3):
+        half = Vector((0.0, 0.0, 0.0))
+        half[axis] = (hi[axis] - lo[axis]) / 2.0
+        err = abs((rot @ half).length * 2.0 - value)
+        if best is None or err < best[0]:
+            best = (err, half)
+    if best is None or best[1].length < 1e-6:
+        return None
+    mw = part.matrix_world
+    return mw @ (centre - best[1]), mw @ (centre + best[1])
+
+
+def _dim_line_world(obj, kind, value):
+    """(a, b) world endpoints of the dimension line a label sits on, or
+    None for labels drawn without one (appliance panel faces)."""
+    if kind == 'CAB_W':
+        a = _root_anchor_world(obj, 0.0, 0.5)
+        b = _root_anchor_world(obj, 1.0, 0.5)
+    elif kind == 'CAB_H':
+        fx = _height_dim_fx(obj)
+        a = _root_anchor_world(obj, fx, 0.0)
+        b = _root_anchor_world(obj, fx, 1.0)
+    elif kind == 'CAB_D':
+        pts = _root_depth_points(obj)
+        if pts is None:
+            return None
+        a, b = pts[0], pts[2]
+    elif kind == 'BAY':
+        a = _anchor_world(obj, 0.0, 0.5)
+        b = _anchor_world(obj, 1.0, 0.5)
+    elif kind == 'BAY_D':
+        pts = _bay_depth_points(obj)
+        if pts is None:
+            return None
+        a, b = pts[0], pts[2]
+    elif kind == 'BAY_H':
+        fx = _height_dim_fx(obj)
+        a = _anchor_world(obj, fx, 0.0)
+        b = _anchor_world(obj, fx, 1.0)
+    elif kind == 'OPENING':
+        a = _anchor_world(obj, 0.5, 0.0)
+        b = _anchor_world(obj, 0.5, 1.0)
+    elif kind == 'PART':
+        return _part_width_line(obj, value)
+    else:
+        return None
+    if a is None or b is None:
+        return None
+    return a, b
+
+
+def _project_dim_line(region, rv3d, line, s):
+    """Region-space LINES points (the line plus an end tick at each
+    end) for a world-space dimension line, or []."""
+    a = view3d_utils.location_3d_to_region_2d(region, rv3d, line[0])
+    b = view3d_utils.location_3d_to_region_2d(region, rv3d, line[1])
+    if a is None or b is None:
+        return []
+    d = b - a
+    if d.length < 1e-6:
+        return []
+    tick = Vector((-d.y, d.x)).normalized() * TICK_PX * s
+    return [tuple(p) for p in (a, b, a - tick, a + tick, b - tick, b + tick)]
 
 
 # ---- Appliance panels ----------------------------------------------------
@@ -555,9 +679,11 @@ def _ap_section(part):
     return appliance, int(index)
 
 
-def compute_labels(context, region, rv3d):
+def compute_labels(context, region, rv3d, lines_out=None):
     """[(obj_name, kind, editable, locked, rect, text)] for every label
-    currently on screen. rect is (x, y, w, h) region-local. ``locked``
+    currently on screen. When ``lines_out`` is a list, the region-space
+    dimension line under each label is appended to it as
+    ``(points, editable)``. rect is (x, y, w, h) region-local. ``locked``
     is the bay/opening hold flag (user-typed value held during
     redistribution); locked labels carry a bullet marker so users can
     see which values are pinned vs auto-calculated. Shared by the draw
@@ -616,6 +742,12 @@ def compute_labels(context, region, rv3d):
             if rect[1] + h < 0 or rect[1] > region.height:
                 continue
             labels.append((cage.name, kind, editable, locked, rect, text))
+            if lines_out is not None:
+                line = _dim_line_world(cage, kind, value)
+                if line is not None:
+                    pts = _project_dim_line(region, rv3d, line, s)
+                    if pts:
+                        lines_out.append((pts, editable))
 
     for cabinet in (_iter_cabinet_roots(scene) if mode is not None else ()):
         if not _cabinet_shown(cabinet, space):
@@ -656,10 +788,12 @@ def compute_labels(context, region, rv3d):
                 # offset.
                 targets.append((bay, 'BAY_H', True, bp.unlock_height,
                                 bp.height, "H ",
-                                _anchor_world(bay, 0.5, 1.0)))
+                                _anchor_world(bay, _height_dim_fx(bay),
+                                              0.5)))
+                depth_pts = _bay_depth_points(bay)
                 targets.append((bay, 'BAY_D', True, bp.unlock_depth,
                                 bp.depth, "D ",
-                                _anchor_world(bay, 0.5, 0.0)))
+                                depth_pts[1] if depth_pts else None))
         elif mode == 'Openings':
             targets = []
             # Non-editable openings (bay roots / V-split children) show
@@ -766,7 +900,9 @@ def _draw():
     # selection, and either on its own is reason enough to draw.
     if _active_mode(context) is None and _appliance_target(context) is None:
         return
-    labels = compute_labels(context, region, context.region_data)
+    dim_lines = []
+    labels = compute_labels(context, region, context.region_data,
+                            dim_lines)
 
     s = 1.0
     try:
@@ -777,6 +913,13 @@ def _draw():
     gpu.state.blend_set('ALPHA')
     shader = gpu.shader.from_builtin('UNIFORM_COLOR')
     shader.bind()
+    from gpu_extras.batch import batch_for_shader
+    for editable in (True, False):
+        pts = [p for line, ed in dim_lines if ed == editable for p in line]
+        if pts:
+            shader.uniform_float(
+                "color", DIM_LINE_COLOR if editable else DIM_LINE_COLOR_DIM)
+            batch_for_shader(shader, 'LINES', {"pos": pts}).draw(shader)
     for name, kind, editable, _locked, rect, text in labels:
         editing = (_edit is not None and _edit['name'] == name
                    and _edit['kind'] == kind)
