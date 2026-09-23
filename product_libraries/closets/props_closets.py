@@ -1038,17 +1038,6 @@ class Closet_Opening_Props(PropertyGroup):
         name="Rollout Height", description="Height of each tray",
         default=const.ROLLOUT_HEIGHT,
         unit='LENGTH', precision=4)  # type: ignore
-    rollout_inset_front: BoolProperty(
-        name="Inset Front",
-        description="Set the tray fronts inside the opening instead "
-                    "of lapping them over it",
-        default=False)  # type: ignore
-    rollout_inset_reveal: FloatProperty(
-        name="Inset Reveal",
-        description="How far an inset tray front is held back from "
-                    "each side of the opening",
-        default=const.ROLLOUT_INSET_REVEAL, min=0.0,
-        unit='LENGTH', precision=4)  # type: ignore
 
     # ----- Slanted shoe shelves -----
     slant_qty: IntProperty(
@@ -1359,7 +1348,6 @@ class Closet_Opening_Props(PropertyGroup):
         'drawer_qty', 'drawer_front_height', 'drawer_box_override',
         'drawer_stretcher_width',
         'rollout_qty', 'rollout_height',
-        'rollout_inset_front', 'rollout_inset_reveal',
         'slant_qty', 'slant_spacing', 'slant_angle', 'slant_color',
         'slant_fence_line', 'slant_fence_inset', 'slant_back_inset',
         'cubby_cols', 'cubby_rows', 'cubby_setback',
