@@ -50,7 +50,13 @@ ACTION_BG       = (0.20, 0.43, 0.70, 0.75)   # a label that is a button
 TEXT_COLOR      = (0.95, 0.95, 0.95, 1.0)
 EDIT_TEXT_COLOR = (1.0, 1.0, 1.0, 1.0)
 CL_COLOR        = (1.0, 0.56, 0.16, 0.95)
+CL_BORDER       = (1.0, 0.56, 0.16, 0.55)
+CL_TEXT_COLOR   = (1.0, 0.70, 0.40, 1.0)
 CL_DASH_PX      = 8
+CL_TICK_PX      = 5
+
+# Window centerline dims: drawn with an orange dimension line.
+_CL_KINDS = {'CAGE_CL_L', 'CAGE_CL_R'}
 
 _INPUT_CHARS = set("0123456789./-'\" ")
 
@@ -192,8 +198,10 @@ def _cage_label_targets(cage_obj):
 
 
 def _centerline_segments(context, region, rv3d, s=1.0):
-    """Region-space dash endpoints for each selected window's
-    centerline, from just below the sill to above the head."""
+    """Region-space line endpoints for each selected window's
+    centerline: the dashed CL from just below the sill to above the
+    head, plus a ticked dimension line from each wall end to it along
+    the window's bottom edge (where the CL labels sit)."""
     pts = []
     for tag, obj in _selected_targets(context).values():
         if tag != 'CAGE' or not obj.get('IS_WINDOW_BP'):
@@ -207,22 +215,46 @@ def _centerline_segments(context, region, rv3d, s=1.0):
         except Exception:
             continue
         mw = obj.matrix_world
-        a = view3d_utils.location_3d_to_region_2d(
-            region, rv3d, mw @ Vector((w / 2.0, 0.0, -inch(2.0))))
-        b = view3d_utils.location_3d_to_region_2d(
-            region, rv3d, mw @ Vector((w / 2.0, 0.0, h + inch(6.0))))
-        if a is None or b is None:
+
+        def to2d(x, z):
+            return view3d_utils.location_3d_to_region_2d(
+                region, rv3d, mw @ Vector((x, 0.0, z)))
+
+        a = to2d(w / 2.0, -inch(2.0))
+        b = to2d(w / 2.0, h + inch(6.0))
+        if a is not None and b is not None:
+            d = b - a
+            length = d.length
+            if length > 1e-6:
+                dash = CL_DASH_PX * s
+                step = d / length * dash
+                n = int(length / dash)
+                for i in range(0, n, 2):
+                    pts.append(tuple(a + step * i))
+                    pts.append(tuple(a + step * min(i + 1, length / dash)))
+
+        wall_obj = obj.parent
+        if wall_obj is None or not wall_obj.get('IS_WALL_BP'):
             continue
-        d = b - a
-        length = d.length
-        if length < 1e-6:
+        wall = hb_types.GeoNodeWall(wall_obj)
+        if not wall.has_modifier():
             continue
-        dash = CL_DASH_PX * s
-        step = d / length * dash
-        n = int(length / dash)
-        for i in range(0, n, 2):
-            pts.append(tuple(a + step * i))
-            pts.append(tuple(a + step * min(i + 1, length / dash)))
+        try:
+            wall_len = wall.get_input('Length')
+        except Exception:
+            continue
+        cx = w / 2.0
+        for end_x in (-obj.location.x, wall_len - obj.location.x):
+            a = to2d(end_x, 0.0)
+            b = to2d(cx, 0.0)
+            if a is None or b is None:
+                continue
+            d = b - a
+            if d.length < 1e-6:
+                continue
+            tick = Vector((-d.y, d.x)).normalized() * CL_TICK_PX * s
+            for p in (a, b, a - tick, a + tick, b - tick, b + tick):
+                pts.append(tuple(p))
     return pts
 
 
@@ -308,13 +340,13 @@ def compute_labels(context, region, rv3d):
 
 # ---- Draw handler --------------------------------------------------------
 
-def _draw_label_rect(shader, rect, bg):
+def _draw_label_rect(shader, rect, bg, border=LABEL_BORDER):
     x, y, w, h = rect
     verts = ((x, y), (x + w, y), (x + w, y + h), (x, y + h))
     from gpu_extras.batch import batch_for_shader
     shader.uniform_float("color", bg)
     batch_for_shader(shader, 'TRI_FAN', {"pos": verts}).draw(shader)
-    shader.uniform_float("color", LABEL_BORDER)
+    shader.uniform_float("color", border)
     batch_for_shader(shader, 'LINE_LOOP', {"pos": verts}).draw(shader)
 
 
@@ -360,10 +392,12 @@ def _draw():
             _draw_label_rect(shader, rect, EDIT_BG)
             blf.color(0, *EDIT_TEXT_COLOR)
         else:
+            is_cl = kind in _CL_KINDS
             _draw_label_rect(shader, rect,
-                             ACTION_BG if kind in _ACTION_KINDS else LABEL_BG)
+                             ACTION_BG if kind in _ACTION_KINDS else LABEL_BG,
+                             CL_BORDER if is_cl else LABEL_BORDER)
             blf.size(0, font_sz)
-            blf.color(0, *TEXT_COLOR)
+            blf.color(0, *(CL_TEXT_COLOR if is_cl else TEXT_COLOR))
         blf.position(0, rect[0] + PAD_X * s, rect[1] + PAD_Y * s, 0)
         blf.draw(0, text if not editing else shown)
     gpu.state.blend_set('NONE')
