@@ -104,9 +104,15 @@ def _matches(obj, mode):
 
 def resolve_target(obj, mode):
     """The object the mode would have offered for a click on ``obj``: the
-    first of obj and its ancestors the mode matches, else None."""
+    first of obj and its ancestors the mode matches, else None.
+
+    A countertop (and anything under it) is its own pick: island tops are
+    parented to a cabinet, and promoting them would leave the top
+    impossible to click."""
     o = obj
     while o is not None:
+        if o.get('IS_COUNTERTOP'):
+            return None
         if _matches(o, mode):
             return o
         o = o.parent
