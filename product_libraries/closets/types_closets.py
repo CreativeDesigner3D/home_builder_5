@@ -1447,6 +1447,13 @@ class ClosetStarter(GeoNodeCage):
             part.set_input('Width', max(width, 0.001))
             part.set_input('Thickness', st)
             _set_part_hidden(c, width <= 0.0)
+            # A filler is made here, when its width is set, long after
+            # the run was finished - so nothing else paints it. One left
+            # bare (as fillers made before this were) takes the closet
+            # material now.
+            if part.get_input('Top Surface') is None:
+                from . import materials_closets
+                materials_closets.apply_to_part(c)
 
     def _layout_bays(self, layout, scene_props, sp):
         st = scene_props.shelf_thickness
