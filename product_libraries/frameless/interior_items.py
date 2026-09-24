@@ -26,9 +26,15 @@ SIGNATURE_KEY = 'hb_items_signature'
 PART_COUNT_KEY = 'hb_items_part_count'
 PART_MENU_ID = 'HOME_BUILDER_MT_interior_part_commands'
 
+# Wine and bar storage inserts, in menu order. Each is one mesh sized to
+# the opening by the face frame library's bar storage builders.
+BAR_STORAGE_KINDS = ('WINE_CUBBY', 'WINE_CELLAR', 'WINE_LATTICE', 'WINE_X',
+                     'WINE_DIAGONAL', 'WINE_HALF_CIRCLE', 'STEMWARE_RACK',
+                     'PLATE_RACK')
+
 # Item kinds a frameless items interior offers, in menu order.
 SUPPORTED_KINDS = ('ROLLOUT', 'PULLOUT_SHELF', 'TRAY_DIVIDERS',
-                   'ADJUSTABLE_SHELF')
+                   'ADJUSTABLE_SHELF') + BAR_STORAGE_KINDS
 
 # Part kinds built from those items. Anything else an item might emit
 # (a nosing, a workstation top) is left out until the library supports it.
@@ -37,7 +43,7 @@ _BUILT_KINDS = frozenset({
     'PULLOUT_SHELF', 'PULLOUT_SPACER',
     'TRAY_DIVIDER', 'TRAY_LOCKED_SHELF',
     'ADJUSTABLE_SHELF',
-})
+}) | frozenset(BAR_STORAGE_KINDS)
 
 # Shelves span the whole interior, including the reach behind a blind
 # panel. Slide-mounted items and tray dividers stay on the door side.
@@ -251,6 +257,45 @@ def _create_rollout_box(interior_obj, desc):
     return box.obj
 
 
+def _create_bar_storage(interior_obj, desc):
+    """A wine or bar storage insert: one mesh built to the opening. Not a
+    cutpart -- it is a bought unit, so cut lists leave it out."""
+    from ..face_frame import bar_storage
+    width, depth, height = desc['dims']
+    obj = bar_storage.build_bar_storage_object(desc['kind'], desc['name'],
+                                               width, height, depth)
+    if obj is None:
+        return None
+    for coll in interior_obj.users_collection:
+        coll.objects.link(obj)
+        break
+    else:
+        bpy.context.scene.collection.objects.link(obj)
+    _tag(obj, interior_obj, desc)
+    return obj
+
+
+def _paint_finish(root, objs):
+    """Bar storage is finished to match the exterior."""
+    if root is None or not objs:
+        return
+    try:
+        style = _cabinet_style(root)
+        mat = style.get_finish_material()[0] if style else None
+    except Exception:
+        mat = None
+    if mat is None:
+        return
+    for obj in objs:
+        mesh = obj.data
+        if mesh is None:
+            continue
+        if mesh.materials:
+            mesh.materials[0] = mat
+        else:
+            mesh.materials.append(mat)
+
+
 def _cabinet_style(root):
     from ... import hb_project
     scene = hb_project.get_main_scene()
@@ -308,14 +353,22 @@ def solve(interior_obj, force=False):
             _remove_part(obj)
         built = []
         painted = []
+        finished = []
         for desc in descs:
             if desc['kind'] == 'ROLLOUT_BOX':
                 built.append(_create_rollout_box(interior_obj, desc))
+            elif desc['kind'] in BAR_STORAGE_KINDS:
+                obj = _create_bar_storage(interior_obj, desc)
+                if obj is not None:
+                    built.append(obj)
+                    finished.append(obj)
             else:
                 obj = _create_mesh_part(interior_obj, desc)
                 built.append(obj)
                 painted.append(obj)
-        _paint(solver_frameless.cabinet_root(interior_obj), painted)
+        root = solver_frameless.cabinet_root(interior_obj)
+        _paint(root, painted)
+        _paint_finish(root, finished)
         interior_obj[SIGNATURE_KEY] = signature
         interior_obj[PART_COUNT_KEY] = len(built)
     finally:

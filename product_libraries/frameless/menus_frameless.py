@@ -270,11 +270,24 @@ class HOME_BUILDER_MT_interior_change(bpy.types.Menu):
         layout.operator("hb_frameless.change_interior_type", text="Roll-outs").interior_type = 'ROLLOUTS'
         layout.operator("hb_frameless.change_interior_type", text="Roll-out Shelves").interior_type = 'PULLOUT_SHELVES'
         layout.operator("hb_frameless.change_interior_type", text="Tray Dividers").interior_type = 'TRAY_DIVIDERS'
+        layout.menu("HOME_BUILDER_MT_interior_change_bar_storage", text="Wine & Bar Storage")
         layout.operator("hb_frameless.change_interior_type", text="Empty (No Interior)").interior_type = 'EMPTY'
         #TODO: Implement ability to create custom interior divisions
         # layout.separator()
         # layout.operator("hb_frameless.custom_interior_vertical", text="Custom Vertical Division...")
         # layout.operator("hb_frameless.custom_interior_horizontal", text="Custom Horizontal Division...")
+
+
+class HOME_BUILDER_MT_interior_change_bar_storage(bpy.types.Menu):
+    bl_label = "Wine & Bar Storage"
+
+    def draw(self, context):
+        from .operators.ops_interior import _ITEM_KIND_LABELS
+        from .interior_items import BAR_STORAGE_KINDS
+        layout = self.layout
+        for kind in BAR_STORAGE_KINDS:
+            layout.operator("hb_frameless.change_interior_type",
+                            text=_ITEM_KIND_LABELS[kind]).interior_type = kind
 
 
 class HOME_BUILDER_MT_interior_part_commands(bpy.types.Menu):
@@ -422,6 +435,7 @@ classes = (
     HOME_BUILDER_MT_door_front_commands,
     HOME_BUILDER_MT_interior_commands,
     HOME_BUILDER_MT_interior_change,
+    HOME_BUILDER_MT_interior_change_bar_storage,
     HOME_BUILDER_MT_interior_part_commands,
     HOME_BUILDER_MT_floating_shelf_commands,
     HOME_BUILDER_MT_valance_commands,
