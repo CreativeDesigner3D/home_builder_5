@@ -2684,6 +2684,10 @@ class FaceFrameCabinet(GeoNodeCage):
                 if panel_rails is None:
                     panel_rails = self._panel_bay_rail_widths()
                 top_target, bottom_target = panel_rails
+            if getattr(bp, 'bread_board', False):
+                from . import props_hb_face_frame as ff_props
+                top_target = max(top_target,
+                                 ff_props.BREAD_BOARD_MIN_TOP_RAIL)
             if not bp.unlock_top_rail:
                 if abs(bp.top_rail_width - top_target) > 1e-6:
                     bp.top_rail_width = top_target

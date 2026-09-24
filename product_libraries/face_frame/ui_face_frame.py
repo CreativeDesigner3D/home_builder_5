@@ -1170,6 +1170,8 @@ def draw_bay_properties(layout, bay_obj):
     col.prop(bp, 'remove_carcass', text="Remove Carcass")
     if cab_type in ('BASE', 'TALL', 'LAP_DRAWER'):
         col.prop(bp, 'floating_bay', text="Floating")
+    if cab_type == 'BASE':
+        col.prop(bp, 'bread_board', text="Bread Board")
     draw_bay_finish_options(col, bay_obj)
     if cab_type in ('BASE', 'UPPER'):
         col.prop(bp, 'bottom_rail_profile', text="Bottom Rail Profile")
@@ -2166,6 +2168,8 @@ def draw_bay_in_prompts(layout, bay_obj):
     col.prop(bp, 'remove_carcass', text="Remove Carcass")
     if cab_type in ('BASE', 'TALL', 'LAP_DRAWER'):
         col.prop(bp, 'floating_bay', text="Floating")
+    if cab_type == 'BASE':
+        col.prop(bp, 'bread_board', text="Bread Board")
     draw_bay_finish_options(col, bay_obj)
     if cab_type in ('BASE', 'UPPER'):
         col.prop(bp, 'bottom_rail_profile', text="Bottom Rail Profile")

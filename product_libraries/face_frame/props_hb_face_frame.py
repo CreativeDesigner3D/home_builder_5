@@ -6883,6 +6883,21 @@ def _sync_corner_garage_extension(cab_props):
         del obj['hb_garage_extension']
 
 
+BREAD_BOARD_MIN_TOP_RAIL = units.inch(2.5)
+
+
+def _update_bay_bread_board(self, context):
+    """Per-bay Bread Board toggle. A locked top rail picks the minimum
+    up in _distribute_bay_rails; an unlocked one holds its own width,
+    so it is raised here when it is under the minimum."""
+    if (self.bread_board and self.unlock_top_rail
+            and self.top_rail_width < BREAD_BOARD_MIN_TOP_RAIL - 1e-6):
+        # The width's own update runs the recalc.
+        self.top_rail_width = BREAD_BOARD_MIN_TOP_RAIL
+        return
+    _update_cabinet_dim(self, context)
+
+
 def _update_bay_appliance_garage(self, context):
     """Per-bay Appliance Garage toggle (uppers, incl. blind corners).
 
@@ -9204,6 +9219,15 @@ class Face_Frame_Bay_Props(PropertyGroup):
         update=_update_bay_appliance_garage,
     )  # type: ignore
     apron_bay: BoolProperty(name="Apron Bay", default=False)  # type: ignore
+    # Bread board: a pull-out board housed in this bay's top rail. The
+    # rail grows to at least BREAD_BOARD_MIN_TOP_RAIL so the board's
+    # slot fits; the opening below gives up the difference.
+    bread_board: BoolProperty(
+        name="Bread Board", default=False,
+        description="Pull-out bread board in this bay's top rail. "
+                    "The top rail grows to at least 2-1/2\"",
+        update=_update_bay_bread_board,
+    )  # type: ignore
     # Finished interior: the exterior finish material reads inside this
     # bay's opening, realized by adding finish-material liner panels on
     # the left / right / top / back inner faces (a shared carcass back /
