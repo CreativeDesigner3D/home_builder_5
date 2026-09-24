@@ -387,19 +387,93 @@ def _alternate_drawer_notes(context, style):
     return props_hb_face_frame.alternate_drawer_notes(style, context)
 
 
+def _value(p, prop, custom=None):
+    """What a field reads: the typed value when it has one, else the
+    list value's name."""
+    if custom and getattr(p, custom + '_is_custom', False):
+        return str(getattr(p, custom + '_custom', "") or "")
+    from ...hb_gpu_ui import enum_label
+    try:
+        return str(enum_label(p, prop) or "")
+    except Exception:
+        return str(getattr(p, prop, "") or "")
+
+
+def _join(*parts):
+    return ", ".join(x for x in parts if x and x.upper() != 'NONE')
+
+
+def _construction_summary(p):
+    return _join(_value(p, 'finish_wood', 'ss_wood'),
+                 _value(p, 'finish_overlay', 'ss_overlay'),
+                 _value(p, 'ss_corner_treatment', 'ss_corner_treatment'))
+
+
+def _finish_summary(p):
+    glaze = _value(p, 'finish_glaze', 'ss_glaze')
+    text = _join(_value(p, 'finish_color', 'ss_color'),
+                 _value(p, 'finish_varnish', 'ss_varnish'),
+                 glaze if glaze and glaze.upper() != 'NONE' else "no glaze")
+    effects = len(getattr(p, 'special_effects', ()) or ())
+    if effects:
+        text += ", %d effect%s" % (effects, "" if effects == 1 else "s")
+    return text
+
+
+def _fronts_summary(p):
+    return _join(_value(p, 'door_style', 'ss_door'),
+                 _value(p, 'drawer_front_style', 'ss_drawer'))
+
+
+def _hardware_summary(p):
+    return _join(_value(p, 'finish_hinge', 'ss_hinge'),
+                 _value(p, 'ss_drawer_slides', 'ss_drawer_slides'),
+                 _value(p, 'ss_drawer_box_construction',
+                        'ss_drawer_box_construction'))
+
+
+def _notes_summary(p):
+    n = len(getattr(p, 'ss_notes', ()) or ())
+    return "none" if n == 0 else "%d note%s" % (n, "" if n == 1 else "s")
+
+
+def _front_cells(context, p):
+    """The two fronts as pictures; a click opens that front's manager."""
+    from .props_hb_face_frame import get_style_props
+    sp = get_style_props(context)
+    cells = []
+    for kind, label, prop, pool, key in (
+            ('DOOR', "Door", 'door_style', 'door_styles', 'DOOR_STYLES'),
+            ('DRAWER', "Drawer Front", 'drawer_front_style',
+             'drawer_front_styles', 'DRAWER_FRONT_STYLES')):
+        name = getattr(p, prop, "") or ""
+        style = next((ds for ds in getattr(sp, pool, ()) if ds.name == name),
+                     None)
+        picture = _front_tile_picture(kind)
+        cells.append({
+            'label': label,
+            'name': name if style is not None else "None",
+            'picture': (lambda ctx, st=style, pic=picture:
+                        pic(ctx, st) if st is not None else ([], 0.0, 0.0)),
+            'op': 'home_builder.options_open_page',
+            'kwargs': {'key': key},
+        })
+    return cells
+
+
 def _cabinet_style_fields():
-    """The fields of one cabinet style, in the sidebar form's order.
-    A 'choice' is a dropdown whose chip turns it into typed text, for a
-    value outside the list; the typed value only prints, the dropdown
-    still drives the geometry and material."""
+    """The fields of one cabinet style, in groups that fold under a line
+    saying what is set in them. A 'choice' is a dropdown whose last item
+    turns it into typed text, for a value outside the list; the typed
+    value only prints, the dropdown still drives the geometry and
+    material."""
     refs = lambda p: p.show_finish_references
 
     def custom_finish(p):
         from . import style_options
         return style_options.is_custom_finish(p.finish_color)
 
-    fields = [
-        ('label', None, "Cabinet"),
+    construction = (
         ('choice', 'finish_wood', "Wood", {'custom': 'ss_wood'}),
         ('choice', 'interior_material_type', "Interior",
          {'custom': 'ss_interior'}),
@@ -415,27 +489,25 @@ def _cabinet_style_fields():
         # opened there.
         ('actions', (("Face Frame Sizes...",
                       'hb_face_frame.face_frame_sizes'),), None),
-    ]
-    fields += [
-        ('gap', None, None),
-        ('label', None, "Finish"),
-        ('bool', 'show_finish_references', "References"),
+    )
+
+    finish = [
         ('choice', 'finish_color', "Color", {'custom': 'ss_color'}),
         # A custom finish is matched to a sample, so there is no colour
         # on file for it -- this is the one to render in.
         ('native', 'custom_finish_color', "Custom Color",
          {'when': custom_finish}),
     ]
-    fields += _ref_fields('ss_color_ref_name', 'ss_color_ref_image',
+    finish += _ref_fields('ss_color_ref_name', 'ss_color_ref_image',
                           "Color", refs)
-    fields.append(('choice', 'finish_varnish', "Varnish",
+    finish.append(('choice', 'finish_varnish', "Varnish",
                    {'custom': 'ss_varnish'}))
-    fields += _ref_fields('ss_varnish_ref_name', 'ss_varnish_ref_image',
+    finish += _ref_fields('ss_varnish_ref_name', 'ss_varnish_ref_image',
                           "Varnish", refs)
-    fields.append(('choice', 'finish_glaze', "Glaze", {'custom': 'ss_glaze'}))
-    fields += _ref_fields('ss_glaze_ref_name', 'ss_glaze_ref_image',
+    finish.append(('choice', 'finish_glaze', "Glaze", {'custom': 'ss_glaze'}))
+    finish += _ref_fields('ss_glaze_ref_name', 'ss_glaze_ref_image',
                           "Glaze", refs)
-    fields += [
+    finish += [
         ('items', 'special_effects', None,
          # A name to read, not a locked value: plain, so it is not greyed.
          {'kind': 'text', 'prop': 'name',
@@ -446,59 +518,134 @@ def _cabinet_style_fields():
               _ref_fields('ref_name', 'ref_image', "Effect")
               if style.show_finish_references else ())}),
         ('pick', _special_effect_choices, "Add Special Effect"),
-        ('gap', None, None),
-        ('label', None, "Fronts"),
+        # References are what a shop matches a finish to; most styles
+        # have none, so their rows stay off until asked for.
+        ('bool', 'show_finish_references', "Show References"),
+    ]
+
+    fronts = (
+        # A click on either picture opens that front's style manager.
+        ('tiles', None, None, {'cells': _front_cells}),
         ('choice', 'door_style', "Door", {'custom': 'ss_door'}),
-        ('actions', (("Manage Door Styles...",
-                      'home_builder.options_open_page',
-                      'key', 'DOOR_STYLES'),), None),
+        ('choice', 'drawer_front_style', "Drawer Front",
+         {'custom': 'ss_drawer'}),
         # Extra styles document the other fronts in use on the Style
         # Section page; only the first extra drawer style has a geometric
-        # effect (the Use Extra Style At height below).
+        # effect (the Alternate Style Over height below).
+        ('label', None, "Also on the Style Section"),
         ('items', 'extra_door_styles', None,
          {'kind': 'enum', 'prop': 'style',
           'remove': ('hb_face_frame.remove_cabinet_extra_front_style',
                      lambda i, item: {'kind': 'DOOR', 'index': i})}),
-        ('actions', (("List Another Door Style",
-                      'hb_face_frame.add_cabinet_extra_front_style',
-                      'kind', 'DOOR'),), None),
-        ('choice', 'drawer_front_style', "Drawer Front",
-         {'custom': 'ss_drawer'}),
-        ('actions', (("Manage Drawer Front Styles...",
-                      'home_builder.options_open_page',
-                      'key', 'DRAWER_FRONT_STYLES'),), None),
         ('items', 'extra_drawer_front_styles', None,
          {'kind': 'enum', 'prop': 'style',
           'remove': ('hb_face_frame.remove_cabinet_extra_front_style',
                      lambda i, item: {'kind': 'DRAWER', 'index': i})}),
-        ('actions', (("List Another Drawer Front",
+        ('actions', (("+ Door Style",
                       'hb_face_frame.add_cabinet_extra_front_style',
-                      'kind', 'DRAWER'),), None),
+                      'kind', 'DOOR'),
+                     ("+ Drawer Front",
+                      'hb_face_frame.add_cabinet_extra_front_style',
+                      'kind', 'DRAWER')), None),
         # Drawer fronts this tall take the first extra style (0 = off).
         ('distance', 'extra_drawer_front_height', "Alternate Style Over",
          {'when': lambda p: len(p.extra_drawer_front_styles) > 0}),
         ('notes', _alternate_drawer_notes, None, {'owner': True}),
-        ('gap', None, None),
-        ('label', None, "Doors"),
+    )
+
+    hardware = (
         ('choice', 'finish_hinge', "Hinge", {'custom': 'ss_hinge'}),
-        ('gap', None, None),
-        ('label', None, "Drawers"),
         ('choice', 'ss_drawer_slides', "Drawer Slides"),
         ('choice', 'ss_drawer_box_construction', "Box Construction"),
         ('file', 'ss_drawer_box_brand', "Box Brand Logo"),
-        ('gap', None, None),
-        ('label', None, "Door & Drawer Edge Profile"),
         ('choice', 'ss_edge_profile', "Edge Profile"),
-        ('gap', None, None),
+    )
+
+    notes = (
         # Printed at the end of the style's Style Section block.
-        ('label', None, "Notes"),
         ('items', 'ss_notes', None,
          {'kind': 'text', 'prop': 'text',
           'remove': ('hb_face_frame.remove_style_note',
                      lambda i, item: {'index': i})}),
         ('actions', (("Add Note", 'hb_face_frame.add_style_note'),), None),
-    ]
-    return tuple(fields)
+    )
+
+    return (
+        ('group', 'cs_construction', "Construction",
+         {'summary': _construction_summary, 'fields': construction}),
+        ('group', 'cs_finish', "Finish",
+         {'summary': _finish_summary, 'fields': tuple(finish)}),
+        ('group', 'cs_fronts', "Fronts",
+         {'summary': _fronts_summary, 'fields': fronts}),
+        ('group', 'cs_hardware', "Hardware",
+         {'summary': _hardware_summary, 'fields': hardware}),
+        ('group', 'cs_notes', "Notes",
+         {'summary': _notes_summary, 'fields': notes}),
+    )
+
+
+# ---- The cabinet style list ---------------------------------------------------
+# Each row carries the style's colour (the one it paints cabinets with
+# when styles are coloured) and how many cabinets use it, so the list
+# reads as the legend for that view.
+
+_count_cache = {'at': 0.0, 'counts': {}}
+
+
+def _style_counts():
+    """{style name: cabinets using it}, worked out at most twice a
+    second -- the panel repaints far more often than that."""
+    import time
+    now = time.monotonic()
+    if now - _count_cache['at'] > 0.5:
+        counts = {}
+        for obj in bpy.data.objects:
+            if (not obj.get('IS_FACE_FRAME_CABINET_CAGE')
+                    or obj.get('hb_applied_to_cabinet_side')
+                    or not obj.users_scene):
+                continue
+            name = obj.get('STYLE_NAME')
+            if name:
+                counts[name] = counts.get(name, 0) + 1
+        _count_cache['at'], _count_cache['counts'] = now, counts
+    return _count_cache['counts']
+
+
+def _style_color(context, style):
+    from . import props_hb_face_frame as ff
+    sp = ff.get_style_props(context)
+    index = next((i for i, cs in enumerate(sp.cabinet_styles)
+                  if cs.name == style.name), -1)
+    if index < 0:
+        return None
+    return ff.style_viewport_color(ff.style_palette_color(index))
+
+
+def _style_count(context, style):
+    return _style_counts().get(style.name, 0)
+
+
+def _style_summary(context, style):
+    n = _style_count(context, style)
+    return {
+        'title': style.name,
+        'swatch': _style_color(context, style),
+        'lines': (
+            _join(_value(style, 'finish_wood', 'ss_wood'),
+                  _value(style, 'finish_color', 'ss_color'),
+                  _value(style, 'finish_overlay', 'ss_overlay')),
+            "Used by %d cabinet%s" % (n, "" if n == 1 else "s"),
+        ),
+    }
+
+
+def _more_style_commands(context):
+    return (("Paint Part", 'hb_face_frame.paint_part_material',
+             {'brush': 'FINISH'}),
+            ("Paint Interior", 'hb_face_frame.paint_part_material',
+             {'brush': 'INTERIOR'}),
+            ("Reset Part", 'hb_face_frame.paint_part_material',
+             {'brush': 'RESET'}))
 
 
 def _front_style_actions(kind):
@@ -576,15 +723,6 @@ def _front_tile_picture(kind):
     return picture
 
 
-def _active_cabinet_style(context):
-    from . import props_hb_face_frame
-    sp = props_hb_face_frame.get_style_props(context)
-    if sp is None:
-        return None
-    i = sp.active_cabinet_style_index
-    return sp.cabinet_styles[i] if 0 <= i < len(sp.cabinet_styles) else None
-
-
 def _front_in_use(kind):
     prop = 'door_style' if kind == 'DOOR' else 'drawer_front_style'
 
@@ -637,17 +775,15 @@ OPTION_PAGES = {
         'move_op': 'hb_face_frame.move_cabinet_style',
         'actions_first': True,
         'fields': _cabinet_style_fields(),
+        'row_dot': _style_color,
+        'row_count': _style_count,
+        'summary': _style_summary,
+        # The everyday three in a row; the part brushes in a menu.
         'actions': (
-            (("Assign to Selected",
-              'hb_face_frame.assign_style_to_selected_cabinets'),
-             ("Update Cabinets", 'hb_face_frame.update_cabinets_from_style')),
-            (("Paint Cabinet", 'hb_face_frame.paint_assign_cabinet_style'),
-             ("Paint Part", 'hb_face_frame.paint_part_material',
-              'brush', 'FINISH')),
-            (("Paint Interior", 'hb_face_frame.paint_part_material',
-              'brush', 'INTERIOR'),
-             ("Reset Part", 'hb_face_frame.paint_part_material',
-              'brush', 'RESET')),
+            (("Assign", 'hb_face_frame.assign_style_to_selected_cabinets'),
+             ("Update", 'hb_face_frame.update_cabinets_from_style'),
+             ("Paint", 'hb_face_frame.paint_assign_cabinet_style'),
+             ("More...", _more_style_commands)),
         ),
     },
     'draw_door_styles_ui': {

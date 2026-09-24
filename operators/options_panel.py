@@ -114,6 +114,8 @@ CHIP = 18            # a toggle or remove chip at the end of a field row
 TILE_H = 86          # one picture tile on a sub-page's tile grid
 TILE_COLS = 3
 TILE_NAME_H = 14     # the name under a tile's picture
+CARD_H = 50          # the summary card over a pool's selected item
+DOT = 8              # a list row's colour dot
 
 
 def form_sections(context):
@@ -321,6 +323,10 @@ class PoolSpec:
     shows (the item's name by default); `rename_prop` is what a second
     click on the active row types into, None for no rename; and
     `allow_empty` lets the last item be removed.
+    `row_dot(context, item)` gives a row a colour dot (an (r, g, b) or
+    None), `row_count(context, item)` a number at its end, and
+    `summary(context, item)` a card over the selected item's fields --
+    {'title', 'lines', 'swatch'}.
     Any operator left None simply leaves that control out.
     """
 
@@ -328,7 +334,8 @@ class PoolSpec:
                  remove_op=None, duplicate_op=None, move_op=None,
                  fields=(), actions=(), scene_fields=(),
                  actions_first=False, scope='main', list_label="Styles",
-                 row_text=None, rename_prop='name', allow_empty=False):
+                 row_text=None, rename_prop='name', allow_empty=False,
+                 row_dot=None, row_count=None, summary=None):
         self.title = title
         self.props = props
         self.collection = collection
@@ -347,6 +354,9 @@ class PoolSpec:
         self.row_text = row_text
         self.rename_prop = rename_prop
         self.allow_empty = allow_empty
+        self.row_dot = row_dot
+        self.row_count = row_count
+        self.summary = summary
 
     @property
     def key(self):
@@ -410,6 +420,9 @@ def _pool_from_spec(spec):
         row_text=spec.get('row_text'),
         rename_prop=spec.get('rename_prop', 'name'),
         allow_empty=spec.get('allow_empty', False),
+        row_dot=spec.get('row_dot'),
+        row_count=spec.get('row_count'),
+        summary=spec.get('summary'),
     )
 
 
@@ -500,6 +513,9 @@ def _pool_blocks(context, pool):
     if pool.actions_first:
         blocks.extend(commands)
     item = pool.active(context)
+    if item is not None and pool.summary is not None:
+        blocks.append(('gap', None))
+        blocks.append(('card', pool))
     if item is not None and pool.fields:
         blocks.append(('gap', None))
         blocks.extend(_field_blocks(context, pool.fields, item))
@@ -553,8 +569,39 @@ def _field_blocks(context, fields, owner):
             blocks.append(('pick', (field[2], field[1])))
         elif field[0] == 'items':
             blocks.extend(_item_blocks(context, field, owner))
+        elif field[0] == 'group':
+            blocks.extend(_group_blocks(context, field, owner))
+        elif field[0] == 'tiles':
+            blocks.append(('picture_tiles',
+                           (_field_parts(field)[3].get('cells'), owner)))
         else:
             blocks.append(('field', (field, owner)))
+    return blocks
+
+
+def _group_blocks(context, field, owner):
+    """A group of fields that folds under a header saying what is set
+    in it, so a long form reads at a glance and opens where it is
+    needed. Folded until opened; remembered like the sections are."""
+    _kind, key, label, options = _field_parts(field)
+    method = 'group:' + key
+    expanded = section_expanded(context, method)
+    summary = ""
+    fn = options.get('summary')
+    if fn is not None:
+        try:
+            summary = fn(owner) or ""
+        except Exception:
+            summary = ""
+
+    def toggle(m=method):
+        toggle_section(bpy.context, m)
+
+    blocks = [('section', (label, method, expanded, toggle, summary))]
+    if expanded:
+        inner = _field_blocks(context, options.get('fields', ()), owner)
+        blocks.extend(('indent', b) for b in inner)
+        blocks.append(('gap', None))
     return blocks
 
 
@@ -665,8 +712,10 @@ def _block_h(block, s):
         return _block_h(block[1], s)
     if kind in ('head', 'section'):
         return SECTION_H * s
-    if kind == 'tiles':
+    if kind in ('tiles', 'picture_tiles'):
         return (TILE_H + ROW_GAP) * s
+    if kind == 'card':
+        return (CARD_H + ROW_GAP) * s
     if kind == 'gap':
         return GROUP_GAP * s
     return (ROW_H + ROW_GAP) * s
@@ -691,7 +740,9 @@ def _typed_fields(context):
     out, y = [], 0.0
     for block in _current_page()[0](context):
         h = _block_h(block, s)
-        inner = block[1] if block[0] == 'indent' else block
+        inner = block
+        while inner[0] == 'indent':
+            inner = inner[1]
         if inner[0] == 'field':
             row = _field_entries(context, inner[1][0], inner[1][1],
                                  0.0, 0.0, 100.0, ROW_H * s, s)[0]
@@ -790,17 +841,18 @@ def build_page(rect, context, blocks_fn, lst):
         # Content under an unfolded section steps in from its header,
         # so the eye can tell what belongs to it.
         x, row_w = x0, full_w
-        if kind == 'indent':
+        while kind == 'indent':
             kind, payload = payload
-            x, row_w = x0 + INDENT * s, full_w - INDENT * s
+            x, row_w = x + INDENT * s, row_w - INDENT * s
         if kind == 'gap':
             continue
         if kind == 'section':
             label, method, expanded = payload[:3]
             toggle = payload[3] if len(payload) > 3 else None
+            summary = payload[4] if len(payload) > 4 else ""
             entries.append(('section_row', label, method,
                             (x, block_top - sect_h, row_w, sect_h), expanded,
-                            toggle))
+                            toggle, summary))
         elif kind == 'value':
             label, text = payload
             entries.append(('value_row', label, text,
@@ -862,10 +914,13 @@ def build_page(rect, context, blocks_fn, lst):
             n = len(payload)
             bw = (row_w - gap * (n - 1)) / n
             for j, (label, op_id, prop, value) in enumerate(payload):
-                entries.append((
-                    'action_btn', label, op_id, prop, value,
-                    (x + j * (bw + gap), block_top - row_h, bw, row_h),
-                    _can_run(op_id, polled)))
+                rect = (x + j * (bw + gap), block_top - row_h, bw, row_h)
+                if callable(op_id):
+                    # A menu of commands in the row: the ones used less.
+                    entries.append(('pick_btn', label, op_id, rect))
+                    continue
+                entries.append(('action_btn', label, op_id, prop, value,
+                                rect, _can_run(op_id, polled)))
         elif kind == 'field':
             field, owner = payload
             entries.extend(_field_entries(context, field, owner, x,
@@ -881,6 +936,22 @@ def build_page(rect, context, blocks_fn, lst):
         elif kind == 'back':
             entries.append(('back_row', payload,
                             (x, block_top - row_h, row_w, row_h)))
+        elif kind == 'card':
+            entries.append(('card', payload,
+                            (x, block_top - CARD_H * s, row_w, CARD_H * s)))
+        elif kind == 'picture_tiles':
+            cells_fn, owner = payload
+            try:
+                cells = list(cells_fn(context, owner) or ())
+            except Exception:
+                cells = []
+            if cells:
+                tile_h = TILE_H * s
+                cw = (row_w - gap * (len(cells) - 1)) / len(cells)
+                for j, cell in enumerate(cells):
+                    entries.append(('picture_tile', cell,
+                                    (x + j * (cw + gap), block_top - tile_h,
+                                     cw, tile_h)))
         elif kind == 'tiles':
             pool, tiles, row = payload
             items = pool.items(context)
@@ -919,12 +990,16 @@ def _field_entries(context, field, owner, x, top, row_w, row_h, s):
     options = dict(options)
     chip_prop = glyph = None
     if fkind == 'choice':
+        # Typing a value outside the list is the last item of the
+        # dropdown; the chip back to the list shows only while typed.
         base = options.get('custom') or prop
-        chip_prop, glyph = base + '_is_custom', 'text'
-        if getattr(owner, chip_prop, False):
+        custom = base + '_is_custom'
+        if getattr(owner, custom, False):
             fkind, prop = 'text', base + '_custom'
+            chip_prop, glyph = custom, 'text'
         else:
             fkind = 'enum'
+            options['custom_toggle'] = custom
     elif fkind == 'locked':
         chip_prop, glyph = options.get('unlock'), 'lock'
         fkind = 'distance'
@@ -1073,12 +1148,26 @@ def paint(entries, mx, my):
                 glyph_chevron(shader, rx + 6 * s, ry + rh / 2.0, 7 * s,
                               not expanded,
                               Theme.GLYPH_HOVER if hot else Theme.GLYPH)
-                shown = fit_text(font_id, FONT * s, label, rw - 20 * s)
-                if hot:
-                    note_tip_if_cut(rect, shown, label)
+                summary = entry[6] if len(entry) > 6 else ""
+                label_w = rw - 20 * s
+                if summary:
+                    label_w = min(text_width(font_id, FONT * s, label),
+                                  (rw - 20 * s) * 0.45)
+                shown = fit_text(font_id, FONT * s, label, label_w)
                 draw_text(font_id, rx + 16 * s, ry + rh * 0.28, FONT * s,
                           Theme.TEXT_PRIMARY if (expanded or hot)
                           else Theme.TEXT_NORMAL, shown)
+                if summary:
+                    # What is set in the group, read without opening it.
+                    sx = rx + 16 * s + label_w + 10 * s
+                    shown_sum = fit_text(font_id, FONT * s, summary,
+                                         rx + rw - 6 * s - sx)
+                    draw_text(font_id, sx, ry + rh * 0.28, FONT * s,
+                              Theme.TEXT_HEADER, shown_sum)
+                    if hot:
+                        note_tip_if_cut(rect, shown_sum, summary)
+                elif hot:
+                    note_tip_if_cut(rect, shown, label)
                 draw_rects(shader, [(rx, ry, rw, 1 * s)], Theme.SEPARATOR)
             elif kind == 'label_row':
                 # A caption inside a form: the small header style, so it
@@ -1132,6 +1221,39 @@ def paint(entries, mx, my):
                     draw_rects(shader, [(rx, ry + 2 * s, ACCENT_W * s,
                                          rh - 4 * s)], Theme.ACCENT_BG)
                 text_x = rx + (ACCENT_W + 8) * s
+                item = None
+                if pool.row_dot is not None or pool.row_count is not None:
+                    items = pool.items(bpy.context)
+                    item = items[_i] if 0 <= _i < len(items) else None
+                dot = None
+                if item is not None and pool.row_dot is not None:
+                    try:
+                        dot = pool.row_dot(bpy.context, item)
+                    except Exception:
+                        dot = None
+                if dot is not None:
+                    d = DOT * s
+                    draw_rect(shader, text_x, ry + (rh - d) / 2.0, d, d,
+                              (dot[0], dot[1], dot[2], 1.0))
+                    draw_rect_outline(shader, text_x, ry + (rh - d) / 2.0,
+                                      d, d, Theme.BTN_BORDER)
+                    text_x += d + 6 * s
+                count_room = 0.0
+                if (item is not None and pool.row_count is not None
+                        and not renaming):
+                    try:
+                        count = pool.row_count(bpy.context, item)
+                    except Exception:
+                        count = None
+                    if count is not None:
+                        ctext = str(count)
+                        cw = text_width(font_id, FONT * s, ctext)
+                        count_room = cw + 8 * s
+                        draw_text(font_id,
+                                  rx + rw - gear_room - arrow_room - 6 * s - cw,
+                                  ry + rh * 0.28, FONT * s,
+                                  Theme.TEXT_PRIMARY if is_active
+                                  else Theme.TEXT_HEADER, ctext)
                 if renaming:
                     # The row becomes the field. A caret marks the end of
                     # the text so it reads as editable rather than
@@ -1146,7 +1268,8 @@ def paint(entries, mx, my):
                     shown = ""
                 else:
                     shown = fit_text(font_id, FONT * s, name,
-                                     rw - gear_room - arrow_room - 16 * s)
+                                     rx + rw - gear_room - arrow_room
+                                     - count_room - 8 * s - text_x)
                     if hovered:
                         note_tip_if_cut(rect, shown, name)
                 draw_text(font_id, text_x, ry + rh * 0.28, FONT * s,
@@ -1309,6 +1432,17 @@ def paint(entries, mx, my):
                                    rw - 26 * s))
             elif kind == 'tile_cell':
                 _paint_tile(shader, font_id, s, mx, my, entry)
+            elif kind == 'picture_tile':
+                cell, rect = entry[1], entry[2]
+                try:
+                    parts, w, h = cell['picture'](bpy.context)
+                except Exception:
+                    parts, w, h = [], 0.0, 0.0
+                _paint_picture(shader, font_id, s, mx, my, rect, parts, w, h,
+                               cell.get('name', ""),
+                               caption=cell.get('label'))
+            elif kind == 'card':
+                _paint_card(shader, font_id, s, entry)
     finally:
         if clipped:
             end_clip(prev)
@@ -1319,39 +1453,92 @@ def paint(entries, mx, my):
 
 
 def _paint_tile(shader, font_id, s, mx, my, entry):
-    """One picture tile: the item drawn by the spec's picture callable
-    (part rects in the item's own units), its name under it, the pick
-    outlined, and a bar across the top where the spec says it is in
-    use."""
+    """One tile of a sub-page's grid: the item drawn by the spec's
+    picture callable, the pick outlined, and a bar across the top where
+    the spec says it is in use."""
     _, _i, name, rect, is_active, _pool, tiles, item = entry
-    rx, ry, rw, rh = rect
-    hovered = point_in_rect(mx, my, rect)
-    paint_button(shader, rect, hovered=hovered)
-    if is_active:
-        draw_rect_outline(shader, rx, ry, rw, rh, Theme.ACCENT_BG)
-        draw_rect_outline(shader, rx + 1 * s, ry + 1 * s, rw - 2 * s,
-                          rh - 2 * s, Theme.ACCENT_BG)
     in_use = tiles.get('in_use')
     try:
         used = bool(in_use(bpy.context, item)) if in_use else False
     except Exception:
         used = False
-    if used:
-        draw_rect(shader, rx + 3 * s, ry + rh - 4 * s, rw - 6 * s, 2 * s,
-                  Theme.ACCENT_BG)
-    name_h = TILE_NAME_H * s
-    pad = 6 * s
-    box = (rx + pad, ry + name_h + 2 * s, rw - 2 * pad,
-           rh - name_h - pad - 4 * s)
     try:
         parts, w, h = tiles['picture'](bpy.context, item)
     except Exception:
         parts, w, h = [], 0.0, 0.0
+    _paint_picture(shader, font_id, s, mx, my, rect, parts, w, h, name,
+                   active=is_active, used=used)
+
+
+def _paint_card(shader, font_id, s, entry):
+    """The selected item summed up: a swatch, its name, and a line or
+    two of what it is -- the answer to "what is this" before any field
+    is read."""
+    _, pool, rect = entry
+    item = pool.active(bpy.context)
+    if item is None:
+        return
+    try:
+        info = pool.summary(bpy.context, item) or {}
+    except Exception:
+        info = {}
+    rx, ry, rw, rh = rect
+    draw_rect(shader, rx, ry, rw, rh, Theme.BTN_BG)
+    draw_rect_outline(shader, rx, ry, rw, rh, Theme.PANEL_BORDER)
+    pad = 8 * s
+    sw = rh - 2 * pad
+    swatch = info.get('swatch')
+    text_x = rx + pad
+    if swatch is not None:
+        draw_rect(shader, rx + pad, ry + pad, sw, sw,
+                  (swatch[0], swatch[1], swatch[2], 1.0))
+        draw_rect_outline(shader, rx + pad, ry + pad, sw, sw,
+                          Theme.BTN_BORDER)
+        text_x += sw + pad
+    avail = rx + rw - pad - text_x
+    lines = [str(line) for line in (info.get('lines') or ()) if line]
+    line_h = (rh - 2 * pad) / 3.0
+    y = ry + rh - pad - line_h * 0.8
+    title = str(info.get('title') or pool.text(item))
+    draw_text(font_id, text_x, y, (FONT + 1) * s, Theme.TEXT_PRIMARY,
+              fit_text(font_id, (FONT + 1) * s, title, avail))
+    for k, line in enumerate(lines[:2]):
+        y -= line_h
+        shown = fit_text(font_id, FONT * s, line, avail)
+        draw_text(font_id, text_x, y, FONT * s,
+                  Theme.TEXT_NORMAL if k == 0 else Theme.TEXT_HEADER, shown)
+
+
+def _paint_picture(shader, font_id, s, mx, my, rect, parts, w, h, name,
+                   caption=None, active=False, used=False):
+    """A picture tile: part rects (the item's own units, x across and z
+    up) fitted into the tile, the name under them, an optional caption
+    over them, the pick outlined and a bar across the top when in
+    use."""
+    rx, ry, rw, rh = rect
+    hovered = point_in_rect(mx, my, rect)
+    paint_button(shader, rect, hovered=hovered)
+    if active:
+        draw_rect_outline(shader, rx, ry, rw, rh, Theme.ACCENT_BG)
+        draw_rect_outline(shader, rx + 1 * s, ry + 1 * s, rw - 2 * s,
+                          rh - 2 * s, Theme.ACCENT_BG)
+    if used:
+        draw_rect(shader, rx + 3 * s, ry + rh - 4 * s, rw - 6 * s, 2 * s,
+                  Theme.ACCENT_BG)
+    name_h = TILE_NAME_H * s
+    cap_h = TILE_NAME_H * s if caption else 0.0
+    pad = 6 * s
+    box = (rx + pad, ry + name_h + 2 * s, rw - 2 * pad,
+           rh - name_h - cap_h - pad - 4 * s)
+    if caption:
+        draw_text(font_id, rx + pad, ry + rh - cap_h - 1 * s, FONT * s,
+                  Theme.TEXT_HEADER,
+                  fit_text(font_id, FONT * s, caption, rw - 2 * pad))
     if parts and w > 0 and h > 0:
         k = min(box[2] / w, box[3] / h)
         ox = box[0] + (box[2] - w * k) / 2.0
         oz = box[1] + (box[3] - h * k) / 2.0
-        line = Theme.GLYPH_HOVER if (hovered or is_active) else Theme.GLYPH
+        line = Theme.GLYPH_HOVER if (hovered or active) else Theme.GLYPH
         for x0, x1, z0, z1, key in parts:
             px, py = ox + x0 * k, oz + z0 * k
             pw, ph = (x1 - x0) * k, (z1 - z0) * k
@@ -1365,7 +1552,7 @@ def _paint_tile(shader, font_id, s, mx, my, entry):
         note_tip_if_cut(rect, shown, name)
     tw = text_width(font_id, FONT * s, shown)
     draw_text(font_id, rx + (rw - tw) / 2.0, ry + 4 * s, FONT * s,
-              Theme.TEXT_PRIMARY if is_active else Theme.TEXT_NORMAL, shown)
+              Theme.TEXT_PRIMARY if active else Theme.TEXT_NORMAL, shown)
 
 
 def _run(op_id, **kwargs):
@@ -1501,7 +1688,8 @@ def hit(context, mx, my, entries):
                 _tag()
                 return True
             if fkind == 'enum' and point_in_rect(mx, my, value_rect):
-                open_enum_menu(context, owner, prop, label)
+                open_enum_menu(context, owner, prop, label,
+                               custom=options.get('custom_toggle'))
                 return True
             if fkind == 'thumb' and point_in_rect(mx, my, value_rect):
                 from . import thumb_picker
@@ -1567,6 +1755,12 @@ def hit(context, mx, my, entries):
             return True
         if kind == 'back_row' and point_in_rect(mx, my, entry[2]):
             close_subpage()
+            return True
+        if kind == 'picture_tile' and point_in_rect(mx, my, entry[2]):
+            cell = entry[1]
+            if cell.get('op'):
+                _run(cell['op'], **dict(cell.get('kwargs') or {}))
+            _tag()
             return True
         if kind == 'tile_cell' and point_in_rect(mx, my, entry[3]):
             pool = entry[5]
@@ -1655,8 +1849,15 @@ def _set_target(owner, prop):
     return True
 
 
-def open_enum_menu(context, owner, prop, title=""):
+# The dropdown's "type a custom value" switch: the owner's bool that
+# turns the field into typed text, or None for a plain list.
+_menu_custom = None
+
+
+def open_enum_menu(context, owner, prop, title="", custom=None):
+    global _menu_custom
     if _set_target(owner, prop):
+        _menu_custom = custom
         _open_popup(title, _draw_enum_menu)
 
 
@@ -1764,6 +1965,10 @@ def _draw_enum_menu(menu, context):
             'home_builder.options_set_enum', text=label,
             icon='CHECKMARK' if ident == current else 'BLANK1')
         op.value = ident
+    if _menu_custom and hasattr(owner, _menu_custom):
+        layout.separator()
+        layout.operator('home_builder.options_set_custom',
+                        text="Type a Custom Value", icon='GREASEPENCIL')
 
 
 def _draw_native(popover, context):
@@ -2036,6 +2241,25 @@ class home_builder_OT_style_rename(bpy.types.Operator):
         return {'RUNNING_MODAL'}
 
 
+class home_builder_OT_options_set_custom(bpy.types.Operator):
+    """Type a value that is not in the list. It prints on the drawings;
+    the list's value still drives the model"""
+    bl_idname = "home_builder.options_set_custom"
+    bl_label = "Type a Custom Value"
+    bl_options = {'INTERNAL', 'UNDO'}
+
+    def execute(self, context):
+        owner, _prop = _menu_owner()
+        if owner is None or not _menu_custom:
+            return {'CANCELLED'}
+        try:
+            setattr(owner, _menu_custom, True)
+        except Exception:
+            return {'CANCELLED'}
+        _tag()
+        return {'FINISHED'}
+
+
 class home_builder_OT_options_open_page(bpy.types.Operator):
     """Open one of the active library's Options pages in the tab"""
     bl_idname = "home_builder.options_open_page"
@@ -2053,6 +2277,7 @@ class home_builder_OT_options_open_page(bpy.types.Operator):
 
 classes = (home_builder_OT_style_options_popup,
            home_builder_OT_options_open_page,
+           home_builder_OT_options_set_custom,
            home_builder_OT_style_rename,
            home_builder_OT_options_open_enum,
            home_builder_OT_options_set_enum,
