@@ -967,6 +967,27 @@ _OPEN_DOOR_BUTTON = _ModalToggleButton(
 )
 
 
+class _FramelessModalToggleButton(_ModalToggleButton):
+    """The same toggle on the frameless tab, gated on the frameless
+    selection mode."""
+
+    def visible(self, context):
+        if not _frameless_ui_visible(context):
+            return False
+        props = getattr(context.scene, 'hb_frameless', None)
+        in_my_mode = (getattr(props, 'frameless_selection_mode', '')
+                      == self.mode_value)
+        return in_my_mode or self._is_my_modal_active()
+
+
+_FRAMELESS_OPEN_DOOR_BUTTON = _FramelessModalToggleButton(
+    'hb_frameless.open_mode', 'Parts',
+    enable_label="Enable Open Door Mode",
+    disable_label="Disable Open Door Mode",
+    glyph=_glyph_open_door,
+)
+
+
 # ---- View strip -------------------------------------------------------------
 # Blender's own viewport controls, kept apart from everything else the
 # HUD draws. The centred rows are about the product: what is selected,
@@ -1421,6 +1442,7 @@ def _rows():
     return [
         [_MODE_BUTTONS,
          [_GRAB_PILL, _CLOSET_GRAB_PILL, _OPEN_DOOR_BUTTON,
+          _FRAMELESS_OPEN_DOOR_BUTTON,
           _SIZES_BUTTON, _FRAMELESS_SIZES_BUTTON, _CLOSET_DIMS_BUTTON]
          + _mode_extra_widgets()],
         [_layout_view_buttons()],

@@ -19,8 +19,10 @@ Shared helpers here are also used by the product solvers in
 """
 
 import bpy
+import math
 import re
 import traceback
+from mathutils import Euler, Matrix, Vector
 from ... import hb_utils
 from ...hb_types import GeoNodeCage, GeoNodeCutpart, CabinetPartModifier
 from ...units import inch
@@ -1168,6 +1170,47 @@ def _solve_drawer_box(front_obj, box_obj, insert_obj, length, width,
     interior_items.solve_drawer_inserts(insert_obj, box_obj, dims, hidden)
 
 
+# How far an insert's fronts are open, 0 closed to 1 fully open. Written
+# by the open mode and the Open / Close command; an insert that never had
+# it set is left exactly as the solver always placed it.
+OPEN_KEY = 'Open Amount'
+DOOR_MAX_SWING = math.radians(90.0)
+# Clearance a drawer keeps at full extension.
+DRAWER_OPEN_CLEARANCE = inch(1.0)
+# Rotation every door front is built with (length up, thickness forward).
+_FRONT_ROTATION = (math.radians(90.0), math.radians(-90.0), 0.0)
+
+
+def open_amount(insert_obj):
+    return min(max(float(prompt(insert_obj, OPEN_KEY, 0.0)), 0.0), 1.0)
+
+
+def _open_front(front_obj, role, amount, thickness, length, travel):
+    """Move one closed front to its open position. Drawers and pullouts
+    slide forward; doors swing 90 degrees on a hinge line at the front
+    face of the hinge edge, which keeps every point of the door on its
+    own side of that line; a flip-up door swings up on its top edge."""
+    x, y, z = front_obj.location
+    if front_obj.get('IS_DRAWER_FRONT') or front_obj.get('IS_PULLOUT_FRONT'):
+        front_obj.location.y = y - amount * travel
+        return
+    if role == 'LEFT_DOOR':
+        axis, angle = 'Z', -amount * DOOR_MAX_SWING
+        pivot, offset = Vector((x, y - thickness, z)), Vector((0.0, thickness, 0.0))
+    elif role == 'RIGHT_DOOR':
+        axis, angle = 'Z', amount * DOOR_MAX_SWING
+        pivot, offset = Vector((x, y - thickness, z)), Vector((0.0, thickness, 0.0))
+    elif front_obj.get('IS_FLIP_UP_DOOR'):
+        axis, angle = 'X', -amount * DOOR_MAX_SWING
+        pivot = Vector((x, y - thickness, z + length))
+        offset = Vector((0.0, thickness, -length))
+    else:
+        return
+    rot = Matrix.Rotation(angle, 3, axis)
+    front_obj.rotation_euler = (rot @ Euler(_FRONT_ROTATION).to_matrix()).to_euler('XYZ')
+    front_obj.location = pivot + rot @ offset
+
+
 def solve_insert_parts(insert_obj):
     """Place the fronts, pulls and drawer boxes of one insert."""
     has_fronts = 'Inset Front' in insert_obj
@@ -1221,6 +1264,9 @@ def solve_insert_parts(insert_obj):
                            ('Left Overlay', left), ('Right Overlay', right)):
             if key in child:
                 child[key] = value
+        if OPEN_KEY in insert_obj:
+            _open_front(child, role, open_amount(insert_obj), thickness,
+                        length, max(dim_y - DRAWER_OPEN_CLEARANCE, 0.0))
 
         false_front = bool(child.get('False Front', False))
         for part in list(child.children):

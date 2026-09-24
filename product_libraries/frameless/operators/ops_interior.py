@@ -201,6 +201,10 @@ class hb_frameless_OT_drawer_interior(bpy.types.Operator):
         if opening is None:
             return {'CANCELLED'}
         self.opening_name = opening.name
+        # Open the drawer so the user can see what they're laying out.
+        from . import op_open_mode
+        if solver_frameless.open_amount(opening) < 0.5:
+            op_open_mode.set_open_amount(opening, 1.0)
         _seed_picks(self, opening)
         self.filter_text = ""
         self.match_index = 0

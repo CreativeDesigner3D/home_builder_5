@@ -186,6 +186,12 @@ class HOME_BUILDER_MT_bay_change_configuration(bpy.types.Menu):
         layout.operator("hb_frameless.change_bay_opening", text="Open").opening_type = 'OPEN'
 
 
+def _draw_open_close(layout, context):
+    from .operators import op_open_mode
+    if op_open_mode.opening_to_toggle(context.object) is not None:
+        layout.operator("hb_frameless.toggle_front_open", text="Open / Close")
+
+
 def _draw_drawer_interior(layout, context):
     """Drawer Interior entry for a drawer or pullout: its opening, front,
     box or an insert. Returns whether it was drawn."""
@@ -204,6 +210,7 @@ class HOME_BUILDER_MT_opening_commands(bpy.types.Menu):
         layout.operator("hb_frameless.opening_prompts", text="Opening Prompts")
         layout.operator("hb_frameless.edit_splitter_openings", text="Edit Opening Sizes")
         _draw_drawer_interior(layout, context)
+        _draw_open_close(layout, context)
         layout.separator()
         layout.menu("HOME_BUILDER_MT_opening_change", text="Change Opening")
         layout.menu("HOME_BUILDER_MT_interior_change", text="Change Interior")
@@ -239,6 +246,7 @@ class HOME_BUILDER_MT_door_front_commands(bpy.types.Menu):
         layout = self.layout
         layout.operator("hb_frameless.door_front_prompts", text="Front Prompts")
         _draw_drawer_interior(layout, context)
+        _draw_open_close(layout, context)
         layout.separator()
         layout.operator("hb_frameless.delete_front", text="Delete Front")
 
@@ -275,6 +283,7 @@ class HOME_BUILDER_MT_interior_part_commands(bpy.types.Menu):
     def draw(self, context):
         layout = self.layout
         if _draw_drawer_interior(layout, context):
+            _draw_open_close(layout, context)
             layout.separator()
         layout.operator("hb_frameless.interior_prompts", text="Interior Options...")
         layout.separator()
