@@ -59,9 +59,9 @@ _BATTERY_CLEARANCE = _mm(12.7)
 # What each system leaves at the side of its box, and how far it
 # stands the box off the floor of the opening it sits in. These
 # are the clearances the prior library built every box of its
-# kind to.
-_SIDE_GAP = {'WOOD': inch(0.327), 'AVANTECH': inch(0.25),
-             'AVANTECH_ILL': inch(0.25), 'METABOX': _mm(15.5)}
+# kind to - an Avantech 24mm narrower than its opening, 12 a side.
+_SIDE_GAP = {'WOOD': inch(0.327), 'AVANTECH': _mm(12),
+             'AVANTECH_ILL': _mm(12), 'METABOX': _mm(15.5)}
 _FLOOR_GAP = {'WOOD': inch(0.5512), 'AVANTECH': _mm(5),
               'AVANTECH_ILL': _mm(5), 'METABOX': _mm(5)}
 
