@@ -4,8 +4,9 @@ Both cabinet overlays (face frame and frameless dim_edit_overlay) show,
 beside a cabinet's own W / H / D, how it sits in its run: on each side,
 a dimension to each thing the cabinet can see there -- the next product
 or appliance whose height range overlaps the cabinet's (so an upper
-above a base cabinet isn't its neighbor; windows and doors never are),
-or the end of the wall when nothing is on that side. A dimension never
+above a base cabinet isn't its neighbor), a door, or -- for uppers,
+talls and tall appliances -- a window; or the end of the wall when
+nothing is on that side. A dimension never
 runs across another product, and a flush side gets none.
 
 A tall cabinet can see more than one neighbor on a side -- a base
@@ -45,6 +46,9 @@ MIN_BAND = inch(1.0)
 MAX_PER_SIDE = 4
 # Narrowest a width edit may leave a product.
 MIN_WIDTH = inch(1.0)
+# Tallest a floor-standing product can be and still count as base
+# height (windows aren't its neighbors).
+BASE_MAX_HEIGHT = inch(48.0)
 
 GAP_KINDS = tuple(f'CAB_GAP_{side}{i}' for side in 'LR'
                   for i in range(MAX_PER_SIDE))
@@ -133,6 +137,13 @@ def _visible(cands, z0, z1):
     return out[:MAX_PER_SIDE]
 
 
+def _is_base_height(z0, height):
+    """Standing on the floor and no taller than BASE_MAX_HEIGHT -- a
+    base cabinet, a dishwasher. Read off the size rather than a cabinet
+    type so it holds for either library and for appliances."""
+    return z0 < inch(1.0) and height <= BASE_MAX_HEIGHT
+
+
 def _side_edges(cabinet, width, height):
     """(wall_obj, wall_len, x0, left, right) where left / right are the
     _visible lists for each side, or None when the cabinet isn't hung
@@ -151,11 +162,11 @@ def _side_edges(cabinet, width, height):
     neighbors = hb_placement.PlacementMixin.get_wall_children_sorted(
         None, wall_obj, exclude_obj=cabinet,
         object_z_start=z0, object_height=height)
-    # Windows and doors are openings in the wall, not things standing on
-    # it: placement avoids them, but a gap to one isn't a cabinet gap.
-    neighbors = [n for n in neighbors
-                 if not (n[2].get('IS_WINDOW_BP')
-                         or n[2].get('IS_ENTRY_DOOR_BP'))]
+    # Doors are always neighbors. Windows are for uppers and talls: a
+    # base-height product under one is spaced off its neighbors, not
+    # off the window above the counter.
+    if _is_base_height(z0, height):
+        neighbors = [n for n in neighbors if not n[2].get('IS_WINDOW_BP')]
     eps = inch(1.0 / 32.0)
     left = sorted(((e, o) for s, e, o in neighbors if e <= x0 + eps),
                   key=lambda t: -t[0])
