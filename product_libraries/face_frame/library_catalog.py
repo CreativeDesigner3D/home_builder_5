@@ -302,10 +302,11 @@ SIZES_FORM = 'draw_cabinet_sizes_ui'
 # sidebar keeps door and drawer front styles behind one tabbed form;
 # they are two pools, so here each gets a row, and the second row's
 # name is only a key for its page.
+# Door and drawer front styles are made and edited in their managers,
+# reached from a cabinet style's Fronts (OPTION_SUBPAGES), so a style
+# section is built in one place rather than two.
 OPTION_FORMS = (
     ("Cabinet Styles", 'draw_cabinet_styles_ui'),
-    ("Door Styles", 'draw_door_styles_ui'),
-    ("Drawer Front Styles", 'draw_drawer_front_styles_ui'),
     ("Finished Ends and Backs", 'draw_finished_ends_ui'),
     ("Pulls", 'draw_pulls_ui'),
     ("Drawer Boxes", 'draw_drawer_box_ui'),
@@ -448,6 +449,9 @@ def _cabinet_style_fields():
         ('gap', None, None),
         ('label', None, "Fronts"),
         ('choice', 'door_style', "Door", {'custom': 'ss_door'}),
+        ('actions', (("Manage Door Styles...",
+                      'home_builder.options_open_page',
+                      'key', 'DOOR_STYLES'),), None),
         # Extra styles document the other fronts in use on the Style
         # Section page; only the first extra drawer style has a geometric
         # effect (the Use Extra Style At height below).
@@ -455,16 +459,19 @@ def _cabinet_style_fields():
          {'kind': 'enum', 'prop': 'style',
           'remove': ('hb_face_frame.remove_cabinet_extra_front_style',
                      lambda i, item: {'kind': 'DOOR', 'index': i})}),
-        ('actions', (("Add Door Style",
+        ('actions', (("List Another Door Style",
                       'hb_face_frame.add_cabinet_extra_front_style',
                       'kind', 'DOOR'),), None),
         ('choice', 'drawer_front_style', "Drawer Front",
          {'custom': 'ss_drawer'}),
+        ('actions', (("Manage Drawer Front Styles...",
+                      'home_builder.options_open_page',
+                      'key', 'DRAWER_FRONT_STYLES'),), None),
         ('items', 'extra_drawer_front_styles', None,
          {'kind': 'enum', 'prop': 'style',
           'remove': ('hb_face_frame.remove_cabinet_extra_front_style',
                      lambda i, item: {'kind': 'DRAWER', 'index': i})}),
-        ('actions', (("Add Drawer Front Style",
+        ('actions', (("List Another Drawer Front",
                       'hb_face_frame.add_cabinet_extra_front_style',
                       'kind', 'DRAWER'),), None),
         # Drawer fronts this tall take the first extra style (0 = off).
@@ -549,6 +556,71 @@ def _crown_uses(p, category):
 # Sections drawn INSIDE the viewport panel rather than opened as a
 # dialog -- see the frameless catalog for the page contract. Where the
 # sidebar greys a field out, the page leaves it out.
+# ---- Door style managers ---------------------------------------------------
+# A picture of every door (or drawer front) style, drawn from the same
+# layout the door is built from, so a tile can never show a door the
+# style does not make -- and there are no pictures to keep up.
+
+_TILE_SIZE = {'DOOR': (15.0, 30.0), 'DRAWER': (18.0, 7.0)}   # inches
+
+
+def _front_tile_picture(kind):
+    def picture(context, style):
+        from ... import units
+        from ..common import door_builder
+        w, h = (units.inch(v) for v in _TILE_SIZE[kind])
+        info = door_builder.door_style_info(style)
+        parts = door_builder.evaluate_layout(info, w, h)
+        return ([(p['x0'], p['x1'], p['z0'], p['z1'], p['key'])
+                 for p in parts], w, h)
+    return picture
+
+
+def _active_cabinet_style(context):
+    from . import props_hb_face_frame
+    sp = props_hb_face_frame.get_style_props(context)
+    if sp is None:
+        return None
+    i = sp.active_cabinet_style_index
+    return sp.cabinet_styles[i] if 0 <= i < len(sp.cabinet_styles) else None
+
+
+def _front_in_use(kind):
+    prop = 'door_style' if kind == 'DOOR' else 'drawer_front_style'
+
+    def in_use(context, style):
+        cs = _active_cabinet_style(context)
+        return cs is not None and getattr(cs, prop, None) == style.name
+    return in_use
+
+
+def _front_manager_notes(kind):
+    prop = 'door_style' if kind == 'DOOR' else 'drawer_front_style'
+    noun = "door" if kind == 'DOOR' else "drawer front"
+
+    def notes(context):
+        cs = _active_cabinet_style(context)
+        if cs is None:
+            return ()
+        return ("%s uses %s" % (cs.name, getattr(cs, prop, "") or "none"),
+                "Pick a %s below; NEW copies the pick" % noun)
+    return notes
+
+
+def _front_manager(kind, pool_key):
+    spec = dict(OPTION_PAGES[pool_key])
+    spec['title'] = ("Door Styles" if kind == 'DOOR'
+                     else "Drawer Front Styles")
+    spec['list_label'] = "Styles"
+    spec['notes'] = _front_manager_notes(kind)
+    spec['tiles'] = {'picture': _front_tile_picture(kind),
+                     'in_use': _front_in_use(kind)}
+    spec['top_actions'] = ((("Use for This Cabinet Style",
+                             'hb_face_frame.use_front_style',
+                             'kind', kind),),)
+    return spec
+
+
 OPTION_PAGES = {
     # The commands sit straight under the list: a style has more fields
     # than fit on screen, and the brushes are what the list is reached
@@ -600,6 +672,8 @@ OPTION_PAGES = {
         'fields': _front_style_fields('DRAWER'),
         'actions': _front_style_actions('DRAWER'),
     },
+    # Pages still carry the two pools: the managers below are built on
+    # them, and the sidebar draws the same sections by these names.
     # Room-level. Apply writes the type to every side flagged exposed;
     # the other defaults are read by the solver per cabinet.
     'draw_finished_ends_ui': {
@@ -787,6 +861,15 @@ OPTION_PAGES = {
             (("Refresh Molding", 'home_builder.refresh_room_molding'),),
         ),
     },
+}
+
+
+# Pages that take the Options tab over, opened by key from a button
+# (home_builder.options_open_page) and left by their Back row.
+OPTION_SUBPAGES = {
+    'DOOR_STYLES': _front_manager('DOOR', 'draw_door_styles_ui'),
+    'DRAWER_FRONT_STYLES': _front_manager('DRAWER',
+                                          'draw_drawer_front_styles_ui'),
 }
 
 

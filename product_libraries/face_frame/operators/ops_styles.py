@@ -1226,6 +1226,48 @@ def _repropagate_tall_drawer(context, style, kind):
         props_hb_face_frame._propagate_cabinet_style(style, context)
 
 
+class hb_face_frame_OT_use_front_style(Operator):
+    """Make the picked door (or drawer front) style the one the active
+    cabinet style builds its fronts with -- the door style manager's
+    way of assigning without going back to the dropdown."""
+    bl_idname = "hb_face_frame.use_front_style"
+    bl_label = "Use for This Cabinet Style"
+    bl_description = ("Build the active cabinet style's fronts with the "
+                      "picked style")
+    bl_options = {'UNDO'}
+
+    kind: bpy.props.EnumProperty(
+        items=[('DOOR', "Door", ""), ('DRAWER', "Drawer Front", "")],
+        default='DOOR')  # type: ignore
+
+    @staticmethod
+    def _picked(sp, kind):
+        pool, idx = ((sp.door_styles, sp.active_door_style_index)
+                     if kind == 'DOOR'
+                     else (sp.drawer_front_styles,
+                           sp.active_drawer_front_style_index))
+        return pool[idx] if 0 <= idx < len(pool) else None
+
+    @classmethod
+    def poll(cls, context):
+        sp = get_style_props(context)
+        return (sp is not None
+                and 0 <= sp.active_cabinet_style_index < len(sp.cabinet_styles))
+
+    def execute(self, context):
+        sp = get_style_props(context)
+        cs = sp.cabinet_styles[sp.active_cabinet_style_index]
+        style = self._picked(sp, self.kind)
+        if style is None:
+            self.report({'WARNING'}, "Pick a style first")
+            return {'CANCELLED'}
+        prop = 'door_style' if self.kind == 'DOOR' else 'drawer_front_style'
+        if getattr(cs, prop) != style.name:
+            setattr(cs, prop, style.name)
+        self.report({'INFO'}, "%s now uses %s" % (cs.name, style.name))
+        return {'FINISHED'}
+
+
 class hb_face_frame_OT_face_frame_sizes(Operator):
     """Show the active cabinet style's face frame sizes as one grid:
     every rail and stile for base, tall and upper, the rails editable
@@ -1655,6 +1697,7 @@ classes = (
     hb_face_frame_OT_add_special_effect,
     hb_face_frame_OT_remove_special_effect,
     hb_face_frame_OT_face_frame_sizes,
+    hb_face_frame_OT_use_front_style,
     hb_face_frame_OT_add_cabinet_extra_front_style,
     hb_face_frame_OT_remove_cabinet_extra_front_style,
     hb_face_frame_OT_add_style_note,

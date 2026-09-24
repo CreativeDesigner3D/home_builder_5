@@ -111,6 +111,9 @@ PLUS_SPAN = 8       # full width of the plus mark, not half
 PLUS_GAP = 4        # plus mark to the word NEW
 INDENT = 8          # an unfolded section's content, in from its header
 CHIP = 18            # a toggle or remove chip at the end of a field row
+TILE_H = 86          # one picture tile on a sub-page's tile grid
+TILE_COLS = 3
+TILE_NAME_H = 14     # the name under a tile's picture
 
 
 def form_sections(context):
@@ -120,6 +123,32 @@ def form_sections(context):
     from . import library_panel
     cat = library_panel.active_catalog(context)
     return tuple(getattr(cat, 'OPTION_FORMS', ()) or ()) if cat else ()
+
+
+def subpage_specs(context):
+    """{key: sub-page spec} for the active library -- the catalog's
+    OPTION_SUBPAGES. A sub-page takes the tab over, with a way back."""
+    from . import library_panel
+    cat = library_panel.active_catalog(context)
+    return dict(getattr(cat, 'OPTION_SUBPAGES', None) or {}) if cat else {}
+
+
+# The sub-page on screen in place of the tab's sections, by key, or None.
+_subpage = None
+
+
+def open_subpage(key):
+    global _subpage
+    _subpage = key
+    _list.offset = 0.0
+    _tag()
+
+
+def close_subpage():
+    global _subpage
+    _subpage = None
+    _list.offset = 0.0
+    _tag()
 
 
 def page_specs(context):
@@ -576,8 +605,39 @@ def _form_blocks(context, spec):
 
 # ---- Provider interface ----------------------------------------------------
 
+def _subpage_blocks(context, spec):
+    """A sub-page: the way back, then a picture of every item in the
+    pool as a grid of tiles, the commands that act on the pick, and the
+    pool itself -- its list, the pick's fields and its commands."""
+    pool = _pool_from_spec(spec)
+    blocks = [('back', spec.get('title', "Back"))]
+    notes = spec.get('notes')
+    if notes is not None:
+        try:
+            lines = notes(context) or ()
+        except Exception:
+            lines = ()
+        blocks.extend(('note', line) for line in lines)
+    tiles = spec.get('tiles')
+    if tiles is not None:
+        count = len(pool.items(context))
+        for row in range((count + TILE_COLS - 1) // TILE_COLS):
+            blocks.append(('tiles', (pool, tiles, row)))
+    for row in spec.get('top_actions', ()):
+        blocks.append(('actions', tuple(_norm_action(a) for a in row)))
+    blocks.append(('gap', None))
+    blocks.extend(_pool_blocks(context, pool))
+    return blocks
+
+
 def _blocks(context):
     """The tab's content as (kind, payload) blocks, top to bottom."""
+    global _subpage
+    if _subpage is not None:
+        spec = subpage_specs(context).get(_subpage)
+        if spec is not None:
+            return _subpage_blocks(context, spec)
+        _subpage = None         # another library: its pages are gone
     blocks = []
     blocks.append(('head', ("Options", False, None)))
     pages = page_specs(context)
@@ -605,6 +665,8 @@ def _block_h(block, s):
         return _block_h(block[1], s)
     if kind in ('head', 'section'):
         return SECTION_H * s
+    if kind == 'tiles':
+        return (TILE_H + ROW_GAP) * s
     if kind == 'gap':
         return GROUP_GAP * s
     return (ROW_H + ROW_GAP) * s
@@ -816,6 +878,22 @@ def build_page(rect, context, blocks_fn, lst):
             label, method = payload
             entries.append(('form_row', label, method,
                             (x, block_top - row_h, row_w, row_h)))
+        elif kind == 'back':
+            entries.append(('back_row', payload,
+                            (x, block_top - row_h, row_w, row_h)))
+        elif kind == 'tiles':
+            pool, tiles, row = payload
+            items = pool.items(context)
+            active = pool.active_index(context)
+            tile_h = TILE_H * s
+            cw = (row_w - gap * (TILE_COLS - 1)) / TILE_COLS
+            for col in range(TILE_COLS):
+                i = row * TILE_COLS + col
+                if i >= len(items):
+                    break
+                cell = (x + col * (cw + gap), block_top - tile_h, cw, tile_h)
+                entries.append(('tile_cell', i, pool.text(items[i]), cell,
+                                i == active, pool, tiles, items[i]))
     return entries
 
 
@@ -1217,6 +1295,20 @@ def paint(entries, mx, my):
                 # Chevron pointing right: this opens something.
                 glyph_chevron(shader, rx + rw - 12 * s, ry + rh / 2.0,
                               7 * s, True, Theme.GLYPH)
+            elif kind == 'back_row':
+                _, title, rect = entry
+                hovered = point_in_rect(mx, my, rect)
+                paint_button(shader, rect, hovered=hovered)
+                rx, ry, rw, rh = rect
+                glyph_chevron(shader, rx + 10 * s, ry + rh / 2.0, 7 * s,
+                              True, Theme.GLYPH_HOVER if hovered
+                              else Theme.GLYPH, left=True)
+                draw_text(font_id, rx + 20 * s, ry + rh * 0.28, FONT * s,
+                          Theme.TEXT_PRIMARY,
+                          fit_text(font_id, FONT * s, "Back  |  " + title,
+                                   rw - 26 * s))
+            elif kind == 'tile_cell':
+                _paint_tile(shader, font_id, s, mx, my, entry)
     finally:
         if clipped:
             end_clip(prev)
@@ -1224,6 +1316,56 @@ def paint(entries, mx, my):
     # edge row is not cut off with it.
     paint_tip(shader, font_id, FONT * s)
     gpu.state.blend_set('NONE')
+
+
+def _paint_tile(shader, font_id, s, mx, my, entry):
+    """One picture tile: the item drawn by the spec's picture callable
+    (part rects in the item's own units), its name under it, the pick
+    outlined, and a bar across the top where the spec says it is in
+    use."""
+    _, _i, name, rect, is_active, _pool, tiles, item = entry
+    rx, ry, rw, rh = rect
+    hovered = point_in_rect(mx, my, rect)
+    paint_button(shader, rect, hovered=hovered)
+    if is_active:
+        draw_rect_outline(shader, rx, ry, rw, rh, Theme.ACCENT_BG)
+        draw_rect_outline(shader, rx + 1 * s, ry + 1 * s, rw - 2 * s,
+                          rh - 2 * s, Theme.ACCENT_BG)
+    in_use = tiles.get('in_use')
+    try:
+        used = bool(in_use(bpy.context, item)) if in_use else False
+    except Exception:
+        used = False
+    if used:
+        draw_rect(shader, rx + 3 * s, ry + rh - 4 * s, rw - 6 * s, 2 * s,
+                  Theme.ACCENT_BG)
+    name_h = TILE_NAME_H * s
+    pad = 6 * s
+    box = (rx + pad, ry + name_h + 2 * s, rw - 2 * pad,
+           rh - name_h - pad - 4 * s)
+    try:
+        parts, w, h = tiles['picture'](bpy.context, item)
+    except Exception:
+        parts, w, h = [], 0.0, 0.0
+    if parts and w > 0 and h > 0:
+        k = min(box[2] / w, box[3] / h)
+        ox = box[0] + (box[2] - w * k) / 2.0
+        oz = box[1] + (box[3] - h * k) / 2.0
+        line = Theme.GLYPH_HOVER if (hovered or is_active) else Theme.GLYPH
+        for x0, x1, z0, z1, key in parts:
+            px, py = ox + x0 * k, oz + z0 * k
+            pw, ph = (x1 - x0) * k, (z1 - z0) * k
+            if key == 'glass':
+                draw_rect(shader, px, py, pw, ph, (0.55, 0.75, 0.95, 0.35))
+            elif key == 'panel':
+                draw_rect(shader, px, py, pw, ph, (1.0, 1.0, 1.0, 0.06))
+            draw_rect_outline(shader, px, py, pw, ph, line)
+    shown = fit_text(font_id, FONT * s, name, rw - 8 * s)
+    if hovered:
+        note_tip_if_cut(rect, shown, name)
+    tw = text_width(font_id, FONT * s, shown)
+    draw_text(font_id, rx + (rw - tw) / 2.0, ry + 4 * s, FONT * s,
+              Theme.TEXT_PRIMARY if is_active else Theme.TEXT_NORMAL, shown)
 
 
 def _run(op_id, **kwargs):
@@ -1422,6 +1564,15 @@ def hit(context, mx, my, entries):
         if kind == 'form_row' and point_in_rect(mx, my, entry[3]):
             bpy.ops.home_builder.style_options_popup(
                 'INVOKE_DEFAULT', section=entry[2], title=entry[1])
+            return True
+        if kind == 'back_row' and point_in_rect(mx, my, entry[2]):
+            close_subpage()
+            return True
+        if kind == 'tile_cell' and point_in_rect(mx, my, entry[3]):
+            pool = entry[5]
+            if pool.active_index(context) != entry[1]:
+                pool.set_active(context, entry[1])
+            _tag()
             return True
     return False
 
@@ -1885,7 +2036,23 @@ class home_builder_OT_style_rename(bpy.types.Operator):
         return {'RUNNING_MODAL'}
 
 
+class home_builder_OT_options_open_page(bpy.types.Operator):
+    """Open one of the active library's Options pages in the tab"""
+    bl_idname = "home_builder.options_open_page"
+    bl_label = "Open Options Page"
+    bl_options = {'INTERNAL'}
+
+    key: bpy.props.StringProperty()  # type: ignore
+
+    def execute(self, context):
+        if self.key not in subpage_specs(context):
+            return {'CANCELLED'}
+        open_subpage(self.key)
+        return {'FINISHED'}
+
+
 classes = (home_builder_OT_style_options_popup,
+           home_builder_OT_options_open_page,
            home_builder_OT_style_rename,
            home_builder_OT_options_open_enum,
            home_builder_OT_options_set_enum,

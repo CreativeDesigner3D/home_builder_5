@@ -246,11 +246,15 @@ def glyph_plus(shader, cx, cy, size, color):
     draw_rect(shader, cx - thick / 2.0, cy - half, thick, size, color)
 
 
-def glyph_chevron(shader, cx, cy, size, collapsed, color):
+def glyph_chevron(shader, cx, cy, size, collapsed, color, left=False):
     """Disclosure chevron centred at (cx, cy): points right when
-    collapsed, down when expanded. `size` is pre-scaled."""
+    collapsed, down when expanded, left with `left` (a way back).
+    `size` is pre-scaled."""
     h = size / 2.0
-    if collapsed:
+    if left:
+        pts = [(cx + h / 2.0, cy + h), (cx - h / 2.0, cy),
+               (cx - h / 2.0, cy), (cx + h / 2.0, cy - h)]
+    elif collapsed:
         pts = [(cx - h / 2.0, cy + h), (cx + h / 2.0, cy),
                (cx + h / 2.0, cy), (cx - h / 2.0, cy - h)]
     else:
