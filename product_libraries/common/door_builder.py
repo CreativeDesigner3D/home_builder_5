@@ -2050,6 +2050,40 @@ def _triangulate(poly):
     return tris
 
 
+def _solid_orientation(verts, faces):
+    """Per face, +1 / -1 to turn its winding outward, from the signed
+    volume of the solid it belongs to (faces joined by shared vertices):
+    the builders do not all wind their parts the same way. 0 for a face
+    of an open surface, which reads as two-sided."""
+    parent = list(range(len(verts)))
+
+    def find(a):
+        while parent[a] != a:
+            parent[a] = parent[parent[a]]
+            a = parent[a]
+        return a
+
+    for f in faces:
+        root = find(f[0])
+        for i in f[1:]:
+            parent[find(i)] = root
+    vol = {}
+    for f in faces:
+        a = verts[f[0]]
+        c = find(f[0])
+        for k in range(1, len(f) - 1):
+            b, d = verts[f[k]], verts[f[k + 1]]
+            vol[c] = vol.get(c, 0.0) + (
+                a[0] * (b[1] * d[2] - b[2] * d[1])
+                - a[1] * (b[0] * d[2] - b[2] * d[0])
+                + a[2] * (b[0] * d[1] - b[1] * d[0]))
+    out = []
+    for f in faces:
+        v = vol.get(find(f[0]), 0.0)
+        out.append(0 if abs(v) < 1e-15 else (1 if v > 0.0 else -1))
+    return out
+
+
 def door_picture(verts, faces, slots, width, height, thickness):
     """The door seen from the front, from build_door_geometry output:
     the faces that face the viewer, flattened, shaded and ordered back
@@ -2064,6 +2098,7 @@ def door_picture(verts, faces, slots, width, height, thickness):
     ll = math.sqrt(lx * lx + lz * lz + ly * ly)
     lx, lz, ly = lx / ll, lz / ll, ly / ll
     flat = ly
+    signs = _solid_orientation(verts, faces)
     front = []
     for fi, f in enumerate(faces):
         pts = [verts[i] for i in f]
@@ -2074,7 +2109,11 @@ def door_picture(verts, faces, slots, width, height, thickness):
             n[1] += (a[2] - b[2]) * (a[0] + b[0])
             n[2] += (a[0] - b[0]) * (a[1] + b[1])
         ln = math.sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2])
-        if ln <= 1e-12 or n[2] / ln < 0.05:
+        if ln <= 1e-12:
+            continue
+        sign = signs[fi] or (1 if n[2] > 0.0 else -1)
+        ln *= sign
+        if n[2] / ln < 0.05:
             continue
         # Mesh space: x up the door, -y across, +z toward the viewer.
         across, up, out = -n[1] / ln, n[0] / ln, n[2] / ln
