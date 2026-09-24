@@ -438,14 +438,16 @@ def _notes_summary(p):
 
 
 def _front_cells(context, p):
-    """The two fronts as pictures; a click opens that front's manager."""
+    """The two fronts as pictures; a click turns the style editor to
+    that front's styles."""
     from .props_hb_face_frame import get_style_props
     sp = get_style_props(context)
     cells = []
-    for kind, label, prop, pool, key in (
-            ('DOOR', "Door", 'door_style', 'door_styles', 'DOOR_STYLES'),
+    for kind, label, prop, pool, tab in (
+            ('DOOR', "Door", 'door_style', 'door_styles',
+             _EDITOR_DOOR_TAB),
             ('DRAWER', "Drawer Front", 'drawer_front_style',
-             'drawer_front_styles', 'DRAWER_FRONT_STYLES')):
+             'drawer_front_styles', _EDITOR_DRAWER_TAB)):
         name = getattr(p, prop, "") or ""
         style = next((ds for ds in getattr(sp, pool, ()) if ds.name == name),
                      None)
@@ -455,8 +457,8 @@ def _front_cells(context, p):
             'name': name if style is not None else "None",
             'picture': (lambda ctx, st=style, pic=picture:
                         pic(ctx, st) if st is not None else ([], 0.0, 0.0)),
-            'op': 'home_builder.options_open_page',
-            'kwargs': {'key': key},
+            'op': 'home_builder.style_editor_open',
+            'kwargs': {'key': 'CABINET_STYLE', 'section': tab},
         })
     return cells
 
@@ -999,13 +1001,33 @@ OPTION_PAGES = {
 
 
 # Larger editors, opened in their own window (operators/style_editor.py).
+# The cabinet style's own sections, then the two front style managers
+# as tabs of their own, so fronts are made and picked without leaving
+# the window.
+def _front_manager_tab(key):
+    def blocks(context):
+        from ...operators import options_panel
+        return options_panel.manager_blocks(context, OPTION_SUBPAGES[key])
+    return {'blocks': blocks}
+
+
+_CABINET_STYLE_TABS = tuple(
+    (label, fields) for label, _summary, fields in _CABINET_STYLE_SECTIONS)
+_FRONTS_TAB = next(i for i, (label, _f) in enumerate(_CABINET_STYLE_TABS)
+                   if label == "Fronts")
+_CABINET_STYLE_TABS = (
+    _CABINET_STYLE_TABS[:_FRONTS_TAB + 1]
+    + (("Door Styles", _front_manager_tab('DOOR_STYLES')),
+       ("Drawer Fronts", _front_manager_tab('DRAWER_FRONT_STYLES')))
+    + _CABINET_STYLE_TABS[_FRONTS_TAB + 1:])
+_EDITOR_DOOR_TAB = _FRONTS_TAB + 1
+_EDITOR_DRAWER_TAB = _FRONTS_TAB + 2
+
 OPTION_EDITORS = {
     'CABINET_STYLE': {
         'owner': _active_cabinet_style,
         'header': _style_summary,
-        'sections': tuple((label, fields)
-                          for label, _summary, fields
-                          in _CABINET_STYLE_SECTIONS),
+        'sections': _CABINET_STYLE_TABS,
         'footer': (
             ("Assign to Selected",
              'hb_face_frame.assign_style_to_selected_cabinets'),

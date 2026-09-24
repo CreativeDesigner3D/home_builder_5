@@ -1803,6 +1803,12 @@ def form_blocks(context, spec):
     return _form_blocks(context, spec)
 
 
+def manager_blocks(context, spec):
+    """A sub-page's content without its way back, for a host that has
+    its own navigation -- the style editor's tabs."""
+    return _subpage_blocks(context, spec)[1:]
+
+
 def new_scroll_list():
     """A ScrollList set up the way this tab's own is."""
     return ScrollList(bar_width=4, bar_pad=4, min_rows=3)

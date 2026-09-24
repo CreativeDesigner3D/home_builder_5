@@ -15,7 +15,7 @@ A catalog declares editors in OPTION_EDITORS:
 
     {key: {'owner':    fn(context) -> the item being edited, or None,
            'header':   fn(context, item) -> {'title', 'lines', 'swatch'},
-           'sections': ((label, fields), ...),
+           'sections': ((label, fields | {'blocks': fn(context)}), ...),
            'footer':   ((label, operator[, prop, value]), ...)}}
 """
 
@@ -63,7 +63,9 @@ def open_editor(context, key, section=0):
         return False
     from . import options_panel
     if _state is not None:
-        _state.update(key=key, section=section)
+        if (_state['key'], _state['section']) != (key, section):
+            _state.update(key=key, section=section)
+            _state['list'].offset = 0.0
         _tag()
         return True
     _state = {'key': key, 'section': section, 'mouse': (0.0, 0.0),
@@ -126,7 +128,7 @@ def _layout(context, area):
     body_bottom = footer_y + FOOTER_H * s + 8 * s
 
     tabs = []
-    for i, (label, _fields) in enumerate(spec['sections']):
+    for i, (label, _content) in enumerate(spec['sections']):
         ty = body_top - (i + 1) * TAB_H * s - i * TAB_GAP * s
         tabs.append((i, label, (x + pad, ty, TAB_W * s, TAB_H * s)))
     fx = x + pad + TAB_W * s + 12 * s
@@ -154,11 +156,16 @@ def _entries(context, lay):
     if owner is None or not sections:
         return []
     i = min(max(_state['section'], 0), len(sections) - 1)
-    fields = sections[i][1]
-    return options_panel.build_page(
-        lay['fields'], context,
-        lambda ctx: options_panel.field_blocks(ctx, fields, owner),
-        _state['list'])
+    content = sections[i][1]
+    if isinstance(content, dict):
+        # A section that is a page of its own (a style manager), not a
+        # run of the item's fields.
+        blocks_fn = content['blocks']
+    else:
+        def blocks_fn(ctx):
+            return options_panel.field_blocks(ctx, content, owner)
+    return options_panel.build_page(lay['fields'], context, blocks_fn,
+                                    _state['list'])
 
 
 # ---- Draw ---------------------------------------------------------------------
@@ -360,14 +367,6 @@ class home_builder_OT_style_editor(bpy.types.Operator):
                     options_panel._run_on_release(op_id, kwargs)
                     return {'FINISHED'}
             entries = _entries(context, lay)
-            # A picture that opens a style manager: that lives in the
-            # Options panel, so this window steps aside for it.
-            for entry in entries:
-                if (entry[0] == 'picture_tile'
-                        and point_in_rect(mx, my, entry[2])):
-                    self._close()
-                    options_panel.hit(context, mx, my, entries)
-                    return {'FINISHED'}
             if options_panel.hit(context, mx, my, entries):
                 _tag()
                 return {'RUNNING_MODAL'}
