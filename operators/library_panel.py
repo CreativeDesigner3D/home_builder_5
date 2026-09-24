@@ -97,6 +97,7 @@ PAD_X = 10
 PAD_Y = 8
 HEADER_H = 22
 HDR_BTN = 20        # the Auto Join pill and the sizes button
+SIZES_LABEL = "Sizes"
 # The draw-through-points mark in a tile's corner, for products that
 # offer it. Sized like the palette's settings caret: big enough to hit,
 # small enough that the thumbnail stays the picture.
@@ -415,7 +416,8 @@ def compute_layout(context, rect):
     # Two controls live in the header, right-aligned: Auto Join, which
     # is a mode you want to SEE the state of rather than hunt for, and
     # the cabinet sizes, which are a form and so open as a popup.
-    btn = HDR_BTN * s
+    # Sizes carries its name: an icon alone went unnoticed.
+    btn = HDR_BTN * s + text_width(0, FONT_LABEL * s, SIZES_LABEL) + 8 * s
     sizes_rect = (content_x + content_w - btn, top - hdr_h, btn, hdr_h)
     aj_w = 62 * s
     autojoin_rect = (sizes_rect[0] - 4 * s - aj_w, top - hdr_h, aj_w, hdr_h)
@@ -710,14 +712,20 @@ def _glyph_path(shader, rect, s, color):
 
 def _paint_sizes_button(shader, sizes_rect, hovered, s):
     paint_button(shader, sizes_rect, hovered=hovered)
-    # Three stacked bars with a mark against them -- a size chart.
+    # Three stacked bars with a mark against them -- a size chart --
+    # then the word, so the button says what it opens.
     sx, sy, sw, sh = sizes_rect
+    gw = HDR_BTN * s
+    color = Theme.GLYPH_HOVER if hovered else Theme.GLYPH
     for i in range(3):
         by = sy + sh * (0.32 + i * 0.18)
-        draw_rects(shader, [(sx + 5 * s, by, sw - 12 * s, 1.4 * s)],
-                   Theme.GLYPH)
-    draw_rects(shader, [(sx + sw - 6 * s, sy + sh * 0.3, 1.4 * s, sh * 0.42)],
-               Theme.GLYPH)
+        draw_rects(shader, [(sx + 5 * s, by, gw - 12 * s, 1.4 * s)], color)
+    draw_rects(shader, [(sx + gw - 6 * s, sy + sh * 0.3, 1.4 * s, sh * 0.42)],
+               color)
+    draw_text(0, sx + gw, sy + (sh - FONT_LABEL * s) / 2.0 + 1 * s,
+              FONT_LABEL * s,
+              Theme.TEXT_PRIMARY if hovered else Theme.TEXT_NORMAL,
+              SIZES_LABEL)
 
 
 def _paint_grid(layout, mx, my):
@@ -745,8 +753,12 @@ def _paint_grid(layout, mx, my):
     shader.bind()
 
     tx, ty, _tw, th = header_rect
+    # The title gives way to the header buttons on a narrow panel.
+    title_w = autojoin_rect[0] - tx - 6 * s
     draw_text(font_id, tx + 2 * s, ty + (th - FONT_TITLE * s) / 2.0 + 1 * s,
-              FONT_TITLE * s, Theme.TEXT_PRIMARY, library_title(context))
+              FONT_TITLE * s, Theme.TEXT_PRIMARY,
+              fit_text(font_id, FONT_TITLE * s, library_title(context),
+                       title_w))
 
     # A library switch is one click, and the picker says which one you
     # are looking at even when you are not switching.
