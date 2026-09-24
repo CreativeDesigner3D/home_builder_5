@@ -23,6 +23,8 @@ def register():
 
 
 def unregister():
+    from . import finish_swatches
+    finish_swatches.unregister()
     quiet_cages.unregister()
     dim_edit_overlay.unregister()
     ui_face_frame.unregister()

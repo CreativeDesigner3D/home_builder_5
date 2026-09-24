@@ -437,6 +437,16 @@ def _notes_summary(p):
     return "none" if n == 0 else "%d note%s" % (n, "" if n == 1 else "s")
 
 
+def _finish_swatch(style):
+    from . import finish_swatches
+    return finish_swatches.style_texture(style)
+
+
+def _finish_swatch_icon(style, color):
+    from . import finish_swatches
+    return finish_swatches.style_icon(style, color)
+
+
 def _cabinet_style_fields():
     """The settings of one cabinet style as (label, summary, fields)
     sections -- the style editor's tabs, and a line each in the panel.
@@ -468,7 +478,9 @@ def _cabinet_style_fields():
     )
 
     finish = [
-        ('choice', 'finish_color', "Color", {'custom': 'ss_color'}),
+        ('choice', 'finish_color', "Color",
+         {'custom': 'ss_color', 'swatch': _finish_swatch,
+          'swatch_icon': _finish_swatch_icon}),
         # A custom finish is matched to a sample, so there is no colour
         # on file for it -- this is the one to render in.
         ('native', 'custom_finish_color', "Custom Color",

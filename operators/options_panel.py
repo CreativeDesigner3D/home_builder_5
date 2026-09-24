@@ -1420,6 +1420,23 @@ def paint(entries, mx, my):
                                           Theme.ACCENT_BG)
                         paint_inline_edit(shader, font_id, value_rect,
                                           FONT * s, _value_edit, pad=6 * s)
+                elif fkind == 'enum' and options.get('swatch'):
+                    # The pick's picture in the button, before its name.
+                    try:
+                        tex = options['swatch'](owner)
+                    except Exception:
+                        tex = None
+                    vx, vy, vw, vh = value_rect
+                    inset = (vh + 2 * s) if tex is not None else 0.0
+                    paint_field(shader, font_id, rect, FONT * s, label,
+                                str(value), hot, label_frac=frac,
+                                text_inset=inset)
+                    if tex is not None:
+                        from . import thumb_picker
+                        side = vh - 8 * s
+                        thumb_picker.draw_texture(
+                            tex, (vx + 5 * s, vy + 4 * s, side, side))
+                        shader.bind()
                 elif fkind == 'file':
                     paint_field(shader, font_id, rect, FONT * s, label,
                                 str(value), hot, label_frac=frac,
@@ -1953,7 +1970,8 @@ def hit(context, mx, my, entries):
                 return True
             if fkind == 'enum' and point_in_rect(mx, my, value_rect):
                 open_enum_menu(context, owner, prop, label,
-                               custom=options.get('custom_toggle'))
+                               custom=options.get('custom_toggle'),
+                               icon=options.get('swatch_icon'))
                 return True
             if fkind == 'thumb' and point_in_rect(mx, my, value_rect):
                 from . import thumb_picker
@@ -2143,12 +2161,16 @@ def _set_target(owner, prop):
 # The dropdown's "type a custom value" switch: the owner's bool that
 # turns the field into typed text, or None for a plain list.
 _menu_custom = None
+_menu_icon = None
 
 
-def open_enum_menu(context, owner, prop, title="", custom=None):
-    global _menu_custom
+def open_enum_menu(context, owner, prop, title="", custom=None, icon=None):
+    """``icon`` is fn(owner, identifier) -> icon_id, for a menu whose
+    items have pictures (finish colours); the pick is shown pressed."""
+    global _menu_custom, _menu_icon
     if _set_target(owner, prop):
         _menu_custom = custom
+        _menu_icon = icon
         _open_popup(title, _draw_enum_menu)
 
 
@@ -2252,9 +2274,20 @@ def _draw_enum_menu(menu, context):
     items = enum_items(owner, prop)
     columns, per_col = _menu_columns(layout, len(items))
     for i, (ident, label) in enumerate(items):
-        op = columns[i // per_col].operator(
-            'home_builder.options_set_enum', text=label,
-            icon='CHECKMARK' if ident == current else 'BLANK1')
+        icon_value = 0
+        if _menu_icon is not None:
+            try:
+                icon_value = _menu_icon(owner, ident) or 0
+            except Exception:
+                icon_value = 0
+        if icon_value:
+            op = columns[i // per_col].operator(
+                'home_builder.options_set_enum', text=label,
+                icon_value=icon_value, depress=ident == current)
+        else:
+            op = columns[i // per_col].operator(
+                'home_builder.options_set_enum', text=label,
+                icon='CHECKMARK' if ident == current else 'BLANK1')
         op.value = ident
     if _menu_custom and hasattr(owner, _menu_custom):
         layout.separator()
