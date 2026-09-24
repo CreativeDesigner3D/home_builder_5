@@ -506,7 +506,6 @@ def _cabinet_style_fields():
         ('choice', 'ss_drawer_slides', "Drawer Slides"),
         ('choice', 'ss_drawer_box_construction', "Box Construction"),
         ('file', 'ss_drawer_box_brand', "Box Brand Logo"),
-        ('choice', 'ss_edge_profile', "Edge Profile"),
     )
 
     notes = (
@@ -683,21 +682,42 @@ def _front_picture(kind, style):
     from ..common import door_builder
     w, h = (units.inch(v) for v in _TILE_SIZE[kind])
     t = units.inch(_TILE_THICKNESS)
+    edge = _edge_profile_name(bpy.context)
     plan = None
     if style.door_type != 'SLAB':
-        plan = style.front_build_plan(w, h, t)
+        plan = style.front_build_plan(w, h, t, edge_name=edge)
         if plan['too_small']:
             plan = None
     if plan is None:
         info = door_builder.door_style_info(style)
         info['door_type'] = 'SLAB'
-        geo = door_builder.build_door_geometry(info, w, h, t)
+        outer = None
+        if edge is not None:
+            from ..common import door_profiles
+            try:
+                outer = door_profiles.named_edge_section(edge, t)
+            except Exception:
+                outer = None
+        geo = door_builder.build_door_geometry(info, w, h, t,
+                                               outer_section=outer)
     else:
         geo = door_builder.build_door_geometry(plan['info'], w, h, t,
                                                **plan['build'])
     pic = door_builder.door_picture(*geo, w, h, t)
     pic['glass'] = bool(plan and plan['glass'])
     return pic
+
+
+def _edge_profile_name(context):
+    """The active cabinet style's Door and Drawer Edge Profile, as
+    Face_Frame_Door_Style._cabinet_edge_profile reads it for a front."""
+    cs = _active_cabinet_style(context)
+    if cs is None:
+        return None
+    if getattr(cs, 'ss_edge_profile_is_custom', False):
+        return cs.ss_edge_profile_custom.strip() or None
+    name = getattr(cs, 'ss_edge_profile', 'None')
+    return None if name == 'None' else name
 
 
 def _cached_picture(key, make):
@@ -716,7 +736,8 @@ def _cached_picture(key, make):
 
 def _front_tile_picture(kind):
     def picture(context, style):
-        pic = _cached_picture(('STYLE', kind, _style_signature(style)),
+        pic = _cached_picture(('STYLE', kind, _style_signature(style),
+                               _edge_profile_name(context)),
                               lambda: _front_picture(kind, style))
         return pic, pic.get('w', 0.0), pic.get('h', 0.0)
     return picture
@@ -737,7 +758,8 @@ def _catalog_picture(kind, series, shape=None, panel=None):
         base = pool[i] if 0 <= i < len(pool) else None
     except Exception:
         base = None
-    key = ('PICK', kind, series, shape, panel, _style_signature(base))
+    key = ('PICK', kind, series, shape, panel, _style_signature(base),
+           _edge_profile_name(bpy.context))
     pic = _cached_picture(key, lambda: _front_picture(
         kind, front_style_sketch(kind, series, shape, panel, base)))
     return pic, pic.get('w', 0.0), pic.get('h', 0.0)
@@ -1147,6 +1169,14 @@ OPTION_PAGES = {
 # each style tab: the style it builds with (a dropdown, or typed text for
 # the Style Section), the others it lists there, and -- drawers -- the
 # height a front changes to the first of those at.
+# The cabinet style's Door and Drawer Edge Profile: one pick for every
+# front, so it shows on both front tabs.
+_EDGE_PROFILE_FIELDS = (
+    ('choice', 'ss_edge_profile', "Edge Profile"),
+    ('notes', lambda context: ("Doors and drawer fronts alike",), None),
+)
+
+
 def _tall_drawer_choices(context):
     op = 'hb_face_frame.set_tall_drawer_front_style'
     out = [("None", op, {'style': ""})]
@@ -1187,6 +1217,10 @@ def _front_manager_tab(key):
         if options_panel.pool_editing(spec):
             return out
         cs = _active_cabinet_style(context)
+        if cs is not None:
+            out.append(('gap', None))
+            out.extend(options_panel.field_blocks(
+                context, _EDGE_PROFILE_FIELDS, cs))
         if cs is not None and kind == 'DRAWER':
             out.append(('gap', None))
             out.extend(options_panel.field_blocks(
@@ -1198,8 +1232,16 @@ def _front_manager_tab(key):
 # The editor's tabs: the style's own sections, with its fronts made,
 # picked and listed in the two front style tabs where Fronts would be.
 _CABINET_STYLE_TABS = ()
+_FINISH_FIELDS = dict((label, fields) for label, _summary, fields
+                      in _CABINET_STYLE_SECTIONS)["Finish"]
 for _label, _summary, _fields in _CABINET_STYLE_SECTIONS:
-    if _label == "Fronts":
+    if _label == "Finish":
+        continue            # on the Cabinet tab, under its heading
+    if _label == "Cabinet":
+        _CABINET_STYLE_TABS += ((_label, tuple(_fields) + (
+            ('gap', None, None), ('label', None, "Finish"))
+            + tuple(_FINISH_FIELDS)),)
+    elif _label == "Fronts":
         _CABINET_STYLE_TABS += (
             ("Door Styles", _front_manager_tab('DOOR_STYLES')),
             ("Drawer Front Styles",
