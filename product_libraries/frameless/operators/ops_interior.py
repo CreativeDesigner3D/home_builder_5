@@ -41,6 +41,234 @@ def get_default_shelf_quantity(opening_height, opening_depth):
             return 4
 
 
+# ---------------------------------------------------------------------------
+# Drawers: box construction and accessories
+# ---------------------------------------------------------------------------
+# The construction and slide lists, the accessory search and the list
+# widgets come from the face frame library; the picks are stored on the
+# frameless drawer opening in the same property group.
+
+def _ff_ops():
+    from ...face_frame.operators import ops_cabinet
+    return ops_cabinet
+
+
+def _construction_enum(self, context):
+    return _ff_ops()._drawer_box_construction_enum(self, context)
+
+
+def _slides_enum(self, context):
+    return _ff_ops()._drawer_slides_enum(self, context)
+
+
+def _pick_owner(name):
+    """The drawer opening or items interior a pick is stored on."""
+    obj = bpy.data.objects.get(name) if name else None
+    if obj is None:
+        return None
+    if interior_items.is_items_interior(obj):
+        return obj
+    return interior_items.drawer_opening_for(obj)
+
+
+def _update_dialog_construction(self, context):
+    owner = _pick_owner(self.opening_name)
+    if owner is not None:
+        _ff_ops()._set_opening_construction(owner, self.construction)
+
+
+def _update_dialog_slides(self, context):
+    owner = _pick_owner(self.opening_name)
+    if owner is not None:
+        _ff_ops()._set_opening_slides(owner, self.slides)
+
+
+def _seed_picks(op, owner):
+    """Show the owner's current picks in the dialog's dropdowns. A code
+    the host no longer offers stays on Project Default."""
+    default = _ff_ops().DRAWER_BOX_CONSTRUCTION_DEFAULT
+    props = owner.face_frame_opening
+    for attr, code in (('construction', props.drawer_box_construction),
+                       ('slides', props.drawer_slides)):
+        try:
+            setattr(op, attr, code or default)
+        except TypeError:
+            pass
+
+
+def draw_box_picks(layout, op):
+    """Construction and slide dropdowns, each only when the host offers
+    options."""
+    ff = _ff_ops()
+    shown = False
+    if ff.drawer_box_construction_options():
+        layout.prop(op, 'construction')
+        shown = True
+    if ff.drawer_slides_options():
+        layout.prop(op, 'slides')
+        shown = True
+    return shown
+
+
+class hb_frameless_AccessorySearchRow(bpy.types.PropertyGroup):
+    """One result row in the drawer accessory search."""
+    code: bpy.props.StringProperty() # type: ignore
+    label: bpy.props.StringProperty() # type: ignore
+    name: bpy.props.StringProperty() # type: ignore
+    section: bpy.props.StringProperty() # type: ignore
+    group: bpy.props.StringProperty() # type: ignore
+    render_kind: bpy.props.StringProperty() # type: ignore
+
+
+def _populate_search(self, context):
+    _ff_ops()._populate_drawer_accessory_search(self, context)
+
+
+class hb_frameless_OT_drawer_add_accessory(bpy.types.Operator):
+    bl_idname = "hb_frameless.drawer_add_accessory"
+    bl_label = "Add"
+    bl_description = "Add this accessory to the drawer"
+    bl_options = {'UNDO', 'INTERNAL'}
+
+    opening_name: bpy.props.StringProperty(options={'HIDDEN'}) # type: ignore
+    code: bpy.props.StringProperty(options={'HIDDEN'}) # type: ignore
+
+    def execute(self, context):
+        opening = interior_items.drawer_opening_for(
+            bpy.data.objects.get(self.opening_name))
+        if opening is None or not self.code:
+            return {'CANCELLED'}
+        if interior_items.add_drawer_accessory(opening, self.code) is None:
+            self.report({'WARNING'}, "Unknown accessory")
+            return {'CANCELLED'}
+        hb_utils.run_calc_fix(context, opening)
+        return {'FINISHED'}
+
+
+class hb_frameless_OT_drawer_remove_accessory(bpy.types.Operator):
+    bl_idname = "hb_frameless.drawer_remove_accessory"
+    bl_label = "Remove"
+    bl_description = "Remove the selected accessory from the drawer"
+    bl_options = {'UNDO', 'INTERNAL'}
+
+    opening_name: bpy.props.StringProperty(options={'HIDDEN'}) # type: ignore
+
+    def execute(self, context):
+        opening = interior_items.drawer_opening_for(
+            bpy.data.objects.get(self.opening_name))
+        if opening is None:
+            return {'CANCELLED'}
+        props = interior_items.item_props(opening)
+        idx = props.interior_items_index
+        if not 0 <= idx < len(props.interior_items):
+            return {'CANCELLED'}
+        props.interior_items.remove(idx)
+        props.interior_items_index = min(idx, max(len(props.interior_items) - 1, 0))
+        hb_utils.run_calc_fix(context, opening)
+        return {'FINISHED'}
+
+
+class hb_frameless_OT_drawer_interior(bpy.types.Operator):
+    """Lay out the inside of a drawer: box construction, slides and the
+    accessories in the box."""
+    bl_idname = "hb_frameless.drawer_interior"
+    bl_label = "Drawer Interior"
+    bl_description = "Pick this drawer's box construction and add the accessories that go inside it"
+    bl_options = {'UNDO'}
+
+    opening_name: bpy.props.StringProperty(options={'HIDDEN'}) # type: ignore
+    filter_text: bpy.props.StringProperty(
+        name="Search",
+        description="Filter the accessory list by name, group or code",
+        options={'TEXTEDIT_UPDATE'}, update=_populate_search) # type: ignore
+    matches: bpy.props.CollectionProperty(type=hb_frameless_AccessorySearchRow) # type: ignore
+    match_index: bpy.props.IntProperty(default=0) # type: ignore
+    construction: bpy.props.EnumProperty(
+        name="Box Construction", items=_construction_enum,
+        description="Construction this drawer's box is built to",
+        update=_update_dialog_construction) # type: ignore
+    slides: bpy.props.EnumProperty(
+        name="Slides", items=_slides_enum,
+        description="Slide hardware this drawer runs on",
+        update=_update_dialog_slides) # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        return interior_items.drawer_opening_for(context.object) is not None
+
+    def invoke(self, context, event):
+        opening = interior_items.drawer_opening_for(context.object)
+        if opening is None:
+            return {'CANCELLED'}
+        self.opening_name = opening.name
+        _seed_picks(self, opening)
+        self.filter_text = ""
+        self.match_index = 0
+        _populate_search(self, context)
+        return context.window_manager.invoke_props_dialog(self, width=520)
+
+    def check(self, context):
+        _populate_search(self, context)
+        return True
+
+    def execute(self, context):
+        return {'FINISHED'}
+
+    def draw(self, context):
+        layout = self.layout
+        opening = bpy.data.objects.get(self.opening_name)
+        if opening is None:
+            layout.label(text="No drawer selected", icon='INFO')
+            return
+        props = interior_items.item_props(opening)
+        if draw_box_picks(layout, self):
+            layout.separator()
+
+        pick = layout.box()
+        pick.label(text="Add an accessory", icon='ADD')
+        pick.prop(self, 'filter_text', text="", icon='VIEWZOOM')
+        if len(self.matches) == 0:
+            pick.label(text="Nothing matches that search", icon='INFO')
+        else:
+            row = pick.row()
+            row.template_list("HB_UL_face_frame_drawer_catalog", "",
+                              self, "matches", self, "match_index", rows=6)
+            side = row.column(align=True)
+            add = side.operator("hb_frameless.drawer_add_accessory", text="",
+                                icon='ADD')
+            add.opening_name = self.opening_name
+            idx = max(0, min(self.match_index, len(self.matches) - 1))
+            add.code = self.matches[idx].code
+            note = pick.row()
+            note.enabled = False
+            note.label(text="Marked accessories are drawn in the drawer; "
+                            "the rest are listed only", icon='MESH_GRID')
+
+        layout.separator()
+        layout.label(text="In this drawer")
+        row = layout.row()
+        row.template_list("HB_UL_face_frame_drawer_items", "",
+                          props, "interior_items", props,
+                          "interior_items_index", rows=4)
+        side = row.column(align=True)
+        rem = side.operator("hb_frameless.drawer_remove_accessory", text="",
+                            icon='REMOVE')
+        rem.opening_name = self.opening_name
+
+        idx = props.interior_items_index
+        if not 0 <= idx < len(props.interior_items):
+            layout.label(text="Add an accessory to get started", icon='INFO')
+            return
+        item = props.interior_items[idx]
+        if item.kind != 'ACCESSORY':
+            return
+        from ...face_frame import ui_face_frame
+        box = layout.box()
+        box.label(text=item.accessory_label or item.accessory_code)
+        box.prop(item, 'accessory_qty', text="Quantity")
+        ui_face_frame.draw_drawer_insert_settings(box, item)
+
+
 def update_shelf_quantities(context, cabinet_obj):
     """Find all shelf interiors in a cabinet and set their quantity based on opening height.
     
@@ -71,6 +299,16 @@ class hb_frameless_OT_interior_prompts(bpy.types.Operator):
     shelf_quantity: bpy.props.IntProperty(name="Shelf Quantity", min=0, max=10, default=1) # type: ignore
     shelf_setback: bpy.props.FloatProperty(name="Shelf Setback", unit='LENGTH', precision=5) # type: ignore
     shelf_clip_gap: bpy.props.FloatProperty(name="Shelf Clip Gap", unit='LENGTH', precision=5) # type: ignore
+    # Roll-out box construction and slides on an items interior.
+    opening_name: bpy.props.StringProperty(options={'HIDDEN'}) # type: ignore
+    construction: bpy.props.EnumProperty(
+        name="Box Construction", items=_construction_enum,
+        description="Construction the roll-out boxes are built to",
+        update=_update_dialog_construction) # type: ignore
+    slides: bpy.props.EnumProperty(
+        name="Slides", items=_slides_enum,
+        description="Slide hardware the roll-outs run on",
+        update=_update_dialog_slides) # type: ignore
 
     interior = None
 
@@ -93,6 +331,9 @@ class hb_frameless_OT_interior_prompts(bpy.types.Operator):
         if 'Shelf Clip Gap' in interior_bp:
             self.shelf_clip_gap = interior_bp['Shelf Clip Gap']
         
+        if interior_items.is_items_interior(interior_bp):
+            self.opening_name = interior_bp.name
+            _seed_picks(self, interior_bp)
         wm = context.window_manager
         width = 340 if interior_items.is_items_interior(interior_bp) else 300
         return wm.invoke_props_dialog(self, width=width)
@@ -113,6 +354,10 @@ class hb_frameless_OT_interior_prompts(bpy.types.Operator):
     def draw(self, context):
         layout = self.layout
         if interior_items.is_items_interior(self.interior.obj):
+            items = interior_items.item_props(self.interior.obj).interior_items
+            if any(it.kind == 'ROLLOUT' for it in items):
+                if draw_box_picks(layout, self):
+                    layout.separator()
             draw_interior_items(layout, self.interior.obj)
             return
         box = layout.box()
@@ -284,7 +529,8 @@ class hb_frameless_OT_delete_interior_part(bpy.types.Operator):
         # Item parts are rebuilt from their interior's item list; they
         # are removed there, not one part at a time.
         return (obj and 'IS_FRAMELESS_INTERIOR_PART' in obj
-                and not obj.get(interior_items.PART_TAG))
+                and not obj.get(interior_items.PART_TAG)
+                and not obj.get(interior_items.DRAWER_INSERT_TAG))
 
     def execute(self, context):
         obj = context.object
@@ -1071,6 +1317,10 @@ class hb_frameless_OT_remove_rollout_box(bpy.types.Operator):
 
 
 classes = (
+    hb_frameless_AccessorySearchRow,
+    hb_frameless_OT_drawer_add_accessory,
+    hb_frameless_OT_drawer_remove_accessory,
+    hb_frameless_OT_drawer_interior,
     hb_frameless_OT_calculate_shelf_quantity,
     hb_frameless_OT_interior_prompts,
     hb_frameless_OT_change_interior_type,

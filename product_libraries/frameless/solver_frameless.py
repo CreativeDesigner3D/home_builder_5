@@ -1157,12 +1157,15 @@ def _solve_drawer_box(front_obj, box_obj, insert_obj, length, width,
     rear = float(prompt(front_obj, 'Drawer Box Rear Clearance', inch(1.0)))
     bottom_clr = float(prompt(front_obj, 'Drawer Box Bottom Clearance', inch(0.5)))
     depth = cage_dims(insert_obj)[1]
-    set_cage(box_obj, (bottom + bottom_clr, -left - side, 0.0),
-             dim_x=width - left - right - side * 2.0,
-             dim_y=depth - rear,
-             dim_z=length - top - bottom - top_clr - bottom_clr)
+    dims = (max(width - left - right - side * 2.0, 0.0),
+            max(depth - rear, 0.0),
+            max(length - top - bottom - top_clr - bottom_clr, 0.0))
+    set_cage(box_obj, (bottom + bottom_clr, -left - side, 0.0), *dims)
     box_obj.hide_viewport = hidden
     box_obj.hide_render = hidden
+    # The box construction pick and the inserts inside the box.
+    from . import interior_items
+    interior_items.solve_drawer_inserts(insert_obj, box_obj, dims, hidden)
 
 
 def solve_insert_parts(insert_obj):

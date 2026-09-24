@@ -5727,9 +5727,11 @@ def _update_cabinet_dim(self, context):
     obj = self.id_data
     if (types_face_frame.find_cabinet_root(obj) is None
             and isinstance(obj, bpy.types.Object)
-            and obj.get('IS_FRAMELESS_ITEMS_INTERIOR')):
-        # The frameless library keeps its interior items in these same
-        # property groups; hand the edit to its solver.
+            and (obj.get('IS_FRAMELESS_ITEMS_INTERIOR')
+                 or obj.get('IS_FRAMELESS_OPENING_CAGE'))):
+        # The frameless library keeps its interior items and drawer
+        # picks in these same property groups; hand the edit to its
+        # solver.
         from ..frameless import interior_items
         interior_items.on_props_changed(obj)
         return

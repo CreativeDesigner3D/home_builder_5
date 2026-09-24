@@ -323,11 +323,178 @@ def solve(interior_obj, force=False):
 
 
 def on_props_changed(obj):
-    """Item property callback for an items interior: re-solve its cabinet."""
+    """Item property callback for an items interior or a drawer opening:
+    re-solve its cabinet."""
     if obj is None or obj.name in _SOLVING:
+        return
+    if solver_frameless.cabinet_root(obj) is None:
         return
     _solver_ff, types_ff = _face_frame()
     if types_ff._RECALC_SUSPEND_DEPTH > 0:
         # A preset writing its height; the outer callback solves once.
         return
     solver_frameless.recalculate_cabinet(obj)
+
+
+# ---------------------------------------------------------------------------
+# Drawers: box construction and the inserts inside the box
+# ---------------------------------------------------------------------------
+#
+# A drawer or pullout opening keeps its box construction pick and its
+# accessories on the opening cage, in the same property group the face
+# frame library uses. Accessories that carry a render hint build real
+# inserts inside the drawer box with the face frame insert builders.
+
+DRAWER_INSERT_TAG = 'IS_FRAMELESS_DRAWER_INSERT'
+INSERT_SIGNATURE_KEY = 'hb_insert_signature'
+_STAMP_KEYS = ('DRAWER_BOX_CONSTRUCTION', 'DRAWER_BOX_CONSTRUCTION_NAME',
+               'DRAWER_SLIDES', 'DRAWER_SLIDES_NAME')
+
+_insert_builder_cls = None
+
+
+def _insert_builder():
+    """The face frame insert builders, bound to an object that tags what
+    they make as frameless parts. The builders read only the box and the
+    item list, never a face frame cabinet."""
+    global _insert_builder_cls
+    if _insert_builder_cls is None:
+        _solver_ff, types_ff = _face_frame()
+
+        class FramelessDrawerInserts(types_ff.FaceFrameCabinet):
+            def __init__(self):
+                pass
+
+            def _emit_drawer_insert(self, box_obj, name, mb, role=None):
+                obj = super()._emit_drawer_insert(box_obj, name, mb, role)
+                if obj is not None:
+                    obj[DRAWER_INSERT_TAG] = True
+                    obj['IS_FRAMELESS_INTERIOR_PART'] = True
+                    obj['MENU_ID'] = PART_MENU_ID
+                return obj
+
+        _insert_builder_cls = FramelessDrawerInserts
+    return _insert_builder_cls()
+
+
+def drawer_opening_for(obj):
+    """The drawer or pullout opening at or above ``obj`` (the opening, its
+    front, the box or an insert), or None."""
+    while obj is not None:
+        if obj.get('IS_FRAMELESS_OPENING_CAGE'):
+            break
+        obj = obj.parent
+    if obj is None:
+        return None
+    for child in obj.children:
+        if child.get('IS_DRAWER_FRONT') or child.get('IS_PULLOUT_FRONT'):
+            return obj
+    return None
+
+
+def drawer_accessories(opening_obj):
+    return [it for it in item_props(opening_obj).interior_items
+            if it.kind == 'ACCESSORY']
+
+
+def _item_signature(item):
+    values = []
+    for prop in item.bl_rna.properties:
+        if prop.identifier == 'rna_type' or prop.type in ('COLLECTION',
+                                                          'POINTER'):
+            continue
+        value = getattr(item, prop.identifier)
+        if isinstance(value, float):
+            value = round(value, 5)
+        elif not isinstance(value, (int, str, bool)):
+            try:
+                value = tuple(round(v, 5) for v in value)
+            except TypeError:
+                value = str(value)
+        values.append(value)
+    return tuple(values)
+
+
+def _stamp_box(box_obj, props):
+    """Tag the box with the opening's construction and slides picks; a
+    cleared pick takes its tag off again."""
+    _solver_ff, types_ff = _face_frame()
+    for key in _STAMP_KEYS:
+        if key in box_obj:
+            del box_obj[key]
+    types_ff.FaceFrameCabinet._stamp_drawer_box_construction(box_obj, props)
+
+
+def _paint_inserts(root, inserts):
+    if root is None or not inserts:
+        return
+    try:
+        style = _cabinet_style(root)
+        mat = style.get_interior_material()[0] if style else None
+    except Exception:
+        mat = None
+    if mat is None:
+        return
+    for obj in inserts:
+        mesh = obj.data
+        if mesh is not None and not mesh.materials:
+            mesh.materials.append(mat)
+
+
+def solve_drawer_inserts(opening_obj, box_obj, dims, hidden):
+    """Stamp the box and rebuild its inserts when anything that shapes
+    them has changed."""
+    props = item_props(opening_obj)
+    _stamp_box(box_obj, props)
+    items = [it for it in drawer_accessories(opening_obj)
+             if getattr(it, 'accessory_render', '')]
+    existing = [c for c in box_obj.children if c.get(DRAWER_INSERT_TAG)]
+    if not items and not existing:
+        if INSERT_SIGNATURE_KEY in box_obj:
+            del box_obj[INSERT_SIGNATURE_KEY]
+        return
+    builder = _insert_builder()
+    dx, dy, dz = dims
+    signature = repr((
+        tuple(round(v, 5) for v in dims),
+        tuple(round(v, 5) for v in builder._drawer_box_interior(box_obj)),
+        tuple(_item_signature(it) for it in items),
+        bool(hidden),
+        int(solver_frameless.cabinet_root(opening_obj).get(
+            'CABINET_STYLE_INDEX', 0)),
+    ))
+    if (box_obj.get(INSERT_SIGNATURE_KEY) == signature
+            and box_obj.get(PART_COUNT_KEY) == len(existing)):
+        return
+    for obj in existing:
+        _remove_part(obj)
+    if items:
+        builder._spawn_drawer_inserts(box_obj, dx, dy, dz, props)
+    built = [c for c in box_obj.children if c.get(DRAWER_INSERT_TAG)]
+    for obj in built:
+        obj.hide_viewport = hidden
+        obj.hide_render = hidden
+    _paint_inserts(solver_frameless.cabinet_root(opening_obj), built)
+    box_obj[INSERT_SIGNATURE_KEY] = signature
+    box_obj[PART_COUNT_KEY] = len(built)
+
+
+def add_drawer_accessory(opening_obj, code):
+    """Append the accessory ``code`` from the host's list to a drawer.
+    Returns the item, or None when the code is unknown."""
+    from ... import accessory_registry
+    entry = accessory_registry.find(code)
+    if not entry:
+        return None
+    props = item_props(opening_obj)
+    _SOLVING.add(opening_obj.name)
+    try:
+        item = props.interior_items.add()
+        item.kind = 'ACCESSORY'
+        item.accessory_label = entry.get('name', code)
+        item.accessory_code = code
+        item.accessory_render = (entry.get('render') or '').upper()
+        props.interior_items_index = len(props.interior_items) - 1
+    finally:
+        _SOLVING.discard(opening_obj.name)
+    return item
