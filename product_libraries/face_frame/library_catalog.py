@@ -640,7 +640,9 @@ def _style_summary(context, style):
 
 
 def _more_style_commands(context):
-    return (("Paint Part", 'hb_face_frame.paint_part_material',
+    return (("Assign to Selected",
+             'hb_face_frame.assign_style_to_selected_cabinets', {}),
+            ("Paint Part", 'hb_face_frame.paint_part_material',
              {'brush': 'FINISH'}),
             ("Paint Interior", 'hb_face_frame.paint_part_material',
              {'brush': 'INTERIOR'}),
@@ -778,11 +780,12 @@ OPTION_PAGES = {
         'row_dot': _style_color,
         'row_count': _style_count,
         'summary': _style_summary,
-        # The everyday three in a row; the part brushes in a menu.
+        # Painting is how a style goes on; a style edit reaches every
+        # cabinet using it by itself (every room), so there is no
+        # Update. Assigning a whole selection at once and the part
+        # brushes wait in the menu.
         'actions': (
-            (("Assign", 'hb_face_frame.assign_style_to_selected_cabinets'),
-             ("Update", 'hb_face_frame.update_cabinets_from_style'),
-             ("Paint", 'hb_face_frame.paint_assign_cabinet_style'),
+            (("Paint", 'hb_face_frame.paint_assign_cabinet_style'),
              ("More...", _more_style_commands)),
         ),
     },

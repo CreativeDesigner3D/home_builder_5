@@ -635,7 +635,8 @@ def suspend_propagate():
 
 def _propagate_cabinet_style(self, context):
     """Push this cabinet style's current state to every face frame
-    cabinet in the scene tagged with STYLE_NAME == self.name. Wired
+    cabinet tagged with STYLE_NAME == self.name, in this room and every
+    other room that uses the style. Wired
     as the update callback on every cabinet-style prop that affects
     cabinet geometry / appearance, so changes in the style panel
     reflect across the scene without needing an explicit Update
@@ -654,6 +655,35 @@ def _propagate_cabinet_style(self, context):
     """
     if _PROPAGATE_SUSPEND_DEPTH > 0:
         return
+    _restyle_room(self, context.scene)
+    # Every other room using the style too, so a change made in the
+    # kitchen reaches the pantry's cabinets without a visit and an
+    # Update. Each room is restyled as the scene in context: the
+    # recalc links the parts it makes (pulls, labels, split pieces) to
+    # the scene in context, and must not put another room's parts in
+    # this one.
+    from ...operators import scene_navigator
+    for scene in list(bpy.data.scenes):
+        if scene is context.scene or not scene_navigator.is_room(scene):
+            continue
+        if not any(obj.get('STYLE_NAME') == self.name
+                   and (obj.get('IS_FACE_FRAME_CABINET_CAGE')
+                        or obj.get('APPLIANCE_TYPE') == 'HOOD')
+                   for obj in scene.objects):
+            continue
+        try:
+            from . import types_face_frame
+            with types_face_frame.isolated_recalc(),                     bpy.context.temp_override(
+                        scene=scene, view_layer=scene.view_layers[0]):
+                _restyle_room(self, scene)
+        except Exception as ex:
+            print("Home Builder: style %r not applied in %r: %s"
+                  % (self.name, scene.name, ex))
+
+
+def _restyle_room(self, scene):
+    """Re-apply cabinet style `self` to every cabinet and wood hood in
+    `scene` tagged with it."""
     from . import types_face_frame
     target_name = self.name
     with types_face_frame.suspend_recalc():
@@ -665,7 +695,7 @@ def _propagate_cabinet_style(self, context):
         # in Scene_objects_next). The targets themselves are root cages
         # / hood cages, which no step deletes, so the snapshot stays
         # valid throughout.
-        targets = [obj for obj in context.scene.objects
+        targets = [obj for obj in scene.objects
                    if obj.get('STYLE_NAME') == target_name
                    and (obj.get('IS_FACE_FRAME_CABINET_CAGE')
                         or obj.get('APPLIANCE_TYPE') == 'HOOD')]

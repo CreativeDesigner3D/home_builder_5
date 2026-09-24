@@ -119,6 +119,28 @@ def suspend_recalc():
                     pass
 
 
+
+@contextmanager
+def isolated_recalc():
+    """A block whose recalcs run inside it, whatever encloses it.
+
+    Under an enclosing suspend_recalc a recalc queues until that block
+    exits -- which is wrong for work done in another scene's context
+    (restyling another room): it would run later, in the wrong scene.
+    The enclosing block's queue is set aside for the duration and put
+    back as it was, so its own recalcs still run where it meant them."""
+    global _RECALC_SUSPEND_DEPTH
+    depth, pending = _RECALC_SUSPEND_DEPTH, set(_PENDING_RECALC_NAMES)
+    _RECALC_SUSPEND_DEPTH = 0
+    _PENDING_RECALC_NAMES.clear()
+    try:
+        yield
+    finally:
+        _RECALC_SUSPEND_DEPTH = depth
+        _PENDING_RECALC_NAMES.clear()
+        _PENDING_RECALC_NAMES.update(pending)
+
+
 # Single string-enum role for parts.
 PART_ROLE_LEFT_SIDE = 'LEFT_SIDE'
 PART_ROLE_RIGHT_SIDE = 'RIGHT_SIDE'
