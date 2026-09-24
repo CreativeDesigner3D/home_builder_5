@@ -356,9 +356,9 @@ def _block_h(block, s):
     if kind == 'head':
         return (HEAD_H + ROW_GAP) * s
     if kind == 'face_cmds':
-        return (BTN_H + ROW_GAP) * s
+        return (BTN_H + ROW_GAP) * 2 * s
     if kind == 'run_cmds':
-        return (BTN_H + ROW_GAP) * 3 * s
+        return (BTN_H + ROW_GAP) * 2 * s
     if kind == 'grid':
         rows = _grid_rows(len(block[1]))
         return rows * (GRID_CELL_H + GRID_PAD) * s + ROW_GAP * s
@@ -665,29 +665,29 @@ def _face_cmd_entries(props, index, x0, top, w, s):
     sec = props.sections[index]
     peers = ap.peer_indices(props, index)
     pos = peers.index(index) if index in peers else 0
-    removable = len(props.sections) > 1 and (sec.column < 0 or len(peers) > 1)
-    rects = _row_rects(x0, top, w, s, 4, BTN_H * s)
+    # A face alone in its column goes with its column, unless it is the
+    # last one.
+    removable = len(props.sections) > 1 and (
+        sec.column < 0 or len(peers) > 1 or len(props.columns) > 1)
+    split_row = _row_rects(x0, top, w, s, 2, BTN_H * s)
+    rects = _row_rects(x0, top - (BTN_H + ROW_GAP) * s, w, s, 3, BTN_H * s)
     return [
-        ('btn', rects[0], 'SPLIT', "Split", True, index),
-        ('btn', rects[1], 'UP', "Up", pos + 1 < len(peers), index),
-        ('btn', rects[2], 'DOWN', "Down", pos > 0, index),
-        ('btn', rects[3], 'REMOVE', "Remove", removable, index),
+        ('btn', split_row[0], 'SPLIT', "Split Top / Bottom", True, index),
+        ('btn', split_row[1], 'SPLIT_ACROSS', "Split Side by Side",
+         True, index),
+        ('btn', rects[0], 'UP', "Up", pos + 1 < len(peers), index),
+        ('btn', rects[1], 'DOWN', "Down", pos > 0, index),
+        ('btn', rects[2], 'REMOVE', "Remove", removable, index),
     ]
 
 
 def _run_cmd_entries(props, x0, top, w, s):
-    """Three rows: what the run is made of sideways, the faces that
-    cross every column, and the way back to the appliance's own
-    front."""
-    top_row = _row_rects(x0, top, w, s, 2, BTN_H * s)
-    low = top - (BTN_H + ROW_GAP) * s
-    low_row = _row_rects(x0, low, w, s, 2, BTN_H * s)
-    last = low - (BTN_H + ROW_GAP) * s
+    """Two rows: the faces that cross every column, and the way back to
+    the appliance's own front. Columns come from splitting a face side
+    by side, so they have no buttons of their own."""
+    low_row = _row_rects(x0, top, w, s, 2, BTN_H * s)
+    last = top - (BTN_H + ROW_GAP) * s
     return [
-        ('btn', top_row[0], 'ADD_COLUMN', "Add Column",
-         len(props.columns) < ap.MAX_COLUMNS, -1),
-        ('btn', top_row[1], 'REMOVE_COLUMN', "Remove Column",
-         len(props.columns) > 1, -1),
         ('btn', low_row[0], 'ADD_BANNER_TOP', "Full Face Above", True, -1),
         ('btn', low_row[1], 'ADD_BANNER_BOTTOM', "Full Face Below", True, -1),
         ('btn', (x0, last - BTN_H * s, w, BTN_H * s), 'REMOVE_PANELS',
@@ -1157,12 +1157,18 @@ class home_builder_OT_appliance_panel_edit(bpy.types.Operator):
             new = ap.split_section(bp, index, self._solved_height(bp, index))
             if new >= 0:
                 select(bp, new)
+        elif act == 'SPLIT_ACROSS':
+            new, why = ap.split_section_across(
+                bp, index, self._solved_height(bp, index))
+            if new >= 0:
+                select(bp, new)
+            elif why:
+                self.report({'INFO'}, why)
         elif act == 'REMOVE':
             if ap.remove_section(bp, index):
-                select(bp, max(0, index - 1))
+                select(bp, max(0, min(index - 1, len(props.sections) - 1)))
             else:
-                self.report({'INFO'}, "A column keeps its last face - remove "
-                                      "the column instead")
+                self.report({'INFO'}, "The appliance keeps at least one face")
         elif act in ('UP', 'DOWN'):
             peers = ap.peer_indices(props, index)
             if ap.move_section(bp, index, 1 if act == 'UP' else -1):

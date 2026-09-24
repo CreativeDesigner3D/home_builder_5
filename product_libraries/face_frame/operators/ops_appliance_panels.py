@@ -186,8 +186,31 @@ class hb_face_frame_OT_appliance_panel_remove_section(_Appliance_Panel_Edit,
 
     def edit(self, bp):
         if not ap.remove_section(bp, self.index):
-            self.report({'INFO'}, "A column keeps its last face - remove the "
-                                  "column instead")
+            self.report({'INFO'}, "The appliance keeps at least one face")
+            return False
+        return True
+
+
+class hb_face_frame_OT_appliance_panel_split_across(_Appliance_Panel_Edit,
+                                                    bpy.types.Operator):
+    bl_idname = "hb_face_frame.appliance_panel_split_across"
+    bl_label = "Split Side by Side"
+    bl_description = ("Split this face into two side by side: a face alone "
+                      "in its column splits the column, a full-width face "
+                      "next to the columns becomes one face in each")
+
+    index: IntProperty(default=0)  # type: ignore
+
+    def edit(self, bp):
+        height = None
+        dim_x, _dim_y, dim_z = ap._cage_dims(bp)
+        if dim_x > 0 and dim_z > 0:
+            box = ap.solve(bp.appliance_panels, dim_x, dim_z)[0].get(self.index)
+            height = (box[3] - box[2]) if box else None
+        new, why = ap.split_section_across(bp, self.index, height)
+        if new < 0:
+            if why:
+                self.report({'INFO'}, why)
             return False
         return True
 
@@ -384,10 +407,6 @@ class hb_face_frame_OT_add_appliance_panels(bpy.types.Operator):
         box = layout.box()
         hdr = box.row(align=True)
         hdr.label(text="Sections (hold to fix a size; others share the rest)")
-        add_col = hdr.row(align=True)
-        add_col.enabled = len(props.columns) < ap.MAX_COLUMNS
-        add_col.operator("hb_face_frame.appliance_panel_add_column",
-                         text="Add Column", icon='ADD')
         ncol = len(props.columns)
         secs = list(enumerate(props.sections))
         col_idx = [i for i, s in secs if 0 <= s.column < ncol]
@@ -417,8 +436,11 @@ class hb_face_frame_OT_add_appliance_panels(bpy.types.Operator):
             dn = mv.operator("hb_face_frame.appliance_panel_move_section",
                              text="", icon='TRIA_DOWN')
             dn.index, dn.delta = i, -1
+            r.operator("hb_face_frame.appliance_panel_split_across",
+                       text="", icon='SPLIT_VERTICAL').index = i
             rm = r.row(align=True)
-            rm.enabled = len(props.sections) > 1 and (s.column < 0 or len(peers) > 1)
+            rm.enabled = len(props.sections) > 1 and (
+                s.column < 0 or len(peers) > 1 or ncol > 1)
             rm.operator("hb_face_frame.appliance_panel_remove_section",
                         text="", icon='X').index = i
             # Backer + the pinned bottom: the fields a spec fills in.
@@ -498,6 +520,7 @@ classes = (
     hb_face_frame_OT_appliance_panel_remove_column,
     hb_face_frame_OT_appliance_panel_add_section,
     hb_face_frame_OT_appliance_panel_remove_section,
+    hb_face_frame_OT_appliance_panel_split_across,
     hb_face_frame_OT_appliance_panel_move_section,
     hb_face_frame_OT_add_appliance_panels,
 )

@@ -501,15 +501,98 @@ def split_section(appliance_obj, index, height=None):
     return index
 
 
+def split_section_across(appliance_obj, index, height=None):
+    """Cut a face in two side by side. Returns (index to select, None),
+    or (-1, why) when the run's shape can't take it.
+
+    A run is columns of stacked faces with full-width faces above and
+    below, so two cuts fit it:
+      - a face alone in its column: the column splits in two, the new
+        one right of it with a face of the same kind;
+      - a full-width face next to the columns, when there are two or
+        more: it becomes one face at that end of every column (doors
+        over a full-width drawer become a door over a drawer in each
+        column), holding the height it has now.
+    `height` is what the face measures now, for the caller that has
+    already solved the run."""
+    props = appliance_obj.appliance_panels
+    if not (0 <= index < len(props.sections)):
+        return -1, None
+    sec = props.sections[index]
+    kind, backer = sec.kind, sec.backer
+    ncol = len(props.columns)
+
+    if sec.column >= 0:
+        ci = sec.column
+        if len(peer_indices(props, index)) > 1:
+            return -1, ("Only a face alone in its column splits side by side "
+                        "- split the full-width face or the column's other "
+                        "faces instead")
+        if ncol >= MAX_COLUMNS:
+            return -1, "Panels are limited to %d columns" % MAX_COLUMNS
+        col = props.columns[ci]
+        with suspended():
+            for other in props.sections:
+                if other.column > ci:
+                    other.column += 1
+            new_col = props.columns.add()
+            props.columns.move(len(props.columns) - 1, ci + 1)
+            if col.width_hold:
+                half = max(_I(1), (col.width - column_gap(props)) / 2.0)
+                col.width = half
+                new_col.width, new_col.width_hold = half, True
+            else:
+                new_col.width_hold = False
+            new = props.sections.add()
+            new.label, new.kind, new.column = _auto_label(props, kind), kind, ci + 1
+            new.backer = backer
+            new.height, new.height_hold = sec.height, sec.height_hold
+            props.sections.move(len(props.sections) - 1, index + 1)
+            props.config = CUSTOM_CONFIG
+        rebuild(appliance_obj)
+        return index + 1, None
+
+    first, last = column_bounds(props)
+    below = index < first
+    adjacent = (index == first - 1) if below else (index == last + 1)
+    if ncol < 2 or last < 0:
+        return -1, ("Split a face above or below it side by side first, so "
+                    "there are columns for it to split into")
+    if not adjacent:
+        return -1, ("Split the full-width face next to the columns first")
+    own = height if (height and not sec.height_hold) else sec.height
+    label = sec.label
+    with suspended():
+        props.sections.remove(index)
+        for ci in range(ncol):
+            peers = [i for i, s in enumerate(props.sections) if s.column == ci]
+            if peers:
+                dst = peers[0] if below else peers[-1] + 1
+            else:
+                first, last = column_bounds(props)
+                dst = (last + 1) if last >= 0 else first
+            new = props.sections.add()
+            new.label = label if ci == 0 else _auto_label(props, kind)
+            new.kind, new.column, new.backer = kind, ci, backer
+            new.height, new.height_hold = own, True
+            props.sections.move(len(props.sections) - 1, dst)
+        props.config = CUSTOM_CONFIG
+    rebuild(appliance_obj)
+    pick = next((i for i, s in enumerate(props.sections)
+                 if s.column == 0 and s.label == label), 0)
+    return pick, None
+
+
 def remove_section(appliance_obj, index):
-    """Remove a face. The last face in a column stays (remove the column
-    instead), and so does the last face on the appliance."""
+    """Remove a face. A face alone in its column takes the column with
+    it (the others share the width); the last column keeps its last
+    face, and so does the appliance."""
     props = appliance_obj.appliance_panels
     if not (0 <= index < len(props.sections)) or len(props.sections) <= 1:
         return False
     sec = props.sections[index]
     if sec.column >= 0 and len(peer_indices(props, index)) <= 1:
-        return False
+        return remove_column(appliance_obj, sec.column)
     with suspended():
         props.sections.remove(index)
         props.config = CUSTOM_CONFIG
