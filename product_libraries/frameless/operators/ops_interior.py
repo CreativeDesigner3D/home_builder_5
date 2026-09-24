@@ -3,6 +3,7 @@ import math
 from .. import types_frameless
 from .. import solver_frameless
 from .. import props_hb_frameless
+from .. import interior_items
 from .... import hb_utils, hb_types, units
 from ....units import inch
 
@@ -93,7 +94,8 @@ class hb_frameless_OT_interior_prompts(bpy.types.Operator):
             self.shelf_clip_gap = interior_bp['Shelf Clip Gap']
         
         wm = context.window_manager
-        return wm.invoke_props_dialog(self, width=300)
+        width = 340 if interior_items.is_items_interior(interior_bp) else 300
+        return wm.invoke_props_dialog(self, width=width)
 
     def check(self, context):
         if 'Shelf Quantity' in self.interior.obj:
@@ -110,9 +112,12 @@ class hb_frameless_OT_interior_prompts(bpy.types.Operator):
 
     def draw(self, context):
         layout = self.layout
+        if interior_items.is_items_interior(self.interior.obj):
+            draw_interior_items(layout, self.interior.obj)
+            return
         box = layout.box()
         col = box.column(align=True)
-        
+
         if 'Shelf Quantity' in self.interior.obj:
             row = col.row(align=True)
             row.label(text="Shelf Quantity:")
@@ -139,6 +144,9 @@ class hb_frameless_OT_change_interior_type(bpy.types.Operator):
         name="Interior Type",
         items=[
             ('SHELVES', "Shelves", "Standard adjustable shelves"),
+            ('ROLLOUTS', "Roll-outs", "Drawer boxes on slides behind the front"),
+            ('PULLOUT_SHELVES', "Roll-out Shelves", "Flat shelves on slides behind the front"),
+            ('TRAY_DIVIDERS', "Tray Dividers", "Vertical dividers for trays and cookie sheets"),
             ('EMPTY', "Empty", "No interior parts"),
         ],
         default='SHELVES'
@@ -148,8 +156,8 @@ class hb_frameless_OT_change_interior_type(bpy.types.Operator):
     def poll(cls, context):
         obj = context.object
         if obj:
-            interior_bp = hb_utils.get_interior_bp(obj)
-            return interior_bp is not None
+            return (_target_interior(obj) is not None
+                    or interior_host(obj) is not None)
         return False
 
     def delete_interior_children(self, interior_obj):
@@ -181,24 +189,29 @@ class hb_frameless_OT_change_interior_type(bpy.types.Operator):
         solver_frameless.attach_cage(interior.obj, opening.obj)
 
     def execute(self, context):
-        interior_bp = hb_utils.get_interior_bp(context.object)
-        if not interior_bp:
-            self.report({'ERROR'}, "Could not find interior")
-            return {'CANCELLED'}
-        
-        # Get parent opening before deleting
-        parent_opening = self.get_parent_opening(interior_bp)
+        interior_bp = _target_interior(context.object)
+        if interior_bp:
+            # Get parent opening before deleting
+            parent_opening = self.get_parent_opening(interior_bp)
+        else:
+            # An opening with no interior yet gets one.
+            parent_opening = interior_host(context.object)
         if not parent_opening:
             self.report({'ERROR'}, "Could not find parent opening")
             return {'CANCELLED'}
-        
+
         # Delete the old interior
-        self.delete_interior_children(interior_bp)
-        bpy.data.objects.remove(interior_bp, do_unlink=True)
-        
+        if interior_bp:
+            self.delete_interior_children(interior_bp)
+            bpy.data.objects.remove(interior_bp, do_unlink=True)
+
         # Create new interior based on type
         if self.interior_type == 'SHELVES':
             interior = types_frameless.CabinetShelves()
+            self.add_interior_to_opening(parent_opening, interior)
+        elif self.interior_type in _ITEM_INTERIOR_KINDS:
+            interior = types_frameless.CabinetInteriorItems()
+            interior.seed_kind = _ITEM_INTERIOR_KINDS[self.interior_type]
             self.add_interior_to_opening(parent_opening, interior)
         elif self.interior_type == 'EMPTY':
             pass  # No interior needed
@@ -268,7 +281,10 @@ class hb_frameless_OT_delete_interior_part(bpy.types.Operator):
     @classmethod
     def poll(cls, context):
         obj = context.object
-        return obj and 'IS_FRAMELESS_INTERIOR_PART' in obj
+        # Item parts are rebuilt from their interior's item list; they
+        # are removed there, not one part at a time.
+        return (obj and 'IS_FRAMELESS_INTERIOR_PART' in obj
+                and not obj.get(interior_items.PART_TAG))
 
     def execute(self, context):
         obj = context.object
@@ -826,6 +842,234 @@ class hb_frameless_OT_calculate_shelf_quantity(bpy.types.Operator):
         return {'FINISHED'}
 
 
+# ---------------------------------------------------------------------------
+# Interior items (roll-outs, roll-out shelves, tray dividers, shelves)
+# ---------------------------------------------------------------------------
+
+# Change Interior choices that build an items interior, and the item
+# each one starts with.
+_ITEM_INTERIOR_KINDS = {
+    'ROLLOUTS': 'ROLLOUT',
+    'PULLOUT_SHELVES': 'PULLOUT_SHELF',
+    'TRAY_DIVIDERS': 'TRAY_DIVIDERS',
+}
+
+_ITEM_KIND_ITEMS = [
+    ('ROLLOUT', "Roll-outs", "Stack of drawer boxes on slides"),
+    ('PULLOUT_SHELF', "Roll-out Shelves", "Stack of flat shelves on slides"),
+    ('TRAY_DIVIDERS', "Tray Dividers", "Vertical dividers, optionally with a locked shelf above"),
+    ('ADJUSTABLE_SHELF', "Adjustable Shelves", "Evenly spaced shelves on shelf pins"),
+]
+_ITEM_KIND_LABELS = {key: label for key, label, _desc in _ITEM_KIND_ITEMS}
+
+
+def interior_host(obj):
+    """The door or open opening at or above ``obj`` that can take an
+    interior but has none, or None. Drawers, pullouts and split openings
+    don't take one."""
+    while obj is not None:
+        if obj.get('IS_FRAMELESS_OPENING_CAGE') or obj.get('IS_FRAMELESS_BAY_CAGE'):
+            break
+        obj = obj.parent
+    if obj is None:
+        return None
+    for child in obj.children:
+        if (child.get('IS_FRAMELESS_INTERIOR_CAGE')
+                or solver_frameless.is_cage_link(child)
+                or child.get('IS_DRAWER_FRONT')
+                or child.get('IS_PULLOUT_FRONT')):
+            return None
+    if 'Door Swing' in obj:
+        return obj
+    if not any(c.get('IS_CABINET_FRONT') for c in obj.children):
+        return obj
+    return None
+
+
+def _target_interior(obj):
+    """The interior at or above ``obj``, or the one directly inside the
+    opening ``obj`` when the opening itself was picked."""
+    interior = hb_utils.get_interior_bp(obj)
+    if interior is None and obj is not None:
+        interior = next((c for c in obj.children
+                         if c.get('IS_FRAMELESS_INTERIOR_CAGE')), None)
+    return interior
+
+
+def _items_interior(name):
+    obj = bpy.data.objects.get(name) if name else None
+    return obj if interior_items.is_items_interior(obj) else None
+
+
+def draw_interior_items(layout, interior_obj):
+    """Item list with per-kind settings, laid out as the face frame
+    library lays out the same items."""
+    props = interior_items.item_props(interior_obj)
+    name = interior_obj.name
+    row = layout.row()
+    row.label(text="Interior Items")
+    row.operator_menu_enum("hb_frameless.add_interior_item", "kind",
+                           text="Add", icon='ADD').interior_name = name
+    if not props.interior_items:
+        layout.label(text="(none)")
+        return
+    box = layout.box()
+    for i, item in enumerate(props.interior_items):
+        sub = box.column(align=True)
+        header = sub.row(align=True)
+        header.label(text=_ITEM_KIND_LABELS.get(item.kind, item.kind))
+        rm = header.operator("hb_frameless.remove_interior_item", text="",
+                             icon='X')
+        rm.interior_name = name
+        rm.index = i
+        if item.kind == 'ADJUSTABLE_SHELF':
+            qty_row = sub.row(align=True)
+            field = qty_row.row(align=True)
+            field.enabled = item.unlock_shelf_qty
+            field.prop(item, 'shelf_qty', text="Qty")
+            lock_icon = 'UNLOCKED' if item.unlock_shelf_qty else 'LOCKED'
+            qty_row.prop(item, 'unlock_shelf_qty', text="", icon=lock_icon)
+            sub.prop(item, 'shelf_setback', text="Setback")
+            sub.prop(item, 'bottom_offset', text="From Bottom")
+        elif item.kind == 'PULLOUT_SHELF':
+            sub.prop(item, 'qty', text="Qty")
+            sub.prop(item, 'pullout_thickness', text="Thickness")
+            sub.prop(item, 'distance_between', text="Gap Between")
+            sub.prop(item, 'bottom_gap', text="Bottom Gap")
+            sub.prop(item, 'item_setback', text="Front Setback")
+            sub.prop(item, 'hide_rollout_spacers', text="Hide Spacer Ladders")
+            lh = sub.row()
+            lh.enabled = not item.hide_rollout_spacers
+            lh.prop(item, 'rollout_spacer_height', text="Ladder Height (0 = Full)")
+        elif item.kind == 'ROLLOUT':
+            for j, rollout_box in enumerate(item.rollout_boxes):
+                brow = sub.row(align=True)
+                brow.label(text=f"Box {j + 1}")
+                brow.prop(rollout_box, 'height_preset', text="")
+                if rollout_box.height_preset == 'CUSTOM':
+                    brow.prop(rollout_box, 'height', text="")
+                rm_box = brow.operator("hb_frameless.remove_rollout_box",
+                                       text="", icon='X')
+                rm_box.interior_name = name
+                rm_box.item_index = i
+                rm_box.box_index = j
+            add_box = sub.operator("hb_frameless.add_rollout_box",
+                                   text="Add Box", icon='ADD')
+            add_box.interior_name = name
+            add_box.item_index = i
+            sub.prop(item, 'distance_between', text="Gap Between")
+            sub.prop(item, 'bottom_gap', text="Bottom Gap")
+            sub.prop(item, 'item_setback', text="Front Setback")
+            sub.prop(item, 'rollout_depth', text="Depth (0 = Auto)")
+            sub.prop(item, 'hide_rollout_spacers', text="Hide Spacer Ladders")
+            lh = sub.row()
+            lh.enabled = not item.hide_rollout_spacers
+            lh.prop(item, 'rollout_spacer_height', text="Ladder Height (0 = Full)")
+            sub.prop(item, 'finger_scoop', text="Finger Scoop")
+        elif item.kind == 'TRAY_DIVIDERS':
+            sub.prop(item, 'tray_qty', text="Qty")
+            sub.prop(item, 'tray_remove_shelf', text="Remove Locked Shelf")
+            shelf_row = sub.row()
+            shelf_row.enabled = not item.tray_remove_shelf
+            shelf_row.prop(item, 'tray_opening_height', text="Opening Height")
+            sub.prop(item, 'tray_divider_thickness', text="Divider Thickness")
+            sub.prop(item, 'tray_setback', text="Setback")
+            sub.prop(item, 'bottom_offset', text="From Bottom")
+        else:
+            sub.label(text="Not built in frameless cabinets", icon='INFO')
+        if i < len(props.interior_items) - 1:
+            box.separator()
+
+
+class hb_frameless_OT_add_interior_item(bpy.types.Operator):
+    bl_idname = "hb_frameless.add_interior_item"
+    bl_label = "Add Interior Item"
+    bl_description = "Add an interior item to this interior"
+    bl_options = {'UNDO'}
+
+    kind: bpy.props.EnumProperty(name="Kind", items=_ITEM_KIND_ITEMS,
+                                 default='ROLLOUT') # type: ignore
+    interior_name: bpy.props.StringProperty(name="Interior Name") # type: ignore
+
+    def execute(self, context):
+        interior_obj = _items_interior(self.interior_name)
+        if interior_obj is None:
+            self.report({'WARNING'}, "Could not find the interior")
+            return {'CANCELLED'}
+        interior_items.add_item(interior_obj, self.kind)
+        hb_utils.run_calc_fix(context, interior_obj)
+        return {'FINISHED'}
+
+
+class hb_frameless_OT_remove_interior_item(bpy.types.Operator):
+    bl_idname = "hb_frameless.remove_interior_item"
+    bl_label = "Remove Interior Item"
+    bl_description = "Remove this interior item"
+    bl_options = {'UNDO'}
+
+    index: bpy.props.IntProperty(name="Index", default=-1) # type: ignore
+    interior_name: bpy.props.StringProperty(name="Interior Name") # type: ignore
+
+    def execute(self, context):
+        interior_obj = _items_interior(self.interior_name)
+        if interior_obj is None:
+            return {'CANCELLED'}
+        props = interior_items.item_props(interior_obj)
+        if not 0 <= self.index < len(props.interior_items):
+            return {'CANCELLED'}
+        props.interior_items.remove(self.index)
+        props.interior_items_index = min(props.interior_items_index,
+                                         max(len(props.interior_items) - 1, 0))
+        hb_utils.run_calc_fix(context, interior_obj)
+        return {'FINISHED'}
+
+
+class hb_frameless_OT_add_rollout_box(bpy.types.Operator):
+    bl_idname = "hb_frameless.add_rollout_box"
+    bl_label = "Add Roll-out Box"
+    bl_description = "Add a box to this roll-out stack"
+    bl_options = {'UNDO'}
+
+    item_index: bpy.props.IntProperty(name="Item Index", default=-1) # type: ignore
+    interior_name: bpy.props.StringProperty(name="Interior Name") # type: ignore
+
+    def execute(self, context):
+        interior_obj = _items_interior(self.interior_name)
+        if interior_obj is None:
+            return {'CANCELLED'}
+        props = interior_items.item_props(interior_obj)
+        if not 0 <= self.item_index < len(props.interior_items):
+            return {'CANCELLED'}
+        props.interior_items[self.item_index].rollout_boxes.add()
+        hb_utils.run_calc_fix(context, interior_obj)
+        return {'FINISHED'}
+
+
+class hb_frameless_OT_remove_rollout_box(bpy.types.Operator):
+    bl_idname = "hb_frameless.remove_rollout_box"
+    bl_label = "Remove Roll-out Box"
+    bl_description = "Remove this box from the roll-out stack"
+    bl_options = {'UNDO'}
+
+    item_index: bpy.props.IntProperty(name="Item Index", default=-1) # type: ignore
+    box_index: bpy.props.IntProperty(name="Box Index", default=-1) # type: ignore
+    interior_name: bpy.props.StringProperty(name="Interior Name") # type: ignore
+
+    def execute(self, context):
+        interior_obj = _items_interior(self.interior_name)
+        if interior_obj is None:
+            return {'CANCELLED'}
+        props = interior_items.item_props(interior_obj)
+        if not 0 <= self.item_index < len(props.interior_items):
+            return {'CANCELLED'}
+        boxes = props.interior_items[self.item_index].rollout_boxes
+        if not 0 <= self.box_index < len(boxes):
+            return {'CANCELLED'}
+        boxes.remove(self.box_index)
+        hb_utils.run_calc_fix(context, interior_obj)
+        return {'FINISHED'}
+
+
 classes = (
     hb_frameless_OT_calculate_shelf_quantity,
     hb_frameless_OT_interior_prompts,
@@ -834,6 +1078,10 @@ classes = (
     hb_frameless_OT_delete_interior_part,
     hb_frameless_OT_custom_interior_vertical,
     hb_frameless_OT_custom_interior_horizontal,
+    hb_frameless_OT_add_interior_item,
+    hb_frameless_OT_remove_interior_item,
+    hb_frameless_OT_add_rollout_box,
+    hb_frameless_OT_remove_rollout_box,
 )
 
 register, unregister = bpy.utils.register_classes_factory(classes)

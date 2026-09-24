@@ -1044,6 +1044,11 @@ def solve_interior_parts(interior_obj):
         for (role, _index), section in split_parts(interior_obj).items():
             if role == 'OPENING':
                 _solve_section_parts(section)
+    elif interior_obj.get('IS_FRAMELESS_ITEMS_INTERIOR'):
+        # Imported here: interior_items reads the face frame item rules,
+        # and the face frame library imports this module while loading.
+        from . import interior_items
+        interior_items.solve(interior_obj)
     elif 'Shelf Quantity' in interior_obj:
         _solve_shelves(interior_obj)
 

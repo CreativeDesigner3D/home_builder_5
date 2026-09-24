@@ -851,6 +851,21 @@ class CabinetShelves(CabinetInterior):
         array_mod.constant_offset_displace = (0,0,0)
 
 
+class CabinetInteriorItems(CabinetInterior):
+    """Interior built from a list of interior items (roll-outs, tray
+    dividers, shelves...). The list lives on the cage; the solver builds
+    the parts (see interior_items)."""
+
+    seed_kind = None
+
+    def create(self,name):
+        super().create(name)
+        self.obj['IS_FRAMELESS_ITEMS_INTERIOR'] = True
+        if self.seed_kind:
+            from . import interior_items
+            interior_items.add_item(self.obj, self.seed_kind)
+
+
 class Doors(CabinetOpening):
 
     door_pull_location = "Base"

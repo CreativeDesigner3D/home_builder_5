@@ -470,6 +470,18 @@ def run_calc_fix(context, obj=None, passes=2):
         import traceback
         traceback.print_exc()
 
+    # The solve can rebuild parts (interior items are wiped and remade),
+    # so collect the hierarchy again rather than touch removed objects.
+    try:
+        if obj:
+            objects_to_update = [obj] + list(obj.children_recursive)
+        else:
+            objects_to_update = list(context.scene.objects)
+    except ReferenceError:
+        # obj itself was one of the rebuilt parts.
+        context.view_layer.update()
+        return
+
     home_builder_calculators = []
     driven = False
 

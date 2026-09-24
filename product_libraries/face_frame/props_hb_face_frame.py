@@ -5724,7 +5724,16 @@ def _update_cabinet_dim(self, context):
     Imported lazily to avoid any chance of a circular import at module load.
     """
     from . import types_face_frame
-    types_face_frame.recalculate_face_frame_cabinet(self.id_data)
+    obj = self.id_data
+    if (types_face_frame.find_cabinet_root(obj) is None
+            and isinstance(obj, bpy.types.Object)
+            and obj.get('IS_FRAMELESS_ITEMS_INTERIOR')):
+        # The frameless library keeps its interior items in these same
+        # property groups; hand the edit to its solver.
+        from ..frameless import interior_items
+        interior_items.on_props_changed(obj)
+        return
+    types_face_frame.recalculate_face_frame_cabinet(obj)
 
 
 # Revolving-door susans carry 1-1/2" front stiles whatever the style's

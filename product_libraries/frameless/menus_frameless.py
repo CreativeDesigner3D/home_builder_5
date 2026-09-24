@@ -195,6 +195,7 @@ class HOME_BUILDER_MT_opening_commands(bpy.types.Menu):
         layout.operator("hb_frameless.edit_splitter_openings", text="Edit Opening Sizes")
         layout.separator()
         layout.menu("HOME_BUILDER_MT_opening_change", text="Change Opening")
+        layout.menu("HOME_BUILDER_MT_interior_change", text="Change Interior")
 
 
 class HOME_BUILDER_MT_opening_change(bpy.types.Menu):
@@ -235,7 +236,7 @@ class HOME_BUILDER_MT_interior_commands(bpy.types.Menu):
 
     def draw(self, context):
         layout = self.layout
-        layout.operator("hb_frameless.interior_prompts", text="Interior Prompts")
+        layout.operator("hb_frameless.interior_prompts", text="Interior Options...")
         layout.separator()
         layout.menu("HOME_BUILDER_MT_interior_change", text="Change Interior")
 
@@ -246,6 +247,9 @@ class HOME_BUILDER_MT_interior_change(bpy.types.Menu):
     def draw(self, context):
         layout = self.layout
         layout.operator("hb_frameless.change_interior_type", text="Shelves").interior_type = 'SHELVES'
+        layout.operator("hb_frameless.change_interior_type", text="Roll-outs").interior_type = 'ROLLOUTS'
+        layout.operator("hb_frameless.change_interior_type", text="Roll-out Shelves").interior_type = 'PULLOUT_SHELVES'
+        layout.operator("hb_frameless.change_interior_type", text="Tray Dividers").interior_type = 'TRAY_DIVIDERS'
         layout.operator("hb_frameless.change_interior_type", text="Empty (No Interior)").interior_type = 'EMPTY'
         #TODO: Implement ability to create custom interior divisions
         # layout.separator()
