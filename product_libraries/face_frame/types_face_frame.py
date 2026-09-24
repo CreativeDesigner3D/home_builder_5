@@ -12065,6 +12065,10 @@ class FaceFrameCabinet(GeoNodeCage):
             kind = bay_obj.get('APPLIANCE_BAY')
             if not kind and is_sink_cabinet and self._bay_has_false_front(bay_obj):
                 kind = 'SINK'
+                # Stamp it: the false front only finds the basin bay the
+                # first time. Changing the bay to plain doors must keep
+                # the sink; Remove Appliance from Bay opts out ('NONE').
+                bay_obj['APPLIANCE_BAY'] = kind
             if not kind and is_cooktop_cabinet:
                 kind = 'COOKTOP'
             if kind in ('SINK', 'COOKTOP'):

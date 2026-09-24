@@ -6906,8 +6906,7 @@ class hb_face_frame_OT_add_appliance_to_bay(bpy.types.Operator):
         else:
             # Fresh bay: explicit defaults (REGISTER remembers last-used
             # values across invocations; the defaults should win here).
-            # A vanity sink base is narrow (20"); kitchen sink / cooktop
-            # default to a 36" sink base. A bay whose fronts the user
+            # A bay whose fronts the user
             # already customized (a drawer stack, pullouts, splits)
             # opens on Keep Existing: the seeded execute below runs
             # BEFORE the popup shows, and applying the false-front
@@ -6916,12 +6915,13 @@ class hb_face_frame_OT_add_appliance_to_bay(bpy.types.Operator):
             presetlike = _bay_layout_is_presetlike(bay)
             self.config = ('FALSE_FRONT_DOORS' if presetlike
                            else 'KEEP_EXISTING')
-            # Keep Existing also keeps the bay's width; the sink-base
-            # width defaults only make sense when the preset rebuilds
-            # the fronts anyway.
-            self.width = (bp.width if not presetlike
-                          else inch(20.0) if self.appliance_kind == 'VANITY_SINK'
-                          else inch(36.0))
+            # The bay keeps its width unless the user types one: a sink
+            # added to a sized cabinet should not resize (and lock) the
+            # bay it was dropped into.
+            self.width = bp.width
+        # Width is only written when it changes -- writing it locks the
+        # bay, which then fights the cabinet width.
+        self._seed_width = bp.width
         # Re-editing keeps whatever interior the bay already has. A fresh
         # bay follows the kind and width (see _auto_appliance_interior)
         # until the user picks one; the width-based seed happens in the
@@ -7035,8 +7035,15 @@ class hb_face_frame_OT_add_appliance_to_bay(bpy.types.Operator):
             # depth callout rules), so keep the specific kind too.
             bay['APPLIANCE_BAY_KIND'] = self.appliance_kind
             bp = bay.face_frame_bay
-            # Width setter auto-locks unlock_width.
-            bp.width = self.width
+            # Width setter auto-locks unlock_width, so leave an untouched
+            # width alone (and put back the lock state a live-preview
+            # edit may have set before the user typed the width back).
+            seed = getattr(self, '_seed_width', None)
+            if seed is None or abs(self.width - seed) > 1e-6:
+                bp.width = self.width
+            elif bp.unlock_width != self._revert['unlock_width']:
+                bp.width = seed
+                bp.unlock_width = self._revert['unlock_width']
             # Drop: lower the bay's FRONT construction (top rail + front
             # stretcher) by the amount. Only the front drops - the back,
             # rear stretcher, sides and end / mid stiles stay full height
