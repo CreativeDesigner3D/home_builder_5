@@ -810,17 +810,50 @@ def _front_in_use(kind):
 
 
 def _front_manager_notes(kind):
-    prop = 'door_style' if kind == 'DOOR' else 'drawer_front_style'
-    noun = "door" if kind == 'DOOR' else "drawer front"
-
     def notes(context):
         cs = _active_cabinet_style(context)
         if cs is None:
             return ()
-        return ("%s uses %s" % (cs.name, getattr(cs, prop, "") or "none"),
-                "The number on a %s is how many cabinet styles use it"
-                % noun)
+        return ("The ticked style is the default for %s; the number is "
+                "how many cabinet styles use it" % cs.name,)
     return notes
+
+
+def _front_tile_check(kind):
+    """The checkbox on a style tile: ticked when the tile is the style
+    the active cabinet style builds its fronts with; ticking makes it
+    so. Unticking does nothing -- a cabinet style always has one."""
+    prop = 'door_style' if kind == 'DOOR' else 'drawer_front_style'
+
+    def checked(context, style):
+        return getattr(_active_cabinet_style(context), prop,
+                       None) == style.name
+
+    def tip(context, style):
+        cs = _active_cabinet_style(context)
+        return "Default for %s" % cs.name if cs is not None else ""
+    return ('hb_face_frame.use_front_style', {'kind': kind}, checked, tip)
+
+
+def _front_tile_icons(kind, spec):
+    """Edit, paint, duplicate and delete on a style tile. Each acts on
+    the tile it is on (the tile is picked first)."""
+    def more_than_one(context, style):
+        return len(getattr(_style_props(context), spec['collection'],
+                           ())) > 1
+    return (
+        ('edit', "Edit", 'home_builder.options_edit_item',
+         {'collection': spec['collection']}),
+        ('paint', "Assign by Painting",
+         'hb_face_frame.paint_assign_front_style', {'kind': kind}),
+        ('duplicate', "Duplicate", spec['add_op'], {}),
+        ('delete', "Delete", spec['remove_op'], {}, more_than_one),
+    )
+
+
+def _style_props(context):
+    from .props_hb_face_frame import get_style_props
+    return get_style_props(context)
 
 
 def _front_default_check(kind):
@@ -850,13 +883,15 @@ def _front_manager(kind, pool_key):
     spec['notes'] = _front_manager_notes(kind)
     spec['tiles'] = {'picture': _front_tile_picture(kind),
                      'in_use': _front_in_use(kind),
-                     'count': _front_use_count(kind)}
-    new_row = [("New from Catalog...", 'hb_face_frame.front_style_wizard',
-                {'kind': kind, 'step': 'START'}, None)]
-    if kind == 'DOOR':
-        new_row.append(("Matching Drawer Front",
-                        'hb_face_frame.matching_drawer_front'))
-    spec['top_actions'] = (tuple(new_row),)
+                     'count': _front_use_count(kind),
+                     'height': 190 if kind == 'DOOR' else 110,
+                     'check': _front_tile_check(kind),
+                     'icons': _front_tile_icons(kind, spec),
+                     'new': ("New", 'hb_face_frame.front_style_wizard',
+                             {'kind': kind, 'step': 'START'})}
+    spec['top_actions'] = (
+        ((("Matching Drawer Front", 'hb_face_frame.matching_drawer_front'),),)
+        if kind == 'DOOR' else ())
     spec['pick_checks'] = (_front_default_check(kind),)
     return spec
 
@@ -1112,39 +1147,34 @@ OPTION_PAGES = {
 # each style tab: the style it builds with (a dropdown, or typed text for
 # the Style Section), the others it lists there, and -- drawers -- the
 # height a front changes to the first of those at.
-_DOOR_STYLE_FIELDS = (
-    ('label', None, "This Cabinet Style"),
-    ('choice', 'door_style', "Door", {'custom': 'ss_door'}),
-    ('label', None, "Also on the Style Section"),
-    ('items', 'extra_door_styles', None,
-     {'kind': 'enum', 'prop': 'style',
-      'remove': ('hb_face_frame.remove_cabinet_extra_front_style',
-                 lambda i, item: {'kind': 'DOOR', 'index': i})}),
-    ('actions', (("+ Door Style",
-                  'hb_face_frame.add_cabinet_extra_front_style',
-                  'kind', 'DOOR'),), None),
-)
-_DRAWER_STYLE_FIELDS = (
-    ('label', None, "This Cabinet Style"),
-    ('choice', 'drawer_front_style', "Drawer Front", {'custom': 'ss_drawer'}),
-    ('label', None, "Also on the Style Section"),
-    ('items', 'extra_drawer_front_styles', None,
-     {'kind': 'enum', 'prop': 'style',
-      'remove': ('hb_face_frame.remove_cabinet_extra_front_style',
-                 lambda i, item: {'kind': 'DRAWER', 'index': i})}),
-    ('actions', (("+ Drawer Front Style",
-                  'hb_face_frame.add_cabinet_extra_front_style',
-                  'kind', 'DRAWER'),), None),
-    # Drawer fronts this tall take the first extra style (0 = off).
-    ('distance', 'extra_drawer_front_height', "Alternate Style Over",
-     {'when': lambda p: len(p.extra_drawer_front_styles) > 0}),
-    ('notes', _alternate_drawer_notes, None, {'owner': True}),
-)
+def _tall_drawer_choices(context):
+    op = 'hb_face_frame.set_tall_drawer_front_style'
+    out = [("None", op, {'style': ""})]
+    sp = _style_props(context)
+    for ds in getattr(sp, 'drawer_front_styles', ()):
+        out.append((ds.name, op, {'style': ds.name}))
+    return tuple(out)
+
+
+def _tall_drawer_fields(context, cs):
+    """The one thing the cabinet style says about its drawer fronts
+    beyond the default: the style its tall drawer fronts switch to (the
+    first extra drawer front row), and from what height. The style
+    page finds every front style in use on the model by itself."""
+    from . import props_hb_face_frame
+    ds = props_hb_face_frame.alternate_drawer_style(cs, context)
+    return (
+        ('label', None, "Tall Drawer Fronts"),
+        ('pick', _tall_drawer_choices,
+         "Use %s" % ds.name if ds is not None else "Same as Default"),
+        ('distance', 'extra_drawer_front_height', "Over",
+         {'when': lambda p: len(p.extra_drawer_front_styles) > 0}),
+        ('notes', _alternate_drawer_notes, None, {'owner': True}),
+    )
 
 
 def _front_manager_tab(key):
     kind = 'DOOR' if key == 'DOOR_STYLES' else 'DRAWER'
-    own = _DOOR_STYLE_FIELDS if kind == 'DOOR' else _DRAWER_STYLE_FIELDS
 
     def blocks(context):
         from ...operators import options_panel
@@ -1157,9 +1187,10 @@ def _front_manager_tab(key):
         if options_panel.pool_editing(spec):
             return out
         cs = _active_cabinet_style(context)
-        if cs is not None:
+        if cs is not None and kind == 'DRAWER':
             out.append(('gap', None))
-            out.extend(options_panel.field_blocks(context, own, cs))
+            out.extend(options_panel.field_blocks(
+                context, _tall_drawer_fields(context, cs), cs))
         return out
     return {'blocks': blocks}
 

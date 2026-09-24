@@ -1633,6 +1633,36 @@ class hb_face_frame_OT_remove_cabinet_extra_front_style(Operator):
         return {'FINISHED'}
 
 
+class hb_face_frame_OT_set_tall_drawer_front_style(Operator):
+    """Pick the drawer front style the active cabinet style switches its
+    tall drawer fronts to (its first extra drawer front row), or none"""
+    bl_idname = "hb_face_frame.set_tall_drawer_front_style"
+    bl_label = "Tall Drawer Fronts"
+    bl_description = ("Use another drawer front style on this cabinet "
+                      "style's taller drawer fronts")
+    bl_options = {'REGISTER', 'UNDO'}
+
+    style: bpy.props.StringProperty(name="Style")  # type: ignore
+
+    def execute(self, context):
+        style = _active_cabinet_style(context, -1)
+        if style is None:
+            return {'CANCELLED'}
+        coll = style.extra_drawer_front_styles
+        if not self.style:
+            # The rows past the first only ever listed styles for the
+            # style page, which now reads the model: clear them all.
+            if len(coll):
+                coll.clear()
+                _repropagate_tall_drawer(context, style, 'DRAWER')
+            return {'FINISHED'}
+        if not len(coll):
+            coll.add()
+        # The row's update fills the height and rebuilds the fronts.
+        coll[0].style = self.style
+        return {'FINISHED'}
+
+
 class hb_face_frame_OT_add_style_note(Operator):
     """Add a free-text note row to the active cabinet style. Notes print
     in a NOTES section at the end of the style's Style Section block
@@ -1966,6 +1996,7 @@ classes = (
     hb_face_frame_OT_remove_special_effect,
     hb_face_frame_OT_face_frame_sizes,
     hb_face_frame_OT_use_front_style,
+    hb_face_frame_OT_set_tall_drawer_front_style,
     hb_face_frame_OT_add_cabinet_extra_front_style,
     hb_face_frame_OT_remove_cabinet_extra_front_style,
     hb_face_frame_OT_add_style_note,

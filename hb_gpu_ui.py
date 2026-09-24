@@ -238,6 +238,53 @@ def glyph_delete(shader, rect, color):
     draw_lines(shader, [(x0, y0), (x1, y1), (x0, y1), (x1, y0)], color)
 
 
+def glyph_pencil(shader, rect, color):
+    """A pencil on the diagonal -- the edit affordance."""
+    rx, ry, rw, rh = rect
+    pad = 4 * scale()
+    x0, y0 = rx + pad, ry + pad
+    x1, y1 = rx + rw - pad, ry + rh - pad
+    k = (x1 - x0) * 0.22
+    draw_lines(shader, [
+        (x0, y0), (x0 + k, y0 + k * 0.35),        # the point
+        (x0, y0), (x0 + k * 0.35, y0 + k),
+        (x0 + k, y0 + k * 0.35), (x1, y1 - k),    # the two long sides
+        (x0 + k * 0.35, y0 + k), (x1 - k, y1),
+        (x1, y1 - k), (x1 - k, y1),               # the end
+    ], color)
+
+
+def glyph_brush(shader, rect, color):
+    """A paint brush: handle, ferrule and bristles -- the paint
+    affordance."""
+    rx, ry, rw, rh = rect
+    s = scale()
+    pad = 4 * s
+    cx = rx + rw / 2.0
+    y0, y1 = ry + pad, ry + rh - pad
+    h = y1 - y0
+    draw_rect(shader, cx - 1 * s, y0 + h * 0.55, 2 * s, h * 0.45, color)
+    draw_rect_outline(shader, cx - 3 * s, y0 + h * 0.38, 6 * s, h * 0.17,
+                      color)
+    draw_lines(shader, [
+        (cx - 3 * s, y0 + h * 0.38), (cx - 3.5 * s, y0),
+        (cx + 3 * s, y0 + h * 0.38), (cx + 3.5 * s, y0),
+        (cx - 3.5 * s, y0), (cx + 3.5 * s, y0),
+    ], color)
+
+
+def glyph_duplicate(shader, rect, color):
+    """Two overlapping sheets -- the duplicate affordance."""
+    rx, ry, rw, rh = rect
+    s = scale()
+    pad = 4 * s
+    w = (rw - 2 * pad) * 0.7
+    h = (rh - 2 * pad) * 0.7
+    off = (rw - 2 * pad) * 0.3
+    draw_rect_outline(shader, rx + pad, ry + pad, w, h, color)
+    draw_rect_outline(shader, rx + pad + off, ry + pad + off, w, h, color)
+
+
 def glyph_plus(shader, cx, cy, size, color):
     """A plus sign centred at (cx, cy). `size` arrives pre-scaled."""
     half = size / 2.0

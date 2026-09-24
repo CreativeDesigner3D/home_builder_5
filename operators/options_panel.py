@@ -77,6 +77,11 @@ from ..hb_gpu_ui import (
     glyph_rename,
     glyph_delete,
     glyph_plus,
+    glyph_pencil,
+    glyph_brush,
+    glyph_duplicate,
+    glyph_check,
+    note_tip,
     glyph_chevron,
     glyph_caret,
     paint_field,
@@ -114,6 +119,8 @@ CHIP = 18            # a toggle or remove chip at the end of a field row
 TILE_H = 86          # one picture tile on a sub-page's tile grid
 TILE_COLS = 3
 TILE_NAME_H = 14     # the name under a tile's picture
+TILE_BAR_H = 20      # a style tile's strip of checkbox and icons
+TILE_ICON = 18       # one icon button on that strip
 CARD_H = 50          # the summary card over a pool's selected item
 DOT = 8              # a list row's colour dot
 
@@ -694,18 +701,13 @@ def _subpage_blocks(context, spec, with_back=True):
     tiles = spec.get('tiles')
     if tiles is not None:
         count = len(pool.items(context))
+        if tiles.get('new') is not None:
+            count += 1
         for row in range((count + TILE_COLS - 1) // TILE_COLS):
             blocks.append(('tiles', (pool, tiles, row)))
     for row in spec.get('top_actions', ()):
         blocks.append(('actions', tuple(_norm_action(a) for a in row)))
     if spec.get('tiles_only'):
-        blocks.extend(_pick_checks(context, spec, pool))
-        if pool.active(context) is not None:
-            row = [("Edit...", 'home_builder.options_edit_item',
-                    'collection', pool.collection)]
-            for actions in pool.actions:
-                row.extend(_norm_action(a) for a in actions)
-            blocks.append(('actions', tuple(row)))
         return blocks
     blocks.append(('gap', None))
     blocks.extend(_pool_blocks(context, pool))
@@ -799,7 +801,9 @@ def _block_h(block, s):
         return _block_h(block[1], s)
     if kind in ('head', 'section'):
         return SECTION_H * s
-    if kind in ('tiles', 'picture_tiles'):
+    if kind == 'tiles':
+        return (block[1][1].get('height', TILE_H) + ROW_GAP) * s
+    if kind == 'picture_tiles':
         return (TILE_H + ROW_GAP) * s
     if kind == 'card':
         return (CARD_H + ROW_GAP) * s
@@ -1046,13 +1050,15 @@ def build_page(rect, context, blocks_fn, lst):
             pool, tiles, row = payload
             items = pool.items(context)
             active = pool.active_index(context)
-            tile_h = TILE_H * s
+            tile_h = tiles.get('height', TILE_H) * s
             cw = (row_w - gap * (TILE_COLS - 1)) / TILE_COLS
             for col in range(TILE_COLS):
                 i = row * TILE_COLS + col
+                cell = (x + col * (cw + gap), block_top - tile_h, cw, tile_h)
+                if i == len(items) and tiles.get('new') is not None:
+                    entries.append(('tile_new', tiles['new'], cell))
                 if i >= len(items):
                     break
-                cell = (x + col * (cw + gap), block_top - tile_h, cw, tile_h)
                 entries.append(('tile_cell', i, pool.text(items[i]), cell,
                                 i == active, pool, tiles, items[i]))
     return entries
@@ -1532,6 +1538,8 @@ def paint(entries, mx, my):
                                    rw - 26 * s))
             elif kind == 'tile_cell':
                 _paint_tile(shader, font_id, s, mx, my, entry)
+            elif kind == 'tile_new':
+                _paint_new_tile(shader, font_id, s, mx, my, entry)
             elif kind == 'picture_tile':
                 cell, rect = entry[1], entry[2]
                 try:
@@ -1552,11 +1560,64 @@ def paint(entries, mx, my):
     gpu.state.blend_set('NONE')
 
 
+def _tile_buttons(context, entry, s):
+    """The clickable parts of a style tile's top strip, as (key, tip,
+    operator, kwargs, rect): the spec's checkbox at the left, its icons
+    at the right. Icons show on the pick and under the pointer; the
+    painter and the hit test both read this, so they cannot drift."""
+    _, _i, _name, rect, _is_active, pool, tiles, item = entry
+    rx, ry, rw, rh = rect
+    bar_y = ry + rh - TILE_BAR_H * s
+    out = []
+    check = tiles.get('check')
+    if check is not None:
+        box = 14 * s
+        # check = (operator, kwargs, checked(context, item),
+        #          tip(context, item))
+        out.append(('check', check[3](context, item), check[0], check[1],
+                    (rx + 4 * s, bar_y + (TILE_BAR_H * s - box) / 2.0,
+                     box, box)))
+    icons = [ic for ic in tiles.get('icons', ())
+             if len(ic) < 5 or ic[4](context, item)]
+    size = TILE_ICON * s
+    x = rx + rw - 3 * s - size
+    for key, tip, op, kwargs, *_when in reversed(icons):
+        out.append((key, tip, op, kwargs,
+                    (x, bar_y + (TILE_BAR_H * s - size) / 2.0, size, size)))
+        x -= size + 1 * s
+    return out
+
+
+_TILE_GLYPHS = {'edit': glyph_pencil, 'paint': glyph_brush,
+                'duplicate': glyph_duplicate, 'delete': glyph_delete}
+
+
+def _paint_new_tile(shader, font_id, s, mx, my, entry):
+    """The tile after the last style: a plus, and what it makes."""
+    _, (label, _op, _kwargs), rect = entry
+    hovered = point_in_rect(mx, my, rect)
+    rx, ry, rw, rh = rect
+    if hovered:
+        paint_button(shader, rect, hovered=True)
+    else:
+        draw_rect_outline(shader, rx, ry, rw, rh, Theme.PANEL_BORDER)
+    color = Theme.GLYPH_HOVER if hovered else Theme.GLYPH
+    glyph_plus(shader, rx + rw / 2.0, ry + rh / 2.0 + 6 * s, 16 * s, color)
+    tw = text_width(font_id, FONT * s, label)
+    draw_text(font_id, rx + (rw - tw) / 2.0, ry + rh / 2.0 - 18 * s,
+              FONT * s, Theme.TEXT_PRIMARY if hovered else Theme.TEXT_NORMAL,
+              label)
+
+
 def _paint_tile(shader, font_id, s, mx, my, entry):
     """One tile of a sub-page's grid: the item drawn by the spec's
     picture callable, the pick outlined, and a bar across the top where
-    the spec says it is in use."""
+    the spec says it is in use. A spec with a checkbox or icons puts
+    them on a strip across the tile's top instead."""
     _, _i, name, rect, is_active, _pool, tiles, item = entry
+    if tiles.get('check') is not None or tiles.get('icons'):
+        _paint_style_tile(shader, font_id, s, mx, my, entry)
+        return
     in_use = tiles.get('in_use')
     try:
         used = bool(in_use(bpy.context, item)) if in_use else False
@@ -1574,6 +1635,51 @@ def _paint_tile(shader, font_id, s, mx, my, entry):
             count = None
     _paint_picture(shader, font_id, s, mx, my, rect, parts, w, h, name,
                    active=is_active, used=used, count=count)
+
+
+def _paint_style_tile(shader, font_id, s, mx, my, entry):
+    """A style tile: its picture and name, and across the top the
+    checkbox (with the use count beside it) and the icons."""
+    _, _i, name, rect, is_active, _pool, tiles, item = entry
+    context = bpy.context
+    try:
+        parts, w, h = tiles['picture'](context, item)
+    except Exception:
+        parts, w, h = [], 0.0, 0.0
+    _paint_picture(shader, font_id, s, mx, my, rect, parts, w, h, name,
+                   active=is_active, top=TILE_BAR_H * s)
+    hovered = point_in_rect(mx, my, rect)
+    count_x = rect[0] + 5 * s
+    for key, tip, _op, _kwargs, brect in _tile_buttons(context, entry, s):
+        hot = point_in_rect(mx, my, brect)
+        if key == 'check':
+            try:
+                on = bool(tiles['check'][2](context, item))
+            except Exception:
+                on = False
+            paint_button(shader, brect, hovered=hot, active=on,
+                         border=Theme.BTN_BORDER)
+            if on:
+                glyph_check(shader, brect, Theme.GLYPH_HOVER)
+            if hot and tip:
+                note_tip(brect, tip)
+            count_x = brect[0] + brect[2] + 5 * s
+            continue
+        if not (hovered or is_active):
+            continue
+        if hot:
+            paint_button(shader, brect, hovered=True)
+            note_tip(brect, tip)
+        _TILE_GLYPHS[key](shader, brect,
+                          Theme.GLYPH_HOVER if hot else Theme.GLYPH)
+    if tiles.get('count') is not None:
+        try:
+            count = tiles['count'](context, item)
+        except Exception:
+            count = None
+        if count:
+            draw_text(font_id, count_x, rect[1] + rect[3] - 14 * s,
+                      FONT * s, Theme.TEXT_HEADER, str(count))
 
 
 def _paint_card(shader, font_id, s, entry):
@@ -1658,7 +1764,8 @@ def _paint_door_picture(shader, pic, ox, oz, k):
 
 
 def _paint_picture(shader, font_id, s, mx, my, rect, parts, w, h, name,
-                   caption=None, active=False, used=False, count=None):
+                   caption=None, active=False, used=False, count=None,
+                   top=0.0):
     """A picture tile: part rects (the item's own units, x across and z
     up) -- or a door_builder.door_picture dict -- fitted into the tile,
     the name under them, an optional caption over them, the pick
@@ -1677,7 +1784,7 @@ def _paint_picture(shader, font_id, s, mx, my, rect, parts, w, h, name,
     cap_h = TILE_NAME_H * s if caption else 0.0
     pad = 6 * s
     box = (rx + pad, ry + name_h + 2 * s, rw - 2 * pad,
-           rh - name_h - cap_h - pad - 4 * s)
+           rh - name_h - cap_h - pad - 4 * s - top)
     if caption:
         draw_text(font_id, rx + pad, ry + rh - cap_h - 1 * s, FONT * s,
                   Theme.TEXT_HEADER,
@@ -1927,10 +2034,23 @@ def hit(context, mx, my, entries):
                 _run(cell['op'], **dict(cell.get('kwargs') or {}))
             _tag()
             return True
+        if kind == 'tile_new' and point_in_rect(mx, my, entry[2]):
+            label, op, kwargs = entry[1]
+            _run_on_release(op, dict(kwargs or {}))
+            _tag()
+            return True
         if kind == 'tile_cell' and point_in_rect(mx, my, entry[3]):
             pool = entry[5]
+            target = None
+            for _key, _tip_text, op, kwargs, rect in _tile_buttons(
+                    context, entry, scale()):
+                if point_in_rect(mx, my, rect):
+                    target = (op, kwargs)
+                    break
             if pool.active_index(context) != entry[1]:
                 pool.set_active(context, entry[1])
+            if target is not None:
+                _run_on_release(target[0], dict(target[1] or {}))
             _tag()
             return True
     return False
