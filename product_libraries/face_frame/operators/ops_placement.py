@@ -42,6 +42,7 @@ from .. import types_face_frame_corner
 from .. import bay_presets
 from .. import props_hb_face_frame
 from .. import exposure
+from .. import upper_over_refrigerator
 from ...common import appliance_geo
 from . import ops_cabinet
 from .... import hb_placement, hb_types, units
@@ -2114,6 +2115,7 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         description="When set, duplicate this existing cabinet root "
                     "instead of building a new cabinet from defaults",
         default="",
+        options={'SKIP_SAVE'},
     )  # type: ignore
 
     mirror: bpy.props.BoolProperty(
@@ -2121,6 +2123,7 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         description="Duplicate mode only: flip the copy left-to-right "
                     "(bay order, door swings, finished ends, stiles)",
         default=False,
+        options={'SKIP_SAVE'},
     )  # type: ignore
 
     move_source: bpy.props.BoolProperty(
@@ -2130,6 +2133,7 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
                     "(wall snap, gap fill, typed width) applied to a "
                     "cabinet that already exists",
         default=False,
+        options={'SKIP_SAVE'},
     )  # type: ignore
 
     # Live state during modal session. Reset on FINISHED/CANCELLED.
@@ -2287,6 +2291,10 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
             cage_obj.location.z = _upper_mount_z(_cls, scene_props)
         else:
             cage_obj.location.z = 0.0
+        # A fresh upper may go over a standalone refrigerator, raising a
+        # bay onto it (see upper_over_refrigerator).
+        self._over_fridge = (self._source_obj is None
+                             and cabinet_type == 'UPPER')
         # Floor reference for free placement. Floor cabinets always seed at
         # Z=0 (the floor) regardless of the 3D cursor height. Free placement
         # uses this instead of the raycast hit Z, which in a non-plan view
@@ -4159,6 +4167,33 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         captured_width = self._cabinet_width
         captured_bay_qty = self.bay_qty
 
+        # An upper dropped across a standalone refrigerator: pick the
+        # fridge it covers most and the bay count that puts one bay over
+        # it (the widths and the raise go on once the cabinet exists).
+        fridge_raise = None
+        if (getattr(self, '_over_fridge', False)
+                and captured_parent is not None
+                and captured_parent.get('IS_WALL_BP')):
+            try:
+                captured_height = hb_types.GeoNodeCage(
+                    cage_obj).get_input('Dim Z')
+            except Exception:
+                captured_height = None
+            if captured_height:
+                x0 = captured_local_loc.x
+                fridges = upper_over_refrigerator.fridges_under(
+                    captured_parent, x0, x0 + captured_width,
+                    captured_local_loc.y,
+                    captured_local_loc.z + captured_height)
+                if fridges:
+                    fridge = max(fridges, key=lambda f: (
+                        min(f[2], x0 + captured_width) - max(f[1], x0)))
+                    counts = upper_over_refrigerator.side_bay_counts(
+                        x0, captured_width, fridge)
+                    if counts is not None:
+                        fridge_raise = (fridge, counts)
+                        captured_bay_qty = sum(counts) + 1
+
         self._delete_preview()
 
         if self._source_obj is not None:
@@ -4309,6 +4344,17 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         # Resize to match cage width via the property update callback
         cab_props = cab_obj.face_frame_cabinet
         cab_props.width = captured_width
+
+        if fridge_raise is not None:
+            fridge, counts = fridge_raise
+            bay_plan = upper_over_refrigerator.plan(
+                cab_props, captured_local_loc.x, captured_local_loc.z,
+                fridge, counts)
+            if bay_plan is None or not upper_over_refrigerator.apply(
+                    cab_obj, bay_plan):
+                self.report({'WARNING'},
+                            f"Couldn't fit a raised bay over "
+                            f"{fridge[0].name}")
 
         # Auto-apply a sensible default bay configuration so cabinets
         # come in populated instead of empty. All bays in a multi-bay
@@ -4659,6 +4705,25 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         """
         if self.move_source and self._source_obj is not None:
             return (cage_obj, self._source_obj)
+        wall = cage_obj.parent
+        hit = getattr(self, 'hit_location', None)
+        if (getattr(self, '_over_fridge', False) and hit is not None
+                and wall is not None and wall.get('IS_WALL_BP')):
+            # A fresh upper held over a refrigerator short enough to take
+            # a raised bay goes over it: that fridge stops blocking, and
+            # _finalize lays the bays out on it. Only while the cursor
+            # is over the fridge -- beside it, the fridge is a neighbor
+            # to butt against as always.
+            try:
+                top = (cage_obj.location.z
+                       + hb_types.GeoNodeCage(cage_obj).get_input('Dim Z'))
+            except Exception:
+                return (cage_obj,)
+            cursor_x = (wall.matrix_world.inverted() @ hit).x
+            fridges = [f for f in upper_over_refrigerator.fridges_under(
+                           wall, None, None, None, top)
+                       if f[1] <= cursor_x <= f[2]]
+            return (cage_obj,) + tuple(f[0] for f in fridges)
         return (cage_obj,)
 
     def _hide_source(self):

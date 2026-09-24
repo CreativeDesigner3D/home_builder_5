@@ -55,6 +55,7 @@ from ...hb_types import GeoNodeCage, GeoNodeCutpart
 from . import types_face_frame
 from . import split_preview
 from . import appliance_panels
+from ..common import gap_mode_chip, wall_run_dims
 from .operators import ops_part_commands
 
 # ---- Style -------------------------------------------------------------
@@ -69,6 +70,12 @@ EDIT_BG         = (0.20, 0.43, 0.70, 0.95)   # matches HUD active blue
 TEXT_COLOR      = (0.95, 0.95, 0.95, 1.0)
 TEXT_COLOR_DIM  = (0.95, 0.95, 0.95, 0.45)
 EDIT_TEXT_COLOR = (1.0, 1.0, 1.0, 1.0)
+DIM_LINE_COLOR     = (0.90, 0.90, 0.90, 0.80)
+DIM_LINE_COLOR_DIM = (0.90, 0.90, 0.90, 0.35)
+TICK_PX         = 5
+# Height dims run up the cage's left side this far in (capped at a
+# quarter of the width for narrow cages).
+HEIGHT_DIM_INSET = 0.0762
 
 # Characters accepted by the typed-distance grammar (parse_typed_distance):
 # digits, decimal point, fractions, feet/inch marks, embedded spaces.
@@ -156,8 +163,9 @@ def _appliance_target(context):
 
 
 def _sizes_scope(context):
-    """Size-label scope from the scene prop: 'ALL', 'SELECTED' (labels
-    only for cages in the current selection), or 'OFF'."""
+    """Size-label scope from the scene prop: 'ALL', 'SELECTED_CABINET'
+    (every label on a cabinet the selection belongs to), 'SELECTED'
+    (labels only for cages in the current selection), or 'OFF'."""
     ff = getattr(context.scene, 'hb_face_frame', None)
     return getattr(ff, 'selection_mode_sizes_scope', 'ALL')
 
@@ -313,21 +321,176 @@ def _root_anchor_world(cabinet, fx, fz):
     return mw @ Vector((dim_x * fx, -depth - 0.003, dim_z * fz))
 
 
+def _height_dim_fx(cage):
+    """Fractional X of a cage's height dim line (HEIGHT_DIM_INSET in
+    from its left side)."""
+    dim_x, _dim_z = split_preview._cage_dims(cage)
+    if dim_x <= 0.0:
+        return 0.5
+    return min(HEIGHT_DIM_INSET / dim_x, 0.25)
+
+
+def _root_depth_points(cabinet):
+    """(front, middle, back) world points of the cabinet's depth dim,
+    across the top at mid width. None when the cage has no size."""
+    dim_x, dim_z = split_preview._cage_dims(cabinet)
+    if dim_x <= 0.0 or dim_z <= 0.0:
+        return None
+    mw = split_preview._world_matrix(cabinet)
+    depth = cabinet.face_frame_cabinet.depth
+    return (mw @ Vector((dim_x / 2.0, -depth, dim_z)),
+            mw @ Vector((dim_x / 2.0, -depth / 2.0, dim_z)),
+            mw @ Vector((dim_x / 2.0, 0.0, dim_z)))
+
+
+def _bay_depth_points(bay):
+    """(front, middle, back) world points of a bay's depth dim, across
+    the top of the bay at mid width. Measured in the cabinet root's
+    frame -- the bay depth runs from the face frame's front (root
+    Y = -depth) to the cabinet back (root Y = 0), while the bay cage
+    itself starts behind the frame."""
+    cabinet = bay.parent
+    top = _anchor_world(bay, 0.5, 1.0)
+    if cabinet is None or top is None:
+        return None
+    cmw = split_preview._world_matrix(cabinet)
+    local = cmw.inverted() @ top
+    depth = bay.face_frame_bay.depth
+    return tuple(cmw @ Vector((local.x, y, local.z))
+                 for y in (-depth, -depth / 2.0, 0.0))
+
+
 def _cabinet_label_targets(cabinet):
     """(kind, anchor, value, prefix) for a cabinet root's three dims.
-    Mirrors the closet starter overlay: each label sits where its edit
-    ACTS - H at the top edge (the edge that moves), W dead-center of
-    the front face, D at the bottom-front edge. All three anchor on the
+    Each label sits at the middle of its dimension line (see
+    _dim_line_world): W across the middle of the front face, H up the
+    left side, D front to back across the top. W and H anchor on the
     cabinet's FRONT plane (via _root_anchor_world) to match bay-mode
     labels. Values come from the SAME props a commit writes
     (face_frame_cabinet.width / height / depth) so typing back the
     shown value is a no-op."""
     props = cabinet.face_frame_cabinet
+    depth_pts = _root_depth_points(cabinet)
     return [
-        ('CAB_H', _root_anchor_world(cabinet, 0.5, 1.0), props.height, "H "),
+        ('CAB_H', _root_anchor_world(cabinet, _height_dim_fx(cabinet), 0.5),
+         props.height, "H "),
         ('CAB_W', _root_anchor_world(cabinet, 0.5, 0.5), props.width, "W "),
-        ('CAB_D', _root_anchor_world(cabinet, 0.5, 0.0), props.depth, "D "),
+        ('CAB_D', depth_pts[1] if depth_pts else None, props.depth, "D "),
     ]
+
+
+def _run_dims_size(obj):
+    """(width, depth, height, world matrix) for a product that gets
+    wall-run dims: a face frame cabinet root or an appliance."""
+    if obj.get('IS_APPLIANCE'):
+        dims = wall_run_dims.appliance_dims(obj)
+        if dims is None:
+            return None
+        return dims + (obj.matrix_world,)
+    dim_x, dim_z = split_preview._cage_dims(obj)
+    return (dim_x, obj.face_frame_cabinet.depth, dim_z,
+            split_preview._world_matrix(obj))
+
+
+def _run_targets(obj, seen_spans):
+    """Cabinets-mode targets for where a cabinet or appliance sits on
+    its wall (see common/wall_run_dims), on its front plane, each with
+    its own dimension line. Editable: a typed value moves or resizes it
+    (the gap edit mode). Spans already in ``seen_spans`` are skipped and
+    new ones added."""
+    size = _run_dims_size(obj)
+    if size is None:
+        return []
+    dim_x, depth, dim_z, mw = size
+    fy = -depth - 0.003
+    out = []
+    for kind, value, prefix, a, b, key in wall_run_dims.run_dims(
+            obj, dim_x, dim_z):
+        if key in seen_spans:
+            continue
+        seen_spans.add(key)
+        wa = mw @ Vector((a[0], fy, a[1]))
+        wb = mw @ Vector((b[0], fy, b[1]))
+        out.append((obj, kind, True, False, value, prefix,
+                    (wa + wb) / 2.0, (wa, wb)))
+    return out
+
+
+def _part_width_line(part, value):
+    """World endpoints across a face-frame member's width: through its
+    bounding-box centre along whichever local axis measures ``value``
+    (stiles are wide in X, rails in Z)."""
+    bb = part.bound_box
+    lo = Vector((min(c[0] for c in bb), min(c[1] for c in bb),
+                 min(c[2] for c in bb)))
+    hi = Vector((max(c[0] for c in bb), max(c[1] for c in bb),
+                 max(c[2] for c in bb)))
+    centre = (lo + hi) / 2.0
+    rot = part.matrix_world.to_3x3()
+    best = None
+    for axis in range(3):
+        half = Vector((0.0, 0.0, 0.0))
+        half[axis] = (hi[axis] - lo[axis]) / 2.0
+        err = abs((rot @ half).length * 2.0 - value)
+        if best is None or err < best[0]:
+            best = (err, half)
+    if best is None or best[1].length < 1e-6:
+        return None
+    mw = part.matrix_world
+    return mw @ (centre - best[1]), mw @ (centre + best[1])
+
+
+def _dim_line_world(obj, kind, value):
+    """(a, b) world endpoints of the dimension line a label sits on, or
+    None for labels drawn without one (appliance panel faces)."""
+    if kind == 'CAB_W':
+        a = _root_anchor_world(obj, 0.0, 0.5)
+        b = _root_anchor_world(obj, 1.0, 0.5)
+    elif kind == 'CAB_H':
+        fx = _height_dim_fx(obj)
+        a = _root_anchor_world(obj, fx, 0.0)
+        b = _root_anchor_world(obj, fx, 1.0)
+    elif kind == 'CAB_D':
+        pts = _root_depth_points(obj)
+        if pts is None:
+            return None
+        a, b = pts[0], pts[2]
+    elif kind == 'BAY':
+        a = _anchor_world(obj, 0.0, 0.5)
+        b = _anchor_world(obj, 1.0, 0.5)
+    elif kind == 'BAY_D':
+        pts = _bay_depth_points(obj)
+        if pts is None:
+            return None
+        a, b = pts[0], pts[2]
+    elif kind == 'BAY_H':
+        fx = _height_dim_fx(obj)
+        a = _anchor_world(obj, fx, 0.0)
+        b = _anchor_world(obj, fx, 1.0)
+    elif kind == 'OPENING':
+        a = _anchor_world(obj, 0.5, 0.0)
+        b = _anchor_world(obj, 0.5, 1.0)
+    elif kind == 'PART':
+        return _part_width_line(obj, value)
+    else:
+        return None
+    if a is None or b is None:
+        return None
+    return a, b
+
+
+def _project_dim_line(region, rv3d, line, s):
+    """Region-space LINES points (the line plus an end tick at each
+    end) for a world-space dimension line, or []."""
+    a = view3d_utils.location_3d_to_region_2d(region, rv3d, line[0])
+    b = view3d_utils.location_3d_to_region_2d(region, rv3d, line[1])
+    if a is None or b is None:
+        return []
+    d = b - a
+    if d.length < 1e-6:
+        return []
+    tick = Vector((-d.y, d.x)).normalized() * TICK_PX * s
+    return [tuple(p) for p in (a, b, a - tick, a + tick, b - tick, b + tick)]
 
 
 # ---- Appliance panels ----------------------------------------------------
@@ -555,9 +718,11 @@ def _ap_section(part):
     return appliance, int(index)
 
 
-def compute_labels(context, region, rv3d):
+def compute_labels(context, region, rv3d, lines_out=None):
     """[(obj_name, kind, editable, locked, rect, text)] for every label
-    currently on screen. rect is (x, y, w, h) region-local. ``locked``
+    currently on screen. When ``lines_out`` is a list, the region-space
+    dimension line under each label is appended to it as
+    ``(points, editable)``. rect is (x, y, w, h) region-local. ``locked``
     is the bay/opening hold flag (user-typed value held during
     redistribution); locked labels carry a bullet marker so users can
     see which values are pinned vs auto-calculated. Shared by the draw
@@ -573,7 +738,7 @@ def compute_labels(context, region, rv3d):
         return []
     scope = _sizes_scope(context)
     sel_names = (_selected_label_names(context)
-                 if scope == 'SELECTED' else None)
+                 if scope in ('SELECTED', 'SELECTED_CABINET') else None)
     scene = context.scene
     unit_settings = scene.unit_settings
     s = 1.0
@@ -586,12 +751,19 @@ def compute_labels(context, region, rv3d):
 
     labels = []
     space = getattr(context, 'space_data', None)
+    # Wall-run dims: a gap two neighbors both report is drawn once.
+    seen_spans = set()
+    picked = _selected_label_names(context)
 
     def _emit(targets):
         """Project a product's targets and add the ones on screen. One
         copy, so a cabinet label and an appliance label can't drift
         apart in size, marker or hit rect."""
-        for cage, kind, editable, locked, value, prefix, anchor in targets:
+        for target in targets:
+            # An optional 8th element carries the target's own world
+            # dimension line (wall-run dims); else _dim_line_world.
+            cage, kind, editable, locked, value, prefix, anchor = target[:7]
+            own_line = target[7] if len(target) > 7 else None
             if anchor is None:
                 anchor = (_part_anchor_world(cage) if kind == 'PART'
                           else _label_anchor_world(cage))
@@ -616,9 +788,43 @@ def compute_labels(context, region, rv3d):
             if rect[1] + h < 0 or rect[1] > region.height:
                 continue
             labels.append((cage.name, kind, editable, locked, rect, text))
+            if lines_out is not None:
+                line = own_line or _dim_line_world(cage, kind, value)
+                if line is not None:
+                    pts = _project_dim_line(region, rv3d, line, s)
+                    if pts:
+                        lines_out.append((pts, editable))
 
-    for cabinet in (_iter_cabinet_roots(scene) if mode is not None else ()):
+    def _emit_wall_appliances(apps):
+        """Appliances on a wall space and size from the model too: the
+        same gap / wall-end dims a cabinet gets, on the same scope."""
+        for appliance in apps:
+            # _cabinet_shown, not _ap_shown: that one probes panel
+            # fronts, and most appliances have none -- this falls back
+            # to the first real mesh part.
+            if not _cabinet_shown(appliance, space):
+                continue
+            if scope in ('SELECTED', 'SELECTED_CABINET') \
+                    and appliance.name not in sel_names:
+                continue
+            _emit(_run_targets(appliance, seen_spans))
+
+    roots = list(_iter_cabinet_roots(scene)) if mode is not None else []
+    wall_apps = (list(wall_run_dims.iter_wall_appliances(scene))
+                 if mode == 'Cabinets' else [])
+    if mode == 'Cabinets':
+        # Selected first: a gap two products share is labelled (and
+        # edited) on the first one reached, which should be the pick --
+        # so a selected appliance goes ahead of every cabinet.
+        roots.sort(key=lambda c: c.name not in picked)
+        _emit_wall_appliances([a for a in wall_apps if a.name in picked])
+    for cabinet in roots:
         if not _cabinet_shown(cabinet, space):
+            continue
+        # Cabinet scope: the whole cabinet's labels once anything in it
+        # is selected (sel_names carries each selected object's
+        # ancestors, so the root is in it).
+        if scope == 'SELECTED_CABINET' and cabinet.name not in sel_names:
             continue
         # Displayed values come from the SAME properties a commit writes
         # (face_frame_bay.width / face_frame_opening.size), never the cage
@@ -638,6 +844,8 @@ def compute_labels(context, region, rv3d):
                 for kind, anchor, value, prefix
                 in _cabinet_label_targets(cabinet)
             ]
+            if scope != 'SELECTED' or cabinet.name in sel_names:
+                targets.extend(_run_targets(cabinet, seen_spans))
         elif mode == 'Bays':
             targets = []
             for bay in _iter_bay_cages(cabinet):
@@ -656,10 +864,12 @@ def compute_labels(context, region, rv3d):
                 # offset.
                 targets.append((bay, 'BAY_H', True, bp.unlock_height,
                                 bp.height, "H ",
-                                _anchor_world(bay, 0.5, 1.0)))
+                                _anchor_world(bay, _height_dim_fx(bay),
+                                              0.5)))
+                depth_pts = _bay_depth_points(bay)
                 targets.append((bay, 'BAY_D', True, bp.unlock_depth,
                                 bp.depth, "D ",
-                                _anchor_world(bay, 0.5, 0.0)))
+                                depth_pts[1] if depth_pts else None))
         elif mode == 'Openings':
             targets = []
             # Non-editable openings (bay roots / V-split children) show
@@ -720,9 +930,12 @@ def compute_labels(context, region, rv3d):
         # SELECTED scope: keep only labels whose cage is part of the
         # current selection. The click handlers hit-test against this
         # same list, so filtered labels are not clickable either.
-        if sel_names is not None:
+        if scope == 'SELECTED':
             targets = [t for t in targets if t[0].name in sel_names]
         _emit(targets)
+
+    # Appliances on a wall: the rest of them, after the cabinets.
+    _emit_wall_appliances([a for a in wall_apps if a.name not in picked])
 
     # Appliance panels: the selected appliance's own faces, in every
     # mode -- an appliance has no bays, openings or frame members of its
@@ -766,7 +979,9 @@ def _draw():
     # selection, and either on its own is reason enough to draw.
     if _active_mode(context) is None and _appliance_target(context) is None:
         return
-    labels = compute_labels(context, region, context.region_data)
+    dim_lines = []
+    labels = compute_labels(context, region, context.region_data,
+                            dim_lines)
 
     s = 1.0
     try:
@@ -777,6 +992,13 @@ def _draw():
     gpu.state.blend_set('ALPHA')
     shader = gpu.shader.from_builtin('UNIFORM_COLOR')
     shader.bind()
+    from gpu_extras.batch import batch_for_shader
+    for editable in (True, False):
+        pts = [p for line, ed in dim_lines if ed == editable for p in line]
+        if pts:
+            shader.uniform_float(
+                "color", DIM_LINE_COLOR if editable else DIM_LINE_COLOR_DIM)
+            batch_for_shader(shader, 'LINES', {"pos": pts}).draw(shader)
     for name, kind, editable, _locked, rect, text in labels:
         editing = (_edit is not None and _edit['name'] == name
                    and _edit['kind'] == kind)
@@ -793,6 +1015,10 @@ def _draw():
             blf.color(0, *EDIT_TEXT_COLOR)
             blf.position(0, rect[0] + PAD_X * s, rect[1] + PAD_Y * s, 0)
             blf.draw(0, shown)
+            if kind in wall_run_dims.KINDS:
+                # Move / Width, beside the field only while it's typed.
+                gap_mode_chip.draw(shader, context.scene, region, rect,
+                                   font_sz, s)
         else:
             _draw_label_rect(shader, rect,
                              LABEL_BG if editable else LABEL_BG_DIM)
@@ -807,6 +1033,24 @@ def _draw():
 
 def _commit(obj, kind, value):
     """Write the typed value through the sidebar's own property paths."""
+    if kind in wall_run_dims.KINDS:
+        # A gap / wall-end dim: move or resize the cabinet / appliance
+        # along its wall, per the gap edit mode.
+        size = _run_dims_size(obj)
+        if size is None:
+            return False
+        set_width = None
+        if wall_run_dims.edit_mode(bpy.context.scene) == 'WIDTH':
+            if obj.get('IS_APPLIANCE'):
+                def set_width(w):
+                    wall_run_dims.set_appliance_width(obj, w)
+            else:
+                def set_width(w):
+                    # The Cabinet Properties path: the update callback
+                    # runs the recalc and bay redistribution.
+                    obj.face_frame_cabinet.width = w
+        return wall_run_dims.commit(obj, kind, value, size[0], size[2],
+                                    set_width)
     if kind in _GAP_PROP:
         # The label carries the appliance itself: a gap belongs to the
         # run, not to any one face.
@@ -983,7 +1227,8 @@ class hb_face_frame_OT_edit_dim_label(bpy.types.Operator):
                ('AP_GAP_L', "Panel Gap Left", ""),
                ('AP_GAP_R', "Panel Gap Right", ""),
                ('AP_GAP_C', "Panel Gap Between Columns", ""),
-               ('AP_GAP_S', "Panel Gap Between Faces", "")],
+               ('AP_GAP_S', "Panel Gap Between Faces", "")]
+        + wall_run_dims.enum_items(),
         options={'HIDDEN'})  # type: ignore
 
     def invoke(self, context, event):
@@ -1000,6 +1245,7 @@ class hb_face_frame_OT_edit_dim_label(bpy.types.Operator):
     def _finish(self, context):
         global _edit
         _edit = None
+        gap_mode_chip.clear()
         try:
             context.window.cursor_set('DEFAULT')
         except Exception:
@@ -1032,13 +1278,17 @@ class hb_face_frame_OT_edit_dim_label(bpy.types.Operator):
                 # Enter on an empty buffer keeps the current value.
                 self._finish(context)
                 return {'FINISHED'}
-            if obj is not None and value == 0.0:
+            # A gap / wall-end dim takes 0 as a size (flush); every other
+            # label reads it as "back to auto".
+            is_gap = self.kind in wall_run_dims.KINDS
+            if obj is not None and value == 0.0 and not is_gap:
                 # Typing 0 means "back to auto": clear the hold so
                 # redistribution recalculates this bay / opening.
                 self._finish(context)
                 _reset_to_auto(obj, self.kind)
                 return {'FINISHED'}
-            if obj is None or value is None or value <= 0.0:
+            if obj is None or value is None or value < 0.0 \
+                    or (value == 0.0 and not is_gap):
                 self.report({'WARNING'},
                             f"Could not read '{typed}' as a size")
                 self._finish(context)
@@ -1058,6 +1308,20 @@ class hb_face_frame_OT_edit_dim_label(bpy.types.Operator):
         if event.type in {'ESC', 'RIGHTMOUSE'}:
             self._finish(context)
             return {'CANCELLED'}
+
+        if self.kind in wall_run_dims.KINDS:
+            # The Move / Width chip beside a gap field: a click on it or
+            # Tab picks what the typed value changes; the edit goes on.
+            part = None
+            if event.type == 'LEFTMOUSE':
+                part = gap_mode_chip.hit(event.mouse_x, event.mouse_y)
+            elif event.type == 'TAB':
+                part = ('MOVE' if wall_run_dims.edit_mode(context.scene)
+                        == 'WIDTH' else 'WIDTH')
+            if part is not None:
+                gap_mode_chip.set_mode(context.scene, part)
+                context.area.tag_redraw()
+                return {'RUNNING_MODAL'}
 
         if event.type == 'LEFTMOUSE':
             # Click-away cancels the edit and consumes the press --

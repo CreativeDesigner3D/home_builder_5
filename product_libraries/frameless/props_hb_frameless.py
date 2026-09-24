@@ -1615,16 +1615,21 @@ class Frameless_Scene_Props(PropertyGroup):
                     update=update_frameless_selection_mode)# type: ignore
     # Editable size labels drawn by dim_edit_overlay in Cabinets / Bays /
     # Openings modes. Per scene so a room can hide them; cycled from the
-    # HUD's Sizes pill (All -> Selected -> Off). SELECTED keeps only the
-    # labels whose cage belongs to the current selection. No update
-    # callback -- the HUD's click handler tags the redraw.
+    # HUD's Sizes pill (All -> Cabinet -> Selected -> None).
+    # SELECTED_CABINET keeps every label on a cabinet the selection
+    # belongs to; SELECTED keeps only the labels whose cage belongs to the
+    # current selection. No update callback -- the HUD's click handler
+    # tags the redraw.
     selection_mode_sizes_scope: EnumProperty(
         name="Size Labels",
         items=[
             ('ALL', "All", "Show size labels on every cabinet"),
-            ('SELECTED', "Selected",
+            ('SELECTED_CABINET', "Selected Cabinet",
+             "Show every size label on the cabinets the selection is "
+             "part of"),
+            ('SELECTED', "Selected Object",
              "Show size labels only for the selected objects"),
-            ('OFF', "Off", "Hide size labels"),
+            ('OFF', "None", "Hide size labels"),
         ],
         default='ALL',
     )  # type: ignore

@@ -4004,6 +4004,11 @@ def _build_recipe_into(recipe, parent_obj, child_index,
             # per-cabinet after placement.
             props.unlock_size = True
             props.size = 0.508  # 20"
+        elif size_role == 'VANITY_COMBINATION_SINK_WIDTH':
+            # Same as VANITY_SINK_WIDTH, but the Combination's sink
+            # opening comes in at 17".
+            props.unlock_size = True
+            props.size = inch(17.0)
         elif size_role == 'BOOKCASE_STORAGE_BOTTOM':
             # Pins the Bookcase Storage Unit's bottom door zone to a fixed
             # 30" so the open-shelf zone above flexes with cabinet height.
