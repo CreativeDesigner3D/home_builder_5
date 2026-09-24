@@ -250,6 +250,13 @@ class FaceFrameLayout:
         self.b_fin_end = cab.back_finished_end_condition
         self.top_scribe = cab.top_scribe
         self.division_thickness = cab.division_thickness
+        # Member extensions: an end stile or the top made that much
+        # bigger past the cabinet's edge, to be scribed to the wall on
+        # site. Only those parts grow -- the box, the cabinet's size and
+        # every other member stay where they are.
+        self.l_ext = max(getattr(cab, 'left_stile_extension', 0.0) or 0.0, 0.0)
+        self.r_ext = max(getattr(cab, 'right_stile_extension', 0.0) or 0.0, 0.0)
+        self.t_ext = max(getattr(cab, 'top_rail_extension', 0.0) or 0.0, 0.0)
 
         # Rail width defaults (used when populating a fresh bay)
         self.default_top_rail_width = cab.top_rail_width
@@ -1873,6 +1880,12 @@ def top_rail_segments(layout):
         # bay top; passthrough breaks at any drop change so `start` speaks
         # for the whole segment.
         z = bay_top_z(layout, start) - front_drop(layout, start)
+        width = first_bay['top_rail_width']
+        if front_drop(layout, start) <= 0.0 and layout.t_ext > 0.0:
+            # The rail hangs down from its top edge, so raising the edge
+            # and widening it by the same amount keeps its bottom put.
+            z += layout.t_ext
+            width += layout.t_ext
         if layout.angled_multi:
             # Split at the bend points so no rail crosses a bend; each
             # angled piece is longer than its world span by 1/cos.
@@ -1886,7 +1899,7 @@ def top_rail_segments(layout):
                     'y':          wy,
                     'z':          wz,
                     'length':     (b - a) / math.cos(theta),
-                    'width':      first_bay['top_rail_width'],
+                    'width':      width,
                     'thickness':  layout.fft,
                 })
             continue
@@ -1898,7 +1911,7 @@ def top_rail_segments(layout):
             'y':          wy,
             'z':          wz,
             'length':     length,
-            'width':      first_bay['top_rail_width'],
+            'width':      width,
             'thickness':  layout.fft,
         })
     return segments
@@ -1975,7 +1988,8 @@ def left_end_stile_position(layout):
         bottom_z = 0.0
     else:
         bottom_z = bay_bottom_z(layout, 0) - ends_down_drop(layout, 'LEFT')
-    return ff_outer_world_pos(layout, 0.0, bottom_z)
+    # An extension grows the stile out past the cabinet's left edge.
+    return ff_outer_world_pos(layout, -layout.l_ext, bottom_z)
 
 
 def left_end_stile_dims(layout):
@@ -1985,8 +1999,8 @@ def left_end_stile_dims(layout):
         bottom_z = 0.0
     else:
         bottom_z = bay_bottom_z(layout, 0) - ends_down_drop(layout, 'LEFT')
-    top_z = bay_top_z(layout, 0)
-    return (top_z - bottom_z, layout.lsw, layout.fft)
+    top_z = bay_top_z(layout, 0) + layout.t_ext
+    return (top_z - bottom_z, layout.lsw + layout.l_ext, layout.fft)
 
 
 def right_end_stile_position(layout):
@@ -2002,7 +2016,9 @@ def right_end_stile_position(layout):
         bottom_z = 0.0
     else:
         bottom_z = bay_bottom_z(layout, last) - ends_down_drop(layout, 'RIGHT')
-    return ff_outer_world_pos(layout, face_frame_length(layout), bottom_z)
+    # The stile grows back from its anchor, so the anchor moves out.
+    return ff_outer_world_pos(layout, face_frame_length(layout) + layout.r_ext,
+                              bottom_z)
 
 
 def right_end_stile_dims(layout):
@@ -2013,8 +2029,8 @@ def right_end_stile_dims(layout):
         bottom_z = 0.0
     else:
         bottom_z = bay_bottom_z(layout, last) - ends_down_drop(layout, 'RIGHT')
-    top_z = bay_top_z(layout, last)
-    return (top_z - bottom_z, layout.rsw, layout.fft)
+    top_z = bay_top_z(layout, last) + layout.t_ext
+    return (top_z - bottom_z, layout.rsw + layout.r_ext, layout.fft)
 
 
 def left_refrig_stile_position(layout):

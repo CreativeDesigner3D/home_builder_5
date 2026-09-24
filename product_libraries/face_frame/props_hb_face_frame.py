@@ -7364,6 +7364,29 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         name="Right Scribe", default=0.0, unit='LENGTH', precision=4,
         update=_on_right_scribe_user_set,
     )  # type: ignore
+    # Member extensions: the end stile (or the top) is built this much
+    # bigger, out past the cabinet's edge, and scribed to the wall on
+    # site. Unlike scribe, which pulls the box in behind a frame of the
+    # cabinet's size, only the member grows -- the box, the cabinet's
+    # width and every other part stay put.
+    left_stile_extension: FloatProperty(
+        name="Left Stile Extension", default=0.0, min=0.0, unit='LENGTH',
+        precision=4, update=_update_cabinet_dim,
+        description="Build the left end stile this much wider, out past "
+                    "the cabinet's left edge, to scribe to the wall",
+    )  # type: ignore
+    right_stile_extension: FloatProperty(
+        name="Right Stile Extension", default=0.0, min=0.0, unit='LENGTH',
+        precision=4, update=_update_cabinet_dim,
+        description="Build the right end stile this much wider, out past "
+                    "the cabinet's right edge, to scribe to the wall",
+    )  # type: ignore
+    top_rail_extension: FloatProperty(
+        name="Top Extension", default=0.0, min=0.0, unit='LENGTH',
+        precision=4, update=_update_cabinet_dim,
+        description="Build the top rail and end stiles this much taller, "
+                    "up past the cabinet's top, to scribe to the ceiling",
+    )  # type: ignore
 
     # Per-side exposure state. Computed by exposure.recalc_cabinet_exposure
     # from wall edges and parent-wall siblings (cabinets + appliances).

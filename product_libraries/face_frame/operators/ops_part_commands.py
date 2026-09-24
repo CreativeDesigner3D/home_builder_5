@@ -613,6 +613,58 @@ class hb_face_frame_OT_set_part_scribe(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class hb_face_frame_OT_set_part_extension(bpy.types.Operator):
+    """Build the selected end stile or top rail bigger than the cabinet,
+    out past its edge, to be scribed to the wall or ceiling on site.
+    Live-bound to the cabinet's extension for that edge, like Set
+    Scribe."""
+    bl_idname = "hb_face_frame.set_part_extension"
+    bl_label = "Set Extension"
+    bl_description = ("Build this member bigger, out past the cabinet's "
+                      "edge, to scribe it on site. The cabinet and its "
+                      "other parts stay where they are")
+    bl_options = {'UNDO'}
+
+    _ATTR_BY_ROLE = {
+        types_face_frame.PART_ROLE_LEFT_STILE:
+            ('left_stile_extension', "Left Stile Extension"),
+        types_face_frame.PART_ROLE_RIGHT_STILE:
+            ('right_stile_extension', "Right Stile Extension"),
+        types_face_frame.PART_ROLE_TOP_RAIL:
+            ('top_rail_extension', "Top Extension"),
+    }
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (obj is not None
+                and obj.get('hb_part_role') in cls._ATTR_BY_ROLE
+                and types_face_frame.find_cabinet_root(obj) is not None)
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self, width=280)
+
+    def draw(self, context):
+        obj = context.active_object
+        root = types_face_frame.find_cabinet_root(obj) if obj else None
+        entry = self._ATTR_BY_ROLE.get(obj.get('hb_part_role')) if obj else None
+        if root is None or entry is None:
+            self.layout.label(text="Select an end stile or top rail",
+                              icon='INFO')
+            return
+        attr, label = entry
+        col = self.layout.column(align=True)
+        col.label(text=obj.name, icon='SNAP_EDGE')
+        col.prop(root.face_frame_cabinet, attr, text=label)
+        if attr == 'top_rail_extension':
+            col.label(text="The end stiles grow with it", icon='INFO')
+        col.label(text="Cabinet size and dimensions are unchanged",
+                  icon='INFO')
+
+    def execute(self, context):
+        return {'FINISHED'}
+
+
 def seam_side_for(obj):
     """'LEFT' / 'RIGHT' when obj is a side panel that could be seamed,
     else None. Used by the menu so the item only shows on a panel the
@@ -4336,6 +4388,7 @@ classes = (
     hb_face_frame_OT_set_combined_finished_end,
     hb_face_frame_OT_separate_combined_end,
     hb_face_frame_OT_set_part_scribe,
+    hb_face_frame_OT_set_part_extension,
     hb_face_frame_OT_set_panel_seam,
     hb_face_frame_OT_remove_panel_seam,
     hb_face_frame_OT_toggle_stile_to_floor,

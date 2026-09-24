@@ -527,6 +527,10 @@ class HOME_BUILDER_MT_face_frame_part_commands(bpy.types.Menu):
                     types_face_frame.PART_ROLE_TOP_RAIL):
             layout.operator("hb_face_frame.set_part_scribe",
                             text="Set Scribe...", icon='SNAP_EDGE')
+            # Extension: the member itself built bigger than the
+            # cabinet, to scribe on site (the box does not move).
+            layout.operator("hb_face_frame.set_part_extension",
+                            text="Set Extension...", icon='ARROW_LEFTRIGHT')
 
         # Stile-to-floor: end stiles and between-bay mid stiles. On an
         # applied panel only the stile facing the cabinet front has a
