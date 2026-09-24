@@ -462,11 +462,11 @@ def _front_cells(context, p):
 
 
 def _cabinet_style_fields():
-    """The fields of one cabinet style, in groups that fold under a line
-    saying what is set in them. A 'choice' is a dropdown whose last item
-    turns it into typed text, for a value outside the list; the typed
-    value only prints, the dropdown still drives the geometry and
-    material."""
+    """The settings of one cabinet style as (label, summary, fields)
+    sections -- the style editor's tabs, and a line each in the panel.
+    A 'choice' is a dropdown whose last item turns it into typed text,
+    for a value outside the list; the typed value only prints, the
+    dropdown still drives the geometry and material."""
     refs = lambda p: p.show_finish_references
 
     def custom_finish(p):
@@ -571,17 +571,22 @@ def _cabinet_style_fields():
     )
 
     return (
-        ('group', 'cs_construction', "Construction",
-         {'summary': _construction_summary, 'fields': construction}),
-        ('group', 'cs_finish', "Finish",
-         {'summary': _finish_summary, 'fields': tuple(finish)}),
-        ('group', 'cs_fronts', "Fronts",
-         {'summary': _fronts_summary, 'fields': fronts}),
-        ('group', 'cs_hardware', "Hardware",
-         {'summary': _hardware_summary, 'fields': hardware}),
-        ('group', 'cs_notes', "Notes",
-         {'summary': _notes_summary, 'fields': notes}),
+        ("Cabinet", _construction_summary, construction),
+        ("Finish", _finish_summary, tuple(finish)),
+        ("Fronts", _fronts_summary, fronts),
+        ("Hardware", _hardware_summary, hardware),
+        ("Notes", _notes_summary, notes),
     )
+
+
+# A style is read in the panel -- the card and a line per section -- and
+# edited in the style editor, where there is room for its settings.
+_CABINET_STYLE_SECTIONS = _cabinet_style_fields()
+
+
+def _cabinet_style_panel_fields():
+    return tuple(('value', summary, label)
+                 for label, summary, _fields in _CABINET_STYLE_SECTIONS)
 
 
 # ---- The cabinet style list ---------------------------------------------------
@@ -637,17 +642,6 @@ def _style_summary(context, style):
             "Used by %d cabinet%s" % (n, "" if n == 1 else "s"),
         ),
     }
-
-
-def _more_style_commands(context):
-    return (("Assign to Selected",
-             'hb_face_frame.assign_style_to_selected_cabinets', {}),
-            ("Paint Part", 'hb_face_frame.paint_part_material',
-             {'brush': 'FINISH'}),
-            ("Paint Interior", 'hb_face_frame.paint_part_material',
-             {'brush': 'INTERIOR'}),
-            ("Reset Part", 'hb_face_frame.paint_part_material',
-             {'brush': 'RESET'}))
 
 
 def _front_style_actions(kind):
@@ -776,17 +770,18 @@ OPTION_PAGES = {
         'remove_op': 'hb_face_frame.remove_cabinet_style',
         'move_op': 'hb_face_frame.move_cabinet_style',
         'actions_first': True,
-        'fields': _cabinet_style_fields(),
+        'fields': _cabinet_style_panel_fields(),
         'row_dot': _style_color,
         'row_count': _style_count,
         'summary': _style_summary,
         # Painting is how a style goes on; a style edit reaches every
         # cabinet using it by itself (every room), so there is no
-        # Update. Assigning a whole selection at once and the part
-        # brushes wait in the menu.
+        # Update. Editing opens the style editor, which carries the
+        # rest.
         'actions': (
             (("Paint", 'hb_face_frame.paint_assign_cabinet_style'),
-             ("More...", _more_style_commands)),
+             ("Edit...", 'home_builder.style_editor_open',
+              'key', 'CABINET_STYLE')),
         ),
     },
     'draw_door_styles_ui': {
@@ -1002,6 +997,27 @@ OPTION_PAGES = {
     },
 }
 
+
+# Larger editors, opened in their own window (operators/style_editor.py).
+OPTION_EDITORS = {
+    'CABINET_STYLE': {
+        'owner': _active_cabinet_style,
+        'header': _style_summary,
+        'sections': tuple((label, fields)
+                          for label, _summary, fields
+                          in _CABINET_STYLE_SECTIONS),
+        'footer': (
+            ("Assign to Selected",
+             'hb_face_frame.assign_style_to_selected_cabinets'),
+            ("Paint Part", 'hb_face_frame.paint_part_material',
+             'brush', 'FINISH'),
+            ("Paint Interior", 'hb_face_frame.paint_part_material',
+             'brush', 'INTERIOR'),
+            ("Reset Part", 'hb_face_frame.paint_part_material',
+             'brush', 'RESET'),
+        ),
+    },
+}
 
 # Pages that take the Options tab over, opened by key from a button
 # (home_builder.options_open_page) and left by their Back row.
