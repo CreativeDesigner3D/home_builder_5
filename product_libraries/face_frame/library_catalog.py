@@ -381,24 +381,6 @@ def _special_effect_choices(context):
                  if name not in have)
 
 
-def _stile_size_notes(context, style):
-    """The stile widths, which the overlay decides: read, never typed."""
-    from ... import units
-    lines = ["Stiles (Base / Tall / Upper)"]
-    for label, root in (("Wall", 'ff_wall_stile_width'),
-                        ("Mid", 'ff_mid_stile_width'),
-                        ("End", 'ff_end_stile_width'),
-                        ("Blind", 'ff_blind_stile_width'),
-                        ("Butt", 'ff_butt_stile_width'),
-                        ("Inside 90", 'ff_inside_90_stile_width'),
-                        ("Angle", 'ff_angle_stile_width')):
-        widths = (units.meter_to_inch(getattr(style, '%s_%s' % (root, col)))
-                  for col in ('base', 'tall', 'upper'))
-        lines.append("%s: %s" % (label, " / ".join(
-            '%.4g"' % w for w in widths)))
-    return lines
-
-
 def _alternate_drawer_notes(context, style):
     from . import props_hb_face_frame
     return props_hb_face_frame.alternate_drawer_notes(style, context)
@@ -409,7 +391,6 @@ def _cabinet_style_fields():
     A 'choice' is a dropdown whose chip turns it into typed text, for a
     value outside the list; the typed value only prints, the dropdown
     still drives the geometry and material."""
-    sizes = lambda p: p.show_face_frame_sizes
     refs = lambda p: p.show_finish_references
 
     def custom_finish(p):
@@ -427,20 +408,14 @@ def _cabinet_style_fields():
         ('choice', 'finish_overlay', "Overlay", {'custom': 'ss_overlay'}),
         ('choice', 'ss_corner_treatment', "Corner Treatment"),
         ('choice', 'ss_fin_opening_edge', "Fin Opening Edge"),
-        # The size grid is large, so it stays folded until asked for. A
-        # rail follows the overlay until its padlock is opened.
-        ('bool', 'show_face_frame_sizes', "Face Frame Sizes"),
+        # Sixteen sizes by three cabinet types read best as the grid they
+        # are, so they open in one rather than filling the panel a greyed
+        # row at a time. A rail follows the overlay until its padlock is
+        # opened there.
+        ('actions', (("Face Frame Sizes...",
+                      'hb_face_frame.face_frame_sizes'),), None),
     ]
-    for rail, key, root in (("Top Rail", 'top', 'ff_top_rail_width'),
-                            ("Bottom Rail", 'bottom', 'ff_bottom_rail_width'),
-                            ("Mid Rail", 'mid', 'ff_mid_rail_width')):
-        for col in ('base', 'tall', 'upper'):
-            fields.append(('locked', '%s_%s' % (root, col),
-                           "%s %s" % (rail, col.title()),
-                           {'unlock': 'unlock_%s_%s_rail' % (col, key),
-                            'when': sizes}))
     fields += [
-        ('notes', _stile_size_notes, None, {'owner': True, 'when': sizes}),
         ('gap', None, None),
         ('label', None, "Finish"),
         ('bool', 'show_finish_references', "References"),

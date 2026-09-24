@@ -110,6 +110,57 @@ def fit_text(font_id, size, text, max_w):
     return (text[:lo].rstrip() + ell) if lo > 0 else ell
 
 
+# ---- Full text on hover -------------------------------------------------------
+# fit_text cuts a long name to what fits. Where the pointer is over one
+# that was cut, the painter notes the whole text here, and the panel
+# paints it as a tip on top of everything once its rows are drawn, so a
+# long style name can be read without widening the panel.
+
+_tip = {'rect': None, 'text': None}
+
+
+def note_tip(rect, text):
+    """Ask for `text` to be shown by `rect` at the end of this draw."""
+    _tip['rect'], _tip['text'] = rect, text
+
+
+def clear_tip():
+    _tip['rect'] = _tip['text'] = None
+
+
+def note_tip_if_cut(rect, shown, text):
+    """note_tip when `shown` is a cut-down `text`."""
+    if text and shown != text:
+        note_tip(rect, text)
+
+
+def paint_tip(shader, font_id, size):
+    """Paint the noted tip above its rect (below when there is no room),
+    kept inside the region, and forget it."""
+    rect, text = _tip['rect'], _tip['text']
+    clear_tip()
+    if not text or rect is None:
+        return
+    s = scale()
+    pad = 6 * s
+    blf.size(font_id, size)
+    tw, th = blf.dimensions(font_id, text)
+    w, h = tw + 2 * pad, th + 2 * pad
+    try:
+        _vx, _vy, region_w, region_h = gpu.state.viewport_get()
+    except Exception:
+        region_w = region_h = 1e9
+    x = min(max(rect[0], 2 * s), max(2 * s, region_w - w - 2 * s))
+    y = rect[1] + rect[3] + 3 * s
+    if y + h > region_h - 2 * s:
+        y = rect[1] - h - 3 * s
+    gpu.state.blend_set('ALPHA')
+    draw_rect(shader, x, y, w, h, Theme.PANEL_BG[:3] + (0.98,))
+    draw_rect_outline(shader, x, y, w, h, Theme.BTN_BORDER)
+    draw_text(font_id, x + pad, vcenter_baseline((x, y, w, h), font_id, size),
+              size, Theme.TEXT_PRIMARY, text)
+
+
 def draw_centered_text(font_id, rect, size, color, text):
     """Draw `text` centred both ways inside `rect`."""
     rx, ry, rw, rh = rect
@@ -758,13 +809,15 @@ def paint_field(shader, font_id, rect, size, label, value, hovered,
         draw_rect_outline(shader, *value_rect, Theme.PANEL_BORDER)
     vx, vy, vw, vh = value_rect
     caret_w = 7 * s if caret else 0.0
+    shown = fit_text(font_id, size, value,
+                     vw - caret_w - 3 * pad * s - text_inset)
+    if hovered and not active:
+        note_tip_if_cut(value_rect, shown, value)
     draw_text(font_id, vx + pad * s + text_inset,
               vcenter_baseline(value_rect, font_id, size),
               size, Theme.TEXT_DIM if not enabled
               else Theme.TEXT_PRIMARY if (hovered or active)
-              else Theme.TEXT_NORMAL,
-              fit_text(font_id, size, value,
-                       vw - caret_w - 3 * pad * s - text_inset))
+              else Theme.TEXT_NORMAL, shown)
     if caret:
         glyph_caret(shader, vx + vw - pad * s - caret_w / 2.0, vy + vh / 2.0,
                     caret_w, False,

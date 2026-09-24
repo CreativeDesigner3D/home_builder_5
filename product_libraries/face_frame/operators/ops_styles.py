@@ -1226,6 +1226,46 @@ def _repropagate_tall_drawer(context, style, kind):
         props_hb_face_frame._propagate_cabinet_style(style, context)
 
 
+class hb_face_frame_OT_face_frame_sizes(Operator):
+    """Show the active cabinet style's face frame sizes as one grid:
+    every rail and stile for base, tall and upper, the rails editable
+    behind their padlocks. The Options panel lists the same numbers a
+    row at a time, greyed while they follow the overlay, which is hard
+    to read across."""
+    bl_idname = "hb_face_frame.face_frame_sizes"
+    bl_label = "Face Frame Sizes"
+    bl_description = ("Show every rail and stile size for base, tall and "
+                      "upper cabinets in one grid")
+    bl_options = {'UNDO'}
+
+    @staticmethod
+    def _style(context):
+        sp = get_style_props(context)
+        if sp is None:
+            return None
+        i = sp.active_cabinet_style_index
+        return sp.cabinet_styles[i] if 0 <= i < len(sp.cabinet_styles) else None
+
+    @classmethod
+    def poll(cls, context):
+        return cls._style(context) is not None
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self, width=460)
+
+    def draw(self, context):
+        style = self._style(context)
+        if style is None:
+            self.layout.label(text="No cabinet style", icon='INFO')
+            return
+        self.layout.label(text=style.name, icon='MATERIAL')
+        style._draw_face_frame_sizes(self.layout, context)
+
+    def execute(self, context):
+        # The grid edits the style directly; OK just closes it.
+        return {'FINISHED'}
+
+
 class hb_face_frame_OT_add_cabinet_extra_front_style(Operator):
     """Add an extra door- or drawer-front style row to the active cabinet
     style. The row is shown on the Style Section page (DOORS / DRAWERS); it
@@ -1614,6 +1654,7 @@ classes = (
     hb_face_frame_OT_add_special_effects,
     hb_face_frame_OT_add_special_effect,
     hb_face_frame_OT_remove_special_effect,
+    hb_face_frame_OT_face_frame_sizes,
     hb_face_frame_OT_add_cabinet_extra_front_style,
     hb_face_frame_OT_remove_cabinet_extra_front_style,
     hb_face_frame_OT_add_style_note,

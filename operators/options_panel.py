@@ -85,6 +85,9 @@ from ..hb_gpu_ui import (
     enum_label,
     InlineEdit,
     paint_inline_edit,
+    clear_tip,
+    note_tip_if_cut,
+    paint_tip,
 )
 
 PREFERRED_WIDTH = 300       # unscaled
@@ -968,6 +971,7 @@ def paint(entries, mx, my):
     gpu.state.blend_set('ALPHA')
     shader = gpu.shader.from_builtin('UNIFORM_COLOR')
     shader.bind()
+    clear_tip()
 
     clip = _clip(entries)
     if clip is not None and clip[2] is not None:
@@ -991,10 +995,12 @@ def paint(entries, mx, my):
                 glyph_chevron(shader, rx + 6 * s, ry + rh / 2.0, 7 * s,
                               not expanded,
                               Theme.GLYPH_HOVER if hot else Theme.GLYPH)
+                shown = fit_text(font_id, FONT * s, label, rw - 20 * s)
+                if hot:
+                    note_tip_if_cut(rect, shown, label)
                 draw_text(font_id, rx + 16 * s, ry + rh * 0.28, FONT * s,
                           Theme.TEXT_PRIMARY if (expanded or hot)
-                          else Theme.TEXT_NORMAL,
-                          fit_text(font_id, FONT * s, label, rw - 20 * s))
+                          else Theme.TEXT_NORMAL, shown)
                 draw_rects(shader, [(rx, ry, rw, 1 * s)], Theme.SEPARATOR)
             elif kind == 'label_row':
                 # A caption inside a form: the small header style, so it
@@ -1009,18 +1015,25 @@ def paint(entries, mx, my):
                 _, label, text, rect = entry
                 rx, ry, rw, rh = rect
                 lw = rw * 0.42
+                shown_label = fit_text(font_id, FONT * s, label, lw - 6 * s)
+                shown = fit_text(font_id, FONT * s, text, rw - lw - 12 * s)
+                if point_in_rect(mx, my, rect):
+                    if shown != text:
+                        note_tip_if_cut(rect, shown, text)
+                    else:
+                        note_tip_if_cut(rect, shown_label, label)
                 draw_text(font_id, rx + 6 * s, ry + rh * 0.28, FONT * s,
-                          Theme.TEXT_NORMAL,
-                          fit_text(font_id, FONT * s, label, lw - 6 * s))
+                          Theme.TEXT_NORMAL, shown_label)
                 draw_text(font_id, rx + lw + 6 * s, ry + rh * 0.28, FONT * s,
-                          Theme.TEXT_PRIMARY,
-                          fit_text(font_id, FONT * s, text, rw - lw - 12 * s))
+                          Theme.TEXT_PRIMARY, shown)
             elif kind == 'note_row':
                 _, text, rect = entry
                 rx, ry, rw, rh = rect
+                shown = fit_text(font_id, FONT * s, text, rw - 12 * s)
+                if point_in_rect(mx, my, rect):
+                    note_tip_if_cut(rect, shown, text)
                 draw_text(font_id, rx + 8 * s, ry + rh * 0.28, FONT * s,
-                          Theme.TEXT_NORMAL,
-                          fit_text(font_id, FONT * s, text, rw - 12 * s))
+                          Theme.TEXT_NORMAL, shown)
             elif kind == 'styles_head':
                 _, label, rect, add_rect, _pool = entry
                 _paint_head(shader, font_id, s, mx, my, label, rect, add_rect)
@@ -1056,6 +1069,8 @@ def paint(entries, mx, my):
                 else:
                     shown = fit_text(font_id, FONT * s, name,
                                      rw - gear_room - arrow_room - 16 * s)
+                    if hovered:
+                        note_tip_if_cut(rect, shown, name)
                 draw_text(font_id, text_x, ry + rh * 0.28, FONT * s,
                           Theme.TEXT_PRIMARY if (is_active or renaming)
                           else Theme.TEXT_NORMAL, shown)
@@ -1194,15 +1209,20 @@ def paint(entries, mx, my):
                 if hovered:
                     draw_rects(shader, [rect], Theme.ROW_HOVER_BG)
                 rx, ry, rw, rh = rect
+                shown = fit_text(font_id, FONT * s, label, rw - 30 * s)
+                if hovered:
+                    note_tip_if_cut(rect, shown, label)
                 draw_text(font_id, rx + 8 * s, ry + rh * 0.28, FONT * s,
-                          Theme.TEXT_NORMAL,
-                          fit_text(font_id, FONT * s, label, rw - 30 * s))
+                          Theme.TEXT_NORMAL, shown)
                 # Chevron pointing right: this opens something.
                 glyph_chevron(shader, rx + rw - 12 * s, ry + rh / 2.0,
                               7 * s, True, Theme.GLYPH)
     finally:
         if clipped:
             end_clip(prev)
+    # On top of every row and outside the clip, so a tip on the panel's
+    # edge row is not cut off with it.
+    paint_tip(shader, font_id, FONT * s)
     gpu.state.blend_set('NONE')
 
 
