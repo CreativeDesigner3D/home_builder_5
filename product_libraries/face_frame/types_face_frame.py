@@ -17824,6 +17824,36 @@ def _active_door_style():
     return None
 
 
+def active_front_style_for_role(role, override=None):
+    """The style a loose front should wear, by role -- the way a cabinet
+    styles its own fronts: a drawer-ish role reads the active cabinet
+    style's Drawer Front style from the drawer-front pool, anything else
+    its Door style from the door pool. ``override`` is a style name
+    assigned to that one front; it wins when it resolves in the right
+    pool. None when nothing resolves."""
+    from . import props_hb_face_frame as props
+    ff = props.get_style_props()
+    if ff is None:
+        return None
+    drawer = role in ('DRAWER_FRONT', 'FALSE_FRONT', 'TILT_OUT',
+                      'DRAWER_LOOK_FRONT')
+    pool = ff.drawer_front_styles if drawer else ff.door_styles
+
+    def resolve(name):
+        if not name or name == 'NONE':
+            return None
+        return next((ds for ds in pool if ds.name == name), None)
+
+    found = resolve(override)
+    if found is not None:
+        return found
+    idx = ff.active_cabinet_style_index
+    if not (0 <= idx < len(ff.cabinet_styles)):
+        return None
+    cs = ff.cabinet_styles[idx]
+    return resolve(cs.drawer_front_style if drawer else cs.door_style)
+
+
 def apply_active_door_style_to_part(door_obj):
     """Apply the active cabinet style's door style to a Door Part front
     (assign_style_to_front adds / strips the CPM_5PIECEDOOR 'Door Style'

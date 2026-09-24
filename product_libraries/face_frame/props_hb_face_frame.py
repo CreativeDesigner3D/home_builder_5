@@ -5006,11 +5006,21 @@ class Face_Frame_Door_Style(PropertyGroup):
             _cage = front_obj.parent
             while _cage is not None and not _cage.get('IS_FACE_FRAME_OPENING_CAGE'):
                 _cage = _cage.parent
+            _key = ('hb_front_drawer_style'
+                    if role in self._DRAWER_FRONT_ROLES
+                    else 'hb_front_door_style')
             if _cage is not None:
-                _key = ('hb_front_drawer_style'
-                        if role in self._DRAWER_FRONT_ROLES
-                        else 'hb_front_door_style')
                 _cage[_key] = self.name
+            elif front_obj.get('IS_APPLIANCE_PANEL_FRONT'):
+                # An appliance panel has no opening: its section in the
+                # appliance's panel run is the durable home.
+                _bp = front_obj.parent
+                _idx = front_obj.get('AP_SECTION_INDEX', -1)
+                _secs = (_bp.appliance_panels.sections
+                         if _bp is not None and hasattr(_bp, 'appliance_panels')
+                         else ())
+                if 0 <= _idx < len(_secs):
+                    _secs[_idx][_key] = self.name
 
         # Every styleable front carries the part right-click menu. Fronts are
         # rebuilt each recalc (new objects), so stamping here - on the freshly

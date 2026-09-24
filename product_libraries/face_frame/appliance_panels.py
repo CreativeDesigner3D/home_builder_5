@@ -1136,8 +1136,42 @@ def _build_pulls(appliance_obj, props, fronts, order, faces):
 
 
 def _structure_key(props, backers):
+    # Kinds are in it so a face changed between door and drawer is built
+    # fresh with the other role and style, rather than keeping the old one.
     return json.dumps({'config': props.config, 'n': len(props.sections),
+                       'kinds': [s.kind for s in props.sections],
                        'backers': sorted(int(i) for i in backers)})
+
+
+# A style picked for one face, stored on its section (the part itself is
+# rebuilt whenever the run's shape changes). One per pool, so a face
+# switched between door and drawer keeps what it had in each.
+SECTION_DOOR_STYLE_KEY = 'hb_front_door_style'
+SECTION_DRAWER_STYLE_KEY = 'hb_front_drawer_style'
+
+
+def front_role(section):
+    """The part role a face is built with: drawer faces are drawer
+    fronts, so they read the drawer front style; the rest are doors."""
+    return (types_face_frame.PART_ROLE_DRAWER_FRONT
+            if section.kind == 'DRAWER' else types_face_frame.PART_ROLE_DOOR)
+
+
+def _apply_front_style(front_obj, section):
+    """Style a face the way a cabinet styles its fronts: the face's own
+    pick, else the active cabinet style's door or drawer front style."""
+    role = front_obj.get('hb_part_role')
+    key = (SECTION_DRAWER_STYLE_KEY
+           if role == types_face_frame.PART_ROLE_DRAWER_FRONT
+           else SECTION_DOOR_STYLE_KEY)
+    ds = types_face_frame.active_front_style_for_role(role, section.get(key))
+    if ds is None:
+        return
+    ds.assign_style_to_front(front_obj)
+    from . import props_hb_face_frame as style_props
+    ff = style_props.get_style_props()
+    if ff is not None and 0 <= ff.active_cabinet_style_index < len(ff.cabinet_styles):
+        front_obj['STYLE_NAME'] = ff.cabinet_styles[ff.active_cabinet_style_index].name
 
 
 def rebuild(appliance_obj):
@@ -1165,7 +1199,7 @@ def rebuild(appliance_obj):
             obj = _new_part(appliance_obj, 'Appliance Panel', TAG_FRONT,
                             'AP_PANEL_INDEX', k, FACE_THICKNESS)
             obj['AP_SECTION_INDEX'] = i
-            obj['hb_part_role'] = types_face_frame.PART_ROLE_DOOR
+            obj['hb_part_role'] = front_role(props.sections[i])
             fronts.append(obj)
         for i, (bx0, bx1, bz0, bz1, t) in backers.items():
             b = _new_part(appliance_obj, 'Appliance Panel Backer', TAG_BACKER,
@@ -1222,7 +1256,7 @@ def rebuild(appliance_obj):
         # on tall doors keys off height).
         bpy.context.view_layer.update()
         for obj in fronts:
-            types_face_frame.apply_active_door_style_to_part(obj)
+            _apply_front_style(obj, props.sections[obj['AP_SECTION_INDEX']])
         for child in appliance_obj.children:
             if child.get('IS_APPLIANCE_TEXT') or child.type == 'FONT':
                 child.hide_viewport = True
