@@ -247,6 +247,42 @@ def _root_depth_points(cabinet):
             mw @ Vector((dim_x / 2.0, 0.0, dim_z)))
 
 
+def _run_dims_size(obj):
+    """(width, depth, height, world matrix) for a product that gets
+    wall-run dims: a frameless cabinet root or an appliance."""
+    if obj.get('IS_APPLIANCE'):
+        dims = wall_run_dims.appliance_dims(obj)
+        if dims is None:
+            return None
+        return dims + (obj.matrix_world,)
+    dim_x, dim_y, dim_z = _cage_dims(obj)
+    return dim_x, dim_y, dim_z, _world_matrix(obj)
+
+
+def _run_targets(obj, seen_spans, editable):
+    """Cabinets-mode targets for where a cabinet or appliance sits on
+    its wall (see common/wall_run_dims), on its front plane (the root's
+    local Y = 0 is its back), each with its own dimension line. A typed
+    value moves or resizes it (the gap edit mode). Spans already in
+    ``seen_spans`` are skipped and new ones added."""
+    size = _run_dims_size(obj)
+    if size is None:
+        return []
+    dim_x, dim_y, dim_z, mw = size
+    fy = -dim_y - 0.003
+    out = []
+    for kind, value, prefix, a, b, key in wall_run_dims.run_dims(
+            obj, dim_x, dim_z):
+        if key in seen_spans:
+            continue
+        seen_spans.add(key)
+        wa = mw @ Vector((a[0], fy, a[1]))
+        wb = mw @ Vector((b[0], fy, b[1]))
+        out.append((obj, kind, editable, False, value, prefix,
+                    (wa + wb) / 2.0, (wa, wb)))
+    return out
+
+
 def _pair(a, b):
     return None if a is None or b is None else (a, b)
 
@@ -393,7 +429,15 @@ def compute_labels(context, region, rv3d, lines_out=None):
     space = getattr(context, 'space_data', None)
     # Wall-run dims: a gap two neighbors both report is drawn once.
     seen_spans = set()
-    for cabinet in _iter_cabinet_roots(scene):
+    picked = _selected_label_names(context)
+    products = list(_iter_cabinet_roots(scene))
+    if mode == 'Cabinets':
+        # Appliances on a wall get the cabinets' gap / wall-end dims
+        # (and only those). Selected first: a gap two products share is
+        # labelled -- and edited -- on the first one reached.
+        products += list(wall_run_dims.iter_wall_appliances(scene))
+        products.sort(key=lambda p: p.name not in picked)
+    for cabinet in products:
         if not _cabinet_shown(cabinet, space):
             continue
         # Cabinet scope: the whole cabinet's labels once anything in it
@@ -405,7 +449,10 @@ def compute_labels(context, region, rv3d, lines_out=None):
         #           anchor, line) -- line is the (a, b) world dimension
         #           line the label sits at the middle of, or None.
         targets = []
-        if mode == 'Cabinets':
+        if cabinet.get('IS_APPLIANCE'):
+            if scope != 'SELECTED' or cabinet.name in sel_names:
+                targets = _run_targets(cabinet, seen_spans, True)
+        elif mode == 'Cabinets':
             dim_x, dim_y, dim_z = _cage_dims(cabinet)
             editable = _cabinet_editable(cabinet)
             # W across the middle of the front, H up the left side, D
@@ -426,20 +473,7 @@ def compute_labels(context, region, rv3d, lines_out=None):
                  (depth_pts[0], depth_pts[2]) if depth_pts else None),
             ]
             if scope != 'SELECTED' or cabinet.name in sel_names:
-                # Where the cabinet sits on its wall, on its front plane
-                # (the root's local Y = 0 is its back). A typed value
-                # slides the cabinet along the wall.
-                mw = _world_matrix(cabinet)
-                fy = -dim_y - 0.003
-                for kind, value, prefix, a, b, key in wall_run_dims.run_dims(
-                        cabinet, dim_x, dim_z):
-                    if key in seen_spans:
-                        continue
-                    seen_spans.add(key)
-                    wa = mw @ Vector((a[0], fy, a[1]))
-                    wb = mw @ Vector((b[0], fy, b[1]))
-                    targets.append((cabinet, kind, editable, False, value,
-                                    prefix, (wa + wb) / 2.0, (wa, wb)))
+                targets += _run_targets(cabinet, seen_spans, editable)
         elif mode == 'Bays':
             # Bay size is the solver's (carcass minus sides / bottom /
             # top), so these are readouts, not inputs.
@@ -616,9 +650,23 @@ def _resolve_after_split_edit(context, cabinet_bp, calc):
 def _commit(context, obj, kind, value):
     """Write the typed value through the dialogs' own paths."""
     if kind in wall_run_dims.KINDS:
-        # A gap / wall-end dim: slide the cabinet along its wall.
-        dim_x, _dim_y, dim_z = _cage_dims(obj)
-        return wall_run_dims.commit(obj, kind, value, dim_x, dim_z)
+        # A gap / wall-end dim: move or resize the cabinet / appliance
+        # along its wall, per the gap edit mode.
+        size = _run_dims_size(obj)
+        if size is None:
+            return False
+        set_width = None
+        if wall_run_dims.edit_mode(context.scene) == 'WIDTH':
+            if obj.get('IS_APPLIANCE'):
+                def set_width(w):
+                    wall_run_dims.set_appliance_width(obj, w)
+            else:
+                def set_width(w):
+                    # Same input + re-solve as a Cabinet Width edit.
+                    GeoNodeCage(obj).set_input('Dim X', w)
+                    hb_utils.run_calc_fix(context, obj)
+        return wall_run_dims.commit(obj, kind, value, size[0], size[2],
+                                    set_width)
     if kind in ('CAB_W', 'CAB_H', 'CAB_D'):
         # Same inputs cabinet_prompts writes, then the same re-solve.
         cage = GeoNodeCage(obj)
@@ -720,13 +768,17 @@ class hb_frameless_OT_edit_dim_label(bpy.types.Operator):
                 # Enter on an empty buffer keeps the current value.
                 self._finish(context)
                 return {'FINISHED'}
-            if obj is not None and value == 0.0:
+            # A gap / wall-end dim takes 0 as a size (flush); every other
+            # label reads it as "back to auto".
+            is_gap = self.kind in wall_run_dims.KINDS
+            if obj is not None and value == 0.0 and not is_gap:
                 # Typing 0 means "back to auto": release the hold so
                 # the opening shares equally again.
                 self._finish(context)
                 _reset_to_auto(context, obj, self.kind)
                 return {'FINISHED'}
-            if obj is None or value is None or value <= 0.0:
+            if obj is None or value is None or value < 0.0 \
+                    or (value == 0.0 and not is_gap):
                 self.report({'WARNING'},
                             f"Could not read '{typed}' as a size")
                 self._finish(context)

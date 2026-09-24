@@ -379,23 +379,39 @@ def _cabinet_label_targets(cabinet):
     ]
 
 
-def _run_targets(cabinet, seen_spans):
-    """Cabinets-mode targets for where ``cabinet`` sits on its wall
-    (see common/wall_run_dims), on its front plane, each with its own
-    dimension line. Editable: a typed value slides the cabinet. Spans
-    already in ``seen_spans`` are skipped and new ones added."""
-    dim_x, dim_z = split_preview._cage_dims(cabinet)
-    mw = split_preview._world_matrix(cabinet)
-    fy = -cabinet.face_frame_cabinet.depth - 0.003
+def _run_dims_size(obj):
+    """(width, depth, height, world matrix) for a product that gets
+    wall-run dims: a face frame cabinet root or an appliance."""
+    if obj.get('IS_APPLIANCE'):
+        dims = wall_run_dims.appliance_dims(obj)
+        if dims is None:
+            return None
+        return dims + (obj.matrix_world,)
+    dim_x, dim_z = split_preview._cage_dims(obj)
+    return (dim_x, obj.face_frame_cabinet.depth, dim_z,
+            split_preview._world_matrix(obj))
+
+
+def _run_targets(obj, seen_spans):
+    """Cabinets-mode targets for where a cabinet or appliance sits on
+    its wall (see common/wall_run_dims), on its front plane, each with
+    its own dimension line. Editable: a typed value moves or resizes it
+    (the gap edit mode). Spans already in ``seen_spans`` are skipped and
+    new ones added."""
+    size = _run_dims_size(obj)
+    if size is None:
+        return []
+    dim_x, depth, dim_z, mw = size
+    fy = -depth - 0.003
     out = []
     for kind, value, prefix, a, b, key in wall_run_dims.run_dims(
-            cabinet, dim_x, dim_z):
+            obj, dim_x, dim_z):
         if key in seen_spans:
             continue
         seen_spans.add(key)
         wa = mw @ Vector((a[0], fy, a[1]))
         wb = mw @ Vector((b[0], fy, b[1]))
-        out.append((cabinet, kind, True, False, value, prefix,
+        out.append((obj, kind, True, False, value, prefix,
                     (wa + wb) / 2.0, (wa, wb)))
     return out
 
@@ -737,6 +753,7 @@ def compute_labels(context, region, rv3d, lines_out=None):
     space = getattr(context, 'space_data', None)
     # Wall-run dims: a gap two neighbors both report is drawn once.
     seen_spans = set()
+    picked = _selected_label_names(context)
 
     def _emit(targets):
         """Project a product's targets and add the ones on screen. One
@@ -778,7 +795,30 @@ def compute_labels(context, region, rv3d, lines_out=None):
                     if pts:
                         lines_out.append((pts, editable))
 
-    for cabinet in (_iter_cabinet_roots(scene) if mode is not None else ()):
+    def _emit_wall_appliances(apps):
+        """Appliances on a wall space and size from the model too: the
+        same gap / wall-end dims a cabinet gets, on the same scope."""
+        for appliance in apps:
+            # _cabinet_shown, not _ap_shown: that one probes panel
+            # fronts, and most appliances have none -- this falls back
+            # to the first real mesh part.
+            if not _cabinet_shown(appliance, space):
+                continue
+            if scope in ('SELECTED', 'SELECTED_CABINET') \
+                    and appliance.name not in sel_names:
+                continue
+            _emit(_run_targets(appliance, seen_spans))
+
+    roots = list(_iter_cabinet_roots(scene)) if mode is not None else []
+    wall_apps = (list(wall_run_dims.iter_wall_appliances(scene))
+                 if mode == 'Cabinets' else [])
+    if mode == 'Cabinets':
+        # Selected first: a gap two products share is labelled (and
+        # edited) on the first one reached, which should be the pick --
+        # so a selected appliance goes ahead of every cabinet.
+        roots.sort(key=lambda c: c.name not in picked)
+        _emit_wall_appliances([a for a in wall_apps if a.name in picked])
+    for cabinet in roots:
         if not _cabinet_shown(cabinet, space):
             continue
         # Cabinet scope: the whole cabinet's labels once anything in it
@@ -894,6 +934,9 @@ def compute_labels(context, region, rv3d, lines_out=None):
             targets = [t for t in targets if t[0].name in sel_names]
         _emit(targets)
 
+    # Appliances on a wall: the rest of them, after the cabinets.
+    _emit_wall_appliances([a for a in wall_apps if a.name not in picked])
+
     # Appliance panels: the selected appliance's own faces, in every
     # mode -- an appliance has no bays, openings or frame members of its
     # own, so its faces are the only thing it could label.
@@ -987,9 +1030,23 @@ def _draw():
 def _commit(obj, kind, value):
     """Write the typed value through the sidebar's own property paths."""
     if kind in wall_run_dims.KINDS:
-        # A gap / wall-end dim: slide the cabinet along its wall.
-        dim_x, dim_z = split_preview._cage_dims(obj)
-        return wall_run_dims.commit(obj, kind, value, dim_x, dim_z)
+        # A gap / wall-end dim: move or resize the cabinet / appliance
+        # along its wall, per the gap edit mode.
+        size = _run_dims_size(obj)
+        if size is None:
+            return False
+        set_width = None
+        if wall_run_dims.edit_mode(bpy.context.scene) == 'WIDTH':
+            if obj.get('IS_APPLIANCE'):
+                def set_width(w):
+                    wall_run_dims.set_appliance_width(obj, w)
+            else:
+                def set_width(w):
+                    # The Cabinet Properties path: the update callback
+                    # runs the recalc and bay redistribution.
+                    obj.face_frame_cabinet.width = w
+        return wall_run_dims.commit(obj, kind, value, size[0], size[2],
+                                    set_width)
     if kind in _GAP_PROP:
         # The label carries the appliance itself: a gap belongs to the
         # run, not to any one face.
@@ -1216,13 +1273,17 @@ class hb_face_frame_OT_edit_dim_label(bpy.types.Operator):
                 # Enter on an empty buffer keeps the current value.
                 self._finish(context)
                 return {'FINISHED'}
-            if obj is not None and value == 0.0:
+            # A gap / wall-end dim takes 0 as a size (flush); every other
+            # label reads it as "back to auto".
+            is_gap = self.kind in wall_run_dims.KINDS
+            if obj is not None and value == 0.0 and not is_gap:
                 # Typing 0 means "back to auto": clear the hold so
                 # redistribution recalculates this bay / opening.
                 self._finish(context)
                 _reset_to_auto(obj, self.kind)
                 return {'FINISHED'}
-            if obj is None or value is None or value <= 0.0:
+            if obj is None or value is None or value < 0.0 \
+                    or (value == 0.0 and not is_gap):
                 self.report({'WARNING'},
                             f"Could not read '{typed}' as a size")
                 self._finish(context)

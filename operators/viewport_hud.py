@@ -859,6 +859,63 @@ class _FramelessSizesButton(_SizesButton):
             self._scope(context), 'ALL')
 
 
+class _GapModeButton:
+    """What typing into a Cabinets-mode gap / wall-end dim changes:
+    'Gap: Move' slides the cabinet or appliance along its wall, 'Gap:
+    Width' keeps its far edge and changes its width. Shown beside Sizes
+    in Cabinets mode for face frame and frameless, while sizes are on.
+    The mode is a scene idprop owned by common/wall_run_dims."""
+
+    LABELS = {'MOVE': 'Gap: Move', 'WIDTH': 'Gap: Width'}
+    HOVER = {'MOVE': "Typed gaps move the product",
+             'WIDTH': "Typed gaps change the product's width"}
+
+    def _mode(self, context):
+        from ..product_libraries.common import wall_run_dims
+        return wall_run_dims.edit_mode(context.scene)
+
+    @property
+    def width(self):
+        s = _s()
+        blf.size(0, FONT_SIZE * s)
+        return int(max(blf.dimensions(0, t)[0]
+                       for t in self.LABELS.values()) + 24 * s)
+
+    def hover_label(self):
+        return self.HOVER[self._mode(bpy.context)]
+
+    def visible(self, context):
+        scene = context.scene
+        if _face_frame_ui_visible(context):
+            props = getattr(scene, 'hb_face_frame', None)
+            return bool(
+                props is not None
+                and getattr(props, 'face_frame_selection_mode_enabled', False)
+                and props.face_frame_selection_mode == 'Cabinets'
+                and props.selection_mode_sizes_scope != 'OFF')
+        if _frameless_ui_visible(context):
+            props = getattr(scene, 'hb_frameless', None)
+            return bool(
+                props is not None
+                and props.frameless_selection_mode == 'Cabinets'
+                and props.selection_mode_sizes_scope != 'OFF')
+        return False
+
+    def draw(self, shader, font_id, rect, context, mouse):
+        rx, ry, rw, rh = rect
+        hovered = point_in_rect(mouse[0], mouse[1], rect)
+        draw_rect(shader, rx, ry, rw, rh,
+                  BTN_HOVER_BG if hovered else BTN_BG)
+        draw_rect_outline(shader, rx, ry, rw, rh, BTN_BORDER)
+        _draw_centered_text(font_id, rect, FONT_SIZE * _s(),
+                            TEXT_ACTIVE if hovered else TEXT_NORMAL,
+                            self.LABELS[self._mode(context)])
+
+    def on_click(self, context, area, region):
+        from ..product_libraries.common import wall_run_dims
+        wall_run_dims.toggle_edit_mode(context.scene)
+
+
 class _ClosetGrabPill(_GrabPill):
     """Grab, for the closet library.
 
@@ -956,6 +1013,7 @@ class _ClosetDimsButton:
 
 _SIZES_BUTTON = _SizesButton()
 _FRAMELESS_SIZES_BUTTON = _FramelessSizesButton()
+_GAP_MODE_BUTTON = _GapModeButton()
 _GRAB_PILL = _GrabPill()
 _CLOSET_GRAB_PILL = _ClosetGrabPill()
 _CLOSET_DIMS_BUTTON = _ClosetDimsButton()
@@ -1421,7 +1479,8 @@ def _rows():
     return [
         [_MODE_BUTTONS,
          [_GRAB_PILL, _CLOSET_GRAB_PILL, _OPEN_DOOR_BUTTON,
-          _SIZES_BUTTON, _FRAMELESS_SIZES_BUTTON, _CLOSET_DIMS_BUTTON]
+          _SIZES_BUTTON, _FRAMELESS_SIZES_BUTTON, _GAP_MODE_BUTTON,
+          _CLOSET_DIMS_BUTTON]
          + _mode_extra_widgets()],
         [_layout_view_buttons()],
     ]

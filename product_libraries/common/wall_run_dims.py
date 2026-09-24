@@ -5,16 +5,25 @@ beside a cabinet's own W / H / D, how it sits in its run: on each side,
 a dimension to each thing the cabinet can see there -- the next product
 or appliance whose height range overlaps the cabinet's (so an upper
 above a base cabinet isn't its neighbor; windows and doors never are),
-or the end of the wall when nothing is on that side. A dimension never runs across another product,
-and a flush side gets none.
+or the end of the wall when nothing is on that side. A dimension never
+runs across another product, and a flush side gets none.
 
 A tall cabinet can see more than one neighbor on a side -- a base
 cabinet low and an upper high -- so it gets a gap to each, drawn at the
 height where that neighbor is the nearest thing. A neighbor hidden
 behind a nearer one at every height gets none.
 
-Every one of these is editable: typing a value slides the cabinet along
-its wall so that dimension becomes the typed size (see commit()).
+Every one of these is editable (see commit()). What a typed value
+changes is the scene's gap edit mode, toggled from the HUD pill beside
+Sizes: MOVE slides the cabinet along its wall, WIDTH keeps its far edge
+where it is and changes its width. 0 closes the gap -- snaps it flush.
+
+Appliances on a wall get the same dimensions (iter_wall_appliances()),
+so a dishwasher or refrigerator can be spaced and sized from the model.
+
+A gap two products share is labelled once, on whichever the overlay
+reaches first -- the overlays visit selected products first, so the one
+you picked is the one a typed value changes.
 
 The neighbor scan is the placement system's own
 (PlacementMixin.get_wall_children_sorted), so the overlay reports the
@@ -33,10 +42,27 @@ MIN_SHOWN = inch(1.0 / 32.0)
 MIN_BAND = inch(1.0)
 # Most neighbors one side can report (the label kinds are fixed).
 MAX_PER_SIDE = 4
+# Narrowest a width edit may leave a product.
+MIN_WIDTH = inch(1.0)
 
 GAP_KINDS = tuple(f'CAB_GAP_{side}{i}' for side in 'LR'
                   for i in range(MAX_PER_SIDE))
 KINDS = GAP_KINDS + ('CAB_END_L', 'CAB_END_R')
+
+
+# Scene idprop holding the gap edit mode; an idprop so it saves with the
+# file without a registered property (the closet Dims pill does the same).
+EDIT_MODE_KEY = 'hb_gap_edit_mode'
+
+
+def edit_mode(scene):
+    """'MOVE' or 'WIDTH'."""
+    mode = scene.get(EDIT_MODE_KEY, 'MOVE') if scene is not None else 'MOVE'
+    return 'WIDTH' if mode == 'WIDTH' else 'MOVE'
+
+
+def toggle_edit_mode(scene):
+    scene[EDIT_MODE_KEY] = 'MOVE' if edit_mode(scene) == 'WIDTH' else 'WIDTH'
 
 
 def enum_items():
@@ -183,38 +209,100 @@ def run_dims(cabinet, width, height):
     return out
 
 
-def commit(cabinet, kind, value, width, height):
-    """Slide ``cabinet`` along its wall so the ``kind`` dimension reads
-    ``value``. The neighbor is looked up again the same way run_dims
-    numbered it, so the label typed into is the one that moves. Clamped
-    to the open space between the neighbors. True when the cabinet
-    moved."""
-    sides = _side_edges(cabinet, width, height)
+def commit(obj, kind, value, width, height, set_width=None):
+    """Make the ``kind`` dimension of ``obj`` read ``value``. The
+    neighbor is looked up again the same way run_dims numbered it, so
+    the label typed into is the one that changes.
+
+    With ``set_width`` (a callable taking the new width) the edge on the
+    dimension's side moves and the far edge stays put -- the product
+    gets wider or narrower. Without it the whole product slides. Either
+    way it stays in the open space between its neighbors: a size too
+    big for the room stops flush against what's there. True when
+    anything changed."""
+    sides = _side_edges(obj, width, height)
     if sides is None or value < 0.0:
         return False
     wall_obj, wall_len, x0, left, right = sides
+    x1 = x0 + width
     if kind == 'CAB_END_L':
-        new_x = value
+        side, edge = 'L', 0.0
     elif kind == 'CAB_END_R':
-        new_x = wall_len - value - width
+        side, edge = 'R', wall_len
     elif kind in GAP_KINDS:
         side, index = kind[-2], int(kind[-1])
         edges = left if side == 'L' else right
         if index >= len(edges):
             return False
         edge = edges[index][0]
-        new_x = edge + value if side == 'L' else edge - value - width
     else:
         return False
-    # Stay in the open space between the neighbors: a gap too big for
-    # the room left stops the cabinet flush against the other side
-    # rather than driving it into what's there.
     lo = max([e for e, _o, _z in left], default=0.0)
-    hi = min([e for e, _o, _z in right], default=wall_len) - width
-    if lo > hi:
-        lo, hi = 0.0, wall_len - width
-    new_x = max(lo, min(new_x, hi))
-    if abs(new_x - x0) < 1e-6:
+    hi = min([e for e, _o, _z in right], default=wall_len)
+    if lo > x0 + 1e-6 or hi < x1 - 1e-6:
+        # Already overlapping something: only the wall bounds the move.
+        lo, hi = 0.0, wall_len
+
+    if set_width is None:
+        new_x = edge + value if side == 'L' else edge - value - width
+        new_x = max(lo, min(new_x, hi - width))
+        if abs(new_x - x0) < 1e-6:
+            return False
+        obj.location.x = new_x
+        return True
+
+    if side == 'L':
+        new_x0 = max(lo, min(edge + value, x1 - MIN_WIDTH))
+        new_x1 = x1
+    else:
+        new_x0 = x0
+        new_x1 = min(hi, max(edge - value, x0 + MIN_WIDTH))
+    new_w = new_x1 - new_x0
+    if abs(new_w - width) < 1e-6:
         return False
-    cabinet.location.x = new_x
+    # Width first: products grow from their origin (the left edge), so
+    # the origin is placed after the size is in.
+    set_width(new_w)
+    obj.location.x = new_x0
     return True
+
+
+def set_appliance_width(appliance, width):
+    """Resize an appliance the way its prompts dialog does: the cage
+    size, taken over from the cabinet when the appliance sits in one,
+    with panels re-solved and a hood rebuilt (its canopy is cut to the
+    cage at build time)."""
+    from . import appliance_geo
+    cage = hb_types.GeoNodeCage(appliance)
+    cage.set_input('Dim X', width)
+    if appliance.get(appliance_geo.CABINET_APPLIANCE_FLAG):
+        appliance[appliance_geo.SIZE_OWNED_FLAG] = True
+    if appliance_geo.supports_panels(appliance)             and appliance_geo.is_panel_ready(appliance):
+        panels = appliance_geo._panels_module()
+        if panels is not None:
+            panels.rebuild(appliance)
+    if appliance_geo.appliance_type(appliance) == 'HOOD':
+        appliance_geo.build_geometry(appliance)
+
+
+def iter_wall_appliances(scene):
+    """Appliances hung straight off a wall -- the ones that get wall-run
+    dimensions."""
+    for obj in scene.objects:
+        if not obj.get('IS_APPLIANCE'):
+            continue
+        parent = obj.parent
+        if parent is not None and parent.get('IS_WALL_BP'):
+            yield obj
+
+
+def appliance_dims(appliance):
+    """(width, depth, height) off the appliance cage, or None."""
+    cage = hb_types.GeoNodeCage(appliance)
+    if not cage.has_modifier():
+        return None
+    try:
+        return (cage.get_input('Dim X'), cage.get_input('Dim Y'),
+                cage.get_input('Dim Z'))
+    except Exception:
+        return None
