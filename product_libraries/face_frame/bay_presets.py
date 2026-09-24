@@ -101,8 +101,10 @@ BASE_PRESETS = {
                                  L('DOUBLE_DOOR', no_shelves=True)),
     # Vanity Deluxe: the Combination's drawer / sink false front / drawer
     # top row over a bottom row of a door beside a stack of two drawers.
+    # Its sink false front comes in at the same 17" opening.
     'VANITY_DELUXE':           H(V(L('DRAWER'),
-                                   L('FALSE_FRONT', size_role='VANITY_SINK_WIDTH'),
+                                   L('FALSE_FRONT',
+                                     size_role='VANITY_COMBINATION_SINK_WIDTH'),
                                    L('DRAWER'),
                                    size_role='TOP_DRAWER'),
                                  V(L('LEFT_DOOR', size_role='VANITY_DOOR',
