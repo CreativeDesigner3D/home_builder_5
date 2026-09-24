@@ -23,6 +23,8 @@ import bpy
 import gpu
 import blf
 import math
+import traceback
+from bpy.app.handlers import persistent
 from mathutils import Vector
 from gpu_extras.batch import batch_for_shader
 from bpy_extras import view3d_utils
@@ -657,6 +659,18 @@ def _opening_rect_screen(region, rv3d, cabinet_obj, layout, leaf_rect, bay_index
 
 
 def _draw_callback(op, context):
+    # A draw that raises would repeat every redraw; drop the frame and
+    # leave the GPU state clean instead.
+    try:
+        _draw_callback_impl(op, context)
+    except Exception:
+        traceback.print_exc()
+    finally:
+        gpu.state.line_width_set(1.0)
+        gpu.state.blend_set('NONE')
+
+
+def _draw_callback_impl(op, context):
     region = context.region
     rv3d = context.region_data
     if region is None or rv3d is None:
@@ -917,6 +931,11 @@ class _GrabBaseMixin:
     bl_options on themselves.
     """
     BOUNDARY_COLLECTOR = None
+    # A grab left switched on outlives many edits, so rolling them all
+    # back on Esc undoes work the user thought was done. Those grabs
+    # keep their edits on Esc and push an undo step per edit instead.
+    ESC_KEEPS_EDITS = False
+    PUSH_UNDO_PER_EDIT = False
 
     # Subclasses can override _collect to scope boundary collection to
     # a specific object (e.g. a cabinet group) instead of iterating
@@ -972,11 +991,13 @@ class _GrabBaseMixin:
         # status bar; matches the draw_walls / change_room_size
         # convention. Mention click-to-unlock since the lock-icon
         # affordance is otherwise only discoverable by experiment.
+        esc_hint = ("Esc: done" if self.ESC_KEEPS_EDITS
+                    else "Esc / RMB: cancel")
         context.area.header_text_set(
             f"{self.bl_label}  |  LMB: drag boundary or click lock"
             f" to unlock  |  Type: numeric  |  Tab: cycle snap"
             f"  |  Shift: hold to disable snap  |  Enter: confirm"
-            f"  |  Esc / RMB: cancel"
+            f"  |  {esc_hint}"
         )
         context.window.cursor_modal_set('SCROLL_XY')
         context.area.tag_redraw()
@@ -986,9 +1007,16 @@ class _GrabBaseMixin:
         register_active_modal(self)
         self._exit_requested = False
         self._exit_timer = None
+        _live_grabs.add(self)
         return {'RUNNING_MODAL'}
 
+    def cancel(self, context):
+        # Blender calls this when it ends the modal itself (file load,
+        # window close); without it the draw handler outlives the file.
+        self._cleanup(context)
+
     def _cleanup(self, context):
+        _live_grabs.discard(self)
         from ....operators.viewport_hud import unregister_active_modal
         unregister_active_modal(self)
         if self._draw_handle is not None:
@@ -1010,6 +1038,37 @@ class _GrabBaseMixin:
             pass
         if context.area:
             context.area.tag_redraw()
+
+    # ---- Undo ----
+
+    def _forget_scene_refs(self):
+        """Drop every cached object reference. Undo and redo free the
+        objects the boundary records point at, and the next redraw
+        would read them. An in-progress drag is abandoned as-is."""
+        self._boundaries = []
+        self._hover_boundary = None
+        self._drag_active = False
+        self._drag_boundary = None
+        self._drag_layout = None
+        self._drag_snapshot = None
+        self._drag_basis = None
+        self._snap_kind = None
+        self._typing = False
+        self._typed = ''
+        self._lock_targets = []
+
+    def _refresh_after_undo(self):
+        self._boundaries = self._collect()
+        # Esc must not roll back past the undo.
+        self._session_snapshot = _snapshot_session(bpy.context.scene)
+
+    def _push_undo(self):
+        if not self.PUSH_UNDO_PER_EDIT:
+            return
+        try:
+            bpy.ops.ed.undo_push(message=self.bl_label)
+        except Exception:
+            traceback.print_exc()
 
     # ---- Boundary picking ----
 
@@ -1054,6 +1113,7 @@ class _GrabBaseMixin:
         # Boundaries change because freshly-unlocked children re-share
         # their sibling space; the icon also disappears.
         self._boundaries = self._collect()
+        self._push_undo()
         return True
 
     def _pick_boundary(self, context, event):
@@ -1747,6 +1807,8 @@ class _GrabBaseMixin:
         self._snap_kind = None
         self._typing = False
         self._typed = ''
+        if commit:
+            self._push_undo()
 
     @staticmethod
     def _parse_typed(s):
@@ -1768,6 +1830,20 @@ class _GrabBaseMixin:
     # ---- Modal event router ----
 
     def modal(self, context, event):
+        # An exception here ends the operator without _cleanup, which
+        # leaves the HUD registry, draw handler, and modal cursor behind
+        # and makes Move unusable until restart. Always tear down.
+        try:
+            return self._modal_impl(context, event)
+        except Exception:
+            traceback.print_exc()
+            try:
+                self._cleanup(context)
+            except Exception:
+                traceback.print_exc()
+            return {'CANCELLED'}
+
+    def _modal_impl(self, context, event):
         # External exit request from the HUD: commit any in-progress drag
         # (Enter semantics, not Esc) and tear down. The wake-up timer
         # added by request_exit_active_grab is consumed here.
@@ -1889,10 +1965,19 @@ class _GrabBaseMixin:
                 self._end_drag(commit=False)
                 context.area.tag_redraw()
                 return {'RUNNING_MODAL'}
+            if self.ESC_KEEPS_EDITS:
+                self._cleanup(context)
+                return {'FINISHED'}
             # Otherwise cancel session: roll back everything
             _restore_session(self._session_snapshot)
             self._cleanup(context)
             return {'CANCELLED'}
+
+        # Undo (or any other shortcut) mid-drag would pull the objects
+        # out from under the drag. Hold them until the drag ends.
+        if (self._drag_active and event.value == 'PRESS'
+                and (event.ctrl or event.oskey)):
+            return {'RUNNING_MODAL'}
 
         return {'PASS_THROUGH'}
 
@@ -2058,10 +2143,13 @@ class hb_face_frame_OT_grab(_GrabBaseMixin, bpy.types.Operator):
     bl_description = (
         "Drag the edges the current selection mode owns: cabinet outer "
         "edges, bay boundaries, opening mid rails, or face frame "
-        "members. Switch mode to change what is draggable. Enter to "
-        "confirm, Esc to cancel"
+        "members. Switch mode to change what is draggable. Each drag "
+        "and unlock is its own undo step. Enter or Esc to finish"
     )
-    bl_options = {'REGISTER', 'UNDO'}
+    # No 'UNDO': it pushes one step per edit instead of one at the end.
+    bl_options = {'REGISTER'}
+    ESC_KEEPS_EDITS = True
+    PUSH_UNDO_PER_EDIT = True
 
     @classmethod
     def poll(cls, context):
@@ -2091,7 +2179,7 @@ class hb_face_frame_OT_grab(_GrabBaseMixin, bpy.types.Operator):
         return any((mx - t['cx']) ** 2 + (my - t['cy']) ** 2 <= tol2
                    for t in targets)
 
-    def modal(self, context, event):
+    def _modal_impl(self, context, event):
         # The boundary list is cached and only refreshed on the events
         # that invalidate it, so a mode change has to say so -- without
         # this the grab keeps offering the previous mode's handles and
@@ -2118,13 +2206,44 @@ class hb_face_frame_OT_grab(_GrabBaseMixin, bpy.types.Operator):
                     and not self._over_a_handle(context, event)):
                 return {'PASS_THROUGH'}
 
-        return super().modal(context, event)
+        return super()._modal_impl(context, event)
 
     def _collect(self):
         collector = collector_for_mode(bpy.context.scene)
         if collector is None:
             return []
         return _collect_boundaries(bpy.context.scene, collector)
+
+
+# Running grab operators, so undo/redo can reach them. Undo frees every
+# object their cached boundary records point at.
+_live_grabs = set()
+
+
+@persistent
+def _grabs_undo_pre(scene, *args):
+    for op in list(_live_grabs):
+        try:
+            op._forget_scene_refs()
+        except Exception:
+            _live_grabs.discard(op)
+
+
+@persistent
+def _grabs_undo_post(scene, *args):
+    for op in list(_live_grabs):
+        try:
+            op._refresh_after_undo()
+        except Exception:
+            traceback.print_exc()
+
+
+_UNDO_HANDLERS = (
+    (bpy.app.handlers.undo_pre, _grabs_undo_pre),
+    (bpy.app.handlers.redo_pre, _grabs_undo_pre),
+    (bpy.app.handlers.undo_post, _grabs_undo_post),
+    (bpy.app.handlers.redo_post, _grabs_undo_post),
+)
 
 
 classes = (
@@ -2135,4 +2254,20 @@ classes = (
     hb_face_frame_OT_grab_cabinet,
     hb_face_frame_OT_grab_cabinet_group,
 )
-register, unregister = bpy.utils.register_classes_factory(classes)
+_register_classes, _unregister_classes = bpy.utils.register_classes_factory(
+    classes)
+
+
+def register():
+    _register_classes()
+    for handlers, fn in _UNDO_HANDLERS:
+        if fn not in handlers:
+            handlers.append(fn)
+
+
+def unregister():
+    for handlers, fn in _UNDO_HANDLERS:
+        if fn in handlers:
+            handlers.remove(fn)
+    _live_grabs.clear()
+    _unregister_classes()
