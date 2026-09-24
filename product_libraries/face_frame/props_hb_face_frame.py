@@ -5022,6 +5022,307 @@ class Face_Frame_Door_Style(PropertyGroup):
             self.rename_anchor = self.name
         return True
 
+    def front_build_plan(self, front_width, front_length, front_thickness,
+                         frame_store=None, front_stamps=None, door_rail=None,
+                         round_top=None, edge_name=None):
+        """How this 5-piece style builds a front of the given size: the
+        effective frame values and the door_builder arguments. Shared by
+        assign_style_to_front and the style tiles, so a tile shows the
+        door the style really builds.
+
+        frame_store is the front's Set Door Frame store and front_stamps
+        the solver's per-leaf stamps on the front object (both mappings;
+        None for a front that has neither, e.g. a tile). door_rail and
+        edge_name may be callables, only called when needed: the paired
+        door style's rail (drawer fronts matching it) and the cabinet
+        edge profile. round_top is the front's round-top spec or None.
+
+        Returns a dict; 'too_small' holds a message when the front is
+        too small for the frame (the caller builds a slab)."""
+        from ..common import door_builder
+        frame_store = frame_store if frame_store is not None else {}
+        front_stamps = front_stamps if front_stamps is not None else {}
+
+        # Auto-add a centered mid rail above 45.5" so tall doors are
+        # split. Matches the frameless convention. Series with no
+        # divisible center panel opt out (see auto_mid_rail_allowed) --
+        # they only get a rail the user asks for.
+        auto_mid_rail_threshold = units.inch(45.5)
+        needs_auto_mid_rail = (
+            front_length > auto_mid_rail_threshold
+            and style_options.auto_mid_rail_allowed(self.front_series))
+
+        # Per-side frame-width overrides, visual-true (eff_left renders on
+        # the viewer's left). Two sources:
+        # - The user's Set Door Frame lock: the whole interface is pinned
+        #   on the OPENING-cage store (HB_FRAME_FRAME_LOCKED) so a cabinet
+        #   edit can't overwrite it.
+        # - Unlocked, the solver's per-leaf stamps on the front object
+        #   (tri-view mirror doors zero the interior stiles so adjacent
+        #   mirrors butt; re-stamped on every recalc), falling back to the
+        #   uniform door-style widths.
+        frame_locked = bool(frame_store.get('HB_FRAME_FRAME_LOCKED', False))
+        stamps = frame_store if frame_locked else front_stamps
+        eff_left_stile  = stamps.get('HB_FRAME_OVR_LEFT_STILE',  self.stile_width)
+        eff_right_stile = stamps.get('HB_FRAME_OVR_RIGHT_STILE', self.stile_width)
+        eff_top_rail    = stamps.get('HB_FRAME_OVR_TOP_RAIL',    self.rail_width)
+        eff_bottom_rail = stamps.get('HB_FRAME_OVR_BOTTOM_RAIL', self.rail_width)
+
+        # Mid-member widths. The style carries one mid rail width and no
+        # mid stile width at all (a mid stile follows the outer stile), so
+        # both are overridable per front from the same locked store - a
+        # stored 0 / missing key means "follow the style".
+        eff_mid_rail = self.mid_rail_width
+        eff_mid_stile = getattr(self, 'mid_stile_width', 0.0) or self.stile_width
+        if frame_locked:
+            eff_mid_rail = (frame_store.get('HB_FRAME_OVR_MID_RAIL_WIDTH', 0.0)
+                            or eff_mid_rail)
+            eff_mid_stile = (frame_store.get('HB_FRAME_OVR_MID_STILE_WIDTH', 0.0)
+                             or eff_mid_stile)
+
+        # Mitered series: the member cross-section IS the profile; its
+        # width becomes the frame width on all four sides (mitred
+        # corners need equal members) and per-side overrides don't
+        # apply.
+        member_sec = self.resolve_member_section(front_thickness)
+        if member_sec is not None:
+            mw = max(u for u, v in member_sec)
+            eff_left_stile = eff_right_stile = mw
+            eff_top_rail = eff_bottom_rail = mw
+
+        # Locked NONE mode removes the mid rail entirely, overriding both the
+        # style's add_mid_rail and the tall-door auto rail.
+        ovr_mid_mode = frame_store.get('HB_FRAME_OVR_MID_RAIL_MODE') if frame_locked else None
+        # Per-front mid-member GRID (Set Door Frame): N mid rails / mid
+        # stiles with optional row / column weights. Active only while
+        # the frame is locked; a rail count > 0 supersedes the single
+        # mid-rail modes below.
+        ovr_grid_rails = 0
+        ovr_grid_stiles = 0
+        if frame_locked:
+            ovr_grid_rails = max(
+                int(frame_store.get('HB_FRAME_OVR_MID_RAIL_COUNT', 0) or 0), 0)
+            ovr_grid_stiles = max(
+                int(frame_store.get('HB_FRAME_OVR_MID_STILE_COUNT', 0) or 0), 0)
+
+        # Match-door-rail (drawer-front styles): a drawer front tall
+        # enough to carry the door rails takes the paired door style's
+        # rail width instead of the drawer rail, so doors and drawer
+        # fronts read as one family. Manual control wins - skipped when
+        # this style's rail is unlocked or the front's frame is locked.
+        # Only ever widens, and only when the front still clears the
+        # 2*rail + 1" panel minimum enforced below.
+        rail_matched = False
+        if (self.match_door_rail_width and _front_is_drawer(self)
+                and door_rail is not None
+                and not frame_locked and not self.unlock_rail_width):
+            if callable(door_rail):
+                door_rail = door_rail()
+            if door_rail is not None and door_rail > eff_top_rail:
+                need = door_rail * 2.0 + units.inch(1)
+                if ovr_mid_mode != 'NONE' and (self.add_mid_rail or needs_auto_mid_rail):
+                    need += eff_mid_rail
+                if front_length >= need:
+                    eff_top_rail = eff_bottom_rail = door_rail
+                    rail_matched = True
+
+        # Shaped (arched) top edge: widen the shaped rail(s) by the
+        # curve's peak rise so the catalog rail width survives at the
+        # crest; the geometry follows in build_door_mesh (shape=).
+        # Twin carries no curve -- it only forces the mid stile below,
+        # so the rails stay at their catalog width. Mitered members
+        # keep their own profile -- the catalog offers no shapes there.
+        # Round top (quarter / half circle): a per-door override, not
+        # a style trait. The arc owns the whole top, so it supersedes
+        # the style's arched-opening shape and needs no rail widening -
+        # the curved rail keeps its catalog width around the curve.
+        shape_k = None
+        shape_rise_cap = 0.0
+        _msw = 0.0
+        if member_sec is None and round_top is None:
+            shape_k = style_options.shape_kind(self.front_shape)
+        if shape_k is not None:
+            _msw = eff_mid_stile
+            _n_ms = 1 if shape_k.get('twin') else 0
+            if shape_k.get('curve'):
+                _cell_w = (front_width - eff_left_stile - eff_right_stile
+                           - _n_ms * _msw) / (_n_ms + 1)
+                if _cell_w > units.inch(2):
+                    shape_rise_cap = door_builder.shape_rise(
+                        shape_k['curve'], _cell_w)
+                    eff_top_rail += shape_rise_cap
+                    if shape_k.get('double'):
+                        eff_bottom_rail += shape_rise_cap
+                else:
+                    shape_k = None
+
+        plan = dict(too_small=None, frame_locked=frame_locked,
+                    rail_matched=rail_matched,
+                    left_stile=eff_left_stile, right_stile=eff_right_stile,
+                    top_rail=eff_top_rail, bottom_rail=eff_bottom_rail,
+                    mid_rail_width=eff_mid_rail, mid_stile_width=eff_mid_stile)
+
+        min_width = eff_left_stile + eff_right_stile + units.inch(1)
+        if ovr_grid_stiles:
+            _grid_msw = eff_mid_stile
+            min_width += ovr_grid_stiles * _grid_msw
+        min_height = eff_top_rail + eff_bottom_rail + units.inch(1)
+        if ovr_grid_rails:
+            min_height += ovr_grid_rails * eff_mid_rail
+        elif ovr_mid_mode != 'NONE' and (self.add_mid_rail or needs_auto_mid_rail):
+            min_height += eff_mid_rail
+
+        if front_width < min_width:
+            plan['too_small'] = (f"Front too narrow ({front_width:.3f}m) for stile "
+                                 f"widths (need {min_width:.3f}m)")
+            return plan
+        if front_length < min_height:
+            plan['too_small'] = (f"Front too short ({front_length:.3f}m) for rail "
+                                 f"widths (need {min_height:.3f}m)")
+            return plan
+
+        # Per-front mid rail override (durable, set from the Set Door Frame
+        # popup) wins over the style / auto-center. CENTERED centers it; THIRD /
+        # QUARTER place it by fraction; CUSTOM, TOP_PANEL and BOTTOM_PANEL use the
+        # single stored value (a from-bottom centerline, or an interior panel
+        # height that the solver converts to a centerline). Presence of an
+        # override also forces a mid rail on. Resolved here to plain values
+        # (on / centered / absolute centerline from the bottom) so both
+        # geometry paths consume the same decision.
+        # Center panel construction by panel KIND -- see
+        # effective_panel_fields (shared with the wood hood doors).
+        _pkind, eff_panel_th, eff_panel_inset = (
+            self.effective_panel_fields(front_thickness))
+
+        mid_on = False
+        mid_center = True
+        mid_loc = 0.0
+        if not ovr_grid_rails and ovr_mid_mode != 'NONE' \
+                and (needs_auto_mid_rail or self.add_mid_rail or ovr_mid_mode):
+            mid_on = True
+            if ovr_mid_mode == 'CENTERED':
+                pass
+            elif ovr_mid_mode == 'THIRD':
+                # The centerline is measured from the BOTTOM, so 2/3 up puts
+                # the rail near the top (bottom opening = 2/3, top = 1/3).
+                mid_center = False
+                mid_loc = front_length * 2.0 / 3.0
+            elif ovr_mid_mode == 'QUARTER':
+                # 3/4 up from the bottom (bottom opening = 3/4, top = 1/4).
+                mid_center = False
+                mid_loc = front_length * 3.0 / 4.0
+            elif ovr_mid_mode in ('CUSTOM', 'TOP_PANEL', 'BOTTOM_PANEL'):
+                # One stored value, interpreted by mode. The door spans
+                # [0, L] along its length; the rail spans [loc - Rm/2,
+                # loc + Rm/2] about its centerline loc. So the bottom opening
+                # is (loc - Rm/2) - bottom_rail and the top opening is
+                # (L - top_rail) - (loc + Rm/2). CUSTOM stores loc directly;
+                # the panel modes store the opening height on that side and we
+                # solve for loc, clamping so a too-large height can't push the
+                # rail past either end rail.
+                mid_center = False
+                stored = frame_store.get('HB_FRAME_OVR_MID_RAIL_LOCATION',
+                                         self.mid_rail_location)
+                half_rm = eff_mid_rail / 2.0
+                if ovr_mid_mode == 'BOTTOM_PANEL':
+                    loc = eff_bottom_rail + stored + half_rm
+                elif ovr_mid_mode == 'TOP_PANEL':
+                    loc = front_length - eff_top_rail - stored - half_rm
+                else:
+                    loc = stored
+                loc_min = eff_bottom_rail + half_rm
+                loc_max = front_length - eff_top_rail - half_rm
+                if loc_max >= loc_min:
+                    loc = max(loc_min, min(loc, loc_max))
+                mid_loc = loc
+            elif needs_auto_mid_rail:
+                pass
+            else:
+                mid_center = self.center_mid_rail
+                if not mid_center:
+                    mid_loc = self.mid_rail_location
+
+        info = door_builder.door_style_info(self)
+        info.update(
+            door_type='5_PIECE',
+            left_stile_width=eff_left_stile,
+            right_stile_width=eff_right_stile,
+            top_rail_width=eff_top_rail,
+            bottom_rail_width=eff_bottom_rail,
+            panel_thickness=eff_panel_th,
+            panel_inset=eff_panel_inset,
+            add_mid_rail=False,
+            mid_rail_z=(((0.5, 0.0) if mid_center else (0.0, mid_loc))
+                        if mid_on else None),
+        )
+        # Locked mid-member widths: the style has one mid rail width
+        # and no mid stile width, so a pinned front takes both off its
+        # own store (unlocked, door_style_info's values already stand).
+        if frame_locked:
+            info['mid_rail_width'] = eff_mid_rail
+            info['mid_stile_width'] = eff_mid_stile
+        # Mid-member grid override: counts + optional row / column
+        # weights (door_layout divides the field; weight strings are
+        # parsed leniently, blank / invalid = equal cells). Mitered
+        # doors sweep their profile along the mid members too.
+        if ovr_grid_rails:
+            info['mid_rail_count'] = ovr_grid_rails
+            info['mid_rail_z'] = None
+            info['mid_rail_fractions'] = door_builder.parse_grid_ratios(
+                frame_store.get('HB_FRAME_OVR_ROW_RATIOS', ''))
+        if ovr_grid_stiles:
+            info['mid_stile_count'] = max(
+                int(info.get('mid_stile_count', 0) or 0),
+                ovr_grid_stiles)
+            info['mid_stile_fractions'] = door_builder.parse_grid_ratios(
+                frame_store.get('HB_FRAME_OVR_COL_RATIOS', ''))
+        if shape_k is not None and shape_k.get('twin') \
+                and not info.get('mid_stile_count'):
+            info['mid_stile_count'] = 1
+            info['mid_stile_width'] = _msw
+        # Profile sweeps / panel construction / mullions resolved
+        # from the style via resolve_mesh_sections (shared with the
+        # wood hood door builder). The cabinet-level "Door and
+        # Drawer Edge Profile" (a per-order catalog styling option,
+        # not a series trait) rides in as the edge override.
+        if callable(edge_name):
+            edge_name = edge_name()
+        secs = self.resolve_mesh_sections(
+            front_thickness, eff_panel_inset, _pkind, member_sec,
+            edge_name=edge_name)
+        # Locked-frame mullion override: the Set Door Frame dialog
+        # can pin the Wood Mullion grid's lite counts per front
+        # (0 / absent = the pattern's standard counts).
+        if (frame_locked and secs.get('mullion') is not None
+                and secs['mullion'].get('pattern') == 'GRID'):
+            _mrows = int(frame_store.get('HB_FRAME_OVR_MULLION_ROWS', 0) or 0)
+            _mcols = int(frame_store.get('HB_FRAME_OVR_MULLION_COLS', 0) or 0)
+            if _mrows > 0:
+                secs['mullion']['rows'] = _mrows
+            if _mcols > 0:
+                secs['mullion']['cols'] = _mcols
+        # Per-row glass (Set Door Frame > Glass Panels): a split
+        # door with a glass top and a wood bottom. Rows resolve
+        # against THIS door's layout.
+        glass_rows = _front_glass_rows(
+            frame_store,
+            door_builder.panel_row_count(info, front_width, front_length))
+        # A door too small for its arc builds square; the Change
+        # Door Shape dialog is where the user hears why.
+        if round_top is not None and door_builder.round_top_layout(
+                info, front_width, front_length, round_top)[0] is None:
+            round_top = None
+        plan.update(
+            info=info, glass_rows=glass_rows,
+            glass=_pkind['kind'] == 'GLASS',
+            panel_thickness=eff_panel_th, panel_inset=eff_panel_inset,
+            mid_on=mid_on, mid_center=mid_center, mid_loc=mid_loc,
+            build=dict(shape=(dict(shape_k, rise=shape_rise_cap)
+                              if shape_k and shape_k.get('curve') else None),
+                       glass_rows=glass_rows or None,
+                       round_top=round_top, **secs))
+        return plan
+
     def assign_style_to_front(self, front_obj, record_override=False):
         """Apply this door style to a face frame front object.
 
@@ -5122,209 +5423,37 @@ class Face_Frame_Door_Style(PropertyGroup):
         except Exception:
             front_thickness = units.inch(0.75)
 
-        # Auto-add a centered mid rail above 45.5" so tall doors are
-        # split. Matches the frameless convention. Series with no
-        # divisible center panel opt out (see auto_mid_rail_allowed) --
-        # they only get a rail the user asks for.
-        auto_mid_rail_threshold = units.inch(45.5)
-        needs_auto_mid_rail = (
-            front_length > auto_mid_rail_threshold
-            and style_options.auto_mid_rail_allowed(self.front_series))
-
-        # Per-side frame-width overrides, visual-true (eff_left renders on
-        # the viewer's left). Two sources:
-        # - The user's Set Door Frame lock: the whole interface is pinned
-        #   on the OPENING-cage store (HB_FRAME_FRAME_LOCKED) so a cabinet
-        #   edit can't overwrite it.
-        # - Unlocked, the solver's per-leaf stamps on the front object
-        #   (tri-view mirror doors zero the interior stiles so adjacent
-        #   mirrors butt; re-stamped on every recalc), falling back to the
-        #   uniform door-style widths.
+        # Frame widths, mid rails, shape, profiles and glass for this
+        # front -- see front_build_plan, which the style tiles share.
         frame_store = _front_frame_store(front_obj)
-        frame_locked = bool(frame_store.get('HB_FRAME_FRAME_LOCKED', False))
-        if frame_locked:
-            eff_left_stile  = frame_store.get('HB_FRAME_OVR_LEFT_STILE',  self.stile_width)
-            eff_right_stile = frame_store.get('HB_FRAME_OVR_RIGHT_STILE', self.stile_width)
-            eff_top_rail    = frame_store.get('HB_FRAME_OVR_TOP_RAIL',    self.rail_width)
-            eff_bottom_rail = frame_store.get('HB_FRAME_OVR_BOTTOM_RAIL', self.rail_width)
-        else:
-            eff_left_stile  = front_obj.get('HB_FRAME_OVR_LEFT_STILE',  self.stile_width)
-            eff_right_stile = front_obj.get('HB_FRAME_OVR_RIGHT_STILE', self.stile_width)
-            eff_top_rail    = front_obj.get('HB_FRAME_OVR_TOP_RAIL',    self.rail_width)
-            eff_bottom_rail = front_obj.get('HB_FRAME_OVR_BOTTOM_RAIL', self.rail_width)
-
-        # Mid-member widths. The style carries one mid rail width and no
-        # mid stile width at all (a mid stile follows the outer stile), so
-        # both are overridable per front from the same locked store - a
-        # stored 0 / missing key means "follow the style".
-        eff_mid_rail = self.mid_rail_width
-        eff_mid_stile = getattr(self, 'mid_stile_width', 0.0) or self.stile_width
-        if frame_locked:
-            eff_mid_rail = (frame_store.get('HB_FRAME_OVR_MID_RAIL_WIDTH', 0.0)
-                            or eff_mid_rail)
-            eff_mid_stile = (frame_store.get('HB_FRAME_OVR_MID_STILE_WIDTH', 0.0)
-                             or eff_mid_stile)
-
-        # Mitered series: the member cross-section IS the profile; its
-        # width becomes the frame width on all four sides (mitred
-        # corners need equal members) and per-side overrides don't
-        # apply.
-        member_sec = self.resolve_member_section(front_thickness)
-        if member_sec is not None:
-            mw = max(u for u, v in member_sec)
-            eff_left_stile = eff_right_stile = mw
-            eff_top_rail = eff_bottom_rail = mw
-
-        # Locked NONE mode removes the mid rail entirely, overriding both the
-        # style's add_mid_rail and the tall-door auto rail.
-        ovr_mid_mode = frame_store.get('HB_FRAME_OVR_MID_RAIL_MODE') if frame_locked else None
-        # Per-front mid-member GRID (Set Door Frame): N mid rails / mid
-        # stiles with optional row / column weights. Active only while
-        # the frame is locked; a rail count > 0 supersedes the single
-        # mid-rail modes below.
-        ovr_grid_rails = 0
-        ovr_grid_stiles = 0
-        if frame_locked:
-            ovr_grid_rails = max(
-                int(frame_store.get('HB_FRAME_OVR_MID_RAIL_COUNT', 0) or 0), 0)
-            ovr_grid_stiles = max(
-                int(frame_store.get('HB_FRAME_OVR_MID_STILE_COUNT', 0) or 0), 0)
-
-        # Match-door-rail (drawer-front styles): a drawer front tall
-        # enough to carry the door rails takes the paired door style's
-        # rail width instead of the drawer rail, so doors and drawer
-        # fronts read as one family. Manual control wins - skipped when
-        # this style's rail is unlocked or the front's frame is locked.
-        # Only ever widens, and only when the front still clears the
-        # 2*rail + 1" panel minimum enforced below.
-        rail_matched = False
-        if (self.match_door_rail_width and _front_is_drawer(self)
-                and role in self._DRAWER_FRONT_ROLES
-                and not frame_locked and not self.unlock_rail_width):
-            door_rail = _door_rail_for_front(self, front_obj)
-            if door_rail is not None and door_rail > eff_top_rail:
-                need = door_rail * 2.0 + units.inch(1)
-                if ovr_mid_mode != 'NONE' and (self.add_mid_rail or needs_auto_mid_rail):
-                    need += eff_mid_rail
-                if front_length >= need:
-                    eff_top_rail = eff_bottom_rail = door_rail
-                    rail_matched = True
-
-        # Shaped (arched) top edge: widen the shaped rail(s) by the
-        # curve's peak rise so the catalog rail width survives at the
-        # crest; the geometry follows in build_door_mesh (shape=).
-        # Twin carries no curve -- it only forces the mid stile below,
-        # so the rails stay at their catalog width. Mitered members
-        # keep their own profile -- the catalog offers no shapes there.
-        # Round top (quarter / half circle): a per-door override, not
-        # a style trait. The arc owns the whole top, so it supersedes
-        # the style's arched-opening shape and needs no rail widening -
-        # the curved rail keeps its catalog width around the curve.
-        round_top = front_round_top(front_obj, frame_store)
-        shape_k = None
-        shape_rise_cap = 0.0
-        _msw = 0.0
-        if member_sec is None and round_top is None:
-            shape_k = style_options.shape_kind(self.front_shape)
-        if shape_k is not None:
-            _msw = eff_mid_stile
-            _n_ms = 1 if shape_k.get('twin') else 0
-            if shape_k.get('curve'):
-                _cell_w = (front_width - eff_left_stile - eff_right_stile
-                           - _n_ms * _msw) / (_n_ms + 1)
-                if _cell_w > units.inch(2):
-                    shape_rise_cap = door_builder.shape_rise(
-                        shape_k['curve'], _cell_w)
-                    eff_top_rail += shape_rise_cap
-                    if shape_k.get('double'):
-                        eff_bottom_rail += shape_rise_cap
-                else:
-                    shape_k = None
-
-        min_width = eff_left_stile + eff_right_stile + units.inch(1)
-        if ovr_grid_stiles:
-            _grid_msw = eff_mid_stile
-            min_width += ovr_grid_stiles * _grid_msw
-        min_height = eff_top_rail + eff_bottom_rail + units.inch(1)
-        if ovr_grid_rails:
-            min_height += ovr_grid_rails * eff_mid_rail
-        elif ovr_mid_mode != 'NONE' and (self.add_mid_rail or needs_auto_mid_rail):
-            min_height += eff_mid_rail
+        plan = self.front_build_plan(
+            front_width, front_length, front_thickness,
+            frame_store=frame_store, front_stamps=front_obj,
+            door_rail=((lambda: _door_rail_for_front(self, front_obj))
+                       if role in self._DRAWER_FRONT_ROLES else None),
+            round_top=front_round_top(front_obj, frame_store),
+            edge_name=lambda: self._cabinet_edge_profile(front_obj))
 
         # Too small for the frame -> the front renders as a slab, which
         # still carries the cabinet-level edge profile. The message
         # return is kept for callers that report the fallback.
-        if front_width < min_width:
+        if plan['too_small']:
             self._apply_slab_front(front_obj, front_length, front_width,
                                    front_thickness)
-            return (f"Front too narrow ({front_width:.3f}m) for stile "
-                    f"widths (need {min_width:.3f}m)")
-        if front_length < min_height:
-            self._apply_slab_front(front_obj, front_length, front_width,
-                                   front_thickness)
-            return (f"Front too short ({front_length:.3f}m) for rail "
-                    f"widths (need {min_height:.3f}m)")
-
-        # Per-front mid rail override (durable, set from the Set Door Frame
-        # popup) wins over the style / auto-center. CENTERED centers it; THIRD /
-        # QUARTER place it by fraction; CUSTOM, TOP_PANEL and BOTTOM_PANEL use the
-        # single stored value (a from-bottom centerline, or an interior panel
-        # height that the solver converts to a centerline). Presence of an
-        # override also forces a mid rail on. Resolved here to plain values
-        # (on / centered / absolute centerline from the bottom) so both
-        # geometry paths consume the same decision.
-        # Center panel construction by panel KIND -- see
-        # effective_panel_fields (shared with the wood hood doors).
-        _pkind, eff_panel_th, eff_panel_inset = (
-            self.effective_panel_fields(front_thickness))
-
-        mid_on = False
-        mid_center = True
-        mid_loc = 0.0
-        if not ovr_grid_rails and ovr_mid_mode != 'NONE' \
-                and (needs_auto_mid_rail or self.add_mid_rail or ovr_mid_mode):
-            mid_on = True
-            if ovr_mid_mode == 'CENTERED':
-                pass
-            elif ovr_mid_mode == 'THIRD':
-                # The centerline is measured from the BOTTOM, so 2/3 up puts
-                # the rail near the top (bottom opening = 2/3, top = 1/3).
-                mid_center = False
-                mid_loc = front_length * 2.0 / 3.0
-            elif ovr_mid_mode == 'QUARTER':
-                # 3/4 up from the bottom (bottom opening = 3/4, top = 1/4).
-                mid_center = False
-                mid_loc = front_length * 3.0 / 4.0
-            elif ovr_mid_mode in ('CUSTOM', 'TOP_PANEL', 'BOTTOM_PANEL'):
-                # One stored value, interpreted by mode. The door spans
-                # [0, L] along its length; the rail spans [loc - Rm/2,
-                # loc + Rm/2] about its centerline loc. So the bottom opening
-                # is (loc - Rm/2) - bottom_rail and the top opening is
-                # (L - top_rail) - (loc + Rm/2). CUSTOM stores loc directly;
-                # the panel modes store the opening height on that side and we
-                # solve for loc, clamping so a too-large height can't push the
-                # rail past either end rail.
-                mid_center = False
-                stored = frame_store.get('HB_FRAME_OVR_MID_RAIL_LOCATION',
-                                         self.mid_rail_location)
-                half_rm = eff_mid_rail / 2.0
-                if ovr_mid_mode == 'BOTTOM_PANEL':
-                    loc = eff_bottom_rail + stored + half_rm
-                elif ovr_mid_mode == 'TOP_PANEL':
-                    loc = front_length - eff_top_rail - stored - half_rm
-                else:
-                    loc = stored
-                loc_min = eff_bottom_rail + half_rm
-                loc_max = front_length - eff_top_rail - half_rm
-                if loc_max >= loc_min:
-                    loc = max(loc_min, min(loc, loc_max))
-                mid_loc = loc
-            elif needs_auto_mid_rail:
-                pass
-            else:
-                mid_center = self.center_mid_rail
-                if not mid_center:
-                    mid_loc = self.mid_rail_location
+            return plan['too_small']
+        frame_locked = plan['frame_locked']
+        rail_matched = plan['rail_matched']
+        eff_left_stile = plan['left_stile']
+        eff_right_stile = plan['right_stile']
+        eff_top_rail = plan['top_rail']
+        eff_bottom_rail = plan['bottom_rail']
+        eff_mid_rail = plan['mid_rail_width']
+        eff_mid_stile = plan['mid_stile_width']
+        eff_panel_th = plan['panel_thickness']
+        eff_panel_inset = plan['panel_inset']
+        mid_on = plan['mid_on']
+        mid_center = plan['mid_center']
+        mid_loc = plan['mid_loc']
         if door_builder.USE_PYTHON_DOORS:
             # Python-built door: static boxes in the front's own mesh. The
             # cutpart modifier stays for its Length / Width / Thickness
@@ -5333,87 +5462,13 @@ class Face_Frame_Door_Style(PropertyGroup):
             for mod in list(front_obj.modifiers):
                 if mod.type == 'NODES' and 'Door Style' in mod.name:
                     front_obj.modifiers.remove(mod)
-            info = door_builder.door_style_info(self)
-            info.update(
-                door_type='5_PIECE',
-                left_stile_width=eff_left_stile,
-                right_stile_width=eff_right_stile,
-                top_rail_width=eff_top_rail,
-                bottom_rail_width=eff_bottom_rail,
-                panel_thickness=eff_panel_th,
-                panel_inset=eff_panel_inset,
-                add_mid_rail=False,
-                mid_rail_z=(((0.5, 0.0) if mid_center else (0.0, mid_loc))
-                            if mid_on else None),
-            )
-            # Locked mid-member widths: the style has one mid rail width
-            # and no mid stile width, so a pinned front takes both off its
-            # own store (unlocked, door_style_info's values already stand).
-            if frame_locked:
-                info['mid_rail_width'] = eff_mid_rail
-                info['mid_stile_width'] = eff_mid_stile
-            # Mid-member grid override: counts + optional row / column
-            # weights (door_layout divides the field; weight strings are
-            # parsed leniently, blank / invalid = equal cells). Mitered
-            # doors sweep their profile along the mid members too.
-            if ovr_grid_rails:
-                info['mid_rail_count'] = ovr_grid_rails
-                info['mid_rail_z'] = None
-                info['mid_rail_fractions'] = door_builder.parse_grid_ratios(
-                    frame_store.get('HB_FRAME_OVR_ROW_RATIOS', ''))
-            if ovr_grid_stiles:
-                info['mid_stile_count'] = max(
-                    int(info.get('mid_stile_count', 0) or 0),
-                    ovr_grid_stiles)
-                info['mid_stile_fractions'] = door_builder.parse_grid_ratios(
-                    frame_store.get('HB_FRAME_OVR_COL_RATIOS', ''))
-            if shape_k is not None and shape_k.get('twin') \
-                    and not info.get('mid_stile_count'):
-                info['mid_stile_count'] = 1
-                info['mid_stile_width'] = _msw
-            # Profile sweeps / panel construction / mullions resolved
-            # from the style via resolve_mesh_sections (shared with the
-            # wood hood door builder). The cabinet-level "Door and
-            # Drawer Edge Profile" (a per-order catalog styling option,
-            # not a series trait) rides in as the edge override.
-            secs = self.resolve_mesh_sections(
-                front_thickness, eff_panel_inset, _pkind, member_sec,
-                edge_name=self._cabinet_edge_profile(front_obj))
-            # Locked-frame mullion override: the Set Door Frame dialog
-            # can pin the Wood Mullion grid's lite counts per front
-            # (0 / absent = the pattern's standard counts).
-            if (frame_locked and secs.get('mullion') is not None
-                    and secs['mullion'].get('pattern') == 'GRID'):
-                _mrows = int(frame_store.get('HB_FRAME_OVR_MULLION_ROWS', 0) or 0)
-                _mcols = int(frame_store.get('HB_FRAME_OVR_MULLION_COLS', 0) or 0)
-                if _mrows > 0:
-                    secs['mullion']['rows'] = _mrows
-                if _mcols > 0:
-                    secs['mullion']['cols'] = _mcols
-            # Per-row glass (Set Door Frame > Glass Panels): a split
-            # door with a glass top and a wood bottom. Rows resolve
-            # against THIS door's layout; the lite rects are stamped
-            # for the drawings' hatch pass.
-            glass_rows = _front_glass_rows(
-                frame_store,
-                door_builder.panel_row_count(info, front_width,
-                                             front_length))
-            # A door too small for its arc builds square; the Change
-            # Door Shape dialog is where the user hears why.
-            if round_top is not None and door_builder.round_top_layout(
-                    info, front_width, front_length, round_top)[0] is None:
-                round_top = None
+            info = plan['info']
+            glass_rows = plan['glass_rows']
             door_builder.build_door_mesh(front_obj.data, info,
                                          front_width, front_length,
-                                         front_thickness,
-                                         shape=(dict(shape_k,
-                                                     rise=shape_rise_cap)
-                                                if shape_k
-                                                and shape_k.get('curve')
-                                                else None),
-                                         glass_rows=glass_rows or None,
-                                         round_top=round_top,
-                                         **secs)
+                                         front_thickness, **plan['build'])
+            # Per-row glass lite rects are stamped for the drawings'
+            # hatch pass.
             if glass_rows:
                 cells = door_builder.glass_cell_rects(
                     info, front_width, front_length, glass_rows)
@@ -5599,6 +5654,58 @@ class Face_Frame_Door_Style(PropertyGroup):
         op = row.operator("hb_face_frame.update_fronts_from_style",
                           text="Update Fronts", icon='FILE_REFRESH')
         op.kind = kind
+
+
+class _FrontStyleSketch:
+    """A front style that is not in the file: the fields a series /
+    shape / panel pick would give a new style, with the door style's
+    build methods, so a wizard tile shows the door it would build."""
+
+    front_build_plan = Face_Frame_Door_Style.front_build_plan
+    effective_panel_fields = Face_Frame_Door_Style.effective_panel_fields
+    resolve_member_section = Face_Frame_Door_Style.resolve_member_section
+    resolve_mesh_sections = Face_Frame_Door_Style.resolve_mesh_sections
+
+    def __init__(self, fields, drawer):
+        self.__dict__.update(fields)
+        self._drawer = drawer
+
+    def path_from_id(self):
+        return ('drawer_front_styles[0]' if self._drawer
+                else 'door_styles[0]')
+
+
+def front_style_sketch(kind, series, shape=None, panel=None, base=None):
+    """What new_front_style would make from this pick, without making
+    it: ``base``'s settings (the property defaults when None), then the
+    series cascade -- a missing shape / panel takes the first choice,
+    as the cascade does."""
+    drawer = kind == 'DRAWER'
+    fields = {}
+    for prop in Face_Frame_Door_Style.bl_rna.properties:
+        pid = prop.identifier
+        if pid == 'rna_type' or prop.type == 'COLLECTION':
+            continue
+        if base is not None:
+            fields[pid] = getattr(base, pid, None)
+        elif prop.type == 'POINTER':
+            fields[pid] = None
+        elif getattr(prop, 'is_array', False):
+            fields[pid] = tuple(prop.default_array)
+        else:
+            fields[pid] = prop.default
+    if not shape:
+        shapes = style_options.door_shapes(series, drawer=drawer)
+        shape = shapes[0] if shapes else ''
+    if not panel:
+        panels = style_options.door_panels(series, shape, drawer=drawer)
+        panel = panels[0] if panels else ''
+    fields.update(front_series=series, front_shape=shape, front_panel=panel)
+    sketch = _FrontStyleSketch(fields, drawer)
+    _apply_series_frame_to_door_style(sketch)
+    # The mid rail follows the rail (update_rail_width).
+    sketch.mid_rail_width = sketch.rail_width
+    return sketch
 
 
 class HB_UL_face_frame_door_styles(UIList):

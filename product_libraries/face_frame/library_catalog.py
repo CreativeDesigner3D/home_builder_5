@@ -649,46 +649,98 @@ def _crown_uses(p, category):
 # sidebar greys a field out, the page leaves it out.
 # ---- Door style managers ---------------------------------------------------
 # A picture of every door (or drawer front) style, drawn from the same
-# layout the door is built from, so a tile can never show a door the
-# style does not make -- and there are no pictures to keep up.
+# geometry the door is built from (front_build_plan + door_builder), so
+# a tile can never show a door the style does not make -- and there are
+# no pictures to keep up.
 
 _TILE_SIZE = {'DOOR': (15.0, 30.0), 'DRAWER': (18.0, 7.0)}   # inches
+_TILE_THICKNESS = 0.75                                         # inches
+_picture_cache = {}
+
+
+def _style_signature(style):
+    """Everything on a front style that can change its picture."""
+    if style is None:
+        return None
+    sig = []
+    for prop in style.bl_rna.properties:
+        pid = prop.identifier
+        if pid in ('rna_type', 'name', 'rename_anchor')                 or prop.type == 'COLLECTION':
+            continue
+        val = getattr(style, pid, None)
+        if prop.type == 'POINTER':
+            val = getattr(val, 'name', None)
+        elif getattr(prop, 'is_array', False):
+            val = tuple(val)
+        sig.append(val)
+    return tuple(sig)
+
+
+def _front_picture(kind, style):
+    """door_builder.door_picture of the front ``style`` builds at the
+    tile size (a door style, or a sketch of one)."""
+    from ... import units
+    from ..common import door_builder
+    w, h = (units.inch(v) for v in _TILE_SIZE[kind])
+    t = units.inch(_TILE_THICKNESS)
+    plan = None
+    if style.door_type != 'SLAB':
+        plan = style.front_build_plan(w, h, t)
+        if plan['too_small']:
+            plan = None
+    if plan is None:
+        info = door_builder.door_style_info(style)
+        info['door_type'] = 'SLAB'
+        geo = door_builder.build_door_geometry(info, w, h, t)
+    else:
+        geo = door_builder.build_door_geometry(plan['info'], w, h, t,
+                                               **plan['build'])
+    pic = door_builder.door_picture(*geo, w, h, t)
+    pic['glass'] = bool(plan and plan['glass'])
+    return pic
+
+
+def _cached_picture(key, make):
+    pic = _picture_cache.get(key)
+    if pic is None:
+        if len(_picture_cache) > 400:
+            _picture_cache.clear()
+        try:
+            pic = make()
+        except Exception as ex:
+            print("Home Builder: front picture failed: %s" % ex)
+            pic = {}
+        _picture_cache[key] = pic
+    return pic
 
 
 def _front_tile_picture(kind):
     def picture(context, style):
-        from ... import units
-        from ..common import door_builder
-        w, h = (units.inch(v) for v in _TILE_SIZE[kind])
-        info = door_builder.door_style_info(style)
-        parts = door_builder.evaluate_layout(info, w, h)
-        return ([(p['x0'], p['x1'], p['z0'], p['z1'], p['key'])
-                 for p in parts], w, h)
+        pic = _cached_picture(('STYLE', kind, _style_signature(style)),
+                              lambda: _front_picture(kind, style))
+        return pic, pic.get('w', 0.0), pic.get('h', 0.0)
     return picture
 
 
 def _catalog_picture(kind, series, shape=None, panel=None):
     """A front as the catalog would build it, for a New from Catalog
-    tile: the series' own frame widths, slab or five piece, a twin's
-    centre stile, and a glass panel where the panel is glass."""
-    from ... import units
-    from ..common import door_builder
-    from . import style_options
-    info = dict(door_builder.DOOR_STYLE_FALLBACK)
-    frame = style_options.frame_for_series(series, shape, panel)
-    if style_options.series_is_slab(series, panel):
-        info['door_type'] = 'SLAB'
-    info['stile_width'] = units.inch(frame['stile'])
-    info['rail_width'] = units.inch(
-        frame['drw_rail'] if kind == 'DRAWER' else frame['rail'])
-    if style_options.SHAPE_KINDS.get((shape or '').strip(), {}).get('twin'):
-        info['mid_stile_count'] = 1
-    glass = style_options.panel_kind(panel)['kind'] == 'GLASS'
-    w, h = (units.inch(v) for v in _TILE_SIZE[kind])
-    parts = door_builder.evaluate_layout(info, w, h)
-    return ([(p['x0'], p['x1'], p['z0'], p['z1'],
-              'glass' if glass and p['key'] == 'panel' else p['key'])
-             for p in parts], w, h)
+    tile: the style new_front_style would make from this pick (the
+    picked style's settings, then the series, shape and panel)."""
+    from .operators import ops_styles
+    from .props_hb_face_frame import front_style_sketch, get_style_props
+    base = None
+    try:
+        ff = get_style_props(bpy.context)
+        pool_name, index_prop = ops_styles._FRONT_POOLS[kind][:2]
+        pool = getattr(ff, pool_name)
+        i = getattr(ff, index_prop)
+        base = pool[i] if 0 <= i < len(pool) else None
+    except Exception:
+        base = None
+    key = ('PICK', kind, series, shape, panel, _style_signature(base))
+    pic = _cached_picture(key, lambda: _front_picture(
+        kind, front_style_sketch(kind, series, shape, panel, base)))
+    return pic, pic.get('w', 0.0), pic.get('h', 0.0)
 
 
 def _front_use_count(kind):

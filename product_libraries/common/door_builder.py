@@ -1791,6 +1791,38 @@ def build_door_mesh(mesh, info, width, height, thickness, materials=None,
     set either way (mid stiles index as stiles, mid rails as rails).
     Zero-size members (e.g. a per-side stile width of 0.0) are skipped.
     """
+    verts, faces, face_slots = build_door_geometry(
+        info, width, height, thickness, outer_section=outer_section,
+        inner_section=inner_section, panel_section=panel_section,
+        inner_rail_section=inner_rail_section,
+        inner_stile_section=inner_stile_section,
+        member_section=member_section, applied_section=applied_section,
+        applied_scope=applied_scope, panel_grooves=panel_grooves,
+        mullion=mullion, shape=shape, glass_rows=glass_rows,
+        round_top=round_top)
+    mesh.clear_geometry()
+    mesh.from_pydata(verts, [], faces)
+    # Slots first: clearing materials drops the material_index layer.
+    if materials is not None:
+        mesh.materials.clear()
+        for mat in materials:
+            mesh.materials.append(mat)
+    attr = (mesh.attributes.get('material_index')
+            or mesh.attributes.new('material_index', 'INT', 'FACE'))
+    attr.data.foreach_set('value', face_slots)
+    mesh.update()
+
+
+def build_door_geometry(info, width, height, thickness,
+                        outer_section=None, inner_section=None,
+                        panel_section=None, inner_rail_section=None,
+                        inner_stile_section=None, member_section=None,
+                        applied_section=None, applied_scope='ALL',
+                        panel_grooves=None, mullion=None, shape=None,
+                        glass_rows=None, round_top=None):
+    """The door build_door_mesh makes, as plain (verts, faces, slots)
+    lists in the same space -- for a mesh, or a picture of the door
+    (door_picture)."""
     mitered = (member_section is not None
                and info.get('door_type') != 'SLAB')
     if mitered:
@@ -1959,14 +1991,123 @@ def build_door_mesh(mesh, info, width, height, thickness, materials=None,
                                mullion,
                                top_pts=shaped_top.get(id(part)),
                                bottom_pts=shaped_bottom.get(id(part)))
-    mesh.clear_geometry()
-    mesh.from_pydata(verts, [], faces)
-    # Slots first: clearing materials drops the material_index layer.
-    if materials is not None:
-        mesh.materials.clear()
-        for mat in materials:
-            mesh.materials.append(mat)
-    attr = (mesh.attributes.get('material_index')
-            or mesh.attributes.new('material_index', 'INT', 'FACE'))
-    attr.data.foreach_set('value', face_slots)
-    mesh.update()
+    return verts, faces, face_slots
+
+
+# ---- Door pictures ---------------------------------------------------
+#
+# A front as the viewer sees it, drawn from the geometry the door is
+# built from -- the style tiles use it, so a tile can never show a door
+# the style does not make.
+
+# Light for the picture shading, door-local (across, up, toward the
+# viewer): from the upper left, in front.
+_PICTURE_LIGHT = (-0.45, 0.6, 1.0)
+# Faces within this angle of each other read as one surface (a swept
+# profile's facets); a sharper turn draws an edge.
+_PICTURE_CREASE_COS = math.cos(math.radians(25.0))
+
+
+def _triangulate(poly):
+    """Ear-clip a simple polygon [(x, z), ...] into index triples."""
+    n = len(poly)
+    if n < 3:
+        return []
+    area = sum(poly[i][0] * poly[(i + 1) % n][1]
+               - poly[(i + 1) % n][0] * poly[i][1] for i in range(n))
+    idx = list(range(n)) if area > 0.0 else list(range(n - 1, -1, -1))
+    tris = []
+
+    def inside(p, a, b, c):
+        d1 = (p[0] - b[0]) * (a[1] - b[1]) - (a[0] - b[0]) * (p[1] - b[1])
+        d2 = (p[0] - c[0]) * (b[1] - c[1]) - (b[0] - c[0]) * (p[1] - c[1])
+        d3 = (p[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (p[1] - a[1])
+        return not ((d1 < 0 or d2 < 0 or d3 < 0)
+                    and (d1 > 0 or d2 > 0 or d3 > 0))
+
+    guard = 0
+    while len(idx) > 3 and guard < 4 * n:
+        guard += 1
+        m = len(idx)
+        for k in range(m):
+            i0, i1, i2 = idx[k - 1], idx[k], idx[(k + 1) % m]
+            a, b, c = poly[i0], poly[i1], poly[i2]
+            cross = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+            if cross <= 1e-14:
+                continue
+            if any(inside(poly[j], a, b, c) for j in idx
+                   if j not in (i0, i1, i2)):
+                continue
+            tris.append((i0, i1, i2))
+            del idx[k]
+            break
+        else:
+            break
+    if len(idx) >= 3:
+        # Whatever ear clipping could not settle: a fan.
+        for k in range(1, len(idx) - 1):
+            tris.append((idx[0], idx[k], idx[k + 1]))
+    return tris
+
+
+def door_picture(verts, faces, slots, width, height, thickness):
+    """The door seen from the front, from build_door_geometry output:
+    the faces that face the viewer, flattened, shaded and ordered back
+    to front, plus the edges worth drawing (outlines, part joints and
+    creases -- not the facets of a swept profile).
+
+    Door-local coords, x across from the left edge and z up from the
+    bottom. Returns dict(w, h, tris=[(x, z), ...] three per triangle,
+    shade=[0..1 per triangle], slot=[material slot per triangle],
+    edges=[((x0, z0), (x1, z1)), ...])."""
+    lx, lz, ly = _PICTURE_LIGHT
+    ll = math.sqrt(lx * lx + lz * lz + ly * ly)
+    lx, lz, ly = lx / ll, lz / ll, ly / ll
+    flat = ly
+    front = []
+    for fi, f in enumerate(faces):
+        pts = [verts[i] for i in f]
+        n = [0.0, 0.0, 0.0]
+        for i in range(len(pts)):
+            a, b = pts[i], pts[(i + 1) % len(pts)]
+            n[0] += (a[1] - b[1]) * (a[2] + b[2])
+            n[1] += (a[2] - b[2]) * (a[0] + b[0])
+            n[2] += (a[0] - b[0]) * (a[1] + b[1])
+        ln = math.sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2])
+        if ln <= 1e-12 or n[2] / ln < 0.05:
+            continue
+        # Mesh space: x up the door, -y across, +z toward the viewer.
+        across, up, out = -n[1] / ln, n[0] / ln, n[2] / ln
+        lit = max(across * lx + up * lz + out * ly, 0.0) / flat
+        depth = sum(p[2] for p in pts) / len(pts)
+        recess = max(thickness - depth, 0.0) / max(thickness, 1e-6)
+        shade = max(min(lit * (1.0 - 0.45 * recess), 1.0), 0.0)
+        front.append((depth, fi, (across, up, out), shade))
+    front.sort(key=lambda q: q[0])
+    tris = []
+    shades = []
+    tri_slots = []
+    normals = {}
+    edge_faces = {}
+    for depth, fi, nrm, shade in front:
+        f = faces[fi]
+        poly = [(-verts[i][1], verts[i][0]) for i in f]
+        for (a, b, c) in _triangulate(poly):
+            tris.extend((poly[a], poly[b], poly[c]))
+            shades.append(shade)
+            tri_slots.append(slots[fi])
+        normals[fi] = nrm
+        for k in range(len(f)):
+            key = (min(f[k], f[k - 1]), max(f[k], f[k - 1]))
+            edge_faces.setdefault(key, []).append(fi)
+    edges = []
+    for (i, j), fis in edge_faces.items():
+        if len(fis) == 2:
+            na, nb = normals[fis[0]], normals[fis[1]]
+            if (na[0] * nb[0] + na[1] * nb[1] + na[2] * nb[2]
+                    >= _PICTURE_CREASE_COS):
+                continue
+        edges.append(((-verts[i][1], verts[i][0]),
+                      (-verts[j][1], verts[j][0])))
+    return dict(w=width, h=height, tris=tris, shade=shades, slot=tri_slots,
+                edges=edges)

@@ -1515,12 +1515,54 @@ def _paint_card(shader, font_id, s, entry):
                   Theme.TEXT_NORMAL if k == 0 else Theme.TEXT_HEADER, shown)
 
 
+def _door_picture_batches(shader, pic):
+    """GPU batches for a door_builder.door_picture, made once and kept
+    on the picture: shaded faces (glass tinted) and the edges."""
+    batches = pic.get('_gpu')
+    if batches is None:
+        import gpu
+        from gpu_extras.batch import batch_for_shader
+        tri_shader = gpu.shader.from_builtin('SMOOTH_COLOR')
+        cols = []
+        for shade, slot in zip(pic['shade'], pic['slot']):
+            if slot == 3 or (slot == 2 and pic.get('glass')):
+                c = (0.30 + 0.20 * shade, 0.45 + 0.22 * shade,
+                     0.62 + 0.25 * shade, 0.9)
+            else:
+                v = 0.30 + 0.50 * shade
+                c = (v, v, v, 1.0)
+            cols.extend((c, c, c))
+        tris = batch_for_shader(tri_shader, 'TRIS',
+                                {'pos': pic['tris'], 'color': cols})
+        pts = [p for e in pic['edges'] for p in e]
+        lines = (batch_for_shader(shader, 'LINES', {'pos': pts})
+                 if pts else None)
+        batches = pic['_gpu'] = (tri_shader, tris, lines)
+    return batches
+
+
+def _paint_door_picture(shader, pic, ox, oz, k):
+    """A door picture at (ox, oz), k pixels to the metre."""
+    import gpu
+    if not pic.get('tris'):
+        return
+    tri_shader, tris, lines = _door_picture_batches(shader, pic)
+    with gpu.matrix.push_pop():
+        gpu.matrix.translate((ox, oz))
+        gpu.matrix.scale((k, k))
+        tris.draw(tri_shader)
+        shader.bind()
+        if lines is not None:
+            shader.uniform_float("color", (0.0, 0.0, 0.0, 0.55))
+            lines.draw(shader)
+
+
 def _paint_picture(shader, font_id, s, mx, my, rect, parts, w, h, name,
                    caption=None, active=False, used=False, count=None):
     """A picture tile: part rects (the item's own units, x across and z
-    up) fitted into the tile, the name under them, an optional caption
-    over them, the pick outlined and a bar across the top when in
-    use."""
+    up) -- or a door_builder.door_picture dict -- fitted into the tile,
+    the name under them, an optional caption over them, the pick
+    outlined and a bar across the top when in use."""
     rx, ry, rw, rh = rect
     hovered = point_in_rect(mx, my, rect)
     paint_button(shader, rect, hovered=hovered)
@@ -1551,6 +1593,9 @@ def _paint_picture(shader, font_id, s, mx, my, rect, parts, w, h, name,
         ox = box[0] + (box[2] - w * k) / 2.0
         oz = box[1] + (box[3] - h * k) / 2.0
         line = Theme.GLYPH_HOVER if (hovered or active) else Theme.GLYPH
+        if isinstance(parts, dict):
+            _paint_door_picture(shader, parts, ox, oz, k)
+            parts = ()
         for x0, x1, z0, z1, key in parts:
             px, py = ox + x0 * k, oz + z0 * k
             pw, ph = (x1 - x0) * k, (z1 - z0) * k
