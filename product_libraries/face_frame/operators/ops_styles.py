@@ -602,6 +602,35 @@ class hb_face_frame_OT_add_drawer_front_style(Operator):
         return {'FINISHED'}
 
 
+def _bare_part_for(obj):
+    """A cabinet bare part (Wood Top / Misc Part) with NO cabinet cage
+    above it, or None. These live outside any cabinet's material walk,
+    so style assignment has to finish them directly."""
+    if obj is None or not obj.get('CABINET_PART'):
+        return None
+    from .. import types_face_frame
+    if types_face_frame.find_cabinet_root(obj) is not None:
+        return None
+    return obj
+
+
+def _apply_style_finish_to_bare_part(style, part_obj):
+    """Push a style's exterior finish onto a bare part. Live cutparts
+    take it on the GN surface inputs; a static carved mesh (nosed wood
+    top) renders its mesh slots instead, so those are painted too --
+    both are written so the finish survives the part flipping between
+    the two display modes. Returns True when a material was applied."""
+    fin, fin_rot = style.get_finish_material()
+    if fin is None:
+        return False
+    part_obj['STYLE_NAME'] = style.name
+    style._set_part_surfaces(part_obj, fin, fin_rot)
+    if part_obj.get('HB_STATIC_TEXTURED') or part_obj.get('IS_MANUAL_PART'):
+        hb_face_frame_OT_paint_part_material._paint_manual_part_slots(
+            part_obj, fin, fin_rot)
+    return True
+
+
 class hb_face_frame_OT_assign_style_to_selected_cabinets(Operator):
     """Apply the active cabinet style to every selected face frame cabinet"""
     bl_idname = "hb_face_frame.assign_style_to_selected_cabinets"
