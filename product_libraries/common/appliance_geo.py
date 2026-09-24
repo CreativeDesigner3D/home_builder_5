@@ -1166,6 +1166,27 @@ def sync_opening_appliance(opening_obj, appliance_type='REFRIGERATOR',
 SIZE_OWNED_FLAG = 'APPLIANCE_SIZE_OWNED'
 
 
+def housed_width(cage_obj):
+    """The width a housed appliance was given, or 0.0 while it still
+    fills what houses it."""
+    if cage_obj is None or not cage_obj.get(SIZE_OWNED_FLAG):
+        return 0.0
+    return _CageWrap(cage_obj).get_input('Dim X')
+
+
+def set_housed_width(cage_obj, width):
+    """Give a housed appliance its own width (the cabinet keeps it
+    centred), or hand the width back to the cabinet with 0. The caller
+    recalculates the cabinet so the change is placed."""
+    if cage_obj is None:
+        return
+    if width > 0.0:
+        cage_obj[SIZE_OWNED_FLAG] = True
+        _CageWrap(cage_obj).set_input('Dim X', width)
+    else:
+        cage_obj.pop(SIZE_OWNED_FLAG, None)
+
+
 def sync_bay_appliance(bay_obj, kind, top_z):
     """A sink or cooktop bay carries the appliance itself, hung with the
     countertop's top surface at the top of its cage so it can sit under

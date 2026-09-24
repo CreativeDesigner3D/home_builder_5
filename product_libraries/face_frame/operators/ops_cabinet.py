@@ -6776,7 +6776,15 @@ class hb_face_frame_OT_add_appliance_to_bay(bpy.types.Operator):
     # (direct EXEC / scripting), which is always allowed to run.
     session_id: bpy.props.IntProperty(default=0, options={'SKIP_SAVE', 'HIDDEN'})  # type: ignore
     width: bpy.props.FloatProperty(
-        name="Width", unit='LENGTH', precision=4, default=inch(36.0),
+        name="Opening Width", unit='LENGTH', precision=4, default=inch(36.0),
+        description="Width of the bay the sink or cooktop goes in",
+    )  # type: ignore
+    # The appliance itself, when it is narrower than the opening (an 18"
+    # vanity bowl in a 48" base). 0 lets it fill the opening.
+    model_width: bpy.props.FloatProperty(
+        name="Sink Width", unit='LENGTH', precision=4, default=0.0, min=0.0,
+        description="Width of the sink or cooktop itself, centred in the "
+                    "opening. 0 fills the opening",
     )  # type: ignore
     drop_bay_amount: bpy.props.FloatProperty(
         name="Drop Bay Amount", unit='LENGTH', precision=4,
@@ -6922,6 +6930,9 @@ class hb_face_frame_OT_add_appliance_to_bay(bpy.types.Operator):
         # Width is only written when it changes -- writing it locks the
         # bay, which then fights the cabinet width.
         self._seed_width = bp.width
+        from ...common import appliance_geo
+        self.model_width = appliance_geo.housed_width(
+            appliance_geo.opening_appliance(bay))
         # Re-editing keeps whatever interior the bay already has. A fresh
         # bay follows the kind and width (see _auto_appliance_interior)
         # until the user picks one; the width-based seed happens in the
@@ -6964,6 +6975,7 @@ class hb_face_frame_OT_add_appliance_to_bay(bpy.types.Operator):
             'left_filler': bp.front_drop_left_filler,
             'right_filler': bp.front_drop_right_filler,
             'custom_fit': bp.farm_sink_custom_fit,
+            'model_width': self.model_width,
         }
         # A true dialog (OK / Cancel), NOT invoke_props_popup: the popup
         # re-runs execute through the operator-repeat machinery, whose
@@ -7010,6 +7022,9 @@ class hb_face_frame_OT_add_appliance_to_bay(bpy.types.Operator):
             bp.front_drop_left_filler = snap['left_filler']
             bp.front_drop_right_filler = snap['right_filler']
             bp.farm_sink_custom_fit = snap['custom_fit']
+            from ...common import appliance_geo
+            appliance_geo.set_housed_width(
+                appliance_geo.opening_appliance(bay), snap['model_width'])
             if root is not None:
                 types_face_frame.recalculate_face_frame_cabinet(root)
 
@@ -7063,13 +7078,31 @@ class hb_face_frame_OT_add_appliance_to_bay(bpy.types.Operator):
             bp.farm_sink_custom_fit = (self.appliance_kind == 'FARM_SINK'
                                        and self.custom_fit)
             types_face_frame.recalculate_face_frame_cabinet(root)
+            # The sink itself: the recalc above creates it on a fresh bay,
+            # so its width is set after, and one more recalc centres it.
+            from ...common import appliance_geo
+            cage = appliance_geo.opening_appliance(bay)
+            # A scripted run that never opened the dialog leaves a width
+            # set in the appliance's own prompts alone unless given one.
+            invoked = getattr(self, '_seed_width', None) is not None
+            if (cage is not None and (invoked or self.model_width > 0.0)
+                    and abs(appliance_geo.housed_width(cage)
+                            - self.model_width) > 1e-6):
+                appliance_geo.set_housed_width(cage, self.model_width)
+                types_face_frame.recalculate_face_frame_cabinet(root)
         return bay, root
 
     def draw(self, context):
         layout = self.layout
         box = layout.box()
-        row = box.row(); row.label(text="Width:")
+        row = box.row(); row.label(text="Opening Width:")
         row.prop(self, 'width', text="")
+        noun = "Cooktop" if self.appliance_kind == 'COOKTOP' else "Sink"
+        row = box.row(); row.label(text=f"{noun} Width:")
+        row.prop(self, 'model_width', text="")
+        if self.model_width <= 0.0:
+            row = box.row()
+            row.label(text=f"0 = {noun.lower()} fills the opening", icon='INFO')
         row = box.row(); row.label(text="Drop Bay Amount:")
         row.prop(self, 'drop_bay_amount', text="")
         if self.drop_bay_amount > 0.0:
