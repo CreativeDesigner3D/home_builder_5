@@ -14,9 +14,10 @@ height where that neighbor is the nearest thing. A neighbor hidden
 behind a nearer one at every height gets none.
 
 Every one of these is editable (see commit()). What a typed value
-changes is the scene's gap edit mode, toggled from the HUD pill beside
-Sizes: MOVE slides the cabinet along its wall, WIDTH keeps its far edge
-where it is and changes its width. 0 closes the gap -- snaps it flush.
+changes is the scene's gap edit mode, picked on the Move / Width chip
+that shows beside the field while it's typed (common/gap_mode_chip):
+MOVE slides the cabinet along its wall, WIDTH keeps its far edge where
+it is and changes its width. 0 closes the gap -- snaps it flush.
 
 Appliances on a wall get the same dimensions (iter_wall_appliances()),
 so a dishwasher or refrigerator can be spaced and sized from the model.
@@ -52,6 +53,7 @@ KINDS = GAP_KINDS + ('CAB_END_L', 'CAB_END_R')
 
 # Scene idprop holding the gap edit mode; an idprop so it saves with the
 # file without a registered property (the closet Dims pill does the same).
+# The mode sticks between edits: pick Width once and it stays Width.
 EDIT_MODE_KEY = 'hb_gap_edit_mode'
 
 

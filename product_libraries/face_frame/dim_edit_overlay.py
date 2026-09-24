@@ -55,7 +55,7 @@ from ...hb_types import GeoNodeCage, GeoNodeCutpart
 from . import types_face_frame
 from . import split_preview
 from . import appliance_panels
-from ..common import wall_run_dims
+from ..common import gap_mode_chip, wall_run_dims
 from .operators import ops_part_commands
 
 # ---- Style -------------------------------------------------------------
@@ -1015,6 +1015,10 @@ def _draw():
             blf.color(0, *EDIT_TEXT_COLOR)
             blf.position(0, rect[0] + PAD_X * s, rect[1] + PAD_Y * s, 0)
             blf.draw(0, shown)
+            if kind in wall_run_dims.KINDS:
+                # Move / Width, beside the field only while it's typed.
+                gap_mode_chip.draw(shader, context.scene, region, rect,
+                                   font_sz, s)
         else:
             _draw_label_rect(shader, rect,
                              LABEL_BG if editable else LABEL_BG_DIM)
@@ -1241,6 +1245,7 @@ class hb_face_frame_OT_edit_dim_label(bpy.types.Operator):
     def _finish(self, context):
         global _edit
         _edit = None
+        gap_mode_chip.clear()
         try:
             context.window.cursor_set('DEFAULT')
         except Exception:
@@ -1303,6 +1308,20 @@ class hb_face_frame_OT_edit_dim_label(bpy.types.Operator):
         if event.type in {'ESC', 'RIGHTMOUSE'}:
             self._finish(context)
             return {'CANCELLED'}
+
+        if self.kind in wall_run_dims.KINDS:
+            # The Move / Width chip beside a gap field: a click on it or
+            # Tab picks what the typed value changes; the edit goes on.
+            part = None
+            if event.type == 'LEFTMOUSE':
+                part = gap_mode_chip.hit(event.mouse_x, event.mouse_y)
+            elif event.type == 'TAB':
+                part = ('MOVE' if wall_run_dims.edit_mode(context.scene)
+                        == 'WIDTH' else 'WIDTH')
+            if part is not None:
+                gap_mode_chip.set_mode(context.scene, part)
+                context.area.tag_redraw()
+                return {'RUNNING_MODAL'}
 
         if event.type == 'LEFTMOUSE':
             # Click-away cancels the edit and consumes the press --
