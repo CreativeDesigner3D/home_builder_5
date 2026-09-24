@@ -149,6 +149,27 @@ def open_subpage(key):
 def close_subpage():
     global _subpage
     _subpage = None
+    _editing.clear()
+    _list.offset = 0.0
+    _tag()
+
+
+# Pools of a tiles-only sub-page showing the pick's settings instead of
+# the tiles, by collection name.
+_editing = set()
+
+
+def pool_editing(spec):
+    """True while a tiles-only page shows its pick's settings."""
+    return (bool(spec.get('tiles_only'))
+            and spec.get('collection') in _editing)
+
+
+def edit_pool_item(collection, edit=True):
+    if edit:
+        _editing.add(collection)
+    else:
+        _editing.discard(collection)
     _list.offset = 0.0
     _tag()
 
@@ -652,12 +673,17 @@ def _form_blocks(context, spec):
 
 # ---- Provider interface ----------------------------------------------------
 
-def _subpage_blocks(context, spec):
+def _subpage_blocks(context, spec, with_back=True):
     """A sub-page: the way back, then a picture of every item in the
     pool as a grid of tiles, the commands that act on the pick, and the
-    pool itself -- its list, the pick's fields and its commands."""
+    pool itself -- its list, the pick's fields and its commands.
+
+    A 'tiles_only' page has no list: the tiles are the list, and Edit
+    swaps them for the pick's settings until its Back row is clicked."""
     pool = _pool_from_spec(spec)
-    blocks = [('back', spec.get('title', "Back"))]
+    blocks = [('back', spec.get('title', "Back"))] if with_back else []
+    if spec.get('tiles_only') and pool.collection in _editing:
+        return blocks + _tile_edit_blocks(context, spec, pool)
     notes = spec.get('notes')
     if notes is not None:
         try:
@@ -672,8 +698,49 @@ def _subpage_blocks(context, spec):
             blocks.append(('tiles', (pool, tiles, row)))
     for row in spec.get('top_actions', ()):
         blocks.append(('actions', tuple(_norm_action(a) for a in row)))
+    if spec.get('tiles_only'):
+        if pool.active(context) is not None:
+            row = [("Edit...", 'home_builder.options_edit_item',
+                    'collection', pool.collection)]
+            for actions in pool.actions:
+                row.extend(_norm_action(a) for a in actions)
+            blocks.append(('actions', tuple(row)))
+        return blocks
     blocks.append(('gap', None))
     blocks.extend(_pool_blocks(context, pool))
+    return blocks
+
+
+def _tile_edit_blocks(context, spec, pool):
+    """The pick of a tiles-only page: a way back to the tiles, its
+    name, its fields and its commands."""
+    item = pool.active(context)
+    if item is None:
+        _editing.discard(pool.collection)
+        return []
+
+    def back(c=pool.collection):
+        edit_pool_item(c, False)
+
+    blocks = [('back', ("%s  |  %s" % (spec.get('title', "Styles"),
+                                       pool.text(item)), back))]
+    if pool.summary is not None:
+        blocks.append(('card', pool))
+    blocks.append(('field', (('text', pool.rename_prop, "Name"), item)))
+    blocks.extend(_field_blocks(context, pool.fields, item))
+    blocks.append(('gap', None))
+    for row in pool.actions:
+        blocks.append(('actions', tuple(_norm_action(a) for a in row)))
+    # A front style's add copies the pick, so it is the duplicate here.
+    row = []
+    dup = pool.duplicate_op or pool.add_op
+    if dup:
+        row.append(("Duplicate", dup, None, None))
+    if pool.remove_op and (pool.allow_empty
+                           or len(pool.items(context)) > 1):
+        row.append(("Delete", pool.remove_op, None, None))
+    if row:
+        blocks.append(('actions', tuple(row)))
     return blocks
 
 
@@ -1420,6 +1487,8 @@ def paint(entries, mx, my):
                               7 * s, True, Theme.GLYPH)
             elif kind == 'back_row':
                 _, title, rect = entry
+                if isinstance(title, tuple):
+                    title = title[0]
                 hovered = point_in_rect(mx, my, rect)
                 paint_button(shader, rect, hovered=hovered)
                 rx, ry, rw, rh = rect
@@ -1811,7 +1880,10 @@ def hit(context, mx, my, entries):
                 'INVOKE_DEFAULT', section=entry[2], title=entry[1])
             return True
         if kind == 'back_row' and point_in_rect(mx, my, entry[2]):
-            close_subpage()
+            if isinstance(entry[1], tuple):
+                entry[1][1]()
+            else:
+                close_subpage()
             return True
         if kind == 'picture_tile' and point_in_rect(mx, my, entry[2]):
             cell = entry[1]
@@ -1863,7 +1935,7 @@ def form_blocks(context, spec):
 def manager_blocks(context, spec):
     """A sub-page's content without its way back, for a host that has
     its own navigation -- the style editor's tabs."""
-    return _subpage_blocks(context, spec)[1:]
+    return _subpage_blocks(context, spec, with_back=False)
 
 
 def new_scroll_list():
@@ -2338,8 +2410,23 @@ class home_builder_OT_options_open_page(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class home_builder_OT_options_edit_item(bpy.types.Operator):
+    """Show the settings of the picked style in place of the pictures"""
+    bl_idname = "home_builder.options_edit_item"
+    bl_label = "Edit"
+    bl_options = {'INTERNAL'}
+
+    collection: bpy.props.StringProperty()  # type: ignore
+    edit: bpy.props.BoolProperty(default=True)  # type: ignore
+
+    def execute(self, context):
+        edit_pool_item(self.collection, self.edit)
+        return {'FINISHED'}
+
+
 classes = (home_builder_OT_style_options_popup,
            home_builder_OT_options_open_page,
+           home_builder_OT_options_edit_item,
            home_builder_OT_options_set_custom,
            home_builder_OT_style_rename,
            home_builder_OT_options_open_enum,

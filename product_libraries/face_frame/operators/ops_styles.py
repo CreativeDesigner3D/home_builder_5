@@ -357,7 +357,9 @@ class _RemoveFrontStyle:
             return {'CANCELLED'}
         styles, fronts = front_style_usage(ff, self.KIND, doomed.name)
         if not styles and not fronts:
-            return self.execute(context)
+            return context.window_manager.invoke_confirm(
+                self, event, title="Delete %s?" % doomed.name,
+                confirm_text="Delete")
         return context.window_manager.invoke_props_dialog(self, width=340)
 
     def draw(self, context):

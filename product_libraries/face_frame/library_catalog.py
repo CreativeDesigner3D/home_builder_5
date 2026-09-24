@@ -828,6 +828,8 @@ def _front_manager(kind, pool_key):
     spec['title'] = ("Door Styles" if kind == 'DOOR'
                      else "Drawer Front Styles")
     spec['list_label'] = "Styles"
+    # The tiles are the list; Edit opens the pick's settings.
+    spec['tiles_only'] = True
     spec['notes'] = _front_manager_notes(kind)
     spec['tiles'] = {'picture': _front_tile_picture(kind),
                      'in_use': _front_in_use(kind),
@@ -1135,7 +1137,10 @@ def _front_manager_tab(key):
         w = ops_styles.front_wizard
         if w is not None and w['kind'] == kind:
             return _wizard_blocks(context, kind)
-        out = list(options_panel.manager_blocks(context, OPTION_SUBPAGES[key]))
+        spec = OPTION_SUBPAGES[key]
+        out = list(options_panel.manager_blocks(context, spec))
+        if options_panel.pool_editing(spec):
+            return out
         cs = _active_cabinet_style(context)
         if cs is not None:
             out.append(('gap', None))
