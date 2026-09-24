@@ -601,6 +601,17 @@ _GAP_PROP = {
 _GAP_AUTO = set(_GAP_PROP) - {'AP_GAP_S'}
 
 
+# Where along its gap a gap label may sit, as a fraction of the run it
+# spans, in the order they are tried.
+_GAP_SPOTS = (0.3, 0.7, 0.15, 0.85, 0.5)
+
+
+def _rects_touch(a, b, margin=2.0):
+    """Whether two (x, y, w, h) label rects overlap, with a little air."""
+    return (a[0] < b[0] + b[2] + margin and b[0] < a[0] + a[2] + margin
+            and a[1] < b[1] + b[3] + margin and b[1] < a[1] + a[3] + margin)
+
+
 def _gap_value(props, kind):
     """What a gap measures now, following the run's single size when the
     edge has not been given one of its own."""
@@ -632,16 +643,29 @@ def _ap_gap_targets(appliance, props, dims, faces, parts):
     mid_x, mid_z = (xs0 + xs1) / 2.0, (zs0 + zs1) / 2.0
     kick = max(0.0, props.toe_kick)
 
-    def target(kind, x, z):
+    def point(x, z):
         box = (x, x, z, z)      # a point; _ap_anchor reads the centre
-        return (appliance, kind, True, _gap_is_own(props, kind),
-                _gap_value(props, kind), "",
-                _ap_anchor(appliance, dims, box, 0.5))
+        return _ap_anchor(appliance, dims, box, 0.5)
 
-    out = [target('AP_GAP_T', mid_x, (zs1 + dim_z) / 2.0),
-           target('AP_GAP_B', mid_x, (kick + zs0) / 2.0),
-           target('AP_GAP_L', xs0 / 2.0, mid_z),
-           target('AP_GAP_R', (xs1 + dim_x) / 2.0, mid_z)]
+    def target(kind, spots):
+        """A gap label with the places along its gap it may sit, best
+        first. The middle is where the face heights, the appliance's
+        own sizes and the wall-run dims all land, so it comes last;
+        _emit takes the first spot clear of the labels already there."""
+        anchors = [point(x, z) for x, z in spots]
+        return (appliance, kind, True, _gap_is_own(props, kind),
+                _gap_value(props, kind), "", anchors[0], None, anchors[1:])
+
+    def along_x(lo, hi, z):
+        return [(lo + (hi - lo) * f, z) for f in _GAP_SPOTS]
+
+    def along_z(x, lo, hi):
+        return [(x, lo + (hi - lo) * f) for f in _GAP_SPOTS]
+
+    out = [target('AP_GAP_T', along_x(xs0, xs1, (zs1 + dim_z) / 2.0)),
+           target('AP_GAP_B', along_x(xs0, xs1, (kick + zs0) / 2.0)),
+           target('AP_GAP_L', along_z(xs0 / 2.0, zs0, zs1)),
+           target('AP_GAP_R', along_z((xs1 + dim_x) / 2.0, zs0, zs1))]
 
     # Between the columns, and between the faces stacked in each.
     bands = {}
@@ -654,16 +678,17 @@ def _ap_gap_targets(appliance, props, dims, faces, parts):
     ordered = [bands[c] for c in sorted(bands)]
     for (a_lo, a_hi), (b_lo, b_hi) in zip(ordered, ordered[1:]):
         if b_lo - a_hi > 1e-6:
-            out.append(target('AP_GAP_C', (a_hi + b_lo) / 2.0, mid_z))
+            out.append(target('AP_GAP_C',
+                              along_z((a_hi + b_lo) / 2.0, zs0, zs1)))
     for column in sorted(bands):
         stack = sorted((faces[i] for i, s in enumerate(props.sections)
                         if s.column == column and i in faces),
                        key=lambda b: b[2])
-        centre = (bands[column][0] + bands[column][1]) / 2.0
+        lo, hi = bands[column]
         for lower, upper in zip(stack, stack[1:]):
             if upper[2] - lower[3] > 1e-6:
-                out.append(target('AP_GAP_S', centre,
-                                  (lower[3] + upper[2]) / 2.0))
+                out.append(target('AP_GAP_S', along_x(
+                    lo, hi, (lower[3] + upper[2]) / 2.0)))
     # A full-width face has the same gap above or below it, on the
     # appliance's centre line so it is not labelled once per column.
     for i, box in faces.items():
@@ -672,7 +697,7 @@ def _ap_gap_targets(appliance, props, dims, faces, parts):
         for edge, z in ((box[3], box[3] + props.section_gap / 2.0),
                         (box[2], box[2] - props.section_gap / 2.0)):
             if zs0 < edge < zs1:
-                out.append(target('AP_GAP_S', mid_x, z))
+                out.append(target('AP_GAP_S', along_x(xs0, xs1, z)))
     return out
 
 
@@ -764,13 +789,13 @@ def compute_labels(context, region, rv3d, lines_out=None):
             # dimension line (wall-run dims); else _dim_line_world.
             cage, kind, editable, locked, value, prefix, anchor = target[:7]
             own_line = target[7] if len(target) > 7 else None
+            # An optional 9th element: other places the label may sit,
+            # tried in turn when the first lands on a label already out.
+            spare = target[8] if len(target) > 8 else ()
             if anchor is None:
                 anchor = (_part_anchor_world(cage) if kind == 'PART'
                           else _label_anchor_world(cage))
             if anchor is None:
-                continue
-            pt = view3d_utils.location_3d_to_region_2d(region, rv3d, anchor)
-            if pt is None:
                 continue
             text = prefix + units.unit_to_string(unit_settings, value)
             if locked:
@@ -781,7 +806,20 @@ def compute_labels(context, region, rv3d, lines_out=None):
             tw, th = blf.dimensions(0, text)
             w = tw + 2 * PAD_X * s
             h = th + 2 * PAD_Y * s
-            rect = (pt.x - w / 2.0, pt.y - h / 2.0, w, h)
+            rect = None
+            for spot in [anchor, *spare]:
+                pt = view3d_utils.location_3d_to_region_2d(region, rv3d, spot)
+                if pt is None:
+                    continue
+                here = (pt.x - w / 2.0, pt.y - h / 2.0, w, h)
+                if rect is None:
+                    rect = here
+                if not spare or not any(_rects_touch(here, other[4])
+                                        for other in labels):
+                    rect = here
+                    break
+            if rect is None:
+                continue
             # Skip labels fully outside the region.
             if rect[0] + w < 0 or rect[0] > region.width:
                 continue
