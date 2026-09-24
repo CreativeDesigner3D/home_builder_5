@@ -647,10 +647,10 @@ def _style_summary(context, style):
 
 
 def _front_style_actions(kind):
+    # A style edit reaches every front using it, in every room, by
+    # itself; painting is for giving one front a style of its own.
     return ((("Assign by Painting", 'hb_face_frame.paint_assign_front_style',
-              'kind', kind),
-             ("Update Fronts", 'hb_face_frame.update_fronts_from_style',
-              'kind', kind)),)
+              'kind', kind),),)
 
 
 def _flush_x(p):
@@ -721,6 +721,87 @@ def _front_tile_picture(kind):
     return picture
 
 
+def _catalog_picture(kind, series, shape=None, panel=None):
+    """A front as the catalog would build it, for a New from Catalog
+    tile: the series' own frame widths, slab or five piece, a twin's
+    centre stile, and a glass panel where the panel is glass."""
+    from ... import units
+    from ..common import door_builder
+    from . import style_options
+    info = dict(door_builder.DOOR_STYLE_FALLBACK)
+    frame = style_options.frame_for_series(series, shape, panel)
+    if style_options.series_is_slab(series, panel):
+        info['door_type'] = 'SLAB'
+    info['stile_width'] = units.inch(frame['stile'])
+    info['rail_width'] = units.inch(
+        frame['drw_rail'] if kind == 'DRAWER' else frame['rail'])
+    if style_options.SHAPE_KINDS.get((shape or '').strip(), {}).get('twin'):
+        info['mid_stile_count'] = 1
+    glass = style_options.panel_kind(panel)['kind'] == 'GLASS'
+    w, h = (units.inch(v) for v in _TILE_SIZE[kind])
+    parts = door_builder.evaluate_layout(info, w, h)
+    return ([(p['x0'], p['x1'], p['z0'], p['z1'],
+              'glass' if glass and p['key'] == 'panel' else p['key'])
+             for p in parts], w, h)
+
+
+def _front_use_count(kind):
+    def count(context, style):
+        from .operators import ops_styles
+        from .props_hb_face_frame import get_style_props
+        styles, _fronts = ops_styles.front_style_usage(
+            get_style_props(context), kind, style.name)
+        return len(styles)
+    return count
+
+
+def _wizard_blocks(context, kind):
+    """New from Catalog: series, then shape, then panel, each picked
+    from pictures. A level with one choice is taken for you."""
+    from .operators import ops_styles
+    from . import style_options
+    w = ops_styles.front_wizard
+    drawer = kind == 'DRAWER'
+    noun = "drawer front" if drawer else "door"
+    if w['series'] is None:
+        step, n, choices = 'SERIES', 1, list(
+            style_options.DRAWER_SERIES if drawer
+            else style_options.DOOR_SERIES)
+        what = "series"
+    elif w['shape'] is None:
+        step, n, what = 'SHAPE', 2, "shape"
+        choices = list(style_options.door_shapes(w['series'], drawer=drawer))
+    else:
+        step, n, what = 'PANEL', 3, "panel"
+        choices = list(style_options.door_panels(w['series'], w['shape'],
+                                                 drawer=drawer))
+    picked = " / ".join(x for x in (w['series'], w['shape']) if x)
+    blocks = [('note', "New %s, step %d of 3: pick a %s" % (noun, n, what))]
+    if picked:
+        blocks.append(('note', picked))
+    blocks.append(('actions', (
+        ("Back", 'hb_face_frame.front_style_wizard',
+         {'kind': kind, 'step': 'BACK'}, None),
+        ("Cancel", 'hb_face_frame.front_style_wizard',
+         {'kind': kind, 'step': 'CANCEL'}, None))))
+    for row in range(0, len(choices), 3):
+        cells = []
+        for value in choices[row:row + 3]:
+            series = value if step == 'SERIES' else w['series']
+            shape = (value if step == 'SHAPE'
+                     else w['shape'] if step == 'PANEL' else None)
+            panel = value if step == 'PANEL' else None
+            cells.append({
+                'name': value,
+                'picture': (lambda ctx, a=series, b=shape, c=panel:
+                            _catalog_picture(kind, a, b, c)),
+                'op': 'hb_face_frame.front_style_wizard',
+                'kwargs': {'kind': kind, 'step': step, 'value': value},
+            })
+        blocks.append(('picture_tiles', (lambda ctx, own, c=cells: c, None)))
+    return blocks
+
+
 def _front_in_use(kind):
     prop = 'door_style' if kind == 'DOOR' else 'drawer_front_style'
 
@@ -739,7 +820,8 @@ def _front_manager_notes(kind):
         if cs is None:
             return ()
         return ("%s uses %s" % (cs.name, getattr(cs, prop, "") or "none"),
-                "Pick a %s below; NEW copies the pick" % noun)
+                "The number on a %s is how many cabinet styles use it"
+                % noun)
     return notes
 
 
@@ -750,10 +832,17 @@ def _front_manager(kind, pool_key):
     spec['list_label'] = "Styles"
     spec['notes'] = _front_manager_notes(kind)
     spec['tiles'] = {'picture': _front_tile_picture(kind),
-                     'in_use': _front_in_use(kind)}
+                     'in_use': _front_in_use(kind),
+                     'count': _front_use_count(kind)}
+    new_row = [("New from Catalog...", 'hb_face_frame.front_style_wizard',
+                {'kind': kind, 'step': 'START'}, None)]
+    if kind == 'DOOR':
+        new_row.append(("Matching Drawer Front",
+                        'hb_face_frame.matching_drawer_front'))
     spec['top_actions'] = ((("Use for This Cabinet Style",
                              'hb_face_frame.use_front_style',
-                             'kind', kind),),)
+                             'kind', kind),),
+                           tuple(new_row))
     return spec
 
 
@@ -1005,8 +1094,14 @@ OPTION_PAGES = {
 # as tabs of their own, so fronts are made and picked without leaving
 # the window.
 def _front_manager_tab(key):
+    kind = 'DOOR' if key == 'DOOR_STYLES' else 'DRAWER'
+
     def blocks(context):
         from ...operators import options_panel
+        from .operators import ops_styles
+        w = ops_styles.front_wizard
+        if w is not None and w['kind'] == kind:
+            return _wizard_blocks(context, kind)
         return options_panel.manager_blocks(context, OPTION_SUBPAGES[key])
     return {'blocks': blocks}
 

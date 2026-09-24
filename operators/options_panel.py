@@ -1466,8 +1466,14 @@ def _paint_tile(shader, font_id, s, mx, my, entry):
         parts, w, h = tiles['picture'](bpy.context, item)
     except Exception:
         parts, w, h = [], 0.0, 0.0
+    count = None
+    if tiles.get('count') is not None:
+        try:
+            count = tiles['count'](bpy.context, item)
+        except Exception:
+            count = None
     _paint_picture(shader, font_id, s, mx, my, rect, parts, w, h, name,
-                   active=is_active, used=used)
+                   active=is_active, used=used, count=count)
 
 
 def _paint_card(shader, font_id, s, entry):
@@ -1510,7 +1516,7 @@ def _paint_card(shader, font_id, s, entry):
 
 
 def _paint_picture(shader, font_id, s, mx, my, rect, parts, w, h, name,
-                   caption=None, active=False, used=False):
+                   caption=None, active=False, used=False, count=None):
     """A picture tile: part rects (the item's own units, x across and z
     up) fitted into the tile, the name under them, an optional caption
     over them, the pick outlined and a bar across the top when in
@@ -1534,6 +1540,12 @@ def _paint_picture(shader, font_id, s, mx, my, rect, parts, w, h, name,
         draw_text(font_id, rx + pad, ry + rh - cap_h - 1 * s, FONT * s,
                   Theme.TEXT_HEADER,
                   fit_text(font_id, FONT * s, caption, rw - 2 * pad))
+    if count:
+        # How many use it, in the corner, where it does not cover the
+        # picture.
+        draw_text(font_id, rx + 5 * s, ry + rh - 14 * s, FONT * s,
+                  Theme.TEXT_PRIMARY if active else Theme.TEXT_HEADER,
+                  str(count))
     if parts and w > 0 and h > 0:
         k = min(box[2] / w, box[3] / h)
         ox = box[0] + (box[2] - w * k) / 2.0

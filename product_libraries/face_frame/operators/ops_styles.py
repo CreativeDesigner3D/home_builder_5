@@ -255,31 +255,325 @@ class hb_face_frame_OT_add_door_style(Operator):
         return {'FINISHED'}
 
 
-class hb_face_frame_OT_remove_door_style(Operator):
-    """Remove the active face frame door style"""
+# ---------------------------------------------------------------------------
+# Front styles in use
+# ---------------------------------------------------------------------------
+# A cabinet style names its door and drawer front styles; a front can
+# carry one of its own (painted on, kept on its opening or its appliance
+# panel section). Removing a style that is still named anywhere asks for
+# the one to use instead, so nothing is left pointing at a name that is
+# gone.
+
+_FRONT_POOLS = {
+    'DOOR': ('door_styles', 'active_door_style_index', 'door_style',
+             'extra_door_styles', 'hb_front_door_style'),
+    'DRAWER': ('drawer_front_styles', 'active_drawer_front_style_index',
+               'drawer_front_style', 'extra_drawer_front_styles',
+               'hb_front_drawer_style'),
+}
+
+
+def _front_roles(kind):
+    ds = props_hb_face_frame.Face_Frame_Door_Style
+    return (ds._DOOR_FRONT_ROLES if kind == 'DOOR'
+            else ds._DRAWER_FRONT_ROLES)
+
+
+def front_style_usage(ff, kind, name):
+    """(cabinet style names, count of fronts) using front style `name`."""
+    _pool, _idx, prop, extras, _ovr = _FRONT_POOLS[kind]
+    styles = [cs.name for cs in ff.cabinet_styles
+              if getattr(cs, prop, None) == name
+              or any(e.style == name for e in getattr(cs, extras, ()))]
+    roles = _front_roles(kind)
+    fronts = sum(1 for obj in bpy.data.objects
+                 if obj.users_scene
+                 and obj.get('DOOR_STYLE_NAME') == name
+                 and obj.get('hb_part_role') in roles)
+    return styles, fronts
+
+
+def _replace_front_style(ff, kind, old, new):
+    """Point everything that names front style `old` at `new`."""
+    _pool, _idx, prop, extras, ovr = _FRONT_POOLS[kind]
+    for cs in ff.cabinet_styles:
+        for e in getattr(cs, extras, ()):
+            if e.style == old:
+                e.style = new
+        if getattr(cs, prop, None) == old:
+            setattr(cs, prop, new)      # restyles its cabinets
+    new_style = next((ds for ds in getattr(ff, _pool) if ds.name == new),
+                     None)
+    roles = _front_roles(kind)
+    for obj in list(bpy.data.objects):
+        if obj.get(ovr) == old:
+            obj[ovr] = new              # an opening's own pick
+        props = getattr(obj, 'appliance_panels', None)
+        for sec in (getattr(props, 'sections', ()) or ()):
+            if sec.get(ovr) == old:
+                sec[ovr] = new          # an appliance panel's own pick
+        if (new_style is not None and obj.users_scene
+                and obj.get('DOOR_STYLE_NAME') == old
+                and obj.get('hb_part_role') in roles):
+            new_style.assign_style_to_front(obj)
+
+
+def _replacement_items(self, context):
+    ff = get_style_props(context)
+    pool = getattr(ff, _FRONT_POOLS[self.kind][0])
+    idx = getattr(ff, _FRONT_POOLS[self.kind][1])
+    doomed = pool[idx].name if 0 <= idx < len(pool) else None
+    items = [(ds.name, ds.name, "") for ds in pool if ds.name != doomed]
+    return items or [('NONE', "(none)", "")]
+
+
+class _RemoveFrontStyle:
+    """Remove the active front style. One still in use asks which style
+    takes its place first."""
+    bl_options = {'REGISTER', 'UNDO'}
+    KIND = 'DOOR'
+
+    replacement: bpy.props.EnumProperty(
+        name="Use Instead", items=_replacement_items)  # type: ignore
+
+    @property
+    def kind(self):
+        return self.KIND
+
+    @classmethod
+    def poll(cls, context):
+        ff = get_style_props(context)
+        return len(getattr(ff, _FRONT_POOLS[cls.KIND][0])) > 1
+
+    def _doomed(self, context):
+        ff = get_style_props(context)
+        pool = getattr(ff, _FRONT_POOLS[self.KIND][0])
+        idx = getattr(ff, _FRONT_POOLS[self.KIND][1])
+        return ff, pool, idx, (pool[idx] if 0 <= idx < len(pool) else None)
+
+    def invoke(self, context, event):
+        ff, _pool, _idx, doomed = self._doomed(context)
+        if doomed is None:
+            return {'CANCELLED'}
+        styles, fronts = front_style_usage(ff, self.KIND, doomed.name)
+        if not styles and not fronts:
+            return self.execute(context)
+        return context.window_manager.invoke_props_dialog(self, width=340)
+
+    def draw(self, context):
+        ff, _pool, _idx, doomed = self._doomed(context)
+        if doomed is None:
+            return
+        styles, fronts = front_style_usage(ff, self.KIND, doomed.name)
+        col = self.layout.column()
+        col.label(text="%s is still in use:" % doomed.name, icon='ERROR')
+        for name in styles[:6]:
+            col.label(text="    Cabinet style %s" % name)
+        if len(styles) > 6:
+            col.label(text="    and %d more" % (len(styles) - 6))
+        if fronts:
+            col.label(text="    %d front%s given it by hand"
+                      % (fronts, "" if fronts == 1 else "s"))
+        col.separator()
+        col.prop(self, 'replacement')
+
+    def execute(self, context):
+        ff, pool, idx, doomed = self._doomed(context)
+        if doomed is None or len(pool) <= 1:
+            self.report({'WARNING'}, "At least one style must remain")
+            return {'CANCELLED'}
+        name = doomed.name
+        styles, fronts = front_style_usage(ff, self.KIND, name)
+        if styles or fronts:
+            new = self.replacement
+            if new in ('', 'NONE', name) or not any(ds.name == new
+                                                    for ds in pool):
+                self.report({'WARNING'}, "Pick the style to use instead")
+                return {'CANCELLED'}
+            _replace_front_style(ff, self.KIND, name, new)
+        # The replacement may have shifted what idx points at.
+        idx = next((i for i, ds in enumerate(pool) if ds.name == name), -1)
+        if idx < 0:
+            return {'CANCELLED'}
+        pool.remove(idx)
+        index_prop = _FRONT_POOLS[self.KIND][1]
+        if getattr(ff, index_prop) >= len(pool):
+            setattr(ff, index_prop, max(0, len(pool) - 1))
+        self.report({'INFO'}, "Removed %s" % name)
+        return {'FINISHED'}
+
+
+class hb_face_frame_OT_remove_door_style(_RemoveFrontStyle, Operator):
+    """Remove the active door style. One still in use asks which style
+    takes its place"""
     bl_idname = "hb_face_frame.remove_door_style"
     bl_label = "Remove Door Style"
     bl_description = "Remove the active door style"
+    KIND = 'DOOR'
+
+
+class hb_face_frame_OT_remove_drawer_front_style(_RemoveFrontStyle, Operator):
+    """Remove the active drawer front style. One still in use asks which
+    style takes its place"""
+    bl_idname = "hb_face_frame.remove_drawer_front_style"
+    bl_label = "Remove Drawer Front Style"
+    bl_description = "Remove the active drawer front style"
+    KIND = 'DRAWER'
+
+
+# ---------------------------------------------------------------------------
+# New from the catalog, and the matching drawer front
+# ---------------------------------------------------------------------------
+
+def new_front_style(context, kind, series, shape=None, panel=None):
+    """Add a front style built from a catalog pick and make it the
+    pick. Other settings (profiles, material) come from the style that
+    was picked, as NEW does. Returns the new style."""
+    ff = get_style_props(context)
+    pool_name, index_prop = _FRONT_POOLS[kind][0], _FRONT_POOLS[kind][1]
+    pool = getattr(ff, pool_name)
+    src_idx = getattr(ff, index_prop)
+    src = pool[src_idx] if 0 <= src_idx < len(pool) else None
+    existing = [ds.name for ds in pool]
+    style = pool.add()
+    style.name = _next_unique_name(
+        " ".join(x for x in (series, shape, panel) if x) or "Style",
+        existing)
+    if src is not None:
+        _copy_door_style(src, style)
+    # The cascade settles each level before the next is set.
+    for prop, value in (('front_series', series), ('front_shape', shape),
+                        ('front_panel', panel)):
+        if value:
+            try:
+                setattr(style, prop, value)
+            except Exception:
+                pass
+    setattr(ff, index_prop, len(pool) - 1)
+    return style
+
+
+class hb_face_frame_OT_new_front_style(Operator):
+    """Make a front style from a catalog series, shape and panel"""
+    bl_idname = "hb_face_frame.new_front_style"
+    bl_label = "New Front Style"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    kind: bpy.props.EnumProperty(
+        items=[('DOOR', "Door", ""), ('DRAWER', "Drawer Front", "")])  # type: ignore
+    series: bpy.props.StringProperty()  # type: ignore
+    shape: bpy.props.StringProperty()  # type: ignore
+    panel: bpy.props.StringProperty()  # type: ignore
+
+    def execute(self, context):
+        if not self.series:
+            return {'CANCELLED'}
+        style = new_front_style(context, self.kind, self.series,
+                                self.shape or None, self.panel or None)
+        self.report({'INFO'}, "Added %s" % style.name)
+        return {'FINISHED'}
+
+
+class hb_face_frame_OT_matching_drawer_front(Operator):
+    """Make the drawer front style that goes with the picked door style:
+    the same series, shape and panel from the drawer catalog, following
+    the door's rail width where the front is tall enough"""
+    bl_idname = "hb_face_frame.matching_drawer_front"
+    bl_label = "Make Matching Drawer Front"
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
     def poll(cls, context):
         ff = get_style_props(context)
-        return len(ff.door_styles) > 1
+        return 0 <= ff.active_door_style_index < len(ff.door_styles)
 
     def execute(self, context):
         ff = get_style_props(context)
-        if len(ff.door_styles) <= 1:
-            self.report({'WARNING'}, "At least one door style must remain")
+        door = ff.door_styles[ff.active_door_style_index]
+        from .. import style_options
+        series = door.front_series
+        if series not in style_options.DRAWER_SERIES:
+            self.report({'WARNING'}, "%s has no drawer fronts in the catalog"
+                        % series)
             return {'CANCELLED'}
-        idx = ff.active_door_style_index
-        if idx < 0 or idx >= len(ff.door_styles):
-            return {'CANCELLED'}
-        name = ff.door_styles[idx].name
-        ff.door_styles.remove(idx)
-        if ff.active_door_style_index >= len(ff.door_styles):
-            ff.active_door_style_index = max(0, len(ff.door_styles) - 1)
-        self.report({'INFO'}, f"Removed door style: {name}")
+        shapes = style_options.door_shapes(series, drawer=True)
+        shape = door.front_shape if door.front_shape in shapes else (
+            shapes[0] if shapes else None)
+        panels = (style_options.door_panels(series, shape, drawer=True)
+                  if shape else [])
+        panel = door.front_panel if door.front_panel in panels else (
+            panels[0] if panels else None)
+        style = new_front_style(context, 'DRAWER', series, shape, panel)
+        try:
+            style.match_door_rail_width = True
+        except Exception:
+            pass
+        self.report({'INFO'}, "Added drawer front %s" % style.name)
+        return {'FINISHED'}
+
+
+# The New from Catalog steps, kept here for the manager page to draw:
+# {'kind': 'DOOR' | 'DRAWER', 'series': str | None, 'shape': str | None}
+# while a pick is under way, else None.
+front_wizard = None
+
+
+class hb_face_frame_OT_front_style_wizard(Operator):
+    """One step of making a front style from the catalog"""
+    bl_idname = "hb_face_frame.front_style_wizard"
+    bl_label = "New from Catalog"
+    bl_options = {'INTERNAL'}
+
+    kind: bpy.props.EnumProperty(
+        items=[('DOOR', "Door", ""), ('DRAWER', "Drawer Front", "")])  # type: ignore
+    step: bpy.props.EnumProperty(items=[
+        ('START', "Start", ""), ('SERIES', "Series", ""),
+        ('SHAPE', "Shape", ""), ('PANEL', "Panel", ""),
+        ('BACK', "Back", ""), ('CANCEL', "Cancel", "")])  # type: ignore
+    value: bpy.props.StringProperty()  # type: ignore
+
+    def execute(self, context):
+        global front_wizard
+        from .. import style_options
+        drawer = self.kind == 'DRAWER'
+        w = front_wizard
+        if self.step == 'START':
+            front_wizard = {'kind': self.kind, 'series': None, 'shape': None}
+        elif self.step == 'CANCEL' or w is None:
+            front_wizard = None
+        elif self.step == 'BACK':
+            if w['shape'] is not None:
+                w['shape'] = None
+            elif w['series'] is not None:
+                w['series'] = None
+            else:
+                front_wizard = None
+        elif self.step == 'SERIES':
+            w['series'] = self.value
+            shapes = style_options.door_shapes(self.value, drawer=drawer)
+            if len(shapes) <= 1:
+                # One shape: nothing to choose.
+                w['shape'] = shapes[0] if shapes else ""
+        elif self.step == 'SHAPE':
+            w['shape'] = self.value
+        elif self.step == 'PANEL':
+            new_front_style(context, self.kind, w['series'],
+                            w['shape'] or None, self.value or None)
+            front_wizard = None
+        # One panel left to pick: take it.
+        w = front_wizard
+        if w is not None and w['series'] and w['shape'] is not None:
+            panels = style_options.door_panels(w['series'], w['shape'],
+                                               drawer=drawer)
+            if len(panels) <= 1:
+                new_front_style(context, self.kind, w['series'],
+                                w['shape'] or None,
+                                panels[0] if panels else None)
+                front_wizard = None
+        for window in context.window_manager.windows:
+            for area in window.screen.areas:
+                if area.type == 'VIEW_3D':
+                    area.tag_redraw()
         return {'FINISHED'}
 
 
@@ -304,63 +598,6 @@ class hb_face_frame_OT_add_drawer_front_style(Operator):
         ff.active_drawer_front_style_index = len(ff.drawer_front_styles) - 1
         self.report({'INFO'}, f"Added drawer front style: {new_style.name}")
         return {'FINISHED'}
-
-
-class hb_face_frame_OT_remove_drawer_front_style(Operator):
-    """Remove the active face frame drawer front style"""
-    bl_idname = "hb_face_frame.remove_drawer_front_style"
-    bl_label = "Remove Drawer Front Style"
-    bl_description = "Remove the active drawer front style"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    @classmethod
-    def poll(cls, context):
-        ff = get_style_props(context)
-        return len(ff.drawer_front_styles) > 1
-
-    def execute(self, context):
-        ff = get_style_props(context)
-        if len(ff.drawer_front_styles) <= 1:
-            self.report({'WARNING'}, "At least one drawer front style must remain")
-            return {'CANCELLED'}
-        idx = ff.active_drawer_front_style_index
-        if idx < 0 or idx >= len(ff.drawer_front_styles):
-            return {'CANCELLED'}
-        name = ff.drawer_front_styles[idx].name
-        ff.drawer_front_styles.remove(idx)
-        if ff.active_drawer_front_style_index >= len(ff.drawer_front_styles):
-            ff.active_drawer_front_style_index = max(0, len(ff.drawer_front_styles) - 1)
-        self.report({'INFO'}, f"Removed drawer front style: {name}")
-        return {'FINISHED'}
-
-
-def _bare_part_for(obj):
-    """A cabinet bare part (Wood Top / Misc Part) with NO cabinet cage
-    above it, or None. These live outside any cabinet's material walk,
-    so style assignment has to finish them directly."""
-    if obj is None or not obj.get('CABINET_PART'):
-        return None
-    from .. import types_face_frame
-    if types_face_frame.find_cabinet_root(obj) is not None:
-        return None
-    return obj
-
-
-def _apply_style_finish_to_bare_part(style, part_obj):
-    """Push a style's exterior finish onto a bare part. Live cutparts
-    take it on the GN surface inputs; a static carved mesh (nosed wood
-    top) renders its mesh slots instead, so those are painted too --
-    both are written so the finish survives the part flipping between
-    the two display modes. Returns True when a material was applied."""
-    fin, fin_rot = style.get_finish_material()
-    if fin is None:
-        return False
-    part_obj['STYLE_NAME'] = style.name
-    style._set_part_surfaces(part_obj, fin, fin_rot)
-    if part_obj.get('HB_STATIC_TEXTURED') or part_obj.get('IS_MANUAL_PART'):
-        hb_face_frame_OT_paint_part_material._paint_manual_part_slots(
-            part_obj, fin, fin_rot)
-    return True
 
 
 class hb_face_frame_OT_assign_style_to_selected_cabinets(Operator):
@@ -1709,6 +1946,9 @@ classes = (
     hb_face_frame_OT_remove_door_style,
     hb_face_frame_OT_add_drawer_front_style,
     hb_face_frame_OT_remove_drawer_front_style,
+    hb_face_frame_OT_new_front_style,
+    hb_face_frame_OT_matching_drawer_front,
+    hb_face_frame_OT_front_style_wizard,
     hb_face_frame_OT_assign_style_to_selected_cabinets,
     hb_face_frame_OT_update_cabinets_from_style,
     hb_face_frame_OT_paint_assign_cabinet_style,

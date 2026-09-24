@@ -718,6 +718,28 @@ def _propagate_door_style(self, context):
     propagator: edits in the door style panel reflect across every
     front using that style without a button press.
     """
+    _restyle_fronts_in_room(self, context.scene)
+    # Every other room too, each as the scene in context (see
+    # _propagate_cabinet_style), so a door style edit reaches fronts
+    # everywhere without an Update Fronts in each room.
+    from ...operators import scene_navigator
+    from . import types_face_frame as _tff
+    for scene in list(bpy.data.scenes):
+        if scene is context.scene or not scene_navigator.is_room(scene):
+            continue
+        try:
+            with _tff.isolated_recalc(), bpy.context.temp_override(
+                    scene=scene, view_layer=scene.view_layers[0]):
+                _restyle_fronts_in_room(self, scene)
+        except Exception as ex:
+            print("Home Builder: front style %r not applied in %r: %s"
+                  % (self.name, scene.name, ex))
+
+
+def _restyle_fronts_in_room(self, scene):
+    """Re-apply front style `self` to its fronts in `scene`: the fronts
+    tagged with it, the wood hoods whose style uses it, and the drawer
+    fronts that follow its rail width."""
     # Both style pools stamp the same DOOR_STYLE_NAME tag on fronts, and
     # a door style and a drawer-front style may share a name. Gate on the
     # front's role so a drawer-style edit can't restyle same-named DOOR
@@ -729,7 +751,7 @@ def _propagate_door_style(self, context):
     # Snapshot before acting: restyling can add / remove scene objects,
     # and mutating scene membership under a live scene.objects iterator
     # is a hard crash (see _propagate_cabinet_style).
-    fronts = [obj for obj in context.scene.objects
+    fronts = [obj for obj in scene.objects
               if obj.get('DOOR_STYLE_NAME') == target_name
               and obj.get('hb_part_role') in roles]
     for obj in fronts:
@@ -758,7 +780,7 @@ def _propagate_door_style(self, context):
                   else None)
         # Snapshot: the hood rebuild deletes / recreates the hood's part
         # objects, which would invalidate a live scene.objects iterator.
-        hoods = [obj for obj in context.scene.objects
+        hoods = [obj for obj in scene.objects
                  if obj.get('APPLIANCE_TYPE') == 'HOOD']
         for obj in hoods:
             name = obj.get('STYLE_NAME')
@@ -779,7 +801,7 @@ def _propagate_door_style(self, context):
             by_name = {ds.name: ds for ds in ff.drawer_front_styles}
             drw_roles = Face_Frame_Door_Style._DRAWER_FRONT_ROLES
             drawer_fronts = [
-                obj for obj in context.scene.objects
+                obj for obj in scene.objects
                 if obj.get('DOOR_STYLE_NAME') in matched
                 and obj.get('hb_part_role') in drw_roles]
             for obj in drawer_fronts:
