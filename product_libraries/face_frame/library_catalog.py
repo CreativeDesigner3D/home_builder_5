@@ -823,6 +823,23 @@ def _front_manager_notes(kind):
     return notes
 
 
+def _front_default_check(kind):
+    """Ticked when the pick is the style the active cabinet style
+    builds its fronts with; ticking makes it so. Unticking does
+    nothing -- a cabinet style always has one."""
+    prop = 'door_style' if kind == 'DOOR' else 'drawer_front_style'
+
+    def check(context, style):
+        cs = _active_cabinet_style(context)
+        if cs is None:
+            return None
+        return ("Default for %s" % cs.name,
+                lambda ctx: getattr(_active_cabinet_style(ctx), prop,
+                                    None) == style.name,
+                'hb_face_frame.use_front_style', {'kind': kind})
+    return check
+
+
 def _front_manager(kind, pool_key):
     spec = dict(OPTION_PAGES[pool_key])
     spec['title'] = ("Door Styles" if kind == 'DOOR'
@@ -839,10 +856,8 @@ def _front_manager(kind, pool_key):
     if kind == 'DOOR':
         new_row.append(("Matching Drawer Front",
                         'hb_face_frame.matching_drawer_front'))
-    spec['top_actions'] = ((("Use for This Cabinet Style",
-                             'hb_face_frame.use_front_style',
-                             'kind', kind),),
-                           tuple(new_row))
+    spec['top_actions'] = (tuple(new_row),)
+    spec['pick_checks'] = (_front_default_check(kind),)
     return spec
 
 

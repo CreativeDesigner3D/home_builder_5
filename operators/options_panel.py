@@ -699,6 +699,7 @@ def _subpage_blocks(context, spec, with_back=True):
     for row in spec.get('top_actions', ()):
         blocks.append(('actions', tuple(_norm_action(a) for a in row)))
     if spec.get('tiles_only'):
+        blocks.extend(_pick_checks(context, spec, pool))
         if pool.active(context) is not None:
             row = [("Edit...", 'home_builder.options_edit_item',
                     'collection', pool.collection)]
@@ -708,6 +709,24 @@ def _subpage_blocks(context, spec, with_back=True):
         return blocks
     blocks.append(('gap', None))
     blocks.extend(_pool_blocks(context, pool))
+    return blocks
+
+
+def _pick_checks(context, spec, pool):
+    """A tiles-only page's checkboxes about its pick: 'pick_checks' is
+    a list of fn(context, item) -> (label, checked(context), operator,
+    kwargs) or None; ticking runs the operator."""
+    item = pool.active(context)
+    if item is None:
+        return []
+    blocks = []
+    for fn in spec.get('pick_checks', ()):
+        try:
+            check = fn(context, item)
+        except Exception:
+            check = None
+        if check is not None:
+            blocks.append(('check', tuple(check)))
     return blocks
 
 
@@ -727,6 +746,7 @@ def _tile_edit_blocks(context, spec, pool):
     if pool.summary is not None:
         blocks.append(('card', pool))
     blocks.append(('field', (('text', pool.rename_prop, "Name"), item)))
+    blocks.extend(_pick_checks(context, spec, pool))
     blocks.extend(_field_blocks(context, pool.fields, item))
     blocks.append(('gap', None))
     for row in pool.actions:
@@ -999,6 +1019,9 @@ def build_page(rect, context, blocks_fn, lst):
         elif kind == 'form':
             label, method = payload
             entries.append(('form_row', label, method,
+                            (x, block_top - row_h, row_w, row_h)))
+        elif kind == 'check':
+            entries.append(('check_row', payload,
                             (x, block_top - row_h, row_w, row_h)))
         elif kind == 'back':
             entries.append(('back_row', payload,
@@ -1485,6 +1508,14 @@ def paint(entries, mx, my):
                 # Chevron pointing right: this opens something.
                 glyph_chevron(shader, rx + rw - 12 * s, ry + rh / 2.0,
                               7 * s, True, Theme.GLYPH)
+            elif kind == 'check_row':
+                (label, checked, _op, _kwargs), rect = entry[1], entry[2]
+                try:
+                    on = bool(checked(bpy.context))
+                except Exception:
+                    on = False
+                paint_check(shader, font_id, rect, FONT * s, label, on,
+                            point_in_rect(mx, my, rect))
             elif kind == 'back_row':
                 _, title, rect = entry
                 if isinstance(title, tuple):
@@ -1878,6 +1909,11 @@ def hit(context, mx, my, entries):
         if kind == 'form_row' and point_in_rect(mx, my, entry[3]):
             bpy.ops.home_builder.style_options_popup(
                 'INVOKE_DEFAULT', section=entry[2], title=entry[1])
+            return True
+        if kind == 'check_row' and point_in_rect(mx, my, entry[2]):
+            _label, _checked, op, kwargs = entry[1]
+            _run_on_release(op, dict(kwargs or {}))
+            _tag()
             return True
         if kind == 'back_row' and point_in_rect(mx, my, entry[2]):
             if isinstance(entry[1], tuple):
