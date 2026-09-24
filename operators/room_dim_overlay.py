@@ -130,17 +130,18 @@ def _resolve_target(obj):
 
 
 def _selected_targets(context):
-    """{name: (tag, obj)} resolved from the current selection + active
-    object. Empty outside room scenes."""
+    """{name: (tag, obj)} resolved from the current selection (not the
+    bare active object). Empty outside room scenes."""
     scene = context.scene
     if scene is None or scene.get('IS_LAYOUT_VIEW') \
             or scene.get('IS_DETAIL_VIEW'):
         return {}
     targets = {}
+    # Selected objects only: the active object outlives a deselect (a
+    # selection-mode switch clears the selection but leaves the wall that
+    # was clicked last active), and counting it kept wall sizes on screen
+    # with nothing selected.
     objs = list(getattr(context, 'selected_objects', ()) or ())
-    act = getattr(context, 'active_object', None)
-    if act is not None and act not in objs:
-        objs.append(act)
     for obj in objs:
         hit = _resolve_target(obj)
         if hit is not None:

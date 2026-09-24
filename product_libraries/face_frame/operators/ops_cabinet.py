@@ -836,6 +836,7 @@ def apply_face_frame_selection_mode(context, root_obj=None):
     # Parts mode also takes the off-path so individual parts render
     # at default color rather than the cabinet-color highlight; the
     # mode value is still readable elsewhere for selection scoping.
+    parts_mode = mode == 'Parts'
     if not ff_scene.face_frame_selection_mode_enabled or mode == 'Parts':
         mode = '__off__'
     if root_obj is not None:
@@ -845,7 +846,32 @@ def apply_face_frame_selection_mode(context, root_obj=None):
     else:
         for obj in context.scene.objects:
             _selection_mode_toggle_one(obj, mode)
+        _apply_door_window_cages(context, parts_mode)
     quiet_cages.after_mode_applied()
+
+
+def _apply_door_window_cages(context, parts_mode):
+    """Door and window cages get out of the way in Parts mode like the
+    cabinet cages do, so they no longer draw in front of the cabinets.
+    A cage with built geometry hides outright (the geometry is its own
+    object and stays); a bare cage has nothing else to show, so it
+    drops to a wire drawn behind the cabinets instead. Leaving Parts
+    mode puts every cage back the way the scene's cage toggle wants."""
+    hb_scene = getattr(context.scene, 'home_builder', None)
+    show_cages = bool(getattr(hb_scene, 'show_entry_door_and_window_cages',
+                              True))
+    for obj in context.scene.objects:
+        if not (obj.get('IS_ENTRY_DOOR_BP') or obj.get('IS_WINDOW_BP')):
+            continue
+        has_geo = any(c.get('IS_DOOR_WINDOW_GEO') for c in obj.children)
+        if parts_mode:
+            obj.hide_viewport = has_geo
+            obj.display_type = 'WIRE'
+            obj.show_in_front = False
+        else:
+            obj.hide_viewport = False
+            obj.display_type = 'TEXTURED' if show_cages else 'WIRE'
+            obj.show_in_front = show_cages
 
 
 class hb_face_frame_OT_toggle_mode(bpy.types.Operator):
