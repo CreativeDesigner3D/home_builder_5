@@ -999,6 +999,10 @@ _STYLE_CAGE_TAGS = (
     'IS_FRAMELESS_CABINET_CAGE',
     'IS_FRAMELESS_PRODUCT_CAGE',
     'IS_CAGE_GROUP',
+    # Any other cage under a cabinet -- the appliance a sink, fridge or
+    # oven opening houses. Painted opaque, it covered the cabinet in a
+    # solid block wherever its mode showed it.
+    'IS_GEONODE_CAGE',
 )
 
 
@@ -1035,6 +1039,25 @@ def style_viewport_color(rgb):
 
 def _is_cage(obj):
     return any(obj.get(tag) for tag in _STYLE_CAGE_TAGS)
+
+
+def _paint_cage(cage, tint, context):
+    """Colour a cage the way the selection mode would. A hidden cage is
+    left alone -- the mode colours it when it shows it. A shown one is
+    the mode's highlight and sits in front of the cabinet, so it takes
+    the see-through wash, or the plain highlight colour when there is no
+    style to show; an opaque fill would hide the cabinet behind it."""
+    if cage.hide_viewport:
+        return
+    if tint is not None:
+        cage.color = (tint[0], tint[1], tint[2], _STYLE_CAGE_ALPHA)
+        return
+    try:
+        prefs = context.window_manager.home_builder.get_user_preferences(
+            context)
+        cage.color = prefs.cabinet_color
+    except Exception:
+        pass
 
 
 # Cage stamp for a cabinet that is already on site: drawn for reference,
@@ -1113,21 +1136,18 @@ def apply_style_colors(context):
     for cage in [o for o in scene.objects
                  if o.get(types_face_frame.TAG_CABINET_CAGE)]:
         tint = _style_tint_for_cabinet(cage, styles) if on else None
-        if tint is None:
-            cage.color = _NO_STYLE_TINT
-            for child in cage.children_recursive:
-                child.color = (note_colour if child.get('IS_2D_ANNOTATION')
-                               else _NO_STYLE_TINT)
-            continue
-        part_colour = (tint[0], tint[1], tint[2], 1.0)
-        cage_colour = (tint[0], tint[1], tint[2], _STYLE_CAGE_ALPHA)
-        cage.color = cage_colour
+        part_colour = (_NO_STYLE_TINT if tint is None
+                       else (tint[0], tint[1], tint[2], 1.0))
+        _paint_cage(cage, tint, context)
         for child in cage.children_recursive:
             if child.get('IS_2D_ANNOTATION'):
                 child.color = note_colour
-                continue
-            child.color = cage_colour if _is_cage(child) else part_colour
-        tinted += 1
+            elif _is_cage(child):
+                _paint_cage(child, tint, context)
+            else:
+                child.color = part_colour
+        if tint is not None:
+            tinted += 1
 
     # The colour only shows in solid shading's OBJECT mode; remember what
     # the viewport had so turning this off gives it back.
