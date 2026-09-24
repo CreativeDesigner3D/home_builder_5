@@ -437,32 +437,6 @@ def _notes_summary(p):
     return "none" if n == 0 else "%d note%s" % (n, "" if n == 1 else "s")
 
 
-def _front_cells(context, p):
-    """The two fronts as pictures; a click turns the style editor to
-    that front's styles."""
-    from .props_hb_face_frame import get_style_props
-    sp = get_style_props(context)
-    cells = []
-    for kind, label, prop, pool, tab in (
-            ('DOOR', "Door", 'door_style', 'door_styles',
-             _EDITOR_DOOR_TAB),
-            ('DRAWER', "Drawer Front", 'drawer_front_style',
-             'drawer_front_styles', _EDITOR_DRAWER_TAB)):
-        name = getattr(p, prop, "") or ""
-        style = next((ds for ds in getattr(sp, pool, ()) if ds.name == name),
-                     None)
-        picture = _front_tile_picture(kind)
-        cells.append({
-            'label': label,
-            'name': name if style is not None else "None",
-            'picture': (lambda ctx, st=style, pic=picture:
-                        pic(ctx, st) if st is not None else ([], 0.0, 0.0)),
-            'op': 'home_builder.style_editor_open',
-            'kwargs': {'key': 'CABINET_STYLE', 'section': tab},
-        })
-    return cells
-
-
 def _cabinet_style_fields():
     """The settings of one cabinet style as (label, summary, fields)
     sections -- the style editor's tabs, and a line each in the panel.
@@ -525,35 +499,7 @@ def _cabinet_style_fields():
         ('bool', 'show_finish_references', "Show References"),
     ]
 
-    fronts = (
-        # A click on either picture opens that front's style manager.
-        ('tiles', None, None, {'cells': _front_cells}),
-        ('choice', 'door_style', "Door", {'custom': 'ss_door'}),
-        ('choice', 'drawer_front_style', "Drawer Front",
-         {'custom': 'ss_drawer'}),
-        # Extra styles document the other fronts in use on the Style
-        # Section page; only the first extra drawer style has a geometric
-        # effect (the Alternate Style Over height below).
-        ('label', None, "Also on the Style Section"),
-        ('items', 'extra_door_styles', None,
-         {'kind': 'enum', 'prop': 'style',
-          'remove': ('hb_face_frame.remove_cabinet_extra_front_style',
-                     lambda i, item: {'kind': 'DOOR', 'index': i})}),
-        ('items', 'extra_drawer_front_styles', None,
-         {'kind': 'enum', 'prop': 'style',
-          'remove': ('hb_face_frame.remove_cabinet_extra_front_style',
-                     lambda i, item: {'kind': 'DRAWER', 'index': i})}),
-        ('actions', (("+ Door Style",
-                      'hb_face_frame.add_cabinet_extra_front_style',
-                      'kind', 'DOOR'),
-                     ("+ Drawer Front",
-                      'hb_face_frame.add_cabinet_extra_front_style',
-                      'kind', 'DRAWER')), None),
-        # Drawer fronts this tall take the first extra style (0 = off).
-        ('distance', 'extra_drawer_front_height', "Alternate Style Over",
-         {'when': lambda p: len(p.extra_drawer_front_styles) > 0}),
-        ('notes', _alternate_drawer_notes, None, {'owner': True}),
-    )
+    fronts = ()
 
     hardware = (
         ('choice', 'finish_hinge', "Hinge", {'custom': 'ss_hinge'}),
@@ -1093,8 +1039,43 @@ OPTION_PAGES = {
 # The cabinet style's own sections, then the two front style managers
 # as tabs of their own, so fronts are made and picked without leaving
 # the window.
+# What the cabinet style itself says about its fronts, at the foot of
+# each style tab: the style it builds with (a dropdown, or typed text for
+# the Style Section), the others it lists there, and -- drawers -- the
+# height a front changes to the first of those at.
+_DOOR_STYLE_FIELDS = (
+    ('label', None, "This Cabinet Style"),
+    ('choice', 'door_style', "Door", {'custom': 'ss_door'}),
+    ('label', None, "Also on the Style Section"),
+    ('items', 'extra_door_styles', None,
+     {'kind': 'enum', 'prop': 'style',
+      'remove': ('hb_face_frame.remove_cabinet_extra_front_style',
+                 lambda i, item: {'kind': 'DOOR', 'index': i})}),
+    ('actions', (("+ Door Style",
+                  'hb_face_frame.add_cabinet_extra_front_style',
+                  'kind', 'DOOR'),), None),
+)
+_DRAWER_STYLE_FIELDS = (
+    ('label', None, "This Cabinet Style"),
+    ('choice', 'drawer_front_style', "Drawer Front", {'custom': 'ss_drawer'}),
+    ('label', None, "Also on the Style Section"),
+    ('items', 'extra_drawer_front_styles', None,
+     {'kind': 'enum', 'prop': 'style',
+      'remove': ('hb_face_frame.remove_cabinet_extra_front_style',
+                 lambda i, item: {'kind': 'DRAWER', 'index': i})}),
+    ('actions', (("+ Drawer Front Style",
+                  'hb_face_frame.add_cabinet_extra_front_style',
+                  'kind', 'DRAWER'),), None),
+    # Drawer fronts this tall take the first extra style (0 = off).
+    ('distance', 'extra_drawer_front_height', "Alternate Style Over",
+     {'when': lambda p: len(p.extra_drawer_front_styles) > 0}),
+    ('notes', _alternate_drawer_notes, None, {'owner': True}),
+)
+
+
 def _front_manager_tab(key):
     kind = 'DOOR' if key == 'DOOR_STYLES' else 'DRAWER'
+    own = _DOOR_STYLE_FIELDS if kind == 'DOOR' else _DRAWER_STYLE_FIELDS
 
     def blocks(context):
         from ...operators import options_panel
@@ -1102,21 +1083,26 @@ def _front_manager_tab(key):
         w = ops_styles.front_wizard
         if w is not None and w['kind'] == kind:
             return _wizard_blocks(context, kind)
-        return options_panel.manager_blocks(context, OPTION_SUBPAGES[key])
+        out = list(options_panel.manager_blocks(context, OPTION_SUBPAGES[key]))
+        cs = _active_cabinet_style(context)
+        if cs is not None:
+            out.append(('gap', None))
+            out.extend(options_panel.field_blocks(context, own, cs))
+        return out
     return {'blocks': blocks}
 
 
-_CABINET_STYLE_TABS = tuple(
-    (label, fields) for label, _summary, fields in _CABINET_STYLE_SECTIONS)
-_FRONTS_TAB = next(i for i, (label, _f) in enumerate(_CABINET_STYLE_TABS)
-                   if label == "Fronts")
-_CABINET_STYLE_TABS = (
-    _CABINET_STYLE_TABS[:_FRONTS_TAB + 1]
-    + (("Door Styles", _front_manager_tab('DOOR_STYLES')),
-       ("Drawer Fronts", _front_manager_tab('DRAWER_FRONT_STYLES')))
-    + _CABINET_STYLE_TABS[_FRONTS_TAB + 1:])
-_EDITOR_DOOR_TAB = _FRONTS_TAB + 1
-_EDITOR_DRAWER_TAB = _FRONTS_TAB + 2
+# The editor's tabs: the style's own sections, with its fronts made,
+# picked and listed in the two front style tabs where Fronts would be.
+_CABINET_STYLE_TABS = ()
+for _label, _summary, _fields in _CABINET_STYLE_SECTIONS:
+    if _label == "Fronts":
+        _CABINET_STYLE_TABS += (
+            ("Door Styles", _front_manager_tab('DOOR_STYLES')),
+            ("Drawer Front Styles",
+             _front_manager_tab('DRAWER_FRONT_STYLES')))
+    else:
+        _CABINET_STYLE_TABS += ((_label, _fields),)
 
 OPTION_EDITORS = {
     'CABINET_STYLE': {
