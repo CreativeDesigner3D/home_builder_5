@@ -254,6 +254,17 @@ class Product(GeoNodeCage):
         recalculate_product(self.obj)
 
 
+# A left end panel built mirrored in Z as well faces out on its top
+# surface, not the bottom the finish flags assume by default.
+LEFT_MIRRORED_FINISH = (True, False)
+
+
+def _finish_faces(part, finish):
+    """Put a part's finish flags right (parts built before they were);
+    the next style update paints them."""
+    part['Finish Top'], part['Finish Bottom'] = finish
+
+
 # ---------------------------------------------------------------------------
 # Floating shelf
 # ---------------------------------------------------------------------------
@@ -300,6 +311,7 @@ def _solve_floating_shelf(root, parts, dim_x, dim_y, dim_z):
 
     part = parts.get('SHELF_LEFT_PANEL')
     if part is not None:
+        _finish_faces(part, LEFT_MIRRORED_FINISH)
         _set_part(part, (0.0, 0.0, 0.0),
                   length=dim_y - mt, width=dim_z, thickness=mt, visible=fl)
 
@@ -352,7 +364,7 @@ class FloatingShelf(Product):
         led_route.set_input('Flip Z', False)
 
         self.add_part('Left Panel', 'SHELF_LEFT_PANEL', rotation=(-90, 0, 90),
-                      mirror='XYZ')
+                      mirror='XYZ', finish=LEFT_MIRRORED_FINISH)
         self.add_part('Right Panel', 'SHELF_RIGHT_PANEL', rotation=(-90, 0, 90),
                       mirror='XY')
 
@@ -508,6 +520,7 @@ def _solve_support_frame(root, parts, dim_x, dim_y, dim_z):
 
     part = parts.get('LEFT_RAIL')
     if part is not None:
+        _finish_faces(part, LEFT_MIRRORED_FINISH)
         _set_part(part, (0.0, -bl_y, 0.0),
                   length=dim_y - fl_y - bl_y, width=dim_z, thickness=mt,
                   visible=bool(get('Left Rail', True)))
@@ -614,7 +627,7 @@ class SupportFrame(Product):
 
         # ---- RAILS ----
         self.add_part('Left Panel', 'LEFT_RAIL', rotation=(-90, 0, 90),
-                      mirror='XYZ')
+                      mirror='XYZ', finish=LEFT_MIRRORED_FINISH)
         self.add_part('Right Panel', 'RIGHT_RAIL', rotation=(-90, 0, 90),
                       mirror='XY')
         self.add_part('Front Panel', 'FRONT_RAIL', rotation=(90, 0, 0),
@@ -1093,10 +1106,26 @@ class CornerFiller(Product):
 BASE_ASSEMBLY_SUPPORT_SPACING = inch(16)
 
 
+# (Finish Top, Finish Bottom) for the parts that show: whichever surface
+# faces out of the base. The front and the right end face out on their
+# bottom surface; the left end, mirrored in Z as well, on its top.
+BASE_ASSEMBLY_FINISH = {
+    'BASE_FRONT': (False, True),
+    'BASE_LEFT_END': (True, False),
+    'BASE_RIGHT_END': (False, True),
+}
+
+
 def _solve_base_assembly(root, parts, dim_x, dim_y, dim_z):
     """A ladder in plan: the kick face and a back rail run the length,
     the ends stand between them, and cross supports divide it evenly."""
     mt = float(_prompt(root, 'Material Thickness', inch(0.75)))
+    # Bases built before the finish sides were put right; the next style
+    # update paints them.
+    for role, finish in BASE_ASSEMBLY_FINISH.items():
+        part = parts.get(role)
+        if part is not None:
+            _finish_faces(part, finish)
     spacing = float(_prompt(root, 'Support Spacing',
                             BASE_ASSEMBLY_SUPPORT_SPACING))
 
@@ -1160,13 +1189,13 @@ class BaseAssembly(Product):
                           BASE_ASSEMBLY_SUPPORT_SPACING)
 
         self.add_part('Front', 'BASE_FRONT', rotation=(90, 0, 0), mirror='Z',
-                      finish=(True, False))
+                      finish=BASE_ASSEMBLY_FINISH['BASE_FRONT'])
         self.add_part('Back', 'BASE_BACK', rotation=(90, 0, 0),
                       finish=(False, False))
         self.add_part('Left End', 'BASE_LEFT_END', rotation=(-90, 0, 90),
-                      mirror='XYZ', finish=(True, False))
+                      mirror='XYZ', finish=BASE_ASSEMBLY_FINISH['BASE_LEFT_END'])
         self.add_part('Right End', 'BASE_RIGHT_END', rotation=(-90, 0, 90),
-                      mirror='XY', finish=(True, False))
+                      mirror='XY', finish=BASE_ASSEMBLY_FINISH['BASE_RIGHT_END'])
 
         support = self.add_part('Support', 'BASE_SUPPORT',
                                 rotation=(-90, 0, 90), mirror='XYZ',

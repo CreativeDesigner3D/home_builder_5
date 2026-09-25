@@ -1007,6 +1007,7 @@ class Frameless_Cabinet_Style(PropertyGroup):
         Fronts take the fronts material both sides. Edges take the
         matching banding. Five-piece fronts also get their stile / rail
         / panel materials, the rails turned so the grain runs across."""
+        from ..common import turned_leg
         m = _sheet_materials()
         finish_mat, _ = self.get_finish_material()
         interior_mat, _ = self.get_interior_material()
@@ -1045,6 +1046,9 @@ class Frameless_Cabinet_Style(PropertyGroup):
             part.set_input("Edge W2", edge)
             part.set_input("Edge L1", edge)
             part.set_input("Edge L2", edge)
+            # A turned leg is a static mesh carrying its own material, taken
+            # from Top Surface when it was turned; give it the new one.
+            turned_leg.sync_static_material(child)
 
             # Shape modifiers (corner notches and the like) carry a
             # Material socket; five-piece fronts carry their members'.
