@@ -23,6 +23,7 @@ from . import wood_materials
 from . import molding_frameless
 from . import finish_colors
 from . import edge_pulls
+from . import grain_match
 import bpy.utils.previews
 
 
@@ -1067,6 +1068,12 @@ class Frameless_Cabinet_Style(PropertyGroup):
                         mod, tree_items['Panel Material'].identifier,
                         front_panel_material(child, front_mat))
 
+        # Matched fronts trade their face materials for ones mapped from
+        # the run's grain reference.
+        for child in parts:
+            if child.get('IS_CABINET_FRONT'):
+                grain_match.apply_to_front(child)
+
     def assign_style_to_cabinet(self, cabinet_obj):
         #Assign Properties to Cabinet done in ops_hb_frameless.py
 
@@ -1204,6 +1211,14 @@ class Frameless_Door_Style(PropertyGroup):
         items=[('1MM', "1mm", "Standard 1mm edgebanding"),
                ('3MM', "3mm", "Heavy 3mm edgebanding")],
         default='1MM',
+        update=update_door_style_fronts,
+    )  # type: ignore
+    grain_match: EnumProperty(
+        name="Grain Match",
+        description="Carry the grain from front to front across a run, "
+                    "as if the fronts were cut from one sheet",
+        items=grain_match.GRAIN_MATCH_ITEMS,
+        default='NONE',
         update=update_door_style_fronts,
     )  # type: ignore
     
@@ -1385,6 +1400,14 @@ class Frameless_Door_Style(PropertyGroup):
                 front_obj.modifiers.remove(mod)
 
     def assign_style_to_front(self, front_obj):
+        """Style the front (see _assign_style_to_front), then put its
+        faces on the grain this style asks for."""
+        result = self._assign_style_to_front(front_obj)
+        if result is not False:
+            grain_match.apply_to_front(front_obj)
+        return result
+
+    def _assign_style_to_front(self, front_obj):
         """Assign this door style to a door or drawer front object.
 
         Slab strips the 'Door Style' modifier; any other preset adds or
@@ -1492,6 +1515,7 @@ class Frameless_Door_Style(PropertyGroup):
         col.prop(self, "front_style", text="Front Style")
         col.prop(self, "panel_type", text="Door Panel")
         col.prop(self, "door_edgeband", text="Edgebanding")
+        col.prop(self, "grain_match", text="Grain")
 
         # Assign button
         row = box.row()
