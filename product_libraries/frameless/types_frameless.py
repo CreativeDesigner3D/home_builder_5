@@ -484,6 +484,71 @@ class RefrigeratorCabinet(Cabinet):
                 solver_frameless.attach_cage(door_drawer.obj, child)
 
 
+# Column refrigeration: a tall cabinet whose bottom opening houses a
+# panel-ready column unit, with doors over it.
+COLUMN_UNITS = {
+    'Tall Column Refrigerator': "Column Refrigerator",
+    'Tall Column Freezer': "Column Freezer",
+}
+COLUMN_WIDTH = inch(30.0)
+COLUMN_OPENING_HEIGHT = inch(80.0)
+# Tall enough for doors of a useful height over the unit.
+COLUMN_MIN_CABINET_HEIGHT = inch(96.0)
+
+
+class ColumnRefrigeratorCabinet(RefrigeratorCabinet):
+    """A column refrigerator or freezer housed in a tall cabinet. The
+    unit is panelled and set a door gap proud of the carcass, so its panel
+    finishes flush with the cabinet doors."""
+
+    def __init__(self, column='Tall Column Refrigerator'):
+        super().__init__()
+        props = bpy.context.scene.hb_frameless
+        self.column = column if column in COLUMN_UNITS else 'Tall Column Refrigerator'
+        self.width = COLUMN_WIDTH
+        self.height = max(props.tall_cabinet_height, COLUMN_MIN_CABINET_HEIGHT)
+
+    def create(self, name="Column Refrigerator"):
+        super().create(name)
+        self.obj['COLUMN_UNIT'] = self.column
+        solver_frameless.recalculate_cabinet(self.obj)
+        from ..common import appliance_geo
+        # Collected first: panelling the unit rebuilds its model.
+        openings = [o for o in self.obj.children_recursive
+                    if o.get('APPLIANCE_OPENING') == 'REFRIGERATOR']
+        for opening in openings:
+            model = appliance_geo.opening_appliance(opening)
+            if model is not None:
+                model['APPLIANCE_NAME'] = COLUMN_UNITS[self.column]
+                model['HB_LIBRARY'] = 'FRAMELESS'
+                appliance_geo.set_front_style(model, 'CABINET')
+                # The run is laid out over the opening like a door, so
+                # the panel needs no margin of its own.
+                panels = model.appliance_panels
+                panels.end_reveal = 0.0
+
+    def add_openings(self):
+        top_doors = Doors()
+        top_doors.half_overlay_bottom = True
+        top_doors.door_pull_location = "Upper"
+        splitter = SplitterVertical()
+        splitter.splitter_qty = 1
+        splitter.opening_sizes = [0, COLUMN_OPENING_HEIGHT]
+        splitter.opening_inserts = [top_doors, None]
+        splitter.create()
+        for (role, index), opening in solver_frameless.split_parts(
+                splitter.obj).items():
+            if role == 'OPENING' and index == 2:
+                opening['APPLIANCE_OPENING'] = 'REFRIGERATOR'
+                opening['APPLIANCE_PROUD'] = inch(0.125)
+                opening['APPLIANCE_SEED'] = {'fridge_config': 'COLUMN',
+                                             'grille_height': 0.0}
+        for child in self.obj.children_recursive:
+            if 'IS_FRAMELESS_BAY_CAGE' in child:
+                splitter.obj.parent = child
+                solver_frameless.attach_cage(splitter.obj, child)
+
+
 # Appliance towers, top to bottom: (insert, fixed height or 0 to share
 # what the fixed ones leave). The oven and microwave openings are sized
 # to common cut-outs; Edit Opening Sizes changes them per cabinet.

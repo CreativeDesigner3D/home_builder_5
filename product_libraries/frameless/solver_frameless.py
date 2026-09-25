@@ -1041,7 +1041,12 @@ def _sync_opening_appliance(opening_obj):
                 bpy.data.objects.remove(child, do_unlink=True)
             bpy.data.objects.remove(model, do_unlink=True)
         return
-    model = appliance_geo.sync_opening_appliance(opening_obj, kind)
+    proud = opening_obj.get('APPLIANCE_PROUD')
+    seed = opening_obj.get('APPLIANCE_SEED')
+    model = appliance_geo.sync_opening_appliance(
+        opening_obj, kind,
+        proud=float(proud) if proud is not None else None,
+        seed=seed.to_dict() if hasattr(seed, 'to_dict') else seed)
     if from_insert and model is not None:
         model[INSERT_APPLIANCE_KEY] = True
 

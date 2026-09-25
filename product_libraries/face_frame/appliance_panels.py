@@ -406,6 +406,28 @@ def _front_plane(appliance_obj, dim_y):
     return -dim_y
 
 
+def _flush_run(appliance_obj, dim_x, dim_z):
+    """(x_lo, x_hi, z_lo, z_hi) of the panel run in the appliance's own
+    space. The appliance's front, except for a unit set flush in a
+    frameless cabinet opening (the opening says how proud): there the run
+    covers the opening the way a door would, over the cabinet sides to a
+    reveal, from the floor to a door gap under the doors above."""
+    opening = appliance_obj.parent
+    if (opening is None or opening.get('APPLIANCE_PROUD') is None
+            or not opening.get('IS_FRAMELESS_OPENING_CAGE')):
+        return 0.0, dim_x, 0.0, dim_z
+    root = opening
+    while root is not None and not root.get('IS_FRAMELESS_CABINET_CAGE'):
+        root = root.parent
+    mt = float(root.get('Material Thickness', _I(0.75))) if root else _I(0.75)
+    wrap = hb_types.GeoNodeCage(opening)
+    open_w, open_h = wrap.get_input('Dim X'), wrap.get_input('Dim Z')
+    x0 = appliance_obj.location.x
+    side = mt - _I(0.0625)
+    over_top = (mt - _I(0.125)) / 2.0
+    return (-x0 - side, open_w - x0 + side, 0.0, open_h + over_top)
+
+
 def default_toe_kick(appliance_obj):
     """Under-counter appliances start above the toe kick: the project toe
     kick default (scene hb_face_frame, or hb_frameless for a frameless
@@ -1369,7 +1391,15 @@ def rebuild(appliance_obj):
     if not props.sections:
         return
     dim_x, dim_y, dim_z = _cage_dims(appliance_obj)
-    faces, backers, rails = solve(props, dim_x, dim_z)
+    run_x0, run_x1, run_z0, run_z1 = _flush_run(appliance_obj, dim_x, dim_z)
+    faces, backers, rails = solve(props, run_x1 - run_x0, run_z1 - run_z0)
+    if (run_x0, run_z0) != (0.0, 0.0):
+        faces = {i: (a + run_x0, b + run_x0, c + run_z0, d + run_z0)
+                 for i, (a, b, c, d) in faces.items()}
+        backers = {i: (a + run_x0, b + run_x0, c + run_z0, d + run_z0, t)
+                   for i, (a, b, c, d, t) in backers.items()}
+        rails = [(a + run_x0, b + run_x0, c + run_z0, d + run_z0)
+                 for (a, b, c, d) in rails]
     order = sorted(faces)                       # section index order
     plane = _front_plane(appliance_obj, dim_y)
     key = _structure_key(props, backers)

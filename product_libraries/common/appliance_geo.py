@@ -210,6 +210,9 @@ FRIDGE_CONFIG_ITEMS = [
     ('SINGLE', "Single Door", "One door over a freezer drawer"),
     ('SIDE_BY_SIDE', "Side by Side", "Full-height freezer beside the fridge"),
     ('TOP_FREEZER', "Top Freezer", "Freezer door above the fridge door"),
+    # Appended so saved files keep their stored enum indices.
+    ('COLUMN', "Column", "One full-height door: a column refrigerator, "
+                         "freezer or wine unit"),
 ]
 
 UNDER_COUNTER_KIND_ITEMS = [
@@ -409,6 +412,7 @@ _PANEL_CONFIG_FOR_FRIDGE = {
     'SINGLE': 'BOTTOM_FREEZER',
     'SIDE_BY_SIDE': 'FRENCH_DOOR',
     'TOP_FREEZER': 'TOP_FREEZER',
+    'COLUMN': 'SINGLE',
 }
 
 
@@ -1139,14 +1143,16 @@ def opening_appliance(opening_obj):
 
 
 def sync_opening_appliance(opening_obj, appliance_type='REFRIGERATOR',
-                           span=None):
+                           span=None, proud=None, seed=None):
     """Keep the appliance in a cabinet opening sized to it, creating it
     the first time. The opening's origin is at its front face and the
     cabinet's back lies at +Dim Y, so the appliance stands with its
     back there and its doors out past the front. ``span`` is
     (x, width, z, height) in the opening's own space when the appliance
     must fit something narrower than the cage -- a face frame's stiles
-    and rail -- and defaults to the whole cage."""
+    and rail -- and defaults to the whole cage. ``proud`` is how far its
+    doors stand out of the cabinet (CABINET_APPLIANCE_PROUD when None);
+    ``seed`` is model options written when the appliance is first made."""
     from . import types_appliances
     cls = getattr(types_appliances,
                   _OPENING_APPLIANCE_CLASSES.get(appliance_type, ''), None)
@@ -1157,10 +1163,12 @@ def sync_opening_appliance(opening_obj, appliance_type='REFRIGERATOR',
                            wrap.get_input('Dim Z'))
     x0, span_w, z0, span_h = span or (0.0, dim_x, 0.0, dim_z)
     c = CABINET_APPLIANCE_CLEARANCE
+    if proud is None:
+        proud = CABINET_APPLIANCE_PROUD
     return _ensure_cabinet_appliance(
         opening_obj, cls, max(span_w - 2.0 * c, 0.0),
-        dim_y + CABINET_APPLIANCE_PROUD, max(span_h - c, 0.0),
-        (x0 + c, dim_y, z0))
+        dim_y + proud, max(span_h - c, 0.0),
+        (x0 + c, dim_y, z0), seed=seed)
 
 
 SIZE_OWNED_FLAG = 'APPLIANCE_SIZE_OWNED'
@@ -1476,6 +1484,9 @@ def _build_refrigerator(cage_obj, opts):
                      'dim_x * %f + %f' % (frac, GAP * 0.5),
                      'dim_x * %f - %f' % (1.0 - frac, GAP * 0.5),
                      base, height, door_t)
+    elif config == 'COLUMN':
+        _fridge_door(cg, opts, mat, metal, "Fridge Door", 0.0, 'dim_x',
+                     base, 'dim_z - %f' % (base + top), door_t)
     elif config == 'TOP_FREEZER':
         _fridge_door(cg, opts, mat, metal, "Freezer Door", 0.0, 'dim_x',
                      'dim_z - %f' % (freezer_h + top), freezer_h, door_t,
