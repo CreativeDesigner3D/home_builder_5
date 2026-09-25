@@ -614,7 +614,28 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             return 'Right'
         return 'Left'
 
+    def own_size(self):
+        """``(height, depth)`` the cabinet's class gives itself when it
+        sizes itself (a bench, a column unit, an appliance garage), else
+        None for each -- a plain cabinet takes the room's defaults for its
+        type. Cabinets, not appliances or parts, which size themselves
+        their own way."""
+        if self.is_appliance or self.cabinet_name in PART_CLASS_MAP:
+            return None, None
+        key = (self.cabinet_name, self.cabinet_type)
+        cached = getattr(self, '_own_size', None)
+        if cached is None or cached[0] != key:
+            # Only a size the class set for itself counts, not the base
+            # class's fallback attributes.
+            own = vars(self.get_cabinet_class())
+            cached = (key, (own.get('height'), own.get('depth')))
+            self._own_size = cached
+        return cached[1]
+
     def get_cabinet_depth(self, context) -> float:
+        own_depth = self.own_size()[1]
+        if own_depth:
+            return own_depth
         props = context.scene.hb_frameless
         if self.cabinet_type == 'BASE':
             return props.base_cabinet_depth
@@ -632,6 +653,9 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             return props.top_drawer_front_height
         if self.is_base_assembly():
             return props.default_toe_kick_height
+        own_height = self.own_size()[0]
+        if own_height:
+            return own_height
         if self.cabinet_type == 'BASE':
             return props.base_cabinet_height
         elif self.cabinet_type == 'TALL':
