@@ -716,8 +716,11 @@ def _propagate_door_style(self, context):
     """Push this door style's current state to every front tagged with
     DOOR_STYLE_NAME == self.name. Same pattern as the cabinet style
     propagator: edits in the door style panel reflect across every
-    front using that style without a button press.
+    front using that style without a button press. Returns immediately
+    under suspend_propagate(), like the cabinet style propagator.
     """
+    if _PROPAGATE_SUSPEND_DEPTH > 0:
+        return
     _restyle_fronts_in_room(self, context.scene)
     # Every other room too, each as the scene in context (see
     # _propagate_cabinet_style), so a door style edit reaches fronts
@@ -870,6 +873,13 @@ def ensure_default_styles(context):
     Default cabinet style + Slab door style when empty; idempotent.
     """
     ff = get_style_props(context)
+    # A project that has no styles yet starts from the user's default
+    # style template when one is set; anything it leaves empty is still
+    # seeded below.
+    if (len(ff.cabinet_styles) == 0 and len(ff.door_styles) == 0
+            and len(ff.drawer_front_styles) == 0):
+        from . import style_templates
+        style_templates.apply_default_template(context)
     if len(ff.cabinet_styles) == 0:
         cs = ff.cabinet_styles.add()
         cs.name = "Default"

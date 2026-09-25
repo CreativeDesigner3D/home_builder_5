@@ -5,6 +5,7 @@ from . import ops_finished_ends
 from . import ops_library
 from . import ops_placement
 from . import ops_styles
+from . import ops_style_templates
 from . import op_modify_cabinet
 from . import op_open_mode
 from . import ops_part_commands
@@ -24,6 +25,7 @@ def register():
     ops_library.register()
     ops_placement.register()
     ops_styles.register()
+    ops_style_templates.register()
     op_modify_cabinet.register()
     op_open_mode.register()
     ops_part_commands.register()
@@ -45,6 +47,7 @@ def unregister():
     ops_part_commands.unregister()
     op_open_mode.unregister()
     op_modify_cabinet.unregister()
+    ops_style_templates.unregister()
     ops_styles.unregister()
     ops_placement.unregister()
     ops_library.unregister()

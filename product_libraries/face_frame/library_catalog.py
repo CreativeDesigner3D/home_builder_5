@@ -603,6 +603,12 @@ def _style_summary(context, style):
     }
 
 
+def _style_template_entries(context):
+    # Saved style sets, to carry a project's styles into the next one.
+    from .operators import ops_style_templates
+    return ops_style_templates.template_menu_entries(context)
+
+
 def _front_style_actions(kind):
     # A style edit reaches every front using it, in every room, by
     # itself; painting is for giving one front a style of its own.
@@ -956,7 +962,8 @@ OPTION_PAGES = {
         'actions': (
             (("Paint", 'hb_face_frame.paint_assign_cabinet_style'),
              ("Edit...", 'home_builder.style_editor_open',
-              'key', 'CABINET_STYLE')),
+              'key', 'CABINET_STYLE'),
+             ("Templates...", _style_template_entries)),
         ),
     },
     'draw_door_styles_ui': {
