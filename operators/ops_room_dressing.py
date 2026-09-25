@@ -245,7 +245,8 @@ class HOME_BUILDER_OT_toggle_room_scenery(bpy.types.Operator):
         hide = any(not obj.hide_viewport for obj in objs)
         for obj in objs:
             obj.hide_viewport = hide
-            obj.hide_render = hide
+            # A floor or ceiling cutter only shapes its host; it never renders.
+            obj.hide_render = hide or bool(obj.get('IS_CUTTING_OBJ'))
             # Also drive the eye icon, which is what the user toggled if
             # they hid one of these by hand.
             try:

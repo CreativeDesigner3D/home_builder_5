@@ -1,6 +1,7 @@
 import bpy
 
 from . import menus
+from .. import cutters
 
 def draw_object_mode_right_click_menu(self, context):
     layout = self.layout
@@ -24,6 +25,14 @@ def draw_object_mode_right_click_menu(self, context):
     # existed.
     if not menu_id and menus.is_reference_image(obj):
         menu_id = "HOME_BUILDER_MT_reference_image_commands"
+
+    # Cutters drawn before they could be reshaped carry no MENU_ID.
+    if not menu_id and cutters.is_cutter(obj):
+        menu_id = cutters.MENU_ID
+
+    # Floors and ceilings are built without a MENU_ID either.
+    if not menu_id and obj and (obj.get('IS_FLOOR_BP') or obj.get('IS_CEILING_BP')):
+        menu_id = "HOME_BUILDER_MT_floor_ceiling_commands"
 
     if menu_id and hasattr(bpy.types, menu_id):
         layout.menu(menu_id)

@@ -649,7 +649,10 @@ class HOME_BUILDER_PT_room_layout_floor(bpy.types.Panel):
         row = layout.row()
         row.operator("home_builder.floor", text="Add Floor")
         row.operator("home_builder_walls.draw_floor_cutter", icon="MOD_BOOLEAN")
-        layout.operator("home_builder_walls.add_ceiling")
+        row = layout.row()
+        row.operator("home_builder_walls.add_ceiling")
+        row.operator("home_builder_walls.draw_floor_cutter", text="Draw Ceiling Cutter",
+                     icon="MOD_BOOLEAN").surface = 'CEILING'
 
 
 # SUBPANEL: Lighting

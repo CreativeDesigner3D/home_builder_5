@@ -32,7 +32,7 @@ from gpu_extras.batch import batch_for_shader
 from mathutils import Vector
 from mathutils.geometry import intersect_line_plane
 
-from .. import backsplash, units
+from .. import backsplash, cutters, units
 from ..product_libraries.common import countertop_common
 from .. import surface_materials as sm
 
@@ -847,9 +847,10 @@ def _draw_countertop_edit(op):
 class HOME_BUILDER_OT_edit_countertop(bpy.types.Operator):
     bl_idname = "home_builder.edit_countertop"
     bl_label = "Edit Top Shape"
-    bl_description = ("Reshape a countertop or wood top in the viewport: "
-                      "drag edges and corners, add a corner to make an "
-                      "offset, bump-out or L, and clip or round corners")
+    bl_description = ("Reshape a countertop, wood top or cutter in the "
+                      "viewport: drag edges and corners, add a corner to "
+                      "make an offset, bump-out or L, and clip or round "
+                      "corners")
     bl_options = {'REGISTER', 'UNDO'}
 
     _draw_handle = None
@@ -870,6 +871,8 @@ class HOME_BUILDER_OT_edit_countertop(bpy.types.Operator):
         obj = context.active_object
         # A top from before outlines existed has one seeded on the way
         # in, so the command is offered for those too.
+        if cutters.is_cutter(obj):
+            return True
         return bool(obj and (obj.get('IS_COUNTERTOP') or obj.get('IS_WOOD_TOP'))
                     and getattr(obj, 'data', None) is not None)
 
@@ -884,8 +887,10 @@ class HOME_BUILDER_OT_edit_countertop(bpy.types.Operator):
         return part
 
     def _top_z(self):
-        """Local Z of the top face."""
+        """Local Z of the top face -- for a cutter, the face it cuts."""
         obj = self.obj
+        if self.is_cutter:
+            return cutters.face_z(obj)
         if self.is_wood:
             return float(obj.wood_top.thickness)
         return (float(obj.get(countertop_common.TOP_KEY, 0.0))
@@ -901,6 +906,8 @@ class HOME_BUILDER_OT_edit_countertop(bpy.types.Operator):
         countertop_common.set_outline(self.obj, points, corners)
         if self.is_wood:
             self._wood_part().rebuild()
+        elif self.is_cutter:
+            cutters.rebuild(self.obj)
         else:
             countertop_common.rebuild(self.obj)
 
@@ -1430,8 +1437,13 @@ class HOME_BUILDER_OT_edit_countertop(bpy.types.Operator):
     # -- modal ---------------------------------------------------------
     def invoke(self, context, event):
         self.obj = context.active_object
-        self.is_wood = bool(self.obj.get('IS_WOOD_TOP'))
-        if self.is_wood:
+        self.is_cutter = cutters.is_cutter(self.obj)
+        self.is_wood = bool(self.obj.get('IS_WOOD_TOP')) and not self.is_cutter
+        if self.is_cutter:
+            if not cutters.ensure_outline(self.obj):
+                self.report({'WARNING'}, "This cutter has no shape to edit")
+                return {'CANCELLED'}
+        elif self.is_wood:
             from ..product_libraries.face_frame import wood_top_shape
             # A square top becomes shaped as the edit starts; cancelling
             # puts it back to square rather than leaving a shaped copy

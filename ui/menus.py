@@ -97,6 +97,30 @@ class HOME_BUILDER_MT_soffit_commands(bpy.types.Menu):
         layout.operator("home_builder_walls.delete_soffit", text="Delete Soffit", icon='X')
 
 
+class HOME_BUILDER_MT_cutter_commands(bpy.types.Menu):
+    bl_label = "Cutter Commands"
+
+    def draw(self, context):
+        layout = self.layout
+        layout.operator("home_builder.edit_countertop", text="Edit Shape", icon='MOD_MESHDEFORM')
+        layout.separator()
+        layout.operator("home_builder_walls.delete_cutter", text="Delete Cutter", icon='X')
+
+
+class HOME_BUILDER_MT_floor_ceiling_commands(bpy.types.Menu):
+    bl_label = "Floor & Ceiling Commands"
+
+    def draw(self, context):
+        layout = self.layout
+        obj = context.object
+        if obj and obj.get('IS_CEILING_BP'):
+            layout.operator("home_builder_walls.draw_floor_cutter", text="Draw Ceiling Cutter",
+                            icon='MOD_BOOLEAN').surface = 'CEILING'
+        else:
+            layout.operator("home_builder_walls.draw_floor_cutter", text="Draw Floor Cutter",
+                            icon='MOD_BOOLEAN').surface = 'FLOOR'
+
+
 class HOME_BUILDER_MT_door_commands(bpy.types.Menu):
     bl_label = "Door Commands"
 
@@ -892,6 +916,8 @@ classes = (
     HOME_BUILDER_MT_main_menu,
     HOME_BUILDER_MT_wall_commands,
     HOME_BUILDER_MT_soffit_commands,
+    HOME_BUILDER_MT_cutter_commands,
+    HOME_BUILDER_MT_floor_ceiling_commands,
     HOME_BUILDER_MT_door_commands,
     HOME_BUILDER_MT_obstacle_commands,
     HOME_BUILDER_MT_window_commands,

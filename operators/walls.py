@@ -9,6 +9,7 @@ from mathutils.geometry import intersect_line_plane, tessellate_polygon
 from bpy_extras import view3d_utils
 from gpu_extras.batch import batch_for_shader
 from .. import hb_types, hb_snap, hb_placement, hb_utils, units
+from .. import cutters
 
 # Wall Miter Angle Calculation
 # How much a wall end may be sheared to close an outer corner, as a
@@ -5623,6 +5624,13 @@ def draw_floor_cutter_preview(op, context):
     confirmed = op.confirmed_points
     cursor_3d = op.cursor_point
 
+    # A rectangle in progress is drawn as its closed outline, with no
+    # rubber-band lines to the cursor.
+    rect = op.rect_points()
+    if rect:
+        confirmed = rect + [rect[0]]
+        cursor_3d = None
+
     if not confirmed and cursor_3d is None:
         gpu.state.blend_set('NONE')
         return
@@ -5711,51 +5719,85 @@ def draw_floor_cutter_preview(op, context):
 class home_builder_walls_OT_draw_floor_cutter(bpy.types.Operator, hb_placement.PlacementMixin):
     bl_idname = "home_builder_walls.draw_floor_cutter"
     bl_label = "Draw Floor Cutter"
-    bl_description = "Draw a polygon shape to cut a hole in the floor (stairwells, pass-throughs, etc.)"
+    bl_description = "Draw a rectangle or polygon to cut a hole in the floor (stairwells, pass-throughs, etc.)"
     bl_options = {'UNDO'}
+
+    surface: bpy.props.EnumProperty(
+        name="Surface", default='FLOOR',
+        items=[('FLOOR', "Floor", "Cut the floor"),
+               ('CEILING', "Ceiling", "Cut the ceiling")])  # type: ignore
 
     # State
     confirmed_points: list = None   # 3D points already clicked
     cursor_point: Vector = None     # Live 3D cursor position
     floor_obj: bpy.types.Object = None
     close_snap: bool = False        # True when cursor is near first point
+    rectangle: bool = True          # Two corners make a rectangle; R toggles polygon
+    square: bool = False            # Shift held: the rectangle is square
     _draw_handle = None
 
     CLOSE_THRESHOLD = 0.15  # Meters — snap-to-close distance
 
     @classmethod
+    def description(cls, context, properties):
+        if properties.surface == 'CEILING':
+            return ("Draw a rectangle or polygon to cut a hole in the "
+                    "ceiling (skylights, chases, etc.)")
+        return cls.bl_description
+
+    @classmethod
     def poll(cls, context):
-        # Need at least one floor in scene
+        # Need at least one floor or ceiling in scene
         for obj in context.scene.objects:
-            if obj.get('IS_FLOOR_BP'):
+            if obj.get('IS_FLOOR_BP') or obj.get('IS_CEILING_BP'):
                 return True
         return False
 
     def find_target_floor(self, context):
-        """Find the floor to cut. Prefer selected, else first found."""
+        """Find the floor (or ceiling) to cut. Prefer selected, else first found."""
+        tag = 'IS_CEILING_BP' if self.surface == 'CEILING' else 'IS_FLOOR_BP'
         # Check active/selected first
-        if context.object and context.object.get('IS_FLOOR_BP'):
+        if context.object and context.object.get(tag):
             return context.object
         for obj in context.selected_objects:
-            if obj.get('IS_FLOOR_BP'):
+            if obj.get(tag):
                 return obj
-        # Fallback: first floor in scene
+        # Fallback: first one in scene
         for obj in context.scene.objects:
-            if obj.get('IS_FLOOR_BP'):
+            if obj.get(tag):
                 return obj
         return None
 
     def get_floor_plane_point(self, context):
-        """Project the current mouse position onto the floor plane (Z=0)."""
+        """Project the current mouse position onto the surface being cut."""
         if self.region is None:
             return None
         coord = (self.mouse_pos.x, self.mouse_pos.y)
         rv3d = self.region.data
         origin = view3d_utils.region_2d_to_origin_3d(self.region, rv3d, coord)
         direction = view3d_utils.region_2d_to_vector_3d(self.region, rv3d, coord)
-        # Intersect with Z=0 plane
-        point = intersect_line_plane(origin, origin + direction, Vector((0, 0, 0)), Vector((0, 0, 1)))
+        point = intersect_line_plane(origin, origin + direction,
+                                     self.plane_point, self.plane_normal)
         return point
+
+    def rect_points(self):
+        """The four world corners of the rectangle being drawn, square to
+        the host, or [] when not drawing one."""
+        if not (self.rectangle and len(self.confirmed_points) == 1
+                and self.cursor_point is not None):
+            return []
+        mw = self.floor_obj.matrix_world
+        to_local = mw.inverted()
+        a = to_local @ self.confirmed_points[0]
+        b = to_local @ self.cursor_point
+        dx, dy = b.x - a.x, b.y - a.y
+        if self.square:
+            side = max(abs(dx), abs(dy))
+            dx = math.copysign(side, dx)
+            dy = math.copysign(side, dy)
+        z = a.z
+        return [mw @ Vector(c) for c in ((a.x, a.y, z), (a.x + dx, a.y, z),
+                                         (a.x + dx, a.y + dy, z), (a.x, a.y + dy, z))]
 
     def check_close_snap(self):
         """Check if cursor is close enough to first point to close the polygon."""
@@ -5767,64 +5809,6 @@ class home_builder_walls_OT_draw_floor_cutter(bpy.types.Operator, hb_placement.P
                 - Vector((first.x, first.y, 0))).length
         self.close_snap = dist < self.CLOSE_THRESHOLD
 
-    def create_cutter_mesh(self, context, points):
-        """Create a cutter object from confirmed polygon points, extruded on Z."""
-        mesh = bpy.data.meshes.new("Floor_Cutter")
-        obj = bpy.data.objects.new("Floor_Cutter", mesh)
-        context.collection.objects.link(obj)
-
-        bm = bmesh.new()
-
-        # Bottom verts at Z = -0.1
-        bottom_verts = []
-        for p in points:
-            v = bm.verts.new(Vector((p.x, p.y, -0.1)))
-            bottom_verts.append(v)
-        bm.verts.ensure_lookup_table()
-
-        # Top verts at Z = +0.1
-        top_verts = []
-        for p in points:
-            v = bm.verts.new(Vector((p.x, p.y, 0.1)))
-            top_verts.append(v)
-        bm.verts.ensure_lookup_table()
-
-        n = len(points)
-
-        # Bottom face (reversed winding for outward normals)
-        bm.faces.new(list(reversed(bottom_verts)))
-
-        # Top face
-        bm.faces.new(top_verts)
-
-        # Side faces
-        for i in range(n):
-            ni = (i + 1) % n
-            bm.faces.new([bottom_verts[i], bottom_verts[ni],
-                          top_verts[ni], top_verts[i]])
-
-        bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
-        bm.normal_update()
-        bm.to_mesh(mesh)
-        bm.free()
-
-        # Tag the cutter
-        obj['IS_CUTTING_OBJ'] = True
-        obj['IS_FLOOR_CUTTER'] = True
-        obj.display_type = 'WIRE'
-        obj.hide_render = True
-
-        return obj
-
-    def add_boolean_to_floor(self, floor_obj, cutter_obj):
-        """Add a boolean DIFFERENCE modifier to the floor."""
-        mod_name = f"Cut - {cutter_obj.name}"
-        mod = floor_obj.modifiers.new(name=mod_name, type='BOOLEAN')
-        mod.operation = 'DIFFERENCE'
-        mod.object = cutter_obj
-        mod.solver = 'EXACT'
-        return mod
-
     def finish(self, context):
         """Close polygon, create cutter, apply boolean, clean up."""
         # Remove draw handler
@@ -5835,17 +5819,23 @@ class home_builder_walls_OT_draw_floor_cutter(bpy.types.Operator, hb_placement.P
         hb_placement.clear_header_text(context)
         context.window.cursor_set('DEFAULT')
 
+        rect = self.rect_points()
+        if rect:
+            self.confirmed_points = rect
         if len(self.confirmed_points) < 3:
             self.report({'WARNING'}, "Need at least 3 points to create a cutter")
             return {'CANCELLED'}
 
-        cutter = self.create_cutter_mesh(context, self.confirmed_points)
-        self.add_boolean_to_floor(self.floor_obj, cutter)
+        # The outline is kept in the host's own space, parented to it, so
+        # Edit Shape can reshape the opening later.
+        to_local = self.floor_obj.matrix_world.inverted()
+        points = [(to_local @ p).to_2d() for p in self.confirmed_points]
+        kind = cutters.CEILING if self.surface == 'CEILING' else cutters.FLOOR
+        if cutters.create_slab_cutter(context, self.floor_obj, kind, points) is None:
+            self.report({'WARNING'}, "The cutter has no size")
+            return {'CANCELLED'}
 
-        # Parent cutter to the floor so they stay linked
-        cutter.parent = self.floor_obj
-
-        self.report({'INFO'}, f"Created floor cutter with {len(self.confirmed_points)} points")
+        self.report({'INFO'}, f"Created {self.surface.lower()} cutter with {len(self.confirmed_points)} points")
         return {'FINISHED'}
 
     def cancel(self, context):
@@ -5859,6 +5849,14 @@ class home_builder_walls_OT_draw_floor_cutter(bpy.types.Operator, hb_placement.P
     def update_header(self, context):
         n = len(self.confirmed_points)
         parts = []
+        if self.rectangle:
+            if n == 0:
+                parts.append("Rectangle: click the first corner")
+            else:
+                parts.append("Click the opposite corner")
+            parts.append("Shift: square | R: polygon | Esc: cancel")
+            hb_placement.draw_header_text(context, " | ".join(parts))
+            return
         if n == 0:
             parts.append("Click to place first point")
         elif n < 3:
@@ -5866,7 +5864,7 @@ class home_builder_walls_OT_draw_floor_cutter(bpy.types.Operator, hb_placement.P
         else:
             close_text = " [CLOSE SNAP]" if self.close_snap else ""
             parts.append(f"{n} points — click to add, Enter to finish{close_text}")
-        parts.append("Backspace: undo point | Esc: cancel")
+        parts.append("R: rectangle | Backspace: undo point | Esc: cancel")
         hb_placement.draw_header_text(context, " | ".join(parts))
 
     def execute(self, context):
@@ -5875,11 +5873,18 @@ class home_builder_walls_OT_draw_floor_cutter(bpy.types.Operator, hb_placement.P
         self.confirmed_points = []
         self.cursor_point = None
         self.close_snap = False
+        self.rectangle = True
+        self.square = False
 
         self.floor_obj = self.find_target_floor(context)
         if not self.floor_obj:
-            self.report({'WARNING'}, "No floor found in scene")
+            self.report({'WARNING'}, f"No {self.surface.lower()} found in scene")
             return {'CANCELLED'}
+
+        kind = cutters.CEILING if self.surface == 'CEILING' else cutters.FLOOR
+        mw = self.floor_obj.matrix_world
+        self.plane_point = mw @ Vector((0, 0, cutters.host_face_z(self.floor_obj, kind)))
+        self.plane_normal = (mw.to_3x3() @ Vector((0, 0, 1))).normalized()
 
         # Add GPU draw handler
         self._draw_handle = bpy.types.SpaceView3D.draw_handler_add(
@@ -5902,7 +5907,9 @@ class home_builder_walls_OT_draw_floor_cutter(bpy.types.Operator, hb_placement.P
         # Update snap / cursor position
         self.update_snap(context, event)
         self.cursor_point = self.get_floor_plane_point(context)
-        self.check_close_snap()
+        self.square = event.shift
+        if not self.rectangle:
+            self.check_close_snap()
 
         # Redraw viewport for GPU overlay
         if context.area:
@@ -5913,11 +5920,26 @@ class home_builder_walls_OT_draw_floor_cutter(bpy.types.Operator, hb_placement.P
             if self.cursor_point is None:
                 return {'RUNNING_MODAL'}
 
+            # Second corner of a rectangle finishes it
+            if self.rectangle and self.confirmed_points:
+                return self.finish(context)
+
             # If snapping to close and we have 3+ points, finish
             if self.close_snap and len(self.confirmed_points) >= 3:
                 return self.finish(context)
 
             self.confirmed_points.append(self.cursor_point.copy())
+            self.update_header(context)
+            return {'RUNNING_MODAL'}
+
+        # --- R: switch between rectangle and polygon ---
+        if event.type == 'R' and event.value == 'PRESS':
+            self.rectangle = not self.rectangle
+            self.close_snap = False
+            # A polygon started with more than one point cannot become a
+            # rectangle; keep only its first point as the first corner.
+            if self.rectangle:
+                del self.confirmed_points[1:]
             self.update_header(context)
             return {'RUNNING_MODAL'}
 
@@ -6128,81 +6150,20 @@ class home_builder_walls_OT_draw_wall_cutter(bpy.types.Operator, hb_placement.Pl
         return point
 
     def create_wall_cutter(self, context, wall_obj, p1, p2):
-        """Create a cube cutter from two corner points, extending through the wall."""
+        """Create a rectangular cutter from two corner points, extending
+        through the wall. Kept as an outline so Edit Shape can reshape it."""
         wall = hb_types.GeoNodeWall(wall_obj)
         wall_thickness = wall.get_input('Thickness')
-        wall_matrix = wall_obj.matrix_world
-        wall_matrix_inv = wall_matrix.inverted()
+        wall_matrix_inv = wall_obj.matrix_world.inverted()
 
         # Convert to wall-local coordinates
         local_p1 = wall_matrix_inv @ p1
         local_p2 = wall_matrix_inv @ p2
 
-        # Rectangle bounds on wall face
-        min_x = min(local_p1.x, local_p2.x)
-        max_x = max(local_p1.x, local_p2.x)
-        min_z = min(local_p1.z, local_p2.z)
-        max_z = max(local_p1.z, local_p2.z)
-
-        # Extend through wall thickness with margin
-        margin = 0.01  # 1cm overshoot
-        min_y = -margin
-        max_y = wall_thickness + margin
-
-        # Create cube mesh in wall-local space
-        mesh = bpy.data.meshes.new("Wall_Cutter")
-        obj = bpy.data.objects.new("Wall_Cutter", mesh)
-        context.collection.objects.link(obj)
-
-        bm = bmesh.new()
-
-        # 8 cube vertices
-        verts = [
-            bm.verts.new(Vector((min_x, min_y, min_z))),  # 0: front-bottom-left
-            bm.verts.new(Vector((max_x, min_y, min_z))),  # 1: front-bottom-right
-            bm.verts.new(Vector((max_x, max_y, min_z))),  # 2: back-bottom-right
-            bm.verts.new(Vector((min_x, max_y, min_z))),  # 3: back-bottom-left
-            bm.verts.new(Vector((min_x, min_y, max_z))),  # 4: front-top-left
-            bm.verts.new(Vector((max_x, min_y, max_z))),  # 5: front-top-right
-            bm.verts.new(Vector((max_x, max_y, max_z))),  # 6: back-top-right
-            bm.verts.new(Vector((min_x, max_y, max_z))),  # 7: back-top-left
-        ]
-        bm.verts.ensure_lookup_table()
-
-        # 6 faces
-        bm.faces.new([verts[0], verts[3], verts[2], verts[1]])  # bottom
-        bm.faces.new([verts[4], verts[5], verts[6], verts[7]])  # top
-        bm.faces.new([verts[0], verts[1], verts[5], verts[4]])  # front
-        bm.faces.new([verts[2], verts[3], verts[7], verts[6]])  # back
-        bm.faces.new([verts[0], verts[4], verts[7], verts[3]])  # left
-        bm.faces.new([verts[1], verts[2], verts[6], verts[5]])  # right
-
-        bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
-        bm.normal_update()
-        bm.to_mesh(mesh)
-        bm.free()
-
-        # Position the cutter in world space: parent to wall so it stays aligned
-        obj.parent = wall_obj
-        obj.matrix_parent_inverse.identity()
-
-        # Tag the cutter
-        obj['IS_CUTTING_OBJ'] = True
-        obj['IS_WALL_CUTTER'] = True
-        obj.display_type = 'WIRE'
-        obj.hide_render = True
-
-        return obj
-
-    def add_boolean_to_wall(self, wall_obj, cutter_obj):
-        """Add a boolean DIFFERENCE modifier to the wall's mesh children."""
-        wall = hb_types.GeoNodeWall(wall_obj)
-        mod_name = f"Cut - {cutter_obj.name}"
-        mod = wall_obj.modifiers.new(name=mod_name, type='BOOLEAN')
-        mod.operation = 'DIFFERENCE'
-        mod.object = cutter_obj
-        mod.solver = 'EXACT'
-        return mod
+        return cutters.create_wall_cutter(
+            context, wall_obj, wall_thickness,
+            min(local_p1.x, local_p2.x), min(local_p1.z, local_p2.z),
+            max(local_p1.x, local_p2.x), max(local_p1.z, local_p2.z))
 
     def finish(self, context):
         """Create cutter cube, apply boolean, clean up."""
@@ -6217,8 +6178,9 @@ class home_builder_walls_OT_draw_wall_cutter(bpy.types.Operator, hb_placement.Pl
             self.report({'WARNING'}, "Need two points to create a wall cutter")
             return {'CANCELLED'}
 
-        cutter = self.create_wall_cutter(context, self.target_wall, self.first_point, self.cursor_point)
-        self.add_boolean_to_wall(self.target_wall, cutter)
+        if self.create_wall_cutter(context, self.target_wall, self.first_point, self.cursor_point) is None:
+            self.report({'WARNING'}, "The cutter has no size")
+            return {'CANCELLED'}
 
         self.report({'INFO'}, f"Created wall cutter on {self.target_wall.name}")
         return {'FINISHED'}
@@ -6309,6 +6271,25 @@ class home_builder_walls_OT_draw_wall_cutter(bpy.types.Operator, hb_placement.Pl
 
         return {'RUNNING_MODAL'}
 
+
+class home_builder_walls_OT_delete_cutter(bpy.types.Operator):
+    bl_idname = "home_builder_walls.delete_cutter"
+    bl_label = "Delete Cutter"
+    bl_description = "Delete the selected cutters and fill their openings back in"
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return any(cutters.is_cutter(o) for o in context.selected_objects)
+
+    def execute(self, context):
+        targets = [o for o in context.selected_objects if cutters.is_cutter(o)]
+        for obj in targets:
+            cutters.remove(obj)
+        self.report({'INFO'}, f"Deleted {len(targets)} cutter(s)")
+        return {'FINISHED'}
+
+
 classes = (
     home_builder_walls_OT_hide_wall,
     home_builder_walls_OT_show_all_walls,
@@ -6320,6 +6301,7 @@ classes = (
     home_builder_walls_OT_add_floor,
     home_builder_walls_OT_draw_floor_cutter,
     home_builder_walls_OT_draw_wall_cutter,
+    home_builder_walls_OT_delete_cutter,
     home_builder_walls_OT_add_ceiling,
     home_builder_walls_OT_add_room_lights,
     home_builder_walls_OT_setup_world_lighting,
