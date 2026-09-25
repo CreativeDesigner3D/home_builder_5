@@ -395,6 +395,8 @@ class hb_frameless_OT_change_interior_type(bpy.types.Operator):
             ('SHELVES', "Shelves", "Standard adjustable shelves"),
             ('ROLLOUTS', "Roll-outs", "Drawer boxes on slides behind the front"),
             ('PULLOUT_SHELVES', "Roll-out Shelves", "Flat shelves on slides behind the front"),
+            ('HALF_DEPTH_SHELVES', "Half Depth Shelves", "Shelves half the depth of the opening"),
+            ('QUARTER_DEPTH_SHELVES', "Quarter Depth Shelves", "Shelves a quarter of the depth of the opening"),
             ('GLASS_SHELVES', "Glass Shelves", "Adjustable glass shelves"),
             ('CLOSET_ROD', "Closet Rod", "Hang rod across the opening"),
             ('TRAY_DIVIDERS', "Tray Dividers", "Vertical dividers for trays and cookie sheets"),
@@ -1111,6 +1113,8 @@ class hb_frameless_OT_calculate_shelf_quantity(bpy.types.Operator):
 _ITEM_INTERIOR_KINDS = {
     'ROLLOUTS': 'ROLLOUT',
     'PULLOUT_SHELVES': 'PULLOUT_SHELF',
+    'HALF_DEPTH_SHELVES': 'HALF_DEPTH_SHELF',
+    'QUARTER_DEPTH_SHELVES': 'QUARTER_DEPTH_SHELF',
     'GLASS_SHELVES': 'GLASS_SHELF',
     'CLOSET_ROD': 'CLOSET_ROD',
     'TRAY_DIVIDERS': 'TRAY_DIVIDERS',
@@ -1123,6 +1127,8 @@ _ITEM_KIND_ITEMS = [
     ('PULLOUT_SHELF', "Roll-out Shelves", "Stack of flat shelves on slides"),
     ('TRAY_DIVIDERS', "Tray Dividers", "Vertical dividers, optionally with a locked shelf above"),
     ('ADJUSTABLE_SHELF', "Adjustable Shelves", "Evenly spaced shelves on shelf pins"),
+    ('HALF_DEPTH_SHELF', "Half Depth Shelves", "Shelves half the depth of the opening"),
+    ('QUARTER_DEPTH_SHELF', "Quarter Depth Shelves", "Shelves a quarter of the depth of the opening"),
     ('GLASS_SHELF', "Glass Shelves", "Adjustable glass shelves"),
     ('CLOSET_ROD', "Closet Rod", "Hang rod across the opening, set down from the top"),
     ('WINE_CUBBY', "Wine Storage Cubby", "Plywood cubbies sized to the opening"),
@@ -1196,14 +1202,16 @@ def draw_interior_items(layout, interior_obj):
                              icon='X')
         rm.interior_name = name
         rm.index = i
-        if item.kind in ('ADJUSTABLE_SHELF', 'GLASS_SHELF'):
+        if item.kind in interior_items.AUTO_COUNT_SHELF_KINDS:
             qty_row = sub.row(align=True)
             field = qty_row.row(align=True)
             field.enabled = item.unlock_shelf_qty
             field.prop(item, 'shelf_qty', text="Qty")
             lock_icon = 'UNLOCKED' if item.unlock_shelf_qty else 'LOCKED'
             qty_row.prop(item, 'unlock_shelf_qty', text="", icon=lock_icon)
-            sub.prop(item, 'shelf_setback', text="Setback")
+            # Partial-depth shelves set their own setback from the depth.
+            if item.kind in ('ADJUSTABLE_SHELF', 'GLASS_SHELF'):
+                sub.prop(item, 'shelf_setback', text="Setback")
             sub.prop(item, 'bottom_offset', text="From Bottom")
         elif item.kind == 'PULLOUT_SHELF':
             sub.prop(item, 'qty', text="Qty")

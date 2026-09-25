@@ -34,8 +34,13 @@ BAR_STORAGE_KINDS = ('WINE_CUBBY', 'WINE_CELLAR', 'WINE_LATTICE', 'WINE_X',
 
 # Item kinds a frameless items interior offers, in menu order.
 SUPPORTED_KINDS = ('ROLLOUT', 'PULLOUT_SHELF', 'TRAY_DIVIDERS',
-                   'ADJUSTABLE_SHELF', 'GLASS_SHELF',
+                   'ADJUSTABLE_SHELF', 'HALF_DEPTH_SHELF',
+                   'QUARTER_DEPTH_SHELF', 'GLASS_SHELF',
                    'CLOSET_ROD') + BAR_STORAGE_KINDS
+
+# Shelf kinds whose count follows the opening height until unlocked.
+AUTO_COUNT_SHELF_KINDS = ('ADJUSTABLE_SHELF', 'HALF_DEPTH_SHELF',
+                          'QUARTER_DEPTH_SHELF', 'GLASS_SHELF')
 
 # Part kinds built from those items. Anything else an item might emit
 # (a nosing, a workstation top) is left out until the library supports it.
@@ -101,7 +106,7 @@ def _sync_items(interior_obj, dim_y, dim_z):
     """Auto shelf counts, and a box list for any roll-out without one."""
     solver_ff, _types_ff = _face_frame()
     for item in item_props(interior_obj).interior_items:
-        if (item.kind in ('ADJUSTABLE_SHELF', 'GLASS_SHELF')
+        if (item.kind in AUTO_COUNT_SHELF_KINDS
                 and not item.unlock_shelf_qty):
             height = max(0.0, dim_z - getattr(item, 'bottom_offset', 0.0))
             qty = solver_ff.auto_shelf_qty(height, dim_y)
