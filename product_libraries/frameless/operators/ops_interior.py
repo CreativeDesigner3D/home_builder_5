@@ -422,7 +422,14 @@ class hb_frameless_OT_interior_prompts(bpy.types.Operator):
         return False
 
     def invoke(self, context, event):
-        interior_bp = hb_utils.get_interior_bp(context.object)
+        obj = context.object
+        if obj is not None and obj.get('IS_FRAMELESS_INTERIOR_SECTION'):
+            # A section picked on its own edits the interior inside it.
+            inner = next((c for c in obj.children
+                          if c.get('IS_FRAMELESS_INTERIOR_CAGE')), None)
+            interior_bp = inner or hb_utils.get_interior_bp(obj)
+        else:
+            interior_bp = hb_utils.get_interior_bp(obj)
         self.interior = hb_types.GeoNodeCage(interior_bp)
         
         if 'Shelf Quantity' in interior_bp:
@@ -473,6 +480,8 @@ class hb_frameless_OT_interior_prompts(bpy.types.Operator):
 
     def draw(self, context):
         layout = self.layout
+        if _splitter_kind(self.interior.obj) is None:
+            _draw_split_controls(layout, self.interior.obj)
         if self.interior.obj.get('IS_FRAMELESS_SHOE_SHELVES'):
             box = layout.box()
             col = box.column(align=True)
@@ -699,6 +708,192 @@ class hb_frameless_OT_delete_interior_part(bpy.types.Operator):
         return {'FINISHED'}
 
 
+# Face-frame style interior splits: Add Division puts a vertical divider
+# in (sections side by side), Add Fixed Shelf a horizontal one (sections
+# stacked). The frameless splitters are named for how their SECTIONS run,
+# so a division is the Horizontal splitter and a fixed shelf the Vertical.
+SPLIT_KINDS = {
+    'DIVISION': ('IS_FRAMELESS_INTERIOR_SPLITTER_HORIZONTAL', "Division"),
+    'FIXED_SHELF': ('IS_FRAMELESS_INTERIOR_SPLITTER_VERTICAL', "Fixed Shelf"),
+}
+
+
+def _splitter_kind(splitter_obj):
+    for kind, (tag, _label) in SPLIT_KINDS.items():
+        if splitter_obj is not None and splitter_obj.get(tag):
+            return kind
+    return None
+
+
+def _section_type_of(interior_obj):
+    """The section type that rebuilds what ``interior_obj`` holds."""
+    if interior_obj is None:
+        return 'EMPTY'
+    if interior_obj.get('IS_FRAMELESS_SHOE_SHELVES'):
+        return 'SHOE_SHELVES'
+    if interior_items.is_items_interior(interior_obj):
+        items = interior_items.item_props(interior_obj).interior_items
+        kind = items[0].kind if len(items) else ''
+        for section_type, item_kind in interior_items.INTERIOR_TYPE_KINDS.items():
+            if item_kind == kind:
+                return section_type
+        return 'EMPTY'
+    return 'SHELVES'
+
+
+def _delete_tree(obj):
+    for child in list(obj.children):
+        _delete_tree(child)
+    bpy.data.objects.remove(obj, do_unlink=True)
+
+
+def split_interior(context, interior_obj, kind):
+    """Put a divider into an interior: its host (opening, bay or a
+    section of an earlier split) takes a two-section splitter, both
+    sections holding what the interior held. Returns the splitter."""
+    host = interior_obj.parent
+    if host is None:
+        return None
+    section_type = _section_type_of(interior_obj)
+    _delete_tree(interior_obj)
+    if kind == 'DIVISION':
+        splitter = types_frameless.InteriorSplitterHorizontal()
+    else:
+        splitter = types_frameless.InteriorSplitterVertical()
+    splitter.splitter_qty = 1
+    splitter.section_sizes = [0, 0]
+    splitter.section_types = [section_type, section_type]
+    splitter.create()
+    solver_frameless.attach_cage(splitter.obj, host)
+    cabinet = hb_utils.get_cabinet_bp(host)
+    if cabinet is not None:
+        hb_utils.run_calc_fix(context, cabinet)
+        update_shelf_quantities(context, cabinet)
+        hb_utils.run_calc_fix(context, cabinet)
+    return splitter.obj
+
+
+def remove_interior_split(context, section_obj):
+    """Take a split out again: its host goes back to one interior,
+    holding what this section held."""
+    splitter = section_obj.parent
+    if _splitter_kind(splitter) is None:
+        return None
+    host = splitter.parent
+    inner = next((c for c in section_obj.children
+                  if c.get('IS_FRAMELESS_INTERIOR_CAGE')), None)
+    section_type = _section_type_of(inner) if inner is not None else 'EMPTY'
+    _delete_tree(splitter)
+    interior = types_frameless.add_section_interior(host, section_type)
+    if interior is not None:
+        solver_frameless.attach_cage(interior, host)
+    cabinet = hb_utils.get_cabinet_bp(host)
+    if cabinet is not None:
+        hb_utils.run_calc_fix(context, cabinet)
+    return interior
+
+
+def section_place(section_obj):
+    """``(index, count, side, calculator prompt)`` of a split's section,
+    or None. Side reads Left/Right... for a division, Bottom/Top... for a
+    fixed shelf."""
+    splitter = section_obj.parent if section_obj is not None else None
+    kind = _splitter_kind(splitter)
+    if kind is None:
+        return None
+    sections = sorted((c for c in splitter.children
+                       if c.get('IS_FRAMELESS_INTERIOR_SECTION')),
+                      key=lambda c: c.get('hb_split_index', 0))
+    if section_obj not in sections:
+        return None
+    index = sections.index(section_obj)
+    count = len(sections)
+    if count == 2:
+        side = (("Left", "Right") if kind == 'DIVISION' else ("Top", "Bottom"))[index]
+    else:
+        side = "Section %d of %d" % (index + 1, count)
+    prompt = None
+    calcs = splitter.home_builder.calculators
+    if len(calcs) and index < len(calcs[0].prompts):
+        prompt = calcs[0].prompts[index]
+    return index, count, side, prompt
+
+
+class hb_frameless_OT_add_interior_split(bpy.types.Operator):
+    """Split an interior in two with a vertical division or a fixed shelf,
+    each side keeping what the interior held"""
+    bl_idname = "hb_frameless.add_interior_split"
+    bl_label = "Add Interior Split"
+    bl_description = "Split this interior in two"
+    bl_options = {'UNDO'}
+
+    kind: bpy.props.EnumProperty(
+        name="Split",
+        items=[('DIVISION', "Division", "A vertical divider: sections side by side"),
+               ('FIXED_SHELF', "Fixed Shelf", "A fixed shelf: sections stacked")],
+        default='DIVISION') # type: ignore
+    interior_name: bpy.props.StringProperty(options={'HIDDEN', 'SKIP_SAVE'}) # type: ignore
+
+    def execute(self, context):
+        interior = bpy.data.objects.get(self.interior_name) if self.interior_name else None
+        if interior is None:
+            interior = hb_utils.get_interior_bp(context.object)
+        if interior is None or _splitter_kind(interior) is not None:
+            self.report({'WARNING'}, "Pick an interior to split")
+            return {'CANCELLED'}
+        split_interior(context, interior, self.kind)
+        return {'FINISHED'}
+
+
+class hb_frameless_OT_remove_interior_split(bpy.types.Operator):
+    """Take this section's division or fixed shelf out, back to one
+    interior"""
+    bl_idname = "hb_frameless.remove_interior_split"
+    bl_label = "Remove Interior Split"
+    bl_description = "Take this split out, back to one interior"
+    bl_options = {'UNDO'}
+
+    section_name: bpy.props.StringProperty(options={'HIDDEN', 'SKIP_SAVE'}) # type: ignore
+
+    def execute(self, context):
+        section = bpy.data.objects.get(self.section_name)
+        if section is None or _splitter_kind(section.parent) is None:
+            self.report({'WARNING'}, "Pick a section of a split")
+            return {'CANCELLED'}
+        remove_interior_split(context, section)
+        return {'FINISHED'}
+
+
+def _draw_split_controls(layout, interior_obj):
+    """The face-frame split controls for one interior: its place in the
+    split around it (size, equal, remove), then Add Division / Add Fixed
+    Shelf to split it further."""
+    section = interior_obj.parent
+    place = section_place(section) if section is not None else None
+    box = layout.box()
+    col = box.column(align=True)
+    if place is not None:
+        index, count, side, prompt = place
+        kind = _splitter_kind(section.parent)
+        col.label(text=side, icon='MESH_PLANE')
+        if prompt is not None:
+            row = col.row(align=True)
+            field = row.row(align=True)
+            field.active = not prompt.equal
+            field.prop(prompt, 'distance_value', text="Section Size")
+            row.prop(prompt, 'equal', text="", icon='LINKED' if prompt.equal else 'UNLINKED')
+        op = col.operator("hb_frameless.remove_interior_split",
+                          text="Remove " + SPLIT_KINDS[kind][1], icon='X')
+        op.section_name = section.name
+        col.separator()
+    row = col.row(align=True)
+    for kind, text, icon in (('DIVISION', "Add Division", 'MOD_ARRAY'),
+                             ('FIXED_SHELF', "Add Fixed Shelf", 'SNAP_FACE')):
+        op = row.operator("hb_frameless.add_interior_split", text=text, icon=icon)
+        op.kind = kind
+        op.interior_name = interior_obj.name
+
+
 # What a division section can hold.
 _SECTION_TYPE_ITEMS = [
     ('SHELVES', "Shelves", "Adjustable shelves"),
@@ -718,10 +913,27 @@ _SECTION_TYPE_ITEMS = [
 ]
 
 
+def _restore_after_cancel(op, context):
+    """A custom split dialog replaces the interior as it opens so the
+    sizes can be previewed; closed without OK, it puts back a plain
+    shelves interior rather than leaving empty sections."""
+    splitter = op.get_splitter_obj()
+    host = op.get_parent_obj()
+    if splitter is not None:
+        _delete_tree(splitter)
+    if host is not None:
+        interior = types_frameless.add_section_interior(host, 'SHELVES')
+        if interior is not None:
+            solver_frameless.attach_cage(interior, host)
+        cabinet = hb_utils.get_cabinet_bp(host)
+        if cabinet is not None:
+            hb_utils.run_calc_fix(context, cabinet)
+
+
 class hb_frameless_OT_custom_interior_vertical(bpy.types.Operator):
     bl_idname = "hb_frameless.custom_interior_vertical"
-    bl_label = "Custom Vertical Interior Division"
-    bl_description = "Create custom vertical interior divisions with adjustable sizes"
+    bl_label = "Custom Fixed Shelves"
+    bl_description = "Stack the interior into sections with fixed shelves, sizes adjustable"
     bl_options = {'UNDO'}
 
     section_count: bpy.props.IntProperty(
@@ -835,6 +1047,9 @@ class hb_frameless_OT_custom_interior_vertical(bpy.types.Operator):
         
         wm = context.window_manager
         return wm.invoke_props_dialog(self, width=400)
+
+    def cancel(self, context):
+        _restore_after_cancel(self, context)
 
     def check(self, context):
         parent_obj = self.get_parent_obj()
@@ -984,8 +1199,8 @@ class hb_frameless_OT_custom_interior_vertical(bpy.types.Operator):
 
 class hb_frameless_OT_custom_interior_horizontal(bpy.types.Operator):
     bl_idname = "hb_frameless.custom_interior_horizontal"
-    bl_label = "Custom Horizontal Interior Division"
-    bl_description = "Create custom horizontal interior divisions with adjustable sizes"
+    bl_label = "Custom Divisions"
+    bl_description = "Divide the interior into side-by-side sections, sizes adjustable"
     bl_options = {'UNDO'}
 
     section_count: bpy.props.IntProperty(
@@ -1099,6 +1314,9 @@ class hb_frameless_OT_custom_interior_horizontal(bpy.types.Operator):
         
         wm = context.window_manager
         return wm.invoke_props_dialog(self, width=400)
+
+    def cancel(self, context):
+        _restore_after_cancel(self, context)
 
     def check(self, context):
         parent_obj = self.get_parent_obj()
@@ -1533,6 +1751,8 @@ classes = (
     hb_frameless_OT_delete_interior_part,
     hb_frameless_OT_custom_interior_vertical,
     hb_frameless_OT_custom_interior_horizontal,
+    hb_frameless_OT_add_interior_split,
+    hb_frameless_OT_remove_interior_split,
     hb_frameless_OT_add_interior_item,
     hb_frameless_OT_remove_interior_item,
     hb_frameless_OT_add_rollout_box,

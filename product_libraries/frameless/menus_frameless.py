@@ -356,8 +356,10 @@ class HOME_BUILDER_MT_interior_change(bpy.types.Menu):
         layout.menu("HOME_BUILDER_MT_interior_change_bar_storage", text="Wine & Bar Storage")
         layout.operator("hb_frameless.change_interior_type", text="Empty (No Interior)").interior_type = 'EMPTY'
         layout.separator()
-        layout.operator("hb_frameless.custom_interior_vertical", text="Custom Vertical Division...")
-        layout.operator("hb_frameless.custom_interior_horizontal", text="Custom Horizontal Division...")
+        layout.operator("hb_frameless.add_interior_split", text="Add Division").kind = 'DIVISION'
+        layout.operator("hb_frameless.add_interior_split", text="Add Fixed Shelf").kind = 'FIXED_SHELF'
+        layout.operator("hb_frameless.custom_interior_horizontal", text="Custom Divisions...")
+        layout.operator("hb_frameless.custom_interior_vertical", text="Custom Fixed Shelves...")
 
 
 class HOME_BUILDER_MT_interior_change_bar_storage(bpy.types.Menu):
