@@ -227,6 +227,7 @@ OPTION_FORMS = (
     ("Handles", 'draw_cabinet_options_handles'),
     ("General Construction", 'draw_cabinet_options_general'),
     ("Molding", 'draw_molding_ui'),
+    ("Light Rail", 'draw_light_rail_ui'),
     ("Countertops & Backsplash", 'draw_countertop_ui'),
 )
 
@@ -377,6 +378,23 @@ OPTION_PAGES = {
              ("Remove", 'hb_frameless.delete_molding')),
         ),
     },
+    # Light rail under the uppers: the room molding system's package,
+    # shared with the face frame library, swept by its Refresh.
+    'draw_light_rail_ui': {
+        'kind': 'form',
+        'title': "Light Rail",
+        'props': 'home_builder',
+        'scope': 'scene',
+        'fields': (
+            ('enum', 'molding_light_rail_package', "Package"),
+            ('enum', 'molding_light_rail_profile', "Profile",
+             {'when': lambda p: (_has_molding_pack()
+                                 and p.molding_light_rail_package != 'NONE')}),
+        ),
+        'actions': (
+            (("Refresh Molding", 'home_builder.refresh_room_molding'),),
+        ),
+    },
     # Countertops and backsplash. The sizes shape the NEXT Add
     # Countertops (rebuilding on every keystroke would throw away sink
     # cut-outs), so the commands sit right under them.
@@ -407,6 +425,11 @@ OPTION_PAGES = {
         ),
     },
 }
+
+
+def _has_molding_pack():
+    from ...molding import packages as molding_packages
+    return bool(molding_packages.profile_paths())
 
 
 def _crown_thumbnail(ident):

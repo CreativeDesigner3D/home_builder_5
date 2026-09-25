@@ -618,6 +618,54 @@ def _solve_upper(root, parts, p, dim_x, dim_y, dim_z):
                  dim_z=dim_z - mt * 2.0)
 
 
+# Finished bottom on an upper: an applied panel of finished stock under
+# the carcass, full width to the outside of the sides, with an optional
+# LED groove routed in its underside behind the front.
+FINISHED_BOTTOM_KEY = 'Finished Bottom'      # 0 none, 1 1/4 in, 2 3/4 in
+FINISHED_BOTTOM_THICKNESS = {1: inch(0.25), 2: inch(0.75)}
+FB_LED_KEY = 'Finished Bottom LED Route'
+FB_LED_WIDTH_KEY = 'LED Route Width'
+FB_LED_DEPTH_KEY = 'LED Route Depth'
+FB_LED_INSET_KEY = 'LED Route Inset'
+FB_LED_MOD_NAME = 'LED Route'
+
+
+def _solve_finished_bottom(root, parts, p, dim_x, dim_y, dim_z):
+    t = FINISHED_BOTTOM_THICKNESS.get(int(prompt(root, FINISHED_BOTTOM_KEY, 0)))
+    panel = parts.get('FINISHED_BOTTOM')
+    if t is None:
+        if panel is not None:
+            parts.pop('FINISHED_BOTTOM')
+            bpy.data.objects.remove(panel, do_unlink=True)
+        return
+    if panel is None:
+        from . import types_frameless
+        # Built from the front back, like the floating shelf's bottom, so
+        # its underside is the Bottom Surface and a route's inset counts
+        # from the front.
+        panel = types_frameless.Cabinet(root)._add_carcass_part(
+            'Finished Bottom', 'FINISHED_BOTTOM', finish=(False, True)).obj
+        parts['FINISHED_BOTTOM'] = panel
+        _paint_like_cabinet(root, panel)
+    set_part(panel, (0.0, -dim_y, -t), length=dim_x, width=dim_y, thickness=t)
+
+    led = bool(prompt(root, FB_LED_KEY, False))
+    mod = panel.modifiers.get(FB_LED_MOD_NAME)
+    if led and mod is None:
+        cpm = GeoNodeCutpart(panel).add_part_modifier('CPM_CUTOUT', FB_LED_MOD_NAME)
+        cpm.set_input('Flip Z', False)
+    if led or mod is not None:
+        width = float(prompt(root, FB_LED_WIDTH_KEY, inch(0.875)))
+        inset = float(prompt(root, FB_LED_INSET_KEY, inch(1.5)))
+        # Always leave 1/16 in of the panel above the groove.
+        depth = min(float(prompt(root, FB_LED_DEPTH_KEY, inch(0.375))),
+                    t - inch(0.0625))
+        set_modifier(panel, FB_LED_MOD_NAME,
+                     (('X', -0.01), ('Y', inset), ('End X', dim_x + 0.01),
+                      ('End Y', inset + width), ('Route Depth', max(depth, 0.0))),
+                     visible=led)
+
+
 def _solve_lap_drawer(root, parts, p, dim_x, dim_y, dim_z):
     mt = p.mt
     inner = dim_x - mt * 2.0
@@ -981,7 +1029,8 @@ def _solve_angled_front(root, parts, p, dim_x, dim_y, dim_z):
             part.location.y = ay + uy * ((x - bx * p.lli) / ux) + by * p.lli
 
     targets = [parts[r] for r in ('TOP', 'BOTTOM', 'BACK_STRETCHER',
-                                  'LEFT_SIDE', 'RIGHT_SIDE') if r in parts]
+                                  'LEFT_SIDE', 'RIGHT_SIDE', 'FINISHED_BOTTOM')
+               if r in parts]
     if bay is not None:
         # The bay stays square, so shelves, dividers and drawer boxes stay
         # square to the back; they are cut to the front with the carcass. Only the
@@ -1118,7 +1167,8 @@ def _solve_angled_back(root, parts, p, dim_x, dim_y, dim_z):
     panel.rotation_euler = euler
     set_part(panel, loc, length=back_len, width=face, thickness=mt)
     targets = [parts[r] for r in ('TOP', 'BOTTOM', 'FRONT_STRETCHER',
-                                  'BACK_STRETCHER', 'SINK_APRON')
+                                  'BACK_STRETCHER', 'SINK_APRON',
+                                  'FINISHED_BOTTOM')
                if r in parts]
     targets += [o for o in root.children_recursive
                 if 'SHELF' in (o.get(PART_ROLE_KEY) or '')]
@@ -1337,6 +1387,8 @@ def recalculate_cabinet(obj):
     dims = (cage.get_input('Dim X'), cage.get_input('Dim Y'),
             cage.get_input('Dim Z'))
     _SOLVERS[kind](root, parts, prompts, *dims)
+    if kind == 'UPPER':
+        _solve_finished_bottom(root, parts, prompts, *dims)
     if kind in STRAIGHT_KINDS:
         _solve_angled_front(root, parts, prompts, *dims)
     if ANGLED_BACK_KEY in root and kind in STRAIGHT_KINDS:

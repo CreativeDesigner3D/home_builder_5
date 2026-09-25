@@ -2605,6 +2605,20 @@ class Frameless_Scene_Props(PropertyGroup):
                      icon='ADD')
         row.operator('hb_frameless.delete_molding', text="", icon='X')
 
+    def draw_light_rail_ui(self, layout, context):
+        """Light rail under the uppers, from the room molding system."""
+        hb_scene = context.scene.home_builder
+        col = layout.column(align=True)
+        col.label(text="Light Rail:")
+        col.prop(hb_scene, 'molding_light_rail_package', text="Package")
+        sub = col.row(align=True)
+        sub.enabled = hb_scene.molding_light_rail_package != 'NONE'
+        sub.prop(hb_scene, 'molding_light_rail_profile', text="Profile")
+        row = col.row(align=True)
+        row.scale_y = 1.3
+        row.operator('home_builder.refresh_room_molding', text="Refresh Molding",
+                     icon='FILE_REFRESH')
+
     def draw_drawer_box_ui(self, layout, context):
         """Draw the drawer box options UI section."""
         row = layout.row()
@@ -2756,6 +2770,7 @@ class Frameless_Scene_Props(PropertyGroup):
             row.prop(self,'show_molding',text="Molding",icon='TRIA_DOWN' if self.show_molding else 'TRIA_RIGHT',emboss=False)
             if self.show_molding:
                 self.draw_molding_ui(box,context)
+                self.draw_light_rail_ui(box,context)
 
             box = col.box()
             row = box.row()

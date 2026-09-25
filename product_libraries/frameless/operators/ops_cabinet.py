@@ -64,11 +64,30 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
         default=0.3048,
         description="How far down the side the angle ends from the back") # type: ignore
     finished_interior: bpy.props.BoolProperty(name="Finished Interior", default=False) # type: ignore
+    finished_bottom: bpy.props.EnumProperty(
+        name="Finished Bottom",
+        description="A panel of finished stock applied under the upper",
+        items=[('0', "None", ""), ('1', "1/4\" Panel", ""), ('2', "3/4\" Panel", "")],
+        default='0') # type: ignore
+    fb_led_route: bpy.props.BoolProperty(
+        name="LED Route", default=False,
+        description="Route a groove for an LED strip in the panel's underside") # type: ignore
+    fb_led_width: bpy.props.FloatProperty(
+        name="Width", unit='LENGTH', precision=4, min=0.0, default=0.022225) # type: ignore
+    fb_led_depth: bpy.props.FloatProperty(
+        name="Depth", unit='LENGTH', precision=4, min=0.0, default=0.009525) # type: ignore
+    fb_led_inset: bpy.props.FloatProperty(
+        name="From Front", unit='LENGTH', precision=4, min=0.0, default=0.0381) # type: ignore
 
     cabinet = None
 
     def _can_angle_back(self):
         return not self.cabinet.obj.get('IS_CORNER_CABINET')
+
+    def _is_upper(self):
+        obj = self.cabinet.obj
+        return (not obj.get('IS_CORNER_CABINET')
+                and solver_frameless.carcass_kind(obj) == 'UPPER')
 
     def _can_angle_front(self):
         obj = self.cabinet.obj
@@ -113,6 +132,11 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
             solver_frameless.FRONT_LEFT_DEPTH_KEY, self.cabinet_depth))
         self.front_right_depth = float(cabinet_bp.get(
             solver_frameless.FRONT_RIGHT_DEPTH_KEY, self.cabinet_depth))
+        self.finished_bottom = str(int(cabinet_bp.get(solver_frameless.FINISHED_BOTTOM_KEY, 0)))
+        self.fb_led_route = bool(cabinet_bp.get(solver_frameless.FB_LED_KEY, False))
+        self.fb_led_width = float(cabinet_bp.get(solver_frameless.FB_LED_WIDTH_KEY, units.inch(0.875)))
+        self.fb_led_depth = float(cabinet_bp.get(solver_frameless.FB_LED_DEPTH_KEY, units.inch(0.375)))
+        self.fb_led_inset = float(cabinet_bp.get(solver_frameless.FB_LED_INSET_KEY, units.inch(1.5)))
         self.angled_back = str(int(cabinet_bp.get('Angled Back', 0)))
         self.angled_back_width = float(cabinet_bp.get('Angled Back Width', units.inch(12.0)))
         self.angled_back_depth = float(cabinet_bp.get('Angled Back Depth', units.inch(12.0)))
@@ -161,6 +185,13 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
                     self.cabinet.obj[key] = value
         if 'Remove Bottom' in self.cabinet.obj:
             self.cabinet.obj['Remove Bottom'] = self.remove_bottom
+        if self._is_upper() and (self.finished_bottom != '0'
+                                 or solver_frameless.FINISHED_BOTTOM_KEY in obj):
+            obj[solver_frameless.FINISHED_BOTTOM_KEY] = int(self.finished_bottom)
+            obj[solver_frameless.FB_LED_KEY] = self.fb_led_route
+            obj[solver_frameless.FB_LED_WIDTH_KEY] = self.fb_led_width
+            obj[solver_frameless.FB_LED_DEPTH_KEY] = self.fb_led_depth
+            obj[solver_frameless.FB_LED_INSET_KEY] = self.fb_led_inset
         if self._can_angle_back() and (self.angled_back != '0'
                                        or 'Angled Back' in self.cabinet.obj):
             self.cabinet.obj['Angled Back'] = int(self.angled_back)
@@ -217,6 +248,22 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
                 row = col.row(align=True)
                 row.label(text="Right Depth:")
                 row.prop(self, 'front_right_depth', text="")
+
+        if self._is_upper():
+            box = layout.box()
+            col = box.column(align=True)
+            row = col.row(align=True)
+            row.label(text="Finished Bottom:")
+            row.prop(self, 'finished_bottom', text="")
+            if self.finished_bottom != '0':
+                col.prop(self, 'fb_led_route')
+                if self.fb_led_route:
+                    for prop, label in (('fb_led_width', "Width:"),
+                                        ('fb_led_depth', "Depth:"),
+                                        ('fb_led_inset', "From Front:")):
+                        row = col.row(align=True)
+                        row.label(text=label)
+                        row.prop(self, prop, text="")
 
         if self._can_angle_back():
             box = layout.box()
