@@ -273,6 +273,7 @@ OPTION_PAGES = {
             ('enum', 'front_style', "Front Style"),
             ('enum', 'panel_type', "Door Panel"),
             ('enum', 'door_edgeband', "Edgebanding"),
+            ('enum', 'grain_match', "Grain Match"),
         ),
         'actions': (
             (("Assign Style",
@@ -295,6 +296,14 @@ OPTION_PAGES = {
         'props': 'hb_frameless',
         'scope': 'main',
         'fields': (
+            # How fronts open, room-wide; a front can still take its own
+            # from its right-click Handle menu.
+            ('enum', 'door_handle_type', "Door Handle"),
+            ('enum', 'drawer_handle_type', "Drawer Handle"),
+            ('distance', 'tab_pull_width', "Tab Width",
+             {'when': lambda p: 'TAB' in (p.door_handle_type,
+                                          p.drawer_handle_type)}),
+            ('gap', None, None),
             ('thumb', 'door_pull_selection', "Door Pull",
              {'thumb': lambda ident: _pull_thumbnail(ident)}),
             ('thumb', 'drawer_pull_selection', "Drawer Pull",

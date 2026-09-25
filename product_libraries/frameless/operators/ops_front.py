@@ -3,13 +3,48 @@ from .. import types_frameless
 from .. import solver_frameless
 from .. import props_hb_frameless
 from .. import edge_pulls
-from .... import hb_utils, units
+from .... import hb_utils, hb_project, units
+
+
+_door_style_items = []
+
+
+def _door_style_enum(self, context):
+    """The room's door styles, by index."""
+    _door_style_items.clear()
+    styles = hb_project.get_main_scene().hb_frameless.door_styles
+    for i, style in enumerate(styles):
+        _door_style_items.append((str(i), style.name, ""))
+    if not _door_style_items:
+        _door_style_items.append(('0', "(none)", ""))
+    return _door_style_items
+
+
+def _front_insert(front):
+    """The insert cage a front belongs to (a bi-fold's upper panel too)."""
+    return front.parent if front is not None else None
+
 
 class hb_frameless_OT_door_front_prompts(bpy.types.Operator):
     bl_idname = "hb_frameless.door_front_prompts"
     bl_label = "Front Prompts"
     bl_description = "Edit door/drawer front properties"
     bl_options = {'UNDO'}
+
+    door_style: bpy.props.EnumProperty(
+        name="Door Style", items=_door_style_enum,
+        description="The door style this front wears") # type: ignore
+    door_swing: bpy.props.EnumProperty(
+        name="Hinge",
+        items=[('0', "Left", "One door hinged on the left"),
+               ('1', "Right", "One door hinged on the right"),
+               ('2', "Double", "A pair of doors")],
+        default='2') # type: ignore
+    handle_type: bpy.props.EnumProperty(
+        name="Handle",
+        items=[('DEFAULT', "Room Default", "Follow the room's door or drawer handle")]
+              + edge_pulls.HANDLE_TYPES,
+        default='DEFAULT') # type: ignore
 
     front = None
     door_style_mod = None
@@ -36,8 +71,34 @@ class hb_frameless_OT_door_front_prompts(bpy.types.Operator):
     def invoke(self, context, event):
         self.front = context.object
         self.door_style_mod = self.get_door_style_modifier(self.front)
+        try:
+            self.door_style = str(int(self.front.get('DOOR_STYLE_INDEX', 0)))
+        except TypeError:
+            pass
+        insert = _front_insert(self.front)
+        if insert is not None and 'Door Swing' in insert:
+            self.door_swing = str(int(insert['Door Swing']))
+        self.handle_type = self.front.get(edge_pulls.HANDLE_KEY, '') or 'DEFAULT'
         wm = context.window_manager
         return wm.invoke_props_dialog(self, width=300)
+
+    def apply_choices(self):
+        """Write the style, hinge and handle picks where they live: the
+        style and handle on the front, the hinge on its doors insert."""
+        front = self.front
+        styles = hb_project.get_main_scene().hb_frameless.door_styles
+        index = int(self.door_style)
+        if 0 <= index < len(styles) and index != int(front.get('DOOR_STYLE_INDEX', -1)):
+            front['DOOR_STYLE_INDEX'] = index
+            styles[index].assign_style_to_front(front)
+            self.door_style_mod = self.get_door_style_modifier(front)
+        insert = _front_insert(front)
+        if insert is not None and 'Door Swing' in insert:
+            insert['Door Swing'] = int(self.door_swing)
+        if self.handle_type == 'DEFAULT':
+            front.pop(edge_pulls.HANDLE_KEY, None)
+        else:
+            front[edge_pulls.HANDLE_KEY] = self.handle_type
 
     def tag_front(self):
         """5.2 modifier-input writes don't tag; rebuild the front. The
@@ -47,10 +108,12 @@ class hb_frameless_OT_door_front_prompts(bpy.types.Operator):
             self.front.update_tag()
 
     def check(self, context):
+        self.apply_choices()
         self.tag_front()
         return True
 
     def execute(self, context):
+        self.apply_choices()
         self.tag_front()
         return {'FINISHED'}
 
@@ -59,6 +122,20 @@ class hb_frameless_OT_door_front_prompts(bpy.types.Operator):
         front = self.front
         if not front:
             return
+
+        box = layout.box()
+        col = box.column(align=True)
+        row = col.row(align=True)
+        row.label(text="Door Style:")
+        row.prop(self, 'door_style', text="")
+        insert = _front_insert(front)
+        if insert is not None and 'Door Swing' in insert:
+            row = col.row(align=True)
+            row.label(text="Hinge:")
+            row.prop(self, 'door_swing', text="")
+        row = col.row(align=True)
+        row.label(text="Handle:")
+        row.prop(self, 'handle_type', text="")
 
         # Pull Location (doors and pullout fronts)
         if 'Pull Location' in front:
