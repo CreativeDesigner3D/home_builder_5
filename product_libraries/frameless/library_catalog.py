@@ -51,6 +51,8 @@ SECTIONS = (
                               ("Tall Stacked", "Tall Stacked",
                                "Tall Stacked"),
                               ("Tall Open", "Tall Open", "Tall Open"))),
+            ("Closet & Mudroom", (("Locker", "Tall Locker", "Tall Locker"),
+                                  ("Bench", "Base Bench", "Base Bench"))),
         ),
     },
     {

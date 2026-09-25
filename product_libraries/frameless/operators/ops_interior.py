@@ -388,6 +388,18 @@ class hb_frameless_OT_interior_prompts(bpy.types.Operator):
     shelf_quantity: bpy.props.IntProperty(name="Shelf Quantity", min=0, max=10, default=1) # type: ignore
     shelf_setback: bpy.props.FloatProperty(name="Shelf Setback", unit='LENGTH', precision=5) # type: ignore
     shelf_clip_gap: bpy.props.FloatProperty(name="Shelf Clip Gap", unit='LENGTH', precision=5) # type: ignore
+    hook_count: bpy.props.IntProperty(name="Coat Hooks", min=0, max=12, default=0) # type: ignore
+    hook_height: bpy.props.FloatProperty(
+        name="Hook Height", unit='LENGTH', precision=4, min=0.0,
+        description="Height of the hooks off the bottom of the interior; 0 is 10 in below the top") # type: ignore
+    hook_style: bpy.props.EnumProperty(
+        name="Hook", items=[('Hook Coat.blend', "Coat Hook", ""),
+                            ('Hook Double.blend', "Double Hook", ""),
+                            ('Hook Waterfall.blend', "Waterfall Hook", "")]) # type: ignore
+    shoe_qty: bpy.props.IntProperty(name="Shoe Shelves", min=0, max=20,
+                                    description="0 spaces them about 9 in apart") # type: ignore
+    shoe_angle: bpy.props.IntProperty(name="Angle", min=0, max=45, default=15) # type: ignore
+    shoe_stop: bpy.props.FloatProperty(name="Shoe Stop", unit='LENGTH', precision=4, min=0.0) # type: ignore
     # Roll-out box construction and slides on an items interior.
     opening_name: bpy.props.StringProperty(options={'HIDDEN'}) # type: ignore
     construction: bpy.props.EnumProperty(
@@ -420,6 +432,16 @@ class hb_frameless_OT_interior_prompts(bpy.types.Operator):
         if 'Shelf Clip Gap' in interior_bp:
             self.shelf_clip_gap = interior_bp['Shelf Clip Gap']
         
+        self.hook_count = int(interior_bp.get('Coat Hooks', 0))
+        self.hook_height = float(interior_bp.get('Coat Hook Height', 0.0))
+        try:
+            self.hook_style = interior_bp.get('Coat Hook Style', 'Hook Coat.blend')
+        except TypeError:
+            pass
+        if interior_bp.get('IS_FRAMELESS_SHOE_SHELVES'):
+            self.shoe_qty = int(interior_bp.get('Shoe Shelf Quantity', 0))
+            self.shoe_angle = int(interior_bp.get('Shoe Shelf Angle', 15))
+            self.shoe_stop = float(interior_bp.get('Shoe Stop Height', units.inch(1.5)))
         if interior_items.is_items_interior(interior_bp):
             self.opening_name = interior_bp.name
             _seed_picks(self, interior_bp)
@@ -428,6 +450,15 @@ class hb_frameless_OT_interior_prompts(bpy.types.Operator):
         return wm.invoke_props_dialog(self, width=width)
 
     def check(self, context):
+        obj = self.interior.obj
+        if self.hook_count or 'Coat Hooks' in obj:
+            obj['Coat Hooks'] = self.hook_count
+            obj['Coat Hook Height'] = self.hook_height
+            obj['Coat Hook Style'] = self.hook_style
+        if obj.get('IS_FRAMELESS_SHOE_SHELVES'):
+            obj['Shoe Shelf Quantity'] = self.shoe_qty
+            obj['Shoe Shelf Angle'] = self.shoe_angle
+            obj['Shoe Stop Height'] = self.shoe_stop
         if 'Shelf Quantity' in self.interior.obj:
             self.interior.obj['Shelf Quantity'] = self.shelf_quantity
         if 'Shelf Setback' in self.interior.obj:
@@ -442,12 +473,21 @@ class hb_frameless_OT_interior_prompts(bpy.types.Operator):
 
     def draw(self, context):
         layout = self.layout
+        if self.interior.obj.get('IS_FRAMELESS_SHOE_SHELVES'):
+            box = layout.box()
+            col = box.column(align=True)
+            col.prop(self, 'shoe_qty', text="Shelves (0 = Auto)")
+            col.prop(self, 'shoe_angle', text="Angle (degrees)")
+            col.prop(self, 'shoe_stop')
+            self.draw_hooks(layout)
+            return
         if interior_items.is_items_interior(self.interior.obj):
             items = interior_items.item_props(self.interior.obj).interior_items
             if any(it.kind == 'ROLLOUT' for it in items):
                 if draw_box_picks(layout, self):
                     layout.separator()
             draw_interior_items(layout, self.interior.obj)
+            self.draw_hooks(layout)
             return
         box = layout.box()
         col = box.column(align=True)
@@ -466,6 +506,19 @@ class hb_frameless_OT_interior_prompts(bpy.types.Operator):
             row = col.row(align=True)
             row.label(text="Shelf Clip Gap:")
             row.prop(self, 'shelf_clip_gap', text="")
+        self.draw_hooks(layout)
+
+
+def _draw_hooks(self, layout):
+    box = layout.box()
+    row = box.row(align=True)
+    row.prop(self, 'hook_count')
+    if self.hook_count:
+        row.prop(self, 'hook_style', text="")
+        box.prop(self, 'hook_height', text="Height (0 = Near Top)")
+
+
+hb_frameless_OT_interior_prompts.draw_hooks = _draw_hooks
 
 
 class hb_frameless_OT_change_interior_type(bpy.types.Operator):
@@ -494,6 +547,7 @@ class hb_frameless_OT_change_interior_type(bpy.types.Operator):
             ('WINE_HALF_CIRCLE', "Half Circle Wine Rack", "Scalloped rails"),
             ('STEMWARE_RACK', "Stemware Rack", "Slotted slats at the top of the opening"),
             ('PLATE_RACK', "Plate Rack", "Dowels on 2 in centers"),
+            ('SHOE_SHELVES', "Shoe Shelves", "Shelves tilted up at the back with a shoe stop"),
         ],
         default='SHELVES'
     ) # type: ignore
@@ -557,6 +611,9 @@ class hb_frameless_OT_change_interior_type(bpy.types.Operator):
         # Create new interior based on type
         if self.interior_type == 'SHELVES':
             interior = types_frameless.CabinetShelves()
+            self.add_interior_to_opening(parent_opening, interior)
+        elif self.interior_type == 'SHOE_SHELVES':
+            interior = types_frameless.CabinetShoeShelves()
             self.add_interior_to_opening(parent_opening, interior)
         elif self.interior_type in _ITEM_INTERIOR_KINDS:
             interior = types_frameless.CabinetInteriorItems()
@@ -657,6 +714,7 @@ _SECTION_TYPE_ITEMS = [
     ('WINE_X', "X-Style Wine Rack", "Two panels crossing corner to corner"),
     ('STEMWARE_RACK', "Stemware Rack", "Slotted slats at the top"),
     ('PLATE_RACK', "Plate Rack", "Dowels on 2 in centers"),
+    ('SHOE_SHELVES', "Shoe Shelves", "Shelves tilted up at the back with a shoe stop"),
 ]
 
 

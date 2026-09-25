@@ -379,6 +379,10 @@ def build_cabinet_for(cabinet_name, cabinet_type, is_appliance=False,
         cabinet = blind_cls()
         cabinet.blind_side = blind_side
         return cabinet
+    if cabinet_type == 'BASE' and cabinet_name == types_frameless.BENCH:
+        return types_frameless.BenchCabinet()
+    if cabinet_type == 'TALL' and cabinet_name == types_frameless.LOCKER:
+        return types_frameless.LockerCabinet()
     if cabinet_type == 'BASE':
         cabinet = types_frameless.BaseCabinet()
         if cabinet_name == 'Base Door':

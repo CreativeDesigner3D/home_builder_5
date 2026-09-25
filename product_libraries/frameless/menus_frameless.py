@@ -303,6 +303,7 @@ class HOME_BUILDER_MT_interior_change(bpy.types.Menu):
         layout.operator("hb_frameless.change_interior_type", text="Quarter Depth Shelves").interior_type = 'QUARTER_DEPTH_SHELVES'
         layout.operator("hb_frameless.change_interior_type", text="Glass Shelves").interior_type = 'GLASS_SHELVES'
         layout.operator("hb_frameless.change_interior_type", text="Closet Rod").interior_type = 'CLOSET_ROD'
+        layout.operator("hb_frameless.change_interior_type", text="Shoe Shelves").interior_type = 'SHOE_SHELVES'
         layout.menu("HOME_BUILDER_MT_interior_change_bar_storage", text="Wine & Bar Storage")
         layout.operator("hb_frameless.change_interior_type", text="Empty (No Interior)").interior_type = 'EMPTY'
         layout.separator()

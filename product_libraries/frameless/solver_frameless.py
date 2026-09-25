@@ -1249,8 +1249,14 @@ def solve_interior_parts(interior_obj):
         # and the face frame library imports this module while loading.
         from . import interior_items
         interior_items.solve(interior_obj)
+    elif interior_obj.get('IS_FRAMELESS_SHOE_SHELVES'):
+        from . import closet_parts
+        closet_parts.solve_shoe_shelves(interior_obj)
     elif 'Shelf Quantity' in interior_obj:
         _solve_shelves(interior_obj)
+    # Any interior can carry a row of coat hooks on its back wall.
+    from . import closet_parts
+    closet_parts.solve_hooks(interior_obj)
 
 
 # ---------------------------------------------------------------------------

@@ -639,6 +639,57 @@ class ApplianceGarageCabinet(Cabinet):
         solver_frameless.recalculate_cabinet(self.obj)
 
 
+LOCKER = 'Tall Locker'
+BENCH = 'Base Bench'
+LOCKER_WIDTH = inch(18.0)
+BENCH_HEIGHT = inch(18.0)
+BENCH_DEPTH = inch(16.0)
+
+
+class LockerCabinet(TallCabinet):
+    """A mudroom locker: an open cubby over a fixed shelf at the top, a
+    hanging section with a rod and a row of coat hooks, and a bench-height
+    shelf over an open cubby at the bottom."""
+
+    def __init__(self):
+        super().__init__()
+        self.width = LOCKER_WIDTH
+
+    def create(self, name="Locker"):
+        self.create_tall_carcass(name)
+        self.obj['CABINET_TYPE'] = 'TALL'
+        self.obj['IS_LOCKER'] = True
+        splitter = SplitterVertical()
+        splitter.splitter_qty = 2
+        splitter.opening_sizes = [inch(12.0), 0, inch(14.0)]
+        splitter.opening_inserts = [None, None, None]
+        self.add_cage_to_bay(splitter)
+        hanging = [o for (role, index), o in
+                   solver_frameless.split_parts(splitter.obj).items()
+                   if role == 'OPENING' and index == 2]
+        if hanging:
+            rod = CabinetInteriorItems()
+            rod.seed_kind = 'CLOSET_ROD'
+            rod.create('Interior')
+            rod.obj['Coat Hooks'] = 3
+            solver_frameless.attach_cage(rod.obj, hanging[0])
+        solver_frameless.recalculate_cabinet(self.obj)
+
+
+class BenchCabinet(BaseCabinet):
+    """A bench: an 18 in high base with a pair of drawers."""
+
+    def __init__(self):
+        super().__init__()
+        self.height = BENCH_HEIGHT
+        self.depth = BENCH_DEPTH
+        self.default_exterior = '2 Drawers'
+
+    def create(self, name="Bench"):
+        super().create(name)
+        self.obj['IS_BENCH'] = True
+
+
 class UpperCabinet(Cabinet):
     """Wall-mounted upper cabinet. No toe kick."""
     
@@ -1005,6 +1056,21 @@ class CabinetShelves(CabinetInterior):
         array_mod.use_relative_offset = False
         array_mod.use_constant_offset = True
         array_mod.constant_offset_displace = (0,0,0)
+
+
+class CabinetShoeShelves(CabinetInterior):
+    """Shelves tilted up towards the back, each with a shoe stop along
+    its front edge (see closet_parts)."""
+
+    def create(self, name):
+        super().create(name)
+        props = bpy.context.scene.hb_frameless
+        self.obj['IS_FRAMELESS_SHOE_SHELVES'] = True
+        self.add_property('Shoe Shelf Quantity', 'QUANTITY', 0)
+        self.add_property('Shoe Shelf Angle', 'QUANTITY', 15)
+        self.add_property('Shoe Stop Height', 'DISTANCE', inch(1.5))
+        self.add_property('Material Thickness', 'DISTANCE',
+                          props.default_carcass_part_thickness)
 
 
 class CabinetInteriorItems(CabinetInterior):
@@ -1620,6 +1686,8 @@ def add_section_interior(section_obj, section_type):
     from . import interior_items
     if section_type == 'SHELVES':
         interior = CabinetShelves()
+    elif section_type == 'SHOE_SHELVES':
+        interior = CabinetShoeShelves()
     elif section_type in interior_items.INTERIOR_TYPE_KINDS:
         interior = CabinetInteriorItems()
         interior.seed_kind = interior_items.INTERIOR_TYPE_KINDS[section_type]
