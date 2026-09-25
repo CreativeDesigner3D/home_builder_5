@@ -110,6 +110,16 @@ def draw_box_picks(layout, op):
     return shown
 
 
+def draw_u_notch(layout, props, text):
+    """U-notch toggle and its size, for a drawer opening or one roll-out
+    box (the fields have the same names on both)."""
+    row = layout.row(align=True)
+    row.prop(props, 'sink_duo', text=text)
+    if props.sink_duo:
+        row.prop(props, 'sink_duo_notch_width', text="Width")
+        row.prop(props, 'sink_duo_notch_depth', text="Depth (0 = Auto)")
+
+
 class hb_frameless_AccessorySearchRow(bpy.types.PropertyGroup):
     """One result row in the drawer accessory search."""
     code: bpy.props.StringProperty() # type: ignore
@@ -225,8 +235,9 @@ class hb_frameless_OT_drawer_interior(bpy.types.Operator):
             layout.label(text="No drawer selected", icon='INFO')
             return
         props = interior_items.item_props(opening)
-        if draw_box_picks(layout, self):
-            layout.separator()
+        draw_box_picks(layout, self)
+        draw_u_notch(layout, props, "U-Shaped Box")
+        layout.separator()
 
         pick = layout.box()
         pick.label(text="Add an accessory", icon='ADD')
@@ -1235,6 +1246,7 @@ def draw_interior_items(layout, interior_obj):
                 rm_box.interior_name = name
                 rm_box.item_index = i
                 rm_box.box_index = j
+                draw_u_notch(sub, rollout_box, "U-Shaped")
             add_box = sub.operator("hb_frameless.add_rollout_box",
                                    text="Add Box", icon='ADD')
             add_box.interior_name = name

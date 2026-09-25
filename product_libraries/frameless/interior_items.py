@@ -190,8 +190,14 @@ def _signature(interior_obj, descs):
         ))
     scoops = tuple(bool(getattr(i, 'finger_scoop', True))
                    for i in props.interior_items)
+    notches = tuple(
+        tuple((bool(b.sink_duo), round(b.sink_duo_notch_width, 5),
+               round(b.sink_duo_notch_depth, 5), b.galley_top)
+              for b in i.rollout_boxes)
+        for i in props.interior_items)
     extras = (
         scoops,
+        notches,
         getattr(props, 'drawer_box_construction', ''),
         getattr(props, 'drawer_slides', ''),
         bool(root.get('Finished Interior', False)) if root else False,
@@ -303,6 +309,11 @@ def _create_rollout_box(interior_obj, desc):
     item_index = desc.get('item_index', -1)
     box.obj[types_ff.TAG_ROLLOUT_ITEM_INDEX] = item_index
     box.obj[types_ff.TAG_ROLLOUT_BOX_INDEX] = desc.get('box_index', -1)
+    box_props = types_ff.rollout_box_props(interior_obj, item_index,
+                                           desc.get('box_index', -1))
+    if box_props is not None and getattr(box_props, 'sink_duo', False):
+        types_ff.FaceFrameCabinet._apply_sink_duo_notch(
+            box.obj, dx, dy, dz, box_props)
     item = types_ff.rollout_item_props(interior_obj, item_index)
     if item is None or getattr(item, 'finger_scoop', True):
         types_ff.FaceFrameCabinet._apply_finger_scoop(
@@ -551,11 +562,40 @@ def _paint_inserts(root, inserts):
             mesh.materials.append(mat)
 
 
+NOTCH_SIGNATURE_KEY = 'hb_notch_signature'
+_NOTCH_MOD = 'Sink Duo Notch'
+
+
+def _solve_drawer_notch(box_obj, props, dims):
+    """U-shaped (sink duo) drawer box: the face frame notch, kept in step
+    with the opening's pick on a box that is not rebuilt each solve."""
+    on = bool(getattr(props, 'sink_duo', False))
+    signature = repr((on, round(props.sink_duo_notch_width, 5),
+                      round(props.sink_duo_notch_depth, 5))
+                     + ((tuple(round(v, 5) for v in dims),) if on else ()))
+    if box_obj.get(NOTCH_SIGNATURE_KEY, repr((False, 0.0, 0.0))) == signature:
+        return
+    mod = box_obj.modifiers.get(_NOTCH_MOD)
+    if mod is not None:
+        box_obj.modifiers.remove(mod)
+    for child in list(box_obj.children):
+        if child.name.split('.')[0] == 'Sink Duo Cutter':
+            _remove_part(child)
+    for key in ('SINK_DUO', 'SINK_DUO_NOTCH_WIDTH', 'SINK_DUO_NOTCH_DEPTH'):
+        if key in box_obj:
+            del box_obj[key]
+    if on:
+        _solver_ff, types_ff = _face_frame()
+        types_ff.FaceFrameCabinet._apply_sink_duo_notch(box_obj, *dims, props)
+    box_obj[NOTCH_SIGNATURE_KEY] = signature
+
+
 def solve_drawer_inserts(opening_obj, box_obj, dims, hidden):
-    """Stamp the box and rebuild its inserts when anything that shapes
-    them has changed."""
+    """Stamp the box, cut its U-notch and rebuild its inserts when
+    anything that shapes them has changed."""
     props = item_props(opening_obj)
     _stamp_box(box_obj, props)
+    _solve_drawer_notch(box_obj, props, dims)
     items = [it for it in drawer_accessories(opening_obj)
              if getattr(it, 'accessory_render', '')]
     existing = [c for c in box_obj.children if c.get(DRAWER_INSERT_TAG)]
