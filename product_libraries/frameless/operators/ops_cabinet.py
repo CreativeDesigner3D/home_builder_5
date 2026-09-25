@@ -223,6 +223,10 @@ class hb_frameless_OT_add_applied_end(bpy.types.Operator):
         ],
         default='LEFT'
     ) # type: ignore
+    thickness: bpy.props.FloatProperty(
+        name="Thickness",
+        description="Panel thickness; 0 uses the carcass thickness",
+        default=0.0, min=0.0, unit='LENGTH') # type: ignore
 
     @classmethod
     def poll(cls, context):
@@ -295,7 +299,8 @@ class hb_frameless_OT_add_applied_end(bpy.types.Operator):
             panel.set_input("Mirror Z", True)
         
         # Set thickness
-        panel.set_input("Thickness", props.default_carcass_part_thickness)
+        panel.set_input("Thickness", self.thickness
+                        or props.default_carcass_part_thickness)
         # The panel is sized and placed by the solver.
         solver_frameless.recalculate_cabinet(cabinet_obj)
         
@@ -351,6 +356,88 @@ class hb_frameless_OT_add_applied_end(bpy.types.Operator):
         hb_utils.run_calc_fix(context, cabinet_bp)
         
         return {'FINISHED'}
+
+
+def _applied_end(obj, side=''):
+    """The slab applied end ``obj`` is, or the cabinet's slab end on
+    ``side``."""
+    if obj is None:
+        return None
+    for tag_side in ('LEFT', 'RIGHT', 'BACK'):
+        if obj.get('IS_APPLIED_END_' + tag_side) and not obj.get('IS_APPLIED_PANEL_5PIECE'):
+            return obj
+    cabinet = hb_utils.get_cabinet_bp(obj)
+    if cabinet is None or not side:
+        return None
+    return next((c for c in cabinet.children
+                 if c.get('IS_APPLIED_END_' + side)
+                 and not c.get('IS_APPLIED_PANEL_5PIECE')), None)
+
+
+class hb_frameless_OT_applied_end_prompts(bpy.types.Operator):
+    """Size a slab end panel: thickness, how far it runs past the front and
+    the back of the cabinet, and its height"""
+    bl_idname = "hb_frameless.applied_end_prompts"
+    bl_label = "End Panel Options"
+    bl_options = {'UNDO'}
+
+    side: bpy.props.EnumProperty(
+        name="Side", items=[('', "Picked", ""), ('LEFT', "Left", ""),
+                            ('RIGHT', "Right", ""), ('BACK', "Back", "")],
+        default='') # type: ignore
+    thickness: bpy.props.FloatProperty(name="Thickness", unit='LENGTH', min=0.0, precision=4) # type: ignore
+    front_extension: bpy.props.FloatProperty(
+        name="Past Front", unit='LENGTH', precision=4,
+        description="How far the panel runs past the carcass front; 7/8 in is flush with the doors") # type: ignore
+    back_extension: bpy.props.FloatProperty(
+        name="Past Back", unit='LENGTH', min=0.0, precision=4,
+        description="How far the panel runs past the back of the cabinet") # type: ignore
+    height: bpy.props.FloatProperty(
+        name="Height", unit='LENGTH', min=0.0, precision=4,
+        description="Panel height; 0 is the cabinet's height") # type: ignore
+
+    panel_name: bpy.props.StringProperty(options={'HIDDEN'}) # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        return context.object is not None and hb_utils.get_cabinet_bp(context.object) is not None
+
+    def invoke(self, context, event):
+        panel = _applied_end(context.object, self.side)
+        if panel is None:
+            self.report({'WARNING'}, "No slab end panel on that side")
+            return {'CANCELLED'}
+        self.panel_name = panel.name
+        self.thickness = hb_types.GeoNodeCutpart(panel).get_input('Thickness')
+        self.front_extension = float(panel.get(
+            solver_frameless.END_FRONT_EXTENSION_KEY,
+            solver_frameless.APPLIED_END_EXTENSION))
+        self.back_extension = float(panel.get(solver_frameless.END_BACK_EXTENSION_KEY, 0.0))
+        self.height = float(panel.get(solver_frameless.END_HEIGHT_KEY, 0.0))
+        return context.window_manager.invoke_props_dialog(self, width=300)
+
+    def check(self, context):
+        panel = bpy.data.objects.get(self.panel_name)
+        if panel is None:
+            return False
+        if self.thickness > 0.0:
+            hb_types.GeoNodeCutpart(panel).set_input('Thickness', self.thickness)
+        panel[solver_frameless.END_FRONT_EXTENSION_KEY] = self.front_extension
+        panel[solver_frameless.END_BACK_EXTENSION_KEY] = self.back_extension
+        panel[solver_frameless.END_HEIGHT_KEY] = self.height
+        solver_frameless.recalculate_cabinet(panel)
+        return True
+
+    def execute(self, context):
+        self.check(context)
+        return {'FINISHED'}
+
+    def draw(self, context):
+        col = self.layout.column(align=True)
+        col.prop(self, 'thickness')
+        col.prop(self, 'front_extension')
+        col.prop(self, 'back_extension')
+        col.prop(self, 'height', text="Height (0 = Cabinet)")
 
 
 class hb_frameless_OT_remove_applied_end(bpy.types.Operator):
@@ -1073,6 +1160,7 @@ classes = (
     hb_frameless_OT_cabinet_prompts,
     hb_frameless_OT_drop_cabinet_to_countertop,
     hb_frameless_OT_add_applied_end,
+    hb_frameless_OT_applied_end_prompts,
     hb_frameless_OT_remove_applied_end,
     hb_frameless_OT_delete_cabinet,
     hb_frameless_OT_create_cabinet_group,

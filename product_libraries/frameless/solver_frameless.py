@@ -85,6 +85,12 @@ APPLIED_END_TAGS = (
 APPLIED_END_EXTENSION = inch(0.875)
 # A five-piece end either runs to the floor or stops at the toe kick.
 PANEL_TO_FLOOR_KEY = 'Panel To Floor'
+# A slab end's own sizes, when it carries them: how far it runs past the
+# carcass front (APPLIED_END_EXTENSION when unset) and past the back, and
+# its height (0 or unset: the cabinet's).
+END_FRONT_EXTENSION_KEY = 'End Front Extension'
+END_BACK_EXTENSION_KEY = 'End Back Extension'
+END_HEIGHT_KEY = 'End Height'
 
 # Base Top Construction prompt: index into ["Full Top", "Stretchers", "Sink"].
 TOP_FULL, TOP_STRETCHERS, TOP_SINK = 0, 1, 2
@@ -278,13 +284,21 @@ def _solve_applied_ends(root, parts, p, dim_x, dim_y, dim_z):
             width = dim_y - inch(0.75)
         else:
             z = 0.0
-            length = dim_z
-            width = dim_y + APPLIED_END_EXTENSION
+            height = float(part.get(END_HEIGHT_KEY, 0.0) or 0.0)
+            length = height if height > 0.0 else dim_z
+            front = float(part.get(END_FRONT_EXTENSION_KEY,
+                                   APPLIED_END_EXTENSION))
+            back = float(part.get(END_BACK_EXTENSION_KEY, 0.0))
+            width = dim_y + front + back
         visible = not part.hide_viewport
+        y = 0.0
+        if not part.get('IS_APPLIED_PANEL_5PIECE'):
+            # Runs back past the cabinet from its back face.
+            y = float(part.get(END_BACK_EXTENSION_KEY, 0.0))
         if side == 'LEFT':
-            set_part(part, (0.0, 0.0, z), length=length, width=width, visible=visible)
+            set_part(part, (0.0, y, z), length=length, width=width, visible=visible)
         elif side == 'RIGHT':
-            set_part(part, (dim_x, 0.0, z), length=length, width=width, visible=visible)
+            set_part(part, (dim_x, y, z), length=length, width=width, visible=visible)
         else:
             set_part(part, (0.0, 0.0, 0.0), length=dim_x, width=dim_z, visible=visible)
 

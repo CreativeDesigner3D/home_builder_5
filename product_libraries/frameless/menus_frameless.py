@@ -1,5 +1,5 @@
 import bpy
-from ... import hb_utils
+from ... import hb_utils, units
 from ..common import appliance_geo
 
 class HOME_BUILDER_MT_applied_ends(bpy.types.Menu):
@@ -13,6 +13,23 @@ class HOME_BUILDER_MT_applied_ends(bpy.types.Menu):
         layout.operator("hb_frameless.add_applied_end", text="Add Back Slab").side = 'BACK'
         layout.operator("hb_frameless.add_applied_end", text="Add Both Sides Slab").side = 'BOTH'
         layout.separator()
+        layout.label(text="End Legs (1-1/2 in):")
+        for side, text in (('LEFT', "Add Left End Leg"), ('RIGHT', "Add Right End Leg"),
+                           ('BOTH', "Add Both End Legs")):
+            op = layout.operator("hb_frameless.add_applied_end", text=text)
+            op.side = side
+            op.thickness = units.inch(1.5)
+        layout.separator()
+        cabinet = hb_utils.get_cabinet_bp(context.object)
+        sides = [s for s in ('LEFT', 'RIGHT', 'BACK') if cabinet is not None and any(
+            c.get('IS_APPLIED_END_' + s) and not c.get('IS_APPLIED_PANEL_5PIECE')
+            for c in cabinet.children)]
+        if sides:
+            layout.label(text="End Panel Options:")
+            for side in sides:
+                layout.operator("hb_frameless.applied_end_prompts",
+                                text=side.title() + " End...").side = side
+            layout.separator()
         layout.label(text="5-Piece Panels:")
         op = layout.operator("hb_frameless.update_finished_end", text="Left 5-Piece...")
         op.side = 'LEFT'
@@ -52,6 +69,10 @@ class HOME_BUILDER_MT_cabinet_commands(bpy.types.Menu):
 
     def draw(self, context):
         layout = self.layout
+        obj = context.object
+        if obj is not None and not obj.get('IS_APPLIED_PANEL_5PIECE') and any(
+                obj.get('IS_APPLIED_END_' + s) for s in ('LEFT', 'RIGHT', 'BACK')):
+            layout.operator("hb_frameless.applied_end_prompts", text="End Panel Options...")
         layout.operator("hb_frameless.cabinet_prompts", text="Cabinet Prompts")
         layout.operator("hb_frameless.adjust_multiple_cabinet_widths", text="Adjust Cabinet Sizes")
         layout.separator()
