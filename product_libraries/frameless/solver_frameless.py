@@ -1348,13 +1348,20 @@ def solve_insert_parts(insert_obj):
                         length, max(dim_y - DRAWER_OPEN_CLEARANCE, 0.0))
 
         false_front = bool(child.get('False Front', False))
+        from . import edge_pulls
+        front_hidden = (false_front if (child.get('IS_DRAWER_FRONT') or child.get('IS_PULLOUT_FRONT'))
+                        else child.hide_viewport)
+        # An edge handle (tab, continuous pull, finger notch) stands in
+        # for the pull model.
+        by_pull = edge_pulls.handle_type(child) == 'PULL'
         for part in list(child.children):
             if part.get('IS_CABINET_PULL'):
-                hidden = false_front if (child.get('IS_DRAWER_FRONT') or child.get('IS_PULLOUT_FRONT')) else child.hide_viewport
-                _solve_pull(child, part, length, width, thickness, hidden)
+                _solve_pull(child, part, length, width, thickness,
+                            front_hidden or not by_pull)
             elif part.get('IS_DRAWER_BOX'):
                 _solve_drawer_box(child, part, insert_obj, length, width,
                                   overlays, false_front)
+        edge_pulls.solve_front(child, length, width, thickness, front_hidden)
 
 
 def attach_cage(child_obj, parent_obj):

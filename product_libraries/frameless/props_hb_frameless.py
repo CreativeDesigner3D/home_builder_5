@@ -22,6 +22,7 @@ from . import types_frameless
 from . import wood_materials
 from . import molding_frameless
 from . import finish_colors
+from . import edge_pulls
 import bpy.utils.previews
 
 
@@ -339,6 +340,17 @@ def update_pull_finish(self, context):
 
 def update_pull_locations(self, context):
     bpy.ops.hb_frameless.update_pull_locations(update_type='ALL')
+
+
+def update_handle_types(self, context):
+    """A room handle default re-solves every frameless cabinet, so the
+    fronts that follow it swap to the new handle."""
+    from . import solver_frameless
+    roots = []
+    for scene in bpy.data.scenes:
+        roots.extend(o for o in scene.objects
+                     if o.get('IS_FRAMELESS_CABINET_CAGE'))
+    solver_frameless.solve_roots(roots)
 
 
 def get_or_create_pull_finish_material(finish_key):
@@ -1977,6 +1989,21 @@ class Frameless_Scene_Props(PropertyGroup):
                                                  unit='LENGTH',
                                                  update=update_pull_locations)# type: ignore
     
+    door_handle_type: EnumProperty(
+        name="Door Handle",
+        description="How doors are opened, unless a door has its own",
+        items=edge_pulls.HANDLE_TYPES, default='PULL',
+        update=update_handle_types)# type: ignore
+    drawer_handle_type: EnumProperty(
+        name="Drawer Handle",
+        description="How drawer and pullout fronts are opened, unless a front has its own",
+        items=edge_pulls.HANDLE_TYPES, default='PULL',
+        update=update_handle_types)# type: ignore
+    tab_pull_width: FloatProperty(name="Tab Pull Width",
+                                  description="Length of a tab pull along its edge",
+                                  default=units.inch(2.0), unit='LENGTH',
+                                  update=update_handle_types)# type: ignore
+
     center_pulls_on_drawer_front: BoolProperty(name="Center Pulls on Drawer Front", 
                                                         description="Check this to center pulls on drawer fronts. Otherwise vertical location will be used.", 
                                                         default=True,
@@ -2327,6 +2354,11 @@ class Frameless_Scene_Props(PropertyGroup):
         pulls = _closet_pulls()
 
         col = layout.column(align=True)
+        col.prop(props, 'door_handle_type', text="Door Handle")
+        col.prop(props, 'drawer_handle_type', text="Drawer Handle")
+        if 'TAB' in (props.door_handle_type, props.drawer_handle_type):
+            col.prop(props, 'tab_pull_width', text="Tab Width")
+        col.separator()
         col.prop(props, 'door_pull_selection', text="Door Pull")
         col.prop(props, 'drawer_pull_selection', text="Drawer Pull")
         if pulls.CUSTOM_PULL in (props.door_pull_selection,

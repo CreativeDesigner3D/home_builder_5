@@ -2,6 +2,7 @@ import bpy
 from .. import types_frameless
 from .. import solver_frameless
 from .. import props_hb_frameless
+from .. import edge_pulls
 from .... import hb_utils, units
 
 class hb_frameless_OT_door_front_prompts(bpy.types.Operator):
@@ -112,9 +113,42 @@ class hb_frameless_OT_delete_front(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class hb_frameless_OT_set_front_handle_type(bpy.types.Operator):
+    """Set how the selected fronts are opened, or hand them back to the
+    room's door / drawer default"""
+    bl_idname = "hb_frameless.set_front_handle_type"
+    bl_label = "Handle"
+    bl_description = "Set how these fronts are opened"
+    bl_options = {'UNDO'}
+
+    handle_type: bpy.props.EnumProperty(
+        name="Handle",
+        items=[('DEFAULT', "Room Default", "Follow the room's door or drawer handle")]
+              + edge_pulls.HANDLE_TYPES,
+        default='DEFAULT') # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        return obj is not None and obj.get('IS_CABINET_FRONT')
+
+    def execute(self, context):
+        fronts = {o for o in context.selected_objects if o.get('IS_CABINET_FRONT')}
+        if context.object is not None and context.object.get('IS_CABINET_FRONT'):
+            fronts.add(context.object)
+        for front in fronts:
+            if self.handle_type == 'DEFAULT':
+                front.pop(edge_pulls.HANDLE_KEY, None)
+            else:
+                front[edge_pulls.HANDLE_KEY] = self.handle_type
+        solver_frameless.solve_roots(list(fronts))
+        return {'FINISHED'}
+
+
 classes = (
     hb_frameless_OT_door_front_prompts,
     hb_frameless_OT_delete_front,
+    hb_frameless_OT_set_front_handle_type,
 )
 
 register, unregister = bpy.utils.register_classes_factory(classes)

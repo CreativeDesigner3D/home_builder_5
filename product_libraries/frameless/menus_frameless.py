@@ -245,6 +245,8 @@ class HOME_BUILDER_MT_door_front_commands(bpy.types.Menu):
     def draw(self, context):
         layout = self.layout
         layout.operator("hb_frameless.door_front_prompts", text="Front Prompts")
+        layout.operator_menu_enum("hb_frameless.set_front_handle_type",
+                                  "handle_type", text="Handle")
         _draw_drawer_interior(layout, context)
         _draw_open_close(layout, context)
         layout.separator()
