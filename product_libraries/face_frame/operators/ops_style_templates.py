@@ -155,17 +155,19 @@ def template_menu_entries(context):
     """The Templates... menu in the cabinet styles list."""
     default = style_templates.get_default_template()
     entries = [("Save Styles as Template...",
-                'hb_face_frame.save_style_template', {'INVOKE': True})]
-    for name, _path in style_templates.list_templates():
-        label = "Load %s" % name
-        if name == default:
-            label += " (new projects)"
+                'hb_face_frame.save_style_template', {'INVOKE': True}),
+               ("Styles for New Projects...",
+                'hb_face_frame.default_style_template', {'INVOKE': True}),
+               ("Open Templates Folder",
+                'hb_face_frame.open_style_template_folder', {})]
+    templates = style_templates.list_templates()
+    if templates:
+        entries.append(("", None, {}))
+        entries.append(("Load Template", None, {}))
+    for name, _path in templates:
+        label = name + (" (new projects)" if name == default else "")
         entries.append((label, 'hb_face_frame.load_style_template',
                         {'template': name, 'INVOKE': True}))
-    entries.append(("Styles for New Projects...",
-                    'hb_face_frame.default_style_template', {'INVOKE': True}))
-    entries.append(("Open Templates Folder",
-                    'hb_face_frame.open_style_template_folder', {}))
     return entries
 
 
