@@ -1801,6 +1801,9 @@ def solve_insert_parts(insert_obj):
             continue
         if not child.get('IS_CABINET_FRONT') or not has_fronts:
             continue
+        if child.get('IS_LIFT_UPPER_FRONT'):
+            # A bi-fold's upper panel is placed with the front below it.
+            continue
 
         role = _front_role(child)
         clear_drivers(child)
@@ -1823,7 +1826,13 @@ def solve_insert_parts(insert_obj):
                            ('Left Overlay', left), ('Right Overlay', right)):
             if key in child:
                 child[key] = value
-        if OPEN_KEY in insert_obj:
+        if child.get('IS_FLIP_UP_DOOR'):
+            # The lift splits, opens and fits hardware to the front; the
+            # pull goes on the part it leaves at the bottom.
+            from . import lift_hardware
+            length = lift_hardware.solve(insert_obj, child, length, width,
+                                         thickness, child.hide_viewport)
+        elif OPEN_KEY in insert_obj:
             retract = None
             pockets = pocket_sides(insert_obj)
             if role == 'LEFT_DOOR' and pockets[0]:

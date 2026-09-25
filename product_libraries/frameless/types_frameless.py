@@ -1147,6 +1147,9 @@ class FlipUpDoor(CabinetOpening):
         super().create("Flip Up Door")
 
         self.add_property('Front Thickness', 'DISTANCE', inch(.75))
+        from . import lift_hardware
+        self.add_property(lift_hardware.LIFT_KEY, 'COMBOBOX', lift_hardware.STAY,
+                          combobox_items=lift_hardware.LIFT_NAMES)
         self.add_properties_opening_thickness()
         self.add_properties_front_overlays()
         overlay_prompts = self.add_properties_front_overlay_calculations()

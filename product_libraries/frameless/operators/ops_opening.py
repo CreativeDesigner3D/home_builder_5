@@ -722,6 +722,13 @@ class hb_frameless_OT_opening_prompts(bpy.types.Operator):
         items=[('0', "Standard", "Doors swing open on hinges"),
                ('1', "Retracting", "Doors open, then slide back into pockets")],
         default='0') # type: ignore
+    lift_mechanism: bpy.props.EnumProperty(
+        name="Lift Mechanism",
+        items=[('0', "Stay Lift", "Front tilts up on its top edge"),
+               ('1', "Bi-Fold Lift", "Front is two panels that fold in half as they lift"),
+               ('2', "Up and Over", "Front rises and tips back over the cabinet top"),
+               ('3', "Vertical Lift", "Front slides straight up")],
+        default='0') # type: ignore
     inset_front: bpy.props.BoolProperty(name="Inset Front", default=False) # type: ignore
     half_overlay_top: bpy.props.BoolProperty(name="Half Overlay Top", default=False) # type: ignore
     half_overlay_bottom: bpy.props.BoolProperty(name="Half Overlay Bottom", default=False) # type: ignore
@@ -729,6 +736,9 @@ class hb_frameless_OT_opening_prompts(bpy.types.Operator):
     half_overlay_right: bpy.props.BoolProperty(name="Half Overlay Right", default=False) # type: ignore
 
     opening = None
+
+    def _is_flip_up(self):
+        return any(c.get('IS_FLIP_UP_DOOR') for c in self.opening.obj.children)
 
     @classmethod
     def poll(cls, context):
@@ -747,6 +757,7 @@ class hb_frameless_OT_opening_prompts(bpy.types.Operator):
         if 'Door Swing' in opening_bp:
             self.door_swing = str(opening_bp['Door Swing'])
             self.door_mechanism = str(int(opening_bp.get('Door Mechanism', 0)))
+        self.lift_mechanism = str(int(opening_bp.get('Lift Mechanism', 0)))
         if 'Inset Front' in opening_bp:
             self.inset_front = opening_bp['Inset Front']
         if 'Half Overlay Top' in opening_bp:
@@ -768,6 +779,8 @@ class hb_frameless_OT_opening_prompts(bpy.types.Operator):
             if ('Door Mechanism' in self.opening.obj
                     or self.door_mechanism != '0'):
                 self.opening.obj['Door Mechanism'] = int(self.door_mechanism)
+        if self._is_flip_up():
+            self.opening.obj['Lift Mechanism'] = int(self.lift_mechanism)
         if 'Inset Front' in self.opening.obj:
             self.opening.obj['Inset Front'] = self.inset_front
         if 'Half Overlay Top' in self.opening.obj:
@@ -795,6 +808,11 @@ class hb_frameless_OT_opening_prompts(bpy.types.Operator):
             row = box.row()
             row.label(text="Mechanism:")
             row.prop(self, 'door_mechanism', text="")
+
+        if self._is_flip_up():
+            row = box.row()
+            row.label(text="Lift:")
+            row.prop(self, 'lift_mechanism', text="")
         
         if 'Inset Front' in self.opening.obj:
             row = box.row()
