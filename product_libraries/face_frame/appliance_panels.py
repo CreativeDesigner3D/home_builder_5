@@ -1331,6 +1331,16 @@ def _apply_front_style_frameless(front_obj, appliance_obj):
                 hb_utils.set_gn_input(mod, items[name].identifier, mat)
 
 
+def repaint_frameless(appliance_obj):
+    """Repaint a frameless appliance's built panels from its cabinet
+    style, after the style's materials change. Nothing moves."""
+    for child in appliance_obj.children:
+        if child.get(TAG_FRONT):
+            _apply_front_style_frameless(child, appliance_obj)
+        elif child.get(TAG_BACKER) or child.get(TAG_RAIL):
+            _finish_part(child)
+
+
 def _apply_front_style(front_obj, section):
     """Style a face the way a cabinet styles its fronts: the face's own
     pick, else the active cabinet style's door or drawer front style."""

@@ -693,6 +693,25 @@ def update_style_materials(self, context):
     Cabinets. Materials only -- nothing moves."""
     for obj in _cabinets_wearing_style(self):
         self.apply_materials_to_cabinet(obj)
+    _repaint_appliance_panels(self)
+
+
+def _repaint_appliance_panels(style):
+    """Panels on a standalone frameless appliance wear the style stamped
+    on the appliance; ones in a cabinet were repainted with it."""
+    main_scene = hb_project.get_main_scene()
+    index = next((i for i, s in enumerate(main_scene.hb_frameless.cabinet_styles)
+                  if s.as_pointer() == style.as_pointer()), None)
+    if index is None:
+        return
+    from ..face_frame import appliance_panels
+    for scene in bpy.data.scenes:
+        for obj in scene.objects:
+            if (obj.get('IS_APPLIANCE')
+                    and obj.get('APPLIANCE_PANEL_STRUCTURE')
+                    and obj.get('CABINET_STYLE_INDEX', 0) == index
+                    and appliance_panels.panel_library(obj) == 'FRAMELESS'):
+                appliance_panels.repaint_frameless(obj)
 
 
 def update_style_overlay(self, context):
