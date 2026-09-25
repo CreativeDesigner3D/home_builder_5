@@ -41,12 +41,15 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
                     "stop at the kick") # type: ignore
     flush_toe_kick: bpy.props.BoolProperty(name="Flush Toe Kick", description="Bring the toe kick forward flush with the doors, across the full width; the sides run to the floor", default=False) # type: ignore
     remove_bottom: bpy.props.BoolProperty(name="Remove Bottom", default=False) # type: ignore
-    end_angle: bpy.props.FloatProperty(
-        name="End Angle", min=0.0, max=80.0, precision=2,
-        description="Degrees the angled face turns off the run's front line") # type: ignore
-    angled_end_side: bpy.props.EnumProperty(
-        name="Short Side", items=[('0', "Left", ""), ('1', "Right", "")],
-        default='1') # type: ignore
+    angled_front: bpy.props.BoolProperty(
+        name="Angled Front",
+        description="Run the front from a left depth to a right depth; "
+                    "the angle follows from the two",
+        default=False) # type: ignore
+    front_left_depth: bpy.props.FloatProperty(
+        name="Left Depth", unit='LENGTH', precision=4, min=0.0) # type: ignore
+    front_right_depth: bpy.props.FloatProperty(
+        name="Right Depth", unit='LENGTH', precision=4, min=0.0) # type: ignore
     angled_back: bpy.props.EnumProperty(
         name="Angled Back",
         description="Cut one back corner off across an angled wall",
@@ -65,8 +68,12 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
     cabinet = None
 
     def _can_angle_back(self):
+        return not self.cabinet.obj.get('IS_CORNER_CABINET')
+
+    def _can_angle_front(self):
         obj = self.cabinet.obj
-        return not obj.get('IS_CORNER_CABINET') and 'End Angle' not in obj
+        return (not obj.get('IS_CORNER_CABINET')
+                and solver_frameless.carcass_kind(obj) in solver_frameless.STRAIGHT_KINDS)
 
     @classmethod
     def poll(cls, context):
@@ -101,9 +108,11 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
         if 'Remove Bottom' in cabinet_bp:
             self.remove_bottom = cabinet_bp['Remove Bottom']
         self.finished_interior = cabinet_bp.get('Finished Interior', False)
-        if 'End Angle' in cabinet_bp:
-            self.end_angle = float(cabinet_bp['End Angle'])
-            self.angled_end_side = str(int(cabinet_bp.get('Angled End Side', 1)))
+        self.angled_front = solver_frameless.FRONT_LEFT_DEPTH_KEY in cabinet_bp
+        self.front_left_depth = float(cabinet_bp.get(
+            solver_frameless.FRONT_LEFT_DEPTH_KEY, self.cabinet_depth))
+        self.front_right_depth = float(cabinet_bp.get(
+            solver_frameless.FRONT_RIGHT_DEPTH_KEY, self.cabinet_depth))
         self.angled_back = str(int(cabinet_bp.get('Angled Back', 0)))
         self.angled_back_width = float(cabinet_bp.get('Angled Back Width', units.inch(12.0)))
         self.angled_back_depth = float(cabinet_bp.get('Angled Back Depth', units.inch(12.0)))
@@ -112,6 +121,18 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
         return wm.invoke_props_dialog(self, width=300)
 
     def check(self, context):
+        obj = self.cabinet.obj
+        if self._can_angle_front():
+            if self.angled_front:
+                # The cabinet is as deep as its deeper end.
+                self.cabinet_depth = max(self.front_left_depth,
+                                         self.front_right_depth)
+                obj[solver_frameless.FRONT_LEFT_DEPTH_KEY] = self.front_left_depth
+                obj[solver_frameless.FRONT_RIGHT_DEPTH_KEY] = self.front_right_depth
+            else:
+                obj.pop(solver_frameless.FRONT_LEFT_DEPTH_KEY, None)
+                obj.pop(solver_frameless.FRONT_RIGHT_DEPTH_KEY, None)
+                self.front_left_depth = self.front_right_depth = self.cabinet_depth
         self.cabinet.set_input('Dim X', self.cabinet_width)
         self.cabinet.set_input('Dim Z', self.cabinet_height)
         self.cabinet.set_input('Dim Y', self.cabinet_depth)
@@ -140,9 +161,6 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
                     self.cabinet.obj[key] = value
         if 'Remove Bottom' in self.cabinet.obj:
             self.cabinet.obj['Remove Bottom'] = self.remove_bottom
-        if 'End Angle' in self.cabinet.obj:
-            self.cabinet.obj['End Angle'] = self.end_angle
-            self.cabinet.obj['Angled End Side'] = int(self.angled_end_side)
         if self._can_angle_back() and (self.angled_back != '0'
                                        or 'Angled Back' in self.cabinet.obj):
             self.cabinet.obj['Angled Back'] = int(self.angled_back)
@@ -183,19 +201,22 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
         row.prop(self, 'cabinet_height', text="")
         
         row = col.row(align=True)
+        # An angled front sets the depth from its two ends.
+        row.active = not (self.angled_front and self._can_angle_front())
         row.label(text="Depth:")
         row.prop(self, 'cabinet_depth', text="")
 
-        if 'End Angle' in self.cabinet.obj:
+        if self._can_angle_front():
             box = layout.box()
-            box.label(text="Angled End")
             col = box.column(align=True)
-            row = col.row(align=True)
-            row.label(text="Angle (degrees):")
-            row.prop(self, 'end_angle', text="")
-            row = col.row(align=True)
-            row.label(text="Short Side:")
-            row.prop(self, 'angled_end_side', text="")
+            col.prop(self, 'angled_front')
+            if self.angled_front:
+                row = col.row(align=True)
+                row.label(text="Left Depth:")
+                row.prop(self, 'front_left_depth', text="")
+                row = col.row(align=True)
+                row.label(text="Right Depth:")
+                row.prop(self, 'front_right_depth', text="")
 
         if self._can_angle_back():
             box = layout.box()

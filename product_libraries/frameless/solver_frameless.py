@@ -728,35 +728,46 @@ def _solve_corner_doors(root, parts, p, dim_x, dim_y, dim_z):
                 _solve_pull(right, pull, length, width, ft, swing == 1)
 
 
-# An angled end cabinet: its whole front is one face turned this many
-# degrees off the run's front line, back to a short side at the end of the
-# run (the right end, or the left for a left-hand end).
-END_ANGLE_KEY = 'End Angle'
-END_ANGLE_SIDE_KEY = 'Angled End Side'
+# An angled front: any straight cabinet can run its front from a left
+# depth to a right depth; the angle follows from the two. The cabinet's
+# Depth is the deeper of them.
+FRONT_LEFT_DEPTH_KEY = 'Front Left Depth'
+FRONT_RIGHT_DEPTH_KEY = 'Front Right Depth'
+STRAIGHT_KINDS = ('BASE', 'TALL', 'UPPER', 'LAP_DRAWER')
+# Parts that run along the front: carried onto the angle, their straight
+# rotation kept here to put back when the front goes square again.
+ANGLED_FRONT_ROLES = ('TOE_KICK', 'TOE_KICK_PANEL', 'FRONT_STRETCHER',
+                      'SINK_APRON')
+BASE_ROTATION_KEY = 'hb_square_rotation'
 
 
-def angled_end_depth(root, dim_x, dim_y, mt):
-    """How deep the short side of an angled end is."""
-    angle = math.radians(min(max(float(prompt(root, END_ANGLE_KEY, 0.0)), 0.0), 80.0))
-    return min(max(dim_y - dim_x * math.tan(angle), mt * 2.0), dim_y)
+def angled_front_depths(root, dim_y, mt):
+    """``(left, right)`` depths of an angled front, or None for a square
+    one."""
+    if FRONT_LEFT_DEPTH_KEY not in root and FRONT_RIGHT_DEPTH_KEY not in root:
+        return None
+    lo = mt * 2.0
+    ld = min(max(float(prompt(root, FRONT_LEFT_DEPTH_KEY, dim_y)), lo), dim_y)
+    rd = min(max(float(prompt(root, FRONT_RIGHT_DEPTH_KEY, dim_y)), lo), dim_y)
+    return ld, rd
+
+
+def _front_frame(ax, ay, bx, by):
+    length = math.hypot(bx - ax, by - ay)
+    if length <= 1e-6:
+        return None
+    ux, uy = (bx - ax) / length, (by - ay) / length
+    return (ax, ay), (ux, uy), (uy, -ux), length
 
 
 def _diagonal_frame(root, dim_x, dim_y):
-    """The angled face of a diagonal corner or an angled end: its left end
-    A, the unit vector u from A to its right end, the outward normal n,
-    and its length."""
-    if END_ANGLE_KEY in root:
-        mt = float(prompt(root, 'Material Thickness', inch(0.75)))
-        short = angled_end_depth(root, dim_x, dim_y, mt)
-        if int(prompt(root, END_ANGLE_SIDE_KEY, 1)) == 1:
-            ax, ay, bx, by = 0.0, -dim_y, dim_x, -short
-        else:
-            ax, ay, bx, by = 0.0, -short, dim_x, -dim_y
-    else:
-        ld = float(prompt(root, 'Left Depth', dim_y))
-        rd = float(prompt(root, 'Right Depth', dim_y))
-        ax, ay = ld, -dim_y
-        bx, by = dim_x, -rd
+    """The angled face of a diagonal corner: its left end A, the unit
+    vector u from A to its right end, the outward normal n, and its
+    length."""
+    ld = float(prompt(root, 'Left Depth', dim_y))
+    rd = float(prompt(root, 'Right Depth', dim_y))
+    ax, ay = ld, -dim_y
+    bx, by = dim_x, -rd
     length = math.hypot(bx - ax, by - ay)
     if length <= 1e-6:
         return None
@@ -866,10 +877,7 @@ def _solve_diagonal_toe_kick(root, parts, p, dim_x, dim_y):
     mt, tks = p.mt, p.tks
     # The kick's face line, and where it meets the two sides' inside faces.
     fx, fy = ax - n[0] * tks, ay - n[1] * tks
-    if END_ANGLE_KEY in root:
-        t0 = (mt - fx) / u[0] if abs(u[0]) > 1e-6 else 0.0
-    else:
-        t0 = ((-dim_y + mt) - fy) / u[1] if abs(u[1]) > 1e-6 else 0.0
+    t0 = ((-dim_y + mt) - fy) / u[1] if abs(u[1]) > 1e-6 else 0.0
     t1 = ((dim_x - mt) - fx) / u[0] if abs(u[0]) > 1e-6 else 0.0
     length = max(t1 - t0, 0.0)
     sx, sy = fx + u[0] * t0 - n[0] * mt, fy + u[1] * t0 - n[1] * mt
@@ -884,23 +892,152 @@ def _solve_diagonal_toe_kick(root, parts, p, dim_x, dim_y):
     kick.hide_viewport = kick.hide_render = p.rb
 
 
-def _solve_angled_end(root, parts, p, dim_x, dim_y, dim_z):
-    """An angled end: the short side, the top and bottom cut along the
-    face, the kick along it and the door on it."""
+def _square_rotation(part, rot_z):
+    """Turn a front-running part ``rot_z`` about Z from its straight
+    rotation (0 puts it back)."""
+    if rot_z == 0.0:
+        if BASE_ROTATION_KEY in part:
+            part.rotation_euler = tuple(part[BASE_ROTATION_KEY])
+            del part[BASE_ROTATION_KEY]
+        return
+    if BASE_ROTATION_KEY not in part:
+        part[BASE_ROTATION_KEY] = list(part.rotation_euler)
+    base = Euler(tuple(part[BASE_ROTATION_KEY])).to_matrix()
+    part.rotation_euler = (Matrix.Rotation(rot_z, 3, 'Z') @ base).to_euler('XYZ')
+
+
+def _clear_cut(root, parts, cutter_role, mod_name):
+    obj = parts.pop(cutter_role, None)
+    if obj is not None:
+        bpy.data.objects.remove(obj, do_unlink=True)
+    for child in root.children_recursive:
+        mod = child.modifiers.get(mod_name)
+        if mod is not None:
+            child.modifiers.remove(mod)
+
+
+def _solve_angled_front(root, parts, p, dim_x, dim_y, dim_z):
+    """A front run from the left depth to the right: each side takes its
+    own depth, the bay turns to the angle (so every door and drawer in it
+    follows), the parts along the front are carried onto it and the top,
+    bottom and back stretcher are cut to it."""
     mt = p.mt
-    short = angled_end_depth(root, dim_x, dim_y, mt)
-    right_hand = int(prompt(root, END_ANGLE_SIDE_KEY, 1)) == 1
-    side = parts.get('RIGHT_SIDE' if right_hand else 'LEFT_SIDE')
-    if side is not None:
-        GeoNodeCutpart(side).set_input('Width', short)
-    targets = [parts[r] for r in ('TOP', 'BOTTOM') if r in parts]
-    targets += [o for o in root.children_recursive
-                if 'SHELF' in (o.get(PART_ROLE_KEY) or '')]
-    _solve_angled_cut(root, targets, _diagonal_frame(root, dim_x, dim_y),
-                      dim_y, dim_z)
-    if parts.get('TOE_KICK') is not None:
-        _solve_diagonal_toe_kick(root, parts, p, dim_x, dim_y)
-    _solve_diagonal_door(root, parts, p, dim_x, dim_y, dim_z)
+    bay = parts.get('BAY')
+    depths = angled_front_depths(root, dim_y, mt)
+    frame = None
+    if depths is not None:
+        frame = _front_frame(0.0, -depths[0], dim_x, -depths[1])
+    if frame is None:
+        # Square: put back anything a past angle turned.
+        for role in ('BAY', 'LADDER_BASE'):
+            cage = parts.get(role)
+            if cage is not None and cage.rotation_euler.z != 0.0:
+                cage.rotation_euler = (0.0, 0.0, 0.0)
+        for role in ANGLED_FRONT_ROLES:
+            part = parts.get(role)
+            if part is not None:
+                _square_rotation(part, 0.0)
+        if parts.get(ANGLED_CUTTER_ROLE) is not None:
+            _clear_cut(root, parts, ANGLED_CUTTER_ROLE, ANGLED_CUT_MOD_NAME)
+        return
+    ld, rd = depths
+    (ax, ay), (ux, uy), _n, face = frame
+    theta = math.atan2(uy, ux)
+    # Back, square to the front, into the cabinet.
+    bx, by = -uy, ux
+
+    for role, depth in (('LEFT_SIDE', ld), ('RIGHT_SIDE', rd)):
+        side = parts.get(role)
+        if side is not None:
+            GeoNodeCutpart(side).set_input('Width', depth)
+
+    for role in ANGLED_FRONT_ROLES:
+        part = parts.get(role)
+        if part is None:
+            continue
+        # How far behind the front the straight solve put it, laid onto
+        # the angle at the same x.
+        x, y, z = part.location
+        behind = y + dim_y
+        along = (x - bx * behind) / ux
+        part.location = (x, ay + uy * along + by * behind, z)
+        cut = GeoNodeCutpart(part)
+        cut.set_input('Length', float(cut.get_input('Length')) / ux)
+        _square_rotation(part, theta)
+
+    ladder = parts.get('LADDER_BASE')
+    if ladder is not None:
+        # A ladder stays square -- turned, its back corner would swing out
+        # past a side -- and stands the setback behind the shallow end.
+        tks = kick_front_setback(root)
+        shallow = min(ld, rd)
+        ladder.location.x, ladder.location.y = 0.0, -shallow + tks
+        ladder.rotation_euler = (0.0, 0.0, 0.0)
+        GeoNodeCage(ladder).set_input('Dim Y', max(shallow - tks, 0.0))
+    for role, x in (('LEG_LEVELER_FL', p.lli), ('LEG_LEVELER_FR', dim_x - p.lli)):
+        part = parts.get(role)
+        if part is not None:
+            part.location.x = x
+            part.location.y = ay + uy * ((x - bx * p.lli) / ux) + by * p.lli
+
+    targets = [parts[r] for r in ('TOP', 'BOTTOM', 'BACK_STRETCHER',
+                                  'LEFT_SIDE', 'RIGHT_SIDE') if r in parts]
+    if bay is not None:
+        # The bay stays square, so shelves, dividers and drawer boxes stay
+        # square to the back; they are cut to the front with the carcass. Only the
+        # fronts turn onto the angle (see angled_front_placement).
+        targets += [o for o in bay.children_recursive
+                    if o.get('IS_DRAWER_BOX')
+                    or o.get('IS_FRAMELESS_INTERIOR_PART')
+                    or o.get(PART_ROLE_KEY) == 'SPLITTER'
+                    or 'SHELF' in (o.get(PART_ROLE_KEY) or '')]
+    _solve_angled_cut(root, targets, frame, dim_y, dim_z)
+
+
+def angled_front_placement(insert_obj):
+    """``(frame, offset, dim_y)`` for laying an insert's fronts onto its
+    cabinet's angled front, or None when the front is square. ``offset``
+    is the insert's origin in cabinet space -- the cages between run
+    square, so their locations add up."""
+    root = cabinet_root(insert_obj)
+    if root is None or carcass_kind(root) not in STRAIGHT_KINDS:
+        return None
+    dim_x, dim_y, _dz = cage_dims(root)
+    mt = float(prompt(root, 'Material Thickness', inch(0.75)))
+    depths = angled_front_depths(root, dim_y, mt)
+    if depths is None:
+        return None
+    frame = _front_frame(0.0, -depths[0], dim_x, -depths[1])
+    if frame is None:
+        return None
+    offset = Vector((0.0, 0.0, 0.0))
+    obj = insert_obj
+    while obj is not None and obj is not root:
+        offset += Vector(obj.location)
+        obj = obj.parent
+    return frame, offset, dim_y
+
+
+def angle_front(front_obj, placement):
+    """Carry one front, placed square by the insert solve (open or
+    closed), onto the angled front: turned about its hinge edge -- the
+    edge its origin sits on -- and stretched along the angle so side by
+    side fronts still meet. Returns the stretch factor."""
+    (ax, ay), (ux, uy), (nx, ny), _face = placement[0]
+    offset, dim_y = placement[1], placement[2]
+    theta = math.atan2(uy, ux)
+    # The hinge edge in cabinet space, and how far in front of the
+    # square carcass front its back face stood.
+    origin = offset + Vector(front_obj.location)
+    ahead = -dim_y - origin.y
+    along = (origin.x - nx * ahead) / ux
+    target = Vector((ax + ux * along + nx * ahead,
+                     ay + uy * along + ny * ahead, origin.z))
+    rot = Matrix.Rotation(theta, 4, 'Z')
+    move = (Matrix.Translation(target) @ rot @ Matrix.Translation(-origin))
+    local = (Matrix.Translation(-offset) @ move @ Matrix.Translation(offset))
+    front_obj.matrix_basis = local @ front_obj.matrix_basis
+    return 1.0 / ux
 
 
 ANGLED_BACK_KEY = 'Angled Back'              # 0 none, 1 left, 2 right
@@ -956,8 +1093,10 @@ def _solve_angled_back(root, parts, p, dim_x, dim_y, dim_z):
         return
     side = parts.get('RIGHT_SIDE' if hand == 2 else 'LEFT_SIDE')
     if side is not None:
+        # Short of its own depth, which an angled front may have cut.
+        cut = GeoNodeCutpart(side)
         side.location.y = -cy
-        GeoNodeCutpart(side).set_input('Width', max(dim_y - cy, 0.0))
+        cut.set_input('Width', max(float(cut.get_input('Width')) - cy, 0.0))
     back = parts.get('BACK')
     back_z, back_len = mt, dim_z - mt * 2.0
     if back is not None:
@@ -1198,9 +1337,9 @@ def recalculate_cabinet(obj):
     dims = (cage.get_input('Dim X'), cage.get_input('Dim Y'),
             cage.get_input('Dim Z'))
     _SOLVERS[kind](root, parts, prompts, *dims)
-    if END_ANGLE_KEY in root:
-        _solve_angled_end(root, parts, prompts, *dims)
-    if ANGLED_BACK_KEY in root and kind in ('BASE', 'TALL', 'UPPER', 'LAP_DRAWER'):
+    if kind in STRAIGHT_KINDS:
+        _solve_angled_front(root, parts, prompts, *dims)
+    if ANGLED_BACK_KEY in root and kind in STRAIGHT_KINDS:
         _solve_angled_back(root, parts, prompts, *dims)
     _solve_blind_corner(root, parts, prompts, *dims)
     _solve_applied_ends(root, parts, prompts, *dims)
@@ -1783,6 +1922,7 @@ def solve_insert_parts(insert_obj):
         y = thickness
     else:
         y = -float(prompt(insert_obj, 'Door to Cabinet Gap', inch(0.125)))
+    angled = angled_front_placement(insert_obj) if has_fronts else None
 
     for child in list(insert_obj.children):
         if child.get('IS_APPLIANCE_TEXT'):
@@ -1844,6 +1984,16 @@ def solve_insert_parts(insert_obj):
             _open_front(child, role, open_amount(insert_obj), thickness,
                         length, max(dim_y - DRAWER_OPEN_CLEARANCE, 0.0),
                         retract)
+        square_basis = child.matrix_basis.copy()
+        square_width = width
+        if angled is not None:
+            stretch = angle_front(child, angled)
+            width *= stretch
+            GeoNodeCutpart(child).set_input('Width', width)
+            for upper in insert_obj.children:
+                if child.get('IS_FLIP_UP_DOOR') and upper.get('IS_LIFT_UPPER_FRONT'):
+                    angle_front(upper, angled)
+                    GeoNodeCutpart(upper).set_input('Width', width)
 
         false_front = bool(child.get('False Front', False))
         from . import edge_pulls
@@ -1857,8 +2007,13 @@ def solve_insert_parts(insert_obj):
                 _solve_pull(child, part, length, width, thickness,
                             front_hidden or not by_pull)
             elif part.get('IS_DRAWER_BOX'):
-                _solve_drawer_box(child, part, insert_obj, length, width,
-                                  overlays, false_front)
+                _solve_drawer_box(child, part, insert_obj, length,
+                                  square_width, overlays, false_front)
+                if angled is not None:
+                    # The box stays square to the back (cut to the front
+                    # with the carcass), however the front turned.
+                    part.matrix_basis = (child.matrix_basis.inverted()
+                                         @ square_basis @ part.matrix_basis)
         edge_pulls.solve_front(child, length, width, thickness, front_hidden)
         edge_pulls.solve_lock(child, length, width, thickness, front_hidden)
     if 'Door Swing' in insert_obj:
