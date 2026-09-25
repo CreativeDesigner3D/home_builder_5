@@ -776,22 +776,23 @@ ANGLED_CUTTER_ROLE = 'ANGLED_CUTTER'
 ANGLED_CUT_MOD_NAME = 'Angled Cut'
 
 
-def _solve_angled_cut(root, targets, dim_x, dim_y, dim_z):
-    """Trim ``targets`` along the angled face with a boolean off one
-    hidden cage covering everything in front of it. (The chamfer part
-    modifier's cutter no longer cuts.)"""
-    frame = _diagonal_frame(root, dim_x, dim_y)
+def _solve_angled_cut(root, targets, frame, dim_y, dim_z,
+                      role=ANGLED_CUTTER_ROLE, mod_name=ANGLED_CUT_MOD_NAME):
+    """Trim ``targets`` along an angled face -- ``frame`` as from
+    ``_diagonal_frame`` -- with a boolean off one hidden cage covering
+    everything on the outside of it. (The chamfer part modifier's cutter
+    no longer cuts.)"""
     if frame is None:
         return
     (ax, ay), u, _n, face = frame
     cutter = next((c for c in root.children
-                   if c.get(PART_ROLE_KEY) == ANGLED_CUTTER_ROLE), None)
+                   if c.get(PART_ROLE_KEY) == role), None)
     if cutter is None:
         cage = GeoNodeCage()
         cage.create('Angled Cutter')
         cutter = cage.obj
         cutter.parent = root
-        cutter[PART_ROLE_KEY] = ANGLED_CUTTER_ROLE
+        cutter[PART_ROLE_KEY] = role
         cage.set_input('Show Cage', True)
         cutter.hide_viewport = cutter.hide_render = True
     # Local X runs along the face; a Mirror Y cage reaches out along the
@@ -803,9 +804,9 @@ def _solve_angled_cut(root, targets, dim_x, dim_y, dim_z):
              dim_z=dim_z + margin * 2.0)
     GeoNodeCage(cutter).set_input('Mirror Y', True)
     for part in targets:
-        mod = part.modifiers.get(ANGLED_CUT_MOD_NAME)
+        mod = part.modifiers.get(mod_name)
         if mod is None:
-            mod = part.modifiers.new(name=ANGLED_CUT_MOD_NAME, type='BOOLEAN')
+            mod = part.modifiers.new(name=mod_name, type='BOOLEAN')
             mod.operation = 'DIFFERENCE'
         if mod.object is not cutter:
             mod.object = cutter
@@ -895,10 +896,96 @@ def _solve_angled_end(root, parts, p, dim_x, dim_y, dim_z):
     targets = [parts[r] for r in ('TOP', 'BOTTOM') if r in parts]
     targets += [o for o in root.children_recursive
                 if 'SHELF' in (o.get(PART_ROLE_KEY) or '')]
-    _solve_angled_cut(root, targets, dim_x, dim_y, dim_z)
+    _solve_angled_cut(root, targets, _diagonal_frame(root, dim_x, dim_y),
+                      dim_y, dim_z)
     if parts.get('TOE_KICK') is not None:
         _solve_diagonal_toe_kick(root, parts, p, dim_x, dim_y)
     _solve_diagonal_door(root, parts, p, dim_x, dim_y, dim_z)
+
+
+ANGLED_BACK_KEY = 'Angled Back'              # 0 none, 1 left, 2 right
+ANGLED_BACK_WIDTH_KEY = 'Angled Back Width'  # along the back from the side
+ANGLED_BACK_DEPTH_KEY = 'Angled Back Depth'  # down the side from the back
+ANGLED_BACK_CUTTER_ROLE = 'ANGLED_BACK_CUTTER'
+ANGLED_BACK_CUT_MOD_NAME = 'Angled Back Cut'
+
+
+def _angled_back_frame(root, dim_x, dim_y, mt):
+    """The angled back across one back corner, run so the frame's normal
+    points out of the cabinet: A on the side, B on the back."""
+    hand = int(prompt(root, ANGLED_BACK_KEY, 0))
+    cx = min(max(float(prompt(root, ANGLED_BACK_WIDTH_KEY, inch(12.0))), mt),
+             dim_x - mt * 2.0)
+    cy = min(max(float(prompt(root, ANGLED_BACK_DEPTH_KEY, inch(12.0))), mt),
+             dim_y - mt * 2.0)
+    if hand == 2:
+        ax, ay, bx, by = dim_x, -cy, dim_x - cx, 0.0
+    else:
+        ax, ay, bx, by = cx, 0.0, 0.0, -cy
+    length = math.hypot(bx - ax, by - ay)
+    if length <= 1e-6:
+        return None, cx, cy
+    ux, uy = (bx - ax) / length, (by - ay) / length
+    return ((ax, ay), (ux, uy), (uy, -ux), length), cx, cy
+
+
+def _clear_angled_back(root, parts):
+    """Take an angled back off: its panel, its cutter and the cuts."""
+    for role in ('ANGLED_BACK', ANGLED_BACK_CUTTER_ROLE):
+        obj = parts.pop(role, None)
+        if obj is not None:
+            bpy.data.objects.remove(obj, do_unlink=True)
+    for obj in root.children_recursive:
+        mod = obj.modifiers.get(ANGLED_BACK_CUT_MOD_NAME)
+        if mod is not None:
+            obj.modifiers.remove(mod)
+
+
+def _solve_angled_back(root, parts, p, dim_x, dim_y, dim_z):
+    """One back corner cut off across an angled wall: the side on that
+    hand stops short of the back, the back stops short of the side, a
+    panel closes the angle and the rest is trimmed to it."""
+    hand = int(prompt(root, ANGLED_BACK_KEY, 0))
+    if hand not in (1, 2):
+        if parts.get('ANGLED_BACK') or parts.get(ANGLED_BACK_CUTTER_ROLE):
+            _clear_angled_back(root, parts)
+        return
+    mt = p.mt
+    frame, cx, cy = _angled_back_frame(root, dim_x, dim_y, mt)
+    if frame is None:
+        return
+    side = parts.get('RIGHT_SIDE' if hand == 2 else 'LEFT_SIDE')
+    if side is not None:
+        side.location.y = -cy
+        GeoNodeCutpart(side).set_input('Width', max(dim_y - cy, 0.0))
+    back = parts.get('BACK')
+    back_z, back_len = mt, dim_z - mt * 2.0
+    if back is not None:
+        back_z = back.location.z
+        back_len = float(GeoNodeCutpart(back).get_input('Length'))
+        if hand == 1:
+            back.location.x = cx
+        GeoNodeCutpart(back).set_input('Width', max(dim_x - mt - cx, 0.0))
+    panel = parts.get('ANGLED_BACK')
+    if panel is None:
+        from . import types_frameless
+        panel = types_frameless.Cabinet(root)._add_carcass_part(
+            'Angled Back', 'ANGLED_BACK', mirror='YZ').obj
+        parts['ANGLED_BACK'] = panel
+        _paint_like_cabinet(root, panel)
+    (ax, ay), u, n, face = frame
+    # Outer face on the angle, thickness in towards the cabinet.
+    euler, loc = _diagonal_matrix(u, n, (ax, ay, back_z))
+    panel.rotation_euler = euler
+    set_part(panel, loc, length=back_len, width=face, thickness=mt)
+    targets = [parts[r] for r in ('TOP', 'BOTTOM', 'FRONT_STRETCHER',
+                                  'BACK_STRETCHER', 'SINK_APRON')
+               if r in parts]
+    targets += [o for o in root.children_recursive
+                if 'SHELF' in (o.get(PART_ROLE_KEY) or '')]
+    _solve_angled_cut(root, targets, frame, dim_y, dim_z,
+                      role=ANGLED_BACK_CUTTER_ROLE,
+                      mod_name=ANGLED_BACK_CUT_MOD_NAME)
 
 
 def _solve_corner_base(root, parts, p, dim_x, dim_y, dim_z):
@@ -977,7 +1064,7 @@ def _solve_corner_base(root, parts, p, dim_x, dim_y, dim_z):
     _solve_corner_doors(root, parts, p, dim_x, dim_y, dim_z)
     if root.get('CORNER_TYPE') == 'DIAGONAL':
         _solve_angled_cut(root, [parts[r] for r in ('TOP', 'BOTTOM') if r in parts],
-                          dim_x, dim_y, dim_z)
+                          _diagonal_frame(root, dim_x, dim_y), dim_y, dim_z)
         _solve_diagonal_toe_kick(root, parts, p, dim_x, dim_y)
         _solve_diagonal_door(root, parts, p, dim_x, dim_y, dim_z)
 
@@ -1019,7 +1106,7 @@ def _solve_corner_upper(root, parts, p, dim_x, dim_y, dim_z):
     _solve_corner_doors(root, parts, p, dim_x, dim_y, dim_z)
     if root.get('CORNER_TYPE') == 'DIAGONAL':
         _solve_angled_cut(root, [parts[r] for r in ('TOP', 'BOTTOM') if r in parts],
-                          dim_x, dim_y, dim_z)
+                          _diagonal_frame(root, dim_x, dim_y), dim_y, dim_z)
         _solve_diagonal_door(root, parts, p, dim_x, dim_y, dim_z)
 
 
@@ -1113,6 +1200,8 @@ def recalculate_cabinet(obj):
     _SOLVERS[kind](root, parts, prompts, *dims)
     if END_ANGLE_KEY in root:
         _solve_angled_end(root, parts, prompts, *dims)
+    if ANGLED_BACK_KEY in root and kind in ('BASE', 'TALL', 'UPPER', 'LAP_DRAWER'):
+        _solve_angled_back(root, parts, prompts, *dims)
     _solve_blind_corner(root, parts, prompts, *dims)
     _solve_applied_ends(root, parts, prompts, *dims)
 

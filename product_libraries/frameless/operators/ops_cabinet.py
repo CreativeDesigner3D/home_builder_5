@@ -47,9 +47,26 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
     angled_end_side: bpy.props.EnumProperty(
         name="Short Side", items=[('0', "Left", ""), ('1', "Right", "")],
         default='1') # type: ignore
+    angled_back: bpy.props.EnumProperty(
+        name="Angled Back",
+        description="Cut one back corner off across an angled wall",
+        items=[('0', "None", ""), ('1', "Left", ""), ('2', "Right", "")],
+        default='0') # type: ignore
+    angled_back_width: bpy.props.FloatProperty(
+        name="Along Back", unit='LENGTH', precision=4, min=0.0,
+        default=0.3048,
+        description="How far along the back the angle starts from the side") # type: ignore
+    angled_back_depth: bpy.props.FloatProperty(
+        name="Down Side", unit='LENGTH', precision=4, min=0.0,
+        default=0.3048,
+        description="How far down the side the angle ends from the back") # type: ignore
     finished_interior: bpy.props.BoolProperty(name="Finished Interior", default=False) # type: ignore
 
     cabinet = None
+
+    def _can_angle_back(self):
+        obj = self.cabinet.obj
+        return not obj.get('IS_CORNER_CABINET') and 'End Angle' not in obj
 
     @classmethod
     def poll(cls, context):
@@ -87,7 +104,10 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
         if 'End Angle' in cabinet_bp:
             self.end_angle = float(cabinet_bp['End Angle'])
             self.angled_end_side = str(int(cabinet_bp.get('Angled End Side', 1)))
-        
+        self.angled_back = str(int(cabinet_bp.get('Angled Back', 0)))
+        self.angled_back_width = float(cabinet_bp.get('Angled Back Width', units.inch(12.0)))
+        self.angled_back_depth = float(cabinet_bp.get('Angled Back Depth', units.inch(12.0)))
+
         wm = context.window_manager
         return wm.invoke_props_dialog(self, width=300)
 
@@ -123,6 +143,11 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
         if 'End Angle' in self.cabinet.obj:
             self.cabinet.obj['End Angle'] = self.end_angle
             self.cabinet.obj['Angled End Side'] = int(self.angled_end_side)
+        if self._can_angle_back() and (self.angled_back != '0'
+                                       or 'Angled Back' in self.cabinet.obj):
+            self.cabinet.obj['Angled Back'] = int(self.angled_back)
+            self.cabinet.obj['Angled Back Width'] = self.angled_back_width
+            self.cabinet.obj['Angled Back Depth'] = self.angled_back_depth
         # Handle Finished Interior toggle
         old_finished = self.cabinet.obj.get('Finished Interior', False)
         if self.finished_interior != old_finished:
@@ -171,6 +196,20 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
             row = col.row(align=True)
             row.label(text="Short Side:")
             row.prop(self, 'angled_end_side', text="")
+
+        if self._can_angle_back():
+            box = layout.box()
+            col = box.column(align=True)
+            row = col.row(align=True)
+            row.label(text="Angled Back:")
+            row.prop(self, 'angled_back', expand=True)
+            if self.angled_back != '0':
+                row = col.row(align=True)
+                row.label(text="Along Back:")
+                row.prop(self, 'angled_back_width', text="")
+                row = col.row(align=True)
+                row.label(text="Down Side:")
+                row.prop(self, 'angled_back_depth', text="")
         
         # Show toe kick options for BASE and TALL cabinets
         if 'Toe Kick Height' in self.cabinet.obj:
