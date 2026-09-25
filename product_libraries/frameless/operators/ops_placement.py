@@ -316,6 +316,7 @@ class WallObjectPlacementMixin(hb_placement.PlacementMixin):
 APPLIANCE_CLASSES = {
     'RANGE': types_appliances.Range,
     'DISHWASHER': types_appliances.Dishwasher,
+    'UNDER_COUNTER': types_appliances.UnderCounterAppliance,
     'REFRIGERATOR': types_appliances.Refrigerator,
     'HOOD': types_appliances.Hood,
     'COOKTOP': types_appliances.Cooktop,
@@ -2195,6 +2196,11 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                     # Calculate default shelf quantities based on opening heights
                     bpy.ops.hb_frameless.calculate_shelf_quantity(cabinet_name=cabinet.obj.name)
                 else:
+                    # Panels on this appliance dress to match frameless
+                    # cabinetry in the active cabinet style.
+                    cabinet.obj['HB_LIBRARY'] = 'FRAMELESS'
+                    cabinet.obj['CABINET_STYLE_INDEX'] = \
+                        context.scene.hb_frameless.active_cabinet_style_index
                     appliance_geo.seed_on_place(cabinet.obj)
                 # Apply toggle mode for display
                 bpy.ops.hb_frameless.toggle_mode(search_obj_name=cabinet.obj.name)
@@ -2298,6 +2304,7 @@ class hb_frameless_OT_draw_cabinet(bpy.types.Operator):
         appliance_map = {
             'Range': 'RANGE',
             'Dishwasher': 'DISHWASHER',
+            'Under Counter Appliance': 'UNDER_COUNTER',
             'Refrigerator': 'REFRIGERATOR',
             'Range Hood': 'HOOD',
         }

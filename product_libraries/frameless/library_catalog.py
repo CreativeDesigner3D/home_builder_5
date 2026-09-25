@@ -80,6 +80,8 @@ SECTIONS = (
             ("", (("Fridge Cabinet", "Refrigerator Cabinet",
                    "Refrigerator Frameless Cabinet"),
                   ("Dishwasher", "Dishwasher", "Dishwasher"),
+                  ("Under Counter", "Under Counter Appliance",
+                   "Under Counter Appliance"),
                   ("Refrigerator", "Refrigerator", "Refrigerator"),
                   ("Range", "Range", "Range"),
                   ("Range Hood", "Range Hood", "Range Hood"))),

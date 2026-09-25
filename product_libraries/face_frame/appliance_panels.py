@@ -312,12 +312,111 @@ class suspended:
         _SUSPEND[0] -= 1
 
 
+# ----------------------------------------------------------------------
+# Which cabinet library dresses the panels
+# ----------------------------------------------------------------------
+# The panels take their finish, door style and pulls from the cabinetry
+# around the appliance. An appliance housed in a cabinet belongs to that
+# cabinet's library; a standalone one carries the library that placed it
+# (HB_LIBRARY). One placed before that stamp existed is frameless only in
+# a file that has frameless styles and no face frame ones.
+LIBRARY_KEY = 'HB_LIBRARY'
+
+
+def panel_library(appliance_obj):
+    obj = appliance_obj.parent if appliance_obj is not None else None
+    while obj is not None:
+        if obj.get('IS_FRAMELESS_CABINET_CAGE'):
+            return 'FRAMELESS'
+        if obj.get('IS_FACE_FRAME_CABINET_CAGE'):
+            return 'FACE_FRAME'
+        obj = obj.parent
+    lib = appliance_obj.get(LIBRARY_KEY) if appliance_obj is not None else None
+    if lib:
+        return lib
+    from ... import hb_project
+    scene = hb_project.get_main_scene()
+    fl = getattr(scene, 'hb_frameless', None)
+    ff = getattr(scene, 'hb_face_frame', None)
+    if (fl is not None and len(fl.cabinet_styles)
+            and (ff is None or not len(ff.cabinet_styles))):
+        return 'FRAMELESS'
+    return 'FACE_FRAME'
+
+
+def _is_frameless(appliance_obj):
+    return panel_library(appliance_obj) == 'FRAMELESS'
+
+
+def _frameless_styles(appliance_obj):
+    """(cabinet style, door style) for a frameless appliance: the housing
+    cabinet's style, else the one stamped at placement, else the active
+    one."""
+    from ... import hb_project
+    fl = hb_project.get_main_scene().hb_frameless
+    index = None
+    obj = appliance_obj
+    while obj is not None:
+        if obj.get('IS_FRAMELESS_CABINET_CAGE') or obj is appliance_obj:
+            if 'CABINET_STYLE_INDEX' in obj:
+                index = int(obj['CABINET_STYLE_INDEX'])
+                if obj is not appliance_obj:
+                    break
+        obj = obj.parent
+    if index is None:
+        index = fl.active_cabinet_style_index
+    cab = None
+    if len(fl.cabinet_styles):
+        cab = fl.cabinet_styles[index if 0 <= index < len(fl.cabinet_styles) else 0]
+    door = None
+    if len(fl.door_styles):
+        d = fl.active_door_style_index
+        door = fl.door_styles[d if 0 <= d < len(fl.door_styles) else 0]
+    return cab, door
+
+
+def _paint_frameless(obj, face_mat, edge_mat):
+    part = hb_types.GeoNodeObject(obj)
+    for name, mat in (('Top Surface', face_mat), ('Bottom Surface', face_mat),
+                      ('Edge W1', edge_mat), ('Edge W2', edge_mat),
+                      ('Edge L1', edge_mat), ('Edge L2', edge_mat)):
+        try:
+            part.set_input(name, mat)
+        except Exception:
+            pass
+
+
+# Clearance between a frameless door and the carcass it hangs on.
+FRAMELESS_DOOR_GAP = _I(0.125)
+
+
+def _front_plane(appliance_obj, dim_y):
+    """Local Y the panel run stands on. The front of the cage, except
+    beside frameless base cabinets, whose doors hang a gap in front of a
+    carcass shallower than the appliance: the run steps back so the
+    panels finish flush with those doors."""
+    if (appliance_obj.get('APPLIANCE_TYPE') in KICK_APPLIANCE_TYPES
+            and _is_frameless(appliance_obj)):
+        fl = getattr(bpy.context.scene, 'hb_frameless', None)
+        depth = getattr(fl, 'base_cabinet_depth', 0.0) if fl else 0.0
+        if depth > 0.0:
+            back = depth + FRAMELESS_DOOR_GAP
+            if back < dim_y:
+                return -back
+    return -dim_y
+
+
 def default_toe_kick(appliance_obj):
     """Under-counter appliances start above the toe kick: the project toe
-    kick default (scene hb_face_frame), else the per-cabinet property
-    default."""
+    kick default (scene hb_face_frame, or hb_frameless for a frameless
+    appliance), else the per-cabinet property default."""
     if appliance_obj is None or appliance_obj.get('APPLIANCE_TYPE') not in KICK_APPLIANCE_TYPES:
         return 0.0
+    if _is_frameless(appliance_obj):
+        fl = getattr(bpy.context.scene, 'hb_frameless', None)
+        tk = getattr(fl, 'default_toe_kick_height', None) if fl is not None else None
+        if tk is not None:
+            return tk
     ff = getattr(bpy.context.scene, 'hb_face_frame', None)
     tk = getattr(ff, 'default_toe_kick_height', None) if ff is not None else None
     if tk is not None:
@@ -964,6 +1063,14 @@ def _place(obj, x0, x1, z0, z1, y, thickness=None):
 def _finish_part(obj):
     """Backers / rails take the active cabinet style's finish (surface +
     rotated edges), the way the other non-cabinet products do."""
+    if obj.parent is not None and _is_frameless(obj.parent):
+        cab, _door = _frameless_styles(obj.parent)
+        if cab is not None:
+            finish, _ = cab.get_finish_material()
+            edge, _front_edge = cab.get_edge_materials()
+            _paint_frameless(obj, finish, edge)
+            obj['CABINET_STYLE_NAME'] = cab.name
+        return
     from . import props_hb_face_frame as props
     ff = props.get_style_props()
     if ff is None:
@@ -1082,6 +1189,9 @@ def _build_pulls(appliance_obj, props, fronts, order, faces):
     """
     from . import pulls as pull_lib
     scene_props = getattr(bpy.context.scene, 'hb_face_frame', None)
+    resolve = pull_lib.resolve_pull_for
+    if _is_frameless(appliance_obj):
+        scene_props, resolve = _frameless_pull_settings()
     for front in fronts:
         _drop_pulls(front)
     if scene_props is None:
@@ -1096,7 +1206,7 @@ def _build_pulls(appliance_obj, props, fronts, order, faces):
         if section.kind == 'PANEL':
             continue
         kind = 'drawer' if section.kind == 'DRAWER' else 'door'
-        pull_obj = pull_lib.resolve_pull_for(scene_props, kind, cabinet_type)
+        pull_obj = resolve(scene_props, kind, cabinet_type)
         if pull_obj is None:
             continue
         box = faces.get(i)
@@ -1135,6 +1245,27 @@ def _build_pulls(appliance_obj, props, fronts, order, faces):
         instance['IS_CABINET_PULL'] = True
 
 
+def _frameless_pull_settings():
+    """The frameless pull picks, shaped like the face frame settings the
+    pull placement reads, and the lookup for the pull object."""
+    from types import SimpleNamespace
+    fl = getattr(bpy.context.scene, 'hb_frameless', None)
+    if fl is None:
+        return None, None
+    settings = SimpleNamespace(
+        pull_horizontal_offset=fl.pull_dim_from_edge,
+        pull_vertical_location_base=fl.pull_vertical_location_base,
+        pull_vertical_location_tall=fl.pull_vertical_location_tall,
+        pull_vertical_location_upper=fl.pull_vertical_location_upper,
+        center_pulls_on_drawer_front=fl.center_pulls_on_drawer_front,
+        door_pull=fl.current_door_pull_object,
+        drawer_pull=fl.current_drawer_front_pull_object)
+
+    def resolve(sp, kind, _cabinet_type):
+        return sp.drawer_pull if kind == 'drawer' else sp.door_pull
+    return settings, resolve
+
+
 def _structure_key(props, backers):
     # Kinds are in it so a face changed between door and drawer is built
     # fresh with the other role and style, rather than keeping the old one.
@@ -1157,9 +1288,55 @@ def front_role(section):
             if section.kind == 'DRAWER' else types_face_frame.PART_ROLE_DOOR)
 
 
+def _apply_front_style_frameless(front_obj, appliance_obj):
+    """A frameless appliance's face is dressed as a frameless front: the
+    door style's profile over the cabinet style's fronts material, and
+    tagged so a later door style edit restyles it with the cabinets."""
+    cab, door = _frameless_styles(appliance_obj)
+    is_drawer = (front_obj.get('hb_part_role')
+                 == types_face_frame.PART_ROLE_DRAWER_FRONT)
+    front_obj['IS_CABINET_FRONT'] = True
+    front_obj['IS_DRAWER_FRONT' if is_drawer else 'IS_DOOR_FRONT'] = True
+    if cab is not None:
+        front_mat, _ = cab.get_front_material()
+        _carcass_edge, front_edge = cab.get_edge_materials()
+        _paint_frameless(front_obj, front_mat, front_edge)
+        front_obj['CABINET_STYLE_NAME'] = cab.name
+    if door is None:
+        return
+    from ... import hb_project
+    fl = hb_project.get_main_scene().hb_frameless
+    front_obj['DOOR_STYLE_INDEX'] = next(
+        (k for k, s in enumerate(fl.door_styles)
+         if s.as_pointer() == door.as_pointer()), 0)
+    door.assign_style_to_front(front_obj)
+    if cab is None:
+        return
+    # A standalone appliance has no cabinet for the style to read its
+    # member materials from, so they are set here.
+    from ..frameless import props_hb_frameless as fl_props
+    from ... import hb_utils
+    front_mat, _ = cab.get_front_material()
+    for mod in front_obj.modifiers:
+        if mod.type != 'NODES' or mod.node_group is None:
+            continue
+        items = mod.node_group.interface.items_tree
+        for name, mat in (
+                ('Stile Material', front_mat),
+                ('Rail Material',
+                 fl_props._sheet_materials().vertical_variant(front_mat)),
+                ('Panel Material',
+                 fl_props.front_panel_material(front_obj, front_mat))):
+            if name in items:
+                hb_utils.set_gn_input(mod, items[name].identifier, mat)
+
+
 def _apply_front_style(front_obj, section):
     """Style a face the way a cabinet styles its fronts: the face's own
     pick, else the active cabinet style's door or drawer front style."""
+    if front_obj.parent is not None and _is_frameless(front_obj.parent):
+        _apply_front_style_frameless(front_obj, front_obj.parent)
+        return
     role = front_obj.get('hb_part_role')
     key = (SECTION_DRAWER_STYLE_KEY
            if role == types_face_frame.PART_ROLE_DRAWER_FRONT
@@ -1184,6 +1361,7 @@ def rebuild(appliance_obj):
     dim_x, dim_y, dim_z = _cage_dims(appliance_obj)
     faces, backers, rails = solve(props, dim_x, dim_z)
     order = sorted(faces)                       # section index order
+    plane = _front_plane(appliance_obj, dim_y)
     key = _structure_key(props, backers)
     fronts = _parts(appliance_obj, TAG_FRONT, 'AP_PANEL_INDEX')
     in_place = (appliance_obj.get('APPLIANCE_PANEL_STRUCTURE') == key
@@ -1214,20 +1392,20 @@ def rebuild(appliance_obj):
         sec = props.sections[i]
         x0, x1, z0, z1 = faces[i]
         b = backers.get(i)
-        y = -dim_y - (b[4] if b else 0.0)
+        y = plane - (b[4] if b else 0.0)
         obj = fronts[k]
         obj['AP_SECTION_INDEX'] = i
         obj['AP_SECTION_LABEL'] = sec.label
         obj['AP_SECTION_KIND'] = sec.kind
         _place(obj, x0, x1, z0, z1, y, sec.face_thickness)
-        if 'HB_DOOR_FRAME' in obj:
+        if 'HB_DOOR_FRAME' in obj and not _is_frameless(appliance_obj):
             from .operators import ops_part_commands
             ops_part_commands._reapply_front_style(obj)
         if b:
             bobj = backer_objs.get(i)
             if bobj is not None:
                 bx0, bx1, bz0, bz1, t = b
-                _place(bobj, bx0, bx1, bz0, bz1, -dim_y, t)
+                _place(bobj, bx0, bx1, bz0, bz1, plane, t)
                 _finish_part(bobj)
                 if bobj.get('APPLIANCE_PANEL_BACKER_TYPE') == 'C':
                     _rout_flange(bobj, bx1 - bx0, bz1 - bz0, t,
@@ -1248,7 +1426,7 @@ def rebuild(appliance_obj):
             r = _new_part(appliance_obj, 'Appliance Panel Rail', TAG_RAIL,
                           'AP_RAIL_INDEX', k, RAIL_THICKNESS)
             r['hb_part_role'] = types_face_frame.PART_ROLE_TOP_RAIL
-        _place(r, x0, x1, z0, z1, -dim_y)
+        _place(r, x0, x1, z0, z1, plane)
         _finish_part(r)
 
     if not in_place:

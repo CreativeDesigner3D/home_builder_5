@@ -31,6 +31,7 @@ from . import ops_placement
 APPLIANCE_NAMES = {
     'Range': 'RANGE',
     'Dishwasher': 'DISHWASHER',
+    'Under Counter Appliance': 'UNDER_COUNTER',
     'Refrigerator': 'REFRIGERATOR',
     'Range Hood': 'HOOD',
 }
