@@ -27,6 +27,18 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
                ('2', "Floating", "No toe kick"),
                ('3', "Leg Levelers", "Plain sides on leg levelers")],
         default='0') # type: ignore
+    kick_panel: bpy.props.BoolProperty(
+        name="Kick Panel",
+        description="A finished panel on the toe kick's face",
+        default=False) # type: ignore
+    kick_panel_thickness: bpy.props.FloatProperty(
+        name="Panel Thickness", unit='LENGTH', precision=4, min=0.0,
+        default=0.009525) # type: ignore
+    kick_end_inset: bpy.props.FloatProperty(
+        name="Hold In From Ends", unit='LENGTH', precision=4, min=0.0,
+        description="Hold the toe kick in from each end of the cabinet; "
+                    "finished returns run back to the wall and the sides "
+                    "stop at the kick") # type: ignore
     flush_toe_kick: bpy.props.BoolProperty(name="Flush Toe Kick", description="Bring the toe kick forward flush with the doors, across the full width; the sides run to the floor", default=False) # type: ignore
     remove_bottom: bpy.props.BoolProperty(name="Remove Bottom", default=False) # type: ignore
     finished_interior: bpy.props.BoolProperty(name="Finished Interior", default=False) # type: ignore
@@ -60,6 +72,9 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
             self.toe_kick_setback = cabinet_bp['Toe Kick Setback']
         self.flush_toe_kick = bool(cabinet_bp.get('Flush Toe Kick', False))
         self.toe_kick_type = str(int(cabinet_bp.get('Toe Kick Type', 0)))
+        self.kick_panel = bool(cabinet_bp.get('Toe Kick Panel', False))
+        self.kick_panel_thickness = float(cabinet_bp.get('Toe Kick Panel Thickness', units.inch(0.375)))
+        self.kick_end_inset = float(cabinet_bp.get('Toe Kick End Inset', 0.0))
         if 'Remove Bottom' in cabinet_bp:
             self.remove_bottom = cabinet_bp['Remove Bottom']
         self.finished_interior = cabinet_bp.get('Finished Interior', False)
@@ -88,6 +103,12 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
             if (self.flush_toe_kick
                     or 'Flush Toe Kick' in self.cabinet.obj):
                 self.cabinet.obj['Flush Toe Kick'] = self.flush_toe_kick
+            for key, value, off in (
+                    ('Toe Kick Panel', self.kick_panel, False),
+                    ('Toe Kick Panel Thickness', self.kick_panel_thickness, None),
+                    ('Toe Kick End Inset', self.kick_end_inset, 0.0)):
+                if key in self.cabinet.obj or (off is not None and value != off):
+                    self.cabinet.obj[key] = value
         if 'Remove Bottom' in self.cabinet.obj:
             self.cabinet.obj['Remove Bottom'] = self.remove_bottom
         # Handle Finished Interior toggle
@@ -152,6 +173,19 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
             # forward.
             row.active = self.toe_kick_type in ('0', '1')
             row.prop(self, 'flush_toe_kick')
+            # A panel on the kick and a held-in kick are toe kick board
+            # options.
+            board = self.toe_kick_type == '0'
+            row = col.row(align=True)
+            row.active = board
+            row.prop(self, 'kick_panel')
+            sub = row.row(align=True)
+            sub.active = board and self.kick_panel
+            sub.prop(self, 'kick_panel_thickness', text="")
+            row = col.row(align=True)
+            row.active = board and not self.flush_toe_kick
+            row.label(text="Hold In From Ends:")
+            row.prop(self, 'kick_end_inset', text="")
             row = col.row()
             row.prop(self, 'remove_bottom')
         

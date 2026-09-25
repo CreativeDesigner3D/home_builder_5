@@ -35,6 +35,9 @@ class Cabinet(GeoNodeCage):
         self.add_property('Toe Kick Height', 'DISTANCE', props.default_toe_kick_height)
         self.add_property('Toe Kick Setback', 'DISTANCE', props.default_toe_kick_setback)
         self.add_property('Flush Toe Kick', 'CHECKBOX', False)
+        self.add_property('Toe Kick Panel', 'CHECKBOX', False)
+        self.add_property('Toe Kick Panel Thickness', 'DISTANCE', inch(0.375))
+        self.add_property('Toe Kick End Inset', 'DISTANCE', 0.0)
         self.add_property('Remove Bottom', 'CHECKBOX', False)
         tkt_index = self._get_toe_kick_type_index()
         self.add_property('Toe Kick Type', 'COMBOBOX', tkt_index,
@@ -1222,6 +1225,7 @@ TOE_KICK_TYPES = ["Notch Ends to Floor", "Ladder Style", "Floating", "Leg Levele
 TOE_KICK_NOTCH, TOE_KICK_LADDER, TOE_KICK_FLOATING, TOE_KICK_LEGS = range(4)
 _TOE_KICK_PART_ROLES = frozenset({
     'TOE_KICK', 'LEFT_TOE_KICK', 'RIGHT_TOE_KICK', 'LADDER_BASE',
+    'TOE_KICK_PANEL', 'TOE_KICK_RETURN_LEFT', 'TOE_KICK_RETURN_RIGHT',
     'LEG_LEVELER_FL', 'LEG_LEVELER_FR', 'LEG_LEVELER_BL', 'LEG_LEVELER_BR',
 })
 

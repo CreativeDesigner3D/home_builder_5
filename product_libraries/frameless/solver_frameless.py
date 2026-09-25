@@ -341,23 +341,101 @@ def kick_front_setback(root):
     return 0.0 if inset else -(gap + front_t)
 
 
+# A finished panel on the toe kick's face (a veneered or laminated skin),
+# and a kick held in from the cabinet's ends so the cabinet reads as
+# floating, with finished returns running back to the wall.
+KICK_PANEL_KEY = 'Toe Kick Panel'
+KICK_PANEL_THICKNESS_KEY = 'Toe Kick Panel Thickness'
+KICK_END_INSET_KEY = 'Toe Kick End Inset'
+_KICK_EXTRA_PARTS = {
+    # role: (name, rotation, mirror) -- the toe kick's own orientation
+    # for the panel, the sides' for the returns.
+    'TOE_KICK_PANEL': ("Toe Kick Panel", (-90, 0, 0), 'Y'),
+    'TOE_KICK_RETURN_LEFT': ("Toe Kick Return Left", (0, -90, 0), 'YZ'),
+    'TOE_KICK_RETURN_RIGHT': ("Toe Kick Return Right", (0, -90, 0), 'Y'),
+}
+
+
+def _kick_part(root, parts, role, wanted):
+    """The toe kick panel or return ``role``, made when it is wanted and
+    taken away when it is not."""
+    part = parts.get(role)
+    if not wanted:
+        if part is not None:
+            bpy.data.objects.remove(part, do_unlink=True)
+            parts.pop(role, None)
+        return None
+    if part is None:
+        from . import types_frameless
+        name, rotation, mirror = _KICK_EXTRA_PARTS[role]
+        part = types_frameless.Cabinet(root)._add_carcass_part(
+            name, role, rotation=rotation, mirror=mirror,
+            finish=(True, True)).obj
+        parts[role] = part
+        _paint_like_cabinet(root, part)
+    return part
+
+
+def _paint_like_cabinet(root, part_obj):
+    """A part made after the cabinet was styled takes the style's finish."""
+    from ... import hb_project
+    styles = hb_project.get_main_scene().hb_frameless.cabinet_styles
+    if not len(styles):
+        return
+    index = root.get('CABINET_STYLE_INDEX', 0)
+    style = styles[index] if 0 <= index < len(styles) else styles[0]
+    finish, _ = style.get_finish_material()
+    edge, _front_edge = style.get_edge_materials()
+    part = GeoNodeCutpart(part_obj)
+    for name, mat in (('Top Surface', finish), ('Bottom Surface', finish),
+                      ('Edge W1', edge), ('Edge W2', edge),
+                      ('Edge L1', edge), ('Edge L2', edge)):
+        try:
+            part.set_input(name, mat)
+        except Exception:
+            pass
+
+
 def _solve_toe_kick(root, parts, p, dim_x, dim_y):
     part = parts.get('TOE_KICK')
     if part is None:
         return
+    visible = not p.rb
     inner = dim_x - p.mt * 2.0
+    # Where the kick's visible face stands, and the span it runs.
+    x0, length = p.mt, inner
     if p.flush:
         inset, front_t, gap = _front_plane(root)
         if inset:
             # Inset fronts face the carcass front, so the kick does too.
-            set_part(part, (p.mt, -dim_y, 0.0), length=inner, width=p.tkh,
-                     thickness=p.mt, visible=not p.rb)
+            face = -dim_y
         else:
-            set_part(part, (0.0, -dim_y - gap - front_t, 0.0), length=dim_x,
-                     width=p.tkh, thickness=p.mt, visible=not p.rb)
-        return
-    set_part(part, (p.mt, -dim_y + p.tks, 0.0), length=inner, width=p.tkh,
-             thickness=p.mt, visible=not p.rb)
+            face = -dim_y - gap - front_t
+            x0, length = 0.0, dim_x
+    else:
+        face = -dim_y + p.tks
+        if p.kick_end_inset > 0.0:
+            x0 = p.kick_end_inset
+            length = max(dim_x - 2.0 * p.kick_end_inset, 0.0)
+    panel_t = p.kick_panel_t if p.kick_panel else 0.0
+
+    panel = _kick_part(root, parts, 'TOE_KICK_PANEL', p.kick_panel)
+    if panel is not None:
+        set_part(panel, (x0, face, 0.0), length=length, width=p.tkh,
+                 thickness=panel_t, visible=visible)
+    # The board stands behind the panel.
+    set_part(part, (x0, face + panel_t, 0.0), length=length, width=p.tkh,
+             thickness=p.mt, visible=visible)
+
+    held_in = p.kick_end_inset > 0.0
+    back_of_kick = face + panel_t + p.mt
+    for role, x in (('TOE_KICK_RETURN_LEFT', x0),
+                    ('TOE_KICK_RETURN_RIGHT', x0 + length)):
+        ret = _kick_part(root, parts, role, held_in)
+        if ret is not None:
+            set_part(ret, (x, 0.0, 0.0), length=p.tkh,
+                     width=max(-back_of_kick, 0.0), thickness=p.mt,
+                     visible=visible)
 
 
 class _Prompts:
@@ -371,6 +449,13 @@ class _Prompts:
         self.saw = float(prompt(root, 'Sink Apron Width', inch(7)))
         self.lli = float(prompt(root, 'Leg Leveler Inset', 0.0))
         self.flush = bool(prompt(root, FLUSH_TOE_KICK_KEY, False))
+        self.kick_panel = bool(prompt(root, KICK_PANEL_KEY, False))
+        self.kick_panel_t = float(prompt(root, KICK_PANEL_THICKNESS_KEY,
+                                         inch(0.375)))
+        # Holding the kick in from the ends only means something when it
+        # stands back from the fronts.
+        self.kick_end_inset = (0.0 if self.flush else
+                               max(float(prompt(root, KICK_END_INSET_KEY, 0.0)), 0.0))
 
 
 def _solve_sides(parts, p, dim_x, dim_y, dim_z, tkh):
@@ -383,9 +468,16 @@ def _solve_sides(parts, p, dim_x, dim_y, dim_z, tkh):
             # of its front bottom corner.
             set_part(part, (x, 0.0, 0.0), length=dim_z, width=dim_y,
                      thickness=p.mt)
+            if p.flush:
+                notch_y = 0.0
+            elif p.kick_end_inset > 0.0:
+                # The kick stands in from the ends, so the side stops at
+                # the top of it all the way back.
+                notch_y = dim_y
+            else:
+                notch_y = p.tks
             set_modifier(part, NOTCH_MOD_NAME,
-                         (('X', tkh), ('Y', 0.0 if p.flush else p.tks),
-                          ('Route Depth', p.mt)))
+                         (('X', tkh), ('Y', notch_y), ('Route Depth', p.mt)))
         else:
             set_part(part, (x, 0.0, tkh), length=dim_z - tkh, width=dim_y,
                      thickness=p.mt)
