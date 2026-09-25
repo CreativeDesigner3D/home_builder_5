@@ -41,6 +41,12 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
                     "stop at the kick") # type: ignore
     flush_toe_kick: bpy.props.BoolProperty(name="Flush Toe Kick", description="Bring the toe kick forward flush with the doors, across the full width; the sides run to the floor", default=False) # type: ignore
     remove_bottom: bpy.props.BoolProperty(name="Remove Bottom", default=False) # type: ignore
+    end_angle: bpy.props.FloatProperty(
+        name="End Angle", min=0.0, max=80.0, precision=2,
+        description="Degrees the angled face turns off the run's front line") # type: ignore
+    angled_end_side: bpy.props.EnumProperty(
+        name="Short Side", items=[('0', "Left", ""), ('1', "Right", "")],
+        default='1') # type: ignore
     finished_interior: bpy.props.BoolProperty(name="Finished Interior", default=False) # type: ignore
 
     cabinet = None
@@ -78,6 +84,9 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
         if 'Remove Bottom' in cabinet_bp:
             self.remove_bottom = cabinet_bp['Remove Bottom']
         self.finished_interior = cabinet_bp.get('Finished Interior', False)
+        if 'End Angle' in cabinet_bp:
+            self.end_angle = float(cabinet_bp['End Angle'])
+            self.angled_end_side = str(int(cabinet_bp.get('Angled End Side', 1)))
         
         wm = context.window_manager
         return wm.invoke_props_dialog(self, width=300)
@@ -111,6 +120,9 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
                     self.cabinet.obj[key] = value
         if 'Remove Bottom' in self.cabinet.obj:
             self.cabinet.obj['Remove Bottom'] = self.remove_bottom
+        if 'End Angle' in self.cabinet.obj:
+            self.cabinet.obj['End Angle'] = self.end_angle
+            self.cabinet.obj['Angled End Side'] = int(self.angled_end_side)
         # Handle Finished Interior toggle
         old_finished = self.cabinet.obj.get('Finished Interior', False)
         if self.finished_interior != old_finished:
@@ -148,6 +160,17 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
         row = col.row(align=True)
         row.label(text="Depth:")
         row.prop(self, 'cabinet_depth', text="")
+
+        if 'End Angle' in self.cabinet.obj:
+            box = layout.box()
+            box.label(text="Angled End")
+            col = box.column(align=True)
+            row = col.row(align=True)
+            row.label(text="Angle (degrees):")
+            row.prop(self, 'end_angle', text="")
+            row = col.row(align=True)
+            row.label(text="Short Side:")
+            row.prop(self, 'angled_end_side', text="")
         
         # Show toe kick options for BASE and TALL cabinets
         if 'Toe Kick Height' in self.cabinet.obj:

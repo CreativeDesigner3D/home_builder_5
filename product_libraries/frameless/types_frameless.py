@@ -1825,6 +1825,70 @@ class InteriorSplitterHorizontal(CabinetInterior):
                 sw.distance_value = self.section_sizes[i - 1]
 
 
+def _add_angled_face_door(cabinet):
+    """One door on a cabinet's angled face (a diagonal corner or an
+    angled end), hinged left or right; the solver places it."""
+    cabinet.add_property('Front Thickness', 'DISTANCE', inch(.75))
+    cabinet.add_property('Door to Cabinet Gap', 'DISTANCE', inch(.125))
+    cabinet.add_property('Top Reveal', 'DISTANCE', inch(.0625))
+    cabinet.add_property('Bottom Reveal', 'DISTANCE', inch(0))
+    cabinet.add_property('Outer Reveal', 'DISTANCE', inch(.0625))
+    cabinet.add_property("Door Swing", 'COMBOBOX', 0, combobox_items=["Left", "Right"])
+    door = CabinetDoor()
+    door.door_pull_location = cabinet.door_pull_location
+    door.create("Diagonal Door")
+    door.obj.parent = cabinet.obj
+    door.set_input("Mirror Y", True)
+    door.obj[solver_frameless.PART_ROLE_KEY] = 'DIAGONAL_DOOR'
+
+
+ANGLED_ENDS = {
+    'Angled End Base': 'BASE',
+    'Angled End Tall': 'TALL',
+    'Angled End Upper': 'UPPER',
+}
+
+
+class AngledEndCabinet(Cabinet):
+    """An end-of-run cabinet whose front is one face turned a typed angle
+    off the run's front, back to a short side, with a door on it."""
+
+    def __init__(self, cabinet_type='BASE'):
+        super().__init__()
+        props = bpy.context.scene.hb_frameless
+        self.cabinet_type = cabinet_type
+        self.width = inch(15.0)
+        if cabinet_type == 'TALL':
+            self.height, self.depth = props.tall_cabinet_height, props.tall_cabinet_depth
+            self.door_pull_location = "Tall"
+        elif cabinet_type == 'UPPER':
+            self.height, self.depth = props.upper_cabinet_height, props.upper_cabinet_depth
+            self.door_pull_location = "Upper"
+        else:
+            self.height, self.depth = props.base_cabinet_height, props.base_cabinet_depth
+            self.door_pull_location = "Base"
+
+    def create(self, name="Angled End"):
+        if self.cabinet_type == 'TALL':
+            self.create_tall_carcass(name)
+        elif self.cabinet_type == 'UPPER':
+            self.create_upper_carcass(name)
+        else:
+            self.create_base_carcass(name)
+        self.obj['CABINET_TYPE'] = self.cabinet_type
+        self.obj['IS_ANGLED_END'] = True
+        self.add_property('End Angle', 'QUANTITY', 45)
+        # Degrees, and not only whole ones (a 150-1/2 degree end is 29.5).
+        self.obj['End Angle'] = 45.0
+        self.add_property('Angled End Side', 'COMBOBOX', 1,
+                          combobox_items=["Left", "Right"])
+        if self.cabinet_type == 'UPPER':
+            self.add_property('Toe Kick Height', 'DISTANCE', 0)
+            self.add_property('Remove Bottom', 'CHECKBOX', False)
+        _add_angled_face_door(self)
+        solver_frameless.recalculate_cabinet(self.obj)
+
+
 class CornerCabinet(Cabinet):
     """Base class for corner cabinets.
     
@@ -1931,18 +1995,7 @@ class CornerCabinet(Cabinet):
     def add_diagonal_door(self):
         """One door on the angled face of a diagonal corner, hinged left
         or right; the solver places it."""
-        self.add_property('Front Thickness', 'DISTANCE', inch(.75))
-        self.add_property('Door to Cabinet Gap', 'DISTANCE', inch(.125))
-        self.add_property('Top Reveal', 'DISTANCE', inch(.0625))
-        self.add_property('Bottom Reveal', 'DISTANCE', inch(0))
-        self.add_property('Outer Reveal', 'DISTANCE', inch(.0625))
-        self.add_property("Door Swing", 'COMBOBOX', 0, combobox_items=["Left", "Right"])
-        door = CabinetDoor()
-        door.door_pull_location = self.door_pull_location
-        door.create("Diagonal Door")
-        door.obj.parent = self.obj
-        door.set_input("Mirror Y", True)
-        door.obj[solver_frameless.PART_ROLE_KEY] = 'DIAGONAL_DOOR'
+        _add_angled_face_door(self)
 
     def _add_corner_leg_levelers(self):
         """Add leg leveler hardware at the four outer corners of the L."""

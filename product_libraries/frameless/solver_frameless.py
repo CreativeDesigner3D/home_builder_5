@@ -728,14 +728,35 @@ def _solve_corner_doors(root, parts, p, dim_x, dim_y, dim_z):
                 _solve_pull(right, pull, length, width, ft, swing == 1)
 
 
+# An angled end cabinet: its whole front is one face turned this many
+# degrees off the run's front line, back to a short side at the end of the
+# run (the right end, or the left for a left-hand end).
+END_ANGLE_KEY = 'End Angle'
+END_ANGLE_SIDE_KEY = 'Angled End Side'
+
+
+def angled_end_depth(root, dim_x, dim_y, mt):
+    """How deep the short side of an angled end is."""
+    angle = math.radians(min(max(float(prompt(root, END_ANGLE_KEY, 0.0)), 0.0), 80.0))
+    return min(max(dim_y - dim_x * math.tan(angle), mt * 2.0), dim_y)
+
+
 def _diagonal_frame(root, dim_x, dim_y):
-    """The angled face of a diagonal corner: its left end A (front corner
-    of the left wing), the unit vector u from A to its right end, the
-    outward normal n, and its length."""
-    ld = float(prompt(root, 'Left Depth', dim_y))
-    rd = float(prompt(root, 'Right Depth', dim_y))
-    ax, ay = ld, -dim_y
-    bx, by = dim_x, -rd
+    """The angled face of a diagonal corner or an angled end: its left end
+    A, the unit vector u from A to its right end, the outward normal n,
+    and its length."""
+    if END_ANGLE_KEY in root:
+        mt = float(prompt(root, 'Material Thickness', inch(0.75)))
+        short = angled_end_depth(root, dim_x, dim_y, mt)
+        if int(prompt(root, END_ANGLE_SIDE_KEY, 1)) == 1:
+            ax, ay, bx, by = 0.0, -dim_y, dim_x, -short
+        else:
+            ax, ay, bx, by = 0.0, -short, dim_x, -dim_y
+    else:
+        ld = float(prompt(root, 'Left Depth', dim_y))
+        rd = float(prompt(root, 'Right Depth', dim_y))
+        ax, ay = ld, -dim_y
+        bx, by = dim_x, -rd
     length = math.hypot(bx - ax, by - ay)
     if length <= 1e-6:
         return None
@@ -749,6 +770,46 @@ def _diagonal_matrix(u, n, origin):
     n."""
     m = Matrix(((0.0, -u[0], n[0]), (0.0, -u[1], n[1]), (1.0, 0.0, 0.0)))
     return m.to_euler('XYZ'), Vector(origin)
+
+
+ANGLED_CUTTER_ROLE = 'ANGLED_CUTTER'
+ANGLED_CUT_MOD_NAME = 'Angled Cut'
+
+
+def _solve_angled_cut(root, targets, dim_x, dim_y, dim_z):
+    """Trim ``targets`` along the angled face with a boolean off one
+    hidden cage covering everything in front of it. (The chamfer part
+    modifier's cutter no longer cuts.)"""
+    frame = _diagonal_frame(root, dim_x, dim_y)
+    if frame is None:
+        return
+    (ax, ay), u, _n, face = frame
+    cutter = next((c for c in root.children
+                   if c.get(PART_ROLE_KEY) == ANGLED_CUTTER_ROLE), None)
+    if cutter is None:
+        cage = GeoNodeCage()
+        cage.create('Angled Cutter')
+        cutter = cage.obj
+        cutter.parent = root
+        cutter[PART_ROLE_KEY] = ANGLED_CUTTER_ROLE
+        cage.set_input('Show Cage', True)
+        cutter.hide_viewport = cutter.hide_render = True
+    # Local X runs along the face; a Mirror Y cage reaches out along the
+    # outward normal from it.
+    margin = inch(2.0)
+    cutter.rotation_euler = (0.0, 0.0, math.atan2(u[1], u[0]))
+    set_cage(cutter, (ax - u[0] * margin, ay - u[1] * margin, -margin),
+             dim_x=face + margin * 2.0, dim_y=dim_y + margin,
+             dim_z=dim_z + margin * 2.0)
+    GeoNodeCage(cutter).set_input('Mirror Y', True)
+    for part in targets:
+        mod = part.modifiers.get(ANGLED_CUT_MOD_NAME)
+        if mod is None:
+            mod = part.modifiers.new(name=ANGLED_CUT_MOD_NAME, type='BOOLEAN')
+            mod.operation = 'DIFFERENCE'
+        if mod.object is not cutter:
+            mod.object = cutter
+        set_modifier(part, 'Chamfer', (('Turn On', False),))
 
 
 def _solve_diagonal_door(root, parts, p, dim_x, dim_y, dim_z):
@@ -791,7 +852,7 @@ def _solve_diagonal_door(root, parts, p, dim_x, dim_y, dim_z):
 def _solve_diagonal_toe_kick(root, parts, p, dim_x, dim_y):
     """A diagonal corner's kick runs along the angled face at the setback,
     between the two sides; the wing kicks of a pie cut are not used."""
-    kick = parts.get('LEFT_TOE_KICK')
+    kick = parts.get('LEFT_TOE_KICK') or parts.get('TOE_KICK')
     other = parts.get('RIGHT_TOE_KICK')
     if other is not None:
         other.hide_viewport = other.hide_render = True
@@ -804,7 +865,10 @@ def _solve_diagonal_toe_kick(root, parts, p, dim_x, dim_y):
     mt, tks = p.mt, p.tks
     # The kick's face line, and where it meets the two sides' inside faces.
     fx, fy = ax - n[0] * tks, ay - n[1] * tks
-    t0 = ((-dim_y + mt) - fy) / u[1] if abs(u[1]) > 1e-6 else 0.0
+    if END_ANGLE_KEY in root:
+        t0 = (mt - fx) / u[0] if abs(u[0]) > 1e-6 else 0.0
+    else:
+        t0 = ((-dim_y + mt) - fy) / u[1] if abs(u[1]) > 1e-6 else 0.0
     t1 = ((dim_x - mt) - fx) / u[0] if abs(u[0]) > 1e-6 else 0.0
     length = max(t1 - t0, 0.0)
     sx, sy = fx + u[0] * t0 - n[0] * mt, fy + u[1] * t0 - n[1] * mt
@@ -817,6 +881,24 @@ def _solve_diagonal_toe_kick(root, parts, p, dim_x, dim_y):
     set_part(kick, (sx, sy, 0.0), length=length, width=p.tkh, thickness=mt,
              visible=not p.rb)
     kick.hide_viewport = kick.hide_render = p.rb
+
+
+def _solve_angled_end(root, parts, p, dim_x, dim_y, dim_z):
+    """An angled end: the short side, the top and bottom cut along the
+    face, the kick along it and the door on it."""
+    mt = p.mt
+    short = angled_end_depth(root, dim_x, dim_y, mt)
+    right_hand = int(prompt(root, END_ANGLE_SIDE_KEY, 1)) == 1
+    side = parts.get('RIGHT_SIDE' if right_hand else 'LEFT_SIDE')
+    if side is not None:
+        GeoNodeCutpart(side).set_input('Width', short)
+    targets = [parts[r] for r in ('TOP', 'BOTTOM') if r in parts]
+    targets += [o for o in root.children_recursive
+                if 'SHELF' in (o.get(PART_ROLE_KEY) or '')]
+    _solve_angled_cut(root, targets, dim_x, dim_y, dim_z)
+    if parts.get('TOE_KICK') is not None:
+        _solve_diagonal_toe_kick(root, parts, p, dim_x, dim_y)
+    _solve_diagonal_door(root, parts, p, dim_x, dim_y, dim_z)
 
 
 def _solve_corner_base(root, parts, p, dim_x, dim_y, dim_z):
@@ -894,6 +976,8 @@ def _solve_corner_base(root, parts, p, dim_x, dim_y, dim_z):
     _solve_corner_shape(root, parts, p, dim_x, dim_y, dim_z)
     _solve_corner_doors(root, parts, p, dim_x, dim_y, dim_z)
     if root.get('CORNER_TYPE') == 'DIAGONAL':
+        _solve_angled_cut(root, [parts[r] for r in ('TOP', 'BOTTOM') if r in parts],
+                          dim_x, dim_y, dim_z)
         _solve_diagonal_toe_kick(root, parts, p, dim_x, dim_y)
         _solve_diagonal_door(root, parts, p, dim_x, dim_y, dim_z)
 
@@ -934,6 +1018,8 @@ def _solve_corner_upper(root, parts, p, dim_x, dim_y, dim_z):
     _solve_corner_shape(root, parts, p, dim_x, dim_y, dim_z)
     _solve_corner_doors(root, parts, p, dim_x, dim_y, dim_z)
     if root.get('CORNER_TYPE') == 'DIAGONAL':
+        _solve_angled_cut(root, [parts[r] for r in ('TOP', 'BOTTOM') if r in parts],
+                          dim_x, dim_y, dim_z)
         _solve_diagonal_door(root, parts, p, dim_x, dim_y, dim_z)
 
 
@@ -1025,6 +1111,8 @@ def recalculate_cabinet(obj):
     dims = (cage.get_input('Dim X'), cage.get_input('Dim Y'),
             cage.get_input('Dim Z'))
     _SOLVERS[kind](root, parts, prompts, *dims)
+    if END_ANGLE_KEY in root:
+        _solve_angled_end(root, parts, prompts, *dims)
     _solve_blind_corner(root, parts, prompts, *dims)
     _solve_applied_ends(root, parts, prompts, *dims)
 
