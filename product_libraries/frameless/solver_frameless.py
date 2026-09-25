@@ -1572,6 +1572,7 @@ def solve_insert_parts(insert_obj):
                 _solve_drawer_box(child, part, insert_obj, length, width,
                                   overlays, false_front)
         edge_pulls.solve_front(child, length, width, thickness, front_hidden)
+        edge_pulls.solve_lock(child, length, width, thickness, front_hidden)
     if 'Door Swing' in insert_obj:
         _solve_pocket_panels(insert_obj, dim_x, dim_y, dim_z)
 

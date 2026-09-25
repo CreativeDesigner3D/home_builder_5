@@ -654,6 +654,9 @@ def solve_drawer_inserts(opening_obj, box_obj, dims, hidden):
     props = item_props(opening_obj)
     _stamp_box(box_obj, props)
     _solve_drawer_notch(box_obj, props, dims)
+    # A hamper or trash pullout shows its model in place of the box.
+    from . import pullout_models
+    pullout_models.solve(opening_obj, box_obj, dims, hidden)
     items = [it for it in drawer_accessories(opening_obj)
              if getattr(it, 'accessory_render', '')]
     existing = [c for c in box_obj.children if c.get(DRAWER_INSERT_TAG)]

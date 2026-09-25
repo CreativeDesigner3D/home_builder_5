@@ -145,10 +145,33 @@ class hb_frameless_OT_set_front_handle_type(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class hb_frameless_OT_toggle_front_lock(bpy.types.Operator):
+    """Add or take off a lock on the selected fronts"""
+    bl_idname = "hb_frameless.toggle_front_lock"
+    bl_label = "Lock"
+    bl_description = "Add or remove a lock on these fronts"
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        return obj is not None and obj.get('IS_CABINET_FRONT')
+
+    def execute(self, context):
+        fronts = {o for o in context.selected_objects if o.get('IS_CABINET_FRONT')}
+        fronts.add(context.object)
+        on = not bool(context.object.get(edge_pulls.LOCK_KEY))
+        for front in fronts:
+            front[edge_pulls.LOCK_KEY] = on
+        solver_frameless.solve_roots(list(fronts))
+        return {'FINISHED'}
+
+
 classes = (
     hb_frameless_OT_door_front_prompts,
     hb_frameless_OT_delete_front,
     hb_frameless_OT_set_front_handle_type,
+    hb_frameless_OT_toggle_front_lock,
 )
 
 register, unregister = bpy.utils.register_classes_factory(classes)

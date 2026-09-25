@@ -266,3 +266,64 @@ def solve_front(front_obj, length, width, thickness, hidden):
         if mat is not None:
             obj.data.materials.append(mat)
     front_obj[SIGNATURE_KEY] = signature
+
+
+# ---------------------------------------------------------------------------
+# Locks
+# ---------------------------------------------------------------------------
+# A lock cylinder on the face of a front (a locking liquor drawer, say),
+# set in from the handle edge where the handle's centre falls.
+
+LOCK_KEY = 'HAS_LOCK'
+LOCK_TAG = 'IS_FRONT_LOCK'
+LOCK_SIGNATURE_KEY = 'hb_lock_signature'
+LOCK_RADIUS = inch(0.375)
+LOCK_PROUD = inch(0.1875)
+LOCK_FROM_EDGE = inch(1.25)
+
+
+def solve_lock(front_obj, length, width, thickness, hidden):
+    """Build the lock a front asks for (HAS_LOCK), or take it off."""
+    wanted = bool(front_obj.get(LOCK_KEY)) and not hidden
+    existing = [c for c in front_obj.children if c.get(LOCK_TAG)]
+    if not wanted:
+        for obj in existing:
+            data = obj.data
+            bpy.data.objects.remove(obj, do_unlink=True)
+            if isinstance(data, bpy.types.Mesh) and data.users == 0:
+                bpy.data.meshes.remove(data)
+        front_obj.pop(LOCK_SIGNATURE_KEY, None)
+        return
+    edge, to_local, span, centre = _layout(front_obj, length, width)
+    centre = _clamp_centre(centre, span, LOCK_RADIUS * 4.0)
+    signature = repr((edge, round(length, 5), round(width, 5),
+                      round(thickness, 5), round(centre, 5),
+                      getattr(_room(), 'pull_finish', '')))
+    if front_obj.get(LOCK_SIGNATURE_KEY) == signature and existing:
+        return
+    for obj in existing:
+        bpy.data.objects.remove(obj, do_unlink=True)
+    segments = 20
+    bm = bmesh.new()
+    rings = []
+    for w in (thickness, thickness + LOCK_PROUD):
+        ring = []
+        for k in range(segments):
+            a = 2.0 * math.pi * k / segments
+            ring.append(bm.verts.new(to_local(
+                centre + LOCK_RADIUS * math.cos(a),
+                -LOCK_FROM_EDGE + LOCK_RADIUS * math.sin(a), w)))
+        rings.append(ring)
+    bm.faces.new(rings[0])
+    bm.faces.new(list(reversed(rings[1])))
+    for k in range(segments):
+        j = (k + 1) % segments
+        bm.faces.new((rings[0][k], rings[0][j], rings[1][j], rings[1][k]))
+    obj = _new_mesh_object(front_obj, 'Lock', bm)
+    obj.pop(PART_TAG, None)
+    obj[LOCK_TAG] = True
+    obj['hb_part_role'] = 'FRONT_LOCK'
+    mat = _finish_material()
+    if mat is not None:
+        obj.data.materials.append(mat)
+    front_obj[LOCK_SIGNATURE_KEY] = signature

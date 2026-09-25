@@ -214,12 +214,13 @@ def _draw_open_close(layout, context):
 
 
 def _draw_drawer_interior(layout, context):
-    """Drawer Interior entry for a drawer or pullout: its opening, front,
-    box or an insert. Returns whether it was drawn."""
+    """Drawer Interior and Pullout Model entries for a drawer or pullout:
+    its opening, front, box or an insert. Returns whether they were drawn."""
     from . import interior_items
     if interior_items.drawer_opening_for(context.object) is None:
         return False
     layout.operator("hb_frameless.drawer_interior", text="Drawer Interior...")
+    layout.operator("hb_frameless.pullout_model", text="Pullout Model...")
     return True
 
 
@@ -268,6 +269,11 @@ class HOME_BUILDER_MT_door_front_commands(bpy.types.Menu):
         layout.operator("hb_frameless.door_front_prompts", text="Front Prompts")
         layout.operator_menu_enum("hb_frameless.set_front_handle_type",
                                   "handle_type", text="Handle")
+        from . import edge_pulls
+        obj = context.object
+        layout.operator("hb_frameless.toggle_front_lock",
+                        text="Remove Lock" if obj is not None and obj.get(edge_pulls.LOCK_KEY)
+                        else "Add Lock")
         _draw_drawer_interior(layout, context)
         _draw_open_close(layout, context)
         layout.separator()

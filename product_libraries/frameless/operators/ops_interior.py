@@ -178,6 +178,80 @@ class hb_frameless_OT_drawer_remove_accessory(bpy.types.Operator):
         return {'FINISHED'}
 
 
+def _pullout_category_enum(self, context):
+    return _ff_ops()._pullout_category_enum(self, context)
+
+
+def _pullout_product_enum(self, context):
+    return _ff_ops()._pullout_product_enum(self, context)
+
+
+class hb_frameless_OT_pullout_model(bpy.types.Operator):
+    """Name the pullout product in this drawer or pullout: hampers and
+    trash roll-outs show their model, the rest are listed"""
+    bl_idname = "hb_frameless.pullout_model"
+    bl_label = "Pullout Model"
+    bl_description = "Choose the pullout product in this drawer or pullout"
+    bl_options = {'UNDO'}
+
+    category: bpy.props.EnumProperty(name="Category", items=_pullout_category_enum) # type: ignore
+    product: bpy.props.EnumProperty(name="Model", items=_pullout_product_enum) # type: ignore
+    clear: bpy.props.BoolProperty(name="No Model", default=False,
+                                  description="Take the model off this opening") # type: ignore
+    opening_name: bpy.props.StringProperty(options={'HIDDEN'}) # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        return interior_items.drawer_opening_for(context.object) is not None
+
+    def invoke(self, context, event):
+        opening = interior_items.drawer_opening_for(context.object)
+        if opening is None:
+            return {'CANCELLED'}
+        self.opening_name = opening.name
+        from ... import accessory_registry
+        code = opening.face_frame_opening.pullout_accessory_code
+        entry = accessory_registry.lookup(_ff_ops()._PULLOUT_HOST, code) if code else None
+        if entry:
+            try:
+                self.category = entry.get('category')
+                self.product = code
+            except TypeError:
+                pass
+        self.clear = False
+        return context.window_manager.invoke_props_dialog(self, width=420)
+
+    def execute(self, context):
+        opening = bpy.data.objects.get(self.opening_name)
+        if opening is None:
+            return {'CANCELLED'}
+        props = opening.face_frame_opening
+        props.pullout_accessory_code = ('' if self.clear or self.product == 'NONE'
+                                        else self.product)
+        hb_utils.run_calc_fix(context, opening)
+        return {'FINISHED'}
+
+    def draw(self, context):
+        layout = self.layout
+        col = layout.column()
+        col.prop(self, 'category')
+        col.prop(self, 'product')
+        col.prop(self, 'clear')
+        opening = bpy.data.objects.get(self.opening_name)
+        from ... import accessory_registry
+        entry = accessory_registry.lookup(_ff_ops()._PULLOUT_HOST, self.product) or {}
+        min_w = entry.get('min_opening_w')
+        if opening is not None and min_w:
+            width_in = solver_frameless.cage_dims(opening)[0] / units.inch(1.0)
+            row = layout.row()
+            if width_in + 1e-6 < min_w:
+                row.alert = True
+                row.label(text="Opening is %.2f in; this model needs %g in" % (width_in, min_w),
+                          icon='ERROR')
+            else:
+                row.label(text="Opening %.2f in (min %g in)" % (width_in, min_w), icon='CHECKMARK')
+
+
 class hb_frameless_OT_drawer_interior(bpy.types.Operator):
     """Lay out the inside of a drawer: box construction, slides and the
     accessories in the box."""
@@ -1393,6 +1467,7 @@ classes = (
     hb_frameless_OT_drawer_add_accessory,
     hb_frameless_OT_drawer_remove_accessory,
     hb_frameless_OT_drawer_interior,
+    hb_frameless_OT_pullout_model,
     hb_frameless_OT_calculate_shelf_quantity,
     hb_frameless_OT_interior_prompts,
     hb_frameless_OT_change_interior_type,
