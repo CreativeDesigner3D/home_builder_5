@@ -442,6 +442,7 @@ class hb_frameless_OT_change_bay_opening(bpy.types.Operator):
         
         appliance = types_frameless.Appliance()
         appliance.appliance_name = "Microwave"
+        appliance.appliance_type = 'MICROWAVE'
         drawer = types_frameless.Drawer()
         
         splitter.opening_inserts = [appliance, drawer]

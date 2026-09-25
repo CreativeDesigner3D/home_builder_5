@@ -1018,14 +1018,32 @@ def link_dims(parent_obj, child_obj, dims):
     return (x, offset, 0.0), (dim_x, dim_y - offset, dim_z)
 
 
+# Stamped on an appliance model that an Appliance insert asked for, so it
+# goes when the insert does (the opening changed to doors, say).
+INSERT_APPLIANCE_KEY = 'HB_FROM_APPLIANCE_INSERT'
+
+
 def _sync_opening_appliance(opening_obj):
     """An opening that houses an appliance model -- a refrigerator
-    cabinet's bottom opening -- keeps that model sized to itself."""
-    kind = opening_obj.get('APPLIANCE_OPENING')
-    if not kind:
-        return
+    cabinet's bottom opening, or one holding an oven or microwave
+    Appliance insert -- keeps that model sized to itself."""
     from ..common import appliance_geo
-    appliance_geo.sync_opening_appliance(opening_obj, kind)
+    kind = opening_obj.get('APPLIANCE_OPENING')
+    from_insert = False
+    if not kind:
+        kind = next((c.get('APPLIANCE_KIND') for c in opening_obj.children
+                     if c.get('APPLIANCE_KIND')), None)
+        from_insert = bool(kind)
+    if not kind:
+        model = appliance_geo.opening_appliance(opening_obj)
+        if model is not None and model.get(INSERT_APPLIANCE_KEY):
+            for child in list(model.children_recursive):
+                bpy.data.objects.remove(child, do_unlink=True)
+            bpy.data.objects.remove(model, do_unlink=True)
+        return
+    model = appliance_geo.sync_opening_appliance(opening_obj, kind)
+    if from_insert and model is not None:
+        model[INSERT_APPLIANCE_KEY] = True
 
 
 def solve_cage_tree(cage_obj):

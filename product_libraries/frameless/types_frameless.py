@@ -484,6 +484,57 @@ class RefrigeratorCabinet(Cabinet):
                 solver_frameless.attach_cage(door_drawer.obj, child)
 
 
+# Appliance towers, top to bottom: (insert, fixed height or 0 to share
+# what the fixed ones leave). The oven and microwave openings are sized
+# to common cut-outs; Edit Opening Sizes changes them per cabinet.
+APPLIANCE_TOWERS = {
+    'Tall Oven': (('DOORS', 0.0), ('WALL_OVEN', inch(29.0)),
+                  ('DRAWER', inch(12.0)), ('DRAWER', inch(12.0))),
+    'Tall Double Oven': (('DOORS', 0.0), ('WALL_OVEN', inch(29.0)),
+                         ('WALL_OVEN', inch(29.0)), ('DRAWER', inch(10.0))),
+    'Tall Oven Microwave': (('DOORS', 0.0), ('MICROWAVE', inch(18.0)),
+                            ('WALL_OVEN', inch(29.0)), ('DRAWER', inch(12.0))),
+}
+APPLIANCE_LABELS = {'WALL_OVEN': "Oven", 'MICROWAVE': "Microwave"}
+# A 30" wall oven's box: its 28-1/2" cut-out is the tower's inside width.
+APPLIANCE_TOWER_WIDTH = inch(30.0)
+
+
+class ApplianceTowerCabinet(TallCabinet):
+    """Tall cabinet built around wall ovens and microwaves: doors over
+    the appliance openings, drawers under them. Each appliance opening
+    houses the appliance's model."""
+
+    def __init__(self, tower='Tall Oven'):
+        super().__init__()
+        self.tower = tower if tower in APPLIANCE_TOWERS else 'Tall Oven'
+        self.width = APPLIANCE_TOWER_WIDTH
+
+    def create(self, name="Oven Tower"):
+        self.create_tall_carcass(name)
+        self.obj['CABINET_TYPE'] = 'TALL'
+        self.obj['APPLIANCE_TOWER'] = self.tower
+        stack = APPLIANCE_TOWERS[self.tower]
+        splitter = SplitterVertical()
+        splitter.splitter_qty = len(stack) - 1
+        last = len(stack) - 1
+        for i, (kind, size) in enumerate(stack):
+            if kind == 'DOORS':
+                insert = Doors()
+                insert.door_pull_location = "Upper"
+            elif kind == 'DRAWER':
+                insert = Drawer()
+            else:
+                insert = Appliance()
+                insert.appliance_name = APPLIANCE_LABELS.get(kind, "Appliance")
+                insert.appliance_type = kind
+            insert.half_overlay_top = i > 0
+            insert.half_overlay_bottom = i < last
+            splitter.opening_sizes.append(size)
+            splitter.opening_inserts.append(insert)
+        self.add_cage_to_bay(splitter)
+
+
 class UpperCabinet(Cabinet):
     """Wall-mounted upper cabinet. No toe kick."""
     
@@ -1026,20 +1077,29 @@ class FalseFront(CabinetOpening):
         # No drawer box added for false front
 
 
+# Appliance model an Appliance opening houses (see Appliance).
+APPLIANCE_KIND_KEY = 'APPLIANCE_KIND'
+
+
 class Appliance(CabinetOpening):
     """An appliance opening displays centered text with the appliance name.
     Used for built-in appliances like ovens, microwaves, refrigerators, etc.
     """
     
     appliance_name = "Appliance"
-    
+    # WALL_OVEN / MICROWAVE: the opening houses that appliance's model,
+    # kept sized to it by the solver. None is a label only.
+    appliance_type = None
+
     def create(self):
         from ...hb_details import GeoNodeText
-        
+
         super().create("Appliance")
-        
+
         # Store appliance name on the object
         self.obj['APPLIANCE_NAME'] = self.appliance_name
+        if self.appliance_type:
+            self.obj[APPLIANCE_KIND_KEY] = self.appliance_type
         
         
         props = bpy.context.scene.home_builder

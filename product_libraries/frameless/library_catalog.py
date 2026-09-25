@@ -79,6 +79,9 @@ SECTIONS = (
         'rows': (
             ("", (("Fridge Cabinet", "Refrigerator Cabinet",
                    "Refrigerator Frameless Cabinet"),
+                  ("Oven Tower", "Tall Oven", "Tall Oven"),
+                  ("Double Oven", "Tall Double Oven", "Tall Double Oven"),
+                  ("Oven Micro", "Tall Oven Microwave", "Tall Oven Microwave"),
                   ("Dishwasher", "Dishwasher", "Dishwasher"),
                   ("Under Counter", "Under Counter Appliance",
                    "Under Counter Appliance"),

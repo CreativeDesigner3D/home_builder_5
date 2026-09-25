@@ -394,6 +394,8 @@ def build_cabinet_for(cabinet_name, cabinet_type, is_appliance=False,
     elif cabinet_type == 'TALL':
         if cabinet_name == 'Refrigerator Cabinet':
             cabinet = types_frameless.RefrigeratorCabinet()
+        elif cabinet_name in types_frameless.APPLIANCE_TOWERS:
+            cabinet = types_frameless.ApplianceTowerCabinet(cabinet_name)
         else:
             cabinet = types_frameless.TallCabinet()
             if cabinet_name == 'Tall Stacked':
@@ -798,6 +800,10 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                 self.auto_quantity = False
             elif self.cabinet_name in ('Base Built-In', 'Tall Built-In'):
                 self.individual_cabinet_width = props.range_width
+                self.fill_mode = False
+                self.auto_quantity = False
+            elif self.cabinet_name in types_frameless.APPLIANCE_TOWERS:
+                self.individual_cabinet_width = types_frameless.APPLIANCE_TOWER_WIDTH
                 self.fill_mode = False
                 self.auto_quantity = False
             elif self.is_blind_corner():
