@@ -2386,6 +2386,8 @@ class Frameless_Scene_Props(PropertyGroup):
         col.prop(props, 'drawer_handle_type', text="Drawer Handle")
         if 'TAB' in (props.door_handle_type, props.drawer_handle_type):
             col.prop(props, 'tab_pull_width', text="Tab Width")
+            for line in edge_pulls.TAB_NOTES:
+                col.label(text=line)
         col.separator()
         col.prop(props, 'door_pull_selection', text="Door Pull")
         col.prop(props, 'drawer_pull_selection', text="Drawer Pull")

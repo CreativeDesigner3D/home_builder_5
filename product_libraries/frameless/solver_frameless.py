@@ -2025,6 +2025,21 @@ def solve_insert_parts(insert_obj):
                            ('Left Overlay', left), ('Right Overlay', right)):
             if key in child:
                 child[key] = value
+        # A tab takes its height out of the front's handle edge, so it
+        # stands inside the front's outline.
+        from . import edge_pulls
+        tab_edge, tab_cut = edge_pulls.tab_allowance(
+            child, child.hide_viewport or bool(child.get('False Front', False)))
+        if tab_cut:
+            cut = GeoNodeCutpart(child)
+            if tab_edge == 'LATCH':
+                width = max(width - tab_cut, 0.0)
+                cut.set_input('Width', width)
+            else:
+                length = max(length - tab_cut, 0.0)
+                cut.set_input('Length', length)
+                if tab_edge == 'BOTTOM':
+                    child.location.z += tab_cut
         if child.get('IS_FLIP_UP_DOOR'):
             # The lift splits, opens and fits hardware to the front; the
             # pull goes on the part it leaves at the bottom.

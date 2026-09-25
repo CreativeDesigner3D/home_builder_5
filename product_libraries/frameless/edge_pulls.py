@@ -10,6 +10,11 @@ flip-up doors -- the bottom; tall doors -- the latch side. A tab on a door
 sits the pull offset in from the latch side, the way a pull does; on a
 drawer it is centred.
 
+A tab stands past its edge, more than the gap to the next front, so a
+front wearing one is shortened by the tab's rise on that edge and the tab
+stands in the space: it stays inside the front's own outline and never
+reaches the front, countertop or cabinet beside it.
+
 The handle type is the room's door or drawer default unless the front
 carries its own (HANDLE_TYPE).
 """
@@ -69,6 +74,32 @@ def _prompt(obj, name, default):
     return default if value is None else float(value)
 
 
+# How a tab is placed, for the handle settings to show.
+TAB_NOTES = (
+    "Tabs sit on the top edge of drawers and base doors,",
+    "the bottom of upper and flip-up doors, the latch side of tall doors.",
+    "A door's tab sits the Handle Horizontal Location in from the latch;",
+    "a drawer's is centred. The front gives up the tab's height.",
+)
+
+
+def handle_edge(front_obj):
+    """The edge an edge handle goes on: TOP, BOTTOM or LATCH."""
+    if _is_drawer(front_obj):
+        return 'TOP'
+    if front_obj.get('IS_FLIP_UP_DOOR'):
+        return 'BOTTOM'
+    return _EDGE_BY_LOCATION.get(int(_prompt(front_obj, 'Pull Location', 0)), 'TOP')
+
+
+def tab_allowance(front_obj, hidden=False):
+    """``(edge, amount)`` a tab takes out of its front so it stands inside
+    the front's outline, or ``(None, 0.0)`` for any other handle."""
+    if hidden or handle_type(front_obj) != 'TAB':
+        return None, 0.0
+    return handle_edge(front_obj), TAB_RISE
+
+
 def _layout(front_obj, length, width):
     """(edge, mapping, span along the edge, centre of a short handle).
 
@@ -84,13 +115,7 @@ def _layout(front_obj, length, width):
     # The origin is the hinge side; the latch is the far side.
     latch = y_lo if mirrored else y_hi
     offset = _prompt(front_obj, 'Handle Horizontal Location', inch(2.0))
-    if _is_drawer(front_obj):
-        edge = 'TOP'
-    elif front_obj.get('IS_FLIP_UP_DOOR'):
-        edge = 'BOTTOM'
-    else:
-        edge = _EDGE_BY_LOCATION.get(int(_prompt(front_obj, 'Pull Location', 0)),
-                                     'TOP')
+    edge = handle_edge(front_obj)
     if edge in ('TOP', 'BOTTOM'):
         sign = 1.0 if edge == 'TOP' else -1.0
         base = length if edge == 'TOP' else 0.0

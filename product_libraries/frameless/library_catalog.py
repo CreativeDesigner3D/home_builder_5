@@ -304,6 +304,9 @@ OPTION_PAGES = {
             ('distance', 'tab_pull_width', "Tab Width",
              {'when': lambda p: 'TAB' in (p.door_handle_type,
                                           p.drawer_handle_type)}),
+            ('notes', lambda context: _tab_notes(), None,
+             {'when': lambda p: 'TAB' in (p.door_handle_type,
+                                          p.drawer_handle_type)}),
             ('gap', None, None),
             ('thumb', 'door_pull_selection', "Door Pull",
              {'thumb': lambda ident: _pull_thumbnail(ident)}),
@@ -425,6 +428,11 @@ OPTION_PAGES = {
         ),
     },
 }
+
+
+def _tab_notes():
+    from . import edge_pulls
+    return edge_pulls.TAB_NOTES
 
 
 def _has_molding_pack():
