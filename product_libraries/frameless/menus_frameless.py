@@ -270,6 +270,8 @@ class HOME_BUILDER_MT_interior_change(bpy.types.Menu):
         layout.operator("hb_frameless.change_interior_type", text="Roll-outs").interior_type = 'ROLLOUTS'
         layout.operator("hb_frameless.change_interior_type", text="Roll-out Shelves").interior_type = 'PULLOUT_SHELVES'
         layout.operator("hb_frameless.change_interior_type", text="Tray Dividers").interior_type = 'TRAY_DIVIDERS'
+        layout.operator("hb_frameless.change_interior_type", text="Glass Shelves").interior_type = 'GLASS_SHELVES'
+        layout.operator("hb_frameless.change_interior_type", text="Closet Rod").interior_type = 'CLOSET_ROD'
         layout.menu("HOME_BUILDER_MT_interior_change_bar_storage", text="Wine & Bar Storage")
         layout.operator("hb_frameless.change_interior_type", text="Empty (No Interior)").interior_type = 'EMPTY'
         #TODO: Implement ability to create custom interior divisions

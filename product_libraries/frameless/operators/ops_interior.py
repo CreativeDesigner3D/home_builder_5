@@ -395,6 +395,8 @@ class hb_frameless_OT_change_interior_type(bpy.types.Operator):
             ('SHELVES', "Shelves", "Standard adjustable shelves"),
             ('ROLLOUTS', "Roll-outs", "Drawer boxes on slides behind the front"),
             ('PULLOUT_SHELVES', "Roll-out Shelves", "Flat shelves on slides behind the front"),
+            ('GLASS_SHELVES', "Glass Shelves", "Adjustable glass shelves"),
+            ('CLOSET_ROD', "Closet Rod", "Hang rod across the opening"),
             ('TRAY_DIVIDERS', "Tray Dividers", "Vertical dividers for trays and cookie sheets"),
             ('EMPTY', "Empty", "No interior parts"),
             ('WINE_CUBBY', "Wine Storage Cubby", "Plywood cubbies sized to the opening"),
@@ -1109,6 +1111,8 @@ class hb_frameless_OT_calculate_shelf_quantity(bpy.types.Operator):
 _ITEM_INTERIOR_KINDS = {
     'ROLLOUTS': 'ROLLOUT',
     'PULLOUT_SHELVES': 'PULLOUT_SHELF',
+    'GLASS_SHELVES': 'GLASS_SHELF',
+    'CLOSET_ROD': 'CLOSET_ROD',
     'TRAY_DIVIDERS': 'TRAY_DIVIDERS',
 }
 _ITEM_INTERIOR_KINDS.update(
@@ -1119,6 +1123,8 @@ _ITEM_KIND_ITEMS = [
     ('PULLOUT_SHELF', "Roll-out Shelves", "Stack of flat shelves on slides"),
     ('TRAY_DIVIDERS', "Tray Dividers", "Vertical dividers, optionally with a locked shelf above"),
     ('ADJUSTABLE_SHELF', "Adjustable Shelves", "Evenly spaced shelves on shelf pins"),
+    ('GLASS_SHELF', "Glass Shelves", "Adjustable glass shelves"),
+    ('CLOSET_ROD', "Closet Rod", "Hang rod across the opening, set down from the top"),
     ('WINE_CUBBY', "Wine Storage Cubby", "Plywood cubbies sized to the opening"),
     ('WINE_CELLAR', "Wine Cellar Rack", "Hardwood grid of 4 in bottle openings"),
     ('WINE_LATTICE', "Lattice Wine Rack", "45 degree lattice"),
@@ -1190,7 +1196,7 @@ def draw_interior_items(layout, interior_obj):
                              icon='X')
         rm.interior_name = name
         rm.index = i
-        if item.kind == 'ADJUSTABLE_SHELF':
+        if item.kind in ('ADJUSTABLE_SHELF', 'GLASS_SHELF'):
             qty_row = sub.row(align=True)
             field = qty_row.row(align=True)
             field.enabled = item.unlock_shelf_qty
@@ -1243,6 +1249,8 @@ def draw_interior_items(layout, interior_obj):
             sub.prop(item, 'tray_divider_thickness', text="Divider Thickness")
             sub.prop(item, 'tray_setback', text="Setback")
             sub.prop(item, 'bottom_offset', text="From Bottom")
+        elif item.kind == 'CLOSET_ROD':
+            sub.prop(item, 'rod_distance_from_top', text="Distance From Top")
         elif item.kind in interior_items.BAR_STORAGE_KINDS:
             sub.label(text="Sized to the opening", icon='INFO')
         else:

@@ -34,7 +34,8 @@ BAR_STORAGE_KINDS = ('WINE_CUBBY', 'WINE_CELLAR', 'WINE_LATTICE', 'WINE_X',
 
 # Item kinds a frameless items interior offers, in menu order.
 SUPPORTED_KINDS = ('ROLLOUT', 'PULLOUT_SHELF', 'TRAY_DIVIDERS',
-                   'ADJUSTABLE_SHELF') + BAR_STORAGE_KINDS
+                   'ADJUSTABLE_SHELF', 'GLASS_SHELF',
+                   'CLOSET_ROD') + BAR_STORAGE_KINDS
 
 # Part kinds built from those items. Anything else an item might emit
 # (a nosing, a workstation top) is left out until the library supports it.
@@ -42,12 +43,12 @@ _BUILT_KINDS = frozenset({
     'ROLLOUT_BOX', 'ROLLOUT_SPACER',
     'PULLOUT_SHELF', 'PULLOUT_SPACER',
     'TRAY_DIVIDER', 'TRAY_LOCKED_SHELF',
-    'ADJUSTABLE_SHELF',
+    'ADJUSTABLE_SHELF', 'GLASS_SHELF', 'CLOSET_ROD',
 }) | frozenset(BAR_STORAGE_KINDS)
 
 # Shelves span the whole interior, including the reach behind a blind
 # panel. Slide-mounted items and tray dividers stay on the door side.
-_FULL_WIDTH_KINDS = frozenset({'ADJUSTABLE_SHELF'})
+_FULL_WIDTH_KINDS = frozenset({'ADJUSTABLE_SHELF', 'GLASS_SHELF'})
 
 # Extra room on each hinged side of a door opening so a slide-mounted
 # item pulls out past the hinge arms.
@@ -100,7 +101,8 @@ def _sync_items(interior_obj, dim_y, dim_z):
     """Auto shelf counts, and a box list for any roll-out without one."""
     solver_ff, _types_ff = _face_frame()
     for item in item_props(interior_obj).interior_items:
-        if item.kind == 'ADJUSTABLE_SHELF' and not item.unlock_shelf_qty:
+        if (item.kind in ('ADJUSTABLE_SHELF', 'GLASS_SHELF')
+                and not item.unlock_shelf_qty):
             height = max(0.0, dim_z - getattr(item, 'bottom_offset', 0.0))
             qty = solver_ff.auto_shelf_qty(height, dim_y)
             if item.shelf_qty != qty:
@@ -236,6 +238,52 @@ def _create_mesh_part(interior_obj, desc):
     return part.obj
 
 
+def _create_glass_shelf(interior_obj, desc):
+    """A glass shelf: laid out like any shelf, but glass rather than
+    sheet stock, so it is not a cabinet part and the style pass leaves
+    its material alone."""
+    from .props_hb_frameless import get_or_create_glass_material
+    obj = _create_mesh_part(interior_obj, desc)
+    del obj['CABINET_PART']
+    glass = get_or_create_glass_material()
+    from ...hb_types import GeoNodeObject
+    part = GeoNodeObject(obj)
+    for name in ('Top Surface', 'Bottom Surface', 'Edge W1', 'Edge W2',
+                 'Edge L1', 'Edge L2'):
+        try:
+            part.set_input(name, glass)
+        except Exception:
+            pass
+    return obj
+
+
+def _create_closet_rod(interior_obj, desc):
+    """A hang rod across the opening, built from the closet library's
+    rod with the room's rod profile and finish. Hardware, not a cabinet
+    part."""
+    from ...hb_types import GeoNodeObject
+    from ..closets import const_closets as closet_const
+    rod = GeoNodeObject()
+    rod.create('GeoNodeClosetRod', desc['name'])
+    _tag(rod.obj, interior_obj, desc)
+    rod.set_input('Dim X', desc['dims'][0])
+    rod.set_input('Radius', closet_const.ROD_RADIUS)
+    rod.set_input('Cup Depth', closet_const.ROD_CUP_DEPTH)
+    rod.set_input('Cup Depth 2', closet_const.ROD_CUP_DEPTH_2)
+    props = getattr(bpy.context.scene, 'hb_closets', None)
+    rod.set_input('Is Oval',
+                  getattr(props, 'closet_rod_type', 'OVAL') == 'OVAL')
+    try:
+        from ..closets import pulls_closets
+        mat = pulls_closets.load_finish_material(
+            getattr(props, 'closet_rod_finish', 'Polished Chrome'))
+        if mat is not None:
+            rod.set_input('Material', mat)
+    except Exception:
+        pass
+    return rod.obj
+
+
 def _create_rollout_box(interior_obj, desc):
     _solver_ff, types_ff = _face_frame()
     box = GeoNodeDrawerBox()
@@ -357,6 +405,10 @@ def solve(interior_obj, force=False):
         for desc in descs:
             if desc['kind'] == 'ROLLOUT_BOX':
                 built.append(_create_rollout_box(interior_obj, desc))
+            elif desc['kind'] == 'GLASS_SHELF':
+                built.append(_create_glass_shelf(interior_obj, desc))
+            elif desc['kind'] == 'CLOSET_ROD':
+                built.append(_create_closet_rod(interior_obj, desc))
             elif desc['kind'] in BAR_STORAGE_KINDS:
                 obj = _create_bar_storage(interior_obj, desc)
                 if obj is not None:
