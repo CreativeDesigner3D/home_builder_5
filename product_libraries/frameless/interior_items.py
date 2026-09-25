@@ -169,6 +169,15 @@ def _rects(interior_obj):
             'reveal_left': 0.0, 'reveal_right': 0.0}
     insert_obj, x_in = _owning_insert(interior_obj)
     left, right = _hinge_sides(insert_obj)
+    pocket_l, pocket_r = solver_frameless.pocket_sides(insert_obj)
+    # Retracting doors: slide-mounted items fit between the pocket
+    # panels and mount to them, so a pocketed side needs no hinge room.
+    pocket_l = solver_frameless.POCKET_WIDTH if pocket_l else 0.0
+    pocket_r = solver_frameless.POCKET_WIDTH if pocket_r else 0.0
+    if pocket_l:
+        left = 0.0
+    if pocket_r:
+        right = 0.0
     if insert_obj is not None and interior_obj.parent is not insert_obj:
         tol = inch(0.01)
         insert_dx = solver_frameless.cage_dims(insert_obj)[0]
@@ -186,6 +195,8 @@ def _rects(interior_obj):
         door_dx = max(0.0, dim_x - span)
         if on_left:
             x_offset = span
+    x_offset += pocket_l
+    door_dx = max(door_dx - pocket_l - pocket_r, 0.0)
     door = dict(full, cage_dim_x=door_dx, reveal_left=left,
                 reveal_right=right)
     return full, door, x_offset
@@ -197,8 +208,20 @@ def descriptors(interior_obj):
     solver_ff, _types_ff = _face_frame()
     props = item_props(interior_obj)
     full, door, x_offset = _rects(interior_obj)
+    # Shelf stacks behind retracting doors take the face frame library's
+    # pocket clearances, which it reads off the door mechanism.
+    insert_obj, _x = _owning_insert(interior_obj)
+    pocket_l, pocket_r = solver_frameless.pocket_sides(insert_obj)
+    opening_ff = None
+    if pocket_l or pocket_r:
+        from types import SimpleNamespace
+        opening_ff = SimpleNamespace(
+            door_mechanism='RETRACTING',
+            hinge_side=('DOUBLE' if pocket_l and pocket_r
+                        else 'LEFT' if pocket_l else 'RIGHT'))
     out = []
-    for desc in solver_ff.interior_item_descriptors(None, full, None, props):
+    for desc in solver_ff.interior_item_descriptors(None, full, None, props,
+                                                    opening_ff):
         if desc['kind'] in _FULL_WIDTH_KINDS:
             out.append(desc)
     for desc in solver_ff.interior_item_descriptors(None, door, None, props):

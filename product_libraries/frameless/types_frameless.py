@@ -603,6 +603,42 @@ class ApplianceTowerCabinet(TallCabinet):
         self.add_cage_to_bay(splitter)
 
 
+APPLIANCE_GARAGE = 'Upper Appliance Garage'
+APPLIANCE_GARAGE_DEPTH = inch(15.0)
+
+
+class ApplianceGarageCabinet(Cabinet):
+    """An appliance garage: a cabinet standing on the countertop up to the
+    uppers, behind retracting doors that open and slide back into pockets,
+    with a pullout shelf to bring the appliance forward."""
+
+    def __init__(self):
+        super().__init__()
+        props = bpy.context.scene.hb_frameless
+        self.width = props.default_cabinet_width
+        self.depth = APPLIANCE_GARAGE_DEPTH
+        self.height = max(props.default_wall_cabinet_location
+                          - props.base_cabinet_height
+                          - props.countertop_thickness, inch(12.0))
+
+    def create(self, name="Appliance Garage"):
+        self.create_upper_carcass(name)
+        self.obj['CABINET_TYPE'] = 'UPPER'
+        self.obj['IS_APPLIANCE_GARAGE'] = True
+        doors = Doors()
+        doors.door_pull_location = "Upper"
+        doors.seed_shelves = False
+        self.add_cage_to_bay(doors)
+        doors.obj['Door Mechanism'] = 1
+        shelf = CabinetInteriorItems()
+        shelf.seed_kind = 'PULLOUT_SHELF'
+        doors.add_interior(shelf)
+        items = shelf.obj.face_frame_opening.interior_items
+        if len(items):
+            items[0].qty = 1
+        solver_frameless.recalculate_cabinet(self.obj)
+
+
 class UpperCabinet(Cabinet):
     """Wall-mounted upper cabinet. No toe kick."""
     
@@ -999,6 +1035,8 @@ class Doors(CabinetOpening):
         self.add_property('Front Thickness', 'DISTANCE', inch(.75))
         self.add_property('Vertical Gap', 'DISTANCE', inch(.125))
         self.add_property("Door Swing",'COMBOBOX',2,combobox_items=["Left","Right","Double"])
+        self.add_property('Door Mechanism', 'COMBOBOX', 0,
+                          combobox_items=["Standard", "Retracting"])
         self.add_properties_opening_thickness()
         self.add_properties_front_overlays()
         overlay_prompts = self.add_properties_front_overlay_calculations()

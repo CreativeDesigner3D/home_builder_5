@@ -717,6 +717,11 @@ class hb_frameless_OT_opening_prompts(bpy.types.Operator):
         default='2'
     ) # type: ignore
 
+    door_mechanism: bpy.props.EnumProperty(
+        name="Door Mechanism",
+        items=[('0', "Standard", "Doors swing open on hinges"),
+               ('1', "Retracting", "Doors open, then slide back into pockets")],
+        default='0') # type: ignore
     inset_front: bpy.props.BoolProperty(name="Inset Front", default=False) # type: ignore
     half_overlay_top: bpy.props.BoolProperty(name="Half Overlay Top", default=False) # type: ignore
     half_overlay_bottom: bpy.props.BoolProperty(name="Half Overlay Bottom", default=False) # type: ignore
@@ -741,6 +746,7 @@ class hb_frameless_OT_opening_prompts(bpy.types.Operator):
         
         if 'Door Swing' in opening_bp:
             self.door_swing = str(opening_bp['Door Swing'])
+            self.door_mechanism = str(int(opening_bp.get('Door Mechanism', 0)))
         if 'Inset Front' in opening_bp:
             self.inset_front = opening_bp['Inset Front']
         if 'Half Overlay Top' in opening_bp:
@@ -758,6 +764,10 @@ class hb_frameless_OT_opening_prompts(bpy.types.Operator):
     def check(self, context):
         if 'Door Swing' in self.opening.obj:
             self.opening.obj['Door Swing'] = int(self.door_swing)
+            # Doors built before the option have no prompt until it is set.
+            if ('Door Mechanism' in self.opening.obj
+                    or self.door_mechanism != '0'):
+                self.opening.obj['Door Mechanism'] = int(self.door_mechanism)
         if 'Inset Front' in self.opening.obj:
             self.opening.obj['Inset Front'] = self.inset_front
         if 'Half Overlay Top' in self.opening.obj:
@@ -782,6 +792,9 @@ class hb_frameless_OT_opening_prompts(bpy.types.Operator):
             row = box.row()
             row.label(text="Door Swing:")
             row.prop(self, 'door_swing', text="")
+            row = box.row()
+            row.label(text="Mechanism:")
+            row.prop(self, 'door_mechanism', text="")
         
         if 'Inset Front' in self.opening.obj:
             row = box.row()

@@ -86,6 +86,8 @@ SECTIONS = (
                    "Tall Column Refrigerator"),
                   ("Column Freezer", "Tall Column Freezer",
                    "Tall Column Freezer"),
+                  ("Appl. Garage", "Upper Appliance Garage",
+                   "Upper Appliance Garage"),
                   ("Dishwasher", "Dishwasher", "Dishwasher"),
                   ("Under Counter", "Under Counter Appliance",
                    "Under Counter Appliance"),

@@ -1205,10 +1205,18 @@ def _solve_shelves(interior_obj):
         # One shelf runs behind the doors and the blind panel alike, so
         # it stands back far enough to clear the panel.
         setback += blind[2]
+    pocket_l, pocket_r = pocket_sides(interior_obj.parent)
+    if pocket_l or pocket_r:
+        # Retracting doors: the shelves stop short of the pockets and
+        # stand back from the front.
+        setback = max(setback, POCKET_FRONT)
+    pocket_l = POCKET_WIDTH if pocket_l else 0.0
+    pocket_r = POCKET_WIDTH if pocket_r else 0.0
     spacing = (dim_z - mt * qty) / (qty + 1)
     # A quantity of zero means no shelves, which the array's own minimum
     # of one could not express.
-    set_part(shelf, (clip_gap, setback, spacing), length=dim_x - clip_gap * 2.0,
+    set_part(shelf, (clip_gap + pocket_l, setback, spacing),
+             length=dim_x - clip_gap * 2.0 - pocket_l - pocket_r,
              width=dim_y - setback, thickness=mt, visible=qty > 0)
     set_array(shelf, SHELF_ARRAY_MOD, qty, spacing + mt)
 
@@ -1360,6 +1368,78 @@ def _solve_drawer_box(front_obj, box_obj, insert_obj, length, width,
     interior_items.solve_drawer_inserts(insert_obj, box_obj, dims, hidden)
 
 
+# Retracting (pocket) doors: they open, then slide back into pockets
+# along the hinge sides. The pockets take interior width off each hinged
+# side and hold what is inside back from the front.
+DOOR_MECHANISM_KEY = 'Door Mechanism'
+MECH_STANDARD, MECH_RETRACTING = 0, 1
+POCKET_WIDTH = inch(3.25)
+POCKET_FRONT = inch(3.0)
+POCKET_CLEARANCE = inch(0.25)
+
+
+def pocket_sides(insert_obj):
+    """(left, right): which sides of a door insert carry a pocket."""
+    if (insert_obj is None
+            or int(prompt(insert_obj, DOOR_MECHANISM_KEY, MECH_STANDARD)) != MECH_RETRACTING
+            or 'Door Swing' not in insert_obj):
+        return False, False
+    swing = int(prompt(insert_obj, 'Door Swing', SWING_DOUBLE))
+    return swing in (SWING_LEFT, SWING_DOUBLE), swing in (SWING_RIGHT, SWING_DOUBLE)
+
+
+def _solve_pocket_panels(insert_obj, dim_x, dim_y, dim_z):
+    """The panel that closes each pocket off from the cabinet's inside,
+    made when the doors retract and taken away when they don't."""
+    left, right = pocket_sides(insert_obj)
+    mt = float(prompt(insert_obj, 'Left Thickness', inch(0.75)))
+    existing = {c.get(PART_ROLE_KEY): c for c in insert_obj.children
+                if c.get(PART_ROLE_KEY) in ('POCKET_PANEL_LEFT', 'POCKET_PANEL_RIGHT')}
+    for role, wanted, x, mirror in (
+            ('POCKET_PANEL_LEFT', left, POCKET_WIDTH - mt, True),
+            ('POCKET_PANEL_RIGHT', right, dim_x - POCKET_WIDTH + mt, False)):
+        part = existing.get(role)
+        if not wanted:
+            if part is not None:
+                bpy.data.objects.remove(part, do_unlink=True)
+            continue
+        if part is None:
+            from . import types_frameless
+            import math as _math
+            cp = types_frameless.CabinetPart()
+            cp.create('Pocket Panel')
+            part = cp.obj
+            part.parent = insert_obj
+            part[PART_ROLE_KEY] = role
+            part['Finish Top'] = False
+            part['Finish Bottom'] = False
+            part.rotation_euler = (0.0, _math.radians(-90.0), 0.0)
+            cp.set_input('Mirror Z', mirror)
+            root = cabinet_root(insert_obj)
+            if root is not None:
+                _paint_interior(root, part)
+        set_part(part, (x, 0.0, 0.0), length=dim_z, width=dim_y, thickness=mt)
+
+
+def _paint_interior(root, part_obj):
+    from ... import hb_project
+    styles = hb_project.get_main_scene().hb_frameless.cabinet_styles
+    if not len(styles):
+        return
+    index = root.get('CABINET_STYLE_INDEX', 0)
+    style = styles[index] if 0 <= index < len(styles) else styles[0]
+    face, _ = style.get_interior_material()
+    edge, _front_edge = style.get_edge_materials()
+    part = GeoNodeCutpart(part_obj)
+    for name, mat in (('Top Surface', face), ('Bottom Surface', face),
+                      ('Edge W1', edge), ('Edge W2', edge),
+                      ('Edge L1', edge), ('Edge L2', edge)):
+        try:
+            part.set_input(name, mat)
+        except Exception:
+            pass
+
+
 # How far an insert's fronts are open, 0 closed to 1 fully open. Written
 # by the open mode and the Open / Close command; an insert that never had
 # it set is left exactly as the solver always placed it.
@@ -1375,7 +1455,8 @@ def open_amount(insert_obj):
     return min(max(float(prompt(insert_obj, OPEN_KEY, 0.0)), 0.0), 1.0)
 
 
-def _open_front(front_obj, role, amount, thickness, length, travel):
+def _open_front(front_obj, role, amount, thickness, length, travel,
+                retract=None):
     """Move one closed front to its open position. Drawers and pullouts
     slide forward; doors swing 90 degrees on a hinge line at the front
     face of the hinge edge, which keeps every point of the door on its
@@ -1396,9 +1477,18 @@ def _open_front(front_obj, role, amount, thickness, length, travel):
         offset = Vector((0.0, thickness, -length))
     else:
         return
+    slide = Vector((0.0, 0.0, 0.0))
+    if retract is not None and axis == 'Z':
+        # A retracting door swings open in the first half of its travel
+        # and slides back into its pocket in the second.
+        swing_part = min(amount * 2.0, 1.0)
+        slide_part = max(amount * 2.0 - 1.0, 0.0)
+        angle = (-1.0 if role == 'LEFT_DOOR' else 1.0) * swing_part * DOOR_MAX_SWING
+        shift_x, depth = retract
+        slide = Vector((shift_x * slide_part, depth * slide_part, 0.0))
     rot = Matrix.Rotation(angle, 3, axis)
     front_obj.rotation_euler = (rot @ Euler(_FRONT_ROTATION).to_matrix()).to_euler('XYZ')
-    front_obj.location = pivot + rot @ offset
+    front_obj.location = pivot + rot @ offset + slide
 
 
 def solve_insert_parts(insert_obj):
@@ -1455,8 +1545,17 @@ def solve_insert_parts(insert_obj):
             if key in child:
                 child[key] = value
         if OPEN_KEY in insert_obj:
+            retract = None
+            pockets = pocket_sides(insert_obj)
+            if role == 'LEFT_DOOR' and pockets[0]:
+                retract = (left + POCKET_CLEARANCE,
+                           min(width + thickness, dim_y - POCKET_CLEARANCE))
+            elif role == 'RIGHT_DOOR' and pockets[1]:
+                retract = (-(right + POCKET_CLEARANCE),
+                           min(width + thickness, dim_y - POCKET_CLEARANCE))
             _open_front(child, role, open_amount(insert_obj), thickness,
-                        length, max(dim_y - DRAWER_OPEN_CLEARANCE, 0.0))
+                        length, max(dim_y - DRAWER_OPEN_CLEARANCE, 0.0),
+                        retract)
 
         false_front = bool(child.get('False Front', False))
         from . import edge_pulls
@@ -1473,6 +1572,8 @@ def solve_insert_parts(insert_obj):
                 _solve_drawer_box(child, part, insert_obj, length, width,
                                   overlays, false_front)
         edge_pulls.solve_front(child, length, width, thickness, front_hidden)
+    if 'Door Swing' in insert_obj:
+        _solve_pocket_panels(insert_obj, dim_x, dim_y, dim_z)
 
 
 def attach_cage(child_obj, parent_obj):

@@ -404,6 +404,8 @@ def build_cabinet_for(cabinet_name, cabinet_type, is_appliance=False,
                 cabinet.is_stacked = True
             elif cabinet_name == 'Tall Open':
                 cabinet.default_exterior = "Open"
+    elif cabinet_type == 'UPPER' and cabinet_name == types_frameless.APPLIANCE_GARAGE:
+        cabinet = types_frameless.ApplianceGarageCabinet()
     elif cabinet_type == 'UPPER':
         cabinet = types_frameless.UpperCabinet()
         if cabinet_name == 'Upper Stacked':
@@ -661,6 +663,10 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         if self.cabinet_name == 'Lap Drawer':
             return props.base_cabinet_height - props.top_drawer_front_height
         
+        if self.cabinet_name == types_frameless.APPLIANCE_GARAGE:
+            # It stands on the countertop.
+            return props.base_cabinet_height + props.countertop_thickness
+
         if self.cabinet_type == 'UPPER':
             return props.default_wall_cabinet_location
         
@@ -802,6 +808,10 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                 self.auto_quantity = False
             elif self.cabinet_name in ('Base Built-In', 'Tall Built-In'):
                 self.individual_cabinet_width = props.range_width
+                self.fill_mode = False
+                self.auto_quantity = False
+            elif self.cabinet_name == types_frameless.APPLIANCE_GARAGE:
+                self.individual_cabinet_width = props.default_cabinet_width
                 self.fill_mode = False
                 self.auto_quantity = False
             elif self.cabinet_name in types_frameless.COLUMN_UNITS:
