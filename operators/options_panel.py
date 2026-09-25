@@ -2314,7 +2314,14 @@ def _draw_pick_menu(menu, context):
         return
     columns, per_col = _menu_columns(layout, len(_pick_entries))
     for i, (label, op_id, kwargs) in enumerate(_pick_entries):
-        op = columns[i // per_col].operator(op_id, text=label)
+        col = columns[i // per_col]
+        kwargs = dict(kwargs)
+        # A popup menu runs its commands without invoke; an entry whose
+        # command opens a dialog (asks for a name, confirms) says so.
+        if kwargs.pop('INVOKE', False):
+            col = col.row()
+            col.operator_context = 'INVOKE_DEFAULT'
+        op = col.operator(op_id, text=label)
         for key, value in kwargs.items():
             setattr(op, key, value)
 
