@@ -19,6 +19,14 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
     cabinet_depth: bpy.props.FloatProperty(name="Depth", unit='LENGTH', precision=5) # type: ignore
     toe_kick_height: bpy.props.FloatProperty(name="Toe Kick Height", unit='LENGTH', precision=5) # type: ignore
     toe_kick_setback: bpy.props.FloatProperty(name="Toe Kick Setback", unit='LENGTH', precision=5) # type: ignore
+    toe_kick_type: bpy.props.EnumProperty(
+        name="Toe Kick Type",
+        description="How the cabinet meets the floor",
+        items=[('0', "Notch Ends to Floor", "Sides notched to the floor with a toe kick board"),
+               ('1', "Ladder Style", "Plain sides standing on a ladder base"),
+               ('2', "Floating", "No toe kick"),
+               ('3', "Leg Levelers", "Plain sides on leg levelers")],
+        default='0') # type: ignore
     flush_toe_kick: bpy.props.BoolProperty(name="Flush Toe Kick", description="Bring the toe kick forward flush with the doors, across the full width; the sides run to the floor", default=False) # type: ignore
     remove_bottom: bpy.props.BoolProperty(name="Remove Bottom", default=False) # type: ignore
     finished_interior: bpy.props.BoolProperty(name="Finished Interior", default=False) # type: ignore
@@ -51,6 +59,7 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
         if 'Toe Kick Setback' in cabinet_bp:
             self.toe_kick_setback = cabinet_bp['Toe Kick Setback']
         self.flush_toe_kick = bool(cabinet_bp.get('Flush Toe Kick', False))
+        self.toe_kick_type = str(int(cabinet_bp.get('Toe Kick Type', 0)))
         if 'Remove Bottom' in cabinet_bp:
             self.remove_bottom = cabinet_bp['Remove Bottom']
         self.finished_interior = cabinet_bp.get('Finished Interior', False)
@@ -68,6 +77,11 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
             self.cabinet.obj['Toe Kick Height'] = self.toe_kick_height
         if 'Toe Kick Setback' in self.cabinet.obj:
             self.cabinet.obj['Toe Kick Setback'] = self.toe_kick_setback
+        if ('Toe Kick Height' in self.cabinet.obj
+                and int(self.toe_kick_type) != int(
+                    self.cabinet.obj.get('Toe Kick Type', 0))):
+            types_frameless.set_toe_kick_type(self.cabinet.obj,
+                                              int(self.toe_kick_type))
         if 'Toe Kick Height' in self.cabinet.obj:
             # Cabinets built before the option have no prompt yet; the
             # first change adds it.
@@ -129,7 +143,14 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
             row.label(text="Setback:")
             row.prop(self, 'toe_kick_setback', text="")
             
+            row = col.row(align=True)
+            row.label(text="Type:")
+            row.prop(self, 'toe_kick_type', text="")
+
             row = col.row()
+            # Only a toe kick board or a ladder base has a face to bring
+            # forward.
+            row.active = self.toe_kick_type in ('0', '1')
             row.prop(self, 'flush_toe_kick')
             row = col.row()
             row.prop(self, 'remove_bottom')

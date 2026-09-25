@@ -301,7 +301,12 @@ FLUSH_TOE_KICK_KEY = 'Flush Toe Kick'
 
 def _front_plane(root):
     """(inset, front thickness, door gap) of the first front insert in
-    the cabinet -- where its doors and drawer fronts stand."""
+    the cabinet -- where its doors and drawer fronts stand. A corner
+    cabinet carries its door prompts on the cabinet itself."""
+    if 'Front Thickness' in root:
+        return (bool(root.get('Inset Front', False)),
+                float(prompt(root, 'Front Thickness', inch(0.75))),
+                float(prompt(root, 'Door to Cabinet Gap', inch(0.125))))
     bay = next((c for c in root.children if c.get('IS_FRAMELESS_BAY_CAGE')),
                None)
     for obj in (bay.children_recursive if bay is not None else ()):
@@ -621,6 +626,11 @@ def _solve_corner_base(root, parts, p, dim_x, dim_y, dim_z):
     mt, tkh = p.mt, p.tkh
     ld = float(prompt(root, 'Left Depth', dim_y))
     rd = float(prompt(root, 'Right Depth', dim_y))
+    # How far each wing's kick stands back from its carcass front; a
+    # flush kick stands forward, in the plane of the doors.
+    tks = kick_front_setback(root)
+    # A flush kick runs out over the side panel at each wing's outer end.
+    end = mt if p.flush else 0.0
 
     # Sides: the left wing runs back along -Y, the right wing along +X.
     for role, loc, width in (('LEFT_SIDE', (0.0, -dim_y), ld),
@@ -632,7 +642,8 @@ def _solve_corner_base(root, parts, p, dim_x, dim_y, dim_z):
             set_part(part, (loc[0], loc[1], 0.0), length=dim_z, width=width,
                      thickness=mt)
             set_modifier(part, NOTCH_MOD_NAME,
-                         (('X', tkh), ('Y', p.tks), ('Route Depth', mt)))
+                         (('X', tkh), ('Y', 0.0 if p.flush else p.tks),
+                          ('Route Depth', mt)))
         else:
             set_part(part, (loc[0], loc[1], tkh), length=dim_z - tkh,
                      width=width, thickness=mt)
@@ -659,13 +670,16 @@ def _solve_corner_base(root, parts, p, dim_x, dim_y, dim_z):
 
     part = parts.get('LEFT_TOE_KICK')
     if part is not None:
-        set_part(part, (ld - p.tks, -dim_y + mt, 0.0),
-                 length=dim_y - rd - mt + p.tks, width=tkh, thickness=mt)
+        # Flush, the left kick also runs on across the inside corner,
+        # the way the left door does, so the two kicks close the corner.
+        set_part(part, (ld - tks, -dim_y + mt - end, 0.0),
+                 length=dim_y - rd - mt + tks + end * 2.0, width=tkh,
+                 thickness=mt)
 
     part = parts.get('RIGHT_TOE_KICK')
     if part is not None:
-        set_part(part, (dim_x - mt, -rd + p.tks, 0.0),
-                 length=dim_x - ld - mt + p.tks, width=tkh, thickness=mt)
+        set_part(part, (dim_x - mt + end, -rd + tks, 0.0),
+                 length=dim_x - ld - mt + tks + end, width=tkh, thickness=mt)
 
     part = parts.get('LADDER_BASE')
     if part is not None:

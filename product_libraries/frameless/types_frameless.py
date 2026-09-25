@@ -1092,6 +1092,88 @@ class LadderBaseCage(GeoNodeCage):
         self.obj.color = (0.5, 0.3, 0, 1)  # Brown-ish color to distinguish from cabinet cage
 
 
+# Toe Kick Type prompt choices, by index.
+TOE_KICK_TYPES = ["Notch Ends to Floor", "Ladder Style", "Floating", "Leg Levelers"]
+TOE_KICK_NOTCH, TOE_KICK_LADDER, TOE_KICK_FLOATING, TOE_KICK_LEGS = range(4)
+_TOE_KICK_PART_ROLES = frozenset({
+    'TOE_KICK', 'LEFT_TOE_KICK', 'RIGHT_TOE_KICK', 'LADDER_BASE',
+    'LEG_LEVELER_FL', 'LEG_LEVELER_FR', 'LEG_LEVELER_BL', 'LEG_LEVELER_BR',
+})
+
+
+def _remove_tree(obj):
+    for child in list(obj.children):
+        _remove_tree(child)
+    bpy.data.objects.remove(obj, do_unlink=True)
+
+
+def _set_side_notch(side_obj, notched):
+    """Add or take off the toe kick notch on a cabinet side."""
+    mod = side_obj.modifiers.get(solver_frameless.NOTCH_MOD_NAME)
+    if notched and mod is None:
+        notch = GeoNodeCutpart(side_obj).add_part_modifier(
+            'CPM_CORNERNOTCH', solver_frameless.NOTCH_MOD_NAME)
+        notch.set_input('Flip Y', True)
+    elif not notched and mod is not None:
+        side_obj.modifiers.remove(mod)
+
+
+def set_toe_kick_type(cabinet_obj, toe_kick_type):
+    """Switch a base, tall or corner base cabinet to another toe kick
+    type in place: the toe kick parts of the old type come off, the new
+    type's go on, the sides take or lose the notch, and the cabinet is
+    solved and repainted. Returns False for a cabinet with no toe kick."""
+    kind = solver_frameless.carcass_kind(cabinet_obj)
+    if kind not in ('BASE', 'TALL', 'CORNER_BASE'):
+        return False
+    toe_kick_type = int(toe_kick_type)
+    parts = solver_frameless.carcass_parts(cabinet_obj)
+    for role, obj in parts.items():
+        if role in _TOE_KICK_PART_ROLES:
+            _remove_tree(obj)
+    for role in ('LEFT_SIDE', 'RIGHT_SIDE'):
+        side = parts.get(role)
+        if side is not None:
+            _set_side_notch(side, toe_kick_type == TOE_KICK_NOTCH)
+
+    if 'Toe Kick Type' in cabinet_obj:
+        cabinet_obj['Toe Kick Type'] = toe_kick_type
+    else:
+        Cabinet(cabinet_obj).add_property(
+            'Toe Kick Type', 'COMBOBOX', toe_kick_type,
+            combobox_items=TOE_KICK_TYPES)
+
+    if kind == 'CORNER_BASE':
+        cab = CornerCabinet(cabinet_obj)
+        if toe_kick_type == TOE_KICK_NOTCH:
+            cab._add_carcass_part('Left Toe Kick', 'LEFT_TOE_KICK',
+                                  rotation=(-90, 0, 90), mirror='Y')
+            cab._add_carcass_part('Right Toe Kick', 'RIGHT_TOE_KICK',
+                                  rotation=(-90, 0, 0), mirror='XY')
+        elif toe_kick_type == TOE_KICK_LADDER:
+            ladder = LadderBaseCage()
+            ladder.create('Ladder Base')
+            ladder.obj.parent = cabinet_obj
+            ladder.obj[solver_frameless.PART_ROLE_KEY] = 'LADDER_BASE'
+        elif toe_kick_type == TOE_KICK_LEGS:
+            cab._add_corner_leg_levelers()
+    else:
+        cab = Cabinet(cabinet_obj)
+        if toe_kick_type == TOE_KICK_NOTCH:
+            cab._add_carcass_part('Toe Kick', 'TOE_KICK', rotation=(-90, 0, 0),
+                                  mirror='Y')
+        cab._add_toe_kick_extras(toe_kick_type)
+
+    solver_frameless.recalculate_cabinet(cabinet_obj)
+    main_scene = hb_project.get_main_scene()
+    styles = main_scene.hb_frameless.cabinet_styles
+    if len(styles):
+        index = cabinet_obj.get('CABINET_STYLE_INDEX', 0)
+        style = styles[index] if 0 <= index < len(styles) else styles[0]
+        style.apply_materials_to_cabinet(cabinet_obj)
+    return True
+
+
 class CabinetSideNotched(CabinetPart):
     """A side with the toe kick notched out of its front bottom corner;
     the solver sizes the notch."""
