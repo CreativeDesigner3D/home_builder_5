@@ -38,6 +38,19 @@ SUPPORTED_KINDS = ('ROLLOUT', 'PULLOUT_SHELF', 'TRAY_DIVIDERS',
                    'QUARTER_DEPTH_SHELF', 'GLASS_SHELF',
                    'CLOSET_ROD') + BAR_STORAGE_KINDS
 
+# Interior types that build an items interior, and the item each starts
+# with. Shared by Change Interior and the interior division sections.
+INTERIOR_TYPE_KINDS = {
+    'ROLLOUTS': 'ROLLOUT',
+    'PULLOUT_SHELVES': 'PULLOUT_SHELF',
+    'TRAY_DIVIDERS': 'TRAY_DIVIDERS',
+    'HALF_DEPTH_SHELVES': 'HALF_DEPTH_SHELF',
+    'QUARTER_DEPTH_SHELVES': 'QUARTER_DEPTH_SHELF',
+    'GLASS_SHELVES': 'GLASS_SHELF',
+    'CLOSET_ROD': 'CLOSET_ROD',
+}
+INTERIOR_TYPE_KINDS.update({kind: kind for kind in BAR_STORAGE_KINDS})
+
 # Shelf kinds whose count follows the opening height until unlocked.
 AUTO_COUNT_SHELF_KINDS = ('ADJUSTABLE_SHELF', 'HALF_DEPTH_SHELF',
                           'QUARTER_DEPTH_SHELF', 'GLASS_SHELF')
@@ -134,18 +147,40 @@ def _hinge_sides(insert_obj):
     return left, right
 
 
+def _owning_insert(interior_obj):
+    """(insert, x of the interior's left edge inside it). An interior in
+    a division section sits some way in from the insert's sides."""
+    x = 0.0
+    obj = interior_obj
+    while obj is not None and not (obj.get('IS_FRAMELESS_OPENING_CAGE')
+                                   or obj.get('IS_FRAMELESS_BAY_CAGE')):
+        x += obj.location.x
+        obj = obj.parent
+    return obj, x
+
+
 def _rects(interior_obj):
     """(full rect, door-side rect, door-side x offset) in the interior's
     own frame. The face frame item rules read the opening size and the
-    per-side reveals; a hinged side gets its clearance as a reveal."""
+    per-side reveals; a hinged side gets its clearance as a reveal, but
+    only where the interior reaches that side of the door opening."""
     dim_x, dim_y, dim_z = solver_frameless.cage_dims(interior_obj)
     full = {'cage_dim_x': dim_x, 'cage_dim_y': dim_y, 'cage_dim_z': dim_z,
             'reveal_left': 0.0, 'reveal_right': 0.0}
-    insert_obj = interior_obj.parent
+    insert_obj, x_in = _owning_insert(interior_obj)
     left, right = _hinge_sides(insert_obj)
+    if insert_obj is not None and interior_obj.parent is not insert_obj:
+        tol = inch(0.01)
+        insert_dx = solver_frameless.cage_dims(insert_obj)[0]
+        if x_in > tol:
+            left = 0.0
+        if x_in + dim_x < insert_dx - tol:
+            right = 0.0
     x_offset = 0.0
     door_dx = dim_x
-    blind = solver_frameless.blind_reach(insert_obj) if insert_obj else None
+    blind = (solver_frameless.blind_reach(insert_obj)
+             if insert_obj is not None and interior_obj.parent is insert_obj
+             else None)
     if blind is not None:
         span, on_left, _panel_t = blind
         door_dx = max(0.0, dim_x - span)

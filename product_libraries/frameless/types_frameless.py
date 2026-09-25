@@ -1363,6 +1363,23 @@ class CabinetPulloutFront(CabinetFront):
 # =============================================================================
 
 
+def add_section_interior(section_obj, section_type):
+    """Give a division section its own interior: adjustable shelves, or
+    an items interior (roll-outs, tray dividers, bar storage...). EMPTY
+    and unknown types leave the section open. Sized by the solver."""
+    from . import interior_items
+    if section_type == 'SHELVES':
+        interior = CabinetShelves()
+    elif section_type in interior_items.INTERIOR_TYPE_KINDS:
+        interior = CabinetInteriorItems()
+        interior.seed_kind = interior_items.INTERIOR_TYPE_KINDS[section_type]
+    else:
+        return None
+    interior.create('Interior')
+    interior.obj.parent = section_obj
+    return interior.obj
+
+
 class InteriorSection(GeoNodeCage):
     """A section within an interior that can contain shelves, rollouts, etc."""
 
@@ -1421,11 +1438,7 @@ class InteriorSplitterVertical(CabinetInterior):
             # Add interior type to section based on section_types
             if len(self.section_types) > i - 1:
                 section_type = self.section_types[i - 1]
-                if section_type == 'SHELVES':
-                    self._add_shelves_to_section(section)
-                elif section_type == 'ROLLOUTS':
-                    self._add_rollouts_to_section(section)
-                # TRAY_DIVIDERS and EMPTY don't add anything for now
+                add_section_interior(section.obj, section_type)
 
         # Set section sizes
         for i in range(1, self.splitter_qty + 2):
@@ -1433,20 +1446,6 @@ class InteriorSplitterVertical(CabinetInterior):
                 sh = section_calculator.get_calculator_prompt('Section ' + str(i) + ' Height')
                 sh.equal = False
                 sh.distance_value = self.section_sizes[i - 1]
-
-    def _add_shelves_to_section(self, section):
-        props = bpy.context.scene.hb_frameless
-        shelf = CabinetPart()
-        shelf.create('Shelf')
-        shelf.obj['IS_FRAMELESS_INTERIOR_PART'] = True
-        shelf.obj['MENU_ID'] = 'HOME_BUILDER_MT_interior_part_commands'
-        shelf.obj.parent = section.obj
-        shelf.obj[solver_frameless.PART_ROLE_KEY] = 'SECTION_SHELF'
-        shelf.set_input("Thickness", props.default_carcass_part_thickness)
-
-    def _add_rollouts_to_section(self, section):
-        # TODO: Implement rollout creation
-        pass
 
 
 class InteriorSplitterHorizontal(CabinetInterior):
@@ -1498,10 +1497,7 @@ class InteriorSplitterHorizontal(CabinetInterior):
             # Add interior type to section
             if len(self.section_types) > i - 1:
                 section_type = self.section_types[i - 1]
-                if section_type == 'SHELVES':
-                    self._add_shelves_to_section(section)
-                elif section_type == 'ROLLOUTS':
-                    self._add_rollouts_to_section(section)
+                add_section_interior(section.obj, section_type)
 
         # Set section sizes
         for i in range(1, self.splitter_qty + 2):
@@ -1509,20 +1505,6 @@ class InteriorSplitterHorizontal(CabinetInterior):
                 sw = section_calculator.get_calculator_prompt('Section ' + str(i) + ' Width')
                 sw.equal = False
                 sw.distance_value = self.section_sizes[i - 1]
-
-    def _add_shelves_to_section(self, section):
-        props = bpy.context.scene.hb_frameless
-        shelf = CabinetPart()
-        shelf.create('Shelf')
-        shelf.obj['IS_FRAMELESS_INTERIOR_PART'] = True
-        shelf.obj['MENU_ID'] = 'HOME_BUILDER_MT_interior_part_commands'
-        shelf.obj.parent = section.obj
-        shelf.obj[solver_frameless.PART_ROLE_KEY] = 'SECTION_SHELF'
-        shelf.set_input("Thickness", props.default_carcass_part_thickness)
-
-    def _add_rollouts_to_section(self, section):
-        # TODO: Implement rollout creation
-        pass
 
 
 class CornerCabinet(Cabinet):

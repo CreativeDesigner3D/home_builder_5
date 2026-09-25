@@ -1046,6 +1046,8 @@ def solve_interior_parts(interior_obj):
         for (role, _index), section in split_parts(interior_obj).items():
             if role == 'OPENING':
                 _solve_section_parts(section)
+                # A section may hold an interior of its own.
+                solve_cage_tree(section)
     elif interior_obj.get('IS_FRAMELESS_ITEMS_INTERIOR'):
         # Imported here: interior_items reads the face frame item rules,
         # and the face frame library imports this module while loading.

@@ -440,8 +440,11 @@ class hb_frameless_OT_change_interior_type(bpy.types.Operator):
             bpy.data.objects.remove(child, do_unlink=True)
 
     def get_parent_opening(self, interior_obj):
-        """Get the parent opening of the interior."""
+        """Get the parent opening of the interior (or the division section
+        it sits in)."""
         parent = interior_obj.parent
+        if parent is not None and parent.get('IS_FRAMELESS_INTERIOR_SECTION'):
+            return parent
         while parent:
             if 'IS_FRAMELESS_OPENING_CAGE' in parent or 'IS_FRAMELESS_BAY_CAGE' in parent:
                 return parent
@@ -565,6 +568,24 @@ class hb_frameless_OT_delete_interior_part(bpy.types.Operator):
         return {'FINISHED'}
 
 
+# What a division section can hold.
+_SECTION_TYPE_ITEMS = [
+    ('SHELVES', "Shelves", "Adjustable shelves"),
+    ('EMPTY', "Empty", "Nothing in the section"),
+    ('ROLLOUTS', "Roll-outs", "Drawer boxes on slides"),
+    ('PULLOUT_SHELVES', "Roll-out Shelves", "Flat shelves on slides"),
+    ('TRAY_DIVIDERS', "Tray Dividers", "Vertical dividers for trays"),
+    ('HALF_DEPTH_SHELVES', "Half Depth Shelves", "Shelves half the section depth"),
+    ('GLASS_SHELVES', "Glass Shelves", "Adjustable glass shelves"),
+    ('CLOSET_ROD', "Closet Rod", "Hang rod across the section"),
+    ('WINE_CUBBY', "Wine Storage Cubby", "Plywood wine cubbies"),
+    ('WINE_LATTICE', "Lattice Wine Rack", "45 degree lattice"),
+    ('WINE_X', "X-Style Wine Rack", "Two panels crossing corner to corner"),
+    ('STEMWARE_RACK', "Stemware Rack", "Slotted slats at the top"),
+    ('PLATE_RACK', "Plate Rack", "Dowels on 2 in centers"),
+]
+
+
 class hb_frameless_OT_custom_interior_vertical(bpy.types.Operator):
     bl_idname = "hb_frameless.custom_interior_vertical"
     bl_label = "Custom Vertical Interior Division"
@@ -582,16 +603,16 @@ class hb_frameless_OT_custom_interior_vertical(bpy.types.Operator):
     parent_obj_name: bpy.props.StringProperty(name="Parent Object") # type: ignore
 
     # Section types
-    section_1_type: bpy.props.EnumProperty(name="Section 1", items=[('SHELVES', "Shelves", ""), ('EMPTY', "Empty", "")], default='SHELVES') # type: ignore
-    section_2_type: bpy.props.EnumProperty(name="Section 2", items=[('SHELVES', "Shelves", ""), ('EMPTY', "Empty", "")], default='SHELVES') # type: ignore
-    section_3_type: bpy.props.EnumProperty(name="Section 3", items=[('SHELVES', "Shelves", ""), ('EMPTY', "Empty", "")], default='SHELVES') # type: ignore
-    section_4_type: bpy.props.EnumProperty(name="Section 4", items=[('SHELVES', "Shelves", ""), ('EMPTY', "Empty", "")], default='SHELVES') # type: ignore
-    section_5_type: bpy.props.EnumProperty(name="Section 5", items=[('SHELVES', "Shelves", ""), ('EMPTY', "Empty", "")], default='SHELVES') # type: ignore
-    section_6_type: bpy.props.EnumProperty(name="Section 6", items=[('SHELVES', "Shelves", ""), ('EMPTY', "Empty", "")], default='SHELVES') # type: ignore
-    section_7_type: bpy.props.EnumProperty(name="Section 7", items=[('SHELVES', "Shelves", ""), ('EMPTY', "Empty", "")], default='SHELVES') # type: ignore
-    section_8_type: bpy.props.EnumProperty(name="Section 8", items=[('SHELVES', "Shelves", ""), ('EMPTY', "Empty", "")], default='SHELVES') # type: ignore
-    section_9_type: bpy.props.EnumProperty(name="Section 9", items=[('SHELVES', "Shelves", ""), ('EMPTY', "Empty", "")], default='SHELVES') # type: ignore
-    section_10_type: bpy.props.EnumProperty(name="Section 10", items=[('SHELVES', "Shelves", ""), ('EMPTY', "Empty", "")], default='SHELVES') # type: ignore
+    section_1_type: bpy.props.EnumProperty(name="Section 1", items=_SECTION_TYPE_ITEMS, default='SHELVES') # type: ignore
+    section_2_type: bpy.props.EnumProperty(name="Section 2", items=_SECTION_TYPE_ITEMS, default='SHELVES') # type: ignore
+    section_3_type: bpy.props.EnumProperty(name="Section 3", items=_SECTION_TYPE_ITEMS, default='SHELVES') # type: ignore
+    section_4_type: bpy.props.EnumProperty(name="Section 4", items=_SECTION_TYPE_ITEMS, default='SHELVES') # type: ignore
+    section_5_type: bpy.props.EnumProperty(name="Section 5", items=_SECTION_TYPE_ITEMS, default='SHELVES') # type: ignore
+    section_6_type: bpy.props.EnumProperty(name="Section 6", items=_SECTION_TYPE_ITEMS, default='SHELVES') # type: ignore
+    section_7_type: bpy.props.EnumProperty(name="Section 7", items=_SECTION_TYPE_ITEMS, default='SHELVES') # type: ignore
+    section_8_type: bpy.props.EnumProperty(name="Section 8", items=_SECTION_TYPE_ITEMS, default='SHELVES') # type: ignore
+    section_9_type: bpy.props.EnumProperty(name="Section 9", items=_SECTION_TYPE_ITEMS, default='SHELVES') # type: ignore
+    section_10_type: bpy.props.EnumProperty(name="Section 10", items=_SECTION_TYPE_ITEMS, default='SHELVES') # type: ignore
 
     @classmethod
     def poll(cls, context):
@@ -846,16 +867,16 @@ class hb_frameless_OT_custom_interior_horizontal(bpy.types.Operator):
     parent_obj_name: bpy.props.StringProperty(name="Parent Object") # type: ignore
 
     # Section types
-    section_1_type: bpy.props.EnumProperty(name="Section 1", items=[('SHELVES', "Shelves", ""), ('EMPTY', "Empty", "")], default='SHELVES') # type: ignore
-    section_2_type: bpy.props.EnumProperty(name="Section 2", items=[('SHELVES', "Shelves", ""), ('EMPTY', "Empty", "")], default='SHELVES') # type: ignore
-    section_3_type: bpy.props.EnumProperty(name="Section 3", items=[('SHELVES', "Shelves", ""), ('EMPTY', "Empty", "")], default='SHELVES') # type: ignore
-    section_4_type: bpy.props.EnumProperty(name="Section 4", items=[('SHELVES', "Shelves", ""), ('EMPTY', "Empty", "")], default='SHELVES') # type: ignore
-    section_5_type: bpy.props.EnumProperty(name="Section 5", items=[('SHELVES', "Shelves", ""), ('EMPTY', "Empty", "")], default='SHELVES') # type: ignore
-    section_6_type: bpy.props.EnumProperty(name="Section 6", items=[('SHELVES', "Shelves", ""), ('EMPTY', "Empty", "")], default='SHELVES') # type: ignore
-    section_7_type: bpy.props.EnumProperty(name="Section 7", items=[('SHELVES', "Shelves", ""), ('EMPTY', "Empty", "")], default='SHELVES') # type: ignore
-    section_8_type: bpy.props.EnumProperty(name="Section 8", items=[('SHELVES', "Shelves", ""), ('EMPTY', "Empty", "")], default='SHELVES') # type: ignore
-    section_9_type: bpy.props.EnumProperty(name="Section 9", items=[('SHELVES', "Shelves", ""), ('EMPTY', "Empty", "")], default='SHELVES') # type: ignore
-    section_10_type: bpy.props.EnumProperty(name="Section 10", items=[('SHELVES', "Shelves", ""), ('EMPTY', "Empty", "")], default='SHELVES') # type: ignore
+    section_1_type: bpy.props.EnumProperty(name="Section 1", items=_SECTION_TYPE_ITEMS, default='SHELVES') # type: ignore
+    section_2_type: bpy.props.EnumProperty(name="Section 2", items=_SECTION_TYPE_ITEMS, default='SHELVES') # type: ignore
+    section_3_type: bpy.props.EnumProperty(name="Section 3", items=_SECTION_TYPE_ITEMS, default='SHELVES') # type: ignore
+    section_4_type: bpy.props.EnumProperty(name="Section 4", items=_SECTION_TYPE_ITEMS, default='SHELVES') # type: ignore
+    section_5_type: bpy.props.EnumProperty(name="Section 5", items=_SECTION_TYPE_ITEMS, default='SHELVES') # type: ignore
+    section_6_type: bpy.props.EnumProperty(name="Section 6", items=_SECTION_TYPE_ITEMS, default='SHELVES') # type: ignore
+    section_7_type: bpy.props.EnumProperty(name="Section 7", items=_SECTION_TYPE_ITEMS, default='SHELVES') # type: ignore
+    section_8_type: bpy.props.EnumProperty(name="Section 8", items=_SECTION_TYPE_ITEMS, default='SHELVES') # type: ignore
+    section_9_type: bpy.props.EnumProperty(name="Section 9", items=_SECTION_TYPE_ITEMS, default='SHELVES') # type: ignore
+    section_10_type: bpy.props.EnumProperty(name="Section 10", items=_SECTION_TYPE_ITEMS, default='SHELVES') # type: ignore
 
     @classmethod
     def poll(cls, context):
@@ -1121,17 +1142,7 @@ class hb_frameless_OT_calculate_shelf_quantity(bpy.types.Operator):
 
 # Change Interior choices that build an items interior, and the item
 # each one starts with.
-_ITEM_INTERIOR_KINDS = {
-    'ROLLOUTS': 'ROLLOUT',
-    'PULLOUT_SHELVES': 'PULLOUT_SHELF',
-    'HALF_DEPTH_SHELVES': 'HALF_DEPTH_SHELF',
-    'QUARTER_DEPTH_SHELVES': 'QUARTER_DEPTH_SHELF',
-    'GLASS_SHELVES': 'GLASS_SHELF',
-    'CLOSET_ROD': 'CLOSET_ROD',
-    'TRAY_DIVIDERS': 'TRAY_DIVIDERS',
-}
-_ITEM_INTERIOR_KINDS.update(
-    {kind: kind for kind in interior_items.BAR_STORAGE_KINDS})
+_ITEM_INTERIOR_KINDS = interior_items.INTERIOR_TYPE_KINDS
 
 _ITEM_KIND_ITEMS = [
     ('ROLLOUT', "Roll-outs", "Stack of drawer boxes on slides"),
@@ -1159,6 +1170,11 @@ def interior_host(obj):
     interior but has none, or None. Drawers, pullouts and split openings
     don't take one."""
     while obj is not None:
+        if obj.get('IS_FRAMELESS_INTERIOR_SECTION'):
+            # A division section takes an interior of its own.
+            if any(c.get('IS_FRAMELESS_INTERIOR_CAGE') for c in obj.children):
+                return None
+            return obj
         if obj.get('IS_FRAMELESS_OPENING_CAGE') or obj.get('IS_FRAMELESS_BAY_CAGE'):
             break
         obj = obj.parent
@@ -1180,6 +1196,10 @@ def interior_host(obj):
 def _target_interior(obj):
     """The interior at or above ``obj``, or the one directly inside the
     opening ``obj`` when the opening itself was picked."""
+    if obj is not None and obj.get('IS_FRAMELESS_INTERIOR_SECTION'):
+        # The section's own interior, not the division around it.
+        return next((c for c in obj.children
+                     if c.get('IS_FRAMELESS_INTERIOR_CAGE')), None)
     interior = hb_utils.get_interior_bp(obj)
     if interior is None and obj is not None:
         interior = next((c for c in obj.children
