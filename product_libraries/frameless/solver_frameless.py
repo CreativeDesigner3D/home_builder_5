@@ -246,6 +246,11 @@ def is_solved_cabinet(obj):
             and carcass_kind(obj) in _SOLVERS)
 
 
+# Carcass parts right-click to their finish condition.
+CARCASS_MENU_ROLES = ('LEFT_SIDE', 'RIGHT_SIDE', 'BACK', 'TOP', 'BOTTOM')
+CARCASS_PART_MENU = 'HOME_BUILDER_MT_carcass_part_commands'
+
+
 def carcass_parts(root):
     """``{role: object}`` for the carcass parts of one cabinet."""
     parts = {}
@@ -1378,6 +1383,8 @@ def recalculate_cabinet(obj):
         # A cabinet matched on its part names carries no tags yet; stamp
         # them now so the next solve finds its parts by tag.
         part_obj[PART_ROLE_KEY] = role
+        if role in CARCASS_MENU_ROLES and not part_obj.get('MENU_ID'):
+            part_obj['MENU_ID'] = CARCASS_PART_MENU
     kind = carcass_kind(root)
     if CARCASS_KEY not in root:
         root[CARCASS_KEY] = kind

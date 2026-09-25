@@ -478,9 +478,134 @@ class hb_frameless_OT_applied_panel_prompts(bpy.types.Operator):
         col.prop(self, "right_stile_width")
 
 
+# The carcass part behind each side a finish condition is set on.
+FINISH_SIDE_ROLES = {
+    'LEFT': 'LEFT_SIDE',
+    'RIGHT': 'RIGHT_SIDE',
+    'BACK': 'BACK',
+    'TOP': 'TOP',
+    'BOTTOM': 'BOTTOM',
+}
+FINISH_ROLE_SIDES = {role: side for side, role in FINISH_SIDE_ROLES.items()}
+# Sides an applied panel can go on.
+PANEL_SIDES = ('LEFT', 'RIGHT', 'BACK')
+FINISH_CONDITIONS = [
+    ('UNFINISHED', "Unfinished", "The outside face in the interior material"),
+    ('FINISHED', "Finished", "The outside face in the finish material"),
+    ('SLAB', "Applied Slab Panel", "A finished slab panel applied over the side"),
+    ('5PIECE', "Applied 5-Piece Panel", "A five-piece panel matching the doors"),
+]
+
+
+def finish_condition(cabinet_obj, side):
+    """The side's condition as FINISH_CONDITIONS names it."""
+    for child in cabinet_obj.children:
+        if side in PANEL_SIDES and child.get('IS_APPLIED_END_' + side):
+            return '5PIECE' if child.get('IS_APPLIED_PANEL_5PIECE') else 'SLAB'
+    part = solver_frameless.carcass_parts(cabinet_obj).get(FINISH_SIDE_ROLES[side])
+    if part is None:
+        return None
+    # Every carcass part faces out on its Bottom Surface.
+    return 'FINISHED' if part.get('Finish Bottom', True) else 'UNFINISHED'
+
+
+def set_finish_condition(context, cabinet_obj, side, condition):
+    """Put one side of one cabinet in ``condition``. The panels come
+    from Update Finished End, sized to the cabinet's doors; a covered
+    side goes unfinished under its panel."""
+    if condition in ('SLAB', '5PIECE') and side not in PANEL_SIDES:
+        return False
+    part = solver_frameless.carcass_parts(cabinet_obj).get(FINISH_SIDE_ROLES[side])
+    if side in PANEL_SIDES:
+        kind = condition if condition in ('SLAB', '5PIECE') else 'NONE'
+        kwargs = {'side': side, 'finished_end_type': kind}
+        door_style = get_door_style_from_front(get_door_from_cabinet(cabinet_obj))
+        if kind == '5PIECE' and door_style:
+            for key, arg in (('top_rail_width', 'top_rail_width'),
+                             ('bottom_rail_width', 'bottom_rail_width'),
+                             ('left_stile_width', 'stile_width')):
+                if door_style.get(key):
+                    kwargs[arg] = door_style[key]
+        with context.temp_override(object=cabinet_obj, active_object=cabinet_obj,
+                                   selected_objects=[cabinet_obj]):
+            bpy.ops.hb_frameless.update_finished_end('EXEC_DEFAULT', **kwargs)
+    if part is not None:
+        part['Finish Top'] = False
+        part['Finish Bottom'] = condition == 'FINISHED'
+    return True
+
+
+def _paint(cabinet_obj):
+    styles = hb_project.get_main_scene().hb_frameless.cabinet_styles
+    if not len(styles):
+        return
+    index = cabinet_obj.get('CABINET_STYLE_INDEX', 0)
+    style = styles[index] if 0 <= index < len(styles) else styles[0]
+    style.apply_materials_to_cabinet(cabinet_obj)
+
+
+class hb_frameless_OT_set_finish_condition(bpy.types.Operator):
+    """Set the finish condition of a side of the selected cabinets, or of
+    the selected carcass parts"""
+    bl_idname = "hb_frameless.set_finish_condition"
+    bl_label = "Finish Condition"
+    bl_description = "Set how this side is finished"
+    bl_options = {'UNDO'}
+
+    side: bpy.props.EnumProperty(
+        name="Side",
+        items=[('PART', "Selected Parts", "The carcass parts selected"),
+               ('LEFT', "Left", ""), ('RIGHT', "Right", ""), ('BACK', "Back", ""),
+               ('TOP', "Top", ""), ('BOTTOM', "Bottom", "")],
+        default='PART') # type: ignore
+    condition: bpy.props.EnumProperty(
+        name="Condition", items=FINISH_CONDITIONS, default='FINISHED') # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        return context.object is not None and hb_utils.get_cabinet_bp(context.object) is not None
+
+    def targets(self, context):
+        """(cabinet, side) pairs: the selected carcass parts, or the named
+        side of every selected cabinet."""
+        objs = list(context.selected_objects)
+        if context.object is not None and context.object not in objs:
+            objs.append(context.object)
+        pairs = []
+        for obj in objs:
+            if self.side == 'PART':
+                side = FINISH_ROLE_SIDES.get(obj.get(solver_frameless.PART_ROLE_KEY))
+                cabinet = obj.parent
+                if side is None or cabinet is None or not cabinet.get('IS_FRAMELESS_CABINET_CAGE'):
+                    continue
+            else:
+                side = self.side
+                cabinet = hb_utils.get_cabinet_bp(obj)
+                if cabinet is None or not cabinet.get('IS_FRAMELESS_CABINET_CAGE'):
+                    continue
+            if (cabinet, side) not in pairs:
+                pairs.append((cabinet, side))
+        return pairs
+
+    def execute(self, context):
+        pairs = self.targets(context)
+        done = set()
+        for cabinet, side in pairs:
+            if set_finish_condition(context, cabinet, side, self.condition):
+                done.add(cabinet)
+        for cabinet in done:
+            _paint(cabinet)
+            hb_utils.run_calc_fix(context, cabinet)
+        if not done:
+            self.report({'WARNING'}, "Nothing to set here")
+            return {'CANCELLED'}
+        return {'FINISHED'}
+
+
 classes = (
     hb_frameless_OT_update_finished_end,
     hb_frameless_OT_applied_panel_prompts,
+    hb_frameless_OT_set_finish_condition,
 )
 
 

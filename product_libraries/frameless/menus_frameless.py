@@ -64,6 +64,51 @@ class HOME_BUILDER_MT_applied_end_commands(bpy.types.Menu):
         layout.operator("hb_frameless.remove_applied_end", text="Remove Applied End")
 
 
+def _draw_finish_conditions(layout, side, sides_label=None, panels=True):
+    from .operators import ops_finished_ends
+    if sides_label:
+        layout.label(text=sides_label)
+    for ident, name, _desc in ops_finished_ends.FINISH_CONDITIONS:
+        if not panels and ident in ('SLAB', '5PIECE'):
+            continue
+        op = layout.operator("hb_frameless.set_finish_condition", text=name)
+        op.side = side
+        op.condition = ident
+
+
+class HOME_BUILDER_MT_finish_condition(bpy.types.Menu):
+    """A side's finish condition on every selected cabinet."""
+    bl_label = "Finish Condition"
+
+    def draw(self, context):
+        layout = self.layout
+        for side, label in (('LEFT', "Left End:"), ('RIGHT', "Right End:"),
+                            ('BACK', "Back:")):
+            _draw_finish_conditions(layout, side, label)
+            layout.separator()
+        _draw_finish_conditions(layout, 'TOP', "Top:", panels=False)
+
+
+class HOME_BUILDER_MT_carcass_part_commands(bpy.types.Menu):
+    """A side, back, top or bottom of a cabinet: its finish condition
+    (for every carcass part selected), then the cabinet's commands."""
+    bl_label = "Carcass Part Commands"
+
+    def draw(self, context):
+        from . import solver_frameless
+        from .operators import ops_finished_ends
+        layout = self.layout
+        obj = context.object
+        side = ops_finished_ends.FINISH_ROLE_SIDES.get(
+            obj.get(solver_frameless.PART_ROLE_KEY)) if obj else None
+        if side is not None:
+            _draw_finish_conditions(layout, 'PART', side.title() + " Finish:",
+                                    panels=side in ops_finished_ends.PANEL_SIDES)
+            layout.separator()
+        layout.operator("hb_frameless.cabinet_prompts", text="Cabinet Prompts")
+        layout.operator("hb_frameless.finish_interior", text="Finish Interior")
+
+
 class HOME_BUILDER_MT_cabinet_commands(bpy.types.Menu):
     bl_label = "Cabinet Commands"
 
@@ -79,6 +124,7 @@ class HOME_BUILDER_MT_cabinet_commands(bpy.types.Menu):
         layout.operator("hb_frameless.drop_cabinet_to_countertop", text="Drop to Countertop")
         layout.separator()
         layout.menu("HOME_BUILDER_MT_applied_ends", text="Applied Ends")
+        layout.menu("HOME_BUILDER_MT_finish_condition", text="Finish Condition")
         layout.operator("hb_frameless.finish_interior", text="Finish Interior")
         
         # Show "Create Cabinet Group" if multiple cabinets are selected
@@ -104,6 +150,8 @@ class HOME_BUILDER_MT_bay_commands(bpy.types.Menu):
         layout.operator("hb_frameless.edit_splitter_openings", text="Edit Opening Sizes")
         layout.separator()
         layout.menu("HOME_BUILDER_MT_bay_change_configuration", text="Change Configuration")
+        layout.separator()
+        layout.operator("hb_frameless.finish_interior", text="Finish Interior")
         
 
 class HOME_BUILDER_MT_bay_change_configuration(bpy.types.Menu):
@@ -233,6 +281,7 @@ class HOME_BUILDER_MT_opening_commands(bpy.types.Menu):
         layout.operator("hb_frameless.edit_splitter_openings", text="Edit Opening Sizes")
         _draw_drawer_interior(layout, context)
         _draw_open_close(layout, context)
+        layout.operator("hb_frameless.finish_interior", text="Finish Interior")
         layout.separator()
         layout.menu("HOME_BUILDER_MT_opening_change", text="Change Opening")
         layout.menu("HOME_BUILDER_MT_interior_change", text="Change Interior")
@@ -460,6 +509,8 @@ class HOME_BUILDER_MT_appliance_commands(bpy.types.Menu):
 
 classes = (
     HOME_BUILDER_MT_applied_ends,
+    HOME_BUILDER_MT_finish_condition,
+    HOME_BUILDER_MT_carcass_part_commands,
     HOME_BUILDER_MT_cabinet_commands,
     HOME_BUILDER_MT_bay_commands,
     HOME_BUILDER_MT_bay_change_configuration,
