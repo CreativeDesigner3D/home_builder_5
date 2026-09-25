@@ -728,6 +728,97 @@ def _solve_corner_doors(root, parts, p, dim_x, dim_y, dim_z):
                 _solve_pull(right, pull, length, width, ft, swing == 1)
 
 
+def _diagonal_frame(root, dim_x, dim_y):
+    """The angled face of a diagonal corner: its left end A (front corner
+    of the left wing), the unit vector u from A to its right end, the
+    outward normal n, and its length."""
+    ld = float(prompt(root, 'Left Depth', dim_y))
+    rd = float(prompt(root, 'Right Depth', dim_y))
+    ax, ay = ld, -dim_y
+    bx, by = dim_x, -rd
+    length = math.hypot(bx - ax, by - ay)
+    if length <= 1e-6:
+        return None
+    ux, uy = (bx - ax) / length, (by - ay) / length
+    return (ax, ay), (ux, uy), (uy, -ux), length
+
+
+def _diagonal_matrix(u, n, origin):
+    """A part's placement on the angled face: length up, across along
+    -u (so a Mirror Y part runs +u from ``origin``), thickness out along
+    n."""
+    m = Matrix(((0.0, -u[0], n[0]), (0.0, -u[1], n[1]), (1.0, 0.0, 0.0)))
+    return m.to_euler('XYZ'), Vector(origin)
+
+
+def _solve_diagonal_door(root, parts, p, dim_x, dim_y, dim_z):
+    """A diagonal corner's door: square to the angled face, a door gap
+    off it, the width of the face less a reveal each side."""
+    door = parts.get('DIAGONAL_DOOR')
+    if door is None:
+        return
+    frame = _diagonal_frame(root, dim_x, dim_y)
+    if frame is None:
+        return
+    (ax, ay), u, n, face = frame
+    mt, tkh = p.mt, p.tkh
+    ft = float(prompt(root, 'Front Thickness', inch(0.75)))
+    gap = float(prompt(root, 'Door to Cabinet Gap', inch(0.125)))
+    reveal = float(prompt(root, 'Outer Reveal', inch(0.0625)))
+    top = mt - float(prompt(root, 'Top Reveal', inch(0.0625)))
+    bottom = mt - float(prompt(root, 'Bottom Reveal', 0.0))
+    bottom_t = 0.0 if p.rb else mt
+    z = tkh + bottom_t - bottom
+    length = dim_z - tkh - bottom_t - mt + top + bottom
+    width = max(face - 2.0 * reveal, 0.0)
+    ox = ax + n[0] * gap + u[0] * reveal
+    oy = ay + n[1] * gap + u[1] * reveal
+    euler, loc = _diagonal_matrix(u, n, (ox, oy, z))
+    clear_drivers(door)
+    door.rotation_euler = euler
+    set_part(door, loc, length=length, width=width, thickness=ft,
+             visible=not door.hide_viewport)
+    swing = int(prompt(root, 'Door Swing', 0))
+    for pull in door.children:
+        if pull.get('IS_CABINET_PULL'):
+            _solve_pull(door, pull, length, width, ft, False)
+            if swing == 1:
+                # Hinged on the right: the pull goes to the left end.
+                offset = float(prompt(door, 'Handle Horizontal Location', inch(2.0)))
+                pull.location.y = -offset
+
+
+def _solve_diagonal_toe_kick(root, parts, p, dim_x, dim_y):
+    """A diagonal corner's kick runs along the angled face at the setback,
+    between the two sides; the wing kicks of a pie cut are not used."""
+    kick = parts.get('LEFT_TOE_KICK')
+    other = parts.get('RIGHT_TOE_KICK')
+    if other is not None:
+        other.hide_viewport = other.hide_render = True
+    if kick is None:
+        return
+    frame = _diagonal_frame(root, dim_x, dim_y)
+    if frame is None:
+        return
+    (ax, ay), u, n, _face = frame
+    mt, tks = p.mt, p.tks
+    # The kick's face line, and where it meets the two sides' inside faces.
+    fx, fy = ax - n[0] * tks, ay - n[1] * tks
+    t0 = ((-dim_y + mt) - fy) / u[1] if abs(u[1]) > 1e-6 else 0.0
+    t1 = ((dim_x - mt) - fx) / u[0] if abs(u[0]) > 1e-6 else 0.0
+    length = max(t1 - t0, 0.0)
+    sx, sy = fx + u[0] * t0 - n[0] * mt, fy + u[1] * t0 - n[1] * mt
+    # Length along u, height up, thickness out along n to the face.
+    m = Matrix(((u[0], 0.0, n[0]), (u[1], 0.0, n[1]), (0.0, 1.0, 0.0)))
+    clear_drivers(kick)
+    # Built for a pie cut's wing, flipped; along the angle it stands up.
+    GeoNodeCutpart(kick).set_input('Mirror Y', False)
+    kick.rotation_euler = m.to_euler('XYZ')
+    set_part(kick, (sx, sy, 0.0), length=length, width=p.tkh, thickness=mt,
+             visible=not p.rb)
+    kick.hide_viewport = kick.hide_render = p.rb
+
+
 def _solve_corner_base(root, parts, p, dim_x, dim_y, dim_z):
     mt, tkh = p.mt, p.tkh
     ld = float(prompt(root, 'Left Depth', dim_y))
@@ -802,6 +893,9 @@ def _solve_corner_base(root, parts, p, dim_x, dim_y, dim_z):
 
     _solve_corner_shape(root, parts, p, dim_x, dim_y, dim_z)
     _solve_corner_doors(root, parts, p, dim_x, dim_y, dim_z)
+    if root.get('CORNER_TYPE') == 'DIAGONAL':
+        _solve_diagonal_toe_kick(root, parts, p, dim_x, dim_y)
+        _solve_diagonal_door(root, parts, p, dim_x, dim_y, dim_z)
 
 
 def _solve_corner_upper(root, parts, p, dim_x, dim_y, dim_z):
@@ -839,6 +933,8 @@ def _solve_corner_upper(root, parts, p, dim_x, dim_y, dim_z):
 
     _solve_corner_shape(root, parts, p, dim_x, dim_y, dim_z)
     _solve_corner_doors(root, parts, p, dim_x, dim_y, dim_z)
+    if root.get('CORNER_TYPE') == 'DIAGONAL':
+        _solve_diagonal_door(root, parts, p, dim_x, dim_y, dim_z)
 
 
 # The least a blind corner keeps for its doors, whatever the blind asks.

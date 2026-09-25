@@ -1928,6 +1928,22 @@ class CornerCabinet(Cabinet):
         right_door.set_input("Mirror Y", True)
         right_door.obj[solver_frameless.PART_ROLE_KEY] = 'RIGHT_DOOR'
 
+    def add_diagonal_door(self):
+        """One door on the angled face of a diagonal corner, hinged left
+        or right; the solver places it."""
+        self.add_property('Front Thickness', 'DISTANCE', inch(.75))
+        self.add_property('Door to Cabinet Gap', 'DISTANCE', inch(.125))
+        self.add_property('Top Reveal', 'DISTANCE', inch(.0625))
+        self.add_property('Bottom Reveal', 'DISTANCE', inch(0))
+        self.add_property('Outer Reveal', 'DISTANCE', inch(.0625))
+        self.add_property("Door Swing", 'COMBOBOX', 0, combobox_items=["Left", "Right"])
+        door = CabinetDoor()
+        door.door_pull_location = self.door_pull_location
+        door.create("Diagonal Door")
+        door.obj.parent = self.obj
+        door.set_input("Mirror Y", True)
+        door.obj[solver_frameless.PART_ROLE_KEY] = 'DIAGONAL_DOOR'
+
     def _add_corner_leg_levelers(self):
         """Add leg leveler hardware at the four outer corners of the L."""
         ll_obj = self._get_leg_leveler_object()
@@ -2042,6 +2058,8 @@ class DiagonalCornerBaseCabinet(CornerCabinet):
         self.obj['CABINET_TYPE'] = 'BASE'
         self.obj['CORNER_TYPE'] = 'DIAGONAL'
         self.obj['IS_CORNER_CABINET'] = True
+        self.add_diagonal_door()
+        solver_frameless.recalculate_cabinet(self.obj)
 
     def add_corner_modifier(self, part):
         """Diagonal uses CPM_CHAMFER to cut a 45 degree angle; the solver
@@ -2100,10 +2118,19 @@ class DiagonalCornerTallCabinet(CornerCabinet):
         self.height = props.tall_cabinet_height
         self.depth = props.tall_cabinet_depth
 
+    door_pull_location = "Tall"
+
     def create(self, name="Diagonal Corner Tall"):
-        self.create_cabinet(name)
+        self.create_corner_base_carcass(name)
         self.obj['CABINET_TYPE'] = 'TALL'
         self.obj['CORNER_TYPE'] = 'DIAGONAL'
+        self.obj['IS_CORNER_CABINET'] = True
+        self.add_diagonal_door()
+        solver_frameless.recalculate_cabinet(self.obj)
+
+    def add_corner_modifier(self, part):
+        chamfer = part.add_part_modifier('CPM_CHAMFER', 'Chamfer')
+        chamfer.set_input('Flip X', True)
 
 
 class PieCutCornerTallCabinet(CornerCabinet):
@@ -2141,10 +2168,22 @@ class DiagonalCornerUpperCabinet(CornerCabinet):
         self.height = props.upper_cabinet_height
         self.depth = props.upper_cabinet_depth
 
+    door_pull_location = "Upper"
+
     def create(self, name="Diagonal Corner Upper"):
-        self.create_cabinet(name)
+        self.create_corner_upper_carcass(name)
         self.obj['CABINET_TYPE'] = 'UPPER'
         self.obj['CORNER_TYPE'] = 'DIAGONAL'
+        self.obj['IS_CORNER_CABINET'] = True
+        # An upper has no toe kick; the door reads these as zero.
+        self.add_property('Toe Kick Height', 'DISTANCE', 0)
+        self.add_property('Remove Bottom', 'CHECKBOX', False)
+        self.add_diagonal_door()
+        solver_frameless.recalculate_cabinet(self.obj)
+
+    def add_corner_modifier(self, part):
+        chamfer = part.add_part_modifier('CPM_CHAMFER', 'Chamfer')
+        chamfer.set_input('Flip X', True)
 
 
 class PieCutCornerUpperCabinet(CornerCabinet):

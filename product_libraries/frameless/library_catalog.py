@@ -66,6 +66,9 @@ SECTIONS = (
                           "Frameless Tall Corner"),
                          ("Upper", "Pie Cut Corner Upper",
                           "Frameless Upper Corner"))),
+            ("Diagonal", (("Base", "Diagonal Corner Base", "Diagonal Corner Base"),
+                          ("Tall", "Diagonal Corner Tall", "Diagonal Corner Tall"),
+                          ("Upper", "Diagonal Corner Upper", "Diagonal Corner Upper"))),
             # Placed like a plain cabinet (their key carries no 'Corner',
             # which is what the placement tool snaps corner products on).
             ("Blind", (("Base", "Blind Base", "Blind Base"),
