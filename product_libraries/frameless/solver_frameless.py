@@ -293,6 +293,54 @@ def _solve_applied_ends(root, parts, p, dim_x, dim_y, dim_z):
 # Carcass solve
 # ---------------------------------------------------------------------------
 
+# A flush toe kick stands in the plane of the doors: the board comes
+# forward under them, across the full width of the cabinet, and the sides
+# run straight to the floor with no notch.
+FLUSH_TOE_KICK_KEY = 'Flush Toe Kick'
+
+
+def _front_plane(root):
+    """(inset, front thickness, door gap) of the first front insert in
+    the cabinet -- where its doors and drawer fronts stand."""
+    bay = next((c for c in root.children if c.get('IS_FRAMELESS_BAY_CAGE')),
+               None)
+    for obj in (bay.children_recursive if bay is not None else ()):
+        if 'Inset Front' in obj and 'Front Thickness' in obj:
+            return (bool(obj.get('Inset Front', False)),
+                    float(prompt(obj, 'Front Thickness', inch(0.75))),
+                    float(prompt(obj, 'Door to Cabinet Gap', inch(0.125))))
+    return False, inch(0.75), inch(0.125)
+
+
+def kick_front_setback(root):
+    """How far the toe kick's face stands back from the carcass front:
+    the setback, or for a flush toe kick the negative of how far the
+    fronts stand forward of it (none for inset fronts)."""
+    if not prompt(root, FLUSH_TOE_KICK_KEY, False):
+        return float(prompt(root, 'Toe Kick Setback', 0.0))
+    inset, front_t, gap = _front_plane(root)
+    return 0.0 if inset else -(gap + front_t)
+
+
+def _solve_toe_kick(root, parts, p, dim_x, dim_y):
+    part = parts.get('TOE_KICK')
+    if part is None:
+        return
+    inner = dim_x - p.mt * 2.0
+    if p.flush:
+        inset, front_t, gap = _front_plane(root)
+        if inset:
+            # Inset fronts face the carcass front, so the kick does too.
+            set_part(part, (p.mt, -dim_y, 0.0), length=inner, width=p.tkh,
+                     thickness=p.mt, visible=not p.rb)
+        else:
+            set_part(part, (0.0, -dim_y - gap - front_t, 0.0), length=dim_x,
+                     width=p.tkh, thickness=p.mt, visible=not p.rb)
+        return
+    set_part(part, (p.mt, -dim_y + p.tks, 0.0), length=inner, width=p.tkh,
+             thickness=p.mt, visible=not p.rb)
+
+
 class _Prompts:
     def __init__(self, root):
         self.mt = float(prompt(root, 'Material Thickness', inch(0.75)))
@@ -303,6 +351,7 @@ class _Prompts:
         self.sw = float(prompt(root, 'Stretcher Width', inch(4)))
         self.saw = float(prompt(root, 'Sink Apron Width', inch(7)))
         self.lli = float(prompt(root, 'Leg Leveler Inset', 0.0))
+        self.flush = bool(prompt(root, FLUSH_TOE_KICK_KEY, False))
 
 
 def _solve_sides(parts, p, dim_x, dim_y, dim_z, tkh):
@@ -316,7 +365,8 @@ def _solve_sides(parts, p, dim_x, dim_y, dim_z, tkh):
             set_part(part, (x, 0.0, 0.0), length=dim_z, width=dim_y,
                      thickness=p.mt)
             set_modifier(part, NOTCH_MOD_NAME,
-                         (('X', tkh), ('Y', p.tks), ('Route Depth', p.mt)))
+                         (('X', tkh), ('Y', 0.0 if p.flush else p.tks),
+                          ('Route Depth', p.mt)))
         else:
             set_part(part, (x, 0.0, tkh), length=dim_z - tkh, width=dim_y,
                      thickness=p.mt)
@@ -338,11 +388,12 @@ def _solve_top_options(parts, p, dim_x, dim_y, dim_z, back_stretcher_y):
                  thickness=p.mt, visible=p.btc == TOP_SINK)
 
 
-def _solve_toe_kick_extras(parts, p, dim_x, dim_y):
+def _solve_toe_kick_extras(parts, p, dim_x, dim_y, root=None):
     part = parts.get('LADDER_BASE')
     if part is not None:
-        set_cage(part, (0.0, -dim_y + p.tks, 0.0), dim_x=dim_x,
-                 dim_y=dim_y - p.tks, dim_z=p.tkh)
+        tks = kick_front_setback(root) if root is not None else p.tks
+        set_cage(part, (0.0, -dim_y + tks, 0.0), dim_x=dim_x,
+                 dim_y=dim_y - tks, dim_z=p.tkh)
     lli = p.lli
     for role, x, y in (('LEG_LEVELER_FL', lli, -(dim_y - lli)),
                        ('LEG_LEVELER_FR', dim_x - lli, -(dim_y - lli)),
@@ -369,10 +420,7 @@ def _solve_base(root, parts, p, dim_x, dim_y, dim_z):
                  length=dim_z if rb else dim_z - tkh - mt,
                  width=inner, thickness=mt)
 
-    part = parts.get('TOE_KICK')
-    if part is not None:
-        set_part(part, (mt, -dim_y + p.tks, 0.0), length=inner, width=tkh,
-                 thickness=mt, visible=not rb)
+    _solve_toe_kick(root, parts, p, dim_x, dim_y)
 
     part = parts.get('TOP')
     if part is not None:
@@ -388,7 +436,7 @@ def _solve_base(root, parts, p, dim_x, dim_y, dim_z):
                  dim_y=dim_y - mt, dim_z=dim_z - tkh - bottom_t - mt)
         _sync_bay_sink(root, part, dim_z - tkh - bottom_t)
 
-    _solve_toe_kick_extras(parts, p, dim_x, dim_y)
+    _solve_toe_kick_extras(parts, p, dim_x, dim_y, root)
 
 
 def _sync_bay_sink(root, bay_obj, top_z):
@@ -417,10 +465,7 @@ def _solve_tall(root, parts, p, dim_x, dim_y, dim_z):
                  length=(dim_z if rb else dim_z - tkh - mt) - mt,
                  width=inner, thickness=mt)
 
-    part = parts.get('TOE_KICK')
-    if part is not None:
-        set_part(part, (mt, -dim_y + p.tks, 0.0), length=inner, width=tkh,
-                 thickness=mt, visible=not rb)
+    _solve_toe_kick(root, parts, p, dim_x, dim_y)
 
     part = parts.get('TOP')
     if part is not None:
@@ -433,7 +478,7 @@ def _solve_tall(root, parts, p, dim_x, dim_y, dim_z):
         set_cage(part, (mt, -dim_y, tkh + bottom_t), dim_x=inner,
                  dim_y=dim_y - mt, dim_z=dim_z - tkh - bottom_t - mt)
 
-    _solve_toe_kick_extras(parts, p, dim_x, dim_y)
+    _solve_toe_kick_extras(parts, p, dim_x, dim_y, root)
 
 
 def _solve_upper(root, parts, p, dim_x, dim_y, dim_z):

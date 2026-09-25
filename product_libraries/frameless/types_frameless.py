@@ -34,6 +34,7 @@ class Cabinet(GeoNodeCage):
         props = bpy.context.scene.hb_frameless
         self.add_property('Toe Kick Height', 'DISTANCE', props.default_toe_kick_height)
         self.add_property('Toe Kick Setback', 'DISTANCE', props.default_toe_kick_setback)
+        self.add_property('Flush Toe Kick', 'CHECKBOX', False)
         self.add_property('Remove Bottom', 'CHECKBOX', False)
         tkt_index = self._get_toe_kick_type_index()
         self.add_property('Toe Kick Type', 'COMBOBOX', tkt_index,

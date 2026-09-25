@@ -99,7 +99,10 @@ class _Member:
         self.z = origin.z
         self.depth = cage.get_input('Dim Y')
         self.kick_height = float(obj.get('Toe Kick Height', 0.0))
-        self.kick_setback = float(obj.get('Toe Kick Setback', 0.0))
+        # Negative for a flush toe kick: the base comes forward under
+        # the fronts.
+        from .. import solver_frameless
+        self.kick_setback = solver_frameless.kick_front_setback(obj)
 
     def continues(self, other):
         """True when ``other`` carries straight on from this cabinet."""
@@ -230,8 +233,10 @@ def create_base_assembly(context, frame, members):
     first, last = members[0], members[-1]
     open_left, open_right = exposed_ends(context, frame, members)
     setback = first.kick_setback
-    x0 = first.x0 + (setback if open_left else 0.0)
-    x1 = last.x1 - (setback if open_right else 0.0)
+    # A flush kick runs out to an exposed end rather than stepping back.
+    end_setback = max(setback, 0.0)
+    x0 = first.x0 + (end_setback if open_left else 0.0)
+    x1 = last.x1 - (end_setback if open_right else 0.0)
     if x1 - x0 <= 0.0 or first.kick_height <= 0.0:
         return None
 
