@@ -600,6 +600,33 @@ def update_countertop_material(self, context):
     apply_countertop_material()
 
 
+def drawer_box_system_items(self, context):
+    return _drawer_box_system_items
+
+
+def _build_drawer_box_system_items():
+    items = [('PARAMETRIC', "Sized to the Drawer",
+              "Each box follows its drawer's own clearances")]
+    try:
+        from ..closets import drawer_boxes_closets
+        items += list(drawer_boxes_closets.BOX_TYPES)
+    except Exception:
+        pass
+    return items
+
+
+_drawer_box_system_items = _build_drawer_box_system_items()
+
+
+def update_drawer_box_system(self, context):
+    """Every frameless drawer box re-sizes for the system picked."""
+    from . import solver_frameless
+    for obj in context.scene.objects:
+        if obj.get('IS_FRAMELESS_CABINET_CAGE') and not (
+                obj.parent and obj.parent.get('IS_FRAMELESS_CABINET_CAGE')):
+            solver_frameless.recalculate_cabinet(obj)
+
+
 def update_top_cabinet_clearance(self, context):
     hb_props = context.scene.home_builder
     # Heights typed in by hand are the room's until the override is
@@ -2168,6 +2195,15 @@ class Frameless_Scene_Props(PropertyGroup):
                                              default=units.inch(0.0),
                                              unit='LENGTH')# type: ignore
 
+    drawer_box_system: EnumProperty(
+        name="Drawer Box",
+        description="The drawer box system every frameless drawer is "
+                    "built with - the closet library's systems, sized to "
+                    "their standard heights and lengths, or boxes sized "
+                    "to each drawer's own clearances",
+        items=drawer_box_system_items,
+        update=update_drawer_box_system)  # type: ignore
+
     countertop_material: EnumProperty(
         name="Countertop Material",
         description="The laminate the frameless countertops are surfaced "
@@ -2718,6 +2754,8 @@ class Frameless_Scene_Props(PropertyGroup):
         """Draw the drawer box options UI section."""
         row = layout.row()
         row.prop(self, 'include_drawer_boxes', text="Include Drawer Boxes in New Cabinets")
+        row = layout.row()
+        row.prop(self, 'drawer_box_system', text="Drawer Box")
 
     def draw_countertop_ui(self, layout, context):
         """Draw the countertop options UI section."""

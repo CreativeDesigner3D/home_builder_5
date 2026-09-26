@@ -1824,6 +1824,15 @@ def _solve_pull(front_obj, pull_obj, length, width, thickness, hidden):
     pull_obj.hide_render = hidden
 
 
+DRAWER_BOX_PARAMETRIC = 'PARAMETRIC'
+
+
+def _drawer_box_system():
+    """The room's Drawer Box pick (Options > Drawer Boxes)."""
+    props = getattr(bpy.context.scene, 'hb_frameless', None)
+    return getattr(props, 'drawer_box_system', DRAWER_BOX_PARAMETRIC)
+
+
 def _solve_drawer_box(front_obj, box_obj, insert_obj, length, width,
                       overlays, hidden):
     clear_drivers(box_obj)
@@ -1837,7 +1846,29 @@ def _solve_drawer_box(front_obj, box_obj, insert_obj, length, width,
     dims = (max(width - left - right - side * 2.0, 0.0),
             max(depth - rear, 0.0),
             max(length - top - bottom - top_clr - bottom_clr, 0.0))
-    set_cage(box_obj, (bottom + bottom_clr, -left - side, 0.0), *dims)
+    location = (bottom + bottom_clr, -left - side, 0.0)
+    system = _drawer_box_system()
+    for key in ('hb_drawer_box_type', 'hb_drawer_box_size'):
+        if key in box_obj:
+            del box_obj[key]
+    if system == 'NONE':
+        hidden = True
+    elif system != DRAWER_BOX_PARAMETRIC:
+        # A bought system (or standard wood boxes): the box takes the
+        # system's standard size for the opening it sits in and the
+        # system's own clearances, the way the closet library sizes one.
+        from ..closets import drawer_boxes_closets as boxes
+        clear_h = max(length - top - bottom, 0.0)
+        clear_w = max(width - left - right, 0.0)
+        sized = boxes.size_box(system, clear_h, depth, dims[2], dims[1])
+        if sized is not None:
+            box_h, box_d, tag = sized
+            gap = boxes.side_gap(system)
+            dims = (max(clear_w - gap * 2.0, 0.0), box_d, box_h)
+            location = (bottom + boxes.floor_gap(system), -left - gap, 0.0)
+            box_obj['hb_drawer_box_type'] = system
+            box_obj['hb_drawer_box_size'] = tag
+    set_cage(box_obj, location, *dims)
     box_obj.hide_viewport = hidden
     box_obj.hide_render = hidden
     # The box construction pick and the inserts inside the box.
