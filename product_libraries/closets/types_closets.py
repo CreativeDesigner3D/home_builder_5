@@ -3953,10 +3953,26 @@ class ClosetStarter(GeoNodeCage):
         the segments it was between and removing a division merges the
         columns either side of it; either way the openings that merge
         keep their contents at the height they were put at."""
+        # A shelf put into an opening that is dealing clip shelves cuts
+        # the opening in two, and the new opening above it starts
+        # empty. Shelves standing above the cut go with it: the lower
+        # opening keeps the count below and the upper takes the count
+        # above, both held so neither re-deals by its new height, and
+        # a shelf held at a height of its own moves up at that height.
+        # Keyed by the cut's bay-interior height, settled once the
+        # cells below are made.
+        carry = {}
+        st = run_sizes(self.obj).shelf_thickness
         for opening in [c for c in bay_obj.children
                         if c.get(TAG_OPENING_CAGE)]:
             seg_bottom = opening.get('hb_seg_bottom', 0.0)
             side = opening.get(PROP_OPENING_SIDE, 'FRONT')
+            new_shelves = [c for c in opening.children
+                           if c.get('hb_part_role') == PART_ROLE_FIXED_SHELF
+                           and not c.get('hb_preview')
+                           and not c.get(PROP_DRAWER_CAP)]
+            if len(new_shelves) == 1:
+                self._carry_shelves_above(opening, new_shelves[0], carry)
             for child in list(opening.children):
                 # The shelf a drawer bank carries on top of itself is
                 # part of the bank, not a shelf someone put in to split
@@ -4049,6 +4065,7 @@ class ClosetStarter(GeoNodeCage):
                             len(row_cuts[k]))
                     slots[(k, j)].append((bottom, left, seg_h, op_obj))
 
+            created = {}
             for k, j in cells:
                 members = slots[(k, j)]
                 if not members:
@@ -4060,6 +4077,7 @@ class ClosetStarter(GeoNodeCage):
                         op.obj[PROP_OPENING_SIDE] = 'BACK'
                     op.obj['hb_opening_index'] = k
                     op.obj['hb_col_index'] = j
+                    created[(k, j)] = op.obj
                     continue
                 members.sort(key=lambda m: (m[0], m[1]))
                 keeper = members[0][3]
@@ -4088,6 +4106,57 @@ class ClosetStarter(GeoNodeCage):
                         bpy.data.objects.remove(op_obj, do_unlink=True)
                 keeper['hb_opening_index'] = k
                 keeper['hb_col_index'] = j
+
+            # The cut's new opening is the empty one in the row just
+            # above it. A row that is divided, or an opening that was
+            # already standing there, is left as it was.
+            for (c_side, cut), (source, n_below, n_above,
+                                held) in carry.items():
+                if c_side != side:
+                    continue
+                k = sum(1 for c in cuts if c <= cut + 1e-6)
+                upper = created.get((k, 0))
+                if upper is None or row_cuts[min(k, rows - 1)]:
+                    continue
+                op = source.hb_closet_opening
+                op.adj_shelf_qty = n_below
+                if n_below:
+                    op.unlock_adj_qty = True
+                up = upper.hb_closet_opening
+                up.adj_shelf_qty = n_above
+                if n_above:
+                    up.unlock_adj_qty = True
+                for shelf, z in held:
+                    shelf.parent = upper
+                    shelf['hb_z_offset'] = max(0.0, z - (cut + st))
+                    shelf['hb_anchor_top'] = 0
+
+    def _carry_shelves_above(self, opening, shelf, carry):
+        """Note what a fixed shelf about to split an opening leaves
+        above it: the count of the opening's dealt clip shelves on each
+        side of the cut, and the held ones above it at their bay-interior
+        heights. The shelves' heights are the last solve's, which is
+        where they are standing now. Nothing is noted when no clip shelf
+        stands above the cut - the opening keeps everything anyway."""
+        seg_bottom = float(opening.get('hb_seg_bottom', 0.0))
+        z_off = float(shelf.get('hb_z_offset', 0.0))
+        if shelf.get('hb_anchor_top'):
+            try:
+                seg_h = GeoNodeCage(opening).get_input('Dim Z')
+            except Exception:
+                seg_h = 0.0
+            z_off = max(0.0, seg_h - z_off)
+        clips = [c for c in opening.children
+                 if c.get('hb_part_role') == PART_ROLE_ADJ_SHELF]
+        dealt = [c for c in clips if not c.get(PROP_SHELF_HELD)]
+        n_above = sum(1 for c in dealt if c.location.z > z_off)
+        held = [(c, seg_bottom + float(c.location.z)) for c in clips
+                if c.get(PROP_SHELF_HELD) and c.location.z > z_off]
+        if not n_above and not held:
+            return
+        side = opening.get(PROP_OPENING_SIDE, 'FRONT')
+        carry[(side, seg_bottom + z_off)] = (
+            opening, len(dealt) - n_above, n_above, held)
 
     def _layout_starter_parts(self, layout, scene_props, sp):
         # Only a unit with a top to cap takes a countertop - a base run

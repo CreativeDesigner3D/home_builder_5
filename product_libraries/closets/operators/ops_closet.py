@@ -5560,52 +5560,21 @@ class hb_closets_OT_lock_shelf(bpy.types.Operator):
             # The layout stands every clip shelf at its opening-local
             # height, dealt or held, so the location is the height.
             z = float(obj.location.z)
-            adj = types_closets.PART_ROLE_ADJ_SHELF
-            held_key = types_closets.PROP_SHELF_HELD
-            others = [c for c in opening.children
-                      if c.get('hb_part_role') == adj and c is not obj]
-            # The fixed shelf splits the opening, and the new opening
-            # above it starts empty. So the dealt shelves are shared
-            # out: those below stay with this opening, those above go
-            # to the new one. Both counts are held so neither opening
-            # re-deals by its height; evenly spaced before, each half
-            # then spaces its shelves exactly where they already were.
-            dealt = [c for c in others if not c.get(held_key)]
-            n_below = sum(1 for c in dealt if c.location.z < z)
-            n_above = len(dealt) - n_below
-            held_above = [(c, float(c.location.z)) for c in others
-                          if c.get(held_key) and c.location.z > z]
-            bay = types_closets.find_bay_cage(opening)
-            side = opening.get(types_closets.PROP_OPENING_SIDE, 'FRONT')
-            seg_bottom = float(opening.get('hb_seg_bottom', 0.0))
-            op = opening.hb_closet_opening
-            with types_closets.suspend_recalc():
-                op.adj_shelf_qty = n_below
-                if n_below:
-                    op.unlock_adj_qty = True
+            # Take the clip shelf out the way Delete Part does: a dealt
+            # shelf comes off the count, a held one goes on its own. The
+            # count is held, so the shelves left keep the spacing they
+            # had rather than being re-dealt by the smaller opening; the
+            # split hands the ones above the lock to the new opening.
+            if not obj.get(types_closets.PROP_SHELF_HELD):
+                op = opening.hb_closet_opening
+                with types_closets.suspend_recalc():
+                    op.adj_shelf_qty = max(0, int(op.adj_shelf_qty) - 1)
+                    if op.adj_shelf_qty:
+                        op.unlock_adj_qty = True
             types_closets._remove_part_tree(obj)
             types_closets.add_fixed_shelf(opening, z)
             _apply_finish(root)
             types_closets.recalculate_closet_starter(root)
-            st = types_closets.run_sizes(root).shelf_thickness
-            upper = (_opening_at_height(bay, side, seg_bottom + z + st
-                                        + 1e-4)
-                     if bay is not None else None)
-            if (upper is not None and upper is not opening
-                    and (n_above or held_above)):
-                up_bottom = float(upper.get('hb_seg_bottom', 0.0))
-                with types_closets.suspend_recalc():
-                    upper.hb_closet_opening.adj_shelf_qty = n_above
-                    if n_above:
-                        upper.hb_closet_opening.unlock_adj_qty = True
-                    # A shelf put at a height of its own above the lock
-                    # moves up with the rest, at the height it stood.
-                    for c, cz in held_above:
-                        c.parent = upper
-                        c['hb_z_offset'] = max(
-                            0.0, seg_bottom + cz - up_bottom)
-                        c['hb_anchor_top'] = 0
-                types_closets.recalculate_closet_starter(root)
             _apply_selection_shading(context, root, keep_active=False)
             self.report({'INFO'}, "Shelf locked")
             return {'FINISHED'}
