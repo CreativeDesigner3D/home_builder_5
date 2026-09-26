@@ -141,7 +141,7 @@ SIZES_FORM = 'draw_closet_sizes_ui'
 # setting anything, and the warnings already show on the model.
 OPTION_FORMS = (
     ("Materials", 'draw_material_options_ui'),
-    ("Door & Drawer Front Styles", 'draw_front_options_ui'),
+    ("Doors & Drawer Fronts", 'draw_front_options_ui'),
     ("Pulls", 'draw_pull_options_ui'),
     ("Drawers", 'draw_drawer_box_options_ui'),
     ("Rods & Hangers", 'draw_rod_options_ui'),
