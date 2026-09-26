@@ -1785,6 +1785,19 @@ class ClosetStarter(GeoNodeCage):
         # by everything below rather than asked for again each time.
         children = list(opening.children)
 
+        # A captured back takes its inset plus its own thickness off the
+        # rear of the opening, so every shelf in the opening starts in
+        # front of it and is cut that much shallower. On a double
+        # island's back side the rear is the far end, so the shelves keep
+        # their origin and only lose the depth.
+        _op = opening.hb_closet_opening
+        back_d = 0.0
+        if _op.add_back:
+            back_d = max(0.0, min(float(_op.back_inset),
+                                  max(depth - st, 0.0))) + st
+        shelf_y = 0.0 if side == 'BACK' else -back_d
+        shelf_room = max(depth - back_d, inch(1.0))
+
         groups = {}
         for child in children:
             role = child.get('hb_part_role')
@@ -1804,10 +1817,10 @@ class ClosetStarter(GeoNodeCage):
                 z = (interior_h - z_off if child.get('hb_anchor_top')
                      else z_off)
                 z = max(0.0, min(z, interior_h - st))
-                child.location = (0.0, 0.0, z)
+                child.location = (0.0, shelf_y, z)
                 part = GeoNodeCutpart(child)
                 part.set_input('Length', width)
-                part.set_input('Width', depth)
+                part.set_input('Width', shelf_room)
                 part.set_input('Thickness', st)
             elif role == PART_ROLE_CLEAT:
                 # A cleat dropped into an opening spans it at the back
@@ -1938,7 +1951,7 @@ class ClosetStarter(GeoNodeCage):
 
         # ----- Adjustable shelves: even spacing bottom-up -----
         adj = groups.get(PART_ROLE_ADJ_SHELF, [])
-        adj_depth = max(depth - adj_setback, inch(1.0))
+        adj_depth = max(shelf_room - adj_setback, inch(1.0))
         # A shelf put in at a height of its own stands there and is
         # cut like the rest; it takes no part in the spacing, so it
         # comes out of the list before the others are dealt.
@@ -1948,7 +1961,7 @@ class ClosetStarter(GeoNodeCage):
             z = float(child.get('hb_z_offset', 0.0))
             if child.get('hb_anchor_top'):
                 z = interior_h - z
-            child.location = (clip, 0.0,
+            child.location = (clip, shelf_y,
                               max(0.0, min(z, interior_h - st)))
             part = GeoNodeCutpart(child)
             part.set_input('Length', shelf_w)
@@ -1966,7 +1979,7 @@ class ClosetStarter(GeoNodeCage):
             for i, child in enumerate(adj):
                 z = max(0.0, min(spacing * (i + 1) + st * i,
                                  interior_h - st))
-                child.location = (clip, 0.0, z)
+                child.location = (clip, shelf_y, z)
                 part = GeoNodeCutpart(child)
                 part.set_input('Length', shelf_w)
                 part.set_input('Width', adj_depth)
@@ -1989,7 +2002,7 @@ class ClosetStarter(GeoNodeCage):
             spacing = float(opening.hb_closet_opening.slant_spacing)
             angle = float(opening.hb_closet_opening.slant_angle)
             setback = const.SLANT_SHELF_SETBACK
-            shelf_depth = max(depth - setback, inch(1.0))
+            shelf_depth = max(shelf_room - setback, inch(1.0))
             y_front = -shelf_depth  # front edge in opening-local Y
             # The shelf tips down toward the front, and it pivots about
             # its REAR edge, so the front edge finishes a shelf-depth's
@@ -2040,7 +2053,7 @@ class ClosetStarter(GeoNodeCage):
                 # These rest on clips too, so they take the opening's
                 # clip gap. Their setback is the fence's, not the
                 # room's, which is why it is worked out above.
-                child.location = (clip, y_slant, z)
+                child.location = (clip, y_slant + shelf_y, z)
                 child.rotation_euler = (angle, 0.0, 0.0)
                 part = GeoNodeCutpart(child)
                 part.set_input('Length', shelf_w)
