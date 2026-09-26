@@ -599,6 +599,12 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         if self.preview_cage:
             self.preview_cage.set_input('Dim Z', height)
 
+    def is_corner_cabinet(self):
+        """A corner cabinet, placed into a wall end - not a part that
+        happens to carry the word, like the Corner Filler."""
+        return ('Corner' in self.cabinet_name
+                and self.cabinet_name not in PART_CLASS_MAP)
+
     def is_blind_corner(self):
         return self.cabinet_name.startswith('Blind ')
 
@@ -872,7 +878,7 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                 self.fill_mode = False
                 self.auto_quantity = False
                 self.cabinet_quantity = 1
-            elif 'Corner' in self.cabinet_name:
+            elif self.is_corner_cabinet():
                 # Corner cabinets use corner size for both width and depth
                 if 'Base' in self.cabinet_name:
                     corner_size = props.base_inside_corner_size
@@ -902,7 +908,7 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             else:
                 self.individual_cabinet_width = props.default_cabinet_width
             self.preview_cage.set_input('Dim X', self.individual_cabinet_width)
-            if 'Corner' in self.cabinet_name:
+            if self.is_corner_cabinet():
                 self.preview_cage.set_input('Dim Y', corner_size)
             elif self.cabinet_name in PART_CLASS_MAP:
                 part_instance = PART_CLASS_MAP[self.cabinet_name]()
@@ -1022,7 +1028,7 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
 
         # The corner fillers the commit will build, where the offsets
         # would be: a run that reaches a corner has no offset there.
-        filler_w = types_products.CORNER_FILLER_WIDTH
+        filler_w = types_products.corner_filler_width()
         filler_text = units.unit_to_string(unit_settings, filler_w) + " Filler"
         reaches_left, reaches_right = self.corner_fillers_reached()
         if reaches_left:
@@ -1250,7 +1256,7 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         cursor-height products close no corner."""
         return (not self.is_appliance
                 and self.cabinet_name not in PART_CLASS_MAP
-                and 'Corner' not in self.cabinet_name
+                and not self.is_corner_cabinet()
                 and not self.is_blind_corner()
                 and not self.cursor_z_tracking
                 and not self.align_top_to_base)
@@ -1320,7 +1326,7 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         self.corner_filler_right = False
         if not self.wants_corner_fillers() or not self.selected_wall:
             return gap_start, gap_end, snap_x
-        width = types_products.CORNER_FILLER_WIDTH
+        width = types_products.corner_filler_width()
         tol = units.inch(0.05)
 
         def at_corner(distance, side):
@@ -1347,11 +1353,11 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         return gap_start, gap_end, snap_x
 
     def create_corner_filler(self, context, wall_thickness, x, cabinet_on_right):
-        """Build the filler for one corner, standing in the reserved 1.5"
+        """Build the filler for one corner, standing in the reserved filler width
         that starts at wall-local `x`, sized to the cabinet being placed
         and reaching out to its door plane."""
         filler = types_products.CornerFiller()
-        filler.width = types_products.CORNER_FILLER_WIDTH
+        filler.width = types_products.corner_filler_width()
         filler.height = self.get_cabinet_height(context)
         filler.depth = self.get_cabinet_depth(context) + types_products.FRONT_THICKNESS
         props = context.scene.hb_frameless
@@ -1391,7 +1397,7 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         """The fillers for the corners the cabinet run actually reaches:
         one at each reserved end the run touches."""
         fillers = []
-        width = types_products.CORNER_FILLER_WIDTH
+        width = types_products.corner_filler_width()
         reaches_left, reaches_right = self.corner_fillers_reached()
         if reaches_left:
             fillers.append(self.create_corner_filler(
@@ -1539,7 +1545,7 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                     snap_x = gap_end - total_width
         
         # Corner cabinet special handling
-        is_corner = 'Corner' in self.cabinet_name
+        is_corner = self.is_corner_cabinet()
         if is_corner:
             corner_snap_threshold = self.individual_cabinet_width
             near_left = cursor_x < corner_snap_threshold
@@ -1928,7 +1934,7 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                 cabinet.obj.parent = self.selected_wall
                 cabinet.obj.location.z = z_loc
                 
-                is_corner = 'Corner' in self.cabinet_name
+                is_corner = self.is_corner_cabinet()
                 if is_corner and self.corner_right_side:
                     cabinet.obj.location.x = self.wall_length
                     cabinet.obj.location.y = 0
@@ -2216,7 +2222,7 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             if target is not None:
                 self.set_position_facing(context, target)
             elif (self.selected_wall and self.is_quarter_turned()
-                  and 'Corner' not in self.cabinet_name):
+                  and not self.is_corner_cabinet()):
                 self.set_position_peninsula(context)
             elif self.selected_wall:
                 if not self.position_locked:
@@ -2432,7 +2438,7 @@ class hb_frameless_OT_duplicate_cabinet(hb_frameless_OT_place_cabinet):
             new.parent = self.selected_wall
             new.matrix_parent_inverse.identity()
             new.location.z = self.get_cabinet_z_location(context)
-            is_corner = 'Corner' in self.cabinet_name
+            is_corner = self.is_corner_cabinet()
             if is_corner and self.corner_right_side:
                 new.location.x, new.location.y = self.wall_length, 0.0
                 new.rotation_euler = (0, 0, math.radians(-90))

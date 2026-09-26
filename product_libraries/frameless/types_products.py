@@ -1012,6 +1012,18 @@ class Panel(Product):
 
 CORNER_FILLER_WIDTH = inch(1.5)
 CORNER_FILLER_RETURN = inch(3.0)
+
+
+def corner_filler_width():
+    """The room's corner filler face width (Cabinet Sizes)."""
+    props = getattr(bpy.context.scene, 'hb_frameless', None)
+    return float(getattr(props, 'corner_filler_width', CORNER_FILLER_WIDTH))
+
+
+def corner_filler_return():
+    """The room's corner filler return depth (Cabinet Sizes)."""
+    props = getattr(bpy.context.scene, 'hb_frameless', None)
+    return float(getattr(props, 'corner_filler_return', CORNER_FILLER_RETURN))
 # How far the door fronts stand off the carcass; the filler's face is
 # set to line up with them.
 FRONT_THICKNESS = inch(0.75)
@@ -1057,7 +1069,8 @@ class CornerFiller(Product):
 
     Where a run meets the wall it stands against, a plain cabinet cannot
     open its door into the corner. This stands between the cabinet's
-    end and the wall: a 1.5" face in the plane of the doors, with a
+    end and the wall: a face in the plane of the doors (1.5" unless the
+    room's Corner Filler width says otherwise), with a
     return leg behind it to fix to the cabinet side. Placement adds one
     of its own accord when a cabinet lands in an inside corner.
     Dim X = width, Dim Y = reach from the wall to the door face,
@@ -1067,7 +1080,8 @@ class CornerFiller(Product):
     def __init__(self):
         super().__init__()
         props = bpy.context.scene.hb_frameless
-        self.width = CORNER_FILLER_WIDTH
+        self.width = corner_filler_width()
+        self.return_depth = corner_filler_return()
         self.height = props.base_cabinet_height
         self.depth = props.base_cabinet_depth + FRONT_THICKNESS
         self.toe_kick_height = props.default_toe_kick_height
@@ -1077,7 +1091,7 @@ class CornerFiller(Product):
     def add_properties(self):
         self.add_property('Toe Kick Height', 'DISTANCE', self.toe_kick_height)
         self.add_property('Toe Kick Setback', 'DISTANCE', self.toe_kick_setback)
-        self.add_property('Return Depth', 'DISTANCE', CORNER_FILLER_RETURN)
+        self.add_property('Return Depth', 'DISTANCE', self.return_depth)
         self.add_property('Cabinet On Right', 'CHECKBOX', self.cabinet_on_right)
 
     def create(self, name="Corner Filler"):

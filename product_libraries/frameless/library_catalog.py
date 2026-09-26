@@ -115,6 +115,7 @@ SECTIONS = (
                   ("Base Assembly", "Base Assembly", "Base Assembly"),
                   ("Half Wall", "Half Wall", "Half Wall"),
                   ("Misc Part", "Misc Part", "Misc Part"),
+                  ("Corner Filler", "Corner Filler", "Corner Filler"),
                   ("Leg", "Leg", "Leg"),
                   ("Tall Leg", "Tall Leg", "Leg"),
                   ("Upper Leg", "Upper Leg", "Leg"),

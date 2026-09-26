@@ -1737,6 +1737,19 @@ class Frameless_Scene_Props(PropertyGroup):
     #CABINET OPTIONS
     fill_cabinets: bpy.props.BoolProperty(name="Fill Cabinets",default = True)# type: ignore
 
+    # The filler placement stands in an inside corner, and the one the
+    # library's Corner Filler part comes in at.
+    corner_filler_width: FloatProperty(
+        name="Corner Filler Width",
+        description="Face width of the filler that closes an inside corner",
+        default=units.inch(1.5), min=0.0, unit='LENGTH',
+        precision=4)  # type: ignore
+    corner_filler_return: FloatProperty(
+        name="Corner Filler Return",
+        description="Depth of the return leg behind a corner filler's face",
+        default=units.inch(3.0), min=0.0, unit='LENGTH',
+        precision=4)  # type: ignore
+
     base_exterior: EnumProperty(name="Base Exterior",
                                items=[('Doors',"Doors","Doors"),
                                       ('Door Drawer','Door Drawer','Door Drawer'),
@@ -2239,8 +2252,12 @@ class Frameless_Scene_Props(PropertyGroup):
         row.label(text="Stacked Top Cabinet Height:") 
         row.prop(self,'upper_top_stacked_cabinet_height',text="")
         row = layout.row()
-        row.label(text="Tall Split Height:") 
+        row.label(text="Tall Split Height:")
         row.prop(self,'tall_cabinet_split_height',text="")
+        row = layout.row()
+        row.label(text="Corner Filler:")
+        row.prop(self,'corner_filler_width',text="Width")
+        row.prop(self,'corner_filler_return',text="Return")
 
     def draw_user_library_ui(self,layout,context):
         from .operators import ops_library
