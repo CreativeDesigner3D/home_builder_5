@@ -214,6 +214,31 @@ def _g_lights(shader, box, color):
                      cy + math.sin(ang) * r * 2.4)], color)
 
 
+def _g_obstacle(shader, box, color):
+    """A wall plate with two outlet slots -- the commonest obstacle."""
+    x, y, w, h = box
+    px, pw = x + w * 0.22, w * 0.56
+    draw_polyline(shader, [(px, y), (px + pw, y), (px + pw, y + h),
+                           (px, y + h)], color, closed=True)
+    for cy in (y + h * 0.32, y + h * 0.68):
+        draw_lines(shader, [(px + pw * 0.3, cy), (px + pw * 0.7, cy)], color)
+
+
+def _g_wireframe(shader, box, color):
+    """A cube drawn as its edges, back face showing through."""
+    x, y, w, h = box
+    s = min(w, h) * 0.66
+    o = min(w, h) * 0.30
+    fx, fy = x, y
+    bx, by = x + o, y + o
+    for ox, oy in ((fx, fy), (bx, by)):
+        draw_polyline(shader, [(ox, oy), (ox + s, oy), (ox + s, oy + s),
+                               (ox, oy + s)], color, closed=True)
+    draw_lines(shader, [(fx, fy), (bx, by), (fx + s, fy), (bx + s, by),
+                        (fx + s, fy + s), (bx + s, by + s),
+                        (fx, fy + s), (bx, by + s)], color)
+
+
 def _g_measure(shader, box, color):
     """A dimension line: what the tool leaves on screen.
 
@@ -282,6 +307,11 @@ BUILTIN_TOOLS = (
      _g_open_door, 1, 'draw_door_window_defaults', "Door & Window Settings"),
     ("home_builder_doors_windows.place_window", "Window", _g_window, 1,
      'draw_door_window_defaults', "Door & Window Settings"),
+    # Outlets, switches, vents and the rest: they sit on the walls like
+    # the openings do, so they share the group. Which one comes in, and
+    # its size, is the form behind the button.
+    ("home_builder_obstacles.place_obstacle", "Obstacle", _g_obstacle, 1,
+     'draw_obstacle_options', "Obstacle Settings"),
     # Named for the thing, not the act: every button on the strip adds
     # something, so "Add" on three of them is a word the eye has to read
     # past to get to what differs. The group reads Floor / Ceiling /
@@ -305,6 +335,11 @@ BUILTIN_TOOLS = (
     # one tool here that adds nothing to the room.
     ("home_builder.measure", "Measure", _g_measure, 4,
      'measure_options', "Measure Settings"),
+    # A view switch rather than a tool, kept with Measure as the other
+    # button that adds nothing: seeing through the walls and cabinets
+    # to what is behind them is a click away instead of a pie menu.
+    ("home_builder.toggle_wireframe", "Wireframe", _g_wireframe, 4,
+     None, None),
 )
 
 # Group captions, shown only in expanded mode. A group is just an int on
@@ -896,6 +931,53 @@ class home_builder_OT_room_palette_hover(bpy.types.Operator):
         return {'PASS_THROUGH'}
 
 
+def _draw_obstacle_options(layout, context):
+    """Which obstacle the button places, and its size."""
+    hb_obs = getattr(context.scene, 'hb_obstacles', None)
+    if hb_obs is None:
+        layout.label(text="These settings are unavailable.", icon='ERROR')
+        return
+    col = layout.column(align=True)
+    col.prop(hb_obs, "obstacle_type", text="")
+    col = layout.column(align=True)
+    col.use_property_split = True
+    col.use_property_decorate = False
+    col.prop(hb_obs, "obstacle_width", text="Width")
+    col.prop(hb_obs, "obstacle_height", text="Height")
+    col.prop(hb_obs, "obstacle_depth", text="Depth")
+    col.prop(hb_obs, "obstacle_height_from_floor", text="From Floor")
+
+
+_option_forms['draw_obstacle_options'] = _draw_obstacle_options
+
+
+class home_builder_OT_toggle_wireframe(bpy.types.Operator):
+    """Show the viewport as wireframe, or back to how it was"""
+    bl_idname = "home_builder.toggle_wireframe"
+    bl_label = "Toggle Wireframe"
+
+    @classmethod
+    def poll(cls, context):
+        return (context.space_data is not None
+                and context.space_data.type == 'VIEW_3D')
+
+    def execute(self, context):
+        shading = context.space_data.shading
+        key = context.space_data.as_pointer()
+        if shading.type == 'WIREFRAME':
+            # Back to the look it had before, remembered per viewport;
+            # Solid when there is nothing to go back to.
+            shading.type = _pre_wire_shading.pop(key, 'SOLID')
+        else:
+            _pre_wire_shading[key] = shading.type
+            shading.type = 'WIREFRAME'
+        return {'FINISHED'}
+
+
+# Viewport -> the shading it had before Wireframe was switched on.
+_pre_wire_shading = {}
+
+
 class home_builder_OT_tool_options(bpy.types.Operator):
     """Settings for the tool under the cursor"""
     bl_idname = "home_builder.tool_options"
@@ -926,6 +1008,7 @@ class home_builder_OT_tool_options(bpy.types.Operator):
 
 
 classes = (
+    home_builder_OT_toggle_wireframe,
     home_builder_OT_tool_options,
     home_builder_OT_room_palette_click,
     home_builder_OT_room_palette_hover,
