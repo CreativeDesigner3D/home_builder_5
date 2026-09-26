@@ -78,6 +78,36 @@ def _update_starter_prop(self, context):
     types_closets.recalculate_closet_starter(self.id_data)
 
 
+def _system_panel_height(value):
+    """A height someone set, on the 32mm system: down to the step below,
+    never under the smallest panel the system builds."""
+    return const.snap_system_height_down(
+        max(float(value), const.PANEL_MIN_HEIGHT))
+
+
+def _update_starter_height(self, context):
+    """Starter height changed. Panels are drilled on the 32mm system,
+    so a height set from outside a solve lands on it - rewriting it
+    fires this again with the height already on a step."""
+    from . import types_closets
+    if id(self.id_data) not in types_closets._RECALCULATING:
+        want = _system_panel_height(self.height)
+        if abs(want - self.height) > 1e-5:
+            self.height = want
+            return
+    _update_starter_prop(self, context)
+
+
+def _update_starter_depth(self, context):
+    """Starter depth changed: no shallower than the system's panel."""
+    from . import types_closets
+    if (id(self.id_data) not in types_closets._RECALCULATING
+            and self.depth < const.PANEL_MIN_DEPTH - 1e-5):
+        self.depth = const.PANEL_MIN_DEPTH
+        return
+    _update_starter_prop(self, context)
+
+
 def _update_room_solve(self, context):
     """A room construction figure changed: re-solve every run, so the
     whole room reads the new figure at once."""
@@ -202,6 +232,11 @@ def _update_bay_height(self, context):
     root = _bay_edit_root(self)
     if root is None:
         return
+    # On the 32mm system, as the starter's height is.
+    want = _system_panel_height(self.height)
+    if abs(want - self.height) > 1e-5:
+        self.height = want
+        return
     if not self.unlock_height:
         self.unlock_height = True
     else:
@@ -213,6 +248,9 @@ def _update_bay_depth(self, context):
     from . import types_closets
     root = _bay_edit_root(self)
     if root is None:
+        return
+    if self.depth < const.PANEL_MIN_DEPTH - 1e-5:
+        self.depth = const.PANEL_MIN_DEPTH
         return
     if not self.unlock_depth:
         self.unlock_depth = True
@@ -337,13 +375,13 @@ class Closet_Starter_Props(PropertyGroup):
         default=const.DEFAULT_WIDTH, unit='LENGTH', precision=4,
         update=_update_starter_prop)  # type: ignore
     height: FloatProperty(
-        name="Height", description="Panel height (Z)",
+        name="Height", description="Panel height (Z), on the 32mm system",
         default=const.TALL_PANEL_HEIGHT, unit='LENGTH', precision=4,
-        update=_update_starter_prop)  # type: ignore
+        update=_update_starter_height)  # type: ignore
     depth: FloatProperty(
         name="Depth", description="Panel depth (Y)",
         default=const.DEFAULT_DEPTH, unit='LENGTH', precision=4,
-        update=_update_starter_prop)  # type: ignore
+        update=_update_starter_depth)  # type: ignore
 
     # Standard section heights (the 32mm-system lattice). Picking one
     # writes the distance above; Custom leaves whatever is typed there.

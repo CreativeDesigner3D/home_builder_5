@@ -6330,13 +6330,19 @@ def _fit_height(root, bay, opening, cage, acc_def):
         if at >= seg_top - 1e-6:
             shelf['hb_z_offset'] = at + delta
     bp = bay.hb_closet_bay
+    # Grown up to the next step of the 32mm system, so the panels stay
+    # on it and the accessory still has its room.
     if len(_run_bays(root)) <= 1:
         sp = root.hb_closet_starter
-        sp.height = sp.height + delta
+        old = sp.height
+        sp.height = const.snap_system_height_up(old + delta)
+        grown = sp.height - old
     else:
         bp.unlock_height = True
-        bp.height = bp.height + delta
-    return have + delta
+        old = bp.height
+        bp.height = const.snap_system_height_up(old + delta)
+        grown = bp.height - old
+    return have + grown
 
 
 def fit_opening_to_accessory(cage):

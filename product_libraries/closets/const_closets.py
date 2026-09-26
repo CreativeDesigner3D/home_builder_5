@@ -4,6 +4,8 @@ Values ported from the prior closet library so dealers migrating projects
 see the same defaults. Heights are defined in millimeters (32mm-system
 panel drilling heights); everything else is inches.
 """
+import math
+
 from ...units import inch, millimeter
 
 
@@ -504,6 +506,20 @@ def snap_system_height_down(value):
     n = int((value - SYSTEM_HEIGHT_BASE + _SYSTEM_HEIGHT_TOL)
             // SYSTEM_PITCH)
     return SYSTEM_HEIGHT_BASE + max(0, n) * SYSTEM_PITCH
+
+
+def snap_system_height_up(value):
+    """Shortest 32mm-system height that is no shorter than `value` -
+    for a height grown to make room, which must not come back short."""
+    n = math.ceil((value - SYSTEM_HEIGHT_BASE - _SYSTEM_HEIGHT_TOL)
+                  / SYSTEM_PITCH)
+    return SYSTEM_HEIGHT_BASE + max(0, n) * SYSTEM_PITCH
+
+
+# The smallest panel the system builds: 9-9/16" high (19 + 7*32 mm) and
+# 6" deep.
+PANEL_MIN_HEIGHT = millimeter(243.0)
+PANEL_MIN_DEPTH = inch(6.0)
 
 
 def snap_system_hole(value):
