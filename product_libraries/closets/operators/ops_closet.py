@@ -5560,15 +5560,52 @@ class hb_closets_OT_lock_shelf(bpy.types.Operator):
             # The layout stands every clip shelf at its opening-local
             # height, dealt or held, so the location is the height.
             z = float(obj.location.z)
-            # Take the clip shelf out the way Delete Part does: a dealt
-            # shelf comes off the count, a held one goes on its own.
-            if not obj.get(types_closets.PROP_SHELF_HELD):
-                qty = int(opening.hb_closet_opening.adj_shelf_qty)
-                opening.hb_closet_opening.adj_shelf_qty = max(0, qty - 1)
+            adj = types_closets.PART_ROLE_ADJ_SHELF
+            held_key = types_closets.PROP_SHELF_HELD
+            others = [c for c in opening.children
+                      if c.get('hb_part_role') == adj and c is not obj]
+            # The fixed shelf splits the opening, and the new opening
+            # above it starts empty. So the dealt shelves are shared
+            # out: those below stay with this opening, those above go
+            # to the new one. Both counts are held so neither opening
+            # re-deals by its height; evenly spaced before, each half
+            # then spaces its shelves exactly where they already were.
+            dealt = [c for c in others if not c.get(held_key)]
+            n_below = sum(1 for c in dealt if c.location.z < z)
+            n_above = len(dealt) - n_below
+            held_above = [(c, float(c.location.z)) for c in others
+                          if c.get(held_key) and c.location.z > z]
+            bay = types_closets.find_bay_cage(opening)
+            side = opening.get(types_closets.PROP_OPENING_SIDE, 'FRONT')
+            seg_bottom = float(opening.get('hb_seg_bottom', 0.0))
+            op = opening.hb_closet_opening
+            with types_closets.suspend_recalc():
+                op.adj_shelf_qty = n_below
+                if n_below:
+                    op.unlock_adj_qty = True
             types_closets._remove_part_tree(obj)
             types_closets.add_fixed_shelf(opening, z)
             _apply_finish(root)
             types_closets.recalculate_closet_starter(root)
+            st = types_closets.run_sizes(root).shelf_thickness
+            upper = (_opening_at_height(bay, side, seg_bottom + z + st
+                                        + 1e-4)
+                     if bay is not None else None)
+            if (upper is not None and upper is not opening
+                    and (n_above or held_above)):
+                up_bottom = float(upper.get('hb_seg_bottom', 0.0))
+                with types_closets.suspend_recalc():
+                    upper.hb_closet_opening.adj_shelf_qty = n_above
+                    if n_above:
+                        upper.hb_closet_opening.unlock_adj_qty = True
+                    # A shelf put at a height of its own above the lock
+                    # moves up with the rest, at the height it stood.
+                    for c, cz in held_above:
+                        c.parent = upper
+                        c['hb_z_offset'] = max(
+                            0.0, seg_bottom + cz - up_bottom)
+                        c['hb_anchor_top'] = 0
+                types_closets.recalculate_closet_starter(root)
             _apply_selection_shading(context, root, keep_active=False)
             self.report({'INFO'}, "Shelf locked")
             return {'FINISHED'}
@@ -5592,6 +5629,16 @@ class hb_closets_OT_lock_shelf(bpy.types.Operator):
                         seg_h = 0.0
                     z = max(0.0, seg_h - z)
                 z += float(parent.get('hb_seg_bottom', 0.0))
+            st = types_closets.run_sizes(root).shelf_thickness
+            # The openings either side of the shelf each deal their own
+            # clip shelves, and the merge keeps only one opening's
+            # count, so both are read before the shelf comes out.
+            below = _opening_at_height(bay, side, z - 1e-4)
+            above = _opening_at_height(bay, side, z + st + 1e-4)
+            n_below = (int(below.hb_closet_opening.adj_shelf_qty)
+                       if below is not None else 0)
+            n_above = (int(above.hb_closet_opening.adj_shelf_qty)
+                       if above is not None and above is not below else 0)
             types_closets._remove_part_tree(obj)
             # First solve merges the openings the shelf stood between;
             # then the merged opening covering that height takes the
@@ -5599,9 +5646,30 @@ class hb_closets_OT_lock_shelf(bpy.types.Operator):
             types_closets.recalculate_closet_starter(root)
             opening = _opening_at_height(bay, side, z)
             if opening is not None:
-                types_closets.add_opening_shelf(
-                    opening,
-                    z - float(opening.get('hb_seg_bottom', 0.0)))
+                op = opening.hb_closet_opening
+                local_z = z - float(opening.get('hb_seg_bottom', 0.0))
+                total = n_below + n_above
+                # A shelf that stands where an even deal of one more
+                # shelf would put it rejoins the count, so unlocking a
+                # shelf that was locked hands back the run it came
+                # from. Anywhere else it stays at its own height.
+                rejoin = False
+                if total:
+                    try:
+                        seg_h = float(hb_types.GeoNodeCage(
+                            opening).get_input('Dim Z'))
+                    except Exception:
+                        seg_h = 0.0
+                    n = total + 1
+                    gap = (seg_h - st * n) / (n + 1)
+                    dealt_z = gap * (n_below + 1) + st * n_below
+                    rejoin = abs(dealt_z - local_z) <= units.inch(1 / 16)
+                with types_closets.suspend_recalc():
+                    if total:
+                        op.adj_shelf_qty = total + (1 if rejoin else 0)
+                        op.unlock_adj_qty = True
+                if not rejoin:
+                    types_closets.add_opening_shelf(opening, local_z)
                 types_closets.recalculate_closet_starter(root)
             _apply_selection_shading(context, root, keep_active=False)
             self.report({'INFO'}, "Shelf unlocked")
