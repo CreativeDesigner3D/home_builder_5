@@ -1738,7 +1738,16 @@ class hb_closets_OT_add_part(bpy.types.Operator,
         z_part = self._preview.location.z
         unit_settings = context.scene.unit_settings
         specs = []
-        if z_part > units.inch(0.5):
+        if self.part_type == 'FIXED_SHELF':
+            # A fixed shelf is set out by its height off the floor - the
+            # figure the elevations print beside it - rather than by the
+            # room under it in the opening.
+            top = wm @ Vector((x_dim, y_dim, z_part))
+            if top.z > units.inch(0.5):
+                specs.append(hb_placement.PlacementDimSpec(
+                    Vector((top.x, top.y, 0.0)), top,
+                    units.unit_to_string(unit_settings, top.z), None))
+        elif z_part > units.inch(0.5):
             specs.append(hb_placement.PlacementDimSpec(
                 wm @ Vector((x_dim, y_dim, 0.0)),
                 wm @ Vector((x_dim, y_dim, z_part)),
