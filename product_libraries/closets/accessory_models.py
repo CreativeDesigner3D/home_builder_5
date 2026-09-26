@@ -521,17 +521,17 @@ def build_wire_basket(w=0.6096, h=0.2794, d=0.3556):
 
 
 def build_wardrobe_lift(w=0.65):
-    """The pull-down rod on its spring arms, drawn at rest."""
+    """The pull-down rod on its spring arms, drawn at rest. Drawn from
+    its left end, the way a telescoping model's rig starts, so pulled
+    out to an opening it runs from one side of it to the other."""
     b = _Build()
     for x in (0.0, w - 0.058):
-        b.box(0.043, 0.147, 0.256, x - w / 2.0, -0.074, 0.0)
-        b.box(0.009, 0.038, 0.771, x - w / 2.0 + 0.019, -0.016,
-              0.059)
-        b.box(0.025, 0.018, 0.031, x - w / 2.0 + 0.022, -0.006,
-              0.797)
-    b.bar(0.008, w - 0.066, 'X', -w / 2.0 + 0.023, 0.003, 0.819)
-    b.box(0.042, 0.042, 0.823, -0.021, -0.018, -0.008)
-    b.box(0.019, 0.019, 0.037, -0.010, -0.007, 0.784)
+        b.box(0.043, 0.147, 0.256, x, -0.074, 0.0)
+        b.box(0.009, 0.038, 0.771, x + 0.019, -0.016, 0.059)
+        b.box(0.025, 0.018, 0.031, x + 0.022, -0.006, 0.797)
+    b.bar(0.008, w - 0.066, 'X', 0.023, 0.003, 0.819)
+    b.box(0.042, 0.042, 0.823, w / 2.0 - 0.021, -0.018, -0.008)
+    b.box(0.019, 0.019, 0.037, w / 2.0 - 0.010, -0.007, 0.784)
     return b.done('Wardrobe Lift')
 
 
@@ -802,6 +802,9 @@ MODELS.update({
 # pulled out to the opening.
 SIZED = {'Wire Basket.blend': build_wire_basket}
 STRETCH = {'Wardrobe Lift.blend': build_wardrobe_lift}
+# Bumped when a stretch builder draws differently, so meshes already
+# pulled out to their width are drawn again.
+STRETCH_REV = 2
 
 
 def build_sized(name, w, h, d):

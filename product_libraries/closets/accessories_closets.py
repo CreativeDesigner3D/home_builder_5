@@ -80,7 +80,9 @@ def restretch_builtin(model, width):
     name = model.get('hb_accessory_model', '')
     if name not in getattr(reg, 'STRETCH', {}):
         return False
-    if abs(float(model.get('hb_stretch_w', 0.0)) - width) < 1e-5:
+    rev = getattr(reg, 'STRETCH_REV', 1)
+    if (abs(float(model.get('hb_stretch_w', 0.0)) - width) < 1e-5
+            and model.get('hb_stretch_rev', 1) == rev):
         return True
     fresh = reg.build_stretch(name, width)
     if fresh is None:
@@ -91,6 +93,7 @@ def restretch_builtin(model, width):
     if old is not None and old.users == 0:
         bpy.data.meshes.remove(old)
     model['hb_stretch_w'] = width
+    model['hb_stretch_rev'] = rev
     return True
 
 
