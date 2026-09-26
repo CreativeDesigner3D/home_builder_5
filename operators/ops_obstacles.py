@@ -319,6 +319,9 @@ class home_builder_obstacles_OT_place_obstacle(bpy.types.Operator, hb_placement.
         
         # Link to scene
         context.scene.collection.objects.link(self.obstacle_obj)
+        # Drawn the way the room's obstacles are (Obstacles as Wireframe).
+        if getattr(hb_obs, 'obstacles_as_wire', False):
+            self.obstacle_obj.display_type = 'WIRE'
         self.register_placement_object(self.obstacle_obj)
         
         return self.obstacle_obj
@@ -407,6 +410,14 @@ class home_builder_obstacles_OT_place_obstacle(bpy.types.Operator, hb_placement.
     # Operator methods
     # -------------------------------------------------------------------------
     
+    def invoke(self, context, event):
+        # With no obstacle picked yet (the list opens on a heading), ask
+        # which one first; the picker starts the placement once it has.
+        if context.scene.hb_obstacles.obstacle_type.startswith('HEADER_'):
+            bpy.ops.home_builder_obstacles.pick_obstacle('INVOKE_DEFAULT')
+            return {'CANCELLED'}
+        return self.execute(context)
+
     def execute(self, context):
         hb_obs = context.scene.hb_obstacles
         
@@ -760,12 +771,49 @@ class home_builder_obstacles_OT_edit_obstacle(bpy.types.Operator):
             col.prop(self, "from_floor")
 
 
+class home_builder_obstacles_OT_pick_obstacle(bpy.types.Operator):
+    """Choose which obstacle to place, then place it"""
+    bl_idname = "home_builder_obstacles.pick_obstacle"
+    bl_label = "Place Obstacle"
+    bl_options = {'INTERNAL'}
+
+    def invoke(self, context, event):
+        from .. import hb_props_obstacles
+        hb_obs = context.scene.hb_obstacles
+        if hb_obs.obstacle_type.startswith('HEADER_'):
+            first = hb_props_obstacles.first_obstacle_type()
+            if first:
+                hb_obs.obstacle_type = first
+        return context.window_manager.invoke_props_dialog(
+            self, width=300, confirm_text="Place")
+
+    def draw(self, context):
+        hb_obs = context.scene.hb_obstacles
+        layout = self.layout
+        layout.prop(hb_obs, "obstacle_type", text="")
+        col = layout.column(align=True)
+        col.use_property_split = True
+        col.use_property_decorate = False
+        col.prop(hb_obs, "obstacle_width", text="Width")
+        col.prop(hb_obs, "obstacle_height", text="Height")
+        col.prop(hb_obs, "obstacle_depth", text="Depth")
+        col.prop(hb_obs, "obstacle_height_from_floor", text="From Floor")
+
+    def execute(self, context):
+        if context.scene.hb_obstacles.obstacle_type.startswith('HEADER_'):
+            self.report({'WARNING'}, "Pick an obstacle, not a heading")
+            return {'CANCELLED'}
+        bpy.ops.home_builder_obstacles.place_obstacle('INVOKE_DEFAULT')
+        return {'FINISHED'}
+
+
 # =============================================================================
 # REGISTRATION
 # =============================================================================
 
 classes = (
     home_builder_obstacles_OT_place_obstacle,
+    home_builder_obstacles_OT_pick_obstacle,
     home_builder_obstacles_OT_delete_obstacle,
     home_builder_obstacles_OT_select_obstacles,
     home_builder_obstacles_OT_select_obstacle,

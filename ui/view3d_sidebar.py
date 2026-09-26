@@ -712,6 +712,7 @@ class HOME_BUILDER_PT_room_layout_obstacles(bpy.types.Panel):
         col = layout.column(align=True)
         col.label(text="Obstacle Type:", icon='OBJECT_DATA')
         col.prop(hb_obs, "obstacle_type", text="")
+        col.prop(hb_obs, "obstacles_as_wire")
         
         # Don't show controls for header items
         if hb_obs.obstacle_type.startswith('HEADER_'):

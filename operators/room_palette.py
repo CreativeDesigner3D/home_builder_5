@@ -224,21 +224,6 @@ def _g_obstacle(shader, box, color):
         draw_lines(shader, [(px + pw * 0.3, cy), (px + pw * 0.7, cy)], color)
 
 
-def _g_wireframe(shader, box, color):
-    """A cube drawn as its edges, back face showing through."""
-    x, y, w, h = box
-    s = min(w, h) * 0.66
-    o = min(w, h) * 0.30
-    fx, fy = x, y
-    bx, by = x + o, y + o
-    for ox, oy in ((fx, fy), (bx, by)):
-        draw_polyline(shader, [(ox, oy), (ox + s, oy), (ox + s, oy + s),
-                               (ox, oy + s)], color, closed=True)
-    draw_lines(shader, [(fx, fy), (bx, by), (fx + s, fy), (bx + s, by),
-                        (fx + s, fy + s), (bx + s, by + s),
-                        (fx, fy + s), (bx, by + s)], color)
-
-
 def _g_measure(shader, box, color):
     """A dimension line: what the tool leaves on screen.
 
@@ -335,11 +320,6 @@ BUILTIN_TOOLS = (
     # one tool here that adds nothing to the room.
     ("home_builder.measure", "Measure", _g_measure, 4,
      'measure_options', "Measure Settings"),
-    # A view switch rather than a tool, kept with Measure as the other
-    # button that adds nothing: seeing through the walls and cabinets
-    # to what is behind them is a click away instead of a pie menu.
-    ("home_builder.toggle_wireframe", "Wireframe", _g_wireframe, 4,
-     None, None),
 )
 
 # Group captions, shown only in expanded mode. A group is just an int on
@@ -939,6 +919,7 @@ def _draw_obstacle_options(layout, context):
         return
     col = layout.column(align=True)
     col.prop(hb_obs, "obstacle_type", text="")
+    col.prop(hb_obs, "obstacles_as_wire")
     col = layout.column(align=True)
     col.use_property_split = True
     col.use_property_decorate = False
@@ -949,33 +930,6 @@ def _draw_obstacle_options(layout, context):
 
 
 _option_forms['draw_obstacle_options'] = _draw_obstacle_options
-
-
-class home_builder_OT_toggle_wireframe(bpy.types.Operator):
-    """Show the viewport as wireframe, or back to how it was"""
-    bl_idname = "home_builder.toggle_wireframe"
-    bl_label = "Toggle Wireframe"
-
-    @classmethod
-    def poll(cls, context):
-        return (context.space_data is not None
-                and context.space_data.type == 'VIEW_3D')
-
-    def execute(self, context):
-        shading = context.space_data.shading
-        key = context.space_data.as_pointer()
-        if shading.type == 'WIREFRAME':
-            # Back to the look it had before, remembered per viewport;
-            # Solid when there is nothing to go back to.
-            shading.type = _pre_wire_shading.pop(key, 'SOLID')
-        else:
-            _pre_wire_shading[key] = shading.type
-            shading.type = 'WIREFRAME'
-        return {'FINISHED'}
-
-
-# Viewport -> the shading it had before Wireframe was switched on.
-_pre_wire_shading = {}
 
 
 class home_builder_OT_tool_options(bpy.types.Operator):
@@ -1008,7 +962,6 @@ class home_builder_OT_tool_options(bpy.types.Operator):
 
 
 classes = (
-    home_builder_OT_toggle_wireframe,
     home_builder_OT_tool_options,
     home_builder_OT_room_palette_click,
     home_builder_OT_room_palette_hover,

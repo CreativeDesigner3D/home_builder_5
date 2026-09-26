@@ -147,6 +147,22 @@ def update_obstacle_type(self, context):
         self.obstacle_height_from_floor = obs_data[7]
 
 
+def first_obstacle_type():
+    """The first obstacle that can actually be placed (the list opens on
+    a category heading)."""
+    for obs in WALL_OBSTACLES + FLOOR_OBSTACLES + CEILING_OBSTACLES + MISC_OBSTACLES:
+        return obs[0]
+    return None
+
+
+def update_obstacles_as_wire(self, context):
+    """Every obstacle in the room drawn as wireframe or solid."""
+    display = 'WIRE' if self.obstacles_as_wire else 'TEXTURED'
+    for obj in context.scene.objects:
+        if obj.get('IS_OBSTACLE'):
+            obj.display_type = display
+
+
 # =============================================================================
 # PROPERTY GROUPS
 # =============================================================================
@@ -206,6 +222,14 @@ class Obstacles_Scene_Props(PropertyGroup):
         description="Show obstacle dimensions in the UI",
         default=True
     )  # type: ignore
+
+    obstacles_as_wire: BoolProperty(
+        name="Obstacles as Wireframe",
+        description="Draw every obstacle in the room as wireframe, so "
+                    "what is built around them stays in view",
+        default=False,
+        update=update_obstacles_as_wire
+    )  # type: ignore
     
     
     def get_obstacle_data(self):
@@ -222,6 +246,7 @@ class Obstacles_Scene_Props(PropertyGroup):
         
         # Obstacle type selector
         col.prop(self, "obstacle_type", text="")
+        col.prop(self, "obstacles_as_wire")
         
         # Don't allow placing header items
         if self.obstacle_type.startswith('HEADER_'):
