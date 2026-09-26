@@ -423,11 +423,11 @@ def build_cabinet_for(cabinet_name, cabinet_type, is_appliance=False,
 
 
 
-class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin):
-    bl_idname = "hb_frameless.place_cabinet"
-    bl_label = "Place Cabinet"
-    bl_description = "Place a cabinet on a wall. Arrow keys for offset, W for width, F to fill gap, Escape to cancel"
-    bl_options = {'UNDO'}
+class PlaceCabinetBase(WallObjectPlacementMixin):
+    """The cabinet placement modal, shared by Place Cabinet and Duplicate
+    Cabinet. Not registered itself: Blender cannot register an operator
+    that subclasses another registered one, so each command is its own
+    Operator built on this."""
 
     cabinet_name: bpy.props.StringProperty(name="Cabinet Name",default="")# type: ignore
 
@@ -2353,7 +2353,14 @@ def apply_frameless_selection_mode(context, root_obj=None):
     quiet_cages.after_mode_applied()
 
 
-class hb_frameless_OT_duplicate_cabinet(hb_frameless_OT_place_cabinet):
+class hb_frameless_OT_place_cabinet(bpy.types.Operator, PlaceCabinetBase):
+    bl_idname = "hb_frameless.place_cabinet"
+    bl_label = "Place Cabinet"
+    bl_description = "Place a cabinet on a wall. Arrow keys for offset, W for width, F to fill gap, Escape to cancel"
+    bl_options = {'UNDO'}
+
+
+class hb_frameless_OT_duplicate_cabinet(bpy.types.Operator, PlaceCabinetBase):
     """Place a copy of the selected cabinet, fronts, interiors and style
     included, anywhere a new cabinet could go. The placement is the
     ordinary one - walls, gaps, typed offsets - started at the source's
