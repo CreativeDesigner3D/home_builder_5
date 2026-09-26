@@ -1,6 +1,7 @@
 import bpy
 import math
 import os
+import types
 from mathutils import Vector, Matrix
 from bpy_extras import view3d_utils
 from .. import types_frameless
@@ -448,7 +449,10 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
     # Preview cage (lightweight, with array modifier)
     preview_cage = None
     array_modifier = None
-    
+    # A duplicate places a copy of an existing cabinet, which keeps its
+    # own style, fronts and interiors (see hb_frameless_OT_duplicate_cabinet).
+    keeps_source_setup = False
+
     fill_mode: bool = True
     cabinet_quantity: int = 1
     auto_quantity: bool = True
@@ -2244,7 +2248,12 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                     # Placed by hand, so rebuilding the room's bases
                     # leaves it and whatever stands on it alone.
                     cabinet.obj[ops_base_assembly.EDITED_KEY] = True
-                if not self.is_appliance:
+                if self.keeps_source_setup:
+                    # A copy already carries its style, fronts and
+                    # interiors; it only needs its drivers settled.
+                    hb_utils.run_calc_fix(context, cabinet.obj)
+                    hb_utils.run_calc_fix(context, cabinet.obj)
+                elif not self.is_appliance:
                     # Cabinet-specific operations (skip for appliances)
                     # Under 24" wide, one door instead of a pair.
                     types_frameless.default_door_swing_for_width(
@@ -2338,6 +2347,119 @@ def apply_frameless_selection_mode(context, root_obj=None):
     quiet_cages.after_mode_applied()
 
 
+class hb_frameless_OT_duplicate_cabinet(hb_frameless_OT_place_cabinet):
+    """Place a copy of the selected cabinet, fronts, interiors and style
+    included, anywhere a new cabinet could go. The placement is the
+    ordinary one - walls, gaps, typed offsets - started at the source's
+    size; the click drops a deep copy of the source instead of building
+    a fresh cabinet."""
+    bl_idname = "hb_frameless.duplicate_cabinet"
+    bl_label = "Duplicate Cabinet"
+    bl_description = ("Place a copy of this cabinet, with all of its "
+                      "settings, on any wall")
+    bl_options = {'UNDO'}
+
+    source_name: bpy.props.StringProperty(
+        options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+
+    keeps_source_setup = True
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        bp = hb_utils.get_cabinet_bp(obj) if obj is not None else None
+        return bp is not None and bool(bp.get('IS_FRAMELESS_CABINET_CAGE'))
+
+    def _source(self):
+        return bpy.data.objects.get(self.source_name)
+
+    def invoke(self, context, event):
+        src = hb_utils.get_cabinet_bp(context.object)
+        self.source_name = src.name
+        self.cabinet_type = src.get('CABINET_TYPE', 'BASE') \
+            if src.get('CABINET_TYPE') in ('BASE', 'TALL', 'UPPER') else 'BASE'
+        # Corner placement (snap into a wall end, turn at the right end)
+        # keys off the name; nothing else about the copy does.
+        self.cabinet_name = ('Corner Cabinet' if src.get('IS_CORNER_CABINET')
+                             else '')
+        return self.execute(context)
+
+    def execute(self, context):
+        src = self._source()
+        if src is None:
+            return {'CANCELLED'}
+        cage = hb_types.GeoNodeCage(src)
+        self._src_size = (cage.get_input('Dim X'), cage.get_input('Dim Y'),
+                          cage.get_input('Dim Z'))
+        result = super().execute(context)
+        # The copy comes in at the source's width, one at a time; W or a
+        # typed width still changes it before the click.
+        self.fill_mode = False
+        self.auto_quantity = False
+        self.cabinet_quantity = 1
+        self.individual_cabinet_width = self._src_size[0]
+        self.default_width = self._src_size[0]
+        if self.array_modifier is not None:
+            self.array_modifier.count = 1
+        self.update_preview_cage()
+        return result
+
+    def own_size(self):
+        size = getattr(self, '_src_size', None)
+        if size is None:
+            return None, None
+        return size[2], size[1]
+
+    def get_cabinet_z_location(self, context) -> float:
+        # Hung at the source's height (an upper keeps its own install
+        # height); a floor cabinet stays on the floor.
+        src = self._source()
+        if src is not None and self.cabinet_type == 'UPPER':
+            return src.matrix_world.translation.z
+        return super().get_cabinet_z_location(context)
+
+    def create_final_cabinets(self, context):
+        src = self._source()
+        if src is None:
+            return []
+        new = hb_placement.duplicate_object_hierarchy(context, src)
+        if new is None:
+            return []
+        width = self.individual_cabinet_width
+        if self.selected_wall and not self.free_standing:
+            wall = hb_types.GeoNodeWall(self.selected_wall)
+            wall_thickness = wall.get_input('Thickness')
+            new.parent = self.selected_wall
+            new.matrix_parent_inverse.identity()
+            new.location.z = self.get_cabinet_z_location(context)
+            is_corner = 'Corner' in self.cabinet_name
+            if is_corner and self.corner_right_side:
+                new.location.x, new.location.y = self.wall_length, 0.0
+                new.rotation_euler = (0, 0, math.radians(-90))
+            elif is_corner or self.place_on_front:
+                new.location.x, new.location.y = self.placement_x, 0.0
+                new.rotation_euler = (0, 0, 0)
+            else:
+                new.location.x = self.placement_x + width
+                new.location.y = wall_thickness
+                new.rotation_euler = (0, 0, math.pi)
+            self.placed_fillers = self.create_corner_fillers(
+                context, wall_thickness)
+        else:
+            new.parent = None
+            new.matrix_parent_inverse.identity()
+            new.location = self.preview_cage.obj.location.copy()
+            new.rotation_euler = self.preview_cage.obj.rotation_euler.copy()
+        hb_utils.note_parent_change()
+        if abs(width - self._src_size[0]) > 1e-6:
+            hb_types.GeoNodeCage(new).set_input('Dim X', width)
+        for o in context.selected_objects:
+            o.select_set(False)
+        new.select_set(True)
+        context.view_layer.objects.active = new
+        return [types.SimpleNamespace(obj=new)]
+
+
 class hb_frameless_OT_toggle_mode(bpy.types.Operator):
     """Toggle Cabinet Openings"""
     bl_idname = "hb_frameless.toggle_mode"
@@ -2411,6 +2533,7 @@ class hb_frameless_OT_draw_cabinet(bpy.types.Operator):
 
 classes = (
     hb_frameless_OT_place_cabinet,
+    hb_frameless_OT_duplicate_cabinet,
     hb_frameless_OT_toggle_mode,
     hb_frameless_OT_draw_cabinet,
 )

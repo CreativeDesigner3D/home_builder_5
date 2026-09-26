@@ -120,6 +120,8 @@ class HOME_BUILDER_MT_cabinet_commands(bpy.types.Menu):
             layout.operator("hb_frameless.applied_end_prompts", text="End Panel Options...")
         layout.operator("hb_frameless.cabinet_prompts", text="Cabinet Prompts")
         layout.operator("hb_frameless.adjust_multiple_cabinet_widths", text="Adjust Cabinet Sizes")
+        layout.operator("hb_frameless.duplicate_cabinet", text="Duplicate Cabinet",
+                        icon='DUPLICATE')
         layout.separator()
         layout.operator("hb_frameless.drop_cabinet_to_countertop", text="Drop to Countertop")
         layout.separator()
