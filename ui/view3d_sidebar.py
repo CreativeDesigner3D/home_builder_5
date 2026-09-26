@@ -580,6 +580,9 @@ def draw_door_window_defaults(layout, context, include_cages=True):
     row = box.row(align=True)
     row.label(text="Preset:")
     row.prop(hb_scene, 'entry_door_style', text="")
+    row = box.row(align=True)
+    row.label(text="Door Type:")
+    row.prop(hb_scene, 'entry_door_type', text="")
 
     box = col.box()
     box.label(text="Window Defaults", icon='MESH_PLANE')

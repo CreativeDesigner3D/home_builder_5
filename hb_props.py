@@ -211,7 +211,11 @@ def update_show_door_swings(self, context):
     hide = not self.show_door_swings
     for obj in context.scene.objects:
         hb = getattr(obj, 'home_builder', None)
-        if hb is None or not (hb.mod_name or '').startswith('GeoNodeDoorSwing'):
+        # The plan symbol a bi-fold / sliding / pocket / barn door is
+        # drawn with in place of the arc goes with the swings.
+        if not obj.get('IS_DOOR_TYPE_SYMBOL') and (
+                hb is None
+                or not (hb.mod_name or '').startswith('GeoNodeDoorSwing')):
             continue
         try:
             obj.hide_set(hide)
@@ -589,6 +593,14 @@ class Home_Builder_Scene_Props(PropertyGroup):
         name="Entry Door Style",
         description="3D style applied to newly placed entry doors",
         items=_entry_door_style_items)  # type: ignore
+    entry_door_type: EnumProperty(
+        name="Entry Door Type",
+        description="How newly placed entry doors open (with a preset "
+                    "set above)",
+        items=[('SWING', "Swing", ""), ('BIFOLD', "Bi-Fold", ""),
+               ('SLIDING', "Sliding", ""), ('POCKET', "Pocket", ""),
+               ('BARN', "Barn", "")],
+        default='SWING')  # type: ignore
     window_style: EnumProperty(
         name="Window Style",
         description="3D style applied to newly placed windows",

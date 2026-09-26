@@ -69,6 +69,26 @@ DOOR_STYLE_ITEMS = [
     ('LITE_HALF', "Half Lite", "Glass in the top half"),
     ('LITE_34', "3/4 Lite", "Glass in the top three quarters"),
     ('LITE_FULL', "Full Lite", "Glass full height, optional grille grid"),
+    ('LOUVER', "Louvered", "Frame with horizontal louvers, the usual "
+                           "closet bi-fold"),
+]
+
+# How the door opens. Every type reads the door's swing annotation for
+# its handing and side: Is Left picks the side a bi-fold folds to, a
+# pocket door disappears into or a barn door slides toward; Swing Inside
+# picks the room side the folds, the barn door and its track are on; Is
+# Double doubles the panels (a pair each side, four bypass panels, two
+# pocket leaves, a pair of barn doors).
+DOOR_TYPE_ITEMS = [
+    ('SWING', "Swing", "Hinged door, or a pair"),
+    ('BIFOLD', "Bi-Fold", "Panels that fold to the side; double is a "
+                          "pair each side"),
+    ('SLIDING', "Sliding", "Bypass panels on two tracks; double is four "
+                           "panels"),
+    ('POCKET', "Pocket", "Slides into the wall; double is one leaf each "
+                         "side"),
+    ('BARN', "Barn", "A slab on a track across the wall face; double is "
+                     "a pair"),
 ]
 
 WINDOW_TYPE_ITEMS = [
@@ -85,11 +105,16 @@ GRILLE_PATTERN_ITEMS = [
     ('PRAIRIE', "Prairie", "Perimeter bars with small corner lites"),
 ]
 
+# Louvered panels: slat spacing and slat face width.
+LOUVER_PITCH = inch(1.25)
+LOUVER_SLAT = inch(0.625)
+
 # Glass share of the door height per partial-lite style.
 _LITE_FRACTION = {'LITE_QUARTER': 0.30, 'LITE_HALF': 0.50, 'LITE_34': 0.72}
 
 DOOR_DEFAULTS = {
     'style': 'CUSTOM',
+    'door_type': 'SWING',
     'door_style': 'PANEL_6',
     'panel_raise': True,
     'glass_grid_cols': 1,
@@ -525,6 +550,9 @@ def apply_scene_style_and_build(cage_obj, context):
     full.update(opts)
     full['style'] = name
     if category == DOOR_CATEGORY:
+        # New doors open the way the room's defaults say.
+        full['door_type'] = getattr(props, 'entry_door_type',
+                                    full.get('door_type', 'SWING'))
         # A preset with sidelites / a transom describes a wider / taller
         # UNIT: grow the opening so the door slab keeps the placed size.
         extra_w, extra_h = door_unit_extras(full)
@@ -1057,14 +1085,22 @@ def _raise_section():
                 field_u=inch(1.5))
 
 
-def _slab_spec(opts):
+def _slab_spec(opts, width=None, height=None):
     """(info, kwargs, glass) for the door slab at the stored options.
     glass is 'NONE' (all wood), 'ALL' (every panel cell is glass) or
-    'TOP' (glass above the lock rail, retagged after the build)."""
+    'TOP' (glass above the lock rail, retagged after the build).
+
+    ``width`` / ``height`` are the panel's own size where it is not a
+    full-width door leaf: a bi-fold or bypass panel is narrow, so its
+    stiles come down with it, and a louvered panel spaces its slats
+    over the height it has."""
     info = dict(door_builder.DOOR_STYLE_FALLBACK)
     lock = max(opts['lock_rail_width'], inch(0.5))
+    stile = max(opts['stile_width'], inch(0.5))
+    if width is not None:
+        stile = min(stile, max(width * 0.18, inch(1.0)))
     info.update(
-        stile_width=max(opts['stile_width'], inch(0.5)),
+        stile_width=stile,
         rail_width=max(opts['top_rail_width'], inch(0.5)),
         top_rail_width=max(opts['top_rail_width'], inch(0.5)),
         bottom_rail_width=max(opts['bottom_rail_width'], inch(0.5)),
@@ -1103,6 +1139,18 @@ def _slab_spec(opts):
         glass = 'TOP'
         frac = _LITE_FRACTION[style]
         info.update(mid_rail_z=(1.0 - frac, 0.0), mid_rail_width=lock)
+    elif style == 'LOUVER':
+        # Slats as a close stack of thin rails over thin fields, which
+        # is how a louvered door reads face on and in section.
+        field = ((height if height is not None else inch(80.0))
+                 - info['top_rail_width'] - info['bottom_rail_width'])
+        count = max(int(field / LOUVER_PITCH) - 1, 1)
+        info.update(mid_rail_count=count, mid_rail_width=LOUVER_SLAT)
+        slat_t = inch(0.125)
+        info['panel_thickness'] = slat_t
+        info['panel_inset'] = max((opts['slab_thickness'] - slat_t) / 2.0,
+                                  0.0)
+        return info, kwargs, glass
     if glass == 'NONE' and opts['panel_raise']:
         kwargs['panel_section'] = _raise_section()
     return info, kwargs, glass
@@ -1267,6 +1315,347 @@ def _place_handles(cage_obj, name, opts, leaf_matrix, open_t, x, y_front,
     knob.matrix_basis = leaf_matrix
 
 
+# ---------------------------------------------------------------------------
+# Door types that don't swing: bi-fold, sliding, pocket, barn
+# ---------------------------------------------------------------------------
+
+DOOR_TYPE_KEY = 'HB_DOOR_TYPE'
+DOOR_SYMBOL_FLAG = 'IS_DOOR_TYPE_SYMBOL'
+BIFOLD_MAX_FOLD = 85.0          # degrees, fully open
+BIFOLD_SYMBOL_FOLD = 30.0       # degrees the plan symbol is drawn at
+BYPASS_OVERLAP = inch(1.0)
+BYPASS_TRACK_GAP = inch(0.125)
+BARN_OVERLAP = inch(1.0)        # past each side of the opening
+BARN_WALL_GAP = inch(0.5)       # clear of the casing
+BARN_FLOOR_GAP = inch(0.5)
+BARN_TRACK = (inch(1.5), inch(0.375))   # height, depth
+SYMBOL_LINE = inch(0.14)        # the swing arc's stroke
+SYMBOL_DASH = (inch(3.0), inch(2.0))
+
+
+def door_type(opts):
+    value = (opts or {}).get('door_type', 'SWING')
+    return value if value in {i[0] for i in DOOR_TYPE_ITEMS} else 'SWING'
+
+
+def _open_fraction(opts):
+    """The Open field read as a percentage for doors that don't swing."""
+    return min(max(float(opts.get('open_angle', 0.0)), 0.0), 100.0) / 100.0
+
+
+def _about_z(pivot, angle):
+    p = Vector((pivot[0], pivot[1], 0.0))
+    return (Matrix.Translation(p) @ Matrix.Rotation(angle, 4, 'Z')
+            @ Matrix.Translation(-p))
+
+
+def _build_panel(cage_obj, name, opts, width, height, x, y_front, z0, st,
+                 transform=None):
+    """One panel of a bi-fold, bypass, pocket or barn door, built closed
+    at ``x`` (width along +X, front face on ``y_front``) and then moved
+    by ``transform`` (cage space). No hardware."""
+    info, kwargs, glass = _slab_spec(opts, width, height)
+    min_w, min_h = door_builder.layout_min_size(info)
+    if width <= min_w or height <= min_h:
+        info = dict(info, door_type='SLAB')
+        glass = 'NONE'
+    door_mat = _door_material()
+    panel_mat = _glass_material() if glass == 'ALL' else door_mat
+    obj = _door_mesh_child(cage_obj, name, info, kwargs, width, height, st,
+                           (door_mat, door_mat, panel_mat), x, y_front, z0)
+    if glass == 'TOP':
+        frac = _LITE_FRACTION[opts['door_style']]
+        mrw = max(opts['lock_rail_width'], inch(0.5))
+        _glassify_above(obj, (1.0 - frac) * height + mrw / 2.0 - 0.001)
+    base = (Matrix.Translation((x, y_front + st, z0))
+            @ Euler((0.0, math.radians(-90.0),
+                     math.radians(90.0))).to_matrix().to_4x4())
+    obj.matrix_basis = (transform @ base) if transform is not None else base
+    return obj
+
+
+def _bifold_pairs(x0, x1, is_double, is_left):
+    """(jamb x, direction, panel width) for each folding pair: a pair
+    is hinged at a jamb and runs from it toward the middle (+1 from the
+    left jamb, -1 from the right)."""
+    if is_double:
+        w = (x1 - x0) / 4.0
+        return [(x0, 1.0, w), (x1, -1.0, w)]
+    w = (x1 - x0) / 2.0
+    return [(x1, -1.0, w)] if is_left else [(x0, 1.0, w)]
+
+
+def _bifold_leaves(jamb, d, w, y_face, s, fold_deg):
+    """Two transforms for one folding pair (jamb-side panel, then the
+    one hinged to it): the first turns about the jamb so its far edge
+    swings to the room side ``s``, the second turns back the other way
+    about that edge, so its own far end stays on the track line."""
+    th = math.radians(fold_deg)
+    phi = d * s * th
+    ta = _about_z((jamb, y_face), phi)
+    near_b = jamb + d * w
+    p1 = (jamb + d * w * math.cos(th), y_face + s * w * math.sin(th))
+    tb = (Matrix.Translation((p1[0] - near_b, p1[1] - y_face, 0.0))
+          @ _about_z((near_b, y_face), -phi))
+    return ta, tb
+
+
+def _build_bifold(cage_obj, opts, x0, x1, z0, h, y_front, st, is_double,
+                  is_left, s):
+    y_face = y_front if s < 0 else y_front + st
+    fold = BIFOLD_MAX_FOLD * _open_fraction(opts)
+    for n, (jamb, d, w) in enumerate(_bifold_pairs(x0, x1, is_double,
+                                                   is_left)):
+        ta, tb = _bifold_leaves(jamb, d, w, y_face, s, fold)
+        xa = jamb if d > 0 else jamb - w
+        xb = jamb + w if d > 0 else jamb - 2.0 * w
+        _build_panel(cage_obj, "Bi-Fold Panel %d" % (2 * n + 1), opts, w, h,
+                     xa, y_front, z0, st, ta)
+        _build_panel(cage_obj, "Bi-Fold Panel %d" % (2 * n + 2), opts, w, h,
+                     xb, y_front, z0, st, tb)
+
+
+def _bypass_layout(x0, x1, is_double, is_left, st, y_center):
+    """(x, y_front, width, slide) per bypass panel, closed. Panels sit on
+    two tracks either side of the frame's center line; ``slide`` is the
+    signed distance each travels fully open."""
+    w_all = x1 - x0
+    # Front faces: the back panel starts just behind the center line,
+    # the front one ends just in front of it.
+    back = y_center + BYPASS_TRACK_GAP / 2.0
+    front = y_center - BYPASS_TRACK_GAP / 2.0 - st
+    if is_double:
+        pw = (w_all / 2.0 + BYPASS_OVERLAP) / 2.0
+        mid = (x0 + x1) / 2.0
+        return [(x0, back, pw, 0.0), (x1 - pw, back, pw, 0.0),
+                (mid - pw, front, pw, -(w_all / 2.0 - pw)),
+                (mid, front, pw, w_all / 2.0 - pw)]
+    pw = (w_all + BYPASS_OVERLAP) / 2.0
+    if is_left:
+        return [(x0, back, pw, 0.0), (x1 - pw, front, pw, -(w_all - pw))]
+    return [(x1 - pw, back, pw, 0.0), (x0, front, pw, w_all - pw)]
+
+
+def _build_sliding(cage_obj, opts, x0, x1, z0, h, y_center, st, is_double,
+                   is_left):
+    f = _open_fraction(opts)
+    for n, (x, y, pw, slide) in enumerate(
+            _bypass_layout(x0, x1, is_double, is_left, st, y_center)):
+        _build_panel(cage_obj, "Sliding Panel %d" % (n + 1), opts, pw, h,
+                     x, y, z0, st,
+                     Matrix.Translation((slide * f, 0.0, 0.0)))
+
+
+def _pocket_layout(x0, x1, is_double, is_left):
+    """(x, width, slide) per pocket leaf: a single leaf runs into the
+    wall on its handed side, a pair parts into both."""
+    w_all = x1 - x0
+    if is_double:
+        half = w_all / 2.0
+        return [(x0, half, -half), (x0 + half, half, half)]
+    return [(x0, w_all, w_all if is_left else -w_all)]
+
+
+def _build_pocket(cage_obj, opts, x0, x1, z0, h, y_center, st, is_double,
+                  is_left):
+    f = _open_fraction(opts)
+    y = y_center - st / 2.0
+    for n, (x, w, slide) in enumerate(_pocket_layout(x0, x1, is_double,
+                                                     is_left)):
+        _build_panel(cage_obj, "Pocket Leaf %d" % (n + 1), opts, w, h, x, y,
+                     z0, st, Matrix.Translation((slide * f, 0.0, 0.0)))
+
+
+def _barn_layout(x0, x1, is_double, is_left):
+    """(x, width, slide) per barn slab, closed over the opening with
+    BARN_OVERLAP to spare each side, and the track's x extent."""
+    bx0, bx1 = x0 - BARN_OVERLAP, x1 + BARN_OVERLAP
+    bw = bx1 - bx0
+    if is_double:
+        half = bw / 2.0
+        return ([(bx0, half, -half), (bx0 + half, half, half)],
+                (bx0 - half, bx1 + half))
+    if is_left:
+        return [(bx0, bw, bw)], (bx0, bx1 + bw)
+    return [(bx0, bw, -bw)], (bx0 - bw, bx1)
+
+
+def _barn_y(T, s, ct, st):
+    """Front face of a barn slab: off the room-side face of the wall,
+    clear of the casing."""
+    if s < 0:
+        return -(ct + BARN_WALL_GAP) - st
+    return T + ct + BARN_WALL_GAP
+
+
+def _build_barn(cage_obj, opts, x0, x1, top, T, s, ct, st, is_double,
+                is_left, verts, faces, slots):
+    f = _open_fraction(opts)
+    y = _barn_y(T, s, ct, st)
+    z0 = BARN_FLOOR_GAP
+    h = top + BARN_OVERLAP - z0
+    slabs, (tx0, tx1) = _barn_layout(x0, x1, is_double, is_left)
+    for n, (x, w, slide) in enumerate(slabs):
+        move = Matrix.Translation((slide * f, 0.0, 0.0))
+        _build_panel(cage_obj, "Barn Door %d" % (n + 1), opts, w, h, x, y,
+                     z0, st, move)
+        if opts['include_knob']:
+            # A plain bar pull on the room face, near the leading edge.
+            lead = x + inch(3.0) if slide < 0 else x + w - inch(4.0)
+            py = y - inch(1.5) if s < 0 else y + st
+            bar = _new_child(cage_obj, "Barn Door %d Pull" % (n + 1))
+            bv, bf, bs = [], [], []
+            _box(bv, bf, bs, lead, lead + inch(1.0), py, py + inch(1.5),
+                 z0 + h * 0.4, z0 + h * 0.4 + inch(12.0))
+            _finish_mesh(bar, bv, bf, bs, [_handle_material()])
+            bar.matrix_basis = move
+    # The track the slabs hang from, on the wall above the opening.
+    th, td = BARN_TRACK
+    ty = y + st if s < 0 else y - td
+    tz = top + BARN_OVERLAP + inch(1.0)
+    _box(verts, faces, slots, tx0, tx1, min(ty, ty + td), max(ty, ty + td),
+         tz, tz + th)
+
+
+def _symbol_lines(segments, dashed=()):
+    """Plan strokes as thin flat bars at the floor, the weight the swing
+    arc is drawn at. ``dashed`` segments are broken into dashes."""
+    verts, faces, slots = [], [], []
+    half = SYMBOL_LINE / 2.0
+
+    def bar(a, b):
+        dx, dy = b[0] - a[0], b[1] - a[1]
+        length = math.hypot(dx, dy)
+        if length <= 1e-6:
+            return
+        nx, ny = -dy / length * half, dx / length * half
+        i = len(verts)
+        for z in (0.0, SYMBOL_LINE):
+            verts.extend([(a[0] + nx, a[1] + ny, z), (b[0] + nx, b[1] + ny, z),
+                          (b[0] - nx, b[1] - ny, z), (a[0] - nx, a[1] - ny, z)])
+        faces.extend([(i, i + 3, i + 2, i + 1), (i + 4, i + 5, i + 6, i + 7),
+                      (i, i + 1, i + 5, i + 4), (i + 1, i + 2, i + 6, i + 5),
+                      (i + 2, i + 3, i + 7, i + 6), (i + 3, i, i + 4, i + 7)])
+        slots.extend([0] * 6)
+
+    for a, b in segments:
+        bar(a, b)
+    dash, gap = SYMBOL_DASH
+    for a, b in dashed:
+        length = math.hypot(b[0] - a[0], b[1] - a[1])
+        if length <= 1e-6:
+            continue
+        ux, uy = (b[0] - a[0]) / length, (b[1] - a[1]) / length
+        t = 0.0
+        while t < length:
+            e = min(t + dash, length)
+            bar((a[0] + ux * t, a[1] + uy * t), (a[0] + ux * e, a[1] + uy * e))
+            t = e + gap
+    return verts, faces, slots
+
+
+def _door_type_symbol(cage_obj, kind, opts, x0, x1, T, y_center, st, ct,
+                      is_double, is_left, s):
+    """The plan symbol a door that doesn't swing is drawn with, in place
+    of the swing arc: the bi-fold's zig-zag, the bypass panels on their
+    two tracks, the pocket leaf and its pocket dashed into the wall, or
+    the barn slab on the wall face with its track dashed beside it."""
+    lines, dashed = [], []
+    if kind == 'BIFOLD':
+        y_face = y_center - st / 2.0 if s < 0 else y_center + st / 2.0
+        for jamb, d, w in _bifold_pairs(x0, x1, is_double, is_left):
+            th = math.radians(BIFOLD_SYMBOL_FOLD)
+            p1 = (jamb + d * w * math.cos(th), y_face + s * w * math.sin(th))
+            p2 = (jamb + 2.0 * d * w * math.cos(th), y_face)
+            lines += [((jamb, y_face), p1), (p1, p2)]
+    elif kind == 'SLIDING':
+        for x, y, pw, _slide in _bypass_layout(x0, x1, is_double, is_left,
+                                               st, y_center):
+            lines.append(((x, y + st / 2.0), (x + pw, y + st / 2.0)))
+    elif kind == 'POCKET':
+        for x, w, slide in _pocket_layout(x0, x1, is_double, is_left):
+            lines.append(((x, y_center), (x + w, y_center)))
+            px0, px1 = sorted((x + slide, x + w + slide))
+            dashed.append(((px0, y_center), (px1, y_center)))
+    elif kind == 'BARN':
+        y = _barn_y(T, s, ct, st) + st / 2.0
+        slabs, (tx0, tx1) = _barn_layout(x0, x1, is_double, is_left)
+        for x, w, _slide in slabs:
+            lines.append(((x, y), (x + w, y)))
+        ty = y + s * (st / 2.0 + inch(1.0))
+        dashed.append(((tx0, ty), (tx1, ty)))
+    verts, faces, slots = _symbol_lines(lines, dashed)
+    if not verts:
+        return None
+    obj = _new_child(cage_obj, "Door Type Symbol")
+    obj['IS_2D_ANNOTATION'] = True
+    obj[DOOR_SYMBOL_FLAG] = True
+    _finish_mesh(obj, verts, faces, slots, [])
+    try:
+        props = bpy.context.scene.home_builder
+        if not getattr(props, 'show_door_swings', True):
+            obj.hide_set(True)
+    except (AttributeError, RuntimeError):
+        pass
+    return obj
+
+
+def _show_swing_arc(cage_obj, show):
+    """The swing annotation stays - it carries the handing, the side and
+    the double flag every door type reads - but only a swing door draws
+    its arc."""
+    child = _swing_child(cage_obj)
+    if child is None:
+        return
+    for mod in child.modifiers:
+        if mod.type == 'NODES':
+            mod.show_viewport = show
+            mod.show_render = show
+
+
+def pocket_warning(cage_obj):
+    """Why a pocket door's pocket won't fit where it is, or ''. The
+    pocket is the leaf's width of wall beside the opening on its handed
+    side (both sides for a pair); it has to stay inside the wall and
+    clear of the other openings in it."""
+    opts = merged_opts(cage_obj)
+    if opts is None or door_type(opts) != 'POCKET':
+        return ''
+    wall = cage_obj.parent
+    if wall is None or not wall.get('IS_WALL_BP'):
+        return ''
+    try:
+        W = hb_types.GeoNodeCage(cage_obj).get_input('Dim X')
+        wall_len = hb_types.GeoNodeWall(wall).get_input('Length')
+    except Exception:
+        return ''
+    is_double, is_left, _inside = _swing_state(cage_obj)
+    x = cage_obj.location.x
+    pockets = []
+    if is_double:
+        pockets = [(x - W / 2.0, x), (x + W, x + W * 1.5)]
+    elif is_left:
+        pockets = [(x + W, x + 2.0 * W)]
+    else:
+        pockets = [(x - W, x)]
+    for p0, p1 in pockets:
+        if p0 < -1e-4 or p1 > wall_len + 1e-4:
+            return "The pocket runs past the end of the wall"
+    for other in wall.children:
+        if other is cage_obj or not (other.get('IS_ENTRY_DOOR_BP')
+                                     or other.get('IS_WINDOW_BP')):
+            continue
+        try:
+            ow = hb_types.GeoNodeCage(other).get_input('Dim X')
+        except Exception:
+            continue
+        ox0 = other.location.x
+        for p0, p1 in pockets:
+            if ox0 < p1 - 1e-4 and ox0 + ow > p0 + 1e-4:
+                return "The pocket runs into %s" % other.name
+    return ''
+
+
 def build_door_geometry(cage_obj):
     """Replace the door cage's generated children from its stored
     options: jamb, casing both faces, threshold, slab(s), optional
@@ -1287,9 +1676,12 @@ def build_door_geometry(cage_obj):
     jw = min(max(opts['jamb_width'], inch(0.25)), inch(2.0))
     cw = max(opts['casing_width'], inch(0.5))
     ct = max(opts['casing_thickness'], inch(0.25))
-    th_h = max(opts['threshold_height'], 0.0)
+    kind = door_type(opts)
+    # Only a swing door sits on a threshold; the others run on tracks.
+    th_h = max(opts['threshold_height'], 0.0) if kind == 'SWING' else 0.0
     st = max(opts['slab_thickness'], inch(0.75))
     trim_mat = _trim_material()
+    cage_obj[DOOR_TYPE_KEY] = kind
 
     verts, faces, slots = [], [], []
 
@@ -1411,6 +1803,30 @@ def build_door_geometry(cage_obj):
     slab_h = z_top - th_h
     slab_zone_w = door_x1 - door_x0
     is_double, is_left, swing_inside = _swing_state(cage_obj)
+    _show_swing_arc(cage_obj, kind == 'SWING')
+    if kind != 'SWING':
+        side = -1.0 if swing_inside else 1.0
+        y_center = y_center_front + st / 2.0
+        casing_t = ct if any_casing else 0.0
+        if kind == 'BIFOLD':
+            _build_bifold(cage_obj, opts, door_x0, door_x1, th_h, slab_h,
+                          y_center_front, st, is_double, is_left, side)
+        elif kind == 'SLIDING':
+            _build_sliding(cage_obj, opts, door_x0, door_x1, th_h, slab_h,
+                           y_center, st, is_double, is_left)
+        elif kind == 'POCKET':
+            _build_pocket(cage_obj, opts, door_x0, door_x1, th_h, slab_h,
+                          y_center, st, is_double, is_left)
+        elif kind == 'BARN':
+            _build_barn(cage_obj, opts, door_x0, door_x1, z_top, T, side,
+                        casing_t, st, is_double, is_left, verts, faces,
+                        slots)
+        _door_type_symbol(cage_obj, kind, opts, door_x0, door_x1, T,
+                          y_center, st, casing_t, is_double, is_left, side)
+        frame = _new_child(cage_obj, "Door Frame")
+        _finish_mesh(frame, verts, faces, slots, [trim_mat])
+        _ensure_annotation_text(cage_obj, False)
+        return
     # 'L' hinges the slab at x = 0, the LEFT end seen from the interior.
     # The annotation's "left" is the exterior view (see _swing_state),
     # so a left-handed door hinges at the 'R' end of the cage. This had

@@ -1320,6 +1320,11 @@ class home_builder_doors_windows_OT_door_prompts(bpy.types.Operator):
         description="Starting point that fills in the fields below; "
                     "edit any field afterwards without losing your "
                     "changes")  # type: ignore
+    door_type: bpy.props.EnumProperty(
+        name="Door Type", items=door_window_geo.DOOR_TYPE_ITEMS,
+        description="How the door opens. Flip Hand picks the side it "
+                    "folds, slides or pockets to, Flip Swing the room "
+                    "side, and Toggle Double makes it a pair")  # type: ignore
     door_style: bpy.props.EnumProperty(
         name="Panel Layout", items=door_window_geo.DOOR_STYLE_ITEMS)  # type: ignore
     panel_raise: bpy.props.BoolProperty(name="Raised Panels")  # type: ignore
@@ -1506,6 +1511,7 @@ class home_builder_doors_windows_OT_door_prompts(bpy.types.Operator):
         getattr(self, '_draw_' + self.ui_tab.lower())(layout.box())
 
     def _draw_door(self, box):
+        _labelled_row(box, self, 'door_type', "Door Type:")
         _labelled_row(box, self, 'door_style', "Panel Layout:")
         if self.door_style == 'LITE_FULL':
             row = box.row(align=True)
@@ -1515,9 +1521,17 @@ class home_builder_doors_windows_OT_door_prompts(bpy.types.Operator):
         elif self.door_style.startswith('LITE_'):
             _labelled_row(box, self, 'lock_rail_width', "Lock Rail:")
         if not self.door_style.startswith('LITE_') \
-                and self.door_style != 'FLUSH':
+                and self.door_style not in ('FLUSH', 'LOUVER'):
             box.prop(self, 'panel_raise')
-        _labelled_row(box, self, 'open_angle', "Open Angle:")
+        # A swing door opens by degrees; the others by how far they
+        # have folded, slid or pocketed (0-100).
+        _labelled_row(box, self, 'open_angle',
+                      "Open Angle:" if self.door_type == 'SWING'
+                      else "Open %:")
+        if self.door_type == 'POCKET':
+            warning = door_window_geo.pocket_warning(self.door.obj)
+            if warning:
+                box.label(text=warning, icon='ERROR')
 
         box.separator()
         box.label(text="Construction")
