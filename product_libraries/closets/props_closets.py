@@ -630,6 +630,12 @@ class Closet_Starter_Props(PropertyGroup):
                     "bottom shelf",
         default=0.0, min=0.0, unit='LENGTH', precision=4,
         update=_update_starter_prop)  # type: ignore
+    bottom_cleat: BoolProperty(
+        name="Bottom Cleat",
+        description="Run one continuous cleat under the bottom of the "
+                    "hanging bays, end panel to end panel, to carry the "
+                    "load against the wall",
+        default=False, update=_update_starter_prop)  # type: ignore
 
     # End options. Finished end and drill through are recorded on the
     # panel as flags - whether the end is exposed, and whether its

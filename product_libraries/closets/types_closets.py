@@ -1249,6 +1249,7 @@ class ClosetStarter(GeoNodeCage):
             self._layout_panels(layout, scene_props)
             self._layout_bays(layout, scene_props, sp)
             self._layout_starter_parts(layout, scene_props, sp)
+            self._layout_bottom_cleats(layout, scene_props, sp)
             self._layout_bridge_parts(layout, scene_props, sp)
             self._layout_battens(layout, scene_props, sp)
             self._layout_fillers(layout, scene_props, sp)
@@ -4157,6 +4158,77 @@ class ClosetStarter(GeoNodeCage):
         side = opening.get(PROP_OPENING_SIDE, 'FRONT')
         carry[(side, seg_bottom + z_off)] = (
             opening, len(dealt) - n_above, n_above, held)
+
+    def _layout_bottom_cleats(self, layout, scene_props, sp):
+        """Bottom Cleat: one continuous cleat hung under the bottom shelf
+        of the hanging bays, against the wall, from the outside of one
+        end panel to the outside of the other - the prior library's
+        bottom support. Bays side by side whose bottoms line up share a
+        cleat; a floor bay, or a bottom at another height, breaks the
+        run. They are the run's own parts, tagged so they are told apart
+        from the bays' cleats, and made or taken away to match."""
+        runs = []
+        # getattr: a newer setting than some running sessions' group.
+        if getattr(sp, 'bottom_cleat', False):
+            bays = layout['bays']
+            panels = layout['panels']
+            pt = scene_props.panel_thickness
+            start = None
+            for i, bay in enumerate(bays + [None]):
+                joins = (bay is not None and not bay['floor']
+                         and (start is None
+                              or abs(bay['z0'] - bays[start]['z0']) < 1e-4))
+                if start is not None and not joins:
+                    first, last = bays[start], bays[i - 1]
+                    left = panels[start]
+                    right = panels[i] if i < len(panels) else None
+
+                    def _under_panel(panel, neighbor):
+                        # A panel shared with a bay that reaches lower
+                        # (a floor bay, or one hung lower) runs on down
+                        # past this cleat, so the cleat stops at its face.
+                        if panel is None or panel.get('hidden'):
+                            return False
+                        return (neighbor is None or (not neighbor['floor']
+                                and neighbor['z0'] >= first['z0'] - 1e-4))
+
+                    before = bays[start - 1] if start > 0 else None
+                    after = bays[i] if i < len(bays) else None
+                    x0 = (min(left['x'], first['x'])
+                          if _under_panel(left, before) else first['x'])
+                    x1 = last['x'] + last['width']
+                    if _under_panel(right, after):
+                        x1 = max(x1, right['x'] + pt)
+                    runs.append((x0, x1 - x0, first['z0']))
+                    start = None
+                if (start is None and bay is not None
+                        and not bay['floor']):
+                    start = i
+        cleats = sorted(
+            [c for c in self.obj.children if c.get('hb_bottom_cleat')],
+            key=lambda o: o.get('hb_bottom_cleat_index', 0))
+        while len(cleats) > len(runs):
+            _remove_part_tree(cleats.pop())
+        while len(cleats) < len(runs):
+            part = CabinetPart()
+            part.create('Bottom Cleat')
+            part.obj.parent = self.obj
+            # Priced and cut like any other cleat.
+            part.obj['hb_part_role'] = PART_ROLE_CLEAT
+            part.obj['hb_bottom_cleat'] = 1
+            part.obj['hb_bottom_cleat_index'] = len(cleats)
+            part.obj['MENU_ID'] = 'HOME_BUILDER_MT_closet_part_commands'
+            part.obj.rotation_euler.x = math.radians(90)
+            cleats.append(part.obj)
+        for cleat, (x0, length, z0) in zip(cleats, runs):
+            # Mirror Y hangs it down from the underside of the bottom
+            # shelf rather than standing it up into the bay.
+            cleat.location = (x0, 0.0, z0)
+            part = GeoNodeCutpart(cleat)
+            part.set_input('Mirror Y', True)
+            part.set_input('Length', length)
+            part.set_input('Width', const.CLEAT_WIDTH)
+            part.set_input('Thickness', scene_props.shelf_thickness)
 
     def _layout_starter_parts(self, layout, scene_props, sp):
         # Only a unit with a top to cap takes a countertop - a base run

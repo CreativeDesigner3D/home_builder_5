@@ -6142,6 +6142,10 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
             col.prop(sp, 'inset_bottom')
             col.prop(sp, 'inset_cleat')
             box.label(text="Floor bays only", icon='INFO')
+            # The other side of the same question: a hanging bay has no
+            # floor under it, so its load can be carried on a cleat.
+            if any(not b.hb_closet_bay.floor_mounted for b in bays):
+                box.prop(sp, 'bottom_cleat')
 
         box = _section(layout, sp, 'show_toe_kick', "Toe Kick")
         if box is not None:
