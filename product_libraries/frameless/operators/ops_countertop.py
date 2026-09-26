@@ -716,6 +716,13 @@ class hb_frameless_OT_add_countertops(bpy.types.Operator):
             ct_count += len(create_island_countertops(
                 context, island_cabinets, appliances))
 
+        # The room's countertop laminate, when one is chosen; new tops
+        # are the only ones without it.
+        from .. import props_hb_frameless
+        props_hb_frameless.apply_countertop_material(
+            [o for o in context.scene.objects if o.get('IS_COUNTERTOP')
+             and o.get('HB_COUNTERTOP_LIB') == 'FRAMELESS'])
+
         self.report({'INFO'}, f"Created {ct_count} countertop(s)")
         return {'FINISHED'}
 

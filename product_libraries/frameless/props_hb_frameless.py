@@ -550,6 +550,56 @@ def clear_library_previews():
         pcoll = preview_collections["library_previews"]
         pcoll.clear()
 
+_CTOP_MATERIAL_KEEP = 'KEEP'
+
+
+_ctop_material_items = None
+
+
+def countertop_material_items(self, context):
+    """The countertop laminates the closet library uses, after a first
+    entry that leaves each top the material it has. Held in a module
+    list: Blender keeps pointers into what a dynamic enum returns."""
+    global _ctop_material_items
+    if _ctop_material_items is None:
+        items = [(_CTOP_MATERIAL_KEEP, "As Picked",
+                  "Leave each countertop the material given to it")]
+        try:
+            from ..closets import materials_closets
+            items += [(n, n, "") for n in
+                      materials_closets.get_countertop_material_names()]
+        except Exception:
+            pass
+        _ctop_material_items = items
+    return _ctop_material_items
+
+
+def apply_countertop_material(tops=None):
+    """Put the room's Countertop Material on frameless countertops - the
+    ones given, or every frameless top in the scene. As Picked leaves
+    them alone."""
+    props = bpy.context.scene.hb_frameless
+    name = props.countertop_material
+    if not name or name == _CTOP_MATERIAL_KEEP:
+        return
+    from ..closets import materials_closets
+    from ... import surface_materials
+    mat = materials_closets.load_material(
+        name, materials_closets.COUNTERTOPS_BLEND)
+    if mat is None:
+        return
+    if tops is None:
+        tops = [o for o in bpy.context.scene.objects
+                if o.get('IS_COUNTERTOP')
+                and o.get('HB_COUNTERTOP_LIB') == 'FRAMELESS']
+    for obj in tops:
+        surface_materials.assign(obj, mat)
+
+
+def update_countertop_material(self, context):
+    apply_countertop_material()
+
+
 def update_top_cabinet_clearance(self, context):
     hb_props = context.scene.home_builder
     # Heights typed in by hand are the room's until the override is
@@ -2118,6 +2168,14 @@ class Frameless_Scene_Props(PropertyGroup):
                                              default=units.inch(0.0),
                                              unit='LENGTH')# type: ignore
 
+    countertop_material: EnumProperty(
+        name="Countertop Material",
+        description="The laminate the frameless countertops are surfaced "
+                    "in - the closet library's countertop materials. "
+                    "Changing it repaints every frameless top in the room",
+        items=countertop_material_items,
+        update=update_countertop_material)  # type: ignore
+
 
     def ensure_default_style(self):
         """Ensure at least one cabinet style exists."""
@@ -2672,6 +2730,8 @@ class Frameless_Scene_Props(PropertyGroup):
         col.prop(props, 'countertop_overhang_front', text="Front Overhang")
         col.prop(props, 'countertop_overhang_sides', text="Side Overhang")
         col.prop(props, 'countertop_overhang_back', text="Back Overhang")
+        col.separator()
+        col.prop(props, 'countertop_material', text="Material")
 
         layout.separator()
 
