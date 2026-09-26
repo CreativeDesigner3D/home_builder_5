@@ -612,6 +612,81 @@ def _draw():
         pass
 
 
+# ---- Accessory space box -------------------------------------------------------
+# The room an accessory asks its opening for - the space below its
+# mounting line and above it that the maker says it needs to work - drawn
+# as a wire box across the opening while the accessory is selected, the
+# way the prior library showed it. Only then: a room of closets full of
+# boxes would bury what they are drawn round.
+
+SPACE_BOX_COLOR = (0.35, 0.75, 1.0, 0.9)
+_space_handle = None
+
+
+def _selected_accessory(context):
+    obj = context.active_object
+    if obj is None or not obj.select_get():
+        return None
+    from . import types_closets
+    return types_closets.find_accessory_cage(obj)
+
+
+def _space_box_lines(cage):
+    """World-space line pairs for one accessory's reserved space, or
+    None when it is not in an opening or not in the catalog."""
+    from . import types_closets
+    from . import accessories_closets as acc
+    from ...hb_types import GeoNodeCage
+    opening = cage.parent
+    if opening is None or not opening.get(types_closets.TAG_OPENING_CAGE):
+        return None
+    acc_def = acc.get(cage.get(types_closets.PROP_ACCESSORY_KEY, ''))
+    if acc_def is None:
+        return None
+    z0, z1 = types_closets.accessory_span(cage, acc_def)
+    if z1 - z0 <= 1e-5:
+        return None
+    try:
+        op_cage = GeoNodeCage(opening)
+        w = op_cage.get_input('Dim X')
+        d = op_cage.get_input('Dim Y')
+    except Exception:
+        return None
+    m = opening.matrix_world
+    corners = [m @ Vector((x, y, z)) for z in (z0, z1)
+               for y in (0.0, -d) for x in (0.0, w)]
+    # 0-3 the bottom (x, y), 4-7 the top.
+    edges = ((0, 1), (2, 3), (0, 2), (1, 3),
+             (4, 5), (6, 7), (4, 6), (5, 7),
+             (0, 4), (1, 5), (2, 6), (3, 7))
+    return [corners[i] for pair in edges for i in pair]
+
+
+def _draw_space_box():
+    if _shutdown:
+        return
+    try:
+        cage = _selected_accessory(bpy.context)
+        if cage is None:
+            return
+        lines = _space_box_lines(cage)
+        if not lines:
+            return
+        from gpu_extras.batch import batch_for_shader
+        shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+        batch = batch_for_shader(shader, 'LINES', {"pos": lines})
+        gpu.state.blend_set('ALPHA')
+        gpu.state.depth_test_set('NONE')
+        gpu.state.line_width_set(2.0)
+        shader.bind()
+        shader.uniform_float("color", SPACE_BOX_COLOR)
+        batch.draw(shader)
+        gpu.state.line_width_set(1.0)
+        gpu.state.blend_set('NONE')
+    except Exception:
+        pass
+
+
 # ---- Commit ------------------------------------------------------------------
 
 def _commit(obj, kind, value):
@@ -986,6 +1061,9 @@ def register():
         bpy.utils.register_class(cls)
     _draw_handle = bpy.types.SpaceView3D.draw_handler_add(
         _draw, (), 'WINDOW', 'POST_PIXEL')
+    global _space_handle
+    _space_handle = bpy.types.SpaceView3D.draw_handler_add(
+        _draw_space_box, (), 'WINDOW', 'POST_VIEW')
     _register_keymaps()
 
 
@@ -1000,6 +1078,13 @@ def unregister():
         except Exception:
             pass
         _draw_handle = None
+    global _space_handle
+    if _space_handle is not None:
+        try:
+            bpy.types.SpaceView3D.draw_handler_remove(_space_handle, 'WINDOW')
+        except Exception:
+            pass
+        _space_handle = None
     for cls in reversed(classes):
         try:
             bpy.utils.unregister_class(cls)
