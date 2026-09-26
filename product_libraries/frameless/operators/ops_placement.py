@@ -523,10 +523,13 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
             self.individual_cabinet_width = parsed / self.cabinet_quantity
             self.fill_mode = False
             self.update_preview_cage()
-                
+            if self.right_offset is not None and self.selected_wall:
+                # Width typed after a right offset: re-anchor to the right.
+                self.recalculate_from_offsets(bpy.context)
+
         elif self.typing_target == hb_placement.TypingTarget.HEIGHT:
             self.preview_cage.set_input('Dim Z', parsed)
-        
+
         self.stop_typing()
     
     def recalculate_from_offsets(self, context):
@@ -553,12 +556,17 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
         gap_width = gap_end - gap_start
         self.current_gap_width = gap_width
         self.placement_x = gap_start
-        
+
         if self.fill_mode and gap_width > 0:
             if self.auto_quantity:
                 self.cabinet_quantity = self.calculate_auto_quantity(gap_width)
             self.individual_cabinet_width = gap_width / self.cabinet_quantity
-        
+        elif self.right_offset is not None and self.left_offset is None:
+            # A set width measured off the right: the cabinet's right
+            # edge lands at the offset and it keeps its width.
+            total_width = self.individual_cabinet_width * self.cabinet_quantity
+            self.placement_x = gap_end - total_width
+
         self.update_preview_cage()
         self.update_preview_position()
     
@@ -1120,6 +1128,8 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                     self.array_modifier.count = self.cabinet_quantity
             self.individual_cabinet_width = parsed / self.cabinet_quantity
             self.update_preview_cage()
+            if self.right_offset is not None and self.selected_wall:
+                self.recalculate_from_offsets(bpy.context)
             self.update_preview_position()
             self.update_dimensions(bpy.context)
             
