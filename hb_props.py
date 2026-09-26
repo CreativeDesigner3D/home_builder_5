@@ -126,8 +126,10 @@ def update_ceiling_height(self, context):
     frameless_props = context.scene.hb_frameless
     
     # Recalculate tall and upper cabinet heights based on new ceiling height
-    frameless_props.tall_cabinet_height = self.ceiling_height - frameless_props.default_top_cabinet_clearance
-    frameless_props.upper_cabinet_height = self.ceiling_height - frameless_props.default_top_cabinet_clearance - frameless_props.default_wall_cabinet_location
+    # Heights typed in by hand stay put when the ceiling moves.
+    if not getattr(frameless_props, 'override_tall_upper_heights', False):
+        frameless_props.tall_cabinet_height = self.ceiling_height - frameless_props.default_top_cabinet_clearance
+        frameless_props.upper_cabinet_height = self.ceiling_height - frameless_props.default_top_cabinet_clearance - frameless_props.default_wall_cabinet_location
 
     # Mirror for face_frame's parallel scene props. Each library owns
     # its own clearance + wall_location, so the formulas are applied

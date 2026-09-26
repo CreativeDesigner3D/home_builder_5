@@ -552,7 +552,11 @@ def clear_library_previews():
 
 def update_top_cabinet_clearance(self, context):
     hb_props = context.scene.home_builder
-    
+    # Heights typed in by hand are the room's until the override is
+    # turned off again, which hands them back to the clearances.
+    if self.override_tall_upper_heights:
+        return
+
     # Calculate heights based on clearance settings
     # Tall cabinet: goes from floor to ceiling minus clearance
     self.tall_cabinet_height = hb_props.ceiling_height - self.default_top_cabinet_clearance
@@ -1865,7 +1869,15 @@ class Frameless_Scene_Props(PropertyGroup):
                                                    default=units.inch(30),
                                                    unit='LENGTH',
                                                    precision=4)# type: ignore
-    
+
+    override_tall_upper_heights: BoolProperty(
+        name="Set Tall and Upper Heights",
+        description="Type the tall and upper cabinet heights instead of "
+                    "working them out from the ceiling height and the "
+                    "top cabinet clearance",
+        default=False,
+        update=update_top_cabinet_clearance)  # type: ignore
+
     base_width_blind: FloatProperty(name="Base Width Blind",
                                                description="Default width for base blind corner cabinets",
                                                default=units.inch(48.0),
@@ -2215,8 +2227,14 @@ class Frameless_Scene_Props(PropertyGroup):
         row = layout.row()
         row.label(text="Height:")
         row.prop(self,'base_cabinet_height',text="")
-        row.label(text=units.unit_to_string(unit_settings,self.tall_cabinet_height))
-        row.label(text=units.unit_to_string(unit_settings,self.upper_cabinet_height))
+        if self.override_tall_upper_heights:
+            row.prop(self,'tall_cabinet_height',text="")
+            row.prop(self,'upper_cabinet_height',text="")
+        else:
+            row.label(text=units.unit_to_string(unit_settings,self.tall_cabinet_height))
+            row.label(text=units.unit_to_string(unit_settings,self.upper_cabinet_height))
+        row = layout.row()
+        row.prop(self,'override_tall_upper_heights')
         row = layout.row()
         row.label(text="Stacked Top Cabinet Height:") 
         row.prop(self,'upper_top_stacked_cabinet_height',text="")

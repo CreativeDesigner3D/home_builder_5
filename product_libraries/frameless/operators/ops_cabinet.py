@@ -17,6 +17,10 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
     cabinet_width: bpy.props.FloatProperty(name="Width", unit='LENGTH', precision=5) # type: ignore
     cabinet_height: bpy.props.FloatProperty(name="Height", unit='LENGTH', precision=5) # type: ignore
     cabinet_depth: bpy.props.FloatProperty(name="Depth", unit='LENGTH', precision=5) # type: ignore
+    height_off_floor: bpy.props.FloatProperty(
+        name="Height Off Floor",
+        description="How high the bottom of the cabinet is hung",
+        unit='LENGTH', precision=5)  # type: ignore
     toe_kick_height: bpy.props.FloatProperty(name="Toe Kick Height", unit='LENGTH', precision=5) # type: ignore
     toe_kick_setback: bpy.props.FloatProperty(name="Toe Kick Setback", unit='LENGTH', precision=5) # type: ignore
     toe_kick_type: bpy.props.EnumProperty(
@@ -89,6 +93,11 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
         return (not obj.get('IS_CORNER_CABINET')
                 and solver_frameless.carcass_kind(obj) == 'UPPER')
 
+    def _is_hung(self):
+        """Uppers are hung at a height of their own; everything else
+        stands on the floor or its toe kick."""
+        return self.cabinet.obj.get('CABINET_TYPE') == 'UPPER'
+
     def _can_angle_front(self):
         obj = self.cabinet.obj
         return (not obj.get('IS_CORNER_CABINET')
@@ -113,7 +122,8 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
         self.cabinet_width = self.cabinet.get_input('Dim X')
         self.cabinet_height = self.cabinet.get_input('Dim Z')
         self.cabinet_depth = self.cabinet.get_input('Dim Y')
-        
+        self.height_off_floor = cabinet_bp.matrix_world.translation.z
+
         # Get toe kick properties if they exist (BASE and TALL cabinets)
         if 'Toe Kick Height' in cabinet_bp:
             self.toe_kick_height = cabinet_bp['Toe Kick Height']
@@ -160,7 +170,14 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
         self.cabinet.set_input('Dim X', self.cabinet_width)
         self.cabinet.set_input('Dim Z', self.cabinet_height)
         self.cabinet.set_input('Dim Y', self.cabinet_depth)
-        
+        if self._is_hung():
+            # Moved up or down by the difference, so it keeps its place
+            # on a wall whatever the wall's own height off the floor.
+            dz = self.height_off_floor - obj.matrix_world.translation.z
+            if abs(dz) > 1e-6:
+                obj.location.z += dz
+                context.view_layer.update()
+
         # Set toe kick properties if they exist
         if 'Toe Kick Height' in self.cabinet.obj:
             self.cabinet.obj['Toe Kick Height'] = self.toe_kick_height
@@ -236,6 +253,11 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
         row.active = not (self.angled_front and self._can_angle_front())
         row.label(text="Depth:")
         row.prop(self, 'cabinet_depth', text="")
+
+        if self._is_hung():
+            row = col.row(align=True)
+            row.label(text="Height Off Floor:")
+            row.prop(self, 'height_off_floor', text="")
 
         if self._can_angle_front():
             box = layout.box()
