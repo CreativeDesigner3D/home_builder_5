@@ -245,6 +245,9 @@ DOUBLE_HANG_TOP_OPENING = inch(40.8248)
 # A mid shelf needs no figure of its own: it sits where the upper
 # hang's room finishes.
 TOP_SHELF_OPENING_HEIGHT = inch(10.5866)
+# The storage opening a top shelf leaves over a single hang: a nominal
+# 12", taken as the nearest step on the same 32 mm ladder.
+SINGLE_HANG_TOP_OPENING = TOP_SHELF_OPENING_HEIGHT + 0.032
 # Fronts (doors / drawer fronts / hampers). Half-overlay convention from
 # the prior closet library: each front overlays a shared panel/shelf by
 # (thickness - gap) / 2 so neighboring fronts split the reveal.

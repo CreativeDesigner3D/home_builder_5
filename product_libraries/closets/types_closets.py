@@ -7167,9 +7167,8 @@ def apply_bay_data(bay_obj, data):
 # below feeds the operator enum.
 BAY_CONFIG_GROUPS = [
     [('ADJ_SHELVES', "Adjustable Shelves")],
-    [('DOUBLE_HANG', "Double Hang"),
-     ('DH_TOP_SHELF', "Double Hang with Top Shelf"),
-     ('DH_MID_SHELF', "Double Hang with Mid Shelf")],
+    [('DH_MID_SHELF', "Double Hang"),
+     ('SH_TOP_SHELF', "Single Hang with Top Shelf")],
     [('DOORS_3DR', "Doors Over 3 Drawers"),
      ('DOORS_4DR', "Doors Over 4 Drawers"),
      ('DOORS_5DR', "Doors Over 5 Drawers"),
@@ -7183,6 +7182,10 @@ BAY_CONFIG_GROUPS = [
      ('FULL_HEIGHT_DOORS', "Full Height Doors")],
 ]
 BAY_CONFIGS = [item for group in BAY_CONFIG_GROUPS for item in group]
+# Off the menu but still built when asked for by name: a double hang
+# with no shelf between the rods, and one under a top shelf.
+BAY_CONFIGS += [('DOUBLE_HANG', "Double Hang (No Shelf)"),
+                ('DH_TOP_SHELF', "Double Hang with Top Shelf")]
 
 
 def seed_door_shelves(opening):
@@ -7409,6 +7412,12 @@ def apply_bay_config(bay_obj, config):
         # way the prior library built this configuration.
         cleat_at = top
         actions = [(0, _cfg_rod), (1, _cfg_rod)]
+    elif config == 'SH_TOP_SHELF':
+        # One hang under a shelf that leaves a 12" storage opening
+        # above it.
+        top = max(inch(2.0), ih - const.SINGLE_HANG_TOP_OPENING - st)
+        splits = [top]
+        actions = [(0, _cfg_rod)]
     elif drawer_qty is not None:
         qty = drawer_qty
 
