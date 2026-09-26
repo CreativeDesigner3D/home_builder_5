@@ -1088,6 +1088,21 @@ class CabinetInteriorItems(CabinetInterior):
             interior_items.add_item(self.obj, self.seed_kind)
 
 
+SINGLE_DOOR_MAX_WIDTH = inch(24)
+
+
+def default_door_swing_for_width(cabinet_obj, width):
+    """A cabinet narrower than 24" is built with one door rather than a
+    pair: every door front on it that is still a pair becomes a single
+    left-hinged door. Only for a cabinet as it is placed - a pair chosen
+    on purpose later is left alone."""
+    if width >= SINGLE_DOOR_MAX_WIDTH - 1e-6:
+        return
+    for obj in cabinet_obj.children_recursive:
+        if 'Door Swing' in obj and int(obj['Door Swing']) == 2:
+            obj['Door Swing'] = 0
+
+
 class Doors(CabinetOpening):
 
     door_pull_location = "Base"

@@ -2246,6 +2246,9 @@ class hb_frameless_OT_place_cabinet(bpy.types.Operator, WallObjectPlacementMixin
                     cabinet.obj[ops_base_assembly.EDITED_KEY] = True
                 if not self.is_appliance:
                     # Cabinet-specific operations (skip for appliances)
+                    # Under 24" wide, one door instead of a pair.
+                    types_frameless.default_door_swing_for_width(
+                        cabinet.obj, self.individual_cabinet_width)
                     # Assign the active cabinet style to the cabinet
                     bpy.ops.hb_frameless.assign_cabinet_style(cabinet_name=cabinet.obj.name)
                     # Force driver update for grandchild objects (workaround for Blender bug #133392)
