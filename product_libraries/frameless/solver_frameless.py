@@ -1570,6 +1570,11 @@ def _solve_splitter(splitter_obj, vertical):
                          dim_z=dim_z)
             board = parts.get(('SPLITTER', i))
             if board is not None:
+                # A board turned -90 about Y builds its thickness toward
+                # -X unless mirrored; mirrored, it fills the gap between
+                # this section and the next instead of eating into this
+                # one. Dividers made before it was set are put right here.
+                GeoNodeCutpart(board).set_input('Mirror Z', True)
                 set_part(board, (x + size, 0.0, 0.0), length=dim_z,
                          width=dim_y, thickness=mt)
             x += size + mt

@@ -1823,6 +1823,7 @@ class InteriorSplitterHorizontal(CabinetInterior):
                 divider.obj['MENU_ID'] = 'HOME_BUILDER_MT_interior_part_commands'
                 divider.obj.parent = self.obj
                 divider.obj.rotation_euler.y = math.radians(-90)
+                divider.set_input("Mirror Z", True)
                 solver_frameless.tag_split_part(divider.obj, 'SPLITTER', i)
 
             section = InteriorSection()
