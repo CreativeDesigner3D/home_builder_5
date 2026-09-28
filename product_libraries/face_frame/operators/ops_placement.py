@@ -94,8 +94,7 @@ def _find_wall_root(obj):
 
 def _upper_mount_z(cabinet_class, scene_props):
     """Floor->bottom Z for an upper at placement. Defaults to the scene
-    wall-cabinet location; a class may override via `default_z_location`
-    (e.g. Bookcase Upper sits on base cabinets, so 36")."""
+    wall-cabinet location; a class may override via `default_z_location`."""
     z = getattr(cabinet_class, 'default_z_location', None)
     return z if z is not None else scene_props.default_wall_cabinet_location
 

@@ -15333,36 +15333,15 @@ class FloatingVanityCabinet(FloatingBaseFaceFrameCabinet):
 class BookcaseUpperFaceFrameCabinet(UpperFaceFrameCabinet):
     """Open-shelf upper bookcase meant to sit on top of base cabinets.
     Same upper construction (no toe kick), but each bay has its bottom
-    panel removed (open underneath) and the default mount height is 36"
-    off the floor (default_z_location) instead of the over-counter wall
-    location. The open-with-shelves layout is applied by the placement
-    operator via default_bay_config ('OPEN_WITH_SHELVES')."""
-
-    # Placement reads this for the floor->bottom mount height (see
-    # ops_placement._upper_mount_z); 36" sits it on a base-cabinet run.
-    default_z_location = inch(36.0)
-
-    def __init__(self):
-        super().__init__()
-        scene = bpy.context.scene
-        if hasattr(scene, 'hb_face_frame'):
-            props = scene.hb_face_frame
-            # Keep the same top-of-cabinet clearance from the ceiling as a
-            # standard upper (top sits at ceiling - top_clearance), but
-            # start at the lower 36" mount instead of the 54" wall location
-            # -> taller by the difference. upper_cabinet_height already
-            # bakes in (ceiling - top_clearance - wall_location), so adding
-            # back (wall_location - our mount Z) re-tops it at the ceiling
-            # clearance from the lower start.
-            self.default_height = (
-                props.upper_cabinet_height
-                + (props.default_wall_cabinet_location - self.default_z_location))
+    panel removed (open underneath). It mounts at the room's upper
+    cabinet location like any other upper, so a bookcase over a taller
+    base (a dresser, a desk) goes where the user has set uppers to start
+    rather than at a fixed countertop height it would collide with. The
+    open-with-shelves layout is applied by the placement operator via
+    default_bay_config ('OPEN_WITH_SHELVES')."""
 
     def create(self, name="Bookcase Upper", bay_qty=1):
         super().create(name, bay_qty=bay_qty)
-        # Mount height for the direct-create / thumbnail path (placement
-        # applies the same value via default_z_location).
-        self.obj.location.z = self.default_z_location
         # Open underneath: drop each bay's bottom panel. Snapshot the bay
         # refs first - each remove_bottom write triggers a recalc that
         # reconciles carcass parts; suspend_recalc batches them.
