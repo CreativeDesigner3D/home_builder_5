@@ -988,6 +988,46 @@ _FRAMELESS_OPEN_DOOR_BUTTON = _FramelessModalToggleButton(
 )
 
 
+class _ClosetOpenDoorButton(_ModalToggleButton):
+    """The same toggle for closets. Closet open-door mode keeps its own
+    running flag rather than the HUD's modal registry, so the active
+    state and the way out come off that module instead."""
+
+    def _is_my_modal_active(self):
+        try:
+            from ..product_libraries.closets.operators import (
+                op_open_door_closet)
+            return op_open_door_closet.open_door_is_active()
+        except Exception:
+            return False
+
+    def visible(self, context):
+        if not _closet_ui_visible(context):
+            return False
+        return (_closet_mode(context) == self.mode_value
+                or self._is_my_modal_active())
+
+    def on_click(self, context, area, region):
+        try:
+            from ..product_libraries.closets.operators import (
+                op_open_door_closet)
+            if op_open_door_closet.open_door_is_active():
+                op_open_door_closet.request_open_door_exit()
+                return
+            with context.temp_override(area=area, region=region):
+                bpy.ops.hb_closets.open_door_mode('INVOKE_DEFAULT')
+        except Exception:
+            pass
+
+
+_CLOSET_OPEN_DOOR_BUTTON = _ClosetOpenDoorButton(
+    'hb_closets.open_door_mode', 'Parts',
+    enable_label="Enable Open Door Mode",
+    disable_label="Disable Open Door Mode",
+    glyph=_glyph_open_door,
+)
+
+
 # ---- View strip -------------------------------------------------------------
 # Blender's own viewport controls, kept apart from everything else the
 # HUD draws. The centred rows are about the product: what is selected,
@@ -1442,7 +1482,7 @@ def _rows():
     return [
         [_MODE_BUTTONS,
          [_GRAB_PILL, _CLOSET_GRAB_PILL, _OPEN_DOOR_BUTTON,
-          _FRAMELESS_OPEN_DOOR_BUTTON,
+          _FRAMELESS_OPEN_DOOR_BUTTON, _CLOSET_OPEN_DOOR_BUTTON,
           _SIZES_BUTTON, _FRAMELESS_SIZES_BUTTON, _CLOSET_DIMS_BUTTON]
          + _mode_extra_widgets()],
         [_layout_view_buttons()],

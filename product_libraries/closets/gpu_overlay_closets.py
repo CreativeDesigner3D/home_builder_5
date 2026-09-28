@@ -225,9 +225,8 @@ def _filter_pill_rects(context, area, mode):
             # but its pill is the HUD's now.
             continue
         pills.append((label, key))
-    if mode == 'Parts':
-        # Parts mode: only the Open Door action pill.
-        pills.append(("Open Door", '__open_door__'))
+    # Open Door is a HUD icon on the mode row now (viewport_hud's
+    # _ClosetOpenDoorButton), matching the cabinet libraries.
     if not pills:
         return []
     widths = [blf.dimensions(0, label)[0] + 24 * s for label, _k in pills]
