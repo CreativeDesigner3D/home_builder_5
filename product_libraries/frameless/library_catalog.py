@@ -227,6 +227,7 @@ OPTION_FORMS = (
     ("Door and Drawer Front Styles", 'draw_door_styles_ui'),
     ("Handles", 'draw_cabinet_options_handles'),
     ("General Construction", 'draw_cabinet_options_general'),
+    ("Drawer Boxes", 'draw_drawer_box_ui'),
     ("Molding", 'draw_molding_ui'),
     ("Light Rail", 'draw_light_rail_ui'),
     ("Countertops & Backsplash", 'draw_countertop_ui'),
@@ -363,7 +364,18 @@ OPTION_PAGES = {
             ('bool', 'equal_drawer_stack_heights', "Equal Drawer Stack Heights"),
             ('distance', 'top_drawer_front_height', "Top Drawer Height",
              {'when': lambda p: not p.equal_drawer_stack_heights}),
+        ),
+    },
+    # Drawer boxes: whether new cabinets get them, and which box system
+    # sizes them (the closet library's systems, or sized to the drawer).
+    'draw_drawer_box_ui': {
+        'kind': 'form',
+        'title': "Drawer Boxes",
+        'props': 'hb_frameless',
+        'scope': 'scene',
+        'fields': (
             ('bool', 'include_drawer_boxes', "Include Drawer Boxes"),
+            ('enum', 'drawer_box_system', "Drawer Box"),
         ),
     },
     # Crown molding, the closet library's way: one profile for the room
