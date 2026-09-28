@@ -4164,6 +4164,9 @@ def apply_opening_preset(opening_obj, config, **overrides):
                          item on any door opening that lacks one. Used
                          by the sink presets so the plumbing zone under
                          the basin comes in empty.
+      finish_opening   - turn on the opening's finished interior
+                         (liners + shelves in the exterior finish).
+                         Used by the bookcase presets.
     """
     preset = _OPENING_PRESETS[config]
     op_props = opening_obj.face_frame_opening
@@ -4220,6 +4223,9 @@ def apply_opening_preset(opening_obj, config, **overrides):
                                                    'HALF_DEPTH_SHELF',
                                                    'QUARTER_DEPTH_SHELF'):
                 op_props.interior_items.remove(i)
+
+    if overrides.get('finish_opening'):
+        op_props.finish_opening = True
 
     # Apply post-preset overrides. accessory_label targets the most
     # recent ACCESSORY item - for fresh openings the preset just added

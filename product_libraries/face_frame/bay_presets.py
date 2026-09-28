@@ -194,11 +194,14 @@ TALL_PRESETS = {
     'OPEN':                       L('OPEN'),
     # Recipe placeholder; apply_bay_preset swaps in panel_recipe().
     'PANEL':                      L('INSET_PANEL'),
-    # Bookcase Storage Unit: open adjustable shelves on top over a double-
-    # door storage base. The bottom doors pin to tall_cabinet_split_height
+    # Bookcase Storage Unit: finished open adjustable shelves on top over
+    # a double-door storage base. The bottom doors pin to tall_cabinet_split_height
     # (TALL_SPLIT_BOTTOM) so the shelf zone above flexes with cabinet height.
-    'BOOKCASE_STORAGE':           H(L('OPEN_WITH_SHELVES'),
+    'BOOKCASE_STORAGE':           H(L('OPEN_WITH_SHELVES', finish_opening=True),
                                     L('DOUBLE_DOOR', size_role='BOOKCASE_STORAGE_BOTTOM')),
+    # Bookcase: one open bay of adjustable shelves, finished inside
+    # (liners and shelves in the exterior finish).
+    'BOOKCASE_OPEN':              L('OPEN_WITH_SHELVES', finish_opening=True),
 }
 
 
@@ -241,6 +244,8 @@ UPPER_PRESETS = {
     'OPEN':                    L('OPEN'),
     # Recipe placeholder; apply_bay_preset swaps in panel_recipe().
     'PANEL':                   L('INSET_PANEL'),
+    # Bookcase Upper: the open shelf bay comes in finished inside.
+    'BOOKCASE_OPEN':           L('OPEN_WITH_SHELVES', finish_opening=True),
 }
 
 
@@ -531,9 +536,9 @@ def default_bay_config(cabinet_name, bay_width):
         # bay configuration.
         return 'VANITY_DELUXE'
     if cabinet_name == 'Bookcase':
-        # Bookcase: a 12" deep tall cabinet with a single open bay of
-        # adjustable shelves.
-        return 'OPEN_WITH_SHELVES'
+        # Bookcase: a 12" deep tall cabinet with a single finished open
+        # bay of adjustable shelves.
+        return 'BOOKCASE_OPEN'
     if cabinet_name == 'Bookcase Storage Unit':
         # Bookcase with a storage base: open shelves on top, double doors
         # (pinned to the standard lower height) below.
@@ -541,7 +546,7 @@ def default_bay_config(cabinet_name, bay_width):
     if cabinet_name == 'Bookcase Upper':
         # Open-shelf upper bookcase: a single open bay of adjustable shelves
         # (bottom panel removed per the cabinet class).
-        return 'OPEN_WITH_SHELVES'
+        return 'BOOKCASE_OPEN'
     if cabinet_name == '5 Drawer Dresser':
         # Dresser: split top row (two drawers) over three single equal
         # drawers - five fronts.
