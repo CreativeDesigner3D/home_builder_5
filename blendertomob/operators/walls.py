@@ -32,8 +32,10 @@ def calculate_wall_miter_angles(wall_obj):
         prev_rot = left_wall.obj.rotation_euler.z
         turn = this_rot - prev_rot
         # Normalize turn angle to -pi to pi
-        while turn > math.pi: turn -= 2 * math.pi
-        while turn < -math.pi: turn += 2 * math.pi
+        while turn > math.pi:
+            turn -= 2 * math.pi
+        while turn < -math.pi:
+            turn += 2 * math.pi
 
         left_angle = turn / 2
         wall.set_input('Left Angle', left_angle)
@@ -46,8 +48,10 @@ def calculate_wall_miter_angles(wall_obj):
         next_rot = right_wall.obj.rotation_euler.z
         turn = next_rot - this_rot
         # Normalize turn angle to -pi to pi
-        while turn > math.pi: turn -= 2 * math.pi
-        while turn < -math.pi: turn += 2 * math.pi
+        while turn > math.pi:
+            turn -= 2 * math.pi
+        while turn < -math.pi:
+            turn += 2 * math.pi
 
         right_angle = -turn / 2
         wall.set_input('Right Angle', right_angle)
@@ -276,8 +280,10 @@ def _miter_between(a_obj, b_obj):
     turn angle between their rotations."""
     import math
     turn = b_obj.rotation_euler.z - a_obj.rotation_euler.z
-    while turn >  math.pi: turn -= 2 * math.pi
-    while turn < -math.pi: turn += 2 * math.pi
+    while turn >  math.pi:
+        turn -= 2 * math.pi
+    while turn < -math.pi:
+        turn += 2 * math.pi
     hb_types.GeoNodeWall(a_obj).set_input('Right Angle', -turn / 2)
     hb_types.GeoNodeWall(b_obj).set_input('Left Angle',   turn / 2)
 
@@ -1952,8 +1958,10 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         closing_rot = closing_wall.obj.rotation_euler.z
         first_rot = first_wall.obj.rotation_euler.z
         turn = first_rot - closing_rot
-        while turn > math.pi: turn -= 2 * math.pi
-        while turn < -math.pi: turn += 2 * math.pi
+        while turn > math.pi:
+            turn -= 2 * math.pi
+        while turn < -math.pi:
+            turn += 2 * math.pi
         closing_wall.set_input('Right Angle', -turn / 2)
         first_wall.set_input('Left Angle', turn / 2)
 

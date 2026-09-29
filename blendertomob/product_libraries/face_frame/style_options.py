@@ -13,6 +13,8 @@ Cascades:
   door/drawer series -> shape -> panel -> product code (DOOR/DRAWER_CASCADE)
 """
 
+import re as _re
+
 WOOD_SPECIES = ['*Standard (no upcharge specie)',
  'Alder',
  'Alder, Knotty',
@@ -4979,7 +4981,6 @@ def woods_for_ui():
 # Color names hidden from the UI: "Let Down" paint duplicates, "limited time"
 # offers, discontinued colors, and price-referencing entries. Identifiers stay
 # raw (pricing / cascade lookups are unaffected); these are display-only drops.
-import re as _re
 
 _COLOR_HIDE_PATTERNS = (
     _re.compile(r'let\s*down', _re.I),       # "Let Down" / "Letdown" duplicates

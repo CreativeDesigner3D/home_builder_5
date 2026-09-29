@@ -1,1 +1,1 @@
-from .draw_handlers import register, unregister
+from .draw_handlers import register as register, unregister as unregister

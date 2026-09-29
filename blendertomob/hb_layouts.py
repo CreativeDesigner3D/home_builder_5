@@ -2821,8 +2821,10 @@ class MultiView(LayoutView):
                             world = mw @ Vector(c)
                             local = obj_matrix_inv @ world
                             for i in range(3):
-                                if local[i] < mn[i]: mn[i] = local[i]
-                                if local[i] > mx[i]: mx[i] = local[i]
+                                if local[i] < mn[i]:
+                                    mn[i] = local[i]
+                                if local[i] > mx[i]:
+                                    mx[i] = local[i]
                 except Exception:
                     pass
             for ch in o.children:

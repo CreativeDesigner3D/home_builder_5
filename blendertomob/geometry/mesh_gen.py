@@ -20,17 +20,17 @@ def clear_mesh(obj):
 def generate_wall_mesh(obj, length, thickness, height):
     """Gera um segmento reto paramétrico de parede usando bmesh (escala em metros)."""
     clear_mesh(obj)
-    l = length
+    comprimento = length
     t = thickness
     h = height
 
     bm = bmesh.new()
 
     # Cria os 4 vértices da base
-    v0 = bm.verts.new((-l / 2, -t / 2, 0.0))
-    v1 = bm.verts.new((l / 2, -t / 2, 0.0))
-    v2 = bm.verts.new((l / 2, t / 2, 0.0))
-    v3 = bm.verts.new((-l / 2, t / 2, 0.0))
+    v0 = bm.verts.new((-comprimento / 2, -t / 2, 0.0))
+    v1 = bm.verts.new((comprimento / 2, -t / 2, 0.0))
+    v2 = bm.verts.new((comprimento / 2, t / 2, 0.0))
+    v3 = bm.verts.new((-comprimento / 2, t / 2, 0.0))
 
     # Cria a face inferior
     base_face = bm.faces.new([v0, v1, v2, v3])

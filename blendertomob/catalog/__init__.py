@@ -8,7 +8,7 @@ The data lives in catalog_data.CATALOG (a plain Python list); the UI is
 a thin renderer over it. Per-item thumbnails (or the no_thumbnail.png
 placeholder) are managed by previews_catalog.
 """
-from . import catalog_data
+from . import catalog_data as catalog_data
 from . import previews_catalog
 from . import props_catalog
 from . import ops_catalog

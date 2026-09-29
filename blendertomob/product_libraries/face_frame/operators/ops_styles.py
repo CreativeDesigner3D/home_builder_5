@@ -1202,11 +1202,17 @@ class hb_face_frame_OT_paint_part_material(bpy.types.Operator):
         if event.type in {'ESC', 'RIGHTMOUSE'} and event.value == 'PRESS':
             return self._finish(context)
         if event.type in {'ONE', 'NUMPAD_1'} and event.value == 'PRESS':
-            self.brush = 'FINISH'; self._status(context); return {'RUNNING_MODAL'}
+            self.brush = 'FINISH'
+            self._status(context)
+            return {'RUNNING_MODAL'}
         if event.type in {'TWO', 'NUMPAD_2'} and event.value == 'PRESS':
-            self.brush = 'INTERIOR'; self._status(context); return {'RUNNING_MODAL'}
+            self.brush = 'INTERIOR'
+            self._status(context)
+            return {'RUNNING_MODAL'}
         if event.type in {'THREE', 'NUMPAD_3'} and event.value == 'PRESS':
-            self.brush = 'RESET'; self._status(context); return {'RUNNING_MODAL'}
+            self.brush = 'RESET'
+            self._status(context)
+            return {'RUNNING_MODAL'}
         if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
             self._paint(context, event)
             return {'RUNNING_MODAL'}

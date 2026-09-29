@@ -1,3 +1,5 @@
+# O hot-reload precisa ocorrer antes das importações dos submódulos.
+# ruff: noqa: E402
 import sys
 import importlib
 import bpy  # type: ignore
@@ -19,10 +21,10 @@ for _mod_name in _submodule_names:
         importlib.reload(sys.modules[_full_name])
 
 # Import modern modules
-from . import compat
+from . import compat as compat
 from . import data
-from . import geometry
-from . import cutting
+from . import geometry as geometry
+from . import cutting as cutting
 from . import ui
 from . import overlays
 from . import operators as btm_operators
@@ -51,7 +53,7 @@ from .product_libraries import face_frame
 from .product_libraries import frameless
 from .product_libraries.common import wood_hoods
 from . import molding
-from . import hb_layouts
+from . import hb_layouts as hb_layouts
 from . import hb_assets
 
 

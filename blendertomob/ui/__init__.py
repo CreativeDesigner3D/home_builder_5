@@ -1,1 +1,1 @@
-from .panels import register, unregister
+from .panels import register as register, unregister as unregister

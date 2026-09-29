@@ -6,7 +6,6 @@ compatível com CorteCloud, CutList Optimizer, Promob, OptiCut e softwares de ma
 
 import json
 from datetime import datetime
-import bpy  # type: ignore
 
 
 def export_cut_plan_to_json(filepath, nesting_result, parts_list, project_name="Projeto Marcenaria"):
@@ -18,7 +17,6 @@ def export_cut_plan_to_json(filepath, nesting_result, parts_list, project_name="
     sheets = nesting_result.get("sheets", [])
     unplaced = nesting_result.get("unplaced", [])
 
-    scene = bpy.context.scene if hasattr(bpy, 'context') and hasattr(bpy.context, 'scene') else None
     unit_str = "mm"
 
     # Estrutura JSON Global Padronizada

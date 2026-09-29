@@ -3711,8 +3711,10 @@ class FaceFrameCabinet(GeoNodeCage):
         between the two extended legs - shared by the shelf and towel bar.
         left/right inner = side outer x +/- its thickness; front = leg front
         edge (y = -depth); leg_bottom = the dropped side bottom z."""
-        lp = solver.left_side_position(layout); ld = solver.left_side_dims(layout)
-        rp = solver.right_side_position(layout); rd = solver.right_side_dims(layout)
+        lp = solver.left_side_position(layout)
+        ld = solver.left_side_dims(layout)
+        rp = solver.right_side_position(layout)
+        rd = solver.right_side_dims(layout)
         left_inner = lp[0] + ld[2]
         right_inner = rp[0] - rd[2]
         front_y = lp[1] - ld[1]
@@ -4696,8 +4698,10 @@ class FaceFrameCabinet(GeoNodeCage):
         FLUSH and to_floor semantics; the math here is shared by bays and
         openings.
         """
-        left_x = region['left_x']; right_x = region['right_x']
-        bottom_z = region['bottom_z']; top_z = region['top_z']
+        left_x = region['left_x']
+        right_x = region['right_x']
+        bottom_z = region['bottom_z']
+        top_z = region['top_z']
         cage_dim_x = right_x - left_x
         cage_dim_y = region['cage_dim_y']
         rev = region['reveals']

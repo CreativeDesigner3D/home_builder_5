@@ -450,10 +450,10 @@ def _hood_door_overlays(hood_obj):
     style = _hood_style(hood_obj)
     try:
         if style is not None:
-            l, r, t, b = style._OVERLAY_TABLE.get(
+            sobreposicao_esquerda, r, t, b = style._OVERLAY_TABLE.get(
                 style.door_overlay_type, style._OVERLAY_TABLE['CLASSIC'])
-            if min(l, r, t, b) > 0.0:
-                return inch(l), inch(r), inch(t), inch(b)
+            if min(sobreposicao_esquerda, r, t, b) > 0.0:
+                return inch(sobreposicao_esquerda), inch(r), inch(t), inch(b)
     except Exception:
         pass
     return inch(0.5), inch(0.5), inch(0.5), inch(0.5)

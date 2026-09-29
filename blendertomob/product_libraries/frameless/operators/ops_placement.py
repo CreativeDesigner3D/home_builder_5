@@ -6,6 +6,9 @@ from .. import types_frameless
 from .. import types_products
 from mathutils.geometry import intersect_line_plane, intersect_point_line
 
+from ...common import types_appliances
+from .... import hb_utils, hb_project, hb_snap, hb_placement, hb_types, units
+
 # Part name to class mapping (module-level, not operator attribute)
 PART_CLASS_MAP = {
     'Floating Shelves': types_products.FloatingShelf,
@@ -18,8 +21,6 @@ PART_CLASS_MAP = {
     'Upper Leg': types_products.UpperLeg,
     'Panel': types_products.Panel,
 }
-from ...common import types_appliances
-from .... import hb_utils, hb_project, hb_snap, hb_placement, hb_types, units
 
 def has_child_item_type(obj,item_type):
     for child in obj.children_recursive:

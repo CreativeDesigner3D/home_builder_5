@@ -2,8 +2,8 @@ from . import props_hb_frameless
 from . import props_elevation_templates
 from . import operators
 from . import menus_frameless
-from . import types_frameless
-from . import types_products
+from . import types_frameless as types_frameless
+from . import types_products as types_products
 
 NAMESPACE = "hb_frameless"
 MENU_NAME = "Frameless"

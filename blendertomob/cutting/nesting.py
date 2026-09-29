@@ -122,14 +122,6 @@ def optimize_nesting(
             w_norm = p.width <= usable_width and p.height <= usable_height
             w_rot = (p.height <= usable_width and p.width <= usable_height) if allow_rotation else False
 
-            # Restrição de veio
-            if respect_grain and p.grain_direction == 'VERTICAL':
-                can_place = w_norm or (allow_rotation and False)
-            elif respect_grain and p.grain_direction == 'HORIZONTAL':
-                can_place = w_norm or w_rot
-            else:
-                can_place = w_norm or w_rot
-
             if not (w_norm or w_rot):
                 all_unplaced.append({
                     "id": p.id,

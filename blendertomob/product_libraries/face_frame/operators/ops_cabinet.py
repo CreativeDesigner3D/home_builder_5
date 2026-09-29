@@ -3706,9 +3706,12 @@ class hb_face_frame_OT_create_cabinet_group(bpy.types.Operator):
         if not roots:
             return (Vector((0, 0, 0)), (0, 0, 0), 0, 0, 0)
 
-        min_x = float('inf'); max_x = float('-inf')
-        min_y = float('inf'); max_y = float('-inf')
-        min_z = float('inf'); max_z = float('-inf')
+        min_x = float('inf')
+        max_x = float('-inf')
+        min_y = float('inf')
+        max_y = float('-inf')
+        min_z = float('inf')
+        max_z = float('-inf')
 
         for root in roots:
             if root.get(types_face_frame.TAG_CABINET_CAGE):
@@ -3743,9 +3746,12 @@ class hb_face_frame_OT_create_cabinet_group(bpy.types.Operator):
             mw = root.matrix_world
             for lc in local_corners:
                 wc = mw @ lc
-                min_x = min(min_x, wc.x); max_x = max(max_x, wc.x)
-                min_y = min(min_y, wc.y); max_y = max(max_y, wc.y)
-                min_z = min(min_z, wc.z); max_z = max(max_z, wc.z)
+                min_x = min(min_x, wc.x)
+                max_x = max(max_x, wc.x)
+                min_y = min(min_y, wc.y)
+                max_y = max(max_y, wc.y)
+                min_z = min(min_z, wc.z)
+                max_z = max(max_z, wc.z)
 
         overall_w = max_x - min_x
         overall_d = max_y - min_y
@@ -4324,9 +4330,11 @@ class hb_face_frame_OT_add_appliance_to_bay(bpy.types.Operator):
     def draw(self, context):
         layout = self.layout
         box = layout.box()
-        row = box.row(); row.label(text="Width:")
+        row = box.row()
+        row.label(text="Width:")
         row.prop(self, 'width', text="")
-        row = box.row(); row.label(text="Drop Bay Amount:")
+        row = box.row()
+        row.label(text="Drop Bay Amount:")
         row.prop(self, 'drop_bay_amount', text="")
         if self.drop_bay_amount > 0.0:
             # Drop-band fillers, mirroring the appliance opening's dialog.
@@ -4335,12 +4343,15 @@ class hb_face_frame_OT_add_appliance_to_bay(bpy.types.Operator):
             if self.include_fillers:
                 fbox.prop(self, 'set_appliance_width')
                 if self.set_appliance_width:
-                    row = fbox.row(); row.label(text="Appliance Width:")
+                    row = fbox.row()
+                    row.label(text="Appliance Width:")
                     row.prop(self, 'appliance_width', text="")
                 else:
-                    row = fbox.row(); row.label(text="Left Filler:")
+                    row = fbox.row()
+                    row.label(text="Left Filler:")
                     row.prop(self, 'left_filler_amount', text="")
-                    row = fbox.row(); row.label(text="Right Filler:")
+                    row = fbox.row()
+                    row.label(text="Right Filler:")
                     row.prop(self, 'right_filler_amount', text="")
         box.label(text="Configuration:")
         box.prop(self, 'config', expand=True)

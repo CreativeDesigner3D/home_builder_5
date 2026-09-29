@@ -1663,10 +1663,10 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         to fronts ship in the next phase, once Face_Frame_Door_Style and
         the per-part material rules are in place.
         """
-        l, r, t, b = self._OVERLAY_TABLE.get(
+        sobreposicao_esquerda, r, t, b = self._OVERLAY_TABLE.get(
             self.door_overlay_type, self._OVERLAY_TABLE['CLASSIC'])
         props = cabinet_obj.face_frame_cabinet
-        props.default_left_overlay = units.inch(l)
+        props.default_left_overlay = units.inch(sobreposicao_esquerda)
         props.default_right_overlay = units.inch(r)
         props.default_top_overlay = units.inch(t)
         props.default_bottom_overlay = units.inch(b)

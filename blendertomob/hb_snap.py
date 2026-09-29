@@ -87,8 +87,10 @@ def search_edge_pos(region, region3D, mouse, v1, v2, epsilon = 0.0001):
     while (v1 - v2).length > epsilon:
         v12D = view3d_utils.location_3d_to_region_2d(region, region3D, v1)
         v22D = view3d_utils.location_3d_to_region_2d(region, region3D, v2)
-        if v12D is None: return v2
-        if v22D is None: return v1
+        if v12D is None:
+            return v2
+        if v22D is None:
+            return v1
         if (v12D - mouse).length < (v22D - mouse).length:
             v2 = (v1 + v2) / 2
         else:

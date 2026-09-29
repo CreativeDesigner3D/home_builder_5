@@ -4,7 +4,6 @@ Gera a lista de peças estruturais (laterais, bases, tampos, fundos, prateleiras
 com dimensões em milímetros, espessura, material, sentido do veio e fitas de borda.
 """
 
-import bpy  # type: ignore
 from .nesting import NestingPart
 
 
@@ -12,7 +11,7 @@ def extract_parts_from_scene(context):
     """
     Percorre todos os objetos da cena atual e extrai as peças individuais
     de marcenaria dos módulos paramétricos e elementos cadastrados.
-    
+
     Retorna:
         Uma lista de objetos NestingPart.
     """
@@ -35,7 +34,7 @@ def extract_parts_from_scene(context):
 
         if is_btm_module:
             cab = getattr(obj, 'btm_cabinet', None)
-            
+
             # Dimensões gerais em milímetros
             if cab:
                 width_mm = cab.width * 1000.0

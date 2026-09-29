@@ -79,7 +79,7 @@ def size_box(box_type, avail_h, avail_d, wood_h, wood_d):
     if box_type == 'AVANTECH_ILL':
         depth_avail -= _BATTERY_CLEARANCE
     box_h = _pick(heights, avail_h)
-    box_d = next((l for l in _SLIDE_LENGTHS if depth_avail >= l),
+    box_d = next((comprimento for comprimento in _SLIDE_LENGTHS if depth_avail >= comprimento),
                  _SLIDE_LENGTHS[-1])
     tag = f"H{round(box_h / MM)} L{round(box_d / MM)}"
     return (box_h, box_d, tag)

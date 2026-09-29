@@ -1,6 +1,6 @@
-import bpy
+import bpy as bpy
 
-from . import types_appliances
+from . import types_appliances as types_appliances
 
 def register():
     pass

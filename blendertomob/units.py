@@ -1,4 +1,20 @@
-"""
-BlenderToMob Units System — Re-export from blendertomob.data.units
-"""
-from .data.units import *
+"""Reexporta as conversões de unidades usadas pelos módulos legados."""
+from .data.units import (
+    UNIT_CONVERSION_TO_METERS as UNIT_CONVERSION_TO_METERS,
+    UNIT_LABELS as UNIT_LABELS,
+    to_meters as to_meters,
+    from_meters as from_meters,
+    get_scene_length_unit as get_scene_length_unit,
+    format_number as format_number,
+    format_value as format_value,
+    inch as inch,
+    feet as feet,
+    millimeter as millimeter,
+    centimeter as centimeter,
+    meter_to_inch as meter_to_inch,
+    meter_to_millimeter as meter_to_millimeter,
+    meter_to_feet as meter_to_feet,
+    convert_to_meters as convert_to_meters,
+    convert_from_meters as convert_from_meters,
+    format_length_unit as format_length_unit,
+)
