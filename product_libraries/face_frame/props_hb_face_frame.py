@@ -12519,7 +12519,8 @@ class Face_Frame_Leg_Props(PropertyGroup):
         unit='LENGTH', precision=4, update=_update_cabinet_dim,
     )  # type: ignore
     nailer_width: FloatProperty(
-        name="Nailer Width", default=units.inch(1.5),
+        name="Nailer Height", default=units.inch(1.5),
+        description="Vertical size of the back nailer; its length follows the back width",
         unit='LENGTH', precision=4, update=_update_cabinet_dim,
     )  # type: ignore
     # Finished band covering the front X inches on the unfinished side(s).

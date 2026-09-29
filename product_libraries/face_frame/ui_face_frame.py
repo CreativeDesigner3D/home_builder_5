@@ -951,7 +951,7 @@ def draw_leg_product(layout, root):
         nsub.enabled = leg.include_back_left_nailer or leg.include_back_right_nailer
         nsub.prop(leg, 'back_width', text="Back Width")
         nsub.prop(leg, 'back_thickness', text="Back Thickness")
-        nsub.prop(leg, 'nailer_width', text="Nailer Width")
+        nsub.prop(leg, 'nailer_width', text="Nailer Height")
         nsub.prop(leg, 'nailer_thickness', text="Nailer Thickness")
 
     fbox = layout.box()
