@@ -1,0 +1,2160 @@
+page	title	category	chars
+aud	Audio System (aud)	aud	48806
+bl_math	Additional Math Functions (bl_math)	bl_math	1471
+blf	Font Drawing (blf)	blf	9284
+blf.types	Font Drawing Types (blf.types)	blf	917
+bmesh	BMesh Module (bmesh)	bmesh	7518
+bmesh.geometry	BMesh Geometry Utilities (bmesh.geometry)	bmesh	639
+bmesh.ops	BMesh Operators (bmesh.ops)	bmesh	86695
+bmesh.types	BMesh Types (bmesh.types)	bmesh	75064
+bmesh.utils	BMesh Utilities (bmesh.utils)	bmesh	8834
+bpy.app	Application Data (bpy.app)	bpy.app	14377
+bpy.app.handlers	Application Handlers (bpy.app.handlers)	bpy.app	14802
+bpy.app.icons	Application Icons (bpy.app.icons)	bpy.app	999
+bpy.app.timers	Application Timers (bpy.app.timers)	bpy.app	2377
+bpy.app.translations	Application Translations (bpy.app.translations)	bpy.app	12186
+bpy.context	Context Access (bpy.context)	bpy.context	480
+bpy.data	Data Access (bpy.data)	bpy.data	860
+bpy.msgbus	Message Bus (bpy.msgbus)	bpy.msgbus	4457
+bpy.ops	Operators (bpy.ops)	bpy.ops	7720
+bpy.ops.action	Action Operators	bpy.ops	19637
+bpy.ops.anim	Anim Operators	bpy.ops	30882
+bpy.ops.armature	Armature Operators	bpy.ops	25567
+bpy.ops.asset	Asset Operators	bpy.ops	12325
+bpy.ops.boid	Boid Operators	bpy.ops	2485
+bpy.ops.brush	Brush Operators	bpy.ops	7976
+bpy.ops.buttons	Buttons Operators	bpy.ops	6881
+bpy.ops.cachefile	Cachefile Operators	bpy.ops	6587
+bpy.ops.camera	Camera Operators	bpy.ops	1625
+bpy.ops.clip	Clip Operators	bpy.ops	48114
+bpy.ops.cloth	Cloth Operators	bpy.ops	759
+bpy.ops.collection	Collection Operators	bpy.ops	4920
+bpy.ops.console	Console Operators	bpy.ops	8831
+bpy.ops.constraint	Constraint Operators	bpy.ops	12366
+bpy.ops.curve	Curve Operators	bpy.ops	28607
+bpy.ops.curves	Curves Operators	bpy.ops	18629
+bpy.ops.cycles	Cycles Operators	bpy.ops	2322
+bpy.ops.dpaint	Dpaint Operators	bpy.ops	1833
+bpy.ops.ed	Ed Operators	bpy.ops	6647
+bpy.ops.export_anim	Export Anim Operators	bpy.ops	2062
+bpy.ops.export_scene	Export Scene Operators	bpy.ops	32495
+bpy.ops.extensions	Extensions Operators	bpy.ops	20347
+bpy.ops.file	File Operators	bpy.ops	19177
+bpy.ops.fluid	Fluid Operators	bpy.ops	4273
+bpy.ops.font	Font Operators	bpy.ops	13209
+bpy.ops.geometry	Geometry Operators	bpy.ops	5425
+bpy.ops.gizmogroup	Gizmogroup Operators	bpy.ops	1233
+bpy.ops.gpencil	Gpencil Operators	bpy.ops	4419
+bpy.ops.graph	Graph Operators	bpy.ops	42750
+bpy.ops.grease_pencil	Grease Pencil Operators	bpy.ops	72912
+bpy.ops.image	Image Operators	bpy.ops	43965
+bpy.ops.import_anim	Import Anim Operators	bpy.ops	2574
+bpy.ops.import_curve	Import Curve Operators	bpy.ops	886
+bpy.ops.import_scene	Import Scene Operators	bpy.ops	9471
+bpy.ops.info	Info Operators	bpy.ops	3172
+bpy.ops.lattice	Lattice Operators	bpy.ops	3742
+bpy.ops.marker	Marker Operators	bpy.ops	5552
+bpy.ops.mask	Mask Operators	bpy.ops	18977
+bpy.ops.material	Material Operators	bpy.ops	888
+bpy.ops.mball	Mball Operators	bpy.ops	4311
+bpy.ops.mesh	Mesh Operators	bpy.ops	130602
+bpy.ops.nla	Nla Operators	bpy.ops	19278
+bpy.ops.node	Node Operators	bpy.ops	111556
+bpy.ops.object	Object Operators	bpy.ops	177048
+bpy.ops.outliner	Outliner Operators	bpy.ops	31796
+bpy.ops.paint	Paint Operators	bpy.ops	36856
+bpy.ops.paintcurve	Paintcurve Operators	bpy.ops	3502
+bpy.ops.palette	Palette Operators	bpy.ops	2421
+bpy.ops.particle	Particle Operators	bpy.ops	15486
+bpy.ops.pointcloud	Pointcloud Operators	bpy.ops	4161
+bpy.ops.pose	Pose Operators	bpy.ops	30466
+bpy.ops.poselib	Poselib Operators	bpy.ops	6489
+bpy.ops.preferences	Preferences Operators	bpy.ops	24826
+bpy.ops.ptcache	Ptcache Operators	bpy.ops	2143
+bpy.ops.render	Render Operators	bpy.ops	10669
+bpy.ops.rigidbody	Rigidbody Operators	bpy.ops	7706
+bpy.ops.scene	Scene Operators	bpy.ops	18279
+bpy.ops.screen	Screen Operators	bpy.ops	20787
+bpy.ops.script	Script Operators	bpy.ops	1316
+bpy.ops.sculpt	Sculpt Operators	bpy.ops	44209
+bpy.ops.sculpt_curves	Sculpt Curves Operators	bpy.ops	3006
+bpy.ops.sequencer	Sequencer Operators	bpy.ops	88870
+bpy.ops.sound	Sound Operators	bpy.ops	12471
+bpy.ops.spreadsheet	Spreadsheet Operators	bpy.ops	2727
+bpy.ops.surface	Surface Operators	bpy.ops	9154
+bpy.ops.text	Text Operators	bpy.ops	20292
+bpy.ops.text_editor	Text Editor Operators	bpy.ops	789
+bpy.ops.texture	Texture Operators	bpy.ops	1272
+bpy.ops.transform	Transform Operators	bpy.ops	48946
+bpy.ops.ui	Ui Operators	bpy.ops	15785
+bpy.ops.uilist	Uilist Operators	bpy.ops	2164
+bpy.ops.uv	Uv Operators	bpy.ops	48329
+bpy.ops.view2d	View2D Operators	bpy.ops	7187
+bpy.ops.view3d	View3D Operators	bpy.ops	33164
+bpy.ops.wm	Wm Operators	bpy.ops	177271
+bpy.ops.workspace	Workspace Operators	bpy.ops	2873
+bpy.ops.world	World Operators	bpy.ops	890
+bpy.path	Path Utilities (bpy.path)	bpy.path	6378
+bpy.props	Property Definitions (bpy.props)	bpy.props	56587
+bpy.types	Types (bpy.types)	bpy.types	142444
+bpy.types.AOV	AOV(bpy_struct)	bpy.types	2708
+bpy.types.AOVs	AOVs(bpy_prop_collection)	bpy.types	2429
+bpy.types.ASSETBROWSER_UL_metadata_tags	ASSETBROWSER_UL_metadata_tags(UIList)	bpy.types	2553
+bpy.types.Action	Action(ID)	bpy.types	9303
+bpy.types.ActionChannelbag	ActionChannelbag(bpy_struct)	bpy.types	3831
+bpy.types.ActionChannelbagFCurves	ActionChannelbagFCurves(bpy_prop_collection)	bpy.types	5150
+bpy.types.ActionChannelbagGroups	ActionChannelbagGroups(bpy_prop_collection)	bpy.types	2924
+bpy.types.ActionChannelbags	ActionChannelbags(bpy_prop_collection)	bpy.types	3138
+bpy.types.ActionConstraint	ActionConstraint(Constraint)	bpy.types	7883
+bpy.types.ActionGroup	ActionGroup(bpy_struct)	bpy.types	4511
+bpy.types.ActionKeyframeStrip	ActionKeyframeStrip(ActionStrip)	bpy.types	3931
+bpy.types.ActionLayer	ActionLayer(bpy_struct)	bpy.types	2704
+bpy.types.ActionLayers	ActionLayers(bpy_prop_collection)	bpy.types	2850
+bpy.types.ActionPoseMarkers	ActionPoseMarkers(bpy_prop_collection)	bpy.types	3263
+bpy.types.ActionSlot	ActionSlot(bpy_struct)	bpy.types	11664
+bpy.types.ActionSlots	ActionSlots(bpy_prop_collection)	bpy.types	3411
+bpy.types.ActionStrip	ActionStrip(bpy_struct)	bpy.types	2681
+bpy.types.ActionStrips	ActionStrips(bpy_prop_collection)	bpy.types	2956
+bpy.types.AddStrip	AddStrip(EffectStrip)	bpy.types	3782
+bpy.types.Addon	Addon(bpy_struct)	bpy.types	2541
+bpy.types.AddonPreferences	AddonPreferences(bpy_struct)	bpy.types	5027
+bpy.types.Addons	Addons(bpy_prop_collection)	bpy.types	2524
+bpy.types.AdjustmentStrip	AdjustmentStrip(EffectStrip)	bpy.types	4666
+bpy.types.AlphaOverStrip	AlphaOverStrip(EffectStrip)	bpy.types	3873
+bpy.types.AlphaUnderStrip	AlphaUnderStrip(EffectStrip)	bpy.types	3888
+bpy.types.AnimData	AnimData(bpy_struct)	bpy.types	10891
+bpy.types.AnimDataDrivers	AnimDataDrivers(bpy_prop_collection)	bpy.types	3721
+bpy.types.AnimViz	AnimViz(bpy_struct)	bpy.types	2484
+bpy.types.AnimVizMotionPaths	AnimVizMotionPaths(bpy_struct)	bpy.types	5838
+bpy.types.Annotation	Annotation(ID)	bpy.types	4431
+bpy.types.AnnotationFrame	AnnotationFrame(bpy_struct)	bpy.types	3543
+bpy.types.AnnotationFrames	AnnotationFrames(bpy_prop_collection)	bpy.types	3425
+bpy.types.AnnotationLayer	AnnotationLayer(bpy_struct)	bpy.types	6348
+bpy.types.AnnotationLayers	AnnotationLayers(bpy_prop_collection)	bpy.types	3305
+bpy.types.AnnotationStroke	AnnotationStroke(bpy_struct)	bpy.types	3198
+bpy.types.AnnotationStrokePoint	AnnotationStrokePoint(bpy_struct)	bpy.types	2411
+bpy.types.AnnotationStrokePoints	AnnotationStrokePoints(bpy_prop_collection)	bpy.types	2899
+bpy.types.AnnotationStrokes	AnnotationStrokes(bpy_prop_collection)	bpy.types	2794
+bpy.types.AnyType	AnyType(bpy_struct)	bpy.types	10710
+bpy.types.Area	Area(bpy_struct)	bpy.types	4294
+bpy.types.AreaLight	AreaLight(Light)	bpy.types	5768
+bpy.types.AreaSpaces	AreaSpaces(bpy_prop_collection)	bpy.types	2304
+bpy.types.Armature	Armature(ID)	bpy.types	7463
+bpy.types.ArmatureBones	ArmatureBones(bpy_prop_collection)	bpy.types	2318
+bpy.types.ArmatureConstraint	ArmatureConstraint(Constraint)	bpy.types	3672
+bpy.types.ArmatureConstraintTargets	ArmatureConstraintTargets(bpy_prop_collection)	bpy.types	3078
+bpy.types.ArmatureEditBones	ArmatureEditBones(bpy_prop_collection)	bpy.types	2993
+bpy.types.ArmatureModifier	ArmatureModifier(Modifier)	bpy.types	3764
+bpy.types.ArrayModifier	ArrayModifier(Modifier)	bpy.types	6117
+bpy.types.AssetLibrary	AssetLibrary(bpy_struct)	bpy.types	3658
+bpy.types.AssetLibraryCollection	AssetLibraryCollection(bpy_prop_collection)	bpy.types	3046
+bpy.types.AssetLibraryReference	AssetLibraryReference(bpy_struct)	bpy.types	1980
+bpy.types.AssetMetaData	AssetMetaData(bpy_struct)	bpy.types	4929
+bpy.types.AssetRepresentation	AssetRepresentation(bpy_struct)	bpy.types	4456
+bpy.types.AssetShelf	AssetShelf(bpy_struct)	bpy.types	13616
+bpy.types.AssetTag	AssetTag(bpy_struct)	bpy.types	2392
+bpy.types.AssetTags	AssetTags(bpy_prop_collection)	bpy.types	2797
+bpy.types.AssetWeakReference	AssetWeakReference(bpy_struct)	bpy.types	3327
+bpy.types.Attribute	Attribute(bpy_struct)	bpy.types	12643
+bpy.types.AttributeGroupCurves	AttributeGroupCurves(bpy_prop_collection)	bpy.types	4130
+bpy.types.AttributeGroupGreasePencil	AttributeGroupGreasePencil(bpy_prop_collection)	bpy.types	4286
+bpy.types.AttributeGroupGreasePencilDrawing	AttributeGroupGreasePencilDrawing(bpy_prop_collection)	bpy.types	4468
+bpy.types.AttributeGroupMesh	AttributeGroupMesh(bpy_prop_collection)	bpy.types	5196
+bpy.types.AttributeGroupPointCloud	AttributeGroupPointCloud(bpy_prop_collection)	bpy.types	4234
+bpy.types.BakeSettings	BakeSettings(bpy_struct)	bpy.types	9686
+bpy.types.BevelModifier	BevelModifier(Modifier)	bpy.types	8541
+bpy.types.BezierSplinePoint	BezierSplinePoint(bpy_struct)	bpy.types	4505
+bpy.types.BlendData	BlendData(bpy_struct)	bpy.types	22259
+bpy.types.BlendDataActions	BlendDataActions(bpy_prop_collection)	bpy.types	3233
+bpy.types.BlendDataAnnotations	BlendDataAnnotations(bpy_prop_collection)	bpy.types	3393
+bpy.types.BlendDataArmatures	BlendDataArmatures(bpy_prop_collection)	bpy.types	3379
+bpy.types.BlendDataBrushes	BlendDataBrushes(bpy_prop_collection)	bpy.types	3673
+bpy.types.BlendDataCacheFiles	BlendDataCacheFiles(bpy_prop_collection)	bpy.types	2343
+bpy.types.BlendDataCameras	BlendDataCameras(bpy_prop_collection)	bpy.types	3296
+bpy.types.BlendDataCollections	BlendDataCollections(bpy_prop_collection)	bpy.types	3372
+bpy.types.BlendDataCurves	BlendDataCurves(bpy_prop_collection)	bpy.types	3441
+bpy.types.BlendDataFonts	BlendDataFonts(bpy_prop_collection)	bpy.types	3385
+bpy.types.BlendDataGreasePencilsV3	BlendDataGreasePencilsV3(bpy_prop_collection)	bpy.types	3503
+bpy.types.BlendDataHairCurves	BlendDataHairCurves(bpy_prop_collection)	bpy.types	3384
+bpy.types.BlendDataImages	BlendDataImages(bpy_prop_collection)	bpy.types	4269
+bpy.types.BlendDataLattices	BlendDataLattices(bpy_prop_collection)	bpy.types	3342
+bpy.types.BlendDataLibraries	BlendDataLibraries(bpy_prop_collection)	bpy.types	8238
+bpy.types.BlendDataLights	BlendDataLights(bpy_prop_collection)	bpy.types	3420
+bpy.types.BlendDataLineStyles	BlendDataLineStyles(bpy_prop_collection)	bpy.types	3435
+bpy.types.BlendDataMasks	BlendDataMasks(bpy_prop_collection)	bpy.types	3186
+bpy.types.BlendDataMaterials	BlendDataMaterials(bpy_prop_collection)	bpy.types	3915
+bpy.types.BlendDataMeshes	BlendDataMeshes(bpy_prop_collection)	bpy.types	4356
+bpy.types.BlendDataMetaBalls	BlendDataMetaBalls(bpy_prop_collection)	bpy.types	3378
+bpy.types.BlendDataMovieClips	BlendDataMovieClips(bpy_prop_collection)	bpy.types	3685
+bpy.types.BlendDataNodeTrees	BlendDataNodeTrees(bpy_prop_collection)	bpy.types	3849
+bpy.types.BlendDataObjects	BlendDataObjects(bpy_prop_collection)	bpy.types	3369
+bpy.types.BlendDataPaintCurves	BlendDataPaintCurves(bpy_prop_collection)	bpy.types	2357
+bpy.types.BlendDataPalettes	BlendDataPalettes(bpy_prop_collection)	bpy.types	3267
+bpy.types.BlendDataParticles	BlendDataParticles(bpy_prop_collection)	bpy.types	3458
+bpy.types.BlendDataPathMeta	BlendDataPathMeta	bpy.types	916
+bpy.types.BlendDataPointClouds	BlendDataPointClouds(bpy_prop_collection)	bpy.types	3459
+bpy.types.BlendDataProbes	BlendDataProbes(bpy_prop_collection)	bpy.types	3553
+bpy.types.BlendDataScenes	BlendDataScenes(bpy_prop_collection)	bpy.types	2978
+bpy.types.BlendDataScreens	BlendDataScreens(bpy_prop_collection)	bpy.types	2297
+bpy.types.BlendDataSounds	BlendDataSounds(bpy_prop_collection)	bpy.types	3377
+bpy.types.BlendDataSpeakers	BlendDataSpeakers(bpy_prop_collection)	bpy.types	3342
+bpy.types.BlendDataTexts	BlendDataTexts(bpy_prop_collection)	bpy.types	3638
+bpy.types.BlendDataTextures	BlendDataTextures(bpy_prop_collection)	bpy.types	3425
+bpy.types.BlendDataVolumes	BlendDataVolumes(bpy_prop_collection)	bpy.types	3306
+bpy.types.BlendDataWindowManagers	BlendDataWindowManagers(bpy_prop_collection)	bpy.types	2399
+bpy.types.BlendDataWorkSpaces	BlendDataWorkSpaces(bpy_prop_collection)	bpy.types	2339
+bpy.types.BlendDataWorlds	BlendDataWorlds(bpy_prop_collection)	bpy.types	3197
+bpy.types.BlendFileColorspace	BlendFileColorspace(bpy_struct)	bpy.types	3438
+bpy.types.BlendImportContext	BlendImportContext(bpy_struct)	bpy.types	4608
+bpy.types.BlendImportContextItem	BlendImportContextItem(bpy_struct)	bpy.types	6181
+bpy.types.BlendImportContextItems	BlendImportContextItems(bpy_prop_collection)	bpy.types	2290
+bpy.types.BlendImportContextLibraries	BlendImportContextLibraries(bpy_prop_collection)	bpy.types	2358
+bpy.types.BlendImportContextLibrary	BlendImportContextLibrary(bpy_struct)	bpy.types	2527
+bpy.types.BlendTexture	BlendTexture(Texture)	bpy.types	4812
+bpy.types.BlenderRNA	BlenderRNA(bpy_struct)	bpy.types	2190
+bpy.types.BoidRule	BoidRule(bpy_struct)	bpy.types	3414
+bpy.types.BoidRuleAverageSpeed	BoidRuleAverageSpeed(BoidRule)	bpy.types	2676
+bpy.types.BoidRuleAvoid	BoidRuleAvoid(BoidRule)	bpy.types	2612
+bpy.types.BoidRuleAvoidCollision	BoidRuleAvoidCollision(BoidRule)	bpy.types	2711
+bpy.types.BoidRuleFight	BoidRuleFight(BoidRule)	bpy.types	2413
+bpy.types.BoidRuleFollowLeader	BoidRuleFollowLeader(BoidRule)	bpy.types	2870
+bpy.types.BoidRuleGoal	BoidRuleGoal(BoidRule)	bpy.types	2403
+bpy.types.BoidSettings	BoidSettings(bpy_struct)	bpy.types	6781
+bpy.types.BoidState	BoidState(bpy_struct)	bpy.types	3651
+bpy.types.Bone	Bone(bpy_struct)	bpy.types	25094
+bpy.types.BoneCollection	BoneCollection(bpy_struct)	bpy.types	8519
+bpy.types.BoneCollectionMemberships	BoneCollectionMemberships(bpy_prop_collection)	bpy.types	2396
+bpy.types.BoneCollections	BoneCollections(bpy_prop_collection)	bpy.types	5157
+bpy.types.BoneColor	BoneColor(bpy_struct)	bpy.types	3073
+bpy.types.BoolAttribute	BoolAttribute(Attribute)	bpy.types	2747
+bpy.types.BoolAttributeValue	BoolAttributeValue(bpy_struct)	bpy.types	2372
+bpy.types.BoolProperty	BoolProperty(Property)	bpy.types	3897
+bpy.types.BooleanModifier	BooleanModifier(Modifier)	bpy.types	5482
+bpy.types.BrightContrastModifier	BrightContrastModifier(StripModifier)	bpy.types	3011
+bpy.types.Brush	Brush(ID)	bpy.types	47601
+bpy.types.BrushCapabilities	BrushCapabilities(bpy_struct)	bpy.types	2760
+bpy.types.BrushCapabilitiesImagePaint	BrushCapabilitiesImagePaint(bpy_struct)	bpy.types	2920
+bpy.types.BrushCapabilitiesSculpt	BrushCapabilitiesSculpt(bpy_struct)	bpy.types	6866
+bpy.types.BrushCapabilitiesVertexPaint	BrushCapabilitiesVertexPaint(bpy_struct)	bpy.types	2417
+bpy.types.BrushCapabilitiesWeightPaint	BrushCapabilitiesWeightPaint(bpy_struct)	bpy.types	2419
+bpy.types.BrushCurvesSculptSettings	BrushCurvesSculptSettings(bpy_struct)	bpy.types	5731
+bpy.types.BrushGpencilSettings	BrushGpencilSettings(bpy_struct)	bpy.types	22690
+bpy.types.BrushTextureSlot	BrushTextureSlot(TextureSlot)	bpy.types	4057
+bpy.types.BuildModifier	BuildModifier(Modifier)	bpy.types	3206
+bpy.types.ByteColorAttribute	ByteColorAttribute(Attribute)	bpy.types	2663
+bpy.types.ByteColorAttributeValue	ByteColorAttributeValue(bpy_struct)	bpy.types	2832
+bpy.types.ByteIntAttribute	ByteIntAttribute(Attribute)	bpy.types	2586
+bpy.types.ByteIntAttributeValue	ByteIntAttributeValue(bpy_struct)	bpy.types	2309
+bpy.types.CLIP_UL_tracking_objects	CLIP_UL_tracking_objects(UIList)	bpy.types	2513
+bpy.types.CURVES_UL_attributes	CURVES_UL_attributes(UIList)	bpy.types	2481
+bpy.types.CacheFile	CacheFile(ID)	bpy.types	6603
+bpy.types.CacheFileLayer	CacheFileLayer(bpy_struct)	bpy.types	2855
+bpy.types.CacheFileLayers	CacheFileLayers(bpy_prop_collection)	bpy.types	3051
+bpy.types.CacheObjectPath	CacheObjectPath(bpy_struct)	bpy.types	2265
+bpy.types.CacheObjectPaths	CacheObjectPaths(bpy_prop_collection)	bpy.types	2300
+bpy.types.Camera	Camera(ID)	bpy.types	17319
+bpy.types.CameraBackgroundImage	CameraBackgroundImage(bpy_struct)	bpy.types	6380
+bpy.types.CameraBackgroundImages	CameraBackgroundImages(bpy_prop_collection)	bpy.types	3040
+bpy.types.CameraDOFSettings	CameraDOFSettings(bpy_struct)	bpy.types	3736
+bpy.types.CameraSolverConstraint	CameraSolverConstraint(Constraint)	bpy.types	2912
+bpy.types.CameraStereoData	CameraStereoData(bpy_struct)	bpy.types	4048
+bpy.types.CastModifier	CastModifier(Modifier)	bpy.types	4308
+bpy.types.ChannelDriverVariables	ChannelDriverVariables(bpy_prop_collection)	bpy.types	2859
+bpy.types.ChildOfConstraint	ChildOfConstraint(Constraint)	bpy.types	4873
+bpy.types.ChildParticle	ChildParticle(bpy_struct)	bpy.types	2158
+bpy.types.ClampToConstraint	ClampToConstraint(Constraint)	bpy.types	3102
+bpy.types.ClothCollisionSettings	ClothCollisionSettings(bpy_struct)	bpy.types	5195
+bpy.types.ClothModifier	ClothModifier(Modifier)	bpy.types	4358
+bpy.types.ClothSettings	ClothSettings(bpy_struct)	bpy.types	14324
+bpy.types.ClothSolverResult	ClothSolverResult(bpy_struct)	bpy.types	3862
+bpy.types.CloudsTexture	CloudsTexture(Texture)	bpy.types	6196
+bpy.types.Collection	Collection(ID)	bpy.types	13610
+bpy.types.CollectionChild	CollectionChild(bpy_struct)	bpy.types	2477
+bpy.types.CollectionChildren	CollectionChildren(bpy_prop_collection)	bpy.types	2782
+bpy.types.CollectionExport	CollectionExport(bpy_struct)	bpy.types	3127
+bpy.types.CollectionExports	CollectionExports(bpy_prop_collection)	bpy.types	3359
+bpy.types.CollectionImport	CollectionImport(bpy_struct)	bpy.types	2390
+bpy.types.CollectionLightLinking	CollectionLightLinking(bpy_struct)	bpy.types	2624
+bpy.types.CollectionObject	CollectionObject(bpy_struct)	bpy.types	2483
+bpy.types.CollectionObjects	CollectionObjects(bpy_prop_collection)	bpy.types	2706
+bpy.types.CollectionProperty	CollectionProperty(Property)	bpy.types	3122
+bpy.types.CollisionModifier	CollisionModifier(Modifier)	bpy.types	2659
+bpy.types.CollisionSettings	CollisionSettings(bpy_struct)	bpy.types	5157
+bpy.types.ColorBalanceModifier	ColorBalanceModifier(StripModifier)	bpy.types	3058
+bpy.types.ColorManagedDisplaySettings	ColorManagedDisplaySettings(bpy_struct)	bpy.types	3625
+bpy.types.ColorManagedInputColorspaceSettings	ColorManagedInputColorspaceSettings(bpy_struct)	bpy.types	3550
+bpy.types.ColorManagedSequencerColorspaceSettings	ColorManagedSequencerColorspaceSettings(bpy_struct)	bpy.types	2688
+bpy.types.ColorManagedViewSettings	ColorManagedViewSettings(bpy_struct)	bpy.types	5779
+bpy.types.ColorMapping	ColorMapping(bpy_struct)	bpy.types	5385
+bpy.types.ColorMixStrip	ColorMixStrip(EffectStrip)	bpy.types	4489
+bpy.types.ColorRamp	ColorRamp(bpy_struct)	bpy.types	6518
+bpy.types.ColorRampElement	ColorRampElement(bpy_struct)	bpy.types	3033
+bpy.types.ColorRampElements	ColorRampElements(bpy_prop_collection)	bpy.types	2856
+bpy.types.ColorStrip	ColorStrip(EffectStrip)	bpy.types	3993
+bpy.types.CompositorNode	CompositorNode(NodeInternal)	bpy.types	10583
+bpy.types.CompositorNodeAlphaOver	CompositorNodeAlphaOver(CompositorNode)	bpy.types	4562
+bpy.types.CompositorNodeAntiAliasing	CompositorNodeAntiAliasing(CompositorNode)	bpy.types	4578
+bpy.types.CompositorNodeBilateralblur	CompositorNodeBilateralblur(CompositorNode)	bpy.types	4618
+bpy.types.CompositorNodeBlankImage	CompositorNodeBlankImage(CompositorNode)	bpy.types	4581
+bpy.types.CompositorNodeBlur	CompositorNodeBlur(CompositorNode)	bpy.types	4481
+bpy.types.CompositorNodeBokehBlur	CompositorNodeBokehBlur(CompositorNode)	bpy.types	4621
+bpy.types.CompositorNodeBokehImage	CompositorNodeBokehImage(CompositorNode)	bpy.types	4597
+bpy.types.CompositorNodeBoxMask	CompositorNodeBoxMask(CompositorNode)	bpy.types	4542
+bpy.types.CompositorNodeBrightContrast	CompositorNodeBrightContrast(CompositorNode)	bpy.types	4612
+bpy.types.CompositorNodeChannelMatte	CompositorNodeChannelMatte(CompositorNode)	bpy.types	4605
+bpy.types.CompositorNodeChromaMatte	CompositorNodeChromaMatte(CompositorNode)	bpy.types	4575
+bpy.types.CompositorNodeColorBalance	CompositorNodeColorBalance(CompositorNode)	bpy.types	5300
+bpy.types.CompositorNodeColorCorrection	CompositorNodeColorCorrection(CompositorNode)	bpy.types	4695
+bpy.types.CompositorNodeColorMatte	CompositorNodeColorMatte(CompositorNode)	bpy.types	4592
+bpy.types.CompositorNodeColorSpill	CompositorNodeColorSpill(CompositorNode)	bpy.types	4619
+bpy.types.CompositorNodeCombineColor	CompositorNodeCombineColor(CompositorNode)	bpy.types	5415
+bpy.types.CompositorNodeConvertColorSpace	CompositorNodeConvertColorSpace(CompositorNode)	bpy.types	5345
+bpy.types.CompositorNodeConvertToDisplay	CompositorNodeConvertToDisplay(CompositorNode)	bpy.types	5409
+bpy.types.CompositorNodeConvolve	CompositorNodeConvolve(CompositorNode)	bpy.types	4530
+bpy.types.CompositorNodeCornerPin	CompositorNodeCornerPin(CompositorNode)	bpy.types	4566
+bpy.types.CompositorNodeCrop	CompositorNodeCrop(CompositorNode)	bpy.types	4539
+bpy.types.CompositorNodeCryptomatte	CompositorNodeCryptomatte(CompositorNode)	bpy.types	5430
+bpy.types.CompositorNodeCryptomatteV2	CompositorNodeCryptomatteV2(CompositorNode)	bpy.types	8789
+bpy.types.CompositorNodeCurveRGB	CompositorNodeCurveRGB(CompositorNode)	bpy.types	4782
+bpy.types.CompositorNodeCustomGroup	CompositorNodeCustomGroup(CompositorNode)	bpy.types	3737
+bpy.types.CompositorNodeDBlur	CompositorNodeDBlur(CompositorNode)	bpy.types	4487
+bpy.types.CompositorNodeDefocus	CompositorNodeDefocus(CompositorNode)	bpy.types	6356
+bpy.types.CompositorNodeDenoise	CompositorNodeDenoise(CompositorNode)	bpy.types	4543
+bpy.types.CompositorNodeDespeckle	CompositorNodeDespeckle(CompositorNode)	bpy.types	4604
+bpy.types.CompositorNodeDiffMatte	CompositorNodeDiffMatte(CompositorNode)	bpy.types	4610
+bpy.types.CompositorNodeDilateErode	CompositorNodeDilateErode(CompositorNode)	bpy.types	4563
+bpy.types.CompositorNodeDisplace	CompositorNodeDisplace(CompositorNode)	bpy.types	4544
+bpy.types.CompositorNodeDistanceMatte	CompositorNodeDistanceMatte(CompositorNode)	bpy.types	4616
+bpy.types.CompositorNodeDoubleEdgeMask	CompositorNodeDoubleEdgeMask(CompositorNode)	bpy.types	4617
+bpy.types.CompositorNodeEllipseMask	CompositorNodeEllipseMask(CompositorNode)	bpy.types	4614
+bpy.types.CompositorNodeExposure	CompositorNodeExposure(CompositorNode)	bpy.types	4549
+bpy.types.CompositorNodeFilter	CompositorNodeFilter(CompositorNode)	bpy.types	4508
+bpy.types.CompositorNodeFlip	CompositorNodeFlip(CompositorNode)	bpy.types	4476
+bpy.types.CompositorNodeGamma	CompositorNodeGamma(CompositorNode)	bpy.types	4454
+bpy.types.CompositorNodeGlare	CompositorNodeGlare(CompositorNode)	bpy.types	4519
+bpy.types.CompositorNodeGroup	CompositorNodeGroup(CompositorNode)	bpy.types	4649
+bpy.types.CompositorNodeHueCorrect	CompositorNodeHueCorrect(CompositorNode)	bpy.types	4801
+bpy.types.CompositorNodeHueSat	CompositorNodeHueSat(CompositorNode)	bpy.types	4521
+bpy.types.CompositorNodeIDMask	CompositorNodeIDMask(CompositorNode)	bpy.types	4522
+bpy.types.CompositorNodeImage	CompositorNodeImage(CompositorNode)	bpy.types	6304
+bpy.types.CompositorNodeImageCoordinates	CompositorNodeImageCoordinates(CompositorNode)	bpy.types	4659
+bpy.types.CompositorNodeImageInfo	CompositorNodeImageInfo(CompositorNode)	bpy.types	4546
+bpy.types.CompositorNodeInpaint	CompositorNodeInpaint(CompositorNode)	bpy.types	4545
+bpy.types.CompositorNodeInvert	CompositorNodeInvert(CompositorNode)	bpy.types	4505
+bpy.types.CompositorNodeKeying	CompositorNodeKeying(CompositorNode)	bpy.types	4575
+bpy.types.CompositorNodeKeyingScreen	CompositorNodeKeyingScreen(CompositorNode)	bpy.types	4984
+bpy.types.CompositorNodeKuwahara	CompositorNodeKuwahara(CompositorNode)	bpy.types	4577
+bpy.types.CompositorNodeLensdist	CompositorNodeLensdist(CompositorNode)	bpy.types	4551
+bpy.types.CompositorNodeLevels	CompositorNodeLevels(CompositorNode)	bpy.types	4524
+bpy.types.CompositorNodeLumaMatte	CompositorNodeLumaMatte(CompositorNode)	bpy.types	4569
+bpy.types.CompositorNodeMapUV	CompositorNodeMapUV(CompositorNode)	bpy.types	4536
+bpy.types.CompositorNodeMask	CompositorNodeMask(CompositorNode)	bpy.types	4671
+bpy.types.CompositorNodeMaskToSDF	CompositorNodeMaskToSDF(CompositorNode)	bpy.types	4564
+bpy.types.CompositorNodeMovieClip	CompositorNodeMovieClip(CompositorNode)	bpy.types	4794
+bpy.types.CompositorNodeMovieDistortion	CompositorNodeMovieDistortion(CompositorNode)	bpy.types	4884
+bpy.types.CompositorNodeNormal	CompositorNodeNormal(CompositorNode)	bpy.types	4527
+bpy.types.CompositorNodeNormalize	CompositorNodeNormalize(CompositorNode)	bpy.types	4585
+bpy.types.CompositorNodeOutputFile	CompositorNodeOutputFile(CompositorNode)	bpy.types	6657
+bpy.types.CompositorNodePixelate	CompositorNodePixelate(CompositorNode)	bpy.types	4606
+bpy.types.CompositorNodePlaneTrackDeform	CompositorNodePlaneTrackDeform(CompositorNode)	bpy.types	5269
+bpy.types.CompositorNodePosterize	CompositorNodePosterize(CompositorNode)	bpy.types	4599
+bpy.types.CompositorNodePremulKey	CompositorNodePremulKey(CompositorNode)	bpy.types	4564
+bpy.types.CompositorNodeRGB	CompositorNodeRGB(CompositorNode)	bpy.types	4442
+bpy.types.CompositorNodeRGBToBW	CompositorNodeRGBToBW(CompositorNode)	bpy.types	4532
+bpy.types.CompositorNodeRLayers	CompositorNodeRLayers(CompositorNode)	bpy.types	4860
+bpy.types.CompositorNodeRelativeToPixel	CompositorNodeRelativeToPixel(CompositorNode)	bpy.types	5750
+bpy.types.CompositorNodeRotate	CompositorNodeRotate(CompositorNode)	bpy.types	4501
+bpy.types.CompositorNodeScale	CompositorNodeScale(CompositorNode)	bpy.types	4484
+bpy.types.CompositorNodeSceneTime	CompositorNodeSceneTime(CompositorNode)	bpy.types	4561
+bpy.types.CompositorNodeSeparateColor	CompositorNodeSeparateColor(CompositorNode)	bpy.types	5431
+bpy.types.CompositorNodeSequencerStripInfo	CompositorNodeSequencerStripInfo(CompositorNode)	bpy.types	4696
+bpy.types.CompositorNodeSetAlpha	CompositorNodeSetAlpha(CompositorNode)	bpy.types	4530
+bpy.types.CompositorNodeSplit	CompositorNodeSplit(CompositorNode)	bpy.types	4549
+bpy.types.CompositorNodeStabilize	CompositorNodeStabilize(CompositorNode)	bpy.types	4774
+bpy.types.CompositorNodeStringToImage	CompositorNodeStringToImage(CompositorNode)	bpy.types	4625
+bpy.types.CompositorNodeSwitch	CompositorNodeSwitch(CompositorNode)	bpy.types	4512
+bpy.types.CompositorNodeSwitchView	CompositorNodeSwitchView(CompositorNode)	bpy.types	4591
+bpy.types.CompositorNodeTime	CompositorNodeTime(CompositorNode)	bpy.types	4752
+bpy.types.CompositorNodeTonemap	CompositorNodeTonemap(CompositorNode)	bpy.types	4577
+bpy.types.CompositorNodeTrackPos	CompositorNodeTrackPos(CompositorNode)	bpy.types	5075
+bpy.types.CompositorNodeTransform	CompositorNodeTransform(CompositorNode)	bpy.types	4548
+bpy.types.CompositorNodeTranslate	CompositorNodeTranslate(CompositorNode)	bpy.types	4527
+bpy.types.CompositorNodeTree	CompositorNodeTree(NodeTree)	bpy.types	3821
+bpy.types.CompositorNodeVecBlur	CompositorNodeVecBlur(CompositorNode)	bpy.types	4548
+bpy.types.CompositorNodeViewer	CompositorNodeViewer(CompositorNode)	bpy.types	4702
+bpy.types.CompositorNodeZcombine	CompositorNodeZcombine(CompositorNode)	bpy.types	4533
+bpy.types.CompositorStrip	CompositorStrip(EffectStrip)	bpy.types	4124
+bpy.types.ConsoleLine	ConsoleLine(bpy_struct)	bpy.types	2804
+bpy.types.Constraint	Constraint(bpy_struct)	bpy.types	10575
+bpy.types.ConstraintTarget	ConstraintTarget(bpy_struct)	bpy.types	2315
+bpy.types.ConstraintTargetBone	ConstraintTargetBone(bpy_struct)	bpy.types	3042
+bpy.types.Context	Context(bpy_struct)	bpy.types	54446
+bpy.types.ContextTempOverride	ContextTempOverride	bpy.types	1143
+bpy.types.CopyLocationConstraint	CopyLocationConstraint(Constraint)	bpy.types	4442
+bpy.types.CopyRotationConstraint	CopyRotationConstraint(Constraint)	bpy.types	5413
+bpy.types.CopyScaleConstraint	CopyScaleConstraint(Constraint)	bpy.types	4095
+bpy.types.CopyTransformsConstraint	CopyTransformsConstraint(Constraint)	bpy.types	5318
+bpy.types.CorrectiveSmoothModifier	CorrectiveSmoothModifier(Modifier)	bpy.types	4702
+bpy.types.CrossStrip	CrossStrip(EffectStrip)	bpy.types	3816
+bpy.types.CryptomatteEntry	CryptomatteEntry(bpy_struct)	bpy.types	2441
+bpy.types.Curve	Curve(ID)	bpy.types	14424
+bpy.types.CurveMap	CurveMap(bpy_struct)	bpy.types	2472
+bpy.types.CurveMapPoint	CurveMapPoint(bpy_struct)	bpy.types	2951
+bpy.types.CurveMapPoints	CurveMapPoints(bpy_prop_collection)	bpy.types	2847
+bpy.types.CurveMapping	CurveMapping(bpy_struct)	bpy.types	16610
+bpy.types.CurveModifier	CurveModifier(Modifier)	bpy.types	3142
+bpy.types.CurvePaintSettings	CurvePaintSettings(bpy_struct)	bpy.types	5700
+bpy.types.CurvePoint	CurvePoint(bpy_struct)	bpy.types	2633
+bpy.types.CurveProfile	CurveProfile(bpy_struct)	bpy.types	5138
+bpy.types.CurveProfilePoint	CurveProfilePoint(bpy_struct)	bpy.types	3371
+bpy.types.CurveProfilePoints	CurveProfilePoints(bpy_prop_collection)	bpy.types	2938
+bpy.types.CurveSlice	CurveSlice(bpy_struct)	bpy.types	2921
+bpy.types.CurveSplines	CurveSplines(bpy_prop_collection)	bpy.types	3007
+bpy.types.Curves	Curves(ID)	bpy.types	10092
+bpy.types.CurvesModifier	CurvesModifier(StripModifier)	bpy.types	2753
+bpy.types.CurvesSculpt	CurvesSculpt(Paint)	bpy.types	2697
+bpy.types.DATA_UL_bone_collections	DATA_UL_bone_collections(UIList)	bpy.types	2513
+bpy.types.DampedTrackConstraint	DampedTrackConstraint(Constraint)	bpy.types	3583
+bpy.types.DataTransferModifier	DataTransferModifier(Modifier)	bpy.types	11154
+bpy.types.DecimateModifier	DecimateModifier(Modifier)	bpy.types	5153
+bpy.types.Depsgraph	Depsgraph(bpy_struct)	bpy.types	24907
+bpy.types.DepsgraphObjectInstance	DepsgraphObjectInstance(bpy_struct)	bpy.types	5658
+bpy.types.DepsgraphUpdate	DepsgraphUpdate(bpy_struct)	bpy.types	2839
+bpy.types.DisplaceModifier	DisplaceModifier(Modifier)	bpy.types	5413
+bpy.types.DisplaySafeAreas	DisplaySafeAreas(bpy_struct)	bpy.types	3217
+bpy.types.DistortedNoiseTexture	DistortedNoiseTexture(Texture)	bpy.types	7233
+bpy.types.DopeSheet	DopeSheet(bpy_struct)	bpy.types	10170
+bpy.types.Driver	Driver(bpy_struct)	bpy.types	3469
+bpy.types.DriverTarget	DriverTarget(bpy_struct)	bpy.types	5080
+bpy.types.DriverVariable	DriverVariable(bpy_struct)	bpy.types	3980
+bpy.types.DynamicPaintBrushSettings	DynamicPaintBrushSettings(bpy_struct)	bpy.types	8521
+bpy.types.DynamicPaintCanvasSettings	DynamicPaintCanvasSettings(bpy_struct)	bpy.types	2681
+bpy.types.DynamicPaintModifier	DynamicPaintModifier(Modifier)	bpy.types	3237
+bpy.types.DynamicPaintSurface	DynamicPaintSurface(bpy_struct)	bpy.types	13201
+bpy.types.DynamicPaintSurfaces	DynamicPaintSurfaces(bpy_prop_collection)	bpy.types	2748
+bpy.types.EQCurveMappingData	EQCurveMappingData(bpy_struct)	bpy.types	2563
+bpy.types.EchoModifier	EchoModifier(StripModifier)	bpy.types	2800
+bpy.types.EdgeSplitModifier	EdgeSplitModifier(Modifier)	bpy.types	2937
+bpy.types.EditBone	EditBone(bpy_struct)	bpy.types	20674
+bpy.types.EffectStrip	EffectStrip(Strip)	bpy.types	6360
+bpy.types.EffectorWeights	EffectorWeights(bpy_struct)	bpy.types	5802
+bpy.types.EnumProperty	EnumProperty(Property)	bpy.types	4568
+bpy.types.EnumPropertyItem	EnumPropertyItem(bpy_struct)	bpy.types	3594
+bpy.types.EvaluateClosureNodeViewerPathElem	EvaluateClosureNodeViewerPathElem(ViewerPathElem)	bpy.types	2902
+bpy.types.Event	Event(bpy_struct)	bpy.types	8366
+bpy.types.ExplodeModifier	ExplodeModifier(Modifier)	bpy.types	3840
+bpy.types.FCurve	FCurve(bpy_struct)	bpy.types	11493
+bpy.types.FCurveKeyframePoints	FCurveKeyframePoints(bpy_prop_collection)	bpy.types	4546
+bpy.types.FCurveModifiers	FCurveModifiers(bpy_prop_collection)	bpy.types	3060
+bpy.types.FCurveSample	FCurveSample(bpy_struct)	bpy.types	2437
+bpy.types.FFmpegSettings	FFmpegSettings(bpy_struct)	bpy.types	8150
+bpy.types.FILEBROWSER_UL_dir	FILEBROWSER_UL_dir(UIList)	bpy.types	2465
+bpy.types.FModifier	FModifier(bpy_struct)	bpy.types	5605
+bpy.types.FModifierCycles	FModifierCycles(FModifier)	bpy.types	3882
+bpy.types.FModifierEnvelope	FModifierEnvelope(FModifier)	bpy.types	3528
+bpy.types.FModifierEnvelopeControlPoint	FModifierEnvelopeControlPoint(bpy_struct)	bpy.types	3236
+bpy.types.FModifierEnvelopeControlPoints	FModifierEnvelopeControlPoints(bpy_prop_collection)	bpy.types	3232
+bpy.types.FModifierFunctionGenerator	FModifierFunctionGenerator(FModifier)	bpy.types	3948
+bpy.types.FModifierGenerator	FModifierGenerator(FModifier)	bpy.types	3536
+bpy.types.FModifierLimits	FModifierLimits(FModifier)	bpy.types	3592
+bpy.types.FModifierNoise	FModifierNoise(FModifier)	bpy.types	4144
+bpy.types.FModifierSmooth	FModifierSmooth(FModifier)	bpy.types	2852
+bpy.types.FModifierStepped	FModifierStepped(FModifier)	bpy.types	3626
+bpy.types.FieldSettings	FieldSettings(bpy_struct)	bpy.types	13406
+bpy.types.FileAssetSelectIDFilter	FileAssetSelectIDFilter(bpy_struct)	bpy.types	9237
+bpy.types.FileAssetSelectParams	FileAssetSelectParams(FileSelectParams)	bpy.types	6856
+bpy.types.FileBrowserFSMenuEntry	FileBrowserFSMenuEntry(bpy_struct)	bpy.types	3277
+bpy.types.FileHandler	FileHandler(bpy_struct)	bpy.types	12082
+bpy.types.FileSelectEntry	FileSelectEntry(bpy_struct)	bpy.types	2823
+bpy.types.FileSelectIDFilter	FileSelectIDFilter(bpy_struct)	bpy.types	9555
+bpy.types.FileSelectParams	FileSelectParams(bpy_struct)	bpy.types	8924
+bpy.types.Float2Attribute	Float2Attribute(Attribute)	bpy.types	2583
+bpy.types.Float2AttributeValue	Float2AttributeValue(bpy_struct)	bpy.types	2519
+bpy.types.Float4Attribute	Float4Attribute(Attribute)	bpy.types	2583
+bpy.types.Float4AttributeValue	Float4AttributeValue(bpy_struct)	bpy.types	2415
+bpy.types.Float4x4Attribute	Float4x4Attribute(Attribute)	bpy.types	2607
+bpy.types.Float4x4AttributeValue	Float4x4AttributeValue(bpy_struct)	bpy.types	2525
+bpy.types.FloatAttribute	FloatAttribute(Attribute)	bpy.types	2565
+bpy.types.FloatAttributeValue	FloatAttributeValue(bpy_struct)	bpy.types	2294
+bpy.types.FloatColorAttribute	FloatColorAttribute(Attribute)	bpy.types	2676
+bpy.types.FloatColorAttributeValue	FloatColorAttributeValue(bpy_struct)	bpy.types	2852
+bpy.types.FloatProperty	FloatProperty(Property)	bpy.types	5416
+bpy.types.FloatVectorAttribute	FloatVectorAttribute(Attribute)	bpy.types	2653
+bpy.types.FloatVectorAttributeValue	FloatVectorAttributeValue(bpy_struct)	bpy.types	2588
+bpy.types.FloatVectorValueReadOnly	FloatVectorValueReadOnly(bpy_struct)	bpy.types	2394
+bpy.types.FloorConstraint	FloorConstraint(Constraint)	bpy.types	3442
+bpy.types.FluidDomainSettings	FluidDomainSettings(bpy_struct)	bpy.types	43947
+bpy.types.FluidEffectorSettings	FluidEffectorSettings(bpy_struct)	bpy.types	4282
+bpy.types.FluidFlowSettings	FluidFlowSettings(bpy_struct)	bpy.types	8577
+bpy.types.FluidModifier	FluidModifier(Modifier)	bpy.types	3465
+bpy.types.FollowPathConstraint	FollowPathConstraint(Constraint)	bpy.types	4231
+bpy.types.FollowTrackConstraint	FollowTrackConstraint(Constraint)	bpy.types	4428
+bpy.types.ForeachGeometryElementGenerationItem	ForeachGeometryElementGenerationItem(bpy_struct)	bpy.types	4056
+bpy.types.ForeachGeometryElementInputItem	ForeachGeometryElementInputItem(bpy_struct)	bpy.types	3618
+bpy.types.ForeachGeometryElementMainItem	ForeachGeometryElementMainItem(bpy_struct)	bpy.types	3593
+bpy.types.ForeachGeometryElementZoneViewerPathElem	ForeachGeometryElementZoneViewerPathElem(ViewerPathElem)	bpy.types	2532
+bpy.types.FreestyleLineSet	FreestyleLineSet(bpy_struct)	bpy.types	10697
+bpy.types.FreestyleLineStyle	FreestyleLineStyle(ID)	bpy.types	17589
+bpy.types.FreestyleModuleSettings	FreestyleModuleSettings(bpy_struct)	bpy.types	2883
+bpy.types.FreestyleModules	FreestyleModules(bpy_prop_collection)	bpy.types	2945
+bpy.types.FreestyleSettings	FreestyleSettings(bpy_struct)	bpy.types	5271
+bpy.types.Function	Function(bpy_struct)	bpy.types	3563
+bpy.types.FunctionNode	FunctionNode(NodeInternal)	bpy.types	7829
+bpy.types.FunctionNodeAlignEulerToVector	FunctionNodeAlignEulerToVector(FunctionNode)	bpy.types	5386
+bpy.types.FunctionNodeAlignRotationToVector	FunctionNodeAlignRotationToVector(FunctionNode)	bpy.types	5433
+bpy.types.FunctionNodeAxesToRotation	FunctionNodeAxesToRotation(FunctionNode)	bpy.types	5079
+bpy.types.FunctionNodeAxisAngleToRotation	FunctionNodeAxisAngleToRotation(FunctionNode)	bpy.types	4646
+bpy.types.FunctionNodeBitMath	FunctionNodeBitMath(FunctionNode)	bpy.types	5245
+bpy.types.FunctionNodeBooleanMath	FunctionNodeBooleanMath(FunctionNode)	bpy.types	4784
+bpy.types.FunctionNodeCombineColor	FunctionNodeCombineColor(FunctionNode)	bpy.types	4839
+bpy.types.FunctionNodeCombineMatrix	FunctionNodeCombineMatrix(FunctionNode)	bpy.types	4550
+bpy.types.FunctionNodeCombineTransform	FunctionNodeCombineTransform(FunctionNode)	bpy.types	4632
+bpy.types.FunctionNodeCompare	FunctionNodeCompare(FunctionNode)	bpy.types	5553
+bpy.types.FunctionNodeEulerToRotation	FunctionNodeEulerToRotation(FunctionNode)	bpy.types	4583
+bpy.types.FunctionNodeFindInString	FunctionNodeFindInString(FunctionNode)	bpy.types	4587
+bpy.types.FunctionNodeFloatToInt	FunctionNodeFloatToInt(FunctionNode)	bpy.types	4849
+bpy.types.FunctionNodeFormatString	FunctionNodeFormatString(FunctionNode)	bpy.types	5230
+bpy.types.FunctionNodeHashValue	FunctionNodeHashValue(FunctionNode)	bpy.types	4776
+bpy.types.FunctionNodeInputBool	FunctionNodeInputBool(FunctionNode)	bpy.types	4694
+bpy.types.FunctionNodeInputColor	FunctionNodeInputColor(FunctionNode)	bpy.types	4795
+bpy.types.FunctionNodeInputInt	FunctionNodeInputInt(FunctionNode)	bpy.types	4687
+bpy.types.FunctionNodeInputIntVector	FunctionNodeInputIntVector(FunctionNode)	bpy.types	5077
+bpy.types.FunctionNodeInputMenu	FunctionNodeInputMenu(FunctionNode)	bpy.types	4654
+bpy.types.FunctionNodeInputRotation	FunctionNodeInputRotation(FunctionNode)	bpy.types	4877
+bpy.types.FunctionNodeInputSpecialCharacters	FunctionNodeInputSpecialCharacters(FunctionNode)	bpy.types	4699
+bpy.types.FunctionNodeInputString	FunctionNodeInputString(FunctionNode)	bpy.types	4927
+bpy.types.FunctionNodeInputVector	FunctionNodeInputVector(FunctionNode)	bpy.types	4991
+bpy.types.FunctionNodeIntegerMath	FunctionNodeIntegerMath(FunctionNode)	bpy.types	4788
+bpy.types.FunctionNodeInvertMatrix	FunctionNodeInvertMatrix(FunctionNode)	bpy.types	4541
+bpy.types.FunctionNodeInvertRotation	FunctionNodeInvertRotation(FunctionNode)	bpy.types	4556
+bpy.types.FunctionNodeMatchString	FunctionNodeMatchString(FunctionNode)	bpy.types	4525
+bpy.types.FunctionNodeMatrixDeterminant	FunctionNodeMatrixDeterminant(FunctionNode)	bpy.types	4600
+bpy.types.FunctionNodeMatrixMultiply	FunctionNodeMatrixMultiply(FunctionNode)	bpy.types	4568
+bpy.types.FunctionNodeMatrixSVD	FunctionNodeMatrixSVD(FunctionNode)	bpy.types	4513
+bpy.types.FunctionNodeProjectPoint	FunctionNodeProjectPoint(FunctionNode)	bpy.types	4574
+bpy.types.FunctionNodeQuaternionToRotation	FunctionNodeQuaternionToRotation(FunctionNode)	bpy.types	4642
+bpy.types.FunctionNodeRandomValue	FunctionNodeRandomValue(FunctionNode)	bpy.types	4780
+bpy.types.FunctionNodeReplaceString	FunctionNodeReplaceString(FunctionNode)	bpy.types	4544
+bpy.types.FunctionNodeReverseString	FunctionNodeReverseString(FunctionNode)	bpy.types	4548
+bpy.types.FunctionNodeRotateEuler	FunctionNodeRotateEuler(FunctionNode)	bpy.types	5210
+bpy.types.FunctionNodeRotateRotation	FunctionNodeRotateRotation(FunctionNode)	bpy.types	4918
+bpy.types.FunctionNodeRotateVector	FunctionNodeRotateVector(FunctionNode)	bpy.types	4521
+bpy.types.FunctionNodeRotationToAxisAngle	FunctionNodeRotationToAxisAngle(FunctionNode)	bpy.types	4628
+bpy.types.FunctionNodeRotationToEuler	FunctionNodeRotationToEuler(FunctionNode)	bpy.types	4583
+bpy.types.FunctionNodeRotationToQuaternion	FunctionNodeRotationToQuaternion(FunctionNode)	bpy.types	4657
+bpy.types.FunctionNodeSeparateColor	FunctionNodeSeparateColor(FunctionNode)	bpy.types	4850
+bpy.types.FunctionNodeSeparateMatrix	FunctionNodeSeparateMatrix(FunctionNode)	bpy.types	4560
+bpy.types.FunctionNodeSeparateTransform	FunctionNodeSeparateTransform(FunctionNode)	bpy.types	4644
+bpy.types.FunctionNodeSetStringCase	FunctionNodeSetStringCase(FunctionNode)	bpy.types	4529
+bpy.types.FunctionNodeSliceString	FunctionNodeSliceString(FunctionNode)	bpy.types	4518
+bpy.types.FunctionNodeSplitString	FunctionNodeSplitString(FunctionNode)	bpy.types	4517
+bpy.types.FunctionNodeStringLength	FunctionNodeStringLength(FunctionNode)	bpy.types	4538
+bpy.types.FunctionNodeStringToValue	FunctionNodeStringToValue(FunctionNode)	bpy.types	4806
+bpy.types.FunctionNodeTransformDirection	FunctionNodeTransformDirection(FunctionNode)	bpy.types	4644
+bpy.types.FunctionNodeTransformPoint	FunctionNodeTransformPoint(FunctionNode)	bpy.types	4564
+bpy.types.FunctionNodeTransposeMatrix	FunctionNodeTransposeMatrix(FunctionNode)	bpy.types	4602
+bpy.types.FunctionNodeTrimString	FunctionNodeTrimString(FunctionNode)	bpy.types	4515
+bpy.types.FunctionNodeValueToString	FunctionNodeValueToString(FunctionNode)	bpy.types	4806
+bpy.types.GPENCIL_UL_annotation_layer	GPENCIL_UL_annotation_layer(UIList)	bpy.types	2537
+bpy.types.GPENCIL_UL_matslots	GPENCIL_UL_matslots(UIList)	bpy.types	2473
+bpy.types.GPencilInterpolateSettings	GPencilInterpolateSettings(bpy_struct)	bpy.types	2585
+bpy.types.GPencilSculptGuide	GPencilSculptGuide(bpy_struct)	bpy.types	4517
+bpy.types.GPencilSculptSettings	GPencilSculptSettings(bpy_struct)	bpy.types	5516
+bpy.types.GREASE_PENCIL_UL_attributes	GREASE_PENCIL_UL_attributes(UIList)	bpy.types	2537
+bpy.types.GREASE_PENCIL_UL_masks	GREASE_PENCIL_UL_masks(UIList)	bpy.types	2497
+bpy.types.GammaCrossStrip	GammaCrossStrip(EffectStrip)	bpy.types	3892
+bpy.types.GaussianBlurStrip	GaussianBlurStrip(EffectStrip)	bpy.types	4054
+bpy.types.GeometryAttributeConstraint	GeometryAttributeConstraint(Constraint)	bpy.types	5850
+bpy.types.GeometryNode	GeometryNode(NodeInternal)	bpy.types	26089
+bpy.types.GeometryNodeAccumulateField	GeometryNodeAccumulateField(GeometryNode)	bpy.types	5331
+bpy.types.GeometryNodeApplySimulatedData	GeometryNodeApplySimulatedData(GeometryNode)	bpy.types	4588
+bpy.types.GeometryNodeAttributeDomainSize	GeometryNodeAttributeDomainSize(GeometryNode)	bpy.types	4966
+bpy.types.GeometryNodeAttributeStatistic	GeometryNodeAttributeStatistic(GeometryNode)	bpy.types	5300
+bpy.types.GeometryNodeBake	GeometryNodeBake(GeometryNode)	bpy.types	5243
+bpy.types.GeometryNodeBlurAttribute	GeometryNodeBlurAttribute(GeometryNode)	bpy.types	4817
+bpy.types.GeometryNodeBoneInfo	GeometryNodeBoneInfo(GeometryNode)	bpy.types	4887
+bpy.types.GeometryNodeBoundBox	GeometryNodeBoundBox(GeometryNode)	bpy.types	4542
+bpy.types.GeometryNodeCameraInfo	GeometryNodeCameraInfo(GeometryNode)	bpy.types	4519
+bpy.types.GeometryNodeCaptureAttribute	GeometryNodeCaptureAttribute(GeometryNode)	bpy.types	5992
+bpy.types.GeometryNodeClosureToList	GeometryNodeClosureToList(GeometryNode)	bpy.types	5450
+bpy.types.GeometryNodeClosureToListItem	GeometryNodeClosureToListItem(bpy_struct)	bpy.types	3898
+bpy.types.GeometryNodeClosureToListItems	GeometryNodeClosureToListItems(bpy_prop_collection)	bpy.types	3809
+bpy.types.GeometryNodeClusterByConnected	GeometryNodeClusterByConnected(GeometryNode)	bpy.types	4670
+bpy.types.GeometryNodeClusterByDistance	GeometryNodeClusterByDistance(GeometryNode)	bpy.types	4643
+bpy.types.GeometryNodeCollectionChildren	GeometryNodeCollectionChildren(GeometryNode)	bpy.types	4667
+bpy.types.GeometryNodeCollectionInfo	GeometryNodeCollectionInfo(GeometryNode)	bpy.types	5093
+bpy.types.GeometryNodeConvexHull	GeometryNodeConvexHull(GeometryNode)	bpy.types	4573
+bpy.types.GeometryNodeCornersOfEdge	GeometryNodeCornersOfEdge(GeometryNode)	bpy.types	4560
+bpy.types.GeometryNodeCornersOfFace	GeometryNodeCornersOfFace(GeometryNode)	bpy.types	4556
+bpy.types.GeometryNodeCornersOfVertex	GeometryNodeCornersOfVertex(GeometryNode)	bpy.types	4591
+bpy.types.GeometryNodeCubeGridTopology	GeometryNodeCubeGridTopology(GeometryNode)	bpy.types	4655
+bpy.types.GeometryNodeCurveArc	GeometryNodeCurveArc(GeometryNode)	bpy.types	4831
+bpy.types.GeometryNodeCurveEndpointSelection	GeometryNodeCurveEndpointSelection(GeometryNode)	bpy.types	4717
+bpy.types.GeometryNodeCurveHandleTypeSelection	GeometryNodeCurveHandleTypeSelection(GeometryNode)	bpy.types	5699
+bpy.types.GeometryNodeCurveLength	GeometryNodeCurveLength(GeometryNode)	bpy.types	4541
+bpy.types.GeometryNodeCurveOfPoint	GeometryNodeCurveOfPoint(GeometryNode)	bpy.types	4551
+bpy.types.GeometryNodeCurvePrimitiveBezierSegment	GeometryNodeCurvePrimitiveBezierSegment(GeometryNode)	bpy.types	5190
+bpy.types.GeometryNodeCurvePrimitiveCircle	GeometryNodeCurvePrimitiveCircle(GeometryNode)	bpy.types	4998
+bpy.types.GeometryNodeCurvePrimitiveLine	GeometryNodeCurvePrimitiveLine(GeometryNode)	bpy.types	5008
+bpy.types.GeometryNodeCurvePrimitiveQuadrilateral	GeometryNodeCurvePrimitiveQuadrilateral(GeometryNode)	bpy.types	5247
+bpy.types.GeometryNodeCurveQuadraticBezier	GeometryNodeCurveQuadraticBezier(GeometryNode)	bpy.types	4690
+bpy.types.GeometryNodeCurveSetHandles	GeometryNodeCurveSetHandles(GeometryNode)	bpy.types	5516
+bpy.types.GeometryNodeCurveSpiral	GeometryNodeCurveSpiral(GeometryNode)	bpy.types	4532
+bpy.types.GeometryNodeCurveSplineType	GeometryNodeCurveSplineType(GeometryNode)	bpy.types	4872
+bpy.types.GeometryNodeCurveStar	GeometryNodeCurveStar(GeometryNode)	bpy.types	4552
+bpy.types.GeometryNodeCurveToMesh	GeometryNodeCurveToMesh(GeometryNode)	bpy.types	4576
+bpy.types.GeometryNodeCurveToPoints	GeometryNodeCurveToPoints(GeometryNode)	bpy.types	5130
+bpy.types.GeometryNodeCurvesToGreasePencil	GeometryNodeCurvesToGreasePencil(GeometryNode)	bpy.types	4688
+bpy.types.GeometryNodeCustomGroup	GeometryNodeCustomGroup(GeometryNode)	bpy.types	3695
+bpy.types.GeometryNodeDeformCurvesOnSurface	GeometryNodeDeformCurvesOnSurface(GeometryNode)	bpy.types	4733
+bpy.types.GeometryNodeDeleteGeometry	GeometryNodeDeleteGeometry(GeometryNode)	bpy.types	5118
+bpy.types.GeometryNodeDistributePointsInGrid	GeometryNodeDistributePointsInGrid(GeometryNode)	bpy.types	5090
+bpy.types.GeometryNodeDistributePointsInVolume	GeometryNodeDistributePointsInVolume(GeometryNode)	bpy.types	4705
+bpy.types.GeometryNodeDistributePointsOnFaces	GeometryNodeDistributePointsOnFaces(GeometryNode)	bpy.types	5461
+bpy.types.GeometryNodeDualMesh	GeometryNodeDualMesh(GeometryNode)	bpy.types	4501
+bpy.types.GeometryNodeDuplicateElements	GeometryNodeDuplicateElements(GeometryNode)	bpy.types	4879
+bpy.types.GeometryNodeEdgePathsToCurves	GeometryNodeEdgePathsToCurves(GeometryNode)	bpy.types	4623
+bpy.types.GeometryNodeEdgePathsToSelection	GeometryNodeEdgePathsToSelection(GeometryNode)	bpy.types	4682
+bpy.types.GeometryNodeEdgesOfCorner	GeometryNodeEdgesOfCorner(GeometryNode)	bpy.types	4569
+bpy.types.GeometryNodeEdgesOfVertex	GeometryNodeEdgesOfVertex(GeometryNode)	bpy.types	4563
+bpy.types.GeometryNodeEdgesToFaceGroups	GeometryNodeEdgesToFaceGroups(GeometryNode)	bpy.types	4642
+bpy.types.GeometryNodeExtrudeMesh	GeometryNodeExtrudeMesh(GeometryNode)	bpy.types	4802
+bpy.types.GeometryNodeFaceOfCorner	GeometryNodeFaceOfCorner(GeometryNode)	bpy.types	4551
+bpy.types.GeometryNodeFieldAtIndex	GeometryNodeFieldAtIndex(GeometryNode)	bpy.types	5098
+bpy.types.GeometryNodeFieldAverage	GeometryNodeFieldAverage(GeometryNode)	bpy.types	5133
+bpy.types.GeometryNodeFieldMinAndMax	GeometryNodeFieldMinAndMax(GeometryNode)	bpy.types	5216
+bpy.types.GeometryNodeFieldOnDomain	GeometryNodeFieldOnDomain(GeometryNode)	bpy.types	5145
+bpy.types.GeometryNodeFieldToGrid	GeometryNodeFieldToGrid(GeometryNode)	bpy.types	5746
+bpy.types.GeometryNodeFieldToGridItem	GeometryNodeFieldToGridItem(bpy_struct)	bpy.types	3532
+bpy.types.GeometryNodeFieldToGridItems	GeometryNodeFieldToGridItems(bpy_prop_collection)	bpy.types	3751
+bpy.types.GeometryNodeFieldToList	GeometryNodeFieldToList(GeometryNode)	bpy.types	5462
+bpy.types.GeometryNodeFieldToListItem	GeometryNodeFieldToListItem(bpy_struct)	bpy.types	3710
+bpy.types.GeometryNodeFieldToListItems	GeometryNodeFieldToListItems(bpy_prop_collection)	bpy.types	3751
+bpy.types.GeometryNodeFieldVariance	GeometryNodeFieldVariance(GeometryNode)	bpy.types	5167
+bpy.types.GeometryNodeFillCurve	GeometryNodeFillCurve(GeometryNode)	bpy.types	4536
+bpy.types.GeometryNodeFilletCurve	GeometryNodeFilletCurve(GeometryNode)	bpy.types	4555
+bpy.types.GeometryNodeFilterList	GeometryNodeFilterList(GeometryNode)	bpy.types	4774
+bpy.types.GeometryNodeFlipFaces	GeometryNodeFlipFaces(GeometryNode)	bpy.types	4558
+bpy.types.GeometryNodeForeachGeometryElementInput	GeometryNodeForeachGeometryElementInput(GeometryNode)	bpy.types	5485
+bpy.types.GeometryNodeForeachGeometryElementOutput	GeometryNodeForeachGeometryElementOutput(GeometryNode)	bpy.types	7792
+bpy.types.GeometryNodeGeometryToInstance	GeometryNodeGeometryToInstance(GeometryNode)	bpy.types	4714
+bpy.types.GeometryNodeGetAttributeNames	GeometryNodeGetAttributeNames(GeometryNode)	bpy.types	4622
+bpy.types.GeometryNodeGetGeometryBundle	GeometryNodeGetGeometryBundle(GeometryNode)	bpy.types	4604
+bpy.types.GeometryNodeGetGeometryComponent	GeometryNodeGetGeometryComponent(GeometryNode)	bpy.types	4654
+bpy.types.GeometryNodeGetNamedGrid	GeometryNodeGetNamedGrid(GeometryNode)	bpy.types	4862
+bpy.types.GeometryNodeGizmoDial	GeometryNodeGizmoDial(GeometryNode)	bpy.types	4790
+bpy.types.GeometryNodeGizmoLinear	GeometryNodeGizmoLinear(GeometryNode)	bpy.types	5147
+bpy.types.GeometryNodeGizmoTransform	GeometryNodeGizmoTransform(GeometryNode)	bpy.types	5994
+bpy.types.GeometryNodeGreasePencilToCurves	GeometryNodeGreasePencilToCurves(GeometryNode)	bpy.types	4667
+bpy.types.GeometryNodeGridAdvect	GeometryNodeGridAdvect(GeometryNode)	bpy.types	4926
+bpy.types.GeometryNodeGridClip	GeometryNodeGridClip(GeometryNode)	bpy.types	4837
+bpy.types.GeometryNodeGridCurl	GeometryNodeGridCurl(GeometryNode)	bpy.types	4531
+bpy.types.GeometryNodeGridDilateAndErode	GeometryNodeGridDilateAndErode(GeometryNode)	bpy.types	5012
+bpy.types.GeometryNodeGridDivergence	GeometryNodeGridDivergence(GeometryNode)	bpy.types	4608
+bpy.types.GeometryNodeGridGradient	GeometryNodeGridGradient(GeometryNode)	bpy.types	4584
+bpy.types.GeometryNodeGridInfo	GeometryNodeGridInfo(GeometryNode)	bpy.types	4776
+bpy.types.GeometryNodeGridLaplacian	GeometryNodeGridLaplacian(GeometryNode)	bpy.types	4576
+bpy.types.GeometryNodeGridMean	GeometryNodeGridMean(GeometryNode)	bpy.types	4883
+bpy.types.GeometryNodeGridMedian	GeometryNodeGridMedian(GeometryNode)	bpy.types	4919
+bpy.types.GeometryNodeGridPrune	GeometryNodeGridPrune(GeometryNode)	bpy.types	4845
+bpy.types.GeometryNodeGridToMesh	GeometryNodeGridToMesh(GeometryNode)	bpy.types	4527
+bpy.types.GeometryNodeGridToPoints	GeometryNodeGridToPoints(GeometryNode)	bpy.types	4857
+bpy.types.GeometryNodeGridVoxelize	GeometryNodeGridVoxelize(GeometryNode)	bpy.types	4875
+bpy.types.GeometryNodeGroup	GeometryNodeGroup(GeometryNode)	bpy.types	4597
+bpy.types.GeometryNodeImageInfo	GeometryNodeImageInfo(GeometryNode)	bpy.types	4499
+bpy.types.GeometryNodeImageTexture	GeometryNodeImageTexture(GeometryNode)	bpy.types	5470
+bpy.types.GeometryNodeImportCSV	GeometryNodeImportCSV(GeometryNode)	bpy.types	4496
+bpy.types.GeometryNodeImportOBJ	GeometryNodeImportOBJ(GeometryNode)	bpy.types	4496
+bpy.types.GeometryNodeImportPLY	GeometryNodeImportPLY(GeometryNode)	bpy.types	4500
+bpy.types.GeometryNodeImportSTL	GeometryNodeImportSTL(GeometryNode)	bpy.types	4494
+bpy.types.GeometryNodeImportText	GeometryNodeImportText(GeometryNode)	bpy.types	4510
+bpy.types.GeometryNodeImportVDB	GeometryNodeImportVDB(GeometryNode)	bpy.types	4499
+bpy.types.GeometryNodeIndexOfNearest	GeometryNodeIndexOfNearest(GeometryNode)	bpy.types	4607
+bpy.types.GeometryNodeIndexSwitch	GeometryNodeIndexSwitch(GeometryNode)	bpy.types	5216
+bpy.types.GeometryNodeInputActiveCamera	GeometryNodeInputActiveCamera(GeometryNode)	bpy.types	4610
+bpy.types.GeometryNodeInputCollection	GeometryNodeInputCollection(GeometryNode)	bpy.types	4795
+bpy.types.GeometryNodeInputCurveHandlePositions	GeometryNodeInputCurveHandlePositions(GeometryNode)	bpy.types	4748
+bpy.types.GeometryNodeInputCurveTilt	GeometryNodeInputCurveTilt(GeometryNode)	bpy.types	4626
+bpy.types.GeometryNodeInputEdgeSmooth	GeometryNodeInputEdgeSmooth(GeometryNode)	bpy.types	4612
+bpy.types.GeometryNodeInputFont	GeometryNodeInputFont(GeometryNode)	bpy.types	4674
+bpy.types.GeometryNodeInputID	GeometryNodeInputID(GeometryNode)	bpy.types	4567
+bpy.types.GeometryNodeInputImage	GeometryNodeInputImage(GeometryNode)	bpy.types	4684
+bpy.types.GeometryNodeInputIndex	GeometryNodeInputIndex(GeometryNode)	bpy.types	4573
+bpy.types.GeometryNodeInputInstanceBounds	GeometryNodeInputInstanceBounds(GeometryNode)	bpy.types	4661
+bpy.types.GeometryNodeInputInstanceReference	GeometryNodeInputInstanceReference(GeometryNode)	bpy.types	4688
+bpy.types.GeometryNodeInputInstanceRotation	GeometryNodeInputInstanceRotation(GeometryNode)	bpy.types	4686
+bpy.types.GeometryNodeInputInstanceScale	GeometryNodeInputInstanceScale(GeometryNode)	bpy.types	4641
+bpy.types.GeometryNodeInputMaterial	GeometryNodeInputMaterial(GeometryNode)	bpy.types	4749
+bpy.types.GeometryNodeInputMaterialIndex	GeometryNodeInputMaterialIndex(GeometryNode)	bpy.types	4682
+bpy.types.GeometryNodeInputMeshEdgeAngle	GeometryNodeInputMeshEdgeAngle(GeometryNode)	bpy.types	4647
+bpy.types.GeometryNodeInputMeshEdgeNeighbors	GeometryNodeInputMeshEdgeNeighbors(GeometryNode)	bpy.types	4715
+bpy.types.GeometryNodeInputMeshEdgeVertices	GeometryNodeInputMeshEdgeVertices(GeometryNode)	bpy.types	4693
+bpy.types.GeometryNodeInputMeshFaceArea	GeometryNodeInputMeshFaceArea(GeometryNode)	bpy.types	4620
+bpy.types.GeometryNodeInputMeshFaceIsPlanar	GeometryNodeInputMeshFaceIsPlanar(GeometryNode)	bpy.types	4734
+bpy.types.GeometryNodeInputMeshFaceNeighbors	GeometryNodeInputMeshFaceNeighbors(GeometryNode)	bpy.types	4707
+bpy.types.GeometryNodeInputMeshIsland	GeometryNodeInputMeshIsland(GeometryNode)	bpy.types	4611
+bpy.types.GeometryNodeInputMeshVertexNeighbors	GeometryNodeInputMeshVertexNeighbors(GeometryNode)	bpy.types	4737
+bpy.types.GeometryNodeInputNamedAttribute	GeometryNodeInputNamedAttribute(GeometryNode)	bpy.types	4959
+bpy.types.GeometryNodeInputNamedLayerSelection	GeometryNodeInputNamedLayerSelection(GeometryNode)	bpy.types	4717
+bpy.types.GeometryNodeInputNormal	GeometryNodeInputNormal(GeometryNode)	bpy.types	4846
+bpy.types.GeometryNodeInputObject	GeometryNodeInputObject(GeometryNode)	bpy.types	4703
+bpy.types.GeometryNodeInputPosition	GeometryNodeInputPosition(GeometryNode)	bpy.types	4577
+bpy.types.GeometryNodeInputRadius	GeometryNodeInputRadius(GeometryNode)	bpy.types	4558
+bpy.types.GeometryNodeInputSceneTime	GeometryNodeInputSceneTime(GeometryNode)	bpy.types	4614
+bpy.types.GeometryNodeInputShadeSmooth	GeometryNodeInputShadeSmooth(GeometryNode)	bpy.types	4626
+bpy.types.GeometryNodeInputShortestEdgePaths	GeometryNodeInputShortestEdgePaths(GeometryNode)	bpy.types	4744
+bpy.types.GeometryNodeInputSplineCyclic	GeometryNodeInputSplineCyclic(GeometryNode)	bpy.types	4639
+bpy.types.GeometryNodeInputSplineResolution	GeometryNodeInputSplineResolution(GeometryNode)	bpy.types	4728
+bpy.types.GeometryNodeInputTangent	GeometryNodeInputTangent(GeometryNode)	bpy.types	4560
+bpy.types.GeometryNodeInputVoxelIndex	GeometryNodeInputVoxelIndex(GeometryNode)	bpy.types	4624
+bpy.types.GeometryNodeInstanceOnPoints	GeometryNodeInstanceOnPoints(GeometryNode)	bpy.types	4663
+bpy.types.GeometryNodeInstanceTransform	GeometryNodeInstanceTransform(GeometryNode)	bpy.types	4641
+bpy.types.GeometryNodeInstancesToPoints	GeometryNodeInstancesToPoints(GeometryNode)	bpy.types	4673
+bpy.types.GeometryNodeInterpolateCurves	GeometryNodeInterpolateCurves(GeometryNode)	bpy.types	4646
+bpy.types.GeometryNodeIsViewport	GeometryNodeIsViewport(GeometryNode)	bpy.types	4570
+bpy.types.GeometryNodeJoinGeometry	GeometryNodeJoinGeometry(GeometryNode)	bpy.types	4561
+bpy.types.GeometryNodeListGetItem	GeometryNodeListGetItem(GeometryNode)	bpy.types	5222
+bpy.types.GeometryNodeListLength	GeometryNodeListLength(GeometryNode)	bpy.types	4789
+bpy.types.GeometryNodeMaterialSelection	GeometryNodeMaterialSelection(GeometryNode)	bpy.types	4636
+bpy.types.GeometryNodeMenuSwitch	GeometryNodeMenuSwitch(GeometryNode)	bpy.types	5867
+bpy.types.GeometryNodeMergeByDistance	GeometryNodeMergeByDistance(GeometryNode)	bpy.types	4596
+bpy.types.GeometryNodeMergeLayers	GeometryNodeMergeLayers(GeometryNode)	bpy.types	4970
+bpy.types.GeometryNodeMergePoints	GeometryNodeMergePoints(GeometryNode)	bpy.types	4562
+bpy.types.GeometryNodeMeshBevel	GeometryNodeMeshBevel(GeometryNode)	bpy.types	4496
+bpy.types.GeometryNodeMeshBoolean	GeometryNodeMeshBoolean(GeometryNode)	bpy.types	5389
+bpy.types.GeometryNodeMeshCircle	GeometryNodeMeshCircle(GeometryNode)	bpy.types	4820
+bpy.types.GeometryNodeMeshCone	GeometryNodeMeshCone(GeometryNode)	bpy.types	4775
+bpy.types.GeometryNodeMeshCube	GeometryNodeMeshCube(GeometryNode)	bpy.types	4516
+bpy.types.GeometryNodeMeshCylinder	GeometryNodeMeshCylinder(GeometryNode)	bpy.types	4843
+bpy.types.GeometryNodeMeshFaceSetBoundaries	GeometryNodeMeshFaceSetBoundaries(GeometryNode)	bpy.types	4707
+bpy.types.GeometryNodeMeshGrid	GeometryNodeMeshGrid(GeometryNode)	bpy.types	4488
+bpy.types.GeometryNodeMeshIcoSphere	GeometryNodeMeshIcoSphere(GeometryNode)	bpy.types	4586
+bpy.types.GeometryNodeMeshLine	GeometryNodeMeshLine(GeometryNode)	bpy.types	5101
+bpy.types.GeometryNodeMeshToCurve	GeometryNodeMeshToCurve(GeometryNode)	bpy.types	4885
+bpy.types.GeometryNodeMeshToDensityGrid	GeometryNodeMeshToDensityGrid(GeometryNode)	bpy.types	4615
+bpy.types.GeometryNodeMeshToPoints	GeometryNodeMeshToPoints(GeometryNode)	bpy.types	5068
+bpy.types.GeometryNodeMeshToSDFGrid	GeometryNodeMeshToSDFGrid(GeometryNode)	bpy.types	4568
+bpy.types.GeometryNodeMeshToVolume	GeometryNodeMeshToVolume(GeometryNode)	bpy.types	4568
+bpy.types.GeometryNodeMeshUVSphere	GeometryNodeMeshUVSphere(GeometryNode)	bpy.types	4586
+bpy.types.GeometryNodeObjectInfo	GeometryNodeObjectInfo(GeometryNode)	bpy.types	5093
+bpy.types.GeometryNodeOffsetCornerInFace	GeometryNodeOffsetCornerInFace(GeometryNode)	bpy.types	4634
+bpy.types.GeometryNodeOffsetPointInCurve	GeometryNodeOffsetPointInCurve(GeometryNode)	bpy.types	4635
+bpy.types.GeometryNodePoints	GeometryNodePoints(GeometryNode)	bpy.types	4487
+bpy.types.GeometryNodePointsOfCurve	GeometryNodePointsOfCurve(GeometryNode)	bpy.types	4557
+bpy.types.GeometryNodePointsToCurves	GeometryNodePointsToCurves(GeometryNode)	bpy.types	4597
+bpy.types.GeometryNodePointsToSDFGrid	GeometryNodePointsToSDFGrid(GeometryNode)	bpy.types	4596
+bpy.types.GeometryNodePointsToVertices	GeometryNodePointsToVertices(GeometryNode)	bpy.types	4611
+bpy.types.GeometryNodePointsToVolume	GeometryNodePointsToVolume(GeometryNode)	bpy.types	4581
+bpy.types.GeometryNodeProximity	GeometryNodeProximity(GeometryNode)	bpy.types	4995
+bpy.types.GeometryNodeRaycast	GeometryNodeRaycast(GeometryNode)	bpy.types	4814
+bpy.types.GeometryNodeRealizeInstances	GeometryNodeRealizeInstances(GeometryNode)	bpy.types	4924
+bpy.types.GeometryNodeRemoveAttribute	GeometryNodeRemoveAttribute(GeometryNode)	bpy.types	4645
+bpy.types.GeometryNodeRenameAttribute	GeometryNodeRenameAttribute(GeometryNode)	bpy.types	4579
+bpy.types.GeometryNodeRepeatInput	GeometryNodeRepeatInput(GeometryNode)	bpy.types	5197
+bpy.types.GeometryNodeRepeatOutput	GeometryNodeRepeatOutput(GeometryNode)	bpy.types	5592
+bpy.types.GeometryNodeReplaceMaterial	GeometryNodeReplaceMaterial(GeometryNode)	bpy.types	4578
+bpy.types.GeometryNodeResampleCurve	GeometryNodeResampleCurve(GeometryNode)	bpy.types	4867
+bpy.types.GeometryNodeReverseCurve	GeometryNodeReverseCurve(GeometryNode)	bpy.types	4573
+bpy.types.GeometryNodeRotateInstances	GeometryNodeRotateInstances(GeometryNode)	bpy.types	4598
+bpy.types.GeometryNodeSDFGridBoolean	GeometryNodeSDFGridBoolean(GeometryNode)	bpy.types	4997
+bpy.types.GeometryNodeSDFGridFillet	GeometryNodeSDFGridFillet(GeometryNode)	bpy.types	4683
+bpy.types.GeometryNodeSDFGridLaplacian	GeometryNodeSDFGridLaplacian(GeometryNode)	bpy.types	4725
+bpy.types.GeometryNodeSDFGridMean	GeometryNodeSDFGridMean(GeometryNode)	bpy.types	4629
+bpy.types.GeometryNodeSDFGridMeanCurvature	GeometryNodeSDFGridMeanCurvature(GeometryNode)	bpy.types	4794
+bpy.types.GeometryNodeSDFGridMedian	GeometryNodeSDFGridMedian(GeometryNode)	bpy.types	4645
+bpy.types.GeometryNodeSDFGridOffset	GeometryNodeSDFGridOffset(GeometryNode)	bpy.types	4672
+bpy.types.GeometryNodeSampleCurve	GeometryNodeSampleCurve(GeometryNode)	bpy.types	5451
+bpy.types.GeometryNodeSampleGrid	GeometryNodeSampleGrid(GeometryNode)	bpy.types	4814
+bpy.types.GeometryNodeSampleGridIndex	GeometryNodeSampleGridIndex(GeometryNode)	bpy.types	4894
+bpy.types.GeometryNodeSampleIndex	GeometryNodeSampleIndex(GeometryNode)	bpy.types	5283
+bpy.types.GeometryNodeSampleNearest	GeometryNodeSampleNearest(GeometryNode)	bpy.types	4895
+bpy.types.GeometryNodeSampleNearestSurface	GeometryNodeSampleNearestSurface(GeometryNode)	bpy.types	4973
+bpy.types.GeometryNodeSampleSoundFrequencies	GeometryNodeSampleSoundFrequencies(GeometryNode)	bpy.types	4729
+bpy.types.GeometryNodeSampleUVSurface	GeometryNodeSampleUVSurface(GeometryNode)	bpy.types	4877
+bpy.types.GeometryNodeScaleElements	GeometryNodeScaleElements(GeometryNode)	bpy.types	4890
+bpy.types.GeometryNodeScaleInstances	GeometryNodeScaleInstances(GeometryNode)	bpy.types	4583
+bpy.types.GeometryNodeSelfObject	GeometryNodeSelfObject(GeometryNode)	bpy.types	4564
+bpy.types.GeometryNodeSeparateComponents	GeometryNodeSeparateComponents(GeometryNode)	bpy.types	4667
+bpy.types.GeometryNodeSeparateGeometry	GeometryNodeSeparateGeometry(GeometryNode)	bpy.types	4957
+bpy.types.GeometryNodeSetCurveHandlePositions	GeometryNodeSetCurveHandlePositions(GeometryNode)	bpy.types	5064
+bpy.types.GeometryNodeSetCurveNormal	GeometryNodeSetCurveNormal(GeometryNode)	bpy.types	4575
+bpy.types.GeometryNodeSetCurveRadius	GeometryNodeSetCurveRadius(GeometryNode)	bpy.types	4583
+bpy.types.GeometryNodeSetCurveTilt	GeometryNodeSetCurveTilt(GeometryNode)	bpy.types	4552
+bpy.types.GeometryNodeSetGeometryBundle	GeometryNodeSetGeometryBundle(GeometryNode)	bpy.types	4604
+bpy.types.GeometryNodeSetGeometryName	GeometryNodeSetGeometryName(GeometryNode)	bpy.types	4595
+bpy.types.GeometryNodeSetGreasePencilColor	GeometryNodeSetGreasePencilColor(GeometryNode)	bpy.types	4997
+bpy.types.GeometryNodeSetGreasePencilDepth	GeometryNodeSetGreasePencilDepth(GeometryNode)	bpy.types	4938
+bpy.types.GeometryNodeSetGreasePencilSoftness	GeometryNodeSetGreasePencilSoftness(GeometryNode)	bpy.types	4708
+bpy.types.GeometryNodeSetGridBackground	GeometryNodeSetGridBackground(GeometryNode)	bpy.types	4939
+bpy.types.GeometryNodeSetGridTransform	GeometryNodeSetGridTransform(GeometryNode)	bpy.types	4930
+bpy.types.GeometryNodeSetID	GeometryNodeSetID(GeometryNode)	bpy.types	4490
+bpy.types.GeometryNodeSetInstanceTransform	GeometryNodeSetInstanceTransform(GeometryNode)	bpy.types	4665
+bpy.types.GeometryNodeSetMaterial	GeometryNodeSetMaterial(GeometryNode)	bpy.types	4530
+bpy.types.GeometryNodeSetMaterialIndex	GeometryNodeSetMaterialIndex(GeometryNode)	bpy.types	4619
+bpy.types.GeometryNodeSetMeshNormal	GeometryNodeSetMeshNormal(GeometryNode)	bpy.types	5670
+bpy.types.GeometryNodeSetNURBSOrder	GeometryNodeSetNURBSOrder(GeometryNode)	bpy.types	4628
+bpy.types.GeometryNodeSetNURBSWeight	GeometryNodeSetNURBSWeight(GeometryNode)	bpy.types	4637
+bpy.types.GeometryNodeSetPointRadius	GeometryNodeSetPointRadius(GeometryNode)	bpy.types	4576
+bpy.types.GeometryNodeSetPosition	GeometryNodeSetPosition(GeometryNode)	bpy.types	4522
+bpy.types.GeometryNodeSetShadeSmooth	GeometryNodeSetShadeSmooth(GeometryNode)	bpy.types	4914
+bpy.types.GeometryNodeSetSplineCyclic	GeometryNodeSetSplineCyclic(GeometryNode)	bpy.types	4631
+bpy.types.GeometryNodeSetSplineResolution	GeometryNodeSetSplineResolution(GeometryNode)	bpy.types	4680
+bpy.types.GeometryNodeSimulationInput	GeometryNodeSimulationInput(GeometryNode)	bpy.types	5305
+bpy.types.GeometryNodeSimulationOutput	GeometryNodeSimulationOutput(GeometryNode)	bpy.types	5533
+bpy.types.GeometryNodeSortElements	GeometryNodeSortElements(GeometryNode)	bpy.types	4965
+bpy.types.GeometryNodeSortList	GeometryNodeSortList(GeometryNode)	bpy.types	4746
+bpy.types.GeometryNodeSplineLength	GeometryNodeSplineLength(GeometryNode)	bpy.types	4586
+bpy.types.GeometryNodeSplineParameter	GeometryNodeSplineParameter(GeometryNode)	bpy.types	4601
+bpy.types.GeometryNodeSplitEdges	GeometryNodeSplitEdges(GeometryNode)	bpy.types	4547
+bpy.types.GeometryNodeSplitToInstances	GeometryNodeSplitToInstances(GeometryNode)	bpy.types	4991
+bpy.types.GeometryNodeStoreNamedAttribute	GeometryNodeStoreNamedAttribute(GeometryNode)	bpy.types	5282
+bpy.types.GeometryNodeStoreNamedGrid	GeometryNodeStoreNamedGrid(GeometryNode)	bpy.types	4888
+bpy.types.GeometryNodeStringJoin	GeometryNodeStringJoin(GeometryNode)	bpy.types	4513
+bpy.types.GeometryNodeStringToCurves	GeometryNodeStringToCurves(GeometryNode)	bpy.types	4631
+bpy.types.GeometryNodeSubdivideCurve	GeometryNodeSubdivideCurve(GeometryNode)	bpy.types	4595
+bpy.types.GeometryNodeSubdivideMesh	GeometryNodeSubdivideMesh(GeometryNode)	bpy.types	4646
+bpy.types.GeometryNodeSubdivisionSurface	GeometryNodeSubdivisionSurface(GeometryNode)	bpy.types	4676
+bpy.types.GeometryNodeSwitch	GeometryNodeSwitch(GeometryNode)	bpy.types	4712
+bpy.types.GeometryNodeTagFilter	GeometryNodeTagFilter(GeometryNode)	bpy.types	4511
+bpy.types.GeometryNodeTool3DCursor	GeometryNodeTool3DCursor(GeometryNode)	bpy.types	4549
+bpy.types.GeometryNodeToolActiveElement	GeometryNodeToolActiveElement(GeometryNode)	bpy.types	4830
+bpy.types.GeometryNodeToolFaceSet	GeometryNodeToolFaceSet(GeometryNode)	bpy.types	4525
+bpy.types.GeometryNodeToolMousePosition	GeometryNodeToolMousePosition(GeometryNode)	bpy.types	4617
+bpy.types.GeometryNodeToolSelection	GeometryNodeToolSelection(GeometryNode)	bpy.types	4577
+bpy.types.GeometryNodeToolSetFaceSet	GeometryNodeToolSetFaceSet(GeometryNode)	bpy.types	4570
+bpy.types.GeometryNodeToolSetSelection	GeometryNodeToolSetSelection(GeometryNode)	bpy.types	5329
+bpy.types.GeometryNodeTransferAttributes	GeometryNodeTransferAttributes(GeometryNode)	bpy.types	4634
+bpy.types.GeometryNodeTransform	GeometryNodeTransform(GeometryNode)	bpy.types	4503
+bpy.types.GeometryNodeTranslateInstances	GeometryNodeTranslateInstances(GeometryNode)	bpy.types	4648
+bpy.types.GeometryNodeTree	GeometryNodeTree(NodeTree)	bpy.types	5745
+bpy.types.GeometryNodeTriangulate	GeometryNodeTriangulate(GeometryNode)	bpy.types	4539
+bpy.types.GeometryNodeTrimCurve	GeometryNodeTrimCurve(GeometryNode)	bpy.types	4916
+bpy.types.GeometryNodeUVPackIslands	GeometryNodeUVPackIslands(GeometryNode)	bpy.types	4605
+bpy.types.GeometryNodeUVTangent	GeometryNodeUVTangent(GeometryNode)	bpy.types	4509
+bpy.types.GeometryNodeUVUnwrap	GeometryNodeUVUnwrap(GeometryNode)	bpy.types	4487
+bpy.types.GeometryNodeVertexOfCorner	GeometryNodeVertexOfCorner(GeometryNode)	bpy.types	4585
+bpy.types.GeometryNodeViewer	GeometryNodeViewer(GeometryNode)	bpy.types	5754
+bpy.types.GeometryNodeViewportTransform	GeometryNodeViewportTransform(GeometryNode)	bpy.types	4635
+bpy.types.GeometryNodeVolumeCube	GeometryNodeVolumeCube(GeometryNode)	bpy.types	4581
+bpy.types.GeometryNodeVolumeToMesh	GeometryNodeVolumeToMesh(GeometryNode)	bpy.types	4550
+bpy.types.GeometryNodeWarning	GeometryNodeWarning(GeometryNode)	bpy.types	4729
+bpy.types.GeometryNodeXPBDSolver	GeometryNodeXPBDSolver(GeometryNode)	bpy.types	4519
+bpy.types.GeometrySet	GeometrySet	bpy.types	6007
+bpy.types.Gizmo	Gizmo(bpy_struct)	bpy.types	15385
+bpy.types.GizmoGroup	GizmoGroup(bpy_struct)	bpy.types	6460
+bpy.types.GizmoGroupProperties	GizmoGroupProperties(bpy_struct)	bpy.types	2969
+bpy.types.GizmoProperties	GizmoProperties(bpy_struct)	bpy.types	2845
+bpy.types.Gizmos	Gizmos(bpy_prop_collection)	bpy.types	2634
+bpy.types.GlowStrip	GlowStrip(EffectStrip)	bpy.types	4530
+bpy.types.GpPaint	GpPaint(Paint)	bpy.types	2967
+bpy.types.GpSculptPaint	GpSculptPaint(Paint)	bpy.types	2726
+bpy.types.GpVertexPaint	GpVertexPaint(Paint)	bpy.types	2726
+bpy.types.GpWeightPaint	GpWeightPaint(Paint)	bpy.types	2726
+bpy.types.GreasePencil	GreasePencil(ID)	bpy.types	10012
+bpy.types.GreasePencilArmatureModifier	GreasePencilArmatureModifier(Modifier)	bpy.types	3953
+bpy.types.GreasePencilArrayModifier	GreasePencilArrayModifier(Modifier)	bpy.types	8780
+bpy.types.GreasePencilBuildModifier	GreasePencilBuildModifier(Modifier)	bpy.types	10551
+bpy.types.GreasePencilColorModifier	GreasePencilColorModifier(Modifier)	bpy.types	6116
+bpy.types.GreasePencilDashModifierData	GreasePencilDashModifierData(Modifier)	bpy.types	5801
+bpy.types.GreasePencilDashModifierSegment	GreasePencilDashModifierSegment(bpy_struct)	bpy.types	3873
+bpy.types.GreasePencilDrawing	GreasePencilDrawing(bpy_struct)	bpy.types	8487
+bpy.types.GreasePencilEnvelopeModifier	GreasePencilEnvelopeModifier(Modifier)	bpy.types	6846
+bpy.types.GreasePencilFrame	GreasePencilFrame(bpy_struct)	bpy.types	4182
+bpy.types.GreasePencilFrames	GreasePencilFrames(bpy_prop_collection)	bpy.types	4172
+bpy.types.GreasePencilHookModifier	GreasePencilHookModifier(Modifier)	bpy.types	7890
+bpy.types.GreasePencilLatticeModifier	GreasePencilLatticeModifier(Modifier)	bpy.types	5704
+bpy.types.GreasePencilLayer	GreasePencilLayer(GreasePencilTreeNode)	bpy.types	9574
+bpy.types.GreasePencilLayerGroup	GreasePencilLayerGroup(GreasePencilTreeNode)	bpy.types	5710
+bpy.types.GreasePencilLayerMask	GreasePencilLayerMask(bpy_struct)	bpy.types	2923
+bpy.types.GreasePencilLayerMasks	GreasePencilLayerMasks(bpy_prop_collection)	bpy.types	3334
+bpy.types.GreasePencilLengthModifier	GreasePencilLengthModifier(Modifier)	bpy.types	9114
+bpy.types.GreasePencilLineartModifier	GreasePencilLineartModifier(Modifier)	bpy.types	18562
+bpy.types.GreasePencilMirrorModifier	GreasePencilMirrorModifier(Modifier)	bpy.types	5519
+bpy.types.GreasePencilMultiplyModifier	GreasePencilMultiplyModifier(Modifier)	bpy.types	6477
+bpy.types.GreasePencilNoiseModifier	GreasePencilNoiseModifier(Modifier)	bpy.types	7860
+bpy.types.GreasePencilOffsetModifier	GreasePencilOffsetModifier(Modifier)	bpy.types	8358
+bpy.types.GreasePencilOpacityModifier	GreasePencilOpacityModifier(Modifier)	bpy.types	7002
+bpy.types.GreasePencilOutlineModifier	GreasePencilOutlineModifier(Modifier)	bpy.types	6105
+bpy.types.GreasePencilShrinkwrapModifier	GreasePencilShrinkwrapModifier(Modifier)	bpy.types	9241
+bpy.types.GreasePencilSimplifyModifier	GreasePencilSimplifyModifier(Modifier)	bpy.types	6855
+bpy.types.GreasePencilSmoothModifier	GreasePencilSmoothModifier(Modifier)	bpy.types	7349
+bpy.types.GreasePencilSubdivModifier	GreasePencilSubdivModifier(Modifier)	bpy.types	5234
+bpy.types.GreasePencilTextureModifier	GreasePencilTextureModifier(Modifier)	bpy.types	7013
+bpy.types.GreasePencilThickModifierData	GreasePencilThickModifierData(Modifier)	bpy.types	6678
+bpy.types.GreasePencilTimeModifier	GreasePencilTimeModifier(Modifier)	bpy.types	6277
+bpy.types.GreasePencilTimeModifierSegment	GreasePencilTimeModifierSegment(bpy_struct)	bpy.types	3478
+bpy.types.GreasePencilTintModifier	GreasePencilTintModifier(Modifier)	bpy.types	7460
+bpy.types.GreasePencilTreeNode	GreasePencilTreeNode(bpy_struct)	bpy.types	4969
+bpy.types.GreasePencilWeightAngleModifier	GreasePencilWeightAngleModifier(Modifier)	bpy.types	6817
+bpy.types.GreasePencilWeightProximityModifier	GreasePencilWeightProximityModifier(Modifier)	bpy.types	7145
+bpy.types.GreasePencilv3LayerGroup	GreasePencilv3LayerGroup(bpy_prop_collection)	bpy.types	5704
+bpy.types.GreasePencilv3Layers	GreasePencilv3Layers(bpy_prop_collection)	bpy.types	5292
+bpy.types.GroupNodeViewerPathElem	GroupNodeViewerPathElem(ViewerPathElem)	bpy.types	2338
+bpy.types.Header	Header(bpy_struct)	bpy.types	4726
+bpy.types.Histogram	Histogram(bpy_struct)	bpy.types	2691
+bpy.types.HookModifier	HookModifier(Modifier)	bpy.types	5685
+bpy.types.HueCorrectModifier	HueCorrectModifier(StripModifier)	bpy.types	2805
+bpy.types.HydraRenderEngine	HydraRenderEngine(RenderEngine)	bpy.types	5960
+bpy.types.ID	ID(bpy_struct)	bpy.types	23140
+bpy.types.IDMaterials	IDMaterials(bpy_prop_collection)	bpy.types	3479
+bpy.types.IDOverrideLibrary	IDOverrideLibrary(bpy_struct)	bpy.types	6221
+bpy.types.IDOverrideLibraryProperties	IDOverrideLibraryProperties(bpy_prop_collection)	bpy.types	3193
+bpy.types.IDOverrideLibraryProperty	IDOverrideLibraryProperty(bpy_struct)	bpy.types	3340
+bpy.types.IDOverrideLibraryPropertyOperation	IDOverrideLibraryPropertyOperation(bpy_struct)	bpy.types	7015
+bpy.types.IDOverrideLibraryPropertyOperations	IDOverrideLibraryPropertyOperations(bpy_prop_collection)	bpy.types	5611
+bpy.types.IDPropertyWrapPtr	IDPropertyWrapPtr(bpy_struct)	bpy.types	2958
+bpy.types.IDViewerPathElem	IDViewerPathElem(ViewerPathElem)	bpy.types	2296
+bpy.types.IKParam	IKParam(bpy_struct)	bpy.types	2372
+bpy.types.IMAGE_AST_brush_paint	IMAGE_AST_brush_paint(AssetShelf)	bpy.types	5755
+bpy.types.IMAGE_FH_drop_handler	IMAGE_FH_drop_handler(FileHandler)	bpy.types	2265
+bpy.types.IMAGE_UL_render_slots	IMAGE_UL_render_slots(UIList)	bpy.types	2489
+bpy.types.IMAGE_UL_udim_tiles	IMAGE_UL_udim_tiles(UIList)	bpy.types	2473
+bpy.types.IO_FH_gltf2	IO_FH_gltf2(FileHandler)	bpy.types	2185
+bpy.types.IO_FH_svg_as_curves	IO_FH_svg_as_curves(FileHandler)	bpy.types	2249
+bpy.types.Image	Image(ID)	bpy.types	20750
+bpy.types.ImageFormatSettings	ImageFormatSettings(bpy_struct)	bpy.types	9163
+bpy.types.ImagePackedFile	ImagePackedFile(bpy_struct)	bpy.types	2856
+bpy.types.ImagePaint	ImagePaint(Paint)	bpy.types	7351
+bpy.types.ImagePreview	ImagePreview(bpy_struct)	bpy.types	4745
+bpy.types.ImageStrip	ImageStrip(Strip)	bpy.types	8198
+bpy.types.ImageTexture	ImageTexture(Texture)	bpy.types	7910
+bpy.types.ImageUser	ImageUser(bpy_struct)	bpy.types	5205
+bpy.types.IndexSwitchItem	IndexSwitchItem(bpy_struct)	bpy.types	2628
+bpy.types.InlineShaderNodes	InlineShaderNodes	bpy.types	2078
+bpy.types.Int2Attribute	Int2Attribute(Attribute)	bpy.types	2548
+bpy.types.Int2AttributeValue	Int2AttributeValue(bpy_struct)	bpy.types	2398
+bpy.types.IntAttribute	IntAttribute(Attribute)	bpy.types	2530
+bpy.types.IntAttributeValue	IntAttributeValue(bpy_struct)	bpy.types	2542
+bpy.types.IntProperty	IntProperty(Property)	bpy.types	4978
+bpy.types.Itasc	Itasc(IKParam)	bpy.types	5341
+bpy.types.Key	Key(ID)	bpy.types	4367
+bpy.types.KeyConfig	KeyConfig(bpy_struct)	bpy.types	3875
+bpy.types.KeyConfigPreferences	KeyConfigPreferences(bpy_struct)	bpy.types	3029
+bpy.types.KeyConfigurations	KeyConfigurations(bpy_prop_collection)	bpy.types	5493
+bpy.types.KeyMap	KeyMap(bpy_struct)	bpy.types	6169
+bpy.types.KeyMapItem	KeyMapItem(bpy_struct)	bpy.types	9333
+bpy.types.KeyMapItems	KeyMapItems(bpy_prop_collection)	bpy.types	7711
+bpy.types.KeyMaps	KeyMaps(bpy_prop_collection)	bpy.types	6709
+bpy.types.Keyframe	Keyframe(bpy_struct)	bpy.types	6197
+bpy.types.KeyingSet	KeyingSet(bpy_struct)	bpy.types	5324
+bpy.types.KeyingSetInfo	KeyingSetInfo(bpy_struct)	bpy.types	4344
+bpy.types.KeyingSetPath	KeyingSetPath(bpy_struct)	bpy.types	4878
+bpy.types.KeyingSetPaths	KeyingSetPaths(bpy_prop_collection)	bpy.types	4106
+bpy.types.KeyingSets	KeyingSets(bpy_prop_collection)	bpy.types	3006
+bpy.types.KeyingSetsAll	KeyingSetsAll(bpy_prop_collection)	bpy.types	2597
+bpy.types.KinematicConstraint	KinematicConstraint(Constraint)	bpy.types	7251
+bpy.types.LaplacianDeformModifier	LaplacianDeformModifier(Modifier)	bpy.types	3152
+bpy.types.LaplacianSmoothModifier	LaplacianSmoothModifier(Modifier)	bpy.types	4241
+bpy.types.Lattice	Lattice(ID)	bpy.types	6583
+bpy.types.LatticeModifier	LatticeModifier(Modifier)	bpy.types	3116
+bpy.types.LatticePoint	LatticePoint(bpy_struct)	bpy.types	3348
+bpy.types.LayerCollection	LayerCollection(bpy_struct)	bpy.types	4925
+bpy.types.LayerObjects	LayerObjects(bpy_prop_collection)	bpy.types	2676
+bpy.types.LayoutPanelState	LayoutPanelState(bpy_struct)	bpy.types	2022
+bpy.types.Library	Library(ID)	bpy.types	6208
+bpy.types.LibraryWeakReference	LibraryWeakReference(bpy_struct)	bpy.types	2633
+bpy.types.Light	Light(ID)	bpy.types	7735
+bpy.types.LightProbe	LightProbe(ID)	bpy.types	6436
+bpy.types.LightProbePlane	LightProbePlane(LightProbe)	bpy.types	3530
+bpy.types.LightProbeSphere	LightProbeSphere(LightProbe)	bpy.types	4672
+bpy.types.LightProbeVolume	LightProbeVolume(LightProbe)	bpy.types	7682
+bpy.types.Lightgroup	Lightgroup(bpy_struct)	bpy.types	2523
+bpy.types.Lightgroups	Lightgroups(bpy_prop_collection)	bpy.types	2743
+bpy.types.LimitDistanceConstraint	LimitDistanceConstraint(Constraint)	bpy.types	4471
+bpy.types.LimitLocationConstraint	LimitLocationConstraint(Constraint)	bpy.types	4753
+bpy.types.LimitRotationConstraint	LimitRotationConstraint(Constraint)	bpy.types	5155
+bpy.types.LimitScaleConstraint	LimitScaleConstraint(Constraint)	bpy.types	4662
+bpy.types.LineStyleAlphaModifier	LineStyleAlphaModifier(LineStyleModifier)	bpy.types	3829
+bpy.types.LineStyleAlphaModifier_AlongStroke	LineStyleAlphaModifier_AlongStroke(LineStyleAlphaModifier)	bpy.types	4852
+bpy.types.LineStyleAlphaModifier_CreaseAngle	LineStyleAlphaModifier_CreaseAngle(LineStyleAlphaModifier)	bpy.types	5304
+bpy.types.LineStyleAlphaModifier_Curvature_3D	LineStyleAlphaModifier_Curvature_3D(LineStyleAlphaModifier)	bpy.types	5322
+bpy.types.LineStyleAlphaModifier_DistanceFromCamera	LineStyleAlphaModifier_DistanceFromCamera(LineStyleAlphaModifier)	bpy.types	5567
+bpy.types.LineStyleAlphaModifier_DistanceFromObject	LineStyleAlphaModifier_DistanceFromObject(LineStyleAlphaModifier)	bpy.types	5842
+bpy.types.LineStyleAlphaModifier_Material	LineStyleAlphaModifier_Material(LineStyleAlphaModifier)	bpy.types	5154
+bpy.types.LineStyleAlphaModifier_Noise	LineStyleAlphaModifier_Noise(LineStyleAlphaModifier)	bpy.types	5239
+bpy.types.LineStyleAlphaModifier_Tangent	LineStyleAlphaModifier_Tangent(LineStyleAlphaModifier)	bpy.types	4757
+bpy.types.LineStyleAlphaModifiers	LineStyleAlphaModifiers(bpy_prop_collection)	bpy.types	3287
+bpy.types.LineStyleColorModifier	LineStyleColorModifier(LineStyleModifier)	bpy.types	3821
+bpy.types.LineStyleColorModifier_AlongStroke	LineStyleColorModifier_AlongStroke(LineStyleColorModifier)	bpy.types	4347
+bpy.types.LineStyleColorModifier_CreaseAngle	LineStyleColorModifier_CreaseAngle(LineStyleColorModifier)	bpy.types	4797
+bpy.types.LineStyleColorModifier_Curvature_3D	LineStyleColorModifier_Curvature_3D(LineStyleColorModifier)	bpy.types	4822
+bpy.types.LineStyleColorModifier_DistanceFromCamera	LineStyleColorModifier_DistanceFromCamera(LineStyleColorModifier)	bpy.types	5034
+bpy.types.LineStyleColorModifier_DistanceFromObject	LineStyleColorModifier_DistanceFromObject(LineStyleColorModifier)	bpy.types	5309
+bpy.types.LineStyleColorModifier_Material	LineStyleColorModifier_Material(LineStyleColorModifier)	bpy.types	4872
+bpy.types.LineStyleColorModifier_Noise	LineStyleColorModifier_Noise(LineStyleColorModifier)	bpy.types	4765
+bpy.types.LineStyleColorModifier_Tangent	LineStyleColorModifier_Tangent(LineStyleColorModifier)	bpy.types	4273
+bpy.types.LineStyleColorModifiers	LineStyleColorModifiers(bpy_prop_collection)	bpy.types	3287
+bpy.types.LineStyleGeometryModifier	LineStyleGeometryModifier(LineStyleModifier)	bpy.types	4717
+bpy.types.LineStyleGeometryModifier_2DOffset	LineStyleGeometryModifier_2DOffset(LineStyleGeometryModifier)	bpy.types	4503
+bpy.types.LineStyleGeometryModifier_2DTransform	LineStyleGeometryModifier_2DTransform(LineStyleGeometryModifier)	bpy.types	5235
+bpy.types.LineStyleGeometryModifier_BackboneStretcher	LineStyleGeometryModifier_BackboneStretcher(LineStyleGeometryModifier)	bpy.types	3981
+bpy.types.LineStyleGeometryModifier_BezierCurve	LineStyleGeometryModifier_BezierCurve(LineStyleGeometryModifier)	bpy.types	3946
+bpy.types.LineStyleGeometryModifier_Blueprint	LineStyleGeometryModifier_Blueprint(LineStyleGeometryModifier)	bpy.types	5151
+bpy.types.LineStyleGeometryModifier_GuidingLines	LineStyleGeometryModifier_GuidingLines(LineStyleGeometryModifier)	bpy.types	3930
+bpy.types.LineStyleGeometryModifier_PerlinNoise1D	LineStyleGeometryModifier_PerlinNoise1D(LineStyleGeometryModifier)	bpy.types	4820
+bpy.types.LineStyleGeometryModifier_PerlinNoise2D	LineStyleGeometryModifier_PerlinNoise2D(LineStyleGeometryModifier)	bpy.types	4820
+bpy.types.LineStyleGeometryModifier_Polygonalization	LineStyleGeometryModifier_Polygonalization(LineStyleGeometryModifier)	bpy.types	3996
+bpy.types.LineStyleGeometryModifier_Sampling	LineStyleGeometryModifier_Sampling(LineStyleGeometryModifier)	bpy.types	3838
+bpy.types.LineStyleGeometryModifier_Simplification	LineStyleGeometryModifier_Simplification(LineStyleGeometryModifier)	bpy.types	3895
+bpy.types.LineStyleGeometryModifier_SinusDisplacement	LineStyleGeometryModifier_SinusDisplacement(LineStyleGeometryModifier)	bpy.types	4432
+bpy.types.LineStyleGeometryModifier_SpatialNoise	LineStyleGeometryModifier_SpatialNoise(LineStyleGeometryModifier)	bpy.types	4755
+bpy.types.LineStyleGeometryModifier_TipRemover	LineStyleGeometryModifier_TipRemover(LineStyleGeometryModifier)	bpy.types	3850
+bpy.types.LineStyleGeometryModifiers	LineStyleGeometryModifiers(bpy_prop_collection)	bpy.types	3390
+bpy.types.LineStyleModifier	LineStyleModifier(bpy_struct)	bpy.types	2296
+bpy.types.LineStyleTextureSlot	LineStyleTextureSlot(TextureSlot)	bpy.types	5043
+bpy.types.LineStyleTextureSlots	LineStyleTextureSlots(bpy_prop_collection)	bpy.types	3147
+bpy.types.LineStyleThicknessModifier	LineStyleThicknessModifier(LineStyleModifier)	bpy.types	4129
+bpy.types.LineStyleThicknessModifier_AlongStroke	LineStyleThicknessModifier_AlongStroke(LineStyleThicknessModifier)	bpy.types	5458
+bpy.types.LineStyleThicknessModifier_Calligraphy	LineStyleThicknessModifier_Calligraphy(LineStyleThicknessModifier)	bpy.types	4967
+bpy.types.LineStyleThicknessModifier_CreaseAngle	LineStyleThicknessModifier_CreaseAngle(LineStyleThicknessModifier)	bpy.types	5904
+bpy.types.LineStyleThicknessModifier_Curvature_3D	LineStyleThicknessModifier_Curvature_3D(LineStyleThicknessModifier)	bpy.types	5926
+bpy.types.LineStyleThicknessModifier_DistanceFromCamera	LineStyleThicknessModifier_DistanceFromCamera(LineStyleThicknessModifier)	bpy.types	6217
+bpy.types.LineStyleThicknessModifier_DistanceFromObject	LineStyleThicknessModifier_DistanceFromObject(LineStyleThicknessModifier)	bpy.types	6500
+bpy.types.LineStyleThicknessModifier_Material	LineStyleThicknessModifier_Material(LineStyleThicknessModifier)	bpy.types	5756
+bpy.types.LineStyleThicknessModifier_Noise	LineStyleThicknessModifier_Noise(LineStyleThicknessModifier)	bpy.types	4870
+bpy.types.LineStyleThicknessModifier_Tangent	LineStyleThicknessModifier_Tangent(LineStyleThicknessModifier)	bpy.types	5320
+bpy.types.LineStyleThicknessModifiers	LineStyleThicknessModifiers(bpy_prop_collection)	bpy.types	3422
+bpy.types.Linesets	Linesets(bpy_prop_collection)	bpy.types	3266
+bpy.types.LockedTrackConstraint	LockedTrackConstraint(Constraint)	bpy.types	3801
+bpy.types.LoopColors	LoopColors(bpy_prop_collection)	bpy.types	3306
+bpy.types.MASK_UL_layers	MASK_UL_layers(UIList)	bpy.types	2433
+bpy.types.MATERIAL_UL_matslots	MATERIAL_UL_matslots(UIList)	bpy.types	2481
+bpy.types.MESH_UL_attributes	MESH_UL_attributes(UIList)	bpy.types	2465
+bpy.types.MESH_UL_color_attributes	MESH_UL_color_attributes(UIList)	bpy.types	2513
+bpy.types.MESH_UL_color_attributes_selector	MESH_UL_color_attributes_selector(UIList)	bpy.types	2585
+bpy.types.MESH_UL_uvmaps	MESH_UL_uvmaps(UIList)	bpy.types	2433
+bpy.types.MESH_UL_vgroups	MESH_UL_vgroups(UIList)	bpy.types	2441
+bpy.types.Macro	Macro(bpy_struct)	bpy.types	6284
+bpy.types.MagicTexture	MagicTexture(Texture)	bpy.types	4111
+bpy.types.MaintainVolumeConstraint	MaintainVolumeConstraint(Constraint)	bpy.types	3548
+bpy.types.MarbleTexture	MarbleTexture(Texture)	bpy.types	6788
+bpy.types.Mask	Mask(ID)	bpy.types	5265
+bpy.types.MaskLayer	MaskLayer(bpy_struct)	bpy.types	4972
+bpy.types.MaskLayers	MaskLayers(bpy_prop_collection)	bpy.types	2984
+bpy.types.MaskModifier	MaskModifier(Modifier)	bpy.types	3401
+bpy.types.MaskParent	MaskParent(bpy_struct)	bpy.types	3142
+bpy.types.MaskSpline	MaskSpline(bpy_struct)	bpy.types	3738
+bpy.types.MaskSplinePoint	MaskSplinePoint(bpy_struct)	bpy.types	5500
+bpy.types.MaskSplinePointUW	MaskSplinePointUW(bpy_struct)	bpy.types	2642
+bpy.types.MaskSplinePoints	MaskSplinePoints(bpy_prop_collection)	bpy.types	2699
+bpy.types.MaskSplines	MaskSplines(bpy_prop_collection)	bpy.types	3107
+bpy.types.MaskStrip	MaskStrip(Strip)	bpy.types	6205
+bpy.types.MaskStripModifier	MaskStripModifier(StripModifier)	bpy.types	2402
+bpy.types.Material	Material(ID)	bpy.types	22197
+bpy.types.MaterialGPencilStyle	MaterialGPencilStyle(bpy_struct)	bpy.types	12108
+bpy.types.MaterialLineArt	MaterialLineArt(bpy_struct)	bpy.types	3294
+bpy.types.MaterialSlot	MaterialSlot(bpy_struct)	bpy.types	2804
+bpy.types.Menu	Menu(bpy_struct)	bpy.types	14374
+bpy.types.Mesh	Mesh(ID)	bpy.types	26250
+bpy.types.MeshAutomaskingSettings	MeshAutomaskingSettings(bpy_struct)	bpy.types	6913
+bpy.types.MeshCacheModifier	MeshCacheModifier(Modifier)	bpy.types	6157
+bpy.types.MeshDeformModifier	MeshDeformModifier(Modifier)	bpy.types	3551
+bpy.types.MeshEdge	MeshEdge(bpy_struct)	bpy.types	3133
+bpy.types.MeshEdges	MeshEdges(bpy_prop_collection)	bpy.types	2241
+bpy.types.MeshLoop	MeshLoop(bpy_struct)	bpy.types	3791
+bpy.types.MeshLoopColor	MeshLoopColor(bpy_struct)	bpy.types	2393
+bpy.types.MeshLoopColorLayer	MeshLoopColorLayer(bpy_struct)	bpy.types	3298
+bpy.types.MeshLoopTriangle	MeshLoopTriangle(bpy_struct)	bpy.types	4653
+bpy.types.MeshLoopTriangles	MeshLoopTriangles(bpy_prop_collection)	bpy.types	2192
+bpy.types.MeshLoops	MeshLoops(bpy_prop_collection)	bpy.types	2241
+bpy.types.MeshNormalValue	MeshNormalValue(bpy_struct)	bpy.types	2564
+bpy.types.MeshPolygon	MeshPolygon(bpy_struct)	bpy.types	4317
+bpy.types.MeshPolygons	MeshPolygons(bpy_prop_collection)	bpy.types	2441
+bpy.types.MeshSequenceCacheModifier	MeshSequenceCacheModifier(Modifier)	bpy.types	3606
+bpy.types.MeshSkinVertex	MeshSkinVertex(bpy_struct)	bpy.types	2869
+bpy.types.MeshSkinVertexLayer	MeshSkinVertexLayer(bpy_struct)	bpy.types	2649
+bpy.types.MeshStatVis	MeshStatVis(bpy_struct)	bpy.types	4127
+bpy.types.MeshToVolumeModifier	MeshToVolumeModifier(Modifier)	bpy.types	3709
+bpy.types.MeshUVLoop	MeshUVLoop(bpy_struct)	bpy.types	2417
+bpy.types.MeshUVLoopLayer	MeshUVLoopLayer(bpy_struct)	bpy.types	4833
+bpy.types.MeshVertex	MeshVertex(bpy_struct)	bpy.types	3650
+bpy.types.MeshVertices	MeshVertices(bpy_prop_collection)	bpy.types	2286
+bpy.types.MetaBall	MetaBall(ID)	bpy.types	6383
+bpy.types.MetaBallElements	MetaBallElements(bpy_prop_collection)	bpy.types	3294
+bpy.types.MetaElement	MetaElement(bpy_struct)	bpy.types	4711
+bpy.types.MetaStrip	MetaStrip(Strip)	bpy.types	7292
+bpy.types.MirrorModifier	MirrorModifier(Modifier)	bpy.types	5785
+bpy.types.Modifier	Modifier(bpy_struct)	bpy.types	10875
+bpy.types.ModifierViewerPathElem	ModifierViewerPathElem(ViewerPathElem)	bpy.types	2373
+bpy.types.MotionPath	MotionPath(bpy_struct)	bpy.types	4440
+bpy.types.MotionPathVert	MotionPathVert(bpy_struct)	bpy.types	2457
+bpy.types.MovieClip	MovieClip(ID)	bpy.types	9111
+bpy.types.MovieClipProxy	MovieClipProxy(bpy_struct)	bpy.types	4064
+bpy.types.MovieClipScopes	MovieClipScopes(bpy_struct)	bpy.types	2132
+bpy.types.MovieClipStrip	MovieClipStrip(Strip)	bpy.types	6939
+bpy.types.MovieClipUser	MovieClipUser(bpy_struct)	bpy.types	3268
+bpy.types.MovieReconstructedCamera	MovieReconstructedCamera(bpy_struct)	bpy.types	3261
+bpy.types.MovieStrip	MovieStrip(Strip)	bpy.types	9094
+bpy.types.MovieTracking	MovieTracking(bpy_struct)	bpy.types	4918
+bpy.types.MovieTrackingCamera	MovieTrackingCamera(bpy_struct)	bpy.types	7423
+bpy.types.MovieTrackingDopesheet	MovieTrackingDopesheet(bpy_struct)	bpy.types	3459
+bpy.types.MovieTrackingMarker	MovieTrackingMarker(bpy_struct)	bpy.types	5000
+bpy.types.MovieTrackingMarkers	MovieTrackingMarkers(bpy_prop_collection)	bpy.types	3724
+bpy.types.MovieTrackingObject	MovieTrackingObject(bpy_struct)	bpy.types	4758
+bpy.types.MovieTrackingObjectPlaneTracks	MovieTrackingObjectPlaneTracks(bpy_prop_collection)	bpy.types	2635
+bpy.types.MovieTrackingObjectTracks	MovieTrackingObjectTracks(bpy_prop_collection)	bpy.types	3065
+bpy.types.MovieTrackingObjects	MovieTrackingObjects(bpy_prop_collection)	bpy.types	3245
+bpy.types.MovieTrackingPlaneMarker	MovieTrackingPlaneMarker(bpy_struct)	bpy.types	3486
+bpy.types.MovieTrackingPlaneMarkers	MovieTrackingPlaneMarkers(bpy_prop_collection)	bpy.types	3643
+bpy.types.MovieTrackingPlaneTrack	MovieTrackingPlaneTrack(bpy_struct)	bpy.types	3940
+bpy.types.MovieTrackingPlaneTracks	MovieTrackingPlaneTracks(bpy_prop_collection)	bpy.types	2634
+bpy.types.MovieTrackingReconstructedCameras	MovieTrackingReconstructedCameras(bpy_prop_collection)	bpy.types	3399
+bpy.types.MovieTrackingReconstruction	MovieTrackingReconstruction(bpy_struct)	bpy.types	3349
+bpy.types.MovieTrackingSettings	MovieTrackingSettings(bpy_struct)	bpy.types	9421
+bpy.types.MovieTrackingStabilization	MovieTrackingStabilization(bpy_struct)	bpy.types	7238
+bpy.types.MovieTrackingTrack	MovieTrackingTrack(bpy_struct)	bpy.types	10691
+bpy.types.MovieTrackingTracks	MovieTrackingTracks(bpy_prop_collection)	bpy.types	3013
+bpy.types.MulticamStrip	MulticamStrip(EffectStrip)	bpy.types	4754
+bpy.types.MultiplyStrip	MultiplyStrip(EffectStrip)	bpy.types	3857
+bpy.types.MultiresModifier	MultiresModifier(Modifier)	bpy.types	5240
+bpy.types.MusgraveTexture	MusgraveTexture(Texture)	bpy.types	7188
+bpy.types.NDOFMotionEventData	NDOFMotionEventData(bpy_struct)	bpy.types	3430
+bpy.types.NODE_AST_compositor	NODE_AST_compositor(AssetShelf)	bpy.types	3412
+bpy.types.NODE_FH_image_node	NODE_FH_image_node(FileHandler)	bpy.types	2241
+bpy.types.NlaStrip	NlaStrip(bpy_struct)	bpy.types	11234
+bpy.types.NlaStripFCurves	NlaStripFCurves(bpy_prop_collection)	bpy.types	2659
+bpy.types.NlaStrips	NlaStrips(bpy_prop_collection)	bpy.types	2890
+bpy.types.NlaTrack	NlaTrack(bpy_struct)	bpy.types	3902
+bpy.types.NlaTracks	NlaTracks(bpy_prop_collection)	bpy.types	2935
+bpy.types.Node	Node(bpy_struct)	bpy.types	50519
+bpy.types.NodeClosureInput	NodeClosureInput(NodeInternal)	bpy.types	4888
+bpy.types.NodeClosureInputItem	NodeClosureInputItem(bpy_struct)	bpy.types	3549
+bpy.types.NodeClosureInputItems	NodeClosureInputItems(bpy_prop_collection)	bpy.types	3527
+bpy.types.NodeClosureOutput	NodeClosureOutput(NodeInternal)	bpy.types	5596
+bpy.types.NodeClosureOutputItem	NodeClosureOutputItem(bpy_struct)	bpy.types	3576
+bpy.types.NodeClosureOutputItems	NodeClosureOutputItems(bpy_prop_collection)	bpy.types	3554
+bpy.types.NodeCombineBundle	NodeCombineBundle(NodeInternal)	bpy.types	5051
+bpy.types.NodeCombineBundleItem	NodeCombineBundleItem(bpy_struct)	bpy.types	3576
+bpy.types.NodeCombineBundleItems	NodeCombineBundleItems(bpy_prop_collection)	bpy.types	3590
+bpy.types.NodeCompositorFileOutputItem	NodeCompositorFileOutputItem(bpy_struct)	bpy.types	4355
+bpy.types.NodeCompositorFileOutputItems	NodeCompositorFileOutputItems(bpy_prop_collection)	bpy.types	3798
+bpy.types.NodeCustomGroup	NodeCustomGroup(Node)	bpy.types	3128
+bpy.types.NodeEnableOutput	NodeEnableOutput(NodeInternal)	bpy.types	4531
+bpy.types.NodeEnumItem	NodeEnumItem(bpy_struct)	bpy.types	2799
+bpy.types.NodeEvaluateClosure	NodeEvaluateClosure(NodeInternal)	bpy.types	5797
+bpy.types.NodeEvaluateClosureInputItem	NodeEvaluateClosureInputItem(bpy_struct)	bpy.types	3749
+bpy.types.NodeEvaluateClosureInputItems	NodeEvaluateClosureInputItems(bpy_prop_collection)	bpy.types	3727
+bpy.types.NodeEvaluateClosureOutputItem	NodeEvaluateClosureOutputItem(bpy_struct)	bpy.types	3776
+bpy.types.NodeEvaluateClosureOutputItems	NodeEvaluateClosureOutputItems(bpy_prop_collection)	bpy.types	3754
+bpy.types.NodeFrame	NodeFrame(NodeInternal)	bpy.types	4702
+bpy.types.NodeFunctionFormatStringItem	NodeFunctionFormatStringItem(bpy_struct)	bpy.types	3395
+bpy.types.NodeFunctionFormatStringItems	NodeFunctionFormatStringItems(bpy_prop_collection)	bpy.types	3785
+bpy.types.NodeGeometryBakeItem	NodeGeometryBakeItem(bpy_struct)	bpy.types	3708
+bpy.types.NodeGeometryBakeItems	NodeGeometryBakeItems(bpy_prop_collection)	bpy.types	3546
+bpy.types.NodeGeometryCaptureAttributeItem	NodeGeometryCaptureAttributeItem(bpy_struct)	bpy.types	3477
+bpy.types.NodeGeometryCaptureAttributeItems	NodeGeometryCaptureAttributeItems(bpy_prop_collection)	bpy.types	3904
+bpy.types.NodeGeometryForeachGeometryElementGenerationItems	NodeGeometryForeachGeometryElementGenerationItems(bpy_prop_collection)	bpy.types	4242
+bpy.types.NodeGeometryForeachGeometryElementInputItems	NodeGeometryForeachGeometryElementInputItems(bpy_prop_collection)	bpy.types	4102
+bpy.types.NodeGeometryForeachGeometryElementMainItems	NodeGeometryForeachGeometryElementMainItems(bpy_prop_collection)	bpy.types	4074
+bpy.types.NodeGeometryRepeatOutputItems	NodeGeometryRepeatOutputItems(bpy_prop_collection)	bpy.types	3634
+bpy.types.NodeGeometrySimulationOutputItems	NodeGeometrySimulationOutputItems(bpy_prop_collection)	bpy.types	3787
+bpy.types.NodeGeometryViewerItem	NodeGeometryViewerItem(bpy_struct)	bpy.types	3587
+bpy.types.NodeGeometryViewerItems	NodeGeometryViewerItems(bpy_prop_collection)	bpy.types	3610
+bpy.types.NodeGetBundleItem	NodeGetBundleItem(NodeInternal)	bpy.types	4934
+bpy.types.NodeGetNestedBundlePaths	NodeGetNestedBundlePaths(NodeInternal)	bpy.types	4374
+bpy.types.NodeGroup	NodeGroup(NodeInternal)	bpy.types	4286
+bpy.types.NodeGroupInput	NodeGroupInput(NodeInternal)	bpy.types	4256
+bpy.types.NodeGroupOutput	NodeGroupOutput(NodeInternal)	bpy.types	4429
+bpy.types.NodeImplicitConversion	NodeImplicitConversion(NodeInternal)	bpy.types	4776
+bpy.types.NodeIndexSwitchItems	NodeIndexSwitchItems(bpy_prop_collection)	bpy.types	3289
+bpy.types.NodeInputs	NodeInputs(bpy_prop_collection)	bpy.types	3329
+bpy.types.NodeInternal	NodeInternal(Node)	bpy.types	6716
+bpy.types.NodeInternalSocketTemplate	NodeInternalSocketTemplate(bpy_struct)	bpy.types	212537
+bpy.types.NodeJoinBundle	NodeJoinBundle(NodeInternal)	bpy.types	4213
+bpy.types.NodeLink	NodeLink(bpy_struct)	bpy.types	4314
+bpy.types.NodeLinks	NodeLinks(bpy_prop_collection)	bpy.types	3305
+bpy.types.NodeMenuSwitchItems	NodeMenuSwitchItems(bpy_prop_collection)	bpy.types	3287
+bpy.types.NodeOutputs	NodeOutputs(bpy_prop_collection)	bpy.types	3348
+bpy.types.NodePanelState	NodePanelState(bpy_struct)	bpy.types	2453
+bpy.types.NodeRaycastSampleAttributeItem	NodeRaycastSampleAttributeItem(bpy_struct)	bpy.types	3416
+bpy.types.NodeRaycastSampleAttributeItems	NodeRaycastSampleAttributeItems(bpy_prop_collection)	bpy.types	3839
+bpy.types.NodeReroute	NodeReroute(NodeInternal)	bpy.types	4353
+bpy.types.NodeSeparateBundle	NodeSeparateBundle(NodeInternal)	bpy.types	5076
+bpy.types.NodeSeparateBundleItem	NodeSeparateBundleItem(bpy_struct)	bpy.types	3604
+bpy.types.NodeSeparateBundleItems	NodeSeparateBundleItems(bpy_prop_collection)	bpy.types	3619
+bpy.types.NodeSocket	NodeSocket(bpy_struct)	bpy.types	43858
+bpy.types.NodeSocketBool	NodeSocketBool(NodeSocketStandard)	bpy.types	3503
+bpy.types.NodeSocketBundle	NodeSocketBundle(NodeSocketStandard)	bpy.types	3384
+bpy.types.NodeSocketClosure	NodeSocketClosure(NodeSocketStandard)	bpy.types	3395
+bpy.types.NodeSocketCollection	NodeSocketCollection(NodeSocketStandard)	bpy.types	3641
+bpy.types.NodeSocketColor	NodeSocketColor(NodeSocketStandard)	bpy.types	3660
+bpy.types.NodeSocketFloat	NodeSocketFloat(NodeSocketStandard)	bpy.types	3538
+bpy.types.NodeSocketFloatAngle	NodeSocketFloatAngle(NodeSocketStandard)	bpy.types	3598
+bpy.types.NodeSocketFloatColorTemperature	NodeSocketFloatColorTemperature(NodeSocketStandard)	bpy.types	3730
+bpy.types.NodeSocketFloatDistance	NodeSocketFloatDistance(NodeSocketStandard)	bpy.types	3634
+bpy.types.NodeSocketFloatFactor	NodeSocketFloatFactor(NodeSocketStandard)	bpy.types	3605
+bpy.types.NodeSocketFloatFrequency	NodeSocketFloatFrequency(NodeSocketStandard)	bpy.types	3646
+bpy.types.NodeSocketFloatMass	NodeSocketFloatMass(NodeSocketStandard)	bpy.types	3586
+bpy.types.NodeSocketFloatPercentage	NodeSocketFloatPercentage(NodeSocketStandard)	bpy.types	3658
+bpy.types.NodeSocketFloatPixel	NodeSocketFloatPixel(NodeSocketStandard)	bpy.types	3598
+bpy.types.NodeSocketFloatTime	NodeSocketFloatTime(NodeSocketStandard)	bpy.types	3586
+bpy.types.NodeSocketFloatTimeAbsolute	NodeSocketFloatTimeAbsolute(NodeSocketStandard)	bpy.types	3682
+bpy.types.NodeSocketFloatUnsigned	NodeSocketFloatUnsigned(NodeSocketStandard)	bpy.types	3631
+bpy.types.NodeSocketFloatWavelength	NodeSocketFloatWavelength(NodeSocketStandard)	bpy.types	3658
+bpy.types.NodeSocketFont	NodeSocketFont(NodeSocketStandard)	bpy.types	3563
+bpy.types.NodeSocketGeometry	NodeSocketGeometry(NodeSocketStandard)	bpy.types	3406
+bpy.types.NodeSocketImage	NodeSocketImage(NodeSocketStandard)	bpy.types	3556
+bpy.types.NodeSocketInt	NodeSocketInt(NodeSocketStandard)	bpy.types	3503
+bpy.types.NodeSocketIntFactor	NodeSocketIntFactor(NodeSocketStandard)	bpy.types	3572
+bpy.types.NodeSocketIntPercentage	NodeSocketIntPercentage(NodeSocketStandard)	bpy.types	3622
+bpy.types.NodeSocketIntPixel	NodeSocketIntPixel(NodeSocketStandard)	bpy.types	3563
+bpy.types.NodeSocketIntUnsigned	NodeSocketIntUnsigned(NodeSocketStandard)	bpy.types	3596
+bpy.types.NodeSocketIntVector2D	NodeSocketIntVector2D(NodeSocketStandard)	bpy.types	3723
+bpy.types.NodeSocketIntVector3D	NodeSocketIntVector3D(NodeSocketStandard)	bpy.types	3726
+bpy.types.NodeSocketIntVectorFactor2D	NodeSocketIntVectorFactor2D(NodeSocketStandard)	bpy.types	3792
+bpy.types.NodeSocketIntVectorFactor3D	NodeSocketIntVectorFactor3D(NodeSocketStandard)	bpy.types	3795
+bpy.types.NodeSocketIntVectorPercentage2D	NodeSocketIntVectorPercentage2D(NodeSocketStandard)	bpy.types	3840
+bpy.types.NodeSocketIntVectorPercentage3D	NodeSocketIntVectorPercentage3D(NodeSocketStandard)	bpy.types	3843
+bpy.types.NodeSocketIntVectorPixel2D	NodeSocketIntVectorPixel2D(NodeSocketStandard)	bpy.types	3783
+bpy.types.NodeSocketIntVectorPixel3D	NodeSocketIntVectorPixel3D(NodeSocketStandard)	bpy.types	3786
+bpy.types.NodeSocketIntVectorUnsigned2D	NodeSocketIntVectorUnsigned2D(NodeSocketStandard)	bpy.types	3816
+bpy.types.NodeSocketIntVectorUnsigned3D	NodeSocketIntVectorUnsigned3D(NodeSocketStandard)	bpy.types	3819
+bpy.types.NodeSocketMask	NodeSocketMask(NodeSocketStandard)	bpy.types	3539
+bpy.types.NodeSocketMaterial	NodeSocketMaterial(NodeSocketStandard)	bpy.types	3607
+bpy.types.NodeSocketMatrix	NodeSocketMatrix(NodeSocketStandard)	bpy.types	3390
+bpy.types.NodeSocketMenu	NodeSocketMenu(NodeSocketStandard)	bpy.types	3476
+bpy.types.NodeSocketObject	NodeSocketObject(NodeSocketStandard)	bpy.types	3573
+bpy.types.NodeSocketRotation	NodeSocketRotation(NodeSocketStandard)	bpy.types	3659
+bpy.types.NodeSocketScene	NodeSocketScene(NodeSocketStandard)	bpy.types	3556
+bpy.types.NodeSocketShader	NodeSocketShader(NodeSocketStandard)	bpy.types	3384
+bpy.types.NodeSocketSound	NodeSocketSound(NodeSocketStandard)	bpy.types	3556
+bpy.types.NodeSocketStandard	NodeSocketStandard(NodeSocket)	bpy.types	11237
+bpy.types.NodeSocketString	NodeSocketString(NodeSocketStandard)	bpy.types	3528
+bpy.types.NodeSocketStringFilePath	NodeSocketStringFilePath(NodeSocketStandard)	bpy.types	3662
+bpy.types.NodeSocketText	NodeSocketText(NodeSocketStandard)	bpy.types	3539
+bpy.types.NodeSocketTexture	NodeSocketTexture(NodeSocketStandard)	bpy.types	3590
+bpy.types.NodeSocketVector	NodeSocketVector(NodeSocketStandard)	bpy.types	3669
+bpy.types.NodeSocketVector2D	NodeSocketVector2D(NodeSocketStandard)	bpy.types	3688
+bpy.types.NodeSocketVector4D	NodeSocketVector4D(NodeSocketStandard)	bpy.types	3698
+bpy.types.NodeSocketVectorAcceleration	NodeSocketVectorAcceleration(NodeSocketStandard)	bpy.types	3777
+bpy.types.NodeSocketVectorAcceleration2D	NodeSocketVectorAcceleration2D(NodeSocketStandard)	bpy.types	3796
+bpy.types.NodeSocketVectorAcceleration4D	NodeSocketVectorAcceleration4D(NodeSocketStandard)	bpy.types	3806
+bpy.types.NodeSocketVectorDirection	NodeSocketVectorDirection(NodeSocketStandard)	bpy.types	3741
+bpy.types.NodeSocketVectorDirection2D	NodeSocketVectorDirection2D(NodeSocketStandard)	bpy.types	3760
+bpy.types.NodeSocketVectorDirection4D	NodeSocketVectorDirection4D(NodeSocketStandard)	bpy.types	3770
+bpy.types.NodeSocketVectorEuler	NodeSocketVectorEuler(NodeSocketStandard)	bpy.types	3690
+bpy.types.NodeSocketVectorEuler2D	NodeSocketVectorEuler2D(NodeSocketStandard)	bpy.types	3748
+bpy.types.NodeSocketVectorEuler4D	NodeSocketVectorEuler4D(NodeSocketStandard)	bpy.types	3734
+bpy.types.NodeSocketVectorFactor	NodeSocketVectorFactor(NodeSocketStandard)	bpy.types	3736
+bpy.types.NodeSocketVectorFactor2D	NodeSocketVectorFactor2D(NodeSocketStandard)	bpy.types	3755
+bpy.types.NodeSocketVectorFactor4D	NodeSocketVectorFactor4D(NodeSocketStandard)	bpy.types	3765
+bpy.types.NodeSocketVectorPercentage	NodeSocketVectorPercentage(NodeSocketStandard)	bpy.types	3789
+bpy.types.NodeSocketVectorPercentage2D	NodeSocketVectorPercentage2D(NodeSocketStandard)	bpy.types	3808
+bpy.types.NodeSocketVectorPercentage4D	NodeSocketVectorPercentage4D(NodeSocketStandard)	bpy.types	3818
+bpy.types.NodeSocketVectorPixel	NodeSocketVectorPixel(NodeSocketStandard)	bpy.types	3729
+bpy.types.NodeSocketVectorPixel2D	NodeSocketVectorPixel2D(NodeSocketStandard)	bpy.types	3748
+bpy.types.NodeSocketVectorPixel4D	NodeSocketVectorPixel4D(NodeSocketStandard)	bpy.types	3758
+bpy.types.NodeSocketVectorTranslation	NodeSocketVectorTranslation(NodeSocketStandard)	bpy.types	3765
+bpy.types.NodeSocketVectorTranslation2D	NodeSocketVectorTranslation2D(NodeSocketStandard)	bpy.types	3784
+bpy.types.NodeSocketVectorTranslation4D	NodeSocketVectorTranslation4D(NodeSocketStandard)	bpy.types	3794
+bpy.types.NodeSocketVectorVelocity	NodeSocketVectorVelocity(NodeSocketStandard)	bpy.types	3729
+bpy.types.NodeSocketVectorVelocity2D	NodeSocketVectorVelocity2D(NodeSocketStandard)	bpy.types	3748
+bpy.types.NodeSocketVectorVelocity4D	NodeSocketVectorVelocity4D(NodeSocketStandard)	bpy.types	3758
+bpy.types.NodeSocketVectorXYZ	NodeSocketVectorXYZ(NodeSocketStandard)	bpy.types	3669
+bpy.types.NodeSocketVectorXYZ2D	NodeSocketVectorXYZ2D(NodeSocketStandard)	bpy.types	3688
+bpy.types.NodeSocketVectorXYZ4D	NodeSocketVectorXYZ4D(NodeSocketStandard)	bpy.types	3698
+bpy.types.NodeSocketVirtual	NodeSocketVirtual(NodeSocketStandard)	bpy.types	3395
+bpy.types.NodeStoreBundleItem	NodeStoreBundleItem(NodeInternal)	bpy.types	4920
+bpy.types.NodeTree	NodeTree(ID)	bpy.types	15232
+bpy.types.NodeTreeInterface	NodeTreeInterface(bpy_struct)	bpy.types	7121
+bpy.types.NodeTreeInterfaceItem	NodeTreeInterfaceItem(bpy_struct)	bpy.types	4388
+bpy.types.NodeTreeInterfacePanel	NodeTreeInterfacePanel(NodeTreeInterfaceItem)	bpy.types	4573
+bpy.types.NodeTreeInterfaceSocket	NodeTreeInterfaceSocket(NodeTreeInterfaceItem)	bpy.types	19365
+bpy.types.NodeTreeInterfaceSocketBool	NodeTreeInterfaceSocketBool(NodeTreeInterfaceSocket)	bpy.types	5187
+bpy.types.NodeTreeInterfaceSocketBundle	NodeTreeInterfaceSocketBundle(NodeTreeInterfaceSocket)	bpy.types	5010
+bpy.types.NodeTreeInterfaceSocketClosure	NodeTreeInterfaceSocketClosure(NodeTreeInterfaceSocket)	bpy.types	5025
+bpy.types.NodeTreeInterfaceSocketCollection	NodeTreeInterfaceSocketCollection(NodeTreeInterfaceSocket)	bpy.types	5350
+bpy.types.NodeTreeInterfaceSocketColor	NodeTreeInterfaceSocketColor(NodeTreeInterfaceSocket)	bpy.types	5348
+bpy.types.NodeTreeInterfaceSocketFloat	NodeTreeInterfaceSocketFloat(NodeTreeInterfaceSocket)	bpy.types	5785
+bpy.types.NodeTreeInterfaceSocketFloatAngle	NodeTreeInterfaceSocketFloatAngle(NodeTreeInterfaceSocket)	bpy.types	5895
+bpy.types.NodeTreeInterfaceSocketFloatColorTemperature	NodeTreeInterfaceSocketFloatColorTemperature(NodeTreeInterfaceSocket)	bpy.types	6137
+bpy.types.NodeTreeInterfaceSocketFloatDistance	NodeTreeInterfaceSocketFloatDistance(NodeTreeInterfaceSocket)	bpy.types	5961
+bpy.types.NodeTreeInterfaceSocketFloatFactor	NodeTreeInterfaceSocketFloatFactor(NodeTreeInterfaceSocket)	bpy.types	5912
+bpy.types.NodeTreeInterfaceSocketFloatFrequency	NodeTreeInterfaceSocketFloatFrequency(NodeTreeInterfaceSocket)	bpy.types	5983
+bpy.types.NodeTreeInterfaceSocketFloatMass	NodeTreeInterfaceSocketFloatMass(NodeTreeInterfaceSocket)	bpy.types	5873
+bpy.types.NodeTreeInterfaceSocketFloatPercentage	NodeTreeInterfaceSocketFloatPercentage(NodeTreeInterfaceSocket)	bpy.types	6007
+bpy.types.NodeTreeInterfaceSocketFloatPixel	NodeTreeInterfaceSocketFloatPixel(NodeTreeInterfaceSocket)	bpy.types	5895
+bpy.types.NodeTreeInterfaceSocketFloatTime	NodeTreeInterfaceSocketFloatTime(NodeTreeInterfaceSocket)	bpy.types	5873
+bpy.types.NodeTreeInterfaceSocketFloatTimeAbsolute	NodeTreeInterfaceSocketFloatTimeAbsolute(NodeTreeInterfaceSocket)	bpy.types	6049
+bpy.types.NodeTreeInterfaceSocketFloatUnsigned	NodeTreeInterfaceSocketFloatUnsigned(NodeTreeInterfaceSocket)	bpy.types	5958
+bpy.types.NodeTreeInterfaceSocketFloatWavelength	NodeTreeInterfaceSocketFloatWavelength(NodeTreeInterfaceSocket)	bpy.types	6005
+bpy.types.NodeTreeInterfaceSocketFont	NodeTreeInterfaceSocketFont(NodeTreeInterfaceSocket)	bpy.types	3788
+bpy.types.NodeTreeInterfaceSocketGeometry	NodeTreeInterfaceSocketGeometry(NodeTreeInterfaceSocket)	bpy.types	5040
+bpy.types.NodeTreeInterfaceSocketImage	NodeTreeInterfaceSocketImage(NodeTreeInterfaceSocket)	bpy.types	5245
+bpy.types.NodeTreeInterfaceSocketInt	NodeTreeInterfaceSocketInt(NodeTreeInterfaceSocket)	bpy.types	5722
+bpy.types.NodeTreeInterfaceSocketIntFactor	NodeTreeInterfaceSocketIntFactor(NodeTreeInterfaceSocket)	bpy.types	5851
+bpy.types.NodeTreeInterfaceSocketIntPercentage	NodeTreeInterfaceSocketIntPercentage(NodeTreeInterfaceSocket)	bpy.types	5939
+bpy.types.NodeTreeInterfaceSocketIntPixel	NodeTreeInterfaceSocketIntPixel(NodeTreeInterfaceSocket)	bpy.types	5832
+bpy.types.NodeTreeInterfaceSocketIntUnsigned	NodeTreeInterfaceSocketIntUnsigned(NodeTreeInterfaceSocket)	bpy.types	5895
+bpy.types.NodeTreeInterfaceSocketIntVector2D	NodeTreeInterfaceSocketIntVector2D(NodeTreeInterfaceSocket)	bpy.types	6234
+bpy.types.NodeTreeInterfaceSocketIntVector3D	NodeTreeInterfaceSocketIntVector3D(NodeTreeInterfaceSocket)	bpy.types	6237
+bpy.types.NodeTreeInterfaceSocketIntVectorFactor2D	NodeTreeInterfaceSocketIntVectorFactor2D(NodeTreeInterfaceSocket)	bpy.types	6375
+bpy.types.NodeTreeInterfaceSocketIntVectorFactor3D	NodeTreeInterfaceSocketIntVectorFactor3D(NodeTreeInterfaceSocket)	bpy.types	6378
+bpy.types.NodeTreeInterfaceSocketIntVectorPercentage2D	NodeTreeInterfaceSocketIntVectorPercentage2D(NodeTreeInterfaceSocket)	bpy.types	6471
+bpy.types.NodeTreeInterfaceSocketIntVectorPercentage3D	NodeTreeInterfaceSocketIntVectorPercentage3D(NodeTreeInterfaceSocket)	bpy.types	6474
+bpy.types.NodeTreeInterfaceSocketIntVectorPixel2D	NodeTreeInterfaceSocketIntVectorPixel2D(NodeTreeInterfaceSocket)	bpy.types	6354
+bpy.types.NodeTreeInterfaceSocketIntVectorPixel3D	NodeTreeInterfaceSocketIntVectorPixel3D(NodeTreeInterfaceSocket)	bpy.types	6357
+bpy.types.NodeTreeInterfaceSocketIntVectorUnsigned2D	NodeTreeInterfaceSocketIntVectorUnsigned2D(NodeTreeInterfaceSocket)	bpy.types	6423
+bpy.types.NodeTreeInterfaceSocketIntVectorUnsigned3D	NodeTreeInterfaceSocketIntVectorUnsigned3D(NodeTreeInterfaceSocket)	bpy.types	6426
+bpy.types.NodeTreeInterfaceSocketMask	NodeTreeInterfaceSocketMask(NodeTreeInterfaceSocket)	bpy.types	3764
+bpy.types.NodeTreeInterfaceSocketMaterial	NodeTreeInterfaceSocketMaterial(NodeTreeInterfaceSocket)	bpy.types	5308
+bpy.types.NodeTreeInterfaceSocketMatrix	NodeTreeInterfaceSocketMatrix(NodeTreeInterfaceSocket)	bpy.types	5016
+bpy.types.NodeTreeInterfaceSocketMenu	NodeTreeInterfaceSocketMenu(NodeTreeInterfaceSocket)	bpy.types	5161
+bpy.types.NodeTreeInterfaceSocketObject	NodeTreeInterfaceSocketObject(NodeTreeInterfaceSocket)	bpy.types	5266
+bpy.types.NodeTreeInterfaceSocketRotation	NodeTreeInterfaceSocketRotation(NodeTreeInterfaceSocket)	bpy.types	5359
+bpy.types.NodeTreeInterfaceSocketScene	NodeTreeInterfaceSocketScene(NodeTreeInterfaceSocket)	bpy.types	3779
+bpy.types.NodeTreeInterfaceSocketShader	NodeTreeInterfaceSocketShader(NodeTreeInterfaceSocket)	bpy.types	5010
+bpy.types.NodeTreeInterfaceSocketSound	NodeTreeInterfaceSocketSound(NodeTreeInterfaceSocket)	bpy.types	3779
+bpy.types.NodeTreeInterfaceSocketString	NodeTreeInterfaceSocketString(NodeTreeInterfaceSocket)	bpy.types	5419
+bpy.types.NodeTreeInterfaceSocketStringFilePath	NodeTreeInterfaceSocketStringFilePath(NodeTreeInterfaceSocket)	bpy.types	5601
+bpy.types.NodeTreeInterfaceSocketText	NodeTreeInterfaceSocketText(NodeTreeInterfaceSocket)	bpy.types	3764
+bpy.types.NodeTreeInterfaceSocketTexture	NodeTreeInterfaceSocketTexture(NodeTreeInterfaceSocket)	bpy.types	5287
+bpy.types.NodeTreeInterfaceSocketVector	NodeTreeInterfaceSocketVector(NodeTreeInterfaceSocket)	bpy.types	6120
+bpy.types.NodeTreeInterfaceSocketVector2D	NodeTreeInterfaceSocketVector2D(NodeTreeInterfaceSocket)	bpy.types	6163
+bpy.types.NodeTreeInterfaceSocketVector4D	NodeTreeInterfaceSocketVector4D(NodeTreeInterfaceSocket)	bpy.types	6173
+bpy.types.NodeTreeInterfaceSocketVectorAcceleration	NodeTreeInterfaceSocketVectorAcceleration(NodeTreeInterfaceSocket)	bpy.types	6372
+bpy.types.NodeTreeInterfaceSocketVectorAcceleration2D	NodeTreeInterfaceSocketVectorAcceleration2D(NodeTreeInterfaceSocket)	bpy.types	6415
+bpy.types.NodeTreeInterfaceSocketVectorAcceleration4D	NodeTreeInterfaceSocketVectorAcceleration4D(NodeTreeInterfaceSocket)	bpy.types	6425
+bpy.types.NodeTreeInterfaceSocketVectorDirection	NodeTreeInterfaceSocketVectorDirection(NodeTreeInterfaceSocket)	bpy.types	6300
+bpy.types.NodeTreeInterfaceSocketVectorDirection2D	NodeTreeInterfaceSocketVectorDirection2D(NodeTreeInterfaceSocket)	bpy.types	6343
+bpy.types.NodeTreeInterfaceSocketVectorDirection4D	NodeTreeInterfaceSocketVectorDirection4D(NodeTreeInterfaceSocket)	bpy.types	6353
+bpy.types.NodeTreeInterfaceSocketVectorEuler	NodeTreeInterfaceSocketVectorEuler(NodeTreeInterfaceSocket)	bpy.types	6201
+bpy.types.NodeTreeInterfaceSocketVectorEuler2D	NodeTreeInterfaceSocketVectorEuler2D(NodeTreeInterfaceSocket)	bpy.types	6283
+bpy.types.NodeTreeInterfaceSocketVectorEuler4D	NodeTreeInterfaceSocketVectorEuler4D(NodeTreeInterfaceSocket)	bpy.types	6269
+bpy.types.NodeTreeInterfaceSocketVectorFactor	NodeTreeInterfaceSocketVectorFactor(NodeTreeInterfaceSocket)	bpy.types	6259
+bpy.types.NodeTreeInterfaceSocketVectorFactor2D	NodeTreeInterfaceSocketVectorFactor2D(NodeTreeInterfaceSocket)	bpy.types	6302
+bpy.types.NodeTreeInterfaceSocketVectorFactor4D	NodeTreeInterfaceSocketVectorFactor4D(NodeTreeInterfaceSocket)	bpy.types	6312
+bpy.types.NodeTreeInterfaceSocketVectorPercentage	NodeTreeInterfaceSocketVectorPercentage(NodeTreeInterfaceSocket)	bpy.types	6360
+bpy.types.NodeTreeInterfaceSocketVectorPercentage2D	NodeTreeInterfaceSocketVectorPercentage2D(NodeTreeInterfaceSocket)	bpy.types	6403
+bpy.types.NodeTreeInterfaceSocketVectorPercentage4D	NodeTreeInterfaceSocketVectorPercentage4D(NodeTreeInterfaceSocket)	bpy.types	6413
+bpy.types.NodeTreeInterfaceSocketVectorPixel	NodeTreeInterfaceSocketVectorPixel(NodeTreeInterfaceSocket)	bpy.types	6240
+bpy.types.NodeTreeInterfaceSocketVectorPixel2D	NodeTreeInterfaceSocketVectorPixel2D(NodeTreeInterfaceSocket)	bpy.types	6283
+bpy.types.NodeTreeInterfaceSocketVectorPixel4D	NodeTreeInterfaceSocketVectorPixel4D(NodeTreeInterfaceSocket)	bpy.types	6293
+bpy.types.NodeTreeInterfaceSocketVectorTranslation	NodeTreeInterfaceSocketVectorTranslation(NodeTreeInterfaceSocket)	bpy.types	6348
+bpy.types.NodeTreeInterfaceSocketVectorTranslation2D	NodeTreeInterfaceSocketVectorTranslation2D(NodeTreeInterfaceSocket)	bpy.types	6391
+bpy.types.NodeTreeInterfaceSocketVectorTranslation4D	NodeTreeInterfaceSocketVectorTranslation4D(NodeTreeInterfaceSocket)	bpy.types	6401
+bpy.types.NodeTreeInterfaceSocketVectorVelocity	NodeTreeInterfaceSocketVectorVelocity(NodeTreeInterfaceSocket)	bpy.types	6276
+bpy.types.NodeTreeInterfaceSocketVectorVelocity2D	NodeTreeInterfaceSocketVectorVelocity2D(NodeTreeInterfaceSocket)	bpy.types	6319
+bpy.types.NodeTreeInterfaceSocketVectorVelocity4D	NodeTreeInterfaceSocketVectorVelocity4D(NodeTreeInterfaceSocket)	bpy.types	6329
+bpy.types.NodeTreeInterfaceSocketVectorXYZ	NodeTreeInterfaceSocketVectorXYZ(NodeTreeInterfaceSocket)	bpy.types	6156
+bpy.types.NodeTreeInterfaceSocketVectorXYZ2D	NodeTreeInterfaceSocketVectorXYZ2D(NodeTreeInterfaceSocket)	bpy.types	6199
+bpy.types.NodeTreeInterfaceSocketVectorXYZ4D	NodeTreeInterfaceSocketVectorXYZ4D(NodeTreeInterfaceSocket)	bpy.types	6209
+bpy.types.NodeTreePath	NodeTreePath(bpy_struct)	bpy.types	2315
+bpy.types.Nodes	Nodes(bpy_prop_collection)	bpy.types	2905
+bpy.types.NodesModifier	NodesModifier(Modifier)	bpy.types	6277
+bpy.types.NodesModifierBake	NodesModifierBake(bpy_struct)	bpy.types	4785
+bpy.types.NodesModifierBakeDataBlocks	NodesModifierBakeDataBlocks(bpy_prop_collection)	bpy.types	2500
+bpy.types.NodesModifierBakes	NodesModifierBakes(bpy_prop_collection)	bpy.types	2194
+bpy.types.NodesModifierDataBlock	NodesModifierDataBlock(bpy_struct)	bpy.types	3018
+bpy.types.NodesModifierPanel	NodesModifierPanel(bpy_struct)	bpy.types	2271
+bpy.types.NodesModifierPanels	NodesModifierPanels(bpy_prop_collection)	bpy.types	2221
+bpy.types.NodesModifierProperties	NodesModifierProperties(bpy_struct)	bpy.types	2928
+bpy.types.NodesModifierPropertiesEmpty	NodesModifierPropertiesEmpty(bpy_struct)	bpy.types	2777
+bpy.types.NodesModifierWarning	NodesModifierWarning(bpy_struct)	bpy.types	2762
+bpy.types.NoiseTexture	NoiseTexture(Texture)	bpy.types	3798
+bpy.types.NormalEditModifier	NormalEditModifier(Modifier)	bpy.types	4990
+bpy.types.Object	Object(ID)	bpy.types	74087
+bpy.types.ObjectBase	ObjectBase(bpy_struct)	bpy.types	2418
+bpy.types.ObjectConstraints	ObjectConstraints(bpy_prop_collection)	bpy.types	4033
+bpy.types.ObjectDisplay	ObjectDisplay(bpy_struct)	bpy.types	2245
+bpy.types.ObjectLightLinking	ObjectLightLinking(bpy_struct)	bpy.types	2671
+bpy.types.ObjectLineArt	ObjectLineArt(bpy_struct)	bpy.types	3862
+bpy.types.ObjectModifiers	ObjectModifiers(bpy_prop_collection)	bpy.types	3561
+bpy.types.ObjectShaderFx	ObjectShaderFx(bpy_prop_collection)	bpy.types	3043
+bpy.types.ObjectSolverConstraint	ObjectSolverConstraint(Constraint)	bpy.types	3567
+bpy.types.OceanModifier	OceanModifier(Modifier)	bpy.types	9003
+bpy.types.Operator	Operator(bpy_struct)	bpy.types	25814
+bpy.types.OperatorFileListElement	OperatorFileListElement(PropertyGroup)	bpy.types	2382
+bpy.types.OperatorMacro	OperatorMacro(bpy_struct)	bpy.types	2178
+bpy.types.OperatorMousePath	OperatorMousePath(PropertyGroup)	bpy.types	2599
+bpy.types.OperatorOptions	OperatorOptions(bpy_struct)	bpy.types	3043
+bpy.types.OperatorProperties	OperatorProperties(bpy_struct)	bpy.types	4813
+bpy.types.OperatorStrokeElement	OperatorStrokeElement(PropertyGroup)	bpy.types	3888
+bpy.types.PARTICLE_UL_particle_systems	PARTICLE_UL_particle_systems(UIList)	bpy.types	2545
+bpy.types.PHYSICS_UL_dynapaint_surfaces	PHYSICS_UL_dynapaint_surfaces(UIList)	bpy.types	2553
+bpy.types.POINTCLOUD_UL_attributes	POINTCLOUD_UL_attributes(UIList)	bpy.types	2513
+bpy.types.POSE_UL_selection_set	POSE_UL_selection_set(UIList)	bpy.types	2489
+bpy.types.PackedFile	PackedFile(bpy_struct)	bpy.types	2982
+bpy.types.Paint	Paint(bpy_struct)	bpy.types	6247
+bpy.types.PaintCurve	PaintCurve(ID)	bpy.types	2884
+bpy.types.PaintModeSettings	PaintModeSettings(bpy_struct)	bpy.types	2562
+bpy.types.Palette	Palette(ID)	bpy.types	3394
+bpy.types.PaletteColor	PaletteColor(bpy_struct)	bpy.types	2844
+bpy.types.PaletteColors	PaletteColors(bpy_prop_collection)	bpy.types	2989
+bpy.types.Panel	Panel(bpy_struct)	bpy.types	11733
+bpy.types.Particle	Particle(bpy_struct)	bpy.types	6610
+bpy.types.ParticleBrush	ParticleBrush(bpy_struct)	bpy.types	3528
+bpy.types.ParticleDupliWeight	ParticleDupliWeight(bpy_struct)	bpy.types	2764
+bpy.types.ParticleEdit	ParticleEdit(bpy_struct)	bpy.types	5955
+bpy.types.ParticleHairKey	ParticleHairKey(bpy_struct)	bpy.types	4612
+bpy.types.ParticleInstanceModifier	ParticleInstanceModifier(Modifier)	bpy.types	6768
+bpy.types.ParticleKey	ParticleKey(bpy_struct)	bpy.types	3247
+bpy.types.ParticleSettings	ParticleSettings(ID)	bpy.types	36826
+bpy.types.ParticleSettingsTextureSlot	ParticleSettingsTextureSlot(TextureSlot)	bpy.types	10690
+bpy.types.ParticleSettingsTextureSlots	ParticleSettingsTextureSlots(bpy_prop_collection)	bpy.types	3293
+bpy.types.ParticleSystem	ParticleSystem(bpy_struct)	bpy.types	15341
+bpy.types.ParticleSystemModifier	ParticleSystemModifier(Modifier)	bpy.types	3487
+bpy.types.ParticleSystems	ParticleSystems(bpy_prop_collection)	bpy.types	2609
+bpy.types.ParticleTarget	ParticleTarget(bpy_struct)	bpy.types	3434
+bpy.types.PathCompare	PathCompare(bpy_struct)	bpy.types	2644
+bpy.types.PathCompareCollection	PathCompareCollection(bpy_prop_collection)	bpy.types	2730
+bpy.types.PitchModifier	PitchModifier(StripModifier)	bpy.types	3735
+bpy.types.PivotConstraint	PivotConstraint(Constraint)	bpy.types	4630
+bpy.types.Point	Point(bpy_struct)	bpy.types	2464
+bpy.types.PointCache	PointCache(bpy_struct)	bpy.types	5314
+bpy.types.PointCacheItem	PointCacheItem(bpy_struct)	bpy.types	4548
+bpy.types.PointCaches	PointCaches(bpy_prop_collection)	bpy.types	2276
+bpy.types.PointCloud	PointCloud(ID)	bpy.types	4843
+bpy.types.PointLight	PointLight(Light)	bpy.types	5245
+bpy.types.PointerProperty	PointerProperty(Property)	bpy.types	3083
+bpy.types.Pose	Pose(bpy_struct)	bpy.types	5965
+bpy.types.PoseBone	PoseBone(bpy_struct)	bpy.types	24946
+bpy.types.PoseBoneConstraints	PoseBoneConstraints(bpy_prop_collection)	bpy.types	3951
+bpy.types.Preferences	Preferences(bpy_struct)	bpy.types	7793
+bpy.types.PreferencesApps	PreferencesApps(bpy_struct)	bpy.types	2679
+bpy.types.PreferencesAssetLibraries	PreferencesAssetLibraries(bpy_struct)	bpy.types	2493
+bpy.types.PreferencesEdit	PreferencesEdit(bpy_struct)	bpy.types	15415
+bpy.types.PreferencesExperimental	PreferencesExperimental(bpy_struct)	bpy.types	6991
+bpy.types.PreferencesExtensions	PreferencesExtensions(bpy_struct)	bpy.types	3021
+bpy.types.PreferencesFilePaths	PreferencesFilePaths(bpy_struct)	bpy.types	11354
+bpy.types.PreferencesInput	PreferencesInput(bpy_struct)	bpy.types	15576
+bpy.types.PreferencesKeymap	PreferencesKeymap(bpy_struct)	bpy.types	2486
+bpy.types.PreferencesSystem	PreferencesSystem(bpy_struct)	bpy.types	15166
+bpy.types.PreferencesView	PreferencesView(bpy_struct)	bpy.types	24733
+bpy.types.PrimitiveBoolean	PrimitiveBoolean(bpy_struct)	bpy.types	2049
+bpy.types.PrimitiveFloat	PrimitiveFloat(bpy_struct)	bpy.types	2042
+bpy.types.PrimitiveInt	PrimitiveInt(bpy_struct)	bpy.types	2016
+bpy.types.PrimitiveString	PrimitiveString(bpy_struct)	bpy.types	2049
+bpy.types.Property	Property(bpy_struct)	bpy.types	9251
+bpy.types.PropertyGroup	PropertyGroup(bpy_struct)	bpy.types	9480
+bpy.types.PropertyGroupItem	PropertyGroupItem(bpy_struct)	bpy.types	5183
+bpy.types.QuaternionAttribute	QuaternionAttribute(Attribute)	bpy.types	2622
+bpy.types.QuaternionAttributeValue	QuaternionAttributeValue(bpy_struct)	bpy.types	2505
+bpy.types.RENDER_UL_renderviews	RENDER_UL_renderviews(UIList)	bpy.types	2489
+bpy.types.RaytraceEEVEE	RaytraceEEVEE(bpy_struct)	bpy.types	4532
+bpy.types.ReadOnlyInteger	ReadOnlyInteger(bpy_struct)	bpy.types	2230
+bpy.types.Region	Region(bpy_struct)	bpy.types	4878
+bpy.types.RegionView3D	RegionView3D(bpy_struct)	bpy.types	6602
+bpy.types.RemeshModifier	RemeshModifier(Modifier)	bpy.types	4682
+bpy.types.RenderEngine	RenderEngine(bpy_struct)	bpy.types	26388
+bpy.types.RenderLayer	RenderLayer(bpy_struct)	bpy.types	8719
+bpy.types.RenderPass	RenderPass(bpy_struct)	bpy.types	3208
+bpy.types.RenderPasses	RenderPasses(bpy_prop_collection)	bpy.types	2556
+bpy.types.RenderResult	RenderResult(bpy_struct)	bpy.types	4086
+bpy.types.RenderSettings	RenderSettings(bpy_struct)	bpy.types	26621
+bpy.types.RenderSlot	RenderSlot(bpy_struct)	bpy.types	2638
+bpy.types.RenderSlots	RenderSlots(bpy_prop_collection)	bpy.types	2859
+bpy.types.RenderView	RenderView(bpy_struct)	bpy.types	2156
+bpy.types.RenderViews	RenderViews(bpy_prop_collection)	bpy.types	3172
+bpy.types.RepeatItem	RepeatItem(bpy_struct)	bpy.types	4167
+bpy.types.RepeatZoneViewerPathElem	RepeatZoneViewerPathElem(ViewerPathElem)	bpy.types	2376
+bpy.types.Report	Report(bpy_struct)	bpy.types	2659
+bpy.types.RetimingKey	RetimingKey(bpy_struct)	bpy.types	2897
+bpy.types.RetimingKeys	RetimingKeys(bpy_prop_collection)	bpy.types	3036
+bpy.types.RigidBodyConstraint	RigidBodyConstraint(bpy_struct)	bpy.types	12794
+bpy.types.RigidBodyObject	RigidBodyObject(bpy_struct)	bpy.types	6547
+bpy.types.RigidBodyWorld	RigidBodyWorld(bpy_struct)	bpy.types	5541
+bpy.types.SCENE_UL_gltf2_filter_action	SCENE_UL_gltf2_filter_action(UIList)	bpy.types	2545
+bpy.types.SCENE_UL_keying_set_paths	SCENE_UL_keying_set_paths(UIList)	bpy.types	2521
+bpy.types.SEQUENCER_FH_image_strip	SEQUENCER_FH_image_strip(FileHandler)	bpy.types	2289
+bpy.types.SEQUENCER_FH_movie_strip	SEQUENCER_FH_movie_strip(FileHandler)	bpy.types	2289
+bpy.types.SEQUENCER_FH_sound_strip	SEQUENCER_FH_sound_strip(FileHandler)	bpy.types	2289
+bpy.types.SPHFluidSettings	SPHFluidSettings(bpy_struct)	bpy.types	6318
+bpy.types.Scene	Scene(ID)	bpy.types	24943
+bpy.types.SceneDisplay	SceneDisplay(bpy_struct)	bpy.types	5093
+bpy.types.SceneEEVEE	SceneEEVEE(bpy_struct)	bpy.types	15030
+bpy.types.SceneGpencil	SceneGpencil(bpy_struct)	bpy.types	3136
+bpy.types.SceneHydra	SceneHydra(bpy_struct)	bpy.types	2419
+bpy.types.SceneObjects	SceneObjects(bpy_prop_collection)	bpy.types	2115
+bpy.types.SceneRenderView	SceneRenderView(bpy_struct)	bpy.types	3300
+bpy.types.SceneStrip	SceneStrip(Strip)	bpy.types	8150
+bpy.types.Scopes	Scopes(bpy_struct)	bpy.types	3251
+bpy.types.Screen	Screen(ID)	bpy.types	5730
+bpy.types.ScrewModifier	ScrewModifier(Modifier)	bpy.types	5110
+bpy.types.ScriptDirectory	ScriptDirectory(bpy_struct)	bpy.types	2900
+bpy.types.ScriptDirectoryCollection	ScriptDirectoryCollection(bpy_prop_collection)	bpy.types	2895
+bpy.types.Sculpt	Sculpt(Paint)	bpy.types	6220
+bpy.types.SelectedUvElement	SelectedUvElement(PropertyGroup)	bpy.types	2433
+bpy.types.SequenceEditor	SequenceEditor(bpy_struct)	bpy.types	6571
+bpy.types.SequenceTimelineChannel	SequenceTimelineChannel(bpy_struct)	bpy.types	2837
+bpy.types.SequencerCacheOverlay	SequencerCacheOverlay(bpy_struct)	bpy.types	2721
+bpy.types.SequencerCompositorModifierData	SequencerCompositorModifierData(StripModifier)	bpy.types	3481
+bpy.types.SequencerCompositorModifierProperties	SequencerCompositorModifierProperties(bpy_struct)	bpy.types	3140
+bpy.types.SequencerCompositorModifierPropertiesEmpty	SequencerCompositorModifierPropertiesEmpty(bpy_struct)	bpy.types	2917
+bpy.types.SequencerPreviewOverlay	SequencerPreviewOverlay(bpy_struct)	bpy.types	5623
+bpy.types.SequencerTimelineOverlay	SequencerTimelineOverlay(bpy_struct)	bpy.types	5040
+bpy.types.SequencerTonemapModifierData	SequencerTonemapModifierData(StripModifier)	bpy.types	4354
+bpy.types.SequencerToolSettings	SequencerToolSettings(bpy_struct)	bpy.types	5994
+bpy.types.ShaderFx	ShaderFx(bpy_struct)	bpy.types	3885
+bpy.types.ShaderFxBlur	ShaderFxBlur(ShaderFx)	bpy.types	2860
+bpy.types.ShaderFxColorize	ShaderFxColorize(ShaderFx)	bpy.types	3127
+bpy.types.ShaderFxFlip	ShaderFxFlip(ShaderFx)	bpy.types	2432
+bpy.types.ShaderFxGlow	ShaderFxGlow(ShaderFx)	bpy.types	4039
+bpy.types.ShaderFxPixel	ShaderFxPixel(ShaderFx)	bpy.types	2563
+bpy.types.ShaderFxRim	ShaderFxRim(ShaderFx)	bpy.types	3539
+bpy.types.ShaderFxShadow	ShaderFxShadow(ShaderFx)	bpy.types	4779
+bpy.types.ShaderFxSwirl	ShaderFxSwirl(ShaderFx)	bpy.types	2829
+bpy.types.ShaderFxWave	ShaderFxWave(ShaderFx)	bpy.types	2776
+bpy.types.ShaderNode	ShaderNode(NodeInternal)	bpy.types	10619
+bpy.types.ShaderNodeAddShader	ShaderNodeAddShader(ShaderNode)	bpy.types	4440
+bpy.types.ShaderNodeAmbientOcclusion	ShaderNodeAmbientOcclusion(ShaderNode)	bpy.types	5275
+bpy.types.ShaderNodeAttribute	ShaderNodeAttribute(ShaderNode)	bpy.types	5439
+bpy.types.ShaderNodeBackground	ShaderNodeBackground(ShaderNode)	bpy.types	4525
+bpy.types.ShaderNodeBevel	ShaderNodeBevel(ShaderNode)	bpy.types	4631
+bpy.types.ShaderNodeBlackbody	ShaderNodeBlackbody(ShaderNode)	bpy.types	4463
+bpy.types.ShaderNodeBrightContrast	ShaderNodeBrightContrast(ShaderNode)	bpy.types	4540
+bpy.types.ShaderNodeBsdfAnisotropic	ShaderNodeBsdfAnisotropic(ShaderNode)	bpy.types	5100
+bpy.types.ShaderNodeBsdfDiffuse	ShaderNodeBsdfDiffuse(ShaderNode)	bpy.types	4488
+bpy.types.ShaderNodeBsdfGlass	ShaderNodeBsdfGlass(ShaderNode)	bpy.types	4924
+bpy.types.ShaderNodeBsdfHair	ShaderNodeBsdfHair(ShaderNode)	bpy.types	4852
+bpy.types.ShaderNodeBsdfHairPrincipled	ShaderNodeBsdfHairPrincipled(ShaderNode)	bpy.types	5929
+bpy.types.ShaderNodeBsdfMetallic	ShaderNodeBsdfMetallic(ShaderNode)	bpy.types	5474
+bpy.types.ShaderNodeBsdfPrincipled	ShaderNodeBsdfPrincipled(ShaderNode)	bpy.types	5855
+bpy.types.ShaderNodeBsdfRayPortal	ShaderNodeBsdfRayPortal(ShaderNode)	bpy.types	4542
+bpy.types.ShaderNodeBsdfRefraction	ShaderNodeBsdfRefraction(ShaderNode)	bpy.types	4817
+bpy.types.ShaderNodeBsdfSheen	ShaderNodeBsdfSheen(ShaderNode)	bpy.types	4935
+bpy.types.ShaderNodeBsdfToon	ShaderNodeBsdfToon(ShaderNode)	bpy.types	4726
+bpy.types.ShaderNodeBsdfTranslucent	ShaderNodeBsdfTranslucent(ShaderNode)	bpy.types	4531
+bpy.types.ShaderNodeBsdfTransparent	ShaderNodeBsdfTransparent(ShaderNode)	bpy.types	4598
+bpy.types.ShaderNodeBump	ShaderNodeBump(ShaderNode)	bpy.types	4656
+bpy.types.ShaderNodeCameraData	ShaderNodeCameraData(ShaderNode)	bpy.types	4526
+bpy.types.ShaderNodeClamp	ShaderNodeClamp(ShaderNode)	bpy.types	4629
+bpy.types.ShaderNodeCombineColor	ShaderNodeCombineColor(ShaderNode)	bpy.types	4793
+bpy.types.ShaderNodeCombineXYZ	ShaderNodeCombineXYZ(ShaderNode)	bpy.types	4473
+bpy.types.ShaderNodeCustomGroup	ShaderNodeCustomGroup(ShaderNode)	bpy.types	3653
+bpy.types.ShaderNodeDisplacement	ShaderNodeDisplacement(ShaderNode)	bpy.types	4864
+bpy.types.ShaderNodeEeveeSpecular	ShaderNodeEeveeSpecular(ShaderNode)	bpy.types	4703
+bpy.types.ShaderNodeEmission	ShaderNodeEmission(ShaderNode)	bpy.types	4428
+bpy.types.ShaderNodeFloatCurve	ShaderNodeFloatCurve(ShaderNode)	bpy.types	4706
+bpy.types.ShaderNodeFresnel	ShaderNodeFresnel(ShaderNode)	bpy.types	4567
+bpy.types.ShaderNodeGamma	ShaderNodeGamma(ShaderNode)	bpy.types	4384
+bpy.types.ShaderNodeGroup	ShaderNodeGroup(ShaderNode)	bpy.types	4545
+bpy.types.ShaderNodeHairInfo	ShaderNodeHairInfo(ShaderNode)	bpy.types	4433
+bpy.types.ShaderNodeHoldout	ShaderNodeHoldout(ShaderNode)	bpy.types	4576
+bpy.types.ShaderNodeHueSaturation	ShaderNodeHueSaturation(ShaderNode)	bpy.types	4523
+bpy.types.ShaderNodeInvert	ShaderNodeInvert(ShaderNode)	bpy.types	4410
+bpy.types.ShaderNodeLayerWeight	ShaderNodeLayerWeight(ShaderNode)	bpy.types	4604
+bpy.types.ShaderNodeLightFalloff	ShaderNodeLightFalloff(ShaderNode)	bpy.types	4610
+bpy.types.ShaderNodeLightPath	ShaderNodeLightPath(ShaderNode)	bpy.types	4536
+bpy.types.ShaderNodeMapRange	ShaderNodeMapRange(ShaderNode)	bpy.types	5155
+bpy.types.ShaderNodeMapping	ShaderNodeMapping(ShaderNode)	bpy.types	4737
+bpy.types.ShaderNodeMath	ShaderNodeMath(ShaderNode)	bpy.types	4752
+bpy.types.ShaderNodeMix	ShaderNodeMix(ShaderNode)	bpy.types	5339
+bpy.types.ShaderNodeMixRGB	ShaderNodeMixRGB(ShaderNode)	bpy.types	4966
+bpy.types.ShaderNodeMixShader	ShaderNodeMixShader(ShaderNode)	bpy.types	4478
+bpy.types.ShaderNodeNewGeometry	ShaderNodeNewGeometry(ShaderNode)	bpy.types	4506
+bpy.types.ShaderNodeNormal	ShaderNodeNormal(ShaderNode)	bpy.types	4416
+bpy.types.ShaderNodeNormalMap	ShaderNodeNormalMap(ShaderNode)	bpy.types	6250
+bpy.types.ShaderNodeObjectInfo	ShaderNodeObjectInfo(ShaderNode)	bpy.types	4476
+bpy.types.ShaderNodeOutputAOV	ShaderNodeOutputAOV(ShaderNode)	bpy.types	4689
+bpy.types.ShaderNodeOutputLight	ShaderNodeOutputLight(ShaderNode)	bpy.types	5126
+bpy.types.ShaderNodeOutputLineStyle	ShaderNodeOutputLineStyle(ShaderNode)	bpy.types	5858
+bpy.types.ShaderNodeOutputMaterial	ShaderNodeOutputMaterial(ShaderNode)	bpy.types	5194
+bpy.types.ShaderNodeOutputWorld	ShaderNodeOutputWorld(ShaderNode)	bpy.types	5135
+bpy.types.ShaderNodeParticleInfo	ShaderNodeParticleInfo(ShaderNode)	bpy.types	4590
+bpy.types.ShaderNodePointInfo	ShaderNodePointInfo(ShaderNode)	bpy.types	4466
+bpy.types.ShaderNodeRGB	ShaderNodeRGB(ShaderNode)	bpy.types	4346
+bpy.types.ShaderNodeRGBCurve	ShaderNodeRGBCurve(ShaderNode)	bpy.types	4665
+bpy.types.ShaderNodeRGBToBW	ShaderNodeRGBToBW(ShaderNode)	bpy.types	4436
+bpy.types.ShaderNodeRadialTiling	ShaderNodeRadialTiling(ShaderNode)	bpy.types	4956
+bpy.types.ShaderNodeRaycast	ShaderNodeRaycast(ShaderNode)	bpy.types	5503
+bpy.types.ShaderNodeScript	ShaderNodeScript(ShaderNode)	bpy.types	5749
+bpy.types.ShaderNodeSeparateColor	ShaderNodeSeparateColor(ShaderNode)	bpy.types	4812
+bpy.types.ShaderNodeSeparateXYZ	ShaderNodeSeparateXYZ(ShaderNode)	bpy.types	4490
+bpy.types.ShaderNodeShaderToRGB	ShaderNodeShaderToRGB(ShaderNode)	bpy.types	4636
+bpy.types.ShaderNodeSqueeze	ShaderNodeSqueeze(ShaderNode)	bpy.types	4398
+bpy.types.ShaderNodeSubsurfaceScattering	ShaderNodeSubsurfaceScattering(ShaderNode)	bpy.types	5591
+bpy.types.ShaderNodeTangent	ShaderNodeTangent(ShaderNode)	bpy.types	5140
+bpy.types.ShaderNodeTexBrick	ShaderNodeTexBrick(ShaderNode)	bpy.types	5810
+bpy.types.ShaderNodeTexChecker	ShaderNodeTexChecker(ShaderNode)	bpy.types	4992
+bpy.types.ShaderNodeTexCoord	ShaderNodeTexCoord(ShaderNode)	bpy.types	4937
+bpy.types.ShaderNodeTexEnvironment	ShaderNodeTexEnvironment(ShaderNode)	bpy.types	6475
+bpy.types.ShaderNodeTexGabor	ShaderNodeTexGabor(ShaderNode)	bpy.types	5262
+bpy.types.ShaderNodeTexGradient	ShaderNodeTexGradient(ShaderNode)	bpy.types	5779
+bpy.types.ShaderNodeTexIES	ShaderNodeTexIES(ShaderNode)	bpy.types	5174
+bpy.types.ShaderNodeTexImage	ShaderNodeTexImage(ShaderNode)	bpy.types	7201
+bpy.types.ShaderNodeTexMagic	ShaderNodeTexMagic(ShaderNode)	bpy.types	5159
+bpy.types.ShaderNodeTexNoise	ShaderNodeTexNoise(ShaderNode)	bpy.types	6311
+bpy.types.ShaderNodeTexSky	ShaderNodeTexSky(ShaderNode)	bpy.types	7781
+bpy.types.ShaderNodeTexVoronoi	ShaderNodeTexVoronoi(ShaderNode)	bpy.types	6913
+bpy.types.ShaderNodeTexWave	ShaderNodeTexWave(ShaderNode)	bpy.types	6161
+bpy.types.ShaderNodeTexWhiteNoise	ShaderNodeTexWhiteNoise(ShaderNode)	bpy.types	4986
+bpy.types.ShaderNodeTree	ShaderNodeTree(NodeTree)	bpy.types	3952
+bpy.types.ShaderNodeUVAlongStroke	ShaderNodeUVAlongStroke(ShaderNode)	bpy.types	4721
+bpy.types.ShaderNodeUVMap	ShaderNodeUVMap(ShaderNode)	bpy.types	4793
+bpy.types.ShaderNodeValToRGB	ShaderNodeValToRGB(ShaderNode)	bpy.types	4660
+bpy.types.ShaderNodeValue	ShaderNodeValue(ShaderNode)	bpy.types	4409
+bpy.types.ShaderNodeVectorCurve	ShaderNodeVectorCurve(ShaderNode)	bpy.types	4706
+bpy.types.ShaderNodeVectorDisplacement	ShaderNodeVectorDisplacement(ShaderNode)	bpy.types	5011
+bpy.types.ShaderNodeVectorMath	ShaderNodeVectorMath(ShaderNode)	bpy.types	4697
+bpy.types.ShaderNodeVectorRotate	ShaderNodeVectorRotate(ShaderNode)	bpy.types	5173
+bpy.types.ShaderNodeVectorTransform	ShaderNodeVectorTransform(ShaderNode)	bpy.types	5344
+bpy.types.ShaderNodeVertexColor	ShaderNodeVertexColor(ShaderNode)	bpy.types	4680
+bpy.types.ShaderNodeVolumeAbsorption	ShaderNodeVolumeAbsorption(ShaderNode)	bpy.types	4558
+bpy.types.ShaderNodeVolumeCoefficients	ShaderNodeVolumeCoefficients(ShaderNode)	bpy.types	5526
+bpy.types.ShaderNodeVolumeInfo	ShaderNodeVolumeInfo(ShaderNode)	bpy.types	4475
+bpy.types.ShaderNodeVolumePrincipled	ShaderNodeVolumePrincipled(ShaderNode)	bpy.types	4582
+bpy.types.ShaderNodeVolumeScatter	ShaderNodeVolumeScatter(ShaderNode)	bpy.types	5444
+bpy.types.ShaderNodeWavelength	ShaderNodeWavelength(ShaderNode)	bpy.types	4472
+bpy.types.ShaderNodeWireframe	ShaderNodeWireframe(ShaderNode)	bpy.types	4769
+bpy.types.ShapeKey	ShapeKey(bpy_struct)	bpy.types	6403
+bpy.types.ShapeKeyBezierPoint	ShapeKeyBezierPoint(bpy_struct)	bpy.types	3013
+bpy.types.ShapeKeyCurvePoint	ShapeKeyCurvePoint(bpy_struct)	bpy.types	2494
+bpy.types.ShapeKeyPoint	ShapeKeyPoint(bpy_struct)	bpy.types	2283
+bpy.types.Short2Attribute	Short2Attribute(Attribute)	bpy.types	2576
+bpy.types.Short2AttributeValue	Short2AttributeValue(bpy_struct)	bpy.types	2430
+bpy.types.ShrinkwrapConstraint	ShrinkwrapConstraint(Constraint)	bpy.types	6490
+bpy.types.ShrinkwrapModifier	ShrinkwrapModifier(Modifier)	bpy.types	5817
+bpy.types.SimpleDeformModifier	SimpleDeformModifier(Modifier)	bpy.types	4922
+bpy.types.SimulationStateItem	SimulationStateItem(bpy_struct)	bpy.types	3844
+bpy.types.SimulationZoneViewerPathElem	SimulationZoneViewerPathElem(ViewerPathElem)	bpy.types	2410
+bpy.types.SkinModifier	SkinModifier(Modifier)	bpy.types	3237
+bpy.types.SmoothModifier	SmoothModifier(Modifier)	bpy.types	3453
+bpy.types.SoftBodyModifier	SoftBodyModifier(Modifier)	bpy.types	2822
+bpy.types.SoftBodySettings	SoftBodySettings(bpy_struct)	bpy.types	11179
+bpy.types.SolidifyModifier	SolidifyModifier(Modifier)	bpy.types	8109
+bpy.types.Sound	Sound(ID)	bpy.types	5627
+bpy.types.SoundEqualizerModifier	SoundEqualizerModifier(StripModifier)	bpy.types	3534
+bpy.types.SoundStrip	SoundStrip(Strip)	bpy.types	5318
+bpy.types.Space	Space(bpy_struct)	bpy.types	5089
+bpy.types.SpaceClipEditor	SpaceClipEditor(Space)	bpy.types	13801
+bpy.types.SpaceClipOverlay	SpaceClipOverlay(bpy_struct)	bpy.types	2486
+bpy.types.SpaceConsole	SpaceConsole(Space)	bpy.types	4917
+bpy.types.SpaceDopeSheetEditor	SpaceDopeSheetEditor(Space)	bpy.types	9698
+bpy.types.SpaceDopeSheetOverlay	SpaceDopeSheetOverlay(bpy_struct)	bpy.types	2594
+bpy.types.SpaceFileBrowser	SpaceFileBrowser(Space)	bpy.types	8390
+bpy.types.SpaceGraphEditor	SpaceGraphEditor(Space)	bpy.types	7862
+bpy.types.SpaceImageEditor	SpaceImageEditor(Space)	bpy.types	12608
+bpy.types.SpaceImageOverlay	SpaceImageOverlay(bpy_struct)	bpy.types	3097
+bpy.types.SpaceInfo	SpaceInfo(Space)	bpy.types	4221
+bpy.types.SpaceNLA	SpaceNLA(Space)	bpy.types	5122
+bpy.types.SpaceNodeEditor	SpaceNodeEditor(Space)	bpy.types	10137
+bpy.types.SpaceNodeEditorPath	SpaceNodeEditorPath(bpy_prop_collection)	bpy.types	3340
+bpy.types.SpaceNodeOverlay	SpaceNodeOverlay(bpy_struct)	bpy.types	4190
+bpy.types.SpaceOutliner	SpaceOutliner(Space)	bpy.types	10840
+bpy.types.SpacePreferences	SpacePreferences(Space)	bpy.types	4630
+bpy.types.SpaceProperties	SpaceProperties(Space)	bpy.types	9224
+bpy.types.SpaceSequenceEditor	SpaceSequenceEditor(Space)	bpy.types	10965
+bpy.types.SpaceSpreadsheet	SpaceSpreadsheet(Space)	bpy.types	7252
+bpy.types.SpaceTextEditor	SpaceTextEditor(Space)	bpy.types	7841
+bpy.types.SpaceUVEditor	SpaceUVEditor(bpy_struct)	bpy.types	6597
+bpy.types.SpaceView3D	SpaceView3D(Space)	bpy.types	20245
+bpy.types.Speaker	Speaker(ID)	bpy.types	5495
+bpy.types.SpeedControlStrip	SpeedControlStrip(EffectStrip)	bpy.types	5052
+bpy.types.Spline	Spline(bpy_struct)	bpy.types	7457
+bpy.types.SplineBezierPoints	SplineBezierPoints(bpy_prop_collection)	bpy.types	2423
+bpy.types.SplineIKConstraint	SplineIKConstraint(Constraint)	bpy.types	6441
+bpy.types.SplinePoint	SplinePoint(bpy_struct)	bpy.types	3138
+bpy.types.SplinePoints	SplinePoints(bpy_prop_collection)	bpy.types	2335
+bpy.types.SpotLight	SpotLight(Light)	bpy.types	5922
+bpy.types.SpreadsheetColumn	SpreadsheetColumn(bpy_struct)	bpy.types	2723
+bpy.types.SpreadsheetColumnID	SpreadsheetColumnID(bpy_struct)	bpy.types	2291
+bpy.types.SpreadsheetRowFilter	SpreadsheetRowFilter(bpy_struct)	bpy.types	5384
+bpy.types.SpreadsheetTable	SpreadsheetTable(bpy_struct)	bpy.types	2919
+bpy.types.SpreadsheetTableID	SpreadsheetTableID(bpy_struct)	bpy.types	2643
+bpy.types.SpreadsheetTableIDGeometry	SpreadsheetTableIDGeometry(SpreadsheetTableID)	bpy.types	4126
+bpy.types.SpreadsheetTables	SpreadsheetTables(bpy_prop_collection)	bpy.types	2464
+bpy.types.Stereo3dDisplay	Stereo3dDisplay(bpy_struct)	bpy.types	3295
+bpy.types.Stereo3dFormat	Stereo3dFormat(bpy_struct)	bpy.types	4436
+bpy.types.StretchToConstraint	StretchToConstraint(Constraint)	bpy.types	5150
+bpy.types.StringAttribute	StringAttribute(Attribute)	bpy.types	2565
+bpy.types.StringAttributeValue	StringAttributeValue(bpy_struct)	bpy.types	2296
+bpy.types.StringProperty	StringProperty(Property)	bpy.types	3356
+bpy.types.Strip	Strip(bpy_struct)	bpy.types	19187
+bpy.types.StripColorBalance	StripColorBalance(StripColorBalanceData)	bpy.types	2635
+bpy.types.StripColorBalanceData	StripColorBalanceData(bpy_struct)	bpy.types	5251
+bpy.types.StripCrop	StripCrop(bpy_struct)	bpy.types	3308
+bpy.types.StripElement	StripElement(bpy_struct)	bpy.types	3103
+bpy.types.StripElements	StripElements(bpy_prop_collection)	bpy.types	2688
+bpy.types.StripModifier	StripModifier(bpy_struct)	bpy.types	5606
+bpy.types.StripModifiers	StripModifiers(bpy_prop_collection)	bpy.types	3307
+bpy.types.StripProxy	StripProxy(bpy_struct)	bpy.types	4119
+bpy.types.StripTransform	StripTransform(bpy_struct)	bpy.types	4563
+bpy.types.StripsMeta	StripsMeta(bpy_prop_collection)	bpy.types	9176
+bpy.types.StripsTopLevel	StripsTopLevel(bpy_prop_collection)	bpy.types	9300
+bpy.types.Struct	Struct(bpy_struct)	bpy.types	4878
+bpy.types.StucciTexture	StucciTexture(Texture)	bpy.types	6094
+bpy.types.StudioLight	StudioLight(bpy_struct)	bpy.types	4293
+bpy.types.StudioLights	StudioLights(bpy_prop_collection)	bpy.types	3433
+bpy.types.SubsurfModifier	SubsurfModifier(Modifier)	bpy.types	6193
+bpy.types.SubtractStrip	SubtractStrip(EffectStrip)	bpy.types	3857
+bpy.types.SunLight	SunLight(Light)	bpy.types	5696
+bpy.types.SurfaceCurve	SurfaceCurve(Curve)	bpy.types	3729
+bpy.types.SurfaceDeformModifier	SurfaceDeformModifier(Modifier)	bpy.types	3804
+bpy.types.SurfaceModifier	SurfaceModifier(Modifier)	bpy.types	2404
+bpy.types.TEXTURE_UL_texpaintslots	TEXTURE_UL_texpaintslots(UIList)	bpy.types	2513
+bpy.types.TEXTURE_UL_texslots	TEXTURE_UL_texslots(UIList)	bpy.types	2473
+bpy.types.TexMapping	TexMapping(bpy_struct)	bpy.types	6320
+bpy.types.TexPaintSlot	TexPaintSlot(bpy_struct)	bpy.types	2736
+bpy.types.Text	Text(ID)	bpy.types	9760
+bpy.types.TextBox	TextBox(bpy_struct)	bpy.types	2489
+bpy.types.TextCharacterFormat	TextCharacterFormat(bpy_struct)	bpy.types	3179
+bpy.types.TextCurve	TextCurve(Curve)	bpy.types	10186
+bpy.types.TextLine	TextLine(bpy_struct)	bpy.types	2356
+bpy.types.TextStrip	TextStrip(EffectStrip)	bpy.types	8381
+bpy.types.TextboxState	TextboxState(bpy_struct)	bpy.types	2658
+bpy.types.Texture	Texture(ID)	bpy.types	10398
+bpy.types.TextureNode	TextureNode(NodeInternal)	bpy.types	5729
+bpy.types.TextureNodeAt	TextureNodeAt(TextureNode)	bpy.types	4340
+bpy.types.TextureNodeBricks	TextureNodeBricks(TextureNode)	bpy.types	5145
+bpy.types.TextureNodeChecker	TextureNodeChecker(TextureNode)	bpy.types	4410
+bpy.types.TextureNodeCombineColor	TextureNodeCombineColor(TextureNode)	bpy.types	4754
+bpy.types.TextureNodeCompose	TextureNodeCompose(TextureNode)	bpy.types	4410
+bpy.types.TextureNodeCoordinates	TextureNodeCoordinates(TextureNode)	bpy.types	4466
+bpy.types.TextureNodeCurveRGB	TextureNodeCurveRGB(TextureNode)	bpy.types	4643
+bpy.types.TextureNodeCurveTime	TextureNodeCurveTime(TextureNode)	bpy.types	4655
+bpy.types.TextureNodeDecompose	TextureNodeDecompose(TextureNode)	bpy.types	4438
+bpy.types.TextureNodeDistance	TextureNodeDistance(TextureNode)	bpy.types	4424
+bpy.types.TextureNodeGroup	TextureNodeGroup(TextureNode)	bpy.types	4571
+bpy.types.TextureNodeHueSaturation	TextureNodeHueSaturation(TextureNode)	bpy.types	4494
+bpy.types.TextureNodeImage	TextureNodeImage(TextureNode)	bpy.types	4826
+bpy.types.TextureNodeInvert	TextureNodeInvert(TextureNode)	bpy.types	4396
+bpy.types.TextureNodeMath	TextureNodeMath(TextureNode)	bpy.types	4755
+bpy.types.TextureNodeMixRGB	TextureNodeMixRGB(TextureNode)	bpy.types	4974
+bpy.types.TextureNodeOutput	TextureNodeOutput(TextureNode)	bpy.types	4532
+bpy.types.TextureNodeRGBToBW	TextureNodeRGBToBW(TextureNode)	bpy.types	4410
+bpy.types.TextureNodeRotate	TextureNodeRotate(TextureNode)	bpy.types	4396
+bpy.types.TextureNodeScale	TextureNodeScale(TextureNode)	bpy.types	4382
+bpy.types.TextureNodeSeparateColor	TextureNodeSeparateColor(TextureNode)	bpy.types	4770
+bpy.types.TextureNodeTexBlend	TextureNodeTexBlend(TextureNode)	bpy.types	4424
+bpy.types.TextureNodeTexClouds	TextureNodeTexClouds(TextureNode)	bpy.types	4438
+bpy.types.TextureNodeTexDistNoise	TextureNodeTexDistNoise(TextureNode)	bpy.types	4480
+bpy.types.TextureNodeTexMagic	TextureNodeTexMagic(TextureNode)	bpy.types	4424
+bpy.types.TextureNodeTexMarble	TextureNodeTexMarble(TextureNode)	bpy.types	4438
+bpy.types.TextureNodeTexMusgrave	TextureNodeTexMusgrave(TextureNode)	bpy.types	4466
+bpy.types.TextureNodeTexNoise	TextureNodeTexNoise(TextureNode)	bpy.types	4424
+bpy.types.TextureNodeTexStucci	TextureNodeTexStucci(TextureNode)	bpy.types	4438
+bpy.types.TextureNodeTexVoronoi	TextureNodeTexVoronoi(TextureNode)	bpy.types	4452
+bpy.types.TextureNodeTexWood	TextureNodeTexWood(TextureNode)	bpy.types	4410
+bpy.types.TextureNodeTexture	TextureNodeTexture(TextureNode)	bpy.types	4796
+bpy.types.TextureNodeTranslate	TextureNodeTranslate(TextureNode)	bpy.types	4438
+bpy.types.TextureNodeTree	TextureNodeTree(NodeTree)	bpy.types	3347
+bpy.types.TextureNodeValToNor	TextureNodeValToNor(TextureNode)	bpy.types	4424
+bpy.types.TextureNodeValToRGB	TextureNodeValToRGB(TextureNode)	bpy.types	4637
+bpy.types.TextureNodeViewer	TextureNodeViewer(TextureNode)	bpy.types	4396
+bpy.types.TextureSlot	TextureSlot(bpy_struct)	bpy.types	4321
+bpy.types.Theme	Theme(bpy_struct)	bpy.types	8389
+bpy.types.ThemeBoneColorSet	ThemeBoneColorSet(bpy_struct)	bpy.types	3331
+bpy.types.ThemeClipEditor	ThemeClipEditor(bpy_struct)	bpy.types	5759
+bpy.types.ThemeCollectionColor	ThemeCollectionColor(bpy_struct)	bpy.types	2406
+bpy.types.ThemeCommon	ThemeCommon(bpy_struct)	bpy.types	2501
+bpy.types.ThemeCommonAnim	ThemeCommonAnim(bpy_struct)	bpy.types	8574
+bpy.types.ThemeCommonCurves	ThemeCommonCurves(bpy_struct)	bpy.types	5204
+bpy.types.ThemeConsole	ThemeConsole(bpy_struct)	bpy.types	3675
+bpy.types.ThemeDopeSheet	ThemeDopeSheet(bpy_struct)	bpy.types	5064
+bpy.types.ThemeFileBrowser	ThemeFileBrowser(bpy_struct)	bpy.types	2916
+bpy.types.ThemeFontStyle	ThemeFontStyle(bpy_struct)	bpy.types	3476
+bpy.types.ThemeGradientColors	ThemeGradientColors(bpy_struct)	bpy.types	3149
+bpy.types.ThemeGraphEditor	ThemeGraphEditor(bpy_struct)	bpy.types	3422
+bpy.types.ThemeImageEditor	ThemeImageEditor(bpy_struct)	bpy.types	7900
+bpy.types.ThemeInfo	ThemeInfo(bpy_struct)	bpy.types	5249
+bpy.types.ThemeNLAEditor	ThemeNLAEditor(bpy_struct)	bpy.types	6662
+bpy.types.ThemeNodeEditor	ThemeNodeEditor(bpy_struct)	bpy.types	9832
+bpy.types.ThemeOutliner	ThemeOutliner(bpy_struct)	bpy.types	4046
+bpy.types.ThemePreferences	ThemePreferences(bpy_struct)	bpy.types	2589
+bpy.types.ThemeProperties	ThemeProperties(bpy_struct)	bpy.types	2565
+bpy.types.ThemeRegions	ThemeRegions(bpy_struct)	bpy.types	3080
+bpy.types.ThemeRegionsAssetShelf	ThemeRegionsAssetShelf(bpy_struct)	bpy.types	2746
+bpy.types.ThemeRegionsChannels	ThemeRegionsChannels(bpy_struct)	bpy.types	2823
+bpy.types.ThemeRegionsScrubbing	ThemeRegionsScrubbing(bpy_struct)	bpy.types	3230
+bpy.types.ThemeRegionsSidebars	ThemeRegionsSidebars(bpy_struct)	bpy.types	2673
+bpy.types.ThemeSequenceEditor	ThemeSequenceEditor(bpy_struct)	bpy.types	8116
+bpy.types.ThemeSpaceGeneric	ThemeSpaceGeneric(bpy_struct)	bpy.types	5691
+bpy.types.ThemeSpaceGradient	ThemeSpaceGradient(bpy_struct)	bpy.types	3780
+bpy.types.ThemeSpreadsheet	ThemeSpreadsheet(bpy_struct)	bpy.types	2674
+bpy.types.ThemeStatusBar	ThemeStatusBar(bpy_struct)	bpy.types	2332
+bpy.types.ThemeStripColor	ThemeStripColor(bpy_struct)	bpy.types	2327
+bpy.types.ThemeStyle	ThemeStyle(bpy_struct)	bpy.types	2719
+bpy.types.ThemeTextEditor	ThemeTextEditor(bpy_struct)	bpy.types	5211
+bpy.types.ThemeTopBar	ThemeTopBar(bpy_struct)	bpy.types	2290
+bpy.types.ThemeUserInterface	ThemeUserInterface(bpy_struct)	bpy.types	18443
+bpy.types.ThemeView3D	ThemeView3D(bpy_struct)	bpy.types	16838
+bpy.types.ThemeWidgetColors	ThemeWidgetColors(bpy_struct)	bpy.types	7666
+bpy.types.ThemeWidgetStateColors	ThemeWidgetStateColors(bpy_struct)	bpy.types	6090
+bpy.types.TimelineMarker	TimelineMarker(bpy_struct)	bpy.types	4265
+bpy.types.TimelineMarkers	TimelineMarkers(bpy_prop_collection)	bpy.types	3042
+bpy.types.Timer	Timer(bpy_struct)	bpy.types	2672
+bpy.types.ToolSettings	ToolSettings(bpy_struct)	bpy.types	34178
+bpy.types.TrackToConstraint	TrackToConstraint(Constraint)	bpy.types	3882
+bpy.types.TransformCacheConstraint	TransformCacheConstraint(Constraint)	bpy.types	2951
+bpy.types.TransformConstraint	TransformConstraint(Constraint)	bpy.types	13452
+bpy.types.TransformOrientation	TransformOrientation(bpy_struct)	bpy.types	2672
+bpy.types.TransformOrientationSlot	TransformOrientationSlot(bpy_struct)	bpy.types	3109
+bpy.types.TriangulateModifier	TriangulateModifier(Modifier)	bpy.types	3636
+bpy.types.UDIMTile	UDIMTile(bpy_struct)	bpy.types	4420
+bpy.types.UDIMTiles	UDIMTiles(bpy_prop_collection)	bpy.types	3413
+bpy.types.UILayout	UILayout(bpy_struct)	bpy.types	87740
+bpy.types.UIList	UIList(bpy_struct)	bpy.types	24765
+bpy.types.UIPieMenu	UIPieMenu(bpy_struct)	bpy.types	2426
+bpy.types.UIPopover	UIPopover(bpy_struct)	bpy.types	2426
+bpy.types.UIPopupMenu	UIPopupMenu(bpy_struct)	bpy.types	2446
+bpy.types.UI_UL_list	UI_UL_list(UIList)	bpy.types	4305
+bpy.types.USDHook	USDHook(bpy_struct)	bpy.types	14610
+bpy.types.USERPREF_UL_extension_repos	USERPREF_UL_extension_repos(UIList)	bpy.types	2537
+bpy.types.UVLoopLayers	UVLoopLayers(bpy_prop_collection)	bpy.types	3726
+bpy.types.UVProjectModifier	UVProjectModifier(Modifier)	bpy.types	3837
+bpy.types.UVProjector	UVProjector(bpy_struct)	bpy.types	2324
+bpy.types.UVWarpModifier	UVWarpModifier(Modifier)	bpy.types	5004
+bpy.types.UnifiedPaintSettings	UnifiedPaintSettings(bpy_struct)	bpy.types	6953
+bpy.types.UnitSettings	UnitSettings(bpy_struct)	bpy.types	3840
+bpy.types.UnknownType	UnknownType(bpy_struct)	bpy.types	2082
+bpy.types.UserAssetLibrary	UserAssetLibrary(bpy_struct)	bpy.types	3939
+bpy.types.UserExtensionRepo	UserExtensionRepo(bpy_struct)	bpy.types	5181
+bpy.types.UserExtensionRepoCollection	UserExtensionRepoCollection(bpy_prop_collection)	bpy.types	3516
+bpy.types.UserSolidLight	UserSolidLight(bpy_struct)	bpy.types	3425
+bpy.types.UvSculpt	UvSculpt(bpy_struct)	bpy.types	2761
+bpy.types.VIEW3D_AST_brush_gpencil_paint	VIEW3D_AST_brush_gpencil_paint(AssetShelf)	bpy.types	5899
+bpy.types.VIEW3D_AST_brush_gpencil_sculpt	VIEW3D_AST_brush_gpencil_sculpt(AssetShelf)	bpy.types	5915
+bpy.types.VIEW3D_AST_brush_gpencil_vertex	VIEW3D_AST_brush_gpencil_vertex(AssetShelf)	bpy.types	5915
+bpy.types.VIEW3D_AST_brush_gpencil_weight	VIEW3D_AST_brush_gpencil_weight(AssetShelf)	bpy.types	5915
+bpy.types.VIEW3D_AST_brush_sculpt	VIEW3D_AST_brush_sculpt(AssetShelf)	bpy.types	5787
+bpy.types.VIEW3D_AST_brush_sculpt_curves	VIEW3D_AST_brush_sculpt_curves(AssetShelf)	bpy.types	5899
+bpy.types.VIEW3D_AST_brush_texture_paint	VIEW3D_AST_brush_texture_paint(AssetShelf)	bpy.types	5899
+bpy.types.VIEW3D_AST_brush_vertex_paint	VIEW3D_AST_brush_vertex_paint(AssetShelf)	bpy.types	5883
+bpy.types.VIEW3D_AST_brush_weight_paint	VIEW3D_AST_brush_weight_paint(AssetShelf)	bpy.types	5883
+bpy.types.VIEW3D_AST_pose_library	VIEW3D_AST_pose_library(AssetShelf)	bpy.types	3444
+bpy.types.VIEW3D_FH_camera_background_image	VIEW3D_FH_camera_background_image(FileHandler)	bpy.types	2361
+bpy.types.VIEW3D_FH_empty_image	VIEW3D_FH_empty_image(FileHandler)	bpy.types	2265
+bpy.types.VIEW3D_FH_vdb_volume	VIEW3D_FH_vdb_volume(FileHandler)	bpy.types	2257
+bpy.types.VIEWLAYER_UL_aov	VIEWLAYER_UL_aov(UIList)	bpy.types	2756
+bpy.types.VIEWLAYER_UL_linesets	VIEWLAYER_UL_linesets(UIList)	bpy.types	2489
+bpy.types.VOLUME_UL_grids	VOLUME_UL_grids(UIList)	bpy.types	2441
+bpy.types.VectorFont	VectorFont(ID)	bpy.types	4862
+bpy.types.VertexGroup	VertexGroup(bpy_struct)	bpy.types	3828
+bpy.types.VertexGroupElement	VertexGroupElement(bpy_struct)	bpy.types	2541
+bpy.types.VertexGroups	VertexGroups(bpy_prop_collection)	bpy.types	3260
+bpy.types.VertexPaint	VertexPaint(Paint)	bpy.types	3041
+bpy.types.VertexWeightEditModifier	VertexWeightEditModifier(Modifier)	bpy.types	7184
+bpy.types.VertexWeightMixModifier	VertexWeightMixModifier(Modifier)	bpy.types	7570
+bpy.types.VertexWeightProximityModifier	VertexWeightProximityModifier(Modifier)	bpy.types	7798
+bpy.types.View2D	View2D(bpy_struct)	bpy.types	3036
+bpy.types.View3DCursor	View3DCursor(bpy_struct)	bpy.types	3857
+bpy.types.View3DOverlay	View3DOverlay(bpy_struct)	bpy.types	20674
+bpy.types.View3DShading	View3DShading(bpy_struct)	bpy.types	12540
+bpy.types.ViewLayer	ViewLayer(bpy_struct)	bpy.types	16621
+bpy.types.ViewLayerEEVEE	ViewLayerEEVEE(bpy_struct)	bpy.types	2869
+bpy.types.ViewLayers	ViewLayers(bpy_prop_collection)	bpy.types	2964
+bpy.types.ViewerNodeViewerPathElem	ViewerNodeViewerPathElem(ViewerPathElem)	bpy.types	2348
+bpy.types.ViewerPath	ViewerPath(bpy_struct)	bpy.types	2611
+bpy.types.ViewerPathElem	ViewerPathElem(bpy_struct)	bpy.types	3411
+bpy.types.Volume	Volume(ID)	bpy.types	7383
+bpy.types.VolumeDisplaceModifier	VolumeDisplaceModifier(Modifier)	bpy.types	4039
+bpy.types.VolumeDisplay	VolumeDisplay(bpy_struct)	bpy.types	4147
+bpy.types.VolumeGrid	VolumeGrid(bpy_struct)	bpy.types	3499
+bpy.types.VolumeGrids	VolumeGrids(bpy_prop_collection)	bpy.types	3766
+bpy.types.VolumeRender	VolumeRender(bpy_struct)	bpy.types	3368
+bpy.types.VolumeToMeshModifier	VolumeToMeshModifier(Modifier)	bpy.types	4221
+bpy.types.VoronoiTexture	VoronoiTexture(Texture)	bpy.types	6540
+bpy.types.WORKSPACE_UL_addons_items	WORKSPACE_UL_addons_items(UIList)	bpy.types	2521
+bpy.types.WalkNavigation	WalkNavigation(bpy_struct)	bpy.types	3642
+bpy.types.WarpModifier	WarpModifier(Modifier)	bpy.types	5534
+bpy.types.WaveModifier	WaveModifier(Modifier)	bpy.types	7083
+bpy.types.WeightedNormalModifier	WeightedNormalModifier(Modifier)	bpy.types	4205
+bpy.types.WeldModifier	WeldModifier(Modifier)	bpy.types	3290
+bpy.types.WhiteBalanceModifier	WhiteBalanceModifier(StripModifier)	bpy.types	2875
+bpy.types.Window	Window(bpy_struct)	bpy.types	9012
+bpy.types.WindowManager	WindowManager(ID)	bpy.types	30360
+bpy.types.Windows	Windows(bpy_prop_collection)	bpy.types	2464
+bpy.types.WipeStrip	WipeStrip(EffectStrip)	bpy.types	4513
+bpy.types.WireframeModifier	WireframeModifier(Modifier)	bpy.types	4562
+bpy.types.WoodTexture	WoodTexture(Texture)	bpy.types	6650
+bpy.types.WorkSpace	WorkSpace(ID)	bpy.types	6765
+bpy.types.WorkSpaceTool	WorkSpaceTool(bpy_struct)	bpy.types	6269
+bpy.types.World	World(ID)	bpy.types	7702
+bpy.types.WorldLighting	WorldLighting(bpy_struct)	bpy.types	2464
+bpy.types.WorldMistSettings	WorldMistSettings(bpy_struct)	bpy.types	3460
+bpy.types.XrActionMap	XrActionMap(bpy_struct)	bpy.types	3873
+bpy.types.XrActionMapBinding	XrActionMapBinding(bpy_struct)	bpy.types	5359
+bpy.types.XrActionMapBindings	XrActionMapBindings(bpy_prop_collection)	bpy.types	3889
+bpy.types.XrActionMapItem	XrActionMapItem(bpy_struct)	bpy.types	8126
+bpy.types.XrActionMapItems	XrActionMapItems(bpy_prop_collection)	bpy.types	3729
+bpy.types.XrActionMaps	XrActionMaps(bpy_prop_collection)	bpy.types	4420
+bpy.types.XrComponentPath	XrComponentPath(bpy_struct)	bpy.types	2649
+bpy.types.XrComponentPaths	XrComponentPaths(bpy_prop_collection)	bpy.types	3237
+bpy.types.XrEventData	XrEventData(bpy_struct)	bpy.types	5764
+bpy.types.XrNavigation	XrNavigation(bpy_struct)	bpy.types	3039
+bpy.types.XrSessionSettings	XrSessionSettings(bpy_struct)	bpy.types	14678
+bpy.types.XrSessionState	XrSessionState(bpy_struct)	bpy.types	13844
+bpy.types.XrUserPath	XrUserPath(bpy_struct)	bpy.types	2507
+bpy.types.XrUserPaths	XrUserPaths(bpy_prop_collection)	bpy.types	3030
+bpy.types.XrViewfinderState	XrViewfinderState(bpy_struct)	bpy.types	5660
+bpy.types.bpy_prop	bpy_prop	bpy.types	3444
+bpy.types.bpy_prop_array	bpy_prop_array	bpy.types	1788
+bpy.types.bpy_prop_collection	bpy_prop_collection	bpy.types	5809
+bpy.types.bpy_prop_collection_idprop	bpy_prop_collection_idprop	bpy.types	1292
+bpy.types.bpy_struct	bpy_struct	bpy.types	60155
+bpy.types.wmOwnerID	wmOwnerID(bpy_struct)	bpy.types	2340
+bpy.types.wmOwnerIDs	wmOwnerIDs(bpy_prop_collection)	bpy.types	2694
+bpy.types.wmTools	wmTools(bpy_prop_collection)	bpy.types	3690
+bpy.utils	Utilities (bpy.utils)	bpy.utils	22812
+bpy.utils.previews	bpy.utils submodule (bpy.utils.previews)	bpy.utils	5575
+bpy.utils.units	bpy.utils submodule (bpy.utils.units)	bpy.utils	2822
+bpy_extras	Extra Utilities (bpy_extras)	bpy_extras	897
+bpy_extras.anim_utils	bpy_extras submodule (bpy_extras.anim_utils)	bpy_extras	13066
+bpy_extras.asset_utils	bpy_extras submodule (bpy_extras.asset_utils)	bpy_extras	2709
+bpy_extras.id_map_utils	bpy_extras submodule (bpy_extras.id_map_utils)	bpy_extras	1227
+bpy_extras.image_utils	bpy_extras submodule (bpy_extras.image_utils)	bpy_extras	2004
+bpy_extras.io_utils	bpy_extras submodule (bpy_extras.io_utils)	bpy_extras	9128
+bpy_extras.keyconfig_utils	bpy_extras submodule (bpy_extras.keyconfig_utils)	bpy_extras	1190
+bpy_extras.mesh_utils	bpy_extras submodule (bpy_extras.mesh_utils)	bpy_extras	4104
+bpy_extras.node_utils	bpy_extras submodule (bpy_extras.node_utils)	bpy_extras	1986
+bpy_extras.object_utils	bpy_extras submodule (bpy_extras.object_utils)	bpy_extras	5178
+bpy_extras.view3d_utils	bpy_extras submodule (bpy_extras.view3d_utils)	bpy_extras	4177
+bpy_types_custom_properties	Types with Custom Property Support	bpy_types_custom_properties	2802
+bpy_types_enum_items/asset_access_items	Asset Access Items	enum_items	392
+bpy_types_enum_items/asset_import_method_items	Asset Import Method Items	enum_items	767
+bpy_types_enum_items/asset_library_type_items	Asset Library Type Items	enum_items	527
+bpy_types_enum_items/attr_storage_type_items	Attr Storage Type Items	enum_items	185
+bpy_types_enum_items/attribute_curves_domain_items	Attribute Curves Domain Items	enum_items	124
+bpy_types_enum_items/attribute_domain_edge_face_items	Attribute Domain Edge Face Items	enum_items	169
+bpy_types_enum_items/attribute_domain_items	Attribute Domain Items	enum_items	397
+bpy_types_enum_items/attribute_domain_only_mesh_items	Attribute Domain Only Mesh Items	enum_items	269
+bpy_types_enum_items/attribute_domain_only_mesh_no_corner_items	Attribute Domain Only Mesh No Corner Items	enum_items	230
+bpy_types_enum_items/attribute_domain_only_mesh_no_edge_items	Attribute Domain Only Mesh No Edge Items	enum_items	242
+bpy_types_enum_items/attribute_domain_point_edge_face_curve_items	Attribute Domain Point Edge Face Curve Items	enum_items	277
+bpy_types_enum_items/attribute_domain_point_face_curve_items	Attribute Domain Point Face Curve Items	enum_items	224
+bpy_types_enum_items/attribute_domain_with_auto_items	Attribute Domain With Auto Items	enum_items	435
+bpy_types_enum_items/attribute_domain_without_corner_items	Attribute Domain Without Corner Items	enum_items	368
+bpy_types_enum_items/attribute_type_items	Attribute Type Items	enum_items	893
+bpy_types_enum_items/attribute_type_with_auto_items	Attribute Type With Auto Items	enum_items	931
+bpy_types_enum_items/attrtype_items	Attrtype Items	enum_items	881
+bpy_types_enum_items/axis_flag_xyz_items	Axis Flag Xyz Items	enum_items	80
+bpy_types_enum_items/axis_xy_items	Axis Xy Items	enum_items	60
+bpy_types_enum_items/axis_xyz_items	Axis Xyz Items	enum_items	70
+bpy_types_enum_items/bake_margin_type_items	Bake Margin Type Items	enum_items	203
+bpy_types_enum_items/bake_pass_filter_type_items	Bake Pass Filter Type Items	enum_items	256
+bpy_types_enum_items/bake_pass_type_items	Bake Pass Type Items	enum_items	359
+bpy_types_enum_items/bake_save_mode_items	Bake Save Mode Items	enum_items	206
+bpy_types_enum_items/bake_target_items	Bake Target Items	enum_items	266
+bpy_types_enum_items/beztriple_interpolation_easing_items	Beztriple Interpolation Easing Items	enum_items	489
+bpy_types_enum_items/beztriple_interpolation_mode_items	Beztriple Interpolation Mode Items	enum_items	1214
+bpy_types_enum_items/beztriple_keyframe_type_items	Beztriple Keyframe Type Items	enum_items	574
+bpy_types_enum_items/boidrule_type_items	Boidrule Type Items	enum_items	697
+bpy_types_enum_items/brush_curve_preset_items	Brush Curve Preset Items	enum_items	295
+bpy_types_enum_items/brush_curves_sculpt_brush_type_items	Brush Curves Sculpt Brush Type Items	enum_items	364
+bpy_types_enum_items/brush_gpencil_sculpt_types_items	Brush Gpencil Sculpt Types Items	enum_items	686
+bpy_types_enum_items/brush_gpencil_types_items	Brush Gpencil Types Items	enum_items	324
+bpy_types_enum_items/brush_gpencil_vertex_types_items	Brush Gpencil Vertex Types Items	enum_items	445
+bpy_types_enum_items/brush_gpencil_weight_types_items	Brush Gpencil Weight Types Items	enum_items	319
+bpy_types_enum_items/brush_image_brush_type_items	Brush Image Brush Type Items	enum_items	190
+bpy_types_enum_items/brush_sculpt_brush_type_items	Brush Sculpt Brush Type Items	enum_items	939
+bpy_types_enum_items/brush_vertex_brush_type_items	Brush Vertex Brush Type Items	enum_items	156
+bpy_types_enum_items/brush_weight_brush_type_items	Brush Weight Brush Type Items	enum_items	156
+bpy_types_enum_items/clip_editor_mode_items	Clip Editor Mode Items	enum_items	166
+bpy_types_enum_items/collection_color_items	Collection Color Items	enum_items	328
+bpy_types_enum_items/color_attribute_domain_items	Color Attribute Domain Items	enum_items	122
+bpy_types_enum_items/color_attribute_type_items	Color Attribute Type Items	enum_items	216
+bpy_types_enum_items/color_sets_items	Color Sets Items	enum_items	853
+bpy_types_enum_items/color_space_convert_default_items	Color Space Convert Default Items	enum_items	194
+bpy_types_enum_items/constraint_type_items	Constraint Type Items	enum_items	2897
+bpy_types_enum_items/context_mode_items	Context Mode Items	enum_items	1063
+bpy_types_enum_items/curve_fit_method_items	Curve Fit Method Items	enum_items	201
+bpy_types_enum_items/curve_normal_mode_items	Curve Normal Mode Items	enum_items	416
+bpy_types_enum_items/curves_handle_type_items	Curves Handle Type Items	enum_items	442
+bpy_types_enum_items/curves_type_items	Curves Type Items	enum_items	144
+bpy_types_enum_items/driver_target_rotation_mode_items	Driver Target Rotation Mode Items	enum_items	924
+bpy_types_enum_items/dt_layers_select_dst_items	Dt Layers Select Dst Items	enum_items	285
+bpy_types_enum_items/dt_layers_select_src_items	Dt Layers Select Src Items	enum_items	367
+bpy_types_enum_items/dt_method_edge_items	Dt Method Edge Items	enum_items	590
+bpy_types_enum_items/dt_method_loop_items	Dt Method Loop Items	enum_items	773
+bpy_types_enum_items/dt_method_poly_items	Dt Method Poly Items	enum_items	465
+bpy_types_enum_items/dt_method_vertex_items	Dt Method Vertex Items	enum_items	768
+bpy_types_enum_items/dt_mix_mode_items	Dt Mix Mode Items	enum_items	777
+bpy_types_enum_items/event_direction_items	Event Direction Items	enum_items	272
+bpy_types_enum_items/event_type_items	Event Type Items	enum_items	5966
+bpy_types_enum_items/event_type_mask_items	Event Type Mask Items	enum_items	301
+bpy_types_enum_items/event_value_items	Event Value Items	enum_items	214
+bpy_types_enum_items/exr_codec_items	Exr Codec Items	enum_items	994
+bpy_types_enum_items/fcurve_auto_smoothing_items	Fcurve Auto Smoothing Items	enum_items	379
+bpy_types_enum_items/file_path_foreach_flag_items	File Path Foreach Flag Items	enum_items	1355
+bpy_types_enum_items/fileselect_params_sort_items	Fileselect Params Sort Items	enum_items	563
+bpy_types_enum_items/fmodifier_type_items	Fmodifier Type Items	enum_items	736
+bpy_types_enum_items/geometry_component_type_items	Geometry Component Type Items	enum_items	543
+bpy_types_enum_items/geometry_nodes_gizmo_color_items	Geometry Nodes Gizmo Color Items	enum_items	158
+bpy_types_enum_items/geometry_nodes_linear_gizmo_draw_style_items	Geometry Nodes Linear Gizmo Draw Style Items	enum_items	162
+bpy_types_enum_items/grease_pencil_selectmode_items	Grease Pencil Selectmode Items	enum_items	241
+bpy_types_enum_items/icon_items	Icon Items	enum_items	36236
+bpy_types_enum_items/id_type_items	Id Type Items	enum_items	1012
+bpy_types_enum_items/image_color_depth_items	Image Color Depth Items	enum_items	227
+bpy_types_enum_items/image_color_mode_items	Image Color Mode Items	enum_items	274
+bpy_types_enum_items/image_generated_type_items	Image Generated Type Items	enum_items	255
+bpy_types_enum_items/image_type_all_items	Image Type All Items	enum_items	1034
+bpy_types_enum_items/keyblock_type_items	Keyblock Type Items	enum_items	176
+bpy_types_enum_items/keyframe_handle_type_items	Keyframe Handle Type Items	enum_items	482
+bpy_types_enum_items/keyframe_paste_merge_items	Keyframe Paste Merge Items	enum_items	352
+bpy_types_enum_items/keyframe_paste_offset_items	Keyframe Paste Offset Items	enum_items	339
+bpy_types_enum_items/keyframe_paste_offset_value_items	Keyframe Paste Offset Value Items	enum_items	545
+bpy_types_enum_items/keying_flag_api_items	Keying Flag Api Items	enum_items	636
+bpy_types_enum_items/keying_flag_items	Keying Flag Items	enum_items	246
+bpy_types_enum_items/keyingset_path_grouping_items	Keyingset Path Grouping Items	enum_items	154
+bpy_types_enum_items/keymap_propvalue_items	Keymap Propvalue Items	enum_items	73
+bpy_types_enum_items/light_type_items	Light Type Items	enum_items	270
+bpy_types_enum_items/lightprobes_type_items	Lightprobes Type Items	enum_items	126
+bpy_types_enum_items/linestyle_alpha_modifier_type_items	Linestyle Alpha Modifier Type Items	enum_items	360
+bpy_types_enum_items/linestyle_color_modifier_type_items	Linestyle Color Modifier Type Items	enum_items	360
+bpy_types_enum_items/linestyle_geometry_modifier_type_items	Linestyle Geometry Modifier Type Items	enum_items	596
+bpy_types_enum_items/linestyle_thickness_modifier_type_items	Linestyle Thickness Modifier Type Items	enum_items	400
+bpy_types_enum_items/mapping_type_items	Mapping Type Items	enum_items	334
+bpy_types_enum_items/mesh_delimit_mode_items	Mesh Delimit Mode Items	enum_items	298
+bpy_types_enum_items/mesh_select_mode_items	Mesh Select Mode Items	enum_items	186
+bpy_types_enum_items/mesh_select_mode_uv_items	Mesh Select Mode Uv Items	enum_items	194
+bpy_types_enum_items/mesh_walk_delimit_edge_loop_items	Mesh Walk Delimit Edge Loop Items	enum_items	497
+bpy_types_enum_items/mesh_walk_delimit_edge_ring_items	Mesh Walk Delimit Edge Ring Items	enum_items	383
+bpy_types_enum_items/mesh_walk_delimit_face_loop_items	Mesh Walk Delimit Face Loop Items	enum_items	285
+bpy_types_enum_items/metaelem_type_items	Metaelem Type Items	enum_items	164
+bpy_types_enum_items/modifier_shrinkwrap_mode_items	Modifier Shrinkwrap Mode Items	enum_items	744
+bpy_types_enum_items/modifier_triangulate_ngon_method_items	Modifier Triangulate Ngon Method Items	enum_items	228
+bpy_types_enum_items/modifier_triangulate_quad_method_items	Modifier Triangulate Quad Method Items	enum_items	504
+bpy_types_enum_items/motionpath_bake_location_items	Motionpath Bake Location Items	enum_items	186
+bpy_types_enum_items/motionpath_display_type_items	Motionpath Display Type Items	enum_items	264
+bpy_types_enum_items/motionpath_range_items	Motionpath Range Items	enum_items	338
+bpy_types_enum_items/navigation_mode_items	Navigation Mode Items	enum_items	190
+bpy_types_enum_items/nla_mode_blend_items	Nla Mode Blend Items	enum_items	611
+bpy_types_enum_items/nla_mode_extend_items	Nla Mode Extend Items	enum_items	283
+bpy_types_enum_items/node_boolean_math_items	Node Boolean Math Items	enum_items	649
+bpy_types_enum_items/node_clamp_items	Node Clamp Items	enum_items	204
+bpy_types_enum_items/node_combsep_color_items	Node Combsep Color Items	enum_items	268
+bpy_types_enum_items/node_compare_operation_items	Node Compare Operation Items	enum_items	750
+bpy_types_enum_items/node_compositor_extension_items	Node Compositor Extension Items	enum_items	347
+bpy_types_enum_items/node_compositor_interpolation_items	Node Compositor Interpolation Items	enum_items	318
+bpy_types_enum_items/node_float_to_int_items	Node Float To Int Items	enum_items	414
+bpy_types_enum_items/node_geometry_curve_handle_side_items	Node Geometry Curve Handle Side Items	enum_items	177
+bpy_types_enum_items/node_geometry_mesh_circle_fill_type_items	Node Geometry Mesh Circle Fill Type Items	enum_items	168
+bpy_types_enum_items/node_integer_math_items	Node Integer Math Items	enum_items	1322
+bpy_types_enum_items/node_map_range_items	Node Map Range Items	enum_items	453
+bpy_types_enum_items/node_math_items	Node Math Items	enum_items	2250
+bpy_types_enum_items/node_socket_data_type_items	Node Socket Data Type Items	enum_items	609
+bpy_types_enum_items/node_socket_in_out_items	Node Socket In Out Items	enum_items	102
+bpy_types_enum_items/node_socket_structure_type_items	Node Socket Structure Type Items	enum_items	437
+bpy_types_enum_items/node_socket_type_items	Node Socket Type Items	enum_items	620
+bpy_types_enum_items/node_tree_interface_item_type_items	Node Tree Interface Item Type Items	enum_items	130
+bpy_types_enum_items/node_vec_math_items	Node Vec Math Items	enum_items	1733
+bpy_types_enum_items/node_warning_type_items	Node Warning Type Items	enum_items	126
+bpy_types_enum_items/normal_space_items	Normal Space Items	enum_items	171
+bpy_types_enum_items/normal_swizzle_items	Normal Swizzle Items	enum_items	160
+bpy_types_enum_items/object_axis_flip_items	Object Axis Flip Items	enum_items	200
+bpy_types_enum_items/object_axis_items	Object Axis Items	enum_items	154
+bpy_types_enum_items/object_empty_drawtype_items	Object Empty Drawtype Items	enum_items	258
+bpy_types_enum_items/object_gpencil_type_items	Object Gpencil Type Items	enum_items	532
+bpy_types_enum_items/object_mode_items	Object Mode Items	enum_items	684
+bpy_types_enum_items/object_modifier_type_items	Object Modifier Type Items	enum_items	6938
+bpy_types_enum_items/object_rotation_mode_items	Object Rotation Mode Items	enum_items	639
+bpy_types_enum_items/object_shaderfx_type_items	Object Shaderfx Type Items	enum_items	515
+bpy_types_enum_items/object_type_curve_items	Object Type Curve Items	enum_items	126
+bpy_types_enum_items/object_type_items	Object Type Items	enum_items	462
+bpy_types_enum_items/operator_context_items	Operator Context Items	enum_items	556
+bpy_types_enum_items/operator_property_tag_items	Operator Property Tag Items	enum_items	155
+bpy_types_enum_items/operator_return_items	Operator Return Items	enum_items	459
+bpy_types_enum_items/operator_type_flag_items	Operator Type Flag Items	enum_items	1354
+bpy_types_enum_items/particle_edit_disconnected_hair_brush_items	Particle Edit Disconnected Hair Brush Items	enum_items	299
+bpy_types_enum_items/particle_edit_hair_brush_items	Particle Edit Hair Brush Items	enum_items	341
+bpy_types_enum_items/preference_section_items	Preference Section Items	enum_items	727
+bpy_types_enum_items/prop_dynamicpaint_type_items	Prop Dynamicpaint Type Items	enum_items	116
+bpy_types_enum_items/property_flag_enum_items	Property Flag Enum Items	enum_items	849
+bpy_types_enum_items/property_flag_items	Property Flag Items	enum_items	1417
+bpy_types_enum_items/property_override_flag_collection_items	Property Override Flag Collection Items	enum_items	545
+bpy_types_enum_items/property_override_flag_items	Property Override Flag Items	enum_items	309
+bpy_types_enum_items/property_string_search_flag_items	Property String Search Flag Items	enum_items	210
+bpy_types_enum_items/property_subtype_items	Property Subtype Items	enum_items	1883
+bpy_types_enum_items/property_subtype_number_array_items	Property Subtype Number Array Items	enum_items	749
+bpy_types_enum_items/property_subtype_number_items	Property Subtype Number Items	enum_items	1059
+bpy_types_enum_items/property_subtype_string_items	Property Subtype String Items	enum_items	289
+bpy_types_enum_items/property_type_items	Property Type Items	enum_items	221
+bpy_types_enum_items/property_unit_items	Property Unit Items	enum_items	489
+bpy_types_enum_items/proportional_falloff_curve_only_items	Proportional Falloff Curve Only Items	enum_items	344
+bpy_types_enum_items/proportional_falloff_items	Proportional Falloff Items	enum_items	406
+bpy_types_enum_items/ramp_blend_items	Ramp Blend Items	enum_items	531
+bpy_types_enum_items/region_panel_category_items	Region Panel Category Items	enum_items	154
+bpy_types_enum_items/region_type_items	Region Type Items	enum_items	520
+bpy_types_enum_items/rigidbody_constraint_type_items	Rigidbody Constraint Type Items	enum_items	666
+bpy_types_enum_items/rigidbody_object_shape_items	Rigidbody Object Shape Items	enum_items	605
+bpy_types_enum_items/rigidbody_object_type_items	Rigidbody Object Type Items	enum_items	224
+bpy_types_enum_items/shading_type_items	Shading Type Items	enum_items	395
+bpy_types_enum_items/shared_automasking_flag_items	Shared Automasking Flag Items	enum_items	1227
+bpy_types_enum_items/shrinkwrap_face_cull_items	Shrinkwrap Face Cull Items	enum_items	216
+bpy_types_enum_items/shrinkwrap_type_items	Shrinkwrap Type Items	enum_items	480
+bpy_types_enum_items/snap_animation_element_items	Snap Animation Element Items	enum_items	205
+bpy_types_enum_items/snap_element_items	Snap Element Items	enum_items	646
+bpy_types_enum_items/snap_source_items	Snap Source Items	enum_items	268
+bpy_types_enum_items/space_action_mode_items	Space Action Mode Items	enum_items	254
+bpy_types_enum_items/space_file_browse_mode_items	Space File Browse Mode Items	enum_items	262
+bpy_types_enum_items/space_graph_mode_items	Space Graph Mode Items	enum_items	246
+bpy_types_enum_items/space_image_mode_all_items	Space Image Mode All Items	enum_items	245
+bpy_types_enum_items/space_image_mode_items	Space Image Mode Items	enum_items	172
+bpy_types_enum_items/space_sequencer_view_type_items	Space Sequencer View Type Items	enum_items	178
+bpy_types_enum_items/space_type_items	Space Type Items	enum_items	1557
+bpy_types_enum_items/stereo3d_anaglyph_type_items	Stereo3D Anaglyph Type Items	enum_items	168
+bpy_types_enum_items/stereo3d_display_items	Stereo3D Display Items	enum_items	651
+bpy_types_enum_items/stereo3d_interlace_type_items	Stereo3D Interlace Type Items	enum_items	220
+bpy_types_enum_items/strip_color_items	Strip Color Items	enum_items	344
+bpy_types_enum_items/strip_modifier_type_items	Strip Modifier Type Items	enum_items	389
+bpy_types_enum_items/strip_scale_method_items	Strip Scale Method Items	enum_items	466
+bpy_types_enum_items/strip_sound_modifier_type_items	Strip Sound Modifier Type Items	enum_items	158
+bpy_types_enum_items/strip_video_modifier_type_items	Strip Video Modifier Type Items	enum_items	323
+bpy_types_enum_items/stroke_depth_order_items	Stroke Depth Order Items	enum_items	246
+bpy_types_enum_items/subdivision_boundary_smooth_items	Subdivision Boundary Smooth Items	enum_items	225
+bpy_types_enum_items/subdivision_uv_smooth_items	Subdivision Uv Smooth Items	enum_items	772
+bpy_types_enum_items/symmetrize_direction_items	Symmetrize Direction Items	enum_items	238
+bpy_types_enum_items/texture_type_items	Texture Type Items	enum_items	1000
+bpy_types_enum_items/transform_mode_type_items	Transform Mode Type Items	enum_items	1019
+bpy_types_enum_items/transform_orientation_items	Transform Orientation Items	enum_items	654
+bpy_types_enum_items/transform_pivot_full_items	Transform Pivot Full Items	enum_items	468
+bpy_types_enum_items/uilist_layout_type_items	Uilist Layout Type Items	enum_items	202
+bpy_types_enum_items/unpack_method_items	Unpack Method Items	enum_items	277
+bpy_types_enum_items/velocity_unit_items	Velocity Unit Items	enum_items	98
+bpy_types_enum_items/views_format_items	Views Format Items	enum_items	233
+bpy_types_enum_items/views_format_multilayer_items	Views Format Multilayer Items	enum_items	247
+bpy_types_enum_items/views_format_multiview_items	Views Format Multiview Items	enum_items	315
+bpy_types_enum_items/volume_grid_data_type_items	Volume Grid Data Type Items	enum_items	628
+bpy_types_enum_items/window_cursor_items	Window Cursor Items	enum_items	685
+bpy_types_enum_items/wm_job_type_items	Wm Job Type Items	enum_items	237
+bpy_types_enum_items/wm_report_items	Wm Report Items	enum_items	312
+bpy_types_enum_items/workspace_object_mode_items	Workspace Object Mode Items	enum_items	735
+change_log	Change Log	guide	36190
+freestyle	Freestyle Module (freestyle)	freestyle	743
+freestyle.chainingiterators	Freestyle Chaining Iterators (freestyle.chainingiterators)	freestyle	17543
+freestyle.functions	Freestyle Functions (freestyle.functions)	freestyle	78194
+freestyle.predicates	Freestyle Predicates (freestyle.predicates)	freestyle	22999
+freestyle.shaders	Freestyle Shaders (freestyle.shaders)	freestyle	36342
+freestyle.types	Freestyle Types (freestyle.types)	freestyle	138365
+freestyle.utils	Freestyle Utilities (freestyle.utils)	freestyle	10687
+freestyle.utils.ContextFunctions	freestyle.utils submodule (freestyle.utils.ContextFunctions)	freestyle	3700
+gpu	GPU Module (gpu)	gpu	24461
+gpu.capabilities	GPU Capabilities Utilities (gpu.capabilities)	gpu	4714
+gpu.compute	GPU Compute Utilities (gpu.compute)	gpu	579
+gpu.matrix	GPU Matrix Utilities (gpu.matrix)	gpu	3424
+gpu.platform	GPU Platform Utilities (gpu.platform)	gpu	1192
+gpu.select	GPU Select Utilities (gpu.select)	gpu	250
+gpu.shader	GPU Shader Utilities (gpu.shader)	gpu	3389
+gpu.state	GPU State Utilities (gpu.state)	gpu	6297
+gpu.texture	GPU Texture Utilities (gpu.texture)	gpu	711
+gpu.types	GPU Types (gpu.types)	gpu	39258
+gpu_extras	GPU Utilities (gpu_extras)	gpu_extras	208
+gpu_extras.batch	gpu_extras submodule (gpu_extras.batch)	gpu_extras	1261
+gpu_extras.presets	gpu_extras submodule (gpu_extras.presets)	gpu_extras	1937
+idprop	ID Properties Module (idprop)	idprop	498
+idprop.types	ID Property Access (idprop.types)	idprop	15076
+imbuf	Image Buffer (imbuf)	imbuf	2019
+imbuf.types	Image Buffer Types (imbuf.types)	imbuf	6201
+info_advanced	Advanced	guide	187
+info_advanced_blender_as_bpy	Blender as a Python Module	guide	4985
+info_api_reference	API Reference Usage	guide	12121
+info_best_practice	Best Practice	guide	10998
+info_contributing	Contribute Documentation	guide	6037
+info_gotcha	Gotchas	guide	632
+info_gotchas_armatures_and_bones	Bones & Armatures	guide	3699
+info_gotchas_crashes	Troubleshooting Errors & Crashes	guide	11877
+info_gotchas_file_paths_and_encoding	File Paths & String Encoding	guide	3292
+info_gotchas_internal_data_and_python_objects	Internal Data & Their Python Objects	guide	9553
+info_gotchas_meshes	Modes and Mesh Access	guide	4826
+info_gotchas_operators	Using Operators	guide	3946
+info_gotchas_threading	Python Threads are Not Supported	guide	2636
+info_overview	API Overview	guide	18502
+info_quickstart	Quickstart	guide	18680
+info_tips_and_tricks	Tips and Tricks	guide	11086
+mathutils	Math Types & Utilities (mathutils)	mathutils	110297
+mathutils.bvhtree	BVHTree Utilities (mathutils.bvhtree)	mathutils	4128
+mathutils.geometry	Geometry Utilities (mathutils.geometry)	mathutils	23016
+mathutils.interpolate	Interpolation Utilities (mathutils.interpolate)	mathutils	516
+mathutils.kdtree	KDTree Utilities (mathutils.kdtree)	mathutils	3046
+mathutils.noise	Noise Utilities (mathutils.noise)	mathutils	11934

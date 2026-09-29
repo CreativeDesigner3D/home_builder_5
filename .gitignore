@@ -171,3 +171,7 @@ _reversa_sdd/
 # Extra files
 manual-treinamento-promob.pdf
 blendertomob.zip
+
+# RAG (docs/rag): local search cache and the source reference zip (~100 MB, regenerable)
+docs/rag/blender-api/index/.bm25.cache.pickle
+blender_python_reference_*.zip

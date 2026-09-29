@@ -15,6 +15,16 @@ The project follows a modular structure to maintain clean separation of concerns
   - `geometry/` - Low-level bmesh generator scripts and shader graph configurations.
   - `cutting/` - 2D nesting optimization logic (computes sheet cuts programmatically).
 
+## Blender API Knowledge Base (RAG)
+
+`docs/rag/` contains the full Blender 5.2 Python API reference as searchable Markdown plus curated, project-specific
+guidance (patterns, 5.x compatibility, gotchas). Start at [docs/rag/README.md](docs/rag/README.md).
+
+```bash
+python3 docs/rag/tools/rag_search.py "draw handler POST_PIXEL"      # search the API reference
+python3 docs/rag/tools/check_api.py                                  # check blendertomob/ against the 5.2 API
+```
+
 ## Getting Started
 
 ### Packaging the Extension

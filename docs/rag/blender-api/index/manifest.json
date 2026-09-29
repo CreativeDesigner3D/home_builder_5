@@ -1,0 +1,33 @@
+{
+  "source": "blender_python_reference_5_2.zip",
+  "blender_api": "Blender 5.2.2 LTS Python API",
+  "pages": 2159,
+  "chunks": 7048,
+  "symbols": 26776,
+  "categories": {
+    "bpy.types": 1790,
+    "enum_items": 209,
+    "bpy.ops": 78,
+    "guide": 17,
+    "bpy_extras": 11,
+    "gpu": 10,
+    "freestyle": 8,
+    "mathutils": 6,
+    "bmesh": 5,
+    "bpy.app": 5,
+    "bpy.utils": 3,
+    "gpu_extras": 3,
+    "blf": 2,
+    "idprop": 2,
+    "imbuf": 2,
+    "aud": 1,
+    "bl_math": 1,
+    "bpy.context": 1,
+    "bpy.data": 1,
+    "bpy.msgbus": 1,
+    "bpy.path": 1,
+    "bpy.props": 1,
+    "bpy_types_custom_properties": 1
+  },
+  "chunk_max_chars": 6000
+}
