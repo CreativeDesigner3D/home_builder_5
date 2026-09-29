@@ -852,7 +852,7 @@ class home_builder_layouts_OT_export_all_to_pdf(bpy.types.Operator):
 
         # Get all layout view scenes, sorted by sort_order
         layout_scenes = [s for s in bpy.data.scenes if s.get('IS_LAYOUT_VIEW')]
-        layout_scenes.sort(key=lambda s: s.blendertomob.sort_order)
+        layout_scenes.sort(key=lambda s: s.home_builder.sort_order)
 
         if not layout_scenes:
             self.report({'WARNING'}, "No layout views found")
@@ -3954,16 +3954,16 @@ class home_builder_layouts_OT_move_layout_view(bpy.types.Operator):
 
     def ensure_sort_orders_initialized(self, layout_views):
         """Make sure all scenes have unique sort_order values."""
-        orders = [s.blendertomob.sort_order for s in layout_views]
+        orders = [s.home_builder.sort_order for s in layout_views]
         if len(set(orders)) != len(orders):
             # Any duplicate makes a neighbor swap invisible (two equal
             # values swap to the same list). Re-sequence in the currently
             # displayed order (sort_order, then name -- matching the UI's
             # stable sort) so normalizing never reshuffles the list.
             displayed = sorted(layout_views,
-                               key=lambda s: (s.blendertomob.sort_order, s.name))
+                               key=lambda s: (s.home_builder.sort_order, s.name))
             for i, scene in enumerate(displayed):
-                scene.blendertomob.sort_order = i
+                scene.home_builder.sort_order = i
 
     def execute(self, context):
         layout_views = [s for s in bpy.data.scenes if s.get('IS_LAYOUT_VIEW')]
@@ -3972,7 +3972,7 @@ class home_builder_layouts_OT_move_layout_view(bpy.types.Operator):
             return {'CANCELLED'}
 
         self.ensure_sort_orders_initialized(layout_views)
-        layout_views = sorted(layout_views, key=lambda s: s.blendertomob.sort_order)
+        layout_views = sorted(layout_views, key=lambda s: s.home_builder.sort_order)
 
         scene = context.scene
 
@@ -3991,8 +3991,8 @@ class home_builder_layouts_OT_move_layout_view(bpy.types.Operator):
         else:
             neighbor = layout_views[idx + 1]
 
-        scene.blendertomob.sort_order, neighbor.blendertomob.sort_order = \
-            neighbor.blendertomob.sort_order, scene.blendertomob.sort_order
+        scene.home_builder.sort_order, neighbor.home_builder.sort_order = \
+            neighbor.home_builder.sort_order, scene.home_builder.sort_order
 
         return {'FINISHED'}
 

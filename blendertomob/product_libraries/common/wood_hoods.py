@@ -1717,7 +1717,7 @@ def restore_hood_part(hood_part):
         hood_part.data.clear_geometry()
     mod = hood_part.modifiers.new(name=data.get('node_group'), type='NODES')
     mod.node_group = ng
-    hood_part.blendertomob.mod_name = mod.name
+    hood_part.home_builder.mod_name = mod.name
     for ident, sval in data.get('inputs', {}).items():
         try:
             hb_utils.set_gn_input(mod, ident, _deser_value(sval))

@@ -950,7 +950,7 @@ class SplitterVertical(GeoNodeCage):
         # Add calculator for opening heights
         empty_obj = self.add_empty("Calc Object")
         empty_obj.empty_display_size = .001
-        opening_calculator = self.obj.blendertomob.add_calculator("Opening Calculator",empty_obj)
+        opening_calculator = self.obj.home_builder.add_calculator("Opening Calculator",empty_obj)
         for i in range(1,self.splitter_qty+2):
             opening_calculator.add_calculator_prompt('Opening ' + str(i) + ' Height')
 
@@ -1063,7 +1063,7 @@ class SplitterHorizontal(GeoNodeCage):
         # Add calculator for opening widths
         empty_obj = self.add_empty("Calc Object")
         empty_obj.empty_display_size = .001
-        opening_calculator = self.obj.blendertomob.add_calculator("Opening Calculator",empty_obj)
+        opening_calculator = self.obj.home_builder.add_calculator("Opening Calculator",empty_obj)
         for i in range(1,self.splitter_qty+2):
             opening_calculator.add_calculator_prompt('Opening ' + str(i) + ' Width')
 
@@ -1194,18 +1194,18 @@ class CabinetOpening(GeoNodeCage):
 
         # Overlay Prompts Stored in Separate Empty Object to Avoid Circular Dependency Graph Issues
         self.overlay_prompts = self.add_empty('Overlay Prompt Obj')
-        self.overlay_prompts.blendertomob.add_property("Overlay Top",'DISTANCE',0.0)
-        self.overlay_prompts.blendertomob.add_property("Overlay Bottom",'DISTANCE',0.0)
-        self.overlay_prompts.blendertomob.add_property("Overlay Left",'DISTANCE',0.0)
-        self.overlay_prompts.blendertomob.add_property("Overlay Right",'DISTANCE',0.0)
+        self.overlay_prompts.home_builder.add_property("Overlay Top",'DISTANCE',0.0)
+        self.overlay_prompts.home_builder.add_property("Overlay Bottom",'DISTANCE',0.0)
+        self.overlay_prompts.home_builder.add_property("Overlay Left",'DISTANCE',0.0)
+        self.overlay_prompts.home_builder.add_property("Overlay Right",'DISTANCE',0.0)
 
         # Inset: negative overlay (door smaller than opening by inset reveal)
         # Half Overlay: (thickness - gap) / 2
         # Full Overlay: thickness - reveal
-        self.overlay_prompts.blendertomob.driver_prop("Overlay Top", "IF(inset,-ir,IF(hot,(tt-vg)/2,tt-tr))", [inset,ir,hot,tt,vg,tr])
-        self.overlay_prompts.blendertomob.driver_prop("Overlay Bottom", "IF(inset,-ir,IF(hob,(bt-vg)/2,bt-br))", [inset,ir,hob,bt,vg,br])
-        self.overlay_prompts.blendertomob.driver_prop("Overlay Left", "IF(inset,-ir,IF(hol,(lt-vg)/2,lt-lr))", [inset,ir,hol,lt,vg,lr])
-        self.overlay_prompts.blendertomob.driver_prop("Overlay Right", "IF(inset,-ir,IF(hor,(rt-vg)/2,rt-rr))", [inset,ir,hor,rt,vg,rr])
+        self.overlay_prompts.home_builder.driver_prop("Overlay Top", "IF(inset,-ir,IF(hot,(tt-vg)/2,tt-tr))", [inset,ir,hot,tt,vg,tr])
+        self.overlay_prompts.home_builder.driver_prop("Overlay Bottom", "IF(inset,-ir,IF(hob,(bt-vg)/2,bt-br))", [inset,ir,hob,bt,vg,br])
+        self.overlay_prompts.home_builder.driver_prop("Overlay Left", "IF(inset,-ir,IF(hol,(lt-vg)/2,lt-lr))", [inset,ir,hol,lt,vg,lr])
+        self.overlay_prompts.home_builder.driver_prop("Overlay Right", "IF(inset,-ir,IF(hor,(rt-vg)/2,rt-rr))", [inset,ir,hor,rt,vg,rr])
 
         return self.overlay_prompts
 
@@ -1258,8 +1258,8 @@ class CabinetShelves(CabinetInterior):
         shelves.driver_input("Length", 'dim_x-clip_gap*2', [dim_x,clip_gap])
         shelves.driver_input("Width", 'dim_y-setback', [dim_y,setback])
         shelves.driver_input("Thickness", 'mt', [mt])
-        shelves.obj.blendertomob.add_driver('modifiers["' + array_mod.name + '"].count',-1,'qty',[qty])
-        shelves.obj.blendertomob.add_driver('modifiers["' + array_mod.name + '"].constant_offset_displace',2,
+        shelves.obj.home_builder.add_driver('modifiers["' + array_mod.name + '"].count',-1,'qty',[qty])
+        shelves.obj.home_builder.add_driver('modifiers["' + array_mod.name + '"].constant_offset_displace',2,
                                      '((dim_z-(mt*qty))/(qty+1))+mt',
                                      [dim_z,mt,qty])
 
@@ -1278,10 +1278,10 @@ class Doors(CabinetOpening):
         self.add_properties_front_overlays()
         overlay_prompts = self.add_properties_front_overlay_calculations()
 
-        to = overlay_prompts.blendertomob.var_prop('Overlay Top', 'to')
-        bo = overlay_prompts.blendertomob.var_prop('Overlay Bottom', 'bo')
-        lo = overlay_prompts.blendertomob.var_prop('Overlay Left', 'lo')
-        ro = overlay_prompts.blendertomob.var_prop('Overlay Right', 'ro')
+        to = overlay_prompts.home_builder.var_prop('Overlay Top', 'to')
+        bo = overlay_prompts.home_builder.var_prop('Overlay Bottom', 'bo')
+        lo = overlay_prompts.home_builder.var_prop('Overlay Left', 'lo')
+        ro = overlay_prompts.home_builder.var_prop('Overlay Right', 'ro')
 
         dim_x = self.var_input('Dim X', 'dim_x')
         self.var_input('Dim Y', 'dim_y')
@@ -1356,10 +1356,10 @@ class FlipUpDoor(CabinetOpening):
         self.add_properties_front_overlays()
         overlay_prompts = self.add_properties_front_overlay_calculations()
 
-        to = overlay_prompts.blendertomob.var_prop('Overlay Top', 'to')
-        bo = overlay_prompts.blendertomob.var_prop('Overlay Bottom', 'bo')
-        lo = overlay_prompts.blendertomob.var_prop('Overlay Left', 'lo')
-        ro = overlay_prompts.blendertomob.var_prop('Overlay Right', 'ro')
+        to = overlay_prompts.home_builder.var_prop('Overlay Top', 'to')
+        bo = overlay_prompts.home_builder.var_prop('Overlay Bottom', 'bo')
+        lo = overlay_prompts.home_builder.var_prop('Overlay Left', 'lo')
+        ro = overlay_prompts.home_builder.var_prop('Overlay Right', 'ro')
 
         dim_x = self.var_input('Dim X', 'dim_x')
         self.var_input('Dim Y', 'dim_y')
@@ -1410,10 +1410,10 @@ class Drawer(CabinetOpening):
         self.add_properties_front_overlays()
         overlay_prompts = self.add_properties_front_overlay_calculations()
 
-        to = overlay_prompts.blendertomob.var_prop('Overlay Top', 'to')
-        bo = overlay_prompts.blendertomob.var_prop('Overlay Bottom', 'bo')
-        lo = overlay_prompts.blendertomob.var_prop('Overlay Left', 'lo')
-        ro = overlay_prompts.blendertomob.var_prop('Overlay Right', 'ro')
+        to = overlay_prompts.home_builder.var_prop('Overlay Top', 'to')
+        bo = overlay_prompts.home_builder.var_prop('Overlay Bottom', 'bo')
+        lo = overlay_prompts.home_builder.var_prop('Overlay Left', 'lo')
+        ro = overlay_prompts.home_builder.var_prop('Overlay Right', 'ro')
 
         dim_x = self.var_input('Dim X', 'dim_x')
         self.var_input('Dim Y', 'dim_y')
@@ -1458,10 +1458,10 @@ class Pullout(CabinetOpening):
         self.add_properties_front_overlays()
         overlay_prompts = self.add_properties_front_overlay_calculations()
 
-        to = overlay_prompts.blendertomob.var_prop('Overlay Top', 'to')
-        bo = overlay_prompts.blendertomob.var_prop('Overlay Bottom', 'bo')
-        lo = overlay_prompts.blendertomob.var_prop('Overlay Left', 'lo')
-        ro = overlay_prompts.blendertomob.var_prop('Overlay Right', 'ro')
+        to = overlay_prompts.home_builder.var_prop('Overlay Top', 'to')
+        bo = overlay_prompts.home_builder.var_prop('Overlay Bottom', 'bo')
+        lo = overlay_prompts.home_builder.var_prop('Overlay Left', 'lo')
+        ro = overlay_prompts.home_builder.var_prop('Overlay Right', 'ro')
 
         dim_x = self.var_input('Dim X', 'dim_x')
         self.var_input('Dim Y', 'dim_y')
@@ -1506,10 +1506,10 @@ class FalseFront(CabinetOpening):
         self.add_properties_front_overlays()
         overlay_prompts = self.add_properties_front_overlay_calculations()
 
-        to = overlay_prompts.blendertomob.var_prop('Overlay Top', 'to')
-        bo = overlay_prompts.blendertomob.var_prop('Overlay Bottom', 'bo')
-        lo = overlay_prompts.blendertomob.var_prop('Overlay Left', 'lo')
-        ro = overlay_prompts.blendertomob.var_prop('Overlay Right', 'ro')
+        to = overlay_prompts.home_builder.var_prop('Overlay Top', 'to')
+        bo = overlay_prompts.home_builder.var_prop('Overlay Bottom', 'bo')
+        lo = overlay_prompts.home_builder.var_prop('Overlay Left', 'lo')
+        ro = overlay_prompts.home_builder.var_prop('Overlay Right', 'ro')
 
         dim_x = self.var_input('Dim X', 'dim_x')
         self.var_input('Dim Y', 'dim_y')
@@ -2072,7 +2072,7 @@ class InteriorSplitterVertical(CabinetInterior):
         # Add calculator for section heights
         empty_obj = self.add_empty("Calc Object")
         empty_obj.empty_display_size = .001
-        section_calculator = self.obj.blendertomob.add_calculator("Section Calculator", empty_obj)
+        section_calculator = self.obj.home_builder.add_calculator("Section Calculator", empty_obj)
         for i in range(1, self.splitter_qty + 2):
             section_calculator.add_calculator_prompt('Section ' + str(i) + ' Height')
 
@@ -2187,7 +2187,7 @@ class InteriorSplitterHorizontal(CabinetInterior):
         # Add calculator for section widths
         empty_obj = self.add_empty("Calc Object")
         empty_obj.empty_display_size = .001
-        section_calculator = self.obj.blendertomob.add_calculator("Section Calculator", empty_obj)
+        section_calculator = self.obj.home_builder.add_calculator("Section Calculator", empty_obj)
         for i in range(1, self.splitter_qty + 2):
             section_calculator.add_calculator_prompt('Section ' + str(i) + ' Width')
 
@@ -2371,20 +2371,20 @@ class CornerCabinet(Cabinet):
 
         # Overlay calculation empty (avoids circular dependencies)
         overlay_obj = self.add_empty('Corner Overlay Calc')
-        overlay_obj.blendertomob.add_property("Overlay Top", 'DISTANCE', 0.0)
-        overlay_obj.blendertomob.add_property("Overlay Bottom", 'DISTANCE', 0.0)
-        overlay_obj.blendertomob.add_property("Overlay Outer", 'DISTANCE', 0.0)
+        overlay_obj.home_builder.add_property("Overlay Top", 'DISTANCE', 0.0)
+        overlay_obj.home_builder.add_property("Overlay Bottom", 'DISTANCE', 0.0)
+        overlay_obj.home_builder.add_property("Overlay Outer", 'DISTANCE', 0.0)
 
         # Inset: negative overlay (door smaller than opening)
         # Half Overlay: (thickness - gap) / 2
         # Full Overlay: thickness - reveal
-        overlay_obj.blendertomob.driver_prop("Overlay Top", "IF(inset,-ir,IF(hot,(mt-vg)/2,mt-tr))", [inset, ir, hot, mt, vg, tr])
-        overlay_obj.blendertomob.driver_prop("Overlay Bottom", "IF(inset,-ir,IF(hob,(mt-vg)/2,mt-br))", [inset, ir, hob, mt, vg, br])
-        overlay_obj.blendertomob.driver_prop("Overlay Outer", "IF(inset,-ir,IF(hoo,(mt-vg)/2,mt-otr))", [inset, ir, hoo, mt, vg, otr])
+        overlay_obj.home_builder.driver_prop("Overlay Top", "IF(inset,-ir,IF(hot,(mt-vg)/2,mt-tr))", [inset, ir, hot, mt, vg, tr])
+        overlay_obj.home_builder.driver_prop("Overlay Bottom", "IF(inset,-ir,IF(hob,(mt-vg)/2,mt-br))", [inset, ir, hob, mt, vg, br])
+        overlay_obj.home_builder.driver_prop("Overlay Outer", "IF(inset,-ir,IF(hoo,(mt-vg)/2,mt-otr))", [inset, ir, hoo, mt, vg, otr])
 
-        to = overlay_obj.blendertomob.var_prop('Overlay Top', 'to')
-        bo = overlay_obj.blendertomob.var_prop('Overlay Bottom', 'bo')
-        oo = overlay_obj.blendertomob.var_prop('Overlay Outer', 'oo')
+        to = overlay_obj.home_builder.var_prop('Overlay Top', 'to')
+        bo = overlay_obj.home_builder.var_prop('Overlay Bottom', 'bo')
+        oo = overlay_obj.home_builder.var_prop('Overlay Outer', 'oo')
 
         # Door swing: determines which door(s) get a pull handle
         self.add_property("Door Swing", 'COMBOBOX', 0, combobox_items=["Left", "Right"])

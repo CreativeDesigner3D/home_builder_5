@@ -369,11 +369,11 @@ class SupportFrame(Product):
         array_mod.use_relative_offset = False
         array_mod.use_constant_offset = True
         array_mod.constant_offset_displace = (0, 0, 0)
-        support.obj.blendertomob.add_driver(
+        support.obj.home_builder.add_driver(
             'modifiers["' + array_mod.name + '"].count', -1,
             'IF(ss>0,floor((dim_x-mt*2-ss)/ss)+1,0)',
             [ss, dim_x, mt])
-        support.obj.blendertomob.add_driver(
+        support.obj.home_builder.add_driver(
             'modifiers["' + array_mod.name + '"].constant_offset_displace', 2,
             '-ss', [ss])
 
@@ -595,11 +595,11 @@ class HalfWall(Product):
         array_mod.use_relative_offset = False
         array_mod.use_constant_offset = True
         array_mod.constant_offset_displace = (0, 0, 0)
-        stud.obj.blendertomob.add_driver(
+        stud.obj.home_builder.add_driver(
             'modifiers["' + array_mod.name + '"].count', -1,
             'IF(ssp>0,floor((dim_x-mt*2-esfe*2)/ssp)+1,1)',
             [ssp, dim_x, mt, esfe])
-        stud.obj.blendertomob.add_driver(
+        stud.obj.home_builder.add_driver(
             'modifiers["' + array_mod.name + '"].constant_offset_displace', 2,
             '-ssp', [ssp])
 

@@ -1451,7 +1451,7 @@ def _can_make_editable(obj):
         role = obj.get('hb_part_role')
         if not role or role in _FRONT_EDITABLE_ROLES:
             return False
-    mn = obj.blendertomob.mod_name
+    mn = obj.home_builder.mod_name
     if bool(mn) and mn in obj.modifiers:
         return True
     # Static wood-hood parts (angled bodies, shiplap wrap, sloped panels)
@@ -1504,7 +1504,7 @@ class hb_face_frame_OT_make_part_editable(bpy.types.Operator):
     @staticmethod
     def _apply_one(context, obj):
         """Apply one STRUCTURAL part's cutpart GeoNode and flag it manual."""
-        mn = obj.blendertomob.mod_name
+        mn = obj.home_builder.mod_name
         # Stash the parametric state BEFORE applying so Revert can restore it.
         # Hood cutparts have no cabinet recalc to re-drive them, so snapshot the
         # full recipe (inputs + drivers + transform); face-frame parts only need
@@ -1610,7 +1610,7 @@ class hb_face_frame_OT_revert_part_to_parametric(bpy.types.Operator):
         mod = obj.modifiers.new(name='GeoNodeCutpart', type='NODES')
         mod.node_group = ng
         mod.show_viewport = True
-        obj.blendertomob.mod_name = mod.name
+        obj.home_builder.mod_name = mod.name
         _restore_mirror_inputs(obj)
         # A Misc Part has no cabinet recalc to rewrite Length / Width /
         # Thickness afterwards, so restore them from the stash directly.

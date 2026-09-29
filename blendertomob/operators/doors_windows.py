@@ -1319,8 +1319,8 @@ def _copy_geo_value_inputs(src_geo, dst_geo):
     either node group are skipped. Clones a placed door/window's edited state
     onto its duplicate."""
     try:
-        src_mod = src_geo.obj.modifiers[src_geo.obj.blendertomob.mod_name]
-        dst_mod = dst_geo.obj.modifiers[dst_geo.obj.blendertomob.mod_name]
+        src_mod = src_geo.obj.modifiers[src_geo.obj.home_builder.mod_name]
+        dst_mod = dst_geo.obj.modifiers[dst_geo.obj.home_builder.mod_name]
     except (KeyError, AttributeError, TypeError):
         return
     if not src_mod.node_group or not dst_mod.node_group:

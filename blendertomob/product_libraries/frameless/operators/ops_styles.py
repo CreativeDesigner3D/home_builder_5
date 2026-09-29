@@ -710,7 +710,7 @@ class hb_frameless_OT_update_cabinets_from_style(bpy.types.Operator):
                 self._current_index += 1
 
                 # Update progress bar (keep below 1.0 to show progress bar)
-                wm.blendertomob.progress = min(0.99, self._current_index / self._total_count)
+                wm.home_builder.progress = min(0.99, self._current_index / self._total_count)
 
                 # Force redraw to update progress bar
                 for area in context.screen.areas:
@@ -731,7 +731,7 @@ class hb_frameless_OT_update_cabinets_from_style(bpy.types.Operator):
             wm.event_timer_remove(self._timer)
 
         # Reset progress to 1.0 (hides progress bar)
-        wm.blendertomob.progress = 1.0
+        wm.home_builder.progress = 1.0
 
         # Force immediate UI redraw
         for window in wm.windows:
@@ -775,7 +775,7 @@ class hb_frameless_OT_update_cabinets_from_style(bpy.types.Operator):
             return {'CANCELLED'}
 
         # Set initial progress to 0
-        wm.blendertomob.progress = 0.0
+        wm.home_builder.progress = 0.0
 
         # Add timer for modal operation
         self._timer = wm.event_timer_add(0.01, window=context.window)

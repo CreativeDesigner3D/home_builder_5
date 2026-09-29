@@ -2015,7 +2015,7 @@ class FaceFrameCabinet(GeoNodeCage):
             # is manual by construction, so stamp the flag and skip. This
             # keeps recalc crash-proof regardless of how a part was applied.
             if child.type == 'MESH':
-                _mn = child.blendertomob.mod_name
+                _mn = child.home_builder.mod_name
                 if _mn and _mn not in child.modifiers:
                     child['IS_MANUAL_PART'] = True
             if child.get('IS_MANUAL_PART'):

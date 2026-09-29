@@ -47,12 +47,12 @@ class home_builder_OT_create_room(bpy.types.Operator):
         use_snap_backface_culling = tool_settings.use_snap_backface_culling
 
         # Store the active product library so the new room keeps it
-        product_tab = original_scene.blendertomob.product_tab
+        product_tab = original_scene.home_builder.product_tab
 
         # Create new scene
         new_scene = bpy.data.scenes.new(self.room_name)
         new_scene['IS_ROOM_SCENE'] = True
-        new_scene.blendertomob.product_tab = product_tab
+        new_scene.home_builder.product_tab = product_tab
 
         # Save view state of original scene if it's a room
         if hb_utils.is_room_scene(original_scene):
@@ -266,15 +266,15 @@ class home_builder_OT_duplicate_room(bpy.types.Operator):
 
         # Fall back to the new scene name downstream instead of showing the
         # source room's label.
-        new_scene.blendertomob.room_name = ""
+        new_scene.home_builder.room_name = ""
 
         # Drop the duplicate at the end of the room list.
         other_rooms = [s for s in bpy.data.scenes
                        if s is not new_scene
                        and not s.get('IS_LAYOUT_VIEW')
                        and not s.get('IS_DETAIL_VIEW')]
-        orders = [s.blendertomob.sort_order for s in other_rooms]
-        new_scene.blendertomob.sort_order = (max(orders) + 1) if orders else 0
+        orders = [s.home_builder.sort_order for s in other_rooms]
+        new_scene.home_builder.sort_order = (max(orders) + 1) if orders else 0
 
         self.report({'INFO'}, f"Duplicated room as: {new_scene.name}")
         return {'FINISHED'}
@@ -291,16 +291,16 @@ class home_builder_OT_move_room_scene(bpy.types.Operator):
 
     def ensure_sort_orders_initialized(self, room_scenes):
         """Make sure all scenes have unique sort_order values."""
-        orders = [s.blendertomob.sort_order for s in room_scenes]
+        orders = [s.home_builder.sort_order for s in room_scenes]
         if len(set(orders)) != len(orders):
             # Any duplicate makes a neighbor swap invisible (two equal
             # values swap to the same list). Re-sequence in the currently
             # displayed order (sort_order, then name -- matching the UI's
             # stable sort) so normalizing never reshuffles the list.
             displayed = sorted(room_scenes,
-                               key=lambda s: (s.blendertomob.sort_order, s.name))
+                               key=lambda s: (s.home_builder.sort_order, s.name))
             for i, scene in enumerate(displayed):
-                scene.blendertomob.sort_order = i
+                scene.home_builder.sort_order = i
 
     def execute(self, context):
         # Get room scenes (not layout or detail views)
@@ -314,7 +314,7 @@ class home_builder_OT_move_room_scene(bpy.types.Operator):
         self.ensure_sort_orders_initialized(room_scenes)
 
         # Sort by sort_order
-        room_scenes = sorted(room_scenes, key=lambda s: s.blendertomob.sort_order)
+        room_scenes = sorted(room_scenes, key=lambda s: s.home_builder.sort_order)
 
         scene = context.scene
 
@@ -337,8 +337,8 @@ class home_builder_OT_move_room_scene(bpy.types.Operator):
             neighbor = room_scenes[idx + 1]
 
         # Swap sort_order values
-        scene.blendertomob.sort_order, neighbor.blendertomob.sort_order = \
-            neighbor.blendertomob.sort_order, scene.blendertomob.sort_order
+        scene.home_builder.sort_order, neighbor.home_builder.sort_order = \
+            neighbor.home_builder.sort_order, scene.home_builder.sort_order
 
         return {'FINISHED'}
 

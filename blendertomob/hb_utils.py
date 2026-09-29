@@ -209,7 +209,7 @@ def run_calc_fix(context, obj=None, passes=2):
 
     # Collect all calculators
     for o in objects_to_update:
-        for calculator in o.blendertomob.calculators:
+        for calculator in o.home_builder.calculators:
             home_builder_calculators.append(calculator)
 
     # Run multiple passes to ensure all dependencies resolve

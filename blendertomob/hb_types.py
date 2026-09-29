@@ -92,7 +92,7 @@ class GeoNodeObject:
         mod.node_group = geo_node_group
 
         # Add custom properties to the object
-        self.obj.blendertomob.mod_name = mod.name
+        self.obj.home_builder.mod_name = mod.name
         # Link object to scene collection
         bpy.context.scene.collection.objects.link(self.obj)
 
@@ -116,7 +116,7 @@ class GeoNodeObject:
         mod.node_group = geo_node_group
 
         # Add custom properties to the object
-        self.obj.blendertomob.mod_name = mod.name
+        self.obj.home_builder.mod_name = mod.name
         self.obj.color = add_on_prefs.annotation_color
         # Link object to scene collection
         bpy.context.scene.collection.objects.link(self.obj)
@@ -129,7 +129,7 @@ class GeoNodeObject:
         return obj
 
     def add_property(self,name,type,value,combobox_items=[]):
-        self.obj.blendertomob.add_property(name,type,value,combobox_items)
+        self.obj.home_builder.add_property(name,type,value,combobox_items)
 
     def draw_prop(self, layout, prop_name, text=None):
         """Draw a custom property in the UI if it exists on the object.
@@ -178,13 +178,13 @@ class GeoNodeObject:
         Raises:
             ValueError: If object doesn't have geometry node modifier or input not found
         """
-        if not hasattr(self.obj, 'home_builder') or not self.obj.blendertomob.mod_name:
+        if not hasattr(self.obj, 'home_builder') or not self.obj.home_builder.mod_name:
             raise ValueError("Object does not have geometry node modifier")
 
         try:
-            mod = self.obj.modifiers[self.obj.blendertomob.mod_name]
+            mod = self.obj.modifiers[self.obj.home_builder.mod_name]
         except KeyError:
-            raise ValueError(f"Modifier '{self.obj.blendertomob.mod_name}' not found on object")
+            raise ValueError(f"Modifier '{self.obj.home_builder.mod_name}' not found on object")
 
         if not mod.node_group:
             raise ValueError("Geometry node modifier has no node group")
@@ -251,13 +251,13 @@ class GeoNodeObject:
         Raises:
             ValueError: If object doesn't have geometry node modifier or input not found
         """
-        if not hasattr(self.obj, 'home_builder') or not self.obj.blendertomob.mod_name:
+        if not hasattr(self.obj, 'home_builder') or not self.obj.home_builder.mod_name:
             raise ValueError("Object does not have geometry node modifier")
 
         try:
-            mod = self.obj.modifiers[self.obj.blendertomob.mod_name]
+            mod = self.obj.modifiers[self.obj.home_builder.mod_name]
         except KeyError:
-            raise ValueError(f"Modifier '{self.obj.blendertomob.mod_name}' not found on object")
+            raise ValueError(f"Modifier '{self.obj.home_builder.mod_name}' not found on object")
 
         if not mod.node_group:
             raise ValueError("Geometry node modifier has no node group")
@@ -299,13 +299,13 @@ class GeoNodeObject:
         Raises:
             ValueError: If object doesn't have geometry node modifier or input not found
         """
-        if not hasattr(self.obj, 'home_builder') or not self.obj.blendertomob.mod_name:
+        if not hasattr(self.obj, 'home_builder') or not self.obj.home_builder.mod_name:
             raise ValueError("Object does not have geometry node modifier")
 
         try:
-            mod = self.obj.modifiers[self.obj.blendertomob.mod_name]
+            mod = self.obj.modifiers[self.obj.home_builder.mod_name]
         except KeyError:
-            raise ValueError(f"Modifier '{self.obj.blendertomob.mod_name}' not found on object")
+            raise ValueError(f"Modifier '{self.obj.home_builder.mod_name}' not found on object")
 
         if not mod.node_group:
             raise ValueError("Geometry node modifier has no node group")
@@ -333,13 +333,13 @@ class GeoNodeObject:
         Raises:
             ValueError: If object doesn't have geometry node modifier or input not found
         """
-        if not hasattr(self.obj, 'home_builder') or not self.obj.blendertomob.mod_name:
+        if not hasattr(self.obj, 'home_builder') or not self.obj.home_builder.mod_name:
             raise ValueError("Object does not have geometry node modifier")
 
         try:
-            mod = self.obj.modifiers[self.obj.blendertomob.mod_name]
+            mod = self.obj.modifiers[self.obj.home_builder.mod_name]
         except KeyError:
-            raise ValueError(f"Modifier '{self.obj.blendertomob.mod_name}' not found on object")
+            raise ValueError(f"Modifier '{self.obj.home_builder.mod_name}' not found on object")
 
         if not mod.node_group:
             raise ValueError("Geometry node modifier has no node group")
@@ -370,13 +370,13 @@ class GeoNodeObject:
         Raises:
             ValueError: If object doesn't have geometry node modifier or input not found
         """
-        if not hasattr(self.obj, 'home_builder') or not self.obj.blendertomob.mod_name:
+        if not hasattr(self.obj, 'home_builder') or not self.obj.home_builder.mod_name:
             raise ValueError("Object does not have geometry node modifier")
 
         try:
-            mod = self.obj.modifiers[self.obj.blendertomob.mod_name]
+            mod = self.obj.modifiers[self.obj.home_builder.mod_name]
         except KeyError:
-            raise ValueError(f"Modifier '{self.obj.blendertomob.mod_name}' not found on object")
+            raise ValueError(f"Modifier '{self.obj.home_builder.mod_name}' not found on object")
 
         if not mod.node_group:
             raise ValueError("Geometry node modifier has no node group")
@@ -398,10 +398,10 @@ class GeoNodeObject:
         Returns:
             True if the input exists, False otherwise
         """
-        if not hasattr(self.obj, 'home_builder') or not self.obj.blendertomob.mod_name:
+        if not hasattr(self.obj, 'home_builder') or not self.obj.home_builder.mod_name:
             return False
 
-        mod = self.obj.modifiers.get(self.obj.blendertomob.mod_name)
+        mod = self.obj.modifiers.get(self.obj.home_builder.mod_name)
         if not mod or not mod.node_group:
             return False
 
@@ -420,9 +420,9 @@ class GeoNodeObject:
         """
         if self.obj is None:
             return False
-        if not hasattr(self.obj, 'home_builder') or not self.obj.blendertomob.mod_name:
+        if not hasattr(self.obj, 'home_builder') or not self.obj.home_builder.mod_name:
             return False
-        mod = self.obj.modifiers.get(self.obj.blendertomob.mod_name)
+        mod = self.obj.modifiers.get(self.obj.home_builder.mod_name)
         if not mod or not mod.node_group:
             return False
         return True
@@ -466,10 +466,10 @@ class GeoNodeWall(GeoNodeObject):
         driver.driver.expression = 'length'
 
     def assign_materials(self,context):
-        if not context.scene.blendertomob.wall_material:
+        if not context.scene.home_builder.wall_material:
             #TODO: GET MATERIAL
             pass
-        mat = context.scene.blendertomob.wall_material
+        mat = context.scene.home_builder.wall_material
         self.set_input("Top Surface",mat)
         self.set_input("Bottom Surface",mat)
         self.set_input("Left Surface",mat)
@@ -481,7 +481,7 @@ class GeoNodeWall(GeoNodeObject):
         constraint = self.obj.constraints.new('COPY_LOCATION')
         constraint.target = wall.obj_x
 
-        wall.obj_x.blendertomob.connected_object = self.obj
+        wall.obj_x.home_builder.connected_object = self.obj
 
     def get_connected_wall(self, direction='left', include_loop_seam=False):
         """

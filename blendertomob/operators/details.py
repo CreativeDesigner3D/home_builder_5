@@ -3177,16 +3177,16 @@ class home_builder_details_OT_move_detail_view(bpy.types.Operator):
 
     def ensure_sort_orders_initialized(self, detail_views):
         """Make sure all scenes have unique sort_order values."""
-        orders = [s.blendertomob.sort_order for s in detail_views]
+        orders = [s.home_builder.sort_order for s in detail_views]
         if len(set(orders)) != len(orders):
             # Any duplicate makes a neighbor swap invisible (two equal
             # values swap to the same list). Re-sequence in the currently
             # displayed order (sort_order, then name -- matching the UI's
             # stable sort) so normalizing never reshuffles the list.
             displayed = sorted(detail_views,
-                               key=lambda s: (s.blendertomob.sort_order, s.name))
+                               key=lambda s: (s.home_builder.sort_order, s.name))
             for i, scene in enumerate(displayed):
-                scene.blendertomob.sort_order = i
+                scene.home_builder.sort_order = i
 
     def execute(self, context):
         detail_views = [s for s in bpy.data.scenes if s.get('IS_DETAIL_VIEW')]
@@ -3195,7 +3195,7 @@ class home_builder_details_OT_move_detail_view(bpy.types.Operator):
             return {'CANCELLED'}
 
         self.ensure_sort_orders_initialized(detail_views)
-        detail_views = sorted(detail_views, key=lambda s: s.blendertomob.sort_order)
+        detail_views = sorted(detail_views, key=lambda s: s.home_builder.sort_order)
 
         scene = context.scene
 
@@ -3214,8 +3214,8 @@ class home_builder_details_OT_move_detail_view(bpy.types.Operator):
         else:
             neighbor = detail_views[idx + 1]
 
-        scene.blendertomob.sort_order, neighbor.blendertomob.sort_order = \
-            neighbor.blendertomob.sort_order, scene.blendertomob.sort_order
+        scene.home_builder.sort_order, neighbor.home_builder.sort_order = \
+            neighbor.home_builder.sort_order, scene.home_builder.sort_order
 
         return {'FINISHED'}
 

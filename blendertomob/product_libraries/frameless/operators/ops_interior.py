@@ -436,7 +436,7 @@ class hb_frameless_OT_custom_interior_vertical(bpy.types.Operator):
         # Otherwise just recalculate
         splitter_obj = self.get_splitter_obj()
         if splitter_obj:
-            for calculator in splitter_obj.blendertomob.calculators:
+            for calculator in splitter_obj.home_builder.calculators:
                 calculator.calculate()
 
             cabinet_bp = hb_utils.get_cabinet_bp(splitter_obj)
@@ -455,7 +455,7 @@ class hb_frameless_OT_custom_interior_vertical(bpy.types.Operator):
 
         # Get the current calculator values before recreating
         section_sizes = []
-        for calculator in splitter_obj.blendertomob.calculators:
+        for calculator in splitter_obj.home_builder.calculators:
             for prompt in calculator.prompts:
                 if prompt.equal:
                     section_sizes.append(0)
@@ -521,7 +521,7 @@ class hb_frameless_OT_custom_interior_vertical(bpy.types.Operator):
         box.label(text="Section Heights:", icon='SNAP_GRID')
 
         if splitter_obj:
-            for calculator in splitter_obj.blendertomob.calculators:
+            for calculator in splitter_obj.home_builder.calculators:
                 col = box.column(align=True)
                 for prompt in calculator.prompts:
                     row = col.row(align=True)
@@ -713,7 +713,7 @@ class hb_frameless_OT_custom_interior_horizontal(bpy.types.Operator):
         # Otherwise just recalculate
         splitter_obj = self.get_splitter_obj()
         if splitter_obj:
-            for calculator in splitter_obj.blendertomob.calculators:
+            for calculator in splitter_obj.home_builder.calculators:
                 calculator.calculate()
 
             cabinet_bp = hb_utils.get_cabinet_bp(splitter_obj)
@@ -732,7 +732,7 @@ class hb_frameless_OT_custom_interior_horizontal(bpy.types.Operator):
 
         # Get the current calculator values before recreating
         section_sizes = []
-        for calculator in splitter_obj.blendertomob.calculators:
+        for calculator in splitter_obj.home_builder.calculators:
             for prompt in calculator.prompts:
                 if prompt.equal:
                     section_sizes.append(0)
@@ -798,7 +798,7 @@ class hb_frameless_OT_custom_interior_horizontal(bpy.types.Operator):
         box.label(text="Section Widths:", icon='SNAP_GRID')
 
         if splitter_obj:
-            for calculator in splitter_obj.blendertomob.calculators:
+            for calculator in splitter_obj.home_builder.calculators:
                 col = box.column(align=True)
                 for prompt in calculator.prompts:
                     row = col.row(align=True)

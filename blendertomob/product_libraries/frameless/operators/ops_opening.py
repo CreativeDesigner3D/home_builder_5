@@ -1228,7 +1228,7 @@ class hb_frameless_OT_custom_vertical_splitter(bpy.types.Operator):
         # Otherwise just recalculate
         splitter_obj = self.get_splitter_obj()
         if splitter_obj:
-            for calculator in splitter_obj.blendertomob.calculators:
+            for calculator in splitter_obj.home_builder.calculators:
                 calculator.calculate()
 
             cabinet_bp = hb_utils.get_cabinet_bp(splitter_obj)
@@ -1292,7 +1292,7 @@ class hb_frameless_OT_custom_vertical_splitter(bpy.types.Operator):
 
         # Get the current calculator values before recreating
         opening_sizes = []
-        for calculator in splitter_obj.blendertomob.calculators:
+        for calculator in splitter_obj.home_builder.calculators:
             for prompt in calculator.prompts:
                 if prompt.equal:
                     opening_sizes.append(0)
@@ -1406,7 +1406,7 @@ class hb_frameless_OT_custom_vertical_splitter(bpy.types.Operator):
         box.label(text="Opening Heights:", icon='SNAP_GRID')
 
         if splitter_obj:
-            for calculator in splitter_obj.blendertomob.calculators:
+            for calculator in splitter_obj.home_builder.calculators:
                 col = box.column(align=True)
                 for prompt in calculator.prompts:
                     row = col.row(align=True)
@@ -1566,7 +1566,7 @@ class hb_frameless_OT_custom_horizontal_splitter(bpy.types.Operator):
         # Otherwise just recalculate
         splitter_obj = self.get_splitter_obj()
         if splitter_obj:
-            for calculator in splitter_obj.blendertomob.calculators:
+            for calculator in splitter_obj.home_builder.calculators:
                 calculator.calculate()
 
             cabinet_bp = hb_utils.get_cabinet_bp(splitter_obj)
@@ -1614,7 +1614,7 @@ class hb_frameless_OT_custom_horizontal_splitter(bpy.types.Operator):
 
         # Get the current calculator values before recreating
         opening_sizes = []
-        for calculator in splitter_obj.blendertomob.calculators:
+        for calculator in splitter_obj.home_builder.calculators:
             for prompt in calculator.prompts:
                 if prompt.equal:
                     opening_sizes.append(0)
@@ -1687,7 +1687,7 @@ class hb_frameless_OT_custom_horizontal_splitter(bpy.types.Operator):
         box.label(text="Opening Widths:", icon='SNAP_GRID')
 
         if splitter_obj:
-            for calculator in splitter_obj.blendertomob.calculators:
+            for calculator in splitter_obj.home_builder.calculators:
                 col = box.column(align=True)
                 for prompt in calculator.prompts:
                     row = col.row(align=True)
@@ -1781,7 +1781,7 @@ class hb_frameless_OT_edit_splitter_openings(bpy.types.Operator):
         splitter_obj = self.get_splitter_obj(context)
         if splitter_obj:
             # Recalculate the calculator
-            for calculator in splitter_obj.blendertomob.calculators:
+            for calculator in splitter_obj.home_builder.calculators:
                 calculator.calculate()
 
             # Run calc fix to update all sizes
@@ -1797,7 +1797,7 @@ class hb_frameless_OT_edit_splitter_openings(bpy.types.Operator):
             return {'CANCELLED'}
 
         # Recalculate the calculator
-        for calculator in splitter_obj.blendertomob.calculators:
+        for calculator in splitter_obj.home_builder.calculators:
             calculator.calculate()
 
         # Run calc fix to update all sizes
@@ -1821,7 +1821,7 @@ class hb_frameless_OT_edit_splitter_openings(bpy.types.Operator):
         box.label(text="Vertical Openings:" if is_vertical else "Horizontal Openings:", icon='SNAP_GRID')
 
         # Draw calculator prompts
-        for calculator in splitter_obj.blendertomob.calculators:
+        for calculator in splitter_obj.home_builder.calculators:
             col = box.column(align=True)
             for prompt in calculator.prompts:
                 row = col.row(align=True)

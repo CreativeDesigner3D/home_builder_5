@@ -749,7 +749,7 @@ def update_top_cabinet_clearance(self, context):
     """
     if not hasattr(context.scene, 'home_builder'):
         return
-    ceiling = context.scene.blendertomob.ceiling_height
+    ceiling = context.scene.home_builder.ceiling_height
     self.tall_cabinet_height = ceiling - self.default_top_cabinet_clearance
     self.upper_cabinet_height = (ceiling
                                  - self.default_top_cabinet_clearance

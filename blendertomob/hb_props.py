@@ -236,7 +236,7 @@ class Calculator_Prompt(PropertyGroup):
         row.prop(self,'equal',text="")
 
     def get_var(self,calculator_name,name):
-        prompt_path = 'blendertomob.calculators["' + calculator_name + '"].prompts["' + self.name + '"]'
+        prompt_path = 'home_builder.calculators["' + calculator_name + '"].prompts["' + self.name + '"]'
         return Variable(self.id_data, prompt_path + '.distance_value',name)
 
     def get_value(self):
@@ -251,7 +251,7 @@ class Calculator(PropertyGroup):
     distance_obj: PointerProperty(name="Distance Obj",type=bpy.types.Object)# type: ignore
 
     def set_total_distance(self,expression="",variables=[],value=0):
-        data_path = 'blendertomob.calculator_distance'
+        data_path = 'home_builder.calculator_distance'
         driver = self.distance_obj.driver_add(data_path)
         hb_utils.add_driver_variables(driver,variables)
         driver.driver.expression = expression
@@ -309,7 +309,7 @@ class Calculator(PropertyGroup):
                     non_equal_prompts_total_value += prompt.distance_value
 
         if equal_prompt_qty > 0:
-            prompt_value = (self.distance_obj.blendertomob.calculator_distance - non_equal_prompts_total_value) / equal_prompt_qty
+            prompt_value = (self.distance_obj.home_builder.calculator_distance - non_equal_prompts_total_value) / equal_prompt_qty
 
             for prompt in calc_prompts:
                 if prompt.include:

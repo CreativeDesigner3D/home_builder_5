@@ -166,7 +166,7 @@ def _appliance_dimensions(scene_props, appliance_name):
         return (scene_props.refrigerator_cabinet_width,
                 scene_props.refrigerator_height, cls.depth)
     if appliance_name == "Range Hood":
-        ceiling = bpy.context.scene.blendertomob.ceiling_height
+        ceiling = bpy.context.scene.home_builder.ceiling_height
         mount_z = _appliance_z_location(scene_props, appliance_name)
         height = max(ceiling - mount_z, cls.height)
         # Width follows range_width so the hood opens sized to the range

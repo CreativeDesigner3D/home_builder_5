@@ -875,7 +875,7 @@ def draw_wall_snap_indicator(op, context):
                 # wall body (thickness) extends in the target wall's
                 # +Y direction, which projects as +X along the face.
                 # Front face is the opposite.
-                draw_thickness = context.scene.blendertomob.wall_thickness
+                draw_thickness = context.scene.home_builder.wall_thickness
                 p1_gap_dir = 1.0 if op.snap_surface == 'back' else -1.0
                 _draw_wall_snap_dimensions(
                     region, op.snap_wall,
@@ -1940,7 +1940,7 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         closing_wall.set_input('Length', closing_length)
 
         # Connect closing wall's end to first wall
-        closing_wall.obj_x.blendertomob.connected_object = first_wall.obj
+        closing_wall.obj_x.home_builder.connected_object = first_wall.obj
 
         context.view_layer.update()
 
@@ -4793,7 +4793,7 @@ class home_builder_walls_OT_delete_wall(bpy.types.Operator):
         if left_wall:
             # Clear the connected_object reference on the left wall's obj_x
             if left_wall.obj_x:
-                left_wall.obj_x.blendertomob.connected_object = None
+                left_wall.obj_x.home_builder.connected_object = None
 
         # Collect all objects to delete (wall bp + all children recursively)
         objects_to_delete = set()

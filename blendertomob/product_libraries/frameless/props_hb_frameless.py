@@ -856,10 +856,10 @@ class Frameless_Cabinet_Style(PropertyGroup):
 
         row = box.row()
         row.scale_y = 1.3
-        if context.window_manager.blendertomob.progress < 1.0:
+        if context.window_manager.home_builder.progress < 1.0:
             row.progress(
-                text=str(int(context.window_manager.blendertomob.progress * 100)) + "%",
-                factor=context.window_manager.blendertomob.progress
+                text=str(int(context.window_manager.home_builder.progress * 100)) + "%",
+                factor=context.window_manager.home_builder.progress
             )
         else:
             row.operator("hb_frameless.update_cabinets_from_style", text="Update Cabinets", icon='FILE_REFRESH')

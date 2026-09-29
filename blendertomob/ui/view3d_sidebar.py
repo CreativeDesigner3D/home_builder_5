@@ -241,7 +241,7 @@ class HOME_BUILDER_PT_project_rooms(bpy.types.Panel):
         room_scenes = hb_project.get_room_scenes()
 
         # Sort by sort_order
-        room_scenes.sort(key=lambda s: s.blendertomob.sort_order)
+        room_scenes.sort(key=lambda s: s.home_builder.sort_order)
 
         # Main row with list and buttons
         main_row = layout.row(align=False)
@@ -291,7 +291,7 @@ class HOME_BUILDER_PT_project_rooms(bpy.types.Panel):
                        if s != context.scene
                        and not s.get('IS_LAYOUT_VIEW')
                        and not s.get('IS_DETAIL_VIEW')]
-        other_rooms.sort(key=lambda s: s.blendertomob.sort_order if hasattr(s, 'home_builder') else 0)
+        other_rooms.sort(key=lambda s: s.home_builder.sort_order if hasattr(s, 'home_builder') else 0)
 
         layout.separator()
         box = layout.box()
@@ -678,7 +678,7 @@ class HOME_BUILDER_PT_layout_views(bpy.types.Panel):
         layout_views = hb_layouts.LayoutView.get_all_layout_views()
 
         # Sort by sort_order
-        layout_views.sort(key=lambda s: s.blendertomob.sort_order)
+        layout_views.sort(key=lambda s: s.home_builder.sort_order)
 
         if layout_views:
             box = layout.box()
@@ -755,7 +755,7 @@ class HOME_BUILDER_MT_room_list(bpy.types.Menu):
         room_scenes = [s for s in bpy.data.scenes
                       if not s.get('IS_LAYOUT_VIEW') and not s.get('IS_DETAIL_VIEW')]
 
-        room_scenes.sort(key=lambda s: s.blendertomob.sort_order)
+        room_scenes.sort(key=lambda s: s.home_builder.sort_order)
         for scene in room_scenes:
             op = layout.operator("home_builder_layouts.go_to_layout_view",
                                text=scene.name, icon='HOME')
@@ -981,7 +981,7 @@ class HOME_BUILDER_PT_2d_details(bpy.types.Panel):
         detail_views = hb_details.DetailView.get_all_detail_views()
 
         # Sort by sort_order
-        detail_views.sort(key=lambda s: s.blendertomob.sort_order)
+        detail_views.sort(key=lambda s: s.home_builder.sort_order)
 
         if detail_views:
             box = layout.box()

@@ -178,7 +178,7 @@ def _find_corner_part(cab_obj, role, side, section_index):
 def _front_gn_dims(front_obj):
     """Read a face-frame front's cutpart (Length, Width, Thickness) GeoNode
     inputs. Returns None if the modifier / inputs aren't present."""
-    mod = front_obj.modifiers.get(front_obj.blendertomob.mod_name)
+    mod = front_obj.modifiers.get(front_obj.home_builder.mod_name)
     if mod is None or mod.node_group is None:
         return None
     names = {it.name: it.identifier
@@ -845,7 +845,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
             cage_z = height + 2.0 * margin
             cutter.location = (origin_x, origin_y, -margin)
             cutter.rotation_euler = (0.0, 0.0, math.radians(45.0))
-            _set_mod_inputs(cutter, cutter.blendertomob.mod_name, (
+            _set_mod_inputs(cutter, cutter.home_builder.mod_name, (
                 ('Dim X', cage_x),
                 ('Dim Y', cage_y),
                 ('Dim Z', cage_z),
@@ -865,7 +865,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
             back_height = height - z_back_floor - t
             angled.location = (clip, 0.0, z_back_floor)
             angled.rotation_euler.z = math.radians(-45.0)
-            _set_mod_inputs(angled, angled.blendertomob.mod_name, (
+            _set_mod_inputs(angled, angled.home_builder.mod_name, (
                 ('Length', back_height),
                 ('Width', clip_len),
                 ('Thickness', t),
@@ -1157,7 +1157,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
             shelf['IS_FACE_FRAME_INTERIOR_PART'] = True
             z_shelf = sec_z0 + (k + 1) * gap + k * solver.SHELF_THICKNESS
             shelf.location = (0.0, 0.0, z_shelf)
-            _set_mod_inputs(shelf, shelf.blendertomob.mod_name, (
+            _set_mod_inputs(shelf, shelf.home_builder.mod_name, (
                 ('Length', depth - t - fflo - l_scribe),
                 ('Width', width - t - ffro - r_scribe),
                 ('Thickness', solver.SHELF_THICKNESS),
@@ -1206,7 +1206,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
             # scribe); the inside-corner end is anchored to the FF so only
             # the outer end moves with the left inset (il).
             left_kick.location = (fl_x, -depth + il + t + left_scribe, 0.0)
-            _set_mod_inputs(left_kick, left_kick.blendertomob.mod_name, (
+            _set_mod_inputs(left_kick, left_kick.home_builder.mod_name, (
                 ('Length',
                  depth - rd + front_setback + fft - t - left_scribe - il),
                 ('Width', kick_height),
@@ -1219,7 +1219,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
             right_kick.hide_render = not show_front_rails
             right_kick.location = (
                 width - ir - t - right_scribe, fr_y, 0.0)
-            _set_mod_inputs(right_kick, right_kick.blendertomob.mod_name, (
+            _set_mod_inputs(right_kick, right_kick.home_builder.mod_name, (
                 ('Length',
                  width - ld + front_setback + fft - t - right_scribe - ir),
                 ('Width', kick_height),
@@ -1232,7 +1232,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
             rear_left.hide_render = not ladder_vis
             if ladder_vis:
                 rear_left.location = (WX + t, LY, 0.0)
-                _set_mod_inputs(rear_left, rear_left.blendertomob.mod_name, (
+                _set_mod_inputs(rear_left, rear_left.home_builder.mod_name, (
                     ('Length', WY - LY),
                     ('Width', kick_height),
                     ('Thickness', t),
@@ -1244,7 +1244,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
             rear_right.hide_render = not ladder_vis
             if ladder_vis:
                 rear_right.location = (RX, WY - t, 0.0)
-                _set_mod_inputs(rear_right, rear_right.blendertomob.mod_name, (
+                _set_mod_inputs(rear_right, rear_right.home_builder.mod_name, (
                     ('Length', RX - WX - t),
                     ('Width', kick_height),
                     ('Thickness', t),
@@ -1256,7 +1256,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
             end_left.hide_render = not ladder_vis
             if ladder_vis:
                 end_left.location = (fl_x, LY, 0.0)
-                _set_mod_inputs(end_left, end_left.blendertomob.mod_name, (
+                _set_mod_inputs(end_left, end_left.home_builder.mod_name, (
                     ('Length', fl_x - WX),
                     ('Width', kick_height),
                     ('Thickness', t),
@@ -1268,7 +1268,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
             end_right.hide_render = not ladder_vis
             if ladder_vis:
                 end_right.location = (RX, fr_y, 0.0)
-                _set_mod_inputs(end_right, end_right.blendertomob.mod_name, (
+                _set_mod_inputs(end_right, end_right.home_builder.mod_name, (
                     ('Length', WY - fr_y),
                     ('Width', kick_height),
                     ('Thickness', t),
@@ -1335,7 +1335,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
             # X-direction notch dim. Inside-corner edges (rd, ld) are
             # face-frame anchored and don't move.
             bottom.location = (0.0, 0.0, z_bottom)
-            _set_mod_inputs(bottom, bottom.blendertomob.mod_name, (
+            _set_mod_inputs(bottom, bottom.home_builder.mod_name, (
                 ('Length', depth - t - fflo - l_scribe),
                 ('Width', width - t - ffro - r_scribe),
                 ('Thickness', t),
@@ -1349,7 +1349,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         top = parts.get(PART_ROLE_CORNER_TOP)
         if top is not None:
             top.location = (0.0, 0.0, z_top)
-            _set_mod_inputs(top, top.blendertomob.mod_name, (
+            _set_mod_inputs(top, top.home_builder.mod_name, (
                 ('Length', depth - t - fflo - l_scribe),
                 ('Width', width - t - ffro - r_scribe),
                 ('Thickness', t),
@@ -1368,7 +1368,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
             # l_scribe.
             left_back.location = (0.0, -t, z_back_floor)
             back_height = height - z_back_floor - t
-            _set_mod_inputs(left_back, left_back.blendertomob.mod_name, (
+            _set_mod_inputs(left_back, left_back.home_builder.mod_name, (
                 ('Length', back_height),
                 ('Width', depth - t * 2 - fflo - l_scribe),
                 ('Thickness', t),
@@ -1381,7 +1381,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
             # r_scribe), so Width shrinks by r_scribe.
             right_back.location = (0.0, 0.0, z_back_floor)
             back_height = height - z_back_floor - t
-            _set_mod_inputs(right_back, right_back.blendertomob.mod_name, (
+            _set_mod_inputs(right_back, right_back.home_builder.mod_name, (
                 ('Length', back_height),
                 ('Width', width - t - ffro - r_scribe),
                 ('Thickness', t),
@@ -1394,7 +1394,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
             # extends Y=-depth..Y=-depth+lsw - covers the resulting gap
             # so long as l_scribe < lsw - t. Width unchanged.
             left_side.location = (0.0, -depth + fflo + l_scribe, side_z)
-            _set_mod_inputs(left_side, left_side.blendertomob.mod_name, (
+            _set_mod_inputs(left_side, left_side.home_builder.mod_name, (
                 ('Length', side_len),
                 ('Width', ld - fft),
                 ('Thickness', t),
@@ -1415,7 +1415,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
             # outer edge at X=width). Right stile covers the gap.
             # Width unchanged.
             right_side.location = (width - ffro - r_scribe, 0.0, side_z)
-            _set_mod_inputs(right_side, right_side.blendertomob.mod_name, (
+            _set_mod_inputs(right_side, right_side.home_builder.mod_name, (
                 ('Length', side_len),
                 ('Width', rd - fft),
                 ('Thickness', t),
@@ -1457,7 +1457,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                         z_back_floor,
                     )
                     _set_mod_inputs(
-                        partition, partition.blendertomob.mod_name, (
+                        partition, partition.home_builder.mod_name, (
                             ('Length', part_length),
                             ('Width', ld - fft - t),
                             ('Thickness', t),
@@ -1470,7 +1470,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                         z_back_floor,
                     )
                     _set_mod_inputs(
-                        partition, partition.blendertomob.mod_name, (
+                        partition, partition.home_builder.mod_name, (
                             ('Length', part_length),
                             ('Width', rd - fft - t),
                             ('Thickness', t),
@@ -1510,7 +1510,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                         -depth + fflo + l_scribe + t + offset,
                         z_back_floor,
                     )
-                    _set_mod_inputs(div, div.blendertomob.mod_name, (
+                    _set_mod_inputs(div, div.home_builder.mod_name, (
                         ('Length', div_length),
                         ('Width', ld - fft - t - setback),
                         ('Thickness', dthk),
@@ -1522,7 +1522,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                         -t,
                         z_back_floor,
                     )
-                    _set_mod_inputs(div, div.blendertomob.mod_name, (
+                    _set_mod_inputs(div, div.home_builder.mod_name, (
                         ('Length', div_length),
                         ('Width', rd - fft - t - setback),
                         ('Thickness', dthk),
@@ -1576,7 +1576,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                     ld - fft - kick_setback + ft,
                     -depth + fflo, 0.0)
                 _set_mod_inputs(
-                    left_finish, left_finish.blendertomob.mod_name, (
+                    left_finish, left_finish.home_builder.mod_name, (
                         ('Length',
                          depth - rd + kick_setback + fft - fflo - ft),
                         ('Width', kick_height),
@@ -1595,7 +1595,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                     width - ffro,
                     -rd + fft + kick_setback - ft, 0.0)
                 _set_mod_inputs(
-                    right_finish, right_finish.blendertomob.mod_name, (
+                    right_finish, right_finish.home_builder.mod_name, (
                         ('Length',
                          width - ld + kick_setback + fft - ffro - ft),
                         ('Width', kick_height),
@@ -1625,7 +1625,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         left_stile = _find_ff_part(self.obj, ff.PART_ROLE_LEFT_STILE, 'LEFT')
         if left_stile is not None:
             left_stile.location = (ld - fft, -depth, z_ff_floor)
-            _set_mod_inputs(left_stile, left_stile.blendertomob.mod_name, (
+            _set_mod_inputs(left_stile, left_stile.home_builder.mod_name, (
                 ('Length', stile_length),
                 ('Width', lsw),
                 ('Thickness', fft),
@@ -1634,7 +1634,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         right_stile = _find_ff_part(self.obj, ff.PART_ROLE_RIGHT_STILE, 'RIGHT')
         if right_stile is not None:
             right_stile.location = (width, -rd + fft, z_ff_floor)
-            _set_mod_inputs(right_stile, right_stile.blendertomob.mod_name, (
+            _set_mod_inputs(right_stile, right_stile.home_builder.mod_name, (
                 ('Length', stile_length),
                 ('Width', rsw),
                 ('Thickness', fft),
@@ -1643,7 +1643,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         left_top_rail = _find_ff_part(self.obj, ff.PART_ROLE_TOP_RAIL, 'LEFT')
         if left_top_rail is not None:
             left_top_rail.location = (ld - fft, -depth + lsw, height)
-            _set_mod_inputs(left_top_rail, left_top_rail.blendertomob.mod_name, (
+            _set_mod_inputs(left_top_rail, left_top_rail.home_builder.mod_name, (
                 ('Length', depth - rd - lsw),
                 ('Width', trw),
                 ('Thickness', fft),
@@ -1652,7 +1652,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         right_top_rail = _find_ff_part(self.obj, ff.PART_ROLE_TOP_RAIL, 'RIGHT')
         if right_top_rail is not None:
             right_top_rail.location = (width - rsw, -rd + fft, height)
-            _set_mod_inputs(right_top_rail, right_top_rail.blendertomob.mod_name, (
+            _set_mod_inputs(right_top_rail, right_top_rail.home_builder.mod_name, (
                 ('Length', width - ld - lsw + fft),
                 ('Width', trw),
                 ('Thickness', fft),
@@ -1661,7 +1661,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         left_bot_rail = _find_ff_part(self.obj, ff.PART_ROLE_BOTTOM_RAIL, 'LEFT')
         if left_bot_rail is not None:
             left_bot_rail.location = (ld - fft, -depth + lsw, z_ff_floor)
-            _set_mod_inputs(left_bot_rail, left_bot_rail.blendertomob.mod_name, (
+            _set_mod_inputs(left_bot_rail, left_bot_rail.home_builder.mod_name, (
                 ('Length', depth - rd - lsw),
                 ('Width', brw_eff),
                 ('Thickness', fft),
@@ -1670,7 +1670,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         right_bot_rail = _find_ff_part(self.obj, ff.PART_ROLE_BOTTOM_RAIL, 'RIGHT')
         if right_bot_rail is not None:
             right_bot_rail.location = (width - rsw, -rd + fft, z_ff_floor)
-            _set_mod_inputs(right_bot_rail, right_bot_rail.blendertomob.mod_name, (
+            _set_mod_inputs(right_bot_rail, right_bot_rail.home_builder.mod_name, (
                 ('Length', width - ld - lsw + fft),
                 ('Width', brw_eff),
                 ('Thickness', fft),
@@ -1756,7 +1756,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                 left_door.location = (ld + door_standoff, left_door_y,
                                       z_door)
                 _set_mod_inputs(
-                    left_door, left_door.blendertomob.mod_name, (
+                    left_door, left_door.home_builder.mod_name, (
                         ('Length', door_length),
                         ('Width', left_door_width),
                         ('Thickness', dt),
@@ -1767,7 +1767,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                 right_door.location = (right_door_x, -rd - door_standoff,
                                        z_door)
                 _set_mod_inputs(
-                    right_door, right_door.blendertomob.mod_name, (
+                    right_door, right_door.home_builder.mod_name, (
                         ('Length', door_length),
                         ('Width', right_door_width),
                         ('Thickness', dt),
@@ -1823,7 +1823,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                 if left_mr is not None:
                     left_mr.location = (ld - fft, -depth + lsw, z_cursor)
                     _set_mod_inputs(
-                        left_mr, left_mr.blendertomob.mod_name, (
+                        left_mr, left_mr.home_builder.mod_name, (
                             ('Length', depth - rd - lsw),
                             ('Width', mrw),
                             ('Thickness', fft),
@@ -1833,7 +1833,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                 if right_mr is not None:
                     right_mr.location = (width - rsw, -rd + fft, z_cursor)
                     _set_mod_inputs(
-                        right_mr, right_mr.blendertomob.mod_name, (
+                        right_mr, right_mr.home_builder.mod_name, (
                             ('Length', width - ld - lsw + fft),
                             ('Width', mrw),
                             ('Thickness', fft),
@@ -2066,7 +2066,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
             shelf['IS_FACE_FRAME_INTERIOR_PART'] = True
             z_shelf = sec_z0 + (k + 1) * gap + k * solver.SHELF_THICKNESS
             shelf.location = (t, -t, z_shelf)
-            _set_mod_inputs(shelf, shelf.blendertomob.mod_name, (
+            _set_mod_inputs(shelf, shelf.home_builder.mod_name, (
                 ('Length', width - ffro - 2.0 * t),
                 ('Width', depth - fflo - 2.0 * t),
                 ('Thickness', solver.SHELF_THICKNESS),
@@ -2128,7 +2128,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         bottom = parts.get(PART_ROLE_CORNER_BOTTOM)
         if bottom is not None:
             bottom.location = (0.0, 0.0, z_bottom)
-            _set_mod_inputs(bottom, bottom.blendertomob.mod_name, (
+            _set_mod_inputs(bottom, bottom.home_builder.mod_name, (
                 ('Length', width - t - ffro),
                 ('Width', depth - t - fflo),
                 ('Thickness', t),
@@ -2139,7 +2139,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         top = parts.get(PART_ROLE_CORNER_TOP)
         if top is not None:
             top.location = (0.0, 0.0, z_top)
-            _set_mod_inputs(top, top.blendertomob.mod_name, (
+            _set_mod_inputs(top, top.home_builder.mod_name, (
                 ('Length', width - t - ffro),
                 ('Width', depth - t - fflo),
                 ('Thickness', t),
@@ -2150,7 +2150,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         if left_back is not None:
             left_back.location = (0.0, -t, z_back_floor)
             back_height = height - z_back_floor - t
-            _set_mod_inputs(left_back, left_back.blendertomob.mod_name, (
+            _set_mod_inputs(left_back, left_back.home_builder.mod_name, (
                 ('Length', back_height),
                 ('Width', depth - t * 2 - fflo),
                 ('Thickness', t),
@@ -2160,7 +2160,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         if right_back is not None:
             right_back.location = (0.0, 0.0, z_back_floor)
             back_height = height - z_back_floor - t
-            _set_mod_inputs(right_back, right_back.blendertomob.mod_name, (
+            _set_mod_inputs(right_back, right_back.home_builder.mod_name, (
                 ('Length', back_height),
                 ('Width', width - t - ffro),
                 ('Thickness', t),
@@ -2172,7 +2172,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         left_side = parts.get(PART_ROLE_CORNER_LEFT_SIDE)
         if left_side is not None:
             left_side.location = (0.0, -depth + fflo, side_z)
-            _set_mod_inputs(left_side, left_side.blendertomob.mod_name, (
+            _set_mod_inputs(left_side, left_side.home_builder.mod_name, (
                 ('Length', side_len),
                 ('Width', ld + fflo),
                 ('Thickness', t),
@@ -2190,7 +2190,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         right_side = parts.get(PART_ROLE_CORNER_RIGHT_SIDE)
         if right_side is not None:
             right_side.location = (width - ffro, 0.0, side_z)
-            _set_mod_inputs(right_side, right_side.blendertomob.mod_name, (
+            _set_mod_inputs(right_side, right_side.home_builder.mod_name, (
                 ('Length', side_len),
                 ('Width', rd + ffro),
                 ('Thickness', t),
@@ -2246,7 +2246,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         if left_stile is not None:
             left_stile.location = (ld, -depth, z_ff_floor)
             left_stile.rotation_euler.z = math.radians(90) + theta
-            _set_mod_inputs(left_stile, left_stile.blendertomob.mod_name, (
+            _set_mod_inputs(left_stile, left_stile.home_builder.mod_name, (
                 ('Length', stile_length),
                 ('Width', lsw),
                 ('Thickness', fft),
@@ -2257,7 +2257,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         if right_stile is not None:
             right_stile.location = (width, -rd, z_ff_floor)
             right_stile.rotation_euler.z = math.radians(90) + theta
-            _set_mod_inputs(right_stile, right_stile.blendertomob.mod_name, (
+            _set_mod_inputs(right_stile, right_stile.home_builder.mod_name, (
                 ('Length', stile_length),
                 ('Width', rsw),
                 ('Thickness', fft),
@@ -2268,7 +2268,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         if bot_rail is not None:
             bot_rail.location = (rail_origin_x, rail_origin_y, z_ff_floor)
             bot_rail.rotation_euler.z = theta
-            _set_mod_inputs(bot_rail, bot_rail.blendertomob.mod_name, (
+            _set_mod_inputs(bot_rail, bot_rail.home_builder.mod_name, (
                 ('Length', rail_length),
                 ('Width', brw_eff),
                 ('Thickness', fft),
@@ -2281,7 +2281,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         if top_rail is not None:
             top_rail.location = (rail_origin_x, rail_origin_y, height - trw)
             top_rail.rotation_euler.z = theta
-            _set_mod_inputs(top_rail, top_rail.blendertomob.mod_name, (
+            _set_mod_inputs(top_rail, top_rail.home_builder.mod_name, (
                 ('Length', rail_length),
                 ('Width', trw),
                 ('Thickness', fft),
@@ -2316,7 +2316,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
             kick_angle = math.atan2(kick_dy, kick_dx)
             diag_kick.location = (kick_left_x, kick_left_y, 0.0)
             diag_kick.rotation_euler.z = kick_angle
-            _set_mod_inputs(diag_kick, diag_kick.blendertomob.mod_name, (
+            _set_mod_inputs(diag_kick, diag_kick.home_builder.mod_name, (
                 ('Length', kick_length),
                 ('Width', kick_height),
                 ('Thickness', t),
@@ -2408,7 +2408,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                 if d_left is not None:
                     d_left.location = (left_door_x, left_door_y, z_door)
                     d_left.rotation_euler.z = math.radians(90) + theta
-                    _set_mod_inputs(d_left, d_left.blendertomob.mod_name, (
+                    _set_mod_inputs(d_left, d_left.home_builder.mod_name, (
                         ('Length', door_length),
                         ('Width', leaf_width),
                         ('Thickness', dt),
@@ -2425,7 +2425,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                         z_door,
                     )
                     d_right.rotation_euler.z = math.radians(90) + theta
-                    _set_mod_inputs(d_right, d_right.blendertomob.mod_name, (
+                    _set_mod_inputs(d_right, d_right.home_builder.mod_name, (
                         ('Length', door_length),
                         ('Width', leaf_width),
                         ('Thickness', dt),
@@ -2465,7 +2465,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                     ff_panel.location = (panel_x, panel_y, z_panel)
                     ff_panel.rotation_euler.z = math.radians(90) + theta
                     _set_mod_inputs(
-                        ff_panel, ff_panel.blendertomob.mod_name, (
+                        ff_panel, ff_panel.home_builder.mod_name, (
                             ('Length', panel_length),
                             ('Width', door_span),
                             ('Thickness', dt),
@@ -2486,7 +2486,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                         rail_origin_x, rail_origin_y, z_cursor)
                     mid_rail.rotation_euler.z = theta
                     _set_mod_inputs(
-                        mid_rail, mid_rail.blendertomob.mod_name, (
+                        mid_rail, mid_rail.home_builder.mod_name, (
                             ('Length', rail_length),
                             ('Width', mrw),
                             ('Thickness', fft),
@@ -2500,7 +2500,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                     i - 1)
                 if fixed is not None:
                     fixed.location = (0.0, 0.0, z_cursor + mrw - t)
-                    _set_mod_inputs(fixed, fixed.blendertomob.mod_name, (
+                    _set_mod_inputs(fixed, fixed.home_builder.mod_name, (
                         ('Length', width - t - ffro),
                         ('Width', depth - t - fflo),
                         ('Thickness', t),
@@ -2543,7 +2543,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
             cage_z = height + 2.0 * margin
             cutter.location = (origin_x, origin_y, -margin)
             cutter.rotation_euler = (0.0, 0.0, rot_z)
-            _set_mod_inputs(cutter, cutter.blendertomob.mod_name, (
+            _set_mod_inputs(cutter, cutter.home_builder.mod_name, (
                 ('Dim X', cage_x),
                 ('Dim Y', cage_y),
                 ('Dim Z', cage_z),
@@ -2575,7 +2575,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
             side_cutter.location = (side_origin_x, side_origin_y, -margin_s)
             side_cutter.rotation_euler = (0.0, 0.0, rot_z_s)
             _set_mod_inputs(side_cutter,
-                            side_cutter.blendertomob.mod_name, (
+                            side_cutter.home_builder.mod_name, (
                 ('Dim X', side_cage_x),
                 ('Dim Y', side_cage_y),
                 ('Dim Z', side_cage_z),
@@ -2760,7 +2760,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
             run = max(math.hypot(fx - bx, fy - by) - t, inch(3.0))
             side.location = (ox, oy, 0.0)
             side.rotation_euler = rot
-            _set_mod_inputs(side, side.blendertomob.mod_name, (
+            _set_mod_inputs(side, side.home_builder.mod_name, (
                 ('Length', height),
                 ('Width', run),
                 ('Thickness', fft),
@@ -2811,7 +2811,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                                    oy - big * ny + inboard_sign * uy * clr,
                                    -vm)
                 cutter.rotation_euler = rot
-                _set_mod_inputs(cutter, cutter.blendertomob.mod_name, (
+                _set_mod_inputs(cutter, cutter.home_builder.mod_name, (
                     ('Dim X', height + 2.0 * vm),   # vertical: through top/bottom
                     ('Dim Y', 2.0 * big),           # run: whole panel both ways
                     ('Dim Z', big),                 # outboard: the whole wing

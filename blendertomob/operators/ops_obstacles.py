@@ -325,7 +325,7 @@ class home_builder_obstacles_OT_place_obstacle(bpy.types.Operator, hb_placement.
 
         elif self.target_type == 'CEILING':
             if self.hit_location:
-                ceiling_height = context.scene.blendertomob.ceiling_height
+                ceiling_height = context.scene.home_builder.ceiling_height
                 self.obstacle_obj.location = Vector((
                     self.hit_location.x,
                     self.hit_location.y,
