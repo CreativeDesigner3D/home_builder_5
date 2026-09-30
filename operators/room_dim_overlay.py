@@ -8,6 +8,8 @@ value labels on it:
   wall; windows also show the sill height (height from floor) and a
   dashed centerline with its distance to each end of the wall.
 - Wall: length and height.
+- Wall obstacle: its distance to each end of the wall, down to the
+  floor and up to the top of the wall.
 
 Each value label sits on a ticked dimension line (orange for a
 window's centerline).
@@ -121,6 +123,12 @@ def _resolve_target(obj):
     while node is not None:
         if node.get('IS_ENTRY_DOOR_BP') or node.get('IS_WINDOW_BP'):
             return ('CAGE', node)
+        if node.get('IS_OBSTACLE'):
+            # Only a wall obstacle has wall ends to measure to; a floor
+            # or ceiling obstacle labels nothing (and not the wall).
+            if node.parent is not None and node.parent.get('IS_WALL_BP'):
+                return ('OBSTACLE', node)
+            return None
         if any(node.get(tag) for tag in _PRODUCT_ROOT_TAGS):
             return None
         if node.get('IS_WALL_BP'):
@@ -205,6 +213,55 @@ def _cage_label_targets(cage_obj):
     return out
 
 
+def _obstacle_frame(obs_obj):
+    """(wall_obj, wall_len, wall_h, center, w, ext) for a wall
+    obstacle: its center in the wall's local space (x along the wall,
+    z up), its width along the wall and its standing height. None when
+    the wall can't be read."""
+    from .ops_obstacles import _obstacle_size, obstacle_z_size
+    wall_obj = obs_obj.parent
+    if wall_obj is None or not wall_obj.get('IS_WALL_BP'):
+        return None
+    wall = hb_types.GeoNodeWall(wall_obj)
+    if not wall.has_modifier():
+        return None
+    try:
+        wall_len = wall.get_input('Length')
+        wall_h = wall.get_input('Height')
+    except Exception:
+        return None
+    w, h, d = _obstacle_size(obs_obj)
+    ext = obstacle_z_size(h, d, obs_obj.get('OBSTACLE_TYPE', ''), 'WALL')
+    center = (wall_obj.matrix_world.inverted()
+              @ obs_obj.matrix_world.translation)
+    return wall_obj, wall_len, wall_h, center, w, ext
+
+
+def _obstacle_gaps(fr):
+    """(left, right, bottom, top) clear distances from a wall obstacle's
+    edges to the wall's start, end, the floor and the wall's top."""
+    _wall, wall_len, wall_h, c, w, ext = fr
+    return (c.x - w / 2.0, wall_len - c.x - w / 2.0,
+            c.z - ext / 2.0, wall_h - c.z - ext / 2.0)
+
+
+def _obstacle_label_targets(obs_obj):
+    """[(kind, value, prefix, wall_local_anchor)] for a wall obstacle:
+    the four clear distances, each at the middle of its dim line."""
+    fr = _obstacle_frame(obs_obj)
+    if fr is None:
+        return []
+    _wall, wall_len, wall_h, c, w, ext = fr
+    left, right, bottom, top = _obstacle_gaps(fr)
+    return [
+        ('OBS_L', left, "← ", Vector((left / 2.0, c.y, c.z))),
+        ('OBS_R', right, "→ ",
+         Vector((wall_len - right / 2.0, c.y, c.z))),
+        ('OBS_B', bottom, "↓ ", Vector((c.x, c.y, bottom / 2.0))),
+        ('OBS_T', top, "↑ ", Vector((c.x, c.y, wall_h - top / 2.0))),
+    ]
+
+
 def _dim_segments(context, region, rv3d, s=1.0):
     """Region-space line endpoints ``(dims, centerline)`` for each
     selected wall / door / window, drawn under its labels so every value
@@ -237,6 +294,32 @@ def _dim_segments(context, region, rv3d, s=1.0):
             for p in (a, b, a - tick, a + tick, b - tick, b + tick):
                 out.append(tuple(p))
 
+        if tag == 'OBSTACLE':
+            fr = _obstacle_frame(obj)
+            if fr is None:
+                continue
+            wall_obj, wall_len, wall_h, c, w, ext = fr
+            wmw = wall_obj.matrix_world
+
+            def seg(x0, z0, x1, z1):
+                a = view3d_utils.location_3d_to_region_2d(
+                    region, rv3d, wmw @ Vector((x0, c.y, z0)))
+                b = view3d_utils.location_3d_to_region_2d(
+                    region, rv3d, wmw @ Vector((x1, c.y, z1)))
+                if a is None or b is None:
+                    return
+                d = b - a
+                if d.length < 1e-6:
+                    return
+                tick = Vector((-d.y, d.x)).normalized() * CL_TICK_PX * s
+                for p in (a, b, a - tick, a + tick, b - tick, b + tick):
+                    dims.append(tuple(p))
+
+            seg(0.0, c.z, c.x - w / 2.0, c.z)
+            seg(c.x + w / 2.0, c.z, wall_len, c.z)
+            seg(c.x, 0.0, c.x, c.z - ext / 2.0)
+            seg(c.x, c.z + ext / 2.0, c.x, wall_h)
+            continue
         if tag == 'WALL':
             wall = hb_types.GeoNodeWall(obj)
             if not wall.has_modifier():
@@ -361,9 +444,17 @@ def compute_labels(context, region, rv3d):
 
     labels = []
     for name, (tag, obj) in targets.items():
-        rows = (_cage_label_targets(obj) if tag == 'CAGE'
-                else _wall_label_targets(obj))
-        mw = obj.matrix_world
+        if tag == 'CAGE':
+            rows = _cage_label_targets(obj)
+            mw = obj.matrix_world
+        elif tag == 'OBSTACLE':
+            # Anchored in the wall's frame: the obstacle's own axes turn
+            # round on the back face of a wall.
+            rows = _obstacle_label_targets(obj)
+            mw = obj.parent.matrix_world
+        else:
+            rows = _wall_label_targets(obj)
+            mw = obj.matrix_world
         for kind, value, prefix, local in rows:
             anchor = mw @ local
             pt = view3d_utils.location_3d_to_region_2d(region, rv3d, anchor)
@@ -456,6 +547,31 @@ def _draw():
 
 # ---- Commit --------------------------------------------------------------
 
+_OBSTACLE_KINDS = {'OBS_L', 'OBS_R', 'OBS_B', 'OBS_T'}
+
+
+def _commit_obstacle(obj, kind, value):
+    """Slide a wall obstacle so the typed side sits ``value`` from its
+    wall end / the floor / the wall top, kept on the wall."""
+    fr = _obstacle_frame(obj)
+    if fr is None:
+        return False
+    wall_obj, wall_len, wall_h, c, w, ext = fr
+    c = c.copy()
+    if kind == 'OBS_L':
+        c.x = value + w / 2.0
+    elif kind == 'OBS_R':
+        c.x = wall_len - value - w / 2.0
+    elif kind == 'OBS_B':
+        c.z = value + ext / 2.0
+    elif kind == 'OBS_T':
+        c.z = wall_h - value - ext / 2.0
+    c.x = max(w / 2.0, min(c.x, wall_len - w / 2.0))
+    c.z = max(ext / 2.0, c.z)
+    # Parented with the wall's inverse, so location is world.
+    obj.location = wall_obj.matrix_world @ c
+    return True
+
 def _commit(obj, kind, value):
     """Write the typed value through the same paths the prompts dialogs
     use; cage size / position edits rebuild the 3D geometry."""
@@ -465,6 +581,8 @@ def _commit(obj, kind, value):
     if kind == 'WALL_H':
         hb_types.GeoNodeWall(obj).set_input('Height', max(value, inch(6.0)))
         return True
+    if kind in _OBSTACLE_KINDS:
+        return _commit_obstacle(obj, kind, value)
 
     cage = hb_types.GeoNodeCage(obj)
     if not cage.has_modifier():
@@ -559,6 +677,10 @@ class home_builder_OT_edit_room_dim_label(bpy.types.Operator):
                ('CAGE_OFF_R', "Offset Right", ""),
                ('CAGE_CL_L', "Centerline From Left", ""),
                ('CAGE_CL_R', "Centerline From Right", ""),
+               ('OBS_L', "Obstacle From Left", ""),
+               ('OBS_R', "Obstacle From Right", ""),
+               ('OBS_B', "Obstacle From Floor", ""),
+               ('OBS_T', "Obstacle From Top", ""),
                ('WALL_LEN', "Wall Length", ""),
                ('WALL_H', "Wall Height", "")],
         options={'HIDDEN'})  # type: ignore
