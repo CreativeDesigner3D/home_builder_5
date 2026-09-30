@@ -31,6 +31,7 @@ from .. import ui_face_frame
 from ....hb_types import GeoNodeCutpart, CabinetPartModifier
 from .... import units
 from .... import hb_utils
+from ...common import arch_cutout
 
 
 # Role sets used by each operator's poll and the menu's draw.
@@ -3385,6 +3386,10 @@ class hb_face_frame_OT_apply_finished_end_to_other_side(bpy.types.Operator):
 # ---------------------------------------------------------------------------
 _CUTOUT_TOKEN = 'CPM_CUTOUT'
 _CUTOUT_NAME = 'Cutout'
+# Arch cutouts ride the same Add / Edit / Remove entries; their node group
+# is built in Python (common/arch_cutout.py).
+_ARCH_CUTOUT_TOKEN = arch_cutout.NODE_GROUP_NAME
+_CUTOUT_TOKENS = (_CUTOUT_TOKEN, _ARCH_CUTOUT_TOKEN)
 
 
 def _cutpart_modifier(obj):
@@ -3405,15 +3410,20 @@ def _is_cutpart(obj):
     return _cutpart_modifier(obj) is not None
 
 
+def _is_arch_cutout(mod):
+    return bool(mod.node_group) and mod.node_group.name == _ARCH_CUTOUT_TOKEN
+
+
 def _user_cutout_mods(obj):
-    """User-added CPM_CUTOUT modifiers on obj, in stack order. Named with the
+    """User-added CPM_CUTOUT / arch cutout modifiers on obj, in stack order.
+    Named with the
     'Cutout' prefix so they stay distinct from system CPM_CUTOUT uses (e.g. the
     appliance-panel 'Flange *' strips)."""
     if obj is None:
         return []
     return [m for m in obj.modifiers
             if (m.type == 'NODES' and m.node_group
-                and m.node_group.name == _CUTOUT_TOKEN
+                and m.node_group.name in _CUTOUT_TOKENS
                 and m.name.split('.')[0] == _CUTOUT_NAME)]
 
 
@@ -3433,20 +3443,40 @@ def _cutout_mod_inputs(obj, mod):
     cpm = CabinetPartModifier(obj)
     cpm.mod = mod
     try:
-        return {'x': float(cpm.get_input('X')),
-                'end_x': float(cpm.get_input('End X')),
-                'y': float(cpm.get_input('Y')),
-                'end_y': float(cpm.get_input('End Y')),
-                'depth': float(cpm.get_input('Route Depth')),
-                'flip_z': bool(cpm.get_input('Flip Z'))}
+        state = {'x': float(cpm.get_input('X')),
+                 'end_x': float(cpm.get_input('End X')),
+                 'y': float(cpm.get_input('Y')),
+                 'end_y': float(cpm.get_input('End Y')),
+                 'depth': float(cpm.get_input('Route Depth')),
+                 'flip_z': bool(cpm.get_input('Flip Z')),
+                 'shape': 'RECTANGLE'}
+        if _is_arch_cutout(mod):
+            state.update(shape='ARCH',
+                         flat_side=int(cpm.get_input('Flat Side')),
+                         open_edge=bool(cpm.get_input('Open Edge')))
+        return state
     except Exception:
         return None
 
 
+def _set_cutout_shape(obj, mod, shape):
+    """Point a cutout modifier at the rectangle or the arch node group."""
+    if shape == 'ARCH':
+        ng = arch_cutout.ensure_node_group()
+    else:
+        ng = CabinetPartModifier(obj).get_node(_CUTOUT_TOKEN)
+    if ng is not None and mod.node_group is not ng:
+        mod.node_group = ng
+
+
 def _write_cutout_inputs(obj, mod, state):
     """Write a _cutout_mod_inputs() snapshot straight back to the modifier."""
+    _set_cutout_shape(obj, mod, state.get('shape', 'RECTANGLE'))
     cpm = CabinetPartModifier(obj)
     cpm.mod = mod
+    if state.get('shape') == 'ARCH':
+        cpm.set_input('Flat Side', state['flat_side'])
+        cpm.set_input('Open Edge', state['open_edge'])
     cpm.set_input('X', state['x'])
     cpm.set_input('End X', state['end_x'])
     cpm.set_input('Y', state['y'])
@@ -3481,26 +3511,40 @@ def _apply_cutout_live(op):
         thickness = part.get_input('Thickness')
     except Exception:
         return
-    cl = max(min(op.cutout_length, length), 0.0)
-    cw = max(min(op.cutout_width, width), 0.0)
-    if cl <= 0.0 or cw <= 0.0:
-        return
-    if op.center:
-        x0 = (length - cl) / 2.0
-        y0 = (width - cw) / 2.0
+    _set_cutout_shape(obj, mod, op.shape)
+    if op.shape == 'ARCH':
+        rise = op.arch_width / 2.0 if op.half_circle else op.arch_rise
+        rect = arch_cutout.arch_rect(
+            length, width, op.arch_width, rise, op.flat_side, op.open_edge,
+            op.center, op.offset_length, op.offset_width)
+        if rect is None:
+            return
+        x0, x1, y0, y1 = rect
     else:
-        x0 = op.offset_length
-        y0 = op.offset_width
-    # Keep the rectangle inside the part face.
-    x0 = min(max(x0, 0.0), length - cl)
-    y0 = min(max(y0, 0.0), width - cw)
+        cl = max(min(op.cutout_length, length), 0.0)
+        cw = max(min(op.cutout_width, width), 0.0)
+        if cl <= 0.0 or cw <= 0.0:
+            return
+        if op.center:
+            x0 = (length - cl) / 2.0
+            y0 = (width - cw) / 2.0
+        else:
+            x0 = op.offset_length
+            y0 = op.offset_width
+        # Keep the rectangle inside the part face.
+        x0 = min(max(x0, 0.0), length - cl)
+        y0 = min(max(y0, 0.0), width - cw)
+        x1, y1 = x0 + cl, y0 + cw
     depth = thickness if op.through else min(op.route_depth, thickness)
     cpm = CabinetPartModifier(obj)
     cpm.mod = mod
+    if op.shape == 'ARCH':
+        cpm.set_input('Flat Side', arch_cutout.FLAT_SIDE_INDEX[op.flat_side])
+        cpm.set_input('Open Edge', op.open_edge)
     cpm.set_input('X', x0)
-    cpm.set_input('End X', x0 + cl)
+    cpm.set_input('End X', x1)
     cpm.set_input('Y', y0)
-    cpm.set_input('End Y', y0 + cw)
+    cpm.set_input('End Y', y1)
     cpm.set_input('Route Depth', depth)
     cpm.set_input('Flip Z', op.back_face)
     mod.show_viewport = True
@@ -3513,8 +3557,9 @@ def _on_cutout_field_update(self, context):
 
 
 class hb_face_frame_OT_add_part_cutout(bpy.types.Operator):
-    """Cut a rectangular hole or route into this part - a fan / liner opening,
-    a light route, an outlet cutout. The cut shows in 3D and in the 2D drawing
+    """Cut a rectangular or arched hole or route into this part - a fan /
+    liner opening, a light route, an outlet cutout, an arched base or
+    valance. The cut shows in 3D and in the 2D drawing
     (a rotated copy of the part reveals it), so no detail view is needed. The
     cutout is built immediately and updates LIVE as the dialog fields change.
 
@@ -3525,8 +3570,8 @@ class hb_face_frame_OT_add_part_cutout(bpy.types.Operator):
     leaves the new cutout in place (drop it with Remove Cutout)."""
     bl_idname = "hb_face_frame.add_part_cutout"
     bl_label = "Add Cutout"
-    bl_description = ("Cut a rectangular hole or route into this part "
-                      "(fan/liner opening, light route, outlet)")
+    bl_description = ("Cut a rectangular or arched hole or route into this "
+                      "part (fan/liner opening, light route, outlet, arch)")
     bl_options = {'REGISTER', 'UNDO'}
 
     # Live-dialog binding: the cutout is created on invoke and each field write
@@ -3540,6 +3585,46 @@ class hb_face_frame_OT_add_part_cutout(bpy.types.Operator):
     # JSON snapshot of the values an edit opened on, for Cancel. Empty on an add.
     restore_state: StringProperty(default='', options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
 
+    shape: EnumProperty(
+        name="Shape",
+        items=[('RECTANGLE', "Rectangle", "A rectangular hole or route"),
+               ('ARCH', "Arch", "A half circle or shallower arch with a "
+                "flat side, opening onto a part edge or inside the part")],
+        default='RECTANGLE', update=_on_cutout_field_update)  # type: ignore
+    arch_width: FloatProperty(
+        name="Arch Width", unit='LENGTH', precision=4, min=0.0,
+        default=units.inch(8.0),
+        description="Length of the arch's flat side",
+        update=_on_cutout_field_update)  # type: ignore
+    half_circle: BoolProperty(
+        name="Half Circle", default=True,
+        description="Rise the arch half its width (a half circle); off sets "
+                    "a shallower rise",
+        update=_on_cutout_field_update)  # type: ignore
+    arch_rise: FloatProperty(
+        name="Rise", unit='LENGTH', precision=4, min=0.0,
+        default=units.inch(2.0),
+        description="How far the arch reaches from its flat side (at most "
+                    "half the width)",
+        update=_on_cutout_field_update)  # type: ignore
+    flat_side: EnumProperty(
+        name="Flat Side",
+        description="The part edge the arch's flat side faces",
+        items=[('LENGTH_START', "Length Start", "Flat side toward the start "
+                "of the part's length"),
+               ('LENGTH_END', "Length End", "Flat side toward the end of the "
+                "part's length"),
+               ('WIDTH_START', "Width Start", "Flat side toward the start of "
+                "the part's width"),
+               ('WIDTH_END', "Width End", "Flat side toward the end of the "
+                "part's width")],
+        default='LENGTH_START', update=_on_cutout_field_update)  # type: ignore
+    open_edge: BoolProperty(
+        name="Open to Edge", default=True,
+        description="Put the flat side on that part edge, so the arch opens "
+                    "onto it (an arched base or valance); off keeps the "
+                    "arch inside the part",
+        update=_on_cutout_field_update)  # type: ignore
     cutout_length: FloatProperty(name="Length", unit='LENGTH', precision=4,
                                  min=0.0, default=units.inch(4.0),
                                  update=_on_cutout_field_update)  # type: ignore
@@ -3573,6 +3658,12 @@ class hb_face_frame_OT_add_part_cutout(bpy.types.Operator):
         return cls.bl_description
 
     def _seed_new(self, length, width, thickness):
+        self.shape = 'RECTANGLE'
+        self.arch_width = min(units.inch(8.0), width)
+        self.half_circle = True
+        self.arch_rise = self.arch_width / 4.0
+        self.flat_side = 'LENGTH_START'
+        self.open_edge = True
         self.cutout_length = min(units.inch(4.0), length)
         self.cutout_width = min(units.inch(4.0), width)
         self.center = True
@@ -3593,8 +3684,22 @@ class hb_face_frame_OT_add_part_cutout(bpy.types.Operator):
         # Centred and through aren't stored flags - they're how the cut was
         # placed - so infer them, or a centred cutout reopens with the box clear.
         eps = units.inch(0.001)
-        self.center = (abs(state['x'] - (length - cl) / 2.0) < eps
-                       and abs(state['y'] - (width - cw) / 2.0) < eps)
+        centred_x = abs(state['x'] - (length - cl) / 2.0) < eps
+        centred_y = abs(state['y'] - (width - cw) / 2.0) < eps
+        self.center = centred_x and centred_y
+        self.shape = state.get('shape', 'RECTANGLE')
+        if self.shape == 'ARCH':
+            self.flat_side = arch_cutout.FLAT_SIDE_BY_INDEX.get(
+                state['flat_side'], 'LENGTH_START')
+            self.open_edge = state['open_edge']
+            along_x = self.flat_side in ('WIDTH_START', 'WIDTH_END')
+            chord, rise = (cl, cw) if along_x else (cw, cl)
+            self.arch_width = chord
+            self.half_circle = abs(rise - chord / 2.0) < eps
+            self.arch_rise = rise
+            if self.open_edge:
+                # Open to an edge, only the position along it is free.
+                self.center = centred_x if along_x else centred_y
         self.through = state['depth'] >= thickness - eps
         self.route_depth = min(state['depth'], thickness)
         self.back_face = state['flip_z']
@@ -3657,12 +3762,32 @@ class hb_face_frame_OT_add_part_cutout(bpy.types.Operator):
                     units.unit_to_string(unit, part.get_input('Width'))))
             except Exception:
                 pass
-        col.prop(self, 'cutout_length')
-        col.prop(self, 'cutout_width')
-        col.prop(self, 'center')
-        if not self.center:
-            col.prop(self, 'offset_length')
-            col.prop(self, 'offset_width')
+        col.prop(self, 'shape', text="")
+        if self.shape == 'ARCH':
+            col.prop(self, 'arch_width')
+            col.prop(self, 'half_circle')
+            if not self.half_circle:
+                col.prop(self, 'arch_rise')
+            col.prop(self, 'flat_side')
+            col.prop(self, 'open_edge')
+            along_x = self.flat_side in ('WIDTH_START', 'WIDTH_END')
+            if self.open_edge:
+                col.prop(self, 'center', text="Center Along Edge")
+            else:
+                col.prop(self, 'center')
+            if not self.center:
+                # Open to an edge, the edge fixes one of the two offsets.
+                if not self.open_edge or along_x:
+                    col.prop(self, 'offset_length')
+                if not self.open_edge or not along_x:
+                    col.prop(self, 'offset_width')
+        else:
+            col.prop(self, 'cutout_length')
+            col.prop(self, 'cutout_width')
+            col.prop(self, 'center')
+            if not self.center:
+                col.prop(self, 'offset_length')
+                col.prop(self, 'offset_width')
         col.separator()
         col.prop(self, 'through')
         if not self.through:

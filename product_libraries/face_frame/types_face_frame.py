@@ -31,6 +31,7 @@ from ...units import inch
 from ...hb_details import apply_label_style
 from ..common import types_appliances
 from ..common import turned_leg
+from ..common import arch_cutout
 from ..frameless.types_frameless import CabinetPart
 from ..frameless.types_products import HalfWall as _FramelessHalfWall
 from ..frameless.types_products import SupportFrame as _FramelessSupportFrame
@@ -1143,6 +1144,7 @@ INTERIOR_PART_ROLES = frozenset({
 INTERIOR_BUILD_INDEX = 'hb_interior_build_index'
 _USER_CUTOUT_TOKEN = 'CPM_CUTOUT'
 _USER_CUTOUT_NAME = 'Cutout'
+_USER_ARCH_CUTOUT_TOKEN = arch_cutout.NODE_GROUP_NAME
 
 # A manual interior part (Make Editable) is left out of the wipe and stands
 # in for the rebuilt part with the same role and build index, which is
@@ -1199,14 +1201,15 @@ def _snapshot_interior_cutouts(opening_obj):
         cuts = []
         for mod in child.modifiers:
             if not (mod.type == 'NODES' and mod.node_group
-                    and mod.node_group.name == _USER_CUTOUT_TOKEN
+                    and mod.node_group.name in (_USER_CUTOUT_TOKEN,
+                                                _USER_ARCH_CUTOUT_TOKEN)
                     and mod.name.split('.')[0] == _USER_CUTOUT_NAME):
                 continue
             cpm = CabinetPartModifier(child)
             cpm.mod = mod
             try:
                 depth = float(cpm.get_input('Route Depth'))
-                cuts.append((mod.name, {
+                st = {
                     'x': float(cpm.get_input('X')),
                     'end_x': float(cpm.get_input('End X')),
                     'y': float(cpm.get_input('Y')),
@@ -1214,7 +1217,11 @@ def _snapshot_interior_cutouts(opening_obj):
                     'depth': depth,
                     'through': depth >= thickness - inch(0.001),
                     'flip_z': bool(cpm.get_input('Flip Z')),
-                }))
+                }
+                if mod.node_group.name == _USER_ARCH_CUTOUT_TOKEN:
+                    st['arch'] = (int(cpm.get_input('Flat Side')),
+                                  bool(cpm.get_input('Open Edge')))
+                cuts.append((mod.name, st))
             except Exception:
                 continue
         if cuts:
@@ -1266,7 +1273,14 @@ def _restore_interior_cutouts(opening_obj, kept):
                 continue
             x0 = min(max(st['x'], 0.0), length - cl)
             y0 = min(max(st['y'], 0.0), width - cw)
-            cpm = part.add_part_modifier(_USER_CUTOUT_TOKEN, name)
+            arch = st.get('arch')
+            if arch is None:
+                cpm = part.add_part_modifier(_USER_CUTOUT_TOKEN, name)
+            else:
+                arch_cutout.ensure_node_group()
+                cpm = part.add_part_modifier(_USER_ARCH_CUTOUT_TOKEN, name)
+                cpm.set_input('Flat Side', arch[0])
+                cpm.set_input('Open Edge', arch[1])
             cpm.set_input('X', x0)
             cpm.set_input('End X', x0 + cl)
             cpm.set_input('Y', y0)
