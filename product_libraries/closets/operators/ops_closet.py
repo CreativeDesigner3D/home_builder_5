@@ -1300,7 +1300,7 @@ class hb_closets_OT_place_starter(bpy.types.Operator,
                 f"width: {width_str}  -  "
                 + ("F: fill gap   " if self._source_obj is not None else "")
                 + "W/numbers: width   Up/Down: bays   Left/Right: gap offset   "
-                "R: rotate   Click: place   Esc: cancel")
+                "R: rotate   Click/Enter: place   Esc: cancel")
 
     # ---------------- modal ----------------
 
@@ -1358,7 +1358,10 @@ class hb_closets_OT_place_starter(bpy.types.Operator,
         if event.type in {'ESC', 'RIGHTMOUSE'} and event.value == 'PRESS':
             return self._cancel(context)
 
-        if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
+        # Enter places, so width and offsets can be typed and committed
+        # without the mouse (while typing, Enter first applies the value).
+        if (event.type in {'LEFTMOUSE', 'RET', 'NUMPAD_ENTER'}
+                and event.value == 'PRESS'):
             return self._finalize(context)
 
         if event.type == 'UP_ARROW' and event.value == 'PRESS':
