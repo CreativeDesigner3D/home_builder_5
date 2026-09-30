@@ -194,6 +194,38 @@ def load_negative_material():
     return mat
 
 
+# A misc part's unbanded edges show the bare board core, so what is
+# drawn matches what is banded.
+CORE_MATERIAL = 'Board Core'
+CORE_MATERIAL_COLOR = (0.62, 0.50, 0.34, 1.0)
+# Edges a misc part can be banded on, ticked on the part as
+# hb_band_<edge> flags (unbanded until chosen).
+MISC_BAND_EDGES = ('W1', 'W2', 'L1', 'L2')
+
+
+def load_core_material():
+    """The bare-board material for unbanded edges: the bundled blend's
+    when it holds one by that name, otherwise made here."""
+    mat = load_material(CORE_MATERIAL)
+    if mat is None:
+        mat = bpy.data.materials.new(CORE_MATERIAL)
+        mat.use_nodes = True
+        mat.diffuse_color = CORE_MATERIAL_COLOR
+        bsdf = mat.node_tree.nodes.get('Principled BSDF')
+        if bsdf is not None:
+            bsdf.inputs['Base Color'].default_value = CORE_MATERIAL_COLOR
+            bsdf.inputs['Roughness'].default_value = 0.9
+    return mat
+
+
+def is_bandable_misc_part(obj):
+    """A true misc part - not the loose back / cleat / shelf, which band
+    the way the part they stand in for always does."""
+    from . import types_closets
+    return (obj.get('hb_part_role') == types_closets.PART_ROLE_MISC
+            and obj.get('hb_loose_kind', 'MISC') == 'MISC')
+
+
 def _mapping_variant(mat, suffix, rot_x=0.0, rot_z=0.0):
     """Find-or-create a copy of mat with its texture mapping rotated.
     Materials without a Mapping node (solid colors) have no direction
@@ -494,13 +526,14 @@ def apply_to_starter(root, carcass_name=None, front_name=None):
         if mat is None:
             continue
         part = hb_types.GeoNodeCutpart(child)
+        # A misc part shows bare core on the edges it isn't banded on.
+        core = load_core_material() if is_bandable_misc_part(child) else None
         try:
             part.set_input('Top Surface', mat)
             part.set_input('Bottom Surface', mat)
-            part.set_input('Edge W1', edge)
-            part.set_input('Edge W2', edge)
-            part.set_input('Edge L1', edge)
-            part.set_input('Edge L2', edge)
+            for e in MISC_BAND_EDGES:
+                banded = core is None or child.get('hb_band_' + e)
+                part.set_input('Edge ' + e, edge if banded else core)
         except Exception:
             continue
         if role in (role_door, role_drawer):
@@ -523,14 +556,14 @@ def apply_to_part(obj, carcass_name=None):
         return False
     edge = rotated_variant(
         _resolve_edge_base('closet_edge_material', carcass))
+    core = load_core_material() if is_bandable_misc_part(obj) else None
     try:
         part = hb_types.GeoNodeCutpart(obj)
         part.set_input('Top Surface', carcass)
         part.set_input('Bottom Surface', carcass)
-        part.set_input('Edge W1', edge)
-        part.set_input('Edge W2', edge)
-        part.set_input('Edge L1', edge)
-        part.set_input('Edge L2', edge)
+        for e in MISC_BAND_EDGES:
+            banded = core is None or obj.get('hb_band_' + e)
+            part.set_input('Edge ' + e, edge if banded else core)
     except Exception:
         return False
     return True

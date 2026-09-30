@@ -3782,9 +3782,7 @@ class hb_closets_OT_rod_prompts(bpy.types.Operator):
         return {'FINISHED'}
 
 
-# Edges a misc part can be banded on, stored on the part as
-# hb_band_<edge> booleans (edges off the cutpart's W1 / W2 / L1 / L2).
-MISC_BAND_EDGES = ('W1', 'W2', 'L1', 'L2')
+MISC_BAND_EDGES = materials_closets.MISC_BAND_EDGES
 
 
 class hb_closets_OT_misc_part_prompts(bpy.types.Operator):
@@ -3889,11 +3887,15 @@ class hb_closets_OT_misc_part_prompts(bpy.types.Operator):
         col.prop(self, 'rot_x')
         col.prop(self, 'rot_y')
         col.prop(self, 'rot_z')
-        box = layout.box()
-        box.label(text="Edgebanding", icon='MOD_EDGESPLIT')
-        row = box.row()
-        for key in MISC_BAND_EDGES:
-            row.prop(self, 'band_' + key.lower())
+        # Only a true misc part picks its banding; a loose back, cleat
+        # or shelf bands the way that part always does.
+        obj = context.active_object
+        if obj is not None and materials_closets.is_bandable_misc_part(obj):
+            box = layout.box()
+            box.label(text="Edgebanding", icon='MOD_EDGESPLIT')
+            row = box.row()
+            for key in MISC_BAND_EDGES:
+                row.prop(self, 'band_' + key.lower())
 
     def execute(self, context):
         obj = context.active_object
@@ -3907,8 +3909,12 @@ class hb_closets_OT_misc_part_prompts(bpy.types.Operator):
             part.set_input('Width', float(self.width))
         except Exception:
             pass
-        for key in MISC_BAND_EDGES:
-            obj['hb_band_' + key] = bool(getattr(self, 'band_' + key.lower()))
+        if materials_closets.is_bandable_misc_part(obj):
+            for key in MISC_BAND_EDGES:
+                obj['hb_band_' + key] = bool(
+                    getattr(self, 'band_' + key.lower()))
+            # Show the banded edges in the band, the rest as bare core.
+            materials_closets.apply_to_part(obj)
         obj.location = (float(self.loc_x), float(self.loc_y),
                         float(self.loc_z))
         obj.rotation_euler = (float(self.rot_x), float(self.rot_y),
