@@ -3310,7 +3310,11 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                 continue
 
             if role in ('ADA_FRONT', 'ADA_ANGLED_FRONT', 'ADA_BOTTOM',
-                        'PANELED_TOP_RAIL'):
+                        'PANELED_TOP_RAIL', 'ADA_FALSE_DOOR',
+                        'ADA_ANGLED_FF_LEFT_STILE',
+                        'ADA_ANGLED_FF_RIGHT_STILE',
+                        'ADA_ANGLED_FF_TOP_RAIL',
+                        'ADA_ANGLED_FF_BOTTOM_RAIL'):
                 # Python-built accessible sink fronts and paneled top
                 # rails: slot 0 on a slab
                 # (grain along the band), stile / rail / panel slots on
@@ -4675,7 +4679,7 @@ class Face_Frame_Door_Style(PropertyGroup):
     # fronts build like a door (Set Door Frame edits them too).
     _STYLEABLE_ROLES = (_DOOR_FRONT_ROLES | _DRAWER_FRONT_ROLES
                         | {'PANELED_TOP_RAIL', 'ADA_FRONT',
-                           'ADA_ANGLED_FRONT'})
+                           'ADA_ANGLED_FRONT', 'ADA_FALSE_DOOR'})
 
     def get_parent_cabinet_style(self, front_obj):
         """Walk up from a front object to its face frame cabinet root,
@@ -8193,6 +8197,9 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
             ('SLAB', "Slab", "One solid part"),
             ('FRAME', "Stiles and Rails",
              "Stiles and rails around a panel, from the door style"),
+            ('FALSE_DOOR', "Face Frame + False Door",
+             "A face frame over the raked edges with a false door from "
+             "the door style applied over it"),
         ],
         default='SLAB', update=_update_cabinet_dim,
     )  # type: ignore

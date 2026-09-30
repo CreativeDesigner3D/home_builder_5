@@ -436,8 +436,20 @@ PART_ROLE_ADA_FRONT = 'ADA_FRONT'
 PART_ROLE_ADA_ANGLED_FRONT = 'ADA_ANGLED_FRONT'
 # The slab closing the band's flat underside between the two fronts.
 PART_ROLE_ADA_BOTTOM = 'ADA_BOTTOM'
-ADA_FRONT_PART_ROLES = (PART_ROLE_ADA_FRONT, PART_ROLE_ADA_ANGLED_FRONT,
-                        PART_ROLE_ADA_BOTTOM)
+# Face Frame + False Door angled front: a face frame proud of the raked
+# edges with a fixed door from the door style applied over it.
+PART_ROLE_ADA_ANGLED_FF_LEFT_STILE = 'ADA_ANGLED_FF_LEFT_STILE'
+PART_ROLE_ADA_ANGLED_FF_RIGHT_STILE = 'ADA_ANGLED_FF_RIGHT_STILE'
+PART_ROLE_ADA_ANGLED_FF_TOP_RAIL = 'ADA_ANGLED_FF_TOP_RAIL'
+PART_ROLE_ADA_ANGLED_FF_BOTTOM_RAIL = 'ADA_ANGLED_FF_BOTTOM_RAIL'
+PART_ROLE_ADA_FALSE_DOOR = 'ADA_FALSE_DOOR'
+ADA_ANGLED_FF_ROLES = (PART_ROLE_ADA_ANGLED_FF_LEFT_STILE,
+                       PART_ROLE_ADA_ANGLED_FF_RIGHT_STILE,
+                       PART_ROLE_ADA_ANGLED_FF_TOP_RAIL,
+                       PART_ROLE_ADA_ANGLED_FF_BOTTOM_RAIL)
+ADA_FRONT_PART_ROLES = ((PART_ROLE_ADA_FRONT, PART_ROLE_ADA_ANGLED_FRONT,
+                         PART_ROLE_ADA_BOTTOM, PART_ROLE_ADA_FALSE_DOOR)
+                        + ADA_ANGLED_FF_ROLES)
 PART_ROLE_APRON = 'APRON'
 # Paneled top rail: stiles and rails around a panel from the door style,
 # built in place of a top rail segment (the plain rail is hidden while
@@ -8097,7 +8109,9 @@ class FaceFrameCabinet(GeoNodeCage):
         FRONT closes the rake between the sides, its face flush with
         the raked edges and toward the knees; it only exists while the
         sides are raked. Each is a slab or stiles and rails around a
-        panel, per the cabinet's two construction picks.
+        panel, per the cabinet's two construction picks. The angled
+        front can instead be a face frame proud of the raked edges with
+        a false door from the door style over it (FALSE_DOOR).
         """
         cab = self.obj.face_frame_cabinet
         specs = {}
@@ -8127,12 +8141,17 @@ class FaceFrameCabinet(GeoNodeCage):
                     basis = Matrix(((0.0, -1.0, 0.0),
                                     (up.y, 0.0, face.y),
                                     (up.z, 0.0, face.z)))
-                    # Face on the rake line, stock behind it in the box.
-                    origin = (Vector((x_lo, -wall_run, floor_z))
-                              - face * t)
-                    specs[PART_ROLE_ADA_ANGLED_FRONT] = (
-                        'Angled Front', cab.ada_angled_front_construction,
-                        basis, origin, width, rake, t)
+                    if cab.ada_angled_front_construction == 'FALSE_DOOR':
+                        specs.update(self._ada_false_door_specs(
+                            layout, basis, up, face, wall_run, floor_z,
+                            rake, fft, t))
+                    else:
+                        # Face on the rake line, stock behind it in the box.
+                        origin = (Vector((x_lo, -wall_run, floor_z))
+                                  - face * t)
+                        specs[PART_ROLE_ADA_ANGLED_FRONT] = (
+                            'Angled Front', cab.ada_angled_front_construction,
+                            basis, origin, width, rake, t)
                     # The flat underside of the band, from the top of
                     # the rake forward to the back of the front: a slab
                     # facing down, its underside flush with the band's.
@@ -8190,9 +8209,93 @@ class FaceFrameCabinet(GeoNodeCage):
             if obj.data.users > 1:
                 obj.data = obj.data.copy()
             obj.matrix_basis = Matrix.Translation(origin) @ basis.to_4x4()
+            if role == PART_ROLE_ADA_FALSE_DOOR:
+                # Fixed in place: read by downstream consumers as a door
+                # that doesn't open (no hinges, no pull).
+                obj['IS_FALSE_DOOR'] = True
             if not self._build_ada_front_from_style(obj, construction):
                 self._build_ada_front_mesh(obj, construction, width, height,
                                            thickness)
+
+    def _ada_false_door_specs(self, layout, basis, up, face, wall_run,
+                              floor_z, rake, fft, door_t):
+        """Part specs for the Face Frame + False Door angled front.
+
+        The frame runs the full cabinet width, its back on the rake line
+        so it stands proud of the raked side edges the way a face frame
+        stands proud of a box. Its members are the cabinet style's base
+        end stile / top rail / bottom rail widths (the accessible sink
+        collapses its own face frame, so there is nothing to borrow
+        there); the job defaults stand in without a style. The door sits
+        on the frame's face, covering the opening by the cabinet's
+        default overlays, and builds from the door style like any door.
+        Members too big for the face leave one plain frame panel.
+        """
+        cab = self.obj.face_frame_cabinet
+        stile, top_rail, bottom_rail = self._ada_frame_member_widths()
+        dim_x = layout.dim_x
+        base = Vector((0.0, -wall_run, floor_z))
+        across = Vector((1.0, 0.0, 0.0))
+        open_w = dim_x - 2.0 * stile
+        open_h = rake - top_rail - bottom_rail
+        if open_w <= 0.0 or open_h <= 0.0:
+            return {PART_ROLE_ADA_ANGLED_FF_LEFT_STILE: (
+                'Angled Frame', 'SLAB', basis, base, dim_x, rake, fft)}
+        specs = {
+            PART_ROLE_ADA_ANGLED_FF_LEFT_STILE: (
+                'Angled Frame Left Stile', 'SLAB', basis, base,
+                stile, rake, fft),
+            PART_ROLE_ADA_ANGLED_FF_RIGHT_STILE: (
+                'Angled Frame Right Stile', 'SLAB', basis,
+                base + across * (dim_x - stile), stile, rake, fft),
+            PART_ROLE_ADA_ANGLED_FF_BOTTOM_RAIL: (
+                'Angled Frame Bottom Rail', 'SLAB', basis,
+                base + across * stile, open_w, bottom_rail, fft),
+            PART_ROLE_ADA_ANGLED_FF_TOP_RAIL: (
+                'Angled Frame Top Rail', 'SLAB', basis,
+                base + across * stile + up * (rake - top_rail),
+                open_w, top_rail, fft),
+        }
+        ovl_l = cab.default_left_overlay
+        ovl_r = cab.default_right_overlay
+        ovl_t = cab.default_top_overlay
+        ovl_b = cab.default_bottom_overlay
+        door_w = open_w + ovl_l + ovl_r
+        door_h = open_h + ovl_t + ovl_b
+        if door_w > 0.0 and door_h > 0.0 and door_t > 0.0:
+            origin = (base + face * fft + across * (stile - ovl_l)
+                      + up * (bottom_rail - ovl_b))
+            specs[PART_ROLE_ADA_FALSE_DOOR] = (
+                'False Door', 'DOOR', basis, origin, door_w, door_h, door_t)
+        return specs
+
+    def _ada_frame_member_widths(self):
+        """(end stile, top rail, bottom rail) for the Face Frame + False
+        Door angled front: the cabinet style's base widths, else the
+        job's face frame defaults."""
+        from .props_hb_face_frame import get_style_props
+        cs = None
+        style_name = self.obj.get('STYLE_NAME')
+        ff = get_style_props()
+        if style_name and ff is not None:
+            for s in ff.cabinet_styles:
+                if s.name == style_name:
+                    cs = s
+                    break
+        scene_ff = getattr(bpy.context.scene, 'hb_face_frame', None)
+
+        def pick(style_attr, scene_attr, fallback):
+            v = getattr(cs, style_attr, 0.0) if cs is not None else 0.0
+            if not v and scene_ff is not None:
+                v = getattr(scene_ff, scene_attr, 0.0)
+            return v or fallback
+
+        return (pick('ff_end_stile_width_base', 'ff_end_stile_width',
+                     inch(2.0)),
+                pick('ff_top_rail_width_base', 'ff_top_rail_width',
+                     inch(1.5)),
+                pick('ff_bottom_rail_width_base', 'ff_bottom_rail_width',
+                     inch(1.5)))
 
     def _build_ada_front_from_style(self, obj, construction):
         """Build a stiles-and-rails accessible sink front with the
@@ -8202,19 +8305,26 @@ class FaceFrameCabinet(GeoNodeCage):
         for a slab, with no 5-piece style, or when the style's frame
         doesn't fit (a short band under wide rails), leaving the caller
         to build the plain frame. The style name stays on in that last
-        case so Set Door Frame edits that do fit rebuild through it."""
+        case so Set Door Frame edits that do fit rebuild through it.
+
+        A false door (construction DOOR) takes the door style whatever
+        its type - a slab style gives a slab door - and falls back to a
+        plain slab only with no door style at all."""
         from . import applied_panel_sizing
         style = None
-        if construction == 'FRAME':
+        if construction in ('FRAME', 'DOOR'):
             style = applied_panel_sizing._resolve_door_style(self.obj)
-            if style is not None and getattr(style, 'door_type', '') != '5_PIECE':
+            if (style is not None and construction == 'FRAME'
+                    and getattr(style, 'door_type', '') != '5_PIECE'):
                 style = None
         if style is None:
             if 'DOOR_STYLE_NAME' in obj:
                 del obj['DOOR_STYLE_NAME']
             return False
         obj['DOOR_STYLE_NAME'] = style.name
-        style.assign_style_to_front(obj)
+        result = style.assign_style_to_front(obj)
+        if construction == 'DOOR':
+            return result is not False
         return 'HB_DOOR_FRAME' in obj and not obj.get('HB_STATIC_SLAB')
 
     def _reconcile_paneled_top_rails(self):
