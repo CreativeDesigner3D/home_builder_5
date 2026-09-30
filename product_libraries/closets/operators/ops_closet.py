@@ -3332,7 +3332,10 @@ class hb_closets_OT_place_misc_part(bpy.types.Operator,
     misc part is never fitted to anything: drop it, then size it with
     Part Properties on its own right-click menu.
 
-    Click places, Right-click or Esc cancels."""
+    A back, cleat or shelf goes on placing until Right-click or Esc,
+    the same as Add Part; a misc part is placed once, to be sized.
+
+    Click places, Right-click or Esc finishes."""
     bl_idname = "hb_closets.place_misc_part"
     bl_label = "Place Misc Part"
     bl_options = {'UNDO'}
@@ -3357,15 +3360,23 @@ class hb_closets_OT_place_misc_part(bpy.types.Operator,
     # The height the preview was last solved at, so the run is not
     # solved again for a cursor that has not moved the part.
     _fitted_at = None
+    # Whether anything has been put down, so finishing a repeating
+    # placement still records an undo step for what was placed.
+    _placed_any = False
 
-    def invoke(self, context, event):
-        self._part_obj = types_closets.add_misc_part(kind=self.kind)
+    def _new_part(self, location):
+        obj = types_closets.add_misc_part(kind=self.kind)
         try:
-            materials_closets.apply_to_part(self._part_obj)
+            materials_closets.apply_to_part(obj)
         except Exception:
             pass
+        obj.location = location
+        return obj
+
+    def invoke(self, context, event):
         cursor = context.scene.cursor.location
-        self._part_obj.location = (cursor.x, cursor.y, 0.0)
+        self._part_obj = self._new_part((cursor.x, cursor.y, 0.0))
+        self._placed_any = False
         self.init_placement(context)
         if self.region is None:
             self._delete_part()
@@ -3381,8 +3392,8 @@ class hb_closets_OT_place_misc_part(bpy.types.Operator,
              "Right-click/Esc to cancel" % label)
             if not self._fits_openings else
             ("Place %s: move over an opening to fit it to that "
-             "opening, click to place, Right-click/Esc to cancel"
-             % label))
+             "opening, click to place (keeps placing), "
+             "Right-click/Esc to finish" % label))
         context.window.cursor_set('CROSSHAIR')
         context.window_manager.modal_handler_add(self)
         return {'RUNNING_MODAL'}
@@ -3587,7 +3598,8 @@ class hb_closets_OT_place_misc_part(bpy.types.Operator,
         self._opening = None
         self._preview = None
         self._back_was = None
-        self._delete_part()
+        cursor_part = self._part_obj
+        self._part_obj = None
         if root is not None:
             _apply_finish(root)
             types_closets.recalculate_closet_starter(root)
@@ -3604,10 +3616,30 @@ class hb_closets_OT_place_misc_part(bpy.types.Operator,
         if placed is not None:
             placed.select_set(True)
             context.view_layer.objects.active = placed
-        self._end(context)
         self.report({'INFO'}, "Placed %s in the opening"
                     % types_closets.LOOSE_PARTS[self.kind][0].lower())
-        return {'FINISHED'}
+        return self._carry_on(context, cursor_part)
+
+    def _carry_on(self, context, cursor_part):
+        """After a drop, a fitted part goes on placing with a fresh
+        part on the cursor; a misc part ends here. The part the cursor
+        was carrying is reused when it was not the one put down."""
+        self._placed_any = True
+        if not self._fits_openings:
+            if cursor_part is not None:
+                self._part_obj = cursor_part
+                self._delete_part()
+            self._end(context)
+            return {'FINISHED'}
+        if cursor_part is not None:
+            self._part_obj = cursor_part
+        else:
+            cursor = context.scene.cursor.location
+            self._part_obj = self._new_part((cursor.x, cursor.y, 0.0))
+        # The next mouse move finds the opening again and stands a
+        # fresh preview in it (or shows the part on the cursor).
+        self._part_obj.hide_set(True)
+        return {'RUNNING_MODAL'}
 
     def _position_from_hit(self, context):
         """A wall under the cursor takes the part as a child, squared
@@ -3683,7 +3715,7 @@ class hb_closets_OT_place_misc_part(bpy.types.Operator,
             self._leave_opening(context)
             self._delete_part()
             self._end(context)
-            return {'CANCELLED'}
+            return {'FINISHED'} if self._placed_any else {'CANCELLED'}
 
         if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
             if self._opening is not None:
@@ -3694,10 +3726,17 @@ class hb_closets_OT_place_misc_part(bpy.types.Operator,
                 other.select_set(False)
             obj.select_set(True)
             context.view_layer.objects.active = obj
-            self._end(context)
             self.report({'INFO'}, "Placed %s"
                         % types_closets.LOOSE_PARTS[self.kind][0].lower())
-            return {'FINISHED'}
+            if not self._fits_openings:
+                self._end(context)
+                return {'FINISHED'}
+            self._placed_any = True
+            self._part_obj = self._new_part(obj.location.copy())
+            self._part_obj.parent = obj.parent
+            self._part_obj.matrix_parent_inverse =                 obj.matrix_parent_inverse.copy()
+            self._part_obj.rotation_euler = obj.rotation_euler.copy()
+            return {'RUNNING_MODAL'}
 
         return {'RUNNING_MODAL'}
 
