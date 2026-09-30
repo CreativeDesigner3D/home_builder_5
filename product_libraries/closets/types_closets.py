@@ -376,6 +376,54 @@ def _remove_part_tree(obj):
     bpy.data.objects.remove(obj, do_unlink=True)
 
 
+# ---------------------------------------------------------------------------
+# The room's baseboard (scene.home_builder.base_board and its sizes). A
+# notched baseboard stays on the wall, so the closet is built around it:
+# partitions standing on the floor are notched at the bottom rear, and a
+# bottom shelf or cleat low enough to meet it is held clear.
+# ---------------------------------------------------------------------------
+
+# A toe kick preset steps on 32mm and can read a hair over the inch size
+# of a baseboard it is meant to match; treat that as matching.
+BASEBOARD_HEIGHT_TOL = inch(0.125)
+
+
+def room_baseboard():
+    """(strips, clearance): the baseboard's strips back to front as
+    (height, depth measured from the wall), and the room left around
+    them. No strips when the room's baseboard is not notched around."""
+    hb = getattr(bpy.context.scene, 'home_builder', None)
+    if hb is None or getattr(hb, 'base_board', 'NONE') not in (
+            'SINGLE_NOTCH', 'DOUBLE_NOTCH'):
+        return [], 0.0
+    strips = []
+    h1, w1 = hb.base_board_height_1, hb.base_board_width_1
+    if h1 > 0.0 and w1 > 0.0:
+        strips.append((h1, w1))
+        h2, w2 = hb.base_board_height_2, hb.base_board_width_2
+        if hb.base_board == 'DOUBLE_NOTCH' and h2 > 0.0 and w2 > 0.0:
+            strips.append((h2, w1 + w2))
+    return strips, float(hb.base_board_route_clearance)
+
+
+def baseboard_shelf_inset(z):
+    """How far a shelf whose underside is at ``z`` has to stand off the
+    wall to clear the baseboard, or 0."""
+    strips, clr = room_baseboard()
+    depth = max((d for h, d in strips
+                 if h + BASEBOARD_HEIGHT_TOL >= z), default=0.0)
+    return depth + clr if depth > 0.0 else 0.0
+
+
+def baseboard_cleat_raise(z):
+    """How far a cleat whose underside is at ``z`` has to rise to clear
+    the baseboard behind it, or 0."""
+    strips, clr = room_baseboard()
+    top = max((h for h, d in strips
+               if h + BASEBOARD_HEIGHT_TOL >= z), default=0.0)
+    return max(top - z + clr, 0.0) if top > 0.0 else 0.0
+
+
 def _stamp_warning(obj, message):
     """Carry a design warning on the part it belongs to, and take it
     off again the moment the part fits, so what the panels find is
@@ -1310,7 +1358,45 @@ class ClosetStarter(GeoNodeCage):
             else:
                 child['hb_finished_end'] = 0
                 child['hb_drill_through'] = 0
+            self._notch_for_baseboard(child, panel['z'], pt,
+                                      off or panel['length'] <= 0.0)
         self._reconcile_double_panels(layout, scene_props)
+
+    # Corner notch modifiers cut at the bottom rear of a partition
+    # with no flips: X runs up from the bottom, Y in from the wall.
+    _BASEBOARD_NOTCHES = ('Baseboard Notch', 'Quarter Round Notch')
+
+    def _notch_for_baseboard(self, child, z, pt, skip=False):
+        """Notch a partition's bottom rear around the room's baseboard
+        (and its quarter round), the way the prior library routed it.
+        Islands stand off the walls and are never notched; the room's
+        Notch Panels for Base Board setting turns it off everywhere."""
+        strips, clr = room_baseboard()
+        want = [] if (skip or isinstance(self, IslandClosetStarter)
+                      or not getattr(bpy.context.scene.hb_closets,
+                                     'notch_panels_for_base_board', True))             else [(h - z + clr, d + clr) for h, d in strips if h > z]
+        for i, name in enumerate(self._BASEBOARD_NOTCHES):
+            mod = child.modifiers.get(name)
+            if i >= len(want):
+                if mod is not None:
+                    mod.show_viewport = False
+                    mod.show_render = False
+                continue
+            if mod is None:
+                CabinetPart(child).add_part_modifier('CPM_CORNERNOTCH', name)
+                mod = child.modifiers.get(name)
+                if mod is None:
+                    continue
+            cpm = CabinetPartModifier(child)
+            cpm.mod = mod
+            x, y = want[i]
+            cpm.set_input('X', x)
+            cpm.set_input('Y', y)
+            cpm.set_input('Route Depth', pt + 0.001)
+            cpm.set_input('Flip X', False)
+            cpm.set_input('Flip Y', False)
+            mod.show_viewport = True
+            mod.show_render = True
 
     def _reconcile_double_panels(self, layout, scene_props):
         """A second partition back-to-back at a
@@ -1349,6 +1435,7 @@ class ClosetStarter(GeoNodeCage):
             part.set_input('Length', d['length'])
             part.set_input('Width', d['depth'])
             part.set_input('Thickness', pt)
+            self._notch_for_baseboard(c, d['z'], pt)
 
     def _layout_battens(self, layout, scene_props, sp):
         """A scribe strip laid flat on the FRONT face of an end panel,
@@ -1482,6 +1569,10 @@ class ClosetStarter(GeoNodeCage):
             # a floor bay has a bottom to set in.
             inset_b = ((sp.inset_bottom + bp.bottom_shelf_inset)
                        if bay['floor'] else 0.0)
+            # ...or further, to clear the room's baseboard.
+            if bay['floor']:
+                inset_b = max(inset_b,
+                              baseboard_shelf_inset(bay['bottom_z']))
             inset_b = max(0.0, min(inset_b, bay['depth'] - 0.001))
 
             bottom = self._bay_part(bay_obj, PART_ROLE_BOTTOM_SHELF)
@@ -1523,7 +1614,8 @@ class ClosetStarter(GeoNodeCage):
             # that still has its bottom.
             cleat_z = bay['cleat_z']
             if bay['floor'] and not bp.remove_bottom:
-                cleat_z += sp.inset_cleat
+                cleat_z += max(sp.inset_cleat,
+                               baseboard_cleat_raise(bay['cleat_z']))
 
             cleat = self._bay_part(bay_obj, PART_ROLE_CLEAT)
             if cleat is not None:

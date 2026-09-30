@@ -1751,6 +1751,12 @@ class Closets_Scene_Props(PropertyGroup):
                     "else, the way the prior library did",
         default=True)  # type: ignore
 
+    notch_panels_for_base_board: BoolProperty(
+        name="Notch Panels for Base Board",
+        description="Notch the bottom rear of partitions standing on the "
+                    "floor around the room's baseboard. Off, the "
+                    "baseboard is cut on site",
+        default=True, update=_update_room_solve)  # type: ignore
     closet_door_edgeband: EnumProperty(
         name="Door Edgebanding",
         description="How thick the fronts' edgebanding is bought - "

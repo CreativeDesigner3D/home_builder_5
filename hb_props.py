@@ -298,6 +298,25 @@ def _molding_light_rail_profile_items(self, context):
     return packages.profile_enum_items('Light Rail')
 
 
+def update_base_board(self, context):
+    """The room's baseboard changed: redraw it on the walls where it is
+    drawn, and re-solve what stands against it (closets notch their
+    partitions and hold their bottom shelf off it)."""
+    scene = self.id_data
+    try:
+        from .operators import wall_baseboard
+        wall_baseboard.refresh(scene)
+    except Exception:
+        pass
+    try:
+        from .product_libraries.closets import types_closets
+    except Exception:
+        return
+    for obj in list(scene.objects):
+        if obj.get(types_closets.TAG_STARTER_CAGE):
+            types_closets.recalculate_closet_starter(obj)
+
+
 def update_wall_material(self, context):
     """Update all wall material inputs when wall material changes."""
     mat = self.wall_material
@@ -607,6 +626,50 @@ class Home_Builder_Scene_Props(PropertyGroup):
         items=_window_style_items)  # type: ignore
 
     wall_material: PointerProperty(name="Wall Material", type=bpy.types.Material, update=update_wall_material)# type: ignore
+
+    # The room's existing baseboard. Products standing against a wall
+    # clear it (see operators/wall_baseboard.py).
+    base_board: EnumProperty(
+        name="Base Board",
+        description="The room's existing baseboard and what happens to "
+                    "it at install",
+        items=[('NONE', "None", "No baseboard"),
+               ('REMOVED_BY_OTHER', "Removed by Other",
+                "Someone else takes the baseboard off before install"),
+               ('REMOVE_AT_INSTALL', "Remove at Install",
+                "The installers take the baseboard off"),
+               ('SINGLE_NOTCH', "Single Notch",
+                "Built around a single baseboard"),
+               ('DOUBLE_NOTCH', "Double Notch",
+                "Built around a baseboard and a quarter round in "
+                "front of it")],
+        default='NONE', update=update_base_board)  # type: ignore
+    base_board_height_1: FloatProperty(
+        name="Base Height", description="Height of the baseboard",
+        min=0.0, unit='LENGTH', precision=4,
+        update=update_base_board)  # type: ignore
+    base_board_width_1: FloatProperty(
+        name="Base Width",
+        description="How far the baseboard stands off the wall",
+        min=0.0, unit='LENGTH', precision=4,
+        update=update_base_board)  # type: ignore
+    base_board_height_2: FloatProperty(
+        name="Quarter Round Height",
+        description="Height of the quarter round in front of the "
+                    "baseboard",
+        min=0.0, unit='LENGTH', precision=4,
+        update=update_base_board)  # type: ignore
+    base_board_width_2: FloatProperty(
+        name="Quarter Round Width",
+        description="How far the quarter round stands off the baseboard",
+        min=0.0, unit='LENGTH', precision=4,
+        update=update_base_board)  # type: ignore
+    base_board_route_clearance: FloatProperty(
+        name="Baseboard Clearance",
+        description="Room left around the baseboard by the notches and "
+                    "the bottom shelf held off it",
+        default=0.003175, min=0.0, unit='LENGTH', precision=4,
+        update=update_base_board)  # type: ignore
 
     show_entry_doors_and_windows: BoolProperty(name="Show Entry Doors and Windows", default=False)
     show_obstacles: BoolProperty(name="Show Obstacles", default=False)

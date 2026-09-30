@@ -24,6 +24,7 @@ from .operators import style_editor
 from .operators import layout_lock
 from .operators import viewport_hud
 from .operators import room_dim_overlay
+from .operators import wall_baseboard
 from .operators import ops_general
 from .operators import ops_surfaces
 from .operators import ops_room_dressing
@@ -423,6 +424,7 @@ def register():
     thumb_picker.register()
     style_editor.register()
     room_dim_overlay.register()
+    wall_baseboard.register()
     ops_general.register()
     ops_surfaces.register()
     ops.register()
@@ -479,6 +481,7 @@ def unregister():
     viewport_hud.unregister()
     layout_lock.unregister()
     room_dim_overlay.unregister()
+    wall_baseboard.unregister()
     ops_stairs.unregister()
     ops_surfaces.unregister()
     ops_general.unregister()
