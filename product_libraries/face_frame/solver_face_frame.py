@@ -247,6 +247,8 @@ class FaceFrameLayout:
         self.r_scribe = cab.right_scribe
         self.l_fin_end = cab.left_finished_end_condition
         self.r_fin_end = cab.right_finished_end_condition
+        self.l_flush_x_th = cab.left_flush_x_thickness
+        self.r_flush_x_th = cab.right_flush_x_thickness
         self.b_fin_end = cab.back_finished_end_condition
         self.top_scribe = cab.top_scribe
         self.division_thickness = cab.division_thickness
@@ -549,9 +551,12 @@ def left_scribe_offset(layout):
         return 0.0
     if layout.l_fin_end in ('PANELED', 'FALSE_FF', 'WORKING_FF'):
         return inch(0.75)
-    # 1/4 applied panels (FLUSH_X strip + textured beadboard / shiplap)
-    # all sit in a 1/4 scribe gap so they tuck flush against the side.
-    if layout.l_fin_end in ('FLUSH_X', 'BEADBOARD', 'SHIPLAP', 'V_GROOVE'):
+    # Applied panels (FLUSH_X strip + 1/4 textured beadboard / shiplap)
+    # sit in a scribe gap their own thickness so they tuck flush against
+    # the side. The flush-X strip's thickness is per side.
+    if layout.l_fin_end == 'FLUSH_X':
+        return layout.l_flush_x_th
+    if layout.l_fin_end in ('BEADBOARD', 'SHIPLAP', 'V_GROOVE'):
         return inch(0.25)
     return layout.l_scribe
 
@@ -586,7 +591,9 @@ def right_scribe_offset(layout):
         return 0.0
     if layout.r_fin_end in ('PANELED', 'FALSE_FF', 'WORKING_FF'):
         return inch(0.75)
-    if layout.r_fin_end in ('FLUSH_X', 'BEADBOARD', 'SHIPLAP', 'V_GROOVE'):
+    if layout.r_fin_end == 'FLUSH_X':
+        return layout.r_flush_x_th
+    if layout.r_fin_end in ('BEADBOARD', 'SHIPLAP', 'V_GROOVE'):
         return inch(0.25)
     return layout.r_scribe
 

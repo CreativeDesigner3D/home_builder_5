@@ -521,7 +521,8 @@ RETURN_SIDE_CONDITIONS = ('FINISHED', 'PANELED', 'BEADBOARD', 'SHIPLAP',
 # applied panel isn't wanted.
 PART_ROLE_FLUSH_X = 'FLUSH_X'
 TAG_FLUSH_X_SIDE = 'hb_flush_x_side'
-# Strip stock thickness. Also the scribe band the carcass side recedes
+# Default strip stock thickness; each side's *_flush_x_thickness sets
+# the real one. That is also the scribe band the carcass side recedes
 # by so the strip's outer face lands on the cabinet's end plane (see
 # solver.left_scribe_offset and the corner arm-end reserve).
 FLUSH_X_THICKNESS = inch(0.25)
@@ -9760,7 +9761,8 @@ class FaceFrameCabinet(GeoNodeCage):
         """Spawn / resize / remove the FLUSH_X applied strip on each
         side. Triggered when *_finished_end_condition == 'FLUSH_X'.
 
-        The strip is a single 1/4 thick part. Outer face flush with
+        The strip is a single part, *_flush_x_thickness thick (1/4 by
+        default). Outer face flush with
         the cabinet's exterior side plane (X=0 on left, dim_x on
         right); inner face touches the side panel since FLUSH_X auto-
         scribes to 1/4 in the solver. Y starts at the back of the
@@ -9771,9 +9773,10 @@ class FaceFrameCabinet(GeoNodeCage):
         cab = self.obj.face_frame_cabinet
         side_specs = (
             ('LEFT',  cab.left_finished_end_condition,
-             cab.left_flush_x_amount, 0),
+             cab.left_flush_x_amount, cab.left_flush_x_thickness, 0),
             ('RIGHT', cab.right_finished_end_condition,
-             cab.right_flush_x_amount, layout.bay_count - 1),
+             cab.right_flush_x_amount, cab.right_flush_x_thickness,
+             layout.bay_count - 1),
         )
 
         existing = {
@@ -9783,7 +9786,7 @@ class FaceFrameCabinet(GeoNodeCage):
             and child.get(TAG_FLUSH_X_SIDE) in ('LEFT', 'RIGHT')
         }
 
-        for side, condition, amount, bay_index in side_specs:
+        for side, condition, amount, thickness, bay_index in side_specs:
             wants = condition == 'FLUSH_X'
             strip = existing.get(side)
 
@@ -9792,7 +9795,6 @@ class FaceFrameCabinet(GeoNodeCage):
                     bpy.data.objects.remove(strip, do_unlink=True)
                 continue
 
-            thickness = FLUSH_X_THICKNESS
             # Run the strip the full height of the cabinet side. For
             # NOTCH / FLUSH toe kicks side_bottom_z is the floor (0.0),
             # so the strip drops to the floor like the carcass side it
@@ -16288,6 +16290,8 @@ class LegProductFaceFrameCabinet(FaceFrameCabinet):
             r_fin_end=cab.right_finished_end_condition,
             l_scribe=cab.left_scribe,
             r_scribe=cab.right_scribe,
+            l_flush_x_th=cab.left_flush_x_thickness,
+            r_flush_x_th=cab.right_flush_x_thickness,
             # Legs are never angled, but the miter / splay passes the
             # reconcile always runs (even for cleanup on UNFINISHED
             # sides) gate on these fields, so they must be present.
@@ -19250,7 +19254,7 @@ def _reapply_cabinet_style(root):
 _SIDE_PROP_NAMES_LEFT = (
     'left_finished_end_condition', 'left_exposure',
     'left_dishwasher_adjacent', 'left_finish_end_auto', 'left_scribe',
-    'left_flush_x_amount', 'blind_left', 'blind_amount_left',
+    'left_flush_x_amount', 'left_flush_x_thickness', 'blind_left', 'blind_amount_left',
     'extend_left', 'left_offset', 'inset_toe_kick_left',
     'left_stile_width', 'left_stile_type', 'unlock_left_stile',
     'turn_off_left_stile', 'extend_left_stile_to_floor',
@@ -19261,7 +19265,7 @@ _SIDE_PROP_NAMES_LEFT = (
 _SIDE_PROP_NAMES_RIGHT = (
     'right_finished_end_condition', 'right_exposure',
     'right_dishwasher_adjacent', 'right_finish_end_auto', 'right_scribe',
-    'right_flush_x_amount', 'blind_right', 'blind_amount_right',
+    'right_flush_x_amount', 'right_flush_x_thickness', 'blind_right', 'blind_amount_right',
     'extend_right', 'right_offset', 'inset_toe_kick_right',
     'right_stile_width', 'right_stile_type', 'unlock_right_stile',
     'turn_off_right_stile', 'extend_right_stile_to_floor',
@@ -19310,6 +19314,7 @@ def _default_side_props(side, stile_width, depth):
         f'{pre}exposed': True,
         f'{pre}scribe': 0.0,
         f'{pre}flush_x_amount': inch(4.0),
+        f'{pre}flush_x_thickness': FLUSH_X_THICKNESS,
         f'blind{suf}': False,
         f'blind_amount{suf}': inch(24.0),
         f'extend{suf}': 0.0,

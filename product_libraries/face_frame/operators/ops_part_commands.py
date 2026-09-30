@@ -3061,6 +3061,8 @@ class hb_face_frame_OT_set_finished_end_condition(bpy.types.Operator):
         # FLUSH_X needs its strip width to be meaningful.
         if fin_type == 'FLUSH_X':
             layout.prop(cab, f'{key}_flush_x_amount', text="Flush Amount")
+            layout.prop(cab, f'{key}_flush_x_thickness',
+                        text="Flush Thickness")
         _draw_shiplap_options(layout, cab, fin_type)
         # A side whose inside face shows below the box (an extended
         # hutch end) can finish that face regardless of the outer
@@ -3324,6 +3326,7 @@ class hb_face_frame_OT_separate_combined_end(bpy.types.Operator):
 _FIN_END_SIDE_PROPS = (
     'finished_end_condition',
     'flush_x_amount',
+    'flush_x_thickness',
     'side_finish_inside',
     'side_finished_extend_back',
     'side_return_width',

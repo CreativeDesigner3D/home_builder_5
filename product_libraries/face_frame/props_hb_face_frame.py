@@ -7723,6 +7723,21 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
     )  # type: ignore
+    # Strip stock thickness. The carcass side recedes by the same amount
+    # so the strip's outer face stays on the cabinet's end plane - a
+    # thicker strip moves the side (and everything built off it) inboard.
+    left_flush_x_thickness: FloatProperty(
+        name="Left Flush X Thickness", default=units.inch(0.25),
+        min=units.inch(0.125), soft_max=units.inch(1.5),
+        unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    right_flush_x_thickness: FloatProperty(
+        name="Right Flush X Thickness", default=units.inch(0.25),
+        min=units.inch(0.125), soft_max=units.inch(1.5),
+        unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
 
     # Applied-panel frame member sizes. Used when a side's finish type is
     # PANELED / FALSE_FF / WORKING_FF. panel_frame_auto=True (default)

@@ -1300,7 +1300,8 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
 
     def _corner_end_reserve(self, cab_props, side):
         """Arm-end reserve used by the diagonal recalc. On top of the
-        applied-panel reserve, a FLUSH_X end reserves a 1/4 band
+        applied-panel reserve, a FLUSH_X end reserves a band its strip's
+        thickness
         outboard of the carcass for its finished strip - overriding the
         typed scribe exactly as solver.left_scribe_offset does on a
         straight cabinet, so the strip's outer face lands on the
@@ -1309,7 +1310,8 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         cond = (cab_props.left_finished_end_condition if side == 'LEFT'
                 else cab_props.right_finished_end_condition)
         if cond == 'FLUSH_X':
-            return ff.FLUSH_X_THICKNESS
+            return (cab_props.left_flush_x_thickness if side == 'LEFT'
+                    else cab_props.right_flush_x_thickness)
         return self._corner_panel_reserve(cab_props, side)
 
     def _corner_applied_panel_geometry(self, cab_props, side):
@@ -1475,7 +1477,8 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         length = cab_props.height - bottom_z - top_drop
         if length <= 0.0:
             return None
-        thickness = ff.FLUSH_X_THICKNESS
+        thickness = (cab_props.left_flush_x_thickness if side == 'LEFT'
+                     else cab_props.right_flush_x_thickness)
         if side == 'LEFT':
             # Width runs +X, so the origin is the wall-side edge of the
             # strip and it grows forward to corner A.

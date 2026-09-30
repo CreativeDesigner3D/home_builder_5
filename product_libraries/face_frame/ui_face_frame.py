@@ -2015,6 +2015,8 @@ def draw_finished_ends(layout, cab_props):
                      text="Extend Back")
         if has_flush_x and fin_type == 'FLUSH_X':
             col.prop(cab_props, f'{side}_flush_x_amount', text="Flush-X Amount")
+            col.prop(cab_props, f'{side}_flush_x_thickness',
+                     text="Flush-X Thickness")
         elif fin_type == 'UNFINISHED' and side != 'back':
             col.prop(cab_props, f'{side}_scribe', text="Scribe")
         if side in ('left', 'right') and _side_shows_inside(cab_props, side):
