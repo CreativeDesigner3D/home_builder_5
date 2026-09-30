@@ -722,6 +722,7 @@ def _update_edit_anchor_x(self, context):
         return
     self.prev_anchor_x = self.anchor_x
     self.from_side = max(self.wall_length - self.from_side - self.width, 0.0)
+    _live_apply(self, context)
 
 
 def _update_edit_anchor_z(self, context):
@@ -733,6 +734,14 @@ def _update_edit_anchor_z(self, context):
         self.from_floor = self.from_floor + ext
     else:
         self.from_floor = max(self.from_floor - ext, 0.0)
+    _live_apply(self, context)
+
+
+def _live_apply(self, context):
+    """Show a dialog edit on the obstacle as it is made; Cancel puts
+    the obstacle back (see edit_obstacle.cancel)."""
+    if self.live:
+        self.apply(context)
 
 
 class home_builder_obstacles_OT_edit_obstacle(bpy.types.Operator):
@@ -745,9 +754,19 @@ class home_builder_obstacles_OT_edit_obstacle(bpy.types.Operator):
         name="Name",
         description="What the obstacle is. Drawings label it with this "
                     "name")  # type: ignore
-    width: bpy.props.FloatProperty(name="Width", default=0.07, min=0.001, unit='LENGTH')  # type: ignore
-    height: bpy.props.FloatProperty(name="Height", default=0.1143, min=0.001, unit='LENGTH')  # type: ignore
-    depth: bpy.props.FloatProperty(name="Depth", default=0.05, min=0.001, unit='LENGTH')  # type: ignore
+    width: bpy.props.FloatProperty(name="Width", default=0.07, min=0.001, unit='LENGTH', update=_live_apply)  # type: ignore
+    height: bpy.props.FloatProperty(name="Height", default=0.1143, min=0.001, unit='LENGTH', update=_live_apply)  # type: ignore
+    depth: bpy.props.FloatProperty(name="Depth", default=0.05, min=0.001, unit='LENGTH', update=_live_apply)  # type: ignore
+    # Edits apply live once the dialog is open; the obstacle as it was
+    # is kept so Cancel can restore it.
+    live: bpy.props.BoolProperty(
+        default=False, options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+    orig_size: bpy.props.FloatVectorProperty(
+        size=3, options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+    orig_location: bpy.props.FloatVectorProperty(
+        size=3, options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+    orig_anchor: bpy.props.StringProperty(
+        options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
     anchor_x: bpy.props.EnumProperty(
         name="Anchor Side",
         items=[('LEFT', "Left", "Locate the obstacle by its left edge, "
@@ -774,12 +793,12 @@ class home_builder_obstacles_OT_edit_obstacle(bpy.types.Operator):
         name="From Side",
         description="Distance from the wall end on the anchor side to "
                     "the obstacle's edge on that side",
-        unit='LENGTH')  # type: ignore
+        unit='LENGTH', update=_live_apply)  # type: ignore
     from_floor: bpy.props.FloatProperty(
         name="From Floor",
         description="Height of the obstacle's anchor edge (bottom or "
                     "top) off the floor",
-        unit='LENGTH')  # type: ignore
+        unit='LENGTH', update=_live_apply)  # type: ignore
 
     @classmethod
     def poll(cls, context):
@@ -787,6 +806,7 @@ class home_builder_obstacles_OT_edit_obstacle(bpy.types.Operator):
 
     def invoke(self, context, event):
         obj = context.active_object
+        self.live = False
         self.obstacle_name = obj.name
         self.width, self.height, self.depth = _obstacle_size(obj)
         self.obstacle_type = obj.get('OBSTACLE_TYPE', 'CUSTOM_RECT')
@@ -810,7 +830,26 @@ class home_builder_obstacles_OT_edit_obstacle(bpy.types.Operator):
             ext = _edit_z_extent(self)
             bottom = local.z - ext / 2
             self.from_floor = bottom + ext if az == 'TOP' else bottom
+        self.orig_size = (self.width, self.height, self.depth)
+        self.orig_location = obj.location
+        self.orig_anchor = ax + '|' + az
+        self.live = True
         return context.window_manager.invoke_props_dialog(self, width=360)
+
+    def cancel(self, context):
+        """Dismissed without OK: put the obstacle back as it was."""
+        if not self.live:
+            return
+        self.live = False
+        obj = context.active_object
+        if obj is None or not obj.get('IS_OBSTACLE'):
+            return
+        ax, _sep, az = self.orig_anchor.partition('|')
+        self.width, self.height, self.depth = self.orig_size
+        self.anchor_x = self.prev_anchor_x = ax or 'LEFT'
+        self.anchor_z = self.prev_anchor_z = az or 'BOTTOM'
+        self.apply(context)
+        obj.location = self.orig_location
 
     def execute(self, context):
         obj = context.active_object
@@ -818,6 +857,14 @@ class home_builder_obstacles_OT_edit_obstacle(bpy.types.Operator):
             return {'CANCELLED'}
         if self.obstacle_name and self.obstacle_name != obj.name:
             obj.name = self.obstacle_name
+        self.apply(context)
+        return {'FINISHED'}
+
+    def apply(self, context):
+        """Build the obstacle at the dialog's size and place it."""
+        obj = context.active_object
+        if obj is None or not obj.get('IS_OBSTACLE'):
+            return
         obs_type = obj.get('OBSTACLE_TYPE', 'CUSTOM_RECT')
         surface = obj.get('OBSTACLE_SURFACE', 'WALL')
         wall = _obstacle_wall(obj)
@@ -869,7 +916,6 @@ class home_builder_obstacles_OT_edit_obstacle(bpy.types.Operator):
             new_z = obstacle_z_size(self.height, self.depth, obs_type,
                                     build_surface)
             obj.location.z += (new_z - old_z) / 2
-        return {'FINISHED'}
 
     def draw(self, context):
         layout = self.layout
