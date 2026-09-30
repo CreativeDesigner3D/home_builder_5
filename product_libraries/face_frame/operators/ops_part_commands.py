@@ -3451,7 +3451,8 @@ def _cutout_mod_inputs(obj, mod):
                  'flip_z': bool(cpm.get_input('Flip Z')),
                  'shape': 'RECTANGLE'}
         if _is_arch_cutout(mod):
-            state.update(shape='ARCH',
+            full = bool(cpm.get_input('Full Circle'))
+            state.update(shape='CIRCLE' if full else 'ARCH',
                          flat_side=int(cpm.get_input('Flat Side')),
                          open_edge=bool(cpm.get_input('Open Edge')))
         return state
@@ -3460,8 +3461,9 @@ def _cutout_mod_inputs(obj, mod):
 
 
 def _set_cutout_shape(obj, mod, shape):
-    """Point a cutout modifier at the rectangle or the arch node group."""
-    if shape == 'ARCH':
+    """Point a cutout modifier at the rectangle or the arch node group (which
+    also cuts full circles)."""
+    if shape in ('ARCH', 'CIRCLE'):
         ng = arch_cutout.ensure_node_group()
     else:
         ng = CabinetPartModifier(obj).get_node(_CUTOUT_TOKEN)
@@ -3474,9 +3476,10 @@ def _write_cutout_inputs(obj, mod, state):
     _set_cutout_shape(obj, mod, state.get('shape', 'RECTANGLE'))
     cpm = CabinetPartModifier(obj)
     cpm.mod = mod
-    if state.get('shape') == 'ARCH':
+    if state.get('shape') in ('ARCH', 'CIRCLE'):
         cpm.set_input('Flat Side', state['flat_side'])
         cpm.set_input('Open Edge', state['open_edge'])
+        cpm.set_input('Full Circle', state['shape'] == 'CIRCLE')
     cpm.set_input('X', state['x'])
     cpm.set_input('End X', state['end_x'])
     cpm.set_input('Y', state['y'])
@@ -3520,6 +3523,13 @@ def _apply_cutout_live(op):
         if rect is None:
             return
         x0, x1, y0, y1 = rect
+    elif op.shape == 'CIRCLE':
+        rect = arch_cutout.circle_rect(
+            length, width, op.circle_diameter, op.center, op.offset_length,
+            op.offset_width)
+        if rect is None:
+            return
+        x0, x1, y0, y1 = rect
     else:
         cl = max(min(op.cutout_length, length), 0.0)
         cw = max(min(op.cutout_width, width), 0.0)
@@ -3538,9 +3548,10 @@ def _apply_cutout_live(op):
     depth = thickness if op.through else min(op.route_depth, thickness)
     cpm = CabinetPartModifier(obj)
     cpm.mod = mod
-    if op.shape == 'ARCH':
+    if op.shape in ('ARCH', 'CIRCLE'):
         cpm.set_input('Flat Side', arch_cutout.FLAT_SIDE_INDEX[op.flat_side])
-        cpm.set_input('Open Edge', op.open_edge)
+        cpm.set_input('Open Edge', op.open_edge and op.shape == 'ARCH')
+        cpm.set_input('Full Circle', op.shape == 'CIRCLE')
     cpm.set_input('X', x0)
     cpm.set_input('End X', x1)
     cpm.set_input('Y', y0)
@@ -3589,8 +3600,13 @@ class hb_face_frame_OT_add_part_cutout(bpy.types.Operator):
         name="Shape",
         items=[('RECTANGLE', "Rectangle", "A rectangular hole or route"),
                ('ARCH', "Arch", "A half circle or shallower arch with a "
-                "flat side, opening onto a part edge or inside the part")],
+                "flat side, opening onto a part edge or inside the part"),
+               ('CIRCLE', "Circle", "A round hole or route")],
         default='RECTANGLE', update=_on_cutout_field_update)  # type: ignore
+    circle_diameter: FloatProperty(
+        name="Diameter", unit='LENGTH', precision=4, min=0.0,
+        default=units.inch(3.0),
+        update=_on_cutout_field_update)  # type: ignore
     arch_width: FloatProperty(
         name="Arch Width", unit='LENGTH', precision=4, min=0.0,
         default=units.inch(8.0),
@@ -3664,6 +3680,7 @@ class hb_face_frame_OT_add_part_cutout(bpy.types.Operator):
         self.arch_rise = self.arch_width / 4.0
         self.flat_side = 'LENGTH_START'
         self.open_edge = True
+        self.circle_diameter = min(units.inch(3.0), length, width)
         self.cutout_length = min(units.inch(4.0), length)
         self.cutout_width = min(units.inch(4.0), width)
         self.center = True
@@ -3700,6 +3717,8 @@ class hb_face_frame_OT_add_part_cutout(bpy.types.Operator):
             if self.open_edge:
                 # Open to an edge, only the position along it is free.
                 self.center = centred_x if along_x else centred_y
+        elif self.shape == 'CIRCLE':
+            self.circle_diameter = min(cl, cw)
         self.through = state['depth'] >= thickness - eps
         self.route_depth = min(state['depth'], thickness)
         self.back_face = state['flip_z']
@@ -3781,6 +3800,13 @@ class hb_face_frame_OT_add_part_cutout(bpy.types.Operator):
                     col.prop(self, 'offset_length')
                 if not self.open_edge or not along_x:
                     col.prop(self, 'offset_width')
+        elif self.shape == 'CIRCLE':
+            col.prop(self, 'circle_diameter')
+            col.prop(self, 'center')
+            if not self.center:
+                # Offsets place the circle's edge, like a rectangle's corner.
+                col.prop(self, 'offset_length')
+                col.prop(self, 'offset_width')
         else:
             col.prop(self, 'cutout_length')
             col.prop(self, 'cutout_width')

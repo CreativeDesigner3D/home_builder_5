@@ -1,5 +1,6 @@
 """
-Arch cutout: a circular-segment hole or route cut into a cutpart.
+Arch / circle cutout: a circular-segment or round hole or route cut
+into a cutpart.
 
 The companion of the CPM_CUTOUT rectangle, built as a geometry node
 group in Python (there is no .blend asset for it) so the shape logic
@@ -15,6 +16,9 @@ Inputs are in the part's local space, the same frame CPM_CUTOUT uses:
                            bulges from it across the rectangle
     Open Edge              the chord lies on a part edge; the cutter
                            runs past it so the cut opens cleanly there
+    Full Circle            cut the whole circle centred in the
+                           rectangle instead (diameter = its shorter
+                           side); Flat Side / Open Edge are ignored
     Route Depth / Flip Z   as CPM_CUTOUT (cut from the Z=0 face, or the
                            opposite face with Flip Z)
     Material               material on the cut walls
@@ -29,7 +33,8 @@ and is clipped to the rectangle.
 import bpy
 
 NODE_GROUP_NAME = 'CPM_ARCHCUTOUT'
-VERSION = 1
+# 2: Full Circle input.
+VERSION = 2
 VERSION_KEY = 'HB_ARCH_CUTOUT_VERSION'
 
 # Circle resolution. Fine enough that the flat facets don't read on a
@@ -42,40 +47,53 @@ OVERSHOOT = 0.002
 FLAT_SIDE_ITEMS = (0, 1, 2, 3)
 
 
+# Interface, in order. Sockets are only ever added (by name), never
+# rebuilt, so the values on cutouts already in a file survive a version
+# upgrade of the nodes.
+_SOCKETS = (
+    ('Geometry', 'OUTPUT', 'NodeSocketGeometry'),
+    ('Geometry', 'INPUT', 'NodeSocketGeometry'),
+    ('X', 'INPUT', 'NodeSocketFloat'),
+    ('End X', 'INPUT', 'NodeSocketFloat'),
+    ('Y', 'INPUT', 'NodeSocketFloat'),
+    ('End Y', 'INPUT', 'NodeSocketFloat'),
+    ('Flat Side', 'INPUT', 'NodeSocketInt'),
+    ('Open Edge', 'INPUT', 'NodeSocketBool'),
+    ('Route Depth', 'INPUT', 'NodeSocketFloat'),
+    ('Flip Z', 'INPUT', 'NodeSocketBool'),
+    ('Material', 'INPUT', 'NodeSocketMaterial'),
+    ('Full Circle', 'INPUT', 'NodeSocketBool'),
+)
+
+
 def ensure_node_group():
-    """The arch cutout node group, built on first use."""
+    """The arch cutout node group, built on first use and rebuilt in
+    place when an older version is found."""
     ng = bpy.data.node_groups.get(NODE_GROUP_NAME)
     if ng is not None and ng.get(VERSION_KEY) == VERSION:
         return ng
     if ng is None:
         ng = bpy.data.node_groups.new(NODE_GROUP_NAME, 'GeometryNodeTree')
-    else:
-        ng.nodes.clear()
-        ng.interface.clear()
+    _ensure_interface(ng)
+    ng.nodes.clear()
     _build(ng)
     ng[VERSION_KEY] = VERSION
     return ng
 
 
-def _build(ng):
-    iface = ng.interface
-    iface.new_socket('Geometry', in_out='OUTPUT',
-                     socket_type='NodeSocketGeometry')
-    iface.new_socket('Geometry', in_out='INPUT',
-                     socket_type='NodeSocketGeometry')
-    for name in ('X', 'End X', 'Y', 'End Y'):
-        iface.new_socket(name, in_out='INPUT', socket_type='NodeSocketFloat')
-    s = iface.new_socket('Flat Side', in_out='INPUT',
-                         socket_type='NodeSocketInt')
-    s.min_value, s.max_value = 0, 3
-    iface.new_socket('Open Edge', in_out='INPUT',
-                     socket_type='NodeSocketBool')
-    iface.new_socket('Route Depth', in_out='INPUT',
-                     socket_type='NodeSocketFloat')
-    iface.new_socket('Flip Z', in_out='INPUT', socket_type='NodeSocketBool')
-    iface.new_socket('Material', in_out='INPUT',
-                     socket_type='NodeSocketMaterial')
+def _ensure_interface(ng):
+    have = {(i.name, i.in_out) for i in ng.interface.items_tree
+            if i.item_type == 'SOCKET'}
+    for name, in_out, socket_type in _SOCKETS:
+        if (name, in_out) in have:
+            continue
+        s = ng.interface.new_socket(name, in_out=in_out,
+                                    socket_type=socket_type)
+        if name == 'Flat Side':
+            s.min_value, s.max_value = 0, 3
 
+
+def _build(ng):
     nodes, links = ng.nodes, ng.links
     gi = nodes.new('NodeGroupInput')
     go = nodes.new('NodeGroupOutput')
@@ -146,6 +164,7 @@ def _build(ng):
                        math('MULTIPLY', rise, rise)),
                   math('MULTIPLY', rise, 2.0))
     inset = math('SUBTRACT', rise, radius)          # centre in from the chord
+    full = gi.outputs['Full Circle']
     chord_mid = index_switch('VECTOR', (combine(x0, mid_y, 0.0),
                                         combine(x1, mid_y, 0.0),
                                         combine(mid_x, y0, 0.0),
@@ -178,16 +197,25 @@ def _build(ng):
     cyl = nodes.new('GeometryNodeMeshCylinder')
     cyl.fill_type = 'NGON'
     cyl.inputs['Vertices'].default_value = CIRCLE_VERTICES
-    links.new(radius, cyl.inputs['Radius'])
+    # Full circle: the rectangle's inscribed circle, unclipped.
+    full_radius = math('MULTIPLY', math('MINIMUM', dx, dy), 0.5)
+    links.new(switch('FLOAT', full, radius, full_radius),
+              cyl.inputs['Radius'])
     links.new(height, cyl.inputs['Depth'])
     centre = nodes.new('ShaderNodeVectorMath')
     centre.operation = 'MULTIPLY_ADD'
     links.new(normal, centre.inputs[0])
     links.new(combine(inset, inset, 0.0), centre.inputs[1])
     links.new(chord_mid, centre.inputs[2])
+    rect_mid = combine(mid_x, mid_y, 0.0)
+    arch_or_full = nodes.new('GeometryNodeSwitch')
+    arch_or_full.input_type = 'VECTOR'
+    links.new(full, arch_or_full.inputs['Switch'])
+    links.new(centre.outputs[0], arch_or_full.inputs['False'])
+    links.new(rect_mid, arch_or_full.inputs['True'])
     cyl_pos = nodes.new('ShaderNodeVectorMath')
     cyl_pos.operation = 'ADD'
-    links.new(centre.outputs[0], cyl_pos.inputs[0])
+    links.new(arch_or_full.outputs[0], cyl_pos.inputs[0])
     links.new(offset, cyl_pos.inputs[1])
     cyl_xf = nodes.new('GeometryNodeTransform')
     links.new(cyl.outputs['Mesh'], cyl_xf.inputs['Geometry'])
@@ -239,8 +267,14 @@ def _build(ng):
     links.new(cyl_xf.outputs['Geometry'], clip.inputs['Mesh 2'])
     links.new(box_xf.outputs['Geometry'], clip.inputs['Mesh 2'])
 
+    cutter = nodes.new('GeometryNodeSwitch')
+    cutter.input_type = 'GEOMETRY'
+    links.new(full, cutter.inputs['Switch'])
+    links.new(clip.outputs['Mesh'], cutter.inputs['False'])
+    links.new(cyl_xf.outputs['Geometry'], cutter.inputs['True'])
+
     set_mat = nodes.new('GeometryNodeSetMaterial')
-    links.new(clip.outputs['Mesh'], set_mat.inputs['Geometry'])
+    links.new(cutter.outputs[0], set_mat.inputs['Geometry'])
     links.new(gi.outputs['Material'], set_mat.inputs['Material'])
 
     cut = nodes.new('GeometryNodeMeshBoolean')
@@ -284,6 +318,23 @@ def arch_rect(length, width, chord, rise, flat_side, open_edge, center,
     x0 = min(max(x0, 0.0), length - ex)
     y0 = min(max(y0, 0.0), width - ey)
     return x0, x0 + ex, y0, y0 + ey
+
+
+def circle_rect(length, width, diameter, center, offset_length,
+                offset_width):
+    """The square (x0, x1, y0, y1) bounding a full circle of ``diameter``
+    on a part face, placed like a rectangle cutout and kept on the face.
+    None when it does not fit."""
+    d = min(diameter, length, width)
+    if d <= 0.0:
+        return None
+    if center:
+        x0, y0 = (length - d) / 2.0, (width - d) / 2.0
+    else:
+        x0, y0 = offset_length, offset_width
+    x0 = min(max(x0, 0.0), length - d)
+    y0 = min(max(y0, 0.0), width - d)
+    return x0, x0 + d, y0, y0 + d
 
 
 FLAT_SIDE_INDEX = {'LENGTH_START': 0, 'LENGTH_END': 1,

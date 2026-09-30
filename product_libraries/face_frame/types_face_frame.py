@@ -1220,7 +1220,8 @@ def _snapshot_interior_cutouts(opening_obj):
                 }
                 if mod.node_group.name == _USER_ARCH_CUTOUT_TOKEN:
                     st['arch'] = (int(cpm.get_input('Flat Side')),
-                                  bool(cpm.get_input('Open Edge')))
+                                  bool(cpm.get_input('Open Edge')),
+                                  bool(cpm.get_input('Full Circle')))
                 cuts.append((mod.name, st))
             except Exception:
                 continue
@@ -1281,6 +1282,7 @@ def _restore_interior_cutouts(opening_obj, kept):
                 cpm = part.add_part_modifier(_USER_ARCH_CUTOUT_TOKEN, name)
                 cpm.set_input('Flat Side', arch[0])
                 cpm.set_input('Open Edge', arch[1])
+                cpm.set_input('Full Circle', arch[2])
             cpm.set_input('X', x0)
             cpm.set_input('End X', x0 + cl)
             cpm.set_input('Y', y0)
