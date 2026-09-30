@@ -122,9 +122,29 @@ class home_builder_obstacles_OT_place_obstacle(bpy.types.Operator, hb_placement.
     obs_depth: float = 0
     obs_surface_type: str = 'ANY'
     
+    # Anchor corner the cursor and typed values locate (LEFT / RIGHT,
+    # BOTTOM / TOP); height_from_floor is that anchor edge's height.
+    anchor_x: str = 'LEFT'
+    anchor_z: str = 'BOTTOM'
+    obs_z_extent: float = 0
+
     def get_default_typing_target(self):
-        """Default to offset from left when typing."""
+        """Type the offset from the wall end on the anchor's side."""
+        if self.anchor_x == 'RIGHT':
+            return hb_placement.TypingTarget.OFFSET_RIGHT
         return hb_placement.TypingTarget.OFFSET_X
+
+    def anchor_to_center_x(self, x):
+        """Cursor position along the wall (the anchor side) -> center."""
+        half = self.obs_width / 2
+        return x - half if self.anchor_x == 'RIGHT' else x + half
+
+    def center_z(self):
+        """Height of the obstacle's center from the anchor edge height."""
+        half = self.obs_z_extent / 2
+        if self.anchor_z == 'TOP':
+            return self.height_from_floor - half
+        return self.height_from_floor + half
     
     def get_next_typing_target(self):
         """Cycle between offset and height."""
@@ -283,6 +303,10 @@ class home_builder_obstacles_OT_place_obstacle(bpy.types.Operator, hb_placement.
         self.obs_depth = hb_obs.obstacle_depth
         self.height_from_floor = hb_obs.obstacle_height_from_floor
         self.obs_surface_type = obs_data[8]
+        self.anchor_x = hb_obs.obstacle_anchor_x
+        self.anchor_z = hb_obs.obstacle_anchor_z
+        self.obs_z_extent = obstacle_z_size(
+            self.obs_height, self.obs_depth, hb_obs.obstacle_type, 'WALL')
         
         # Create mesh
         self.obstacle_obj = create_obstacle_mesh(
@@ -301,6 +325,8 @@ class home_builder_obstacles_OT_place_obstacle(bpy.types.Operator, hb_placement.
         self.obstacle_obj['OBSTACLE_WIDTH'] = self.obs_width
         self.obstacle_obj['OBSTACLE_HEIGHT'] = self.obs_height
         self.obstacle_obj['OBSTACLE_DEPTH'] = self.obs_depth
+        self.obstacle_obj['OBSTACLE_ANCHOR_X'] = self.anchor_x
+        self.obstacle_obj['OBSTACLE_ANCHOR_Z'] = self.anchor_z
         self.obstacle_obj['MENU_ID'] = 'HOME_BUILDER_MT_obstacle_commands'
         
         # Set color
@@ -360,7 +386,7 @@ class home_builder_obstacles_OT_place_obstacle(bpy.types.Operator, hb_placement.
                 pos += perp_dir * (-self.obs_depth / 2)
                 self.obstacle_obj.rotation_euler.z = wall_angle + math.pi  # Face outward
             
-            pos.z = self.height_from_floor
+            pos.z = self.center_z()
             self.obstacle_obj.location = pos
             
         elif self.target_type == 'CEILING':
@@ -396,11 +422,15 @@ class home_builder_obstacles_OT_place_obstacle(bpy.types.Operator, hb_placement.
             display = self.get_typed_display_string()
             text = f"{display}_ | Enter to confirm | Esc to cancel"
         elif self.target_type == 'WALL' and self.target_wall:
-            pos_str = units.unit_to_string(context.scene.unit_settings, self.wall_position_x)
+            half = self.obs_width / 2
+            anchor_pos = (self.wall_position_x + half if self.anchor_x == 'RIGHT'
+                          else self.wall_position_x - half)
+            pos_str = units.unit_to_string(context.scene.unit_settings, anchor_pos)
             len_str = units.unit_to_string(context.scene.unit_settings, self.wall_length)
             height_str = units.unit_to_string(context.scene.unit_settings, self.height_from_floor)
             face_str = self.wall_face.capitalize()
-            text = f"{obs_name} | {self.target_wall.name} ({face_str}) | Pos: {pos_str}/{len_str} | H: {height_str} | ← → H Tab | Click to place"
+            edge = 'Top' if self.anchor_z == 'TOP' else 'Bottom'
+            text = f"{obs_name} | {self.target_wall.name} ({face_str}) | Pos: {pos_str}/{len_str} | {edge}: {height_str} | ← → H Tab | Click to place"
         else:
             text = f"{obs_name} ({self.target_type}) | Click to place | Esc to cancel"
         
@@ -500,7 +530,7 @@ class home_builder_obstacles_OT_place_obstacle(bpy.types.Operator, hb_placement.
                         self.target_wall = wall
                         self.target_type = 'WALL'
                         self.wall_length = self.get_wall_length(wall)
-                        self.wall_position_x = wall_pos
+                        self.wall_position_x = self.anchor_to_center_x(wall_pos)
                         self.wall_face = self.get_wall_face(wall, self.hit_location)
                 elif self.obs_surface_type == 'CEILING':
                     self.target_wall = None
@@ -513,7 +543,7 @@ class home_builder_obstacles_OT_place_obstacle(bpy.types.Operator, hb_placement.
                         self.target_wall = wall
                         self.target_type = 'WALL'
                         self.wall_length = self.get_wall_length(wall)
-                        self.wall_position_x = wall_pos
+                        self.wall_position_x = self.anchor_to_center_x(wall_pos)
                         self.wall_face = self.get_wall_face(wall, self.hit_location)
                     else:
                         self.target_wall = None
@@ -669,6 +699,42 @@ def _obstacle_size(obj):
     return size[0], size[2], size[1]
 
 
+def _wall_length(wall):
+    for child in wall.children:
+        if child.get('obj_x'):
+            return child.location.x
+    for mod in wall.modifiers:
+        if mod.type == 'NODES' and mod.node_group:
+            length = hb_utils.try_get_gn_input(mod, 'Input_2')
+            if length is not None:
+                return length
+    return 0.0
+
+
+def _edit_z_extent(op):
+    return obstacle_z_size(op.height, op.depth, op.obstacle_type, 'WALL')
+
+
+def _update_edit_anchor_x(self, context):
+    # Keep the obstacle where it is: re-express the side distance from
+    # the newly picked side.
+    if self.anchor_x == self.prev_anchor_x:
+        return
+    self.prev_anchor_x = self.anchor_x
+    self.from_side = max(self.wall_length - self.from_side - self.width, 0.0)
+
+
+def _update_edit_anchor_z(self, context):
+    if self.anchor_z == self.prev_anchor_z:
+        return
+    self.prev_anchor_z = self.anchor_z
+    ext = _edit_z_extent(self)
+    if self.anchor_z == 'TOP':
+        self.from_floor = self.from_floor + ext
+    else:
+        self.from_floor = max(self.from_floor - ext, 0.0)
+
+
 class home_builder_obstacles_OT_edit_obstacle(bpy.types.Operator):
     bl_idname = "home_builder_obstacles.edit_obstacle"
     bl_label = "Obstacle Properties"
@@ -682,14 +748,37 @@ class home_builder_obstacles_OT_edit_obstacle(bpy.types.Operator):
     width: bpy.props.FloatProperty(name="Width", default=0.07, min=0.001, unit='LENGTH')  # type: ignore
     height: bpy.props.FloatProperty(name="Height", default=0.1143, min=0.001, unit='LENGTH')  # type: ignore
     depth: bpy.props.FloatProperty(name="Depth", default=0.05, min=0.001, unit='LENGTH')  # type: ignore
-    from_wall_start: bpy.props.FloatProperty(
-        name="From Wall Start",
-        description="Distance along the wall from its start to the "
-                    "obstacle's nearer edge",
+    anchor_x: bpy.props.EnumProperty(
+        name="Anchor Side",
+        items=[('LEFT', "Left", "Locate the obstacle by its left edge, "
+                                "measured from the wall's left end"),
+               ('RIGHT', "Right", "Locate the obstacle by its right edge, "
+                                  "measured from the wall's right end")],
+        default='LEFT', update=_update_edit_anchor_x)  # type: ignore
+    anchor_z: bpy.props.EnumProperty(
+        name="Anchor Height",
+        items=[('BOTTOM', "Bottom", "Locate the obstacle by its bottom "
+                                    "edge off the floor"),
+               ('TOP', "Top", "Locate the obstacle by its top edge off "
+                              "the floor")],
+        default='BOTTOM', update=_update_edit_anchor_z)  # type: ignore
+    prev_anchor_x: bpy.props.StringProperty(
+        default='LEFT', options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+    prev_anchor_z: bpy.props.StringProperty(
+        default='BOTTOM', options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+    obstacle_type: bpy.props.StringProperty(
+        options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+    wall_length: bpy.props.FloatProperty(
+        options={'HIDDEN', 'SKIP_SAVE'}, unit='LENGTH')  # type: ignore
+    from_side: bpy.props.FloatProperty(
+        name="From Side",
+        description="Distance from the wall end on the anchor side to "
+                    "the obstacle's edge on that side",
         unit='LENGTH')  # type: ignore
     from_floor: bpy.props.FloatProperty(
         name="From Floor",
-        description="Height of the obstacle's center off the floor",
+        description="Height of the obstacle's anchor edge (bottom or "
+                    "top) off the floor",
         unit='LENGTH')  # type: ignore
 
     @classmethod
@@ -700,12 +789,28 @@ class home_builder_obstacles_OT_edit_obstacle(bpy.types.Operator):
         obj = context.active_object
         self.obstacle_name = obj.name
         self.width, self.height, self.depth = _obstacle_size(obj)
+        self.obstacle_type = obj.get('OBSTACLE_TYPE', 'CUSTOM_RECT')
+        ax = obj.get('OBSTACLE_ANCHOR_X', 'LEFT')
+        az = obj.get('OBSTACLE_ANCHOR_Z', 'BOTTOM')
+        # Set the previous anchors first so the update callbacks see no
+        # change and leave the distances alone.
+        self.prev_anchor_x = ax
+        self.prev_anchor_z = az
+        self.anchor_x = ax
+        self.anchor_z = az
         wall = _obstacle_wall(obj)
         if wall is not None:
             local = wall.matrix_world.inverted() @ obj.matrix_world.translation
-            self.from_wall_start = local.x - self.width / 2
-            self.from_floor = local.z
-        return context.window_manager.invoke_props_dialog(self, width=300)
+            self.wall_length = _wall_length(wall)
+            left = local.x - self.width / 2
+            if ax == 'RIGHT':
+                self.from_side = self.wall_length - left - self.width
+            else:
+                self.from_side = left
+            ext = _edit_z_extent(self)
+            bottom = local.z - ext / 2
+            self.from_floor = bottom + ext if az == 'TOP' else bottom
+        return context.window_manager.invoke_props_dialog(self, width=360)
 
     def execute(self, context):
         obj = context.active_object
@@ -746,8 +851,17 @@ class home_builder_obstacles_OT_edit_obstacle(bpy.types.Operator):
                 local.y = thickness + self.depth / 2
             else:
                 local.y = -self.depth / 2
-            local.x = self.from_wall_start + self.width / 2
-            local.z = self.from_floor
+            if self.anchor_x == 'RIGHT':
+                left = self.wall_length - self.from_side - self.width
+            else:
+                left = self.from_side
+            local.x = left + self.width / 2
+            ext = obstacle_z_size(self.height, self.depth, obs_type, 'WALL')
+            bottom = (self.from_floor - ext if self.anchor_z == 'TOP'
+                      else self.from_floor)
+            local.z = bottom + ext / 2
+            obj['OBSTACLE_ANCHOR_X'] = self.anchor_x
+            obj['OBSTACLE_ANCHOR_Z'] = self.anchor_z
             # Parented with the wall's inverse, so location is world.
             obj.location = wall_mw @ local
         elif surface != 'CEILING':
@@ -766,9 +880,14 @@ class home_builder_obstacles_OT_edit_obstacle(bpy.types.Operator):
         col.prop(self, "height")
         col.prop(self, "depth")
         if obj is not None and _obstacle_wall(obj) is not None:
-            col = layout.column(align=True)
-            col.prop(self, "from_wall_start")
-            col.prop(self, "from_floor")
+            from .. import hb_props_obstacles
+            row = layout.row()
+            hb_props_obstacles.draw_anchor_point(row, self, 'anchor_x',
+                                                 'anchor_z')
+            col = row.column(align=True)
+            col.label(text="Location")
+            col.prop(self, "from_side", text=self.anchor_x.title())
+            col.prop(self, "from_floor", text=self.anchor_z.title())
 
 
 class home_builder_obstacles_OT_pick_obstacle(bpy.types.Operator):
@@ -798,6 +917,11 @@ class home_builder_obstacles_OT_pick_obstacle(bpy.types.Operator):
         col.prop(hb_obs, "obstacle_height", text="Height")
         col.prop(hb_obs, "obstacle_depth", text="Depth")
         col.prop(hb_obs, "obstacle_height_from_floor", text="From Floor")
+        data = hb_obs.get_obstacle_data()
+        if data and data[8] == 'WALL':
+            from .. import hb_props_obstacles
+            hb_props_obstacles.draw_anchor_point(
+                layout, hb_obs, 'obstacle_anchor_x', 'obstacle_anchor_z')
 
     def execute(self, context):
         if context.scene.hb_obstacles.obstacle_type.startswith('HEADER_'):

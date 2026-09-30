@@ -167,6 +167,17 @@ def update_obstacles_as_wire(self, context):
 # PROPERTY GROUPS
 # =============================================================================
 
+def draw_anchor_point(layout, data, prop_x, prop_z):
+    """The anchor corner picker: Top over Left | Right over Bottom."""
+    col = layout.column(align=True)
+    col.label(text="Anchor Point")
+    col.prop_enum(data, prop_z, 'TOP')
+    row = col.row(align=True)
+    row.prop_enum(data, prop_x, 'LEFT')
+    row.prop_enum(data, prop_x, 'RIGHT')
+    col.prop_enum(data, prop_z, 'BOTTOM')
+
+
 class Obstacles_Scene_Props(PropertyGroup):
     """Scene-level obstacle properties."""
     
@@ -207,9 +218,27 @@ class Obstacles_Scene_Props(PropertyGroup):
         precision=4
     )  # type: ignore
     
+    obstacle_anchor_x: EnumProperty(
+        name="Anchor Side",
+        description="Which side of a wall obstacle the cursor and typed "
+                    "positions locate",
+        items=[('LEFT', "Left", "Locate the obstacle by its left edge"),
+               ('RIGHT', "Right", "Locate the obstacle by its right edge")],
+        default='LEFT'
+    )  # type: ignore
+
+    obstacle_anchor_z: EnumProperty(
+        name="Anchor Height",
+        description="Which edge of a wall obstacle From Floor measures to",
+        items=[('BOTTOM', "Bottom", "From Floor is the obstacle's bottom edge"),
+               ('TOP', "Top", "From Floor is the obstacle's top edge")],
+        default='BOTTOM'
+    )  # type: ignore
+
     obstacle_height_from_floor: FloatProperty(
         name="Height from Floor",
-        description="Height of obstacle center from floor (for wall obstacles)",
+        description="Height off the floor of the wall obstacle's anchor "
+                    "edge (bottom or top, per the Anchor Point)",
         default=units.inch(12),
         min=0,
         max=units.inch(120),
@@ -278,6 +307,8 @@ class Obstacles_Scene_Props(PropertyGroup):
             obs_data = get_obstacle_data(self.obstacle_type)
             if obs_data and obs_data[8] == 'WALL':
                 col.prop(self, "obstacle_height_from_floor", text="From Floor")
+                draw_anchor_point(box, self, 'obstacle_anchor_x',
+                                  'obstacle_anchor_z')
     
     @classmethod
     def register(cls):
