@@ -150,6 +150,7 @@ CUT_PART_ROLES = frozenset({
     'FINISHED_BOTTOM',
     # Toe kick, for the options that run the post past it to the floor
     'TOE_KICK_SUBFRONT', 'FINISH_TOE_KICK', 'MID_FINISH_KICK',
+    'REAR_FINISH_TOE_KICK',
     'LEFT_CORNER_FINISH_KICK', 'RIGHT_CORNER_FINISH_KICK',
     'LEFT_KICK_RETURN', 'RIGHT_KICK_RETURN',
     'LOOSE_KICK_FRONT', 'LOOSE_KICK_REAR',

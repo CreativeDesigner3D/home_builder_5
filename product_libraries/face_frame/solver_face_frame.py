@@ -186,6 +186,14 @@ class FaceFrameLayout:
                                 if self.has_toe_kick else 0.0)
         self.kick_inset_right = (cab.inset_toe_kick_right
                                  if self.has_toe_kick else 0.0)
+        # Rear inset: the kick recessed at the back as well (an island's
+        # seating side). Only the kicks that build a sub-base - NOTCH and
+        # the loose ladders - have a back to recess.
+        self.kick_inset_back = (
+            getattr(cab, 'inset_toe_kick_rear', 0.0)
+            if (self.has_toe_kick
+                and self.toe_kick_type in REAR_INSET_KICK_TYPES)
+            else 0.0)
         self.back_bottom_inset = cab.back_bottom_inset
         # Tip-up wedge inputs (refrigerator / tall). Computed dims are
         # derived live in wedge_geometry(); only the inputs persist.
@@ -1092,6 +1100,56 @@ KICK_REAR_BEAM_CLEARANCE = inch(5.0)
 KICK_REAR_BEAM_SHALLOW_DEPTH = inch(15.0)
 
 
+# Toe kick types a rear inset applies to (see Layout.kick_inset_back).
+REAR_INSET_KICK_TYPES = ('NOTCH', 'LOOSE', 'LOOSE_FLUSH')
+
+# Thickness each applied back type adds behind the carcass back. The rear
+# inset is measured from the outermost back face, so the number typed is
+# the recess the user sees.
+_BACK_COVER_THICKNESS = {
+    'FINISHED': inch(0.75), 'PANELED': inch(0.75),
+    'FALSE_FF': inch(0.75), 'WORKING_FF': inch(0.75),
+    'BEADBOARD': inch(0.25), 'SHIPLAP': inch(0.25), 'V_GROOVE': inch(0.25),
+}
+
+
+def has_rear_kick_inset(layout):
+    return getattr(layout, 'kick_inset_back', 0.0) > 1e-6
+
+
+def rear_kick_face_y(layout, bay_index):
+    """Cabinet Y of the rear kick face under ``bay_index``: the bay's
+    outermost back face (carcass back plus any applied back) less the
+    rear inset. The rear beam's back face lands here; a rear finish
+    kick is applied behind it."""
+    bay = layout.bays[bay_index]
+    back_y = -layout.dim_y + bay['depth']
+    cover = _BACK_COVER_THICKNESS.get(bay_back_condition(layout, bay_index),
+                                      0.0)
+    return back_y + cover - layout.kick_inset_back
+
+
+def rear_kick_notch_depth(layout, bay_index, back_edge_y=None):
+    """How far a floor-standing part whose back edge sits at
+    ``back_edge_y`` (default: the bay's carcass back) has to be cut back
+    to clear the rear kick recess. 0 when there is no rear inset or it
+    doesn't reach past that edge."""
+    if not has_rear_kick_inset(layout):
+        return 0.0
+    if back_edge_y is None:
+        back_edge_y = -layout.dim_y + layout.bays[bay_index]['depth']
+    return max(0.0, back_edge_y - rear_kick_face_y(layout, bay_index))
+
+
+def has_rear_finish_kick(layout, bay_index):
+    """A finish board on the rear kick face: the back is exposed there
+    (any back type but UNFINISHED) and the cabinet carries a finish kick
+    at the front."""
+    return (has_rear_kick_inset(layout)
+            and layout.include_finish_kick
+            and bay_back_condition(layout, bay_index) != 'UNFINISHED')
+
+
 def kick_rear_beam_clearance(layout):
     """Gap between the cabinet back and the rear beam's back face."""
     if layout.dim_y < KICK_REAR_BEAM_SHALLOW_DEPTH - inch(0.01):
@@ -1129,10 +1187,11 @@ def kick_subrear_segments(layout):
     """
     if not has_kick_subfront(layout):
         return []
+    rear_inset = has_rear_kick_inset(layout)
     beam_back_y = -kick_rear_beam_clearance(layout)
     beam_front_y = beam_back_y - layout.tkt
     subfront_back_y = -layout.dim_y + layout.tks + layout.tkt
-    if beam_front_y <= subfront_back_y:
+    if beam_front_y <= subfront_back_y and not rear_inset:
         return []
     segments = []
     last_bay = layout.bay_count - 1
@@ -1142,6 +1201,17 @@ def kick_subrear_segments(layout):
             continue
         if first_bay.get('floating_bay'):
             continue
+        if rear_inset:
+            # A rear inset makes the beam the back kick face: its back
+            # face on the inset line, standing in for the plumbing-
+            # clearance position. (Thickness extends +Y from the origin,
+            # so the origin is one board forward of that face.)
+            face_y = rear_kick_face_y(layout, start)
+            if face_y - layout.tkt <= subfront_back_y:
+                continue
+            beam_y = face_y - layout.tkt
+        else:
+            beam_y = beam_back_y
         left_x, right_x = _segment_x_bounds(layout, start, end)
         # Same end treatment as the subfront: an inset end grows a
         # return that runs the full depth of the sub-base, so the beam
@@ -1154,11 +1224,46 @@ def kick_subrear_segments(layout):
             'start_bay':  start,
             'end_bay':    end,
             'x':          left_x,
-            'y':          beam_back_y,
+            'y':          beam_y,
             'z':          0.0,
             'length':     right_x - left_x,
             'width':      kick_beam_width(layout, start),
             'thickness':  layout.tkt,
+        })
+    return segments
+
+
+def rear_finish_kick_segments(layout):
+    """Finish boards on the rear kick face, one per rear beam segment
+    whose back is exposed. Like the front finish kick they run past the
+    beam to the cabinet ends - or to an end inset's return, whose back
+    end they cover - and meet at the carcass meeting plane at interior
+    breaks. Back face on the rear kick face (Thickness extends +Y)."""
+    segments = []
+    last_bay = layout.bay_count - 1
+    finish_t = layout.finish_kick_thickness
+    for beam in kick_subrear_segments(layout):
+        start, end = beam['start_bay'], beam['end_bay']
+        if not has_rear_finish_kick(layout, start):
+            continue
+        if start == 0:
+            left_x = layout.kick_inset_left if layout.kick_inset_left > 0 else 0.0
+        else:
+            left_x = _carcass_meeting_x(layout, start - 1)
+        if end == last_bay:
+            right_x = (layout.dim_x - layout.kick_inset_right
+                       if layout.kick_inset_right > 0 else layout.dim_x)
+        else:
+            right_x = _carcass_meeting_x(layout, end)
+        segments.append({
+            'start_bay':  start,
+            'end_bay':    end,
+            'x':          left_x,
+            'y':          rear_kick_face_y(layout, start),
+            'z':          0.0,
+            'length':     right_x - left_x,
+            'width':      layout.bays[start]['kick_height'],
+            'thickness':  finish_t,
         })
     return segments
 
@@ -1558,19 +1663,28 @@ def has_right_kick_return(layout):
             and layout.kick_inset_right > 0)
 
 
+def _kick_return_back_y(layout, bay_index):
+    """Where an end-inset return's back end sits: the cabinet back, or
+    the rear kick face with a rear inset (a rear finish kick then covers
+    the return's end, as the front finish kick covers its front)."""
+    if has_rear_kick_inset(layout):
+        return min(0.0, rear_kick_face_y(layout, bay_index))
+    return 0.0
+
+
 def left_kick_return_position(layout):
-    """Origin at the cabinet back, X at the inset distance from the
-    cabinet outer, on the floor. Length runs -Y toward the front,
-    Thickness extends +X toward the cabinet interior.
+    """Origin at the cabinet back (or the rear kick face), X at the inset
+    distance from the cabinet outer, on the floor. Length runs -Y toward
+    the front, Thickness extends +X toward the cabinet interior.
     """
-    return (layout.kick_inset_left, 0.0, 0.0)
+    return (layout.kick_inset_left, _kick_return_back_y(layout, 0), 0.0)
 
 
 def left_kick_return_dims(layout):
     """Length spans from cabinet back to main kick front. Width is bay
     0's kick height. Thickness is the toe kick board thickness.
     """
-    length = layout.dim_y - layout.tks
+    length = layout.dim_y - layout.tks + _kick_return_back_y(layout, 0)
     width = layout.bays[0]['kick_height']
     thickness = layout.tkt
     return (length, width, thickness)
@@ -1581,12 +1695,15 @@ def right_kick_return_position(layout):
     extends -X toward the cabinet interior (Mirror Z = False on the
     part flips the Thickness direction relative to the left return).
     """
-    return (layout.dim_x - layout.kick_inset_right, 0.0, 0.0)
+    last = layout.bay_count - 1
+    return (layout.dim_x - layout.kick_inset_right,
+            _kick_return_back_y(layout, last), 0.0)
 
 
 def right_kick_return_dims(layout):
     """Mirror of left_kick_return_dims; uses the LAST bay's kick height."""
-    length = layout.dim_y - layout.tks
+    length = (layout.dim_y - layout.tks
+              + _kick_return_back_y(layout, layout.bay_count - 1))
     width = layout.bays[layout.bay_count - 1]['kick_height']
     thickness = layout.tkt
     return (length, width, thickness)
@@ -1635,12 +1752,13 @@ def loose_kick_end(layout, side):
     butt between the two end boards."""
     x_left, x_right = loose_kick_x_bounds(layout)
     x = x_left if side == 'LEFT' else x_right
+    back_y = loose_kick_back_y(layout)
     return {
-        'x': x, 'y': 0.0, 'z': 0.0,
-        # Length spans from the cabinet back to the ladder front face;
-        # LOOSE_FLUSH (setback 0) runs the full depth so the ladder is
-        # flush with the cabinet front.
-        'length': layout.dim_y - loose_kick_setback(layout),
+        'x': x, 'y': back_y, 'z': 0.0,
+        # Length spans from the cabinet back (or rear inset) to the ladder
+        # front face; LOOSE_FLUSH (setback 0) runs the full depth so the
+        # ladder is flush with the cabinet front.
+        'length': layout.dim_y - loose_kick_setback(layout) + back_y,
         'width':  layout.tkh,
         'thickness': layout.tkt,
     }
@@ -1702,14 +1820,23 @@ def loose_kick_finish_segment(layout):
     }
 
 
+def loose_kick_back_y(layout):
+    """Back face of the loose ladder: the cabinet back, or pulled in by
+    the rear inset (measured, like the NOTCH kick, from the outermost
+    back face - the ladder is one piece, so bay 0's back)."""
+    if has_rear_kick_inset(layout):
+        return min(0.0, rear_kick_face_y(layout, 0))
+    return 0.0
+
+
 def loose_kick_rear_rail(layout):
     """Rear rail. Same orientation and X span as the front rail; sits at
-    the cabinet back with its outer face flush to y=0 (Thickness extends
-    +Y, so the origin is one thickness forward)."""
+    the ladder back with its outer face on loose_kick_back_y (Thickness
+    extends +Y, so the origin is one thickness forward)."""
     x0, length = _loose_kick_rail_x_length(layout)
     return {
         'x': x0,
-        'y': -layout.tkt,
+        'y': loose_kick_back_y(layout) - layout.tkt,
         'z': 0.0,
         'length': length,
         'width':  layout.tkh,

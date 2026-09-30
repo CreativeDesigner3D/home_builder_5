@@ -307,6 +307,10 @@ def draw_construction(layout, cab_props):
             col.prop(cab_props, 'toe_kick_setback', text="Setback")
             col.prop(cab_props, 'inset_toe_kick_left', text="Left Inset")
             col.prop(cab_props, 'inset_toe_kick_right', text="Right Inset")
+            if (cab_props.corner_type == 'NONE'
+                    and cab_props.toe_kick_type in ('NOTCH', 'LOOSE',
+                                                    'LOOSE_FLUSH')):
+                col.prop(cab_props, 'inset_toe_kick_rear', text="Rear Inset")
             # Back insets pull each arm's rear (wall-side) rail off its wall;
             # corner cabinets only (no wall-side rail on a straight run).
             if cab_props.corner_type != 'NONE':

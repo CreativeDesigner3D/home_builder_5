@@ -2543,7 +2543,7 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         'VALANCE_PANEL_LEFT', 'VALANCE_PANEL_RIGHT',
         # Visible toe kick parts
         'CORNER_MID_RAIL', 'CORNER_FALSE_FRONT',
-        'FINISH_TOE_KICK', 'MID_FINISH_KICK',
+        'FINISH_TOE_KICK', 'MID_FINISH_KICK', 'REAR_FINISH_TOE_KICK',
         'CORNER_LEFT_FINISH_KICK', 'CORNER_RIGHT_FINISH_KICK',
         'LEFT_CORNER_FINISH_KICK', 'RIGHT_CORNER_FINISH_KICK',
         'DIAGONAL_FINISH_KICK',
@@ -8826,6 +8826,16 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
     )  # type: ignore
     inset_toe_kick_right: FloatProperty(
         name="Inset Toe Kick Right", default=0.0, unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    # Straight cabinets: recess the kick at the back too (an island's
+    # seating side), measured in from the outermost back face. 0 = the
+    # kick zone runs to the back as before. Notched and loose kicks only.
+    inset_toe_kick_rear: FloatProperty(
+        name="Inset Toe Kick Rear", default=0.0, min=0.0,
+        unit='LENGTH', precision=4,
+        description="Recess the toe kick at the back of the cabinet by this "
+                    "much, measured from the outermost back face",
         update=_update_cabinet_dim,
     )  # type: ignore
     # Corner cabinets only: pull each arm's rear (wall-side) toe-kick /

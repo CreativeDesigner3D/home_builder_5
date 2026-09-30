@@ -193,6 +193,8 @@ PART_ROLE_TOE_KICK_SUBFRONT = 'TOE_KICK_SUBFRONT'
 # Second beam of the sub-base, run near the back to carry the back
 # edge of the carcass bottom (see solver.kick_subrear_segments).
 PART_ROLE_TOE_KICK_SUBREAR = 'TOE_KICK_SUBREAR'
+# Finish board on the rear kick face of a rear-inset kick (exposed back).
+PART_ROLE_REAR_FINISH_TOE_KICK = 'REAR_FINISH_TOE_KICK'
 PART_ROLE_FINISH_TOE_KICK = 'FINISH_TOE_KICK'
 PART_ROLE_LEFT_CORNER_FINISH_KICK = 'LEFT_CORNER_FINISH_KICK'
 PART_ROLE_RIGHT_CORNER_FINISH_KICK = 'RIGHT_CORNER_FINISH_KICK'
@@ -3035,6 +3037,8 @@ class FaceFrameCabinet(GeoNodeCage):
                 self._reconcile_kick_subrears(kick_subrear_segs)
                 finish_kick_segs = solver.finish_kick_segments(layout)
                 self._reconcile_finish_kicks(finish_kick_segs)
+                self._reconcile_rear_finish_kicks(
+                    solver.rear_finish_kick_segments(layout))
                 self._ensure_corner_finish_kick(
                     PART_ROLE_LEFT_CORNER_FINISH_KICK, 'Finish Toe Kick Left')
                 self._ensure_corner_finish_kick(
@@ -3070,6 +3074,7 @@ class FaceFrameCabinet(GeoNodeCage):
                 self._reconcile_kick_subfronts([])
                 self._reconcile_kick_subrears([])
                 self._reconcile_finish_kicks([])
+                self._reconcile_rear_finish_kicks([])
 
             # Blind panels exist on every carcass-bearing cabinet (Base /
             # Tall / Upper / Lap Drawer). Hidden when stile type isn't
@@ -9370,9 +9375,14 @@ class FaceFrameCabinet(GeoNodeCage):
         # The panel lies on this segment's back face: y = that plane plus
         # its own thickness, since Mirror Y extrudes it back toward the
         # carcass.
+        # A rear-inset kick recesses the back of the kick zone, so the
+        # panel stops at the top of the kick instead of covering it.
+        bottom_z = 0.0
+        if solver.has_rear_kick_inset(layout):
+            bottom_z = layout.bays[segment['start_bay']]['kick_height']
         existing.location = (segment['x'] - ext_l + ret_l,
-                             segment['y'] + thickness, 0.0)
-        part.set_input('Length',    layout.dim_z)
+                             segment['y'] + thickness, bottom_z)
+        part.set_input('Length',    layout.dim_z - bottom_z)
         part.set_input('Width',
                        segment['width'] + ext_l + ext_r - ret_l - ret_r)
         part.set_input('Thickness', thickness)
@@ -11077,6 +11087,40 @@ class FaceFrameCabinet(GeoNodeCage):
                 continue
             self._create_finish_kick_part(seg['start_bay'])
 
+    def _reconcile_rear_finish_kicks(self, segments):
+        """Finish boards on a rear-inset kick's back face, one per rear
+        beam segment with an exposed back. Keyed by hb_segment_start_bay
+        and placed here (they have no other consumer), same orientation
+        as the front finish kick: Length along X, Width up, Thickness
+        extending +Y from its back face on the rear kick face."""
+        by_start = {seg['start_bay']: seg for seg in segments}
+        existing = {}
+        for child in list(self.obj.children):
+            if child.get('hb_part_role') != PART_ROLE_REAR_FINISH_TOE_KICK:
+                continue
+            key = child.get('hb_segment_start_bay')
+            if key not in by_start or key in existing:
+                _remove_part_with_mesh(child)
+            else:
+                existing[key] = child
+        for start, seg in by_start.items():
+            obj = existing.get(start)
+            if obj is None:
+                fk = CabinetPart()
+                fk.create(f'Rear Finish Toe Kick {start + 1}')
+                fk.obj.parent = self.obj
+                fk.obj['hb_part_role'] = PART_ROLE_REAR_FINISH_TOE_KICK
+                fk.obj['CABINET_PART'] = True
+                fk.obj['hb_segment_start_bay'] = start
+                fk.obj.rotation_euler.x = math.radians(90)
+                fk.set_input('Mirror Z', True)
+                obj = fk.obj
+            part = CabinetPart(obj)
+            obj.location = (seg['x'], seg['y'], seg['z'])
+            part.set_input('Length', seg['length'])
+            part.set_input('Width', seg['width'])
+            part.set_input('Thickness', seg['thickness'])
+
     def _create_finish_kick_part(self, start_bay_index):
         """Create one finish toe kick part keyed to its segment. Same
         orientation as the kick subfront.
@@ -12068,6 +12112,59 @@ class FaceFrameCabinet(GeoNodeCage):
             ('X', kick),
             ('Y', setback),
             ('Route Depth', thickness),
+        ):
+            node_input = ng.interface.items_tree.get(input_name)
+            if node_input is not None:
+                hb_utils.set_gn_input(mod, node_input.identifier, value)
+        mod.show_viewport = active
+        mod.show_render = active
+        self._update_side_rear_kick_notch(side_obj, layout, bay_index,
+                                          has_inset, bay_floating,
+                                          side_thickness)
+
+    def _update_side_rear_kick_notch(self, side_obj, layout, bay_index,
+                                     has_inset, bay_floating,
+                                     side_thickness):
+        """The back-bottom twin of the front notch: clear a rear-inset
+        toe kick recess (solver.rear_kick_notch_depth). Floor-standing
+        sides only - a NOTCH kick, and not a side already floated by an
+        end inset or a floating bay. Measured from the side's own back
+        edge, which a FINISHED end run past the back carries out with it.
+        Flip Y = False is the back face (Mirror Y = True on both sides).
+        Added only once a rear inset asks for it."""
+        depth = 0.0
+        if (layout.has_toe_kick and layout.toe_kick_type == 'NOTCH'
+                and not has_inset and not bay_floating
+                and 0 <= bay_index < len(layout.bays)):
+            cab = self.obj.face_frame_cabinet
+            left = side_obj.get('hb_part_role') == PART_ROLE_LEFT_SIDE
+            cond = (cab.left_finished_end_condition if left
+                    else cab.right_finished_end_condition)
+            extend = 0.0
+            if cond == 'FINISHED' and not layout.is_angled:
+                extend = max(0.0, (cab.left_side_finished_extend_back if left
+                                   else cab.right_side_finished_extend_back))
+            back_edge = (-layout.dim_y + layout.bays[bay_index]['depth']
+                         + extend)
+            depth = solver.rear_kick_notch_depth(layout, bay_index, back_edge)
+        active = depth > 1e-6
+        mod = side_obj.modifiers.get('Notch Back Bottom')
+        if mod is None:
+            if not active:
+                return
+            cpm = GeoNodeCutpart(side_obj).add_part_modifier(
+                'CPM_CORNERNOTCH', 'Notch Back Bottom')
+            cpm.set_input('Flip X', False)
+            cpm.set_input('Flip Y', False)
+            mod = cpm.mod
+        if mod.node_group is None:
+            return
+        kick = layout.bays[bay_index]['kick_height'] if active else 0.0
+        ng = mod.node_group
+        for input_name, value in (
+            ('X', kick),
+            ('Y', depth if active else 0.0),
+            ('Route Depth', side_thickness if active else 0.0),
         ):
             node_input = ng.interface.items_tree.get(input_name)
             if node_input is not None:
@@ -19979,7 +20076,7 @@ def break_cabinet_at_gap(cabinet, gap_index, shrink_side='AUTO'):
             'door_thickness', 'back_thickness', 'division_thickness',
             'finish_toe_kick_thickness',
             'toe_kick_type', 'toe_kick_height', 'toe_kick_setback',
-            'toe_kick_thickness', 'back_bottom_inset',
+            'toe_kick_thickness', 'back_bottom_inset', 'inset_toe_kick_rear',
             'include_finish_toe_kick',
             'include_external_nailer', 'include_internal_nailer',
             'include_thin_finished_bottom',
