@@ -4671,9 +4671,11 @@ class Face_Frame_Door_Style(PropertyGroup):
     _DOOR_FRONT_ROLES = {'DOOR', 'PULLOUT_FRONT', 'DOOR_LOOK_FRONT'}
     _DRAWER_FRONT_ROLES = {'DRAWER_FRONT', 'FALSE_FRONT', 'TILT_OUT',
                             'DRAWER_LOOK_FRONT'}
-    # A paneled top rail builds like a door (Set Door Frame edits it too).
+    # A paneled top rail and the accessible sink's stiles-and-rails
+    # fronts build like a door (Set Door Frame edits them too).
     _STYLEABLE_ROLES = (_DOOR_FRONT_ROLES | _DRAWER_FRONT_ROLES
-                        | {'PANELED_TOP_RAIL'})
+                        | {'PANELED_TOP_RAIL', 'ADA_FRONT',
+                           'ADA_ANGLED_FRONT'})
 
     def get_parent_cabinet_style(self, front_obj):
         """Walk up from a front object to its face frame cabinet root,

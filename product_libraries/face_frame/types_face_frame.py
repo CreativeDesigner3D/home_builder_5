@@ -8190,8 +8190,32 @@ class FaceFrameCabinet(GeoNodeCage):
             if obj.data.users > 1:
                 obj.data = obj.data.copy()
             obj.matrix_basis = Matrix.Translation(origin) @ basis.to_4x4()
-            self._build_ada_front_mesh(obj, construction, width, height,
-                                       thickness)
+            if not self._build_ada_front_from_style(obj, construction):
+                self._build_ada_front_mesh(obj, construction, width, height,
+                                           thickness)
+
+    def _build_ada_front_from_style(self, obj, construction):
+        """Build a stiles-and-rails accessible sink front with the
+        cabinet's 5-piece door style, exactly like a door, so Set Door
+        Frame's locked sizes, mid rails, grid and glass (stored on the
+        part, which persists across recalcs) apply to it. Returns False
+        for a slab, with no 5-piece style, or when the style's frame
+        doesn't fit (a short band under wide rails), leaving the caller
+        to build the plain frame. The style name stays on in that last
+        case so Set Door Frame edits that do fit rebuild through it."""
+        from . import applied_panel_sizing
+        style = None
+        if construction == 'FRAME':
+            style = applied_panel_sizing._resolve_door_style(self.obj)
+            if style is not None and getattr(style, 'door_type', '') != '5_PIECE':
+                style = None
+        if style is None:
+            if 'DOOR_STYLE_NAME' in obj:
+                del obj['DOOR_STYLE_NAME']
+            return False
+        obj['DOOR_STYLE_NAME'] = style.name
+        style.assign_style_to_front(obj)
+        return 'HB_DOOR_FRAME' in obj and not obj.get('HB_STATIC_SLAB')
 
     def _reconcile_paneled_top_rails(self):
         """Build a paneled part over each top rail segment, or take them
