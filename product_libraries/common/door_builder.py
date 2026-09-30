@@ -1813,6 +1813,99 @@ def build_door_mesh(mesh, info, width, height, thickness, materials=None,
     mesh.update()
 
 
+def _sticking_within_members(parts, ws, wr, eps=1e-6):
+    """Parts with every panel / glass cell grown by the sticking strip
+    widths (``ws`` across on its left / right edges, ``wr`` on its top /
+    bottom) and the members reshaped around the grown cells: a member
+    edge that faces a cell moves back by that strip width, and a member
+    end that butts such an edge moves forward to meet it (a rail end
+    into a stile's trimmed band, a mid stile end into a rail's), so the
+    boxes still tile the frame without overlapping."""
+    cells = [p for p in parts if p['key'] in ('panel', 'glass')
+             and p['x1'] - p['x0'] > eps and p['z1'] - p['z0'] > eps]
+    if not cells or (ws <= eps and wr <= eps):
+        return parts
+
+    def _span(a0, a1, b0, b1):
+        return min(a1, b1) - max(a0, b0) > eps
+
+    def _faces_cell(p, side):
+        # Does the member edge on ``side`` border a cell?
+        for c in cells:
+            if side == 'x0' and abs(p['x0'] - c['x1']) < eps \
+                    and _span(p['z0'], p['z1'], c['z0'], c['z1']):
+                return True
+            if side == 'x1' and abs(p['x1'] - c['x0']) < eps \
+                    and _span(p['z0'], p['z1'], c['z0'], c['z1']):
+                return True
+            if side == 'z0' and abs(p['z0'] - c['z1']) < eps \
+                    and _span(p['x0'], p['x1'], c['x0'], c['x1']):
+                return True
+            if side == 'z1' and abs(p['z1'] - c['z0']) < eps \
+                    and _span(p['x0'], p['x1'], c['x0'], c['x1']):
+                return True
+        return False
+
+    members = [p for p in parts if p['key'] not in ('panel', 'glass', 'slab')
+               and p['x1'] - p['x0'] > eps and p['z1'] - p['z0'] > eps]
+    trims = {id(p): {s: _faces_cell(p, s) for s in ('x0', 'x1', 'z0', 'z1')}
+             for p in members}
+
+    def _butts_trimmed(p, side):
+        # Does the member end on ``side`` butt another member's edge
+        # that faces a cell (and so moves back)?
+        for q in members:
+            if q is p:
+                continue
+            t = trims[id(q)]
+            if side == 'x0' and t['x1'] and abs(p['x0'] - q['x1']) < eps \
+                    and _span(p['z0'], p['z1'], q['z0'], q['z1']):
+                return True
+            if side == 'x1' and t['x0'] and abs(p['x1'] - q['x0']) < eps \
+                    and _span(p['z0'], p['z1'], q['z0'], q['z1']):
+                return True
+            if side == 'z0' and t['z1'] and abs(p['z0'] - q['z1']) < eps \
+                    and _span(p['x0'], p['x1'], q['x0'], q['x1']):
+                return True
+            if side == 'z1' and t['z0'] and abs(p['z1'] - q['z0']) < eps \
+                    and _span(p['x0'], p['x1'], q['x0'], q['x1']):
+                return True
+        return False
+
+    out = []
+    for p in parts:
+        if p['key'] in ('panel', 'glass') and any(p is c for c in cells):
+            out.append(dict(p, x0=p['x0'] - ws, x1=p['x1'] + ws,
+                            z0=p['z0'] - wr, z1=p['z1'] + wr))
+            continue
+        if not any(p is m for m in members):
+            out.append(p)
+            continue
+        t = trims[id(p)]
+        x0, x1, z0, z1 = p['x0'], p['x1'], p['z0'], p['z1']
+        if t['x0']:
+            x0 += ws
+        elif _butts_trimmed(p, 'x0'):
+            x0 -= ws
+        if t['x1']:
+            x1 -= ws
+        elif _butts_trimmed(p, 'x1'):
+            x1 += ws
+        if t['z0']:
+            z0 += wr
+        elif _butts_trimmed(p, 'z0'):
+            z0 -= wr
+        if t['z1']:
+            z1 -= wr
+        elif _butts_trimmed(p, 'z1'):
+            z1 += wr
+        if x1 - x0 <= eps or z1 - z0 <= eps:
+            # Member narrower than its sticking: keep the nominal build.
+            return parts
+        out.append(dict(p, x0=x0, x1=x1, z0=z0, z1=z1))
+    return out
+
+
 def build_door_geometry(info, width, height, thickness,
                         outer_section=None, inner_section=None,
                         panel_section=None, inner_rail_section=None,
@@ -1833,6 +1926,20 @@ def build_door_geometry(info, width, height, thickness,
         faces = []
         face_slots = []
     parts = evaluate_layout(info, width, height)
+    # The sticking is machined into the stiles and rails, so it lives
+    # inside the member widths: pull the member boxes back and open the
+    # cells by the strip widths, keeping the visible opening edge at
+    # the nominal member width. Round tops keep the nominal layout (the
+    # arc geometry is derived from it separately).
+    if (not mitered and info.get('door_type') != 'SLAB'
+            and round_top is None
+            and (inner_section is not None
+                 or inner_rail_section is not None
+                 or inner_stile_section is not None)):
+        _lr = inner_rail_section or inner_section or inner_stile_section
+        _ls = inner_stile_section or inner_section or inner_rail_section
+        parts = _sticking_within_members(
+            parts, max(u for u, v in _ls), max(u for u, v in _lr))
     if glass_rows and info.get('door_type') != 'SLAB':
         parts = _apply_glass_rows(parts, thickness, glass_rows)
     # Round top (quarter / half circle): the arc owns the door's whole
