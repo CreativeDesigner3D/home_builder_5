@@ -6137,6 +6137,72 @@ def recalculate_closet_starter(obj):
     _wrap_starter(root).recalculate()
     mark_parts(root)
     stamp_part_menus(root)
+    stamp_panel_limits(root)
+
+
+# Largest partition the stock allows. Depth: a wall-hung panel has only
+# the cleat and the wall to carry it, a floor panel stands on the toe
+# kick, and an island panel is limited by the width of the board.
+# Height: the board length, which depends on the colour.
+PANEL_MAX_DEPTH_WALL = inch(18.0)
+PANEL_MAX_DEPTH_FLOOR = inch(30.0)
+PANEL_MAX_DEPTH_ISLAND = inch(48.0)
+PANEL_MAX_HEIGHT_LONG = inch(120.0)
+PANEL_MAX_HEIGHT = inch(96.0)
+# Colours stocked in 10' boards; every other colour comes 8' long.
+LONG_STOCK_MATERIALS = frozenset((
+    'White', 'Phantom Ecru', 'Phantom Pearl', 'Phantom Charcoal',
+    'Veranda Teak'))
+
+
+def panel_limit_warning(height, depth, floor, island, material):
+    """Why a partition this size can't be cut or hung, or ''."""
+    msgs = []
+    if island:
+        max_d = PANEL_MAX_DEPTH_ISLAND
+    elif floor:
+        max_d = PANEL_MAX_DEPTH_FLOOR
+    else:
+        max_d = PANEL_MAX_DEPTH_WALL
+    if depth > max_d + 0.0005:
+        where = ("An island" if island else
+                 "A floor mounted" if floor else "A wall hung")
+        msgs.append("%s panel is at most %s deep; this one is %s"
+                    % (where, _in_str(max_d), _in_str(depth)))
+    max_h = (PANEL_MAX_HEIGHT_LONG if material in LONG_STOCK_MATERIALS
+             else PANEL_MAX_HEIGHT)
+    if height > max_h + 0.0005:
+        msgs.append("%s panels are at most %s tall; this one is %s"
+                    % (material or "These", _in_str(max_h), _in_str(height)))
+    return "; ".join(msgs)
+
+
+def stamp_panel_limits(root):
+    """Warn on every partition past the stock limits. A panel standing
+    on the floor counts as floor mounted even when a hanging bay shares
+    it - the floor carries it either way."""
+    wrapped = _wrap_starter(root)
+    island = isinstance(wrapped, IslandClosetStarter)
+    material = getattr(bpy.context.scene.hb_closets, 'closet_material', '')
+    for obj in root.children_recursive:
+        if obj.get('hb_part_role') != PART_ROLE_PANEL:
+            continue
+        if obj.get('hb_panel_off'):
+            _stamp_warning(obj, '')
+            continue
+        try:
+            part = GeoNodeCutpart(obj)
+            height = float(part.get_input('Length'))
+            depth = float(part.get_input('Width'))
+        except Exception:
+            continue
+        # Panels stand in the starter's space with the floor at z = 0;
+        # a hanging bay's panels start at the hang line above it.
+        floor = obj.location.z < 0.001 if obj.parent is root else (
+            obj.matrix_world.translation.z
+            - root.matrix_world.translation.z < 0.001)
+        _stamp_warning(obj, panel_limit_warning(
+            height, depth, floor, island, material))
 
 
 # The shelves that hold a unit square rather than resting on clips.
