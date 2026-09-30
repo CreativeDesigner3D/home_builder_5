@@ -8226,9 +8226,11 @@ class FaceFrameCabinet(GeoNodeCage):
         stands proud of a box. Its members are the cabinet style's base
         end stile / top rail / bottom rail widths (the accessible sink
         collapses its own face frame, so there is nothing to borrow
-        there); the job defaults stand in without a style. The door sits
-        on the frame's face, covering the opening by the cabinet's
-        default overlays, and builds from the door style like any door.
+        there); the job defaults stand in without a style. The door is
+        sized and set off the frame like the cabinet's other doors - its
+        default overlays, door-to-frame gap and inset amount, so an
+        inset cabinet sets it into the opening - and builds from the
+        door style like any door.
         Members too big for the face leave one plain frame panel.
         """
         cab = self.obj.face_frame_cabinet
@@ -8263,7 +8265,12 @@ class FaceFrameCabinet(GeoNodeCage):
         door_w = open_w + ovl_l + ovl_r
         door_h = open_h + ovl_t + ovl_b
         if door_w > 0.0 and door_h > 0.0 and door_t > 0.0:
-            origin = (base + face * fft + across * (stile - ovl_l)
+            # Back face off the frame face like any door: the door-to-
+            # frame gap, less the cabinet's inset amount (partial / full
+            # inset push it back into the opening).
+            standoff = (fft + solver.DOOR_TO_FRAME_GAP
+                        - cab.default_door_inset_amount)
+            origin = (base + face * standoff + across * (stile - ovl_l)
                       + up * (bottom_rail - ovl_b))
             specs[PART_ROLE_ADA_FALSE_DOOR] = (
                 'False Door', 'DOOR', basis, origin, door_w, door_h, door_t)
