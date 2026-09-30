@@ -3782,6 +3782,11 @@ class hb_closets_OT_rod_prompts(bpy.types.Operator):
         return {'FINISHED'}
 
 
+# Edges a misc part can be banded on, stored on the part as
+# hb_band_<edge> booleans (edges off the cutpart's W1 / W2 / L1 / L2).
+MISC_BAND_EDGES = ('W1', 'W2', 'L1', 'L2')
+
+
 class hb_closets_OT_misc_part_prompts(bpy.types.Operator):
     """Size and place the active misc part. Nothing about a misc part
     is worked out for the person: the numbers here are the part."""
@@ -3800,7 +3805,16 @@ class hb_closets_OT_misc_part_prompts(bpy.types.Operator):
         unit='LENGTH', precision=4)  # type: ignore
     thickness: bpy.props.FloatProperty(
         name="Part Thickness", min=0.0,
-        unit='LENGTH', precision=4)  # type: ignore
+        unit='LENGTH', precision=4,
+        options={'SKIP_SAVE'})  # type: ignore
+    band_w1: bpy.props.BoolProperty(
+        name="W1", description="Edgeband the first width edge")  # type: ignore
+    band_w2: bpy.props.BoolProperty(
+        name="W2", description="Edgeband the second width edge")  # type: ignore
+    band_l1: bpy.props.BoolProperty(
+        name="L1", description="Edgeband the first length edge")  # type: ignore
+    band_l2: bpy.props.BoolProperty(
+        name="L2", description="Edgeband the second length edge")  # type: ignore
     loc_x: bpy.props.FloatProperty(
         name="Horizontal",
         description="How far along the wall the part stands, or east "
@@ -3845,6 +3859,9 @@ class hb_closets_OT_misc_part_prompts(bpy.types.Operator):
         self.rot_x = float(obj.rotation_euler.x)
         self.rot_y = float(obj.rotation_euler.y)
         self.rot_z = float(obj.rotation_euler.z)
+        # Banded edges are the part's own choice, unbanded until told.
+        for key in MISC_BAND_EDGES:
+            setattr(self, 'band_' + key.lower(), bool(obj.get('hb_band_' + key)))
         wm = context.window_manager
         return wm.invoke_props_dialog(self, width=300)
 
@@ -3856,7 +3873,10 @@ class hb_closets_OT_misc_part_prompts(bpy.types.Operator):
         col.prop(self, 'part_name')
         col.prop(self, 'length')
         col.prop(self, 'width')
-        col.prop(self, 'thickness')
+        # Thickness comes from the board the part is cut from.
+        row = col.row()
+        row.enabled = False
+        row.prop(self, 'thickness')
         box = layout.box()
         box.label(text="Location", icon='ORIENTATION_LOCAL')
         col = box.column(align=True)
@@ -3869,6 +3889,11 @@ class hb_closets_OT_misc_part_prompts(bpy.types.Operator):
         col.prop(self, 'rot_x')
         col.prop(self, 'rot_y')
         col.prop(self, 'rot_z')
+        box = layout.box()
+        box.label(text="Edgebanding", icon='MOD_EDGESPLIT')
+        row = box.row()
+        for key in MISC_BAND_EDGES:
+            row.prop(self, 'band_' + key.lower())
 
     def execute(self, context):
         obj = context.active_object
@@ -3880,9 +3905,10 @@ class hb_closets_OT_misc_part_prompts(bpy.types.Operator):
             part = hb_types.GeoNodeCutpart(obj)
             part.set_input('Length', float(self.length))
             part.set_input('Width', float(self.width))
-            part.set_input('Thickness', float(self.thickness))
         except Exception:
             pass
+        for key in MISC_BAND_EDGES:
+            obj['hb_band_' + key] = bool(getattr(self, 'band_' + key.lower()))
         obj.location = (float(self.loc_x), float(self.loc_y),
                         float(self.loc_z))
         obj.rotation_euler = (float(self.rot_x), float(self.rot_y),
