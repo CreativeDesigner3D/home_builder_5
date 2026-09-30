@@ -5941,16 +5941,38 @@ def _walk_interior_node(node, rect, origin_offset,
     if sp.axis == 'H':
         # Horizontal divider (fixed shelf). Children stack in Z.
         ox, oy, oz = origin_offset
-        # Divider: HORIZONTAL part flush in X and Y, at z = size_a
+        # Divider: HORIZONTAL part flush in X, at z = size_a. The front
+        # edge sits shelf_setback behind the back of the face frame; a
+        # nosing recesses the board by its stock depth and fills the
+        # gap, as on adjustable shelves (_shelf_stack_descriptors).
         if sp.include_part:
+            setback = getattr(sp, 'shelf_setback', 0.0)
+            nosing_style = getattr(sp, 'shelf_nosing_style', 'NONE')
+            nosing = nosing_style not in (None, '', 'NONE')
+            nose_d = shelf_nosing.NOSE_STOCK_DEPTH if nosing else 0.0
+            shelf_n = len(out) + 1
             out.append({
                 'kind':         'INTERIOR_FIXED_SHELF',
                 'role':         'INTERIOR_FIXED_SHELF',
-                'name':         f'Fixed Shelf {len(out) + 1}',
+                'name':         f'Fixed Shelf {shelf_n}',
                 'orientation':  'HORIZONTAL',
-                'position':     (ox, oy, oz + size_a),
-                'dims':         (cage_x, cage_y, div_t),
+                'position':     (ox, oy + setback + nose_d, oz + size_a),
+                'dims':         (cage_x,
+                                 max(0.0, cage_y - setback - nose_d),
+                                 div_t),
             })
+            if nosing and cage_x > 0.0:
+                out.append({
+                    'kind':     'SHELF_NOSING',
+                    'role':     'SHELF_NOSING',
+                    'name':     f'Fixed Shelf Nosing {shelf_n}',
+                    'position': (ox, oy + setback + nose_d,
+                                 oz + size_a + div_t),
+                    'length':   cage_x,
+                    'style':    nosing_style,
+                    'shelf_thickness': div_t,
+                    'height':   getattr(sp, 'shelf_nosing_height', 0.0),
+                })
         if sp.add_face_frame and sp.face_frame_width > 0.0:
             ffw = sp.face_frame_width
             # Rail inline with the FF plane; its top face is flush

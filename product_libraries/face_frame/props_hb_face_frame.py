@@ -10690,6 +10690,30 @@ class Face_Frame_Interior_Split_Props(PropertyGroup):
         thickness while the part is built, 0 while it is turned off."""
         return self.divider_thickness if self.include_part else 0.0
 
+    # Fixed shelf (H) front edge: pulled back from the back of the face
+    # frame like an adjustable shelf, and optionally nosed with the same
+    # profiles (see Face_Frame_Interior_Item.shelf_nosing_*). The names
+    # match the interior item's so nosing readers take either.
+    shelf_setback: FloatProperty(
+        name="Shelf Setback",
+        description="Distance the fixed shelf is pulled back from the front of the cavity",
+        default=units.inch(0.125), min=0.0, unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    shelf_nosing_style: EnumProperty(
+        name="Shelf Nosing",
+        description="Finished-opening nosing profile applied to the front edge of the fixed shelf",
+        items=shelf_nosing.NOSING_STYLE_ITEMS, default='NONE',
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    shelf_nosing_height: FloatProperty(
+        name="Nosing Height",
+        description="Overall height of an extra-height nosing. Clover / Kelli ignore this and match the shelf thickness",
+        default=units.inch(1.5), min=units.inch(0.125),
+        unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
     add_face_frame: BoolProperty(
         name="Add Face Frame",
         description="Add a face frame rail (fixed shelf) or stile "

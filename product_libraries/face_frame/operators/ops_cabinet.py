@@ -3230,13 +3230,13 @@ class hb_face_frame_OT_remove_interior_item(bpy.types.Operator):
 
 class hb_face_frame_OT_apply_shelf_nosing_to_room(bpy.types.Operator):
     """Push the nosing profile on one shelf item onto every adjustable /
-    half-depth shelf in the room. Shelf nosing is otherwise set item by
+    half-depth / fixed shelf in the room. Shelf nosing is otherwise set item by
     item, which is a lot of clicks on a job that runs one profile
     throughout."""
     bl_idname = "hb_face_frame.apply_shelf_nosing_to_room"
     bl_label = "Apply to Room"
     bl_description = ("Apply this nosing profile and height to every "
-                      "adjustable and half-depth shelf in the room")
+                      "adjustable, half-depth and fixed shelf in the room")
     bl_options = {'REGISTER', 'UNDO'}
 
     index: bpy.props.IntProperty(
@@ -3272,6 +3272,20 @@ class hb_face_frame_OT_apply_shelf_nosing_to_room(bpy.types.Operator):
         roots = []
         with types_face_frame.suspend_recalc():
             for obj in objects:
+                # Fixed shelves (H splits) carry their own nosing.
+                if obj.get(types_face_frame.TAG_INTERIOR_SPLIT_NODE):
+                    sp = obj.face_frame_interior_split
+                    if (sp.axis != 'H' or not sp.include_part
+                            or (sp.shelf_nosing_style == style
+                                and abs(sp.shelf_nosing_height - height)
+                                < 1e-9)):
+                        continue
+                    sp.shelf_nosing_style = style
+                    sp.shelf_nosing_height = height
+                    root = types_face_frame.find_cabinet_root(obj)
+                    if root is not None and root not in roots:
+                        roots.append(root)
+                    continue
                 if not (obj.get(types_face_frame.TAG_OPENING_CAGE)
                         or obj.get(types_face_frame.TAG_INTERIOR_REGION)):
                     continue

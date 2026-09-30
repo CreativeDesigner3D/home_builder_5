@@ -1674,6 +1674,13 @@ def _draw_split_face_frame_props(layout, sp):
     thick_row = layout.row(align=True)
     thick_row.enabled = sp.include_part
     thick_row.prop(sp, 'divider_thickness', text="Divider Thickness")
+    if sp.axis == 'H':
+        shelf_col = layout.column(align=True)
+        shelf_col.enabled = sp.include_part
+        shelf_col.prop(sp, 'shelf_setback', text="Setback")
+        shelf_col.prop(sp, 'shelf_nosing_style', text="Nosing")
+        if sp.shelf_nosing_style in shelf_nosing.EXTRA_HEIGHT_STYLES:
+            shelf_col.prop(sp, 'shelf_nosing_height', text="Nosing Height")
     layout.prop(sp, 'add_face_frame')
     width_row = layout.row(align=True)
     width_row.enabled = sp.add_face_frame
