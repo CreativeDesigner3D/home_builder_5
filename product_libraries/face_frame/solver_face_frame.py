@@ -3231,8 +3231,11 @@ def applied_back_segments(layout):
             # Outer face of this stretch's back: the panel hangs on it.
             'y':          -layout.dim_y + first_bay['depth'],
             # Floor to cabinet top, as the cabinet-wide applied back has
-            # always run - it covers the toe-kick band at the bottom.
-            'z':          0.0,
+            # always run - it covers the toe-kick band at the bottom -
+            # unless a rear-inset kick recesses that band: then it stops
+            # at the top of the kick.
+            'z':          (first_bay['kick_height']
+                           if has_rear_kick_inset(layout) else 0.0),
             'top_z':      layout.dim_z,
             'width':      right_x - left_x,
         })

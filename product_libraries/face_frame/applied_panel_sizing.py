@@ -53,6 +53,23 @@ def _resolve_door_style(cab_obj):
     return None
 
 
+# Root prop, per side, carrying a rear-inset kick's notch for an applied
+# END panel: [kick height, depth measured from the panel's back edge].
+# Stamped by the cabinet recalc (which has the layout) before the notch
+# pass; absent or zero when the end needs no rear cut.
+REAR_KICK_NOTCH_KEY = 'HB_REAR_KICK_NOTCH_%s'
+
+
+def rear_kick_inset_active(cab):
+    """True when a straight cabinet's toe kick is recessed at the back
+    (Face_Frame_Cabinet_Props.inset_toe_kick_rear): its applied back
+    then stops at the kick top instead of covering the band."""
+    return (cab.cabinet_type in ('BASE', 'TALL')
+            and getattr(cab, 'inset_toe_kick_rear', 0.0) > 0.0
+            and cab.toe_kick_type in ('NOTCH', 'LOOSE', 'LOOSE_FLUSH')
+            and getattr(cab, 'corner_type', 'NONE') == 'NONE')
+
+
 def _toe_kick_band(cab, side):
     """Bottom-rail growth needed for Base/Tall cabinets where the
     applied panel spans the full cabinet height (floor to top) and
@@ -67,6 +84,10 @@ def _toe_kick_band(cab, side):
     if side == 'LEFT' and cab.inset_toe_kick_left > 0:
         return 0.0
     if side == 'RIGHT' and cab.inset_toe_kick_right > 0:
+        return 0.0
+    # A rear-inset kick recesses the back, so an applied back stops at the
+    # kick top (solver.applied_back_segments) with no band to cover.
+    if side == 'BACK' and rear_kick_inset_active(cab):
         return 0.0
     return cab.toe_kick_height
 
@@ -653,6 +674,15 @@ def _apply_panel_far_kick_notch(cab_obj, panel_obj, side, bottom_rail,
     # cabinet's, so the stile's share of the setback is that much less.
     stile_depth = max(0.0, setback - far_fft)
 
+    # Otherwise the far end is the cabinet's back, which a rear-inset
+    # kick recesses: the same corner, cut to the depth the recalc worked
+    # out from this panel's own back edge.
+    if not active:
+        rear = cab_obj.get(REAR_KICK_NOTCH_KEY % side)
+        if rear is not None and len(rear) == 2:
+            kick, stile_depth = float(rear[0]), float(rear[1])
+            active = kick > 0.0 and stile_depth > _NOTCH_EPS
+
     far_role = (types_face_frame.PART_ROLE_LEFT_STILE
                 if facing_role == types_face_frame.PART_ROLE_RIGHT_STILE
                 else types_face_frame.PART_ROLE_RIGHT_STILE)
@@ -747,9 +777,12 @@ def _apply_back_panel_kick_notches(cab_obj, panel_obj):
         return
     cab = cab_obj.face_frame_cabinet
     kick = cab.toe_kick_height
+    # A rear-inset kick holds the whole back up at the kick top, so there
+    # is no band left at its ends to cut.
     buildable = (cab.cabinet_type in ('BASE', 'TALL')
                  and cab.toe_kick_type != 'FLOATING'
-                 and kick > 0.0)
+                 and kick > 0.0
+                 and not rear_kick_inset_active(cab))
 
     bottom_rail = None
     stiles = {}

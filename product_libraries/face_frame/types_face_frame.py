@@ -9271,7 +9271,17 @@ class FaceFrameCabinet(GeoNodeCage):
             )
             # Toe-kick corner notch on bottom rail + facing stile;
             # a BACK panel takes end cuts for an inset kick instead.
-            # No-op for non-NOTCH toe kicks.
+            # No-op for non-NOTCH toe kicks. An END panel's back corner
+            # clears a rear-inset kick through the far-end notch; its
+            # depth is measured here, off the panel's own back edge.
+            if side in ('LEFT', 'RIGHT'):
+                key = applied_panel_sizing.REAR_KICK_NOTCH_KEY % side
+                rear = self._applied_end_rear_kick_notch(layout, side)
+                if rear is None:
+                    if key in self.obj:
+                        del self.obj[key]
+                else:
+                    self.obj[key] = rear
             applied_panel_sizing.apply_panel_toe_kick_notch(
                 self.obj, panel_obj, side,
             )
@@ -10776,8 +10786,12 @@ class FaceFrameCabinet(GeoNodeCage):
                 # Origin sits at Y=+thickness so the part fills [0, thickness]
                 # in cabinet Y - directly behind the carcass back, same as
                 # FINISHED_BACK but 1/4 thick.
-                location = (0.0, thickness, 0.0)
-                length = layout.dim_z
+                # A rear-inset kick recesses the back, so the skin stops
+                # at the kick top like the finished back does.
+                back_z = (layout.bays[0]['kick_height']
+                          if solver.has_rear_kick_inset(layout) else 0.0)
+                location = (0.0, thickness, back_z)
+                length = layout.dim_z - back_z
                 width = layout.dim_x
                 rot_x, rot_y = math.radians(90), math.radians(-90)
                 mirror_y, mirror_z = True, False  # no z-mirror needed
@@ -10847,6 +10861,12 @@ class FaceFrameCabinet(GeoNodeCage):
                 bay_index = 0 if side == 'LEFT' else layout.bay_count - 1
                 self._drive_flush_x_notch(part_obj, layout, side,
                                           bay_index, thickness)
+                # Back corner for a rear-inset kick: the skin shares the
+                # carcass side's orientation and floor-standing rules.
+                rear = self._applied_end_rear_kick_notch(layout, side)
+                self._drive_rear_kick_notch(
+                    part_obj, layout, bay_index,
+                    rear[1] if rear else 0.0, thickness)
 
     # =====================================================================
     # Helpers - rail reconciliation + bay cage update
@@ -12122,6 +12142,64 @@ class FaceFrameCabinet(GeoNodeCage):
                                           has_inset, bay_floating,
                                           side_thickness)
 
+    def _applied_end_rear_kick_notch(self, layout, side):
+        """[kick height, depth] an applied END panel on ``side`` cuts at
+        its back-bottom corner for a rear-inset kick, or None. Only a
+        floor-standing panel (NOTCH kick, no end inset holding it up) on
+        a straight cabinet; the depth runs from the panel's back edge -
+        the cabinet back plus any finished-end extend - to the rear kick
+        face."""
+        if not (layout.has_toe_kick and layout.toe_kick_type == 'NOTCH'
+                and solver.has_rear_kick_inset(layout)
+                and not layout.is_angled):
+            return None
+        cab = self.obj.face_frame_cabinet
+        if side == 'LEFT':
+            inset, bay_index = layout.kick_inset_left, 0
+            extend = cab.left_side_finished_extend_back
+        else:
+            inset, bay_index = layout.kick_inset_right, layout.bay_count - 1
+            extend = cab.right_side_finished_extend_back
+        if inset > 0:
+            return None
+        depth = solver.rear_kick_notch_depth(layout, bay_index,
+                                             max(0.0, extend))
+        if depth <= 1e-6:
+            return None
+        return [layout.bays[bay_index]['kick_height'], depth]
+
+    def _drive_rear_kick_notch(self, part_obj, layout, bay_index, depth,
+                               route):
+        """Drive (or turn off) a floor-standing side-oriented part's
+        'Notch Back Bottom': the back-bottom twin of 'Notch Front
+        Bottom', ``depth`` in from the part's back edge and the bay's
+        kick height up. Flip Y = False is the back face on the carcass
+        side orientation (Mirror Y = True). Added only once needed."""
+        active = depth > 1e-6 and 0 <= bay_index < len(layout.bays)
+        mod = part_obj.modifiers.get('Notch Back Bottom')
+        if mod is None:
+            if not active:
+                return
+            cpm = GeoNodeCutpart(part_obj).add_part_modifier(
+                'CPM_CORNERNOTCH', 'Notch Back Bottom')
+            cpm.set_input('Flip X', False)
+            cpm.set_input('Flip Y', False)
+            mod = cpm.mod
+        if mod.node_group is None:
+            return
+        kick = layout.bays[bay_index]['kick_height'] if active else 0.0
+        ng = mod.node_group
+        for input_name, value in (
+            ('X', kick),
+            ('Y', depth if active else 0.0),
+            ('Route Depth', route if active else 0.0),
+        ):
+            node_input = ng.interface.items_tree.get(input_name)
+            if node_input is not None:
+                hb_utils.set_gn_input(mod, node_input.identifier, value)
+        mod.show_viewport = active
+        mod.show_render = active
+
     def _update_side_rear_kick_notch(self, side_obj, layout, bay_index,
                                      has_inset, bay_floating,
                                      side_thickness):
@@ -12147,30 +12225,8 @@ class FaceFrameCabinet(GeoNodeCage):
             back_edge = (-layout.dim_y + layout.bays[bay_index]['depth']
                          + extend)
             depth = solver.rear_kick_notch_depth(layout, bay_index, back_edge)
-        active = depth > 1e-6
-        mod = side_obj.modifiers.get('Notch Back Bottom')
-        if mod is None:
-            if not active:
-                return
-            cpm = GeoNodeCutpart(side_obj).add_part_modifier(
-                'CPM_CORNERNOTCH', 'Notch Back Bottom')
-            cpm.set_input('Flip X', False)
-            cpm.set_input('Flip Y', False)
-            mod = cpm.mod
-        if mod.node_group is None:
-            return
-        kick = layout.bays[bay_index]['kick_height'] if active else 0.0
-        ng = mod.node_group
-        for input_name, value in (
-            ('X', kick),
-            ('Y', depth if active else 0.0),
-            ('Route Depth', side_thickness if active else 0.0),
-        ):
-            node_input = ng.interface.items_tree.get(input_name)
-            if node_input is not None:
-                hb_utils.set_gn_input(mod, node_input.identifier, value)
-        mod.show_viewport = active
-        mod.show_render = active
+        self._drive_rear_kick_notch(side_obj, layout, bay_index, depth,
+                                    side_thickness)
 
     # Flip Z on a CPM_CUTOUT is read in the part's PRE-MIRROR frame, so
     # the value that routes the INNER face is not the same on both sides:
