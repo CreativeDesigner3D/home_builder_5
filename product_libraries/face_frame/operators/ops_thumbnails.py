@@ -25,6 +25,8 @@ from . import ops_cabinet
 RENDERABLE_CATALOG = (
     # Standard cabinets.
     "Base",
+    "Base Door",
+    "Base Drawer",
     "Tall",
     "Upper",
     "Upper Stacked",

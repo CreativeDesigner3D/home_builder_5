@@ -50,6 +50,10 @@ SECTIONS = (
         'rows': (
             ("", (("Base", "Base"), ("Tall", "Tall"), ("Upper", "Upper"),
                   ("Lap", "Lap Drawer"), ("Stacked", "Upper Stacked"))),
+            # Bases with one front type throughout: full height doors
+            # (one or a pair by width) or a 3 drawer stack, for jobs that
+            # never want the drawer-over-door default.
+            ("Base", (("Doors", "Base Door"), ("Drawers", "Base Drawer"))),
         ),
     },
     {
