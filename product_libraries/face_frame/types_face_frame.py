@@ -513,12 +513,14 @@ RETURN_BACK_CONDITIONS = ('FINISHED', 'PANELED', 'BEADBOARD', 'SHIPLAP',
 RETURN_SIDE_CONDITIONS = ('FINISHED', 'PANELED', 'BEADBOARD', 'SHIPLAP',
                           'V_GROOVE')
 
-# Applied flush-X strip: a 1/4 part covering the front portion of a
-# cabinet side when LEFT/RIGHT_finished_end_condition is FLUSH_X. The
-# strip's outer face is flush with the FF outer face; its width along
-# the cabinet depth is the user's *_flush_x_amount value (typically
-# 4"). Used for sides that abut a dishwasher / appliance where a full
-# applied panel isn't wanted.
+# Applied flush-X strip: a part (1/4 by default) covering the front
+# portion of a cabinet side when LEFT/RIGHT_finished_end_condition is
+# FLUSH_X. The strip's outer face is flush with the FF outer face; its
+# width along the cabinet depth is the user's *_flush_x_amount value
+# (typically 4") less the face frame thickness - the amount is measured
+# from the face frame front, so the frame counts toward it. Used for
+# sides that abut a dishwasher / appliance where a full applied panel
+# isn't wanted.
 PART_ROLE_FLUSH_X = 'FLUSH_X'
 TAG_FLUSH_X_SIDE = 'hb_flush_x_side'
 # Default strip stock thickness; each side's *_flush_x_thickness sets
@@ -9765,10 +9767,12 @@ class FaceFrameCabinet(GeoNodeCage):
         default). Outer face flush with
         the cabinet's exterior side plane (X=0 on left, dim_x on
         right); inner face touches the side panel since FLUSH_X auto-
-        scribes to 1/4 in the solver. Y starts at the back of the
-        face frame (lined up with the side panel) and extends back
-        into the cabinet by *_flush_x_amount. Z span matches the side
-        panel.
+        scribes by the strip thickness in the solver. *_flush_x_amount
+        is the finished depth measured from the front of the face
+        frame, so the strip starts at the back of the face frame (lined
+        up with the side panel) and runs amount - face frame thickness
+        back; 4" on a 3/4" frame is a 3 1/4" strip. An amount no deeper
+        than the frame leaves no strip. Z span matches the side panel.
         """
         cab = self.obj.face_frame_cabinet
         side_specs = (
@@ -9787,7 +9791,8 @@ class FaceFrameCabinet(GeoNodeCage):
         }
 
         for side, condition, amount, thickness, bay_index in side_specs:
-            wants = condition == 'FLUSH_X'
+            strip_width = amount - layout.fft
+            wants = condition == 'FLUSH_X' and strip_width > 1e-6
             strip = existing.get(side)
 
             if not wants:
@@ -9809,10 +9814,10 @@ class FaceFrameCabinet(GeoNodeCage):
             # Width along cabinet -Y from origin (Mirror Y=True flips
             # +Y to -Y). Strip's front edge sits at the back of the
             # face frame (-dim_y + fft) so it aligns with the side
-            # panel; from there it extends back into the cabinet by
-            # `amount`. Origin Y is the strip's back edge:
-            #   origin_y - amount = -dim_y + fft   (front edge)
-            #   origin_y         = -dim_y + fft + amount (back edge)
+            # panel; its back edge lands `amount` behind the face frame
+            # front. Origin Y is the strip's back edge:
+            #   origin_y - strip_width = -dim_y + fft   (front edge)
+            #   origin_y               = -dim_y + amount (back edge)
             # Angled-front cabinets: the strip's front edge follows that
             # side's own depth (where the angled face frame meets it).
             if layout.is_angled:
@@ -9821,7 +9826,7 @@ class FaceFrameCabinet(GeoNodeCage):
                               else solver.effective_right_depth(layout))
             else:
                 depth_side = layout.dim_y
-            origin_y = -depth_side + layout.fft + amount
+            origin_y = -depth_side + amount
             origin_x = 0.0 if side == 'LEFT' else layout.dim_x
 
             if strip is None:
@@ -9844,7 +9849,7 @@ class FaceFrameCabinet(GeoNodeCage):
 
             strip.location = (origin_x, origin_y, bottom_z)
             part.set_input('Length',    length)
-            part.set_input('Width',     amount)
+            part.set_input('Width',     strip_width)
             part.set_input('Thickness', thickness)
             self._drive_flush_x_notch(strip, layout, side, bay_index, thickness)
 
