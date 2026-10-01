@@ -882,16 +882,17 @@ def _front_tile_check(kind):
 def _front_tile_icons(kind, spec):
     """Edit, paint, duplicate and delete on a style tile. Each acts on
     the tile it is on (the tile is picked first)."""
-    def more_than_one(context, style):
-        return len(getattr(_style_props(context), spec['collection'],
-                           ())) > 1
+    def can_delete(context, style):
+        # The last drawer front style can go: a slab one replaces it.
+        count = len(getattr(_style_props(context), spec['collection'], ()))
+        return count > 1 or (count == 1 and kind == 'DRAWER')
     return (
         ('edit', "Edit", 'home_builder.options_edit_item',
          {'collection': spec['collection']}),
         ('paint', "Assign by Painting",
          'hb_face_frame.paint_assign_front_style', {'kind': kind}),
         ('duplicate', "Duplicate", spec['add_op'], {}),
-        ('delete', "Delete", spec['remove_op'], {}, more_than_one),
+        ('delete', "Delete", spec['remove_op'], {}, can_delete),
     )
 
 
@@ -989,6 +990,8 @@ OPTION_PAGES = {
         'index': 'active_drawer_front_style_index',
         'add_op': 'hb_face_frame.add_drawer_front_style',
         'remove_op': 'hb_face_frame.remove_drawer_front_style',
+        # The last one can go; a slab drawer front replaces it.
+        'allow_empty': True,
         'fields': _front_style_fields('DRAWER'),
         'actions': _front_style_actions('DRAWER'),
     },

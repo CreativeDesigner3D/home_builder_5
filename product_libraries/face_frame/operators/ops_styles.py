@@ -318,32 +318,35 @@ def _replace_front_style(ff, kind, old, new):
             new_style.assign_style_to_front(obj)
 
 
-def _replacement_items(self, context):
-    ff = get_style_props(context)
-    pool = getattr(ff, _FRONT_POOLS[self.kind][0])
-    idx = getattr(ff, _FRONT_POOLS[self.kind][1])
-    doomed = pool[idx].name if 0 <= idx < len(pool) else None
-    items = [(ds.name, ds.name, "") for ds in pool if ds.name != doomed]
-    return items or [('NONE', "(none)", "")]
+def _fallback_front_style(pool, idx):
+    """The style that takes over from the one at `idx`: the one before
+    it in the list, or after it when it is the first."""
+    if len(pool) < 2:
+        return None
+    return pool[idx - 1] if idx > 0 else pool[idx + 1]
+
+
+def _slab_series(kind):
+    """First catalog series that builds a plain slab front."""
+    series = (style_options.DOOR_SERIES if kind == 'DOOR'
+              else style_options.DRAWER_SERIES)
+    return next((s for s in series if style_options.series_is_slab(s)),
+                None)
 
 
 class _RemoveFrontStyle:
-    """Remove the active front style. One still in use asks which style
-    takes its place first."""
+    """Remove the active front style. Whatever still uses it switches to
+    the style before it in the list. The last drawer front style can go
+    too: a slab drawer front takes its place, so a job with no drawers
+    isn't stuck with a drawer style it never picked."""
     bl_options = {'REGISTER', 'UNDO'}
     KIND = 'DOOR'
-
-    replacement: bpy.props.EnumProperty(
-        name="Use Instead", items=_replacement_items)  # type: ignore
-
-    @property
-    def kind(self):
-        return self.KIND
 
     @classmethod
     def poll(cls, context):
         ff = get_style_props(context)
-        return len(getattr(ff, _FRONT_POOLS[cls.KIND][0])) > 1
+        count = len(getattr(ff, _FRONT_POOLS[cls.KIND][0]))
+        return count > 1 or (count == 1 and cls.KIND == 'DRAWER')
 
     def _doomed(self, context):
         ff = get_style_props(context)
@@ -352,55 +355,66 @@ class _RemoveFrontStyle:
         return ff, pool, idx, (pool[idx] if 0 <= idx < len(pool) else None)
 
     def invoke(self, context, event):
-        ff, _pool, _idx, doomed = self._doomed(context)
+        ff, pool, idx, doomed = self._doomed(context)
         if doomed is None:
             return {'CANCELLED'}
         styles, fronts = front_style_usage(ff, self.KIND, doomed.name)
-        if not styles and not fronts:
-            return context.window_manager.invoke_confirm(
-                self, event, title="Delete %s?" % doomed.name,
-                confirm_text="Delete")
-        return context.window_manager.invoke_props_dialog(self, width=340)
-
-    def draw(self, context):
-        ff, _pool, _idx, doomed = self._doomed(context)
-        if doomed is None:
-            return
-        styles, fronts = front_style_usage(ff, self.KIND, doomed.name)
-        col = self.layout.column()
-        col.label(text="%s is still in use:" % doomed.name, icon='ERROR')
-        for name in styles[:6]:
-            col.label(text="    Cabinet style %s" % name)
-        if len(styles) > 6:
-            col.label(text="    and %d more" % (len(styles) - 6))
+        fallback = _fallback_front_style(pool, idx)
+        in_use = []
+        if styles:
+            in_use.append("%d cabinet style%s"
+                          % (len(styles), "" if len(styles) == 1 else "s"))
         if fronts:
-            col.label(text="    %d front%s given it by hand"
-                      % (fronts, "" if fronts == 1 else "s"))
-        col.separator()
-        col.prop(self, 'replacement')
+            in_use.append("%d front%s" % (fronts, "" if fronts == 1 else "s"))
+        message = ""
+        if fallback is None:
+            message = "A slab drawer front takes its place."
+        elif in_use:
+            message = "Used by %s, which will use %s instead." % (
+                " and ".join(in_use), fallback.name)
+        return context.window_manager.invoke_confirm(
+            self, event, title="Delete %s?" % doomed.name,
+            message=message, confirm_text="Delete")
 
     def execute(self, context):
         ff, pool, idx, doomed = self._doomed(context)
-        if doomed is None or len(pool) <= 1:
-            self.report({'WARNING'}, "At least one style must remain")
+        if doomed is None:
             return {'CANCELLED'}
         name = doomed.name
+        fallback = _fallback_front_style(pool, idx)
+        if fallback is None:
+            series = _slab_series(self.KIND) if self.KIND == 'DRAWER' else None
+            if series is None:
+                self.report({'WARNING'}, "At least one style must remain")
+                return {'CANCELLED'}
+            new = new_front_style(context, self.KIND, series).name
+        else:
+            new = fallback.name
         styles, fronts = front_style_usage(ff, self.KIND, name)
         if styles or fronts:
-            new = self.replacement
-            if new in ('', 'NONE', name) or not any(ds.name == new
-                                                    for ds in pool):
-                self.report({'WARNING'}, "Pick the style to use instead")
-                return {'CANCELLED'}
             _replace_front_style(ff, self.KIND, name, new)
-        # The replacement may have shifted what idx points at.
+        # Adding or replacing may have shifted what idx points at.
         idx = next((i for i, ds in enumerate(pool) if ds.name == name), -1)
         if idx < 0:
             return {'CANCELLED'}
+        # Cabinet styles hold their front style picks as list positions,
+        # so removing one shifts every pick after it. Keep them by name.
+        _p, _i, prop, extras, _o = _FRONT_POOLS[self.KIND]
+        picks = []
+        for cs in ff.cabinet_styles:
+            picks.append((cs, prop, getattr(cs, prop, '')))
+            picks.extend((e, 'style', e.style)
+                         for e in getattr(cs, extras, ()))
         pool.remove(idx)
+        for owner, attr, pick in picks:
+            if pick and getattr(owner, attr, '') != pick:
+                try:
+                    setattr(owner, attr, pick)
+                except TypeError:
+                    pass
         index_prop = _FRONT_POOLS[self.KIND][1]
-        if getattr(ff, index_prop) >= len(pool):
-            setattr(ff, index_prop, max(0, len(pool) - 1))
+        new_idx = next((i for i, ds in enumerate(pool) if ds.name == new), 0)
+        setattr(ff, index_prop, new_idx)
         self.report({'INFO'}, "Removed %s" % name)
         return {'FINISHED'}
 
