@@ -1252,6 +1252,11 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
     # a distance from that track point along that axis.
     _track_type_anchor = None       # Vector: the tracking point to measure from
     _track_type_direction = None    # Vector: unit +/-X or +/-Y
+    # (anchor, direction, distance) of a first point placed by a typed
+    # tracking distance, kept until that wall is confirmed: the distance
+    # is to the wall's face, and which face meets the anchor is only
+    # known once the wall is pointed somewhere (see _place_tracked_start).
+    _track_first = None
     
     # Free rotation mode (Alt toggles, snaps to 15° increments)
     free_rotation: bool = False
@@ -1858,6 +1863,10 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
                 self.start_point = Vector((candidate.x, candidate.y, 0))
                 self.current_wall.obj.location = self.start_point
                 self.has_start_point = True
+                self._track_first = (
+                    Vector((self._track_type_anchor.x,
+                            self._track_type_anchor.y, 0.0)),
+                    self._track_type_direction.copy(), parsed)
                 self._show_wall_objects()
                 if self.highlighted_wall:
                     self.clear_wall_highlight()
@@ -2196,6 +2205,8 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
                     else:
                         self.current_wall.set_input('Length', hb_snap.snap_value_to_grid(abs(y), fine=self.fine_snap))
 
+            self._place_tracked_start()
+
             # Check for end snap to existing wall faces
             snap_len, snap_wall_obj, snap_face = self.find_end_wall_snap(bpy.context)
             if snap_len is not None:
@@ -2214,6 +2225,28 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
                     self.clear_wall_highlight()
 
             self.update_dimension(bpy.context)
+
+    def _place_tracked_start(self):
+        """Hold a typed tracking distance to the wall's FACE.
+
+        The start point is the wall's origin line, its back face; the
+        body runs to local +Y. Drawn away from the anchor's side that is
+        the near face, but drawn the other way the body lies between the
+        origin and the anchor and the gap came out one wall thickness
+        short (measuring from a right-hand endpoint, drawing out into
+        the room). Shift the origin by the part of the thickness that
+        faces the anchor."""
+        if self._track_first is None or self.current_wall is None:
+            return
+        anchor, direction, distance = self._track_first
+        angle = self.current_wall.obj.rotation_euler.z
+        body = Vector((-math.sin(angle), math.cos(angle), 0.0))
+        thickness = self.current_wall.get_input('Thickness') or 0.0
+        toward = max(0.0, -body.dot(direction))
+        start = anchor + direction * (distance + thickness * toward)
+        start.z = 0.0
+        self.start_point = start
+        self.current_wall.obj.location = start
 
     def close_room(self, context):
         """Close the room by connecting the current wall back to the first wall."""
@@ -2306,6 +2339,7 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
 
     def confirm_current_wall(self):
         """Finalize current wall and prepare for next."""
+        self._track_first = None
         # Capture the very first start point (before it gets updated)
         if self.first_start_point is None:
             self.first_start_point = self.start_point.copy()
@@ -2374,6 +2408,7 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         self.previous_wall = None
         self.start_point = None
         self.has_start_point = False
+        self._track_first = None
         self.first_start_point = None
         self.first_wall = None
         self.confirmed_wall_count = 0
@@ -2478,6 +2513,7 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         self.previous_wall = None
         self.start_point = None
         self.has_start_point = False
+        self._track_first = None
         self._wall_dim_handle = None
         self._wall_dim_visible = False
         self.free_rotation = False
