@@ -166,10 +166,10 @@ __marimo__/
 .claude/
 .codex/
 .reversa/
-_reversa_sdd/
 
 # Extra files
 manual-treinamento-promob.pdf
+promob_pacote_completo.zip
 blendertomob.zip
 
 # RAG (docs/rag): local search cache and the source reference zip (~100 MB, regenerable)

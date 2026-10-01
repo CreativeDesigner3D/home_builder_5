@@ -1,0 +1,47 @@
+{"ts": "2026-10-01T06:46:56+00:00", "action": "T001", "status": "done", "files": ["blendertomob/compat.py"]}
+{"ts": "2026-10-01T06:46:56+00:00", "action": "T002", "status": "done", "files": ["blendertomob/hb_utils.py", "blendertomob/hb_types.py"]}
+{"ts": "2026-10-01T06:49:32+00:00", "action": "T003", "status": "done", "files": ["blendertomob/data/dimension_schema.py"]}
+{"ts": "2026-10-01T06:49:32+00:00", "action": "T004", "status": "done", "files": ["blendertomob/data/dimension_schema.py"]}
+{"ts": "2026-10-01T06:52:59+00:00", "action": "T005", "status": "done", "files": ["blendertomob/data/units.py"]}
+{"ts": "2026-10-01T06:52:59+00:00", "action": "T006", "status": "done", "files": ["tools/render_dimension_refs.py", "blendertomob/assets/dimension_refs/"]}
+{"ts": "2026-10-01T06:53:00+00:00", "action": "T007", "status": "done", "files": ["blendertomob/standards/__init__.py"]}
+{"ts": "2026-10-01T06:56:04+00:00", "action": "T008", "status": "done", "files": ["tests/test_units.py", "tests/_bootstrap.py"]}
+{"ts": "2026-10-01T06:56:04+00:00", "action": "T009", "status": "done", "files": ["tests/test_dimension_schema.py"]}
+{"ts": "2026-10-01T06:56:04+00:00", "action": "T010", "status": "done", "files": ["tests/test_promob_io.py", "tests/fixtures/dimensionexport_me_moveis.xml"]}
+{"ts": "2026-10-01T06:56:04+00:00", "action": "T011", "status": "done", "files": ["tests/test_production_contracts.py"]}
+{"ts": "2026-10-01T06:56:04+00:00", "action": "T012", "status": "done", "files": ["tests/blender_increment1_smoke.py"]}
+{"ts": "2026-10-01T06:56:49+00:00", "action": "T013", "status": "done", "files": ["blendertomob/standards/model.py", "blendertomob/standards/__init__.py"]}
+{"ts": "2026-10-01T06:58:55+00:00", "action": "T014", "status": "done", "files": ["blendertomob/standards/builtin.py"]}
+{"ts": "2026-10-01T06:58:55+00:00", "action": "T015", "status": "done", "files": ["blendertomob/standards/api.py"]}
+{"ts": "2026-10-01T06:59:48+00:00", "action": "T016", "status": "done", "files": ["blendertomob/standards/io_json.py"]}
+{"ts": "2026-10-01T06:59:48+00:00", "action": "T017", "status": "done", "files": ["blendertomob/standards/io_promob.py"]}
+{"ts": "2026-10-01T07:02:01+00:00", "action": "T018", "status": "done", "files": ["blendertomob/product_libraries/frameless/operators/ops_defaults.py"]}
+{"ts": "2026-10-01T07:02:01+00:00", "action": "T019", "status": "done", "files": ["blendertomob/standards/sync.py", "blendertomob/standards/api.py"]}
+{"ts": "2026-10-01T07:06:33+00:00", "action": "T023", "status": "done", "files": ["blendertomob/cutting/nesting.py"]}
+{"ts": "2026-10-01T07:06:33+00:00", "action": "T026", "status": "done", "files": ["blendertomob/cutting/json_exporter.py"]}
+{"ts": "2026-10-01T07:06:33+00:00", "action": "T027", "status": "done", "files": ["blendertomob/cutting/csv_exporter.py"]}
+{"ts": "2026-10-01T07:09:11+00:00", "action": "T020", "status": "done", "files": ["blendertomob/product_libraries/frameless/operators/ops_cabinet.py"]}
+{"ts": "2026-10-01T07:09:11+00:00", "action": "T021", "status": "done", "files": ["blendertomob/product_libraries/closets/props_closets.py", "blendertomob/standards/sync.py"]}
+{"ts": "2026-10-01T07:09:11+00:00", "action": "T022", "status": "done", "files": ["blendertomob/cutting/part_roles.py"]}
+{"ts": "2026-10-01T07:09:11+00:00", "action": "T024", "status": "done", "files": ["blendertomob/cutting/part_sources.py"]}
+{"ts": "2026-10-01T07:09:11+00:00", "action": "T025", "status": "done", "files": ["blendertomob/cutting/part_extractor.py", "blendertomob/cutting/__init__.py"]}
+{"ts": "2026-10-01T07:09:39+00:00", "action": "T037", "status": "done", "files": ["blendertomob/data/properties.py", "blendertomob/operators/cabinet_builder.py"]}
+{"ts": "2026-10-01T07:11:20+00:00", "action": "T028", "status": "done", "files": ["blendertomob/standards/migration.py", "blendertomob/standards/builtin.py", "blendertomob/standards/api.py"]}
+{"ts": "2026-10-01T07:11:20+00:00", "action": "T029", "status": "done", "files": ["blendertomob/standards/previews.py"]}
+{"ts": "2026-10-01T07:11:20+00:00", "action": "T030", "status": "done", "files": ["blendertomob/__init__.py", "blendertomob/standards/__init__.py"]}
+{"ts": "2026-10-01T07:16:12+00:00", "action": "T031", "status": "done", "files": ["blendertomob/ui/standards_tree.py", "blendertomob/ui/__init__.py", "blendertomob/standards/model.py", "blendertomob/standards/api.py"]}
+{"ts": "2026-10-01T07:16:12+00:00", "action": "T032", "status": "done", "files": ["blendertomob/operators/ops_standards.py", "blendertomob/operators/__init__.py"]}
+{"ts": "2026-10-01T07:16:12+00:00", "action": "T033", "status": "done", "files": ["blendertomob/operators/ops_standards.py", "blendertomob/operators/__init__.py"]}
+{"ts": "2026-10-01T07:16:12+00:00", "action": "T034", "status": "done", "files": ["blendertomob/operators/ops_standards.py", "blendertomob/operators/__init__.py"]}
+{"ts": "2026-10-01T07:16:12+00:00", "action": "T035", "status": "done", "files": ["blendertomob/operators/ops_cutting.py"]}
+{"ts": "2026-10-01T07:16:12+00:00", "action": "T036", "status": "done", "files": ["blendertomob/operators/ops_cutting.py"]}
+{"ts": "2026-10-01T07:16:12+00:00", "action": "T038", "status": "done", "files": ["blendertomob/cutting/stale.py", "blendertomob/cutting/__init__.py", "blendertomob/__init__.py"]}
+{"ts": "2026-10-01T07:16:12+00:00", "action": "T039", "status": "done", "files": ["blendertomob/ui/panels.py"]}
+{"ts": "2026-10-01T07:16:12+00:00", "action": "T045", "status": "done", "files": ["blendertomob/operators/ops_standards.py"]}
+{"ts": "2026-10-01T07:19:03+00:00", "action": "T040", "status": "done", "files": ["blendertomob/hb_types.py", "blendertomob/data/properties.py"]}
+{"ts": "2026-10-01T07:19:03+00:00", "action": "T041", "status": "done", "files": ["blendertomob/hb_placement.py", "blendertomob/data/units.py", "blendertomob/units.py", "blendertomob/product_libraries/face_frame/dim_edit_overlay.py", "blendertomob/product_libraries/closets/gpu_overlay_closets.py"]}
+{"ts": "2026-10-01T07:19:03+00:00", "action": "T042", "status": "done", "files": ["blendertomob/overlays/draw_handlers.py", "blendertomob/data/units.py"]}
+{"ts": "2026-10-01T07:19:03+00:00", "action": "T043", "status": "done", "files": ["blendertomob/operators/ops_dimensions.py"]}
+{"ts": "2026-10-01T07:19:29+00:00", "action": "T044", "status": "done", "files": ["blendertomob/data/i18n.py"]}
+{"ts": "2026-10-01T07:20:13+00:00", "action": "T046", "status": "done", "files": ["docs/usuario/configurador-e-producao.md"]}
+{"ts": "2026-10-01T07:20:13+00:00", "action": "T047", "status": "done", "files": ["tests/blender_smoke.py"]}
