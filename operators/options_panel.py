@@ -698,9 +698,20 @@ def _subpage_blocks(context, spec, with_back=True):
         except Exception:
             lines = ()
         blocks.extend(('note', line) for line in lines)
-    tiles = spec.get('tiles')
-    if tiles is not None:
-        count = len(pool.items(context))
+    # 'tile_groups' splits the pool across grids, each showing the
+    # items its 'filter' passes under its own 'heading'; a plain
+    # 'tiles' is one grid of everything.
+    groups = spec.get('tile_groups')
+    if groups is None:
+        groups = [spec['tiles']] if spec.get('tiles') is not None else []
+    items = pool.items(context)
+    for tiles in groups:
+        count = len(_tile_indices(context, tiles, items))
+        heading = tiles.get('heading')
+        if heading:
+            if count == 0 and tiles.get('hide_empty'):
+                continue
+            blocks.append(('note', heading))
         if tiles.get('new') is not None:
             count += 1
         for row in range((count + TILE_COLS - 1) // TILE_COLS):
@@ -1049,19 +1060,39 @@ def build_page(rect, context, blocks_fn, lst):
         elif kind == 'tiles':
             pool, tiles, row = payload
             items = pool.items(context)
+            shown = _tile_indices(context, tiles, items)
             active = pool.active_index(context)
             tile_h = tiles.get('height', TILE_H) * s
             cw = (row_w - gap * (TILE_COLS - 1)) / TILE_COLS
             for col in range(TILE_COLS):
-                i = row * TILE_COLS + col
+                n = row * TILE_COLS + col
                 cell = (x + col * (cw + gap), block_top - tile_h, cw, tile_h)
-                if i == len(items) and tiles.get('new') is not None:
+                if n == len(shown) and tiles.get('new') is not None:
                     entries.append(('tile_new', tiles['new'], cell))
-                if i >= len(items):
+                if n >= len(shown):
                     break
+                # The pool index, not the place in the grid: a pick and
+                # the icons act on the item itself.
+                i = shown[n]
                 entries.append(('tile_cell', i, pool.text(items[i]), cell,
                                 i == active, pool, tiles, items[i]))
     return entries
+
+
+def _tile_indices(context, tiles, items):
+    """Pool indices of the items a tile grid shows: those its 'filter'
+    passes, or all of them."""
+    filt = tiles.get('filter')
+    if filt is None:
+        return list(range(len(items)))
+    out = []
+    for i, item in enumerate(items):
+        try:
+            if filt(context, item):
+                out.append(i)
+        except Exception:
+            pass
+    return out
 
 
 def _native_value(owner, prop):
@@ -1605,8 +1636,22 @@ def _tile_buttons(context, entry, s):
     return out
 
 
+def _glyph_add(shader, rect, color):
+    x, y, w, h = rect
+    glyph_plus(shader, x + w / 2.0, y + h / 2.0, min(w, h) * 0.55, color)
+
+
+def _glyph_remove(shader, rect, color):
+    x, y, w, h = rect
+    size = min(w, h) * 0.55
+    t = max(1.0, size * 0.14)
+    draw_rect(shader, x + (w - size) / 2.0, y + (h - t) / 2.0, size, t,
+              color)
+
+
 _TILE_GLYPHS = {'edit': glyph_pencil, 'paint': glyph_brush,
-                'duplicate': glyph_duplicate, 'delete': glyph_delete}
+                'duplicate': glyph_duplicate, 'delete': glyph_delete,
+                'add': _glyph_add, 'remove': _glyph_remove}
 
 
 def _paint_new_tile(shader, font_id, s, mx, my, entry):

@@ -371,13 +371,20 @@ def _panel_for_wood(wood):
 def _apply_wood_to_front_panels(cab_style, context):
     """Move the cabinet style's door + drawer-front styles onto the wood's
     default flat panel. Setting front_panel runs update_front_panel, which
-    re-derives the frame and restyles the assigned fronts."""
+    re-derives the frame and restyles the assigned fronts.
+
+    Front styles are shared across style sections, so a style another
+    section also uses is not changed under it (a stained section turned
+    a painted section's MDF doors to veneer): this section moves to a
+    copy on the new panel instead, reusing one already made."""
     panel = _panel_for_wood(cab_style.finish_wood)
     if panel is None:
         return
     ff = get_style_props(context)
-    for pool, name in ((ff.door_styles, cab_style.door_style),
-                       (ff.drawer_front_styles, cab_style.drawer_front_style)):
+    for kind, pool, attr in (
+            ('DOOR', ff.door_styles, 'door_style'),
+            ('DRAWER', ff.drawer_front_styles, 'drawer_front_style')):
+        name = getattr(cab_style, attr)
         ds = next((s for s in pool if s.name == name), None)
         if ds is None or ds.front_panel == panel:
             continue
@@ -385,8 +392,36 @@ def _apply_wood_to_front_panels(cab_style, context):
             continue
         table = _DRAWER_PANEL_ITEMS if _front_is_drawer(ds) else _DOOR_PANEL_ITEMS
         offered = {i[0] for i in table.get((ds.front_series, ds.front_shape), [])}
-        if panel in offered:
+        if panel not in offered:
+            continue
+        shared = any(cs != cab_style
+                     and ds.name in section_front_styles(cs, kind, ff)
+                     for cs in ff.cabinet_styles)
+        if not shared:
             _set_enum_safe(ds, "front_panel", panel)
+            continue
+        twin = next((s for s in pool
+                     if s != ds and s.front_series == ds.front_series
+                     and s.front_shape == ds.front_shape
+                     and s.front_panel == panel), None)
+        if twin is None:
+            from .operators.ops_styles import (_copy_door_style,
+                                               _next_unique_name)
+            # Named after the catalog pick like the original, or after the
+            # original's own name plus the panel.
+            base = _NAME_SUFFIX_RE.sub("", ds.name)
+            if base in _auto_front_style_names(_front_is_drawer(ds)):
+                base = _auto_front_style_name(ds.front_series,
+                                              ds.front_shape, panel)
+            else:
+                base = "%s %s" % (ds.name, panel)
+            twin = pool.add()
+            twin.name = _next_unique_name(base,
+                                          [s.name for s in pool if s != twin])
+            _copy_door_style(ds, twin)
+            _set_enum_safe(twin, "front_panel", panel)
+        setattr(cab_style, attr, twin.name)
+        remove_from_section(cab_style, kind, twin.name)
 
 
 def update_finish_wood(self, context):
@@ -958,6 +993,114 @@ def ensure_default_styles(context):
         ff.active_drawer_front_style_index = 0
 
 
+# ---- Style sections' own front styles ---------------------------------------
+
+_SECTION_LISTS = {'DOOR': ('section_door_styles', 'door_style',
+                           'door_styles'),
+                  'DRAWER': ('section_drawer_front_styles',
+                             'drawer_front_style', 'drawer_front_styles')}
+_painted_cache = {'at': 0.0, 'map': {}}
+
+
+def painted_front_styles():
+    """{(cabinet style name, 'DOOR' | 'DRAWER'): [front style names]}
+    built on the model's fronts, in model order. Every front carries the
+    style it was built with (DOOR_STYLE_NAME) and its cabinet carries
+    its cabinet style (STYLE_NAME). Cached for half a second: the panel
+    asks on every redraw."""
+    import time
+    now = time.monotonic()
+    if now - _painted_cache['at'] < 0.5:
+        return _painted_cache['map']
+    door_roles = Face_Frame_Door_Style._DOOR_FRONT_ROLES
+    drawer_roles = Face_Frame_Door_Style._DRAWER_FRONT_ROLES
+    out = {}
+    for obj in bpy.data.objects:
+        name = obj.get('DOOR_STYLE_NAME')
+        if not name or not obj.users_scene:
+            continue
+        role = obj.get('hb_part_role')
+        kind = ('DOOR' if role in door_roles
+                else 'DRAWER' if role in drawer_roles else None)
+        if kind is None:
+            continue
+        node = obj.parent
+        while node is not None and not node.get('STYLE_NAME'):
+            node = node.parent
+        if node is None:
+            continue
+        names = out.setdefault((node['STYLE_NAME'], kind), [])
+        if name not in names:
+            names.append(name)
+    _painted_cache.update(at=now, map=out)
+    return out
+
+
+def section_front_styles(cs, kind, ff=None):
+    """The names of the door (kind 'DOOR') or drawer front ('DRAWER')
+    styles cabinet style ``cs``'s section uses, in order: its default,
+    its own list, the tall drawer style, then any other style painted on
+    its cabinets. Only names still in the project's pool."""
+    if cs is None:
+        return []
+    ff = ff if ff is not None else get_style_props()
+    list_attr, default_attr, pool_attr = _SECTION_LISTS[kind]
+    pool = {ds.name for ds in getattr(ff, pool_attr, ())}
+    names = [getattr(cs, default_attr, '')]
+    names += [r.name for r in getattr(cs, list_attr, ())]
+    if kind == 'DRAWER' and len(cs.extra_drawer_front_styles):
+        names.append(cs.extra_drawer_front_styles[0].style)
+    names += painted_front_styles().get((cs.name, kind), [])
+    out = []
+    for name in names:
+        if name in pool and name not in out:
+            out.append(name)
+    return out
+
+
+def add_to_section(cs, kind, name):
+    """List ``name`` on cabinet style ``cs``'s section. True when it
+    was not there before."""
+    if cs is None or not name:
+        return False
+    list_attr, default_attr, _pool = _SECTION_LISTS[kind]
+    coll = getattr(cs, list_attr)
+    if name == getattr(cs, default_attr, '') or any(
+            r.name == name for r in coll):
+        return False
+    coll.add().name = name
+    return True
+
+
+def remove_from_section(cs, kind, name):
+    """Take ``name`` off cabinet style ``cs``'s own list. The default
+    and painted styles stay in the section regardless."""
+    if cs is None:
+        return
+    coll = getattr(cs, _SECTION_LISTS[kind][0])
+    for i in reversed(range(len(coll))):
+        if coll[i].name == name:
+            coll.remove(i)
+
+
+def rename_in_sections(ff, kind, old, new):
+    """Follow a front style rename (or a delete's replacement) through
+    every section list. ``new`` None just drops ``old``."""
+    list_attr = _SECTION_LISTS[kind][0]
+    for cs in getattr(ff, 'cabinet_styles', ()):
+        coll = getattr(cs, list_attr)
+        have = {r.name for r in coll}
+        for i in reversed(range(len(coll))):
+            if coll[i].name != old:
+                continue
+            if new and new not in have:
+                coll[i].name = new
+                have.add(new)
+            else:
+                coll.remove(i)
+    _painted_cache['at'] = 0.0
+
+
 def update_door_style_name(self, context):
     """Keep style names unique within the style's OWN pool (door_styles or
     drawer_front_styles -- independent lists, so a name may repeat across
@@ -989,6 +1132,8 @@ def update_door_style_name(self, context):
             if (obj.get('DOOR_STYLE_NAME') == old
                     and obj.get('hb_part_role') in roles):
                 obj['DOOR_STYLE_NAME'] = final
+        rename_in_sections(main, 'DRAWER' if in_drawer else 'DOOR',
+                           old, final)
     self.rename_anchor = final
     # Apply the de-duplicated name last; a re-entry sees anchor == final
     # and is a clean no-op.
@@ -1552,6 +1697,14 @@ def alternate_drawer_notes(style, context=None):
         lines.append('Below the %s minimum of %s'
                      % (ds.name, _inches_text(min_h)))
     return lines
+
+
+class Face_Frame_Section_Front_Style(PropertyGroup):
+    """One door or drawer front style a cabinet style's section uses.
+    Held by NAME (not an index into the pool) so removing another
+    style can't shift it; renames and deletes keep it in step (see
+    update_door_style_name and ops_styles._replace_front_style)."""
+    name: StringProperty(name="Front Style")  # type: ignore
 
 
 class Face_Frame_Cabinet_Extra_Front_Style(PropertyGroup):
@@ -2239,6 +2392,21 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
     # front style in use. Documentation only, except that the FIRST extra
     # drawer-front style becomes the tall-drawer style when
     # extra_drawer_front_height is set (see _apply_door_styles_to_fronts).
+    # ---- The section's front styles ----
+    # Each style section keeps its own list out of the project's door and
+    # drawer front styles: what its Doors / Drawers tabs show first, what
+    # the style page prints. The default (door_style / drawer_front_style)
+    # always belongs, and so does any style painted on its cabinets; see
+    # section_front_styles.
+    section_door_styles: CollectionProperty(
+        name="Section Door Styles",
+        type=Face_Frame_Section_Front_Style,
+    )  # type: ignore
+    section_drawer_front_styles: CollectionProperty(
+        name="Section Drawer Front Styles",
+        type=Face_Frame_Section_Front_Style,
+    )  # type: ignore
+
     extra_door_styles: CollectionProperty(
         name="Extra Door Styles",
         type=Face_Frame_Cabinet_Extra_Front_Style,
@@ -13371,6 +13539,7 @@ classes = (
     Face_Frame_Column_Beam_Props,
     Face_Frame_Millwork_Item,
     Face_Frame_Special_Effect,
+    Face_Frame_Section_Front_Style,
     Face_Frame_Cabinet_Extra_Front_Style,
     Face_Frame_Style_Note,
     Face_Frame_Cabinet_Style,

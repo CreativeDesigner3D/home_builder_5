@@ -869,20 +869,62 @@ def _front_tile_check(kind):
     return ('hb_face_frame.use_front_style', {'kind': kind}, checked, tip)
 
 
+def _front_in_section(kind):
+    """filter(context, style): whether the style belongs to the active
+    cabinet style's section. Everything does when there is none."""
+    from .props_hb_face_frame import section_front_styles
+
+    def in_section(context, style):
+        cs = _active_cabinet_style(context)
+        if cs is None:
+            return True
+        return style.name in section_front_styles(cs, kind,
+                                                  _style_props(context))
+    return in_section
+
+
+def _front_project_tile_icons(kind, spec):
+    """A project style outside the section: add it to the section, edit
+    it, or delete it from the project."""
+    def can_delete(context, style):
+        count = len(getattr(_style_props(context), spec['collection'], ()))
+        return count > 1 or (count == 1 and kind == 'DRAWER')
+    return (
+        ('add', "Add to This Section", 'hb_face_frame.section_front_style',
+         {'kind': kind, 'action': 'ADD'}),
+        ('edit', "Edit", 'home_builder.options_edit_item',
+         {'collection': spec['collection']}),
+        ('delete', "Delete from the Project", spec['remove_op'], {},
+         can_delete),
+    )
+
+
 def _front_tile_icons(kind, spec):
-    """Edit, paint, duplicate and delete on a style tile. Each acts on
-    the tile it is on (the tile is picked first)."""
+    """Edit, paint, duplicate, take off the section and delete on a
+    style tile. Each acts on the tile it is on (the tile is picked
+    first)."""
     def can_delete(context, style):
         # The last drawer front style can go: a slab one replaces it.
         count = len(getattr(_style_props(context), spec['collection'], ()))
         return count > 1 or (count == 1 and kind == 'DRAWER')
+
+    def can_remove(context, style):
+        # The default always belongs to its section.
+        cs = _active_cabinet_style(context)
+        default = getattr(cs, 'door_style' if kind == 'DOOR'
+                          else 'drawer_front_style', None)
+        return cs is not None and style.name != default
     return (
         ('edit', "Edit", 'home_builder.options_edit_item',
          {'collection': spec['collection']}),
         ('paint', "Assign by Painting",
          'hb_face_frame.paint_assign_front_style', {'kind': kind}),
         ('duplicate', "Duplicate", spec['add_op'], {}),
-        ('delete', "Delete", spec['remove_op'], {}, can_delete),
+        ('remove', "Remove from This Section",
+         'hb_face_frame.section_front_style',
+         {'kind': kind, 'action': 'REMOVE'}, can_remove),
+        ('delete', "Delete from the Project", spec['remove_op'], {},
+         can_delete),
     )
 
 
@@ -916,14 +958,26 @@ def _front_manager(kind, pool_key):
     # The tiles are the list; Edit opens the pick's settings.
     spec['tiles_only'] = True
     spec['notes'] = _front_manager_notes(kind)
-    spec['tiles'] = {'picture': _front_tile_picture(kind),
-                     'in_use': _front_in_use(kind),
-                     'count': _front_use_count(kind),
-                     'height': 190 if kind == 'DOOR' else 110,
-                     'check': _front_tile_check(kind),
-                     'icons': _front_tile_icons(kind, spec),
-                     'new': ("New", 'hb_face_frame.front_style_wizard',
-                             {'kind': kind, 'step': 'START'})}
+    tiles = {'picture': _front_tile_picture(kind),
+             'in_use': _front_in_use(kind),
+             'count': _front_use_count(kind),
+             'height': 190 if kind == 'DOOR' else 110}
+    # The active cabinet style's section first, then the rest of the
+    # project's styles to add from (see props section_front_styles).
+    in_section = _front_in_section(kind)
+    spec['tile_groups'] = [
+        dict(tiles, filter=in_section,
+             check=_front_tile_check(kind),
+             icons=_front_tile_icons(kind, spec),
+             new=("New", 'hb_face_frame.front_style_wizard',
+                  {'kind': kind, 'step': 'START'})),
+        dict(tiles, filter=lambda c, st: not in_section(c, st),
+             heading=("Other %s in this project"
+                      % ("door styles" if kind == 'DOOR'
+                         else "drawer front styles")),
+             hide_empty=True,
+             icons=_front_project_tile_icons(kind, spec)),
+    ]
     spec['top_actions'] = (
         ((("Matching Drawer Front", 'hb_face_frame.matching_drawer_front'),),)
         if kind == 'DOOR' else ())

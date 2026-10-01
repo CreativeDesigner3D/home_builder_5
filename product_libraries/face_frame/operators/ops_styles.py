@@ -251,6 +251,7 @@ class hb_face_frame_OT_add_door_style(Operator):
             # rail callouts are a drawer-rail concern.
             new_style.show_rail_annotation = False
         ff.active_door_style_index = len(ff.door_styles) - 1
+        _join_active_section(context, 'DOOR', new_style.name)
         self.report({'INFO'}, f"Added door style: {new_style.name}")
         return {'FINISHED'}
 
@@ -302,6 +303,7 @@ def _replace_front_style(ff, kind, old, new):
                 e.style = new
         if getattr(cs, prop, None) == old:
             setattr(cs, prop, new)      # restyles its cabinets
+    props_hb_face_frame.rename_in_sections(ff, kind, old, new)
     new_style = next((ds for ds in getattr(ff, _pool) if ds.name == new),
                      None)
     roles = _front_roles(kind)
@@ -406,6 +408,7 @@ class _RemoveFrontStyle:
             picks.extend((e, 'style', e.style)
                          for e in getattr(cs, extras, ()))
         pool.remove(idx)
+        props_hb_face_frame.rename_in_sections(ff, self.KIND, name, None)
         for owner, attr, pick in picks:
             if pick and getattr(owner, attr, '') != pick:
                 try:
@@ -466,7 +469,15 @@ def new_front_style(context, kind, series, shape=None, panel=None):
             except Exception:
                 pass
     setattr(ff, index_prop, len(pool) - 1)
+    _join_active_section(context, kind, style.name)
     return style
+
+
+def _join_active_section(context, kind, name):
+    """A style made from a section's Doors / Drawers tab belongs to that
+    section."""
+    props_hb_face_frame.add_to_section(
+        _active_cabinet_style(context, -1), kind, name)
 
 
 class hb_face_frame_OT_new_front_style(Operator):
@@ -612,6 +623,7 @@ class hb_face_frame_OT_add_drawer_front_style(Operator):
         if src is not None:
             _copy_door_style(src, new_style)
         ff.active_drawer_front_style_index = len(ff.drawer_front_styles) - 1
+        _join_active_section(context, 'DRAWER', new_style.name)
         self.report({'INFO'}, f"Added drawer front style: {new_style.name}")
         return {'FINISHED'}
 
@@ -1240,6 +1252,8 @@ class hb_face_frame_OT_paint_assign_front_style(_paint_front_brush, bpy.types.Op
         result = style.assign_style_to_front(front, record_override=True)
         if result is True:
             self._count += 1
+            props_hb_face_frame.add_to_section(
+                style.get_parent_cabinet_style(front), self.kind, style.name)
             # Surfaces come from the cabinet material walk (see assign
             # op) -- run it per click so a glass panel shows immediately.
             _reapply_materials_for_door_style(style, context)
@@ -1547,6 +1561,55 @@ def _repropagate_tall_drawer(context, style, kind):
         props_hb_face_frame._propagate_cabinet_style(style, context)
 
 
+class hb_face_frame_OT_section_front_style(Operator):
+    """Add the picked front style to the active cabinet style's section,
+    or take it off"""
+    bl_idname = "hb_face_frame.section_front_style"
+    bl_label = "Section Front Style"
+    bl_options = {'UNDO'}
+
+    kind: bpy.props.EnumProperty(
+        items=[('DOOR', "Door", ""), ('DRAWER', "Drawer Front", "")],
+        default='DOOR')  # type: ignore
+    action: bpy.props.EnumProperty(
+        items=[('ADD', "Add to Section", ""),
+               ('REMOVE', "Remove from Section", "")],
+        default='ADD')  # type: ignore
+
+    @classmethod
+    def description(cls, context, props):
+        return ("List the picked style on this cabinet style's section"
+                if props.action == 'ADD' else
+                "Take the picked style off this cabinet style's section "
+                "(it stays in the project)")
+
+    def execute(self, context):
+        cs = _active_cabinet_style(context, -1)
+        style = hb_face_frame_OT_use_front_style._picked(
+            get_style_props(context), self.kind)
+        if cs is None or style is None:
+            return {'CANCELLED'}
+        if self.action == 'ADD':
+            props_hb_face_frame.add_to_section(cs, self.kind, style.name)
+            self.report({'INFO'}, "%s added to %s" % (style.name, cs.name))
+            return {'FINISHED'}
+        default = cs.door_style if self.kind == 'DOOR' \
+            else cs.drawer_front_style
+        if style.name == default:
+            self.report({'WARNING'}, "%s is this section's default; pick "
+                        "another default first" % style.name)
+            return {'CANCELLED'}
+        props_hb_face_frame.remove_from_section(cs, self.kind, style.name)
+        if style.name in props_hb_face_frame.section_front_styles(
+                cs, self.kind):
+            self.report({'WARNING'}, "%s is still on this section's "
+                        "cabinets; paint them with another style to take "
+                        "it off" % style.name)
+            return {'FINISHED'}
+        self.report({'INFO'}, "%s removed from %s" % (style.name, cs.name))
+        return {'FINISHED'}
+
+
 class hb_face_frame_OT_use_front_style(Operator):
     """Make the picked door (or drawer front) style the one the active
     cabinet style builds its fronts with -- the door style manager's
@@ -1583,8 +1646,13 @@ class hb_face_frame_OT_use_front_style(Operator):
             self.report({'WARNING'}, "Pick a style first")
             return {'CANCELLED'}
         prop = 'door_style' if self.kind == 'DOOR' else 'drawer_front_style'
-        if getattr(cs, prop) != style.name:
+        old = getattr(cs, prop)
+        if old != style.name:
+            # The old default stays in the section, as a listed style.
+            props_hb_face_frame.add_to_section(cs, self.kind, old)
             setattr(cs, prop, style.name)
+            props_hb_face_frame.remove_from_section(cs, self.kind,
+                                                    style.name)
         self.report({'INFO'}, "%s now uses %s" % (cs.name, style.name))
         return {'FINISHED'}
 
@@ -2048,6 +2116,7 @@ classes = (
     hb_face_frame_OT_add_special_effect,
     hb_face_frame_OT_remove_special_effect,
     hb_face_frame_OT_face_frame_sizes,
+    hb_face_frame_OT_section_front_style,
     hb_face_frame_OT_use_front_style,
     hb_face_frame_OT_set_tall_drawer_front_style,
     hb_face_frame_OT_add_cabinet_extra_front_style,
