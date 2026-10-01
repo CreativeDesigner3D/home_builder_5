@@ -10,11 +10,14 @@ handler paints value labels:
 - Bays mode: every bay's width (auto-locks on commit, pinned labels carry
   a bullet and right-click / 0-Enter resets to auto) PLUS every opening's
   height, so both are editable without a mode switch.
-- Openings mode: opening heights.
+- Openings mode: every opening's clear height as a dimension up its
+  left side; typing one moves the bounding fixed shelf onto the 32mm
+  holes.
 
-Opening height is a DERIVED value in closets (bay height minus kick and
-the two fixed shelves), so committing one inverse-writes the bay height.
-Typing back the displayed value is a no-op by construction.
+Opening height is a DERIVED value in closets (the clear space between
+the fixed shelves that bound it), so committing one moves the shelf
+above it (below it, for the top opening) onto the 32mm holes. Typing
+back the displayed value lands on the same hole - a no-op.
 
 Architecture mirrors face_frame/dim_edit_overlay.py deliberately: a
 permanent draw handler plus addon-keymap click operators that
@@ -50,6 +53,16 @@ EDIT_BG         = (0.20, 0.43, 0.70, 0.95)
 TEXT_COLOR      = (0.95, 0.95, 0.95, 1.0)
 TEXT_COLOR_DIM  = (0.95, 0.95, 0.95, 0.45)
 EDIT_TEXT_COLOR = (1.0, 1.0, 1.0, 1.0)
+DIM_LINE_COLOR     = (0.90, 0.90, 0.90, 0.80)
+DIM_LINE_COLOR_DIM = (0.90, 0.90, 0.90, 0.35)
+TICK_PX         = 5
+# Opening height dims stand this far in from the opening's left side
+# (at most a quarter of its width), clear of the rod and drawer labels
+# that sit on the centerline.
+HEIGHT_DIM_INSET = units.inch(3.0)
+# Smallest clear height a typed opening height may leave the opening
+# on the other side of the shelf it moves.
+MIN_OPENING_CLEAR = units.inch(1.0)
 
 _INPUT_CHARS = set("0123456789./-'\" ")
 
@@ -308,9 +321,36 @@ def _starter_label_targets(starter):
     ]
 
 
-def compute_labels(context, region, rv3d):
+def _height_dim_line(opening):
+    """World (bottom, top) of an opening's height dimension line."""
+    dim_x, _dim_z = split_preview._cage_dims(opening)
+    fx = min(HEIGHT_DIM_INSET / dim_x, 0.25) if dim_x > 0.0 else 0.5
+    a = _anchor_world(opening, fx, 0.0)
+    b = _anchor_world(opening, fx, 1.0)
+    if a is None or b is None:
+        return None
+    return a, b
+
+
+def _project_dim_line(region, rv3d, line, s):
+    """Region-space LINES points (the line plus an end tick at each
+    end) for a world-space dimension line, or []."""
+    a = view3d_utils.location_3d_to_region_2d(region, rv3d, line[0])
+    b = view3d_utils.location_3d_to_region_2d(region, rv3d, line[1])
+    if a is None or b is None:
+        return []
+    d = b - a
+    if d.length < 1e-6:
+        return []
+    tick = Vector((-d.y, d.x)).normalized() * TICK_PX * s
+    return [tuple(p) for p in (a, b, a - tick, a + tick, b - tick, b + tick)]
+
+
+def compute_labels(context, region, rv3d, lines_out=None):
     """[(obj_name, kind, editable, locked, rect, text)] currently on
-    screen. Shared by draw and the click operators."""
+    screen. Shared by draw and the click operators. When ``lines_out``
+    is a list, the region-space dimension lines the labels sit on are
+    appended to it as (points, editable)."""
     mode = _active_mode(context)
     if mode is None or rv3d is None:
         return []
@@ -325,6 +365,7 @@ def compute_labels(context, region, rv3d):
 
     space = getattr(context, 'space_data', None)
     targets = []   # (obj, kind, editable, locked, anchor, value, prefix)
+    dim_lines = {}  # (obj name, kind) -> world (a, b)
     for starter in _iter_starter_roots(scene):
         if not _starter_shown(starter, space):
             continue
@@ -388,17 +429,21 @@ def compute_labels(context, region, rv3d):
                     targets.append((bay, 'BAY_H', True, False,
                                     _anchor_world(bay, 0.5, 1.0),
                                     bay_top_world, "H "))
-                elif mode == 'Openings' and not is_top:
-                    # Section label reads the capping shelf's height OFF
-                    # THE GROUND (world Z); committing places the shelf
-                    # at the typed height.
-                    shelves = shelves_by_side.get(side, [])
-                    if idx < len(shelves):
-                        shelf_world_z = split_preview._world_matrix(
-                            shelves[idx]).translation.z
-                        targets.append((opening, 'OPEN_H', True, False,
-                                        _anchor_world(opening, 0.5, 1.0),
-                                        shelf_world_z, "H "))
+                elif (mode == 'Openings'
+                        and int(opening.get('hb_col_index', 0)) == 0):
+                    # Every opening's clear height, as a dimension up
+                    # its left side - one per row; the columns of a
+                    # divided row share it. Typing one moves the fixed
+                    # shelf that bounds it (the one above, or below for
+                    # the top opening) onto the 32mm holes; a bay with
+                    # no fixed shelf has nothing to move.
+                    line = _height_dim_line(opening)
+                    if line is not None:
+                        editable = bool(shelves_by_side.get(side))
+                        dim_lines[(opening.name, 'OPEN_H')] = line
+                        targets.append((opening, 'OPEN_H', editable, False,
+                                        (line[0] + line[1]) / 2.0,
+                                        interior_h, ""))
                 if mode != 'Openings':
                     continue
                 # Per-part labels: fixed shelves and rods show their
@@ -465,6 +510,12 @@ def compute_labels(context, region, rv3d):
         if rect[1] + h < 0 or rect[1] > region.height:
             continue
         labels.append((obj.name, kind, editable, locked, rect, text))
+        if lines_out is not None:
+            line = dim_lines.get((obj.name, kind))
+            if line is not None:
+                pts = _project_dim_line(region, rv3d, line, s)
+                if pts:
+                    lines_out.append((pts, editable))
 
     # ----- Toggle widgets (Bays mode). Reuses the label tuple shape:
     # editable=False keeps them out of the edit modal; the ``locked``
@@ -562,7 +613,9 @@ def _draw():
         mode = _active_mode(context)
         if mode is None:
             return
-        labels = compute_labels(context, region, context.region_data)
+        dim_lines = []
+        labels = compute_labels(context, region, context.region_data,
+                                dim_lines)
 
         s = 1.0
         try:
@@ -573,6 +626,15 @@ def _draw():
         gpu.state.blend_set('ALPHA')
         shader = gpu.shader.from_builtin('UNIFORM_COLOR')
         shader.bind()
+        from gpu_extras.batch import batch_for_shader
+        for editable in (True, False):
+            pts = [p for line, ed in dim_lines if ed == editable
+                   for p in line]
+            if pts:
+                shader.uniform_float(
+                    "color",
+                    DIM_LINE_COLOR if editable else DIM_LINE_COLOR_DIM)
+                batch_for_shader(shader, 'LINES', {"pos": pts}).draw(shader)
         _draw_filter_pills(shader, context, area, font_sz, mode)
         for name, kind, editable, _locked, rect, text in labels:
             if kind.startswith('TOGGLE_'):
@@ -712,41 +774,7 @@ def _commit(obj, kind, value):
         obj.hb_closet_bay.depth = value
         return True
     if kind == 'OPEN_H':
-        # Segment-aware: when a splitting shelf caps this opening,
-        # editing the opening height MOVES that shelf. Only the topmost
-        # segment (no shelf above) falls back to resizing the bay:
-        # bay_height = value + seg_bottom + 2*shelf (+ kick when floor).
-        bay = types_closets.find_bay_cage(obj)
-        root = types_closets.find_starter_root(obj)
-        if bay is None or root is None:
-            return False
-        seg_bottom = obj.get('hb_seg_bottom', 0.0)
-        side = obj.get(types_closets.PROP_OPENING_SIDE, 'FRONT')
-        shelves = sorted(
-            [c for c in bay.children
-             if c.get('hb_part_role') == types_closets.PART_ROLE_FIXED_SHELF
-             and c.get(types_closets.PROP_OPENING_SIDE, 'FRONT') == side
-             and not c.get('hb_preview')],
-            key=lambda o: o.get('hb_z_offset', 0.0))
-        above = next((sh for sh in shelves
-                      if sh.get('hb_z_offset', 0.0) >= seg_bottom - 1e-6),
-                     None)
-        if above is not None:
-            # The label reads the capping shelf's height OFF THE GROUND
-            # (world Z), so the typed value places the shelf there.
-            # base = world Z of the shelf's zero offset.
-            base_world = (split_preview._world_matrix(above).translation.z
-                          - above.get('hb_z_offset', 0.0))
-            above['hb_z_offset'] = float(max(0.0, value - base_world))
-            types_closets.recalculate_closet_starter(root)
-            return True
-        scene_props = types_closets.run_sizes(bay)
-        bp = bay.hb_closet_bay
-        kick = (root.hb_closet_starter.toe_kick_height
-                if bp.floor_mounted else 0.0)
-        bp.height = (value + seg_bottom
-                     + 2.0 * scene_props.shelf_thickness + kick)
-        return True
+        return _commit_opening_height(obj, value)
     if kind == 'BAY_H':
         # Typed value = desired bay top off the floor. Move the top by
         # the delta (floor bays: top lands exactly at the value; hanging
@@ -797,6 +825,68 @@ def _commit(obj, kind, value):
         types_closets.recalculate_closet_starter(root)
         return True
     return False
+
+
+def _snap_shelf_offset(target, lo, hi):
+    """The 32mm-system hole nearest ``target`` that lies within
+    [lo, hi] (bay-interior offsets of a fixed shelf's underside), or
+    None when no hole fits."""
+    pitch = const.SYSTEM_PITCH
+    z = const.snap_system_hole(target)
+    while z < lo - 1e-6:
+        z += pitch
+    while z > hi + 1e-6:
+        z -= pitch
+    if z < lo - 1e-6 or z < 0.0:
+        return None
+    return z
+
+
+def _commit_opening_height(opening, value):
+    """Give an opening the typed clear height by moving the fixed shelf
+    that bounds it - the shelf above it, or for the top opening the
+    shelf below it. The shelf lands on the 32mm-system hole nearest the
+    asked-for height, and never closer than MIN_OPENING_CLEAR to the
+    shelf or bay limit on its other side; the neighbouring opening
+    takes up the difference."""
+    bay = types_closets.find_bay_cage(opening)
+    root = types_closets.find_starter_root(opening)
+    if bay is None or root is None:
+        return False
+    side = opening.get(types_closets.PROP_OPENING_SIDE, 'FRONT')
+    shelves = sorted(
+        [c for c in bay.children
+         if c.get('hb_part_role') == types_closets.PART_ROLE_FIXED_SHELF
+         and c.get(types_closets.PROP_OPENING_SIDE, 'FRONT') == side
+         and not c.get('hb_preview')],
+        key=lambda o: o.get('hb_z_offset', 0.0))
+    if not shelves:
+        return False
+    rows = [o for o in _iter_opening_cages(bay)
+            if o.get(types_closets.PROP_OPENING_SIDE, 'FRONT') == side]
+    top = max(rows, key=lambda o: o.get('hb_opening_index', 0))
+    interior_h = (float(top.get('hb_seg_bottom', 0.0))
+                  + split_preview._cage_dims(top)[1])
+    st = types_closets.run_sizes(bay).shelf_thickness
+    idx = int(opening.get('hb_opening_index', 0))
+    zs = [float(sh.get('hb_z_offset', 0.0)) for sh in shelves]
+    if idx < len(shelves):
+        # Capped: the shelf above moves; the opening's floor stays.
+        k = idx
+        target = float(opening.get('hb_seg_bottom', 0.0)) + value
+    else:
+        # Top opening: the shelf below moves; the bay top stays.
+        k = len(shelves) - 1
+        target = interior_h - value - st
+    lo = (zs[k - 1] + st if k > 0 else 0.0) + MIN_OPENING_CLEAR
+    hi = ((zs[k + 1] if k + 1 < len(zs) else interior_h)
+          - st - MIN_OPENING_CLEAR)
+    z = _snap_shelf_offset(target, lo, hi)
+    if z is None:
+        return False
+    shelves[k]['hb_z_offset'] = float(z)
+    types_closets.recalculate_closet_starter(root)
+    return True
 
 
 def _reset_to_auto(obj, kind):
