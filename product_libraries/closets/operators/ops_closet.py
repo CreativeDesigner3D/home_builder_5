@@ -484,9 +484,13 @@ def _stack_on_countertop(context, root, base):
     to the base's countertop: every bay takes the tallest 32mm-system
     height that fits between the hanging top and the countertop, and
     the panels extend the remainder so they stand on the countertop.
-    Nothing is linked - changing the base later leaves this as it is."""
-    context.view_layer.update()
+    A backsplash on the base is turned off: the panels stand where it
+    would run. Nothing is linked - changing the base later leaves this
+    as it is."""
     bsp = base.hb_closet_starter
+    if bsp.include_backsplash:
+        bsp.include_backsplash = False
+    context.view_layer.update()
     top_of_base = bsp.height + (bsp.countertop_thickness
                                 if bsp.include_countertop else 0.0)
     ctop_z = (base.matrix_world @ Vector((0.0, 0.0, top_of_base))).z
