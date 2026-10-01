@@ -5339,8 +5339,11 @@ def _shelf_stack_descriptors(rect, cage_dim_y, qty, setback,
     drives downstream material handling and selection. setback is
     per-item (half-depth shelves pass the mid-cavity line) so
     individual items can request a deeper front gap. z0 lifts the
-    whole stack: shelves distribute evenly in [z0, region top], so
-    an item can sit above another insert sharing the opening.
+    whole stack. At 0 the shelves spread evenly through the region,
+    with a gap under the first one; above 0 the lowest shelf's bottom
+    sits AT z0 (what a typed "From Bottom" reads as) and the rest
+    spread evenly above it, so an item can also sit on top of another
+    insert sharing the opening.
 
     A nosing style other than NONE (adjustable shelves only) recesses
     the shelf board by the nosing stock depth and emits one
@@ -5357,7 +5360,10 @@ def _shelf_stack_descriptors(rect, cage_dim_y, qty, setback,
     interior_h = (cage_dim_z - z0) - qty * SHELF_THICKNESS
     if interior_h <= 0:
         return []
-    spacing = interior_h / (qty + 1)
+    # One gap per shelf plus the one above the last; the gap under the
+    # first only when the stack starts at the bottom.
+    raised = z0 > 1e-6
+    spacing = interior_h / (qty if raised else qty + 1)
 
     nosing = nosing_style not in (None, '', 'NONE')
     nose_d = shelf_nosing.NOSE_STOCK_DEPTH if nosing else 0.0
@@ -5367,9 +5373,9 @@ def _shelf_stack_descriptors(rect, cage_dim_y, qty, setback,
 
     items = []
     for k in range(qty):
-        # Shelf k bottom-face Z: stack from the bottom with one spacing
-        # gap before the first shelf and one after the last.
-        z = z0 + (k + 1) * spacing + k * SHELF_THICKNESS
+        # Shelf k bottom-face Z: one spacing gap after the last shelf,
+        # and one before the first unless the stack was raised.
+        z = z0 + (k if raised else k + 1) * spacing + k * SHELF_THICKNESS
         items.append({
             'kind':     kind,
             'role':     role,
@@ -5403,6 +5409,44 @@ def _adjustable_shelf_descriptors(rect, cage_dim_y, qty, setback,
         'ADJUSTABLE_SHELF', 'ADJUSTABLE_SHELF', 'Adjustable Shelf',
         nosing_style, nosing_height, z0,
     )
+
+
+# KV shelf standards: a metal strip set into each side wall with its
+# face just proud of the wall, front and back, from the item's From
+# Bottom to the top of the region.
+SHELF_STANDARD_WIDTH = inch(0.625)
+SHELF_STANDARD_PROUD = inch(1.0 / 16.0)
+SHELF_STANDARD_RECESS = inch(0.125)
+SHELF_STANDARD_INSET = inch(1.0)       # in from the shelf front / back
+
+
+def _shelf_standard_descriptor(rect, cage_dim_y, setback, z0=0.0):
+    """One descriptor for the four standards behind a shelf stack: the
+    strips as (x0, x1, y0, y1) in region-local space plus the Z run.
+    Hardware, built as one mesh (see types._create_shelf_standards)."""
+    dim_x, dim_z = rect['cage_dim_x'], rect['cage_dim_z']
+    z0 = max(0.0, min(z0, dim_z))
+    if dim_z - z0 <= 0.0:
+        return None
+    w = SHELF_STANDARD_WIDTH
+    y_front = setback + SHELF_STANDARD_INSET
+    y_back = cage_dim_y - SHELF_BACK_SETBACK - SHELF_STANDARD_INSET - w
+    if y_back <= y_front + w:
+        y_back = y_front     # too shallow for two: one per side
+    xs = ((-SHELF_STANDARD_RECESS, SHELF_STANDARD_PROUD),
+          (dim_x - SHELF_STANDARD_PROUD, dim_x + SHELF_STANDARD_RECESS))
+    strips = []
+    for x0, x1 in xs:
+        for y in sorted({y_front, y_back}):
+            strips.append((x0, x1, y, y + w))
+    return {
+        'kind':     'SHELF_STANDARDS',
+        'role':     'SHELF_STANDARD',
+        'name':     'KV Shelf Standards',
+        'position': (0.0, 0.0, z0),
+        'strips':   strips,
+        'height':   dim_z - z0,
+    }
 
 
 def _glass_shelf_descriptors(rect, cage_dim_y, qty, setback, z0=0.0):
@@ -5875,6 +5919,16 @@ def _retracting_clearances(opening_ff):
     return (left, right, inch(3.0), 0.0)
 
 
+def _shelf_standards_for(item, rect, cage_dim_y, setback):
+    """[standards descriptor] when the shelf item hangs on KV
+    standards, else []."""
+    if getattr(item, 'shelf_support', 'PINS') != 'KV_STANDARDS':
+        return []
+    desc = _shelf_standard_descriptor(rect, cage_dim_y, setback,
+                                      getattr(item, 'bottom_offset', 0.0))
+    return [desc] if desc is not None else []
+
+
 def interior_item_descriptors(layout, rect, cab_props, opening_props,
                               opening_ff=None):
     """Flatten one opening's interior_items collection into a list of
@@ -5928,6 +5982,9 @@ def interior_item_descriptors(layout, rect, cab_props, opening_props,
                 getattr(item, 'shelf_nosing_height', 0.0),
                 getattr(item, 'bottom_offset', 0.0),
             )))
+            out.extend(_pocket_shifted(_shelf_standards_for(
+                item, shelf_rect, cage_dim_y,
+                max(item.shelf_setback, cl_f))))
         elif item.kind in PARTIAL_DEPTH_SHELF_KINDS:
             # Partial-depth shelves: the front edge always sits at a
             # set fraction of the cavity depth, so the look holds
@@ -5944,12 +6001,18 @@ def interior_item_descriptors(layout, rect, cab_props, opening_props,
                 getattr(item, 'shelf_nosing_height', 0.0),
                 z0=getattr(item, 'bottom_offset', 0.0),
             )))
+            out.extend(_pocket_shifted(_shelf_standards_for(
+                item, shelf_rect, cage_dim_y,
+                max(cage_dim_y * (1.0 - depth_frac), cl_f))))
         elif item.kind == 'GLASS_SHELF':
             out.extend(_pocket_shifted(_glass_shelf_descriptors(
                 shelf_rect, cage_dim_y, item.shelf_qty,
                 max(item.shelf_setback, cl_f),
                 z0=getattr(item, 'bottom_offset', 0.0),
             )))
+            out.extend(_pocket_shifted(_shelf_standards_for(
+                item, shelf_rect, cage_dim_y,
+                max(item.shelf_setback, cl_f))))
         elif item.kind == 'PULLOUT_SHELF':
             out.extend(_pullout_shelf_descriptors(rect, cage_dim_y, item))
         elif item.kind == 'ROLLOUT':

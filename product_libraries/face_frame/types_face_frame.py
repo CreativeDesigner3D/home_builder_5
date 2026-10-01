@@ -1097,6 +1097,9 @@ PART_ROLE_BAR_STORAGE = 'BAR_STORAGE'
 # Hang rod across an opening (same role string the closets library uses,
 # so downstream consumers treat both the same way).
 PART_ROLE_CLOSET_ROD = 'CLOSET_ROD'
+# KV shelf standards behind a shelf stack: hardware, one mesh for the
+# four strips (see _create_shelf_standards).
+PART_ROLE_SHELF_STANDARD = 'SHELF_STANDARD'
 # Appliance-bay annotation: the square + word (SINK / COOKTOP) drawn on
 # top of an appliance bay so plan views read like a dealer drawing.
 # Wiped + recreated every recalc (sized from the live bay cage); the
@@ -1132,6 +1135,7 @@ INTERIOR_PART_ROLES = frozenset({
     PART_ROLE_ACCESSORY_LABEL,
     PART_ROLE_BAR_STORAGE,
     PART_ROLE_CLOSET_ROD,
+    PART_ROLE_SHELF_STANDARD,
     PART_ROLE_INTERIOR_DIVISION,
     PART_ROLE_INTERIOR_FIXED_SHELF,
     PART_ROLE_INTERIOR_FF_RAIL,
@@ -14438,6 +14442,8 @@ class FaceFrameCabinet(GeoNodeCage):
                 self._create_galley_rollout_top(opening_obj, desc)
             elif kind == 'CLOSET_ROD':
                 self._create_closet_rod_part(opening_obj, desc)
+            elif kind == 'SHELF_STANDARDS':
+                self._create_shelf_standards(opening_obj, desc)
             elif kind in bar_storage.KINDS:
                 self._create_bar_storage_part(opening_obj, desc)
             elif kind in ('INTERIOR_FF_RAIL', 'INTERIOR_FF_STILE'):
@@ -15101,6 +15107,37 @@ class FaceFrameCabinet(GeoNodeCage):
         )
         if obj is None:
             return None
+        bpy.context.scene.collection.objects.link(obj)
+        obj.parent = opening_obj
+        obj.location = desc['position']
+        obj['hb_part_role'] = desc['role']
+        obj['IS_FACE_FRAME_INTERIOR_PART'] = True
+        obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_interior_part_commands'
+        return obj
+
+    def _create_shelf_standards(self, opening_obj, desc):
+        """The KV standards a shelf stack hangs on: one mesh with a box
+        per strip. Hardware like the closet rod, so not a CABINET_PART
+        (cut lists and machining leave it out); a plain metal finish."""
+        height = desc['height']
+        bm = bmesh.new()
+        for x0, x1, y0, y1 in desc['strips']:
+            verts = [bm.verts.new((x, y, z))
+                     for z in (0.0, height)
+                     for x, y in ((x0, y0), (x1, y0), (x1, y1), (x0, y1))]
+            for face in ((0, 3, 2, 1), (4, 5, 6, 7), (0, 1, 5, 4),
+                         (1, 2, 6, 5), (2, 3, 7, 6), (3, 0, 4, 7)):
+                bm.faces.new([verts[i] for i in face])
+        mesh = bpy.data.meshes.new(desc['name'])
+        bm.to_mesh(mesh)
+        bm.free()
+        mat = bpy.data.materials.get('Shelf Standard')
+        if mat is None:
+            mat = bpy.data.materials.new('Shelf Standard')
+            mat.diffuse_color = (0.55, 0.56, 0.58, 1.0)
+            mat.metallic = 0.8
+        mesh.materials.append(mat)
+        obj = hb_utils.new_object(desc['name'], mesh)
         bpy.context.scene.collection.objects.link(obj)
         obj.parent = opening_obj
         obj.location = desc['position']

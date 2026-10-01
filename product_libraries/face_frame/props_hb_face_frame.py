@@ -9676,8 +9676,19 @@ class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
     # (e.g. tray dividers below, shelves above).
     bottom_offset: FloatProperty(
         name="From Bottom",
-        description="Raise this item's zone up from the bottom of the opening; shelves spread out in the space above",
+        description="Raise this item up from the bottom of the opening. Shelves: the lowest shelf sits this high and the rest spread out above it",
         default=0.0, min=0.0, unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    # What adjustable shelves sit on. Standards are drawn (they show in a
+    # finished opening); pin holes are not.
+    shelf_support: EnumProperty(
+        name="Shelf Support",
+        items=[('PINS', "Shelf Pins", "Shelves on pins in drilled holes"),
+               ('KV_STANDARDS', "KV Standards",
+                "Shelves on clips in metal standards, two on each side, "
+                "from From Bottom to the top of the opening")],
+        default='PINS',
         update=_update_cabinet_dim,
     )  # type: ignore
     # Finished-opening nosing on the shelf front edge (ADJUSTABLE_SHELF
