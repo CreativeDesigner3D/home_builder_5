@@ -503,10 +503,18 @@ _BUILDERS = {
 }
 
 
-def build_bar_storage_object(kind, name, w, h, depth):
+# Back that closes the insert off when the cavity runs deeper than the
+# unit (a 12" cubby in a 24" base).
+BACK_THICKNESS = inch(0.5)
+
+
+def build_bar_storage_object(kind, name, w, h, depth, back=False):
     """Build the insert mesh for a kind, or None when the opening is
     too small (or the kind unknown). The returned object is NOT linked
-    to any collection; the caller links, parents, and tags it."""
+    to any collection; the caller links, parents, and tags it.
+
+    back: close the rear of the unit with a full-size panel, its back
+    face at `depth`."""
     builder = _BUILDERS.get(kind)
     if builder is None or w <= 0.0 or h <= 0.0 or depth <= 0.0:
         return None
@@ -515,6 +523,9 @@ def build_bar_storage_object(kind, name, w, h, depth):
     if not ok or len(bm.faces) == 0:
         bm.free()
         return None
+    if back and depth > BACK_THICKNESS:
+        _add_prism_y(bm, _rect_poly(0.0, 0.0, w, h),
+                     depth - BACK_THICKNESS, depth)
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
     mesh = bpy.data.meshes.new(name)
     bm.to_mesh(mesh)

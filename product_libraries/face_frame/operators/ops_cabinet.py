@@ -3162,6 +3162,12 @@ class hb_face_frame_OT_add_interior_item(bpy.types.Operator):
             if self.kind == 'ROLLOUT':
                 for _ in range(2):
                     item.rollout_boxes.add()
+            # A wine cubby is finished flush on all four sides of the
+            # opening, so it comes in that way.
+            if (self.kind == 'WINE_CUBBY'
+                    and hasattr(target_props, 'finish_opening_flush')):
+                target_props.finish_opening = True
+                target_props.finish_opening_flush = True
 
         # Field defaults on the prop class (shelf_qty=1, qty=2, tray_qty=3,
         # vanity_z=11", ...) cover the initial values; the recalc owns

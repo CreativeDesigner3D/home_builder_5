@@ -15097,6 +15097,7 @@ class FaceFrameCabinet(GeoNodeCage):
         w, depth, h = desc['dims']
         obj = bar_storage.build_bar_storage_object(
             desc['kind'], desc['name'], w, h, depth,
+            back=desc.get('back', False),
         )
         if obj is None:
             return None

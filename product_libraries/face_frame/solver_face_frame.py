@@ -5787,10 +5787,24 @@ BAR_STORAGE_FRONT_Y = inch(0.75)
 
 
 def _bar_storage_descriptor(rect, cage_dim_y, item):
-    depth = min(
-        bar_storage.MAX_DEPTH,
-        cage_dim_y - BAR_STORAGE_FRONT_Y - SHELF_BACK_SETBACK,
-    )
+    x0, z0 = 0.0, 0.0
+    w, h = rect['cage_dim_x'], rect['cage_dim_z']
+    front_y = BAR_STORAGE_FRONT_Y
+    if rect.get('finish_flush'):
+        # A flush finish bands the FF opening, so the insert fills the
+        # opening inside the band instead of the larger cavity behind
+        # the frame (it used to run through the band).
+        x0 = rect.get('reveal_left', 0.0)
+        z0 = rect.get('reveal_bottom', 0.0)
+        w -= x0 + rect.get('reveal_right', 0.0)
+        h -= z0 + rect.get('reveal_top', 0.0)
+        if item.kind == 'WINE_CUBBY':
+            # The cubby slides in from the back and butts the frame.
+            front_y = 0.0
+    if w <= 0.0 or h <= 0.0:
+        return None
+    room = cage_dim_y - front_y - SHELF_BACK_SETBACK
+    depth = min(bar_storage.MAX_DEPTH, room)
     if depth <= 0.0:
         return None
     label = bar_storage.KIND_LABELS.get(item.kind, item.kind)
@@ -5798,11 +5812,14 @@ def _bar_storage_descriptor(rect, cage_dim_y, item):
         'kind':     item.kind,
         'role':     'BAR_STORAGE',
         'name':     label,
-        'position': (0.0, BAR_STORAGE_FRONT_Y, 0.0),
+        'position': (x0, front_y, z0),
         # (w, depth, h) of the insert volume - consumed only by the
         # bar-storage materialize branch, which builds a mesh rather
         # than an oriented cutpart.
-        'dims':     (rect['cage_dim_x'], depth, rect['cage_dim_z']),
+        'dims':     (w, depth, h),
+        # A cubby blocked off short of a deep cavity gets a back so it
+        # doesn't read as open through to the cabinet back.
+        'back':     item.kind == 'WINE_CUBBY' and room > depth + 1e-6,
     }
 
 
@@ -6249,6 +6266,18 @@ def finish_liner_insets(opening_obj, layout, rect):
     return zero
 
 
+def _finish_is_flush(opening_obj):
+    """True when the opening sits in a FLUSH finish - its own, or its
+    bay's (a bay-level finish supersedes the opening's)."""
+    bay_cage = opening_obj.parent
+    while bay_cage is not None and not bay_cage.get('IS_FACE_FRAME_BAY_CAGE'):
+        bay_cage = bay_cage.parent
+    if bay_cage is not None and bay_cage.face_frame_bay.finish_bay:
+        return bool(bay_cage.face_frame_bay.finish_bay_flush)
+    op = opening_obj.face_frame_opening
+    return bool(op.finish_opening and op.finish_opening_flush)
+
+
 def interior_descriptors_for_opening(opening_obj, layout, rect, cab_props):
     """Top-level entry point for the recalc. Routes through the tree if
     one exists on `opening_obj`, else falls through to the flat path.
@@ -6264,6 +6293,9 @@ def interior_descriptors_for_opening(opening_obj, layout, rect, cab_props):
         rect = dict(rect)
         rect['cage_dim_x'] = max(0.0, rect['cage_dim_x'] - left_in - right_in)
         rect['cage_dim_z'] = max(0.0, rect['cage_dim_z'] - top_in)
+    if _finish_is_flush(opening_obj):
+        rect = dict(rect)
+        rect['finish_flush'] = True
 
     root = _interior_tree_root(opening_obj)
     op_props = opening_obj.face_frame_opening
