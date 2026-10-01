@@ -28,6 +28,7 @@ on click rather than cached, so draw and hit-test can never drift.
 
 import bpy
 import blf
+import math
 import gpu
 from mathutils import Vector
 from bpy_extras import view3d_utils
@@ -435,7 +436,8 @@ def compute_labels(context, region, rv3d, lines_out=None):
                     # its left side - one per row; the columns of a
                     # divided row share it. Typing one moves the fixed
                     # shelf that bounds it (the one above, or below for
-                    # the top opening) onto the 32mm holes; a bay with
+                    # the top opening) onto the 32mm holes, rounding the
+                    # opening down; a bay with
                     # no fixed shelf has nothing to move.
                     line = _height_dim_line(opening)
                     if line is not None:
@@ -827,12 +829,16 @@ def _commit(obj, kind, value):
     return False
 
 
-def _snap_shelf_offset(target, lo, hi):
-    """The 32mm-system hole nearest ``target`` that lies within
-    [lo, hi] (bay-interior offsets of a fixed shelf's underside), or
-    None when no hole fits."""
+def _snap_shelf_offset(target, lo, hi, up=False):
+    """The 32mm-system hole at or below ``target`` (at or above when
+    ``up``) that lies within [lo, hi] - bay-interior offsets of a fixed
+    shelf's underside - or None when no hole fits."""
     pitch = const.SYSTEM_PITCH
-    z = const.snap_system_hole(target)
+    # A target already on a hole must not lose a step to float error.
+    tol = 0.00005
+    n = (target - const.SYSTEM_HOLE_BASE) / pitch
+    n = math.ceil(n - tol / pitch) if up else math.floor(n + tol / pitch)
+    z = const.SYSTEM_HOLE_BASE + max(0, n) * pitch
     while z < lo - 1e-6:
         z += pitch
     while z > hi + 1e-6:
@@ -845,9 +851,10 @@ def _snap_shelf_offset(target, lo, hi):
 def _commit_opening_height(opening, value):
     """Give an opening the typed clear height by moving the fixed shelf
     that bounds it - the shelf above it, or for the top opening the
-    shelf below it. The shelf lands on the 32mm-system hole nearest the
-    asked-for height, and never closer than MIN_OPENING_CLEAR to the
-    shelf or bay limit on its other side; the neighbouring opening
+    shelf below it. The shelf lands on the 32mm-system hole that gives
+    the asked-for height or the next one down - never taller than typed
+    - and never closer than MIN_OPENING_CLEAR to the shelf or bay limit
+    on its other side; the neighbouring opening
     takes up the difference."""
     bay = types_closets.find_bay_cage(opening)
     root = types_closets.find_starter_root(opening)
@@ -870,18 +877,24 @@ def _commit_opening_height(opening, value):
     st = types_closets.run_sizes(bay).shelf_thickness
     idx = int(opening.get('hb_opening_index', 0))
     zs = [float(sh.get('hb_z_offset', 0.0)) for sh in shelves]
+    # A typed height is the most the opening may be: the shelf lands on
+    # the hole that gives the opening that height or the next one down.
     if idx < len(shelves):
-        # Capped: the shelf above moves; the opening's floor stays.
+        # Capped: the shelf above moves (down to a hole); the opening's
+        # floor stays.
         k = idx
         target = float(opening.get('hb_seg_bottom', 0.0)) + value
+        up = False
     else:
-        # Top opening: the shelf below moves; the bay top stays.
+        # Top opening: the shelf below moves (up to a hole); the bay
+        # top stays.
         k = len(shelves) - 1
         target = interior_h - value - st
+        up = True
     lo = (zs[k - 1] + st if k > 0 else 0.0) + MIN_OPENING_CLEAR
     hi = ((zs[k + 1] if k + 1 < len(zs) else interior_h)
           - st - MIN_OPENING_CLEAR)
-    z = _snap_shelf_offset(target, lo, hi)
+    z = _snap_shelf_offset(target, lo, hi, up)
     if z is None:
         return False
     shelves[k]['hb_z_offset'] = float(z)
