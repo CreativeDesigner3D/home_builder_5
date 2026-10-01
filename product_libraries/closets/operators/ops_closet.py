@@ -976,12 +976,9 @@ class hb_closets_OT_place_starter(bpy.types.Operator,
             if getattr(self, '_stack_handle', None) is None:
                 self._stack_handle = bpy.types.SpaceView3D.draw_handler_add(
                     _draw_stack_highlight, (self,), 'WINDOW', 'POST_VIEW')
-            hb_placement.draw_header_text(
-                context, f"Stacks on {base.name}'s countertop: click to "
-                "place, Esc to cancel")
         else:
             self._clear_stack_highlight()
-            self._update_header(context)
+        self._update_header(context)
         if context.area is not None:
             context.area.tag_redraw()
 
@@ -1459,6 +1456,14 @@ class hb_closets_OT_place_starter(bpy.types.Operator,
         mode = "auto" if self._auto_bay_qty else "manual"
         width_str = units.unit_to_string(
             context.scene.unit_settings, self._cabinet_width)
+        stack = getattr(self, '_stack_base_name', "")
+        if stack and self.placement_state !=                 hb_placement.PlacementState.TYPING:
+            hb_placement.draw_header_text(
+                context,
+                f"{title}  -  stacks on {stack}'s countertop  -  "
+                f"{bay_label} ({mode})  -  width: {width_str}  -  "
+                "Up/Down: bays   Click: place   Esc: cancel")
+            return
         if self.placement_state == hb_placement.PlacementState.TYPING:
             typed = self.get_typed_display_string()
             label = {
