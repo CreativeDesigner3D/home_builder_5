@@ -1082,6 +1082,42 @@ def _place(obj, x0, x1, z0, z1, y, thickness=None):
         part.set_input('Thickness', thickness)
 
 
+def face_frame_style(appliance_obj):
+    """The face frame cabinet style an appliance's panels wear: the
+    housing cabinet's, else the one assigned to the appliance itself,
+    else the active one. None when the file has no face frame styles."""
+    from . import props_hb_face_frame as props
+    ff = props.get_style_props()
+    if ff is None or not len(ff.cabinet_styles):
+        return None
+    by_name = {cs.name: cs for cs in ff.cabinet_styles}
+    obj = appliance_obj.parent if appliance_obj is not None else None
+    while obj is not None:
+        if obj.get('IS_FACE_FRAME_CABINET_CAGE'):
+            cs = by_name.get(obj.get('STYLE_NAME'))
+            if cs is not None:
+                return cs
+            break
+        obj = obj.parent
+    if appliance_obj is not None:
+        cs = by_name.get(appliance_obj.get('STYLE_NAME'))
+        if cs is not None:
+            return cs
+    idx = ff.active_cabinet_style_index
+    if not (0 <= idx < len(ff.cabinet_styles)):
+        return None
+    return ff.cabinet_styles[idx]
+
+
+def _is_housed(appliance_obj):
+    obj = appliance_obj.parent
+    while obj is not None:
+        if obj.get('IS_FACE_FRAME_CABINET_CAGE'):
+            return True
+        obj = obj.parent
+    return False
+
+
 def _finish_part(obj):
     """Backers / rails take the active cabinet style's finish (surface +
     rotated edges), the way the other non-cabinet products do."""
@@ -1093,14 +1129,9 @@ def _finish_part(obj):
             _paint_frameless(obj, finish, edge)
             obj['CABINET_STYLE_NAME'] = cab.name
         return
-    from . import props_hb_face_frame as props
-    ff = props.get_style_props()
-    if ff is None:
+    cs = face_frame_style(obj.parent)
+    if cs is None:
         return
-    idx = ff.active_cabinet_style_index
-    if not (0 <= idx < len(ff.cabinet_styles)):
-        return
-    cs = ff.cabinet_styles[idx]
     finish_mat, finish_mat_rotated = cs.get_finish_material()
     if finish_mat is None:
         return
@@ -1365,22 +1396,64 @@ def repaint_frameless(appliance_obj):
 
 def _apply_front_style(front_obj, section):
     """Style a face the way a cabinet styles its fronts: the face's own
-    pick, else the active cabinet style's door or drawer front style."""
+    pick, else the panel's cabinet style's door or drawer front style
+    (face_frame_style), then that cabinet style's finish."""
     if front_obj.parent is not None and _is_frameless(front_obj.parent):
         _apply_front_style_frameless(front_obj, front_obj.parent)
         return
+    cs = face_frame_style(front_obj.parent)
     role = front_obj.get('hb_part_role')
     key = (SECTION_DRAWER_STYLE_KEY
            if role == types_face_frame.PART_ROLE_DRAWER_FRONT
            else SECTION_DOOR_STYLE_KEY)
-    ds = types_face_frame.active_front_style_for_role(role, section.get(key))
-    if ds is None:
+    ds = types_face_frame.active_front_style_for_role(
+        role, section.get(key), cabinet_style=cs)
+    if ds is not None:
+        ds.assign_style_to_front(front_obj)
+    if cs is None:
         return
-    ds.assign_style_to_front(front_obj)
-    from . import props_hb_face_frame as style_props
-    ff = style_props.get_style_props()
-    if ff is not None and 0 <= ff.active_cabinet_style_index < len(ff.cabinet_styles):
-        front_obj['STYLE_NAME'] = ff.cabinet_styles[ff.active_cabinet_style_index].name
+    front_obj['STYLE_NAME'] = cs.name
+    # A cabinet's fronts take its finish in the cabinet's material walk;
+    # a panel has no cabinet walking it, so the finish is set here.
+    finish_mat, finish_mat_rotated = cs.get_finish_material()
+    if finish_mat is None:
+        return
+    face_mat = finish_mat
+    if (cs._door_style_grain(front_obj) == 'HORIZONTAL'
+            and finish_mat_rotated is not None):
+        face_mat = finish_mat_rotated
+    cs._set_part_surfaces(front_obj, face_mat, finish_mat_rotated)
+    cs._set_door_modifier_materials(front_obj, finish_mat, finish_mat_rotated)
+
+
+def repaint(appliance_obj):
+    """Restyle an appliance's built panels from the cabinet style they
+    wear now (after a style is assigned to the appliance or its
+    housing cabinet, or the style itself changes). Nothing moves."""
+    if _is_frameless(appliance_obj):
+        repaint_frameless(appliance_obj)
+        return
+    props = appliance_obj.appliance_panels
+    for child in list(appliance_obj.children):
+        if child.get(TAG_FRONT):
+            i = child.get('AP_SECTION_INDEX', -1)
+            if 0 <= i < len(props.sections):
+                _apply_front_style(child, props.sections[i])
+        elif child.get(TAG_BACKER) or child.get(TAG_RAIL):
+            _finish_part(child)
+
+
+def panel_appliance_for(obj):
+    """The appliance whose built panel run `obj` belongs to (a panel,
+    backer, rail or pull, or the appliance itself), else None."""
+    cur = obj
+    while cur is not None:
+        if cur.get('IS_APPLIANCE'):
+            if cur.get('APPLIANCE_PANEL_STRUCTURE'):
+                return cur
+            return None
+        cur = cur.parent
+    return None
 
 
 def rebuild(appliance_obj):
@@ -1390,6 +1463,13 @@ def rebuild(appliance_obj):
     props = appliance_obj.appliance_panels
     if not props.sections:
         return
+    # A standalone appliance keeps the style its panels were first built
+    # in, so picking another active style later doesn't restyle it.
+    if (not _is_frameless(appliance_obj) and not _is_housed(appliance_obj)
+            and not appliance_obj.get('STYLE_NAME')):
+        cs = face_frame_style(appliance_obj)
+        if cs is not None:
+            appliance_obj['STYLE_NAME'] = cs.name
     dim_x, dim_y, dim_z = _cage_dims(appliance_obj)
     run_x0, run_x1, run_z0, run_z1 = _flush_run(appliance_obj, dim_x, dim_z)
     faces, backers, rails = solve(props, run_x1 - run_x0, run_z1 - run_z0)

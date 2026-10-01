@@ -668,7 +668,8 @@ def _propagate_cabinet_style(self, context):
             continue
         if not any(obj.get('STYLE_NAME') == self.name
                    and (obj.get('IS_FACE_FRAME_CABINET_CAGE')
-                        or obj.get('APPLIANCE_TYPE') == 'HOOD')
+                        or obj.get('APPLIANCE_TYPE') == 'HOOD'
+                        or _is_panel_appliance(obj))
                    for obj in scene.objects):
             continue
         try:
@@ -679,6 +680,13 @@ def _propagate_cabinet_style(self, context):
         except Exception as ex:
             print("Home Builder: style %r not applied in %r: %s"
                   % (self.name, scene.name, ex))
+
+
+def _is_panel_appliance(obj):
+    """A standalone appliance with a built panel run (its panels wear the
+    STYLE_NAME stamped on it; housed ones follow their cabinet)."""
+    return bool(obj.get('IS_APPLIANCE')
+                and obj.get('APPLIANCE_PANEL_STRUCTURE'))
 
 
 def _restyle_room(self, scene):
@@ -698,10 +706,14 @@ def _restyle_room(self, scene):
         targets = [obj for obj in scene.objects
                    if obj.get('STYLE_NAME') == target_name
                    and (obj.get('IS_FACE_FRAME_CABINET_CAGE')
-                        or obj.get('APPLIANCE_TYPE') == 'HOOD')]
+                        or obj.get('APPLIANCE_TYPE') == 'HOOD'
+                        or _is_panel_appliance(obj))]
         for obj in targets:
             if obj.get('IS_FACE_FRAME_CABINET_CAGE'):
                 self.assign_style_to_cabinet(obj)
+            elif _is_panel_appliance(obj):
+                from . import appliance_panels
+                appliance_panels.repaint(obj)
             else:
                 # Hood doors are static python-built meshes: a door-style
                 # / overlay edit must rebuild the built hood (the rebuild
@@ -1210,6 +1222,24 @@ def apply_style_colors(context):
                 child.color = part_colour
         if tint is not None:
             tinted += 1
+
+    # Panels on a standalone appliance wear the style stamped on it (a
+    # housed one was reached through its cabinet above). Only the panel
+    # run is tinted, not the appliance model behind it.
+    from . import appliance_panels
+    for app in [o for o in scene.objects if _is_panel_appliance(o)]:
+        if appliance_panels._is_housed(app):
+            continue
+        tint = _style_tint_for_cabinet(app, styles) if on else None
+        part_colour = (_NO_STYLE_TINT if tint is None
+                       else (tint[0], tint[1], tint[2], 1.0))
+        for child in app.children:
+            if (child.get(appliance_panels.TAG_FRONT)
+                    or child.get(appliance_panels.TAG_BACKER)
+                    or child.get(appliance_panels.TAG_RAIL)):
+                child.color = part_colour
+                for sub in child.children_recursive:
+                    sub.color = part_colour
 
     # The colour only shows in solid shading's OBJECT mode; remember what
     # the viewport had so turning this off gives it back.
@@ -2459,6 +2489,12 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         from . import types_face_frame
         with types_face_frame.suspend_recalc():
             self._assign_style_to_cabinet_inner(cabinet_obj)
+        # Panels on an appliance housed in the cabinet wear its style.
+        from . import appliance_panels
+        for child in list(cabinet_obj.children_recursive):
+            if (child.get('IS_APPLIANCE')
+                    and child.get('APPLIANCE_PANEL_STRUCTURE')):
+                appliance_panels.repaint(child)
 
     def _assign_style_to_cabinet_inner(self, cabinet_obj):
         self.apply_overlay_to_cabinet(cabinet_obj)

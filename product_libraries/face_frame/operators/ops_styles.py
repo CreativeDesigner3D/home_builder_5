@@ -631,6 +631,28 @@ def _apply_style_finish_to_bare_part(style, part_obj):
     return True
 
 
+def _standalone_panel_appliance(obj):
+    """The appliance `obj` belongs to when it carries a built panel run
+    and stands on its own (not housed in a cabinet, whose style its
+    panels follow), else None."""
+    from .. import appliance_panels
+    app = appliance_panels.panel_appliance_for(obj)
+    if (app is None or appliance_panels._is_housed(app)
+            or appliance_panels.panel_library(app) != 'FACE_FRAME'):
+        return None
+    return app
+
+
+def _assign_style_to_appliance(style, appliance_obj):
+    """Stamp a cabinet style on a standalone appliance and restyle its
+    panels (fronts, backers, rails) from it."""
+    from .. import appliance_panels
+    appliance_obj['STYLE_NAME'] = style.name
+    if not style.rename_anchor:
+        style.rename_anchor = style.name
+    appliance_panels.repaint(appliance_obj)
+
+
 class hb_face_frame_OT_assign_style_to_selected_cabinets(Operator):
     """Apply the active cabinet style to every selected face frame cabinet"""
     bl_idname = "hb_face_frame.assign_style_to_selected_cabinets"
@@ -658,8 +680,15 @@ class hb_face_frame_OT_assign_style_to_selected_cabinets(Operator):
         cab_roots = []
         hood_roots = []
         bare_parts = []
+        appliances = []
         seen = set()
         for obj in context.selected_objects:
+            app = _standalone_panel_appliance(obj)
+            if app is not None:
+                if app.name not in seen:
+                    seen.add(app.name)
+                    appliances.append(app)
+                continue
             root = types_face_frame.find_cabinet_root(obj)
             if root is not None:
                 if root.name not in seen:
@@ -676,7 +705,7 @@ class hb_face_frame_OT_assign_style_to_selected_cabinets(Operator):
                 seen.add(part.name)
                 bare_parts.append(part)
 
-        if not cab_roots and not hood_roots and not bare_parts:
+        if not cab_roots and not hood_roots and not bare_parts and not appliances:
             self.report({'WARNING'}, "No face frame cabinets or wood hoods in selection")
             return {'CANCELLED'}
 
@@ -689,7 +718,9 @@ class hb_face_frame_OT_assign_style_to_selected_cabinets(Operator):
             wood_hoods.rebuild_built_hood(hood)
         for part in bare_parts:
             _apply_style_finish_to_bare_part(style, part)
-        n = len(cab_roots) + len(hood_roots) + len(bare_parts)
+        for app in appliances:
+            _assign_style_to_appliance(style, app)
+        n = len(cab_roots) + len(hood_roots) + len(bare_parts) + len(appliances)
         _refresh_style_colors(context)
         self.report({'INFO'}, f"Applied '{style.name}' to {n} item(s)")
         return {'FINISHED'}
@@ -795,7 +826,12 @@ class hb_face_frame_OT_paint_assign_cabinet_style(bpy.types.Operator):
             return None
         # The hit may be any cabinet or hood part -- resolve to the cabinet
         # root, else fall back to the wood-hood cage, else a bare part
-        # (Wood Top / Misc Part) standing on its own.
+        # (Wood Top / Misc Part) standing on its own. A standalone
+        # appliance's panels resolve to the appliance, so the whole run
+        # takes the style rather than the one part clicked.
+        app = _standalone_panel_appliance(obj)
+        if app is not None:
+            return app
         root = types_face_frame.find_cabinet_root(obj)
         if root is not None:
             return root
@@ -815,6 +851,9 @@ class hb_face_frame_OT_paint_assign_cabinet_style(bpy.types.Operator):
             return
         if root.get('IS_FACE_FRAME_CABINET_CAGE'):
             style.assign_style_to_cabinet(root)
+            _refresh_style_colors(context)
+        elif _standalone_panel_appliance(root) is root:
+            _assign_style_to_appliance(style, root)
             _refresh_style_colors(context)
         elif root.get('APPLIANCE_TYPE') == 'HOOD':
             # Stamp the style, then rebuild a built wood hood so its
