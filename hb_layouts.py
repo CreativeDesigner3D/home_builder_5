@@ -988,17 +988,19 @@ def is_helper_object(obj) -> bool:
     they link the real part objects and hang off a collection instance
     rather than a scene. The part also keeps its parent, so a content
     rebuild walking children finds it and links it back on every sync.
-    A live part always belongs to the scene it was built in; one that
-    belongs to no scene at all has been deleted, so drop it. Scoped to
-    tagged parts on purpose: annotations legitimately live outside the
-    model scene, in their own page's collections.
+    A live model object always belongs to the scene it was built in; one
+    that belongs to no scene at all has been deleted, so drop it. That
+    holds for anything parented into the model -- a mesh the user
+    modeled and dropped on a cabinet comes back just the same as a
+    part. Annotations are the exception: they legitimately live outside
+    the model scene, in their own page's collections, and every one
+    carries IS_2D_ANNOTATION.
     """
     if obj.get('obj_x') or obj.get('IS_RENDER_ONLY'):
         return True
     if 'Overlay Prompt Obj' in obj.name:
         return True
-    if ((obj.get('CABINET_PART') or obj.get('hb_part_role'))
-            and not obj.users_scene):
+    if not obj.users_scene and not obj.get('IS_2D_ANNOTATION'):
         return True
     return False
 
