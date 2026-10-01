@@ -1600,22 +1600,18 @@ def _door_type_symbol(cage_obj, kind, opts, x0, x1, T, y_center, st, ct,
     return obj
 
 
-def _fit_swing_to_leaf(cage_obj, x0=0.0, inset=0.0, y_shift=0.0,
-                       thickness=None):
+def _fit_swing_to_leaf(cage_obj, x0=0.0, inset=0.0, thickness=None):
     """Fit the swing annotation to the modeled leaf instead of the
     whole cage. The cage's Dim X is the overall unit including the
     casing band and jambs, so a symbol drawn across it hinges out at
     the casing edge and swings a wider arc than the slab - in plan it
     reads beside the leaf rather than on it. The annotation shifts to
     the leaf zone's start and its width driver deducts the frame, so
-    it still follows the cage when the width is edited live. The
-    symbol pivots on a wall face while the slab hinges inside the
-    frame; y_shift moves it onto the slab's hinge line."""
+    it still follows the cage when the width is edited live."""
     child = _swing_child(cage_obj)
     if child is None:
         return
     child.location.x = x0
-    child.location.y = y_shift
     if thickness is not None:
         try:
             hb_types.GeoNodeObject(child).set_input('Door Thickness',
@@ -1843,12 +1839,7 @@ def build_door_geometry(cage_obj):
     slab_zone_w = door_x1 - door_x0
     is_double, is_left, swing_inside = _swing_state(cage_obj)
     _show_swing_arc(cage_obj, kind == 'SWING')
-    # The symbol pivots on the far face for its swing (T inswing, 0
-    # outswing); the slab hinges on its own face at y_center_front.
-    _fit_swing_to_leaf(
-        cage_obj, door_x0, W - (door_x1 - door_x0),
-        (y_center_front - T) if swing_inside else (y_center_front + st),
-        st)
+    _fit_swing_to_leaf(cage_obj, door_x0, W - (door_x1 - door_x0), st)
     if kind != 'SWING':
         side = -1.0 if swing_inside else 1.0
         y_center = y_center_front + st / 2.0
