@@ -68,9 +68,9 @@ TEXT_COLOR      = (0.95, 0.95, 0.95, 1.0)
 TEXT_COLOR_DIM  = (0.95, 0.95, 0.95, 0.45)
 EDIT_TEXT_COLOR = (1.0, 1.0, 1.0, 1.0)
 
-# Characters accepted by the typed-distance grammar (parse_typed_distance):
-# digits, decimal point, fractions, feet/inch marks, embedded spaces.
-_INPUT_CHARS = set("0123456789./-'\" ")
+# Caracteres aceitos pela gramática de medidas (parse_typed_distance): dígitos, vírgula/ponto decimal,
+# sinal e sufixos mm/cm/m (sem frações nem pés/polegadas — PL-03).
+_INPUT_CHARS = set("0123456789.,-mcMC ")
 
 # ---- Module state -------------------------------------------------------
 
@@ -90,9 +90,6 @@ _addon_keymaps = []
 
 class _DistanceParser:
     parse_typed_distance = hb_placement.PlacementMixin.parse_typed_distance
-    _parse_feet_inches = hb_placement.PlacementMixin._parse_feet_inches
-    _extract_number = hb_placement.PlacementMixin._extract_number
-    _number_to_scene_units = hb_placement.PlacementMixin._number_to_scene_units
     typed_value = ""
 
 

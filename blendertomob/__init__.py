@@ -7,7 +7,7 @@ from bpy.app.handlers import persistent  # type: ignore
 
 # Hot-reload submodules during active development
 _submodule_names = [
-    "compat", "data", "geometry", "cutting", "ui", "overlays",
+    "compat", "data", "standards", "geometry", "cutting", "ui", "overlays",
     "hb_props", "hb_project", "hb_props_obstacles", "ops",
     "view3d_sidebar", "menu_apend", "menus",
     "walls", "doors_windows", "layouts", "rooms", "details",
@@ -23,6 +23,7 @@ for _mod_name in _submodule_names:
 # Import modern modules
 from . import compat as compat
 from . import data
+from . import standards
 from . import geometry as geometry
 from . import cutting as cutting
 from . import ui
@@ -75,6 +76,9 @@ def load_file_post(scene):
     # Ensure a default frameless style is created
     if main_scene and hasattr(main_scene, "hb_frameless"):
         main_scene.hb_frameless.ensure_default_style()
+
+    # Padrão de Dimensões: definições embutidas e migrações M-01/M-02 (uma vez por arquivo).
+    standards.migration.run(main_scene)
 
     # Modal operators do not survive a .blend load -- re-arm the HUD listener.
     from .operators import viewport_hud
@@ -207,6 +211,8 @@ def register():
 
     # Register modern data layer and translation
     data.register()
+    standards.register()
+    cutting.register()
 
     # Register legacy properties
     hb_props.register()
@@ -300,6 +306,8 @@ def unregister():
     hb_props.unregister()
 
     # Unregister modern data
+    cutting.unregister()
+    standards.unregister()
     data.unregister()
 
     try:

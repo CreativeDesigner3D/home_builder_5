@@ -103,8 +103,70 @@ translations_dict = {
         ("*", "Folga entre Portas"): "Door Clearance Gap",
         ("*", "Recuo do Fundo"): "Back Panel Inset",
         ("*", "Profundidade do Canal"): "Groove Depth",
+        # Padrão de Dimensões / Configurador (T044)
+        ("*", "Padrão de Dimensões"): "Dimension Standard",
+        ("*", "Abrir Configurador de Dimensões"): "Open Dimension Configurator",
+        ("*", "Config. Dimensões"): "Dimension Settings",
+        ("*", "Aplicar Padrão de Dimensões"): "Apply Dimension Standard",
+        ("*", "Definir Definição Ativa"): "Set Active Definition",
+        ("*", "Definir e aplicar"): "Set and Apply",
+        ("*", "Duplicar Definição"): "Duplicate Definition",
+        ("*", "Duplicar para editar"): "Duplicate to Edit",
+        ("*", "Renomear Definição"): "Rename Definition",
+        ("*", "Excluir Definição"): "Delete Definition",
+        ("*", "Exportar Definição (JSON)"): "Export Definition (JSON)",
+        ("*", "Importar Definição (JSON)"): "Import Definition (JSON)",
+        ("*", "Importar do Promob"): "Import from Promob",
+        ("*", "Exportar para o Promob"): "Export to Promob",
+        ("*", "Exportar p/ Promob"): "Export to Promob",
+        ("*", "Relatório do Padrão de Dimensões"): "Dimension Standard Report",
+        ("*", "Incluir medidas manuais"): "Include Manual Measurements",
+        ("*", "Definição"): "Definition",
+        ("*", "Nome"): "Name",
+        ("*", "Buscar"): "Search",
+        ("*", "Valor"): "Value",
+        ("*", "Aplicar"): "Apply",
+        ("*", "Fechar"): "Close",
+        ("*", "Importar"): "Import",
+        ("*", "Exportar"): "Export",
+        ("*", "Medidas Máximas"): "Maximum Measurements",
+        ("*", "Dimensões Externas"): "External Dimensions",
+        ("*", "Chapas"): "Sheets",
+        ("*", "Componentes"): "Components",
+        ("*", "Nenhuma alteração pendente."): "No pending changes.",
+        ("*", "Selecione um parâmetro na árvore."): "Select a parameter in the tree.",
+        ("*", "Imagem de referência indisponível."): "Reference image unavailable.",
+        # Lista de peças e plano de corte (T044)
+        ("*", "Lista de Peças e Plano de Corte"): "Parts List and Cut Plan",
+        ("*", "Exportar JSON Global"): "Export Global JSON",
+        ("*", "Importar JSON Global"): "Import Global JSON",
+        ("*", "Exportar Peças (CSV)"): "Export Parts (CSV)",
+        ("*", "Incluir dados do cliente"): "Include Client Data",
+        ("*", "Incluir Dados do Cliente"): "Include Client Data",
+        ("*", "Incluir plano de corte"): "Include Cut Plan",
+        ("*", "Plano de Corte Desatualizado"): "Cut Plan Out of Date",
+        ("*", "O projeto mudou: recalcule o plano de corte."): "The project changed: recalculate the cut plan.",
+        ("*", "Nenhuma otimização calculada."): "No optimization calculated.",
+        ("*", "Otimizador de Chapas MDF"): "MDF Sheet Optimizer",
     }
 }
+
+
+def _schema_translations():
+    """Rótulos do esquema do Padrão de Dimensões (label_pt → label_en), gerados do próprio esquema."""
+    from . import dimension_schema as schema
+    entries = {}
+    for param in schema.PARAMS.values():
+        entries[("*", param.label_pt)] = param.label_en
+    for comp in schema.COMPONENTS:
+        entries[("*", comp.label_pt)] = comp.label_en
+    for _code, pt, en in schema.LINES:
+        entries[("*", pt)] = en
+    return entries
+
+
+for _key, _value in _schema_translations().items():
+    translations_dict["en_US"].setdefault(_key, _value)
 
 
 def register():

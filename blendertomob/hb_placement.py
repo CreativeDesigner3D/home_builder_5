@@ -60,7 +60,7 @@ NUMBER_KEYS = {
     'NUMPAD_8': '8', 'NUMPAD_9': '9',
     'PERIOD': '.', 'NUMPAD_PERIOD': '.',
     'MINUS': '-', 'NUMPAD_MINUS': '-',
-    'SLASH': '/', 'NUMPAD_SLASH': '/',  # For fractions like 3/4
+    'COMMA': ',',  # vírgula decimal (pt-BR)
 }
 
 
@@ -282,110 +282,21 @@ class PlacementMixin:
 
     def parse_typed_distance(self, value_str: str = None) -> float:
         """
-        Parse a typed string as a distance value, returning meters.
+        Interpreta a medida digitada e devolve metros (None se inválida).
 
-        Supports:
-        - Plain numbers (interpreted based on scene units)
-        - Feet and inches: 5'6" or 5' 6" or 5'6
-        - Fractions: 5/8 or 5 3/4
-        - Explicit units: 24" or 24in or 600mm or 0.6m
-
-        Returns None if parsing fails.
+        Aceita vírgula ou ponto decimal e os sufixos mm, cm e m; sem sufixo vale a unidade do usuário
+        (`btm_settings.btm_unit`). Frações e pés/polegadas não são aceitos (decisão PL-03).
         """
         if value_str is None:
             value_str = self.typed_value
-
-        value_str = value_str.strip()
+        value_str = (value_str or "").strip()
         if not value_str:
             return None
-
         try:
-            # Check for feet/inches notation: 5'6" or 5' 6"
-            if "'" in value_str:
-                return self._parse_feet_inches(value_str)
-
-            # Check for explicit units
-            if value_str.endswith('"') or value_str.lower().endswith('in'):
-                num = self._extract_number(value_str.rstrip('"').rstrip('in').rstrip('IN'))
-                return units.inch(num) if num is not None else None
-
-            if value_str.lower().endswith('mm'):
-                num = self._extract_number(value_str[:-2])
-                return units.millimeter(num) if num is not None else None
-
-            if value_str.lower().endswith('cm'):
-                num = self._extract_number(value_str[:-2])
-                return units.centimeter(num) if num is not None else None
-
-            if value_str.lower().endswith('m'):
-                num = self._extract_number(value_str[:-1])
-                return num  # Already in meters
-
-            if value_str.endswith("'") or value_str.lower().endswith('ft'):
-                num = self._extract_number(value_str.rstrip("'").rstrip('ft').rstrip('FT'))
-                return units.feet(num) if num is not None else None
-
-            # Plain number - interpret based on scene units
-            num = self._extract_number(value_str)
-            if num is not None:
-                return self._number_to_scene_units(num)
-
-        except (ValueError, ZeroDivisionError):
-            pass
-
-        return None
-
-    def _parse_feet_inches(self, value_str: str) -> float:
-        """Parse feet/inches notation like 5'6" or 5' 6 1/2" """
-        parts = value_str.replace('"', '').split("'")
-        feet_val = self._extract_number(parts[0].strip()) or 0
-
-        inches_val = 0
-        if len(parts) > 1 and parts[1].strip():
-            inches_val = self._extract_number(parts[1].strip()) or 0
-
-        return units.feet(feet_val) + units.inch(inches_val)
-
-    def _extract_number(self, s: str) -> float:
-        """
-        Extract a number from string, handling fractions like "3/4" or "5 3/4"
-        """
-        s = s.strip()
-        if not s:
+            return units.parse_length(value_str, units.get_scene_length_unit(bpy.context.scene),
+                                      allow_negative=True)
+        except ValueError:
             return None
-
-        # Check for fraction with whole number: "5 3/4"
-        if ' ' in s and '/' in s:
-            parts = s.split(' ')
-            whole = float(parts[0])
-            frac_parts = parts[1].split('/')
-            frac = float(frac_parts[0]) / float(frac_parts[1])
-            return whole + frac
-
-        # Check for simple fraction: "3/4"
-        if '/' in s:
-            parts = s.split('/')
-            return float(parts[0]) / float(parts[1])
-
-        # Plain number
-        return float(s)
-
-    def _number_to_scene_units(self, num: float) -> float:
-        """Convert a plain number to meters based on scene unit settings."""
-        unit_settings = bpy.context.scene.unit_settings
-
-        if unit_settings.system == 'IMPERIAL':
-            # Assume inches for imperial
-            return units.inch(num)
-        elif unit_settings.system == 'METRIC':
-            if unit_settings.length_unit == 'MILLIMETERS':
-                return units.millimeter(num)
-            elif unit_settings.length_unit == 'CENTIMETERS':
-                return units.centimeter(num)
-            else:
-                return num  # Meters
-        else:
-            return num  # None/generic - assume meters
 
     def get_typed_display_string(self) -> str:
         """Get a formatted string showing what the user is typing."""
@@ -393,15 +304,16 @@ class PlacementMixin:
             return ""
 
         target_name = {
-            TypingTarget.LENGTH: "Length",
-            TypingTarget.OFFSET_X: "Offset (←)",
-            TypingTarget.OFFSET_RIGHT: "Offset (→)",
-            TypingTarget.WIDTH: "Width",
-            TypingTarget.HEIGHT: "Height",
-            TypingTarget.DEPTH: "Depth",
-        }.get(self.typing_target, "Value")
+            TypingTarget.LENGTH: "Comprimento",
+            TypingTarget.OFFSET_X: "Afastamento (←)",
+            TypingTarget.OFFSET_RIGHT: "Afastamento (→)",
+            TypingTarget.WIDTH: "Largura",
+            TypingTarget.HEIGHT: "Altura",
+            TypingTarget.DEPTH: "Profundidade",
+        }.get(self.typing_target, "Valor")
 
-        return f"{target_name}: {self.typed_value}"
+        unit = units.UNIT_LABELS.get(units.get_scene_length_unit(bpy.context.scene), "")
+        return f"{target_name}: {self.typed_value} {unit}".rstrip()
 
     # -------------------------------------------------------------------------
     # Cancel / Cleanup

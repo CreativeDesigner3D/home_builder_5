@@ -17,8 +17,10 @@ class BTM_OT_CabinetBuilder(bpy.types.Operator):
     thickness: bpy.props.FloatProperty(name="Espessura MDF", default=0.018, min=0.006, subtype='DISTANCE')
 
     def invoke(self, context, event):
-        if hasattr(context.scene, "btm_settings"):
-            self.thickness = context.scene.btm_settings.config_lateral.thickness
+        # Espessura da lateral vem do Padrão de Dimensões ativo (linha Cozinha).
+        if hasattr(context.scene, "btm_standards"):
+            from ..standards import api
+            self.thickness = api.get_value_m(context.scene, 'COZ.sheets.LAT.thickness')
         return self.execute(context)
 
     def execute(self, context):

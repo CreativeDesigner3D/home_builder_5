@@ -6,6 +6,12 @@ Suporta refilo perimetral por borda, espessura da lâmina (kerf), veio da madeir
 
 
 class NestingPart:
+    """Peça de corte em mm. `height` é o comprimento (veio VERTICAL acompanha o comprimento) e `width` a largura.
+
+    `edges[4]`: espessura da fita por lado; lados 1–2 = bordas do comprimento, 3–4 = bordas da largura (clarify C-1).
+    Os nomes antigos `edge_left/right/top/bottom` continuam aceitos e são aliases de leitura de `edges`.
+    """
+
     def __init__(
         self,
         id,
@@ -20,9 +26,17 @@ class NestingPart:
         edge_top=0.0,
         edge_bottom=0.0,
         edge_left=0.0,
-        edge_right=0.0
+        edge_right=0.0,
+        uid=None,
+        component="UNCLASSIFIED",
+        edges=None,
+        finish="",
+        source="SYNTHETIC",
+        limit_status="OK",
+        module_uid=None,
     ):
         self.id = id
+        self.uid = str(uid) if uid else str(id)
         self.name = name
         self.width = float(width)
         self.height = float(height)
@@ -31,22 +45,49 @@ class NestingPart:
         self.material = material
         self.grain_direction = grain_direction.upper()  # 'NONE', 'VERTICAL', 'HORIZONTAL'
         self.module_ref = module_ref
-        self.edge_top = float(edge_top)
-        self.edge_bottom = float(edge_bottom)
-        self.edge_left = float(edge_left)
-        self.edge_right = float(edge_right)
+        self.module_uid = module_uid
+        self.component = component or "UNCLASSIFIED"
+        if edges is None:
+            edges = [edge_left, edge_right, edge_top, edge_bottom]
+        self.edges = [float(e or 0.0) for e in list(edges)[:4]] + [0.0] * (4 - min(4, len(edges)))
+        self.finish = finish or ""
+        self.source = source
+        self.limit_status = limit_status
+
+    # Aliases dos nomes antigos (v1)
+    @property
+    def edge_left(self):
+        return self.edges[0]
+
+    @property
+    def edge_right(self):
+        return self.edges[1]
+
+    @property
+    def edge_top(self):
+        return self.edges[2]
+
+    @property
+    def edge_bottom(self):
+        return self.edges[3]
 
     def to_dict(self):
         return {
             "id": self.id,
+            "uid": self.uid,
             "name": self.name,
             "width": self.width,
             "height": self.height,
             "quantity": self.quantity,
             "thickness": self.thickness,
             "material": self.material,
+            "finish": self.finish,
+            "component": self.component,
+            "source": self.source,
+            "limit_status": self.limit_status,
             "grain_direction": self.grain_direction,
             "module_ref": self.module_ref,
+            "module_uid": self.module_uid,
             "edges": {
                 "top": self.edge_top,
                 "bottom": self.edge_bottom,
@@ -99,10 +140,10 @@ def optimize_nesting(
     usable_width = sheet_width - (refilo_left + refilo_right)
     usable_height = sheet_height - (refilo_top + refilo_bottom)
 
-    # Separação de peças por agrupamento de espessura e material
+    # Separação das chapas por matéria-prima, espessura e acabamento (clarify C-2)
     groups = {}
     for p in parts:
-        key = (p.material, p.thickness)
+        key = (p.material, p.thickness, getattr(p, 'finish', ''))
         if key not in groups:
             groups[key] = []
         groups[key].append(p)
@@ -114,7 +155,7 @@ def optimize_nesting(
 
     global_sheet_id = 1
 
-    for (mat, th), group_parts in groups.items():
+    for (mat, th, finish), group_parts in groups.items():
         flat_parts = []
 
         for p in group_parts:
@@ -125,6 +166,7 @@ def optimize_nesting(
             if not (w_norm or w_rot):
                 all_unplaced.append({
                     "id": p.id,
+                    "uid": p.uid,
                     "name": p.name,
                     "width": p.width,
                     "height": p.height,
@@ -138,6 +180,7 @@ def optimize_nesting(
                 flat_parts.append({
                     "id": f"{p.id}_{i+1}" if p.quantity > 1 else p.id,
                     "part_id": p.id,
+                    "part_uid": p.uid,
                     "name": p.name,
                     "width": p.width,
                     "height": p.height,
@@ -175,6 +218,7 @@ def optimize_nesting(
                         shelf["parts"].append({
                             "id": part["id"],
                             "part_id": part["part_id"],
+                            "part_uid": part["part_uid"],
                             "name": part["name"],
                             "x": x + refilo_left,
                             "y": y + refilo_bottom,
@@ -216,6 +260,7 @@ def optimize_nesting(
                         "parts": [{
                             "id": part["id"],
                             "part_id": part["part_id"],
+                            "part_uid": part["part_uid"],
                             "name": part["name"],
                             "x": refilo_left,
                             "y": (usable_height - sheet["remaining_height"]) + refilo_bottom,
@@ -249,6 +294,7 @@ def optimize_nesting(
                         "id": global_sheet_id,
                         "material": mat,
                         "thickness": th,
+                        "finish": finish,
                         "width": sheet_width,
                         "height": sheet_height,
                         "usable_width": usable_width,
@@ -267,6 +313,7 @@ def optimize_nesting(
                             "parts": [{
                                 "id": part["id"],
                                 "part_id": part["part_id"],
+                                "part_uid": part["part_uid"],
                                 "name": part["name"],
                                 "x": refilo_left,
                                 "y": refilo_bottom,
@@ -290,6 +337,7 @@ def optimize_nesting(
                 else:
                     all_unplaced.append({
                         "id": part["id"],
+                        "uid": part["part_uid"],
                         "name": part["name"],
                         "width": part["width"],
                         "height": part["height"],

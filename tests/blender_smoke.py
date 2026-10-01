@@ -34,11 +34,32 @@ with tempfile.TemporaryDirectory() as directory:
     output = str(Path(directory) / 'cut_plan.json')
     assert bpy.ops.btm.export_cut_plan_json(filepath=output) == {'FINISHED'}
     exported = json.loads(Path(output).read_text())
-    assert len(exported['parts_catalog']) == 14
-    assert exported['project']['placed_parts_count'] == 14
+    assert exported['schema_version'] == '2.0.0'
+    assert len(exported['parts']) == 14
+    assert exported['cut_plan']['stats']['parts_placed'] == 14
+
+
+def assert_clean_unregister():
+    """T047: nada do add-on pode sobrar depois do unregister (propriedades, previews, handlers, timers)."""
+    from blendertomob.cutting import stale
+    from blendertomob.standards import migration, previews
+    assert not hasattr(bpy.types.Scene, 'btm_settings')
+    assert not hasattr(bpy.types.Scene, 'btm_standards')
+    assert not hasattr(bpy.types.WindowManager, 'btm_standards_draft')
+    assert previews._collection is None
+    assert stale.depsgraph_update_post not in bpy.app.handlers.depsgraph_update_post
+    assert addon.load_file_post not in bpy.app.handlers.load_post
+    assert not bpy.app.timers.is_registered(migration._startup_timer)
+    assert not hasattr(bpy.types, 'BTM_OT_StandardsConfigurator')
+    assert not hasattr(bpy.types, 'BTM_UL_StandardsTree')
+
+
 addon.unregister()
-assert not hasattr(bpy.types.Scene, 'btm_settings')
-addon.register()
-addon.load_file_post(None)
-addon.unregister()
+assert_clean_unregister()
+for _ in range(2):
+    addon.register()
+    addon.load_file_post(None)
+    assert bpy.context.scene.btm_standards.definitions, 'definições embutidas ausentes'
+    addon.unregister()
+    assert_clean_unregister()
 print('BLENDER_SMOKE_OK', flush=True)

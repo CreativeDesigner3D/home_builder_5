@@ -72,6 +72,39 @@ def _update_starter_prop(self, context):
     types_closets.recalculate_closet_starter(self.id_data)
 
 
+# Propriedade do starter → padrão da cena que a sincronização do Padrão de Dimensões aplica.
+_STARTER_SCENE_DEFAULTS = {
+    'depth': 'default_panel_depth',
+    'toe_kick_height': 'toe_kick_height',
+    'toe_kick_setback': 'toe_kick_setback',
+}
+
+
+def _scene_default(starter, name, scene):
+    props = getattr(scene, 'hb_closets', None)
+    if props is None:
+        return None
+    if name == 'height':
+        attr = {'BASE': 'base_panel_height', 'TALL': 'tall_panel_height'}.get(starter.closet_type)
+    else:
+        attr = _STARTER_SCENE_DEFAULTS.get(name)
+    return getattr(props, attr) if attr else None
+
+
+def _starter_prop_updater(name):
+    """Callback de update que, numa edição do usuário, marca `name` como medida manual (btm_overrides)."""
+    def update(self, context):
+        from . import types_closets
+        from ...standards import sync
+        root = self.id_data
+        if not sync.is_syncing() and id(root) not in types_closets._RECALCULATING:
+            default = _scene_default(self, name, context.scene)
+            if default is not None and abs(getattr(self, name) - default) > 1e-9:
+                sync.add_override(root, name)
+        types_closets.recalculate_closet_starter(root)
+    return update
+
+
 def _update_bay_prop(self, context):
     """Bay-level prop changed (height/depth/floor/remove flags)."""
     from . import types_closets
@@ -112,11 +145,11 @@ class Closet_Starter_Props(PropertyGroup):
     height: FloatProperty(
         name="Height", description="Panel height (Z)",
         default=const.BASE_PANEL_HEIGHT, unit='LENGTH', precision=4,
-        update=_update_starter_prop)  # type: ignore
+        update=_starter_prop_updater('height'))  # type: ignore
     depth: FloatProperty(
         name="Depth", description="Panel depth (Y)",
         default=const.DEFAULT_DEPTH, unit='LENGTH', precision=4,
-        update=_update_starter_prop)  # type: ignore
+        update=_starter_prop_updater('depth'))  # type: ignore
 
     closet_type: EnumProperty(
         name="Closet Type",
@@ -131,11 +164,11 @@ class Closet_Starter_Props(PropertyGroup):
     toe_kick_height: FloatProperty(
         name="Toe Kick Height",
         default=const.DEFAULT_TOE_KICK_HEIGHT, unit='LENGTH', precision=4,
-        update=_update_starter_prop)  # type: ignore
+        update=_starter_prop_updater('toe_kick_height'))  # type: ignore
     toe_kick_setback: FloatProperty(
         name="Toe Kick Setback",
         default=const.DEFAULT_TOE_KICK_SETBACK, unit='LENGTH', precision=4,
-        update=_update_starter_prop)  # type: ignore
+        update=_starter_prop_updater('toe_kick_setback'))  # type: ignore
 
     include_countertop: BoolProperty(
         name="Include Countertop", default=False,

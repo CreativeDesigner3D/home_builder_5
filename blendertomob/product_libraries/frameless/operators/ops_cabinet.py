@@ -49,11 +49,33 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
         if 'Remove Bottom' in cabinet_bp:
             self.remove_bottom = cabinet_bp['Remove Bottom']
         self.finished_interior = cabinet_bp.get('Finished Interior', False)
+        # Valores iniciais: o que o usuário alterar vira medida manual (btm_overrides), preservada
+        # quando o Padrão de Dimensões for reaplicado (D-16a).
+        self._initial = self._override_values()
 
         wm = context.window_manager
         return wm.invoke_props_dialog(self, width=300)
 
+    def _override_values(self):
+        return {
+            'Dim X': self.cabinet_width,
+            'Dim Z': self.cabinet_height,
+            'Dim Y': self.cabinet_depth,
+            'Toe Kick Height': self.toe_kick_height,
+            'Toe Kick Setback': self.toe_kick_setback,
+        }
+
+    def _register_overrides(self):
+        from ....standards import sync
+        initial = getattr(self, '_initial', None) or {}
+        for name, value in self._override_values().items():
+            if name in initial and abs(initial[name] - value) > 1e-9:
+                if name.startswith('Toe Kick') and name not in self.cabinet.obj:
+                    continue
+                sync.add_override(self.cabinet.obj, name)
+
     def check(self, context):
+        self._register_overrides()
         self.cabinet.set_input('Dim X', self.cabinet_width)
         self.cabinet.set_input('Dim Z', self.cabinet_height)
         self.cabinet.set_input('Dim Y', self.cabinet_depth)

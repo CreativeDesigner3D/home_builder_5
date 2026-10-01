@@ -10,54 +10,19 @@ from mathutils import Quaternion, Euler
 # version-agnostic. A missing input raises KeyError on 5.1 and
 # AttributeError on 5.2 - catch (KeyError, AttributeError) where needed,
 # or use try_get_gn_input for a default instead.
-GN_INPUTS_AS_RNA = bpy.app.version >= (5, 2, 0)
+#
+# The implementation lives in compat.py (single source of version
+# differences, CLAUDE.md). These names keep the identifier-based
+# signatures the legacy layer already uses.
+from . import compat
 
+GN_INPUTS_AS_RNA = compat.GN_INPUTS_AS_RNA
 
-def get_gn_input(mod, identifier):
-    """Read a geometry node modifier input value by socket identifier."""
-    if GN_INPUTS_AS_RNA:
-        return getattr(mod.properties.inputs, identifier).value
-    return mod[identifier]
-
-
-def set_gn_input(mod, identifier, value):
-    """Write a geometry node modifier input value by socket identifier."""
-    if GN_INPUTS_AS_RNA:
-        getattr(mod.properties.inputs, identifier).value = value
-    else:
-        mod[identifier] = value
-
-
-def try_get_gn_input(mod, identifier, default=None):
-    """get_gn_input, returning default when the input is missing (or the
-    identifier is empty / the socket has no value, e.g. Geometry)."""
-    if not identifier:
-        return default
-    if GN_INPUTS_AS_RNA:
-        item = getattr(mod.properties.inputs, identifier, None)
-        return getattr(item, 'value', default) if item is not None else default
-    return mod.get(identifier, default)
-
-
-def gn_input_ui_ref(mod, identifier):
-    """(owner, prop_name) pair for layout.prop() on a modifier input,
-    or None when the input isn't drawable (missing / no value socket)."""
-    if GN_INPUTS_AS_RNA:
-        item = getattr(mod.properties.inputs, identifier, None)
-        if item is None or not hasattr(item, 'value'):
-            return None
-        return item, 'value'
-    if identifier not in mod.keys():
-        return None
-    return mod, '["%s"]' % identifier
-
-
-def gn_input_data_path(mod, identifier):
-    """Animatable data path (driver_add / path_resolve) for a geometry
-    node modifier input value."""
-    if GN_INPUTS_AS_RNA:
-        return 'modifiers["%s"].properties.inputs.%s.value' % (mod.name, identifier)
-    return 'modifiers["%s"]["%s"]' % (mod.name, identifier)
+get_gn_input = compat.get_gn_input_by_id
+set_gn_input = compat.set_gn_input_by_id
+try_get_gn_input = compat.try_get_gn_input_by_id
+gn_input_ui_ref = compat.gn_input_ui_ref_by_id
+gn_input_data_path = compat.gn_input_data_path_by_id
 
 
 # =============================================================================

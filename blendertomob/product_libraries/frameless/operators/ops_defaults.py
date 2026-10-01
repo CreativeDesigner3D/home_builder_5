@@ -1,75 +1,189 @@
 import bpy
 from .... import hb_utils, hb_project, hb_types
 
+# ---------------------------------------------------------------------------------------------------------------
+# Funções de atualização (chamadas pela sincronização do Padrão de Dimensões, standards/sync.py, e pelos operadores)
+#
+# `skip(obj, prompt_name)` permite pular medidas editadas à mão (btm_overrides, RN-23); None = atualizar tudo.
+# Cada função devolve a quantidade de objetos alterados.
+# ---------------------------------------------------------------------------------------------------------------
+
+TOE_KICK_TYPE_INDEX = {
+    'Notch Ends to Floor': 0,
+    'Ladder Style': 1,
+    'Floating': 2,
+    'Leg Levelers': 3,
+}
+
+BASE_TOP_CONSTRUCTION_INDEX = {
+    'Full Top': 0,
+    'Stretchers': 1,
+}
+
+
+def _set_prompt(obj, name, value, skip):
+    if name not in obj or (skip and skip(obj, name)):
+        return False
+    if obj[name] == value:
+        return False
+    obj[name] = value
+    return True
+
+
+def update_toe_kick_prompts(context, skip=None):
+    """Aplica altura, recuo e tipo de rodapé padrão da cena a todos os objetos com esses prompts."""
+    props = context.scene.hb_frameless
+    type_index = TOE_KICK_TYPE_INDEX.get(props.default_toe_kick_type, 0)
+    count = 0
+    for obj in context.scene.objects:
+        changed = _set_prompt(obj, 'Toe Kick Height', props.default_toe_kick_height, skip)
+        changed |= _set_prompt(obj, 'Toe Kick Setback', props.default_toe_kick_setback, skip)
+        changed |= _set_prompt(obj, 'Toe Kick Type', type_index, skip)
+        if changed:
+            hb_utils.run_calc_fix(context, obj)
+            count += 1
+    return count
+
+
+def update_material_thickness_prompts(context, skip=None):
+    """Aplica a espessura padrão da caixa a `Material Thickness` e às espessuras usadas no cálculo das frentes."""
+    thickness = context.scene.hb_frameless.default_carcass_part_thickness
+    count = 0
+    for obj in context.scene.objects:
+        changed = _set_prompt(obj, 'Material Thickness', thickness, skip)
+        for key in ('Left Thickness', 'Right Thickness', 'Top Thickness', 'Bottom Thickness'):
+            changed |= _set_prompt(obj, key, thickness, skip)
+        if changed:
+            hb_utils.run_calc_fix(context, obj)
+            count += 1
+    return count
+
+
+def update_base_top_construction_prompts(context, skip=None):
+    """Aplica a construção do topo dos inferiores (tampo inteiro ou travessas) aos gabinetes BASE existentes.
+
+    Gabinetes com avental de pia (índice 2) são mantidos: é uma escolha do módulo, não do padrão.
+    """
+    props = hb_project.get_main_scene().hb_frameless
+    index = BASE_TOP_CONSTRUCTION_INDEX.get(props.base_top_construction)
+    if index is None:
+        return 0
+    count = 0
+    for obj in context.scene.objects:
+        if not obj.get('IS_FRAMELESS_CABINET_CAGE') or obj.get('CABINET_TYPE') != 'BASE':
+            continue
+        if obj.get('Base Top Construction') == 2:
+            continue
+        if _set_prompt(obj, 'Base Top Construction', index, skip):
+            hb_utils.run_calc_fix(context, obj)
+            count += 1
+    return count
+
+
+def update_drawer_front_height_prompts(context, new_height, old_height, skip=None):
+    """Troca a altura fixa das gavetas superiores que seguiam o padrão anterior (`old_height`).
+
+    A altura da gaveta superior é gravada na criação como `Opening 1 Height` fixo da calculadora do splitter;
+    só os valores iguais ao padrão anterior mudam — alturas escolhidas à mão são preservadas.
+    """
+    if old_height is None or abs(new_height - old_height) < 1e-9:
+        return 0
+    count = 0
+    for obj in context.scene.objects:
+        calculators = getattr(getattr(obj, 'home_builder', None), 'calculators', None)
+        if not calculators:
+            continue
+        if skip and skip(obj, 'Opening 1 Height'):
+            continue
+        for calculator in calculators:
+            prompt = calculator.get_calculator_prompt('Opening 1 Height')
+            if prompt is None or prompt.equal:
+                continue
+            if abs(prompt.distance_value - old_height) < 1e-6:
+                prompt.distance_value = new_height
+                calculator.calculate()
+                count += 1
+    return count
+
+
+def update_cabinet_sizes(context, skip=None):
+    """Aplica profundidade e altura padrão da cena aos gabinetes frameless conforme o tipo (BASE/TALL/UPPER)."""
+    props = hb_project.get_main_scene().hb_frameless
+    sizes = {
+        'BASE': (props.base_cabinet_depth, props.base_cabinet_height),
+        'TALL': (props.tall_cabinet_depth, props.tall_cabinet_height),
+        'UPPER': (props.upper_cabinet_depth, props.upper_cabinet_height),
+    }
+    count = 0
+    for obj in context.scene.objects:
+        if not obj.get('IS_FRAMELESS_CABINET_CAGE'):
+            continue
+        size = sizes.get(obj.get('CABINET_TYPE', ''))
+        if size is None:
+            continue
+        cabinet = hb_types.GeoNodeObject(obj)
+        changed = False
+        for input_name, value in (('Dim Y', size[0]), ('Dim Z', size[1])):
+            if skip and skip(obj, input_name):
+                continue
+            if abs(cabinet.get_input(input_name) - value) > 1e-9:
+                cabinet.set_input(input_name, value)
+                changed = True
+        if changed:
+            count += 1
+    return count
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Operadores (atalhos para as funções acima)
+# ---------------------------------------------------------------------------------------------------------------
+
 class hb_frameless_OT_update_toe_kick_prompts(bpy.types.Operator):
     bl_idname = "hb_frameless.update_toe_kick_prompts"
     bl_label = "Update Toe Kick Prompts"
+    bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        frameless_props = context.scene.hb_frameless
-        # Map enum string to COMBOBOX index
-        type_map = {
-            'Notch Ends to Floor': 0,
-            'Ladder Style': 1,
-            'Floating': 2,
-            'Leg Levelers': 3,
-        }
-        new_type_index = type_map.get(frameless_props.default_toe_kick_type, 0)
-
-        for obj in context.scene.objects:
-            if 'Toe Kick Height' in obj:
-                obj['Toe Kick Height'] = frameless_props.default_toe_kick_height
-            if 'Toe Kick Setback' in obj:
-                obj['Toe Kick Setback'] = frameless_props.default_toe_kick_setback
-            if 'Toe Kick Type' in obj:
-                obj['Toe Kick Type'] = new_type_index
-            hb_utils.run_calc_fix(context,obj)
+        count = update_toe_kick_prompts(context)
+        self.report({'INFO'}, f"Rodapé atualizado em {count} objeto(s)")
         return {'FINISHED'}
-
 
 
 class hb_frameless_OT_update_material_thickness_prompts(bpy.types.Operator):
     bl_idname = "hb_frameless.update_material_thickness_prompts"
     bl_label = "Update Material Thickness Prompts"
     bl_description = "Update all cabinets in the project with the current material thickness"
+    bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        frameless_props = context.scene.hb_frameless
-        thickness = frameless_props.default_carcass_part_thickness
-        updated_count = 0
-
-        for obj in context.scene.objects:
-            changed = False
-            if 'Material Thickness' in obj:
-                obj['Material Thickness'] = thickness
-                changed = True
-            for key in ('Left Thickness', 'Right Thickness', 'Top Thickness', 'Bottom Thickness'):
-                if key in obj:
-                    obj[key] = thickness
-                    changed = True
-            if changed:
-                hb_utils.run_calc_fix(context, obj)
-                updated_count += 1
-
-        self.report({'INFO'}, f"Updated material thickness on {updated_count} object(s)")
+        count = update_material_thickness_prompts(context)
+        self.report({'INFO'}, f"Espessura atualizada em {count} objeto(s)")
         return {'FINISHED'}
 
 
 class hb_frameless_OT_update_base_top_construction_prompts(bpy.types.Operator):
     bl_idname = "hb_frameless.update_base_top_construction_prompts"
     bl_label = "Update Base Top Construction Prompts"
+    bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        print('TODO: Update Base Top Construction Prompts')
+        count = update_base_top_construction_prompts(context)
+        self.report({'INFO'}, f"Topo atualizado em {count} gabinete(s)")
         return {'FINISHED'}
 
 
 class hb_frameless_OT_update_drawer_front_height_prompts(bpy.types.Operator):
     bl_idname = "hb_frameless.update_drawer_front_height_prompts"
     bl_label = "Update Drawer Front Height Prompts"
+    bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        print('TODO: Update Drawer Front Height Prompts')
+        props = hb_project.get_main_scene().hb_frameless
+        scene = context.scene
+        old_height = scene.get('btm_last_top_drawer_front_height')
+        count = update_drawer_front_height_prompts(context, props.top_drawer_front_height, old_height)
+        scene['btm_last_top_drawer_front_height'] = props.top_drawer_front_height
+        self.report({'INFO'}, f"Altura da gaveta superior atualizada em {count} vão(s)")
         return {'FINISHED'}
 
 
@@ -115,48 +229,15 @@ class hb_frameless_OT_update_cabinet_sizes(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-
-        # Get props from main scene
-        main_scene = hb_project.get_main_scene()
-        props = main_scene.hb_frameless
-
-        updated_count = 0
-
-        # Find all cabinets in the current scene
-        for obj in context.scene.objects:
-            if not obj.get('IS_FRAMELESS_CABINET_CAGE'):
-                continue
-
-            cabinet_type = obj.get('CABINET_TYPE', '')
-            cabinet = hb_types.GeoNodeObject(obj)
-
-            # Get the appropriate depth and height based on cabinet type
-            if cabinet_type == 'BASE':
-                new_depth = props.base_cabinet_depth
-                new_height = props.base_cabinet_height
-            elif cabinet_type == 'TALL':
-                new_depth = props.tall_cabinet_depth
-                new_height = props.tall_cabinet_height
-            elif cabinet_type == 'UPPER':
-                new_depth = props.upper_cabinet_depth
-                new_height = props.upper_cabinet_height
-            else:
-                # Unknown type, skip
-                continue
-
-            # Update depth (Dim Y) and height (Dim Z)
-            try:
-                cabinet.set_input('Dim Y', new_depth)
-                cabinet.set_input('Dim Z', new_height)
-                updated_count += 1
-            except Exception as e:
-                self.report({'WARNING'}, f"Could not update cabinet {obj.name}: {str(e)}")
-
-        if updated_count > 0:
-            self.report({'INFO'}, f"Updated {updated_count} cabinet(s)")
+        try:
+            count = update_cabinet_sizes(context)
+        except Exception as exc:
+            self.report({'WARNING'}, f"Não foi possível atualizar os gabinetes: {exc}")
+            return {'CANCELLED'}
+        if count:
+            self.report({'INFO'}, f"{count} gabinete(s) atualizado(s)")
         else:
-            self.report({'INFO'}, "No cabinets found to update")
-
+            self.report({'INFO'}, "Nenhum gabinete a atualizar")
         return {'FINISHED'}
 
 

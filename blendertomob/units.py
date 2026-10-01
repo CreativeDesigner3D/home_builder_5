@@ -17,4 +17,6 @@ from .data.units import (
     convert_to_meters as convert_to_meters,
     convert_from_meters as convert_from_meters,
     format_length_unit as format_length_unit,
+    unit_to_string as unit_to_string,
+    parse_length as parse_length,
 )

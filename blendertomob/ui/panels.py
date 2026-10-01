@@ -20,6 +20,107 @@ def _scene_has_walls(context):
 
 
 # ==========================================================================
+# Blocos reutilizáveis: Padrão de Dimensões e Plano de Corte (T039)
+# ==========================================================================
+
+SUMMARY_KEYS = (
+    ('COZ.sheets.LAT.thickness', "Lateral"),
+    ('COZ.sheets.FUN_INF.thickness', "Fundo"),
+    ('COZ.sheets.POR.thickness', "Portas"),
+    ('COZ.sheets.PRAT.thickness', "Prateleiras"),
+    ('COZ.external.base_height', "Altura balcão"),
+    ('COZ.external.base_depth', "Prof. balcão"),
+)
+
+
+def draw_standards_box(layout, context):
+    """Definição ativa, Configurador e gestão das definições."""
+    from ..data import dimension_schema as schema
+    from ..standards import api
+    scene = context.scene
+    box = layout.box()
+    box.label(text="Padrão de Dimensões", icon='CON_SIZELIMIT')
+    definition = api.active_definition(scene)
+    row = box.row(align=True)
+    row.operator_menu_enum("btm.standards_set_active", "definition",
+                           text=definition.name if definition else "Nenhuma definição",
+                           icon='LOCKED' if definition is not None and definition.builtin else 'PRESET')
+    row.operator("btm.standards_duplicate", text="", icon='DUPLICATE')
+    row.operator("btm.standards_rename", text="", icon='GREASEPENCIL')
+    row.operator("btm.standards_delete", text="", icon='TRASH')
+
+    col = box.column()
+    col.scale_y = 1.3
+    col.operator("btm.standards_configurator", text="Abrir Configurador de Dimensões", icon='WINDOW')
+
+    if definition is not None:
+        unit = api.user_unit(scene)
+        grid = box.grid_flow(columns=2, even_columns=True, align=True)
+        for key, title in SUMMARY_KEYS:
+            param = schema.get_param(key)
+            value = api.get_definition_value(definition, key)
+            grid.label(text=f"{title}: {api.format_param_value(param, value, unit)}")
+
+    sub = box.column(align=True)
+    row = sub.row(align=True)
+    row.operator("btm.standards_import_json", text="Importar", icon='IMPORT')
+    row.operator("btm.standards_export_json", text="Exportar", icon='EXPORT')
+    row = sub.row(align=True)
+    row.operator("btm.standards_import_promob", text="Importar do Promob", icon='IMPORT')
+    row.operator("btm.standards_export_promob", text="Exportar p/ Promob", icon='EXPORT')
+
+
+def draw_cut_plan(layout, context, compact=False):
+    """Cálculo, aviso de desatualizado, incompatíveis e exportações do plano de corte."""
+    from ..data import units as btm_units
+    from ..operators import ops_cutting
+    scene = context.scene
+    settings = scene.btm_settings
+
+    if settings.cut_plan_stale and "btm_nesting_sheets_count" in scene:
+        warn = layout.box()
+        warn.alert = True
+        warn.label(text="O projeto mudou: recalcule o plano de corte.", icon='ERROR')
+
+    row = layout.row(align=True)
+    row.scale_y = 1.3
+    row.operator("btm.calculate_nesting", text="Calcular Plano de Corte", icon='PLAY')
+
+    col = layout.column(align=True)
+    row = col.row(align=True)
+    row.operator("btm.export_cut_plan_json", text="Exportar JSON Global", icon='EXPORT')
+    row.operator("btm.export_parts_csv", text="Exportar Peças (CSV)", icon='SPREADSHEET')
+    if not compact:
+        col.operator("btm.import_cut_plan_json", text="Importar JSON Global", icon='IMPORT')
+        col.prop(settings, "cut_include_client")
+
+    box = layout.box()
+    box.label(text=scene.get("btm_nesting_result", "Nenhuma otimização calculada."), icon='INFO')
+    if compact:
+        return
+
+    if "btm_nesting_sheets_count" in scene:
+        col = box.column(align=True)
+        col.label(text=f"Total de peças: {scene.get('btm_nesting_parts_count', 0)}")
+        col.label(text=f"Chapas necessárias: {scene.get('btm_nesting_sheets_count', 0)}")
+        col.label(text=f"Aproveitamento: {scene.get('btm_nesting_utilization', 0.0)}%")
+
+    incompatible = ops_cutting.incompatible_parts(scene)
+    if incompatible:
+        bad = layout.box()
+        bad.alert = True
+        bad.label(text=f"Peças maiores que o limite de chapa: {len(incompatible)}", icon='ERROR')
+        col = bad.column(align=True)
+        for item in incompatible[:10]:
+            size = (f"{btm_units.format_value(item['length'] / 1000.0, scene)} × "
+                    f"{btm_units.format_value(item['width'] / 1000.0, scene)}")
+            reason = "comprimento" if item['status'] == 'EXCEEDS_LENGTH' else "largura"
+            col.label(text=f"{item['module']} › {item['name']}: {size} (excede {reason})")
+        if len(incompatible) > 10:
+            col.label(text=f"… e mais {len(incompatible) - 10}")
+
+
+# ==========================================================================
 # PAINEL PRINCIPAL: Criador de Ambientes (Blender to Mob)
 # ==========================================================================
 
@@ -73,7 +174,7 @@ class BTM_PT_EnvironmentBuilder(bpy.types.Panel):
             box.label(text="Mobiliário & Iluminação", icon='LIGHT')
             grid = box.grid_flow(columns=2, even_columns=True, even_rows=True, align=True)
             grid.operator("btm.cabinet_builder", text="Módulo Rápido", icon='OUTLINER_OB_MESH')
-            grid.operator("btm.dimension_settings_dialog", text="Config. Dimensões", icon='PREFERENCES')
+            grid.operator("btm.standards_configurator", text="Config. Dimensões", icon='PREFERENCES')
             grid.operator("home_builder_walls.add_room_lights", text="Luzes do Quarto", icon='LIGHT')
             grid.operator("home_builder_obstacles.place_obstacle", text="Inserir Obstáculo", icon='ERROR')
 
@@ -110,25 +211,8 @@ class BTM_PT_EnvironmentBuilder(bpy.types.Panel):
                 col.prop(settings, "snap_increment", text="Incremento do Snap")
             col.prop(settings, "collision_global", text="Evitar Colisões Físicas")
 
-            # 2. Configurador de Dimensões (Promob-Style)
-            box_dim = layout.box()
-            box_dim.label(text="Padrões de Marcenaria (Dimensões)", icon='CON_SIZELIMIT')
-            dim = settings.dimension_settings
-
-            col_d = box_dim.column(align=True)
-            col_d.prop(dim, "preset", text="Preset")
-
-            row_btn = box_dim.row(align=True)
-            row_btn.operator("btm.dimension_settings_dialog", text="Abrir Editor de Dimensões", icon='WINDOW')
-
-            # Resumo rápido de espessuras
-            box_th_summary = box_dim.box()
-            box_th_summary.label(text="Espessuras de Chapa Ativas", icon='MOD_SOLIDIFY')
-            grid_th = box_th_summary.grid_flow(columns=2, align=True)
-            grid_th.prop(dim, "carcass_thickness", text="Estrutura/Caixa")
-            grid_th.prop(dim, "back_thickness", text="Fundo")
-            grid_th.prop(dim, "door_thickness", text="Portas")
-            grid_th.prop(dim, "shelf_thickness", text="Prateleiras")
+            # 2. Padrão de Dimensões (Configurador de Dimensões)
+            draw_standards_box(layout, context)
 
             # 3. Limites e Especificações de Chapas MDF
             box_mdf = layout.box()
@@ -183,29 +267,8 @@ class BTM_PT_EnvironmentBuilder(bpy.types.Panel):
         # ------------------------------------------------------------------
         elif tab == 'PLANO_CORTE':
             box_actions = layout.box()
-            box_actions.label(text="Otimizador de Corte (Nesting)", icon='ALIGN_JUSTIFY')
-
-            row_calc = box_actions.row(align=True)
-            row_calc.scale_y = 1.3
-            row_calc.operator("btm.calculate_nesting", text="Calcular Plano de Corte", icon='PLAY')
-
-            row_exp = box_actions.row(align=True)
-            row_exp.scale_y = 1.2
-            row_exp.operator("btm.export_cut_plan_json", text="Exportar JSON (CorteCloud / CutList)", icon='EXPORT')
-
-            # Resumo do Plano Calculado
-            nesting_res = scene.get("btm_nesting_result", "Nenhuma otimização calculada.")
-            box_info = layout.box()
-            box_info.label(text="Status da Otimização", icon='INFO')
-            box_info.label(text=nesting_res)
-
-            if "btm_nesting_sheets_count" in scene:
-                box_metrics = layout.box()
-                box_metrics.label(text="Métricas do Projeto", icon='LINENUMBERS_ON')
-                col_m = box_metrics.column(align=True)
-                col_m.label(text=f"Total de Peças: {scene.get('btm_nesting_parts_count', 0)}")
-                col_m.label(text=f"Chapas Necessárias: {scene.get('btm_nesting_sheets_count', 0)}")
-                col_m.label(text=f"Aproveitamento: {scene.get('btm_nesting_utilization', 0.0)}%")
+            box_actions.label(text="Lista de Peças e Plano de Corte", icon='ALIGN_JUSTIFY')
+            draw_cut_plan(box_actions, context)
 
 
 # ==========================================================================
@@ -331,19 +394,8 @@ class BTM_PT_NestingPanel(bpy.types.Panel):
 
     def draw(self, context):
         layout = self.layout
-        scene = context.scene
-
         layout.label(text="Otimizador de Chapas MDF", icon='ALIGN_JUSTIFY')
-        row = layout.row(align=True)
-        row.scale_y = 1.2
-        row.operator("btm.calculate_nesting", text="Calcular Plano de Corte", icon='PLAY')
-
-        row_exp = layout.row(align=True)
-        row_exp.operator("btm.export_cut_plan_json", text="Exportar JSON Universal", icon='EXPORT')
-
-        nesting_res = scene.get("btm_nesting_result", "Nenhuma otimização calculada")
-        box = layout.box()
-        box.label(text=nesting_res, icon='INFO')
+        draw_cut_plan(layout, context, compact=True)
 
 
 # ==========================================================================

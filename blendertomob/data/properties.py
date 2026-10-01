@@ -55,6 +55,9 @@ def update_scene_unit(self, context):
         unit_settings.length_unit = 'CENTIMETERS'
     elif self.btm_unit == 'MILLIMETERS':
         unit_settings.length_unit = 'MILLIMETERS'
+    # Cotas legadas já criadas passam a mostrar a nova unidade.
+    from .. import hb_types
+    hb_types.refresh_dimension_units(context.scene)
 
 
 # ---------------------------------------------------------------------------
@@ -679,11 +682,24 @@ class BTM_PG_SceneSettings(bpy.types.PropertyGroup):
         default=True
     )  # type: ignore
 
-    # Dimension Settings & MDF Config Sub-groups
+    # Plano de corte (T037): marcado como desatualizado quando o padrão ou um módulo muda depois do cálculo.
+    cut_plan_stale: bpy.props.BoolProperty(
+        name="Plano de Corte Desatualizado",
+        description="O projeto mudou depois do último cálculo do plano de corte",
+        default=False
+    )  # type: ignore
+    cut_include_client: bpy.props.BoolProperty(
+        name="Incluir Dados do Cliente",
+        description="Grava nome e contato do cliente no JSON exportado (RN-21)",
+        default=True
+    )  # type: ignore
+
+    # OBSOLETOS desde o Padrão de Dimensões (Scene.btm_standards): `dimension_settings` e `config_*` são mantidos
+    # somente para a migração M-01 de arquivos antigos; nada novo deve ler ou escrever estes grupos.
     dimension_settings: bpy.props.PointerProperty(type=BTM_PG_DimensionSettings)  # type: ignore
     mdf_config: bpy.props.PointerProperty(type=BTM_PG_MDFSheetConfig)  # type: ignore
 
-    # Configurador de componentes individuais
+    # Configurador de componentes individuais (OBSOLETO: ver Scene.btm_standards; lido só pela migração)
     config_active_component: bpy.props.EnumProperty(
         name="Componente",
         description="Escolha o componente a configurar",

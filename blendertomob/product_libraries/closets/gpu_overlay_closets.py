@@ -50,7 +50,7 @@ TEXT_COLOR      = (0.95, 0.95, 0.95, 1.0)
 TEXT_COLOR_DIM  = (0.95, 0.95, 0.95, 0.45)
 EDIT_TEXT_COLOR = (1.0, 1.0, 1.0, 1.0)
 
-_INPUT_CHARS = set("0123456789./-'\" ")
+_INPUT_CHARS = set("0123456789.,-mcMC ")
 
 _HUD_MARGIN_Y = 12
 _HUD_BTN_H = 24
@@ -158,13 +158,9 @@ _addon_keymaps = []
 
 
 class _DistanceParser:
-    """Borrow the placement mixin's typed-distance grammar. All four
-    methods are needed - parse_typed_distance calls the other three
-    through self (face_frame's overlay lends the same set)."""
+    """Reusa a gramática de medidas digitadas do PlacementMixin (vírgula ou ponto decimal, mm/cm/m; sem
+    frações — PL-03). parse_typed_distance não depende de outros métodos (face_frame faz o mesmo)."""
     parse_typed_distance = hb_placement.PlacementMixin.parse_typed_distance
-    _parse_feet_inches = hb_placement.PlacementMixin._parse_feet_inches
-    _extract_number = hb_placement.PlacementMixin._extract_number
-    _number_to_scene_units = hb_placement.PlacementMixin._number_to_scene_units
     typed_value = ""
 
 

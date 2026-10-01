@@ -4,13 +4,14 @@ import math
 from typing import Optional
 from . import units
 from . import hb_utils
+from . import compat
 
 geometry_nodes_path = os.path.join(os.path.dirname(__file__),'geometry_nodes')
 cabinet_part_modifiers_path = os.path.join(geometry_nodes_path,'CabinetPartModifiers')
 
 
 # Cache of resolved input identifiers per geometry node group.
-# Layout: { id(node_group): { input_name: identifier } }
+# Layout: { node_group.session_uid: { input_name: identifier } }
 #
 # interface_update() syncs the modifier's input slots with the node group's
 # interface and is what turns property writes into actual evaluation.
@@ -18,36 +19,11 @@ cabinet_part_modifiers_path = os.path.join(geometry_nodes_path,'CabinetPartModif
 # input is stable for the group's lifetime, so subsequent writes can skip
 # the call. interface_update is the dominant cost in set_input
 # (~0.45ms/call); pure value writes are ~2000x faster.
-_INPUT_IDENT_CACHE = {}
-
-
-def _get_input_identifier(node_group, input_name):
-    """Return the modifier-side identifier for input_name, caching across calls.
-
-    On cache miss, runs interface_update so the modifier picks up the input
-    and a stable identifier can be captured. Subsequent hits skip the call.
-    """
-    group_cache = _INPUT_IDENT_CACHE.get(id(node_group))
-    if group_cache is not None:
-        ident = group_cache.get(input_name)
-        if ident is not None:
-            return ident
-    else:
-        group_cache = {}
-        _INPUT_IDENT_CACHE[id(node_group)] = group_cache
-
-    if input_name not in node_group.interface.items_tree:
-        raise ValueError(f"Input '{input_name}' not found in geometry node")
-
-    node_group.interface_update(bpy.context)
-    ident = node_group.interface.items_tree[input_name].identifier
-    group_cache[input_name] = ident
-    return ident
-
-
-def _invalidate_input_cache(node_group):
-    """Drop cached identifiers for a node group (used on schema mismatch)."""
-    _INPUT_IDENT_CACHE.pop(id(node_group), None)
+#
+# The cache itself lives in compat.py (one cache per node group, keyed by
+# session_uid) so the modern and legacy layers never disagree.
+_get_input_identifier = compat.get_input_identifier
+_invalidate_input_cache = compat.invalidate_input_cache
 
 
 def _gn_input_data_path(mod, identifier):
@@ -687,6 +663,24 @@ def ensure_dimension_text_offset_basis(ng):
     ng.links.new(add.outputs['Vector'], sp4.inputs['Offset'])
 
 
+def refresh_dimension_units(scene):
+    """Reaplica a unidade (Unit Type) e as casas decimais em todas as cotas da cena (troca de unidade — T040)."""
+    count = 0
+    for obj in scene.objects:
+        mod = next((m for m in obj.modifiers if m.type == 'NODES' and m.node_group
+                    and m.node_group.name.split('.')[0] == 'GeoNodeDimension'), None)
+        if mod is None or obj.type != 'CURVE':
+            continue
+        dim = GeoNodeDimension(obj)
+        dim.set_input("Unit Type", GeoNodeDimension.get_unit_type())
+        try:
+            dim.set_decimal()
+        except (IndexError, AttributeError):
+            pass
+        count += 1
+    return count
+
+
 class GeoNodeDimension(GeoNodeObject):
 
     @staticmethod
@@ -696,6 +690,12 @@ class GeoNodeDimension(GeoNodeObject):
         Returns:
             int: 0=inches, 1=feet, 2=millimeters, 3=centimeters, 4=meters
         """
+        # Unidade escolhida pelo usuário no BlenderToMob (btm_settings.btm_unit) tem prioridade.
+        settings = getattr(bpy.context.scene, 'btm_settings', None)
+        if settings is not None:
+            btm_unit = {'MILLIMETERS': 2, 'CENTIMETERS': 3, 'METERS': 4}.get(settings.btm_unit)
+            if btm_unit is not None:
+                return btm_unit
         unit_settings = bpy.context.scene.unit_settings
         if unit_settings.system == 'METRIC':
             length_unit = unit_settings.length_unit
