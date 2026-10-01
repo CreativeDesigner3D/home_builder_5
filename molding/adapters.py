@@ -406,8 +406,8 @@ def build_facts(scene, members):
                 # like legs; the opening between them (where the
                 # refrigerator sits) has no kick face behind it, so it
                 # is skipped outright - never a RECESS to opt into.
-                # Returns die into the stile edges (one frame
-                # thickness) instead of running back to a kick line.
+                # The molding ends square at the opening edges with no
+                # return onto the stiles' inner faces.
                 kick = {
                     'skip': False,
                     'setback': getattr(ffc, 'face_frame_thickness',

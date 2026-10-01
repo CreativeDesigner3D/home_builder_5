@@ -742,11 +742,21 @@ def _kick_spans_local(obj, f):
     right_stile = kick.get('stile_right') and kick.get('stile_right_w', 0.0) > 1e-5
     x0 = kick.get('stile_left_w', 0.0) if left_stile else 0.0
     x1 = width - (kick.get('stile_right_w', 0.0) if right_stile else 0.0)
+    if kick.get('middle_skip'):
+        # No kick face exists between the stiles (refrigerator
+        # openings): the molding covers the stile faces only and dies
+        # square at the opening edge - no return onto the stiles'
+        # inner faces. The open span is dropped outright, never opted
+        # back in.
+        if left_stile:
+            spans.append(([V((0.0, front)), V((x0, front))], 'FRONT'))
+        spans.append(([V((x0, front)), V((x1, front))], 'SKIP'))
+        if right_stile:
+            spans.append(([V((x1, front)), V((width, front))], 'FRONT'))
+        return spans
     if left_stile:
         spans.append(([V((0.0, front)), V((x0, front)), V((x0, r))], 'FRONT'))
-    # middle_skip: no kick face exists between the stiles (refrigerator
-    # openings) - the span is dropped outright, never opted back in.
-    mid_kind = 'SKIP' if kick.get('middle_skip') else 'RECESS'
+    mid_kind = 'RECESS'
     # Flush sections (bays whose front runs to the floor) are carved
     # out of the recessed middle: the molding wraps out of the recess,
     # across the flush face, and back.
