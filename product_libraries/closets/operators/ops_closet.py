@@ -6424,6 +6424,98 @@ def _top_opening_height(bay, side='FRONT'):
         return None
 
 
+# Live dialogs. The opening and bay dialogs apply each change as it is
+# made so the closet updates while the dialog is open, and however the
+# dialog is closed - Done, Cancel, Esc or a click away - what is on
+# screen is kept: Blender reports all of those but Done the same way,
+# so they cannot be told apart. Putting things back is the dialog's own
+# Revert Changes button. What was there when the dialog opened is kept
+# on the operator (as JSON in a hidden property - a Python attribute
+# does not survive between the dialog's calls) for that button.
+_LIVE_PROP_TYPES = {'BOOLEAN', 'INT', 'FLOAT', 'STRING', 'ENUM'}
+_LIVE_SKIP_PROPS = {'rna_type', 'name', 'tab', 'live', 'orig_state',
+                    'applied_sig', 'target_name', 'revert_changes'}
+
+
+def _live_revert_prop():
+    return bpy.props.BoolProperty(
+        name="Revert Changes",
+        description="Put everything in this dialog back the way it was "
+                    "when the dialog was opened",
+        default=False, options={'SKIP_SAVE'})
+
+
+def _draw_revert(layout, op):
+    row = layout.row()
+    row.prop(op, 'revert_changes', toggle=True, icon='LOOP_BACK')
+
+
+def _keep_live_changes(op, label):
+    """The dialog closed without Done: what was applied stays, so it
+    gets its own undo step like any other edit."""
+    if not op.live:
+        return
+    op.live = False
+    try:
+        bpy.ops.ed.undo_push(message=label)
+    except Exception:
+        pass
+
+
+def _pg_snapshot(pg):
+    """{name: [value, is_set]} for a PropertyGroup's plain properties."""
+    out = {}
+    for prop in pg.bl_rna.properties:
+        name = prop.identifier
+        if name in _LIVE_SKIP_PROPS or prop.type not in _LIVE_PROP_TYPES:
+            continue
+        if prop.is_readonly:
+            continue
+        if prop.type == 'ENUM' and prop.is_enum_flag:
+            value = sorted(getattr(pg, name))
+        elif getattr(prop, 'is_array', False):
+            value = list(getattr(pg, name))
+        else:
+            value = getattr(pg, name)
+        out[name] = [value, bool(pg.is_property_set(name))]
+    return out
+
+
+def _pg_restore(pg, snap):
+    """Write a _pg_snapshot back. Callers hold the run's recalc."""
+    for name, (value, was_set) in snap.items():
+        try:
+            if not was_set:
+                pg.property_unset(name)
+                continue
+            prop = pg.bl_rna.properties[name]
+            if prop.type == 'ENUM' and prop.is_enum_flag:
+                value = set(value)
+            current = getattr(pg, name)
+            if isinstance(value, list):
+                current = list(current)
+            if current != value:
+                setattr(pg, name, value)
+        except Exception:
+            pass
+
+
+def _operator_signature(op):
+    """The dialog's values as a string, to tell a real change from a
+    redraw (a tab switch also calls check)."""
+    vals = {}
+    for name in getattr(type(op), '__annotations__', {}):
+        if name in _LIVE_SKIP_PROPS:
+            continue
+        value = getattr(op, name, None)
+        if value is not None and not isinstance(
+                value, (str, int, float, bool)):
+            value = list(value) if not isinstance(value, set) \
+                else sorted(value)
+        vals[name] = value
+    return json.dumps(vals, sort_keys=True)
+
+
 class hb_closets_OT_bay_prompts(bpy.types.Operator):
     """Edit the active bay's overrides (width/height/depth/mounting)."""
     bl_idname = "hb_closets.bay_prompts"
@@ -6463,6 +6555,7 @@ class hb_closets_OT_bay_prompts(bpy.types.Operator):
         default="", options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
     target_name: bpy.props.StringProperty(
         default="", options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+    revert_changes: _live_revert_prop()  # type: ignore
 
     def _target(self, context):
         obj = (bpy.data.objects.get(self.target_name)
@@ -6470,6 +6563,15 @@ class hb_closets_OT_bay_prompts(bpy.types.Operator):
         if obj is not None:
             return obj
         return types_closets.find_bay_cage(context.active_object)
+
+    def _load_fields(self, bay):
+        """Read the dialog's own fields off the bay."""
+        _sync_height_dropdown(bay.hb_closet_bay)
+        height = _top_opening_height(bay)
+        if height is not None:
+            self.top_opening_height = height
+            self.top_opening_preset = (
+                const.nearest_opening_height_key(height) or 'CUSTOM')
 
     @classmethod
     def poll(cls, context):
@@ -6479,12 +6581,7 @@ class hb_closets_OT_bay_prompts(bpy.types.Operator):
         bay = types_closets.find_bay_cage(context.active_object)
         self.target_name = bay.name if bay is not None else ""
         if bay is not None:
-            _sync_height_dropdown(bay.hb_closet_bay)
-            height = _top_opening_height(bay)
-            if height is not None:
-                self.top_opening_height = height
-                self.top_opening_preset = (
-                    const.nearest_opening_height_key(height) or 'CUSTOM')
+            self._load_fields(bay)
             parts = list(_bay_split_shelves(bay))
             rod = _double_hang_lower_rod(bay)
             if rod is not None:
@@ -6495,21 +6592,32 @@ class hb_closets_OT_bay_prompts(bpy.types.Operator):
                            int(o.get('hb_anchor_top', 0))] for o in parts],
             })
             self.live = True
-        return context.window_manager.invoke_props_dialog(self, width=380)
+        return context.window_manager.invoke_props_dialog(
+            self, width=380, confirm_text="Done")
 
     def check(self, context):
-        """Apply the top opening height as it changes."""
+        """Apply the top opening height as it changes, or put the bay
+        back when Revert Changes is pressed."""
         if not self.live:
             return False
+        if self.revert_changes:
+            self.revert_changes = False
+            self._revert(context)
+            bay = self._target(context)
+            if bay is not None:
+                self._load_fields(bay)
+            return True
         self._apply(context)
         return True
 
     def cancel(self, context):
-        """Backed out: put the bay and the shelf or rod the top opening
-        height moved back the way the dialog found them."""
-        if not self.live or not self.orig_state:
+        _keep_live_changes(self, "Closet Bay Properties")
+
+    def _revert(self, context):
+        """Put the bay and the shelf or rod the top opening height moved
+        back the way the dialog found them."""
+        if not self.orig_state:
             return
-        self.live = False
         bay = self._target(context)
         if bay is None:
             return
@@ -6604,6 +6712,8 @@ class hb_closets_OT_bay_prompts(bpy.types.Operator):
             sub = col.column(align=True)
             sub.enabled = bp.include_center_back
             sub.prop(bp, 'center_back_location')
+
+        _draw_revert(layout, self)
 
     def _top_opening_target(self):
         """The height the dialog is asking the top opening to be."""
@@ -6714,70 +6824,6 @@ def _opening_dims(opening):
         return (0.0, 0.0, 0.0)
 
 
-# Live dialogs. The opening and bay dialogs apply each change as it is
-# made so the closet updates while the dialog is open. What was there
-# when the dialog opened is kept on the operator (as JSON in a hidden
-# property - a Python attribute does not survive between the dialog's
-# calls) so backing out puts it back.
-_LIVE_PROP_TYPES = {'BOOLEAN', 'INT', 'FLOAT', 'STRING', 'ENUM'}
-_LIVE_SKIP_PROPS = {'rna_type', 'name', 'tab', 'live', 'orig_state',
-                    'applied_sig', 'target_name'}
-
-
-def _pg_snapshot(pg):
-    """{name: [value, is_set]} for a PropertyGroup's plain properties."""
-    out = {}
-    for prop in pg.bl_rna.properties:
-        name = prop.identifier
-        if name in _LIVE_SKIP_PROPS or prop.type not in _LIVE_PROP_TYPES:
-            continue
-        if prop.is_readonly:
-            continue
-        if prop.type == 'ENUM' and prop.is_enum_flag:
-            value = sorted(getattr(pg, name))
-        elif getattr(prop, 'is_array', False):
-            value = list(getattr(pg, name))
-        else:
-            value = getattr(pg, name)
-        out[name] = [value, bool(pg.is_property_set(name))]
-    return out
-
-
-def _pg_restore(pg, snap):
-    """Write a _pg_snapshot back. Callers hold the run's recalc."""
-    for name, (value, was_set) in snap.items():
-        try:
-            if not was_set:
-                pg.property_unset(name)
-                continue
-            prop = pg.bl_rna.properties[name]
-            if prop.type == 'ENUM' and prop.is_enum_flag:
-                value = set(value)
-            current = getattr(pg, name)
-            if isinstance(value, list):
-                current = list(current)
-            if current != value:
-                setattr(pg, name, value)
-        except Exception:
-            pass
-
-
-def _operator_signature(op):
-    """The dialog's values as a string, to tell a real change from a
-    redraw (a tab switch also calls check)."""
-    vals = {}
-    for name in getattr(type(op), '__annotations__', {}):
-        if name in _LIVE_SKIP_PROPS:
-            continue
-        value = getattr(op, name, None)
-        if value is not None and not isinstance(
-                value, (str, int, float, bool)):
-            value = list(value) if not isinstance(value, set) \
-                else sorted(value)
-        vals[name] = value
-    return json.dumps(vals, sort_keys=True)
-
-
 class hb_closets_OT_opening_prompts(bpy.types.Operator):
     """Edit what fills the active opening: its size readout, the interior
     (shelves / drawers / cubbies / trays / shoe shelves) with that
@@ -6808,6 +6854,7 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
     # starter, so the active object stops pointing at it.
     target_name: bpy.props.StringProperty(
         default="", options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+    revert_changes: _live_revert_prop()  # type: ignore
 
     def _target(self, context):
         obj = (bpy.data.objects.get(self.target_name)
@@ -7149,6 +7196,21 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
         opening = self._target(context)
         if opening is None:
             return {'CANCELLED'}
+        self._load_fields(context, opening)
+        self.target_name = opening.name
+        rod = _single_top_rod(opening)
+        self.orig_state = json.dumps({
+            'pg': _pg_snapshot(opening.hb_closet_opening),
+            'rod': (rod.name, float(rod.get('hb_z_offset', 0.0)))
+            if rod is not None else None,
+        })
+        self.applied_sig = _operator_signature(self)
+        self.live = True
+        return context.window_manager.invoke_props_dialog(
+            self, width=380, confirm_text="Done")
+
+    def _load_fields(self, context, opening):
+        """Read the dialog's fields off the opening."""
         # An empty opening reads back as zero of everything. The dialog
         # opens on the quantity a user would want if they picked that
         # interior, so a zero falls back to the standard starting count;
@@ -7223,16 +7285,6 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
             op.door_pull_vertical_location)
         self.door_pull_horizontal_offset = float(
             op.door_pull_horizontal_offset)
-        self.target_name = opening.name
-        rod = _single_top_rod(opening)
-        self.orig_state = json.dumps({
-            'pg': _pg_snapshot(opening.hb_closet_opening),
-            'rod': (rod.name, float(rod.get('hb_z_offset', 0.0)))
-            if rod is not None else None,
-        })
-        self.applied_sig = _operator_signature(self)
-        self.live = True
-        return context.window_manager.invoke_props_dialog(self, width=380)
 
     def _draw_interior(self, box, context):
         """What is standing in the opening and the settings that
@@ -7320,6 +7372,7 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
             self._draw_pulls_tab(layout, context)
         else:
             self._draw_back_tab(layout)
+        _draw_revert(layout, self)
 
     def _draw_interior_tab(self, layout, context, opening):
         box = layout.box()
@@ -7474,9 +7527,18 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
 
     def check(self, context):
         """Apply each change as it is made, so the opening updates
-        while the dialog is open."""
+        while the dialog is open, or put the opening back when Revert
+        Changes is pressed."""
         if not self.live:
             return False
+        if self.revert_changes:
+            self.revert_changes = False
+            self._revert(context)
+            opening = self._target(context)
+            if opening is not None:
+                self._load_fields(context, opening)
+            self.applied_sig = _operator_signature(self)
+            return True
         sig = _operator_signature(self)
         if sig != self.applied_sig:
             self.applied_sig = sig
@@ -7484,11 +7546,12 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
         return True
 
     def cancel(self, context):
-        """Backed out: put the opening back the way the dialog found
-        it."""
-        if not self.live or not self.orig_state:
+        _keep_live_changes(self, "Closet Opening Properties")
+
+    def _revert(self, context):
+        """Put the opening back the way the dialog found it."""
+        if not self.orig_state:
             return
-        self.live = False
         opening = self._target(context)
         if opening is None:
             return
