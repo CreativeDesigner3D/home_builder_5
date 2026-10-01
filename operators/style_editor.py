@@ -7,9 +7,11 @@ tabs down the left, and the commands that act on it along the bottom.
 The fields are the Options panel's own -- laid out, painted and hit by
 the same code -- so a field behaves the same in either place.
 
-Like the thumbnail picker it hangs beside the tool strip and is a modal
+Like the thumbnail picker it opens beside the tool strip and is a modal
 only while it is open (Blender skips autosave while a modal runs). Esc,
-right-click, the close button or a click outside it closes it.
+right-click, the close button or a click outside it closes it. Dragging
+the header moves it; it opens where it was left for the rest of the
+session.
 
 A catalog declares editors in OPTION_EDITORS:
 
@@ -53,6 +55,7 @@ FONT = 10
 GAP_FROM_STRIP = 10
 
 _state = None       # {'key', 'section', 'mouse', 'list'} while open
+_offset = [0.0, 0.0]   # where the user dragged it, from its home spot
 
 
 def open_editor(context, key, section=0):
@@ -115,8 +118,9 @@ def _layout(context, area):
     if top < 0:
         top = y_max - 12 * s
     x = _strip_right_edge(context, area) + GAP_FROM_STRIP * s
-    x = max(x_min + 4 * s, min(x, x_max - width - 4 * s))
     height = min(MAX_H * s, top - y_min - 12 * s)
+    x = max(x_min + 4 * s, min(x + _offset[0], x_max - width - 4 * s))
+    top = max(y_min + height + 4 * s, min(top + _offset[1], y_max - 4 * s))
     panel = (x, top - height, width, height)
 
     header = (x + pad, top - pad - HEADER_H * s, width - 2 * pad,
@@ -273,6 +277,7 @@ class home_builder_OT_style_editor(bpy.types.Operator):
         if _state is None or context.area is None:
             return {'CANCELLED'}
         self._area = context.area
+        self._drag = None   # (mouse, offset) at the press while dragging
         # The press that opened the window is still down; its release
         # must not land on whatever is under it.
         self._armed = event.value == 'RELEASE'
@@ -286,8 +291,27 @@ class home_builder_OT_style_editor(bpy.types.Operator):
     def cancel(self, context):
         self._close()
 
+    def _settle_offset(self, context, lay):
+        """Pull the stored offset back to where the clamp left the
+        window, so dragging past an edge doesn't bank distance."""
+        global _offset
+        saved = list(_offset)
+        _offset = [0.0, 0.0]
+        home = _layout(context, self._area)
+        _offset = saved
+        if home is None:
+            return
+        _offset[0] = lay['panel'][0] - home['panel'][0]
+        _offset[1] = (lay['panel'][1] + lay['panel'][3])             - (home['panel'][1] + home['panel'][3])
+
     def _close(self):
         global _state
+        if getattr(self, '_drag', None) is not None:
+            self._drag = None
+            try:
+                bpy.context.window.cursor_modal_restore()
+            except Exception:
+                pass
         if self._handle is not None:
             try:
                 bpy.types.SpaceView3D.draw_handler_remove(self._handle,
@@ -321,6 +345,20 @@ class home_builder_OT_style_editor(bpy.types.Operator):
             return {'CANCELLED', 'PASS_THROUGH'}
         panel = lay['panel']
 
+        if self._drag is not None:
+            # Moving the window by its header.
+            (sx, sy), (ox, oy) = self._drag
+            _offset[0] = ox + mx - sx
+            _offset[1] = oy + my - sy
+            if event.type == 'LEFTMOUSE' and event.value == 'RELEASE':
+                self._drag = None
+                context.window.cursor_modal_restore()
+                lay = _layout(context, self._area)
+                if lay is not None:
+                    self._settle_offset(context, lay)
+            _tag()
+            return {'RUNNING_MODAL'}
+
         if event.type == 'MOUSEMOVE':
             _tag()
             return {'RUNNING_MODAL'}
@@ -350,6 +388,10 @@ class home_builder_OT_style_editor(bpy.types.Operator):
             if point_in_rect(mx, my, lay['close']):
                 self._close()
                 return {'FINISHED'}
+            if point_in_rect(mx, my, lay['header']):
+                self._drag = ((mx, my), tuple(_offset))
+                context.window.cursor_modal_set('SCROLL_XY')
+                return {'RUNNING_MODAL'}
             for i, _label, rect in lay['tabs']:
                 if point_in_rect(mx, my, rect):
                     if _state['section'] != i:
