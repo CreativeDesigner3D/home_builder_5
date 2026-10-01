@@ -1912,17 +1912,23 @@ class home_builder_OT_hud_click(bpy.types.Operator):
                 context, area, region, ax, atop)
             if layout and point_in_rect(mx, my, layout[0]):
                 hit = scene_navigator.hit_test(mx, my, layout[1])
-                if hit is not None and hit[0] == 'row':
+                if hit is not None and hit[0] in ('row', 'delete'):
                     # A row press holds the mouse: released in place it
                     # is the ordinary click (switch / rename), dragged
                     # past the threshold it picks the row up to reorder
                     # its section. The modal lives only press-to-release,
                     # so nothing persistent is added to the handler list.
+                    # A delete press waits for the release too: its
+                    # operator opens a confirm popup under the cursor,
+                    # and the release would otherwise confirm it.
                     self._area = area
                     self._region = region
                     self._anchor = (ax, atop)
                     self._press = (mx, my)
-                    scene_navigator.press_row(hit[1], my)
+                    if hit[0] == 'row':
+                        scene_navigator.press_row(hit[1], my)
+                    else:
+                        scene_navigator.cancel_drag()
                     context.window_manager.modal_handler_add(self)
                     return {'RUNNING_MODAL'}
                 scene_navigator.handle_navigator_click(

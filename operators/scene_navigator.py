@@ -1344,6 +1344,7 @@ class home_builder_OT_scene_navigator(bpy.types.Operator):
         self.mouse_x = event.mouse_x - window_region.x
         self.mouse_y = event.mouse_y - window_region.y
         self.entries = None
+        self._pending_delete = None
         self.panel_rect = (0, 0, 0, 0)
         self._draw_handle = None
 
@@ -1422,6 +1423,20 @@ class home_builder_OT_scene_navigator(bpy.types.Operator):
                     context.area.tag_redraw()
             return {'RUNNING_MODAL'}
 
+        if event.type == 'LEFTMOUSE' and event.value == 'RELEASE':
+            pending = getattr(self, '_pending_delete', None)
+            self._pending_delete = None
+            if pending is not None:
+                mx = event.mouse_x - self.region.x
+                my = event.mouse_y - self.region.y
+                hit = hit_test(mx, my, self.entries)
+                if (hit is not None and hit[0] == 'delete'
+                        and hit[1].name == pending):
+                    self._cleanup(context)
+                    self._delete_row(context, hit[1])
+                    return {'FINISHED'}
+            return {'RUNNING_MODAL'}
+
         if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
             mx = event.mouse_x - self.region.x
             my = event.mouse_y - self.region.y
@@ -1439,9 +1454,12 @@ class home_builder_OT_scene_navigator(bpy.types.Operator):
                 return {'RUNNING_MODAL'}
 
             if kind == 'delete':
-                self._cleanup(context)
-                self._delete_row(context, scene)
-                return {'FINISHED'}
+                # Act on the release, not the press: the delete
+                # operator opens a confirm popup under the cursor, and
+                # the release of this same click would land on it and
+                # confirm before the user could choose.
+                self._pending_delete = scene.name
+                return {'RUNNING_MODAL'}
             if kind == 'row':
                 # This popup is transient by nature -- it is summoned for
                 # one pick and goes. The panel that stays up is the one
