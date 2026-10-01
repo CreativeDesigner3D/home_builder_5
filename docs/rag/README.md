@@ -11,6 +11,7 @@ Base de conhecimento consultável (por pessoas e por agentes de IA) para desenvo
 | `blender-api/index/symbols.tsv` | 26 776 símbolos (`objects.inv`) → arquivo#âncora | — |
 | `blender-api/index/pages.tsv`, `manifest.json` | Catálogo de páginas e metadados do build | — |
 | `tools/` | `rag_search.py` (busca), `check_api.py` (verificador de compatibilidade), `build_rag.py` (gera tudo) | — |
+| `promob/` | Manual de Treinamento Promob (referência de produto/UX): corpus por capítulo + busca `promob_search.py`. Ver [`promob/README.md`](promob/README.md) | 32 capítulos |
 
 ## Comece por aqui
 
