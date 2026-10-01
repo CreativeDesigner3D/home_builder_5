@@ -6072,14 +6072,20 @@ def _walk_interior_node(node, rect, origin_offset,
         # Horizontal divider (fixed shelf). Children stack in Z.
         ox, oy, oz = origin_offset
         # Divider: HORIZONTAL part flush in X, at z = size_a. The front
-        # edge sits shelf_setback behind the back of the face frame; a
-        # nosing recesses the board by its stock depth and fills the
-        # gap, as on adjustable shelves (_shelf_stack_descriptors).
+        # of the shelf (the nosing front when nosed) sits shelf_setback
+        # behind the back of the face frame; a nosing recesses the board
+        # by the profile's own depth and fills the gap. A face frame
+        # rail at the split replaces both: no nosing, no setback.
         if sp.include_part:
-            setback = getattr(sp, 'shelf_setback', 0.0)
-            nosing_style = getattr(sp, 'shelf_nosing_style', 'NONE')
+            ff_rail = bool(sp.add_face_frame and sp.face_frame_width > 0.0)
+            setback = 0.0 if ff_rail else getattr(sp, 'shelf_setback', 0.0)
+            nosing_style = ('NONE' if ff_rail
+                            else getattr(sp, 'shelf_nosing_style', 'NONE'))
             nosing = nosing_style not in (None, '', 'NONE')
-            nose_d = shelf_nosing.NOSE_STOCK_DEPTH if nosing else 0.0
+            nose_d = (shelf_nosing.nosing_depth(
+                          nosing_style, div_t,
+                          getattr(sp, 'shelf_nosing_height', 0.0))
+                      if nosing else 0.0)
             shelf_n = len(out) + 1
             out.append({
                 'kind':         'INTERIOR_FIXED_SHELF',

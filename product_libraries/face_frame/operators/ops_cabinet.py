@@ -3276,6 +3276,7 @@ class hb_face_frame_OT_apply_shelf_nosing_to_room(bpy.types.Operator):
                 if obj.get(types_face_frame.TAG_INTERIOR_SPLIT_NODE):
                     sp = obj.face_frame_interior_split
                     if (sp.axis != 'H' or not sp.include_part
+                            or sp.add_face_frame
                             or (sp.shelf_nosing_style == style
                                 and abs(sp.shelf_nosing_height - height)
                                 < 1e-9)):

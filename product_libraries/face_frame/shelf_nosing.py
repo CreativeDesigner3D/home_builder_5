@@ -150,11 +150,9 @@ def nosing_outline(style, shelf_thickness, height):
     return [(0.0, 0.0), (D, 0.0), (D, -H), (0.0, -H)]
 
 
-def build_nosing_object(name, length, style, shelf_thickness, height):
-    """Sweep the style's outline along +X into a new (unlinked) mesh
-    object. Object origin is the back-top-left corner of the nosing:
-    the back face sits on the shelf front edge (section d maps to -Y)
-    and the top is flush with the shelf top (section z maps to +Z)."""
+def _resolved_outline(style, shelf_thickness, height):
+    """Outline for ``style``: the registered provider's when it supplies
+    one, else the code-generated fallback."""
     outline = None
     if _outline_provider is not None:
         try:
@@ -163,6 +161,29 @@ def build_nosing_object(name, length, style, shelf_thickness, height):
             outline = None
     if not outline:
         outline = nosing_outline(style, shelf_thickness, height)
+    return outline
+
+
+def nosing_depth(style, shelf_thickness, height):
+    """How far the nosing's front reaches forward of its back face, from
+    the same outline the 3D sweep uses. Profiles differ (a shelf-
+    thickness nose can be well under the stock depth, a mantle band can
+    project past it), so a setback measured from the nosing front has to
+    use this rather than NOSE_STOCK_DEPTH."""
+    if style in (None, '', 'NONE'):
+        return 0.0
+    outline = _resolved_outline(style, shelf_thickness, height)
+    if not outline:
+        return NOSE_STOCK_DEPTH
+    return max(0.0, max(d for d, _z in outline))
+
+
+def build_nosing_object(name, length, style, shelf_thickness, height):
+    """Sweep the style's outline along +X into a new (unlinked) mesh
+    object. Object origin is the back-top-left corner of the nosing:
+    the back face sits on the shelf front edge (section d maps to -Y)
+    and the top is flush with the shelf top (section z maps to +Z)."""
+    outline = _resolved_outline(style, shelf_thickness, height)
     clean = [outline[0]]
     for p in outline[1:]:
         if (abs(p[0] - clean[-1][0]) > 1e-7

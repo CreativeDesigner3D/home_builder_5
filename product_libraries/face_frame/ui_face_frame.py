@@ -1678,7 +1678,9 @@ def _draw_split_face_frame_props(layout, sp):
     thick_row = layout.row(align=True)
     thick_row.enabled = sp.include_part
     thick_row.prop(sp, 'divider_thickness', text="Divider Thickness")
-    if sp.axis == 'H':
+    # A face frame rail at a fixed shelf replaces the nosing and the
+    # setback (the board runs to the rail), so hide both while it's on.
+    if sp.axis == 'H' and not sp.add_face_frame:
         shelf_col = layout.column(align=True)
         shelf_col.enabled = sp.include_part
         shelf_col.prop(sp, 'shelf_setback', text="Setback")
