@@ -479,6 +479,55 @@ def _dispatch_name_for_starter(src):
     return None
 
 
+# Stack highlight: while a hanging starter is over a base starter, the
+# base's countertop is washed in the snap colour and outlined, and a
+# dimension stands up off it to the hanging top reading the bay height
+# the stack will get - so it is plain before the click what happens.
+STACK_COLOR = (0.30, 0.85, 0.45, 1.0)
+STACK_FILL = (0.30, 0.85, 0.45, 0.28)
+
+
+def _stack_top_of_base(base):
+    """Root-local Z of the top of a base starter's countertop."""
+    bsp = base.hb_closet_starter
+    return bsp.height + (bsp.countertop_thickness
+                         if bsp.include_countertop else 0.0)
+
+
+def _stack_quad(base):
+    """World corners of the base's top, at countertop height."""
+    bsp = base.hb_closet_starter
+    z = _stack_top_of_base(base)
+    mw = base.matrix_world
+    w, d = bsp.width, bsp.depth
+    return [mw @ Vector(c) for c in ((0.0, 0.0, z), (w, 0.0, z),
+                                     (w, -d, z), (0.0, -d, z))]
+
+
+def _draw_stack_highlight(op):
+    quad = getattr(op, '_stack_quad_world', None)
+    if not quad:
+        return
+    try:
+        import gpu
+        from gpu_extras.batch import batch_for_shader
+        shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+        gpu.state.blend_set('ALPHA')
+        gpu.state.depth_test_set('NONE')
+        shader.bind()
+        pts = [tuple(v) for v in quad]
+        shader.uniform_float("color", STACK_FILL)
+        batch_for_shader(shader, 'TRIS', {"pos": pts},
+                         indices=((0, 1, 2), (0, 2, 3))).draw(shader)
+        gpu.state.line_width_set(3.0)
+        shader.uniform_float("color", STACK_COLOR)
+        batch_for_shader(shader, 'LINE_LOOP', {"pos": pts}).draw(shader)
+        gpu.state.line_width_set(1.0)
+        gpu.state.blend_set('NONE')
+    except Exception:
+        pass
+
+
 def _stack_on_countertop(context, root, base):
     """Fit a hanging starter that was placed over a base starter down
     to the base's countertop: every bay takes the tallest 32mm-system
@@ -715,7 +764,14 @@ class hb_closets_OT_place_starter(bpy.types.Operator,
         self._array_modifier = None
         self.placement_objects = []
 
+    def cancel(self, context):
+        # The window manager can end the modal without an event (file
+        # load, window closed): never leave the highlight drawing.
+        self._clear_stack_highlight()
+        self.remove_placement_dim_handler()
+
     def _cancel(self, context):
+        self._clear_stack_highlight()
         self.remove_placement_dim_handler()
         self._delete_preview()
         hb_placement.clear_header_text(context)
@@ -916,11 +972,28 @@ class hb_closets_OT_place_starter(bpy.types.Operator,
             return
         self._stack_base_name = name
         if base is not None:
+            self._stack_quad_world = _stack_quad(base)
+            if getattr(self, '_stack_handle', None) is None:
+                self._stack_handle = bpy.types.SpaceView3D.draw_handler_add(
+                    _draw_stack_highlight, (self,), 'WINDOW', 'POST_VIEW')
             hb_placement.draw_header_text(
-                context, f"Stack over {base.name}: click to place on its "
-                "countertop, Esc to cancel")
+                context, f"Stacks on {base.name}'s countertop: click to "
+                "place, Esc to cancel")
         else:
+            self._clear_stack_highlight()
             self._update_header(context)
+        if context.area is not None:
+            context.area.tag_redraw()
+
+    def _clear_stack_highlight(self):
+        self._stack_quad_world = None
+        handle = getattr(self, '_stack_handle', None)
+        if handle is not None:
+            try:
+                bpy.types.SpaceView3D.draw_handler_remove(handle, 'WINDOW')
+            except Exception:
+                pass
+        self._stack_handle = None
 
     def _position_stacked(self, context, base):
         cage_obj = self._preview_cage.obj
@@ -935,8 +1008,24 @@ class hb_closets_OT_place_starter(bpy.types.Operator,
         self._apply_width(base.hb_closet_starter.width, fill_mode=True)
         self._place_on_front = abs(base.rotation_euler.z) < 1e-3
         self._gap_wall = None
-        self._placement_dim_specs = []
         self._set_stack_base(context, base)
+        self._stack_quad_world = _stack_quad(base)
+        # Up off the countertop's front-left corner to the hanging top,
+        # labelled with the bay height the stack will get.
+        mw = base.matrix_world
+        bsp = base.hb_closet_starter
+        z0 = _stack_top_of_base(base)
+        span = (self._mount_z(context.scene.hb_closets)
+                + self._cabinet_height - z0)
+        bay_h = const.snap_system_height_down(span)
+        self._placement_dim_specs = []
+        if span > 0.0:
+            text = "Stacks on countertop: bays %s" % units.unit_to_string(
+                context.scene.unit_settings, bay_h)
+            self._placement_dim_specs.append(hb_placement.PlacementDimSpec(
+                mw @ Vector((0.0, -bsp.depth, z0)),
+                mw @ Vector((0.0, -bsp.depth, z0 + span)),
+                text, STACK_COLOR))
         if context.area is not None:
             context.area.tag_redraw()
 
@@ -1512,6 +1601,7 @@ class hb_closets_OT_place_starter(bpy.types.Operator,
     def _finalize(self, context):
         """Capture the cage transform, delete it, build the real starter
         there, and push the placed width through the prop update path."""
+        self._clear_stack_highlight()
         self.remove_placement_dim_handler()
         cage_obj = self._preview_cage.obj
         captured_parent = cage_obj.parent
