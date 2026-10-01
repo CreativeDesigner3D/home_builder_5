@@ -80,6 +80,9 @@ DEFAULT_DEPTH = inch(14.0)
 # A starter carries at most MAX_BAY_QTY openings, so that is the hard
 # ceiling on the count however wide the run gets.
 BAY_WIDTH_TARGET = inch(30.0)
+# Widest bay a shelf or rod may span before it is flagged under Design
+# Warnings.
+BAY_MAX_WIDTH = inch(30.0)
 MIN_BAY_QTY = 1
 MAX_BAY_QTY = 9
 
@@ -119,6 +122,33 @@ PANEL_HEIGHT_ITEMS = [
     (str(v), inch_label(v), inch_label(v))
     for v in range(PANEL_HEIGHT_MIN_MM, PANEL_HEIGHT_MAX_MM + 1, 32)
 ]
+
+
+# The section-height dropdowns offer only the lattice. 'Custom' (a typed
+# height off the 32mm system) is no longer offered; it stays a valid
+# stored value so a file saved with it still loads, and the dropdown
+# shows it only while a section still carries it. Items carry explicit
+# numbers so stored values keep their meaning.
+PANEL_HEIGHT_CUSTOM_INDEX = len(PANEL_HEIGHT_ITEMS)
+PANEL_HEIGHT_PRESET_ITEMS = [
+    (key, name, desc, i)
+    for i, (key, name, desc) in enumerate(PANEL_HEIGHT_ITEMS)
+]
+PANEL_HEIGHT_PRESET_ITEMS_LEGACY = PANEL_HEIGHT_PRESET_ITEMS + [
+    ('CUSTOM', "Custom", "A height off the 32mm system, kept from an "
+     "older file. Pick a standard height to replace it",
+     PANEL_HEIGHT_CUSTOM_INDEX)]
+PANEL_HEIGHT_DEFAULT_INDEX = next(
+    i for i, item in enumerate(PANEL_HEIGHT_ITEMS) if item[0] == '2131')
+
+
+def panel_height_preset_index(key):
+    """Stored dropdown value for a PANEL_HEIGHT_ITEMS key, or the
+    legacy Custom value for ''."""
+    for i, item in enumerate(PANEL_HEIGHT_ITEMS):
+        if item[0] == key:
+            return i
+    return PANEL_HEIGHT_CUSTOM_INDEX
 
 
 def nearest_panel_height_key(value):

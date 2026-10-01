@@ -160,6 +160,14 @@ def _update_height_preset(self, context):
         _update_starter_prop(self, context)
 
 
+def _height_preset_items(self, context):
+    """Standard section heights only; Custom appears solely on a
+    section that still carries it from an older file."""
+    if self.get('height_preset') == const.PANEL_HEIGHT_CUSTOM_INDEX:
+        return const.PANEL_HEIGHT_PRESET_ITEMS_LEGACY
+    return const.PANEL_HEIGHT_PRESET_ITEMS
+
+
 def _update_bay_open_door(self, context):
     """The bay's open percentage speaks for every front across it, so a
     front someone had clicked open hands its own answer back and follows
@@ -384,14 +392,13 @@ class Closet_Starter_Props(PropertyGroup):
         update=_update_starter_depth)  # type: ignore
 
     # Standard section heights (the 32mm-system lattice). Picking one
-    # writes the distance above; Custom leaves whatever is typed there.
+    # writes the distance above.
     height_preset: EnumProperty(
         name="Height",
-        description="Standard section height (Custom keeps the typed "
-                    "value)",
-        items=const.PANEL_HEIGHT_ITEMS + [('CUSTOM', "Custom",
-                                           "Use the typed height")],
-        default='2131', update=_update_height_preset)  # type: ignore
+        description="Standard section height on the 32mm system",
+        items=_height_preset_items,
+        default=const.PANEL_HEIGHT_DEFAULT_INDEX,
+        update=_update_height_preset)  # type: ignore
 
     closet_type: EnumProperty(
         name="Closet Type",
@@ -881,11 +888,10 @@ class Closet_Bay_Props(PropertyGroup):
         update=_update_bay_prop)  # type: ignore
     height_preset: EnumProperty(
         name="Height",
-        description="Standard section height (Custom keeps the typed "
-                    "value)",
-        items=const.PANEL_HEIGHT_ITEMS + [('CUSTOM', "Custom",
-                                           "Use the typed height")],
-        default='2131', update=_update_bay_height_preset)  # type: ignore
+        description="Standard section height on the 32mm system",
+        items=_height_preset_items,
+        default=const.PANEL_HEIGHT_DEFAULT_INDEX,
+        update=_update_bay_height_preset)  # type: ignore
     depth: FloatProperty(
         name="Depth", description="Bay depth",
         default=const.DEFAULT_DEPTH, unit='LENGTH', precision=4,

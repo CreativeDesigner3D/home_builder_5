@@ -1682,6 +1682,15 @@ class hb_closets_OT_add_part(bpy.types.Operator,
         except Exception:
             return 0.0
 
+    def _paint_rod(self, locked):
+        """Mark the rod preview while it sits locked at the standard
+        drop under the shelf above; plain otherwise."""
+        if self._preview is None:
+            return
+        color = const.LOCK_SHELF_COLOR if locked else const.PLAIN_PART_COLOR
+        for obj in (self._preview, *self._preview.children_recursive):
+            obj.color = color
+
     def _resolve_opening_under_cursor(self, context):
         return _opening_under_cursor(context, self.region,
                                      self.mouse_pos)
@@ -1715,9 +1724,14 @@ class hb_closets_OT_add_part(bpy.types.Operator,
             # The standard drop under the shelf or top above wins over
             # the hole lattice when the cursor is near it: a rod hangs
             # from cups under the shelf, not on a system hole.
+            # It never rises past that drop either: a rod closer to the
+            # shelf above than its cups allow cannot be hung, so a drag
+            # upward stops there and the rod takes the lock colour.
             z_hang = interior_h - const.ROD_TOP_OFFSET
-            if z_hang > 0.0 and abs(local_z - z_hang) < units.inch(1.0):
+            if z_hang > 0.0 and (abs(local_z - z_hang) < units.inch(1.0)
+                                 or z > z_hang):
                 z = z_hang
+            self._paint_rod(z_hang > 0.0 and abs(z - z_hang) < 1e-6)
             # Stored as distance from the opening top (rods ride the top).
             self._preview['hb_z_offset'] = float(interior_h - z)
             self._preview['hb_anchor_top'] = 1
@@ -1816,6 +1830,8 @@ class hb_closets_OT_add_part(bpy.types.Operator,
                 committed_opening = self._opening
                 if 'hb_preview' in self._preview:
                     del self._preview['hb_preview']
+                if self.part_type == 'ROD':
+                    self._paint_rod(False)
                 root = types_closets.find_starter_root(committed_opening)
                 if root is not None and self.part_type != 'ROD':
                     _apply_finish(root)
@@ -3755,8 +3771,10 @@ class hb_closets_OT_rod_prompts(bpy.types.Operator):
     from_top: bpy.props.FloatProperty(
         name="Distance From Top",
         description="How far down from the shelf or top above the rod's "
-                    "centerline sits",
-        min=0.0, unit='LENGTH', precision=4)  # type: ignore
+                    "centerline sits. A rod hangs at least the standard "
+                    "drop below it",
+        min=const.ROD_TOP_OFFSET, unit='LENGTH',
+        precision=4)  # type: ignore
     set_from_front: bpy.props.BoolProperty(
         name="Set Distance From Front",
         description="Measure the rod front to back from the front edge of "
@@ -5871,9 +5889,11 @@ def _set_enum_silent(pgroup, prop_name, identifier):
 
 def _sync_height_dropdown(pgroup):
     """Point a height dropdown at the standard height matching the
-    current distance, or Custom when it sits off the standard steps."""
-    key = const.nearest_panel_height_key(pgroup.height) or 'CUSTOM'
-    _set_enum_silent(pgroup, 'height_preset', key)
+    current distance, or the legacy Custom value when it sits off the
+    standard steps. Written as the stored number: the dropdown's items
+    are dynamic, so they cannot be looked up by name here."""
+    pgroup['height_preset'] = const.panel_height_preset_index(
+        const.nearest_panel_height_key(pgroup.height))
 
 
 def _starter_bays(root):

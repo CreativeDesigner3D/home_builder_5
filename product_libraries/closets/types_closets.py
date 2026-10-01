@@ -6230,6 +6230,7 @@ def recalculate_closet_starter(obj):
     mark_parts(root)
     stamp_part_menus(root)
     stamp_panel_limits(root)
+    stamp_bay_width_limits(root)
 
 
 # Largest partition the stock allows. Depth: a wall-hung panel has only
@@ -6295,6 +6296,26 @@ def stamp_panel_limits(root):
             - root.matrix_world.translation.z < 0.001)
         _stamp_warning(obj, panel_limit_warning(
             height, depth, floor, island, material))
+
+
+def bay_width_warning(width):
+    """Why this bay is too wide, or '' when it is not. Shelves and
+    rods span the bay, and past 30" they sag."""
+    if width > const.BAY_MAX_WIDTH + 0.0005:
+        return "Bay Width exceeds 30 Inches; this one is %s" % _in_str(width)
+    return ""
+
+
+def stamp_bay_width_limits(root):
+    """Warn on every bay of the run wider than the span limit."""
+    for bay in root.children:
+        if not bay.get(TAG_BAY_CAGE):
+            continue
+        try:
+            width = float(GeoNodeCage(bay).get_input('Dim X'))
+        except Exception:
+            continue
+        _stamp_warning(bay, bay_width_warning(width))
 
 
 # The shelves that hold a unit square rather than resting on clips.
