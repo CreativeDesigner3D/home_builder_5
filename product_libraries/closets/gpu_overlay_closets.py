@@ -80,7 +80,8 @@ _PILL_GAP = 4
 # menus. The overlay keeps dims, mount toggles, and the Grab pill.
 _FILTERS = [
     ("Dims", 'hb_ov_show_dims',
-     ('STARTER_', 'BAY_', 'OPEN_H', 'PART_Z', 'DRAWER_H', 'TOGGLE_LOCK'),
+     ('STARTER_', 'BAY_', 'OPEN_H', 'PART_Z', 'ROD_TOP', 'DRAWER_H',
+      'TOGGLE_LOCK'),
      ('Starters', 'Bays', 'Openings')),
     ("Bottoms", 'hb_ov_show_mount',
      ('TOGGLE_BOTTOM',), ('Bays',)),
@@ -158,8 +159,10 @@ KIND_ITEMS = [
     ('BAY_H', "Bay Height", ""),
     # Bay depth, at the bottom-front of the bay.
     ('BAY_D', "Bay Depth", ""),
-    # Per-part height (fixed shelf underside / rod center, opening-local)
+    # Per-part height (fixed shelf underside, opening-local)
     ('PART_Z', "Part Height", ""),
+    # Hang rod: its center down from the top of its opening
+    ('ROD_TOP', "Rod From Top", ""),
     # Drawer stack front height (opening idprop)
     ('DRAWER_H', "Drawer Front Height", ""),
 ]
@@ -448,18 +451,24 @@ def compute_labels(context, region, rv3d, lines_out=None):
                                         interior_h, ""))
                 if mode != 'Openings':
                     continue
-                # Per-part labels: fixed shelves and rods show their
-                # opening-local height at the part itself; a drawer
-                # stack shows its front height at the stack's top edge.
+                # Per-part labels: a rod shows how far its center
+                # hangs below the top of its opening, as a dimension
+                # from the rod up to the top - the figure it is hung
+                # by; a drawer stack shows its front height at the
+                # stack's top edge.
                 o_mw = split_preview._world_matrix(opening)
                 for child in opening.children:
                     role = child.get('hb_part_role')
                     if (role == types_closets.PART_ROLE_ROD
                             and not child.get('hb_preview')):
-                        anchor = o_mw @ Vector(
-                            (o_w / 2.0, -0.003, child.location.z))
-                        targets.append((child, 'PART_Z', True, False,
-                                        anchor, child.location.z, ""))
+                        rod_z = child.location.z
+                        line = (o_mw @ Vector((o_w / 2.0, -0.003, rod_z)),
+                                o_mw @ Vector((o_w / 2.0, -0.003,
+                                               interior_h)))
+                        dim_lines[(child.name, 'ROD_TOP')] = line
+                        targets.append((child, 'ROD_TOP', True, False,
+                                        (line[0] + line[1]) / 2.0,
+                                        max(interior_h - rod_z, 0.0), ""))
                     elif role == types_closets.PART_ROLE_DRAWER_FRONT:
                         # Every drawer front carries its own editable height
                         # label at its center; the bullet marks the fronts
@@ -814,6 +823,19 @@ def _commit(obj, kind, value):
             obj['hb_z_offset'] = float(max(0.0, interior_h - value))
         else:
             obj['hb_z_offset'] = float(max(0.0, value))
+        types_closets.recalculate_closet_starter(root)
+        return True
+    if kind == 'ROD_TOP':
+        # Typed value = rod center down from the top of its opening. A
+        # rod never hangs closer to the shelf above than its cups allow.
+        root = types_closets.find_starter_root(obj)
+        parent = obj.parent
+        if root is None or parent is None:
+            return False
+        _w, interior_h = split_preview._cage_dims(parent)
+        drop = min(max(value, const.ROD_TOP_OFFSET), interior_h)
+        obj['hb_z_offset'] = float(drop)
+        obj['hb_anchor_top'] = 1
         types_closets.recalculate_closet_starter(root)
         return True
     if kind == 'DRAWER_H':
