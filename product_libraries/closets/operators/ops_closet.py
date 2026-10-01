@@ -2192,13 +2192,13 @@ class hb_closets_OT_add_drawers(_ClosetInsertDialog, bpy.types.Operator):
     for _i in range(1, 11):
         __annotations__['front_%d_equal' % _i] = bpy.props.BoolProperty(
             name="Equal", default=True,
-            description="Let drawer %d take an equal share of the bank "
-                        "instead of holding a size of its own" % _i)
+            description="Let this drawer take an equal share of the bank "
+                        "instead of holding a size of its own")
         __annotations__['front_%d_height' % _i] = bpy.props.EnumProperty(
-            name="Drawer %d Height" % _i,
+            name="Drawer Height",
             items=const.DRAWER_FRONT_HEIGHT_ITEMS,
             default=const.DRAWER_FRONT_HEIGHT_KEY,
-            description="Height drawer %d's front is held at" % _i)
+            description="Height this drawer's front is held at")
     del _i
 
     def invoke(self, context, event):
@@ -2251,8 +2251,11 @@ class hb_closets_OT_add_drawers(_ClosetInsertDialog, bpy.types.Operator):
         col.prop(self, 'stretcher_width')
         col.prop(self, 'fill')
 
-        # A row per drawer, bottom drawer first, the order the bank is
-        # built in. Filling the opening, a drawer sharing it reads back
+        # A row per drawer, top drawer first and numbered from the top
+        # the way the shop counts them. The bank is still stored and
+        # built bottom drawer first (front_1 is the bottom), so only
+        # the rows are turned over here. Filling the opening, a drawer
+        # sharing it reads back
         # the height it is getting and one holding a size shows the
         # size instead, the ones still sharing taking up the
         # difference. Not filling it, every drawer is a size to set.
@@ -2263,9 +2266,9 @@ class hb_closets_OT_add_drawers(_ClosetInsertDialog, bpy.types.Operator):
         box = layout.box()
         box.label(text="Drawer Heights", icon='MESH_GRID')
         col = box.column(align=True)
-        for i in range(1, self.qty + 1):
+        for n, i in enumerate(range(self.qty, 0, -1), 1):
             row = col.row(align=True)
-            row.label(text="Drawer %d" % i)
+            row.label(text="Drawer %d" % n)
             if not self.fill:
                 row.prop(self, 'front_%d_height' % i, text="")
                 continue
@@ -6132,6 +6135,11 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
                 sub = col.column(align=True)
                 sub.enabled = sp.add_top_accent_shelf
                 sub.prop(sp, 'top_accent_overhang')
+                sub.prop(sp, 'top_accent_set_sides')
+                row = sub.row(align=True)
+                row.enabled = sp.top_accent_set_sides
+                row.prop(sp, 'top_accent_overhang_left')
+                row.prop(sp, 'top_accent_overhang_right')
 
         if getattr(cls, 'has_hang_rail', False):
             box = _section(layout, sp, 'show_hang_rail', "Hang Rail")

@@ -4473,10 +4473,20 @@ class ClosetStarter(GeoNodeCage):
             part.set_input('Mirror Y', True)
             shelf = part.obj
         ovh = sp.top_accent_overhang
-        left = ovh if sp.left_finished_end else 0.0
-        right = ovh if sp.right_finished_end else 0.0
+        if sp.top_accent_set_sides:
+            left = sp.top_accent_overhang_left
+            right = sp.top_accent_overhang_right
+        else:
+            # Out over a wall filler to the wall; past a finished end by
+            # the overhang; flush otherwise.
+            def _end(filler, finished):
+                if filler > 0.0:
+                    return filler
+                return ovh if finished else 0.0
+            left = _end(sp.left_side_wall_filler, sp.left_finished_end)
+            right = _end(sp.right_side_wall_filler, sp.right_finished_end)
         # Base at the panel top; projects forward by the overhang and
-        # out past each finished end.
+        # out past each end as worked out above.
         shelf.location = (-left, 0.0, sp.height)
         part = GeoNodeCutpart(shelf)
         part.set_input('Length', sp.width + left + right)

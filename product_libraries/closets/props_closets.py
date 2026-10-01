@@ -78,6 +78,56 @@ def _update_starter_prop(self, context):
     types_closets.recalculate_closet_starter(self.id_data)
 
 
+def sync_end_overhangs(sp, sides=('LEFT', 'RIGHT')):
+    """Set the countertop's side overhang and exposed-end flag from
+    what stands at that end of the run. A wall filler means the run
+    goes to the wall: the top runs out over the filler and stops there,
+    and that end is not exposed. A finished end with no filler is
+    exposed: the top overhangs it by the same amount as the front.
+    Anything else has no side overhang.
+
+    Written only when one of those changes, so a side overhang typed in
+    by hand afterwards is kept until the end condition changes again."""
+    for side in sides:
+        key = side.lower()
+        filler = float(getattr(sp, key + '_side_wall_filler'))
+        finished = bool(getattr(sp, key + '_finished_end'))
+        if filler > 0.0:
+            overhang, exposed = filler, False
+        elif finished:
+            overhang, exposed = float(sp.countertop_overhang_front), True
+        else:
+            overhang, exposed = 0.0, False
+        if abs(getattr(sp, 'countertop_overhang_' + key) - overhang) > 1e-6:
+            setattr(sp, 'countertop_overhang_' + key, overhang)
+        if getattr(sp, 'countertop_%s_finished_end' % key) != exposed:
+            setattr(sp, 'countertop_%s_finished_end' % key, exposed)
+
+
+def _end_condition_update(side):
+    """Update for a finished-end flag or a wall filler width: carry the
+    change to the countertop's end, then solve the run once."""
+    def _update(self, context):
+        from . import types_closets
+        with types_closets.suspend_recalc():
+            sync_end_overhangs(self, (side,))
+        _update_starter_prop(self, context)
+    return _update
+
+
+def _update_countertop_front(self, context):
+    """Front overhang changed: a finished end with no filler follows
+    it, since its side overhang matches the front."""
+    from . import types_closets
+    with types_closets.suspend_recalc():
+        for side in ('LEFT', 'RIGHT'):
+            key = side.lower()
+            if (getattr(self, key + '_finished_end')
+                    and getattr(self, key + '_side_wall_filler') <= 0.0):
+                sync_end_overhangs(self, (side,))
+    _update_starter_prop(self, context)
+
+
 def _system_panel_height(value):
     """A height someone set, on the 32mm system: down to the step below,
     never under the smallest panel the system builds."""
@@ -510,7 +560,7 @@ class Closet_Starter_Props(PropertyGroup):
         name="Front", description="Countertop projection past the front "
                                   "of the carcass",
         default=const.COUNTERTOP_OVERHANG_FRONT, unit='LENGTH',
-        precision=4, update=_update_starter_prop)  # type: ignore
+        precision=4, update=_update_countertop_front)  # type: ignore
     countertop_overhang_rear: FloatProperty(
         name="Rear", description="Countertop projection past the back of "
                                  "the carcass",
@@ -653,12 +703,12 @@ class Closet_Starter_Props(PropertyGroup):
         name="Left Finished End",
         description="The left end panel is exposed, so it gets an edge "
                     "treatment and no through drilling",
-        default=False, update=_update_starter_prop)  # type: ignore
+        default=False, update=_end_condition_update('LEFT'))  # type: ignore
     right_finished_end: BoolProperty(
         name="Right Finished End",
         description="The right end panel is exposed, so it gets an edge "
                     "treatment and no through drilling",
-        default=False, update=_update_starter_prop)  # type: ignore
+        default=False, update=_end_condition_update('RIGHT'))  # type: ignore
     turn_off_left_panel: BoolProperty(
         name="Turn Off Left Panel",
         description="Hide the left end panel and give its thickness to "
@@ -703,6 +753,26 @@ class Closet_Starter_Props(PropertyGroup):
                     "past each finished end",
         default=const.TOP_ACCENT_OVERHANG, unit='LENGTH', precision=4,
         update=_update_starter_prop)  # type: ignore
+    # By default the shelf's ends follow the run: out over a wall filler
+    # to the wall, past a finished end by the overhang, flush otherwise.
+    # Set separately, each end takes its own figure regardless - to
+    # bridge over to a neighbouring starter, say.
+    top_accent_set_sides: BoolProperty(
+        name="Set Left/Right Separately",
+        description="Give the accent shelf its own left and right "
+                    "overhangs instead of following the finished ends "
+                    "and fillers",
+        default=False, update=_update_starter_prop)  # type: ignore
+    top_accent_overhang_left: FloatProperty(
+        name="Left",
+        description="How far the accent shelf runs past the left end",
+        default=0.0, min=0.0, unit='LENGTH', precision=4,
+        update=_update_starter_prop)  # type: ignore
+    top_accent_overhang_right: FloatProperty(
+        name="Right",
+        description="How far the accent shelf runs past the right end",
+        default=0.0, min=0.0, unit='LENGTH', precision=4,
+        update=_update_starter_prop)  # type: ignore
 
     # Hang rail options.
     remove_hang_rail: BoolProperty(
@@ -741,13 +811,13 @@ class Closet_Starter_Props(PropertyGroup):
         description="Width of the scribe filler past the left end (0 = "
                     "none)",
         default=0.0, min=0.0, unit='LENGTH', precision=4,
-        update=_update_starter_prop)  # type: ignore
+        update=_end_condition_update('LEFT'))  # type: ignore
     right_side_wall_filler: FloatProperty(
         name="Right Side Wall Filler",
         description="Width of the scribe filler past the right end (0 = "
                     "none)",
         default=0.0, min=0.0, unit='LENGTH', precision=4,
-        update=_update_starter_prop)  # type: ignore
+        update=_end_condition_update('RIGHT'))  # type: ignore
 
     # Corner (L-shelf) starter prompts. Only meaningful when the
     # starter class is an L-shelf variant (is_corner); the prompts
