@@ -612,6 +612,50 @@ def _rects_touch(a, b, margin=2.0):
             and a[1] < b[1] + b[3] + margin and b[1] < a[1] + a[3] + margin)
 
 
+def _slide_clear(region, rv3d, line, rect, placed):
+    """``rect`` moved along its own dimension line to the nearest spot
+    clear of the ``placed`` label rects -- or just off the line when it
+    has no room -- or None when nothing nearby is clear. Labels that share a point on screen (a bay's W over a
+    rail's width, a gap over a cabinet width) otherwise hide each
+    other; sliding keeps each one on the line it measures."""
+    if line is None:
+        return None
+    a = view3d_utils.location_3d_to_region_2d(region, rv3d, line[0])
+    b = view3d_utils.location_3d_to_region_2d(region, rv3d, line[1])
+    if a is None or b is None:
+        return None
+    d = b - a
+    length = d.length
+    if length < 1e-6:
+        return None
+    u = d / length
+    x, y, w, h = rect
+    cx, cy = x + w / 2.0, y + h / 2.0
+    # Where the label sits along the line now, and one label's extent
+    # along it (plus a little air) as the step.
+    t0 = (cx - a.x) * u.x + (cy - a.y) * u.y
+    step = abs(w * u.x) + abs(h * u.y) + 4.0
+    half = step / 2.0
+    for k in range(1, 13):
+        for sign in (1.0, -1.0):
+            t = t0 + sign * k * step
+            if t < half or t > length - half:
+                continue
+            here = (a.x + u.x * t - w / 2.0, a.y + u.y * t - h / 2.0, w, h)
+            if not any(_rects_touch(here, other[4]) for other in placed):
+                return here
+    # Zoomed out the line is too short to slide on: step off to its
+    # side instead, as near the line as stays clear.
+    side = abs(w * u.y) + abs(h * u.x) + 4.0
+    for k in range(1, 5):
+        for sign in (1.0, -1.0):
+            off = sign * k * side
+            here = (x - u.y * off, y + u.x * off, w, h)
+            if not any(_rects_touch(here, other[4]) for other in placed):
+                return here
+    return None
+
+
 def _gap_value(props, kind):
     """What a gap measures now, following the run's single size when the
     edge has not been given one of its own."""
@@ -820,6 +864,15 @@ def compute_labels(context, region, rv3d, lines_out=None):
                     break
             if rect is None:
                 continue
+            if any(_rects_touch(rect, other[4]) for other in labels):
+                # Still on top of a label already out: slide it along
+                # its own dimension line to a clear spot.
+                moved = _slide_clear(
+                    region, rv3d,
+                    own_line or _dim_line_world(cage, kind, value),
+                    rect, labels)
+                if moved is not None:
+                    rect = moved
             # Skip labels fully outside the region.
             if rect[0] + w < 0 or rect[0] > region.width:
                 continue
