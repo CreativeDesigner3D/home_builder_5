@@ -6660,6 +6660,17 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
     bl_label = "Closet Opening Properties"
     bl_options = {'UNDO'}
 
+    # The dialog is broken into tabs so each part of the opening is
+    # read on its own. The opening's size stays above the tabs.
+    tab: bpy.props.EnumProperty(
+        name="Tab",
+        items=[('INTERIOR', "Interior",
+                "What fills the opening, and the rod"),
+               ('FRONT', "Front", "Door and overlays"),
+               ('PULLS', "Pulls", "How the fronts are pulled"),
+               ('BACK', "Back", "A back closing the opening")],
+        default='INTERIOR')  # type: ignore
+
     fill: bpy.props.EnumProperty(
         name="Interior", items=_OPENING_FILL_ITEMS,
         default='ADJ_SHELVES')  # type: ignore
@@ -7142,9 +7153,21 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
             col.label(text=label)
             col.label(text=units.unit_to_string(
                 context.scene.unit_settings, value))
-        box.label(text="Sized by the bay and the shelves around it",
-                  icon='INFO')
+        box.label(text="Type a new height on its dimension in "
+                       "Openings mode", icon='INFO')
 
+        row = layout.row(align=True)
+        row.prop(self, 'tab', expand=True)
+        if self.tab == 'INTERIOR':
+            self._draw_interior_tab(layout, context, opening)
+        elif self.tab == 'FRONT':
+            self._draw_front_tab(layout, context, opening)
+        elif self.tab == 'PULLS':
+            self._draw_pulls_tab(layout, context)
+        else:
+            self._draw_back_tab(layout)
+
+    def _draw_interior_tab(self, layout, context, opening):
         box = layout.box()
         box.label(text="Interior", icon='SNAP_VOLUME')
         # A tilt-out hamper is its own interior - the basket stands
@@ -7156,10 +7179,31 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
         else:
             self._draw_interior(box, context)
 
+        # Only worth showing once something is hanging in here. The rod
+        # itself is added from the opening's menu or by the bay's
+        # configuration; this is where it is dimensioned afterwards.
+        if _opening_rods(opening):
+            box = layout.box()
+            box.label(text="Rod", icon='MESH_CYLINDER')
+            col = box.column(align=True)
+            if _single_top_rod(opening) is not None:
+                col.prop(self, 'rod_top_offset')
+            col.prop(self, 'rod_set_from_front')
+            if self.rod_set_from_front:
+                col.prop(self, 'rod_from_front')
+            else:
+                col.prop(self, 'rod_from_rear')
+            col.prop(self, 'rod_width_deduction')
+            col.prop(self, 'remove_hangers')
+
+    def _draw_front_tab(self, layout, context, opening):
         # Drawers are their own front, so an opening filled with them
         # has no door to set and the section is left out rather than
         # offered greyed out.
-        if self.fill != 'DRAWERS':
+        if self.fill == 'DRAWERS':
+            layout.label(text="The drawers are this opening's front",
+                         icon='INFO')
+        else:
             box = layout.box()
             box.label(text="Front", icon='MOD_SOLIDIFY')
             box.prop(self, 'door_swing', text="")
@@ -7185,6 +7229,7 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
             box.label(text="Unlocked sides are this opening's own",
                       icon='INFO')
 
+    def _draw_pulls_tab(self, layout, context):
         # What the room does with a pull on this opening's fronts, and
         # anything the opening has taken over for itself. A locked
         # setting reads back the room's figure, so there is something to
@@ -7253,6 +7298,7 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
         sub.enabled = self.double_pull_on_front
         sub.prop(self, 'distance_between_pulls', text="")
 
+    def _draw_back_tab(self, layout):
         # A back closes the opening whatever is standing in front of
         # it, so it gets its own section rather than being one of the
         # interiors to choose between.
@@ -7271,23 +7317,6 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
         sizes.enabled = self.back_notch_left or self.back_notch_right
         sizes.prop(self, 'back_notch_width')
         sizes.prop(self, 'back_notch_height')
-
-        # Only worth showing once something is hanging in here. The rod
-        # itself is added from the opening's menu or by the bay's
-        # configuration; this is where it is dimensioned afterwards.
-        if _opening_rods(opening):
-            box = layout.box()
-            box.label(text="Rod", icon='MESH_CYLINDER')
-            col = box.column(align=True)
-            if _single_top_rod(opening) is not None:
-                col.prop(self, 'rod_top_offset')
-            col.prop(self, 'rod_set_from_front')
-            if self.rod_set_from_front:
-                col.prop(self, 'rod_from_front')
-            else:
-                col.prop(self, 'rod_from_rear')
-            col.prop(self, 'rod_width_deduction')
-            col.prop(self, 'remove_hangers')
 
     def execute(self, context):
         opening = _active_opening_for_insert(context)
