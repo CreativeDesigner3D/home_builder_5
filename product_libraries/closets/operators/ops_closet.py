@@ -479,6 +479,36 @@ def _dispatch_name_for_starter(src):
     return None
 
 
+def _stack_on_countertop(context, root, base):
+    """Fit a hanging starter that was placed over a base starter down
+    to the base's countertop: every bay takes the tallest 32mm-system
+    height that fits between the hanging top and the countertop, and
+    the panels extend the remainder so they stand on the countertop.
+    Nothing is linked - changing the base later leaves this as it is."""
+    context.view_layer.update()
+    bsp = base.hb_closet_starter
+    top_of_base = bsp.height + (bsp.countertop_thickness
+                                if bsp.include_countertop else 0.0)
+    ctop_z = (base.matrix_world @ Vector((0.0, 0.0, top_of_base))).z
+    sp = root.hb_closet_starter
+    top_z = (root.matrix_world @ Vector((0.0, 0.0, sp.height))).z
+    span = top_z - ctop_z
+    bay_h = const.snap_system_height_down(span)
+    if bay_h < const.PANEL_MIN_HEIGHT:
+        return False
+    with types_closets.suspend_recalc():
+        for bay in root.children:
+            if not bay.get(types_closets.TAG_BAY_CAGE):
+                continue
+            bp = bay.hb_closet_bay
+            bp.unlock_height = True
+            bp.height = bay_h
+        sp.extend_panels_to_countertop = True
+        sp.extend_panel_amount = max(span - bay_h, 0.0)
+    types_closets.recalculate_closet_starter(root)
+    return True
+
+
 class hb_closets_OT_place_starter(bpy.types.Operator,
                                   hb_placement.PlacementMixin):
     """Place a closet starter. On a wall the width fills the available
@@ -841,11 +871,70 @@ class hb_closets_OT_place_starter(bpy.types.Operator,
     def _position_from_hit(self, context):
         if self.hit_location is None:
             return
+        base = self._stack_target()
+        if base is not None:
+            self._position_stacked(context, base)
+            return
+        self._set_stack_base(context, None)
         wall = _detect_wall(self, context)
         if wall is not None:
             self._position_on_wall(context, wall)
             return
         self._position_free(context)
+
+    # -- Stacking a hanging starter over a base starter -----------------
+    # With the cursor over a base starter, a hanging starter snaps onto
+    # it: same wall, side, left edge and width. On placement its bays
+    # are sized down to the 32mm height that fits between its top and
+    # the base's countertop, and its panels extend the rest of the way
+    # down to sit on the countertop.
+
+    def _stack_target(self):
+        """The base starter under the cursor, when a hanging starter is
+        being placed over one; else None."""
+        if (not self._is_hanging or getattr(self, '_is_corner', False)
+                or self.source_starter_name):
+            return None
+        obj = self.hit_object
+        while obj is not None and not obj.get(types_closets.TAG_STARTER_CAGE):
+            obj = obj.parent
+        if obj is None or obj is self._preview_cage.obj:
+            return None
+        cls = types_closets.WRAP_CLASS_REGISTRY.get(obj.get('CLASS_NAME', ''))
+        if cls is None or not cls.has_countertop or getattr(
+                cls, 'is_corner', False) or cls.default_closet_type != 'BASE':
+            return None
+        return obj
+
+    def _set_stack_base(self, context, base):
+        name = base.name if base is not None else ""
+        if name == getattr(self, '_stack_base_name', ""):
+            return
+        self._stack_base_name = name
+        if base is not None:
+            hb_placement.draw_header_text(
+                context, f"Stack over {base.name}: click to place on its "
+                "countertop, Esc to cancel")
+        else:
+            self._update_header(context)
+
+    def _position_stacked(self, context, base):
+        cage_obj = self._preview_cage.obj
+        if cage_obj.parent is not base.parent:
+            cage_obj.parent = base.parent
+            cage_obj.matrix_parent_inverse = base.matrix_parent_inverse.copy()
+        cage_obj.location.x = base.location.x
+        cage_obj.location.y = base.location.y
+        cage_obj.rotation_euler = base.rotation_euler.copy()
+        cage_obj.location.z = (base.location.z
+                               + self._mount_z(context.scene.hb_closets))
+        self._apply_width(base.hb_closet_starter.width, fill_mode=True)
+        self._place_on_front = abs(base.rotation_euler.z) < 1e-3
+        self._gap_wall = None
+        self._placement_dim_specs = []
+        self._set_stack_base(context, base)
+        if context.area is not None:
+            context.area.tag_redraw()
 
     def _update_place_on_front(self, context, wall, local_hit_y, wall_thickness):
         """Which side of the wall the cursor is on, with hysteresis. In a
@@ -1455,6 +1544,10 @@ class hb_closets_OT_place_starter(bpy.types.Operator,
 
         # Resize through the update callback so the solver relays out.
         root.hb_closet_starter.width = captured_width
+
+        base = bpy.data.objects.get(getattr(self, '_stack_base_name', ""))
+        if base is not None:
+            _stack_on_countertop(context, root, base)
 
         _apply_finish(root)
 
