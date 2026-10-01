@@ -1839,7 +1839,10 @@ def draw_placement_dimensions(operator, context):
     # Optional facing arrow (corner-cabinet free placement). World-space
     # line segments [(start, end), ...]; drawn after the dims below.
     facing = getattr(operator, '_facing_arrow_segments', None)
-    if not specs and not facing:
+    # Optional preview outline: world-space segments sketching how the
+    # product will be laid out (an upper's bays over a refrigerator).
+    outline = getattr(operator, '_preview_outline_segments', None)
+    if not specs and not facing and not outline:
         return
 
     region = context.region
@@ -1945,6 +1948,22 @@ def draw_placement_dimensions(operator, context):
             blf.position(font_id, cx - text_w * 0.5, cy - text_h * 0.5, 0)
             blf.color(font_id, *color)
             blf.draw(font_id, text)
+
+    if outline:
+        pts = []
+        for s_world, e_world in outline:
+            s_screen = view3d_utils.location_3d_to_region_2d(region, rv3d, s_world)
+            e_screen = view3d_utils.location_3d_to_region_2d(region, rv3d, e_world)
+            if s_screen is None or e_screen is None:
+                continue
+            pts.append(tuple(s_screen))
+            pts.append(tuple(e_screen))
+        if pts:
+            gpu.state.line_width_set(2.0)
+            shader.bind()
+            shader.uniform_float("color", (0.30, 0.95, 0.40, 0.95))
+            batch_for_shader(shader, 'LINES', {"pos": pts}).draw(shader)
+            gpu.state.line_width_set(1.5)
 
     # Facing arrow - a single bright polyline (shaft + arrowhead) drawn
     # over the dims so the open-face direction reads at a glance.

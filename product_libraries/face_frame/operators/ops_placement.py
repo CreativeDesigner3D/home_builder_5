@@ -2751,8 +2751,75 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         # Only _position_on_island_back sets this; any other landing
         # commits outside a cabinet group.
         self._island_back_group = None
+        self._fridge_preview_hit = False
         self._route_position_from_hit(context)
+        if not self._fridge_preview_hit:
+            self._end_fridge_preview()
         self._facing_arrow_segments = self._build_facing_arrow()
+
+    # ---------------- upper over a refrigerator ----------------
+
+    def _fridge_preview_specs(self, context, wall, wall_thickness,
+                              placement_x, cabinet_width):
+        """While a fresh upper sits over a refrigerator it will raise a
+        bay onto, show that: the bays as they will be laid out (one box
+        instead of the even preview cells) with the raised bay's new
+        bottom on the fridge top, and a dim for how far it goes up.
+        Returns the extra dim specs; turns the preview off otherwise."""
+        cage_obj = self._preview_cage.obj
+        picked = None
+        if getattr(self, '_over_fridge', False):
+            try:
+                height = self._preview_cage.get_input('Dim Z')
+            except Exception:
+                height = None
+            if height:
+                # The cage stands on its back corner when placed on the
+                # far face; the run's left edge is placement_x either way.
+                picked = upper_over_refrigerator.pick(
+                    wall, placement_x, cabinet_width, cage_obj.location.y,
+                    cage_obj.location.z + height)
+        if picked is None:
+            self._end_fridge_preview()
+            return []
+        fridge, counts = picked
+        self._fridge_preview_hit = True
+        if not getattr(self, '_fridge_preview_on', False):
+            self._fridge_preview_on = True
+            if self._array_modifier is not None:
+                self._array_modifier.count = 1
+        if abs(self._preview_cage.get_input('Dim X') - cabinet_width) > 1e-6:
+            self._preview_cage.set_input('Dim X', cabinet_width)
+
+        z0 = cage_obj.location.z
+        z1 = z0 + height
+        top = fridge[3]
+        depth = self._cabinet_depth
+        y = -depth if self._place_on_front else wall_thickness + depth
+        wm = wall.matrix_world
+        segments = []
+        bays = upper_over_refrigerator.preview_bays(
+            placement_x, cabinet_width, fridge, counts)
+        for bx0, _bx1, _raised in bays[1:]:
+            segments.append((wm @ Vector((bx0, y, z0)),
+                             wm @ Vector((bx0, y, z1))))
+        raised = next(b for b in bays if b[2])
+        segments.append((wm @ Vector((raised[0], y, top)),
+                         wm @ Vector((raised[1], y, top))))
+        self._preview_outline_segments = segments
+
+        mid = (raised[0] + raised[1]) / 2.0
+        return [hb_placement.PlacementDimSpec(
+            wm @ Vector((mid, y, z0)), wm @ Vector((mid, y, top)),
+            "Raise " + units.unit_to_string(context.scene.unit_settings,
+                                            top - z0),
+            (0.30, 0.95, 0.40, 1.0))]
+
+    def _end_fridge_preview(self):
+        self._preview_outline_segments = None
+        if getattr(self, '_fridge_preview_on', False):
+            self._fridge_preview_on = False
+            self._update_cage()
 
     def _route_position_from_hit(self, context):
         if self.hit_location is None:
@@ -4124,6 +4191,8 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
                     gs, ge, units.unit_to_string(unit_settings, gap), snap_green,
                 ))
 
+        specs.extend(self._fridge_preview_specs(
+            context, wall, wall_thickness, placement_x, cabinet_width))
         return specs
 
     def _build_dim_specs_free(self, context):
@@ -4179,19 +4248,12 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
             except Exception:
                 captured_height = None
             if captured_height:
-                x0 = captured_local_loc.x
-                fridges = upper_over_refrigerator.fridges_under(
-                    captured_parent, x0, x0 + captured_width,
+                fridge_raise = upper_over_refrigerator.pick(
+                    captured_parent, captured_local_loc.x, captured_width,
                     captured_local_loc.y,
                     captured_local_loc.z + captured_height)
-                if fridges:
-                    fridge = max(fridges, key=lambda f: (
-                        min(f[2], x0 + captured_width) - max(f[1], x0)))
-                    counts = upper_over_refrigerator.side_bay_counts(
-                        x0, captured_width, fridge)
-                    if counts is not None:
-                        fridge_raise = (fridge, counts)
-                        captured_bay_qty = sum(counts) + 1
+                if fridge_raise is not None:
+                    captured_bay_qty = sum(fridge_raise[1]) + 1
 
         self._delete_preview()
 

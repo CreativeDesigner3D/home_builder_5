@@ -105,6 +105,43 @@ def side_bay_counts(upper_x0, width, fridge):
     return n_left, n_right
 
 
+def pick(wall, upper_x0, width, upper_y, upper_top):
+    """(fridge, counts) for an upper at ``upper_x0`` .. ``+width`` on
+    ``wall``: the fridge it covers most and the bays either side of the
+    raised one, or None. The placement preview and the drop both ask
+    this, so what is shown is what gets built."""
+    fridges = fridges_under(wall, upper_x0, upper_x0 + width, upper_y,
+                            upper_top)
+    if not fridges:
+        return None
+    fridge = max(fridges, key=lambda f: (
+        min(f[2], upper_x0 + width) - max(f[1], upper_x0)))
+    counts = side_bay_counts(upper_x0, width, fridge)
+    if counts is None:
+        return None
+    return fridge, counts
+
+
+def preview_bays(upper_x0, width, fridge, counts):
+    """[(x0, x1, raised)] bay spans, wall-local, left to right -- the
+    layout plan() builds, less the stiles, for drawing while the upper
+    is still being placed."""
+    _obj, f0, f1, _top = fridge
+    n_left, n_right = counts
+    x1 = upper_x0 + width
+    a = max(f0, upper_x0) if n_left else upper_x0
+    b = min(f1, x1) if n_right else x1
+    out = []
+    for i in range(n_left):
+        out.append((upper_x0 + (a - upper_x0) * i / n_left,
+                    upper_x0 + (a - upper_x0) * (i + 1) / n_left, False))
+    out.append((a, b, True))
+    for i in range(n_right):
+        out.append((b + (x1 - b) * i / n_right,
+                    b + (x1 - b) * (i + 1) / n_right, False))
+    return out
+
+
 def plan(cab_props, upper_x0, upper_z, fridge, counts):
     """[(opening_width, raised_height or None)] per bay, left to right,
     for a built cabinet with ``sum(counts) + 1`` bays, or None when the
