@@ -424,13 +424,13 @@ def _finish_summary(p):
     return text
 
 
-def _fronts_summary(p):
+def _doors_summary(p):
     return _join(_value(p, 'door_style', 'ss_door'),
-                 _value(p, 'drawer_front_style', 'ss_drawer'))
+                 _value(p, 'finish_hinge', 'ss_hinge'))
 
 
-def _hardware_summary(p):
-    return _join(_value(p, 'finish_hinge', 'ss_hinge'),
+def _drawers_summary(p):
+    return _join(_value(p, 'drawer_front_style', 'ss_drawer'),
                  _value(p, 'ss_drawer_slides', 'ss_drawer_slides'),
                  _value(p, 'ss_drawer_box_construction',
                         'ss_drawer_box_construction'))
@@ -515,15 +515,9 @@ def _cabinet_style_fields():
         ('bool', 'show_finish_references', "Show References"),
     ]
 
-    fronts = ()
-
-    hardware = (
-        ('choice', 'finish_hinge', "Hinge", {'custom': 'ss_hinge'}),
-        ('choice', 'ss_drawer_slides', "Drawer Slides"),
-        ('choice', 'ss_drawer_box_construction', "Box Construction"),
-        ('file', 'ss_drawer_box_brand', "Box Brand Logo"),
-    )
-
+    # Doors and Drawers are edited on the front style tabs, with the
+    # hardware that goes with each (_DOOR_STYLE_FIELDS /
+    # _DRAWER_STYLE_FIELDS); the panel reads them as a line each.
     notes = (
         # Printed at the end of the style's Style Section block.
         ('items', 'ss_notes', None,
@@ -536,8 +530,8 @@ def _cabinet_style_fields():
     return (
         ("Cabinet", _construction_summary, construction),
         ("Finish", _finish_summary, tuple(finish)),
-        ("Fronts", _fronts_summary, fronts),
-        ("Hardware", _hardware_summary, hardware),
+        ("Doors", _doors_summary, ()),
+        ("Drawers", _drawers_summary, ()),
         ("Notes", _notes_summary, notes),
     )
 
@@ -704,7 +698,7 @@ def _front_picture(kind, style):
     from ..common import door_builder
     w, h = (units.inch(v) for v in _TILE_SIZE[kind])
     t = units.inch(_TILE_THICKNESS)
-    edge = _edge_profile_name(bpy.context)
+    edge = _edge_profile_name(bpy.context, kind)
     plan = None
     if style.door_type != 'SLAB':
         plan = style.front_build_plan(w, h, t, edge_name=edge)
@@ -730,16 +724,12 @@ def _front_picture(kind, style):
     return pic
 
 
-def _edge_profile_name(context):
-    """The active cabinet style's Door and Drawer Edge Profile, as
-    Face_Frame_Door_Style._cabinet_edge_profile reads it for a front."""
-    cs = _active_cabinet_style(context)
-    if cs is None:
-        return None
-    if getattr(cs, 'ss_edge_profile_is_custom', False):
-        return cs.ss_edge_profile_custom.strip() or None
-    name = getattr(cs, 'ss_edge_profile', 'None')
-    return None if name == 'None' else name
+def _edge_profile_name(context, kind='DOOR'):
+    """The active cabinet style's edge profile for a door or drawer
+    front, as Face_Frame_Door_Style._cabinet_edge_profile reads it."""
+    from .props_hb_face_frame import cabinet_style_edge_profile
+    return cabinet_style_edge_profile(_active_cabinet_style(context),
+                                      kind == 'DRAWER')
 
 
 def _cached_picture(key, make):
@@ -759,7 +749,7 @@ def _cached_picture(key, make):
 def _front_tile_picture(kind):
     def picture(context, style):
         pic = _cached_picture(('STYLE', kind, _style_signature(style),
-                               _edge_profile_name(context)),
+                               _edge_profile_name(context, kind)),
                               lambda: _front_picture(kind, style))
         return pic, pic.get('w', 0.0), pic.get('h', 0.0)
     return picture
@@ -781,7 +771,7 @@ def _catalog_picture(kind, series, shape=None, panel=None):
     except Exception:
         base = None
     key = ('PICK', kind, series, shape, panel, _style_signature(base),
-           _edge_profile_name(bpy.context))
+           _edge_profile_name(bpy.context, kind))
     pic = _cached_picture(key, lambda: _front_picture(
         kind, front_style_sketch(kind, series, shape, panel, base)))
     return pic, pic.get('w', 0.0), pic.get('h', 0.0)
@@ -1195,11 +1185,22 @@ OPTION_PAGES = {
 # each style tab: the style it builds with (a dropdown, or typed text for
 # the Style Section), the others it lists there, and -- drawers -- the
 # height a front changes to the first of those at.
-# The cabinet style's Door and Drawer Edge Profile: one pick for every
-# front, so it shows on both front tabs.
-_EDGE_PROFILE_FIELDS = (
+# What the cabinet style says about its doors and its drawers, under
+# each front tab's styles: the edge profile and the hardware that goes
+# with that kind of front. Drawer fronts share the doors' edge profile
+# unless the style gives them their own.
+_DOOR_STYLE_FIELDS = (
     ('choice', 'ss_edge_profile', "Edge Profile"),
-    ('notes', lambda context: ("Doors and drawer fronts alike",), None),
+    ('choice', 'finish_hinge', "Hinge", {'custom': 'ss_hinge'}),
+)
+_DRAWER_STYLE_FIELDS = (
+    ('bool', 'ss_drawer_edge_profile_differs',
+     "Different Drawer Edge Profile"),
+    ('choice', 'ss_drawer_edge_profile', "Drawer Edge Profile",
+     {'when': lambda p: p.ss_drawer_edge_profile_differs}),
+    ('choice', 'ss_drawer_slides', "Drawer Slides"),
+    ('choice', 'ss_drawer_box_construction', "Box Construction"),
+    ('file', 'ss_drawer_box_brand', "Box Brand Logo"),
 )
 
 
@@ -1246,7 +1247,8 @@ def _front_manager_tab(key):
         if cs is not None:
             out.append(('gap', None))
             out.extend(options_panel.field_blocks(
-                context, _EDGE_PROFILE_FIELDS, cs))
+                context, (_DRAWER_STYLE_FIELDS if kind == 'DRAWER'
+                          else _DOOR_STYLE_FIELDS), cs))
         if cs is not None and kind == 'DRAWER':
             out.append(('gap', None))
             out.extend(options_panel.field_blocks(
@@ -1256,7 +1258,8 @@ def _front_manager_tab(key):
 
 
 # The editor's tabs: the style's own sections, with its fronts made,
-# picked and listed in the two front style tabs where Fronts would be.
+# picked and listed on the Doors and Drawers tabs, each with its
+# hardware.
 _CABINET_STYLE_TABS = ()
 _FINISH_FIELDS = dict((label, fields) for label, _summary, fields
                       in _CABINET_STYLE_SECTIONS)["Finish"]
@@ -1267,11 +1270,11 @@ for _label, _summary, _fields in _CABINET_STYLE_SECTIONS:
         _CABINET_STYLE_TABS += ((_label, tuple(_fields) + (
             ('gap', None, None), ('label', None, "Finish"))
             + tuple(_FINISH_FIELDS)),)
-    elif _label == "Fronts":
+    elif _label == "Doors":
+        _CABINET_STYLE_TABS += ((_label, _front_manager_tab('DOOR_STYLES')),)
+    elif _label == "Drawers":
         _CABINET_STYLE_TABS += (
-            ("Door Styles", _front_manager_tab('DOOR_STYLES')),
-            ("Drawer Front Styles",
-             _front_manager_tab('DRAWER_FRONT_STYLES')))
+            (_label, _front_manager_tab('DRAWER_FRONT_STYLES')),)
     else:
         _CABINET_STYLE_TABS += ((_label, _fields),)
 

@@ -633,6 +633,42 @@ def suspend_propagate():
         _PROPAGATE_SUSPEND_DEPTH -= 1
 
 
+# Door and drawer front edge profiles a cabinet style can call for.
+EDGE_PROFILE_ITEMS = [
+    ('None', 'None', ''),
+    ('Bay', 'Bay', ''),
+    ('Beveled', 'Beveled', ''),
+    ('Chamfer', 'Chamfer', ''),
+    ('Classic Cut', 'Classic Cut', ''),
+    ('Drop Radius', '3/8" Drop Radius', ''),
+    ('Eclipse', 'Eclipse', ''),
+    ('Estate', 'Estate', ''),
+    ('New Cut', 'New Cut', ''),
+    ('Square', 'Square', ''),
+    ('1/8" Radius', '1/8" Radius', ''),
+    ('1/4" Radius', '1/4" Radius', ''),
+    ('3/8" Radius', '3/8" Radius', ''),
+    ('3/8" Inset 1/8" Radius', '3/8" Inset 1/8" Radius', ''),
+    ('3/8" Inset Radius', '3/8" Inset 3/8" Radius', ''),
+    ('3/8" Inset square', '3/8" Inset Square', ''),
+]
+
+
+def cabinet_style_edge_profile(cs, drawer=False):
+    """The edge profile a cabinet style cuts into its fronts (the pick,
+    or its custom free text), or None when unset. Drawer fronts read the
+    drawer edge profile when the style gives them one of their own."""
+    if cs is None:
+        return None
+    key = ('ss_drawer_edge_profile'
+           if drawer and getattr(cs, 'ss_drawer_edge_profile_differs', False)
+           else 'ss_edge_profile')
+    if getattr(cs, key + '_is_custom', False):
+        return (getattr(cs, key + '_custom', '') or '').strip() or None
+    name = getattr(cs, key, 'None')
+    return None if name == 'None' else name
+
+
 def _propagate_cabinet_style(self, context):
     """Push this cabinet style's current state to every face frame
     cabinet tagged with STYLE_NAME == self.name, in this room and every
@@ -2115,24 +2151,22 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
     ss_edge_profile: EnumProperty(
         name="Edge Profile",
         description="Door and drawer edge profile: cut into every front's outer edge and shown on the style section page (None = use the door style's outer profile)",
-        items=[
-            ('None', 'None', ''),
-            ('Bay', 'Bay', ''),
-            ('Beveled', 'Beveled', ''),
-            ('Chamfer', 'Chamfer', ''),
-            ('Classic Cut', 'Classic Cut', ''),
-            ('Drop Radius', '3/8" Drop Radius', ''),
-            ('Eclipse', 'Eclipse', ''),
-            ('Estate', 'Estate', ''),
-            ('New Cut', 'New Cut', ''),
-            ('Square', 'Square', ''),
-            ('1/8" Radius', '1/8" Radius', ''),
-            ('1/4" Radius', '1/4" Radius', ''),
-            ('3/8" Radius', '3/8" Radius', ''),
-            ('3/8" Inset 1/8" Radius', '3/8" Inset 1/8" Radius', ''),
-            ('3/8" Inset Radius', '3/8" Inset 3/8" Radius', ''),
-            ('3/8" Inset square', '3/8" Inset Square', ''),
-        ],
+        items=EDGE_PROFILE_ITEMS,
+        default='None',
+        update=_propagate_cabinet_style,
+    )  # type: ignore
+    # Drawer fronts usually share the doors' edge; when they don't, the
+    # drawer fronts take their own.
+    ss_drawer_edge_profile_differs: BoolProperty(
+        name="Different Drawer Edge Profile",
+        description="Drawer fronts get an edge profile of their own instead of the doors' one",
+        default=False,
+        update=_propagate_cabinet_style,
+    )  # type: ignore
+    ss_drawer_edge_profile: EnumProperty(
+        name="Drawer Edge Profile",
+        description="Edge profile cut into drawer fronts when it differs from the doors'",
+        items=EDGE_PROFILE_ITEMS,
         default='None',
         update=_propagate_cabinet_style,
     )  # type: ignore
@@ -2153,6 +2187,8 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
     # fields), so its custom companions propagate too.
     ss_edge_profile_is_custom: BoolProperty(name="Custom Edge Profile", default=False, update=_propagate_cabinet_style)  # type: ignore
     ss_edge_profile_custom: StringProperty(name="Edge Profile", default="", update=_propagate_cabinet_style)  # type: ignore
+    ss_drawer_edge_profile_is_custom: BoolProperty(name="Custom Drawer Edge Profile", default=False, update=_propagate_cabinet_style)  # type: ignore
+    ss_drawer_edge_profile_custom: StringProperty(name="Drawer Edge Profile", default="", update=_propagate_cabinet_style)  # type: ignore
     ss_wood_is_custom: BoolProperty(name="Custom Wood", default=False)  # type: ignore
     ss_wood_custom: StringProperty(name="Wood", default="")  # type: ignore
     ss_interior_is_custom: BoolProperty(name="Custom Interior", default=False)  # type: ignore
@@ -3964,6 +4000,10 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         row.label(text="DOOR & DRAWER EDGE PROFILE")
         col = box.column(align=True)
         self._draw_toggle_field(col, "ss_edge_profile", "Edge Profile")
+        col.prop(self, "ss_drawer_edge_profile_differs")
+        if self.ss_drawer_edge_profile_differs:
+            self._draw_toggle_field(col, "ss_drawer_edge_profile",
+                                    "Drawer Edge Profile")
 
         # Free-text notes printed in a NOTES section at the end of this
         # style's Style Section block (e.g. 'TOUCH LATCH = TL').
@@ -4744,17 +4784,13 @@ class Face_Frame_Door_Style(PropertyGroup):
         return None
 
     def _cabinet_edge_profile(self, front_obj):
-        """The parent cabinet style's Door and Drawer Edge Profile pick
-        (ss_edge_profile, or its custom free text), or None when unset.
-        A per-order catalog styling option, so it lives on the CABINET
-        style -- not the door style -- and applies to every front."""
+        """The parent cabinet style's edge profile for this front (see
+        cabinet_style_edge_profile), or None when unset. A per-order
+        catalog styling option, so it lives on the CABINET style -- not
+        the door style."""
         cs = self.get_parent_cabinet_style(front_obj)
-        if cs is None:
-            return None
-        if getattr(cs, 'ss_edge_profile_is_custom', False):
-            return cs.ss_edge_profile_custom.strip() or None
-        name = cs.ss_edge_profile
-        return None if name == 'None' else name
+        drawer = front_obj.get('hb_part_role') in self._DRAWER_FRONT_ROLES
+        return cabinet_style_edge_profile(cs, drawer)
 
     def resolve_member_section(self, front_thickness):
         """Mitered-series member cross-section for this style at a door
