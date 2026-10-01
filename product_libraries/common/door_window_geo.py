@@ -1600,6 +1600,43 @@ def _door_type_symbol(cage_obj, kind, opts, x0, x1, T, y_center, st, ct,
     return obj
 
 
+def _fit_swing_to_leaf(cage_obj, x0=0.0, inset=0.0, y_shift=0.0,
+                       thickness=None):
+    """Fit the swing annotation to the modeled leaf instead of the
+    whole cage. The cage's Dim X is the overall unit including the
+    casing band and jambs, so a symbol drawn across it hinges out at
+    the casing edge and swings a wider arc than the slab - in plan it
+    reads beside the leaf rather than on it. The annotation shifts to
+    the leaf zone's start and its width driver deducts the frame, so
+    it still follows the cage when the width is edited live. The
+    symbol pivots on a wall face while the slab hinges inside the
+    frame; y_shift moves it onto the slab's hinge line."""
+    child = _swing_child(cage_obj)
+    if child is None:
+        return
+    child.location.x = x0
+    child.location.y = y_shift
+    if thickness is not None:
+        try:
+            hb_types.GeoNodeObject(child).set_input('Door Thickness',
+                                                    thickness)
+        except Exception:
+            pass
+    hbp = getattr(child, 'home_builder', None)
+    mod = child.modifiers.get(hbp.mod_name) if hbp else None
+    if mod is None or mod.node_group is None:
+        return
+    item = mod.node_group.interface.items_tree.get('Dim X')
+    if item is None or child.animation_data is None:
+        return
+    path = hb_types._gn_input_data_path(mod, item.identifier)
+    for fc in child.animation_data.drivers:
+        if fc.data_path == path:
+            fc.driver.expression = ('dim_x - %.6f' % inset
+                                    if inset > 1e-6 else 'dim_x')
+            break
+
+
 def _show_swing_arc(cage_obj, show):
     """The swing annotation stays - it carries the handing, the side and
     the double flag every door type reads - but only a swing door draws
@@ -1663,6 +1700,7 @@ def build_door_geometry(cage_obj):
     remove_geometry(cage_obj)
     opts = merged_opts(cage_obj)
     if opts is None:
+        _fit_swing_to_leaf(cage_obj)
         return
     cage = hb_types.GeoNodeCage(cage_obj)
     if not cage.has_modifier():
@@ -1671,6 +1709,7 @@ def build_door_geometry(cage_obj):
     T = cage.get_input('Dim Y')
     H = cage.get_input('Dim Z')
     if W <= inch(6) or H <= inch(12) or T <= inch(0.5):
+        _fit_swing_to_leaf(cage_obj)
         return
 
     jw = min(max(opts['jamb_width'], inch(0.25)), inch(2.0))
@@ -1804,6 +1843,12 @@ def build_door_geometry(cage_obj):
     slab_zone_w = door_x1 - door_x0
     is_double, is_left, swing_inside = _swing_state(cage_obj)
     _show_swing_arc(cage_obj, kind == 'SWING')
+    # The symbol pivots on the far face for its swing (T inswing, 0
+    # outswing); the slab hinges on its own face at y_center_front.
+    _fit_swing_to_leaf(
+        cage_obj, door_x0, W - (door_x1 - door_x0),
+        (y_center_front - T) if swing_inside else (y_center_front + st),
+        st)
     if kind != 'SWING':
         side = -1.0 if swing_inside else 1.0
         y_center = y_center_front + st / 2.0
