@@ -41,6 +41,13 @@ from types import SimpleNamespace
 TAG_STARTER_CAGE = 'IS_CLOSET_STARTER_CAGE'
 TAG_BAY_CAGE = 'IS_CLOSET_BAY_CAGE'
 TAG_OPENING_CAGE = 'IS_CLOSET_OPENING_CAGE'
+# A corner (L-shelf) unit has no bays or openings - it lays itself out
+# whole - but the Bays and Openings selection modes still show it: one
+# cage over the unit, one over the space its shelves and rods stand in,
+# each with the commands that belong at that level. Tagged apart from
+# the run's own cages so nothing that walks a run's bays meets them.
+TAG_CORNER_BAY_CAGE = 'IS_CLOSET_CORNER_BAY_CAGE'
+TAG_CORNER_OPENING_CAGE = 'IS_CLOSET_CORNER_OPENING_CAGE'
 
 PART_ROLE_PANEL = 'CLOSET_PANEL'
 PART_ROLE_BOTTOM_SHELF = 'CLOSET_BOTTOM_SHELF'
@@ -5504,6 +5511,59 @@ class LShelfClosetStarter(GeoNodeCage):
             return 3
         return max(0, int(sp.l_shelf_qty)) + 2
 
+    def _corner_cage(self, tag, name, menu_id):
+        for c in self.obj.children:
+            if c.get(tag):
+                return c
+        cage = GeoNodeCage()
+        cage.create(name)
+        cage.obj.parent = self.obj
+        cage.obj[tag] = True
+        cage.obj['MENU_ID'] = menu_id
+        cage.set_input('Mirror Y', True)
+        # Shown by the selection mode that wants it, like a bay's cage.
+        cage.obj.display_type = 'WIRE'
+        cage.obj.hide_viewport = True
+        return cage.obj
+
+    def _notch_corner_cage(self, cage_obj, W, D, LD, RD, h):
+        """Cut the room's corner out of a corner cage so its highlight
+        reads as the L the unit is, not the square it stands in."""
+        name = 'Corner Notch'
+        mod = cage_obj.modifiers.get(name)
+        cpm = CabinetPartModifier(cage_obj)
+        if mod is None:
+            cpm.add_node('CPM_CORNERNOTCH', name)
+            cpm.set_input('Flip X', True)
+            cpm.set_input('Flip Y', True)
+        else:
+            cpm.mod = mod
+        cpm.set_input('X', max(W - LD, 0.0))
+        cpm.set_input('Y', max(D - RD, 0.0))
+        cpm.set_input('Route Depth', h + 0.01)
+
+    def _layout_corner_cages(self, W, D, H, LD, RD, open_lo, open_hi):
+        """The cages the Bays and Openings selection modes show for a
+        corner: the whole unit, and the space between its bottom and
+        top shelf where its shelves and rods go."""
+        bay = self._corner_cage(TAG_CORNER_BAY_CAGE, 'Corner Bay',
+                                'HOME_BUILDER_MT_closet_corner_bay_commands')
+        bay.location = (0.0, 0.0, 0.0)
+        g = GeoNodeCage(bay)
+        g.set_input('Dim X', W)
+        g.set_input('Dim Y', D)
+        g.set_input('Dim Z', H)
+        self._notch_corner_cage(bay, W, D, LD, RD, H)
+        opening = self._corner_cage(
+            TAG_CORNER_OPENING_CAGE, 'Corner Opening',
+            'HOME_BUILDER_MT_closet_corner_opening_commands')
+        opening.location = (0.0, 0.0, open_lo)
+        g = GeoNodeCage(opening)
+        g.set_input('Dim X', W)
+        g.set_input('Dim Y', D)
+        g.set_input('Dim Z', max(open_hi - open_lo, 0.001))
+        self._notch_corner_cage(opening, W, D, LD, RD, open_hi - open_lo)
+
     def _reconcile_l_rods(self, want):
         """The rods in a corner unit: none, one, or two.
 
@@ -6002,6 +6062,7 @@ class LShelfClosetStarter(GeoNodeCage):
             rods = self._reconcile_l_rods(len(tops))
             self._layout_l_rods(rods, W, D, LD, RD, l_pt, r_pt, tops)
             self._warn_l_rod(W, D)
+            self._layout_corner_cages(W, D, H, LD, RD, z_bottom + st, z_top)
 
             self.set_input('Dim X', W)
             self.set_input('Dim Y', D)

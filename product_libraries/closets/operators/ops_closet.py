@@ -350,6 +350,12 @@ class hb_closets_OT_toggle_mode(bpy.types.Operator):
         'Bays': types_closets.TAG_BAY_CAGE,
         'Openings': types_closets.TAG_OPENING_CAGE,
     }
+    # A corner unit's stand-ins for a bay and an opening show in the
+    # same modes as the real ones.
+    MODE_EXTRA_TAGS = {
+        'Bays': types_closets.TAG_CORNER_BAY_CAGE,
+        'Openings': types_closets.TAG_CORNER_OPENING_CAGE,
+    }
 
     def _matches_mode(self, obj, mode):
         if mode == 'Parts':
@@ -359,7 +365,8 @@ class hb_closets_OT_toggle_mode(bpy.types.Operator):
         tag = self.MODE_TAGS.get(mode)
         if tag is None:
             return False
-        return tag in obj
+        extra = self.MODE_EXTRA_TAGS.get(mode)
+        return tag in obj or (extra is not None and extra in obj)
 
     def _toggle_one(self, obj, mode):
         # Never touch scene geometry outside the closet hierarchy.
@@ -6892,6 +6899,145 @@ def _section(layout, sp, toggle, label):
     return box if getattr(sp, toggle) else None
 
 
+def _corner_root(context):
+    """The corner (L-shelf) unit the active object belongs to, or None."""
+    root = types_closets.find_starter_root(context.active_object)
+    if root is None:
+        return None
+    cls = types_closets.WRAP_CLASS_REGISTRY.get(root.get('CLASS_NAME', ''))
+    if cls is None or not getattr(cls, 'is_corner', False) \
+            or getattr(cls, 'is_filler', False):
+        return None
+    return root
+
+
+class hb_closets_OT_corner_bay_prompts(bpy.types.Operator):
+    """Size and build of a corner unit: how far it reaches along each
+    wall, how deep each wing is, how tall it stands, and the partition
+    and corner its shelves turn around. Changes show as they are made"""
+    bl_idname = "hb_closets.corner_bay_prompts"
+    bl_label = "Corner Properties"
+    bl_options = {'UNDO'}
+
+    target_name: bpy.props.StringProperty(
+        options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        return _corner_root(context) is not None
+
+    def invoke(self, context, event):
+        self.target_name = _corner_root(context).name
+        return context.window_manager.invoke_props_dialog(
+            self, width=360, confirm_text="Done")
+
+    def execute(self, context):
+        return {'FINISHED'}
+
+    def draw(self, context):
+        root = bpy.data.objects.get(self.target_name)
+        layout = self.layout
+        if root is None:
+            layout.label(text="This corner is gone")
+            return
+        sp = root.hb_closet_starter
+        box = layout.box()
+        box.label(text="Size", icon='MOD_BEVEL')
+        col = box.column(align=True)
+        col.prop(sp, 'width', text="Along Back Wall")
+        col.prop(sp, 'depth', text="Along Side Wall")
+        col.prop(sp, 'height')
+        col = box.column(align=True)
+        col.prop(sp, 'l_left_depth', text="Side Wall Wing Depth")
+        col.prop(sp, 'l_right_depth', text="Back Wall Wing Depth")
+        box = layout.box()
+        box.label(text="Construction", icon='MOD_BUILD')
+        col = box.column(align=True)
+        col.prop(sp, 'l_back_width')
+        col.prop(sp, 'l_flip_partition')
+        col = box.column(align=True)
+        col.prop(sp, 'l_use_radius')
+        sub = col.column(align=True)
+        sub.enabled = sp.l_use_radius
+        sub.prop(sp, 'l_corner_radius')
+        row = sub.row(align=True)
+        row.prop(sp, 'l_radius_top', text="Top")
+        row.prop(sp, 'l_radius_shelves', text="Shelves")
+        row.prop(sp, 'l_radius_bottom', text="Bottom")
+
+
+class hb_closets_OT_corner_opening_prompts(bpy.types.Operator):
+    """What stands in a corner unit: shelves (adjustable or locked) or
+    a rod along one wing, single or double hang. Changes show as they
+    are made"""
+    bl_idname = "hb_closets.corner_opening_prompts"
+    bl_label = "Corner Opening Properties"
+    bl_options = {'UNDO'}
+
+    target_name: bpy.props.StringProperty(
+        options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        return _corner_root(context) is not None
+
+    def invoke(self, context, event):
+        self.target_name = _corner_root(context).name
+        return context.window_manager.invoke_props_dialog(
+            self, width=340, confirm_text="Done")
+
+    def execute(self, context):
+        return {'FINISHED'}
+
+    def draw(self, context):
+        root = bpy.data.objects.get(self.target_name)
+        layout = self.layout
+        if root is None:
+            layout.label(text="This corner is gone")
+            return
+        sp = root.hb_closet_starter
+        col = layout.column(align=True)
+        col.prop(sp, 'l_interior')
+        if sp.l_interior in ('ADJ', 'LOCK'):
+            col.prop(sp, 'l_shelf_qty')
+        else:
+            # A rod runs along one wing rather than turning the corner,
+            # so which wing is the question.
+            col.prop(sp, 'l_rod_on_left')
+            if sp.l_interior == 'DOUBLE':
+                col.prop(sp, 'l_top_opening_height')
+        warning = root.get(types_closets.PROP_ACCESSORY_WARNING, '')
+        if warning:
+            layout.box().label(text=warning, icon='ERROR')
+        layout.label(text="A corner holds shelves and rods only",
+                     icon='INFO')
+
+
+class hb_closets_OT_corner_opening_config(bpy.types.Operator):
+    """Set what stands in a corner unit"""
+    bl_idname = "hb_closets.corner_opening_config"
+    bl_label = "Corner Opening"
+    bl_options = {'UNDO'}
+
+    interior: bpy.props.EnumProperty(
+        name="Holds",
+        items=[('ADJ', "Adjustable Shelves", ""),
+               ('LOCK', "Lock Shelves", ""),
+               ('ROD', "Hanging Rod", ""),
+               ('DOUBLE', "Double Hang", "")])  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        return _corner_root(context) is not None
+
+    def execute(self, context):
+        root = _corner_root(context)
+        root.hb_closet_starter.l_interior = self.interior
+        _apply_finish(root)
+        _redraw_viewports(context)
+        return {'FINISHED'}
+
+
 class hb_closets_OT_starter_prompts(bpy.types.Operator):
     """Edit the active starter's sizes and options."""
     bl_idname = "hb_closets.starter_prompts"
@@ -8982,6 +9128,9 @@ classes = (
     hb_closets_OT_continuous_top_prompts,
     hb_closets_OT_place_bay_countertop,
     hb_closets_OT_place_slab_countertop,
+    hb_closets_OT_corner_bay_prompts,
+    hb_closets_OT_corner_opening_prompts,
+    hb_closets_OT_corner_opening_config,
     hb_closets_OT_slab_countertop_prompts,
     hb_closets_OT_bay_countertop_prompts,
     hb_closets_OT_delete_bay_countertop,

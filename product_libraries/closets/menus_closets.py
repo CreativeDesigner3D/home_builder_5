@@ -46,6 +46,35 @@ class HOME_BUILDER_MT_closet_hanger_commands(bpy.types.Menu):
                              text="Change Hanger...", icon='MOD_CLOTH')
 
 
+class HOME_BUILDER_MT_closet_corner_bay_commands(bpy.types.Menu):
+    """Right-click on a corner unit in Bays mode."""
+    bl_label = "Corner Commands"
+
+    def draw(self, context):
+        layout = self.layout
+        layout.operator("hb_closets.corner_bay_prompts",
+                        text="Corner Properties...", icon='WINDOW')
+
+
+class HOME_BUILDER_MT_closet_corner_opening_commands(bpy.types.Menu):
+    """Right-click on a corner unit in Openings mode. Shelves and rods
+    are all a corner takes."""
+    bl_label = "Corner Opening Commands"
+
+    def draw(self, context):
+        layout = self.layout
+        layout.operator("hb_closets.corner_opening_prompts",
+                        text="Opening Properties...", icon='WINDOW')
+        layout.separator()
+        for key, label in (('ADJ', "Adjustable Shelves"),
+                           ('LOCK', "Lock Shelves"),
+                           ('ROD', "Hanging Rod"),
+                           ('DOUBLE', "Double Hang")):
+            op = layout.operator("hb_closets.corner_opening_config",
+                                 text=label)
+            op.interior = key
+
+
 class HOME_BUILDER_MT_closet_bay_commands(bpy.types.Menu):
     """Right-click menu for a closet bay cage."""
     bl_label = "Closet Bay Commands"
@@ -466,6 +495,8 @@ class HOME_BUILDER_MT_closet_part_commands(bpy.types.Menu):
 classes = (
     HOME_BUILDER_MT_closet_starter_commands,
     HOME_BUILDER_MT_closet_hanger_commands,
+    HOME_BUILDER_MT_closet_corner_bay_commands,
+    HOME_BUILDER_MT_closet_corner_opening_commands,
     HOME_BUILDER_MT_closet_bay_commands,
     HOME_BUILDER_MT_closet_opening_commands,
     HOME_BUILDER_MT_closet_change_bay,
