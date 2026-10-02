@@ -1953,6 +1953,15 @@ class hb_face_frame_OT_paint_part_material(bpy.types.Operator):
             node = node.parent
         return None
 
+    def _paint_region_nosing(self, cage, mat):
+        """Show a region's new shelf paint on its nosings right away;
+        the material walk re-applies it from the cage stamp on recalc."""
+        if cage is None:
+            return
+        for c in cage.children_recursive:
+            if c.get('hb_part_role') == 'SHELF_NOSING':
+                self._assign_object_material(c, mat)
+
     @staticmethod
     def _shelf_cage_for(obj):
         """Walk up to the stable cage a shelf stamp lives on: the opening
@@ -1983,6 +1992,9 @@ class hb_face_frame_OT_paint_part_material(bpy.types.Operator):
         is_part = bool(obj.get('CABINET_PART'))
         is_front = is_part and obj.get('hb_part_role') in self._FRONT_ROLES
         is_shelf = is_part and obj.get('hb_part_role') in self._SHELF_ROLES
+        # Shelf nosing is a plain mesh (not a cutpart) rebuilt with its
+        # shelf, so painting it stamps the same region cage as the shelf.
+        is_nosing = obj.get('hb_part_role') == 'SHELF_NOSING'
 
         if self.brush == 'RESET':
             if is_front:
@@ -1991,7 +2003,7 @@ class hb_face_frame_OT_paint_part_material(bpy.types.Operator):
                 for k in ('hb_front_material_override', 'hb_front_material_style'):
                     if k in tgt:
                         del tgt[k]
-            elif is_shelf:
+            elif is_shelf or is_nosing:
                 tgt = self._shelf_cage_for(obj)
                 for t in (tgt, obj):
                     if t is None:
@@ -2006,7 +2018,7 @@ class hb_face_frame_OT_paint_part_material(bpy.types.Operator):
                 for k in ('hb_part_material_override', 'hb_part_material_style'):
                     if k in obj:
                         del obj[k]
-            if is_part:
+            if is_part or is_nosing:
                 root = types_face_frame.find_cabinet_root(obj)
                 if root is not None:
                     host = self._style_for(ff, obj)
@@ -2043,6 +2055,21 @@ class hb_face_frame_OT_paint_part_material(bpy.types.Operator):
                 tgt[key + '_override'] = self.brush
                 tgt[key + '_style'] = style.name
                 style._set_part_surfaces(obj, mat, edge)
+                self._paint_region_nosing(cage, mat)
+            elif is_nosing:
+                cage = self._shelf_cage_for(obj)
+                if cage is not None:
+                    cage['hb_shelf_material_override'] = self.brush
+                    cage['hb_shelf_material_style'] = style.name
+                    # The shelves in the region take the same paint, so
+                    # shelf and nosing stay one piece on the next recalc.
+                    for c in cage.children_recursive:
+                        if (c.get('CABINET_PART')
+                                and c.get('hb_part_role') in self._SHELF_ROLES):
+                            style._set_part_surfaces(c, mat, edge)
+                    self._paint_region_nosing(cage, mat)
+                else:
+                    self._assign_object_material(obj, mat)
             elif is_part:
                 obj['hb_part_material_override'] = self.brush
                 obj['hb_part_material_style'] = style.name

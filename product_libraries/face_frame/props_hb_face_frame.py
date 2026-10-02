@@ -3277,6 +3277,15 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                                    # exterior finish the other cutters take.
                                    'DRAWER_BOX_CUTTER'):
                     slot_mat = interior_mat or finish_mat
+                if slot_role == 'SHELF_NOSING':
+                    # A painted shelf region carries its nosing along:
+                    # the stamp on the opening / bay cage wins over the
+                    # exterior-finish default, same as the shelves.
+                    ov = self._shelf_paint_override(
+                        self._opening_cage_for_part(child),
+                        self._bay_cage_for_part(child))
+                    if ov is not None and ov[0] is not None:
+                        slot_mat = ov[0]
                 if slot_mat is not None:
                     if child.data.materials:
                         child.data.materials[0] = slot_mat
@@ -3445,25 +3454,9 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                 # Per-region shelf paint override. Shelves are wiped and
                 # rebuilt every recalc, so the Paint Part stamp lives on
                 # the stable opening (or bay) cage, like fronts do.
-                ov_src = None
-                for cage in (opening_cage, bay_cage):
-                    if (cage is not None
-                            and cage.get('hb_shelf_material_override')
-                            in ('FINISH', 'INTERIOR')):
-                        ov_src = cage
-                        break
-                if ov_src is not None:
-                    sstyle = self
-                    sname = ov_src.get('hb_shelf_material_style')
-                    if sname:
-                        for cs in get_style_props().cabinet_styles:
-                            if cs.name == sname:
-                                sstyle = cs
-                                break
-                    if ov_src['hb_shelf_material_override'] == 'FINISH':
-                        base_mat, base_edge = sstyle.get_finish_material()
-                    else:
-                        base_mat, base_edge = sstyle.get_interior_material()
+                ov = self._shelf_paint_override(opening_cage, bay_cage)
+                if ov is not None:
+                    base_mat, base_edge = ov
                 self._set_part_surfaces(child, base_mat, base_edge)
                 continue
 
@@ -3622,6 +3615,29 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                 self._set_part_surfaces(
                     child, interior_mat, interior_mat_rotated,
                 )
+
+    def _shelf_paint_override(self, opening_cage, bay_cage):
+        """(surface, edge) materials from a Paint Part shelf stamp on
+        the opening cage (else the bay cage), or None when the region is
+        unpainted. The stamped style wins; this style is the fallback
+        when the stamped one no longer exists."""
+        for cage in (opening_cage, bay_cage):
+            if (cage is not None
+                    and cage.get('hb_shelf_material_override')
+                    in ('FINISH', 'INTERIOR')):
+                break
+        else:
+            return None
+        sstyle = self
+        sname = cage.get('hb_shelf_material_style')
+        if sname:
+            for cs in get_style_props().cabinet_styles:
+                if cs.name == sname:
+                    sstyle = cs
+                    break
+        if cage['hb_shelf_material_override'] == 'FINISH':
+            return sstyle.get_finish_material()
+        return sstyle.get_interior_material()
 
     @staticmethod
     def _region_material_mode(bay_cage, opening_cage):
