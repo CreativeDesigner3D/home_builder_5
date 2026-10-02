@@ -7927,6 +7927,44 @@ def _cfg_double_hang(opening):
             const.DOUBLE_HANG_TOP_OPENING + const.ROD_TOP_OFFSET)
 
 
+# Least room under the double hang's shelf that still makes a hang.
+_DOUBLE_HANG_MIN_LOWER = inch(24.0)
+
+
+def _cfg_double_hang_shelf(opening, root):
+    """Double hang in one opening, built the way the bay's Double Hang
+    is: a fixed shelf (with its cleat) where the upper hang's room
+    finishes, a rod under it in the opening above and a rod under the
+    shelf in the opening below.
+
+    A column of a divided segment can't take the shelf - it runs the
+    width of the bay and would cut the columns beside it in two - and
+    an opening too short to leave both hangs their room (the upper
+    hang's top opening, and at least a short hang under the shelf) has
+    nowhere to put it; both get the two rods with nothing between
+    them."""
+    seg_h = _cage_dim_z(opening)
+    st = run_sizes(root).shelf_thickness
+    z = seg_h - const.DOUBLE_HANG_TOP_OPENING - st
+    if segment_columns(opening) > 1 or z < _DOUBLE_HANG_MIN_LOWER:
+        _cfg_double_hang(opening)
+        return
+    add_fixed_shelf(opening, z, cleat=True)
+    recalculate_closet_starter(root)   # adopt the shelf -> two segments
+    # The split leaves this opening as the lower segment; the upper one
+    # is the opening on the next row up in the same side.
+    bay = opening.parent
+    side = opening.get(PROP_OPENING_SIDE, 'FRONT')
+    row = int(opening.get('hb_opening_index', 0))
+    above = [c for c in bay.children
+             if c.get(TAG_OPENING_CAGE)
+             and c.get(PROP_OPENING_SIDE, 'FRONT') == side
+             and int(c.get('hb_opening_index', -1)) == row + 1]
+    _cfg_rod(opening)
+    if len(above) == 1:
+        _cfg_rod(above[0])
+
+
 def _cfg_doors(opening):
     opening.hb_closet_opening.door_swing = 'DOUBLE'
     seed_door_shelves(opening)
@@ -8107,7 +8145,7 @@ def apply_opening_config(opening, config):
     elif config == 'HANG_ROD':
         _cfg_rod(opening)
     elif config == 'DOUBLE_HANG':
-        _cfg_double_hang(opening)
+        _cfg_double_hang_shelf(opening, root)
     elif config == 'DOOR_LEFT':
         opening.hb_closet_opening.door_swing = 'LEFT'
         seed_door_shelves(opening)
