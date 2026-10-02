@@ -107,9 +107,10 @@ def add_item(interior_obj, kind):
         item = props.interior_items.add()
         item.kind = kind
         if kind == 'ROLLOUT':
-            item.rollout_top_first = True
-            for _ in range(2):
-                item.rollout_boxes.add()
+            # As many standard boxes as fit the opening.
+            _solver_ff, types_ff = _face_frame()
+            _x, _y, dim_z = solver_frameless.cage_dims(interior_obj)
+            types_ff.seed_rollout_boxes(item, dim_z)
         props.interior_items_index = len(props.interior_items) - 1
     finally:
         _SOLVING.discard(interior_obj.name)

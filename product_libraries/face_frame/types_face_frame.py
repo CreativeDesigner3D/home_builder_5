@@ -919,6 +919,37 @@ def migrate_rollout_order(item):
     return n > 1
 
 
+_ROLLOUT_FIT_TOL = inch(1.0 / 32.0)
+
+
+def rollout_stack_height(item, heights):
+    """How tall a rollout stack of box ``heights`` stands in its
+    opening: the bottom gap, the boxes, and the gaps between them."""
+    if not heights:
+        return 0.0
+    return (item.bottom_gap + sum(heights)
+            + (len(heights) - 1) * item.distance_between)
+
+
+def rollout_box_fits(item, cavity_h, box_h):
+    """Whether one more box ``box_h`` tall still fits the opening."""
+    heights = [b.height for b in item.rollout_boxes] + [box_h]
+    return rollout_stack_height(item, heights) <= cavity_h + _ROLLOUT_FIT_TOL
+
+
+def seed_rollout_boxes(item, cavity_h):
+    """Give a new ROLLOUT item as many boxes of the standard height as
+    fit the opening at its gaps - always at least one. Replaces any
+    boxes already seeded."""
+    item.rollout_top_first = True
+    item.rollout_boxes.clear()
+    first = item.rollout_boxes.add()
+    box_h = first.height
+    while rollout_box_fits(item, cavity_h, box_h):
+        item.rollout_boxes.add()
+    return len(item.rollout_boxes)
+
+
 def rollout_item_props(opening_obj, item_index):
     """The interior item behind a rollout box object, or None when the
     index no longer resolves. Same contract as rollout_box_props."""
@@ -6075,6 +6106,9 @@ class FaceFrameCabinet(GeoNodeCage):
                         sink_bottom - opening_z - inch(0.25), inch(6.0))
                 if kind == 'ROLLOUT':
                     item.hide_rollout_spacers = True
+                    # The bowls are sized to clear the sink from the
+                    # ladder bottom gap, not the floor-mounted one.
+                    item.bottom_gap = inch(0.25)
                     # Top down: the shallow bowl rides above the deep one.
                     item.rollout_top_first = True
                     for height, top in ((inch(4.625), 'BOWL_10'),

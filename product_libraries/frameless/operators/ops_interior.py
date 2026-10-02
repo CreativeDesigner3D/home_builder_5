@@ -1708,7 +1708,18 @@ class hb_frameless_OT_add_rollout_box(bpy.types.Operator):
         props = interior_items.item_props(interior_obj)
         if not 0 <= self.item_index < len(props.interior_items):
             return {'CANCELLED'}
-        props.interior_items[self.item_index].rollout_boxes.add()
+        item = props.interior_items[self.item_index]
+        from ...face_frame import types_face_frame
+        _x, _y, cavity_h = solver_frameless.cage_dims(interior_obj)
+        box_h = (item.rollout_boxes[-1].height if len(item.rollout_boxes)
+                 else item.rollout_height)
+        if cavity_h > 0.0 and not types_face_frame.rollout_box_fits(
+                item, cavity_h, box_h):
+            self.report({'WARNING'},
+                        "No room for another box in this opening. Remove "
+                        "a box or reduce the gap between first")
+            return {'CANCELLED'}
+        item.rollout_boxes.add()
         hb_utils.run_calc_fix(context, interior_obj)
         return {'FINISHED'}
 

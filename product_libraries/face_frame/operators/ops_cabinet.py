@@ -3160,9 +3160,12 @@ class hb_face_frame_OT_add_interior_item(bpy.types.Operator):
             # count is the list length and each box defaults to the
             # standard 3 5/8" height.
             if self.kind == 'ROLLOUT':
-                item.rollout_top_first = True
-                for _ in range(2):
-                    item.rollout_boxes.add()
+                # As many standard boxes as fit the opening. Setting
+                # the kind above already ran a recalc that seeded the
+                # default count, so this replaces that rather than
+                # adding to it.
+                types_face_frame.seed_rollout_boxes(
+                    item, _read_cage_dims(target)['cage_dim_z'])
             # A wine cubby is finished flush on all four sides of the
             # opening, so it comes in that way.
             if (self.kind == 'WINE_CUBBY'
@@ -3349,6 +3352,15 @@ class hb_face_frame_OT_add_rollout_box(bpy.types.Operator):
         if not (0 <= self.item_index < len(target_props.interior_items)):
             return {'CANCELLED'}
         item = target_props.interior_items[self.item_index]
+        cavity_h = _read_cage_dims(target)['cage_dim_z']
+        box_h = (item.rollout_boxes[-1].height if len(item.rollout_boxes)
+                 else item.rollout_height)
+        if cavity_h > 0.0 and not types_face_frame.rollout_box_fits(
+                item, cavity_h, box_h):
+            self.report({'WARNING'},
+                        "No room for another box in this opening. Remove "
+                        "a box or reduce the gap between first")
+            return {'CANCELLED'}
         item.rollout_boxes.add()
         root = types_face_frame.find_cabinet_root(target)
         if root is not None:

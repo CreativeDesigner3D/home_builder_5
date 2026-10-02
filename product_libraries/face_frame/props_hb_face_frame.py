@@ -6282,6 +6282,25 @@ def rollout_height_preset_for(height):
     return 'CUSTOM'
 
 
+# Bottom gap under a rollout / pullout stack: on spacer ladders the
+# first box rides a little above the cabinet floor; fixed at the floor
+# (no ladders) it sits on the floor-mounted slides 5/8" up.
+STACK_BOTTOM_GAP = units.inch(0.25)
+STACK_FLOOR_BOTTOM_GAP = units.inch(0.625)
+
+
+def _update_hide_rollout_spacers(self, context):
+    """Ladders on / off: a bottom gap still at the default for the
+    other mounting moves to this one's default. A typed gap is kept."""
+    want, other = ((STACK_FLOOR_BOTTOM_GAP, STACK_BOTTOM_GAP)
+                   if self.hide_rollout_spacers
+                   else (STACK_BOTTOM_GAP, STACK_FLOOR_BOTTOM_GAP))
+    if abs(self.bottom_gap - other) < 1e-6:
+        self.bottom_gap = want   # its own update runs the recalc
+        return
+    _update_cabinet_dim(self, context)
+
+
 def _update_rollout_box_preset(self, context):
     """A rollout box's preset writes its inch value into the box's height
     (the field the solver reads when stacking boxes); CUSTOM leaves height
@@ -9984,8 +10003,9 @@ class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
         name="Hide Spacer Ladders",
         description="Don't build the side spacer ladders the slides "
                     "mount to - e.g. a single rollout or shelf fixed at "
-                    "the floor that needs no spacer assembly",
-        default=False, update=_update_cabinet_dim,
+                    "the floor that needs no spacer assembly. The bottom "
+                    "gap moves to 5/8\" unless it was typed",
+        default=False, update=_update_hide_rollout_spacers,
     )  # type: ignore
     # How far up the opening the spacer ladders run. 0 = the full
     # opening height, which is how they have always built. A typed
