@@ -479,19 +479,55 @@ def _dispatch_name_for_starter(src):
     return None
 
 
-# Stack highlight: while a hanging starter is over a base starter, the
-# base's countertop is washed in the snap colour and outlined, and a
-# dimension stands up off it to the hanging top reading the bay height
-# the stack will get - so it is plain before the click what happens.
+# Stack highlight: while a hanging starter is over a base or tall
+# starter, the top it will stand on is washed in the snap colour and
+# outlined, and a dimension stands up off it reading the bay height the
+# stack will get - so it is plain before the click what happens.
 STACK_COLOR = (0.30, 0.85, 0.45, 1.0)
 STACK_FILL = (0.30, 0.85, 0.45, 0.28)
 
 
+def _stack_is_tall(base):
+    cls = types_closets.WRAP_CLASS_REGISTRY.get(base.get('CLASS_NAME', ''))
+    return cls is not None and cls.default_closet_type == 'TALL'
+
+
 def _stack_top_of_base(base):
-    """Root-local Z of the top of a base starter's countertop."""
+    """Root-local Z of what a stack stands on: a base starter's
+    countertop top, or a tall starter's panel top - its accent shelf's
+    top when it carries one."""
     bsp = base.hb_closet_starter
+    if _stack_is_tall(base):
+        return bsp.height + (types_closets.run_sizes(base).shelf_thickness
+                             if bsp.add_top_accent_shelf else 0.0)
     return bsp.height + (bsp.countertop_thickness
                          if bsp.include_countertop else 0.0)
+
+
+def _stack_tall_span(context, base):
+    """Run height for a hanging starter stacked on a tall starter: the
+    tallest 32mm-system height between the tall's top and the top of
+    the wall it stands against (no wall: the default hanging bay
+    height), no taller than the system builds. 0.0 when there is not
+    room for the smallest panel."""
+    bottom = (base.matrix_world
+              @ Vector((0.0, 0.0, _stack_top_of_base(base)))).z
+    wall = base.parent
+    room = None
+    if wall is not None and 'IS_WALL_BP' in wall:
+        try:
+            wall_h = float(hb_types.GeoNodeWall(wall).get_input('Height')
+                           or 0.0)
+        except Exception:
+            wall_h = 0.0
+        if wall_h > 0.0:
+            room = (wall.matrix_world
+                    @ Vector((0.0, 0.0, wall_h))).z - bottom
+    if room is None:
+        room = context.scene.hb_closets.hanging_panel_height
+    span = const.snap_system_height_down(
+        min(room, const.PANEL_HEIGHT_MAX_MM / 1000.0))
+    return span if span >= const.PANEL_MIN_HEIGHT - 1e-6 else 0.0
 
 
 def _stack_quad(base):
@@ -560,6 +596,29 @@ def _stack_on_countertop(context, root, base):
         sp.extend_panel_amount = max(span - bay_h, 0.0)
     types_closets.recalculate_closet_starter(root)
     return True
+
+
+def _stack_on_tall(context, root, span):
+    """Fit a hanging starter that was placed on top of a tall starter:
+    the run and every bay take the stack height, so the whole unit
+    stands on the tall's top (its accent shelf, when it has one). The
+    two stay whole units - each keeps its own top and bottom - and
+    nothing is linked."""
+    sp = root.hb_closet_starter
+    # A hanging run grows down from its top on a height change; this
+    # one was placed by its bottom, so it must stay standing on the tall.
+    z = root.location.z
+    with types_closets.suspend_recalc():
+        sp.height = span
+        for bay in root.children:
+            if not bay.get(types_closets.TAG_BAY_CAGE):
+                continue
+            bp = bay.hb_closet_bay
+            bp.unlock_height = True
+            bp.height = span
+    root['hb_last_height'] = span
+    types_closets.recalculate_closet_starter(root)
+    root.location.z = z
 
 
 class hb_closets_OT_place_starter(bpy.types.Operator,
@@ -942,12 +1001,14 @@ class hb_closets_OT_place_starter(bpy.types.Operator,
             return
         self._position_free(context)
 
-    # -- Stacking a hanging starter over a base starter -----------------
-    # With the cursor over a base starter, a hanging starter snaps onto
-    # it: same wall, side, left edge and width. On placement its bays
-    # are sized down to the 32mm height that fits between its top and
-    # the base's countertop, and its panels extend the rest of the way
-    # down to sit on the countertop.
+    # -- Stacking a hanging starter over a base or tall starter ---------
+    # With the cursor over a base or tall starter, a hanging starter
+    # snaps onto it: same wall, side, left edge and width. Over a base,
+    # its bays are sized down to the 32mm height that fits between its
+    # top and the base's countertop, and its panels extend the rest of
+    # the way down to sit on the countertop. Over a tall, the whole
+    # unit sits on the tall's top and rises to the tallest 32mm height
+    # that fits under the top of the wall.
 
     def _stack_target(self):
         """The base starter under the cursor, when a hanging starter is
@@ -961,8 +1022,13 @@ class hb_closets_OT_place_starter(bpy.types.Operator,
         if obj is None or obj is self._preview_cage.obj:
             return None
         cls = types_closets.WRAP_CLASS_REGISTRY.get(obj.get('CLASS_NAME', ''))
-        if cls is None or not cls.has_countertop or getattr(
-                cls, 'is_corner', False) or cls.default_closet_type != 'BASE':
+        if cls is None or getattr(cls, 'is_corner', False):
+            return None
+        if cls.default_closet_type == 'TALL':
+            if _stack_tall_span(bpy.context, obj) <= 0.0:
+                return None
+            return obj
+        if not cls.has_countertop or cls.default_closet_type != 'BASE':
             return None
         return obj
 
@@ -978,6 +1044,8 @@ class hb_closets_OT_place_starter(bpy.types.Operator,
                     _draw_stack_highlight, (self,), 'WINDOW', 'POST_VIEW')
         else:
             self._clear_stack_highlight()
+            if self._preview_cage is not None:
+                self._preview_cage.set_input('Dim Z', self._cabinet_height)
         self._update_header(context)
         if context.area is not None:
             context.area.tag_redraw()
@@ -1000,8 +1068,16 @@ class hb_closets_OT_place_starter(bpy.types.Operator,
         cage_obj.location.x = base.location.x
         cage_obj.location.y = base.location.y
         cage_obj.rotation_euler = base.rotation_euler.copy()
-        cage_obj.location.z = (base.location.z
-                               + self._mount_z(context.scene.hb_closets))
+        tall = _stack_is_tall(base)
+        if tall:
+            # On top of the tall: the cage stands on it at stack height.
+            span = _stack_tall_span(context, base)
+            cage_obj.location.z = base.location.z + _stack_top_of_base(base)
+            self._preview_cage.set_input('Dim Z', span)
+        else:
+            cage_obj.location.z = (base.location.z
+                                   + self._mount_z(context.scene.hb_closets))
+            self._preview_cage.set_input('Dim Z', self._cabinet_height)
         self._apply_width(base.hb_closet_starter.width, fill_mode=True)
         self._place_on_front = abs(base.rotation_euler.z) < 1e-3
         self._gap_wall = None
@@ -1012,13 +1088,15 @@ class hb_closets_OT_place_starter(bpy.types.Operator,
         mw = base.matrix_world
         bsp = base.hb_closet_starter
         z0 = _stack_top_of_base(base)
-        span = (self._mount_z(context.scene.hb_closets)
-                + self._cabinet_height - z0)
+        if not tall:
+            span = (self._mount_z(context.scene.hb_closets)
+                    + self._cabinet_height - z0)
         bay_h = const.snap_system_height_down(span)
         self._placement_dim_specs = []
         if span > 0.0:
-            text = "Stacks on countertop: bays %s" % units.unit_to_string(
-                context.scene.unit_settings, bay_h)
+            text = "Stacks on %s: bays %s" % (
+                "tall" if tall else "countertop",
+                units.unit_to_string(context.scene.unit_settings, bay_h))
             self._placement_dim_specs.append(hb_placement.PlacementDimSpec(
                 mw @ Vector((0.0, -bsp.depth, z0)),
                 mw @ Vector((0.0, -bsp.depth, z0 + span)),
@@ -1460,7 +1538,7 @@ class hb_closets_OT_place_starter(bpy.types.Operator,
         if stack and self.placement_state !=                 hb_placement.PlacementState.TYPING:
             hb_placement.draw_header_text(
                 context,
-                f"{title}  -  stacks on {stack}'s countertop  -  "
+                f"{title}  -  stacks on {stack}  -  "
                 f"{bay_label} ({mode})  -  width: {width_str}  -  "
                 "Up/Down: bays   Click: place   Esc: cancel")
             return
@@ -1646,7 +1724,12 @@ class hb_closets_OT_place_starter(bpy.types.Operator,
 
         base = bpy.data.objects.get(getattr(self, '_stack_base_name', ""))
         if base is not None:
-            _stack_on_countertop(context, root, base)
+            if _stack_is_tall(base):
+                span = _stack_tall_span(context, base)
+                if span > 0.0:
+                    _stack_on_tall(context, root, span)
+            else:
+                _stack_on_countertop(context, root, base)
 
         _apply_finish(root)
 
