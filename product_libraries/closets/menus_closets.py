@@ -387,6 +387,8 @@ class HOME_BUILDER_MT_closet_part_commands(bpy.types.Menu):
                     types_closets.PART_ROLE_DRAWER_FRONT)):
             layout.operator("hb_closets.front_style",
                             text="Front Style...", icon='SHADERFX')
+            layout.operator("hb_closets.front_pull",
+                            text="Pull for Selected...", icon='GRIP')
         if (obj is not None and obj.get('hb_part_role')
                 == types_closets.PART_ROLE_DRAWER_FRONT):
             layout.operator("hb_closets.drawer_accessory",

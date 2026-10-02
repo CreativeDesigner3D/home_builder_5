@@ -283,7 +283,15 @@ def reconcile_rod_hangers(rod_obj, rod_length, allow=True):
 
 _enum_cache = None
 # One loaded source object per selection; instances share its mesh data.
-_pull_cache = {'selection': '', 'object': None}
+# Keyed by selection: doors, drawers and single fronts can each use a
+# different pull, so a single slot would reload the file on every swap.
+_pull_cache = {}
+_drawer_enum_cache = None
+_front_enum_cache = None
+
+# Drawer pull / per-front pull choices that defer to something else.
+SAME_AS_DOORS = 'SAME'
+FOLLOW_ROOM = 'FOLLOW'
 
 
 DEFAULT_PULL = 'CLASSIC 96.blend'
@@ -338,11 +346,58 @@ def pull_enum_items(self, context):
     return _enum_cache
 
 
+def drawer_pull_enum_items(self, context):
+    """Drawer pull dropdown: Same as Doors first (number 0, so files
+    saved before this setting existed read as Same), then every
+    handle."""
+    global _drawer_enum_cache
+    if _drawer_enum_cache is None:
+        items = [(SAME_AS_DOORS, "Same as Doors",
+                  "Drawer fronts use the door pull", 'LINKED', 0)]
+        for key, label, desc, icon, num in pull_enum_items(self, context):
+            items.append((key, label, desc, icon,
+                          num if num >= 1000 else num + 1))
+        _drawer_enum_cache = items
+    return _drawer_enum_cache
+
+
+def front_pull_enum_items(self, context):
+    """Per-front pull dropdown: Follow The Room, then every handle."""
+    global _front_enum_cache
+    if _front_enum_cache is None:
+        items = [(FOLLOW_ROOM, "Follow The Room",
+                  "Use the room's door or drawer pull", 'LINKED', 0)]
+        for key, label, desc, icon, num in pull_enum_items(self, context):
+            items.append((key, label, desc, icon,
+                          num if num >= 1000 else num + 1))
+        _front_enum_cache = items
+    return _front_enum_cache
+
+
+def selection_for(kind, front=None):
+    """Pull selection for a front: its own pull when one was set on
+    it, else the room's drawer pull for drawer fronts (unless that is
+    Same as Doors), else the room's door pull."""
+    from . import types_closets
+    if front is not None:
+        own = front.get(types_closets.PROP_FRONT_PULL)
+        if own:
+            return own
+    cp = bpy.context.scene.hb_closets
+    if kind == 'drawer':
+        drawer = getattr(cp, 'closet_drawer_pull', SAME_AS_DOORS)
+        if drawer and drawer != SAME_AS_DOORS:
+            return drawer
+    return getattr(cp, 'closet_pull', DEFAULT_PULL)
+
+
 def refresh():
     global _enum_cache, _hanger_enum_cache, _hanger_override_enum_cache
+    global _drawer_enum_cache, _front_enum_cache
     _enum_cache = None
-    _pull_cache['selection'] = ''
-    _pull_cache['object'] = None
+    _drawer_enum_cache = None
+    _front_enum_cache = None
+    _pull_cache.clear()
     _hanger_enum_cache = None
     _hanger_override_enum_cache = None
     _hanger_models.clear()
@@ -381,10 +436,12 @@ def _apply_finish_to_pull(pull_obj, finish=None):
     mats.append(mat)
 
 
-def current_pull_stem():
-    """Display name of the active pull selection (file stem)."""
-    selection = getattr(bpy.context.scene.hb_closets,
-                        'closet_pull', DEFAULT_PULL)
+def current_pull_stem(selection=None):
+    """Display name of a pull selection (file stem); the room's door
+    pull when none is given."""
+    if selection is None:
+        selection = getattr(bpy.context.scene.hb_closets,
+                            'closet_pull', DEFAULT_PULL)
     if not selection or selection == 'NONE':
         return ''
     if selection == CUSTOM_PULL:
@@ -429,8 +486,8 @@ def _build_custom_pull(mesh, center_to_center):
 def _resolve_custom_pull(finish=None):
     size = _custom_pull_size()
     key = "%s:%.6f" % (CUSTOM_PULL, size)
-    cached = _pull_cache['object']
-    if _pull_cache['selection'] == key and cached is not None:
+    cached = _pull_cache.get(key)
+    if cached is not None:
         try:
             cached.name
             _apply_finish_to_pull(cached, finish)
@@ -443,8 +500,7 @@ def _resolve_custom_pull(finish=None):
         pull_obj = bpy.data.objects.new('Closet Custom Pull', mesh)
     # Rebuilt in place: placed pulls share this mesh, so they resize too.
     _build_custom_pull(pull_obj.data, size)
-    _pull_cache['selection'] = key
-    _pull_cache['object'] = pull_obj
+    _pull_cache[key] = pull_obj
     _apply_finish_to_pull(pull_obj, finish)
     return pull_obj
 
@@ -464,8 +520,8 @@ def resolve_pull_object(selection=None, finish=None):
     if selection == CUSTOM_PULL:
         return _resolve_custom_pull(finish)
 
-    cached = _pull_cache['object']
-    if _pull_cache['selection'] == selection and cached is not None:
+    cached = _pull_cache.get(selection)
+    if cached is not None:
         try:
             cached.name  # dead reference check (file reload / purge)
             _apply_finish_to_pull(cached, finish)
@@ -484,8 +540,7 @@ def resolve_pull_object(selection=None, finish=None):
     pull_obj = next((o for o in dst.objects if o is not None), None)
     if pull_obj is None:
         return None
-    _pull_cache['selection'] = selection
-    _pull_cache['object'] = pull_obj
+    _pull_cache[selection] = pull_obj
     _apply_finish_to_pull(pull_obj, finish)
     return pull_obj
 

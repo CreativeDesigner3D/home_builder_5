@@ -5997,6 +5997,81 @@ class hb_closets_OT_continuous_top_prompts(bpy.types.Operator):
         col.prop(self, 'right_offset', text="Right Offset")
 
 
+class hb_closets_OT_front_pull(bpy.types.Operator):
+    """Give the selected fronts a pull of their own, or hand them back
+    to the room. The room sets one pull for doors and one for drawers;
+    this is for the fronts that differ - a longer pull on the wide
+    drawers, say."""
+    bl_idname = "hb_closets.front_pull"
+    bl_label = "Pull for Selected Fronts"
+    bl_options = {'UNDO'}
+
+    def _items(self, context):
+        from .. import pulls_closets
+        return pulls_closets.front_pull_enum_items(self, context)
+
+    pull: bpy.props.EnumProperty(
+        name="Pull", items=_items)  # type: ignore
+
+    FRONT_ROLES = frozenset((types_closets.PART_ROLE_DOOR,
+                             types_closets.PART_ROLE_DRAWER_FRONT))
+
+    @classmethod
+    def _fronts(cls, context):
+        """Selected fronts; a selected pull stands for its front."""
+        objs = list(context.selected_objects)
+        if context.active_object is not None:
+            objs.append(context.active_object)
+        fronts = []
+        for obj in objs:
+            if obj.get('IS_CABINET_PULL') and obj.parent is not None:
+                obj = obj.parent
+            if (obj.get('hb_part_role') in cls.FRONT_ROLES
+                    and obj not in fronts):
+                fronts.append(obj)
+        return fronts
+
+    @classmethod
+    def poll(cls, context):
+        if not cls._fronts(context):
+            cls.poll_message_set("Select doors or drawer fronts")
+            return False
+        return True
+
+    def invoke(self, context, event):
+        stored = (context.active_object.get(types_closets.PROP_FRONT_PULL)
+                  if context.active_object is not None else None)
+        try:
+            self.pull = stored or 'FOLLOW'
+        except TypeError:
+            self.pull = 'FOLLOW'
+        return context.window_manager.invoke_props_dialog(self,
+                                                          width=300)
+
+    def draw(self, context):
+        n = len(self._fronts(context))
+        self.layout.label(text="%d front%s selected"
+                          % (n, "" if n == 1 else "s"))
+        self.layout.prop(self, 'pull')
+
+    def execute(self, context):
+        roots = []
+        for front in self._fronts(context):
+            if self.pull == 'FOLLOW':
+                if types_closets.PROP_FRONT_PULL in front:
+                    del front[types_closets.PROP_FRONT_PULL]
+            else:
+                front[types_closets.PROP_FRONT_PULL] = self.pull
+            root = types_closets.find_starter_root(front)
+            if root is not None and root not in roots:
+                roots.append(root)
+        for root in roots:
+            types_closets.recalculate_closet_starter(root)
+            _apply_finish(root)
+        _redraw_viewports(context)
+        return {'FINISHED'}
+
+
 class hb_closets_OT_front_style(bpy.types.Operator):
     """Give one front a style of its own, or hand it back to the room.
 
@@ -8669,6 +8744,7 @@ classes = (
     hb_closets_OT_clear_bay,
     hb_closets_OT_adj_shelf_step,
     hb_closets_OT_front_style,
+    hb_closets_OT_front_pull,
     hb_closets_OT_lock_l_shelf,
     hb_closets_OT_lock_shelf,
     hb_closets_OT_delete_part,

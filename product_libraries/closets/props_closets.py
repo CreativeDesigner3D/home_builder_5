@@ -1805,8 +1805,14 @@ class Closets_Scene_Props(PropertyGroup):
 
     closet_pull: EnumProperty(
         name="Pull",
-        description="Handle used on every closet front",
+        description="Handle used on the closet doors (and on the drawer "
+                    "fronts unless they have a pull of their own)",
         items=pulls_closets.pull_enum_items,
+        update=pulls_closets.update_room)  # type: ignore
+    closet_drawer_pull: EnumProperty(
+        name="Drawer Pull",
+        description="Handle used on the drawer fronts",
+        items=pulls_closets.drawer_pull_enum_items,
         update=pulls_closets.update_room)  # type: ignore
     closet_custom_pull_size: FloatProperty(
         name="Pull Size",
@@ -2143,8 +2149,10 @@ class Closets_Scene_Props(PropertyGroup):
     # =====================================================================
     def draw_pull_options_ui(self, layout, context):
         col = layout.column(align=True)
-        col.prop(self, 'closet_pull', text="Pull")
-        if self.closet_pull == pulls_closets.CUSTOM_PULL:
+        col.prop(self, 'closet_pull', text="Door Pull")
+        col.prop(self, 'closet_drawer_pull', text="Drawer Pull")
+        if pulls_closets.CUSTOM_PULL in (self.closet_pull,
+                                         self.closet_drawer_pull):
             col.prop(self, 'closet_custom_pull_size',
                      text="Center to Center")
         col.prop(self, 'closet_pull_finish', text="Finish")

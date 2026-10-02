@@ -146,6 +146,9 @@ PROP_FRONT_STYLE = 'hb_front_style'
 # Same idea for a door's panel (wood or one of the glass types). Unset
 # follows the room's panel type.
 PROP_FRONT_PANEL = 'hb_front_panel'
+# A front's own pull (a handle file, NONE or CUSTOM). Unset follows the
+# room's door pull, or its drawer pull on drawer fronts.
+PROP_FRONT_PULL = 'hb_front_pull'
 PROP_BASKET_W = 'hb_basket_width'
 PROP_BASKET_H = 'hb_basket_height'
 PROP_BASKET_D = 'hb_basket_depth'
@@ -2788,8 +2791,9 @@ class ClosetStarter(GeoNodeCage):
             return
         op = opening.hb_closet_opening if opening is not None else None
         pull_obj = None
+        selection = pulls_closets.selection_for(kind, front)
         if side != 'BACK' and not (op is not None and op.no_pulls):
-            pull_obj = pulls_closets.resolve_pull_object()
+            pull_obj = pulls_closets.resolve_pull_object(selection)
         if pull_obj is None:
             for child in existing:
                 bpy.data.objects.remove(child, do_unlink=True)
@@ -2950,7 +2954,8 @@ class ClosetStarter(GeoNodeCage):
             # Model name rides the instance (the mesh datablock name is
             # the asset's internal name) - downstream reports key on it.
             inst['hb_pull_index'] = i
-            inst['hb_pull_name'] = pulls_closets.current_pull_stem()
+            inst['hb_pull_name'] = pulls_closets.current_pull_stem(
+                selection)
             across, up = x + dx, y
             if length_up:
                 inst.location = (height - up, across, z)
