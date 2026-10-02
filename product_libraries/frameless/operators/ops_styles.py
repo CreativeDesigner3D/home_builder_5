@@ -3,6 +3,7 @@ import os
 from bpy_extras import view3d_utils
 from .. import types_frameless
 from .. import props_hb_frameless
+from .. import edge_pulls
 from .... import hb_utils, hb_project, hb_types, units
 
 
@@ -879,6 +880,9 @@ class hb_frameless_OT_update_cabinet_pulls(bpy.types.Operator):
             
             try:
                 pull_hw = hb_types.GeoNodeHardware(obj)
+                # A front given its own pull (Pull for Selected) keeps it.
+                if parent.get(edge_pulls.PULL_KEY):
+                    continue
                 
                 if parent.get('IS_DOOR_FRONT') and self.pull_type in ('DOOR', 'ALL'):
                     if door_is_none:
@@ -902,13 +906,15 @@ class hb_frameless_OT_update_cabinet_pulls(bpy.types.Operator):
                     updated_objs.append(obj)
                     updated_objs.append(parent)
                 
-                elif parent.get('IS_PULLOUT_FRONT') and self.pull_type in ('DOOR', 'ALL'):
-                    if door_is_none:
+                # Pullouts are built with the drawer pull and handled as
+                # drawers (edge_pulls._is_drawer), so they follow it here too.
+                elif parent.get('IS_PULLOUT_FRONT') and self.pull_type in ('DRAWER', 'ALL'):
+                    if drawer_is_none:
                         pull_hw.set_input("Object", None)
                         cleared_count += 1
-                    elif door_pull_obj:
-                        pull_hw.set_input("Object", door_pull_obj)
-                        parent['Pull Length'] = door_pull_obj.dimensions.x
+                    elif drawer_pull_obj:
+                        pull_hw.set_input("Object", drawer_pull_obj)
+                        parent['Pull Length'] = drawer_pull_obj.dimensions.x
                         updated_count += 1
                     updated_objs.append(obj)
                     updated_objs.append(parent)

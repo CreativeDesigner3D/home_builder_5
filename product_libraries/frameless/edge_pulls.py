@@ -33,6 +33,9 @@ HANDLE_TYPES = [
     ('NONE', "None", "No handle"),
 ]
 HANDLE_KEY = 'HANDLE_TYPE'
+# A front's own pull (a handle file, NONE or CUSTOM), set from Pull for
+# Selected. Unset follows the room's door or drawer pull.
+PULL_KEY = 'hb_front_pull'
 PART_TAG = 'IS_EDGE_PULL'
 SIGNATURE_KEY = 'hb_edge_pull_signature'
 NOTCH_MOD = 'Finger Notch'

@@ -3,7 +3,7 @@ from .. import types_frameless
 from .. import solver_frameless
 from .. import props_hb_frameless
 from .. import edge_pulls
-from .... import hb_utils, hb_project, units
+from .... import hb_types, hb_utils, hb_project, units
 
 
 _door_style_items = []
@@ -222,6 +222,73 @@ class hb_frameless_OT_set_front_handle_type(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class hb_frameless_OT_set_front_pull(bpy.types.Operator):
+    """Give the selected fronts a pull of their own, or hand them back
+    to the room's door / drawer pull"""
+    bl_idname = "hb_frameless.set_front_pull"
+    bl_label = "Pull for Selected Fronts"
+    bl_description = "Set the pull on the selected fronts only"
+    bl_options = {'UNDO'}
+
+    def _items(self, context):
+        return props_hb_frameless._closet_pulls().front_pull_enum_items(
+            self, context)
+
+    pull: bpy.props.EnumProperty(name="Pull", items=_items) # type: ignore
+
+    @staticmethod
+    def _fronts(context):
+        objs = list(context.selected_objects)
+        if context.object is not None:
+            objs.append(context.object)
+        fronts = set()
+        for obj in objs:
+            if obj.get('IS_CABINET_PULL') and obj.parent is not None:
+                obj = obj.parent
+            if obj.get('IS_CABINET_FRONT'):
+                fronts.add(obj)
+        return fronts
+
+    @classmethod
+    def poll(cls, context):
+        return bool(cls._fronts(context))
+
+    def invoke(self, context, event):
+        own = context.object.get(edge_pulls.PULL_KEY) if context.object else None
+        try:
+            self.pull = own or 'FOLLOW'
+        except TypeError:
+            self.pull = 'FOLLOW'
+        return context.window_manager.invoke_props_dialog(self, width=300)
+
+    def draw(self, context):
+        n = len(self._fronts(context))
+        self.layout.label(text="%d front%s selected" % (n, "" if n == 1 else "s"))
+        self.layout.prop(self, 'pull')
+
+    def execute(self, context):
+        fronts = self._fronts(context)
+        for front in fronts:
+            if self.pull == 'FOLLOW':
+                front.pop(edge_pulls.PULL_KEY, None)
+                kind = 'drawer' if edge_pulls._is_drawer(front) else 'door'
+                pull_obj = props_hb_frameless.resolve_pull_object(kind)
+            else:
+                front[edge_pulls.PULL_KEY] = self.pull
+                pull_obj = props_hb_frameless.resolve_pull_file(self.pull)
+            for child in front.children:
+                if not child.get('IS_CABINET_PULL'):
+                    continue
+                hb_types.GeoNodeHardware(child).set_input("Object", pull_obj)
+                if pull_obj is not None:
+                    front['Pull Length'] = pull_obj.dimensions.x
+                child.update_tag()
+            front.update_tag()
+        solver_frameless.solve_roots(list(fronts))
+        hb_utils.run_calc_fix(context)
+        return {'FINISHED'}
+
+
 class hb_frameless_OT_toggle_front_lock(bpy.types.Operator):
     """Add or take off a lock on the selected fronts"""
     bl_idname = "hb_frameless.toggle_front_lock"
@@ -248,6 +315,7 @@ classes = (
     hb_frameless_OT_door_front_prompts,
     hb_frameless_OT_delete_front,
     hb_frameless_OT_set_front_handle_type,
+    hb_frameless_OT_set_front_pull,
     hb_frameless_OT_toggle_front_lock,
 )
 

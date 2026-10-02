@@ -330,6 +330,51 @@ def resolve_pull_object(pull_type='door'):
     return obj
 
 
+# Handles loaded for single fronts' own pulls, by file.
+_front_pull_objects = {}
+
+
+def resolve_pull_file(selection):
+    """The source object for one pull selection (a handle file, the
+    custom bar pull, or None for NONE), independent of the room's door /
+    drawer slots - for fronts given a pull of their own. Reuses a slot's
+    object when it already holds that handle."""
+    props = hb_project.get_main_scene().hb_frameless
+    pulls = _closet_pulls()
+    finish = props.pull_finish
+    if not selection or selection == 'NONE':
+        return None
+    if selection == pulls.CUSTOM_PULL:
+        return _custom_pull_object(max(float(props.custom_pull_size), 0.01),
+                                   finish)
+    for obj in (getattr(props, 'current_door_pull_object', None),
+                getattr(props, 'current_drawer_front_pull_object', None),
+                _front_pull_objects.get(selection)):
+        if obj is None:
+            continue
+        try:
+            if obj.get('hb_pull_file') == selection:
+                pulls._apply_finish_to_pull(obj, finish)
+                return obj
+        except ReferenceError:
+            continue
+    path = os.path.join(pulls.HANDLES_DIR, selection)
+    if not os.path.exists(path):
+        return None
+    try:
+        with bpy.data.libraries.load(path) as (data_from, data_to):
+            data_to.objects = list(data_from.objects)
+    except Exception:
+        return None
+    obj = next((o for o in data_to.objects if o is not None), None)
+    if obj is None:
+        return None
+    obj['hb_pull_file'] = selection
+    pulls._apply_finish_to_pull(obj, finish)
+    _front_pull_objects[selection] = obj
+    return obj
+
+
 def update_pull_selection(self, context):
     """A handle or size pick re-hangs every pull in the room."""
     bpy.ops.hb_frameless.update_cabinet_pulls(pull_type='ALL')
