@@ -5551,6 +5551,236 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
         return True
 
 
+def _bay_under_hit(root, hit_object, hit_location):
+    """The bay of `root` the cursor is over: the bay holding what was
+    hit, else (a partition, the run's own top) whichever bay spans the
+    hit across the run."""
+    bay = types_closets.find_bay_cage(hit_object)
+    if bay is not None and types_closets.find_starter_root(bay) is root:
+        return bay
+    if hit_location is None:
+        return None
+    x = (root.matrix_world.inverted() @ Vector(hit_location)).x
+    best = None
+    for b in root.children:
+        if not b.get(types_closets.TAG_BAY_CAGE):
+            continue
+        x0 = b.location.x
+        x1 = x0 + hb_types.GeoNodeCage(b).get_input('Dim X')
+        if x0 - 0.05 <= x <= x1 + 0.05:
+            d = 0.0 if x0 <= x <= x1 else min(abs(x - x0), abs(x - x1))
+            if best is None or d < best[0]:
+                best = (d, b)
+    return best[1] if best else None
+
+
+class hb_closets_OT_place_bay_countertop(bpy.types.Operator,
+                                        hb_placement.PlacementMixin):
+    """Place a countertop over some of a run's bays. Hover a bay that
+    stands lower than the run: the top covers it and its neighbours
+    of the same height, stopping against taller partitions. Click
+    places, Shift-click places and keeps going, Right-click or Esc
+    cancels."""
+    bl_idname = "hb_closets.place_bay_countertop"
+    bl_label = "Place Countertop"
+    bl_options = {'UNDO'}
+
+    def invoke(self, context, event):
+        self.init_placement(context)
+        if self.region is None:
+            self.report({'WARNING'}, "No 3D viewport available")
+            return {'CANCELLED'}
+        self._target = None
+        self._stack_quad_world = None
+        self._stack_handle = bpy.types.SpaceView3D.draw_handler_add(
+            _draw_stack_highlight, (self,), 'WINDOW', 'POST_VIEW')
+        self._header(context)
+        context.window.cursor_set('CROSSHAIR')
+        context.window_manager.modal_handler_add(self)
+        return {'RUNNING_MODAL'}
+
+    def _header(self, context):
+        if self._target is None:
+            text = ("Countertop: hover a bay lower than its run   "
+                    "Esc: cancel")
+        else:
+            root, first, last = self._target[:3]
+            n = last - first + 1
+            text = (f"Countertop over {n} bay{'s' if n != 1 else ''} of "
+                    f"{root.name}   Click: place   Shift-click: place "
+                    "another   Esc: cancel")
+        hb_placement.draw_header_text(context, text)
+
+    def _update_target(self, context):
+        target = None
+        root = (types_closets.find_starter_root(self.hit_object)
+                if self.hit_object is not None else None)
+        cls = (types_closets.WRAP_CLASS_REGISTRY.get(
+            root.get('CLASS_NAME', '')) if root is not None else None)
+        if cls is not None and not getattr(cls, 'is_corner', False):
+            bay = _bay_under_hit(root, self.hit_object, self.hit_location)
+            found = types_closets.bay_countertop_target(root, bay)
+            if found is not None:
+                first, last, layout = found
+                target = (root, first, last, bay, layout)
+        self._target = target
+        if target is None:
+            self._stack_quad_world = None
+        else:
+            root, first, last, _bay, layout = target
+            span = types_closets.bay_countertop_span(
+                layout, first, last,
+                types_closets.run_sizes(root).panel_thickness)
+            mw = root.matrix_world
+            z = span['z']
+            d = span['depth'] + const.COUNTERTOP_OVERHANG_FRONT
+            self._stack_quad_world = [
+                mw @ Vector(c) for c in (
+                    (span['x0'], 0.0, z), (span['x1'], 0.0, z),
+                    (span['x1'], -d, z), (span['x0'], -d, z))]
+        self._header(context)
+
+    def _end(self, context):
+        handle = getattr(self, '_stack_handle', None)
+        if handle is not None:
+            try:
+                bpy.types.SpaceView3D.draw_handler_remove(handle, 'WINDOW')
+            except Exception:
+                pass
+        self._stack_handle = None
+        self._stack_quad_world = None
+        hb_placement.clear_header_text(context)
+        context.window.cursor_set('DEFAULT')
+        if context.area is not None:
+            context.area.tag_redraw()
+
+    def cancel(self, context):
+        self._end(context)
+
+    def modal(self, context, event):
+        if context.area is not None:
+            context.area.tag_redraw()
+        if event.type in {'MIDDLEMOUSE', 'WHEELUPMOUSE', 'WHEELDOWNMOUSE'}:
+            return {'PASS_THROUGH'}
+        if event.type == 'MOUSEMOVE':
+            self.update_snap(context, event)
+            self._update_target(context)
+            return {'RUNNING_MODAL'}
+        if event.type in {'ESC', 'RIGHTMOUSE'} and event.value == 'PRESS':
+            self._end(context)
+            return {'CANCELLED'}
+        if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
+            if self._target is None:
+                return {'RUNNING_MODAL'}
+            root, _first, _last, bay = self._target[:4]
+            entry = types_closets.add_bay_countertop(root, bay)
+            if entry is None:
+                return {'RUNNING_MODAL'}
+            _apply_finish(root)
+            self.report({'INFO'}, "Placed countertop")
+            if event.shift:
+                self._target = None
+                self._stack_quad_world = None
+                self._header(context)
+                return {'RUNNING_MODAL'}
+            self._end(context)
+            for o in context.selected_objects:
+                o.select_set(False)
+            for c in root.children:
+                if (c.get(types_closets.PROP_BAY_CTOP) == entry.uid
+                        and c.get(types_closets.PROP_BAY_CTOP_SLOT)
+                        == 'TOP'):
+                    c.select_set(True)
+                    context.view_layer.objects.active = c
+            return {'FINISHED'}
+        return {'RUNNING_MODAL'}
+
+
+class hb_closets_OT_bay_countertop_prompts(bpy.types.Operator):
+    """Overhangs, finished ends and backsplash of a countertop placed
+    over some of a run's bays. Changes show as they are made"""
+    bl_idname = "hb_closets.bay_countertop_prompts"
+    bl_label = "Countertop Properties"
+    bl_options = {'UNDO'}
+
+    target_name: bpy.props.StringProperty(
+        options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        return types_closets.bay_countertop_entry(
+            context.active_object)[1] is not None
+
+    def _entry(self):
+        obj = bpy.data.objects.get(self.target_name)
+        return types_closets.bay_countertop_entry(obj)
+
+    def invoke(self, context, event):
+        self.target_name = context.active_object.name
+        return context.window_manager.invoke_props_dialog(
+            self, width=340, confirm_text="Done")
+
+    def execute(self, context):
+        return {'FINISHED'}
+
+    def draw(self, context):
+        root, entry = self._entry()
+        layout = self.layout
+        if entry is None:
+            layout.label(text="This countertop is gone")
+            return
+        unit_settings = context.scene.unit_settings
+        top = None
+        for c in root.children:
+            if (c.get(types_closets.PROP_BAY_CTOP) == entry.uid
+                    and c.get(types_closets.PROP_BAY_CTOP_SLOT) == 'TOP'):
+                top = c
+        box = layout.box()
+        if top is not None:
+            cut = hb_types.GeoNodeCutpart(top)
+            row = box.row()
+            row.label(text="Length: " + units.unit_to_string(
+                unit_settings, cut.get_input('Length')))
+            row.label(text="Depth: " + units.unit_to_string(
+                unit_settings, cut.get_input('Width')))
+        box.label(text="Overhang:")
+        row = box.row(align=True)
+        row.prop(entry, 'overhang_left', text="Left")
+        row.prop(entry, 'overhang_right', text="Right")
+        row.prop(entry, 'overhang_front', text="Front")
+        row = box.row(align=True)
+        row.label(text="Finished End:")
+        row.prop(entry, 'left_finished_end', text="Left")
+        row.prop(entry, 'right_finished_end', text="Right")
+        box = layout.box()
+        box.prop(entry, 'include_backsplash', text="Backsplash")
+        row = box.row()
+        row.enabled = entry.include_backsplash
+        row.prop(entry, 'backsplash_height', text="Splash Height")
+        layout.label(text="Thickness follows the run's countertop",
+                     icon='INFO')
+
+
+class hb_closets_OT_delete_bay_countertop(bpy.types.Operator):
+    """Take this countertop (and its backsplashes) off the bays"""
+    bl_idname = "hb_closets.delete_bay_countertop"
+    bl_label = "Delete Countertop"
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return types_closets.bay_countertop_entry(
+            context.active_object)[1] is not None
+
+    def execute(self, context):
+        root, entry = types_closets.bay_countertop_entry(
+            context.active_object)
+        if entry is None:
+            return {'CANCELLED'}
+        types_closets.remove_bay_countertop(root, entry.uid)
+        return {'FINISHED'}
+
+
 class hb_closets_OT_continuous_top_prompts(bpy.types.Operator):
     """Set how deep the active continuous top is and how far it runs
     past each end of what it caps. The length is what those come to,
@@ -8258,6 +8488,9 @@ classes = (
     hb_closets_OT_add_part,
     hb_closets_OT_place_misc_part,
     hb_closets_OT_continuous_top_prompts,
+    hb_closets_OT_place_bay_countertop,
+    hb_closets_OT_bay_countertop_prompts,
+    hb_closets_OT_delete_bay_countertop,
     hb_closets_OT_rod_prompts,
     hb_closets_OT_misc_part_prompts,
     hb_closets_OT_panel_prompts,

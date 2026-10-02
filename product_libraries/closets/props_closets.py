@@ -20,10 +20,12 @@ import math
 from bpy.types import PropertyGroup
 from bpy.props import (
         BoolProperty,
+        CollectionProperty,
         FloatProperty,
         IntProperty,
         PointerProperty,
         EnumProperty,
+        StringProperty,
         )
 
 import os
@@ -382,6 +384,66 @@ def _set_wall_offset(self, value):
 # ---------------------------------------------------------------------------
 # Object-level: starter root
 # ---------------------------------------------------------------------------
+def _bay_ctop_end_update(side):
+    """A countertop end marked finished (or not): an exposed end gets
+    the end overhang, a covered one none. Typed afterwards, the
+    overhang stays as typed until the flag changes again."""
+    def _update(self, context):
+        from . import types_closets
+        key = side.lower()
+        with types_closets.suspend_recalc():
+            setattr(self, 'overhang_' + key,
+                    const.COUNTERTOP_OVERHANG_END
+                    if getattr(self, key + '_finished_end') else 0.0)
+        _update_starter_prop(self, context)
+    return _update
+
+
+class Closet_Bay_Countertop_Props(PropertyGroup):
+    """A countertop over some of a run's bays rather than the whole run
+    - a counter at base height between taller sections, say. It runs
+    from the first bay named to the last, sits on their tops, and runs
+    over a partition between it and a lower neighbour but stops against
+    one that rises above it. Laid out by the run, so it follows the
+    bays it covers when they change."""
+    uid: StringProperty(options={'HIDDEN'})  # type: ignore
+    first_bay: StringProperty(options={'HIDDEN'})  # type: ignore
+    last_bay: StringProperty(options={'HIDDEN'})  # type: ignore
+    overhang_front: FloatProperty(
+        name="Front", description="How far the top projects past the "
+                                  "front of the bays",
+        default=const.COUNTERTOP_OVERHANG_FRONT, unit='LENGTH',
+        precision=4, update=_update_starter_prop)  # type: ignore
+    overhang_left: FloatProperty(
+        name="Left", description="How far the top runs past its left end",
+        default=0.0, unit='LENGTH', precision=4,
+        update=_update_starter_prop)  # type: ignore
+    overhang_right: FloatProperty(
+        name="Right", description="How far the top runs past its right end",
+        default=0.0, unit='LENGTH', precision=4,
+        update=_update_starter_prop)  # type: ignore
+    left_finished_end: BoolProperty(
+        name="Left Finished End",
+        description="The left end is exposed: it overhangs and gets no "
+                    "side splash",
+        default=False, update=_bay_ctop_end_update('LEFT'))  # type: ignore
+    right_finished_end: BoolProperty(
+        name="Right Finished End",
+        description="The right end is exposed: it overhangs and gets no "
+                    "side splash",
+        default=False, update=_bay_ctop_end_update('RIGHT'))  # type: ignore
+    include_backsplash: BoolProperty(
+        name="Include Backsplash",
+        description="Add an upstand along the back, and along each end "
+                    "that is not finished",
+        default=True, update=_update_starter_prop)  # type: ignore
+    backsplash_height: FloatProperty(
+        name="Backsplash Height",
+        description="How far the backsplash stands above the countertop",
+        default=const.BACKSPLASH_HEIGHT, min=0.0, unit='LENGTH',
+        precision=4, update=_update_starter_prop)  # type: ignore
+
+
 class Closet_Starter_Props(PropertyGroup):
 
     # Where the starter sits along its wall, read off and written to the
@@ -602,6 +664,9 @@ class Closet_Starter_Props(PropertyGroup):
         default=const.BACKSPLASH_HEIGHT,
         min=0.0, unit='LENGTH', precision=4,
         update=_update_starter_prop)  # type: ignore
+    # Countertops over some of the bays (the Countertop part).
+    bay_countertops: CollectionProperty(
+        type=Closet_Bay_Countertop_Props)  # type: ignore
 
     # Applied back: the panel closing the rear face of an island bay.
     back_to_floor: BoolProperty(
@@ -2253,6 +2318,7 @@ class Closets_Scene_Props(PropertyGroup):
 
 
 classes = (
+    Closet_Bay_Countertop_Props,
     Closet_Starter_Props,
     Closet_Bay_Props,
     Closet_Opening_Props,

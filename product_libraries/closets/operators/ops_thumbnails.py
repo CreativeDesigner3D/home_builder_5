@@ -102,10 +102,29 @@ def _build_fitted(name):
     return root
 
 
+def _build_bay_countertop():
+    """A tall run with its middle bays at base height and a countertop
+    across them - the counter between taller sections the part is
+    for."""
+    root = _build_starter('Tall', const.DEFAULT_BAY_QTY)
+    if root is None:
+        return None
+    bays = types_closets.ClosetStarter(root)._sorted_bays()
+    middle = bays[1:-1] or bays
+    for bay in middle:
+        bay.hb_closet_bay.unlock_height = True
+        bay.hb_closet_bay.height = const.BASE_PANEL_HEIGHT
+    types_closets.recalculate_closet_starter(root)
+    types_closets.add_bay_countertop(root, middle[0])
+    return root
+
+
 def _build_in_scene(name):
     """Build the catalog product `name` into the active scene and
     return the object the camera should frame, or None when nothing
     here knows how to build it."""
+    if name == 'Countertop':
+        return _build_bay_countertop()
     if name in _LOOSE_KINDS:
         return types_closets.add_misc_part(kind=_LOOSE_KINDS[name])
     if name in _FITTED_IN:

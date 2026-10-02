@@ -51,6 +51,11 @@ PART_SECTIONS = [
          "A shelf. Dropped in an opening it is cut to it and lands "
          "on the nearest system hole; anywhere else it stands alone",
          'hb_closets.place_misc_part', {'kind': 'SHELF'}),
+        ('Countertop', "Countertop",
+         "A countertop over some of a run's bays: hover a bay lower "
+         "than its run and it covers that bay and its neighbours of "
+         "the same height",
+         'hb_closets.place_bay_countertop', {}),
         # Fitted rather than dropped loose: these hover an opening,
         # preview at the cursor height and go on placing until you
         # stop. They were two buttons on the viewport overlay, which

@@ -83,6 +83,12 @@ PART_ROLE_MISC = 'CLOSET_MISC_PART'
 # prompted, so it is sized and placed once, at the drop, and left
 # alone after: a run resized later keeps the top it was given.
 PART_ROLE_CONTINUOUS_TOP = 'CLOSET_CONTINUOUS_TOP'
+# A countertop over some of a run's bays (props_closets
+# Closet_Bay_Countertop_Props) carries the countertop / backsplash roles
+# like the run's own top, plus this: the uid of the entry it belongs to.
+# The run's own top and splashes are the ones without it.
+PROP_BAY_CTOP = 'hb_bay_ctop'
+PROP_BAY_CTOP_SLOT = 'hb_bay_ctop_slot'
 # A bought item that hangs in the closet: a valet rod, a wire basket,
 # an ironing board. The cage carries the choice; what hangs under it
 # depends on the accessory. Three children are possible:
@@ -374,6 +380,169 @@ def _remove_part_tree(obj):
     for child in list(obj.children):
         _remove_part_tree(child)
     bpy.data.objects.remove(obj, do_unlink=True)
+
+
+_BAY_CTOP_TOL = 1e-4
+
+
+def bay_countertop_span(layout, first, last, pt):
+    """Where a countertop over bays `first`..`last` of a solved layout
+    goes, in run space: x0/x1 its ends, z the bays' top, depth the
+    deepest of them, and per end whether a partition rises above it
+    there (`left_wall` / `right_wall`) or it is the end of the run.
+
+    At each end the top runs over the partition when that partition
+    finishes at the bays' top - beside a lower bay or at the end of
+    the run - and stops against it when it rises above, beside a
+    taller bay. A turned-off end panel is not there to run over."""
+    bays = layout['bays']
+    panels = layout['panels']
+    doubles = {d['junction']: d for d in layout.get('doubles', ())}
+    top = bays[first]['z0'] + bays[first]['height']
+
+    def rises(panel):
+        return panel['z'] + panel['length'] > top + _BAY_CTOP_TOL
+
+    # The partition on the left of the first bay is panels[first]
+    # (a doubled junction's primary panel serves the right bay).
+    lp = panels[first]
+    left_wall = (not lp.get('hidden')) and rises(lp)
+    x0 = bays[first]['x']
+    if not lp.get('hidden') and not left_wall:
+        x0 = lp['x']
+    # On the right of the last bay: a doubled junction's second panel
+    # serves it, otherwise the junction's own panel.
+    junction = last + 1
+    rp = doubles.get(junction) or panels[junction]
+    right_hidden = bool(panels[junction].get('hidden'))
+    right_wall = (not right_hidden) and rises(rp)
+    x1 = bays[last]['x'] + bays[last]['width']
+    if not right_hidden and not right_wall:
+        x1 += pt
+    return {
+        'x0': x0, 'x1': x1, 'z': top,
+        'depth': max(b['depth'] for b in bays[first:last + 1]),
+        'left_wall': left_wall, 'right_wall': right_wall,
+        'left_end': first == 0, 'right_end': last == len(bays) - 1,
+    }
+
+
+def bay_countertop_bays(layout, bay_i):
+    """The bays a countertop dropped on bay `bay_i` covers: it and its
+    neighbours either side standing on the floor at the same height,
+    as (first, last). None when the bay hangs - a top belongs on bays
+    that stand on the floor."""
+    bays = layout['bays']
+    b = bays[bay_i]
+    top = b['z0'] + b['height']
+    if not b['floor']:
+        return None
+
+    def same(k):
+        o = bays[k]
+        return o['floor'] and abs(o['z0'] + o['height'] - top) < 1e-3
+
+    first = last = bay_i
+    while first > 0 and same(first - 1):
+        first -= 1
+    while last < len(bays) - 1 and same(last + 1):
+        last += 1
+    return first, last
+
+
+def bay_countertop_target(root, bay_obj):
+    """(first, last, layout) for a countertop dropped on `bay_obj`, or
+    None when it can't take one: a hanging bay, a bay already under a
+    countertop of its own, or a bay up at the top of a run that has a
+    countertop of its own - that one is the top to use there."""
+    if root is None or bay_obj is None:
+        return None
+    bays = ClosetStarter(root)._sorted_bays()
+    if bay_obj not in bays:
+        return None
+    layout = solve_starter_layout(root)
+    rng = bay_countertop_bays(layout, bays.index(bay_obj))
+    if rng is None:
+        return None
+    cls = WRAP_CLASS_REGISTRY.get(root.get('CLASS_NAME', ''))
+    b = layout['bays'][rng[0]]
+    if (cls is not None and cls.has_countertop
+            and b['z0'] + b['height']
+            > root.hb_closet_starter.height - 1e-3):
+        return None
+    first, last = rng
+    names = {b.name for b in bays[first:last + 1]}
+    index = {b.name: i for i, b in enumerate(bays)}
+    for entry in root.hb_closet_starter.bay_countertops:
+        i, j = index.get(entry.first_bay), index.get(entry.last_bay)
+        if i is None or j is None:
+            continue
+        if names & {b.name for b in bays[min(i, j):max(i, j) + 1]}:
+            return None
+    return first, last, layout
+
+
+def add_bay_countertop(root, bay_obj):
+    """Put a countertop over the bay `bay_obj` and its same-height
+    neighbours. An end against a taller partition is a wall end (a
+    side splash, no overhang); an end at the run takes the run's
+    finished end; an end beside a lower bay is exposed. Hands back the
+    new entry, or None when the bay can't take a top."""
+    import uuid
+    target = bay_countertop_target(root, bay_obj)
+    if target is None:
+        return None
+    first, last, layout = target
+    sp = root.hb_closet_starter
+    bays = ClosetStarter(root)._sorted_bays()
+    span = bay_countertop_span(layout, first, last,
+                               run_sizes(root).panel_thickness)
+    with suspend_recalc():
+        entry = sp.bay_countertops.add()
+        entry.uid = uuid.uuid4().hex
+        entry.first_bay = bays[first].name
+        entry.last_bay = bays[last].name
+        for side in ('left', 'right'):
+            if span[side + '_wall']:
+                finished = False
+            elif span[side + '_end']:
+                finished = (bool(getattr(sp, side + '_finished_end'))
+                            and getattr(sp, side + '_side_wall_filler')
+                            <= 0.0)
+            else:
+                finished = True
+            setattr(entry, side + '_finished_end', finished)
+    recalculate_closet_starter(root)
+    return entry
+
+
+def remove_bay_countertop(root, uid):
+    """Take a countertop over some bays out, parts and all."""
+    sp = root.hb_closet_starter
+    for k, entry in enumerate(sp.bay_countertops):
+        if entry.uid == uid:
+            sp.bay_countertops.remove(k)
+            break
+    recalculate_closet_starter(root)
+
+
+def bay_countertop_entry(obj):
+    """(root, entry) for one of a countertop-over-bays' parts, else
+    (None, None)."""
+    uid = obj.get(PROP_BAY_CTOP) if obj is not None else None
+    root = obj.parent if uid is not None else None
+    if root is None:
+        return None, None
+    for entry in root.hb_closet_starter.bay_countertops:
+        if entry.uid == uid:
+            return root, entry
+    return None, None
+
+
+def solve_starter_layout(root):
+    """The solved layout of a run as it stands, without writing it."""
+    return solver.compute_layout(
+        ClosetStarter(root)._spec_from_props(run_sizes(root)))
 
 
 # ---------------------------------------------------------------------------
@@ -1089,7 +1258,8 @@ class ClosetStarter(GeoNodeCage):
 
     def _root_part(self, role):
         for c in self.obj.children:
-            if c.get('hb_part_role') == role:
+            if (c.get('hb_part_role') == role
+                    and c.get(PROP_BAY_CTOP) is None):
                 return c
         return None
 
@@ -1224,6 +1394,7 @@ class ClosetStarter(GeoNodeCage):
             self._layout_panels(layout, scene_props)
             self._layout_bays(layout, scene_props, sp)
             self._layout_starter_parts(layout, scene_props, sp)
+            self._layout_bay_countertops(layout, scene_props, sp)
             self._layout_bottom_cleats(layout, scene_props, sp)
             self._layout_bridge_parts(layout, scene_props, sp)
             self._layout_battens(layout, scene_props, sp)
@@ -4309,7 +4480,8 @@ class ClosetStarter(GeoNodeCage):
     def _backsplash_part(self, slot):
         for c in self.obj.children:
             if (c.get('hb_part_role') == PART_ROLE_BACKSPLASH
-                    and c.get('hb_splash_slot') == slot):
+                    and c.get('hb_splash_slot') == slot
+                    and c.get(PROP_BAY_CTOP) is None):
                 return c
         return None
 
@@ -4377,6 +4549,90 @@ class ClosetStarter(GeoNodeCage):
             cut.set_input('Width', sp.backsplash_height)
             cut.set_input('Thickness', thk)
             _set_part_hidden(splash, not show)
+
+    def _layout_bay_countertops(self, layout, scene_props, sp):
+        """The countertops over some of the bays (sp.bay_countertops):
+        each one's top and splashes, built like the run's own and laid
+        over the bays it names. An entry whose bays have gone builds
+        nothing, and parts left by an entry that has gone are taken
+        out."""
+        index = {b.name: i for i, b in enumerate(self._sorted_bays())}
+        pt = scene_props.panel_thickness
+        thk = sp.countertop_thickness
+        have = {}
+        for c in list(self.obj.children):
+            uid = c.get(PROP_BAY_CTOP)
+            if uid is not None:
+                have.setdefault((uid, c.get(PROP_BAY_CTOP_SLOT)), c)
+        keep = set()
+        for entry in sp.bay_countertops:
+            i = index.get(entry.first_bay)
+            j = index.get(entry.last_bay)
+            if not entry.uid or i is None or j is None:
+                continue
+            span = bay_countertop_span(layout, min(i, j), max(i, j), pt)
+            oh_l, oh_r = entry.overhang_left, entry.overhang_right
+            oh_f = entry.overhang_front
+            run = span['x1'] - span['x0'] + oh_l + oh_r
+            x0 = span['x0'] - oh_l
+            z = span['z']
+            depth = span['depth']
+            splash = entry.include_backsplash
+            reach = abs(depth + oh_f - thk)
+            specs = (
+                # slot, show, label, location, rotation, length, width,
+                # mirror z
+                ('TOP', True, "Countertop", (x0, 0.0, z),
+                 (0.0, 0.0, 0.0), run, depth + oh_f, False),
+                ('REAR', splash, "Backsplash", (x0, 0.0, z + thk),
+                 (math.radians(-90), 0.0, 0.0), run,
+                 entry.backsplash_height, True),
+                ('LEFT', splash and not entry.left_finished_end,
+                 "Left Backsplash", (x0, -thk, z + thk),
+                 (math.radians(-90), 0.0, math.radians(-90)), reach,
+                 entry.backsplash_height, False),
+                ('RIGHT', splash and not entry.right_finished_end,
+                 "Right Backsplash", (x0 + run, -thk, z + thk),
+                 (math.radians(-90), 0.0, math.radians(-90)), reach,
+                 entry.backsplash_height, True),
+            )
+            for slot, show, label, loc, rot, length, width, mirror_z \
+                    in specs:
+                obj = have.get((entry.uid, slot))
+                if obj is None:
+                    if not show:
+                        continue
+                    part = CabinetPart()
+                    part.create(label)
+                    part.obj.parent = self.obj
+                    part.obj['hb_part_role'] = (
+                        PART_ROLE_COUNTERTOP if slot == 'TOP'
+                        else PART_ROLE_BACKSPLASH)
+                    part.obj[PROP_BAY_CTOP] = entry.uid
+                    part.obj[PROP_BAY_CTOP_SLOT] = slot
+                    if slot != 'TOP':
+                        part.obj['hb_splash_slot'] = slot
+                    obj = part.obj
+                    have[(entry.uid, slot)] = obj
+                keep.add(obj.name)
+                obj.location = loc
+                obj.rotation_euler = rot
+                cut = GeoNodeCutpart(obj)
+                cut.set_input('Mirror Y', True)
+                cut.set_input('Mirror Z', mirror_z)
+                cut.set_input('Length', length)
+                cut.set_input('Width', width)
+                cut.set_input('Thickness', thk)
+                if slot == 'TOP':
+                    obj['hb_ctop_left_finished'] = (
+                        1 if entry.left_finished_end else 0)
+                    obj['hb_ctop_right_finished'] = (
+                        1 if entry.right_finished_end else 0)
+                    obj['hb_ctop_corner_radius'] = 0.0
+                _set_part_hidden(obj, not show)
+        for obj in have.values():
+            if obj.name not in keep:
+                _remove_part_tree(obj)
 
     def _layout_accent_shelf(self, scene_props, sp):
         """A decorative shelf laid on top of the

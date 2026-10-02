@@ -360,6 +360,13 @@ class HOME_BUILDER_MT_closet_part_commands(bpy.types.Menu):
             layout.operator("hb_closets.panel_prompts",
                             text="Panel Properties...", icon='WINDOW')
             layout.separator()
+        if (obj is not None
+                and obj.get(types_closets.PROP_BAY_CTOP) is not None):
+            layout.operator("hb_closets.bay_countertop_prompts",
+                            text="Countertop Properties...", icon='WINDOW')
+            layout.operator("hb_closets.delete_bay_countertop",
+                            text="Delete Countertop", icon='X')
+            layout.separator()
         if (obj is not None and obj.get('hb_part_role')
                 == types_closets.PART_ROLE_CONTINUOUS_TOP):
             layout.operator("hb_closets.continuous_top_prompts",
