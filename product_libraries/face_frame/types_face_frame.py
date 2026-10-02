@@ -85,6 +85,11 @@ TAG_INTERIOR_REGION = 'IS_INTERIOR_REGION'
 #     manager - inner suspends stack and only the outermost exit drains.
 _RECALCULATING = set()
 _DISTRIBUTING_WIDTHS = set()
+# Callables(root) run after every completed cabinet recalc, so other
+# add-ons can follow a cabinet's changes. They run on every recalc
+# (including each drag tick), so they must be cheap; exceptions are
+# swallowed so a listener can never break a recalc.
+POST_RECALC_HOOKS = []
 _RECALC_SUSPEND_DEPTH = 0
 _PENDING_RECALC_NAMES = set()
 
@@ -19539,6 +19544,12 @@ def recalculate_face_frame_cabinet(obj):
     # recalc (own guard prevents recursion via its bay insert/delete).
     with hb_utils.children_index():
         _reconcile_standalone_panel(root)
+
+    for hook in tuple(POST_RECALC_HOOKS):
+        try:
+            hook(root)
+        except Exception:
+            pass
 
 
 def _resize_seated_wood_tops(root):
