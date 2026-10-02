@@ -5473,6 +5473,12 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
         precision=4,
         description="How tall the compartment under the cap shelf "
                     "is. Zero uses the standard height")  # type: ignore
+    custom_name: bpy.props.StringProperty(
+        name="Name",
+        description="What it is - written on it in the drawings")  # type: ignore
+    custom_height: bpy.props.FloatProperty(
+        name="Height", min=0.0, unit='LENGTH', precision=4,
+        description="How tall it stands in the opening")  # type: ignore
 
     @classmethod
     def poll(cls, context):
@@ -5542,6 +5548,9 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
             obj.get(types_closets.PROP_ACCESSORY_NO_FRONT))
         self.opening_height = float(
             obj.get(types_closets.PROP_ACCESSORY_OPEN_H, 0.0) or 0.0)
+        self.custom_name = str(
+            obj.get(types_closets.PROP_CUSTOM_NAME, '') or '')
+        self.custom_height = types_closets.custom_accessory_height(obj)
         return context.window_manager.invoke_props_dialog(self,
                                                           width=320)
 
@@ -5558,6 +5567,9 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
                            "is deleted.")
             return
         col = layout.column(align=True)
+        if acc_def.custom:
+            col.prop(self, 'custom_name')
+            col.prop(self, 'custom_height')
         if acc_def.bands:
             col.prop(self, 'model')
         if acc_def.family == acc.FAMILY_PANEL:
@@ -5651,6 +5663,10 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
                 obj[types_closets.PROP_ACCESSORY_COLOR] = self.color
             if self.fabric != 'NONE':
                 obj[types_closets.PROP_ACCESSORY_FABRIC] = self.fabric
+            if acc_def is not None and acc_def.custom:
+                obj[types_closets.PROP_CUSTOM_NAME] = self.custom_name
+                obj[types_closets.PROP_CUSTOM_HEIGHT] = float(
+                    self.custom_height)
             if acc_def is None or acc_def.family != acc.FAMILY_INSERT:
                 # Below zero hangs it past the bottom of the partition.
                 # A wall has no partition to hang below - the floor is

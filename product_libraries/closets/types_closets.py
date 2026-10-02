@@ -142,6 +142,11 @@ PROP_ACCESSORY_ON_WALL = 'hb_accessory_on_wall'
 # drop-down front can be left off, and the compartment height set.
 PROP_ACCESSORY_NO_FRONT = 'hb_accessory_no_front'
 PROP_ACCESSORY_OPEN_H = 'hb_accessory_open_h'
+# A custom accessory (one the catalog marks custom): what the person
+# calls it, and how tall it stands in the opening.
+PROP_CUSTOM_NAME = 'hb_custom_name'
+PROP_CUSTOM_HEIGHT = 'hb_custom_height'
+CUSTOM_ACCESSORY_HEIGHT = inch(14.0)
 # A corner shelf that has been locked. Lock and adjustable are the
 # same board cut the same way - what differs is how it is held: pins
 # in routed notches, or cams into the wings. So it is a flag on the
@@ -169,6 +174,10 @@ PROP_HOOK_QTY = 'hb_hook_qty'
 PROP_HOOK_INSET = 'hb_hook_inset'
 PROP_HOOK_INDEX = 'hb_hook_index'
 PART_ROLE_ACCESSORY_BLOCK = 'CLOSET_ACCESSORY_BLOCK'
+# The box a custom accessory is drawn as, and the name written on it.
+PART_ROLE_CUSTOM_BOX = 'CLOSET_CUSTOM_ACCESSORY_BOX'
+PART_ROLE_CUSTOM_LABEL = 'CLOSET_CUSTOM_ACCESSORY_LABEL'
+CUSTOM_BOX_COLOR = (0.85, 0.85, 0.85, 1.0)
 # A fixed shelf splits a bay top and bottom; a division splits one of
 # those segments left and right. Both are bay structure rather than
 # contents, so both live on the bay cage. A division carries the bottom
@@ -3589,6 +3598,52 @@ class ClosetStarter(GeoNodeCage):
                     bsdf.inputs['Roughness'].default_value = 0.9
         return mat
 
+    def _acc_custom_box(self, cage, kids, width, depth, height):
+        """A custom accessory drawn as what it is known to be: a box
+        the size of the space it takes, with its name on the front."""
+        found = kids.get(PART_ROLE_CUSTOM_BOX) or ()
+        box = found[0] if found else None
+        if box is None:
+            mesh = bpy.data.meshes.new('Custom Accessory')
+            box = bpy.data.objects.new('Custom Accessory', mesh)
+            bpy.context.scene.collection.objects.link(box)
+            box.parent = cage
+            box.matrix_parent_inverse.identity()
+            box['hb_part_role'] = PART_ROLE_CUSTOM_BOX
+            box['MENU_ID'] = 'HOME_BUILDER_MT_closet_part_commands'
+            kids.setdefault(PART_ROLE_CUSTOM_BOX, []).append(box)
+        # The cage is drawn back from the front: y runs 0 (back) to
+        # -depth (front), the way the opening's own does.
+        w, d, h = width, -depth, height
+        verts = [(0, 0, 0), (w, 0, 0), (w, d, 0), (0, d, 0),
+                 (0, 0, h), (w, 0, h), (w, d, h), (0, d, h)]
+        faces = [(0, 1, 2, 3), (4, 7, 6, 5), (0, 4, 5, 1),
+                 (1, 5, 6, 2), (2, 6, 7, 3), (3, 7, 4, 0)]
+        box.data.clear_geometry()
+        box.data.from_pydata(verts, [], faces)
+        box.data.update()
+        box.color = CUSTOM_BOX_COLOR
+        name = custom_accessory_name(cage)
+        found = kids.get(PART_ROLE_CUSTOM_LABEL) or ()
+        label = found[0] if found else None
+        if label is None:
+            curve = bpy.data.curves.new('Custom Accessory Label', 'FONT')
+            label = bpy.data.objects.new('Custom Accessory Label', curve)
+            bpy.context.scene.collection.objects.link(label)
+            label.parent = cage
+            label.matrix_parent_inverse.identity()
+            label['hb_part_role'] = PART_ROLE_CUSTOM_LABEL
+            label.data.align_x = 'CENTER'
+            label.data.align_y = 'CENTER'
+            kids.setdefault(PART_ROLE_CUSTOM_LABEL, []).append(label)
+        if label.data.body != name:
+            label.data.body = name
+        label.data.size = max(min(height * 0.3, inch(2.0)), inch(0.5))
+        # Standing on the front face, reading from the room.
+        label.location = (w / 2.0, d - 0.001, h / 2.0)
+        label.rotation_euler = (math.radians(90), 0.0, 0.0)
+        label.color = (0.0, 0.0, 0.0, 1.0)
+
     def _acc_placeholder(self, cage, want, kids):
         """A red block standing in for a model that is not installed.
 
@@ -3837,7 +3892,7 @@ class ClosetStarter(GeoNodeCage):
             # row of hooks rather than one model, so its models are
             # left to the layout below.
             if acc_def.family != acc.FAMILY_CLEAT \
-                    and not acc_def.is_sized:
+                    and not acc_def.is_sized and not acc_def.custom:
                 self._acc_model(cage, acc_def, kids)
             if acc_def.family == acc.FAMILY_INSERT:
                 self._acc_part(cage, 'Ironing Board Mount',
@@ -3914,6 +3969,29 @@ class ClosetStarter(GeoNodeCage):
                 else:
                     self._acc_placeholder(cage, False, kids)
                 want_w, want_d = b_w, b_d
+            elif acc_def.custom:
+                # Across the whole opening, as tall as it was said to
+                # stand, at the height it was put.
+                h = custom_accessory_height(cage)
+                z = min(float(cage[PROP_ACCESSORY_Z]),
+                        max(interior_h - h, 0.0))
+                cage[PROP_ACCESSORY_Z] = z
+                cage.location = (0.0, 0.0, z)
+                geo.set_input('Dim X', width)
+                geo.set_input('Dim Y', depth)
+                geo.set_input('Dim Z', h)
+                self._acc_custom_box(cage, kids, width, depth, h)
+                msg = ''
+                if h > interior_h + 0.0005:
+                    msg = ("%s is %s tall; this opening is %s"
+                           % (custom_accessory_name(cage), _in_str(h),
+                              _in_str(interior_h)))
+                if msg:
+                    cage[PROP_ACCESSORY_WARNING] = msg
+                elif PROP_ACCESSORY_WARNING in cage:
+                    del cage[PROP_ACCESSORY_WARNING]
+                _stamp_warning(cage, msg)
+                continue
             elif acc_def.family == acc.FAMILY_OPENING:
                 # A pull-out is fitted at the front of the opening and
                 # runs back its own depth, so the cage does the same.
@@ -7384,6 +7462,15 @@ def _sync_countertop_thickness(root):
     want = room_countertop_thickness(bpy.context.scene.hb_closets)
     if abs(sp.countertop_thickness - want) > 1e-6:
         sp['countertop_thickness'] = want
+
+
+def custom_accessory_name(cage):
+    return str(cage.get(PROP_CUSTOM_NAME, '') or '') or "Accessory"
+
+
+def custom_accessory_height(cage):
+    h = float(cage.get(PROP_CUSTOM_HEIGHT, 0.0) or 0.0)
+    return h if h > 0.0 else CUSTOM_ACCESSORY_HEIGHT
 
 
 def seat_insert_on_shelf(cage, z):

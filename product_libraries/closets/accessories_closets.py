@@ -528,7 +528,7 @@ class AccessoryDef:
                  'center_depth', 'model_y', 'model_z',
                  'floor_snap',
                  'colors', 'fabrics', 'ready', 'description', 'menu',
-                 'hook_qty')
+                 'hook_qty', 'custom')
 
     def __init__(self, key, label, family, model='', model_path='',
                  bands=(), band_axis=BAND_BY_WIDTH, width=0.0, height=0.0,
@@ -538,7 +538,8 @@ class AccessoryDef:
                  max_width=0.0, setback=0.0, center_depth=False,
                  model_y=0.0,
                  model_z=0.0, floor_snap=False, colors=(), fabrics=(),
-                 ready=False, description="", menu='', hook_qty=0):
+                 ready=False, description="", menu='', hook_qty=0,
+                 custom=False):
         self.key = key
         self.label = label
         self.family = family
@@ -576,6 +577,10 @@ class AccessoryDef:
         # library's own count; a line whose model is itself a row of hooks
         # starts with one.
         self.hook_qty = int(hook_qty or 0)
+        # A line with no model of its own: the person names it and says
+        # how tall it stands, and it is drawn as a labelled box across
+        # the opening - for something the catalog does not carry.
+        self.custom = bool(custom)
 
     @property
     def is_sized(self):
@@ -715,7 +720,8 @@ def _def_from_item(item):
         ready=bool(item.get('ready')),
         description=item.get('description') or '',
         menu=item.get('menu') or '',
-        hook_qty=int(item.get('hook_qty') or 0))
+        hook_qty=int(item.get('hook_qty') or 0),
+        custom=bool(item.get('custom')))
 
 
 _catalog_cache = None
