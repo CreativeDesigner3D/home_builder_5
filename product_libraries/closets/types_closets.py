@@ -109,6 +109,9 @@ PROP_BAY_CLEAT = 'hb_bay_cleat'
 PART_ROLE_ACCESSORY = 'CLOSET_ACCESSORY'
 PART_ROLE_ACCESSORY_PART = 'CLOSET_ACCESSORY_PART'
 PART_ROLE_ACCESSORY_MODEL = 'CLOSET_ACCESSORY_MODEL'
+# The bag set drawn behind a tilt-out hamper front. A picture only:
+# the front prices and lists what it carries.
+PART_ROLE_HAMPER_MODEL = 'CLOSET_HAMPER_MODEL'
 # Accessory idprops, on the accessory cage:
 #   key      catalog key (see accessories_closets.CATALOG)
 #   color    finish name, '' = as it comes
@@ -305,6 +308,11 @@ PROP_DOOR_SWING = 'hb_door_swing'
 # fronts a swing can name. Kept so a file saved before the change can be
 # carried over on open. See carry_over_hampers().
 PROP_IS_HAMPER = 'hb_is_hamper'
+# The catalog entry a hamper front draws its bags from, and how far
+# over the opening floor the bag set's top (the model's origin) hangs
+# so the bags stand just clear of the floor.
+HAMPER_ACCESSORY_KEY = 'TILT_OUT_HAMPER'
+HAMPER_BAG_HANG = inch(22.0)
 # How many fronts each swing hangs. A tilt-out hamper is a single
 # bottom-hinged front, so it counts the same as any other single.
 FRONT_QTY_BY_SWING = {'LEFT': 1, 'RIGHT': 1, 'DOUBLE': 2,
@@ -2443,6 +2451,12 @@ class ClosetStarter(GeoNodeCage):
                 _stash_door_closed(child, x, front_y,
                                    (-bo + d_h) if up else -bo,
                                    leaf, side, height=d_h)
+                self._layout_hamper_basket(
+                    child, width, 0.0,
+                    front_y + (scene_props.door_to_cabinet_gap
+                               if side == 'FRONT'
+                               else -scene_props.door_to_cabinet_gap),
+                    side)
                 self._position_front_pull(
                     child,
                     'hamper' if child.get('hb_is_hamper') else 'door',
@@ -3109,6 +3123,9 @@ class ClosetStarter(GeoNodeCage):
             _apply_front_style(child, is_drawer=False)
             _stash_door_closed(child, x, front_y, z, leaf, side,
                                height=interior_h + to + bo)
+            self._layout_hamper_basket(
+                child, width, bay['interior_z'],
+                front_y + scene_props.door_to_cabinet_gap, side)
             self._position_front_pull(
                 child, 'hamper' if child.get('hb_is_hamper') else 'door',
                 side)
@@ -3260,6 +3277,62 @@ class ClosetStarter(GeoNodeCage):
     # -------------------------------------------------------------
     # Accessories
     # -------------------------------------------------------------
+    def _layout_hamper_basket(self, front, width, floor_z, face_y,
+                              side):
+        """Hang the tilt-out hamper's frame and bags behind its front.
+
+        The bags are the catalog's Tilt Out Hamper, at the largest
+        width it is bought in that the opening takes (the narrowest
+        where none fits - the front already warns about that). They
+        are a child of the front so they tilt out with it, set where
+        they stand with the front shut: centred across the opening,
+        just behind its face, bags hanging to the opening floor. A
+        front that is no longer a hamper loses them."""
+        from . import accessories_closets as acc
+        found = [c for c in front.children
+                 if c.get('hb_part_role') == PART_ROLE_HAMPER_MODEL]
+        acc_def = (acc.get(HAMPER_ACCESSORY_KEY)
+                   if front.get('hb_is_hamper') else None)
+        band = path = None
+        if acc_def is not None and acc_def.bands:
+            fits = [b for b in acc_def.bands if b[1] <= width + 0.0005]
+            band = (max(fits, key=lambda b: b[1]) if fits
+                    else min(acc_def.bands, key=lambda b: b[1]))
+            path = acc_def.path_for(band)
+        if band is None or not acc.model_is_installed(path):
+            for obj in found:
+                _remove_part_tree(obj)
+            return
+        model = found[0] if found else None
+        if model is not None and model.get(PROP_ACCESSORY_MODEL) != band[2]:
+            _remove_part_tree(model)
+            model = None
+        if model is None:
+            model = acc.instance_accessory_model(path, 'Hamper Bags')
+            if model is None:
+                return
+            bpy.context.scene.collection.objects.link(model)
+            model.parent = front
+            model['hb_part_role'] = PART_ROLE_HAMPER_MODEL
+            model[PROP_ACCESSORY_MODEL] = band[2]
+            model['MENU_ID'] = 'HOME_BUILDER_MT_closet_part_commands'
+        for obj in found[1:]:
+            _remove_part_tree(obj)
+        color, fabric, _missing = acc.default_finish(acc_def)
+        acc.apply_finish(model, color, fabric)
+        # Placed in the front's own parent frame, undoing where the
+        # front sits shut (its stashed pivot, stood up 90 degrees), so
+        # the bags follow the front as it tilts.
+        shut = (Matrix.Translation((front['hb_door_cx'],
+                                    front['hb_door_cy'],
+                                    front['hb_door_cz']))
+                @ Matrix.Rotation(math.radians(90.0), 4, 'X'))
+        model.matrix_parent_inverse = shut.inverted()
+        model.location = (width / 2.0, face_y, floor_z + HAMPER_BAG_HANG)
+        # A back-side front faces +Y, so its bags run back the other way.
+        model.rotation_euler = (0.0, 0.0,
+                                math.pi if side == 'BACK' else 0.0)
+
     def _acc_part(self, cage, name, role, kids, rotate_x=False):
         """Find-or-create one melamine child under an accessory cage,
         matched on role + name so an accessory can carry several."""
