@@ -6073,7 +6073,8 @@ class hb_closets_OT_front_pull(bpy.types.Operator):
 
 
 class hb_closets_OT_front_style(bpy.types.Operator):
-    """Give one front a style of its own, or hand it back to the room.
+    """Give the selected fronts a style of their own, or hand them back
+    to the room.
 
     Nearly every job is one style throughout, which is why the style
     is a room setting. This is for the job that is not: a run of
@@ -6109,15 +6110,31 @@ class hb_closets_OT_front_style(bpy.types.Operator):
                              types_closets.PART_ROLE_DRAWER_FRONT))
 
     @classmethod
+    def _fronts(cls, context):
+        """Selected doors / drawer fronts, active first; a selected pull
+        stands for its front."""
+        objs = []
+        if context.active_object is not None:
+            objs.append(context.active_object)
+        objs += list(context.selected_objects)
+        fronts = []
+        for obj in objs:
+            if obj.get('IS_CABINET_PULL') and obj.parent is not None:
+                obj = obj.parent
+            if (obj.get('hb_part_role') in cls.FRONT_ROLES
+                    and obj not in fronts):
+                fronts.append(obj)
+        return fronts
+
+    @classmethod
     def poll(cls, context):
-        obj = context.active_object
-        if obj is None or obj.get('hb_part_role') not in cls.FRONT_ROLES:
-            cls.poll_message_set("Select a door or a drawer front")
+        if not cls._fronts(context):
+            cls.poll_message_set("Select doors or drawer fronts")
             return False
         return True
 
     def invoke(self, context, event):
-        obj = context.active_object
+        obj = self._fronts(context)[0]
         stored = obj.get(types_closets.PROP_FRONT_STYLE) or 'FOLLOW'
         try:
             self.style = stored
@@ -6131,33 +6148,39 @@ class hb_closets_OT_front_style(bpy.types.Operator):
         return context.window_manager.invoke_props_dialog(self,
                                                           width=260)
 
-    def _is_door(self, context):
-        return (context.active_object.get('hb_part_role')
-                == types_closets.PART_ROLE_DOOR)
+    def _has_door(self, context):
+        return any(f.get('hb_part_role') == types_closets.PART_ROLE_DOOR
+                   for f in self._fronts(context))
 
     def draw(self, context):
+        n = len(self._fronts(context))
+        if n > 1:
+            self.layout.label(text="%d fronts selected" % n)
         self.layout.prop(self, 'style')
         # Drawer fronts always keep a wood panel; only doors choose.
-        if self._is_door(context):
+        if self._has_door(context):
             row = self.layout.row()
             row.enabled = self.style != 'SLAB'
             row.prop(self, 'panel')
 
     def execute(self, context):
-        obj = context.active_object
-        root = types_closets.find_starter_root(obj)
-        if self.style == 'FOLLOW':
-            if types_closets.PROP_FRONT_STYLE in obj:
-                del obj[types_closets.PROP_FRONT_STYLE]
-        else:
-            obj[types_closets.PROP_FRONT_STYLE] = self.style
-        if self._is_door(context):
-            if self.panel == 'FOLLOW':
-                if types_closets.PROP_FRONT_PANEL in obj:
-                    del obj[types_closets.PROP_FRONT_PANEL]
+        roots = []
+        for obj in self._fronts(context):
+            if self.style == 'FOLLOW':
+                if types_closets.PROP_FRONT_STYLE in obj:
+                    del obj[types_closets.PROP_FRONT_STYLE]
             else:
-                obj[types_closets.PROP_FRONT_PANEL] = self.panel
-        if root is not None:
+                obj[types_closets.PROP_FRONT_STYLE] = self.style
+            if obj.get('hb_part_role') == types_closets.PART_ROLE_DOOR:
+                if self.panel == 'FOLLOW':
+                    if types_closets.PROP_FRONT_PANEL in obj:
+                        del obj[types_closets.PROP_FRONT_PANEL]
+                else:
+                    obj[types_closets.PROP_FRONT_PANEL] = self.panel
+            root = types_closets.find_starter_root(obj)
+            if root is not None and root not in roots:
+                roots.append(root)
+        for root in roots:
             types_closets.recalculate_closet_starter(root)
             _apply_finish(root)
         _redraw_viewports(context)

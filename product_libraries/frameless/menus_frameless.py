@@ -322,6 +322,8 @@ class HOME_BUILDER_MT_door_front_commands(bpy.types.Menu):
                                   "handle_type", text="Handle")
         layout.operator("hb_frameless.set_front_pull",
                         text="Pull for Selected...")
+        layout.operator("hb_frameless.set_selected_front_style",
+                        text="Door Style for Selected...")
         from . import edge_pulls
         obj = context.object
         layout.operator("hb_frameless.toggle_front_lock",

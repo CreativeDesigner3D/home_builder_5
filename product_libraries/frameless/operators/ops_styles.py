@@ -135,6 +135,79 @@ class hb_frameless_OT_duplicate_door_style(bpy.types.Operator):
         return {'FINISHED'}
 
 
+_style_enum_hold = []
+
+
+class hb_frameless_OT_set_selected_front_style(bpy.types.Operator):
+    """Give every selected door / drawer front one door style"""
+    bl_idname = "hb_frameless.set_selected_front_style"
+    bl_label = "Door Style for Selected"
+    bl_description = "Set the door style on the selected door and drawer fronts"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def _items(self, context):
+        props = hb_project.get_main_scene().hb_frameless
+        items = [(str(i), s.name, "") for i, s in enumerate(props.door_styles)]
+        _style_enum_hold[:] = items or [('0', "None", "")]
+        return _style_enum_hold
+
+    style: bpy.props.EnumProperty(name="Door Style", items=_items) # type: ignore
+
+    FRONT_KEYS = ('IS_DOOR_FRONT', 'IS_DRAWER_FRONT', 'IS_PULLOUT_FRONT')
+
+    @classmethod
+    def _fronts(cls, context):
+        objs = []
+        if context.object is not None:
+            objs.append(context.object)
+        objs += list(context.selected_objects)
+        fronts = []
+        for obj in objs:
+            if obj.get('IS_CABINET_PULL') and obj.parent is not None:
+                obj = obj.parent
+            if any(obj.get(k) for k in cls.FRONT_KEYS) and obj not in fronts:
+                fronts.append(obj)
+        return fronts
+
+    @classmethod
+    def poll(cls, context):
+        props = hb_project.get_main_scene().hb_frameless
+        return len(props.door_styles) > 0 and bool(cls._fronts(context))
+
+    def invoke(self, context, event):
+        props = hb_project.get_main_scene().hb_frameless
+        index = self._fronts(context)[0].get('DOOR_STYLE_INDEX', 0)
+        if 0 <= index < len(props.door_styles):
+            self.style = str(index)
+        return context.window_manager.invoke_props_dialog(self, width=300)
+
+    def draw(self, context):
+        n = len(self._fronts(context))
+        self.layout.label(text="%d front%s selected" % (n, "" if n == 1 else "s"))
+        self.layout.prop(self, 'style')
+
+    def execute(self, context):
+        props = hb_project.get_main_scene().hb_frameless
+        index = int(self.style)
+        if not 0 <= index < len(props.door_styles):
+            return {'CANCELLED'}
+        style = props.door_styles[index]
+        assigned, too_small = 0, []
+        for front in self._fronts(context):
+            result = style.assign_style_to_front(front)
+            if result is True:
+                front['DOOR_STYLE_INDEX'] = index
+                assigned += 1
+            elif isinstance(result, str):
+                too_small.append(result)
+        if too_small:
+            self.report({'WARNING'}, "%d front(s) too small for '%s', left slab"
+                        % (len(too_small), style.name))
+        else:
+            self.report({'INFO'}, "Set '%s' on %d front(s)" % (style.name, assigned))
+        return {'FINISHED'}
+
+
 class hb_frameless_OT_assign_door_style_to_selected_fronts(bpy.types.Operator):
     """Paint door style onto fronts - click doors/drawers to assign the active style"""
     bl_idname = "hb_frameless.assign_door_style_to_selected_fronts"
@@ -1311,6 +1384,7 @@ classes = (
     hb_frameless_OT_remove_door_style,
     hb_frameless_OT_duplicate_door_style,
     hb_frameless_OT_assign_door_style_to_selected_fronts,
+    hb_frameless_OT_set_selected_front_style,
     hb_frameless_OT_update_fronts_from_style,
     hb_frameless_OT_add_cabinet_style,
     hb_frameless_OT_remove_cabinet_style,
