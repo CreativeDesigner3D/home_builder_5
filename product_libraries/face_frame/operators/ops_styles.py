@@ -1129,17 +1129,24 @@ class _paint_front_brush:
         origin = view3d_utils.region_2d_to_origin_3d(region, rv3d, coord)
         direction = view3d_utils.region_2d_to_vector_3d(region, rv3d, coord)
         depsgraph = context.evaluated_depsgraph_get()
-        hit, loc, nrm, fidx, obj, mat = context.scene.ray_cast(depsgraph, origin, direction)
-        if not hit or obj is None:
-            return None
-        # The hit may be the front itself or a child (e.g. a pull) -- walk up
-        # to the nearest object carrying a front role.
-        cur = obj
-        while cur is not None:
-            role = cur.get('hb_part_role')
-            if role in self._DOOR_ROLES or role in self._DRAWER_ROLES:
-                return cur
-            cur = cur.parent
+        # Anything that isn't a front (a wall cutter, a room boundary, a
+        # glass panel...) is see-through for the brush: keep casting from
+        # just past each hit until a front or nothing is reached.
+        step = direction.normalized() * 1e-4
+        for _ in range(64):
+            hit, loc, nrm, fidx, obj, mat = context.scene.ray_cast(
+                depsgraph, origin, direction)
+            if not hit or obj is None:
+                return None
+            # The hit may be the front itself or a child (e.g. a pull) --
+            # walk up to the nearest object carrying a front role.
+            cur = obj.original if hasattr(obj, 'original') else obj
+            while cur is not None:
+                role = cur.get('hb_part_role')
+                if role in self._DOOR_ROLES or role in self._DRAWER_ROLES:
+                    return cur
+                cur = cur.parent
+            origin = loc + step
         return None
 
     def _set_hover(self, context, front):
