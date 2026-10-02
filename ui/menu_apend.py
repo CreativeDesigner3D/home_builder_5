@@ -38,6 +38,11 @@ def draw_object_mode_right_click_menu(self, context):
         layout.menu(menu_id)
         layout.separator()
 
+    # A loose mesh can be attached to a cabinet (and taken off again).
+    from ..operators import ops_general
+    if not menu_id and ops_general.draw_attach_items(layout, context):
+        layout.separator()
+
 
 def register():
     bpy.types.VIEW3D_MT_object_context_menu.prepend(draw_object_mode_right_click_menu)  

@@ -169,6 +169,13 @@ class HB_GENERAL_OT_delete(bpy.types.Operator):
 
         obj = context.active_object
 
+        # A loose part attached to a cabinet is still just that part:
+        # deleting it must never reach the cabinet it hangs on.
+        if obj is not None and obj.get(ATTACHED_TAG):
+            _remove_objects([o for o in _delete_selection(context)
+                             if o.get(ATTACHED_TAG)])
+            return {'FINISHED'}
+
         # A dimension / label (IS_2D_ANNOTATION) or an individual cabinet part
         # (CABINET_PART / hb_part_role) is a SUB-object of a product, not the
         # product itself. Deleting one must remove ONLY that object, never the
@@ -439,12 +446,202 @@ class HB_GENERAL_OT_show_all_hidden(bpy.types.Operator):
         return {'FINISHED'}
 
 
+# ---------------------------------------------------------------------------
+# Attaching loose parts to a cabinet
+# ---------------------------------------------------------------------------
+# A part modelled on its own - a plain mesh, or a Misc Part - can be
+# made part of a cabinet: parented to the cabinet root where it stands,
+# so it moves, copies and deletes with the cabinet and is drawn with it
+# (the layout views walk a cabinet's whole child tree). Nothing about
+# the part changes but its parent.
+ATTACHED_TAG = 'hb_attached_part'
+_CABINET_TAGS = ('IS_FACE_FRAME_CABINET_CAGE', 'IS_FRAMELESS_CABINET_CAGE')
+# Objects that are themselves products or room pieces, never loose parts.
+_NOT_A_PART_TAGS = _CABINET_TAGS + (
+    'IS_WALL_BP', 'IS_FLOOR_BP', 'IS_CEILING_BP', 'IS_OBSTACLE',
+    'IS_ENTRY_DOOR_BP', 'IS_WINDOW_BP', 'IS_APPLIANCE')
+
+
+def find_attach_cabinet(obj):
+    """The cabinet root at or above ``obj``, or None."""
+    while obj is not None:
+        if any(obj.get(t) for t in _CABINET_TAGS):
+            return obj
+        obj = obj.parent
+    return None
+
+
+def is_attachable(obj):
+    """A loose part that can go on a cabinet: a mesh (or curve) that is
+    not a product or room piece and not already one of a cabinet's own
+    parts. One attached before can be moved to another cabinet."""
+    if obj is None or obj.type not in {'MESH', 'CURVE'}:
+        return False
+    if any(obj.get(t) for t in _NOT_A_PART_TAGS):
+        return False
+    if obj.get(ATTACHED_TAG):
+        return True
+    return find_attach_cabinet(obj.parent) is None
+
+
+def _attachable_selection(context):
+    objs = list(context.selected_objects)
+    if context.object is not None and context.object not in objs:
+        objs.append(context.object)
+    return [o for o in objs if is_attachable(o)]
+
+
+def attach_to_cabinet(objs, cabinet):
+    """Parent ``objs`` to ``cabinet`` without moving them."""
+    for obj in objs:
+        mw = obj.matrix_world.copy()
+        obj.parent = cabinet
+        obj.matrix_parent_inverse.identity()
+        obj.matrix_world = mw
+        obj[ATTACHED_TAG] = True
+
+
+def detach_from_cabinet(objs):
+    """Let attached parts go of their cabinet, where they stand."""
+    for obj in objs:
+        mw = obj.matrix_world.copy()
+        obj.parent = None
+        obj.matrix_world = mw
+        if ATTACHED_TAG in obj:
+            del obj[ATTACHED_TAG]
+
+
+class HB_GENERAL_OT_attach_to_cabinet(bpy.types.Operator):
+    """Make the selected parts part of a cabinet: click the cabinet and
+    they move, copy and delete with it and are drawn with it"""
+    bl_idname = "hb_general.attach_to_cabinet"
+    bl_label = "Attach to Cabinet"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return bool(_attachable_selection(context))
+
+    def invoke(self, context, event):
+        if context.area is None or context.area.type != 'VIEW_3D':
+            self.report({'WARNING'}, "Use this from the 3D viewport")
+            return {'CANCELLED'}
+        self._names = [o.name for o in _attachable_selection(context)]
+        self._cabinet = None
+        self._header(context)
+        context.window.cursor_set('EYEDROPPER')
+        context.window_manager.modal_handler_add(self)
+        return {'RUNNING_MODAL'}
+
+    def _parts(self):
+        return [o for o in (bpy.data.objects.get(n) for n in self._names)
+                if o is not None]
+
+    def _header(self, context):
+        n = len(self._names)
+        what = f"{n} part{'s' if n != 1 else ''}"
+        if self._cabinet is None:
+            text = f"Attach {what}: click a cabinet   Esc: cancel"
+        else:
+            text = (f"Attach {what} to {self._cabinet.name}   "
+                    "Click: attach   Esc: cancel")
+        context.area.header_text_set(text)
+
+    def _cabinet_under_mouse(self, context, event):
+        from bpy_extras import view3d_utils
+        region = context.region
+        rv3d = context.region_data
+        if region is None or rv3d is None:
+            return None
+        coord = (event.mouse_region_x, event.mouse_region_y)
+        origin = view3d_utils.region_2d_to_origin_3d(region, rv3d, coord)
+        direction = view3d_utils.region_2d_to_vector_3d(region, rv3d, coord)
+        depsgraph = context.evaluated_depsgraph_get()
+        skip = set(self._names)
+        # Step past the parts being attached (and anything else that is
+        # not a cabinet) until a cabinet is hit.
+        for _ in range(32):
+            hit, loc, _n, _i, obj, _m = context.scene.ray_cast(
+                depsgraph, origin, direction)
+            if not hit:
+                return None
+            if obj.name not in skip:
+                cabinet = find_attach_cabinet(obj)
+                if cabinet is not None:
+                    return cabinet
+            origin = loc + direction * 1e-4
+        return None
+
+    def _finish(self, context):
+        context.area.header_text_set(None)
+        context.window.cursor_set('DEFAULT')
+
+    def modal(self, context, event):
+        if event.type in {'MIDDLEMOUSE', 'WHEELUPMOUSE', 'WHEELDOWNMOUSE'}:
+            return {'PASS_THROUGH'}
+        if event.type == 'MOUSEMOVE':
+            cabinet = self._cabinet_under_mouse(context, event)
+            if cabinet is not self._cabinet:
+                self._cabinet = cabinet
+                self._header(context)
+            return {'RUNNING_MODAL'}
+        if event.type in {'ESC', 'RIGHTMOUSE'} and event.value == 'PRESS':
+            self._finish(context)
+            return {'CANCELLED'}
+        if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
+            cabinet = self._cabinet_under_mouse(context, event)
+            if cabinet is None:
+                return {'RUNNING_MODAL'}
+            parts = self._parts()
+            attach_to_cabinet(parts, cabinet)
+            self._finish(context)
+            self.report({'INFO'}, "Attached %d part%s to %s" % (
+                len(parts), "" if len(parts) == 1 else "s", cabinet.name))
+            return {'FINISHED'}
+        return {'RUNNING_MODAL'}
+
+
+class HB_GENERAL_OT_detach_from_cabinet(bpy.types.Operator):
+    """Take the selected parts off the cabinet they were attached to,
+    leaving them where they are"""
+    bl_idname = "hb_general.detach_from_cabinet"
+    bl_label = "Detach from Cabinet"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return any(o.get(ATTACHED_TAG) for o in _attachable_selection(context))
+
+    def execute(self, context):
+        parts = [o for o in _attachable_selection(context)
+                 if o.get(ATTACHED_TAG)]
+        detach_from_cabinet(parts)
+        self.report({'INFO'}, "Detached %d part%s" % (
+            len(parts), "" if len(parts) == 1 else "s"))
+        return {'FINISHED'}
+
+
+def draw_attach_items(layout, context):
+    """The attach / detach commands, for any right-click menu a loose
+    part can land in. Draws nothing when they don't apply."""
+    parts = _attachable_selection(context)
+    if not parts:
+        return False
+    layout.operator_context = 'INVOKE_DEFAULT'
+    layout.operator("hb_general.attach_to_cabinet", icon='LINKED')
+    if any(o.get(ATTACHED_TAG) for o in parts):
+        layout.operator("hb_general.detach_from_cabinet", icon='UNLINKED')
+    return True
+
+
 classes = (
     HB_MT_call_menu_wrapper,
     HB_GENERAL_OT_menu,
     HB_GENERAL_OT_delete,
     HB_GENERAL_OT_hide,
     HB_GENERAL_OT_show_all_hidden,
+    HB_GENERAL_OT_attach_to_cabinet,
+    HB_GENERAL_OT_detach_from_cabinet,
 )
 
 

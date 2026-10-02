@@ -1262,6 +1262,10 @@ class HOME_BUILDER_MT_face_frame_misc_part_commands(bpy.types.Menu):
             layout.operator("hb_face_frame.make_part_editable",
                             text="Make Editable", icon='EDITMODE_HLT')
 
+        from ....operators import ops_general
+        layout.separator()
+        ops_general.draw_attach_items(layout, context)
+
         layout.separator()
         layout.operator("hb_general.delete", text="Delete Part", icon='X')
 
