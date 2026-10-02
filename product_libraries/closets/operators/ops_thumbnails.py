@@ -36,8 +36,7 @@ from ...face_frame import thumbnail_render
 
 
 # Loose parts, by the catalog name they carry -> the kind they are cut
-# as. Continuous Top is not among them: it is sized by the run it lands
-# on rather than cut at a figure, so it is built as a fitted part.
+# as.
 _LOOSE_KINDS = {
     'Misc Part': 'MISC',
     'Back': 'BACK',
@@ -48,12 +47,10 @@ _LOOSE_KINDS = {
 # Parts that live in an opening, as (the starter to show it in, how
 # many bays that starter gets). A rod and a shelf hang in a single-bay
 # wall box, where the part is most of the picture rather than a line
-# across one opening of four. A continuous top is the opposite: it is
-# one top across a whole run, so it needs a run to cross.
+# across one opening of four.
 _FITTED_IN = {
     'Fixed Shelf': ('Hanging', 1),
     'Closet Rod': ('Hanging', 1),
-    'Continuous Top': ('Base', const.DEFAULT_BAY_QTY),
 }
 
 
@@ -85,10 +82,6 @@ def _build_fitted(name):
     root = _build_starter(starter_name, bay_qty)
     if root is None:
         return None
-    if name == 'Continuous Top':
-        top = types_closets.add_continuous_top()
-        types_closets.fit_continuous_top(top, root)
-        return root
     opening = _first_opening(root)
     if opening is None:
         return None

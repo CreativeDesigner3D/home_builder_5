@@ -5551,121 +5551,6 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
         return True
 
 
-class hb_closets_OT_place_continuous_top(bpy.types.Operator,
-                                        hb_placement.PlacementMixin):
-    """Place a continuous top. Over a run it caps the whole run at
-    once, as long as the run and reaching past its front; anywhere
-    else it stands free where it is dropped. A top longer than can be
-    cut from one length of material comes in two pieces when it lands.
-    Click places, Shift-click places and starts another, Right-click
-    or Esc cancels."""
-    bl_idname = "hb_closets.place_continuous_top"
-    bl_label = "Place Continuous Top"
-    bl_options = {'UNDO'}
-
-    _part_obj = None
-
-    def invoke(self, context, event):
-        self._part_obj = types_closets.add_continuous_top()
-        try:
-            materials_closets.apply_to_part(self._part_obj)
-        except Exception:
-            pass
-        cursor = context.scene.cursor.location
-        self._part_obj.location = (cursor.x, cursor.y, 0.0)
-        self.init_placement(context)
-        if self.region is None:
-            self._delete_part()
-            self.report({'WARNING'}, "No 3D viewport available")
-            return {'CANCELLED'}
-        self.register_placement_object(self._part_obj)
-        hb_placement.draw_header_text(
-            context,
-            "Place continuous top: move over a run to cap it, click "
-            "to place, Shift-click to place another, Right-click/Esc "
-            "to cancel")
-        context.window.cursor_set('CROSSHAIR')
-        context.window_manager.modal_handler_add(self)
-        return {'RUNNING_MODAL'}
-
-    def _delete_part(self):
-        if self._part_obj is not None:
-            try:
-                types_closets._remove_part_tree(self._part_obj)
-            except ReferenceError:
-                pass
-        self._part_obj = None
-
-    def _position_from_hit(self, context):
-        """A run under the cursor takes the top across its whole
-        length; off a run the top stands free on the floor grid."""
-        obj = self._part_obj
-        if self.hit_location is None:
-            return
-        root = None
-        if self.hit_object is not None:
-            root = types_closets.find_starter_root(self.hit_object)
-        if root is not None:
-            types_closets.fit_continuous_top(obj, root)
-            return
-        if obj.parent is not None:
-            obj.parent = None
-            obj.matrix_parent_inverse.identity()
-        obj.rotation_euler = (0.0, 0.0, 0.0)
-        obj.location = hb_snap.snap_vector_to_grid(
-            Vector(self.hit_location))
-
-    def _end(self, context):
-        hb_placement.clear_header_text(context)
-        context.window.cursor_set('DEFAULT')
-
-    def cancel(self, context):
-        # The window manager can end a modal without an event (file
-        # load, window closed); clean up the same as Esc.
-        self._delete_part()
-        self._end(context)
-
-    def modal(self, context, event):
-        if self._part_obj is None:
-            return {'CANCELLED'}
-        if context.area is not None:
-            context.area.tag_redraw()
-
-        if event.type in {'MIDDLEMOUSE', 'WHEELUPMOUSE', 'WHEELDOWNMOUSE'}:
-            return {'PASS_THROUGH'}
-
-        if event.type == 'MOUSEMOVE':
-            obj = self._part_obj
-            obj.hide_set(True)
-            try:
-                self.update_snap(context, event)
-            finally:
-                obj.hide_set(False)
-            self._position_from_hit(context)
-            return {'RUNNING_MODAL'}
-
-        if event.type in {'ESC', 'RIGHTMOUSE'} and event.value == 'PRESS':
-            self._delete_part()
-            self._end(context)
-            return {'CANCELLED'}
-
-        if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
-            obj = self._part_obj
-            self._part_obj = None
-            types_closets.split_continuous_top(obj)
-            for other in context.selected_objects:
-                other.select_set(False)
-            obj.select_set(True)
-            context.view_layer.objects.active = obj
-            self._end(context)
-            self.report({'INFO'}, "Placed continuous top")
-            if event.shift:
-                bpy.ops.hb_closets.place_continuous_top('INVOKE_DEFAULT')
-            return {'FINISHED'}
-
-        return {'RUNNING_MODAL'}
-
-
 class hb_closets_OT_continuous_top_prompts(bpy.types.Operator):
     """Set how deep the active continuous top is and how far it runs
     past each end of what it caps. The length is what those come to,
@@ -8372,7 +8257,6 @@ classes = (
     hb_closets_OT_delete_bay,
     hb_closets_OT_add_part,
     hb_closets_OT_place_misc_part,
-    hb_closets_OT_place_continuous_top,
     hb_closets_OT_continuous_top_prompts,
     hb_closets_OT_rod_prompts,
     hb_closets_OT_misc_part_prompts,
