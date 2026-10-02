@@ -361,6 +361,11 @@ class HOME_BUILDER_MT_closet_part_commands(bpy.types.Menu):
                             text="Panel Properties...", icon='WINDOW')
             layout.separator()
         if (obj is not None
+                and obj.get(types_closets.PROP_BAY_CLEAT) is not None):
+            layout.operator("hb_closets.delete_bay_cleat",
+                            text="Delete Support Cleat", icon='X')
+            layout.separator()
+        if (obj is not None
                 and obj.get(types_closets.PROP_BAY_CTOP) is not None):
             layout.operator("hb_closets.bay_countertop_prompts",
                             text="Countertop Properties...", icon='WINDOW')

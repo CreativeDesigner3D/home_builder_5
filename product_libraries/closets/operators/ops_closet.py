@@ -3661,6 +3661,12 @@ class hb_closets_OT_place_misc_part(bpy.types.Operator,
     # Whether anything has been put down, so finishing a repeating
     # placement still records an undo step for what was placed.
     _placed_any = False
+    # A cleat dropped low in a hanging bay supports the bay from below
+    # instead, the prior library's bottom support: (root, bay) while
+    # the cursor is there, and the highlight showing where it goes.
+    _support = None
+    _stack_quad_world = None
+    _stack_handle = None
 
     def _new_part(self, location):
         obj = types_closets.add_misc_part(kind=self.kind)
@@ -3683,6 +3689,12 @@ class hb_closets_OT_place_misc_part(bpy.types.Operator,
         self.register_placement_object(self._part_obj)
         if self._fits_openings:
             self.add_placement_dim_handler(context)
+        self._support = None
+        self._stack_quad_world = None
+        self._stack_handle = None
+        if self.kind == 'CLEAT':
+            self._stack_handle = bpy.types.SpaceView3D.draw_handler_add(
+                _draw_stack_highlight, (self,), 'WINDOW', 'POST_VIEW')
         label = types_closets.LOOSE_PARTS[self.kind][0].lower()
         hb_placement.draw_header_text(
             context,
@@ -3690,8 +3702,10 @@ class hb_closets_OT_place_misc_part(bpy.types.Operator,
              "Right-click/Esc to cancel" % label)
             if not self._fits_openings else
             ("Place %s: move over an opening to fit it to that "
-             "opening, click to place (keeps placing), "
-             "Right-click/Esc to finish" % label))
+             "opening, %sclick to place (keeps placing), "
+             "Right-click/Esc to finish"
+             % (label, "low in a hanging bay to support it from "
+                       "below, " if self.kind == 'CLEAT' else "")))
         context.window.cursor_set('CROSSHAIR')
         context.window_manager.modal_handler_add(self)
         return {'RUNNING_MODAL'}
@@ -3918,6 +3932,78 @@ class hb_closets_OT_place_misc_part(bpy.types.Operator,
                     % types_closets.LOOSE_PARTS[self.kind][0].lower())
         return self._carry_on(context, cursor_part)
 
+    # -- Support cleat under hanging bays ------------------------------
+    SUPPORT_BAND = units.inch(5.0)
+
+    def _support_target(self, opening, local_z):
+        """(root, bay, span) when a cleat at this cursor height in this
+        opening supports its bay from below: the cursor is in the
+        bottom few inches of the lowest opening of a hanging bay, and
+        that bay can take a support cleat."""
+        if self.kind != 'CLEAT' or local_z > self.SUPPORT_BAND:
+            return None
+        if opening.get('hb_seg_bottom', 0.0) > 1e-4:
+            return None
+        bay = types_closets.find_bay_cage(opening)
+        root = types_closets.find_starter_root(opening)
+        found = types_closets.bay_cleat_target(root, bay)
+        if found is None:
+            return None
+        first, last, layout = found
+        span = types_closets.bottom_cleat_span(
+            layout, first, last,
+            types_closets.run_sizes(root).panel_thickness)
+        return root, bay, span
+
+    def _set_support(self, context, target):
+        """Show (or stop showing) the support cleat the cursor would
+        put in: the cleat's face washed in the snap colour, its length
+        dimensioned, and the opening's own cleat preview hidden."""
+        self._support = target[:2] if target is not None else None
+        if self._preview is not None:
+            try:
+                self._preview.hide_set(target is not None)
+            except ReferenceError:
+                pass
+        if target is None:
+            self._stack_quad_world = None
+            return
+        root, _bay, (x0, length, z0) = target
+        mw = root.matrix_world
+        y = -context.scene.hb_closets.shelf_thickness
+        z1 = z0 - const.CLEAT_WIDTH
+        self._stack_quad_world = [
+            mw @ Vector(c) for c in ((x0, y, z0), (x0 + length, y, z0),
+                                     (x0 + length, y, z1), (x0, y, z1))]
+        self._placement_dim_specs = [hb_placement.PlacementDimSpec(
+            mw @ Vector((x0, y, z1)), mw @ Vector((x0 + length, y, z1)),
+            "Support cleat " + units.unit_to_string(
+                context.scene.unit_settings, length), STACK_COLOR)]
+        if context.area is not None:
+            context.area.tag_redraw()
+
+    def _place_support(self, context):
+        """Commit a support cleat: the opening's cleat preview goes, and
+        the run takes a support cleat under the bays."""
+        root, bay = self._support
+        self._set_support(context, None)
+        self._leave_opening(context)
+        entry = types_closets.add_bay_cleat(root, bay)
+        if entry is None:
+            return {'RUNNING_MODAL'}
+        _apply_finish(root)
+        _apply_selection_shading(context, root, keep_active=False)
+        for other in context.selected_objects:
+            other.select_set(False)
+        for c in root.children:
+            if c.get(types_closets.PROP_BAY_CLEAT) == entry.uid:
+                c.select_set(True)
+                context.view_layer.objects.active = c
+        self.report({'INFO'}, "Placed a support cleat under the bays")
+        cursor_part = self._part_obj
+        self._part_obj = None
+        return self._carry_on(context, cursor_part)
+
     def _carry_on(self, context, cursor_part):
         """After a drop, a fitted part goes on placing with a fresh
         part on the cursor; a misc part ends here. The part the cursor
@@ -3965,6 +4051,15 @@ class hb_closets_OT_place_misc_part(bpy.types.Operator,
 
     def _end(self, context):
         self.remove_placement_dim_handler()
+        handle = self._stack_handle
+        if handle is not None:
+            try:
+                bpy.types.SpaceView3D.draw_handler_remove(handle, 'WINDOW')
+            except Exception:
+                pass
+        self._stack_handle = None
+        self._stack_quad_world = None
+        self._support = None
         hb_placement.clear_header_text(context)
         context.window.cursor_set('DEFAULT')
 
@@ -3996,9 +4091,13 @@ class hb_closets_OT_place_misc_part(bpy.types.Operator,
                         if self._fits_openings else None)
             if resolved is not None:
                 self._enter_opening(context, resolved[0])
-                self._fit_opening(context, resolved[0], resolved[1],
-                                  resolved[2])
+                support = self._support_target(resolved[0], resolved[1])
+                if support is None:
+                    self._fit_opening(context, resolved[0], resolved[1],
+                                      resolved[2])
+                self._set_support(context, support)
                 return {'RUNNING_MODAL'}
+            self._set_support(context, None)
             self._leave_opening(context)
             obj = self._part_obj
             obj.hide_set(True)
@@ -4016,6 +4115,8 @@ class hb_closets_OT_place_misc_part(bpy.types.Operator,
             return {'FINISHED'} if self._placed_any else {'CANCELLED'}
 
         if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
+            if self._support is not None:
+                return self._place_support(context)
             if self._opening is not None:
                 return self._place_in_opening(context)
             obj = self._part_obj
@@ -5778,6 +5879,25 @@ class hb_closets_OT_delete_bay_countertop(bpy.types.Operator):
         if entry is None:
             return {'CANCELLED'}
         types_closets.remove_bay_countertop(root, entry.uid)
+        return {'FINISHED'}
+
+
+class hb_closets_OT_delete_bay_cleat(bpy.types.Operator):
+    """Take this support cleat out from under its bays"""
+    bl_idname = "hb_closets.delete_bay_cleat"
+    bl_label = "Delete Support Cleat"
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (obj is not None and obj.parent is not None
+                and obj.get(types_closets.PROP_BAY_CLEAT) is not None)
+
+    def execute(self, context):
+        obj = context.active_object
+        types_closets.remove_bay_cleat(
+            obj.parent, obj.get(types_closets.PROP_BAY_CLEAT))
         return {'FINISHED'}
 
 
@@ -8491,6 +8611,7 @@ classes = (
     hb_closets_OT_place_bay_countertop,
     hb_closets_OT_bay_countertop_prompts,
     hb_closets_OT_delete_bay_countertop,
+    hb_closets_OT_delete_bay_cleat,
     hb_closets_OT_rod_prompts,
     hb_closets_OT_misc_part_prompts,
     hb_closets_OT_panel_prompts,

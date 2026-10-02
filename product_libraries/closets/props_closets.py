@@ -444,6 +444,16 @@ class Closet_Bay_Countertop_Props(PropertyGroup):
         precision=4, update=_update_starter_prop)  # type: ignore
 
 
+class Closet_Bay_Cleat_Props(PropertyGroup):
+    """A support cleat under some of a run's hanging bays rather than
+    all of them (the Cleat part dropped low in a hanging bay): one
+    cleat under the bottom shelf against the wall, from the first bay
+    named to the last, laid out the way the run-wide Bottom Cleat is."""
+    uid: StringProperty(options={'HIDDEN'})  # type: ignore
+    first_bay: StringProperty(options={'HIDDEN'})  # type: ignore
+    last_bay: StringProperty(options={'HIDDEN'})  # type: ignore
+
+
 class Closet_Starter_Props(PropertyGroup):
 
     # Where the starter sits along its wall, read off and written to the
@@ -755,6 +765,9 @@ class Closet_Starter_Props(PropertyGroup):
                     "hanging bays, end panel to end panel, to carry the "
                     "load against the wall",
         default=False, update=_update_starter_prop)  # type: ignore
+    # Support cleats under some of the hanging bays (the Cleat part).
+    bay_cleats: CollectionProperty(
+        type=Closet_Bay_Cleat_Props)  # type: ignore
 
     # End options. Finished end and drill through are recorded on the
     # panel as flags - whether the end is exposed, and whether its
@@ -2319,6 +2332,7 @@ class Closets_Scene_Props(PropertyGroup):
 
 classes = (
     Closet_Bay_Countertop_Props,
+    Closet_Bay_Cleat_Props,
     Closet_Starter_Props,
     Closet_Bay_Props,
     Closet_Opening_Props,

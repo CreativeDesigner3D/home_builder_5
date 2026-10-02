@@ -89,6 +89,10 @@ PART_ROLE_CONTINUOUS_TOP = 'CLOSET_CONTINUOUS_TOP'
 # The run's own top and splashes are the ones without it.
 PROP_BAY_CTOP = 'hb_bay_ctop'
 PROP_BAY_CTOP_SLOT = 'hb_bay_ctop_slot'
+# A support cleat under some of a run's hanging bays (props_closets
+# Closet_Bay_Cleat_Props): a cleat part on the run, carrying the uid of
+# the entry it belongs to.
+PROP_BAY_CLEAT = 'hb_bay_cleat'
 # A bought item that hangs in the closet: a valet rod, a wire basket,
 # an ironing board. The cage carries the choice; what hangs under it
 # depends on the accessory. Three children are possible:
@@ -537,6 +541,125 @@ def bay_countertop_entry(obj):
         if entry.uid == uid:
             return root, entry
     return None, None
+
+
+def bottom_cleat_span(layout, first, last, pt):
+    """(x0, length, z0) of a support cleat under hanging bays
+    `first`..`last`: under the bottom shelf, against the wall, and out
+    to the outside of each end partition - except where that partition
+    is shared with a bay reaching lower (a floor bay, or one hung
+    lower), which runs on down past the cleat, so it stops at its
+    face."""
+    bays = layout['bays']
+    panels = layout['panels']
+    a, b = bays[first], bays[last]
+
+    def under_panel(panel, neighbor):
+        if panel is None or panel.get('hidden'):
+            return False
+        return (neighbor is None or (not neighbor['floor']
+                and neighbor['z0'] >= a['z0'] - 1e-4))
+
+    left = panels[first]
+    right = panels[last + 1] if last + 1 < len(panels) else None
+    before = bays[first - 1] if first > 0 else None
+    after = bays[last + 1] if last + 1 < len(bays) else None
+    x0 = min(left['x'], a['x']) if under_panel(left, before) else a['x']
+    x1 = b['x'] + b['width']
+    if under_panel(right, after):
+        x1 = max(x1, right['x'] + pt)
+    return x0, x1 - x0, a['z0']
+
+
+def _place_bottom_cleat(cleat, span, scene_props):
+    x0, length, z0 = span
+    # Mirror Y hangs it down from the underside of the bottom shelf
+    # rather than standing it up into the bay.
+    cleat.location = (x0, 0.0, z0)
+    part = GeoNodeCutpart(cleat)
+    part.set_input('Mirror Y', True)
+    part.set_input('Length', length)
+    part.set_input('Width', const.CLEAT_WIDTH)
+    part.set_input('Thickness', scene_props.shelf_thickness)
+
+
+def bay_cleat_bays(layout, bay_i):
+    """(first, last) for a support cleat under hanging bay `bay_i`: it
+    and its neighbours either side hung at the same height. None for a
+    floor bay - it stands on the floor."""
+    bays = layout['bays']
+    b = bays[bay_i]
+    if b['floor']:
+        return None
+
+    def same(k):
+        o = bays[k]
+        return not o['floor'] and abs(o['z0'] - b['z0']) < 1e-3
+
+    first = last = bay_i
+    while first > 0 and same(first - 1):
+        first -= 1
+    while last < len(bays) - 1 and same(last + 1):
+        last += 1
+    return first, last
+
+
+def bay_cleat_target(root, bay_obj):
+    """(first, last, layout) for a support cleat dropped under
+    `bay_obj`, or None when it can't take one: a floor bay, the run's
+    Bottom Cleat already runs under it, or another support cleat
+    already covers one of the bays."""
+    if root is None or bay_obj is None:
+        return None
+    sp = root.hb_closet_starter
+    if getattr(sp, 'bottom_cleat', False):
+        return None
+    bays = ClosetStarter(root)._sorted_bays()
+    if bay_obj not in bays:
+        return None
+    layout = solve_starter_layout(root)
+    rng = bay_cleat_bays(layout, bays.index(bay_obj))
+    if rng is None:
+        return None
+    first, last = rng
+    names = {b.name for b in bays[first:last + 1]}
+    index = {b.name: i for i, b in enumerate(bays)}
+    for entry in sp.bay_cleats:
+        i, j = index.get(entry.first_bay), index.get(entry.last_bay)
+        if i is None or j is None:
+            continue
+        if names & {b.name for b in bays[min(i, j):max(i, j) + 1]}:
+            return None
+    return first, last, layout
+
+
+def add_bay_cleat(root, bay_obj):
+    """Put a support cleat under the hanging bay `bay_obj` and its
+    neighbours hung at the same height. Hands back the new entry, or
+    None when the bay can't take one."""
+    import uuid
+    target = bay_cleat_target(root, bay_obj)
+    if target is None:
+        return None
+    first, last, _layout = target
+    bays = ClosetStarter(root)._sorted_bays()
+    with suspend_recalc():
+        entry = root.hb_closet_starter.bay_cleats.add()
+        entry.uid = uuid.uuid4().hex
+        entry.first_bay = bays[first].name
+        entry.last_bay = bays[last].name
+    recalculate_closet_starter(root)
+    return entry
+
+
+def remove_bay_cleat(root, uid):
+    """Take a support cleat out from under its bays."""
+    sp = root.hb_closet_starter
+    for k, entry in enumerate(sp.bay_cleats):
+        if entry.uid == uid:
+            sp.bay_cleats.remove(k)
+            break
+    recalculate_closet_starter(root)
 
 
 def solve_starter_layout(root):
@@ -4358,42 +4481,22 @@ class ClosetStarter(GeoNodeCage):
         run. They are the run's own parts, tagged so they are told apart
         from the bays' cleats, and made or taken away to match."""
         runs = []
+        bays = layout['bays']
+        pt = scene_props.panel_thickness
         # getattr: a newer setting than some running sessions' group.
         if getattr(sp, 'bottom_cleat', False):
-            bays = layout['bays']
-            panels = layout['panels']
-            pt = scene_props.panel_thickness
             start = None
             for i, bay in enumerate(bays + [None]):
                 joins = (bay is not None and not bay['floor']
                          and (start is None
                               or abs(bay['z0'] - bays[start]['z0']) < 1e-4))
                 if start is not None and not joins:
-                    first, last = bays[start], bays[i - 1]
-                    left = panels[start]
-                    right = panels[i] if i < len(panels) else None
-
-                    def _under_panel(panel, neighbor):
-                        # A panel shared with a bay that reaches lower
-                        # (a floor bay, or one hung lower) runs on down
-                        # past this cleat, so the cleat stops at its face.
-                        if panel is None or panel.get('hidden'):
-                            return False
-                        return (neighbor is None or (not neighbor['floor']
-                                and neighbor['z0'] >= first['z0'] - 1e-4))
-
-                    before = bays[start - 1] if start > 0 else None
-                    after = bays[i] if i < len(bays) else None
-                    x0 = (min(left['x'], first['x'])
-                          if _under_panel(left, before) else first['x'])
-                    x1 = last['x'] + last['width']
-                    if _under_panel(right, after):
-                        x1 = max(x1, right['x'] + pt)
-                    runs.append((x0, x1 - x0, first['z0']))
+                    runs.append(bottom_cleat_span(layout, start, i - 1, pt))
                     start = None
                 if (start is None and bay is not None
                         and not bay['floor']):
                     start = i
+        self._layout_bay_cleats(layout, scene_props, sp)
         cleats = sorted(
             [c for c in self.obj.children if c.get('hb_bottom_cleat')],
             key=lambda o: o.get('hb_bottom_cleat_index', 0))
@@ -4410,15 +4513,52 @@ class ClosetStarter(GeoNodeCage):
             part.obj['MENU_ID'] = 'HOME_BUILDER_MT_closet_part_commands'
             part.obj.rotation_euler.x = math.radians(90)
             cleats.append(part.obj)
-        for cleat, (x0, length, z0) in zip(cleats, runs):
-            # Mirror Y hangs it down from the underside of the bottom
-            # shelf rather than standing it up into the bay.
-            cleat.location = (x0, 0.0, z0)
-            part = GeoNodeCutpart(cleat)
-            part.set_input('Mirror Y', True)
-            part.set_input('Length', length)
-            part.set_input('Width', const.CLEAT_WIDTH)
-            part.set_input('Thickness', scene_props.shelf_thickness)
+        for cleat, span in zip(cleats, runs):
+            _place_bottom_cleat(cleat, span, scene_props)
+
+    def _layout_bay_cleats(self, layout, scene_props, sp):
+        """The support cleats under some of the hanging bays
+        (sp.bay_cleats), one per entry, laid out like the run-wide
+        Bottom Cleat over just the bays the entry names. An entry whose
+        bays have gone, or no longer hang, builds nothing; parts left by
+        an entry that has gone are taken out."""
+        index = {b.name: i for i, b in enumerate(self._sorted_bays())}
+        bays = layout['bays']
+        pt = scene_props.panel_thickness
+        have = {}
+        for c in list(self.obj.children):
+            uid = c.get(PROP_BAY_CLEAT)
+            if uid is not None:
+                if uid in have:
+                    _remove_part_tree(c)
+                else:
+                    have[uid] = c
+        keep = set()
+        for entry in getattr(sp, 'bay_cleats', ()):
+            i = index.get(entry.first_bay)
+            j = index.get(entry.last_bay)
+            if not entry.uid or i is None or j is None:
+                continue
+            i, j = min(i, j), max(i, j)
+            if any(b['floor'] for b in bays[i:j + 1]):
+                continue
+            cleat = have.get(entry.uid)
+            if cleat is None:
+                part = CabinetPart()
+                part.create('Cleat')
+                part.obj.parent = self.obj
+                part.obj['hb_part_role'] = PART_ROLE_CLEAT
+                part.obj[PROP_BAY_CLEAT] = entry.uid
+                part.obj['MENU_ID'] = 'HOME_BUILDER_MT_closet_part_commands'
+                part.obj.rotation_euler.x = math.radians(90)
+                cleat = part.obj
+                have[entry.uid] = cleat
+            keep.add(entry.uid)
+            _place_bottom_cleat(
+                cleat, bottom_cleat_span(layout, i, j, pt), scene_props)
+        for uid, obj in have.items():
+            if uid not in keep:
+                _remove_part_tree(obj)
 
     def _layout_starter_parts(self, layout, scene_props, sp):
         # Only a unit with a top to cap takes a countertop - a base run
