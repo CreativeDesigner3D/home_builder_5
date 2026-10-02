@@ -6175,6 +6175,28 @@ def _update_cabinet_width(self, context):
         if abs(delta) > 1e-9:
             root.location -= _width_axis(root) * (delta * share)
     root['HB_ANCHOR_LAST_WIDTH'] = self.width
+    if (old is not None and getattr(self, 'corner_type', 'NONE') != 'NONE'
+            and abs(self.width - old) > 1e-9):
+        from . import corner_neighbors
+        corner_neighbors.follow_corner_resize(root, old, self.depth)
+    _update_cabinet_dim(self, context)
+
+
+def _update_cabinet_depth(self, context):
+    """Depth update. On a corner cabinet depth is the leg along the
+    other wall, so the cabinet butted against that arm end follows it
+    (corner_neighbors). The cage's Dim Y still holds the pre-write depth
+    when the callback fires."""
+    if getattr(self, 'corner_type', 'NONE') != 'NONE':
+        root = self.id_data
+        from ... import hb_types
+        try:
+            old = hb_types.GeoNodeCage(root).get_input('Dim Y')
+        except Exception:
+            old = None
+        if old is not None and abs(self.depth - old) > 1e-9:
+            from . import corner_neighbors
+            corner_neighbors.follow_corner_resize(root, self.width, old)
     _update_cabinet_dim(self, context)
 
 
@@ -7728,7 +7750,7 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         name="Depth",
         description="Cabinet depth (Y dimension)",
         default=units.inch(24.0), unit='LENGTH', precision=4,
-        update=_update_cabinet_dim,
+        update=_update_cabinet_depth,
     )  # type: ignore
 
     # Width lock - consulted by the Grab Cabinet Group operator when
