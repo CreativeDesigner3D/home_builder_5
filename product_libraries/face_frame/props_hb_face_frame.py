@@ -6015,6 +6015,28 @@ class HB_UL_face_frame_door_styles(UIList):
 # ---------------------------------------------------------------------------
 # Object-level PropertyGroups - face frame cabinet & bay state
 # ---------------------------------------------------------------------------
+FINISH_TOE_KICK_TYPE_ITEMS = [
+    ('APPLIED', "Applied 1/4\"",
+     "Thin applied finish toe kick over the toe kick front"),
+    ('SOLID', "Solid Lumber 3/4\"",
+     "3/4\" solid lumber with square edges used as the finish toe kick"),
+]
+
+FINISH_TOE_KICK_THICKNESS = {
+    'APPLIED': units.inch(0.25),
+    'SOLID': units.inch(0.75),
+}
+
+
+def _update_finish_toe_kick_type(self, context):
+    """Each finish toe kick type carries its stock thickness; writing
+    it runs the thickness update (and the recalc)."""
+    thickness = FINISH_TOE_KICK_THICKNESS.get(self.finish_toe_kick_type)
+    if (thickness is not None
+            and abs(self.finish_toe_kick_thickness - thickness) > 1e-9):
+        self.finish_toe_kick_thickness = thickness
+
+
 def _update_cabinet_dim(self, context):
     """Triggered when a cabinet-level dimension changes. Walks back to the
     cabinet root (works even if the prop is on a descendant somehow) and
@@ -9177,6 +9199,11 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         name="Include Finish Toe Kick", default=True,
         update=_update_cabinet_dim,
     )  # type: ignore
+    finish_toe_kick_type: EnumProperty(
+        name="Finish Toe Kick Type",
+        items=FINISH_TOE_KICK_TYPE_ITEMS, default='APPLIED',
+        update=_update_finish_toe_kick_type,
+    )  # type: ignore
 
     include_external_nailer: BoolProperty(name="Include External Nailer", default=False)  # type: ignore
     include_internal_nailer: BoolProperty(name="Include Internal Nailer", default=False)  # type: ignore
@@ -11192,6 +11219,11 @@ def _sync_toe_kick_defaults(self, context):
                 val = getattr(self, attr)
                 if abs(getattr(ff, attr) - val) > 1e-9:
                     setattr(ff, attr, val)
+            for attr in ('default_include_finish_toe_kick',
+                         'default_finish_toe_kick_type'):
+                val = getattr(self, attr)
+                if getattr(ff, attr) != val:
+                    setattr(ff, attr, val)
     finally:
         _SYNCING_TOE_KICK_DEFAULTS = False
 
@@ -11622,6 +11654,21 @@ class Face_Frame_Scene_Props(PropertyGroup):
         update=_sync_toe_kick_defaults,
     )  # type: ignore
 
+    default_include_finish_toe_kick: BoolProperty(
+        name="Finish Toe Kick",
+        description="Include a finish toe kick on new cabinets in this project",
+        default=True,
+        update=_sync_toe_kick_defaults,
+    )  # type: ignore
+
+    default_finish_toe_kick_type: EnumProperty(
+        name="Finish Toe Kick Type",
+        description="Finish toe kick stock for new cabinets in this project",
+        items=FINISH_TOE_KICK_TYPE_ITEMS,
+        default='APPLIED',
+        update=_sync_toe_kick_defaults,
+    )  # type: ignore
+
     base_cabinet_height: FloatProperty(
         name="Base Cabinet Height",
         description="Default height for base cabinets",
@@ -12010,6 +12057,15 @@ class Face_Frame_Scene_Props(PropertyGroup):
         row.prop(self, 'default_toe_kick_height', text="")
         row.prop(self, 'default_toe_kick_setback', text="")
         row.operator('hb_face_frame.update_toe_kicks', text="", icon='FILE_REFRESH')
+        # Finish toe kick on / off and stock: seeds new cabinets; the
+        # refresh pushes both onto every cabinet already in the room.
+        row = layout.row()
+        row.prop(self, 'default_include_finish_toe_kick', text="Finish Toe Kick")
+        sub = row.row()
+        sub.enabled = self.default_include_finish_toe_kick
+        sub.prop(self, 'default_finish_toe_kick_type', text="")
+        row.operator('hb_face_frame.update_finish_toe_kicks', text="",
+                     icon='FILE_REFRESH')
 
         layout.separator()
         ohbox = layout.box()

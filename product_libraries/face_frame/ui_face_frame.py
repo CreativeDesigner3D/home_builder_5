@@ -316,7 +316,11 @@ def draw_construction(layout, cab_props):
             if cab_props.corner_type != 'NONE':
                 col.prop(cab_props, 'inset_toe_kick_back_left', text="Back Left Inset")
                 col.prop(cab_props, 'inset_toe_kick_back_right', text="Back Right Inset")
-            col.prop(cab_props, 'include_finish_toe_kick', text="Finish Toe Kick")
+            row = col.row(align=True)
+            row.prop(cab_props, 'include_finish_toe_kick', text="Finish Toe Kick")
+            sub = row.row(align=True)
+            sub.enabled = cab_props.include_finish_toe_kick
+            sub.prop(cab_props, 'finish_toe_kick_type', text="")
 
     box = layout.box()
     box.prop(cab_props, 'show_finished_ends', text="Finished Ends and Backs",

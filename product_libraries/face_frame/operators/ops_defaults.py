@@ -91,9 +91,55 @@ class hb_face_frame_OT_update_toe_kicks(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class hb_face_frame_OT_update_finish_toe_kicks(bpy.types.Operator):
+    """Push the project finish toe kick setting (on / off and stock)
+    onto every face frame cabinet in this scene - one step to add or
+    remove the finish toe kick everywhere instead of cabinet by cabinet.
+    Cabinets whose kick can't carry one ignore the flag when they build,
+    so writing every cabinet is harmless."""
+    bl_idname = "hb_face_frame.update_finish_toe_kicks"
+    bl_label = "Update Finish Toe Kicks"
+    bl_description = ("Apply the project finish toe kick setting to "
+                      "every cabinet in this room")
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        main_scene = hb_project.get_main_scene()
+        if not hasattr(main_scene, 'hb_face_frame'):
+            self.report({'WARNING'}, "Face frame scene props not registered")
+            return {'CANCELLED'}
+        ff_props = main_scene.hb_face_frame
+        include = ff_props.default_include_finish_toe_kick
+        kick_type = ff_props.default_finish_toe_kick_type
+
+        # Snapshot first: each write recalcs the cabinet, and recalcs
+        # can add / remove scene objects under a live iteration.
+        cages = [obj for obj in context.scene.objects
+                 if obj.get(types_face_frame.TAG_CABINET_CAGE)]
+        updated = 0
+        with types_face_frame.suspend_recalc():
+            for obj in cages:
+                cab = obj.face_frame_cabinet
+                if cab.cabinet_type == 'PANEL':
+                    continue
+                changed = False
+                if cab.include_finish_toe_kick != include:
+                    cab.include_finish_toe_kick = include
+                    changed = True
+                if include and cab.finish_toe_kick_type != kick_type:
+                    cab.finish_toe_kick_type = kick_type
+                    changed = True
+                updated += changed
+
+        self.report({'INFO'},
+                    f"Updated finish toe kick on {updated} cabinet(s)")
+        return {'FINISHED'}
+
+
 classes = (
     hb_face_frame_OT_update_cabinet_sizes,
     hb_face_frame_OT_update_toe_kicks,
+    hb_face_frame_OT_update_finish_toe_kicks,
 )
 
 

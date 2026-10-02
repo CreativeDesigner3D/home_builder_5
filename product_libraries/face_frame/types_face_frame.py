@@ -2120,6 +2120,10 @@ class FaceFrameCabinet(GeoNodeCage):
                 if tk_h is not None:
                     cab_props.toe_kick_height = tk_h
                     cab_props.toe_kick_setback = ff_scene.default_toe_kick_setback
+                    cab_props.include_finish_toe_kick = (
+                        ff_scene.default_include_finish_toe_kick)
+                    cab_props.finish_toe_kick_type = (
+                        ff_scene.default_finish_toe_kick_type)
 
             cab_props.width = self.default_width
             cab_props.height = self.default_height
@@ -20268,7 +20272,7 @@ def break_cabinet_at_gap(cabinet, gap_index, shrink_side='AUTO'):
             'default_left_overlay', 'default_right_overlay',
             'material_thickness', 'face_frame_thickness',
             'door_thickness', 'back_thickness', 'division_thickness',
-            'finish_toe_kick_thickness',
+            'finish_toe_kick_type', 'finish_toe_kick_thickness',
             'toe_kick_type', 'toe_kick_height', 'toe_kick_setback',
             'toe_kick_thickness', 'back_bottom_inset', 'inset_toe_kick_rear',
             'include_finish_toe_kick',
