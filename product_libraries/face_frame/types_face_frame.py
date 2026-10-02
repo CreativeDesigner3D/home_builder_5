@@ -9256,8 +9256,10 @@ class FaceFrameCabinet(GeoNodeCage):
                 br = ext_br if at_right else 0.0
                 # Splayed back extension widens the back plane the same
                 # way it widens the carcass / finished back.
+                void = (self._finished_back_void_offset(cab, layout)
+                        if at_left and at_right else 0.0)
                 location = (location[0] + ext_r - ret_r + br,
-                            location[1], location[2])
+                            location[1] + void, location[2])
                 width = (width + ext_l + ext_r - ret_l - ret_r + bl + br)
             elif side == 'LEFT':
                 eb = cab.left_side_finished_extend_back
@@ -9446,8 +9448,13 @@ class FaceFrameCabinet(GeoNodeCage):
         bottom_z = 0.0
         if solver.has_rear_kick_inset(layout):
             bottom_z = layout.bays[segment['start_bay']]['kick_height']
+        # Sides run back past the box with no return closeout: the back
+        # rides out with them, leaving a void behind the carcass. Only a
+        # back that spans the whole cabinet moves; split backs stay put.
+        void = (self._finished_back_void_offset(cab, layout)
+                if at_left and at_right else 0.0)
         existing.location = (segment['x'] - ext_l + ret_l,
-                             segment['y'] + thickness, bottom_z)
+                             segment['y'] + thickness + void, bottom_z)
         part.set_input('Length',    layout.dim_z - bottom_z)
         part.set_input('Width',
                        segment['width'] + ext_l + ext_r - ret_l - ret_r)
@@ -9523,6 +9530,38 @@ class FaceFrameCabinet(GeoNodeCage):
                 or extend <= 0.0 or width <= 0.0):
             return 0.0
         return width
+
+    def _finished_back_void_offset(self, cab, layout):
+        """How far the finished / paneled / textured back moves off the
+        carcass back (+Y) to ride with sides extended back past the box,
+        leaving a void behind the cabinet. 0.0 keeps it tight.
+
+        The back follows the furthest extended side. Any active return
+        closeout keeps it tight: the return panel and post are built to
+        die into a back at Y=0. Sides carrying an island combined end are
+        ignored (their extend spans the partner run, not a void), as are
+        sides with no finished face, whose extend value is a leftover.
+        Angled cabinets reshape the sides and back separately, so skip.
+        """
+        if layout.is_angled:
+            return 0.0
+        if (self._finished_side_return_width(cab, layout, 'LEFT') > 0.0
+                or self._finished_side_return_width(cab, layout, 'RIGHT')
+                > 0.0):
+            return 0.0
+        carried = set(island_pair.carried_sides(self.obj))
+        offset = 0.0
+        for side, condition, extend in (
+                ('LEFT', cab.left_finished_end_condition,
+                 cab.left_side_finished_extend_back),
+                ('RIGHT', cab.right_finished_end_condition,
+                 cab.right_side_finished_extend_back)):
+            if condition in ('UNFINISHED', 'FLUSH_X'):
+                continue
+            if side in carried:
+                continue
+            offset = max(offset, extend)
+        return offset
 
     def _reconcile_finished_side_returns(self, layout):
         """Spawn / resize / remove the return closeout on a FINISHED or
@@ -10867,7 +10906,9 @@ class FaceFrameCabinet(GeoNodeCage):
                 # finished-back trim in _reconcile_finished_back).
                 ret_l = self._finished_side_return_width(cab, layout, 'LEFT')
                 ret_r = self._finished_side_return_width(cab, layout, 'RIGHT')
-                location = (location[0] - el - ext_bl + ret_l, location[1],
+                location = (location[0] - el - ext_bl + ret_l,
+                            location[1]
+                            + self._finished_back_void_offset(cab, layout),
                             location[2])
                 width = width + el + er + ext_bl + ext_br - ret_l - ret_r
             else:
