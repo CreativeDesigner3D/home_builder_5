@@ -83,8 +83,8 @@ def sync_end_overhangs(sp, sides=('LEFT', 'RIGHT')):
     what stands at that end of the run. A wall filler means the run
     goes to the wall: the top runs out over the filler and stops there,
     and that end is not exposed. A finished end with no filler is
-    exposed: the top overhangs it by the same amount as the front.
-    Anything else has no side overhang.
+    exposed: the top overhangs it by the end overhang. Anything else
+    has no side overhang.
 
     Written only when one of those changes, so a side overhang typed in
     by hand afterwards is kept until the end condition changes again."""
@@ -95,7 +95,7 @@ def sync_end_overhangs(sp, sides=('LEFT', 'RIGHT')):
         if filler > 0.0:
             overhang, exposed = filler, False
         elif finished:
-            overhang, exposed = float(sp.countertop_overhang_front), True
+            overhang, exposed = const.COUNTERTOP_OVERHANG_END, True
         else:
             overhang, exposed = 0.0, False
         if abs(getattr(sp, 'countertop_overhang_' + key) - overhang) > 1e-6:
@@ -113,19 +113,6 @@ def _end_condition_update(side):
             sync_end_overhangs(self, (side,))
         _update_starter_prop(self, context)
     return _update
-
-
-def _update_countertop_front(self, context):
-    """Front overhang changed: a finished end with no filler follows
-    it, since its side overhang matches the front."""
-    from . import types_closets
-    with types_closets.suspend_recalc():
-        for side in ('LEFT', 'RIGHT'):
-            key = side.lower()
-            if (getattr(self, key + '_finished_end')
-                    and getattr(self, key + '_side_wall_filler') <= 0.0):
-                sync_end_overhangs(self, (side,))
-    _update_starter_prop(self, context)
 
 
 def _system_panel_height(value):
@@ -570,7 +557,7 @@ class Closet_Starter_Props(PropertyGroup):
         name="Front", description="Countertop projection past the front "
                                   "of the carcass",
         default=const.COUNTERTOP_OVERHANG_FRONT, unit='LENGTH',
-        precision=4, update=_update_countertop_front)  # type: ignore
+        precision=4, update=_update_starter_prop)  # type: ignore
     countertop_overhang_rear: FloatProperty(
         name="Rear", description="Countertop projection past the back of "
                                  "the carcass",

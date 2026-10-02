@@ -216,6 +216,9 @@ KICK_HEIGHT_ITEMS = [
 # Countertop (Base and Island starters)
 # ---------------------------------------------------------------------------
 COUNTERTOP_OVERHANG_FRONT = inch(1.875)
+# Side overhang past a finished end. Less than the front: the front
+# clears doors and drawers below the top, an end never has any.
+COUNTERTOP_OVERHANG_END = inch(1.0)
 # Backsplash: an upstand along the wall edge of a countertop.
 BACKSPLASH_HEIGHT = inch(4.0)
 BACKSPLASH_THICKNESS = inch(0.75)
