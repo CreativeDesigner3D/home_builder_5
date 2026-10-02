@@ -148,6 +148,16 @@ def _update_starter_height(self, context):
     _update_starter_prop(self, context)
 
 
+def _system_default_height(attr):
+    """A default height typed in the room sizes: onto the 32mm system,
+    so the starters it seeds come out on a dropdown height."""
+    def _update(self, context):
+        want = _system_panel_height(getattr(self, attr))
+        if abs(want - getattr(self, attr)) > 1e-5:
+            setattr(self, attr, want)
+    return _update
+
+
 def _update_starter_depth(self, context):
     """Starter depth changed: no shallower than the system's panel."""
     from . import types_closets
@@ -1517,17 +1527,21 @@ class Closets_Scene_Props(PropertyGroup):
         unit='LENGTH', precision=4)  # type: ignore
     base_panel_height: FloatProperty(
         name="Base Panel Height", default=const.BASE_PANEL_HEIGHT,
-        unit='LENGTH', precision=4)  # type: ignore
+        unit='LENGTH', precision=4,
+        update=_system_default_height('base_panel_height'))  # type: ignore
     tall_panel_height: FloatProperty(
         name="Tall Panel Height", default=const.TALL_PANEL_HEIGHT,
-        unit='LENGTH', precision=4)  # type: ignore
+        unit='LENGTH', precision=4,
+        update=_system_default_height('tall_panel_height'))  # type: ignore
     hanging_panel_height: FloatProperty(
         name="Hanging Panel Height", default=const.HANGING_PANEL_HEIGHT,
-        unit='LENGTH', precision=4)  # type: ignore
+        unit='LENGTH', precision=4,
+        update=_system_default_height('hanging_panel_height'))  # type: ignore
     hanging_top_height: FloatProperty(
         name="Hanging Top Height",
         description="Floor to the top of wall-mounted hanging starters",
-        default=const.HANGING_TOP_HEIGHT, unit='LENGTH', precision=4)  # type: ignore
+        default=const.HANGING_TOP_HEIGHT, unit='LENGTH', precision=4,
+        update=_system_default_height('hanging_top_height'))  # type: ignore
     panel_thickness: FloatProperty(
         name="Panel Thickness", default=const.PANEL_THICKNESS,
         unit='LENGTH', precision=4)  # type: ignore

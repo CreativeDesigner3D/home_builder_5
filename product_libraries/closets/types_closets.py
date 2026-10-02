@@ -947,13 +947,14 @@ class ClosetStarter(GeoNodeCage):
         # Starter ENVELOPE height (floor to run top). A Hanging starter
         # is the same floor-standing envelope as a Tall - only its bays
         # are pre-set to hang (see _default_bay_height); the difference
-        # is settings, not placement.
-        return {
+        # is settings, not placement. A default saved off the 32mm
+        # system still seeds a starter on it.
+        return const.snap_system_height_down({
             'BASE': scene_props.base_panel_height,
             'TALL': scene_props.tall_panel_height,
             'HANGING': scene_props.hanging_top_height,
             'ISLAND': scene_props.base_panel_height,
-        }[self.default_closet_type]
+        }[self.default_closet_type])
 
     def _default_depth_for_type(self, scene_props):
         """Per-type default panel depth, falling back to
@@ -4710,7 +4711,8 @@ class HangingClosetStarter(ClosetStarter):
     allows_toe_kick = True     # a bay dropped to the floor gets a kick
 
     def _default_bay_height(self, scene_props, sp):
-        return scene_props.hanging_panel_height
+        return const.snap_system_height_down(
+            scene_props.hanging_panel_height)
 
 
 class IslandClosetStarter(ClosetStarter):
@@ -4753,11 +4755,11 @@ class LShelfClosetStarter(GeoNodeCage):
     default_depth = const.L_SHELF_SIZE
 
     def default_height(self, scene_props):
-        return {
+        return const.snap_system_height_down({
             'BASE': scene_props.base_panel_height,
             'TALL': scene_props.tall_panel_height,
             'UPPER': scene_props.hanging_panel_height,
-        }[self.default_closet_type]
+        }[self.default_closet_type])
 
     def create_starter(self, name, bay_qty=1):
         super().create(name)
