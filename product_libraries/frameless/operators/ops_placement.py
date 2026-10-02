@@ -21,7 +21,14 @@ PART_CLASS_MAP = {
     'Panel': types_products.Panel,
     'Corner Filler': types_products.CornerFiller,
     'Base Assembly': types_products.BaseAssembly,
+    'Voided Corner Base': types_products.VoidedCornerBase,
+    'Voided Corner Tall': types_products.VoidedCornerTall,
+    'Voided Corner Upper': types_products.VoidedCornerUpper,
 }
+
+# Products placed into a corner the way a corner cabinet is.
+CORNER_PRODUCTS = ('Voided Corner Base', 'Voided Corner Tall',
+                   'Voided Corner Upper')
 from .. import props_hb_frameless
 from .. import quiet_cages
 from . import ops_base_assembly
@@ -603,7 +610,8 @@ class PlaceCabinetBase(WallObjectPlacementMixin):
         """A corner cabinet, placed into a wall end - not a part that
         happens to carry the word, like the Corner Filler."""
         return ('Corner' in self.cabinet_name
-                and self.cabinet_name not in PART_CLASS_MAP)
+                and (self.cabinet_name not in PART_CLASS_MAP
+                     or self.cabinet_name in CORNER_PRODUCTS))
 
     def is_blind_corner(self):
         return self.cabinet_name.startswith('Blind ')
@@ -880,7 +888,10 @@ class PlaceCabinetBase(WallObjectPlacementMixin):
                 self.cabinet_quantity = 1
             elif self.is_corner_cabinet():
                 # Corner cabinets use corner size for both width and depth
-                if 'Base' in self.cabinet_name:
+                if self.cabinet_name in CORNER_PRODUCTS:
+                    # As deep each way as the runs that meet there.
+                    corner_size = PART_CLASS_MAP[self.cabinet_name]().width
+                elif 'Base' in self.cabinet_name:
                     corner_size = props.base_inside_corner_size
                 elif 'Tall' in self.cabinet_name:
                     corner_size = props.tall_inside_corner_size
@@ -910,6 +921,10 @@ class PlaceCabinetBase(WallObjectPlacementMixin):
             self.preview_cage.set_input('Dim X', self.individual_cabinet_width)
             if self.is_corner_cabinet():
                 self.preview_cage.set_input('Dim Y', corner_size)
+                if self.cabinet_name in CORNER_PRODUCTS:
+                    self.preview_cage.set_input(
+                        'Dim Z',
+                        PART_CLASS_MAP[self.cabinet_name]().height)
             elif self.cabinet_name in PART_CLASS_MAP:
                 part_instance = PART_CLASS_MAP[self.cabinet_name]()
                 self.preview_cage.set_input('Dim Y', part_instance.depth)

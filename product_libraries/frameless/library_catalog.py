@@ -71,6 +71,11 @@ SECTIONS = (
                           ("Upper", "Diagonal Corner Upper", "Diagonal Corner Upper"))),
             # Placed like a plain cabinet (their key carries no 'Corner',
             # which is what the placement tool snaps corner products on).
+            ("Voided", (("Base", "Voided Corner Base",
+                         "Voided Corner Base"),
+                        ("Tall", "Voided Corner Tall", "Voided Corner Tall"),
+                        ("Upper", "Voided Corner Upper",
+                         "Voided Corner Upper"))),
             ("Blind", (("Base", "Blind Base", "Blind Base"),
                        ("Tall", "Blind Tall", "Blind Tall"),
                        ("Upper", "Blind Upper", "Blind Upper"))),

@@ -1114,6 +1114,188 @@ class CornerFiller(Product):
 
 
 # ---------------------------------------------------------------------------
+# Voided corner
+# ---------------------------------------------------------------------------
+
+VOIDED_CORNER_FILLER = inch(3.0)
+
+
+def _voided_type(name):
+    if 'Upper' in name:
+        return 'UPPER'
+    if 'Tall' in name:
+        return 'TALL'
+    return 'BASE'
+
+
+def _solve_voided_corner(root, parts, dim_x, dim_y, dim_z):
+    """An L of filler at the inside corner of two runs, at their door
+    planes, with the corner behind it left empty.
+
+    Origin at the corner where the walls meet, as a corner cabinet's
+    is. The run along the back wall (+X) stands Right Depth deep; the
+    run along the side wall (-Y) Left Depth deep. Each face is in the
+    plane of the doors of the run it lines up with and runs out by the
+    filler width to where that run's first cabinet starts, so the cage
+    is that wide each way. The face along the back wall laps the end of
+    the other, so the joint reads closed from the room. A return stands
+    behind each face's outer edge against the cabinet beside it; a base
+    or tall has a kick under each face, set back; any of them can be
+    closed over the top or under the bottom of the void."""
+    mt = float(_prompt(root, 'Material Thickness', inch(0.75)))
+    ld = float(_prompt(root, 'Left Depth', inch(24)))
+    rd = float(_prompt(root, 'Right Depth', inch(24)))
+    fw = float(_prompt(root, 'Filler Width', VOIDED_CORNER_FILLER))
+    ret = float(_prompt(root, 'Return Depth', CORNER_FILLER_RETURN))
+    tkh = float(_prompt(root, 'Toe Kick Height', 0.0))
+    tks = float(_prompt(root, 'Toe Kick Setback', 0.0))
+    top_on = bool(root.get('Top Panel', False))
+    bottom_on = bool(root.get('Bottom Panel', False))
+
+    # The faces' fronts, in the door plane of each run.
+    fx = ld + FRONT_THICKNESS        # side-wall run's doors (an X)
+    fy = -(rd + FRONT_THICKNESS)     # back-wall run's doors (a Y)
+    dim_x = fx + fw
+    dim_y = rd + FRONT_THICKNESS + fw
+    cage = GeoNodeCage(root)
+    cage.set_input('Dim X', dim_x)
+    cage.set_input('Dim Y', dim_y)
+
+    z0 = tkh
+    h = dim_z - tkh
+    # Back-wall face, lapping the end of the side-wall face.
+    part = parts.get('VC_FACE_BACK')
+    if part is not None:
+        _set_part(part, (fx - mt, fy, z0), length=h,
+                  width=dim_x - fx + mt, thickness=mt)
+    part = parts.get('VC_FACE_SIDE')
+    if part is not None:
+        _set_part(part, (fx - mt, fy, z0), length=h,
+                  width=dim_y + fy, thickness=mt)
+
+    part = parts.get('VC_KICK_BACK')
+    if part is not None:
+        _set_part(part, (fx - tks - mt, fy + tks, 0.0), length=tkh,
+                  width=dim_x - fx + tks + mt, thickness=mt,
+                  visible=tkh > 0.0)
+    part = parts.get('VC_KICK_SIDE')
+    if part is not None:
+        _set_part(part, (fx - tks - mt, fy + tks, 0.0), length=tkh,
+                  width=dim_y + fy + tks, thickness=mt,
+                  visible=tkh > 0.0)
+
+    # Returns inside the void, against the first cabinet of each run,
+    # between the panels where those are on.
+    rz0 = z0 + (mt if bottom_on else 0.0)
+    rh = h - (mt if bottom_on else 0.0) - (mt if top_on else 0.0)
+    part = parts.get('VC_RETURN_BACK')
+    if part is not None:
+        _set_part(part, (dim_x, fy + mt + ret, rz0), length=rh,
+                  width=ret, thickness=mt, visible=ret > 0.0)
+    part = parts.get('VC_RETURN_SIDE')
+    if part is not None:
+        _set_part(part, (fx - mt, -dim_y, rz0), length=rh,
+                  width=ret, thickness=mt, visible=ret > 0.0)
+
+    # The void closed over or under: everything behind the faces, inside
+    # the returns - a square with the room's corner notched out of it.
+    pw = dim_x - mt
+    pd = dim_y - mt
+    notch = (('X', dim_x - fx), ('Y', dim_y + fy),
+             ('Route Depth', mt + 0.01))
+    for role, on, z in (('VC_BOTTOM', bottom_on, z0),
+                        ('VC_TOP', top_on, dim_z - mt)):
+        part = parts.get(role)
+        if part is None:
+            continue
+        _set_part(part, (0.0, 0.0, z), length=pw, width=pd,
+                  thickness=mt, visible=on)
+        _set_modifier(part, 'Corner Notch', notch)
+
+
+class VoidedCorner(Product):
+    """A voided corner: two runs meet at the corner and stop short of
+    it, and an L of filler closes the gap between their door faces.
+
+    Placed into a corner like a corner cabinet. It is as deep each way
+    as the cabinets that meet there plus their doors and the filler, so
+    a cabinet placed along either wall stops against it. Base, tall and
+    upper; an upper usually closes the bottom of the void, since it is
+    seen from below."""
+
+    def __init__(self, cabinet_type='BASE'):
+        super().__init__()
+        props = bpy.context.scene.hb_frameless
+        self.cabinet_type = cabinet_type
+        depth, height = {
+            'UPPER': (props.upper_cabinet_depth, props.upper_cabinet_height),
+            'TALL': (props.tall_cabinet_depth, props.tall_cabinet_height),
+        }.get(cabinet_type, (props.base_cabinet_depth,
+                             props.base_cabinet_height))
+        self.cabinet_depth = depth
+        self.filler_width = VOIDED_CORNER_FILLER
+        self.width = depth + FRONT_THICKNESS + self.filler_width
+        self.depth = self.width
+        self.height = height
+        on_floor = cabinet_type != 'UPPER'
+        self.toe_kick_height = (props.default_toe_kick_height
+                                if on_floor else 0.0)
+        self.toe_kick_setback = (props.default_toe_kick_setback
+                                 if on_floor else 0.0)
+
+    def create(self, name="Voided Corner"):
+        self.create_product(name)
+        self.obj['PART_TYPE'] = 'VOIDED_CORNER'
+        self.obj['IS_VOIDED_CORNER'] = True
+        self.obj['CABINET_TYPE'] = self.cabinet_type
+
+        self.add_properties_common()
+        self.add_property('Left Depth', 'DISTANCE', self.cabinet_depth)
+        self.add_property('Right Depth', 'DISTANCE', self.cabinet_depth)
+        self.add_property('Filler Width', 'DISTANCE', self.filler_width)
+        self.add_property('Return Depth', 'DISTANCE', corner_filler_return())
+        self.add_property('Toe Kick Height', 'DISTANCE', self.toe_kick_height)
+        self.add_property('Toe Kick Setback', 'DISTANCE',
+                          self.toe_kick_setback)
+        self.add_property('Top Panel', 'CHECKBOX', False)
+        self.add_property('Bottom Panel', 'CHECKBOX',
+                          self.cabinet_type == 'UPPER')
+
+        self.add_part('Filler Face', 'VC_FACE_BACK', rotation=(-90, -90, 0))
+        self.add_part('Filler Face', 'VC_FACE_SIDE',
+                      rotation=(-90, -90, -90))
+        self.add_part('Filler Kick', 'VC_KICK_BACK', rotation=(-90, -90, 0))
+        self.add_part('Filler Kick', 'VC_KICK_SIDE',
+                      rotation=(-90, -90, -90))
+        self.add_part('Filler Return', 'VC_RETURN_BACK',
+                      rotation=(0, -90, 0), mirror='Y')
+        self.add_part('Filler Return', 'VC_RETURN_SIDE',
+                      rotation=(0, -90, -90), mirror='Y')
+        for name_, role in (('Bottom', 'VC_BOTTOM'), ('Top', 'VC_TOP')):
+            part = self.add_part(name_, role, mirror='Y')
+            notch = part.add_part_modifier('CPM_CORNERNOTCH', 'Corner Notch')
+            notch.set_input('Flip X', True)
+            notch.set_input('Flip Y', True)
+
+        self.solve()
+
+
+class VoidedCornerBase(VoidedCorner):
+    def __init__(self):
+        super().__init__('BASE')
+
+
+class VoidedCornerTall(VoidedCorner):
+    def __init__(self):
+        super().__init__('TALL')
+
+
+class VoidedCornerUpper(VoidedCorner):
+    def __init__(self):
+        super().__init__('UPPER')
+
+
+# ---------------------------------------------------------------------------
 # Base assembly
 # ---------------------------------------------------------------------------
 
@@ -1233,4 +1415,5 @@ _SOLVERS = {
     'UPPER_LEG': _solve_upper_leg,
     'PANEL': _solve_panel,
     'CORNER_FILLER': _solve_corner_filler,
+    'VOIDED_CORNER': _solve_voided_corner,
 }

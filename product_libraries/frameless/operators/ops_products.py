@@ -129,6 +129,8 @@ class hb_frameless_OT_product_prompts(bpy.types.Operator):
             self.draw_leg(layout, obj)
         elif self.part_type == 'UPPER_LEG':
             self.draw_upper_leg(layout, obj)
+        elif self.part_type == 'VOIDED_CORNER':
+            self.draw_voided_corner(layout, obj)
 
     def draw_floating_shelf(self, layout, obj):
         box = layout.box()
@@ -219,6 +221,32 @@ class hb_frameless_OT_product_prompts(bpy.types.Operator):
             row.label(text=f"{corner} Leg:")
             row.prop(obj, f'["{corner} Leg"]', text="")
             row.prop(obj, f'["{corner} Leg Type"]', text="")
+
+    def draw_voided_corner(self, layout, obj):
+        box = layout.box()
+        box.label(text="Corner")
+        col = box.column(align=True)
+        for label, key in (("Left Cabinet Depth:", "Left Depth"),
+                           ("Right Cabinet Depth:", "Right Depth"),
+                           ("Filler Width:", "Filler Width"),
+                           ("Return Depth:", "Return Depth")):
+            row = col.row(align=True)
+            row.label(text=label)
+            row.prop(obj, '["%s"]' % key, text="")
+        if obj.get('CABINET_TYPE') != 'UPPER':
+            box = layout.box()
+            box.label(text="Toe Kick")
+            col = box.column(align=True)
+            for label, key in (("Height:", "Toe Kick Height"),
+                               ("Setback:", "Toe Kick Setback")):
+                row = col.row(align=True)
+                row.label(text=label)
+                row.prop(obj, '["%s"]' % key, text="")
+        box = layout.box()
+        box.label(text="Close the Void")
+        row = box.row(align=True)
+        row.prop(obj, '["Top Panel"]', text="Top Panel")
+        row.prop(obj, '["Bottom Panel"]', text="Bottom Panel")
 
     def draw_half_wall(self, layout, obj):
         box = layout.box()

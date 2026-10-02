@@ -136,6 +136,9 @@ CABINET_MARKERS = frozenset({
     # Closet starter roots participate in placement collision the same
     # way cabinets do (same-wall gaps AND adjacent-wall corner intrusion).
     'IS_CLOSET_STARTER_CAGE',
+    # A voided corner is a product, not a cabinet, but runs stop against
+    # it on both walls the way they do against a corner cabinet.
+    'IS_VOIDED_CORNER',
 })
 
 
