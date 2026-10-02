@@ -338,6 +338,9 @@ DOOR_PULL_LOCATION_ITEMS = [
 DOOR_MAX_NARROW = inch(24.626)
 DOOR_MAX_LONG = inch(84.0)
 LIFT_UP_MIN_HEIGHT = inch(11.2)
+# A tilt-out hamper's frame and bags come no narrower than 18", so an
+# opening under that has nothing to fit it.
+HAMPER_MIN_WIDTH = inch(18.0)
 DRAWER_FRONT_HEIGHT = millimeter(156.82)   # 6 1/4" front
 # Minimum height the redistributor will assign to an unlocked drawer front
 # when the stack fills its opening (mirrors MIN_BAY_WIDTH for widths).

@@ -732,18 +732,23 @@ def _stamp_warning(obj, message):
         del obj[PROP_BOX_WARNING]
 
 
-def _door_size_warning(width, height, hinge):
+def _door_size_warning(width, height, hinge, opening_w=0.0):
     """Why this door is past the size limits, or '' when it is
     not. A swing door runs up to 24 5/8" wide by 84" tall; a lift-up
     lies on its side and takes the same limits the other way around,
     and its hardware will not work a door shorter than 11 1/4". A
-    tilt-out hamper went unchecked in the prior library, so it is left
-    alone here too. More than one limit can be broken at once; every
+    tilt-out hamper is checked against the opening it fills rather
+    than its front: the frame and bags behind it come no narrower than
+    18". More than one limit can be broken at once; every
     broken one is said. The warning rides the door itself, so it names
     the dimension plainly rather than in the prior library's list-speak
     ("Room has door width that...")."""
     msgs = []
-    if hinge == 'TOP':
+    if hinge == 'BOTTOM':
+        if 0.0 < opening_w < const.HAMPER_MIN_WIDTH - 0.0005:
+            msgs.append("Tilt Out Hamper needs an opening at least 18 "
+                        "Inches wide; this one is %s" % _in_str(opening_w))
+    elif hinge == 'TOP':
         if height < const.LIFT_UP_MIN_HEIGHT:
             msgs.append("Lift Up Door Height must be at least "
                         "11 1/4 Inches")
@@ -2433,7 +2438,7 @@ class ClosetStarter(GeoNodeCage):
                     part.set_input('Width', d_h)
                 part.set_input('Thickness', const.FRONT_THICKNESS)
                 _stamp_warning(child, _door_size_warning(
-                    leaf, d_h, child.get('hb_hinge', 'LEFT')))
+                    leaf, d_h, child.get('hb_hinge', 'LEFT'), width))
                 _apply_front_style(child, is_drawer=False)
                 _stash_door_closed(child, x, front_y,
                                    (-bo + d_h) if up else -bo,
@@ -3100,7 +3105,7 @@ class ClosetStarter(GeoNodeCage):
             part.set_input('Thickness', const.FRONT_THICKNESS)
             _stamp_warning(child, _door_size_warning(
                 leaf, interior_h + to + bo,
-                child.get('hb_hinge', 'LEFT')))
+                child.get('hb_hinge', 'LEFT'), width))
             _apply_front_style(child, is_drawer=False)
             _stash_door_closed(child, x, front_y, z, leaf, side,
                                height=interior_h + to + bo)
@@ -3728,11 +3733,6 @@ class ClosetStarter(GeoNodeCage):
         take the opening's width."""
         st = scene_props.shelf_thickness
         plat_t = const.IRONING_BOARD_PLATFORM_THICKNESS
-        # The compartment height is the person's where one was given,
-        # the prior library's figure otherwise.
-        open_h = float(cage.get(PROP_ACCESSORY_OPEN_H, 0.0) or 0.0)
-        if open_h <= 0.0:
-            open_h = const.IRONING_BOARD_OPENING_HEIGHT
         # The plate the board bolts to: flush to the front edge, its
         # underside on the opening floor, centered left to right.
         plate = self._acc_part(cage, 'Ironing Board Mount',
@@ -3744,22 +3744,21 @@ class ClosetStarter(GeoNodeCage):
         pg.set_input('Length', p_w)
         pg.set_input('Width', p_d)
         pg.set_input('Thickness', plat_t)
-        # The shelf that caps the compartment. Its underside sits the
-        # compartment height above the plate, so raising the plate
-        # thickness raises the shelf with it - and that is exactly what
-        # walked it off the lattice: the plate is 19.05mm and the holes
-        # run 12.95 + n*32mm up from the interior bottom, so open_h +
-        # plat_t landed between two of them. The shelf rests on pins, so
-        # its underside has to BE a hole. Snap up rather than down, so
-        # the compartment never comes out shorter than it was asked for
-        # and the board still fits.
-        want = open_h + plat_t
-        cap_z = const.snap_system_hole(want)
-        if cap_z + 1e-9 < want:
-            cap_z += const.SYSTEM_PITCH
-        cap_z = min(cap_z, max(interior_h - st, 0.0))
+        # The shelf that caps the compartment, on a system hole.
+        cap_z = insert_cap_height(cage)
+        # Placed, the drawer gets a real shelf over it that divides the
+        # opening (see seat_insert_on_shelf), so the opening it stands
+        # in tops out at the cap and that shelf is the cap. Its own
+        # shelf only draws where nothing is there yet - a drawer from
+        # before that, or one with room over it it could not split off.
+        capped = interior_h - cap_z < st - 1e-4
+        if capped:
+            cap_z = interior_h
+        else:
+            cap_z = min(cap_z, max(interior_h - st, 0.0))
         shelf = self._acc_part(cage, 'Accessory Shelf',
                                PART_ROLE_ACCESSORY_PART, kids)
+        _set_part_hidden(shelf, capped)
         shelf.location = (0.0, 0.0, cap_z)
         sg = GeoNodeCutpart(shelf)
         sg.set_input('Length', width)
@@ -6974,6 +6973,49 @@ def fit_opening_to_accessory(cage):
     return got
 
 
+def insert_cap_height(cage):
+    """How high over its opening floor the shelf capping an ironing
+    board drawer's compartment sits (its underside).
+
+    The compartment height is the person's where one was given, the
+    prior library's figure otherwise, over the plate the board bolts
+    to. The shelf rests on pins, so its underside has to be a system
+    hole; it snaps up rather than down so the compartment never comes
+    out shorter than asked and the board still fits. (The plate is
+    19.05mm and the holes run 12.95 + n*32mm up from the interior
+    bottom, so the plain sum lands between two of them.)"""
+    open_h = float(cage.get(PROP_ACCESSORY_OPEN_H, 0.0) or 0.0)
+    if open_h <= 0.0:
+        open_h = const.IRONING_BOARD_OPENING_HEIGHT
+    want = open_h + const.IRONING_BOARD_PLATFORM_THICKNESS
+    cap_z = const.snap_system_hole(want)
+    if cap_z + 1e-9 < want:
+        cap_z += const.SYSTEM_PITCH
+    return cap_z
+
+
+# Least room over an insert's shelf worth splitting off as an opening.
+_INSERT_MIN_ABOVE = inch(1.0)
+
+
+def _cap_insert(cage, opening, root, st):
+    """Put the shelf over an ironing board drawer in as a fixed shelf,
+    dividing the opening, so what goes in above it - doors, shelves -
+    lands in an opening of its own instead of over the drawer. Left
+    alone when the opening already tops out at the cap or there is no
+    room above it for an opening."""
+    cap_z = insert_cap_height(cage)
+    interior_h = _cage_dim_z(opening)
+    if interior_h - cap_z < st - 1e-4:
+        return
+    if interior_h - cap_z - st < _INSERT_MIN_ABOVE:
+        return
+    add_fixed_shelf(opening, cap_z)
+    if root is not None:
+        _recalculate_now(root)
+    bpy.context.view_layer.update()
+
+
 def seat_insert_on_shelf(cage, z):
     """Give an accessory that stands on something a floor to stand on.
 
@@ -6992,11 +7034,12 @@ def seat_insert_on_shelf(cage, z):
         return cage
     scene_props = bpy.context.scene.hb_closets
     st = scene_props.shelf_thickness
+    root = find_starter_root(opening)
     if z <= const.ACCESSORY_BOTTOM_SNAP_TOL:
         # The floor of the opening is its shelf.
         cage[PROP_ACCESSORY_Z] = 0.0
+        _cap_insert(cage, opening, root, st)
         return cage
-    root = find_starter_root(opening)
     bay = opening.parent
     bpy.context.view_layer.update()
     want_floor = opening.matrix_world.translation.z + z + st
@@ -7023,6 +7066,7 @@ def seat_insert_on_shelf(cage, z):
     if root is not None:
         _recalculate_now(root)
     bpy.context.view_layer.update()
+    _cap_insert(cage, above, root, st)
     return cage
 
 

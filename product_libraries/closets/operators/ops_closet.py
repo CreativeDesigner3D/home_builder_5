@@ -4551,6 +4551,35 @@ def _accessory_of(obj):
     return acc.get(cage.get(types_closets.PROP_ACCESSORY_KEY, ''))
 
 
+# The catalog's tilt-out hamper is a front, not something that hangs
+# in the opening: picked from the accessory list it builds the same
+# bottom-hinged hamper front the Add Doors menu does, so there is one
+# hamper however it was asked for.
+TILT_OUT_HAMPER_KEY = 'TILT_OUT_HAMPER'
+
+
+def _hamper_front_into(op, context, opening):
+    """Make an opening's front a tilt-out hamper and say so when the
+    opening is too narrow for one."""
+    root = types_closets.find_starter_root(opening)
+    if root is None:
+        return {'CANCELLED'}
+    opening.hb_closet_opening.door_swing = 'TILT_OUT'
+    types_closets.recalculate_closet_starter(root)
+    _apply_finish(root)
+    for other in context.selected_objects:
+        other.select_set(False)
+    opening.select_set(True)
+    context.view_layer.objects.active = opening
+    _apply_selection_shading(context, root)
+    width = types_closets._cage_dim_x(opening)
+    if width < const.HAMPER_MIN_WIDTH - 0.0005:
+        op.report({'WARNING'},
+                  "Tilt Out Hamper needs an opening at least 18 Inches "
+                  "wide; this one is %s" % types_closets._in_str(width))
+    return {'FINISHED'}
+
+
 class hb_closets_OT_add_accessory(bpy.types.Operator):
     """Hang an accessory in the active opening.
 
@@ -4650,6 +4679,8 @@ class hb_closets_OT_add_accessory(bpy.types.Operator):
             self.report({'WARNING'},
                         "That accessory is no longer offered")
             return {'CANCELLED'}
+        if self.accessory == TILT_OUT_HAMPER_KEY:
+            return _hamper_front_into(self, context, opening)
         root = types_closets.find_starter_root(opening)
         with types_closets.suspend_recalc():
             cage = types_closets.add_accessory(opening, self.accessory)
@@ -5058,6 +5089,15 @@ class hb_closets_OT_place_accessory(bpy.types.Operator,
             acc_def.label, where, why, face)
         # The opening being the wrong size for it is the thing worth
         # reading first, and it is fixable without putting it down.
+        if self.accessory == TILT_OUT_HAMPER_KEY:
+            # Becomes the opening's front on the click; where it is
+            # carried up and down the opening does not matter.
+            self._note = "Tilt Out Hamper front on this opening"
+            if open_w < const.HAMPER_MIN_WIDTH - 0.0005:
+                self._note += ("  -  needs an opening at least 18 Inches "
+                               "wide; this one is %s"
+                               % types_closets._in_str(open_w))
+            return
         warning = self._cage.get(
             types_closets.PROP_ACCESSORY_WARNING, '')
         if warning:
@@ -5192,6 +5232,17 @@ class hb_closets_OT_place_accessory(bpy.types.Operator,
                 self.report({'WARNING'},
                             "Move over an opening to place it")
                 return {'RUNNING_MODAL'}
+            if (self.accessory == TILT_OUT_HAMPER_KEY
+                    and not self._on_wall):
+                opening = self._opening
+                self._drop()
+                self._end(context)
+                result = _hamper_front_into(self, context, opening)
+                if event.shift and result == {'FINISHED'}:
+                    bpy.ops.hb_closets.place_accessory(
+                        'INVOKE_DEFAULT', accessory=self.accessory,
+                        model=self.model)
+                return result
             cage = self._cage
             self._cage = None
             acc_def = acc.get(self.accessory)
