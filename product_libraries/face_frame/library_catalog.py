@@ -451,6 +451,11 @@ def _finish_swatch_icon(style, color):
     return finish_swatches.style_icon(style, color)
 
 
+def _interior_differs(p):
+    """Whether a style's interior is finished other than the outside."""
+    return p.interior_material_type != 'MATCHING' or p.ss_interior_is_custom
+
+
 def _cabinet_style_fields():
     """The settings of one cabinet style as (label, summary, fields)
     sections -- the style editor's tabs, and a line each in the panel.
@@ -470,6 +475,13 @@ def _cabinet_style_fields():
         ('native', 'custom_interior_material', "Interior Material",
          {'when': lambda p: (not p.ss_interior_is_custom
                              and p.interior_material_type == 'CUSTOM')}),
+        # An interior unlike the outside can show through the glass of
+        # glass doors on the 2D drawings.
+        ('bool', 'show_interior_color_in_2d', "Interior Behind Glass",
+         {'when': _interior_differs}),
+        ('native', 'interior_color_in_2d_drawings', "Interior 2D Color",
+         {'when': lambda p: (_interior_differs(p)
+                             and p.show_interior_color_in_2d)}),
         ('choice', 'finish_overlay', "Overlay", {'custom': 'ss_overlay'}),
         ('choice', 'ss_corner_treatment', "Corner Treatment"),
         ('choice', 'ss_fin_opening_edge', "Fin Opening Edge"),

@@ -1790,6 +1790,27 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         max=1.0,
         default=(1.0, 1.0, 1.0),
     )  # type: ignore
+    # An interior finished differently from the outside shows on the 2D
+    # drawings through the glass of glass doors, filled in this colour.
+    # Off until someone turns it on, so drawings don't change by
+    # themselves.
+    show_interior_color_in_2d: BoolProperty(
+        name="Show Interior Behind Glass",
+        description="Fill the glass of this style's glass doors with the "
+                    "interior color in 2D shop drawings, so a different "
+                    "interior finish shows on the drawings",
+        default=False,
+    )  # type: ignore
+    interior_color_in_2d_drawings: FloatVectorProperty(
+        name="Interior 2D Drawing Color",
+        description="Color the glass of this style's glass doors is "
+                    "filled with in 2D shop drawings",
+        subtype='COLOR',
+        size=3,
+        min=0.0,
+        max=1.0,
+        default=(0.6, 0.75, 0.95),
+    )  # type: ignore
 
     # ---- Wood / exterior material ----
     wood_species: EnumProperty(
@@ -4056,6 +4077,12 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                                 "ss_interior")
         if not self.ss_interior_is_custom and self.interior_material_type == 'CUSTOM':
             col.prop(self, "custom_interior_material", text="")
+        if self.interior_material_type != 'MATCHING' or self.ss_interior_is_custom:
+            row = col.row(align=True)
+            row.prop(self, "show_interior_color_in_2d")
+            sub = row.row(align=True)
+            sub.enabled = self.show_interior_color_in_2d
+            sub.prop(self, "interior_color_in_2d_drawings", text="")
         self._draw_toggle_field(col, "finish_overlay", "Overlay", "ss_overlay")
         self._draw_toggle_field(col, "ss_corner_treatment", "Corner Treatment")
         self._draw_toggle_field(col, "ss_fin_opening_edge", "Fin Opening Edge")
