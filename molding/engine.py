@@ -921,6 +921,27 @@ def _seam_open_loop(loop):
     return out
 
 
+def _square_return_corner(at, to, along):
+    """Corner that squares a return from `at` to `to`, or None.
+
+    A return normally leaves a stretch at right angles (inline
+    neighbours share the end plane). A cabinet butted perpendicular
+    against the run's end - its back to the end panel - puts its kick
+    corner off both axes, and the straight return cut diagonally across
+    the floor. The corner turns first across the end (perpendicular to
+    `along`, the stretch's direction at `at`), then runs along the
+    neighbour's side to `to`."""
+    if along.length < 1e-6:
+        return None
+    d = along.normalized()
+    delta = to - at
+    run = delta.dot(d)
+    perp = delta - d * run
+    if abs(run) < 1e-3 or perp.length < 1e-3:
+        return None
+    return at + perp
+
+
 def _stretch_segments(spans, include_recessed, x_off,
                       facts=None, terminals=None, island=False):
     """Offset path segments from a span list. Kept spans (FRONT and
@@ -972,6 +993,11 @@ def _stretch_segments(spans, include_recessed, x_off,
                         p = spans[prev_k][0][-1]
                         if _fresh_return(pts[:2], p):
                             current.append(p)
+                            if len(pts) > 1:
+                                c = _square_return_corner(
+                                    pts[0], p, pts[0] - pts[1])
+                                if c is not None:
+                                    current.append(c)
             current.extend(pts)
             current_meta['end_idx'] = k
             current_meta['last_kind'] = kind
@@ -979,6 +1005,11 @@ def _stretch_segments(spans, include_recessed, x_off,
             if current is not None:
                 if (current_meta.get('last_kind') == 'FRONT'
                         and _fresh_return(current[-2:], pts[0])):
+                    if len(current) > 1:
+                        c = _square_return_corner(
+                            current[-1], pts[0], current[-1] - current[-2])
+                        if c is not None:
+                            current.append(c)
                     current.append(pts[0])
                 segments.append((current, current_meta))
                 current = None
