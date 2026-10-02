@@ -344,6 +344,17 @@ def resolve_countertop_material(carcass=None):
     return load_material(name, COUNTERTOPS_BLEND) or carcass
 
 
+def door_panel_type(front_obj):
+    """The panel a door shows: its own panel when one was set on it,
+    else the room's panel type."""
+    from . import types_closets
+    own = front_obj.get(types_closets.PROP_FRONT_PANEL, '')
+    if own in {key for key, _label, _desc in PANEL_TYPES}:
+        return own
+    return getattr(bpy.context.scene.hb_closets, 'closet_panel_type',
+                   'Vertical Grain')
+
+
 def apply_front_member_materials(front_obj, is_drawer, front_mat=None):
     """Grain-correct materials on a styled front's Door Style modifier:
     stiles (vertical members) carry vertical grain, rails horizontal,
@@ -377,8 +388,7 @@ def apply_front_member_materials(front_obj, is_drawer, front_mat=None):
     # the 2D layer hatch glass panels later.
     is_glass = False
     if not is_drawer:
-        panel_type = getattr(props, 'closet_panel_type',
-                             'Vertical Grain')
+        panel_type = door_panel_type(front_obj)
         if panel_type != 'Vertical Grain':
             glass = None
             if panel_type == 'Clear Glass':

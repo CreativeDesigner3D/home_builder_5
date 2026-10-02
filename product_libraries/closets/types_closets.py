@@ -143,6 +143,9 @@ PROP_L_LOCKED = 'hb_l_locked'
 # so changing the room still changes every front that has not been
 # spoken for.
 PROP_FRONT_STYLE = 'hb_front_style'
+# Same idea for a door's panel (wood or one of the glass types). Unset
+# follows the room's panel type.
+PROP_FRONT_PANEL = 'hb_front_panel'
 PROP_BASKET_W = 'hb_basket_width'
 PROP_BASKET_H = 'hb_basket_height'
 PROP_BASKET_D = 'hb_basket_depth'

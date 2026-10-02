@@ -6019,6 +6019,17 @@ class hb_closets_OT_front_style(bpy.types.Operator):
     style: bpy.props.EnumProperty(
         name="Style", items=_items)  # type: ignore
 
+    def _panel_items(self, context):
+        from .. import materials_closets
+        items = [('FOLLOW', "Follow The Room",
+                  "Take whatever panel the room is set to")]
+        items += [(k, label, desc or label)
+                  for k, label, desc in materials_closets.PANEL_TYPES]
+        return _held('front_panel', items)
+
+    panel: bpy.props.EnumProperty(
+        name="Panel", items=_panel_items)  # type: ignore
+
     FRONT_ROLES = frozenset((types_closets.PART_ROLE_DOOR,
                              types_closets.PART_ROLE_DRAWER_FRONT))
 
@@ -6037,11 +6048,25 @@ class hb_closets_OT_front_style(bpy.types.Operator):
             self.style = stored
         except TypeError:
             self.style = 'FOLLOW'
+        stored = obj.get(types_closets.PROP_FRONT_PANEL) or 'FOLLOW'
+        try:
+            self.panel = stored
+        except TypeError:
+            self.panel = 'FOLLOW'
         return context.window_manager.invoke_props_dialog(self,
                                                           width=260)
 
+    def _is_door(self, context):
+        return (context.active_object.get('hb_part_role')
+                == types_closets.PART_ROLE_DOOR)
+
     def draw(self, context):
         self.layout.prop(self, 'style')
+        # Drawer fronts always keep a wood panel; only doors choose.
+        if self._is_door(context):
+            row = self.layout.row()
+            row.enabled = self.style != 'SLAB'
+            row.prop(self, 'panel')
 
     def execute(self, context):
         obj = context.active_object
@@ -6051,6 +6076,12 @@ class hb_closets_OT_front_style(bpy.types.Operator):
                 del obj[types_closets.PROP_FRONT_STYLE]
         else:
             obj[types_closets.PROP_FRONT_STYLE] = self.style
+        if self._is_door(context):
+            if self.panel == 'FOLLOW':
+                if types_closets.PROP_FRONT_PANEL in obj:
+                    del obj[types_closets.PROP_FRONT_PANEL]
+            else:
+                obj[types_closets.PROP_FRONT_PANEL] = self.panel
         if root is not None:
             types_closets.recalculate_closet_starter(root)
             _apply_finish(root)

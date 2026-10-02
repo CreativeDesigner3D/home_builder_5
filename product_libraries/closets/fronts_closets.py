@@ -147,6 +147,12 @@ def _strip_style(front_obj):
             front_obj.modifiers.remove(mod)
     if 'DOOR_STYLE_NAME' in front_obj:
         del front_obj['DOOR_STYLE_NAME']
+    # A slab has no panel: drop the panel tags a styled front left, or a
+    # door that was glass keeps reading as glass downstream.
+    if 'hb_panel_type' in front_obj:
+        del front_obj['hb_panel_type']
+    if front_obj.get('IS_PREP_FOR_GLASS'):
+        front_obj['IS_PREP_FOR_GLASS'] = False
 
 
 def apply_style_to_front(front_obj, is_drawer, style=None):
