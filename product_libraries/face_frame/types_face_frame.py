@@ -12681,6 +12681,11 @@ class FaceFrameCabinet(GeoNodeCage):
             op.set_input('Dim Y', cage_dim_y)
             op.set_input('Dim Z', rect['cage_dim_z'])
             op.set_input('Mirror Y', False)
+            # Clear height between the rails (Dim Z includes the reveals).
+            # The cabinet style's alternate drawer style reads it.
+            cage['HB_OPENING_CLEAR_H'] = (rect['cage_dim_z']
+                                          - rect['reveal_top']
+                                          - rect['reveal_bottom'])
             self._update_fronts_in_opening(cage, layout, rect, bay_index)
             self._update_interior_items_in_opening(cage, layout, rect)
             self._update_appliance_in_opening(cage, rect,

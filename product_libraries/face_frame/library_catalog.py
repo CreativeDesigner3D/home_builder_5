@@ -1290,7 +1290,7 @@ def _tall_drawer_fields(context, cs):
         ('label', None, "Tall Drawer Fronts"),
         ('pick', _tall_drawer_choices,
          "Use %s" % ds.name if ds is not None else "Same as Default"),
-        ('distance', 'extra_drawer_front_height', "Over",
+        ('distance', 'extra_drawer_front_height', "Opening Over",
          {'when': lambda p: len(p.extra_drawer_front_styles) > 0}),
         ('notes', _alternate_drawer_notes, None, {'owner': True}),
     )

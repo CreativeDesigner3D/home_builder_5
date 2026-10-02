@@ -1691,10 +1691,10 @@ def alternate_drawer_notes(style, context=None):
     h = style.extra_drawer_front_height
     if h <= 0.0:
         return ['Set a height to use %s on taller drawers' % ds.name]
-    lines = ['Drawers %s and up use %s' % (_inches_text(h), ds.name)]
+    lines = ['Drawer openings %s and up use %s' % (_inches_text(h), ds.name)]
     min_h = front_style_min_height(ds)
     if min_h and h < min_h - 1e-5:
-        lines.append('Below the %s minimum of %s'
+        lines.append('Below the %s minimum front of %s'
                      % (ds.name, _inches_text(min_h)))
     return lines
 
@@ -2436,12 +2436,14 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         name="Extra Drawer Front Styles",
         type=Face_Frame_Cabinet_Extra_Front_Style,
     )  # type: ignore
-    # Drawer fronts at least this tall take the first extra drawer-front
-    # style instead of drawer_front_style (e.g. a slab top drawer over
-    # 5-piece lower drawers). 0 turns the rule off.
+    # Drawers whose opening (clear height between the rails) is at least
+    # this tall take the first extra drawer-front style instead of
+    # drawer_front_style (e.g. 5-piece on tall drawers under slab top
+    # drawers). 0 turns the rule off.
     extra_drawer_front_height: FloatProperty(
-        name="Alternate Style Over",
-        description="Drawer fronts this tall or taller use the alternate "
+        name="Alternate Style Over Opening",
+        description="Drawers whose opening (clear height between the "
+                    "rails) is this tall or taller use the alternate "
                     "drawer style (the first extra drawer front style); "
                     "shorter ones use the main Drawer Front style. Filled "
                     "in with the alternate style's minimum height when it "
@@ -3888,10 +3890,10 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         door_ds = resolve(self.door_style, ff.door_styles)
         drawer_ds = resolve(self.drawer_front_style, ff.drawer_front_styles)
 
-        # Tall-drawer default: fronts at or above extra_drawer_front_height
-        # take the first extra drawer-front style (slab top drawer over
-        # 5-piece lowers). It only replaces the cabinet default - a per-front
-        # assignment still wins.
+        # Tall-drawer default: drawers whose opening (clear height between
+        # the rails) is at or above extra_drawer_front_height take the first
+        # extra drawer-front style. It only replaces the cabinet default - a
+        # per-front assignment still wins.
         tall_drawer_ds = None
         tall_min = self.extra_drawer_front_height
         if tall_min > 0.0 and len(self.extra_drawer_front_styles) > 0:
@@ -3926,8 +3928,15 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
             else:
                 pool, default_ds = ff.drawer_front_styles, drawer_ds
                 if tall_drawer_ds is not None:
-                    h = front_height(child)
-                    # Small tolerance so a front sized exactly at the
+                    # The opening, not the front: overlays make the front
+                    # taller than what the user sized. A cage from before
+                    # the stamp falls back to the front until it recalcs.
+                    tall_cage = self._opening_cage_for_part(child)
+                    h = (tall_cage.get('HB_OPENING_CLEAR_H')
+                         if tall_cage is not None else None)
+                    if h is None:
+                        h = front_height(child)
+                    # Small tolerance so an opening sized exactly at the
                     # cutoff is not lost to float error.
                     if h is not None and h >= tall_min - 1e-5:
                         default_ds = tall_drawer_ds
