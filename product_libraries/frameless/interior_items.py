@@ -107,6 +107,7 @@ def add_item(interior_obj, kind):
         item = props.interior_items.add()
         item.kind = kind
         if kind == 'ROLLOUT':
+            item.rollout_top_first = True
             for _ in range(2):
                 item.rollout_boxes.add()
         props.interior_items_index = len(props.interior_items) - 1
@@ -129,6 +130,8 @@ def _sync_items(interior_obj, dim_y, dim_z):
               and item.qty > 0):
             for _ in range(item.qty):
                 item.rollout_boxes.add()
+        if item.kind == 'ROLLOUT':
+            _types_ff.migrate_rollout_order(item)
 
 
 # ---------------------------------------------------------------------------

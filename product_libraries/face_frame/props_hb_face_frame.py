@@ -9959,6 +9959,12 @@ class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
     # PULLOUT_SHELF-only.
     rollout_boxes: CollectionProperty(type=Face_Frame_Rollout_Box)  # type: ignore
     rollout_boxes_index: IntProperty(default=0)  # type: ignore
+    # The box list reads top down: Box 1 is the top box, like the
+    # openings list. Items saved when it read bottom up carry False; the
+    # recalc reverses their list once (types_face_frame
+    # migrate_rollout_order) so their boxes stay where they were.
+    rollout_top_first: BoolProperty(
+        default=False, options={'HIDDEN'})  # type: ignore
     # Explicit rollout box depth; 0 = automatic (cavity depth less the
     # front setback). A typed value shortens the boxes at the BACK -
     # e.g. 18" deep rollouts clearing a pipe run behind them.

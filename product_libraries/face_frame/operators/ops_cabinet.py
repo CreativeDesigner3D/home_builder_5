@@ -2577,8 +2577,8 @@ def rollout_above_target(obj):
         if item is not None and item.get(mark):
             built = len(item.rollout_boxes)
             box_index = obj.get(types_face_frame.TAG_ROLLOUT_BOX_INDEX, -1)
-            # Boxes stack bottom to top; the list reads top down.
-            focus = built - 1 - box_index if 0 <= box_index < built else -1
+            # The box list reads top down, as the rollouts list does.
+            focus = box_index if 0 <= box_index < built else -1
             return opening, focus
     return None, -1
 
@@ -3160,6 +3160,7 @@ class hb_face_frame_OT_add_interior_item(bpy.types.Operator):
             # count is the list length and each box defaults to the
             # standard 3 5/8" height.
             if self.kind == 'ROLLOUT':
+                item.rollout_top_first = True
                 for _ in range(2):
                     item.rollout_boxes.add()
             # A wine cubby is finished flush on all four sides of the

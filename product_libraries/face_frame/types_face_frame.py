@@ -903,6 +903,22 @@ def _seed_cutter_material(cutter, box_obj):
         cutter.data.materials.append(mat)
 
 
+def migrate_rollout_order(item):
+    """Turn a ROLLOUT item's box list to read top down, once. Lists
+    saved when Box 1 was the bottom box are reversed in place, so every
+    box keeps its height, options and place in the stack - only the
+    numbering changes. Returns True when it reordered anything (the
+    write re-enters recalc; the callers' guards absorb that)."""
+    if item.kind != 'ROLLOUT' or item.rollout_top_first:
+        return False
+    boxes = item.rollout_boxes
+    n = len(boxes)
+    for i in range(n - 1):
+        boxes.move(n - 1, i)
+    item.rollout_top_first = True
+    return n > 1
+
+
 def rollout_item_props(opening_obj, item_index):
     """The interior item behind a rollout box object, or None when the
     index no longer resolves. Same contract as rollout_box_props."""
@@ -6059,8 +6075,10 @@ class FaceFrameCabinet(GeoNodeCage):
                         sink_bottom - opening_z - inch(0.25), inch(6.0))
                 if kind == 'ROLLOUT':
                     item.hide_rollout_spacers = True
-                    for height, top in ((inch(6.125), 'BOWL_14'),
-                                        (inch(4.625), 'BOWL_10')):
+                    # Top down: the shallow bowl rides above the deep one.
+                    item.rollout_top_first = True
+                    for height, top in ((inch(4.625), 'BOWL_10'),
+                                        (inch(6.125), 'BOWL_14')):
                         box = item.rollout_boxes.add()
                         try:
                             box.height_preset = 'CUSTOM'
@@ -14407,6 +14425,8 @@ class FaceFrameCabinet(GeoNodeCage):
                         box.height_preset = preset
                         if preset == 'CUSTOM':
                             box.height = item.rollout_height
+                if item.kind == 'ROLLOUT':
+                    migrate_rollout_order(item)
 
         # The rollout that rides above a drawer is a normal ROLLOUT
         # interior item - it just belongs to the cabinet rather than to
@@ -14638,8 +14658,10 @@ class FaceFrameCabinet(GeoNodeCage):
 
         if item.kind != 'ROLLOUT':
             item.kind = 'ROLLOUT'
-        # The item stacks its boxes bottom to top.
-        heights = [height for _bottom, height in reversed(placed)]
+        if not item.rollout_top_first:
+            item.rollout_top_first = True
+        # The item's box list reads top down, as placed does.
+        heights = [height for _bottom, height in placed]
         if len(item.rollout_boxes) != len(heights):
             item.rollout_boxes.clear()
             for _ in heights:

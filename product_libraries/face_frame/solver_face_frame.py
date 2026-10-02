@@ -5624,8 +5624,10 @@ GALLEY_TOP_T = inch(0.5)      # a workstation roll-out's plywood top
 
 def _rollout_descriptors(rect, cage_dim_y, item, item_index=-1):
     # Per-box stack: each box in item.rollout_boxes carries its own height,
-    # so the boxes are placed bottom to top by a running Z sum rather than a
-    # uniform step. Items saved before per-box heights have an empty
+    # so the boxes are placed by a running Z sum rather than a uniform
+    # step. The list reads top down (Box 1 is the top box, like the
+    # openings list), so the stack is built from the last box up.
+    # Items saved before per-box heights have an empty
     # rollout_boxes collection until the recalc migrates them; fall back to a
     # uniform stack of qty boxes at rollout_height so geometry is unchanged
     # in the meantime.
@@ -5651,7 +5653,8 @@ def _rollout_descriptors(rect, cage_dim_y, item, item_index=-1):
 
     out = []
     z = bottom_gap
-    for k, item_height in enumerate(heights):
+    for k in reversed(range(len(heights))):
+        item_height = heights[k]
         out.append({
             'kind':         'ROLLOUT_BOX',
             'role':         'ROLLOUT_BOX',
