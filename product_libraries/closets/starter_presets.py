@@ -56,6 +56,11 @@ PART_SECTIONS = [
          "than its run and it covers that bay and its neighbours of "
          "the same height",
          'hb_closets.place_bay_countertop', {}),
+        ('Slab Countertop', "Slab Top",
+         "A 1 1/8 inch laminate countertop as a part of its own: hover "
+         "a closet or a run of cabinets and it sits on it, or put it "
+         "down anywhere",
+         'hb_closets.place_slab_countertop', {}),
         # Fitted rather than dropped loose: these hover an opening,
         # preview at the cursor height and go on placing until you
         # stop. They were two buttons on the viewport overlay, which

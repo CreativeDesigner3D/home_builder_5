@@ -2498,6 +2498,10 @@ class hb_frameless_OT_draw_cabinet(bpy.types.Operator):
     cabinet_name: bpy.props.StringProperty(name="Cabinet Name")  # type: ignore
 
     def execute(self, context):
+        if self.cabinet_name == 'Slab Countertop':
+            # A closet library part: the same top in both libraries.
+            bpy.ops.hb_closets.place_slab_countertop('INVOKE_DEFAULT')
+            return {'FINISHED'}
         # Map appliance names to types
         appliance_map = {
             'Range': 'RANGE',

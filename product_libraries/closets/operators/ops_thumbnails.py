@@ -125,6 +125,8 @@ def _build_in_scene(name):
     here knows how to build it."""
     if name == 'Countertop':
         return _build_bay_countertop()
+    if name == 'Slab Countertop':
+        return types_closets.add_slab_countertop()
     if name in _LOOSE_KINDS:
         return types_closets.add_misc_part(kind=_LOOSE_KINDS[name])
     if name in _FITTED_IN:

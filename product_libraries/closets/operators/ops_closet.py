@@ -14,7 +14,7 @@ import bpy
 import json
 import math
 import os
-from mathutils import Vector
+from mathutils import Matrix, Vector
 
 from .... import hb_types, hb_placement, hb_snap, units
 from ...frameless.operators.ops_placement import toggle_cabinet_color
@@ -5848,6 +5848,195 @@ class hb_closets_OT_place_bay_countertop(bpy.types.Operator,
         return {'RUNNING_MODAL'}
 
 
+def _slab_of(obj):
+    """The slab countertop a part belongs to - itself or the one its
+    splash stands on - or None."""
+    if types_closets.is_slab_countertop(obj):
+        return obj
+    if obj is not None and types_closets.is_slab_countertop(obj.parent):
+        return obj.parent
+    return None
+
+
+class hb_closets_OT_place_slab_countertop(bpy.types.Operator,
+                                         hb_placement.PlacementMixin):
+    """Place a 1 1/8" slab countertop.
+
+    Hover a run of cabinets or a closet and the top sits on it, as wide
+    and deep as what it covers plus its overhangs; anywhere else it is
+    put down at its own size where the cursor is. Click places it,
+    Right-click or Esc cancels."""
+    bl_idname = "hb_closets.place_slab_countertop"
+    bl_label = "Place Slab Countertop"
+    bl_options = {'UNDO'}
+
+    _slab = None
+    _note = ""
+
+    def invoke(self, context, event):
+        self.init_placement(context)
+        if self.region is None:
+            self.report({'WARNING'}, "No 3D viewport available")
+            return {'CANCELLED'}
+        obj = types_closets.add_slab_countertop()
+        obj['hb_preview'] = 1
+        self._slab = obj
+        self._note = "Move over cabinets or a closet to place the top"
+        hb_placement.draw_header_text(context, self._note)
+        context.window.cursor_set('CROSSHAIR')
+        context.window_manager.modal_handler_add(self)
+        return {'RUNNING_MODAL'}
+
+    def _parts(self):
+        obj = self._slab
+        return [obj] + list(obj.children) if obj is not None else []
+
+    def _snap(self, context, event):
+        """Raycast with the carried top hidden, so it never hits
+        itself."""
+        hidden = []
+        for o in self._parts():
+            if not o.hide_get():
+                o.hide_set(True)
+                hidden.append(o)
+        try:
+            self.update_snap(context, event)
+        finally:
+            for o in hidden:
+                o.hide_set(False)
+
+    def _follow(self, context, event):
+        self._snap(context, event)
+        obj = self._slab
+        target = types_closets.slab_target(self.hit_object)
+        if target is not None:
+            types_closets.set_slab_on(obj, target)
+            sp = obj.hb_closet_slab
+            self._note = "Slab Countertop on %s  -  %s x %s" % (
+                target[3],
+                types_closets._in_str(sp.width + sp.overhang_left
+                                      + sp.overhang_right),
+                types_closets._in_str(sp.depth + sp.overhang_front))
+        elif self.hit_location is not None:
+            obj.matrix_world = Matrix.Translation(self.hit_location)
+            obj[types_closets.PROP_SLAB_LEFT_SHIFT] = 0.0
+            self._note = ("Slab Countertop on its own  -  move over "
+                          "cabinets or a closet to set it on them")
+        else:
+            self._note = "Move over cabinets or a closet to place the top"
+
+    def _end(self, context):
+        hb_placement.clear_header_text(context)
+        context.window.cursor_set('DEFAULT')
+
+    def _drop(self):
+        if self._slab is not None:
+            try:
+                types_closets._remove_part_tree(self._slab)
+            except ReferenceError:
+                pass
+        self._slab = None
+
+    def cancel(self, context):
+        self._drop()
+        self._end(context)
+
+    def modal(self, context, event):
+        if context.area is not None:
+            context.area.tag_redraw()
+        if event.type in {'MIDDLEMOUSE', 'WHEELUPMOUSE',
+                          'WHEELDOWNMOUSE'}:
+            return {'PASS_THROUGH'}
+        if event.type == 'MOUSEMOVE':
+            self._follow(context, event)
+            hb_placement.draw_header_text(context, self._note)
+            return {'RUNNING_MODAL'}
+        if event.type in {'ESC', 'RIGHTMOUSE'} and event.value == 'PRESS':
+            self._drop()
+            self._end(context)
+            return {'CANCELLED'}
+        if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
+            self._follow(context, event)
+            if self.hit_location is None:
+                self.report({'WARNING'}, "Move over the room to place it")
+                return {'RUNNING_MODAL'}
+            obj = self._slab
+            self._slab = None
+            if 'hb_preview' in obj:
+                del obj['hb_preview']
+            for other in context.selected_objects:
+                other.select_set(False)
+            obj.select_set(True)
+            context.view_layer.objects.active = obj
+            self._end(context)
+            return {'FINISHED'}
+        return {'RUNNING_MODAL'}
+
+
+class hb_closets_OT_slab_countertop_prompts(bpy.types.Operator):
+    """Size, overhangs, finished ends and backsplash of a slab
+    countertop. Changes show as they are made"""
+    bl_idname = "hb_closets.slab_countertop_prompts"
+    bl_label = "Countertop Properties"
+    bl_options = {'UNDO'}
+
+    target_name: bpy.props.StringProperty(
+        options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        return _slab_of(context.active_object) is not None
+
+    def invoke(self, context, event):
+        self.target_name = _slab_of(context.active_object).name
+        return context.window_manager.invoke_props_dialog(
+            self, width=340, confirm_text="Done")
+
+    def execute(self, context):
+        return {'FINISHED'}
+
+    def draw(self, context):
+        obj = bpy.data.objects.get(self.target_name)
+        layout = self.layout
+        if obj is None:
+            layout.label(text="This countertop is gone")
+            return
+        sp = obj.hb_closet_slab
+        unit_settings = context.scene.unit_settings
+        box = layout.box()
+        row = box.row(align=True)
+        row.prop(sp, 'width')
+        row.prop(sp, 'depth')
+        cut = hb_types.GeoNodeCutpart(obj)
+        row = box.row()
+        row.label(text="Length: " + units.unit_to_string(
+            unit_settings, cut.get_input('Length')))
+        row.label(text="Depth: " + units.unit_to_string(
+            unit_settings, cut.get_input('Width')))
+        row.label(text="Thickness: " + units.unit_to_string(
+            unit_settings, cut.get_input('Thickness')))
+        box.label(text="Overhang:")
+        row = box.row(align=True)
+        row.prop(sp, 'overhang_left', text="Left")
+        row.prop(sp, 'overhang_right', text="Right")
+        row.prop(sp, 'overhang_front', text="Front")
+        row = box.row(align=True)
+        row.label(text="Finished End:")
+        row.prop(sp, 'left_finished_end', text="Left")
+        row.prop(sp, 'right_finished_end', text="Right")
+        box = layout.box()
+        box.prop(sp, 'include_backsplash', text="Backsplash")
+        row = box.row()
+        row.enabled = sp.include_backsplash
+        row.prop(sp, 'backsplash_height', text="Height")
+        props = context.scene.hb_closets
+        layout.label(
+            text="Material: %s (room Countertops option)" % (
+                "closet material"
+                if props.use_closet_material_for_countertops
+                else props.closet_countertop_material), icon='MATERIAL')
+
+
 class hb_closets_OT_bay_countertop_prompts(bpy.types.Operator):
     """Overhangs, finished ends and backsplash of a countertop placed
     over some of a run's bays. Changes show as they are made"""
@@ -6956,7 +7145,10 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
         box = col.box()
         box.label(text="Countertop", icon='MESH_PLANE')
         sub = box.column(align=True)
-        sub.prop(sp, 'countertop_thickness')
+        # Fixed by what the top is made of (Countertops in the room
+        # options), so it is said rather than offered.
+        sub.label(text="Thickness: %s" % types_closets._in_str(
+            sp.countertop_thickness))
         sub = box.column(align=True)
         sub.label(text="Overhang")
         row = sub.row(align=True)
@@ -8789,6 +8981,8 @@ classes = (
     hb_closets_OT_place_misc_part,
     hb_closets_OT_continuous_top_prompts,
     hb_closets_OT_place_bay_countertop,
+    hb_closets_OT_place_slab_countertop,
+    hb_closets_OT_slab_countertop_prompts,
     hb_closets_OT_bay_countertop_prompts,
     hb_closets_OT_delete_bay_countertop,
     hb_closets_OT_delete_bay_cleat,

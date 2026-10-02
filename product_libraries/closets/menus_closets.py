@@ -350,7 +350,17 @@ class HOME_BUILDER_MT_closet_part_commands(bpy.types.Menu):
             layout.operator("hb_closets.rod_prompts",
                             text="Rod Properties...", icon='WINDOW')
             layout.separator()
-        if (obj is not None and obj.get('hb_part_role')
+        slab = None
+        if types_closets.is_slab_countertop(obj):
+            slab = obj
+        elif obj is not None and types_closets.is_slab_countertop(
+                obj.parent):
+            slab = obj.parent
+        if slab is not None:
+            layout.operator("hb_closets.slab_countertop_prompts",
+                            text="Countertop Properties...", icon='WINDOW')
+            layout.separator()
+        elif (obj is not None and obj.get('hb_part_role')
                 == types_closets.PART_ROLE_MISC):
             layout.operator("hb_closets.misc_part_prompts",
                             text="Part Properties...", icon='WINDOW')

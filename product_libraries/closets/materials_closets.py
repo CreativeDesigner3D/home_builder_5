@@ -558,12 +558,30 @@ def apply_to_part(obj, carcass_name=None):
     same as the run beside it. Returns True when it took.
     """
     from ... import hb_types
+    from . import types_closets
     props = bpy.context.scene.hb_closets
     if carcass_name is None:
         carcass_name = getattr(props, 'closet_material', DEFAULT_MATERIAL)
     carcass = load_material(carcass_name)
     if carcass is None:
         return False
+    if types_closets.is_slab_countertop(obj):
+        # A slab is the countertop laminate all the way round, and so
+        # are its splashes - one board, banded in itself.
+        ctop = resolve_countertop_material(carcass)
+        edge = rotated_variant(ctop)
+        for part_obj in [obj] + [c for c in obj.children
+                                 if c.get('hb_part_role')
+                                 == types_closets.PART_ROLE_BACKSPLASH]:
+            try:
+                part = hb_types.GeoNodeCutpart(part_obj)
+                part.set_input('Top Surface', ctop)
+                part.set_input('Bottom Surface', ctop)
+                for e in MISC_BAND_EDGES:
+                    part.set_input('Edge ' + e, edge)
+            except Exception:
+                continue
+        return True
     edge = rotated_variant(
         _resolve_edge_base('closet_edge_material', carcass))
     core = load_core_material() if is_bandable_misc_part(obj) else None

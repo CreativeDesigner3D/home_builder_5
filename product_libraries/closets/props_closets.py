@@ -31,6 +31,7 @@ from bpy.props import (
 import os
 
 from . import const_closets as const
+from ...units import inch
 from . import starter_presets
 from . import materials_closets
 from . import pulls_closets
@@ -321,6 +322,16 @@ def _update_closet_selection_mode(self, context):
     bpy.ops.hb_closets.toggle_mode(search_obj_name="")
 
 
+def countertop_thickness_for(scene_props):
+    from . import types_closets
+    return types_closets.room_countertop_thickness(scene_props)
+
+
+def _thickness_label(value):
+    from . import types_closets
+    return types_closets._in_str(value)
+
+
 def _update_countertop_mode(self, context):
     """Switching the tops between a countertop material and the closet
     material changes what they are made of, so it changes how thick
@@ -329,9 +340,7 @@ def _update_countertop_mode(self, context):
     setting for that material, not a size to carry across."""
     from . import types_closets
     scene = getattr(context, 'scene', None) or bpy.context.scene
-    thickness = (self.shelf_thickness
-                 if self.use_closet_material_for_countertops
-                 else self.countertop_thickness)
+    thickness = countertop_thickness_for(self)
     for obj in scene.objects:
         if obj.get(types_closets.TAG_STARTER_CAGE):
             sp = obj.hb_closet_starter
@@ -442,6 +451,75 @@ class Closet_Bay_Countertop_Props(PropertyGroup):
         description="How far the backsplash stands above the countertop",
         default=const.BACKSPLASH_HEIGHT, min=0.0, unit='LENGTH',
         precision=4, update=_update_starter_prop)  # type: ignore
+
+
+def _update_slab(self, context):
+    from . import types_closets
+    types_closets.layout_slab_countertop(self.id_data)
+
+
+def _slab_end_update(side):
+    """A slab end marked finished (or not): an exposed end gets the end
+    overhang and no side splash, a covered one neither overhang nor
+    exposure. A typed overhang stands until the flag changes again."""
+    def _update(self, context):
+        key = side.lower()
+        self['overhang_' + key] = (const.COUNTERTOP_OVERHANG_END
+                                   if getattr(self, key + '_finished_end')
+                                   else 0.0)
+        _update_slab(self, context)
+    return _update
+
+
+class Closet_Slab_Countertop_Props(PropertyGroup):
+    """A slab countertop standing on its own: a 1 1/8" laminate top
+    set on whatever it was placed over (closet or cabinets) or wherever
+    it was put down. Width and depth are of what it covers; the
+    overhangs are added to them, so the top grows past its ends and
+    out at the front without moving what it sits over."""
+    width: FloatProperty(
+        name="Width", description="Width of what the top covers, before "
+                                  "the end overhangs",
+        default=inch(40.0), min=inch(1.0), unit='LENGTH', precision=4,
+        update=_update_slab)  # type: ignore
+    depth: FloatProperty(
+        name="Depth", description="Depth of what the top covers, before "
+                                  "the front overhang",
+        default=inch(24.0), min=inch(1.0), unit='LENGTH', precision=4,
+        update=_update_slab)  # type: ignore
+    overhang_front: FloatProperty(
+        name="Front", description="How far the top projects past the "
+                                  "front",
+        default=const.COUNTERTOP_OVERHANG_FRONT, min=0.0, unit='LENGTH',
+        precision=4, update=_update_slab)  # type: ignore
+    overhang_left: FloatProperty(
+        name="Left", description="How far the top runs past its left end",
+        default=0.0, min=0.0, unit='LENGTH', precision=4,
+        update=_update_slab)  # type: ignore
+    overhang_right: FloatProperty(
+        name="Right", description="How far the top runs past its right end",
+        default=0.0, min=0.0, unit='LENGTH', precision=4,
+        update=_update_slab)  # type: ignore
+    left_finished_end: BoolProperty(
+        name="Left Finished End",
+        description="The left end is exposed: it overhangs and gets no "
+                    "side splash",
+        default=False, update=_slab_end_update('LEFT'))  # type: ignore
+    right_finished_end: BoolProperty(
+        name="Right Finished End",
+        description="The right end is exposed: it overhangs and gets no "
+                    "side splash",
+        default=False, update=_slab_end_update('RIGHT'))  # type: ignore
+    include_backsplash: BoolProperty(
+        name="Include Backsplash",
+        description="Add an upstand along the back, and along each end "
+                    "that is not finished",
+        default=True, update=_update_slab)  # type: ignore
+    backsplash_height: FloatProperty(
+        name="Backsplash Height",
+        description="How far the backsplash stands above the countertop",
+        default=const.BACKSPLASH_HEIGHT, min=0.0, unit='LENGTH',
+        precision=4, update=_update_slab)  # type: ignore
 
 
 class Closet_Bay_Cleat_Props(PropertyGroup):
@@ -2250,9 +2328,8 @@ class Closets_Scene_Props(PropertyGroup):
         sub = col.row()
         sub.enabled = not self.use_closet_material_for_countertops
         sub.prop(self, 'closet_countertop_material', text="Material")
-        sub = col.row()
-        sub.enabled = not self.use_closet_material_for_countertops
-        sub.prop(self, 'countertop_thickness', text="Thickness")
+        col.label(text="Thickness: %s" % _thickness_label(
+            countertop_thickness_for(self)))
 
     # =====================================================================
     # UI: molding (Options tab)
@@ -2340,6 +2417,7 @@ class Closets_Scene_Props(PropertyGroup):
 
 classes = (
     Closet_Bay_Countertop_Props,
+    Closet_Slab_Countertop_Props,
     Closet_Bay_Cleat_Props,
     Closet_Starter_Props,
     Closet_Bay_Props,
@@ -2359,6 +2437,8 @@ def register():
         name="Closet Bay Props", type=Closet_Bay_Props)
     bpy.types.Object.hb_closet_opening = PointerProperty(
         name="Closet Opening Props", type=Closet_Opening_Props)
+    bpy.types.Object.hb_closet_slab = PointerProperty(
+        name="Slab Countertop Props", type=Closet_Slab_Countertop_Props)
 
 
 def unregister():
@@ -2376,5 +2456,7 @@ def unregister():
         del bpy.types.Object.hb_closet_bay
     if hasattr(bpy.types.Object, 'hb_closet_opening'):
         del bpy.types.Object.hb_closet_opening
+    if hasattr(bpy.types.Object, 'hb_closet_slab'):
+        del bpy.types.Object.hb_closet_slab
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)

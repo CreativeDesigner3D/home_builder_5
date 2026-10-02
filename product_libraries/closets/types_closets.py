@@ -1125,6 +1125,223 @@ def add_misc_part(name='Misc Part', kind='MISC'):
     return part.obj
 
 
+# A slab countertop: the 1 1/8" laminate top as a part of its own,
+# set on a closet or a run of cabinets, or put down anywhere. It is a
+# loose part to everything that prices and lists parts (its own kind),
+# carries its settings on the object, and lays its splashes out
+# whenever they change - nothing else ever re-runs it.
+SLAB_KIND = 'COUNTERTOP'
+# How far the slab has been moved left to make room for its left
+# overhang, so a changed overhang moves it by the difference only.
+PROP_SLAB_LEFT_SHIFT = 'hb_slab_left_shift'
+PROP_SLAB_SLOT = 'hb_slab_slot'
+
+
+def is_slab_countertop(obj):
+    return (obj is not None
+            and obj.get('hb_part_role') == PART_ROLE_MISC
+            and obj.get('hb_loose_kind') == SLAB_KIND)
+
+
+def add_slab_countertop(name="Slab Countertop"):
+    """Create a slab countertop standing on its own, at its starting
+    size. The caller places it; layout_slab_countertop draws it."""
+    part = CabinetPart()
+    part.create(name)
+    obj = part.obj
+    obj['hb_part_role'] = PART_ROLE_MISC
+    obj['hb_loose_kind'] = SLAB_KIND
+    obj['MENU_ID'] = 'HOME_BUILDER_MT_closet_part_commands'
+    obj[PROP_SLAB_LEFT_SHIFT] = 0.0
+    part.set_input('Mirror Y', True)
+    layout_slab_countertop(obj)
+    return obj
+
+
+def layout_slab_countertop(obj):
+    """Size a slab countertop and its splashes from its settings.
+
+    The top's origin is the back left corner of its underside, the way
+    a run's own top is drawn, and it reaches forward from there: the
+    covered width plus the end overhangs across, the covered depth plus
+    the front overhang forward. The left overhang is room taken to the
+    left of what it covers, so the part moves left by it and back when
+    it shrinks. Splashes stand on the top at the back, and at each end
+    that is not finished - built like the run's own."""
+    if not is_slab_countertop(obj):
+        return
+    sp = obj.hb_closet_slab
+    thk = const.COUNTERTOP_THICKNESS
+    oh_l, oh_r, oh_f = sp.overhang_left, sp.overhang_right, sp.overhang_front
+    shift = float(obj.get(PROP_SLAB_LEFT_SHIFT, 0.0))
+    if abs(shift - oh_l) > 1e-9:
+        x_axis = obj.matrix_world.to_3x3() @ Vector((1.0, 0.0, 0.0))
+        if x_axis.length > 0.0:
+            x_axis.normalize()
+        delta = x_axis * (oh_l - shift)
+        if obj.parent is not None:
+            delta = obj.parent.matrix_world.inverted().to_3x3() @ delta
+        obj.location -= delta
+        obj[PROP_SLAB_LEFT_SHIFT] = oh_l
+    run = sp.width + oh_l + oh_r
+    deep = sp.depth + oh_f
+    top = GeoNodeCutpart(obj)
+    top.set_input('Mirror Y', True)
+    top.set_input('Length', run)
+    top.set_input('Width', deep)
+    top.set_input('Thickness', thk)
+    obj['hb_ctop_left_finished'] = 1 if sp.left_finished_end else 0
+    obj['hb_ctop_right_finished'] = 1 if sp.right_finished_end else 0
+    obj['hb_ctop_corner_radius'] = 0.0
+    splash = sp.include_backsplash
+    reach = max(deep - thk, 0.001)
+    specs = (
+        # slot, show, label, location, rotation, length, width, mirror z
+        ('REAR', splash, "Backsplash", (0.0, 0.0, thk),
+         (math.radians(-90), 0.0, 0.0), run, sp.backsplash_height, True),
+        ('LEFT', splash and not sp.left_finished_end, "Left Backsplash",
+         (0.0, -thk, thk), (math.radians(-90), 0.0, math.radians(-90)),
+         reach, sp.backsplash_height, False),
+        ('RIGHT', splash and not sp.right_finished_end, "Right Backsplash",
+         (run, -thk, thk), (math.radians(-90), 0.0, math.radians(-90)),
+         reach, sp.backsplash_height, True),
+    )
+    have = {c.get(PROP_SLAB_SLOT): c for c in obj.children
+            if c.get(PROP_SLAB_SLOT)}
+    for slot, show, label, loc, rot, length, width, mirror_z in specs:
+        child = have.get(slot)
+        if child is None:
+            if not show:
+                continue
+            part = CabinetPart()
+            part.create(label)
+            child = part.obj
+            child.parent = obj
+            child['hb_part_role'] = PART_ROLE_BACKSPLASH
+            child['hb_splash_slot'] = slot
+            child[PROP_SLAB_SLOT] = slot
+            child['MENU_ID'] = 'HOME_BUILDER_MT_closet_part_commands'
+        child.location = loc
+        child.rotation_euler = rot
+        cut = GeoNodeCutpart(child)
+        cut.set_input('Mirror Y', True)
+        cut.set_input('Mirror Z', mirror_z)
+        cut.set_input('Length', length)
+        cut.set_input('Width', max(width, 0.001))
+        cut.set_input('Thickness', thk)
+        _set_part_hidden(child, not show or width <= 0.0)
+    from . import materials_closets
+    materials_closets.apply_to_part(obj)
+
+
+# How closely two cabinets have to line up to be one run under a slab.
+_SLAB_RUN_TOL = inch(1.0 / 16.0)
+
+
+def _cage_dims(obj):
+    try:
+        cage = GeoNodeCage(obj)
+        return (float(cage.get_input('Dim X')),
+                float(cage.get_input('Dim Y')),
+                float(cage.get_input('Dim Z')))
+    except Exception:
+        return None
+
+
+def _frameless_cabinet(obj):
+    while obj is not None:
+        if obj.get('IS_FRAMELESS_CABINET_CAGE'):
+            return obj
+        obj = obj.parent
+    return None
+
+
+def _cabinet_run(cab):
+    """The cabinets standing in a line with this one under a slab: same
+    wall, same facing, same depth and the same top, each butted to the
+    next. Returned left to right."""
+    dims = _cage_dims(cab)
+    if dims is None:
+        return [cab]
+    rot = cab.matrix_world.to_3x3().normalized()
+    inv = cab.matrix_world.inverted()
+    top = (cab.matrix_world @ Vector((0.0, 0.0, dims[2]))).z
+    spans = []
+    pool = (cab.parent.children if cab.parent is not None
+            else [o for o in bpy.context.scene.objects if o.parent is None])
+    for other in pool:
+        if not other.get('IS_FRAMELESS_CABINET_CAGE'):
+            continue
+        od = _cage_dims(other)
+        if od is None or abs(od[1] - dims[1]) > _SLAB_RUN_TOL:
+            continue
+        o_rot = other.matrix_world.to_3x3().normalized()
+        if any(abs(a - b) > 1e-3 for ra, rb in zip(rot, o_rot)
+               for a, b in zip(ra, rb)):
+            continue
+        local = inv @ other.matrix_world.translation
+        if abs(local.y) > _SLAB_RUN_TOL:
+            continue
+        o_top = (other.matrix_world @ Vector((0.0, 0.0, od[2]))).z
+        if abs(o_top - top) > _SLAB_RUN_TOL:
+            continue
+        spans.append((local.x, local.x + od[0], other))
+    spans.sort(key=lambda t: t[0])
+    # Grow out from the one under the cursor while the next one butts.
+    i = next(k for k, t in enumerate(spans) if t[2] is cab)
+    lo = hi = i
+    while lo > 0 and abs(spans[lo - 1][1] - spans[lo][0]) <= _SLAB_RUN_TOL:
+        lo -= 1
+    while (hi < len(spans) - 1
+           and abs(spans[hi + 1][0] - spans[hi][1]) <= _SLAB_RUN_TOL):
+        hi += 1
+    return [t[2] for t in spans[lo:hi + 1]]
+
+
+def slab_target(hit_obj):
+    """What a slab countertop dropped on hit_obj covers, as
+    (frame, width, depth, label): frame is the world matrix of the back
+    left corner of the top it sits on. A frameless cabinet brings the
+    run of cabinets it stands in with; a closet the whole starter, on
+    its own top if it has one. None when the hit is neither."""
+    cab = _frameless_cabinet(hit_obj)
+    if cab is not None:
+        run = _cabinet_run(cab)
+        first, last = run[0], run[-1]
+        d0, dl = _cage_dims(first), _cage_dims(last)
+        x1 = (first.matrix_world.inverted()
+              @ last.matrix_world.translation).x + dl[0]
+        frame = first.matrix_world @ Matrix.Translation(
+            (0.0, 0.0, d0[2]))
+        label = ("%d cabinets" % len(run)) if len(run) > 1 else cab.name
+        return frame, x1, d0[1], label
+    root = find_starter_root(hit_obj) if hit_obj is not None else None
+    if root is not None:
+        dims = _cage_dims(root)
+        if dims is None:
+            return None
+        sp = root.hb_closet_starter
+        top = dims[2]
+        if getattr(sp, 'include_countertop', False):
+            top += sp.countertop_thickness
+        frame = root.matrix_world @ Matrix.Translation((0.0, 0.0, top))
+        return frame, dims[0], dims[1], root.name
+    return None
+
+
+def set_slab_on(obj, target):
+    """Size a slab to what it covers and stand it there, its left
+    overhang reaching past the left end."""
+    frame, width, depth, _label = target
+    sp = obj.hb_closet_slab
+    sp['width'] = width
+    sp['depth'] = depth
+    obj.matrix_world = frame @ Matrix.Translation(
+        (-sp.overhang_left, 0.0, 0.0))
+    obj[PROP_SLAB_LEFT_SHIFT] = sp.overhang_left
+    layout_slab_countertop(obj)
+
+
 def add_division(opening_obj, x_offset):
     """Create a vertical division splitting one opening left and right.
 
@@ -1237,9 +1454,7 @@ class ClosetStarter(GeoNodeCage):
             # A top surfaced in the closet material is a shelf, so
             # it is as thick as one.
             sp.countertop_thickness = (
-                scene_props.shelf_thickness
-                if scene_props.use_closet_material_for_countertops
-                else scene_props.countertop_thickness)
+                room_countertop_thickness(scene_props))
             # A double-sided island is reachable from every side, so its
             # top overhangs all round; everything else only overhangs at
             # the front until a prompt says otherwise.
@@ -6634,6 +6849,7 @@ def recalculate_closet_starter(obj):
         return
     if id(root) in _RECALCULATING:
         return
+    _sync_countertop_thickness(root)
     carry_over_lock_flags(root)
     carry_over_opening_settings(root)
     carry_over_bay_fronts(root)
@@ -7087,6 +7303,26 @@ def _cap_insert(cage, opening, root, st):
     if root is not None:
         _recalculate_now(root)
     bpy.context.view_layer.update()
+
+
+def room_countertop_thickness(scene_props):
+    """How thick the room's tops are. A countertop laminate is bought
+    as a 1 1/8" slab and comes in no other thickness, so that is fixed;
+    a top in the closet material is a shelf, as thick as one."""
+    if scene_props.use_closet_material_for_countertops:
+        return scene_props.shelf_thickness
+    return const.COUNTERTOP_THICKNESS
+
+
+def _sync_countertop_thickness(root):
+    """Hold a starter's tops at the room's thickness. Before it was
+    fixed it could be typed per starter, so a drawing can carry one
+    that is no longer a size the top comes in. Written past the update
+    callback: this runs inside the recalc that will use it."""
+    sp = root.hb_closet_starter
+    want = room_countertop_thickness(bpy.context.scene.hb_closets)
+    if abs(sp.countertop_thickness - want) > 1e-6:
+        sp['countertop_thickness'] = want
 
 
 def seat_insert_on_shelf(cage, z):

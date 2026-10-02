@@ -295,8 +295,6 @@ OPTION_PAGES = {
              "Use Closet Material for Tops"),
             ('enum', 'closet_countertop_material', "Material",
              {'when': lambda p: not p.use_closet_material_for_countertops}),
-            ('distance', 'countertop_thickness', "Thickness",
-             {'when': lambda p: not p.use_closet_material_for_countertops}),
         ),
     },
     'draw_molding_options_ui': {
