@@ -5266,6 +5266,41 @@ def profiles_for_series(series):
     return SERIES_PROFILES.get(series, {})
 
 
+# Door and drawer edge profiles a series can be ordered with, as
+# EDGE_PROFILE_ITEMS identifiers. Series not listed take any edge. An
+# empty tuple means the series' own edge is fixed (built into the
+# door), so a cabinet-level pick never applies to it.
+SERIES_EDGE_PROFILES = {
+    'Brink':      ('Square', '1/8" Radius', '1/4" Radius', 'Chamfer',
+                   '3/8" Radius', 'Drop Radius', 'Classic Cut',
+                   'Eclipse', 'Bay'),
+    'Century':    ('Square', 'Chamfer'),
+    'Konza':      ('Square',),
+    'Notable':    ('Square',),
+    'Bezel':      (),
+    'Skyline':    (),
+    'Harmony':    (),
+    'Nantucket':  (),
+    'Providence': (),
+}
+
+
+def edge_profile_for_series(series, edge_name):
+    """The edge profile a front of ``series`` actually gets when the
+    cabinet calls for ``edge_name`` (None = unset). A pick the series
+    allows passes through; otherwise the series' first allowed edge, or
+    None (its own edge) when the series has no edge options."""
+    if edge_name is None:
+        return None
+    allowed = SERIES_EDGE_PROFILES.get(series)
+    if allowed is None:
+        return edge_name
+    for name in allowed:
+        if name.lower() == edge_name.lower():
+            return name
+    return allowed[0] if allowed else None
+
+
 # Recessed (flat) center panel construction, applied to every
 # non-Raised panel choice regardless of the series' raised spec: a
 # 1/4" panel held 1/8" off the BACK of the door (catalog standard).

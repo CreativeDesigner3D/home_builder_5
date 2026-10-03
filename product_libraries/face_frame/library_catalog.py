@@ -710,7 +710,7 @@ def _front_picture(kind, style):
     from ..common import door_builder
     w, h = (units.inch(v) for v in _TILE_SIZE[kind])
     t = units.inch(_TILE_THICKNESS)
-    edge = _edge_profile_name(bpy.context, kind)
+    edge = _edge_profile_name(bpy.context, kind, style)
     plan = None
     if style.door_type != 'SLAB':
         plan = style.front_build_plan(w, h, t, edge_name=edge)
@@ -736,12 +736,12 @@ def _front_picture(kind, style):
     return pic
 
 
-def _edge_profile_name(context, kind='DOOR'):
-    """The active cabinet style's edge profile for a door or drawer
-    front, as Face_Frame_Door_Style._cabinet_edge_profile reads it."""
-    from .props_hb_face_frame import cabinet_style_edge_profile
-    return cabinet_style_edge_profile(_active_cabinet_style(context),
-                                      kind == 'DRAWER')
+def _edge_profile_name(context, kind='DOOR', style=None):
+    """The edge profile a ``style`` front gets under the active cabinet
+    style, as Face_Frame_Door_Style._cabinet_edge_profile reads it."""
+    from .props_hb_face_frame import front_edge_profile
+    return front_edge_profile(style, _active_cabinet_style(context),
+                              kind == 'DRAWER')
 
 
 def _cached_picture(key, make):
@@ -761,7 +761,7 @@ def _cached_picture(key, make):
 def _front_tile_picture(kind):
     def picture(context, style):
         pic = _cached_picture(('STYLE', kind, _style_signature(style),
-                               _edge_profile_name(context, kind)),
+                               _edge_profile_name(context, kind, style)),
                               lambda: _front_picture(kind, style))
         return pic, pic.get('w', 0.0), pic.get('h', 0.0)
     return picture

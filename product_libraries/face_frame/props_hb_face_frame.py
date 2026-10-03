@@ -704,6 +704,29 @@ def cabinet_style_edge_profile(cs, drawer=False):
     return None if name == 'None' else name
 
 
+# Door style edge profile choices: follow the cabinet style, or force
+# one edge on every front of this style (fronts bought in with their
+# own edge, or a door whose edge differs from the rest of the room).
+DOOR_STYLE_EDGE_ITEMS = [
+    ('CABINET', 'Cabinet Style',
+     "Use the cabinet style's edge profile, limited to the edges this "
+     "series is made with"),
+] + EDGE_PROFILE_ITEMS
+
+
+def front_edge_profile(door_style, cs, drawer=False):
+    """The edge profile fronts of ``door_style`` get under cabinet style
+    ``cs``, or None for the door style's own outer edge. A door-style
+    override wins; otherwise the cabinet style's pick, swapped for the
+    series' edge when the series isn't made with it."""
+    ovr = getattr(door_style, 'edge_profile_override', 'CABINET')
+    if ovr and ovr != 'CABINET':
+        return None if ovr == 'None' else ovr
+    edge = cabinet_style_edge_profile(cs, drawer)
+    series = getattr(door_style, 'front_series', '') if door_style else ''
+    return style_options.edge_profile_for_series(series, edge)
+
+
 def _propagate_cabinet_style(self, context):
     """Push this cabinet style's current state to every face frame
     cabinet tagged with STYLE_NAME == self.name, in this room and every
@@ -4950,6 +4973,14 @@ class Face_Frame_Door_Style(PropertyGroup):
         update=_propagate_door_style,
     )  # type: ignore
 
+    edge_profile_override: EnumProperty(
+        name="Edge Profile",
+        description="Edge profile for fronts using this style",
+        items=DOOR_STYLE_EDGE_ITEMS,
+        default='CABINET',
+        update=_propagate_door_style,
+    )  # type: ignore
+
     # ---- Edge profile (slab doors) ----
     edge_profile_type: EnumProperty(
         name="Edge Profile",
@@ -5004,13 +5035,13 @@ class Face_Frame_Door_Style(PropertyGroup):
         return None
 
     def _cabinet_edge_profile(self, front_obj):
-        """The parent cabinet style's edge profile for this front (see
-        cabinet_style_edge_profile), or None when unset. A per-order
-        catalog styling option, so it lives on the CABINET style -- not
-        the door style."""
+        """The edge profile this front gets (see front_edge_profile), or
+        None for the style's own outer edge. The pick lives on the
+        CABINET style; this door style can override it, and its series
+        limits which picks apply."""
         cs = self.get_parent_cabinet_style(front_obj)
         drawer = front_obj.get('hb_part_role') in self._DRAWER_FRONT_ROLES
-        return cabinet_style_edge_profile(cs, drawer)
+        return front_edge_profile(self, cs, drawer)
 
     def resolve_member_section(self, front_thickness):
         """Mitered-series member cross-section for this style at a door
@@ -5903,6 +5934,8 @@ class Face_Frame_Door_Style(PropertyGroup):
             op = hrow.operator("hb_face_frame.paint_door_hardware",
                                text="", icon='BRUSH_DATA')
             op.callout = code
+
+        box.prop(self, "edge_profile_override", text="Edge Profile")
 
         # Frame widths derive from the catalog series by default (read-only).
         # Stile and rail each have an independent unlock toggle to override
