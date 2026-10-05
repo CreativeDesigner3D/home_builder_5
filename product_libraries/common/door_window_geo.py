@@ -355,10 +355,21 @@ def list_styles(category):
 
 
 def load_style(category, name):
-    """The preset's option dict (values already in meters), or None."""
-    for pname, _label, opts in _presets_for(category):
+    """The preset's option dict (values already in meters), or None.
+    Every key any preset of the category sets is included, reset to its
+    default when this preset doesn't set it -- otherwise switching from
+    e.g. 'Picture Prairie' to 'Picture' kept the prairie grille."""
+    presets = _presets_for(category)
+    for pname, _label, opts in presets:
         if pname == name:
-            return dict(opts)
+            defaults = _defaults_for(category)
+            full = {}
+            for _n, _l, other in presets:
+                for key in other:
+                    if key in defaults:
+                        full[key] = defaults[key]
+            full.update(opts)
+            return full
     return None
 
 
