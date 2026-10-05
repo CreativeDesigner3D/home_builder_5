@@ -5335,8 +5335,13 @@ def recessed_panel_spec(series):
 #   GROOVED -- flat recessed panel with vertical grooves cut into the
 #              face: 'style' BEAD (quirk-bead beadboard) or KERF
 #              (square kerf slots), 'spacing' in inches.
-# Names not listed (Speaker Cloth, Lattice / Basket Weave pending a
-# material pass, the specialty slab fronts) read as FLAT.
+#   LATTICE -- solid wood staves in place of the panel, laid
+#              diagonally in two crossing layers at the panel plane
+#              (door_builder._emit_lattice): 'stave_width', 'stave_gap'
+#              (clear space between staves) and 'stave_thickness' in
+#              inches; 'thickness' is the two layers together.
+# Names not listed (Speaker Cloth, Basket Weave pending a material
+# pass, the specialty slab fronts) read as FLAT.
 PANEL_KINDS = {
     'Solid Wood Raised': {'kind': 'RAISED'},
     'MDF Raised': {'kind': 'RAISED'},
@@ -5358,6 +5363,11 @@ PANEL_KINDS = {
     'Double Bow Mullion': {'kind': 'GLASS', 'mullion': 'DBL_BOW'},
     'Interloken Mullion': {'kind': 'GLASS', 'mullion': 'INTERLOKEN'},
     'X-Mullion': {'kind': 'GLASS', 'mullion': 'X'},
+    # Product spec: 1/16" thick x 5/8" wide solid wood staves spread
+    # 5/8" apart.
+    'Lattice': {'kind': 'LATTICE', 'stave_width': 0.625,
+                'stave_gap': 0.625, 'stave_thickness': 0.0625,
+                'thickness': 0.125},
     '3/8" MDF Reverse Panel': {'kind': 'FLAT', 'thickness': 0.375},
     # Bead spacing is the board face width from the product spec:
     # MDF boards run 1-1/2" standard / 3" wide, solid wood 1-5/8"

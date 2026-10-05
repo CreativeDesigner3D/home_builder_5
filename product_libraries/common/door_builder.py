@@ -1351,6 +1351,86 @@ def _emit_mullion_bars(verts, faces, slots, part, thickness, spec,
     return True
 
 
+def _lattice_layout(w, h, sw, gap):
+    """Stave footprints for a lattice over a w x h cell: two lists of
+    convex polygons [(x, z), ...] in cell-local coords, the rising
+    (+45 degree) staves and the falling (-45 degree) ones. Staves are
+    ``sw`` wide with ``gap`` clear between them, measured square to
+    the stave, and each family is centered on the cell center. Returns
+    ([], []) when the cell is too small for a stave."""
+    if w <= 0.0 or h <= 0.0 or sw <= 0.0:
+        return [], []
+    pitch = sw + max(gap, 0.0)
+    r2 = math.sqrt(2.0)
+    cell = [(0.0, 0.0), (w, 0.0), (w, h), (0.0, h)]
+    families = []
+    # (a, b): the stave's cross axis; d = (a*x + b*z) / sqrt(2) is the
+    # signed distance across the staves.
+    for a, b in ((1.0, -1.0), (1.0, 1.0)):
+        ds = [(a * x + b * z) / r2 for (x, z) in cell]
+        d_lo, d_hi = min(ds), max(ds)
+        d_c = (d_lo + d_hi) / 2.0
+        k_lo = int(math.floor((d_lo - d_c - sw / 2.0) / pitch))
+        k_hi = int(math.ceil((d_hi - d_c + sw / 2.0) / pitch))
+        polys = []
+        for k in range(k_lo, k_hi + 1):
+            dk = d_c + k * pitch
+            poly = _clip_half(cell, a / r2, b / r2, dk + sw / 2.0)
+            if len(poly) >= 3:
+                poly = _clip_half(poly, -a / r2, -b / r2, -(dk - sw / 2.0))
+            if len(poly) >= 3:
+                polys.append(poly)
+        families.append(polys)
+    return families[0], families[1]
+
+
+def _emit_lattice(verts, faces, slots, part, thickness, spec,
+                  top_pts=None, bottom_pts=None):
+    """Lattice panel: solid wood staves in place of the panel, two
+    layers at the panel plane -- the rising staves in front, the
+    falling staves directly behind -- each spec['stave_thickness']
+    thick. Staves take the panel material slot. Shaped cells clip the
+    staves under / above the curve. Returns False when no stave fits."""
+    x_off, z_off = part['x0'], part['z0']
+    w = part['x1'] - x_off
+    h = part['z1'] - z_off
+    st = spec.get('stave_thickness', inch(0.0625))
+    # A shaped cell's curve rises above (dips below) the cell box: lay
+    # the staves out over the full span, then clip them to the curve.
+    z_lo, z_hi = 0.0, h
+    if top_pts:
+        z_hi = max(z_hi, max(pz for (_px, pz) in top_pts) - z_off)
+    if bottom_pts:
+        z_lo = min(z_lo, min(pz for (_px, pz) in bottom_pts) - z_off)
+    rising, falling = _lattice_layout(
+        w, z_hi - z_lo, spec.get('bar_width', inch(0.625)),
+        spec.get('gap', inch(0.625)))
+    if not rising and not falling:
+        return False
+    if z_lo:
+        rising = [[(x, z + z_lo) for (x, z) in p] for p in rising]
+        falling = [[(x, z + z_lo) for (x, z) in p] for p in falling]
+    planes = []
+    if top_pts:
+        planes += _curve_clip_planes(top_pts, x_off, z_off, True)
+    if bottom_pts:
+        planes += _curve_clip_planes(bottom_pts, x_off, z_off, False)
+    zf = thickness - part['y_inset']
+    slot = _PART_MAT_SLOT['panel']
+    for layer, polys in enumerate((rising, falling)):
+        z_front = zf - layer * st
+        for poly in polys:
+            for (a, b, c) in planes:
+                poly = _clip_half(poly, a, b, c)
+                if len(poly) < 3:
+                    break
+            if len(poly) < 3:
+                continue
+            _emit_prism(verts, faces, slots, poly, x_off, z_off,
+                        z_front, z_front - st, slot)
+    return True
+
+
 # Part keys whose boxes may carry the door's outer edge profile. Panels
 # and mid members never do: a zero-width outer member exposing them to
 # the outline is the butted-mirror-pair case, where the shared edge is
@@ -1994,6 +2074,10 @@ def build_door_geometry(info, width, height, thickness,
                     shaped_bottom[id(p)] = pts
                     bottom_rail_segs.append(pts)
     shaped_top.update(round_pts)
+    # A LATTICE mullion spec builds the panel itself (_emit_lattice)
+    # instead of bars over it.
+    lattice = (mullion is not None and info.get('door_type') != 'SLAB'
+               and mullion.get('pattern') == 'LATTICE')
     cells = []
     for part in parts:
         if mitered and part['key'] not in ('panel', 'glass'):
@@ -2012,6 +2096,12 @@ def build_door_geometry(info, width, height, thickness,
             r_zf = thickness - part['y_inset']
             _emit_prism(verts, faces, face_slots, r_poly, 0.0, 0.0,
                         r_zf, r_zf - r_th, _PART_MAT_SLOT[part['key']])
+            continue
+        # Lattice: staves replace the panel (a shaped cell that fits no
+        # stave falls through to the plain panel below).
+        if (part['key'] == 'panel' and lattice
+                and _emit_lattice(verts, faces, face_slots, part,
+                                  thickness, mullion, t_pts, b_pts)):
             continue
         if (part['key'] == 'panel' and panel_section is not None
                 and _emit_raised_panel(verts, faces, face_slots, part,
@@ -2092,7 +2182,8 @@ def build_door_geometry(info, width, height, thickness,
     # Mullion bars over glass openings (dict(pattern=..., bar_width=,
     # depth=) -- see _mullion_layout / _emit_mullion_bars). Independent
     # of the frame construction, so mitered doors get them too.
-    if info.get('door_type') != 'SLAB' and mullion is not None:
+    if (info.get('door_type') != 'SLAB' and mullion is not None
+            and not lattice):
         for part in cells:
             _emit_mullion_bars(verts, faces, face_slots, part, thickness,
                                mullion,

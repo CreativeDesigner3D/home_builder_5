@@ -5204,6 +5204,16 @@ class Face_Frame_Door_Style(PropertyGroup):
                 pattern=pkind['mullion'],
                 bar_width=units.inch(pkind.get('bar_width', 0.875)),
                 depth=eff_panel_inset)
+        # Lattice: the staves replace the panel at the panel plane
+        # (door_builder._emit_lattice), carried on the mullion spec.
+        if pkind['kind'] == 'LATTICE':
+            mull = dict(
+                pattern='LATTICE',
+                bar_width=units.inch(pkind.get('stave_width', 0.625)),
+                gap=units.inch(pkind.get('stave_gap', 0.625)),
+                stave_thickness=units.inch(
+                    pkind.get('stave_thickness', 0.0625)),
+                depth=eff_panel_inset)
         # Shape-width series (Konza): Glass / Speaker Cloth adds an inner
         # hardwood trim frame inside the opening (catalog total width
         # minus the outer member) - rendered as a FRAME border of bars
