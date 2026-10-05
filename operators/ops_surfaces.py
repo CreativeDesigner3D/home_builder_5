@@ -32,7 +32,7 @@ from gpu_extras.batch import batch_for_shader
 from mathutils import Vector
 from mathutils.geometry import intersect_line_plane
 
-from .. import backsplash, cutters, units
+from .. import backsplash, cutters, hb_gpu_ui, units
 from ..product_libraries.common import countertop_common
 from .. import surface_materials as sm
 
@@ -290,6 +290,7 @@ COL_EDGE = (0.15, 0.65, 1.0, 1.0)
 COL_HOT = (1.0, 0.75, 0.15, 1.0)
 COL_TEXT = (1.0, 1.0, 1.0, 1.0)
 COL_LABEL_BG = (0.0, 0.0, 0.0, 0.65)
+LABEL_PX = 13.0
 
 
 def _thick_line(shader, a, b, width):
@@ -332,6 +333,9 @@ def _draw_edit(op):
     if context.region != op.region:
         return
     region, rv3d = context.region, context.region_data
+    # Device pixels: track the UI scale or the readout is unreadable
+    # on a high-DPI display.
+    ui = hb_gpu_ui.scale()
 
     def to2d(p):
         return view3d_utils.location_3d_to_region_2d(region, rv3d, p)
@@ -341,9 +345,9 @@ def _draw_edit(op):
     if op.readout and active is not None and 0 <= active < len(op.handles):
         pos = to2d(op.handles[active]['world'])
         if pos is not None:
-            blf.size(0, 13)
+            blf.size(0, LABEL_PX * ui)
             tw, th = blf.dimensions(0, op.readout)
-            label = (pos.x + 14.0, pos.y + 14.0, tw, th)
+            label = (pos.x + 14.0 * ui, pos.y + 14.0 * ui, tw, th)
 
     gpu.state.blend_set('ALPHA')
     shader = gpu.shader.from_builtin('UNIFORM_COLOR')
@@ -370,13 +374,14 @@ def _draw_edit(op):
         if label is not None:
             x, y, tw, th = label
             shader.uniform_float("color", COL_LABEL_BG)
-            _quad(shader, x - 5.0, y - 4.0, tw + 10.0, th + 8.0)
+            _quad(shader, x - 5.0 * ui, y - 4.0 * ui, tw + 10.0 * ui,
+                  th + 8.0 * ui)
     finally:
         gpu.state.blend_set('NONE')
 
     if label is not None:
         x, y, _tw, _th = label
-        blf.size(0, 13)
+        blf.size(0, LABEL_PX * ui)
         blf.color(0, *COL_TEXT)
         blf.position(0, x, y, 0)
         blf.draw(0, op.readout)
@@ -739,6 +744,9 @@ def _draw_countertop_edit(op):
     if context.region != op.region:
         return
     region, rv3d = context.region, context.region_data
+    # Device pixels: track the UI scale or the readout is unreadable
+    # on a high-DPI display.
+    ui = hb_gpu_ui.scale()
 
     def to2d(p):
         return view3d_utils.location_3d_to_region_2d(region, rv3d, p)
@@ -751,9 +759,9 @@ def _draw_countertop_edit(op):
     if text and active is not None and 0 <= active < len(op.handles):
         pos = to2d(op.handles[active]['world'])
         if pos is not None:
-            blf.size(0, 13)
+            blf.size(0, LABEL_PX * ui)
             tw, th = blf.dimensions(0, text)
-            label = (pos.x + 14.0, pos.y + 14.0, tw, th)
+            label = (pos.x + 14.0 * ui, pos.y + 14.0 * ui, tw, th)
 
     gpu.state.blend_set('ALPHA')
     shader = gpu.shader.from_builtin('UNIFORM_COLOR')
@@ -831,13 +839,14 @@ def _draw_countertop_edit(op):
         if label is not None:
             x, y, tw, th = label
             shader.uniform_float("color", COL_LABEL_BG)
-            _quad(shader, x - 5.0, y - 4.0, tw + 10.0, th + 8.0)
+            _quad(shader, x - 5.0 * ui, y - 4.0 * ui, tw + 10.0 * ui,
+                  th + 8.0 * ui)
     finally:
         gpu.state.blend_set('NONE')
 
     if label is not None:
         x, y, _tw, _th = label
-        blf.size(0, 13)
+        blf.size(0, LABEL_PX * ui)
         blf.color(0, *COL_TEXT)
         blf.position(0, x, y, 0)
         blf.draw(0, text)
