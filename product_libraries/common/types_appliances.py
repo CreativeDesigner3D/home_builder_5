@@ -224,26 +224,46 @@ class Sink(Appliance):
 
 class WashingMachine(Appliance):
     """Clothes washing machine."""
-    
+
     width = inch(27)
     height = inch(38)
     depth = inch(30)
-    
+
+    APPLIANCE_TYPE = 'WASHING_MACHINE'
+
     def create(self, name="Washing Machine"):
-        self.create_appliance(name, 'WASHING_MACHINE')
-        
+        self.create_appliance(name, 'WASHING_MACHINE', label='WASHER')
+
         self.add_property('Front Load', 'CHECKBOX', True)
 
 
 class Dryer(Appliance):
     """Clothes dryer."""
-    
+
     width = inch(27)
     height = inch(38)
     depth = inch(30)
-    
+
+    APPLIANCE_TYPE = 'DRYER'
+
     def create(self, name="Dryer"):
         self.create_appliance(name, 'DRYER')
-        
+
         self.add_property('Front Load', 'CHECKBOX', True)
+        self.add_property('Gas', 'CHECKBOX', False)
+
+
+class StackedWasherDryer(Appliance):
+    """A front-load washer with its dryer stacked on top, as one unit --
+    freestanding, or housed in a tall cabinet's appliance opening."""
+
+    width = inch(27)
+    height = inch(77)
+    depth = inch(30)
+
+    APPLIANCE_TYPE = 'STACKED_LAUNDRY'
+
+    def create(self, name="Stacked Washer Dryer"):
+        self.create_appliance(name, 'STACKED_LAUNDRY',
+                              label='WASHER / DRYER')
         self.add_property('Gas', 'CHECKBOX', False)

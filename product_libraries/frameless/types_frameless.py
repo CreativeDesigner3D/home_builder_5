@@ -487,6 +487,44 @@ class RefrigeratorCabinet(Cabinet):
                 solver_frameless.attach_cage(door_drawer.obj, child)
 
 
+# Laundry: a tall cabinet built like the refrigerator cabinet, its open
+# bottom opening housing a stacked washer and dryer.
+LAUNDRY_CABINET = 'Tall Laundry'
+LAUNDRY_CABINET_WIDTH = inch(32.0)
+LAUNDRY_OPENING_HEIGHT = inch(78.0)
+
+
+class LaundryCabinet(RefrigeratorCabinet):
+    """A stacked washer and dryer housed in a tall cabinet, doors over
+    it."""
+
+    def __init__(self):
+        super().__init__()
+        self.width = LAUNDRY_CABINET_WIDTH
+
+    def create(self, name="Laundry Cabinet"):
+        super().create(name)
+        self.obj['IS_LAUNDRY_CABINET'] = True
+
+    def add_openings(self):
+        top_doors = Doors()
+        top_doors.half_overlay_bottom = True
+        top_doors.door_pull_location = "Upper"
+        splitter = SplitterVertical()
+        splitter.splitter_qty = 1
+        splitter.opening_sizes = [0, LAUNDRY_OPENING_HEIGHT]
+        splitter.opening_inserts = [top_doors, None]
+        splitter.create()
+        for (role, index), opening in solver_frameless.split_parts(
+                splitter.obj).items():
+            if role == 'OPENING' and index == 2:
+                opening['APPLIANCE_OPENING'] = 'STACKED_LAUNDRY'
+        for child in self.obj.children_recursive:
+            if 'IS_FRAMELESS_BAY_CAGE' in child:
+                splitter.obj.parent = child
+                solver_frameless.attach_cage(splitter.obj, child)
+
+
 # Column refrigeration: a tall cabinet whose bottom opening houses a
 # panel-ready column unit, with doors over it.
 COLUMN_UNITS = {

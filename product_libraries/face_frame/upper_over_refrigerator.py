@@ -42,7 +42,8 @@ MAX_BAY_WIDTH = inch(36.0)
 def _is_standalone_refrigerator(obj):
     if not obj.get('IS_APPLIANCE'):
         return False
-    if obj.get('APPLIANCE_TYPE') != 'REFRIGERATOR':
+    # A stacked washer/dryer takes an upper over it the same way.
+    if obj.get('APPLIANCE_TYPE') not in ('REFRIGERATOR', 'STACKED_LAUNDRY'):
         return False
     # One housed in a cabinet belongs to that cabinet, not the wall run.
     return not obj.get(appliance_geo.CABINET_APPLIANCE_FLAG)

@@ -188,6 +188,10 @@ TALL_PRESETS = {
     'BUILT_IN_REFRIGERATOR':      H(L('DOUBLE_DOOR'),
                                     L('APPLIANCE', size_role='REFRIGERATOR',
                                       accessory_label='REFRIGERATOR')),
+    # Laundry cabinet: the same, the zone housing a stacked washer/dryer.
+    'BUILT_IN_LAUNDRY':           H(L('DOUBLE_DOOR'),
+                                    L('APPLIANCE', size_role='REFRIGERATOR',
+                                      accessory_label='WASHER / DRYER')),
     'DOORS_WITH_TALL_PULLOUT':    H(L('DOUBLE_DOOR'), L('PULLOUT')),
     'TALL_PULLOUT':               L('PULLOUT'),
     'OPEN_WITH_SHELVES':          L('OPEN_WITH_SHELVES'),
@@ -499,6 +503,8 @@ def default_bay_config(cabinet_name, bay_width):
         return 'DOUBLE_STACKED_DOOR' if is_wide else 'LEFT_STACKED_DOOR'
     if cabinet_name == 'Refrigerator Cabinet':
         return 'BUILT_IN_REFRIGERATOR'
+    if cabinet_name == 'Laundry Cabinet':
+        return 'BUILT_IN_LAUNDRY'
     if cabinet_name.startswith('Galley IWS'):
         # Workstation sink base: doors in every opening; the sink rides
         # above them between the aprons.

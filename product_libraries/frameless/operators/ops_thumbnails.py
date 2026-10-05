@@ -27,14 +27,8 @@ from . import ops_placement
 
 
 # Catalog names that are appliances rather than cabinets, and the type
-# the appliance dispatch wants for them (mirrors draw_cabinet).
-APPLIANCE_NAMES = {
-    'Range': 'RANGE',
-    'Dishwasher': 'DISHWASHER',
-    'Under Counter Appliance': 'UNDER_COUNTER',
-    'Refrigerator': 'REFRIGERATOR',
-    'Range Hood': 'HOOD',
-}
+# the appliance dispatch wants for them (shared with draw_cabinet).
+APPLIANCE_NAMES = ops_placement.APPLIANCE_NAMES
 
 
 def cabinet_type_for(name):

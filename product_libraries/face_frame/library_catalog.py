@@ -77,6 +77,10 @@ SECTIONS = (
             # Generic under-counter appliance (beverage centre, wine
             # fridge, ice maker) - relabel after placing via Set Label.
             ("", (("Under Counter", "Under Counter Appliance"),)),
+            ("Laundry", (("Washer", "Washer"),
+                         ("Dryer", "Dryer"),
+                         ("Stacked", "Stacked Washer Dryer"),
+                         ("Laundry Tall", "Laundry Cabinet"))),
         ),
     },
     {

@@ -12879,7 +12879,8 @@ class FaceFrameCabinet(GeoNodeCage):
                       - rect['reveal_bottom'])
             props = opening_obj.face_frame_opening
             if opening_obj.get('SIZE_ROLE') == 'REFRIGERATOR':
-                kind = 'REFRIGERATOR'
+                kind = HOUSED_APPLIANCE_BY_CLASS.get(
+                    self.obj.get('CLASS_NAME'), 'REFRIGERATOR')
             elif props.front_type == 'APPLIANCE':
                 choice = props.appliance_kind
                 if choice == 'AUTO':
@@ -16033,6 +16034,10 @@ class RefrigeratorCabinet(TallFaceFrameCabinet):
             props = scene.hb_face_frame
             self.default_width = props.refrigerator_cabinet_width
 
+    def default_opening_height(self, scene_props):
+        """The appliance opening's height a new cabinet starts with."""
+        return scene_props.refrigerator_height
+
     def create(self, name="Refrigerator Cabinet", bay_qty=1):
         self.create_cabinet_root(name)
         cab_props = self.obj.face_frame_cabinet
@@ -16058,11 +16063,11 @@ class RefrigeratorCabinet(TallFaceFrameCabinet):
             # Seed the per-cabinet opening height from the scene default
             # via dict-set so its update callback (which would walk for a
             # not-yet-built opening node) doesn't fire mid-create.
-            cab_props['refrigerator_opening_height'] = (
-                scene.hb_face_frame.refrigerator_height)
+            opening_h = self.default_opening_height(scene.hb_face_frame)
+            cab_props['refrigerator_opening_height'] = opening_h
             cab_props.back_bottom_inset = (
                 cab_props.toe_kick_height
-                + scene.hb_face_frame.refrigerator_height
+                + opening_h
                 + cab_props.bottom_rail_width
                 - cab_props.material_thickness
             )
@@ -16106,6 +16111,33 @@ class RefrigeratorCabinet(TallFaceFrameCabinet):
         right_refrig.obj.rotation_euler.z = math.radians(90)
         right_refrig.set_input('Mirror Y', False)
         right_refrig.set_input('Mirror Z', True)
+
+
+class LaundryCabinet(RefrigeratorCabinet):
+    """Tall cabinet housing a stacked washer and dryer: built exactly
+    like the refrigerator cabinet -- doors above, an open zone to the
+    floor below -- with the zone sized for the stacked pair and the
+    pair standing in it instead of a refrigerator."""
+
+    def __init__(self):
+        super().__init__()
+        scene = bpy.context.scene
+        if hasattr(scene, 'hb_face_frame'):
+            self.default_width = scene.hb_face_frame.laundry_cabinet_width
+
+    def default_opening_height(self, scene_props):
+        return scene_props.laundry_opening_height
+
+    def create(self, name="Laundry Cabinet", bay_qty=1):
+        super().create(name, bay_qty=bay_qty)
+
+
+# Cabinets with an open appliance zone pinned by refrigerator_opening_
+# height, and the appliance each one stands in that zone.
+HOUSED_APPLIANCE_BY_CLASS = {
+    'RefrigeratorCabinet': 'REFRIGERATOR',
+    'LaundryCabinet': 'STACKED_LAUNDRY',
+}
 
 
 class BuiltInTallFaceFrameCabinet(TallFaceFrameCabinet):
@@ -19182,6 +19214,7 @@ CABINET_NAME_DISPATCH = {
     "Tall": TallFaceFrameCabinet,
     "Tall Stacked": TallFaceFrameCabinet,
     "Refrigerator Cabinet": RefrigeratorCabinet,
+    "Laundry Cabinet": LaundryCabinet,
     "Built in Tall": BuiltInTallFaceFrameCabinet,
     "Panel": PanelFaceFrameCabinet,
     "Face Frame and Doors": FaceFrameAndDoorsCabinet,
@@ -19210,6 +19243,9 @@ APPLIANCE_NAME_DISPATCH = {
     "Range Hood": types_appliances.Hood,
     "Standalone Refrigerator": types_appliances.Refrigerator,
     "Under Counter Appliance": types_appliances.UnderCounterAppliance,
+    "Washer": types_appliances.WashingMachine,
+    "Dryer": types_appliances.Dryer,
+    "Stacked Washer Dryer": types_appliances.StackedWasherDryer,
 }
 
 
@@ -19379,6 +19415,7 @@ WRAP_CLASS_REGISTRY.update({
     'UpperFaceFrameCabinet': UpperFaceFrameCabinet,
     'TallFaceFrameCabinet': TallFaceFrameCabinet,
     'RefrigeratorCabinet': RefrigeratorCabinet,
+    'LaundryCabinet': LaundryCabinet,
     'BuiltInTallFaceFrameCabinet': BuiltInTallFaceFrameCabinet,
     'BookcaseFaceFrameCabinet': BookcaseFaceFrameCabinet,
     'LapDrawerFaceFrameCabinet': LapDrawerFaceFrameCabinet,

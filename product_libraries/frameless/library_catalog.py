@@ -104,6 +104,11 @@ SECTIONS = (
                   ("Refrigerator", "Refrigerator", "Refrigerator"),
                   ("Range", "Range", "Range"),
                   ("Range Hood", "Range Hood", "Range Hood"))),
+            ("Laundry", (("Washer", "Washer", "Washer"),
+                         ("Dryer", "Dryer", "Dryer"),
+                         ("Stacked", "Stacked Washer Dryer",
+                          "Stacked Washer Dryer"),
+                         ("Laundry Tall", "Tall Laundry", "Tall Laundry"))),
         ),
     },
     {

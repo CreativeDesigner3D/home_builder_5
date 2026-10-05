@@ -68,7 +68,11 @@ GEO_CHILD_FLAG = "IS_APPLIANCE_GEO"
 MODEL_PANEL_READY_FLAG = "APPLIANCE_MODEL_PANEL_READY"
 
 SUPPORTED_TYPES = {'REFRIGERATOR', 'RANGE', 'DISHWASHER', 'UNDER_COUNTER',
-                   'HOOD', 'SINK', 'WALL_OVEN', 'MICROWAVE', 'COOKTOP'}
+                   'HOOD', 'SINK', 'WALL_OVEN', 'MICROWAVE', 'COOKTOP',
+                   'WASHING_MACHINE', 'DRYER', 'STACKED_LAUNDRY'}
+
+# Laundry: the washer, the dryer and the two stacked as one unit.
+LAUNDRY_TYPES = {'WASHING_MACHINE', 'DRYER', 'STACKED_LAUNDRY'}
 
 # Appliances that can wear cabinet door panels instead of their own
 # front. Matches what the appliance-panels product accepts.
@@ -137,6 +141,12 @@ DISPLAY_W = inch(5.0)
 DISPLAY_H = inch(1.5)
 KNOB_R = inch(0.875)
 KNOB_DEPTH = inch(1.25)
+LAUNDRY_FRONT_T = inch(0.75)      # the front panel standing on the case
+LAUNDRY_CONTROL_H = inch(4.5)     # a front loader's control band
+LAUNDRY_CONSOLE_H = inch(6.0)     # a top loader's console, on the case top
+LAUNDRY_CONSOLE_D = inch(4.0)
+LAUNDRY_DOOR_R = inch(10.5)       # the round door's outside radius
+LAUNDRY_STACK_GAP = inch(0.5)     # between a stacked washer and dryer
 
 
 # ---------------------------------------------------------------------------
@@ -233,6 +243,15 @@ CONTROL_STYLE_ITEMS = [
     ('FRONT', "Front", "Control panel across the front above the door"),
 ]
 
+LAUNDRY_STYLE_ITEMS = [
+    ('FRONT_LOAD', "Front Load", "Round door in the front and the controls "
+                                 "across the top of it, as a stackable "
+                                 "pair is built"),
+    ('TOP_LOAD', "Top Load / Console", "Controls on a console at the back "
+                                       "of the top; a washer loads through "
+                                       "a lid, a dryer through its door"),
+]
+
 BURNER_STYLE_ITEMS = [
     ('GAS', "Gas", "Grates over sealed burners"),
     ('ELECTRIC', "Electric", "Coil elements"),
@@ -323,7 +342,16 @@ _COOKTOP_DEFAULTS = dict(_COMMON_DEFAULTS, **{
     'counter_thickness': inch(1.5),
 })
 
+_LAUNDRY_DEFAULTS = dict(_COMMON_DEFAULTS, **{
+    'finish': 'WHITE',
+    'laundry_style': 'FRONT_LOAD',
+    'pedestal_height': 0.0,
+})
+
 _DEFAULTS_BY_TYPE = {
+    'WASHING_MACHINE': _LAUNDRY_DEFAULTS,
+    'DRYER': _LAUNDRY_DEFAULTS,
+    'STACKED_LAUNDRY': _LAUNDRY_DEFAULTS,
     'SINK': _SINK_DEFAULTS,
     'COOKTOP': _COOKTOP_DEFAULTS,
     'WALL_OVEN': _OVEN_DEFAULTS,
@@ -1134,7 +1162,8 @@ CABINET_APPLIANCE_PROUD = inch(2.5)   # a built-in's doors stand this far
 
 _OPENING_APPLIANCE_CLASSES = {'REFRIGERATOR': 'Refrigerator', 'SINK': 'Sink',
                               'WALL_OVEN': 'WallOven',
-                              'MICROWAVE': 'Microwave'}
+                              'MICROWAVE': 'Microwave',
+                              'STACKED_LAUNDRY': 'StackedWasherDryer'}
 
 
 def opening_appliance(opening_obj):
@@ -2588,6 +2617,151 @@ def _build_under_counter(cage_obj, opts):
 
 
 # ---------------------------------------------------------------------------
+# Laundry (washer, dryer, stacked pair)
+# ---------------------------------------------------------------------------
+
+def _half(value):
+    return ('(%s) * 0.5' % value if isinstance(value, str)
+            else value * 0.5)
+
+
+def _place_driven(cg, obj, axis, value):
+    if isinstance(value, str):
+        _CageWrap(obj).driver_location(axis, value, cg.vars_for(value))
+    else:
+        setattr(obj.location, axis, value)
+
+
+def _laundry_door(cg, name, metal, dark, radius, x, z):
+    """The round door: a metal bezel ring standing off the front with a
+    dark window set into it. Fixed size, built along +Z from the face
+    like a knob and stood up onto the front; ``x`` / ``z`` place its
+    centre and may be expressions."""
+    verts, faces = [], []
+    smooth, dark_faces = set(), set()
+    inner = radius * 0.72
+    side, _caps = _revolve(verts, faces,
+                           [(inner, inch(0.25)), (radius, 0.0),
+                            (radius, inch(0.6)),
+                            (inner + inch(0.75), inch(1.0)),
+                            (inner, inch(1.0)), (inner, inch(0.25))],
+                           segments=48, caps=False)
+    smooth.update(side)
+    side, caps = _revolve(verts, faces, [(inner, inch(0.25)),
+                                         (inner, inch(0.5))], segments=48)
+    smooth.update(side)
+    dark_faces.update(side + caps)
+    obj = _mesh_child(cg, name, verts, faces, metal, extra_mats=(dark,),
+                      face_mats={i: 1 for i in dark_faces},
+                      smooth_faces=smooth)
+    obj.rotation_euler.x = math.radians(90)
+    _place_driven(cg, obj, 'x', x)
+    _place_driven(cg, obj, 'y', '-dim_y')
+    _place_driven(cg, obj, 'z', z)
+    return obj
+
+
+def _laundry_controls(cg, name, metal, dark, y, z):
+    """A knob and a readout across a control face at depth ``y``."""
+    for obj, fx in ((_knob(cg, "%s Knob" % name, metal, dark), 0.42),
+                    (_display(cg, "%s Display" % name, dark,
+                              _display_material()), 0.72)):
+        obj.rotation_euler.x = math.radians(90)
+        _place_driven(cg, obj, 'x', 'dim_x * %f' % fx)
+        _place_driven(cg, obj, 'y', y)
+        _place_driven(cg, obj, 'z', z)
+
+
+def _laundry_unit(cg, opts, kind, z0, height, front_load, size):
+    """One machine from ``z0`` up ``height`` (numbers or expressions):
+    a case, a front, the controls and the door. ``size`` is the cage's
+    (width, front height) now, for the fixed-size round door."""
+    mat = _finish_material(opts)
+    dark = _dark_material()
+    metal = _metal_material()
+    name = "Washer" if kind == 'WASHING_MACHINE' else "Dryer"
+    t = LAUNDRY_FRONT_T
+    ctrl = LAUNDRY_CONTROL_H if front_load else 0.0
+    console = 0.0 if front_load else LAUNDRY_CONSOLE_H
+    body_h = _sub(height, console) if console else height
+    top = _add(z0, body_h)
+    _flat(cg, "%s Case" % name, 0.0, 0.0, z0, 'dim_x', 'dim_y - %f' % t,
+          body_h, mat)
+
+    front_h = _sub(body_h, ctrl + GAP) if ctrl else body_h
+    _front(cg, "%s Front" % name, 0.0, z0, 'dim_x', front_h, t, mat)
+    if front_load:
+        _front(cg, "%s Controls" % name, 0.0, _sub(top, ctrl), 'dim_x',
+               ctrl, t, mat)
+        _laundry_controls(cg, name, metal, dark, '-dim_y',
+                          _sub(top, ctrl * 0.5))
+        if kind == 'WASHING_MACHINE':
+            # The detergent drawer, at the left of the control band.
+            _front(cg, "Detergent Drawer", inch(1.0),
+                   _sub(top, ctrl - inch(0.5)), inch(7.0),
+                   ctrl - inch(1.0), inch(0.25), mat, proud=True)
+    else:
+        _flat(cg, "%s Console" % name, 0.0, 0.0, top, 'dim_x',
+              LAUNDRY_CONSOLE_D, console, mat)
+        _laundry_controls(cg, name, metal, dark,
+                          -LAUNDRY_CONSOLE_D, _add(top, console * 0.5))
+
+    if kind == 'WASHING_MACHINE' and not front_load:
+        # A top loader's lid, on a dark seam so it reads as a lid.
+        y_back = -(LAUNDRY_CONSOLE_D + inch(1.0))
+        _flat(cg, "Washer Lid Seam", inch(1.25), y_back + inch(0.25), top,
+              'dim_x - %f' % inch(2.5),
+              'dim_y - %f' % (LAUNDRY_CONSOLE_D + inch(2.0)), inch(0.03),
+              dark)
+        _flat(cg, "Washer Lid", inch(1.5), y_back, _add(top, inch(0.03)),
+              'dim_x - %f' % inch(3.0),
+              'dim_y - %f' % (LAUNDRY_CONSOLE_D + inch(2.5)), inch(0.375),
+              mat)
+        return
+
+    width_now, front_now = size
+    radius = max(min(LAUNDRY_DOOR_R, width_now * 0.4, front_now * 0.42),
+                 inch(4.0))
+    _laundry_door(cg, "%s Door" % name, metal, dark, radius,
+                  'dim_x * 0.5', _add(z0, _half(front_h)))
+
+
+def _build_laundry(cage_obj, opts):
+    cg = _Cage(cage_obj)
+    wrap = _CageWrap(cage_obj)
+    width_now, height_now = wrap.get_input('Dim X'), wrap.get_input('Dim Z')
+    kind = appliance_type(cage_obj)
+    if kind == 'STACKED_LAUNDRY':
+        half = '(dim_z - %f) * 0.5' % LAUNDRY_STACK_GAP
+        unit_now = (height_now - LAUNDRY_STACK_GAP) * 0.5
+        size = (width_now, unit_now - LAUNDRY_CONTROL_H - GAP)
+        _laundry_unit(cg, opts, 'WASHING_MACHINE', 0.0, half, True, size)
+        _flat(cg, "Stacking Kit", 0.0, 0.0, half, 'dim_x',
+              'dim_y - %f' % LAUNDRY_FRONT_T, LAUNDRY_STACK_GAP,
+              _dark_material())
+        _laundry_unit(cg, opts, 'DRYER',
+                      '(dim_z + %f) * 0.5' % LAUNDRY_STACK_GAP, half, True,
+                      size)
+        return
+    front_load = opts.get('laundry_style', 'FRONT_LOAD') == 'FRONT_LOAD'
+    pedestal = float(opts.get('pedestal_height', 0.0)) if front_load else 0.0
+    z0 = 0.0
+    if pedestal > 0.0:
+        mat = _finish_material(opts)
+        _flat(cg, "Pedestal Case", 0.0, 0.0, 0.0, 'dim_x',
+              'dim_y - %f' % LAUNDRY_FRONT_T, pedestal - GAP, mat)
+        _front(cg, "Pedestal Drawer", 0.0, 0.0, 'dim_x', pedestal - GAP,
+               LAUNDRY_FRONT_T, mat)
+        _bar_handle(cg, "Pedestal Handle", opts, _metal_material(),
+                    inch(4.0), pedestal - GAP - inch(3.0),
+                    'dim_x - %f' % inch(8.0), False)
+        z0 = pedestal
+    ctrl = LAUNDRY_CONTROL_H if front_load else LAUNDRY_CONSOLE_H
+    _laundry_unit(cg, opts, kind, z0, 'dim_z - %f' % z0, front_load,
+                  (width_now, height_now - z0 - ctrl - GAP))
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -2601,6 +2775,9 @@ _BUILDERS = {
     'RANGE': _build_range,
     'DISHWASHER': _build_dishwasher,
     'UNDER_COUNTER': _build_under_counter,
+    'WASHING_MACHINE': _build_laundry,
+    'DRYER': _build_laundry,
+    'STACKED_LAUNDRY': _build_laundry,
 }
 
 
@@ -2770,6 +2947,14 @@ class HOME_BUILDER_OT_appliance_prompts(bpy.types.Operator):
         name="Rack Rows", min=1, max=12,
         description="Wine rack slats visible behind a glass door")  # type: ignore
 
+    # Laundry
+    laundry_style: EnumProperty(name="Style", items=LAUNDRY_STYLE_ITEMS,
+                                default='FRONT_LOAD')  # type: ignore
+    pedestal_height: FloatProperty(
+        name="Pedestal", unit='LENGTH', precision=5, min=0.0,
+        description="Storage drawer pedestal under a front loader, 0 for "
+                    "none")  # type: ignore
+
     # Dishwasher
     control_style: EnumProperty(name="Controls", items=CONTROL_STYLE_ITEMS,
                                 default='TOP')  # type: ignore
@@ -2925,7 +3110,9 @@ class HOME_BUILDER_OT_appliance_prompts(bpy.types.Operator):
                       icon='INFO')
             return
         col.prop(self, 'finish')
-        if appl not in ('HOOD', 'SINK', 'COOKTOP'):
+        if appl not in ('HOOD', 'SINK', 'COOKTOP') and not (
+                appl in LAUNDRY_TYPES and (self.pedestal_height <= 0.0
+                                           or appl == 'STACKED_LAUNDRY')):
             col.prop(self, 'handle_style')
 
         if supports_panels(self.appliance):
@@ -2990,6 +3177,10 @@ class HOME_BUILDER_OT_appliance_prompts(bpy.types.Operator):
                 elif self.uc_kind == 'BEVERAGE':
                     col.prop(self, 'shelf_count')
             col.prop(self, 'kick_height')
+        elif appl in ('WASHING_MACHINE', 'DRYER'):
+            col.prop(self, 'laundry_style')
+            if self.laundry_style == 'FRONT_LOAD':
+                col.prop(self, 'pedestal_height')
         elif appl == 'DISHWASHER':
             col.prop(self, 'control_style')
             if self.control_style == 'FRONT':

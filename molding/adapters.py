@@ -401,7 +401,8 @@ def build_facts(scene, members):
             if getattr(ffc, 'corner_type', 'NONE') != 'NONE':
                 corner = {'ld': ffc.left_depth, 'rd': ffc.right_depth,
                           'diagonal': ffc.corner_type == 'DIAGONAL'}
-            if obj.get('CLASS_NAME') == 'RefrigeratorCabinet':
+            if obj.get('CLASS_NAME') in ('RefrigeratorCabinet',
+                                         'LaundryCabinet'):
                 # The end stiles run to the floor and carry molding
                 # like legs; the opening between them (where the
                 # refrigerator sits) has no kick face behind it, so it

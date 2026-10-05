@@ -45,6 +45,7 @@ RENDERABLE_CATALOG = (
     # appliance products. Built and populated via the bay preset path.
     "Built in Tall",
     "Refrigerator Cabinet",
+    "Laundry Cabinet",
     "Sink",
     # Vanity products - standard base cabinets with a vanity bay preset.
     "Special",

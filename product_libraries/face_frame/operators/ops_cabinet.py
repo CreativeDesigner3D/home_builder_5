@@ -4075,10 +4075,17 @@ def _build_recipe_into(recipe, parent_obj, child_index,
             props.size = bpy.context.scene.hb_face_frame.upper_top_stacked_cabinet_height
         elif size_role == 'REFRIGERATOR':
             # Pins the bottom appliance opening of a refrigerator
-            # cabinet to the scene's refrigerator_height so the
-            # door zone above flexes with the cabinet height.
+            # cabinet to its opening height (seeded from the scene's
+            # refrigerator_height, or the laundry height for a laundry
+            # cabinet) so the door zone above flexes with the cabinet
+            # height.
             props.unlock_size = True
-            props.size = bpy.context.scene.hb_face_frame.refrigerator_height
+            root = types_face_frame.find_cabinet_root(props.id_data)
+            if (root is not None and root.get('CLASS_NAME')
+                    in types_face_frame.HOUSED_APPLIANCE_BY_CLASS):
+                props.size = root.face_frame_cabinet.refrigerator_opening_height
+            else:
+                props.size = bpy.context.scene.hb_face_frame.refrigerator_height
         elif size_role == 'GARAGE_BOTTOM':
             # Pins a garage opening to the cabinet's stored counter
             # extension (written by the Appliance Garage toggle) minus

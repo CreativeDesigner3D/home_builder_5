@@ -6550,7 +6550,8 @@ def _update_opening_size(self, context):
     if obj.get('SIZE_ROLE') == 'REFRIGERATOR':
         root = types_face_frame.find_cabinet_root(obj)
         if (root is not None
-                and root.get('CLASS_NAME') == 'RefrigeratorCabinet'
+                and root.get('CLASS_NAME')
+                in types_face_frame.HOUSED_APPLIANCE_BY_CLASS
                 and id(root) not in types_face_frame._DISTRIBUTING_WIDTHS):
             cab = root.face_frame_cabinet
             if abs(cab.refrigerator_opening_height - self.size) > 1e-6:
@@ -11948,6 +11949,23 @@ class Face_Frame_Scene_Props(PropertyGroup):
         precision=4,
     )  # type: ignore
 
+    laundry_opening_height: FloatProperty(
+        name="Laundry Opening Height",
+        description="Default height of a laundry cabinet's open zone, "
+                    "where the stacked washer and dryer stand",
+        default=units.inch(78.0),
+        unit='LENGTH',
+        precision=4,
+    )  # type: ignore
+
+    laundry_cabinet_width: FloatProperty(
+        name="Laundry Cabinet Width",
+        description="Default laundry cabinet width",
+        default=units.inch(32.0),
+        unit='LENGTH',
+        precision=4,
+    )  # type: ignore
+
     range_width: FloatProperty(
         name="Range Width",
         description="Default range width",
@@ -12179,6 +12197,12 @@ class Face_Frame_Scene_Props(PropertyGroup):
                 row = abox.row()
                 row.label(text="Refrigerator Opening Width:")
                 row.label(text=units.unit_to_string(unit_settings, opening))
+            row = abox.row()
+            row.label(text="Laundry Opening Height:")
+            row.prop(self, 'laundry_opening_height', text="")
+            row = abox.row()
+            row.label(text="Laundry Cabinet Width:")
+            row.prop(self, 'laundry_cabinet_width', text="")
             row = abox.row()
             row.label(text="Dishwasher / Range:")
             row.prop(self, 'dishwasher_width', text="")

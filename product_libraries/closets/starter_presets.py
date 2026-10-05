@@ -74,6 +74,23 @@ PART_SECTIONS = [
          "A hanging rod in an opening at the height it is dropped",
          'hb_closets.add_part', {'part_type': 'ROD'}),
     ]),
+    # The shared laundry appliances and the tall cabinet housing a stacked
+    # pair, placed through the frameless library's placement.
+    ("Laundry", [
+        ('Washer', "Washer",
+         "A washing machine, front or top load",
+         'hb_frameless.draw_cabinet', {'cabinet_name': 'Washer'}),
+        ('Dryer', "Dryer",
+         "A clothes dryer",
+         'hb_frameless.draw_cabinet', {'cabinet_name': 'Dryer'}),
+        ('Stacked Washer Dryer', "Stacked",
+         "A washer with its dryer stacked on top",
+         'hb_frameless.draw_cabinet', {'cabinet_name': 'Stacked Washer Dryer'}),
+        ('Tall Laundry', "Laundry Tall",
+         "A tall cabinet with doors over an open zone housing a stacked "
+         "washer and dryer",
+         'hb_frameless.draw_cabinet', {'cabinet_name': 'Tall Laundry'}),
+    ]),
 ]
 
 # Flat list retained for anything iterating the whole catalog

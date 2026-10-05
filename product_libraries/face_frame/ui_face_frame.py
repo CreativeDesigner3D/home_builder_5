@@ -537,11 +537,13 @@ def draw_refrigerator_options(layout, root):
     carcass back in sync. Raise Left / Right lift that side's carcass side
     panel AND end stile to the top of the opening, so the side spans only the
     door zone above the fridge (handy for sliding a wider unit past one end)."""
-    if root.get('CLASS_NAME') != 'RefrigeratorCabinet':
+    if root.get('CLASS_NAME') not in ('RefrigeratorCabinet',
+                                      'LaundryCabinet'):
         return
     cab = root.face_frame_cabinet
     box = layout.box()
-    box.label(text="Refrigerator", icon='MOD_BUILD')
+    box.label(text=("Laundry" if root.get('CLASS_NAME') == 'LaundryCabinet'
+                    else "Refrigerator"), icon='MOD_BUILD')
     box.prop(cab, 'refrigerator_opening_height', text="Opening Height")
     row = box.row(align=True)
     row.label(text="Raise Side Up:")

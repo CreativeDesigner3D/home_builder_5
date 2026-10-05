@@ -331,6 +331,22 @@ APPLIANCE_CLASSES = {
     'WALL_OVEN': types_appliances.WallOven,
     'MICROWAVE': types_appliances.Microwave,
     'SINK': types_appliances.Sink,
+    'WASHING_MACHINE': types_appliances.WashingMachine,
+    'DRYER': types_appliances.Dryer,
+    'STACKED_LAUNDRY': types_appliances.StackedWasherDryer,
+}
+
+# Catalog names that place an appliance rather than a cabinet, and the
+# appliance type each one is. The thumbnail renderer reads it too.
+APPLIANCE_NAMES = {
+    'Range': 'RANGE',
+    'Dishwasher': 'DISHWASHER',
+    'Under Counter Appliance': 'UNDER_COUNTER',
+    'Refrigerator': 'REFRIGERATOR',
+    'Range Hood': 'HOOD',
+    'Washer': 'WASHING_MACHINE',
+    'Dryer': 'DRYER',
+    'Stacked Washer Dryer': 'STACKED_LAUNDRY',
 }
 
 
@@ -406,6 +422,8 @@ def build_cabinet_for(cabinet_name, cabinet_type, is_appliance=False,
     elif cabinet_type == 'TALL':
         if cabinet_name == 'Refrigerator Cabinet':
             cabinet = types_frameless.RefrigeratorCabinet()
+        elif cabinet_name == types_frameless.LAUNDRY_CABINET:
+            cabinet = types_frameless.LaundryCabinet()
         elif cabinet_name in types_frameless.APPLIANCE_TOWERS:
             cabinet = types_frameless.ApplianceTowerCabinet(cabinet_name)
         elif cabinet_name in types_frameless.COLUMN_UNITS:
@@ -866,6 +884,10 @@ class PlaceCabinetBase(WallObjectPlacementMixin):
                 self.auto_quantity = False
             elif self.cabinet_name == types_frameless.APPLIANCE_GARAGE:
                 self.individual_cabinet_width = props.default_cabinet_width
+                self.fill_mode = False
+                self.auto_quantity = False
+            elif self.cabinet_name == types_frameless.LAUNDRY_CABINET:
+                self.individual_cabinet_width = types_frameless.LAUNDRY_CABINET_WIDTH
                 self.fill_mode = False
                 self.auto_quantity = False
             elif self.cabinet_name in types_frameless.COLUMN_UNITS:
@@ -2518,13 +2540,7 @@ class hb_frameless_OT_draw_cabinet(bpy.types.Operator):
             bpy.ops.hb_closets.place_slab_countertop('INVOKE_DEFAULT')
             return {'FINISHED'}
         # Map appliance names to types
-        appliance_map = {
-            'Range': 'RANGE',
-            'Dishwasher': 'DISHWASHER',
-            'Under Counter Appliance': 'UNDER_COUNTER',
-            'Refrigerator': 'REFRIGERATOR',
-            'Range Hood': 'HOOD',
-        }
+        appliance_map = APPLIANCE_NAMES
         
         # Check if this is an appliance
         is_appliance = False
