@@ -436,6 +436,7 @@ OPTION_PAGES = {
             ('distance', 'countertop_overhang_front', "Front Overhang"),
             ('distance', 'countertop_overhang_sides', "Side Overhang"),
             ('distance', 'countertop_overhang_back', "Back Overhang"),
+            ('enum', 'countertop_material', "Material"),
             ('actions', (("Add Countertops", 'hb_frameless.add_countertops',
                           'selected_only', False),
                          ("Add to Selected", 'hb_frameless.add_countertops',

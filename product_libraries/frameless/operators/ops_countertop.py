@@ -1,6 +1,7 @@
 import bpy
 import bmesh
 import math
+from mathutils import Vector
 from .... import hb_types, hb_project, units
 from ...common import countertop_common
 
@@ -234,6 +235,69 @@ def find_adjacent_tall_cabinets(wall_obj, cabinets):
     return tall_at_left, tall_at_right
 
 
+def _x_range_on_wall(wall_obj, obj):
+    """The (min, max) x an object's bounds cover in the wall's space."""
+    to_wall = wall_obj.matrix_world.inverted() @ obj.matrix_world
+    xs = [(to_wall @ Vector(c)).x for c in obj.bound_box]
+    return min(xs), max(xs)
+
+
+def extend_run_ends(wall_obj, cabinets, start_x, end_x, cab_height,
+                    extend_left=True, extend_right=True):
+    """Widen a front-side run over what finishes its ends: applied end
+    panels on the end cabinets, and fillers or end panels standing in
+    the run at base height. A taller panel at an end stops the top the
+    way a tall cabinet does.
+
+    Returns (start_x, end_x, tall_at_left, tall_at_right)."""
+    tol = 0.005
+    tall_left = tall_right = False
+
+    for cab in cabinets:
+        for child in cab.children:
+            if extend_left and child.get('IS_APPLIED_END_LEFT'):
+                start_x = min(start_x, _x_range_on_wall(wall_obj, child)[0])
+            elif extend_right and child.get('IS_APPLIED_END_RIGHT'):
+                end_x = max(end_x, _x_range_on_wall(wall_obj, child)[1])
+
+    pieces = []
+    for child in wall_obj.children:
+        if not child.get('IS_FRAMELESS_PRODUCT_CAGE'):
+            continue
+        if child.get('PART_TYPE') not in ('PANEL', 'CORNER_FILLER'):
+            continue
+        if abs(child.rotation_euler.z) > 0.1:
+            continue
+        cage = hb_types.GeoNodeCage(child)
+        x0 = child.location.x
+        x1 = x0 + cage.get_input('Dim X')
+        top = child.location.z + cage.get_input('Dim Z')
+        if child.location.z > tol:
+            continue
+        pieces.append((x0, x1, top > cab_height + tol))
+
+    # Follow touching pieces outward, so a filler beside an end panel
+    # is covered too.
+    changed = True
+    while changed:
+        changed = False
+        for x0, x1, is_tall in pieces:
+            if extend_left and not tall_left and abs(x1 - start_x) < tol:
+                if is_tall:
+                    tall_left = True
+                else:
+                    start_x = x0
+                    changed = True
+            if extend_right and not tall_right and abs(x0 - end_x) < tol:
+                if is_tall:
+                    tall_right = True
+                else:
+                    end_x = x1
+                    changed = True
+
+    return start_x, end_x, tall_left, tall_right
+
+
 def create_wall_countertop(context, wall_obj, cabinets, has_left_conn, has_right_conn):
     """Create a countertop for cabinets on a single wall.
 
@@ -298,6 +362,16 @@ def create_wall_countertop(context, wall_obj, cabinets, has_left_conn, has_right
     cabinets_sorted = sorted(cabinets, key=lambda c: c.location.x)
     left_corner = cabinets_sorted[0] if cabinets_sorted[0].get('IS_CORNER_CABINET') else None
     right_corner = cabinets_sorted[-1] if cabinets_sorted[-1].get('IS_CORNER_CABINET') else None
+
+    # Fillers, end panels and applied ends at the run's ends are under
+    # the top too; corner ends keep the corner cabinet's own L.
+    if not is_back_side:
+        start_x, end_x, panel_tall_left, panel_tall_right = extend_run_ends(
+            wall_obj, cabinets, start_x, end_x, cab_height,
+            extend_left=left_corner is None,
+            extend_right=right_corner is None)
+        suppress_left = suppress_left or panel_tall_left
+        suppress_right = suppress_right or panel_tall_right
 
     # --- Build the countertop mesh ---
     if is_back_side:
