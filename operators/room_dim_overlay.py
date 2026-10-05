@@ -511,38 +511,43 @@ def _draw():
     except AttributeError:
         pass
     font_sz = FONT_SIZE * s
-    gpu.state.blend_set('ALPHA')
-    shader = gpu.shader.from_builtin('UNIFORM_COLOR')
-    shader.bind()
     dim_pts, cl_pts = _dim_segments(context, region,
                                     context.region_data, s)
-    from gpu_extras.batch import batch_for_shader
-    for pts, color in ((dim_pts, DIM_LINE_COLOR), (cl_pts, CL_COLOR)):
-        if pts:
-            shader.uniform_float("color", color)
-            batch_for_shader(shader, 'LINES', {"pos": pts}).draw(shader)
-    for name, kind, rect, text in labels:
-        editing = (_edit is not None and _edit['name'] == name
-                   and _edit['kind'] == kind)
-        if editing:
-            typed = _edit['typed']
-            shown = (typed + "|") if typed else text
-            blf.size(0, font_sz)
-            tw, _th = blf.dimensions(0, shown)
-            w = max(rect[2], tw + 2 * PAD_X * s)
-            rect = (rect[0], rect[1], w, rect[3])
-            _draw_label_rect(shader, rect, EDIT_BG)
-            blf.color(0, *EDIT_TEXT_COLOR)
-        else:
-            is_cl = kind in _CL_KINDS
-            _draw_label_rect(shader, rect,
-                             ACTION_BG if kind in _ACTION_KINDS else LABEL_BG,
-                             CL_BORDER if is_cl else LABEL_BORDER)
-            blf.size(0, font_sz)
-            blf.color(0, *(CL_TEXT_COLOR if is_cl else TEXT_COLOR))
-        blf.position(0, rect[0] + PAD_X * s, rect[1] + PAD_Y * s, 0)
-        blf.draw(0, text if not editing else shown)
-    gpu.state.blend_set('NONE')
+
+    def _paint():
+        gpu.state.blend_set('ALPHA')
+        shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+        shader.bind()
+        from gpu_extras.batch import batch_for_shader
+        for pts, color in ((dim_pts, DIM_LINE_COLOR), (cl_pts, CL_COLOR)):
+            if pts:
+                shader.uniform_float("color", color)
+                batch_for_shader(shader, 'LINES', {"pos": pts}).draw(shader)
+        for name, kind, rect, text in labels:
+            editing = (_edit is not None and _edit['name'] == name
+                       and _edit['kind'] == kind)
+            if editing:
+                typed = _edit['typed']
+                shown = (typed + "|") if typed else text
+                blf.size(0, font_sz)
+                tw, _th = blf.dimensions(0, shown)
+                w = max(rect[2], tw + 2 * PAD_X * s)
+                rect = (rect[0], rect[1], w, rect[3])
+                _draw_label_rect(shader, rect, EDIT_BG)
+                blf.color(0, *EDIT_TEXT_COLOR)
+            else:
+                is_cl = kind in _CL_KINDS
+                _draw_label_rect(shader, rect,
+                                 ACTION_BG if kind in _ACTION_KINDS else LABEL_BG,
+                                 CL_BORDER if is_cl else LABEL_BORDER)
+                blf.size(0, font_sz)
+                blf.color(0, *(CL_TEXT_COLOR if is_cl else TEXT_COLOR))
+            blf.position(0, rect[0] + PAD_X * s, rect[1] + PAD_Y * s, 0)
+            blf.draw(0, text if not editing else shown)
+        gpu.state.blend_set('NONE')
+
+    from . import viewport_hud
+    viewport_hud.paint_clear_of_panel(context, area, _paint)
 
 
 # ---- Commit --------------------------------------------------------------

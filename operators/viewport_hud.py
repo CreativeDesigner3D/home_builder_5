@@ -38,7 +38,8 @@ from ..hb_gpu_draw import (
 # Shared widget layer -- the same UI scale and palette the scene
 # navigator draws with, so the two surfaces cannot drift apart.
 from ..hb_gpu_ui import (Theme, scale as _s, draw_arrow_head,
-                         arc_points, draw_polyline, fit_text)
+                         arc_points, draw_polyline, fit_text,
+                         paint_outside)
 # Sibling module -- safe to import at load (scene_navigator imports viewport_hud
 # only lazily, inside its pin-toggle handler, so there's no import cycle).
 from . import scene_navigator
@@ -1759,6 +1760,21 @@ def pinned_panel_rect(context, area):
     layout = scene_navigator.build_hosted_layout(context, area, region,
                                                  ax, atop)
     return layout[0] if layout else None
+
+
+def paint_clear_of_panel(context, area, paint):
+    """Run an overlay's `paint()` everywhere but the pinned panel.
+
+    Dimension labels are region-wide POST_PIXEL drawing with no notion
+    of the chrome above them, so a label projected under the panel
+    printed straight across its rows and neither could be read. The
+    panel is opaque UI: whatever is under it stays under it.
+    """
+    try:
+        rect = pinned_panel_rect(context, area)
+    except Exception:
+        rect = None
+    paint_outside(rect, paint)
 
 
 # ---- Draw handler -----------------------------------------------------------

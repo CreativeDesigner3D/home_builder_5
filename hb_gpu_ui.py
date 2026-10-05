@@ -439,6 +439,46 @@ def end_clip_nested(prev):
     gpu.state.scissor_set(*prev)
 
 
+def paint_outside(rect, paint):
+    """Call `paint()` with everything inside `rect` masked off.
+
+    For overlays that sit UNDER a piece of chrome (dimension labels
+    under a pinned panel): one scissor box cannot have a hole in it, so
+    the region is cut into up to four strips around `rect` -- full-height
+    columns to its left and right, and the spans below and above it --
+    and `paint` runs once per strip. With `rect` None it simply runs once.
+
+    `rect` is region-local and rounded INWARD, the opposite of
+    begin_clip: the panel's own border column must stay the panel's.
+    """
+    if rect is None:
+        paint()
+        return
+    prev = gpu.state.scissor_get()
+    ox, oy, rw, rh = prev
+    x, y, w, h = rect
+    x0 = max(0, min(rw, int(math.floor(x))))
+    y0 = max(0, min(rh, int(math.floor(y))))
+    x1 = max(0, min(rw, int(math.floor(x + w)) + 1))
+    y1 = max(0, min(rh, int(math.floor(y + h)) + 1))
+    strips = (
+        (0, 0, x0, rh),
+        (x1, 0, rw - x1, rh),
+        (x0, 0, x1 - x0, y0),
+        (x0, y1, x1 - x0, rh - y1),
+    )
+    gpu.state.scissor_test_set(True)
+    try:
+        for sx, sy, sw, sh in strips:
+            if sw <= 0 or sh <= 0:
+                continue
+            gpu.state.scissor_set(ox + sx, oy + sy, sw, sh)
+            paint()
+    finally:
+        gpu.state.scissor_set(*prev)
+        gpu.state.scissor_test_set(False)
+
+
 def paint_inline_edit(shader, font_id, rect, size, edit, pad=0.0):
     """The text of an InlineEdit inside `rect`: its selection, the text,
     and the caret. A text longer than the field scrolls sideways to keep

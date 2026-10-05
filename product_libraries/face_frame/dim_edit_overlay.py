@@ -1080,44 +1080,48 @@ def _draw():
     except AttributeError:
         pass
     font_sz = FONT_SIZE * s
-    gpu.state.blend_set('ALPHA')
-    shader = gpu.shader.from_builtin('UNIFORM_COLOR')
-    shader.bind()
-    from gpu_extras.batch import batch_for_shader
-    for editable in (True, False):
-        pts = [p for line, ed in dim_lines if ed == editable for p in line]
-        if pts:
-            shader.uniform_float(
-                "color", DIM_LINE_COLOR if editable else DIM_LINE_COLOR_DIM)
-            batch_for_shader(shader, 'LINES', {"pos": pts}).draw(shader)
-    for name, kind, editable, _locked, rect, text in labels:
-        editing = (_edit is not None and _edit['name'] == name
-                   and _edit['kind'] == kind)
-        if editing:
-            # In-progress typed value with a text cursor; empty buffer
-            # shows the current value so the user sees what Enter keeps.
-            typed = _edit['typed']
-            shown = (typed + "|") if typed else text
-            blf.size(0, font_sz)
-            tw, th = blf.dimensions(0, shown)
-            w = max(rect[2], tw + 2 * PAD_X * s)
-            rect = (rect[0], rect[1], w, rect[3])
-            _draw_label_rect(shader, rect, EDIT_BG)
-            blf.color(0, *EDIT_TEXT_COLOR)
-            blf.position(0, rect[0] + PAD_X * s, rect[1] + PAD_Y * s, 0)
-            blf.draw(0, shown)
-            if kind in wall_run_dims.KINDS:
-                # Move / Width, beside the field only while it's typed.
-                gap_mode_chip.draw(shader, context.scene, region, rect,
-                                   font_sz, s)
-        else:
-            _draw_label_rect(shader, rect,
-                             LABEL_BG if editable else LABEL_BG_DIM)
-            blf.size(0, font_sz)
-            blf.color(0, *(TEXT_COLOR if editable else TEXT_COLOR_DIM))
-            blf.position(0, rect[0] + PAD_X * s, rect[1] + PAD_Y * s, 0)
-            blf.draw(0, text)
-    gpu.state.blend_set('NONE')
+    def _paint():
+        gpu.state.blend_set('ALPHA')
+        shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+        shader.bind()
+        from gpu_extras.batch import batch_for_shader
+        for editable in (True, False):
+            pts = [p for line, ed in dim_lines if ed == editable for p in line]
+            if pts:
+                shader.uniform_float(
+                    "color", DIM_LINE_COLOR if editable else DIM_LINE_COLOR_DIM)
+                batch_for_shader(shader, 'LINES', {"pos": pts}).draw(shader)
+        for name, kind, editable, _locked, rect, text in labels:
+            editing = (_edit is not None and _edit['name'] == name
+                       and _edit['kind'] == kind)
+            if editing:
+                # In-progress typed value with a text cursor; empty buffer
+                # shows the current value so the user sees what Enter keeps.
+                typed = _edit['typed']
+                shown = (typed + "|") if typed else text
+                blf.size(0, font_sz)
+                tw, th = blf.dimensions(0, shown)
+                w = max(rect[2], tw + 2 * PAD_X * s)
+                rect = (rect[0], rect[1], w, rect[3])
+                _draw_label_rect(shader, rect, EDIT_BG)
+                blf.color(0, *EDIT_TEXT_COLOR)
+                blf.position(0, rect[0] + PAD_X * s, rect[1] + PAD_Y * s, 0)
+                blf.draw(0, shown)
+                if kind in wall_run_dims.KINDS:
+                    # Move / Width, beside the field only while it's typed.
+                    gap_mode_chip.draw(shader, context.scene, region, rect,
+                                       font_sz, s)
+            else:
+                _draw_label_rect(shader, rect,
+                                 LABEL_BG if editable else LABEL_BG_DIM)
+                blf.size(0, font_sz)
+                blf.color(0, *(TEXT_COLOR if editable else TEXT_COLOR_DIM))
+                blf.position(0, rect[0] + PAD_X * s, rect[1] + PAD_Y * s, 0)
+                blf.draw(0, text)
+        gpu.state.blend_set('NONE')
+
+    from ...operators import viewport_hud
+    viewport_hud.paint_clear_of_panel(context, area, _paint)
 
 
 # ---- Commit --------------------------------------------------------------
