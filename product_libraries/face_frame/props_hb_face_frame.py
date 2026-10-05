@@ -2922,8 +2922,12 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
     }
 
     # Roles that read materials from the 5-piece door modifier instead
-    # of (or in addition to) the cutpart surface inputs.
-    _FRONT_ROLES = {'DOOR', 'DRAWER_FRONT', 'PULLOUT_FRONT', 'FALSE_FRONT', 'TILT_OUT'}
+    # of (or in addition to) the cutpart surface inputs. Applied drawer- /
+    # door-look fronts are styled like real fronts (a profiled slab is a
+    # static mesh whose finish lives on its material slot), so they take
+    # this path too rather than the plain exterior-finish one.
+    _FRONT_ROLES = {'DOOR', 'DRAWER_FRONT', 'PULLOUT_FRONT', 'FALSE_FRONT', 'TILT_OUT',
+                    'DRAWER_LOOK_FRONT', 'DOOR_LOOK_FRONT'}
 
     # Interior shelving that follows the bay's finish_bay flag: a finished
     # bay shows the exterior finish on its shelves too, otherwise they
