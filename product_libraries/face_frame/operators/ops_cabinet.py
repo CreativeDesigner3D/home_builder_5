@@ -2029,119 +2029,152 @@ class hb_face_frame_OT_split_opening(bpy.types.Operator):
 
     def execute(self, context):
         split_preview.remove_preview()
-        original = context.view_layer.objects.active
-        root = types_face_frame.find_cabinet_root(original)
-        if root is None:
+        active = context.view_layer.objects.active
+        # Every selected opening is split with the same settings, not just
+        # the active one. view_layer.objects + select_get rather than
+        # context.selected_objects: in Bay selection mode the opening
+        # cages are hidden and drop out of selected_objects (see poll).
+        openings = [o for o in context.view_layer.objects
+                    if o.select_get()
+                    and o.get(types_face_frame.TAG_OPENING_CAGE)]
+        if active is not None and active not in openings:
+            openings.insert(0, active)
+        openings = [o for o in openings
+                    if types_face_frame.find_cabinet_root(o) is not None]
+        if not openings:
             self.report({'WARNING'}, "Active opening is not in a face frame cabinet")
             return {'CANCELLED'}
 
+        # The last slot's contents default to the ACTIVE opening's current
+        # front (see invoke). Other selected openings keep their own front
+        # unless the user changed that slot in the dialog.
+        active_front = (active.face_frame_opening.front_type
+                        if active is not None
+                        and active.get(types_face_frame.TAG_OPENING_CAGE)
+                        else None)
+        last_front = getattr(self, f'front_type_{self.count - 1}')
+
+        roots = []
         with types_face_frame.suspend_recalc():
-            old_parent = original.parent
-            old_index = original.get('hb_split_child_index', 0)
-
-            # Snapshot original's current size + unlock for handing to the
-            # split node (which will now occupy original's slot in the
-            # parent tree).
-            op_props = original.face_frame_opening
-            inherited_size = op_props.size
-            inherited_unlock = op_props.unlock_size
-            # SIZE_ROLE describes the SLOT, not the opening: it says how
-            # this position in the parent tree is sized. The split node
-            # takes the slot over, so the stamp moves with it. Left on
-            # the original, a later re-sync would push a height onto a
-            # node whose size now means something else entirely (a width,
-            # under a V-split) and unbalance its new siblings.
-            inherited_role = original.get('SIZE_ROLE')
-
-            # Create split node empty
-            split_obj = hb_utils.new_object('Split Node', None)
-            bpy.context.scene.collection.objects.link(split_obj)
-            split_obj.empty_display_type = 'PLAIN_AXES'
-            split_obj.empty_display_size = 0.001
-            split_obj[types_face_frame.TAG_SPLIT_NODE] = True
-            split_obj.parent = old_parent
-            split_obj['hb_split_child_index'] = old_index
-            sp = split_obj.face_frame_split
-            sp.axis = self.axis
-            sp.size = inherited_size
-            sp.unlock_size = inherited_unlock
-            sp.splitter_width = (self.mid_rail_width if self.axis == 'H'
-                                 else self.mid_stile_width)
-            sp.add_backing = self.add_backing
-            if 'SIZE_ROLE' in original:
-                split_obj['SIZE_ROLE'] = inherited_role
-                del original['SIZE_ROLE']
-
-            # Find the bay (for opening_index counter) before re-parenting.
-            bay = original
-            while bay is not None and not bay.get(types_face_frame.TAG_BAY_CAGE):
-                bay = bay.parent
-            if bay is not None:
-                existing = [c for c in bay.children_recursive
-                            if c.get(types_face_frame.TAG_OPENING_CAGE)]
-                next_idx = 1 + max(
-                    (c.face_frame_opening.opening_index for c in existing),
-                    default=-1,
-                )
-            else:
-                next_idx = 1
-
-            # Create (count - 1) new sibling openings at indices 0 .. count-2.
-            # The dialog's per-opening size + unlock arrays cover all `count`
-            # children; the original takes the last slot (index count - 1).
-            new_count = max(0, self.count - 1)
-            new_openings = []
-            for i in range(new_count):
-                new_op = types_face_frame.FaceFrameOpening()
-                new_op.create('Opening')
-                new_op.obj.parent = split_obj
-                new_op.obj['hb_split_child_index'] = i
-                new_op.obj.face_frame_opening.opening_index = next_idx + i
-                new_op.obj.face_frame_opening.size = self.sizes[i]
-                new_op.obj.face_frame_opening.unlock_size = self.unlocks[i]
-                # Per-opening contents chosen in the dialog (defaults match
-                # the previous behavior -- new openings get the root default).
-                new_op.obj.face_frame_opening.front_type = getattr(
-                    self, f'front_type_{i}')
-                new_openings.append(new_op.obj)
-
-            # Re-parent original under split as the last child.
-            original.parent = split_obj
-            hb_utils.note_parent_change()
-            original['hb_split_child_index'] = new_count
-            op_props.size = self.sizes[new_count]
-            op_props.unlock_size = self.unlocks[new_count]
-            # Original opening's chosen contents (last slot). Assign only on
-            # change so an untouched dialog leaves its front_type exactly as-is.
-            orig_front = getattr(self, f'front_type_{new_count}')
-            if op_props.front_type != orig_front:
-                op_props.front_type = orig_front
-
-            # A custom split inside an applied panel pins it to manual
-            # mode so the host recalc stops wiping / rebuilding the
-            # opening tree (mirrors insert / delete bay). Without this the
-            # next recalc would revert the user's split.
-            if (root.get(types_face_frame.TAG_APPLIED_PANEL_SIDE)
-                    or types_face_frame._is_standalone_panel(root)):
-                root.face_frame_cabinet.panel_split_auto = False
-
-            types_face_frame.recalculate_face_frame_cabinet(root)
+            for original in openings:
+                root = types_face_frame.find_cabinet_root(original)
+                keep_front = (original is not active
+                              and last_front == active_front)
+                self._split_one(original, root, keep_front)
+                if root not in roots:
+                    roots.append(root)
+            for root in roots:
+                types_face_frame.recalculate_face_frame_cabinet(root)
 
         # Apply current selection mode's visual treatment to the new
         # cages and the split node so they appear correctly highlighted
-        # / dimmed instead of stuck on default colors. Scoped to this
+        # / dimmed instead of stuck on default colors. Scoped to each
         # cabinet via search_obj_name to avoid touching unrelated scene
         # geometry.
-        try:
-            bpy.ops.hb_face_frame.toggle_mode(search_obj_name=root.name)
-        except RuntimeError:
-            # toggle_mode poll might fail in unusual contexts; not
-            # fatal, the new cages are still functionally valid.
-            pass
+        for root in roots:
+            try:
+                bpy.ops.hb_face_frame.toggle_mode(search_obj_name=root.name)
+            except RuntimeError:
+                # toggle_mode poll might fail in unusual contexts; not
+                # fatal, the new cages are still functionally valid.
+                pass
 
         self.report({'INFO'},
-                    f"Split {original.name} into {self.count} along {self.axis}-axis")
+                    f"Split {len(openings)} opening(s) into {self.count} along {self.axis}-axis")
         return {'FINISHED'}
+
+    def _split_one(self, original, root, keep_front=False):
+        """Split one opening cage. Caller holds suspend_recalc and
+        recalculates the cabinet afterwards."""
+        old_parent = original.parent
+        old_index = original.get('hb_split_child_index', 0)
+
+        # Snapshot original's current size + unlock for handing to the
+        # split node (which will now occupy original's slot in the
+        # parent tree).
+        op_props = original.face_frame_opening
+        inherited_size = op_props.size
+        inherited_unlock = op_props.unlock_size
+        # SIZE_ROLE describes the SLOT, not the opening: it says how
+        # this position in the parent tree is sized. The split node
+        # takes the slot over, so the stamp moves with it. Left on
+        # the original, a later re-sync would push a height onto a
+        # node whose size now means something else entirely (a width,
+        # under a V-split) and unbalance its new siblings.
+        inherited_role = original.get('SIZE_ROLE')
+
+        # Create split node empty
+        split_obj = hb_utils.new_object('Split Node', None)
+        bpy.context.scene.collection.objects.link(split_obj)
+        split_obj.empty_display_type = 'PLAIN_AXES'
+        split_obj.empty_display_size = 0.001
+        split_obj[types_face_frame.TAG_SPLIT_NODE] = True
+        split_obj.parent = old_parent
+        split_obj['hb_split_child_index'] = old_index
+        sp = split_obj.face_frame_split
+        sp.axis = self.axis
+        sp.size = inherited_size
+        sp.unlock_size = inherited_unlock
+        sp.splitter_width = (self.mid_rail_width if self.axis == 'H'
+                             else self.mid_stile_width)
+        sp.add_backing = self.add_backing
+        if 'SIZE_ROLE' in original:
+            split_obj['SIZE_ROLE'] = inherited_role
+            del original['SIZE_ROLE']
+
+        # Find the bay (for opening_index counter) before re-parenting.
+        bay = original
+        while bay is not None and not bay.get(types_face_frame.TAG_BAY_CAGE):
+            bay = bay.parent
+        if bay is not None:
+            existing = [c for c in bay.children_recursive
+                        if c.get(types_face_frame.TAG_OPENING_CAGE)]
+            next_idx = 1 + max(
+                (c.face_frame_opening.opening_index for c in existing),
+                default=-1,
+            )
+        else:
+            next_idx = 1
+
+        # Create (count - 1) new sibling openings at indices 0 .. count-2.
+        # The dialog's per-opening size + unlock arrays cover all `count`
+        # children; the original takes the last slot (index count - 1).
+        new_count = max(0, self.count - 1)
+        new_openings = []
+        for i in range(new_count):
+            new_op = types_face_frame.FaceFrameOpening()
+            new_op.create('Opening')
+            new_op.obj.parent = split_obj
+            new_op.obj['hb_split_child_index'] = i
+            new_op.obj.face_frame_opening.opening_index = next_idx + i
+            new_op.obj.face_frame_opening.size = self.sizes[i]
+            new_op.obj.face_frame_opening.unlock_size = self.unlocks[i]
+            # Per-opening contents chosen in the dialog (defaults match
+            # the previous behavior -- new openings get the root default).
+            new_op.obj.face_frame_opening.front_type = getattr(
+                self, f'front_type_{i}')
+            new_openings.append(new_op.obj)
+
+        # Re-parent original under split as the last child.
+        original.parent = split_obj
+        hb_utils.note_parent_change()
+        original['hb_split_child_index'] = new_count
+        op_props.size = self.sizes[new_count]
+        op_props.unlock_size = self.unlocks[new_count]
+        # Original opening's chosen contents (last slot). Assign only on
+        # change so an untouched dialog leaves its front_type exactly as-is;
+        # keep_front leaves a non-active selected opening's front alone.
+        orig_front = getattr(self, f'front_type_{new_count}')
+        if not keep_front and op_props.front_type != orig_front:
+            op_props.front_type = orig_front
+
+        # A custom split inside an applied panel pins it to manual
+        # mode so the host recalc stops wiping / rebuilding the
+        # opening tree (mirrors insert / delete bay). Without this the
+        # next recalc would revert the user's split.
+        if (root.get(types_face_frame.TAG_APPLIED_PANEL_SIDE)
+                or types_face_frame._is_standalone_panel(root)):
+            root.face_frame_cabinet.panel_split_auto = False
 
 
 def _find_owning_opening(obj):
