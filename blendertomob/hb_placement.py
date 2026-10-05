@@ -827,6 +827,17 @@ class PlacementMixin:
                               min(wall_length, max(xa, xb))))
         return spans
 
+    @staticmethod
+    def avoid_overlap(context=None):
+        """RN-13 "Evitar Sobreposição" (`btm_settings.collision_global`); sem a propriedade, vale ligado (T071).
+
+        Desligado, o posicionamento de módulos ignora os outros módulos e as paredes como obstáculos (sobrepor é
+        permitido); portas, janelas e linhas de encaixe continuam valendo.
+        """
+        scene = getattr(context or bpy.context, 'scene', None)
+        settings = getattr(scene, 'btm_settings', None) if scene is not None else None
+        return True if settings is None else bool(settings.collision_global)
+
     def find_placement_gap_by_side(self, wall_obj, cursor_x: float,
                                    object_width: float,
                                    place_on_front: bool,
@@ -865,6 +876,7 @@ class PlacementMixin:
         )
         if check_vertical:
             object_z_end = object_z_start + object_height
+        avoid = self.avoid_overlap()
 
         children = []
         for child in wall_obj.children:
@@ -880,6 +892,8 @@ class PlacementMixin:
             # Doors/windows cut through both sides - always an obstacle.
             is_opening = ('IS_ENTRY_DOOR_BP' in child or
                           'IS_WINDOW_BP' in child)
+            if not is_opening and not avoid:
+                continue  # "Evitar Sobreposição" desligado: módulos não bloqueiam
             if not is_opening:
                 child_on_front = child.location.y < wall_thickness / 2
                 if child_on_front != place_on_front:
@@ -943,7 +957,7 @@ class PlacementMixin:
         else:
             band_y0, band_y1 = wall_thickness, wall_thickness + band
         wall_inv = wall_obj.matrix_world.inverted()
-        for obj in bpy.context.scene.objects:
+        for obj in (bpy.context.scene.objects if avoid else ()):
             if obj.parent is not None:
                 continue
             if exclude_obj is not None and obj == exclude_obj:
@@ -987,7 +1001,7 @@ class PlacementMixin:
         # Pass our own filter params through so the intrusion check
         # uses the same vertical / depth / side criteria as the
         # primary same-wall scan above.
-        left_intrusion = self.get_adjacent_wall_intrusion(
+        left_intrusion = 0.0 if not avoid else self.get_adjacent_wall_intrusion(
             wall_obj, 'left',
             object_z_start=object_z_start,
             object_height=object_height,
@@ -996,7 +1010,7 @@ class PlacementMixin:
         )
         if left_intrusion > 0:
             children.append((0.0, left_intrusion, None))
-        right_intrusion = self.get_adjacent_wall_intrusion(
+        right_intrusion = 0.0 if not avoid else self.get_adjacent_wall_intrusion(
             wall_obj, 'right',
             object_z_start=object_z_start,
             object_height=object_height,
@@ -1010,7 +1024,7 @@ class PlacementMixin:
 
         # Interior walls butting into this wall mid-run (T-junctions)
         # become virtual obstacles, same as the end intrusions above.
-        tee_spans = self.get_tee_wall_intrusions(
+        tee_spans = [] if not avoid else self.get_tee_wall_intrusions(
             wall_obj, place_on_front=place_on_front,
             object_z_start=object_z_start, object_height=object_height)
         if tee_spans:

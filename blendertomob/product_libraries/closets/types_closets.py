@@ -800,7 +800,7 @@ class ClosetStarter(GeoNodeCage):
                     'hamper' if child.get('hb_is_hamper') else 'door',
                     side)
                 apply_door_open(
-                    child, 1.0 if child.get('hb_door_open') else 0.0)
+                    child, open_fraction(child, 'hb_door_open'))
 
         # ----- Drawer stack (bottom-up fronts + boxes) -----
         # The stack FILLS the opening: fronts span the full front extent
@@ -874,7 +874,7 @@ class ClosetStarter(GeoNodeCage):
                 travel = min(box_d, inch(12.0))
                 _stash_drawer_closed(child, box, travel, side)
                 apply_drawer_open(
-                    child, 1.0 if child.get('hb_drawer_open') else 0.0)
+                    child, open_fraction(child, 'hb_drawer_open'))
                 z += dh + const.FRONT_GAP
 
         # ----- Cubby grid (divisions full height, shelves full width) -----
@@ -1095,7 +1095,7 @@ class ClosetStarter(GeoNodeCage):
                 child, 'hamper' if child.get('hb_is_hamper') else 'door',
                 side)
             apply_door_open(
-                child, 1.0 if child.get('hb_door_open') else 0.0)
+                child, open_fraction(child, 'hb_door_open'))
 
     def _reconcile_doors(self, opening, side):
         # A bay-wide door supersedes opening doors on its side.
@@ -1765,6 +1765,16 @@ def find_bay_cage(obj):
 
 
 DOOR_OPEN_ANGLE = math.radians(110.0)
+
+
+def open_fraction(part, key):
+    """Estado de abertura salvo (0 fechado .. 1 aberto). Aceita a fração gravada pela inspeção e os 0/1 inteiros
+    de arquivos antigos (M-05)."""
+    try:
+        value = float(part.get(key, 0.0) or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+    return max(0.0, min(1.0, value))
 
 
 def apply_door_open(door, frac):

@@ -92,3 +92,84 @@ Regras 🟢 de `_reversa_sdd/domain.md` e das units que continuam intactas:
   acabamento.
 - `cutting` (`NestingPart`/exportação JSON v1) → **alterada**: contrato v2; v1 só na leitura.
 - `frameless` dívida "Undo" (`ops_defaults.py` sem `UNDO`) → **alterada**: operadores de propagação com `UNDO`.
+
+---
+
+# Impacto no legado — incremento 3, bloco 1 (Inspeção e movimento)
+
+> Gerado por `/reversa-coding` em 2026-10-03 · ações T048–T051, T054–T064, T068, T069, T073–T077.
+
+## Tabela de impacto
+
+| Arquivo afetado | Componente | Tipo | Severidade | Justificativa |
+|---|---|---|---|---|
+| `blendertomob/inspection/*` (`fronts`, `pivot_math`, `props`, `ops_inspect`, `ops_interference`, `interference`, `gizmo`, `overlay`, `save_guard`, `adapters/*`) | inspeção (novo) | componente-novo | MEDIUM | Camada única de abertura das quatro origens de frente, controle no 3D, salvar fechado e interferência |
+| `blendertomob/inspection/adapters/frameless.py` | frameless (frentes) | regra-nova | MEDIUM | Frentes frameless passam a abrir por `delta_rotation_euler`/`delta_location`, valor em idprop `btm_open` |
+| `blendertomob/product_libraries/closets/types_closets.py` | closets (abertura) | delta-de-dados | MEDIUM | `hb_door_open`/`hb_drawer_open` lidos como fração 0–1 (`open_fraction`); 0/1 antigos continuam válidos |
+| `blendertomob/geometry/door_controller.py` | camada moderna (portas) | regra-alterada | MEDIUM | Posição fechada do controlador passa de Y = 0,03 m para 0 (as portas não ficam mais ~13,5° abertas) |
+| `blendertomob/data/properties.py` | data (props de cena) | delta-de-dados | LOW | `save_fronts_open`; `collision_global` renomeada para "Evitar Sobreposição" (lógica ainda não ligada — T071) |
+| `blendertomob/__init__.py` | núcleo do add-on | regra-alterada | LOW | Registro do pacote `inspection` (gizmo, `save_pre`/`save_post`/`save_post_fail`, draw handlers) |
+| `blendertomob/ui/panels.py` | ui (painéis) | regra-alterada | LOW | Bloco "Inspeção de Portas e Gavetas" na aba Construtor; rótulo "Evitar Sobreposição" |
+| `blendertomob/data/i18n.py` | data (i18n) | regra-alterada | LOW | Strings do bloco de inspeção |
+
+## Diff conceitual por componente
+
+**Inspeção (novo).** Uma `Front` representa uma porta, basculante, gaveta ou pullout de qualquer linha, com um valor
+comum (graus de 0 a 90 para articuladas, fração do curso para gavetas). O valor é aplicado sem recalcular o módulo
+durante a animação ou o arraste e gravado no estado da linha ao final. O arquivo é salvo sempre fechado (RN-14) e a
+vista é reaberta depois de salvar. O detector de interferência varre a abertura e testa contra os outros objetos.
+
+**frameless.** Ganha abertura sem objetos novos nem mudança no recálculo: só os deltas de transformação da própria
+peça e a idprop `btm_open`.
+
+**face frame.** Nenhum arquivo do face frame foi alterado; o adaptador usa `op_open_mode._build_tween_context` e
+`_apply_swing` e grava `swing_percent` (90° = 0,9).
+
+**closets.** O estado de abertura passa a ser fracionário para permitir 45°; o layout reaplica a fração no recálculo.
+
+**camada moderna.** O controlador fecha em Y = 0, coerente com a restrição (0–0,2 m) e com o slider.
+
+## Preservadas
+
+- `domain.md` R-02, R-04 a R-10: código não tocado.
+- `_reversa_sdd/closets/requirements.md` RN-06 e o recálculo dos starters: inalterados (só a leitura do estado salvo).
+- Mecanismo do face frame (`solver_face_frame.front_leaves`, `swing_percent`, pivôs `FRONT_PIVOT`): inalterado.
+
+## Modificadas
+
+- `_reversa_sdd/data-dictionary-legacy.md`, `hb_door_open / hb_drawer_open` (int, 0) → **alterada**: float 0–1.
+- `_reversa_sdd/data-dictionary.md`, `collision_global` ("Colisões Globais") → **alterada** (redação): "Evitar
+  Sobreposição"; a lógica de posicionamento ainda não a lê (T071 pendente).
+
+## Incremento 3, bloco 1 — segunda rodada (T052, T053, T065–T067, T070–T072, T078, T079)
+
+| Arquivo afetado | Componente | Tipo | Severidade | Justificativa |
+|---|---|---|---|---|
+| `blendertomob/hb_placement.py` | hb_placement (vão) | regra-alterada | HIGH | `avoid_overlap()`; com "Evitar Sobreposição" desligado, módulos, módulos livres e intrusões de paredes deixam de ser obstáculos em `find_placement_gap_by_side` (RN-13) |
+| `blendertomob/product_libraries/face_frame/operators/op_open_mode.py` | face_frame (abrir) | regra-alterada | MEDIUM | `hb_face_frame.open_mode` vira atalho de `btm.inspect_fronts`; helpers de pose mantidos |
+| `blendertomob/product_libraries/closets/operators/op_open_door_closet.py` | closets (abrir) | regra-alterada | MEDIUM | `hb_closets.open_door_mode` e as funções da pílula delegam ao modo único |
+| `blendertomob/operators/viewport_hud.py` | HUD | regra-alterada | LOW | Botão de abrir portas visível no modo Parts de todas as linhas |
+| `blendertomob/cutting/stale.py` | cutting (plano desatualizado) | regra-alterada | MEDIUM | Abrir frentes não marca o plano; rodada do recálculo do face frame ignorada |
+| `blendertomob/inspection/ops_inspect.py`, `inspection/interference.py`, `inspection/adapters/face_frame.py` | inspeção | regra-alterada | LOW | Cliques nas pílulas do closets passam; teste de contenção no detector; aviso ao handler de plano |
+| `tests/*`, `docs/usuario/inspecao-e-movimento.md` | testes / docs | componente-novo | LOW | Testes de `pivot_math`, fumaça da inspeção, checagens de registro corrigidas; guia do usuário |
+
+**hb_placement.** O cálculo do vão continua igual com a opção ligada (padrão). Desligada, só portas, janelas e linhas de
+encaixe limitam a posição; os módulos podem se sobrepor (RN-13).
+
+**face frame / closets.** Os dois modos de abrir antigos deixam de ter animação própria e abrem o modo único, que usa
+os mesmos mecanismos de pose de cada linha.
+
+### Preservadas (segunda rodada)
+
+- `_reversa_sdd/hb_placement/requirements.md` RN-12 (filtro vertical) e o cálculo de `snap_x` e de recuos: inalterados.
+- `_reversa_sdd/closets/requirements.md` "abrir portas/gavetas com animação": continua verdadeiro, agora pelo modo
+  único (mesmo `bl_idname`, mesma pílula).
+- `find_placement_gap` (portas e janelas nas paredes): inalterado.
+
+### Modificadas (segunda rodada)
+
+- `_reversa_sdd/hb_placement/requirements.md` RN-09 ("obstáculos são os filhos da parede…") → **alterada**: os
+  filhos-módulo só são obstáculos com "Evitar Sobreposição" ligado; portas e janelas sempre.
+- `_reversa_sdd/hb_placement/requirements.md` RN-14 (gabinetes livres viram obstáculos) → **alterada**: só com
+  "Evitar Sobreposição" ligado.
+

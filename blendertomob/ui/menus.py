@@ -67,6 +67,7 @@ class HOME_BUILDER_MT_wall_commands(bpy.types.Menu):
     def draw(self, context):
         layout = self.layout
         layout.operator("home_builder_walls.wall_prompts", text="Wall Prompts")
+        layout.operator("btm.wall_editor", text="Editar Paredes…", icon='GREASEPENCIL')
         layout.operator("home_builder_walls.change_room_size", text="Change Room Size", icon='ARROW_LEFTRIGHT')
         layout.separator()
         layout.operator("home_builder_walls.hide_wall", text="Hide Wall", icon='HIDE_ON')
@@ -79,6 +80,9 @@ class HOME_BUILDER_MT_wall_commands(bpy.types.Menu):
         layout.operator("hb_frameless.place_snap_line", text="Place Snap Line", icon='SNAP_MIDPOINT')
         layout.operator("hb_frameless.delete_all_snap_lines", text="Delete All Snap Lines", icon='TRASH')
         layout.separator()
+        layout.operator("btm.wall_lower", text="Rebaixar Parede", icon='TRIA_DOWN_BAR')
+        layout.operator_menu_enum("btm.wall_visibility", "mode", text="Visibilidade", icon='HIDE_OFF')
+        layout.operator("btm.wall_remove", text="Remover Parede…", icon='TRASH')
         layout.operator("home_builder_walls.delete_wall", text="Delete Wall", icon='X')
 
 

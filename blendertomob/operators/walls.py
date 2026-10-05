@@ -697,6 +697,10 @@ def _draw_wall_snap_dimensions(region, wall_obj, snap_point_3d, face,
     gpu.state.line_width_set(1.0)
 
 
+CLOSE_SNAP_PX = 15          # BlenderToMob (D-39): raio do ímã do ponto inicial, em pixels de tela
+CLOSE_TYPED_TOLERANCE = 0.01  # comprimento digitado que termina a até 10 mm do início também pergunta
+
+
 def _draw_snap_point(x, y, color, radius, cross_size, diamond=False):
     """Draw a snap crosshair + circle at screen position (x, y)."""
     shader = gpu.shader.from_builtin('UNIFORM_COLOR')
@@ -920,6 +924,13 @@ def draw_wall_snap_indicator(op, context):
             # Closing the room - bright green diamond at the start point
             color = (0.2, 1.0, 0.2, 0.95)
             _draw_snap_point(end_2d.x, end_2d.y, color, 14, 9, diamond=True)
+            # BlenderToMob (D-39): pergunta de fechamento junto do ponto inicial
+            label = ("Deseja fechar a parede?  Enter/clique: Sim · Esc: Não"
+                     if getattr(op, 'pending_close', False) else "Fechar")
+            blf.size(0, 14)
+            blf.color(0, *color)
+            blf.position(0, end_2d.x + 16, end_2d.y + 14, 0)
+            blf.draw(0, label)
         elif op.end_snap_wall:
             color = (0.0, 1.0, 0.4, 0.9)
             _draw_snap_point(end_2d.x, end_2d.y, color, 12, 8, diamond=True)
@@ -958,6 +969,7 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
 
     # Track if we've placed the first point
     has_start_point: bool = False
+    pending_close: bool = False     # BlenderToMob (D-39): aguardando "Deseja fechar a parede?"
 
     # Tracking-distance typing state: set at typing-start when the cursor is
     # snapped to a single tracking axis, used to interpret the typed value as
@@ -1587,6 +1599,19 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         if parsed is not None and self.current_wall:
             self.current_wall.set_input('Length', parsed)
             self.update_dimension(bpy.context)
+            # BlenderToMob (D-39): comprimento digitado que termina no ponto inicial pergunta antes de fechar.
+            if (self.confirmed_wall_count >= 2 and self.first_wall is not None
+                    and self.first_start_point is not None):
+                angle = self.current_wall.obj.rotation_euler.z
+                end = Vector((self.start_point[0] + math.cos(angle) * parsed,
+                              self.start_point[1] + math.sin(angle) * parsed, 0))
+                first = Vector((self.first_start_point.x, self.first_start_point.y, 0))
+                if (end - first).length <= CLOSE_TYPED_TOLERANCE:
+                    self.close_snap_active = True
+                    self.pending_close = True
+                    self.stop_typing()
+                    self.update_header(bpy.context)
+                    return
             commit_error = self._wall_commit_error()
             if commit_error:
                 self.report({'WARNING'}, commit_error)
@@ -1855,10 +1880,17 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
             if (self.first_start_point is not None
                     and self.confirmed_wall_count >= 2
                     and self.first_wall is not None):
-                close_threshold = 0.15
+                # BlenderToMob (D-39): ímã de 15 px de tela, como no Editor de Paredes; 0,15 m se a vista não projetar.
                 d = (Vector((eff_vec.x, eff_vec.y, 0))
                      - Vector((self.first_start_point.x, self.first_start_point.y, 0))).length
-                if d < close_threshold:
+                near = d < 0.15
+                if self.region is not None and self.mouse_pos is not None:
+                    start_2d = view3d_utils.location_3d_to_region_2d(
+                        self.region, self.region.data,
+                        Vector((self.first_start_point.x, self.first_start_point.y, 0)))
+                    if start_2d is not None:
+                        near = (start_2d - Vector(self.mouse_pos)).length <= CLOSE_SNAP_PX
+                if near:
                     cx = self.first_start_point.x - self.start_point[0]
                     cy = self.first_start_point.y - self.start_point[1]
                     close_len = math.sqrt(cx * cx + cy * cy)
@@ -1926,6 +1958,16 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
                     self.clear_wall_highlight()
 
             self.update_dimension(bpy.context)
+
+    def _finish_close_room(self, context):
+        """Fecha a sala e encerra o modal (clique/Enter na pergunta ou tecla C)."""
+        self.close_room(context)
+        self.clear_wall_highlight()
+        self._remove_snap_indicator()
+        self._remove_dim_handler()
+        self._remove_track_timer(context)
+        hb_placement.clear_header_text(context)
+        return {'FINISHED'}
 
     def close_room(self, context):
         """Close the room by connecting the current wall back to the first wall."""
@@ -2092,6 +2134,9 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
             snap_hint = f" [Snap: {self.end_snap_face} face]" if self.end_snap_wall else ""
             if self.close_snap_active:
                 snap_hint = " [CLOSE]"
+            if getattr(self, 'pending_close', False):
+                context.area.header_text_set("Deseja fechar a parede?  Enter ou clique: Sim  |  Esc: Não")
+                return
             fine_hint = " [Fine: 1/16\"]" if self.fine_snap else ""
             tp_count = len(self.track_points)
             track_hint = f" [Track: {tp_count}]" if tp_count else ""
@@ -2165,6 +2210,7 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
 
         # Close-room snap state (active when cursor is near first wall's start point)
         self.close_snap_active = False
+        self.pending_close = False
 
         # Wall tracking state (object snap tracking)
         self.track_points = []
@@ -2185,6 +2231,18 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
 
         # Skip intermediate mouse moves
         if event.type == "INBETWEEN_MOUSEMOVE":
+            return {'RUNNING_MODAL'}
+
+        # BlenderToMob (D-39): "Deseja fechar a parede?" — Enter/clique fecha, Esc/botão direito continua desenhando.
+        if self.pending_close:
+            if event.type in {'MIDDLEMOUSE', 'WHEELUPMOUSE', 'WHEELDOWNMOUSE'}:
+                return {'PASS_THROUGH'}
+            if event.value == 'PRESS' and event.type in {'RET', 'NUMPAD_ENTER', 'LEFTMOUSE'}:
+                self.pending_close = False
+                return self._finish_close_room(context)
+            if event.value == 'PRESS' and event.type in {'ESC', 'RIGHTMOUSE'}:
+                self.pending_close = False
+                self.update_header(context)
             return {'RUNNING_MODAL'}
 
         # Let mixin handle typing events first
@@ -2282,13 +2340,9 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
             else:
                 # If close-snap is active, close the room instead of confirming
                 if self.close_snap_active and self.confirmed_wall_count >= 2 and self.first_wall is not None:
-                    self.close_room(context)
-                    self.clear_wall_highlight()
-                    self._remove_snap_indicator()
-                    self._remove_dim_handler()
-                    self._remove_track_timer(context)
-                    hb_placement.clear_header_text(context)
-                    return {'FINISHED'}
+                    self.pending_close = True            # BlenderToMob (D-39): pergunta antes de fechar
+                    self.update_header(context)
+                    return {'RUNNING_MODAL'}
                 # Confirm wall and start next
                 commit_error = self._wall_commit_error()
                 if commit_error:
@@ -2323,13 +2377,7 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         # C key - close room (requires 2+ confirmed walls)
         if event.type == 'C' and event.value == 'PRESS' and self.has_start_point:
             if self.confirmed_wall_count >= 2 and self.first_wall is not None:
-                self.close_room(context)
-                self.clear_wall_highlight()
-                self._remove_snap_indicator()
-                self._remove_dim_handler()
-                self._remove_track_timer(context)
-                hb_placement.clear_header_text(context)
-                return {'FINISHED'}
+                return self._finish_close_room(context)
             return {'RUNNING_MODAL'}
 
         # T key - acquire/remove track point at cursor
@@ -5740,7 +5788,7 @@ classes = (
 
 def register():
     for cls in classes:
-        reg_cls = getattr(bpy.types, cls.__name__, None)
+        reg_cls = (cls if cls.is_registered else getattr(bpy.types, cls.__name__, None))
         if reg_cls:
             try:
                 bpy.utils.unregister_class(reg_cls)
@@ -5754,7 +5802,7 @@ def register():
 
 def unregister():
     for cls in reversed(classes):
-        reg_cls = getattr(bpy.types, cls.__name__, None)
+        reg_cls = (cls if cls.is_registered else getattr(bpy.types, cls.__name__, None))
         if reg_cls:
             try:
                 bpy.utils.unregister_class(reg_cls)

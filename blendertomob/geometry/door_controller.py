@@ -133,7 +133,8 @@ def update_door_geometry_and_controller(cabinet_obj):
     # O Empty se move localmente no eixo Y dele próprio (que alinhamos com o Y global para frente).
     # Vamos posicionar o Empty na extremidade direita do armário para portas comuns
     controller_obj.location.x = cabinet.width / 2.0 - 0.03
-    controller_obj.location.y = 0.03 # 3cm à frente da chapa da porta
+    # Fechado = Y local 0: a restrição limita o curso a 0–0,2 m e o driver das portas usa y·(π/2)/0,2 (T059).
+    controller_obj.location.y = 0.0
     controller_obj.location.z = cabinet.height / 2.0
 
     # Determina espessura e folga
@@ -230,7 +231,7 @@ def update_door_geometry_and_controller(cabinet_obj):
     add_ui_sync_driver(cabinet_obj, controller_obj)
 
     # Atualiza a posição do controlador baseando-se no valor inicial da propriedade
-    controller_obj.location.y = 0.03 + cabinet.door_open * 0.2
+    controller_obj.location.y = cabinet.door_open * 0.2
 
 
 def update_door_rotation_from_property(cabinet_obj):

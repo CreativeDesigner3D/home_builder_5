@@ -3,7 +3,7 @@ from .wall_builder import BTM_OT_WallBuilder
 from .floor_builder import BTM_OT_FloorBuilder, BTM_OT_AdjustFloor
 from .cabinet_builder import BTM_OT_CabinetBuilder
 from .opening_builder import BTM_OT_InsertOpening, BTM_OT_RemoveOpening
-from . import ops_cutting, ops_standards
+from . import ops_cutting, ops_standards, ops_wall_extras
 from .ops_dimensions import BTM_OT_DimensionSettingsDialog, BTM_OT_ApplyDimensionPreset
 
 classes = (
@@ -17,8 +17,8 @@ classes = (
     BTM_OT_ApplyDimensionPreset,
 )
 
-# Módulos com registro próprio (produção e Padrão de Dimensões).
-_MODULES = (ops_cutting, ops_standards)
+# Módulos com registro próprio (produção, Padrão de Dimensões e operações de parede).
+_MODULES = (ops_cutting, ops_standards, ops_wall_extras)
 
 
 def register():

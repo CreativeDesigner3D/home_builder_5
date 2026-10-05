@@ -5,7 +5,6 @@ com suporte integral a Português do Brasil (pt_BR) e unidades dinâmicas (mm, c
 """
 
 import bpy  # type: ignore
-from ..data import units
 
 
 # ==========================================================================
@@ -68,6 +67,58 @@ def draw_standards_box(layout, context):
     row = sub.row(align=True)
     row.operator("btm.standards_import_promob", text="Importar do Promob", icon='IMPORT')
     row.operator("btm.standards_export_promob", text="Exportar p/ Promob", icon='EXPORT')
+
+
+def draw_inspection_box(layout, context):
+    """Inspeção de portas e gavetas: modo de clique, abrir/fechar tudo, salvar fechado e interferência (T076)."""
+    state = getattr(context.window_manager, 'btm_inspection', None)
+    settings = context.scene.btm_settings
+    box = layout.box()
+    box.label(text="Inspeção de Portas e Gavetas", icon='HIDE_OFF')
+    if state is None:
+        box.label(text="Inspeção indisponível.", icon='ERROR')
+        return
+    row = box.row()
+    row.scale_y = 1.2
+    row.operator("btm.inspect_fronts", text="Sair do Modo de Abrir" if state.active else "Abrir Portas e Gavetas",
+                 icon='CANCEL' if state.active else 'RESTRICT_SELECT_OFF', depress=state.active)
+    move_over = getattr(context.window_manager, 'btm_move_over', None)
+    if move_over is not None:
+        row = box.row()
+        row.scale_y = 1.2
+        row.prop(move_over, "enabled", toggle=True, icon='ORIENTATION_GIMBAL',
+                 text="Sair do Mover Sobre" if move_over.enabled else "Mover Sobre (botão direito)")
+    row = box.row(align=True)
+    op = row.operator("btm.fronts_set_open", text="Abrir tudo 90°", icon='TRIA_RIGHT_BAR')
+    op.scope, op.mode = 'ALL', 'OPEN_90'
+    op = row.operator("btm.fronts_set_open", text="45°")
+    op.scope, op.mode = 'ALL', 'OPEN_45'
+    op = row.operator("btm.fronts_set_open", text="Fechar tudo", icon='TRIA_LEFT_BAR')
+    op.scope, op.mode = 'ALL', 'CLOSE'
+    col = box.column(align=True)
+    col.prop(state, "default_angle", text="Ângulo do clique")
+    col.prop(state, "snap_stops")
+    col.prop(settings, "save_fronts_open")
+
+    sub = box.box()
+    sub.operator("btm.check_front_interference", text="Verificar Interferência", icon='MOD_PHYSICS')
+    if state.checked_fronts < 0:
+        sub.label(text="Ainda não verificado.", icon='INFO')
+    elif state.checked_fronts == 0:
+        sub.label(text="Nenhuma frente verificada.", icon='INFO')
+    elif not state.interferences:
+        sub.label(text=f"Sem interferência em {state.checked_fronts} frente(s).", icon='CHECKMARK')
+    else:
+        warn = sub.column(align=True)
+        warn.alert = True
+        warn.label(text=f"{len(state.interferences)} interferência(s) em {state.checked_fronts} frente(s):",
+                   icon='ERROR')
+        for index, item in enumerate(state.interferences[:8]):
+            row = sub.row(align=True)
+            row.label(text=f"{item.module_name} › {item.front_name} × {item.hit_name}")
+            row.operator("btm.interference_goto", text="", icon='VIEWZOOM').index = index
+        if len(state.interferences) > 8:
+            sub.label(text=f"… e mais {len(state.interferences) - 8}")
 
 
 def draw_cut_plan(layout, context, compact=False):
@@ -156,6 +207,7 @@ class BTM_PT_EnvironmentBuilder(bpy.types.Panel):
             box.label(text="Paredes & Piso", icon='GREASEPENCIL')
             grid = box.grid_flow(columns=2, even_columns=True, even_rows=True, align=True)
             grid.operator("home_builder_walls.draw_walls", text="Desenhar Paredes", icon='GREASEPENCIL')
+            grid.operator("btm.wall_editor", text="Editor de Paredes", icon='MESH_GRID')
             grid.operator("btm.adjust_floor", text="Ajustar Piso", icon='MESH_GRID')
             grid.operator("btm.floor_builder", text="Piso Manual", icon='MESH_PLANE')
             grid.operator("home_builder_walls.add_ceiling", text="Criar Teto", icon='MESH_CUBE')
@@ -177,6 +229,11 @@ class BTM_PT_EnvironmentBuilder(bpy.types.Panel):
             grid.operator("btm.standards_configurator", text="Config. Dimensões", icon='PREFERENCES')
             grid.operator("home_builder_walls.add_room_lights", text="Luzes do Quarto", icon='LIGHT')
             grid.operator("home_builder_obstacles.place_obstacle", text="Inserir Obstáculo", icon='ERROR')
+            grid.operator("btm.geometry_create", text="Placa", icon='MESH_PLANE').kind = 'PLACA'
+            grid.operator("btm.geometry_create", text="Caixa", icon='MESH_CUBE').kind = 'CAIXA'
+
+            # Seção: Inspeção (abrir portas e gavetas, interferência)
+            draw_inspection_box(layout, context)
 
         # ------------------------------------------------------------------
         # ABA: GALERIA DE MÓDULOS
@@ -209,7 +266,7 @@ class BTM_PT_EnvironmentBuilder(bpy.types.Panel):
             col.prop(settings, "snap_grid", text="Atrair ao Grid (Snap)")
             if settings.snap_grid:
                 col.prop(settings, "snap_increment", text="Incremento do Snap")
-            col.prop(settings, "collision_global", text="Evitar Colisões Físicas")
+            col.prop(settings, "collision_global", text="Evitar Sobreposição")
 
             # 2. Padrão de Dimensões (Configurador de Dimensões)
             draw_standards_box(layout, context)
@@ -251,16 +308,16 @@ class BTM_PT_EnvironmentBuilder(bpy.types.Panel):
                     is_selected = r_scene == context.scene
                     icon = 'CHECKBOX_HLT' if is_selected else 'CHECKBOX_DEHLT'
 
-                    op = row.operator("home_builder.switch_room", text=r_scene.name, icon=icon)
+                    op = row.operator("blendertomob.switch_room", text=r_scene.name, icon=icon)
                     op.scene_name = r_scene.name
 
                     if len(room_scenes) > 1:
-                        del_op = row.operator("home_builder.delete_room", text="", icon='X')
+                        del_op = row.operator("blendertomob.delete_room", text="", icon='X')
                         del_op.scene_name = r_scene.name
 
                 row_actions = box_rooms.row(align=True)
-                row_actions.operator("home_builder.create_room", text="Novo Ambiente", icon='ADD')
-                row_actions.operator("home_builder.rename_room", text="Renomear", icon='GREASEPENCIL')
+                row_actions.operator("blendertomob.create_room", text="Novo Ambiente", icon='ADD')
+                row_actions.operator("blendertomob.rename_room", text="Renomear", icon='GREASEPENCIL')
 
         # ------------------------------------------------------------------
         # ABA: PLANO DE CORTE (Nesting & Exportação JSON)
@@ -269,114 +326,6 @@ class BTM_PT_EnvironmentBuilder(bpy.types.Panel):
             box_actions = layout.box()
             box_actions.label(text="Lista de Peças e Plano de Corte", icon='ALIGN_JUSTIFY')
             draw_cut_plan(box_actions, context)
-
-
-# ==========================================================================
-# PAINEL: Propriedades Paramétricas Dinâmicas (Context-Sensitive)
-# ==========================================================================
-
-class BTM_PT_ContextProperties(bpy.types.Panel):
-    bl_label = "Propriedades do Objeto Selecionado"
-    bl_idname = "BTM_PT_context_properties"
-    bl_space_type = 'VIEW_3D'
-    bl_region_type = 'UI'
-    bl_category = "Blender to Mob"
-    bl_order = 1
-
-    @classmethod
-    def poll(cls, context):
-        obj = context.active_object
-        return (
-            obj is not None
-            and hasattr(obj, 'btm_plane')
-            and obj.btm_plane.object_kind in ('WALL', 'MODULE', 'OPENING', 'FLOOR')
-        )
-
-    def draw(self, context):
-        layout = self.layout
-        obj = context.active_object
-        kind = obj.btm_plane.object_kind
-
-        if kind == 'WALL':
-            self._draw_wall_props(layout, obj)
-        elif kind == 'MODULE':
-            self._draw_module_props(layout, obj)
-        elif kind == 'OPENING':
-            self._draw_opening_props(layout, obj)
-        elif kind == 'FLOOR':
-            self._draw_floor_props(context, layout, obj)
-
-    def _draw_wall_props(self, layout, obj):
-        layout.label(text="Parâmetros da Parede", icon='MESH_PLANE')
-        wall = obj.btm_wall
-
-        box = layout.box()
-        col = box.column(align=True)
-        col.prop(wall, "length", text="Comprimento")
-        col.prop(wall, "thickness", text="Espessura")
-
-        col.separator(factor=0.5)
-        col.prop(wall, "height_start", text="Pé-Direito Inicial")
-        col.prop(wall, "height_end", text="Pé-Direito Final")
-        col.prop(wall, "offset", text="Afastamento Base")
-
-        col.separator(factor=0.5)
-        col.prop(wall, "absolute_angle", text="Ângulo Absoluto")
-        col.prop(wall, "relative_angle", text="Ângulo Relativo")
-        col.prop(wall, "sagitta", text="Flecha do Arco")
-        col.prop(wall, "wall_type", text="Tipo de Parede")
-
-    def _draw_module_props(self, layout, obj):
-        layout.label(text="Parâmetros do Módulo", icon='OUTLINER_OB_MESH')
-        cabinet = obj.btm_cabinet
-
-        box = layout.box()
-        col = box.column(align=True)
-        col.prop(cabinet, "cabinet_type", text="Tipo")
-        col.separator(factor=0.5)
-        col.prop(cabinet, "width", text="Largura")
-        col.prop(cabinet, "height", text="Altura")
-        col.prop(cabinet, "depth", text="Profundidade")
-        col.prop(cabinet, "thickness", text="Espessura Chapas")
-
-        # Portas e Controle de Abertura interativo
-        box_door = layout.box()
-        box_door.label(text="Portas & Abertura", icon='OUTLINER_OB_LIGHTPATH')
-        col_door = box_door.column(align=True)
-        col_door.prop(cabinet, "door_swing", text="Sentido")
-        if cabinet.door_swing != 'NONE':
-            col_door.prop(cabinet, "door_open", slider=True, text="Grau de Abertura")
-
-    def _draw_opening_props(self, layout, obj):
-        layout.label(text="Parâmetros da Abertura", icon='MOD_BOOLEAN')
-        opening = obj.btm_opening
-
-        box = layout.box()
-        col = box.column(align=True)
-        col.prop(opening, "opening_type", text="Tipo")
-        col.separator(factor=0.5)
-        col.prop(opening, "width", text="Largura")
-        col.prop(opening, "height", text="Altura")
-        col.prop(opening, "sill_height", text="Peitoril")
-
-        if opening.parent_wall:
-            col.separator(factor=0.5)
-            col.label(text=f"Parede: {opening.parent_wall.name}", icon='LINKED')
-
-        layout.separator(factor=0.5)
-        row = layout.row()
-        row.alert = True
-        row.operator("btm.remove_opening", text="Remover Abertura", icon='TRASH')
-
-    def _draw_floor_props(self, context, layout, obj):
-        layout.label(text="Parâmetros do Piso", icon='MESH_GRID')
-        box = layout.box()
-        box.label(text=f"Elemento: {obj.name}")
-        if obj.type == 'MESH':
-            dims = obj.dimensions
-            w_str = units.format_value(dims.x, context.scene)
-            h_str = units.format_value(dims.y, context.scene)
-            box.label(text=f"Dimensões: {w_str} x {h_str}")
 
 
 # ==========================================================================
@@ -404,7 +353,6 @@ class BTM_PT_NestingPanel(bpy.types.Panel):
 
 classes = (
     BTM_PT_EnvironmentBuilder,
-    BTM_PT_ContextProperties,
     BTM_PT_NestingPanel,
 )
 

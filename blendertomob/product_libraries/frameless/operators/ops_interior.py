@@ -860,7 +860,7 @@ classes = (
 
 def register():
     for cls in classes:
-        reg_cls = getattr(bpy.types, cls.__name__, None)
+        reg_cls = (cls if cls.is_registered else getattr(bpy.types, cls.__name__, None))
         if reg_cls:
             try:
                 bpy.utils.unregister_class(reg_cls)
@@ -874,7 +874,7 @@ def register():
 
 def unregister():
     for cls in reversed(classes):
-        reg_cls = getattr(bpy.types, cls.__name__, None)
+        reg_cls = (cls if cls.is_registered else getattr(bpy.types, cls.__name__, None))
         if reg_cls:
             try:
                 bpy.utils.unregister_class(reg_cls)

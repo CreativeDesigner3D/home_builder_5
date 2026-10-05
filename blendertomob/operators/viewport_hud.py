@@ -390,14 +390,59 @@ _GRAB_OPENING_BUTTON = _ModalToggleButton(
     enable_label="Enable Grab Openings",
     disable_label="Disable Grab Openings",
 )
-_OPEN_DOOR_BUTTON = _ModalToggleButton(
-    'hb_face_frame.open_mode', 'Parts',
-    enable_label="Enable Open Door Mode",
-    disable_label="Disable Open Door Mode",
+class _InspectButton(_ModalToggleButton):
+    """Modo de inspeção (`btm.inspect_fronts`): visível no modo Parts de qualquer linha de produto (T067)."""
+
+    def visible(self, context):
+        if self._is_my_modal_active():
+            return True
+        for wiring in (_FF_SELECTION, _FL_SELECTION, _CL_SELECTION):
+            if not wiring.ui_visible(context):
+                continue
+            props = getattr(context.scene, wiring.scene_attr, None)
+            if props is None:
+                continue
+            if wiring.enabled_attr and not getattr(props, wiring.enabled_attr, False):
+                continue
+            if getattr(props, wiring.enum_attr, None) == self.mode_value:
+                return True
+        return False
+
+
+_OPEN_DOOR_BUTTON = _InspectButton(
+    'btm.inspect_fronts', 'Parts',
+    enable_label="Abrir Portas e Gavetas",
+    disable_label="Sair do Modo de Abrir",
+)
+class _MoveOverButton(_ModalToggleButton):
+    """Modo "Mover Sobre" (feature 002): liga/desliga `WindowManager.btm_move_over.enabled`. Não é um modal — o
+    estado é uma propriedade — e o botão aparece em qualquer linha de produto, num ambiente."""
+
+    def _is_my_modal_active(self):
+        state = getattr(bpy.context.window_manager, 'btm_move_over', None)
+        return bool(state and state.enabled)
+
+    def visible(self, context):
+        if self._is_my_modal_active():
+            return True
+        return any(w.ui_visible(context) for w in (_FF_SELECTION, _FL_SELECTION, _CL_SELECTION))
+
+    def on_click(self, context, area, region):
+        state = getattr(context.window_manager, 'btm_move_over', None)
+        if state is not None:
+            state.enabled = not state.enabled
+        if area is not None:
+            area.tag_redraw()
+
+
+_MOVE_OVER_BUTTON = _MoveOverButton(
+    'btm.move_over_toggle', None,
+    enable_label="Mover Sobre",
+    disable_label="Sair do Mover Sobre",
 )
 _MODAL_TOGGLE_BUTTONS = [
     _GRAB_CABINET_BUTTON, _GRAB_FACE_FRAME_BUTTON, _GRAB_BAY_BUTTON,
-    _GRAB_OPENING_BUTTON, _OPEN_DOOR_BUTTON,
+    _GRAB_OPENING_BUTTON, _OPEN_DOOR_BUTTON, _MOVE_OVER_BUTTON,
 ]
 
 
@@ -736,7 +781,7 @@ def register():
     global _draw_handle, _hud_shutdown
     _hud_shutdown = False
     for cls in classes:
-        reg_cls = getattr(bpy.types, cls.__name__, None)
+        reg_cls = (cls if cls.is_registered else getattr(bpy.types, cls.__name__, None))
         if reg_cls:
             try:
                 bpy.utils.unregister_class(reg_cls)

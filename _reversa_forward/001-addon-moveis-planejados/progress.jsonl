@@ -45,3 +45,36 @@
 {"ts": "2026-10-01T07:19:29+00:00", "action": "T044", "status": "done", "files": ["blendertomob/data/i18n.py"]}
 {"ts": "2026-10-01T07:20:13+00:00", "action": "T046", "status": "done", "files": ["docs/usuario/configurador-e-producao.md"]}
 {"ts": "2026-10-01T07:20:13+00:00", "action": "T047", "status": "done", "files": ["tests/blender_smoke.py"]}
+{"ts": "2026-10-03T03:11:37+00:00", "action": "T048", "status": "done", "files": ["blendertomob/inspection/fronts.py", "blendertomob/inspection/__init__.py"]}
+{"ts": "2026-10-03T03:11:37+00:00", "action": "T049", "status": "done", "files": ["blendertomob/inspection/props.py"]}
+{"ts": "2026-10-03T03:11:37+00:00", "action": "T050", "status": "done", "files": ["blendertomob/data/properties.py", "blendertomob/ui/panels.py"]}
+{"ts": "2026-10-03T03:11:37+00:00", "action": "T051", "status": "done", "files": ["blendertomob/inspection/pivot_math.py"]}
+{"ts": "2026-10-03T03:11:37+00:00", "action": "T054", "status": "done", "files": ["blendertomob/inspection/adapters/frameless.py", "blendertomob/inspection/adapters/__init__.py"]}
+{"ts": "2026-10-03T03:11:37+00:00", "action": "T055", "status": "done", "files": ["blendertomob/inspection/adapters/frameless.py"]}
+{"ts": "2026-10-03T03:11:37+00:00", "action": "T056", "status": "done", "files": ["blendertomob/inspection/adapters/face_frame.py"]}
+{"ts": "2026-10-03T03:11:37+00:00", "action": "T057", "status": "done", "files": ["blendertomob/product_libraries/closets/types_closets.py"]}
+{"ts": "2026-10-03T03:11:37+00:00", "action": "T058", "status": "done", "files": ["blendertomob/inspection/adapters/closets.py"]}
+{"ts": "2026-10-03T03:11:37+00:00", "action": "T059", "status": "done", "files": ["blendertomob/geometry/door_controller.py"]}
+{"ts": "2026-10-03T03:11:37+00:00", "action": "T060", "status": "done", "files": ["blendertomob/inspection/adapters/btm.py"]}
+{"ts": "2026-10-03T03:11:37+00:00", "action": "T061", "status": "done", "files": ["blendertomob/inspection/interference.py"]}
+{"ts": "2026-10-03T03:11:37+00:00", "action": "T062", "status": "done", "files": ["blendertomob/inspection/interference.py"]}
+{"ts": "2026-10-03T03:11:37+00:00", "action": "T063", "status": "done", "files": ["blendertomob/inspection/ops_inspect.py"]}
+{"ts": "2026-10-03T03:11:37+00:00", "action": "T064", "status": "done", "files": ["blendertomob/inspection/ops_inspect.py"]}
+{"ts": "2026-10-03T03:11:37+00:00", "action": "T068", "status": "done", "files": ["blendertomob/inspection/gizmo.py"]}
+{"ts": "2026-10-03T03:11:37+00:00", "action": "T069", "status": "done", "files": ["blendertomob/inspection/save_guard.py"]}
+{"ts": "2026-10-03T03:11:37+00:00", "action": "T073", "status": "done", "files": ["blendertomob/inspection/overlay.py"]}
+{"ts": "2026-10-03T03:11:37+00:00", "action": "T074", "status": "done", "files": ["blendertomob/inspection/ops_interference.py"]}
+{"ts": "2026-10-03T03:11:37+00:00", "action": "T075", "status": "done", "files": ["blendertomob/__init__.py"]}
+{"ts": "2026-10-03T03:11:37+00:00", "action": "T076", "status": "done", "files": ["blendertomob/ui/panels.py"]}
+{"ts": "2026-10-03T03:11:37+00:00", "action": "T077", "status": "done", "files": ["blendertomob/data/i18n.py"]}
+{"ts": "2026-10-03T09:41:49+00:00", "action": "T052", "status": "done", "files": ["tests/test_inspection_math.py", "tests/_bootstrap.py"]}
+{"ts": "2026-10-03T09:41:49+00:00", "action": "T053", "status": "done", "files": ["tests/blender_inspection_smoke.py"]}
+{"ts": "2026-10-03T09:41:49+00:00", "action": "T065", "status": "done", "files": ["blendertomob/product_libraries/face_frame/operators/op_open_mode.py"]}
+{"ts": "2026-10-03T09:41:49+00:00", "action": "T066", "status": "done", "files": ["blendertomob/product_libraries/closets/operators/op_open_door_closet.py", "blendertomob/inspection/ops_inspect.py"]}
+{"ts": "2026-10-03T09:41:49+00:00", "action": "T067", "status": "done", "files": ["blendertomob/operators/viewport_hud.py"]}
+{"ts": "2026-10-03T09:41:49+00:00", "action": "T070", "status": "done", "files": ["blendertomob/cutting/stale.py", "blendertomob/inspection/adapters/face_frame.py"]}
+{"ts": "2026-10-03T09:41:49+00:00", "action": "T071", "status": "done", "files": ["blendertomob/hb_placement.py"]}
+{"ts": "2026-10-03T09:41:49+00:00", "action": "T072", "status": "done", "files": [], "note": "sem alteração: o posicionamento de frameless, face frame e closets já passa por find_placement_gap_by_side (T071)"}
+{"ts": "2026-10-03T09:41:49+00:00", "action": "T078", "status": "done", "files": ["docs/usuario/inspecao-e-movimento.md"]}
+{"ts": "2026-10-03T09:41:49+00:00", "action": "T079", "status": "done", "files": ["tests/blender_smoke.py"]}
+{"ts": "2026-10-03T09:41:49+00:00", "action": "T062", "status": "corrected", "files": ["blendertomob/inspection/interference.py"], "note": "acrescentado teste de contenção (vértices do objeto dentro de um casco) além do BVHTree.overlap"}

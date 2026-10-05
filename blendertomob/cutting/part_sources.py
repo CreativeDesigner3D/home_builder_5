@@ -197,3 +197,30 @@ def synthetic_records(module, thickness_for):
 
 def module_has_cutparts(module):
     return any(_cutpart_modifier(o) is not None for o in module.obj.children_recursive if o.type == 'MESH')
+
+
+# ----------------------------------------------------------------------------------------------------------------
+# Adaptador FREE_GEOMETRY (geometria livre marcada como peça de fabricação; T022, data-delta §5)
+# ----------------------------------------------------------------------------------------------------------------
+
+def geometry_records(scene):
+    """Peças das geometrias livres com `btm_geometry.fabrication`: placa = 1 chapa; caixa = 6 chapas.
+
+    Sem módulo (`module_uid` vazio, `null` no JSON); o uid da peça usa o `btm_uid` da própria geometria. A linha
+    fica vazia para a matéria-prima digitada valer (sem fitas e sem limite de chapa do padrão).
+    """
+    from ..geometry_free import mesh
+    records = []
+    for obj in scene.objects:
+        if not mesh.is_geometry(obj) or not obj.btm_geometry.fabrication or not _visible(obj):
+            continue
+        g = obj.btm_geometry
+        uid = ensure_module_uid(obj)
+        for index, (name, length, width, thickness) in enumerate(
+                mesh.sheets(g.kind, g.plane, g.width, g.depth, g.height, g.thickness)):
+            records.append(PartRecord(
+                uid=f"{uid}/{g.component}/{index}", module_uid=None, module_name=obj.name, line="",
+                name=name if g.kind == 'CAIXA' else obj.name, component=g.component,
+                length=length * 1000.0, width=width * 1000.0, thickness=thickness * 1000.0,
+                finish=g.finish, source="FREE_GEOMETRY", material=g.material))
+    return records

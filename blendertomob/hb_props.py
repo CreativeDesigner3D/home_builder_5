@@ -78,6 +78,13 @@ def update_text_color(self, context):
 def update_ceiling_height(self, context):
     """Update cabinet heights when ceiling height changes."""
 
+    # BlenderToMob (D-38, RF-43): as paredes de altura cheia acompanham o pé-direito do projeto.
+    try:
+        from .walls2d import apply as walls2d_apply
+        walls2d_apply.sync_project_height(context, self.ceiling_height)
+    except Exception as exc:          # não impede o recálculo dos armários abaixo
+        print("BlenderToMob: falha ao atualizar o pé-direito das paredes:", exc)
+
     # Check if frameless props exist on the current scene
     if not hasattr(context.scene, 'hb_frameless'):
         return
@@ -954,7 +961,7 @@ classes = (
 
 def register():
     for cls in classes:
-        reg_cls = getattr(bpy.types, cls.__name__, None)
+        reg_cls = (cls if cls.is_registered else getattr(bpy.types, cls.__name__, None))
         if reg_cls:
             try:
                 bpy.utils.unregister_class(reg_cls)
@@ -968,7 +975,7 @@ def register():
 
 def unregister():
     for cls in reversed(classes):
-        reg_cls = getattr(bpy.types, cls.__name__, None)
+        reg_cls = (cls if cls.is_registered else getattr(bpy.types, cls.__name__, None))
         if reg_cls:
             try:
                 bpy.utils.unregister_class(reg_cls)

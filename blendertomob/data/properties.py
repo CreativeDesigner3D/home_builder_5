@@ -627,9 +627,16 @@ class BTM_PG_SceneSettings(bpy.types.PropertyGroup):
         subtype='DISTANCE'
     )  # type: ignore
     collision_global: bpy.props.BoolProperty(
-        name="Colisões Globais",
-        description="Evitar interseção física entre módulos",
+        name="Evitar Sobreposição",
+        description=("Ligado, nenhum módulo ocupa o espaço de outro nem atravessa paredes ao ser posicionado; "
+                     "desligado, sobrepor é permitido (RN-13)"),
         default=True
+    )  # type: ignore
+    save_fronts_open: bpy.props.BoolProperty(
+        name="Salvar com Frentes Abertas",
+        description=("Desligado (padrão), portas e gavetas abertas para inspeção são salvas fechadas e continuam "
+                     "abertas na tela (RN-14)"),
+        default=False
     )  # type: ignore
 
     # Grid overlay settings
@@ -756,7 +763,7 @@ def unregister_properties():
 def register():
     unregister_properties()
     for cls in classes:
-        reg_cls = getattr(bpy.types, cls.__name__, None)
+        reg_cls = (cls if cls.is_registered else getattr(bpy.types, cls.__name__, None))
         if reg_cls:
             try:
                 bpy.utils.unregister_class(reg_cls)
@@ -793,7 +800,7 @@ def register():
 def unregister():
     unregister_properties()
     for cls in reversed(classes):
-        reg_cls = getattr(bpy.types, cls.__name__, None)
+        reg_cls = (cls if cls.is_registered else getattr(bpy.types, cls.__name__, None))
         if reg_cls:
             try:
                 bpy.utils.unregister_class(reg_cls)

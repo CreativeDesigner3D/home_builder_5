@@ -23,5 +23,5 @@ def _stub(name, path):
 
 
 _stub("blendertomob", PACKAGE)
-for _sub in ("cutting", "data", "standards"):
+for _sub in ("cutting", "data", "standards", "inspection", "selection", "canvas2d", "move_over", "measure", "walls2d"):
     _stub(f"blendertomob.{_sub}", PACKAGE / _sub)

@@ -1,0 +1,97 @@
+{"ts": "2026-10-05T06:18:49+00:00", "action": "T001", "status": "done", "files": ["blendertomob/selection/classify.py", "blendertomob/selection/__init__.py"]}
+{"ts": "2026-10-05T06:18:49+00:00", "action": "T002", "status": "done", "files": ["blendertomob/canvas2d/view.py", "blendertomob/canvas2d/__init__.py"]}
+{"ts": "2026-10-05T06:18:49+00:00", "action": "T004", "status": "done", "files": ["blendertomob/move_over/align.py"]}
+{"ts": "2026-10-05T06:18:49+00:00", "action": "T005", "status": "done", "files": ["blendertomob/measure/cotas.py", "blendertomob/measure/__init__.py"]}
+{"ts": "2026-10-05T06:18:49+00:00", "action": "T006", "status": "done", "files": ["blendertomob/move_over/props.py"]}
+{"ts": "2026-10-05T06:18:49+00:00", "action": "T009", "status": "done", "files": ["tests/test_canvas2d_view.py", "tests/_bootstrap.py"]}
+{"ts": "2026-10-05T06:18:49+00:00", "action": "T011", "status": "done", "files": ["tests/test_move_over_align.py"]}
+{"ts": "2026-10-05T06:18:49+00:00", "action": "T012", "status": "done", "files": ["tests/test_cotas.py"]}
+{"ts": "2026-10-05T06:18:49+00:00", "action": "T013", "status": "done", "files": ["tests/test_classify.py"]}
+{"ts": "2026-10-05T06:18:49+00:00", "action": "T014", "status": "done", "files": ["blendertomob/measure/scene_cotas.py"]}
+{"ts": "2026-10-05T06:18:49+00:00", "action": "T015", "status": "done", "files": ["blendertomob/selection/editing.py"]}
+{"ts": "2026-10-05T06:18:49+00:00", "action": "T017", "status": "done", "files": ["blendertomob/move_over/scene.py"]}
+{"ts": "2026-10-05T06:18:49+00:00", "action": "T018", "status": "done", "files": ["blendertomob/canvas2d/draw.py"]}
+{"ts": "2026-10-05T06:18:49+00:00", "action": "T023", "status": "done", "files": ["blendertomob/ui/object_properties.py", "blendertomob/ui/panels.py", "blendertomob/ui/__init__.py"], "note": "\"Abrir\" só para frentes de módulo; portas/janelas de ambiente dependem da T016 (aberta)"}
+{"ts": "2026-10-05T06:18:49+00:00", "action": "T024", "status": "done", "files": ["blendertomob/overlays/selection_cotas.py", "blendertomob/overlays/__init__.py"]}
+{"ts": "2026-10-05T06:18:49+00:00", "action": "T025", "status": "done", "files": ["blendertomob/move_over/ops_drag.py", "blendertomob/move_over/__init__.py", "blendertomob/__init__.py"], "note": "move_over registrado no __init__ do add-on; o registro completo (T037) fica para os blocos 3 e 4"}
+{"ts": "2026-10-05T06:18:49+00:00", "action": "T026", "status": "done", "files": ["blendertomob/move_over/ops_dialog.py"]}
+{"ts": "2026-10-05T06:18:49+00:00", "action": "T027", "status": "done", "files": ["blendertomob/operators/viewport_hud.py", "blendertomob/ui/panels.py"]}
+{"ts": "2026-10-05T07:20:45+00:00", "action": "T003", "status": "done", "files": ["blendertomob/walls2d/model.py"]}
+{"ts": "2026-10-05T07:20:45+00:00", "action": "T007", "status": "done", "files": ["blendertomob/walls2d/props.py"]}
+{"ts": "2026-10-05T07:20:45+00:00", "action": "T008", "status": "done", "files": ["blendertomob/geometry_free/props.py"]}
+{"ts": "2026-10-05T07:20:45+00:00", "action": "T010", "status": "done", "files": ["tests/test_walls2d_model.py"]}
+{"ts": "2026-10-05T07:20:45+00:00", "action": "T016", "status": "blocked", "files": [], "note": "portas/janelas de ambiente (HB5 e btm_opening) não têm folha 3D: só gaiola de recorte e símbolo 2D GeoNodeDoorSwing sem ângulo; adaptador não criado; RF-20 depende de modelar a folha (decisão do titular)"}
+{"ts": "2026-10-05T07:20:45+00:00", "action": "T019", "status": "done", "files": ["blendertomob/walls2d/scene_io.py"]}
+{"ts": "2026-10-05T07:20:45+00:00", "action": "T020", "status": "done", "files": ["blendertomob/walls2d/apply.py"], "note": "piso/teto ligados não são regenerados no OK (desvio registrado)"}
+{"ts": "2026-10-05T07:20:45+00:00", "action": "T021", "status": "done", "files": ["blendertomob/geometry_free/mesh.py"]}
+{"ts": "2026-10-05T07:20:45+00:00", "action": "T022", "status": "done", "files": ["blendertomob/cutting/part_sources.py", "blendertomob/cutting/part_extractor.py"]}
+{"ts": "2026-10-05T07:20:45+00:00", "action": "T028", "status": "done", "files": ["blendertomob/walls2d/window.py"]}
+{"ts": "2026-10-05T07:20:45+00:00", "action": "T029", "status": "done", "files": ["blendertomob/walls2d/ops_editor.py"], "note": "corrigido o fechamento pelo prompt (faltava o trecho de fechamento)"}
+{"ts": "2026-10-05T07:20:45+00:00", "action": "T030", "status": "done", "files": ["blendertomob/walls2d/panels.py"]}
+{"ts": "2026-10-05T07:20:45+00:00", "action": "T031", "status": "done", "files": ["blendertomob/ui/menus.py", "blendertomob/ui/panels.py"]}
+{"ts": "2026-10-05T07:20:45+00:00", "action": "T032", "status": "done", "files": ["blendertomob/geometry_free/ops_create.py", "blendertomob/ui/panels.py"], "note": "usa hb_snap.main em vez do seletor de pontos do DimensionOperatorMixin"}
+{"ts": "2026-10-05T07:20:45+00:00", "action": "T033", "status": "done", "files": ["blendertomob/geometry_free/ops_edit.py", "blendertomob/ui/object_properties.py"]}
+{"ts": "2026-10-05T07:20:45+00:00", "action": "T034", "status": "done", "files": ["blendertomob/operators/ops_wall_extras.py", "blendertomob/operators/__init__.py", "blendertomob/walls2d/apply.py"]}
+{"ts": "2026-10-05T07:20:45+00:00", "action": "T035", "status": "done", "files": ["blendertomob/operators/ops_wall_extras.py", "blendertomob/ui/menus.py", "blendertomob/ui/object_properties.py"]}
+{"ts": "2026-10-05T07:20:45+00:00", "action": "T036", "status": "done", "files": ["blendertomob/move_over/ops_move_on_wall.py", "blendertomob/move_over/__init__.py", "blendertomob/measure/cotas.py", "blendertomob/ui/object_properties.py", "tests/test_cotas.py"]}
+{"ts": "2026-10-05T07:20:45+00:00", "action": "T037", "status": "done", "files": ["blendertomob/__init__.py", "blendertomob/walls2d/__init__.py", "blendertomob/geometry_free/__init__.py"]}
+{"ts": "2026-10-05T07:20:45+00:00", "action": "T038", "status": "done", "files": ["blendertomob/data/i18n.py"]}
+{"ts": "2026-10-05T07:20:45+00:00", "action": "T039", "status": "done", "files": ["docs/usuario/editor-paredes-e-mover-sobre.md"]}
+{"ts": "2026-10-05T07:20:45+00:00", "action": "T040", "status": "done", "files": ["tests/blender_002_smoke.py"]}
+{"ts": "2026-10-05T15:03:17+00:00", "action": "T029", "status": "corrected", "files": ["blendertomob/walls2d/ops_editor.py", "blendertomob/walls2d/window.py", "tests/blender_002_smoke.py"], "note": "audit A001: o modal ignorava a região UI sobreposta e engolia cliques/teclas do painel lateral; agora passa os eventos sobre o painel e a planta usa só a largura visível"}
+{"ts": "2026-10-05T15:03:17+00:00", "action": "T030", "status": "corrected", "files": ["blendertomob/walls2d/window.py"], "note": "audit A013: janela do editor sem menus e ferramentas de imagem"}
+{"ts": "2026-10-05T15:03:17+00:00", "action": "T019", "status": "corrected", "files": ["blendertomob/walls2d/scene_io.py", "blendertomob/walls2d/model.py", "blendertomob/walls2d/ops_editor.py"], "note": "audit A004 / D-05: paredes da camada nova aparecem tracejadas como referência, sem edição"}
+{"ts": "2026-10-05T15:03:17+00:00", "action": "T020", "status": "corrected", "files": ["blendertomob/walls2d/apply.py"], "note": "audit A005: OK refaz a malha de pisos e tetos existentes com o contorno novo (mesmas funções de add_floor/add_ceiling)"}
+{"ts": "2026-10-05T15:03:17+00:00", "action": "T040", "status": "corrected", "files": ["tests/blender_002_smoke.py"], "note": "fumaça cobre A001, A004, A005 e verifica que os 463 operadores citados na interface existem (A002)"}
+{"ts": "2026-10-05T17:46:37+00:00", "action": "T041", "status": "done", "files": ["blendertomob/inspection/room_door_math.py"], "note": "lado e sentido pelos inputs do símbolo, conferidos contra o símbolo medido no Blender (pontas do arco); a caixa avaliada não é lida em tempo de uso"}
+{"ts": "2026-10-05T17:46:37+00:00", "action": "T042", "status": "done", "files": ["blendertomob/walls2d/convert.py"]}
+{"ts": "2026-10-05T17:46:37+00:00", "action": "T043", "status": "done", "files": ["tests/test_room_door_math.py"]}
+{"ts": "2026-10-05T17:46:37+00:00", "action": "T045", "status": "done", "files": ["tests/test_walls2d_convert.py"]}
+{"ts": "2026-10-05T17:46:37+00:00", "action": "T044", "status": "done", "files": ["blendertomob/inspection/room_door_leaf.py"]}
+{"ts": "2026-10-05T17:46:37+00:00", "action": "T016", "status": "done", "files": ["blendertomob/inspection/adapters/room_doors.py", "blendertomob/inspection/fronts.py", "blendertomob/inspection/interference.py"], "note": "Front.can_sweep(): a verificação de interferência não cria folhas; module_root_of reconhece IS_ENTRY_DOOR_BP"}
+{"ts": "2026-10-05T17:46:37+00:00", "action": "T046", "status": "done", "files": ["blendertomob/walls2d/apply.py", "blendertomob/walls2d/model.py", "blendertomob/walls2d/props.py"]}
+{"ts": "2026-10-05T17:46:37+00:00", "action": "T047", "status": "done", "files": ["blendertomob/walls2d/scene_io.py"], "note": "o 'offset' (base Z) do btm_wall_segments é ignorado: as paredes convertidas nascem no piso"}
+{"ts": "2026-10-05T17:46:37+00:00", "action": "T048", "status": "done", "files": ["blendertomob/walls2d/panels.py", "blendertomob/walls2d/ops_editor.py", "blendertomob/walls2d/props.py"]}
+{"ts": "2026-10-05T17:46:37+00:00", "action": "T049", "status": "done", "files": ["blendertomob/walls2d/ops_editor.py"]}
+{"ts": "2026-10-05T17:46:37+00:00", "action": "T050", "status": "done", "files": ["blendertomob/ui/object_properties.py"]}
+{"ts": "2026-10-05T17:46:37+00:00", "action": "T051", "status": "done", "files": ["tests/blender_002_smoke.py", "tests/test_walls2d_model.py", "blendertomob/walls2d/model.py"], "note": "a fumaça achou e corrigiu a esquadria do deslocamento CENTER/LEFT nos cantos (1/(2cos²) em vez de 1/(2cos)); teste unitário do canto acrescentado"}
+{"ts": "2026-10-05T17:46:37+00:00", "action": "T052", "status": "done", "files": ["docs/usuario/editor-paredes-e-mover-sobre.md"]}
+{"ts": "2026-10-05T17:46:37+00:00", "action": "T053", "status": "done", "files": ["blendertomob/data/i18n.py"]}
+{"ts": "2026-10-05T17:46:37+00:00", "action": "T003", "status": "corrected", "files": ["blendertomob/walls2d/model.py"], "note": "offset_for_orientation: escala da esquadria nos cantos corrigida (achado pela T051)"}
+{"ts": "2026-10-05T18:47:59+00:00", "action": "T054", "status": "done", "files": ["blendertomob/walls2d/model.py"], "note": "Chain.side no lugar de orientation; nós = face interna; hb_order(); shifted_nodes(); plan_signature(); invert() mantém a parede no lugar"}
+{"ts": "2026-10-05T18:47:59+00:00", "action": "T055", "status": "done", "files": ["blendertomob/data/properties.py", "blendertomob/hb_project.py", "blendertomob/hb_props.py", "blendertomob/hb_props_obstacles.py", "blendertomob/molding/ops.py", "blendertomob/operators/details.py", "blendertomob/operators/doors_windows.py", "blendertomob/operators/export.py", "blendertomob/operators/ops_general.py", "blendertomob/operators/ops_stairs.py", "blendertomob/operators/rooms.py", "blendertomob/operators/scene_navigator.py", "blendertomob/operators/viewport_hud.py", "blendertomob/operators/walls.py", "blendertomob/ops.py", "blendertomob/hb_assets.py"], "note": "o padrão também estava em menus, propriedades e painéis: corrigido em 46 arquivos (91 ocorrências) + hb_assets (hasattr)"}
+{"ts": "2026-10-05T18:47:59+00:00", "action": "T056", "status": "done", "files": ["blendertomob/product_libraries/frameless/menus_frameless.py", "blendertomob/product_libraries/frameless/operators/ops_appliance.py", "blendertomob/product_libraries/frameless/operators/ops_cabinet.py", "blendertomob/product_libraries/frameless/operators/ops_crown.py", "blendertomob/product_libraries/frameless/operators/ops_defaults.py", "blendertomob/product_libraries/frameless/operators/ops_front.py", "blendertomob/product_libraries/frameless/operators/ops_interior.py", "blendertomob/product_libraries/frameless/operators/ops_library.py", "blendertomob/product_libraries/frameless/operators/ops_opening.py", "blendertomob/product_libraries/frameless/operators/ops_placement.py", "blendertomob/product_libraries/frameless/operators/ops_products.py", "blendertomob/product_libraries/frameless/operators/ops_styles.py", "blendertomob/product_libraries/frameless/operators/ops_toe_kick.py", "blendertomob/product_libraries/frameless/operators/ops_upper_bottom.py", "blendertomob/product_libraries/frameless/props_hb_frameless.py"]}
+{"ts": "2026-10-05T18:47:59+00:00", "action": "T057", "status": "done", "files": ["blendertomob/product_libraries/closets/menus_closets.py", "blendertomob/product_libraries/closets/operators/ops_closet.py", "blendertomob/product_libraries/face_frame/menus_face_frame.py", "blendertomob/product_libraries/face_frame/operators/op_modify_cabinet.py", "blendertomob/product_libraries/face_frame/operators/ops_appliance_panels.py", "blendertomob/product_libraries/face_frame/operators/ops_cabinet.py", "blendertomob/product_libraries/face_frame/operators/ops_defaults.py", "blendertomob/product_libraries/face_frame/operators/ops_finished_ends.py", "blendertomob/product_libraries/face_frame/operators/ops_library.py", "blendertomob/product_libraries/face_frame/operators/ops_part_commands.py", "blendertomob/product_libraries/face_frame/operators/ops_placement.py", "blendertomob/product_libraries/face_frame/operators/ops_styles.py", "blendertomob/product_libraries/face_frame/operators/ops_thumbnails.py", "blendertomob/product_libraries/face_frame/operators/ops_wedge.py", "blendertomob/product_libraries/face_frame/props_hb_face_frame.py", "blendertomob/product_libraries/face_frame/ui_face_frame.py"]}
+{"ts": "2026-10-05T18:47:59+00:00", "action": "T058", "status": "done", "files": ["tests/test_walls2d_model.py"]}
+{"ts": "2026-10-05T18:47:59+00:00", "action": "T060", "status": "done", "files": ["blendertomob/walls2d/convert.py"]}
+{"ts": "2026-10-05T18:47:59+00:00", "action": "T059", "status": "done", "files": ["tests/test_walls2d_convert.py"]}
+{"ts": "2026-10-05T18:47:59+00:00", "action": "T061", "status": "done", "files": ["blendertomob/walls2d/apply.py"]}
+{"ts": "2026-10-05T18:47:59+00:00", "action": "T062", "status": "done", "files": ["blendertomob/walls2d/scene_io.py"], "note": "salas legadas desenhadas no anti-horário (espessura para dentro) são lidas como estão (Direção esquerda, nós na base): nelas a linha dos nós é a externa; trocar a Direção corrige"}
+{"ts": "2026-10-05T18:47:59+00:00", "action": "T063", "status": "done", "files": ["blendertomob/walls2d/props.py"]}
+{"ts": "2026-10-05T18:47:59+00:00", "action": "T064", "status": "done", "files": ["blendertomob/inspection/gizmo.py"]}
+{"ts": "2026-10-05T18:47:59+00:00", "action": "T065", "status": "done", "files": ["blendertomob/walls2d/ops_editor.py"]}
+{"ts": "2026-10-05T18:47:59+00:00", "action": "T066", "status": "done", "files": ["blendertomob/walls2d/ops_editor.py"]}
+{"ts": "2026-10-05T18:47:59+00:00", "action": "T067", "status": "done", "files": ["blendertomob/walls2d/ops_editor.py"]}
+{"ts": "2026-10-05T18:47:59+00:00", "action": "T068", "status": "done", "files": ["blendertomob/walls2d/panels.py", "blendertomob/walls2d/window.py"], "note": "pelo print da tela: com HIDE_HEADER o Blender ignora bl_order (Confirmar continuava no topo) → cabeçalho 'Confirmar' visível; a região lateral abria na aba 'Tool' → focus_editor_tab no modal; cabeçalho View/New/Open escondido"}
+{"ts": "2026-10-05T18:47:59+00:00", "action": "T069", "status": "done", "files": ["blendertomob/move_over/ops_drag.py"], "note": "lista fixa de mapas de modo (em --background o teclado padrão vem sem itens, então não dá para descobrir na hora)"}
+{"ts": "2026-10-05T18:47:59+00:00", "action": "T070", "status": "done", "files": ["tests/blender_002_smoke.py"]}
+{"ts": "2026-10-05T18:47:59+00:00", "action": "T071", "status": "done", "files": ["tests/blender_002_ui_events.py"], "note": "10 verificações com cliques reais; na janela simulada o 1º botão direito da sessão se perde (efeito da simulação; aquecimento no teste)"}
+{"ts": "2026-10-05T18:47:59+00:00", "action": "T072", "status": "done", "files": ["docs/usuario/editor-paredes-e-mover-sobre.md"]}
+{"ts": "2026-10-05T18:47:59+00:00", "action": "T073", "status": "done", "files": ["blendertomob/data/i18n.py"], "note": "inclui rótulos de operador no contexto 'Operator' (Cancelar, Enquadrar Tudo…), que ficavam em português com o Blender em inglês"}
+{"ts": "2026-10-05T22:27:24+00:00", "action": "T074", "status": "done", "files": ["blendertomob/walls2d/model.py"]}
+{"ts": "2026-10-05T22:27:24+00:00", "action": "T075", "status": "done", "files": ["blendertomob/walls2d/heights.py"]}
+{"ts": "2026-10-05T22:27:24+00:00", "action": "T076", "status": "done", "files": ["tests/test_walls2d_model.py"]}
+{"ts": "2026-10-05T22:27:24+00:00", "action": "T077", "status": "done", "files": ["tests/test_walls2d_heights.py"]}
+{"ts": "2026-10-05T22:27:24+00:00", "action": "T078", "status": "done", "files": ["blendertomob/walls2d/ops_editor.py"]}
+{"ts": "2026-10-05T22:27:24+00:00", "action": "T079", "status": "done", "files": ["blendertomob/walls2d/ops_editor.py", "blendertomob/walls2d/props.py"], "note": "'Não' na pergunta pelo teclado mantém o trecho digitado (ponto pendente)"}
+{"ts": "2026-10-05T22:27:24+00:00", "action": "T080", "status": "done", "files": ["blendertomob/walls2d/apply.py"]}
+{"ts": "2026-10-05T22:27:24+00:00", "action": "T081", "status": "done", "files": ["blendertomob/walls2d/ops_editor.py", "blendertomob/walls2d/props.py"], "note": "o valor é lido ao abrir pelo operador btm.wall_editor"}
+{"ts": "2026-10-05T22:27:24+00:00", "action": "T082", "status": "done", "files": ["blendertomob/walls2d/apply.py", "blendertomob/walls2d/props.py", "blendertomob/walls2d/ops_editor.py"]}
+{"ts": "2026-10-05T22:27:24+00:00", "action": "T083", "status": "done", "files": ["blendertomob/walls2d/panels.py"]}
+{"ts": "2026-10-05T22:27:24+00:00", "action": "T084", "status": "done", "files": ["blendertomob/hb_props.py", "blendertomob/walls2d/apply.py"], "note": "sync_project_height em walls2d/apply.py, chamado pelo update_ceiling_height; piso/teto refeitos só na cena atual"}
+{"ts": "2026-10-05T22:27:24+00:00", "action": "T085", "status": "done", "files": ["blendertomob/operators/walls.py"], "note": "tecla C continua fechando direto (comando explícito); _finish_close_room reaproveitado pelo clique, Enter e C"}
+{"ts": "2026-10-05T22:27:24+00:00", "action": "T086", "status": "done", "files": ["blendertomob/operators/walls.py"]}
+{"ts": "2026-10-05T22:27:24+00:00", "action": "T087", "status": "done", "files": ["tests/blender_002_smoke.py"]}
+{"ts": "2026-10-05T22:27:24+00:00", "action": "T088", "status": "done", "files": ["tests/blender_002_ui_events.py"], "note": "13 verificações com cliques reais, incluindo o ímã do editor e o Desenhar Paredes 3D"}
+{"ts": "2026-10-05T22:27:24+00:00", "action": "T089", "status": "done", "files": ["docs/usuario/editor-paredes-e-mover-sobre.md"]}
+{"ts": "2026-10-05T22:27:24+00:00", "action": "T090", "status": "done", "files": ["blendertomob/data/i18n.py"]}

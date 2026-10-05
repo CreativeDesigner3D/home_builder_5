@@ -7,7 +7,8 @@ from bpy.app.handlers import persistent  # type: ignore
 
 # Hot-reload submodules during active development
 _submodule_names = [
-    "compat", "data", "standards", "geometry", "cutting", "ui", "overlays",
+    "compat", "data", "standards", "geometry", "cutting", "inspection", "move_over", "walls2d", "geometry_free",
+    "ui", "overlays",
     "hb_props", "hb_project", "hb_props_obstacles", "ops",
     "view3d_sidebar", "menu_apend", "menus",
     "walls", "doors_windows", "layouts", "rooms", "details",
@@ -26,6 +27,10 @@ from . import data
 from . import standards
 from . import geometry as geometry
 from . import cutting as cutting
+from . import inspection
+from . import move_over
+from . import walls2d
+from . import geometry_free
 from . import ui
 from . import overlays
 from . import operators as btm_operators
@@ -235,6 +240,10 @@ def register():
 
     # Register modern UI, operators & draw handlers
     btm_operators.register()
+    inspection.register()
+    move_over.register()
+    walls2d.register()
+    geometry_free.register()
     ui.register()
     overlays.register()
 
@@ -284,6 +293,10 @@ def unregister():
     # Unregister modern UI, operators & draw handlers
     overlays.unregister()
     ui.unregister()
+    geometry_free.unregister()
+    walls2d.unregister()
+    move_over.unregister()
+    inspection.unregister()
     btm_operators.unregister()
 
     # Unregister legacy operators

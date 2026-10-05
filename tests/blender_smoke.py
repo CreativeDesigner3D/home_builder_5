@@ -50,8 +50,19 @@ def assert_clean_unregister():
     assert stale.depsgraph_update_post not in bpy.app.handlers.depsgraph_update_post
     assert addon.load_file_post not in bpy.app.handlers.load_post
     assert not bpy.app.timers.is_registered(migration._startup_timer)
-    assert not hasattr(bpy.types, 'BTM_OT_StandardsConfigurator')
-    assert not hasattr(bpy.types, 'BTM_UL_StandardsTree')
+    # Operadores e grupos de gizmo registrados em Python só aparecem pelo RNA (o nome da classe não vale).
+    assert bpy.types.Operator.bl_rna_get_subclass_py('BTM_OT_standards_configurator') is None
+    # Inspeção (T079): gizmo, estado, operadores, handlers de salvar, draw handlers e timer do gizmo.
+    from blendertomob.inspection import gizmo, overlay, save_guard
+    assert not hasattr(bpy.types.WindowManager, 'btm_inspection')
+    assert bpy.types.GizmoGroup.bl_rna_get_subclass_py('BTM_GGT_front_open') is None
+    assert bpy.types.Operator.bl_rna_get_subclass_py('BTM_OT_inspect_fronts') is None
+    assert save_guard.save_pre not in bpy.app.handlers.save_pre
+    assert save_guard.save_post not in bpy.app.handlers.save_post
+    assert save_guard.save_post not in bpy.app.handlers.save_post_fail
+    assert not overlay._handles
+    assert not bpy.app.timers.is_registered(gizmo._commit_pending)
+    assert bpy.types.UIList.bl_rna_get_subclass_py('BTM_UL_StandardsTree') is None
 
 
 addon.unregister()

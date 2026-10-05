@@ -13,6 +13,13 @@
 | W006 | `_reversa_sdd/cutting/requirements.md`, `NestingPart` / exportação | Exportação gera JSON `schema_version` 2.0.0 (`parts`, `materials`, `modules`, `cut_plan`); v1 só na importação (convertido) | redação | Spec descreve `parts_catalog`/`schema_version 1.0.0` como saída atual |
 | W007 | `_reversa_sdd/cutting/requirements.md`, extração de peças | Gabinetes frameless/closets geram peças a partir dos `GeoNodeCutpart` visíveis, com `uid = <btm_uid>/<componente>/<índice>` estável; sintético só para módulos `btm_*` | presença | Spec volta a descrever peças deduzidas das medidas do módulo para todos os gabinetes |
 | W008 | `_reversa_sdd/frameless/requirements.md`, dívida "Undo" (`ops_defaults.py`) | Operadores de propagação de padrões do frameless têm `UNDO` e aceitam pular medidas manuais (`btm_overrides`) | redação | Spec regenerada volta a listar `ops_defaults.py` sem `UNDO` ou sem o filtro de medidas manuais |
+| W009 | `_reversa_sdd/data-dictionary-legacy.md`, `hb_door_open / hb_drawer_open` | Estado de abertura das frentes do closets é **fração 0–1** (float); valores inteiros 0/1 de arquivos antigos continuam válidos | redação | Spec regenerada descreve o campo como `int` 0/1 |
+| W010 | `_reversa_sdd/data-dictionary.md`, `collision_global` | Propriedade exibida como "Evitar Sobreposição" (RN-13) | redação | Spec volta a chamar o campo de "Colisões Globais" ou "Evitar Colisões Físicas" |
+| W011 | `_reversa_sdd/frameless/requirements.md`, frentes (`types_frameless.py` `CabinetDoor`/`CabinetFlipUpDoor`/`CabinetDrawerFront`/`CabinetPulloutFront`) | Frentes frameless abrem por `delta_rotation_euler`/`delta_location` (idprop `btm_open`) sem alterar drivers de medida nem a hierarquia | presença | Spec não menciona abertura de frentes no frameless ou descreve pivôs/drivers novos para isso |
+| W012 | `_reversa_sdd/hb_core` (handlers de aplicação) | `save_pre` fecha as frentes abertas e `save_post`/`save_post_fail` reabrem; com `btm_settings.save_fronts_open` nada muda (RN-14) | presença | Spec regenerada não lista os handlers de salvar ou diz que o arquivo guarda as frentes abertas |
+| W013 | `_reversa_sdd/hb_placement/requirements.md`, RN-09 | Filhos-módulo da parede só são obstáculos com `btm_settings.collision_global` ("Evitar Sobreposição") ligado; portas/janelas e linhas de encaixe sempre | redação | Spec regenerada descreve todos os filhos como obstáculos sem condição |
+| W014 | `_reversa_sdd/hb_placement/requirements.md`, RN-14 | Gabinetes livres e intrusões de paredes adjacentes/em T só bloqueiam com "Evitar Sobreposição" ligado | redação | Spec descreve gabinetes livres ou intrusões como obstáculos incondicionais |
+| W015 | `_reversa_sdd/face_frame/` e `_reversa_sdd/closets/` (modos de abrir) | `hb_face_frame.open_mode` e `hb_closets.open_door_mode` apenas abrem `btm.inspect_fronts`; não têm animação própria | presença | Spec volta a descrever tween/estado próprios nesses operadores ou estado 0/1 gravado por eles |
 
 ## Histórico de re-extrações
 
@@ -31,3 +38,10 @@ Itens sem peso de regressão (regras de origem 🟡/🔴 ou decisões novas dest
 - Comparação do limite de chapa por medidas ordenadas (lado maior × maior limite) é decisão 🟡 (D-12).
 - `btm_overrides` só é gravado quando o valor difere do padrão da cena (closets) ou do valor inicial do diálogo
   (frameless); edições por drivers ou scripts não são marcadas. 🟡
+- (incremento 3) Posição fechada do controlador do módulo rápido em Y = 0 (`geometry/door_controller.py`); a regra
+  anterior (0,03 m) não constava como 🟢 nas specs. 🟡
+- (incremento 3) Teto comum de 90° para as frentes articuladas de todas as linhas, convertido para os máximos legados
+  (face frame 100°, closets 110°) — decisão D-20 🟡.
+- (incremento 3) Envelope de interferência por cascos convexos de poses a cada 15° com tolerância de 1 mm — D-29 🟡.
+- (incremento 3) Abrir portas não marca o plano de corte como desatualizado (`cutting/stale.py`, regra criada no
+  incremento 1, sem origem 🟢 nas specs do legado) — D-31.

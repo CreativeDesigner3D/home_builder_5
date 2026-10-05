@@ -407,7 +407,7 @@ classes = (
 
 def register():
     for cls in classes:
-        if hasattr(bpy.types, cls.__name__):
+        if cls.is_registered:
             continue
         try:
             bpy.utils.register_class(cls)
@@ -421,9 +421,9 @@ def unregister():
     except Exception:
         pass
     for cls in reversed(classes):
-        if hasattr(bpy.types, cls.__name__):
+        if cls.is_registered:
             try:
-                bpy.utils.unregister_class(getattr(bpy.types, cls.__name__))
+                bpy.utils.unregister_class(cls)
             except Exception:
                 pass
 
