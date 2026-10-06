@@ -87,6 +87,10 @@ def toggle_cabinet_color(obj,toggle,type_name="",dont_show_parent=True):
                 return
         if _under_hidden_wall(obj):
             return
+        # Hidden by Hide / Isolate: stays out of sight and unselected
+        # until Show All Hidden.
+        if obj.get('HB_ISOLATED_HIDDEN'):
+            return
         obj.color = _style_color(obj, add_on_prefs.cabinet_color,
                                  highlight=True)
         obj.show_in_front = True
