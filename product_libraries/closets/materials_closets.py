@@ -218,6 +218,84 @@ def load_core_material():
     return mat
 
 
+# Which edges each kind of part is banded on - the same table the pricing
+# engine charges banding by (spaces pricing.closets CARCASS_EB_EDGES,
+# the prior library's per-class ebl1/ebl2/ebw1/ebw2), so the model shows
+# the banding the shop puts on and the cut list, labels and MV export
+# (which read the edge slots) say the same. L2 is the front edge. A part
+# not listed - fronts, tops, purchased rails - is banded all round.
+BAND_EDGES = {
+    'CLOSET_PANEL': ('L2', 'W1', 'W2'),
+    'CLOSET_BOTTOM_SHELF': ('L2',),
+    'CLOSET_TOP_SHELF': ('L2',),
+    'CLOSET_FIXED_SHELF': ('L2',),
+    'CLOSET_ADJ_SHELF': ('L2',),
+    'CLOSET_CLEAT': ('L2',),
+    'CLOSET_CUBBY_DIVISION': ('L2',),
+    'CLOSET_CUBBY_SHELF': ('L2',),
+    'CLOSET_BRIDGE_SHELF': ('L2',),
+    'CLOSET_COUNTERTOP': ('L1', 'L2', 'W1', 'W2'),
+    'CLOSET_BACKSPLASH': ('L1', 'L2', 'W1', 'W2'),
+    'CLOSET_APPLIED_BACK': ('L1', 'L2', 'W1', 'W2'),
+    'CLOSET_TOE_KICK': (),
+    'CLOSET_CENTER_BACK': (),
+    'CLOSET_HOOK_CLEAT': ('L1', 'L2', 'W1', 'W2'),
+    'CLOSET_FILLER': ('L1', 'W1', 'W2'),
+    'CLOSET_DRAWER_STRETCHER': ('L2',),
+    'CLOSET_CAPTURED_BACK': (),
+    'CLOSET_DIVISION': ('L2',),
+    'CLOSET_SLANTED_SHELF': ('L2',),
+    'CLOSET_TOP_ACCENT_SHELF': ('L1', 'L2'),
+    'CLOSET_CONTINUOUS_TOP': ('L1', 'L2'),
+    'CLOSET_IRONING_BOARD_MOUNT': ('L1', 'L2', 'W1', 'W2'),
+    'CLOSET_L_LOCK_SHELF': ('L2',),
+    'CLOSET_L_ADJ_SHELF': ('L2',),
+}
+# Parts with a generic role band as the part they are (pricing
+# _ACCESSORY_PART_ROLES / _LOOSE_PART_ROLES).
+_ACCESSORY_BAND_ROLES = {
+    'Hook Cleat': 'CLOSET_HOOK_CLEAT',
+    'Ironing Board Mount': 'CLOSET_IRONING_BOARD_MOUNT',
+    'Accessory Shelf': 'CLOSET_FIXED_SHELF',
+}
+_LOOSE_BAND_ROLES = {
+    'BACK': 'CLOSET_CAPTURED_BACK',
+    'CLEAT': 'CLOSET_CLEAT',
+    'SHELF': 'CLOSET_ADJ_SHELF',
+    'COUNTERTOP': 'CLOSET_COUNTERTOP',
+}
+
+
+def banded_edges(obj):
+    """The edges (of W1 W2 L1 L2) a part is banded on, or None for all
+    four. A misc part bands the edges ticked on it; any other part what
+    its kind always does (BAND_EDGES)."""
+    if is_bandable_misc_part(obj):
+        return tuple(e for e in MISC_BAND_EDGES if obj.get('hb_band_' + e))
+    role = obj.get('hb_part_role')
+    if obj.get('hb_l_index') is not None:
+        if role == 'CLOSET_ADJ_SHELF':
+            role = 'CLOSET_L_ADJ_SHELF'
+        elif role in ('CLOSET_FIXED_SHELF', 'CLOSET_TOP_SHELF',
+                      'CLOSET_BOTTOM_SHELF'):
+            role = 'CLOSET_L_LOCK_SHELF'
+    elif role == 'CLOSET_ACCESSORY_PART':
+        role = _ACCESSORY_BAND_ROLES.get(obj.get('hb_acc_part'), role)
+    elif role == 'CLOSET_MISC_PART':
+        role = _LOOSE_BAND_ROLES.get(obj.get('hb_loose_kind'), role)
+    return BAND_EDGES.get(role)
+
+
+def _set_edges(part, obj, edge):
+    """Band the edges `obj` is banded on in `edge`; the rest show the
+    bare board core."""
+    banded = banded_edges(obj)
+    core = load_core_material() if banded is not None         and len(banded) < len(MISC_BAND_EDGES) else None
+    for e in MISC_BAND_EDGES:
+        part.set_input('Edge ' + e,
+                       edge if (banded is None or e in banded) else core)
+
+
 def is_bandable_misc_part(obj):
     """A true misc part - not the loose back / cleat / shelf, which band
     the way the part they stand in for always does."""
@@ -540,14 +618,11 @@ def apply_to_starter(root, carcass_name=None, front_name=None):
         if mat is None:
             continue
         part = hb_types.GeoNodeCutpart(child)
-        # A misc part shows bare core on the edges it isn't banded on.
-        core = load_core_material() if is_bandable_misc_part(child) else None
         try:
             part.set_input('Top Surface', mat)
             part.set_input('Bottom Surface', mat)
-            for e in MISC_BAND_EDGES:
-                banded = core is None or child.get('hb_band_' + e)
-                part.set_input('Edge ' + e, edge if banded else core)
+            # Unbanded edges show the bare board core.
+            _set_edges(part, child, edge)
         except Exception:
             continue
         if role in (role_door, role_drawer):
@@ -588,14 +663,12 @@ def apply_to_part(obj, carcass_name=None):
         return True
     edge = rotated_variant(
         _resolve_edge_base('closet_edge_material', carcass))
-    core = load_core_material() if is_bandable_misc_part(obj) else None
     try:
         part = hb_types.GeoNodeCutpart(obj)
         part.set_input('Top Surface', carcass)
         part.set_input('Bottom Surface', carcass)
-        for e in MISC_BAND_EDGES:
-            banded = core is None or obj.get('hb_band_' + e)
-            part.set_input('Edge ' + e, edge if banded else core)
+        # Unbanded edges show the bare board core.
+        _set_edges(part, obj, edge)
     except Exception:
         return False
     return True
