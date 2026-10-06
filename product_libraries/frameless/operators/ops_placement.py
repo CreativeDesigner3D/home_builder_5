@@ -570,14 +570,15 @@ class PlaceCabinetBase(WallObjectPlacementMixin):
         # Offsets are relative to these boundaries, not the wall edges
         
         # Determine actual gap_start (left boundary + left offset)
+        left_origin, right_origin = self.offset_origins()
         if self.left_offset is not None:
-            gap_start = self.gap_left_boundary + self.left_offset
+            gap_start = left_origin + self.left_offset
         else:
             gap_start = self.gap_left_boundary
         
         # Determine actual gap_end (right boundary - right offset)
         if self.right_offset is not None:
-            gap_end = self.gap_right_boundary - self.right_offset
+            gap_end = right_origin - self.right_offset
         else:
             gap_end = self.gap_right_boundary
         
@@ -1048,26 +1049,28 @@ class PlaceCabinetBase(WallObjectPlacementMixin):
             units.unit_to_string(unit_settings, total_width),
             total_color)]
 
-        left_offset = x0 - self.gap_left_boundary
-        if left_offset > units.inch(0.5):
-            specs.append(hb_placement.PlacementDimSpec(
-                wm @ Vector((self.gap_left_boundary, y_dim, z_offset)),
-                wm @ Vector((x0, y_dim, z_offset)),
-                units.unit_to_string(unit_settings, left_offset),
-                offset_color))
-        right_offset = self.gap_right_boundary - x1
-        if right_offset > units.inch(0.5):
-            specs.append(hb_placement.PlacementDimSpec(
-                wm @ Vector((x1, y_dim, z_offset)),
-                wm @ Vector((self.gap_right_boundary, y_dim, z_offset)),
-                units.unit_to_string(unit_settings, right_offset),
-                offset_color))
-
         # The corner fillers the commit will build, where the offsets
         # would be: a run that reaches a corner has no offset there.
         filler_w = types_products.corner_filler_width()
         filler_text = units.unit_to_string(unit_settings, filler_w) + " Filler"
         reaches_left, reaches_right = self.corner_fillers_reached()
+
+        left_origin, right_origin = self.offset_origins()
+        left_offset = x0 - left_origin
+        if not reaches_left and left_offset > units.inch(0.5):
+            specs.append(hb_placement.PlacementDimSpec(
+                wm @ Vector((left_origin, y_dim, z_offset)),
+                wm @ Vector((x0, y_dim, z_offset)),
+                units.unit_to_string(unit_settings, left_offset),
+                offset_color))
+        right_offset = right_origin - x1
+        if not reaches_right and right_offset > units.inch(0.5):
+            specs.append(hb_placement.PlacementDimSpec(
+                wm @ Vector((x1, y_dim, z_offset)),
+                wm @ Vector((right_origin, y_dim, z_offset)),
+                units.unit_to_string(unit_settings, right_offset),
+                offset_color))
+
         if reaches_left:
             specs.append(hb_placement.PlacementDimSpec(
                 wm @ Vector((self.gap_left_boundary - filler_w, y_dim, z_offset)),
@@ -1416,6 +1419,21 @@ class PlaceCabinetBase(WallObjectPlacementMixin):
             filler.obj.location.y = wall_thickness
             filler.obj.rotation_euler = (0, 0, math.pi)
         return filler
+
+    def offset_origins(self):
+        """(left, right): where typed offsets and the offset dims measure
+        from. That is the gap's ends, except at a corner kept for a
+        filler, which measures from the corner itself: a cabinet set
+        back from the wall lands at the typed distance and, no longer
+        touching the corner, gets no filler."""
+        width = types_products.corner_filler_width()
+        left = self.gap_left_boundary
+        right = self.gap_right_boundary
+        if getattr(self, 'corner_filler_left', False):
+            left -= width
+        if getattr(self, 'corner_filler_right', False):
+            right += width
+        return left, right
 
     def corner_fillers_reached(self):
         """(left, right): the reserved corners the cabinet run actually
