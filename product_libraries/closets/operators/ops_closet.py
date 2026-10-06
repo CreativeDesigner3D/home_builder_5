@@ -1756,8 +1756,12 @@ class hb_closets_OT_place_starter(bpy.types.Operator,
             matches = _detect_corner_closet_neighbor(root)
             if matches:
                 kwargs = {'closet_name': root.name}
+                clearance = getattr(context.scene.hb_closets,
+                                    'corner_clearance', None)
                 for neighbor, placed_end, gap in matches:
                     k = placed_end.lower()
+                    if clearance is not None:
+                        kwargs[f'clearance_{k}'] = clearance
                     kwargs[f'has_{k}'] = True
                     kwargs[f'neighbor_{k}'] = neighbor.name
                     kwargs[f'gap_{k}'] = gap
@@ -1833,8 +1837,12 @@ class hb_closets_OT_place_starter(bpy.types.Operator,
             matches = _detect_corner_closet_neighbor(root)
             if matches:
                 kwargs = {'closet_name': root.name}
+                clearance = getattr(context.scene.hb_closets,
+                                    'corner_clearance', None)
                 for neighbor, placed_end, gap in matches:
                     k = placed_end.lower()
+                    if clearance is not None:
+                        kwargs[f'clearance_{k}'] = clearance
                     kwargs[f'has_{k}'] = True
                     kwargs[f'neighbor_{k}'] = neighbor.name
                     kwargs[f'gap_{k}'] = gap

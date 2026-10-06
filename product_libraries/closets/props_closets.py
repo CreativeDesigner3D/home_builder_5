@@ -1282,8 +1282,9 @@ class Closet_Opening_Props(PropertyGroup):
         default=0, min=0, max=10)  # type: ignore
     drawer_front_height: FloatProperty(
         name="Front Height",
-        description="Height of each drawer front. The top drawer takes up "
-                    "whatever height is left over",
+        description="Height of a drawer front the opening holds; fronts "
+                    "left to share split what the opening has left "
+                    "equally",
         default=const.DRAWER_FRONT_HEIGHT,
         unit='LENGTH', precision=4)  # type: ignore
     # Held as a plain string rather than an enum so an opening keeps a box
@@ -1671,6 +1672,15 @@ class Closets_Scene_Props(PropertyGroup):
     # Whether a new run is built with its hang rails (the prior
     # library's Add Hanging Rail for closet starters). Seeds the run's
     # Remove Hang Rail; runs already in the room keep theirs.
+    # Access gap left at a corner where a run meets a perpendicular one
+    # (the prior library's Adjacent Closet Spacing). Seeds the Corner
+    # Clearance dialog that placement opens; each corner keeps its own.
+    corner_clearance: FloatProperty(
+        name="Corner Clearance",
+        description="Gap a new run leaves between its end and a "
+                    "perpendicular closet at the corner",
+        default=inch(12.0), min=0.0, unit='LENGTH',
+        precision=4)  # type: ignore
     add_hanging_rail: BoolProperty(
         name="Add Hanging Rail",
         description="Build new closet runs with a hanging rail; each run "
@@ -2122,6 +2132,9 @@ class Closets_Scene_Props(PropertyGroup):
         row = col.row()
         row.label(text="Accent Overhang:")
         row.prop(self, 'default_accent_overhang', text="")
+        row = col.row()
+        row.label(text="Corner Clearance:")
+        row.prop(self, 'corner_clearance', text="")
         col.prop(self, 'add_hanging_rail')
 
         box = layout.box()
