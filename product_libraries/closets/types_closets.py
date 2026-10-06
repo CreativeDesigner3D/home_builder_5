@@ -280,6 +280,9 @@ PROP_DRAWER_CAP = 'hb_drawer_cap'
 # front whose grain runs vertical. Its origin is then the TOP edge -
 # read a front's bottom through front_bottom_z.
 PROP_FRONT_LENGTH_UP = 'hb_front_length_up'
+# Marks a single island's inset back (a bay-level captured back, built
+# and laid out with the bay rather than switched on an opening).
+PROP_ISLAND_INSET_BACK = 'hb_island_inset_back'
 # On a bay-wide door (no opening cage of its own): the clear width it
 # covers and the bay-local z of that clear space's floor.
 PROP_COVER_WIDTH = 'hb_cover_w'
@@ -1607,6 +1610,8 @@ class ClosetStarter(GeoNodeCage):
             # Both faces of an island stand in the room, so it is kicked
             # front and back (4.3 add_toe_kick is_rear on every island).
             self._ensure_rear_kick(bay_obj)
+        if isinstance(self, IslandClosetStarter) and not self.is_double:
+            self._ensure_inset_back(bay_obj)
 
         if self.is_double:
             center_back = CabinetPart()
@@ -1666,6 +1671,25 @@ class ClosetStarter(GeoNodeCage):
         rear_kick.set_input('Mirror Z', True)
         rear_kick.obj['MENU_ID'] = 'HOME_BUILDER_MT_closet_part_commands'
         return rear_kick.obj
+
+    def _ensure_inset_back(self, bay_obj):
+        """A single island's inset back: a captured back set inside the
+        carcass at its back, the full interior, cut vertical grain -
+        the prior library's add_island_inset_back (Captured_Back,
+        IS_VERTICAL_GRAIN_BACK) behind the applied back. Made if the bay
+        has none yet, so an island built before picks it up."""
+        for c in bay_obj.children:
+            if c.get(PROP_ISLAND_INSET_BACK):
+                return c
+        back = CabinetPart()
+        back.create('Inset Back')
+        back.obj.parent = bay_obj
+        back.obj['hb_part_role'] = PART_ROLE_CAPTURED_BACK
+        back.obj[PROP_ISLAND_INSET_BACK] = 1
+        back.obj['IS_VERTICAL_GRAIN_BACK'] = 1
+        back.set_input('Mirror Z', True)
+        back.obj['MENU_ID'] = 'HOME_BUILDER_MT_closet_part_commands'
+        return back.obj
 
     def _bay_part(self, bay_obj, role):
         for c in bay_obj.children:
@@ -2256,6 +2280,25 @@ class ClosetStarter(GeoNodeCage):
             # grain. Stood up from the bay's right side, it fills the same
             # board space it did cut across; set every layout so a back
             # from before turns too.
+            # Inset back (single islands): st thick, set in at the back of
+            # the carcass behind the applied back, the full interior -
+            # 4.3 add_island_inset_back: loc (width, -st, interior z),
+            # rot (90, -90, 0), Length up it (vertical grain). The front
+            # opening stops in front of it (below).
+            if isinstance(self, IslandClosetStarter) and not self.is_double:
+                inset = self._ensure_inset_back(bay_obj)
+                inset.rotation_euler = (math.radians(90),
+                                        math.radians(-90), 0.0)
+                inset.location = (bay['width'], -st, bay['interior_z'])
+                part = GeoNodeCutpart(inset)
+                part.set_input('Length', bay['interior_h'])
+                part.set_input('Width', bay['width'])
+                part.set_input('Thickness', st)
+                _set_part_hidden(inset, False)
+                if part.get_input('Top Surface') is None:
+                    from . import materials_closets
+                    materials_closets.apply_to_part(inset)
+
             center_back = self._bay_part(bay_obj, PART_ROLE_CENTER_BACK)
             if center_back is not None:
                 cb_y = bp.center_back_location
@@ -2287,6 +2330,11 @@ class ClosetStarter(GeoNodeCage):
                     o_depth = half_depth
                     base_y = (0.0 if side == 'BACK'
                               else -(bay['depth'] / 2.0 + st / 2.0))
+                elif isinstance(self, IslandClosetStarter):
+                    # A single island's opening stops in front of its
+                    # inset back (4.3: opening_depth - s_thickness).
+                    o_depth = bay['depth'] - st
+                    base_y = -st
                 else:
                     o_depth = bay['depth']
                     base_y = 0.0

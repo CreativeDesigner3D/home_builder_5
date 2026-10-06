@@ -6688,6 +6688,8 @@ class hb_closets_OT_delete_part(bpy.types.Operator):
         if types_closets.find_accessory_cage(obj) is not None:
             return True
         role = obj.get('hb_part_role')
+        if obj.get(types_closets.PROP_ISLAND_INSET_BACK):
+            return False    # an island's inset back is its structure
         if role == types_closets.PART_ROLE_CLEAT:
             # A cleat dropped into an opening is the person's, and
             # theirs to take out again. The one a bay carries across
