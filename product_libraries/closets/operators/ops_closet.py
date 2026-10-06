@@ -505,8 +505,17 @@ def _stack_top_of_base(base):
     top when it carries one."""
     bsp = base.hb_closet_starter
     if _stack_is_tall(base):
-        return bsp.height + (types_closets.run_sizes(base).shelf_thickness
-                             if bsp.add_top_accent_shelf else 0.0)
+        st = types_closets.run_sizes(base).shelf_thickness
+        if bsp.add_top_accent_shelf:
+            # A stepped run's accent shelf is cut in pieces at their own
+            # tops; a stack stands on the highest of them.
+            tops = [c.location.z + st for c in base.children
+                    if c.get('hb_part_role')
+                    == types_closets.PART_ROLE_ACCENT_SHELF
+                    and not c.hide_viewport]
+            if tops:
+                return max(tops)
+        return bsp.height + (st if bsp.add_top_accent_shelf else 0.0)
     return bsp.height + (bsp.countertop_thickness
                          if bsp.include_countertop else 0.0)
 
@@ -1723,13 +1732,26 @@ class hb_closets_OT_place_starter(bpy.types.Operator,
 
         if self._source_obj is not None:
             if self.discard_source:
+                source = self._source_obj
                 try:
-                    return self._finalize_duplicate(
+                    result = self._finalize_duplicate(
                         context, captured_parent, captured_world,
                         captured_local_loc, captured_local_rot,
                         captured_width)
                 finally:
                     self._discard_library_source()
+                # The library source was appended hidden, and the copy
+                # carries that over: show the placed closet. Parts the
+                # closet switches off use hide_viewport, not this.
+                placed = context.view_layer.objects.active
+                if (placed is not None and placed is not source
+                        and placed.get(types_closets.TAG_STARTER_CAGE)):
+                    for obj in [placed] + list(placed.children_recursive):
+                        try:
+                            obj.hide_set(False)
+                        except RuntimeError:
+                            pass
+                return result
             return self._finalize_duplicate(
                 context, captured_parent, captured_world,
                 captured_local_loc, captured_local_rot, captured_width)
