@@ -516,6 +516,7 @@ class hb_frameless_OT_duplicate_cabinet_style(bpy.types.Operator):
         # Copy all properties
         new_style.sheet_material = source.sheet_material
         new_style.front_material = source.front_material
+        new_style.interior_sheet_material = source.interior_sheet_material
         new_style.edge_material = source.edge_material
         new_style.front_edge_material = source.front_edge_material
         new_style.door_overlay_type = source.door_overlay_type

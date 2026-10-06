@@ -264,6 +264,7 @@ OPTION_PAGES = {
         'fields': (
             ('enum', 'sheet_material', "Material"),
             ('enum', 'front_material', "Fronts"),
+            ('enum', 'interior_sheet_material', "Interior"),
             ('enum', 'edge_material', "Cabinet Edge"),
             ('enum', 'front_edge_material', "Front Edge"),
             ('enum', 'door_overlay_type', "Door Overlay"),
