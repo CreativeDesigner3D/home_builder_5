@@ -370,6 +370,8 @@ def load_accessory_model(path):
                 if o is not None and o.type == 'MESH'), None)
     if obj is None:
         return None
+    from . import accessory_models
+    accessory_models.stamp_finish_slots(obj)
     _accessory_models[path] = obj
     return obj
 

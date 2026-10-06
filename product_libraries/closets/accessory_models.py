@@ -93,13 +93,70 @@ _FABRIC_SPECS = {
 }
 
 
+# A vendor model (the prior library's accessory .blends) names what each
+# material slot is - pyclone pointers, slot i = pointer i - and its slots
+# are empty. The prior library dressed them by those names
+# (types_accessories.py assign_materials_to_accessory); two of its files
+# misspell one, which it then left bare.
+_SLOT_ALIASES = {'Accesory Color': 'Accessory Color',
+                 'Accessory Fabirc Color': 'Accessory Fabric Color'}
+_FIXED_SLOT_FINISH = {'Accessory Metal': 'Polished Chrome',
+                      'Accessory Black Plastic': 'Black Plastic',
+                      'Accessory Mirror': 'Mirror',
+                      'Accessory Black Fabric': 'Fabric Black'}
+# The catalog's finish names -> the finish library's materials.
+_COLOR_FINISH = {'Chrome': 'Polished Chrome'}
+SLOT_NAMES_KEY = 'hb_finish_slots'
+
+
+def stamp_finish_slots(obj):
+    """Carry a vendor model's slot names onto its mesh, which every
+    instance shares (an instance is a new object and does not carry the
+    source object's pointers)."""
+    try:
+        pointers = obj['pyclone']['pointers']
+        names = [str(dict(p).get('name', '')) for p in pointers]
+    except Exception:
+        return
+    if names and obj.data is not None:
+        obj.data[SLOT_NAMES_KEY] = [_SLOT_ALIASES.get(n, n) for n in names]
+
+
+def _apply_slot_finish(obj, names, color, fabric):
+    from . import pulls_closets
+    want = {
+        'Accessory Color': _COLOR_FINISH.get(color, color) or
+        'Polished Chrome',
+        'Accessory Fabric Color': fabric or 'Fabric Black',
+    }
+    want.update(_FIXED_SLOT_FINISH)
+    for i, name in enumerate(names):
+        if i >= len(obj.material_slots) or name not in want:
+            continue
+        mat = pulls_closets.load_finish_material(want[name])
+        if mat is None and name == 'Accessory Color' and color in                 _FINISH_SPECS:
+            # A finish the library has no material for (White) is drawn
+            # the way a built model draws it.
+            mat = _mat('Closet Accessory ' + color, *_FINISH_SPECS[color])
+        if mat is None:
+            continue
+        slot = obj.material_slots[i]
+        slot.link = 'OBJECT'
+        slot.material = mat
+
+
 def apply_finish(obj, color='', fabric=''):
     """Dress one instance in its chosen finish and fabric.
 
     The mesh keeps the shared neutral materials; the override rides
     the object's slots, so two instances of the one mesh can wear
-    two finishes. Unknown or empty names leave the neutral in place."""
+    two finishes. Unknown or empty names leave the neutral in place.
+    A vendor model is dressed by the names its slots carry instead."""
     if obj is None or obj.type != 'MESH' or obj.data is None:
+        return
+    names = obj.data.get(SLOT_NAMES_KEY)
+    if names:
+        _apply_slot_finish(obj, list(names), color, fabric)
         return
     fin = _FINISH_SPECS.get(color)
     fab = _FABRIC_SPECS.get(fabric)
