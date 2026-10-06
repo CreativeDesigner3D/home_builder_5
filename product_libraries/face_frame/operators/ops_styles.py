@@ -1097,6 +1097,10 @@ class _paint_front_brush:
 
     _DOOR_ROLES = {'DOOR', 'PULLOUT_FRONT'}
     _DRAWER_ROLES = {'DRAWER_FRONT', 'FALSE_FRONT', 'TILT_OUT'}
+    # When True, a drawer-/door-look carrier leaf is see-through for the
+    # ray: its applied look fronts carry the visible style, the carrier
+    # itself is never styled.
+    _skip_look_carriers = False
 
     def _front_kind(self, front):
         """'DOOR' / 'DRAWER' / None for a front object. Role-based, except
@@ -1142,6 +1146,8 @@ class _paint_front_brush:
             # walk up to the nearest object carrying a front role.
             cur = obj.original if hasattr(obj, 'original') else obj
             while cur is not None:
+                if self._skip_look_carriers and cur.get('HB_DRAWER_LOOK_CARRIER'):
+                    break
                 role = cur.get('hb_part_role')
                 if role in self._DOOR_ROLES or role in self._DRAWER_ROLES:
                     return cur
@@ -1232,6 +1238,13 @@ class hb_face_frame_OT_paint_assign_front_style(_paint_front_brush, bpy.types.Op
         default='DOOR',
         options={'HIDDEN'},
     )  # type: ignore
+
+    # The applied fronts on a drawer-/door-look leaf are what the user
+    # sees and clicks; they read the drawer-front / door pool like real
+    # fronts.
+    _DOOR_ROLES = _paint_front_brush._DOOR_ROLES | {'DOOR_LOOK_FRONT'}
+    _DRAWER_ROLES = _paint_front_brush._DRAWER_ROLES | {'DRAWER_LOOK_FRONT'}
+    _skip_look_carriers = True
 
 
     def _paints(self, front):
@@ -1397,8 +1410,9 @@ class hb_face_frame_OT_update_fronts_from_style(bpy.types.Operator):
         default='DOOR', options={'HIDDEN'},
     )  # type: ignore
 
-    _DOOR_ROLES = {'DOOR', 'PULLOUT_FRONT'}
-    _DRAWER_ROLES = {'DRAWER_FRONT', 'FALSE_FRONT', 'TILT_OUT'}
+    _DOOR_ROLES = {'DOOR', 'PULLOUT_FRONT', 'DOOR_LOOK_FRONT'}
+    _DRAWER_ROLES = {'DRAWER_FRONT', 'FALSE_FRONT', 'TILT_OUT',
+                     'DRAWER_LOOK_FRONT'}
 
     def execute(self, context):
         ff = get_style_props(context)
