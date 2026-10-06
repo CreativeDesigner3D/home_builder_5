@@ -374,6 +374,22 @@ def front_pull_enum_items(self, context):
     return _front_enum_cache
 
 
+def pulls_off_for_room(scene=None):
+    """True when the room's pull drilling is No Pull No Drill: the job
+    goes out with no pulls at all, so none are drawn (or priced, which
+    counts the pull objects) - the prior library's 'Turn Off Pulls' on
+    every front. The choice lives with the machining add-on (Pull
+    Drilling Type), which owns the drilling it also decides; without that
+    add-on pulls are on."""
+    scene = scene or bpy.context.scene
+    try:
+        from bl_ext.user_default.spaces_manufacturing import props as mfg
+        choice = mfg.closet_machining_settings(scene).pull_drilling_type
+    except Exception:
+        return False
+    return choice == 'NO_PULL_NO_DRILL'
+
+
 def selection_for(kind, front=None):
     """Pull selection for a front: its own pull when one was set on
     it, else the room's drawer pull for drawer fronts (unless that is

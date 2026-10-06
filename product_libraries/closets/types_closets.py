@@ -3080,7 +3080,8 @@ class ClosetStarter(GeoNodeCage):
         op = opening.hb_closet_opening if opening is not None else None
         pull_obj = None
         selection = pulls_closets.selection_for(kind, front)
-        if side != 'BACK' and not (op is not None and op.no_pulls):
+        if (side != 'BACK' and not (op is not None and op.no_pulls)
+                and not pulls_closets.pulls_off_for_room()):
             pull_obj = pulls_closets.resolve_pull_object(selection)
         if pull_obj is None:
             for child in existing:
