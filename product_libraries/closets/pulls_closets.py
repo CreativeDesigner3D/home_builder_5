@@ -452,6 +452,13 @@ def _apply_finish_to_pull(pull_obj, finish=None):
     mats.append(mat)
 
 
+def is_edge_pull(stem):
+    """An ELITE pull is an edge pull: it rides the top edge of a drawer
+    front rather than its face (4.3 put an ELITE pick's drawer pulls on
+    the top edge - Drawer Vertical 0, not centered)."""
+    return str(stem or '').upper().startswith('ELITE')
+
+
 def current_pull_stem(selection=None):
     """Display name of a pull selection (file stem); the room's door
     pull when none is given."""

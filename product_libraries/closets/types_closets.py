@@ -3221,6 +3221,11 @@ class ClosetStarter(GeoNodeCage):
             # not to its edge the way the door figures below are.
             x = width / 2.0
             y = height / 2.0 if centered else height - v_drawer
+            if pulls_closets.is_edge_pull(
+                    pulls_closets.current_pull_stem(selection)):
+                # An edge pull sits on the top edge whatever the
+                # drawer figures say.
+                y = height
             rot = (math.radians(-90.0), 0.0, 0.0)
         elif kind == 'hamper':
             # A hamper front takes the measured location even where the
