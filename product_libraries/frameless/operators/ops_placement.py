@@ -77,6 +77,16 @@ def _style_color(obj, fallback, highlight):
         return fallback
 
 
+def _try_select(obj, state):
+    """select_set that skips an object outside the active view layer
+    (a cabinet in another room recalculated from here) instead of raising
+    out of the caller's recalc."""
+    try:
+        obj.select_set(state)
+    except RuntimeError:
+        pass
+
+
 def toggle_cabinet_color(obj,toggle,type_name="",dont_show_parent=True):
     hb_props = bpy.context.window_manager.home_builder
     add_on_prefs = hb_props.get_user_preferences(bpy.context)
@@ -96,7 +106,7 @@ def toggle_cabinet_color(obj,toggle,type_name="",dont_show_parent=True):
         obj.show_in_front = True
         obj.hide_viewport = False
         obj.display_type = 'SOLID'
-        obj.select_set(True)
+        _try_select(obj, True)
 
     else:
         obj.show_name = False
@@ -113,7 +123,7 @@ def toggle_cabinet_color(obj,toggle,type_name="",dont_show_parent=True):
                 obj, [1.000000, 1.000000, 1.000000, 1.000000],
                 highlight=False)
             obj.display_type = 'SOLID'
-        obj.select_set(False)
+        _try_select(obj, False)
 
 class WallObjectPlacementMixin(hb_placement.PlacementMixin):
     """
