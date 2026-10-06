@@ -19734,8 +19734,12 @@ def _reapply_cabinet_style(root):
     material slots and the per-front CPM_5PIECEDOOR modifier vanish
     each cycle. STYLE_NAME on the cabinet root survives (it lives on
     the root, not on parts), so we look up the cabinet style and re-
-    run both walks. No-op if the cabinet has no STYLE_NAME or the
-    named style is missing from the scene's collection.
+    run both walks. No-op if the cabinet has no STYLE_NAME.
+
+    A STYLE_NAME that no longer resolves (the style was removed, or the
+    cabinet came from a file with other styles) falls back to the first
+    cabinet style. Skipping it would leave every rebuilt front a bare
+    slab with no door style the next time the cabinet is edited.
 
     Order matters: door styles add the 5-piece modifier (which has its
     own material slots), and the material walk then wires those slots
@@ -19746,15 +19750,17 @@ def _reapply_cabinet_style(root):
         return
     from .props_hb_face_frame import get_style_props
     ff = get_style_props()
-    for cs in ff.cabinet_styles:
-        if cs.name == style_name:
-            cs._apply_door_styles_to_fronts(root)
-            cs._apply_materials_to_cabinet(root)
-            # FF sizes intentionally NOT re-applied here - widths are
-            # cabinet props the user can edit between recalcs; pushing
-            # them every recalc would clobber per-cabinet adjustments.
-            # The Assign Style op runs the push explicitly.
-            return
+    cs = next((s for s in ff.cabinet_styles if s.name == style_name), None)
+    if cs is None and len(ff.cabinet_styles) > 0:
+        cs = ff.cabinet_styles[0]
+    if cs is None:
+        return
+    cs._apply_door_styles_to_fronts(root)
+    cs._apply_materials_to_cabinet(root)
+    # FF sizes intentionally NOT re-applied here - widths are
+    # cabinet props the user can edit between recalcs; pushing
+    # them every recalc would clobber per-cabinet adjustments.
+    # The Assign Style op runs the push explicitly.
 
 
 # ---------------------------------------------------------------------------

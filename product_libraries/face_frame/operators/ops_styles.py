@@ -182,8 +182,21 @@ class hb_face_frame_OT_remove_cabinet_style(Operator):
             ff.active_cabinet_style_index -= 1
         if ff.active_cabinet_style_index >= len(ff.cabinet_styles):
             ff.active_cabinet_style_index = max(0, len(ff.cabinet_styles) - 1)
+        # Cabinets still tagged with the removed style move to the first
+        # remaining style, the same one a recalc falls back to, so the
+        # tag, the 2D colours and the rebuilt fronts all agree.
+        new_name = ff.cabinet_styles[0].name
+        moved = 0
+        for obj in bpy.data.objects:
+            if obj.get('STYLE_NAME') == name:
+                obj['STYLE_NAME'] = new_name
+                moved += 1
         _refresh_style_colors(context)
-        self.report({'INFO'}, f"Removed cabinet style: {name}")
+        if moved:
+            self.report({'INFO'}, f"Removed cabinet style: {name}. "
+                        f"{moved} item(s) using it now use {new_name}")
+        else:
+            self.report({'INFO'}, f"Removed cabinet style: {name}")
         return {'FINISHED'}
 
 
