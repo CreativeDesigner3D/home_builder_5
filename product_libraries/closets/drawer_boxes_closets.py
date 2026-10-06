@@ -211,9 +211,38 @@ def box_warning(box_type, avail_h, avail_d, wood_d):
     return ''
 
 
+# A wood (dovetail) box is built the prior library's way: 3/4" sides,
+# sub-front and back, a 1/4" bottom let in 1/2" up, all in White
+# (types_drawer_boxes.py Drawer_Left_Side prompts, closet_parts
+# Wood_Box_Part). The metal systems keep the node group's 5/8".
+WOOD_BOX_MATERIAL = 'White'
+_WOOD_SIDE_THICKNESS = inch(0.75)
+_METAL_SIDE_THICKNESS = inch(0.625)
+_BOX_BOTTOM_THICKNESS = inch(0.25)
+_BOX_BOTTOM_Z = inch(0.5)
+
+
+def style_box(gb, box_type):
+    """Board thickness and finish of one drawer box for its system. Every
+    slot is written, so a box changing system follows it both ways."""
+    side = (_WOOD_SIDE_THICKNESS if box_type == 'WOOD'
+            else _METAL_SIDE_THICKNESS)
+    for socket, value in (("Material Thickness", side),
+                          ("Bottom Thickness", _BOX_BOTTOM_THICKNESS),
+                          ("Drawer Bottom Z Location", _BOX_BOTTOM_Z),
+                          ("Material", box_material(box_type))):
+        try:
+            gb.set_input(socket, value)
+        except Exception:
+            pass
+
+
 def box_material(box_type):
-    """Existing-or-appended system material for the box (None keeps the
-    node group's default wood look)."""
+    """Existing-or-appended material for the box: the system's finish,
+    or White for a wood box (None for no box)."""
+    if box_type == 'WOOD':
+        from . import materials_closets
+        return materials_closets.load_material(WOOD_BOX_MATERIAL)
     name = _BOX_MATERIALS.get(box_type)
     if not name:
         return None

@@ -2800,7 +2800,6 @@ class ClosetStarter(GeoNodeCage):
                 _fovr = child.get(PROP_FRONT_BOX_OVERRIDE, '')
                 box_type = (_fovr if _fovr and _fovr != 'DEFAULT'
                             else default_box_type)
-                box_mat = dbx.box_material(box_type)
                 # Stamp the drawer's inside width and depth so the
                 # accessory dialog can size a tray live; resolve the
                 # jewelry-tray name so it tracks any resize.
@@ -2880,13 +2879,9 @@ class ClosetStarter(GeoNodeCage):
                     gb.set_input('Dim X', box_w)
                     gb.set_input('Dim Y', box_d)
                     gb.set_input('Dim Z', box_h)
-                    # Always write the slot: None resets a previously
-                    # applied system material to the node default (the
-                    # WOOD look) when the selection changes.
-                    try:
-                        gb.set_input('Material', box_mat)
-                    except Exception:
-                        pass
+                    # Board thickness and finish for the system (wood:
+                    # 3/4" in White, as the prior library built it).
+                    dbx.style_box(gb, box_type)
                 # Open-drawer support: stash closed Y + travel, then apply
                 # the persistent open state (Open Door mode toggles it).
                 travel = min(box_d, inch(12.0))
@@ -3013,6 +3008,7 @@ class ClosetStarter(GeoNodeCage):
                 gb.set_input('Dim X', box_w)
                 gb.set_input('Dim Y', box_d)
                 gb.set_input('Dim Z', bh)
+                dbx.style_box(gb, 'WOOD')
                 z += h + gap
 
         # ----- Cubby grid (divisions full height, shelves full width) -----
