@@ -715,6 +715,13 @@ def apply_to_starter(root, carcass_name=None, front_name=None):
         if child.type != 'MESH':
             continue
         role = child.get('hb_part_role')
+        if child.get('hb_drawer_box_type'):
+            # A box's finish is its system's - a Metabox's bottom and
+            # back are the closet colour, so it follows a new one.
+            from . import drawer_boxes_closets
+            drawer_boxes_closets.style_box(
+                hb_types.GeoNodeObject(child), child['hb_drawer_box_type'])
+            continue
         if role == types_closets.PART_ROLE_ACCESSORY_BLOCK:
             # A stand-in for something missing. It is meant to look
             # nothing like the room, so it keeps its red.

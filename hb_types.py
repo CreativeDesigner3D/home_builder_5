@@ -614,6 +614,8 @@ class GeoNodeDrawerBox(GeoNodeObject):
 
     def create(self,name):
         super().create('GeoNodeDrawerBox',name)  
+        ensure_drawer_box_side_inputs(
+            bpy.data.node_groups.get('GeoNodeDrawerBox'))
         self.obj['IS_DRAWER_BOX'] = True
         self.set_input("Material Thickness",units.inch(0.625))
         self.set_input("Bottom Thickness",units.inch(0.25))
@@ -627,6 +629,145 @@ class GeoNodeDoorSwing(GeoNodeObject):
         self.obj['IS_2D_ANNOTATION'] = True
         self.obj.color = (0,0,0,1)
         self.set_input("Door Thickness",units.inch(1.5))
+
+
+def ensure_drawer_box_side_inputs(ng):
+    """Give GeoNodeDrawerBox its sides' own finish and position.
+    Idempotent versioning fixup for the node group shipped in
+    GeoNodeDrawerBox.blend (and embedded in existing files).
+
+    As authored the five boards are joined and take one Material, with
+    the sides inside the box's width. A metal box is two-tone and its
+    sides stand outside the bottom and back it carries (Avantech: graphite
+    sides 1/4" in from the opening over a silver bottom/back cut 12mm in
+    each side). Adds:
+      'Use Side Material' (default off) / 'Side Material' - the sides'
+        finish; off, they keep the box Material;
+      'Side Outset' (default 0) - how far each side stands out past the
+        box's width.
+    The sides are pulled off the join, moved out by the outset and given
+    their own Set Material, then joined back after the box's. With the
+    defaults the output is exactly what it was, so every library that
+    builds a drawer box is unchanged until it asks for this.
+
+    The back, sub-front and bottom are cut to fit between the sides, so
+    they widen by the outset each side too and still meet the sides'
+    inner faces (4.3's sides lap the edges of the bottom and back).
+
+    Called at drawer-box creation and when a closet styles its boxes, so
+    files saved before the fix heal on first use. Silently leaves
+    unexpected topologies alone.
+    """
+    if ng is None:
+        return
+    if not ng.nodes.get('Side Set Material'):
+        _split_drawer_box_sides(ng)
+    _widen_drawer_box_boards(ng)
+
+
+def _widen_drawer_box_boards(ng):
+    """Back, sub-front and bottom widths (Dim X - 2T) + 2 x Side Outset."""
+    if ng.nodes.get('Side Outset Widen') or not ng.nodes.get(
+            'Side Group Input'):
+        return
+    gi = ng.nodes['Side Group Input']
+    twice = ng.nodes.new('ShaderNodeMath')
+    twice.name = 'Side Outset Widen'
+    twice.operation = 'MULTIPLY'
+    twice.inputs[1].default_value = 2.0
+    twice.location = (gi.location.x, gi.location.y - 300)
+    ng.links.new(gi.outputs['Side Outset'], twice.inputs[0])
+    for name in ('Math.008', 'Math.013', 'T*2.002'):
+        width = ng.nodes.get(name)
+        if width is None or width.operation != 'SUBTRACT':
+            continue
+        add = ng.nodes.new('ShaderNodeMath')
+        add.name = name + ' Widen'
+        add.operation = 'ADD'
+        add.location = (width.location.x + 120, width.location.y - 60)
+        targets = [(l.to_node, l.to_socket) for l in width.outputs[0].links]
+        for link in list(width.outputs[0].links):
+            ng.links.remove(link)
+        ng.links.new(width.outputs[0], add.inputs[0])
+        ng.links.new(twice.outputs[0], add.inputs[1])
+        for node, sock in targets:
+            ng.links.new(add.outputs[0], sock)
+
+
+def _split_drawer_box_sides(ng):
+    """Sides off the main join, moved out and finished on their own."""
+    left = ng.nodes.get('Transform Geometry')
+    right = ng.nodes.get('Transform Geometry.001')
+    join = ng.nodes.get('Join Geometry')
+    set_mat = ng.nodes.get('Set Material')
+    out = ng.nodes.get('Group Output')
+    if not all((left, right, join, set_mat, out)):
+        return
+    iface = ng.interface
+    names = {it.name for it in iface.items_tree
+             if getattr(it, 'in_out', None) == 'INPUT'}
+    if 'Use Side Material' not in names:
+        iface.new_socket('Use Side Material', in_out='INPUT',
+                         socket_type='NodeSocketBool')
+    if 'Side Material' not in names:
+        iface.new_socket('Side Material', in_out='INPUT',
+                         socket_type='NodeSocketMaterial')
+    if 'Side Outset' not in names:
+        sock = iface.new_socket('Side Outset', in_out='INPUT',
+                                socket_type='NodeSocketFloat')
+        sock.default_value = 0.0
+    x0, y0 = set_mat.location.x, set_mat.location.y - 360
+    gi = ng.nodes.new('NodeGroupInput')
+    gi.name = 'Side Group Input'
+    gi.location = (x0 - 900, y0)
+    # Pull both sides off the main join.
+    for xf in (left, right):
+        for link in list(xf.outputs['Geometry'].links):
+            if link.to_node == join:
+                ng.links.remove(link)
+    neg = ng.nodes.new('ShaderNodeMath')
+    neg.name = 'Side Outset Neg'
+    neg.operation = 'MULTIPLY'
+    neg.inputs[1].default_value = -1.0
+    neg.location = (x0 - 700, y0 - 120)
+    ng.links.new(gi.outputs['Side Outset'], neg.inputs[0])
+    side_join = ng.nodes.new('GeometryNodeJoinGeometry')
+    side_join.name = 'Side Join'
+    side_join.location = (x0 - 200, y0)
+    for xf, src, label in ((left, neg.outputs[0], 'Left'),
+                           (right, gi.outputs['Side Outset'], 'Right')):
+        vec = ng.nodes.new('ShaderNodeCombineXYZ')
+        vec.name = 'Side Outset %s' % label
+        vec.location = (x0 - 550, y0 - (0 if label == 'Left' else 200))
+        ng.links.new(src, vec.inputs['X'])
+        move = ng.nodes.new('GeometryNodeTransform')
+        move.name = 'Side Move %s' % label
+        move.location = (x0 - 380, y0 - (0 if label == 'Left' else 200))
+        ng.links.new(xf.outputs['Geometry'], move.inputs['Geometry'])
+        ng.links.new(vec.outputs['Vector'], move.inputs['Translation'])
+        ng.links.new(move.outputs['Geometry'], side_join.inputs['Geometry'])
+    pick = ng.nodes.new('GeometryNodeSwitch')
+    pick.name = 'Side Material Switch'
+    pick.input_type = 'MATERIAL'
+    pick.location = (x0 - 200, y0 - 220)
+    ng.links.new(gi.outputs['Use Side Material'], pick.inputs['Switch'])
+    ng.links.new(gi.outputs['Material'], pick.inputs['False'])
+    ng.links.new(gi.outputs['Side Material'], pick.inputs['True'])
+    side_mat = ng.nodes.new('GeometryNodeSetMaterial')
+    side_mat.name = 'Side Set Material'
+    side_mat.location = (x0, y0)
+    ng.links.new(side_join.outputs['Geometry'], side_mat.inputs['Geometry'])
+    ng.links.new(pick.outputs['Output'], side_mat.inputs['Material'])
+    final = ng.nodes.new('GeometryNodeJoinGeometry')
+    final.name = 'Box Join'
+    final.location = (set_mat.location.x + 200, set_mat.location.y)
+    for link in list(set_mat.outputs['Geometry'].links):
+        if link.to_node == out:
+            ng.links.remove(link)
+    ng.links.new(set_mat.outputs['Geometry'], final.inputs['Geometry'])
+    ng.links.new(side_mat.outputs['Geometry'], final.inputs['Geometry'])
+    ng.links.new(final.outputs['Geometry'], out.inputs['Geometry'])
+    out.location = (final.location.x + 200, out.location.y)
 
 
 def ensure_dimension_text_offset_basis(ng):

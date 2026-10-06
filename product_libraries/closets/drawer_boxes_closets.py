@@ -222,15 +222,56 @@ _BOX_BOTTOM_THICKNESS = inch(0.25)
 _BOX_BOTTOM_Z = inch(0.5)
 
 
+# A metal box is two-tone, with its sides standing outside the bottom
+# and back it carries (closet_parts.py / types_drawer_boxes.py). The box
+# cage is the bottom/back (an Avantech 24mm narrower than its opening, a
+# Metabox 31mm - what pricing and the cut parts read); the sides stand
+# out past it to where 4.3 put them - an Avantech's 1/4" in from the
+# opening, a Metabox's 15.5 - 3mm in.
+# system -> (side finish, bottom/back finish or None = the closet's,
+#            side outset)
+_METAL_LOOK = {
+    'AVANTECH': ('Slate Graphite', 'Storm Silver Gray',
+                 _mm(12) - inch(0.25)),
+    'AVANTECH_ILL': ('Slate Graphite', 'Storm Silver Gray',
+                     _mm(12) - inch(0.25)),
+    'METABOX': ('Metabox White', None, _mm(15.5) - _mm(12.5)),
+}
+
+
 def style_box(gb, box_type):
     """Board thickness and finish of one drawer box for its system. Every
     slot is written, so a box changing system follows it both ways."""
+    from ... import hb_types
+    try:
+        hb_types.ensure_drawer_box_side_inputs(gb.obj.modifiers[0].node_group)
+    except Exception:
+        pass
     side = (_WOOD_SIDE_THICKNESS if box_type == 'WOOD'
             else _METAL_SIDE_THICKNESS)
+    material = box_material(box_type)
+    side_mat, use_side, outset = None, False, 0.0
+    look = _METAL_LOOK.get(box_type)
+    if look is not None:
+        side_name, body_name, outset = look
+        from . import pulls_closets
+        side_mat = pulls_closets.load_finish_material(side_name)
+        use_side = side_mat is not None
+        if body_name is None:
+            from . import materials_closets
+            body = materials_closets.load_material(getattr(
+                bpy.context.scene.hb_closets, 'closet_material', '')
+                or materials_closets.DEFAULT_MATERIAL)
+        else:
+            body = pulls_closets.load_finish_material(body_name)
+        material = body or material
     for socket, value in (("Material Thickness", side),
                           ("Bottom Thickness", _BOX_BOTTOM_THICKNESS),
                           ("Drawer Bottom Z Location", _BOX_BOTTOM_Z),
-                          ("Material", box_material(box_type))):
+                          ("Material", material),
+                          ("Side Material", side_mat),
+                          ("Use Side Material", use_side),
+                          ("Side Outset", outset)):
         try:
             gb.set_input(socket, value)
         except Exception:
