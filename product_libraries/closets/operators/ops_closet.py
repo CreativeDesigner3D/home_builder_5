@@ -2645,11 +2645,16 @@ class hb_closets_OT_drawer_accessory(bpy.types.Operator):
     override_depth: bpy.props.FloatProperty(
         name="Depth", default=0.0, min=0.0,
         unit='LENGTH', precision=4,
-        description="Force the box depth (0 = system size)")  # type: ignore
+        description="Size the box from this depth instead of the "
+                    "opening's - it still steps to a standard slide "
+                    "length. A wood box is built to this depth as typed "
+                    "(0 = from the opening)")  # type: ignore
     override_height: bpy.props.FloatProperty(
         name="Height", default=0.0, min=0.0,
         unit='LENGTH', precision=4,
-        description="Force the box height (0 = system size)")  # type: ignore
+        description="Size the box from this height instead of the "
+                    "opening's - it still steps to a standard box "
+                    "height (0 = from the opening)")  # type: ignore
     grain: bpy.props.EnumProperty(
         name="Grain",
         description="Which way the grain runs on this drawer front, "

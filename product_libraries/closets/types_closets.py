@@ -1974,12 +1974,16 @@ class ClosetStarter(GeoNodeCage):
 
     def _layout_fillers(self, layout, scene_props, sp):
         """A front scribe board standing
-        past the end of the run to close the gap to a side wall. Ground
-        truth from a live reference build: Length runs vertical, the filler
-        WIDTH extends outward past the end (left filler -X, right +X),
-        thickness = shelf material at the front face, origin at the end
-        opening's front-bottom. Reconciled by width>0 (like
-        battens)."""
+        past the end of the run to close the gap to a side wall. Part
+        frame as in the prior library: Length runs vertical, thickness =
+        shelf material at the front face. HB5 stands the filler OUTSIDE
+        the run - its width extends outward past the end (left filler
+        -X, right +X) and the run width is the closet alone; the prior
+        library took it out of the run width instead. That is a choice
+        (the countertop and accent shelf run out over it to the wall),
+        not a porting slip. It spans what its end panel spans, so on a
+        hanging end it drops with an Extend Panels extension the way the
+        prior library's did. Reconciled by width>0 (like battens)."""
         bays = layout['bays']
         if not bays:
             return
@@ -2013,9 +2017,12 @@ class ClosetStarter(GeoNodeCage):
             # fillers self-correct.
             GeoNodeCutpart(c).set_input('Mirror Y', side == 'RIGHT')
             x = 0.0 if side == 'LEFT' else sp.width
-            c.location = (x, -bay['depth'], bay['z0'])
+            # The end panel's span: the bay's, plus any Extend Panels
+            # drop below a hanging bay.
+            end_panel = layout['panels'][0 if side == 'LEFT' else -1]
+            c.location = (x, -bay['depth'], end_panel['z'])
             part = GeoNodeCutpart(c)
-            part.set_input('Length', bay['height'])
+            part.set_input('Length', end_panel['length'])
             part.set_input('Width', max(width, 0.001))
             part.set_input('Thickness', st)
             _set_part_hidden(c, width <= 0.0)
@@ -2819,19 +2826,27 @@ class ClosetStarter(GeoNodeCage):
                 # Selected drawer box system decides the box proportions
                 # (standard heights/slide lengths) or turns boxes off;
                 # the WOOD path keeps the parametric deduct behavior.
-                wood_h = max(avail_h - const.DRAWER_BOX_HEIGHT_DEDUCT,
+                # Explicit per-front size overrides (0 = system size).
+                # As in 4.3 they stand in for the opening the box is
+                # sized FROM, so the box still snaps to a standard size
+                # that can be ordered and its size tag and warning say
+                # what was built. The one exception is a wood box's
+                # depth, which 4.3 took as the box depth itself.
+                _dov = float(child.get(PROP_BOX_DEPTH_OVERRIDE, 0.0))
+                _hov = float(child.get(PROP_BOX_HEIGHT_OVERRIDE, 0.0))
+                is_wood = box_type == 'WOOD'
+                size_h = _hov if _hov > 0.0 else avail_h
+                size_d = _dov if (_dov > 0.0 and not is_wood) else depth
+                wood_h = max(size_h - const.DRAWER_BOX_HEIGHT_DEDUCT,
                              inch(2.0))
-                spec = dbx.size_box(box_type, avail_h, depth, wood_h,
+                spec = dbx.size_box(box_type, size_h, size_d, wood_h,
                                     wood_d)
-                warn = dbx.box_warning(box_type, avail_h, depth,
+                warn = dbx.box_warning(box_type, size_h, size_d,
                                        wood_d)
                 _stamp_warning(child, "; ".join(
                     m for m in (warn, tray_warn) if m))
-                # Explicit per-front size overrides (0 = system size).
-                _dov = float(child.get(PROP_BOX_DEPTH_OVERRIDE, 0.0))
-                _hov = float(child.get(PROP_BOX_HEIGHT_OVERRIDE, 0.0))
                 box_d = spec[1] if spec is not None else wood_d
-                if _dov > 0.0:
+                if _dov > 0.0 and is_wood:
                     box_d = _dov
                 child[PROP_BOX_SIZE_TAG] = (spec[2] if spec else 'NONE')
                 if box is not None:
@@ -2841,7 +2856,7 @@ class ClosetStarter(GeoNodeCage):
                     _stamp_warning(box, warn)
                     _set_part_hidden(box, spec is None)
                 if box is not None and spec is not None:
-                    box_h = _hov if _hov > 0.0 else spec[0]
+                    box_h = spec[0]
                     # GeoNodeDrawerBox extrudes +Y from its origin, so
                     # anchor the origin at the face the drawer serves:
                     # box spans [y_box, y_box + box_d], front edge flush
