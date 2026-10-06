@@ -864,6 +864,7 @@ def draw_valance_product(layout, root):
     col.prop(cab, 'width', text="Width")
     col.prop(cab, 'depth', text="Depth")
     col.prop(cab, 'height', text="Height")
+    col.prop(val, 'height_off_floor', text="Height Off Floor")
 
     box = layout.box()
     box.label(text="Finished Ends")

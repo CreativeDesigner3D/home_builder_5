@@ -13713,6 +13713,20 @@ class Face_Frame_Column_Beam_Props(PropertyGroup):
     )  # type: ignore
 
 
+def _get_valance_height_off_floor(self):
+    return self.id_data.matrix_world.translation.z
+
+
+def _set_valance_height_off_floor(self, value):
+    # Moved by the difference, so the edit works whatever the valance
+    # hangs from (a wall, or a wall off the floor).
+    obj = self.id_data
+    dz = value - obj.matrix_world.translation.z
+    if abs(dz) > 1e-6:
+        obj.location.z += dz
+        bpy.context.view_layer.update()
+
+
 class Face_Frame_Valance_Props(PropertyGroup):
     """Options for a Valance product (a decorative board spanning the
     gap between two upper cabinets).
@@ -13754,6 +13768,13 @@ class Face_Frame_Valance_Props(PropertyGroup):
         name="Top Scribe Amount", default=units.inch(0.25),
         unit='LENGTH', precision=4, update=_update_cabinet_dim,
         description="Drop the cover down from the top edge by this amount",
+    )  # type: ignore
+    # Not stored: reads and moves the valance object itself.
+    height_off_floor: FloatProperty(
+        name="Height Off Floor", unit='LENGTH', precision=4,
+        get=_get_valance_height_off_floor,
+        set=_set_valance_height_off_floor,
+        description="How high the bottom of the valance sits off the floor",
     )  # type: ignore
 
 
