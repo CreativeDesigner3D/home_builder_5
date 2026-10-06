@@ -9084,6 +9084,12 @@ class hb_closets_OT_add_molding(bpy.types.Operator):
         # rather than quietly adding nothing.
         profile_name = (getattr(context.scene.hb_closets, prop_name, '')
                         or molding_closets.KINDS[kind][1])
+        swapped = False
+        if not base:
+            resolved = molding_closets.resolve_crown_profile(profile_name,
+                                                             context.scene)
+            swapped = resolved != profile_name
+            profile_name = resolved
         profile = molding_closets.load_profile(profile_name, kind)
         label = "Base" if base else "Crown"
         if profile is None:
@@ -9102,7 +9108,12 @@ class hb_closets_OT_add_molding(bpy.types.Operator):
                        else "bays under 60\" are skipped")
             self.report({'INFO'}, f"No qualifying runs ({skipped})")
             return {'CANCELLED'}
-        self.report({'INFO'}, f"Added {label.lower()} to {made} runs")
+        if swapped:
+            self.report({'WARNING'},
+                        f"Added L crown to {made} runs - light shield is "
+                        "not available for this material")
+        else:
+            self.report({'INFO'}, f"Added {label.lower()} to {made} runs")
         return {'FINISHED'}
 
 

@@ -1668,6 +1668,14 @@ class Closets_Scene_Props(PropertyGroup):
     default_accent_overhang: FloatProperty(
         name="Accent Shelf Overhang", default=const.TOP_ACCENT_OVERHANG,
         unit='LENGTH', precision=4)  # type: ignore
+    # Whether a new run is built with its hang rails (the prior
+    # library's Add Hanging Rail for closet starters). Seeds the run's
+    # Remove Hang Rail; runs already in the room keep theirs.
+    add_hanging_rail: BoolProperty(
+        name="Add Hanging Rail",
+        description="Build new closet runs with a hanging rail; each run "
+                    "can still turn its own off or on",
+        default=True)  # type: ignore
     base_panel_height: FloatProperty(
         name="Base Panel Height", default=const.BASE_PANEL_HEIGHT,
         unit='LENGTH', precision=4,
@@ -2114,6 +2122,7 @@ class Closets_Scene_Props(PropertyGroup):
         row = col.row()
         row.label(text="Accent Overhang:")
         row.prop(self, 'default_accent_overhang', text="")
+        col.prop(self, 'add_hanging_rail')
 
         box = layout.box()
         box.prop(self, 'show_thickness_sizes', text="Part Thicknesses",
@@ -2338,6 +2347,13 @@ class Closets_Scene_Props(PropertyGroup):
         col = layout.column(align=True)
         col.label(text="Crown:")
         col.prop(self, 'closet_crown_profile', text="Profile")
+        if (molding_closets.resolve_crown_profile(
+                self.closet_crown_profile or molding_closets.DEFAULT_PROFILE,
+                context.scene)
+                != (self.closet_crown_profile
+                    or molding_closets.DEFAULT_PROFILE)):
+            col.label(text="Light shield not available for this material "
+                      "- adds L crown", icon='INFO')
         row = col.row(align=True)
         row.scale_y = 1.3
         row.operator('hb_closets.add_molding', text="Add Crown Molding",

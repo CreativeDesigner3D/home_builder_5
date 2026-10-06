@@ -1497,6 +1497,9 @@ class ClosetStarter(GeoNodeCage):
                         if self.default_depth is not None
                         else self._default_depth_for_type(scene_props))
             sp.top_accent_overhang = scene_props.default_accent_overhang
+            if self.has_hang_rail:
+                sp.remove_hang_rail = not getattr(
+                    scene_props, 'add_hanging_rail', True)
             self._build_parts(bay_qty, scene_props)
         finally:
             _RECALCULATING.discard(cabinet_id)
@@ -1585,9 +1588,10 @@ class ClosetStarter(GeoNodeCage):
         cleat.obj.parent = bay_obj
         cleat.obj['hb_part_role'] = PART_ROLE_CLEAT
         cleat.obj.rotation_euler.x = math.radians(90)
-        # A double island has no wall side; the center back stiffens the
-        # unit and the cleat would float mid-carcass - skip it.
-        if self.is_double:
+        # An island has no wall to cleat to - the prior library built
+        # its islands without one; on a double the center back stiffens
+        # the unit instead.
+        if isinstance(self, IslandClosetStarter):
             _set_part_hidden(cleat.obj, True)
             cleat.obj['hb_always_hidden'] = 1
 
@@ -1599,16 +1603,12 @@ class ClosetStarter(GeoNodeCage):
             back.obj.rotation_euler.x = math.radians(90)
             back.set_input('Mirror Z', True)
 
-        if self.is_double:
-            rear_kick = CabinetPart()
-            rear_kick.create('Rear Toe Kick')
-            rear_kick.obj.parent = bay_obj
-            rear_kick.obj['hb_part_role'] = PART_ROLE_TOE_KICK
-            rear_kick.obj['hb_rear'] = 1
-            rear_kick.obj.rotation_euler.x = math.radians(-90)
-            rear_kick.set_input('Mirror Y', True)
-            rear_kick.set_input('Mirror Z', True)
+        if isinstance(self, IslandClosetStarter):
+            # Both faces of an island stand in the room, so it is kicked
+            # front and back (4.3 add_toe_kick is_rear on every island).
+            self._ensure_rear_kick(bay_obj)
 
+        if self.is_double:
             center_back = CabinetPart()
             center_back.create('Center Back')
             center_back.obj.parent = bay_obj
@@ -1648,6 +1648,24 @@ class ClosetStarter(GeoNodeCage):
                     and c.get(PROP_BAY_CTOP) is None):
                 return c
         return None
+
+    def _ensure_rear_kick(self, bay_obj):
+        """The island's back toe kick, made if the bay has none yet (an
+        island built before single islands had one picks it up here)."""
+        for c in bay_obj.children:
+            if (c.get('hb_part_role') == PART_ROLE_TOE_KICK
+                    and c.get('hb_rear')):
+                return c
+        rear_kick = CabinetPart()
+        rear_kick.create('Rear Toe Kick')
+        rear_kick.obj.parent = bay_obj
+        rear_kick.obj['hb_part_role'] = PART_ROLE_TOE_KICK
+        rear_kick.obj['hb_rear'] = 1
+        rear_kick.obj.rotation_euler.x = math.radians(-90)
+        rear_kick.set_input('Mirror Y', True)
+        rear_kick.set_input('Mirror Z', True)
+        rear_kick.obj['MENU_ID'] = 'HOME_BUILDER_MT_closet_part_commands'
+        return rear_kick.obj
 
     def _bay_part(self, bay_obj, role):
         for c in bay_obj.children:
@@ -2084,6 +2102,14 @@ class ClosetStarter(GeoNodeCage):
                 part.set_input('Thickness', st)
                 _set_part_hidden(top, False)
 
+            if isinstance(self, IslandClosetStarter):
+                rear = self._ensure_rear_kick(bay_obj)
+                # One made here, after the run was finished, takes the
+                # closet material like its front twin.
+                if GeoNodeCutpart(rear).get_input('Top Surface') is None:
+                    from . import materials_closets
+                    materials_closets.apply_to_part(rear)
+
             for kick in bay_obj.children:
                 if kick.get('hb_part_role') != PART_ROLE_TOE_KICK:
                     continue
@@ -2116,7 +2142,8 @@ class ClosetStarter(GeoNodeCage):
                 part.set_input('Width', const.CLEAT_WIDTH)
                 part.set_input('Thickness', st)
                 _set_part_hidden(cleat, bp.remove_cleat
-                                 or bool(cleat.get('hb_always_hidden')))
+                                 or bool(cleat.get('hb_always_hidden'))
+                                 or isinstance(self, IslandClosetStarter))
                 # Its bottom edge is banded only while there is no bottom
                 # shelf under it, so the banding follows Remove Bottom.
                 from . import materials_closets
@@ -2223,18 +2250,26 @@ class ClosetStarter(GeoNodeCage):
 
             # Center back (double islands): st thick, spanning the
             # interior. Centered in depth unless the bay names a
-            # location. Horizontal grain for now; grain direction is
-            # decided downstream.
+            # location. Cut vertical grain - Length up the back - as the
+            # prior library cut it (types_closet.py IS_VERTICAL_GRAIN_BACK,
+            # rot (90, -90, 0)): the nest lays Length along the sheet
+            # grain. Stood up from the bay's right side, it fills the same
+            # board space it did cut across; set every layout so a back
+            # from before turns too.
             center_back = self._bay_part(bay_obj, PART_ROLE_CENTER_BACK)
             if center_back is not None:
                 cb_y = bp.center_back_location
                 if cb_y <= 0.0:
                     cb_y = bay['depth'] / 2.0 + st / 2.0
                 cb_y = min(cb_y, bay['depth'])
-                center_back.location = (0.0, -cb_y, bay['interior_z'])
+                center_back['IS_VERTICAL_GRAIN_BACK'] = 1
+                center_back.rotation_euler = (math.radians(90),
+                                              math.radians(-90), 0.0)
+                center_back.location = (bay['width'], -cb_y,
+                                        bay['interior_z'])
                 part = GeoNodeCutpart(center_back)
-                part.set_input('Length', bay['width'])
-                part.set_input('Width', bay['interior_h'])
+                part.set_input('Length', bay['interior_h'])
+                part.set_input('Width', bay['width'])
                 part.set_input('Thickness', st)
                 _set_part_hidden(center_back, not bp.include_center_back)
 
@@ -4672,10 +4707,11 @@ class ClosetStarter(GeoNodeCage):
         part.set_input('Length', bay['width'])
         part.set_input('Width', const.CLEAT_WIDTH)
         part.set_input('Thickness', st)
-        # A double island has no wall behind the shelf to cleat to.
+        # An island has no wall behind the shelf to cleat to.
         _set_part_hidden(
             cleat,
-            self.is_double or bay_obj.hb_closet_bay.remove_shelf_cleat)
+            isinstance(self, IslandClosetStarter)
+            or bay_obj.hb_closet_bay.remove_shelf_cleat)
 
     def _bay_split_shelves(self, bay_obj, side):
         """Committed splitting shelves of one side, bottom-up."""
@@ -5054,7 +5090,7 @@ class ClosetStarter(GeoNodeCage):
             _set_part_hidden(ctop, not want_ctop)
 
         self._layout_backsplashes(scene_props, sp)
-        self._layout_accent_shelf(scene_props, sp)
+        self._layout_accent_shelf(scene_props, sp, layout)
 
     def _backsplash_part(self, slot):
         for c in self.obj.children:
@@ -5213,27 +5249,26 @@ class ClosetStarter(GeoNodeCage):
             if obj.name not in keep:
                 _remove_part_tree(obj)
 
-    def _layout_accent_shelf(self, scene_props, sp):
-        """A decorative shelf laid on top of the
-        run at the panel top, projecting forward by the overhang and
-        past each finished end by the same amount. One spanning piece
-        (uniform run) - a plain shelf part identified by its
-        role."""
+    def _layout_accent_shelf(self, scene_props, sp, layout=None):
+        """A decorative shelf laid on top of the run at the panel top,
+        projecting forward by the overhang and past each finished end by
+        the same amount - a plain shelf part identified by its role.
+
+        Bays standing at the same top and depth share one piece. Where
+        the top or the depth steps, it is cut there the prior library's
+        way (TOP_ACCENT_SHELF_X / _WIDTH): against a taller neighbour it
+        stops at the partition; over a lower one it runs across the
+        partition and out past it by the overhang; between bays of one
+        height the deeper one's piece wraps past the partition by the
+        overhang and the shallower one's starts that far in. Tops are
+        compared where they stand (a floor bay beside a hanging one of
+        the same height is a step)."""
         want = sp.add_top_accent_shelf
-        shelf = None
-        for c in self.obj.children:
-            if c.get('hb_part_role') == PART_ROLE_ACCENT_SHELF:
-                shelf = c
-                break
-        if shelf is None:
-            if not want:
-                return
-            part = CabinetPart()
-            part.create('Top Accent Shelf')
-            part.obj.parent = self.obj
-            part.obj['hb_part_role'] = PART_ROLE_ACCENT_SHELF
-            part.set_input('Mirror Y', True)
-            shelf = part.obj
+        shelves = sorted((c for c in self.obj.children
+                          if c.get('hb_part_role') == PART_ROLE_ACCENT_SHELF),
+                         key=lambda o: o.get('hb_accent_index', 0))
+        if not shelves and not want:
+            return
         ovh = sp.top_accent_overhang
         if sp.top_accent_set_sides:
             left = sp.top_accent_overhang_left
@@ -5247,14 +5282,80 @@ class ClosetStarter(GeoNodeCage):
                 return ovh if finished else 0.0
             left = _end(sp.left_side_wall_filler, sp.left_finished_end)
             right = _end(sp.right_side_wall_filler, sp.right_finished_end)
-        # Base at the panel top; projects forward by the overhang and
-        # out past each end as worked out above.
-        shelf.location = (-left, 0.0, sp.height)
-        part = GeoNodeCutpart(shelf)
-        part.set_input('Length', sp.width + left + right)
-        part.set_input('Width', sp.depth + ovh)
-        part.set_input('Thickness', scene_props.shelf_thickness)
-        _set_part_hidden(shelf, not want)
+
+        # (x start, x end, top, depth) per piece.
+        bays = (layout or {}).get('bays') or []
+        pieces = []
+        if not bays:
+            pieces.append((-left, sp.width + right, sp.height, sp.depth))
+        else:
+            tol = 1.0e-4
+            tops = [b['z0'] + b['height'] for b in bays]
+            groups = []
+            for i, b in enumerate(bays):
+                if (groups and abs(tops[i] - tops[groups[-1][0]]) < tol
+                        and abs(b['depth'] - bays[groups[-1][0]]['depth'])
+                        < tol):
+                    groups[-1].append(i)
+                else:
+                    groups.append([i])
+            last = len(bays) - 1
+            for g in groups:
+                a, z = g[0], g[-1]
+                top, depth = tops[a], bays[a]['depth']
+                if a == 0:
+                    x0 = -left
+                else:
+                    p = a - 1
+                    j0 = bays[p]['x'] + bays[p]['width']
+                    j1 = bays[a]['x']
+                    if tops[p] > top + tol:
+                        x0 = j1
+                    elif tops[p] < top - tol:
+                        x0 = j0 - ovh
+                    elif bays[p]['depth'] > depth:
+                        x0 = j1 + ovh
+                    else:
+                        x0 = j0 - ovh
+                if z == last:
+                    x1 = sp.width + right
+                else:
+                    n = z + 1
+                    j0 = bays[z]['x'] + bays[z]['width']
+                    j1 = bays[n]['x']
+                    if tops[n] > top + tol:
+                        x1 = j0
+                    elif tops[n] < top - tol:
+                        x1 = j1 + ovh
+                    elif bays[n]['depth'] > depth:
+                        x1 = j0 - ovh
+                    else:
+                        x1 = j1 + ovh
+                pieces.append((x0, x1, top, depth))
+
+        # One part per piece, made or dropped to match.
+        while len(shelves) > len(pieces):
+            _remove_part_tree(shelves.pop())
+        while len(shelves) < len(pieces):
+            part = CabinetPart()
+            part.create('Top Accent Shelf')
+            part.obj.parent = self.obj
+            part.obj['hb_part_role'] = PART_ROLE_ACCENT_SHELF
+            part.set_input('Mirror Y', True)
+            if shelves and GeoNodeCutpart(shelves[0]).get_input(
+                    'Top Surface') is not None:
+                from . import materials_closets
+                materials_closets.apply_to_part(part.obj)
+            shelves.append(part.obj)
+        for k, (shelf, (x0, x1, top, depth)) in enumerate(
+                zip(shelves, pieces)):
+            shelf['hb_accent_index'] = k
+            shelf.location = (x0, 0.0, top)
+            part = GeoNodeCutpart(shelf)
+            part.set_input('Length', max(x1 - x0, 0.001))
+            part.set_input('Width', depth + ovh)
+            part.set_input('Thickness', scene_props.shelf_thickness)
+            _set_part_hidden(shelf, not want)
 
     def _bridge_part(self, side, slot):
         for c in self.obj.children:

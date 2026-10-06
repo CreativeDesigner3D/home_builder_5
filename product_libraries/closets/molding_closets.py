@@ -36,6 +36,30 @@ PROP_MOLDING_KIND = 'hb_molding_kind'
 
 MIN_CROWN_HEIGHT = inch(60.0)
 
+# The light shield is only made in some colours; on any other the crown
+# goes on without it - the prior library's rule (closet_parts.py
+# Molding_Part.has_valid_materials, ops_closet get_profile).
+LIGHT_SHIELD_PROFILE = DEFAULT_PROFILE
+PLAIN_L_CROWN_PROFILE = 'L Crown.blend'
+LIGHT_SHIELD_MATERIALS = frozenset(
+    ('White', 'Phantom Charcoal', 'Phantom Ecru', 'Veranda Teak'))
+
+
+def light_shield_available(scene=None):
+    """True when the room's closet colour comes with a light shield."""
+    scene = scene or bpy.context.scene
+    props = getattr(scene, 'hb_closets', None)
+    return getattr(props, 'closet_material', '') in LIGHT_SHIELD_MATERIALS
+
+
+def resolve_crown_profile(name, scene=None):
+    """The crown profile actually put on: the light shield profile turns
+    into the plain L crown where the colour has no light shield."""
+    if (name == LIGHT_SHIELD_PROFILE and not light_shield_available(scene)
+            and PLAIN_L_CROWN_PROFILE in get_profile_files('CROWN')):
+        return PLAIN_L_CROWN_PROFILE
+    return name
+
 # kind -> (directory, default profile, label used for object names)
 KINDS = {
     'CROWN': (CROWN_DIR, DEFAULT_PROFILE, "Crown Molding"),
