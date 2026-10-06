@@ -1348,13 +1348,24 @@ for _label, _summary, _fields in _CABINET_STYLE_SECTIONS:
     else:
         _CABINET_STYLE_TABS += ((_label, _fields),)
 
+def _style_footer_note(context, style, section):
+    """The footer's commands take the whole style, every tab of it --
+    said over them so on the Doors or Drawers tab they don't read as
+    acting on the fronts alone."""
+    note = 'These use the "%s" style as a whole (every tab)' % style.name
+    if section and section != "Cabinet":
+        note += ", not just %s" % section
+    return note
+
+
 OPTION_EDITORS = {
     'CABINET_STYLE': {
         'owner': _active_cabinet_style,
         'header': _style_summary,
         'sections': _CABINET_STYLE_TABS,
+        'footer_note': _style_footer_note,
         'footer': (
-            ("Assign to Selected",
+            ("Assign Style to Selected",
              'hb_face_frame.assign_style_to_selected_cabinets'),
             ("Paint Part", 'hb_face_frame.paint_part_material',
              'brush', 'FINISH'),
