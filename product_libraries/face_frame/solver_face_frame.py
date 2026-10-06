@@ -3743,6 +3743,34 @@ def partition_skin_panels(layout, gap_index):
         d = skin_bay['depth']
         return (-layout.dim_y + d, d - layout.fft)
 
+    def _step_skin(side, skin_bay_idx, bottom_z, top_z, slot):
+        """A step skin finishes the neighbour's wall where it shows past
+        the step. Past the step the skin bay has no carcass, so what
+        shows is the neighbour's own division panel: the skin runs that
+        bay's depth, and when depths differ it also covers the missing
+        panel on the skin bay's side (the setup is two panels thick)."""
+        other_bay = layout.bays[gap_index + 1 if skin_bay_idx == gap_index
+                                else gap_index]
+        y, width = _y_and_width(other_bay)
+        x = _x_origin(side)
+        thickness = _side_thickness(side)
+        if thickness > 1e-6 and not _epsilon_eq(bay_a['depth'],
+                                                 bay_b['depth']):
+            dt = layout.division_thickness
+            thickness += dt
+            if side == 'RIGHT':
+                x -= dt
+        return {
+            'slot':      slot,
+            'side':      side,
+            'x':         x,
+            'y':         y,
+            'z':         bottom_z,
+            'length':    top_z - bottom_z,
+            'width':     width,
+            'thickness': thickness,
+        }
+
     # A bay flagged floating raises its floor (kick_height holds the lift), so
     # the floors-differ step below would ALSO fire on the floating side and
     # overlap the slot-2 floating finish. When exactly one adjacent bay floats
@@ -3766,17 +3794,7 @@ def partition_skin_panels(layout, gap_index):
             bottom_z, top_z = floor_a, floor_b
         skin_bay = layout.bays[skin_bay_idx]
         top_z += skin_bay['bottom_rail_width'] - layout.mt
-        y, width = _y_and_width(skin_bay)
-        skins.append({
-            'slot':      0,
-            'side':      side,
-            'x':         _x_origin(side),
-            'y':         y,
-            'z':         bottom_z,
-            'length':    top_z - bottom_z,
-            'width':     width,
-            'thickness': _side_thickness(side),
-        })
+        skins.append(_step_skin(side, skin_bay_idx, bottom_z, top_z, 0))
 
     # ----- Slot 1: top step (Upper / Tall only - solid top panel) -----
     if layout.cabinet_type in {'UPPER', 'TALL'}:
@@ -3792,20 +3810,9 @@ def partition_skin_panels(layout, gap_index):
                 side = 'RIGHT'
                 skin_bay_idx = gap_index + 1
                 lower_top, upper_top = top_b, top_a
-            skin_bay = layout.bays[skin_bay_idx]
             bottom_z = lower_top - layout.top_scribe
             top_z = upper_top
-            y, width = _y_and_width(skin_bay)
-            skins.append({
-                'slot':      1,
-                'side':      side,
-                'x':         _x_origin(side),
-                'y':         y,
-                'z':         bottom_z,
-                'length':    top_z - bottom_z,
-                'width':     width,
-                'thickness': _side_thickness(side),
-            })
+            skins.append(_step_skin(side, skin_bay_idx, bottom_z, top_z, 1))
 
     # ----- Slot 2: floating-bay finish (base / tall) -----
     # A floating bay has no toe kick, so below its carcass bottom the mid-stile
