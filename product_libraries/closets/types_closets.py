@@ -2117,6 +2117,10 @@ class ClosetStarter(GeoNodeCage):
                 part.set_input('Thickness', st)
                 _set_part_hidden(cleat, bp.remove_cleat
                                  or bool(cleat.get('hb_always_hidden')))
+                # Its bottom edge is banded only while there is no bottom
+                # shelf under it, so the banding follows Remove Bottom.
+                from . import materials_closets
+                materials_closets.refresh_banding(cleat)
 
             # Hang rail: the wall strip each bay hangs from / anchors
             # to. Lazily created (like the countertop) so starters

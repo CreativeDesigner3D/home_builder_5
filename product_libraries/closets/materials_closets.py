@@ -283,7 +283,58 @@ def banded_edges(obj):
         role = _ACCESSORY_BAND_ROLES.get(obj.get('hb_acc_part'), role)
     elif role == 'CLOSET_MISC_PART':
         role = _LOOSE_BAND_ROLES.get(obj.get('hb_loose_kind'), role)
-    return BAND_EDGES.get(role)
+    edges = BAND_EDGES.get(role)
+    if edges is None:
+        return None
+    extra = _context_band_edges(obj, role)
+    return edges + tuple(e for e in extra if e not in edges)
+
+
+def _context_band_edges(obj, role):
+    """Edges the prior library banded beyond a part's usual ones because
+    of where it stands (types_closet.py), mapped to HB5's frame - checked
+    live on both 2026-10-06 (4.3: shelf / panel L1 = back, cleat L1 =
+    top; HB5: L1 = back, cleat L2 = top):
+
+    - an island's partitions and its top and bottom shelves show their
+      back as well as their front: + the back edge (L1);
+    - a cleat in a bay with its bottom removed has nothing under it, so
+      its bottom edge shows too: + L1 (4.3 'ebl2 = remove_bottom')."""
+    if role in ('CLOSET_PANEL', 'CLOSET_TOP_SHELF', 'CLOSET_BOTTOM_SHELF'):
+        cur = obj.parent
+        while cur is not None:
+            if cur.get('IS_CLOSET_STARTER_CAGE'):
+                if 'Island' in str(cur.get('CLASS_NAME', '')):
+                    return ('L1',)
+                break
+            cur = cur.parent
+        return ()
+    if role == 'CLOSET_CLEAT' and obj.get('hb_part_role') == 'CLOSET_CLEAT':
+        bay = obj.parent
+        bp = getattr(bay, 'hb_closet_bay', None) if bay is not None else None
+        if bp is not None and bool(getattr(bp, 'remove_bottom', False)):
+            return ('L1',)
+    return ()
+
+
+def refresh_banding(obj):
+    """Re-band a part in the banding it already wears, for when which
+    edges it bands on changes with the layout (a cleat whose bay loses
+    its bottom) rather than with a finish. No-op on an unfinished part."""
+    from ... import hb_types
+    try:
+        part = hb_types.GeoNodeCutpart(obj)
+        core = bpy.data.materials.get(CORE_MATERIAL)
+        edge = None
+        for e in MISC_BAND_EDGES:
+            mat = part.get_input('Edge ' + e)
+            if mat is not None and mat is not core:
+                edge = mat
+                break
+        if edge is not None:
+            _set_edges(part, obj, edge)
+    except Exception:
+        pass
 
 
 def _set_edges(part, obj, edge):
