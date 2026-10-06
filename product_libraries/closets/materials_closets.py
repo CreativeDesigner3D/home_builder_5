@@ -240,6 +240,10 @@ def _mapping_variant(mat, suffix, rot_x=0.0, rot_z=0.0):
     if variant is None:
         variant = mat.copy()
         variant.name = name
+    # The colour the variant is cut from: a turned texture is a drawing
+    # concern, so cut lists, nests and pricing read the sheet by this
+    # rather than by the variant's own name ('Dalia GRAIN V').
+    variant['hb_base_material'] = mat.get('hb_base_material', mat.name)
     mapping = next((n for n in variant.node_tree.nodes
                     if n.type == 'MAPPING'), None)
     if mapping is not None:
@@ -595,6 +599,18 @@ def apply_to_part(obj, carcass_name=None):
     except Exception:
         return False
     return True
+
+
+def update_drawer_grain(self=None, context=None):
+    """Room Vertical Grain update: a drawer front's grain decides which
+    way it is CUT (length up for vertical), not only how it is painted,
+    so every starter is laid out again before it is re-finished."""
+    scene = getattr(context, 'scene', None) or bpy.context.scene
+    from . import types_closets
+    for obj in list(scene.objects):
+        if obj.get(types_closets.TAG_STARTER_CAGE):
+            types_closets.recalculate_closet_starter(obj)
+    update_room(self, context)
 
 
 def update_room(self=None, context=None):

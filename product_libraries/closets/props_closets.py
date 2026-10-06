@@ -1879,7 +1879,7 @@ class Closets_Scene_Props(PropertyGroup):
         description="Run the grain up the drawer fronts instead of "
                     "across them",
         default=False,
-        update=materials_closets.update_room)  # type: ignore
+        update=materials_closets.update_drawer_grain)  # type: ignore
 
     closet_pull: EnumProperty(
         name="Pull",

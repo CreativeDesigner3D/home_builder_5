@@ -485,7 +485,8 @@ def compute_labels(context, region, rv3d, lines_out=None):
                             types_closets.PROP_UNLOCK_FRONT_HEIGHT, 0))
                         anchor = o_mw @ Vector(
                             (o_w / 2.0, -0.003,
-                             child.location.z + dh / 2.0))
+                             types_closets.front_bottom_z(child)
+                             + dh / 2.0))
                         targets.append((child, 'DRAWER_H', True, pinned,
                                         anchor, dh, ""))
 

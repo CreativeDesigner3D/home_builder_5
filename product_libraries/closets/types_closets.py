@@ -275,10 +275,15 @@ PROP_DRAWER_CAP = 'hb_drawer_cap'
 # unrotated, so a part cut across its length reads its grain sideways -
 # and a door's grain runs down the door. Standing the part up in its
 # own frame leaves the door exactly where it was: only which side is
-# called the length changes. Swinging doors carry this; a lift-up and
-# a tilt-out hamper still pivot about their own edges in the old frame
-# and are pending.
+# called the length changes. Every door carries this (apply_door_open
+# pivots lift-ups and tilt-outs from this frame), and so does a drawer
+# front whose grain runs vertical. Its origin is then the TOP edge -
+# read a front's bottom through front_bottom_z.
 PROP_FRONT_LENGTH_UP = 'hb_front_length_up'
+# On a bay-wide door (no opening cage of its own): the clear width it
+# covers and the bay-local z of that clear space's floor.
+PROP_COVER_WIDTH = 'hb_cover_w'
+PROP_COVER_BOTTOM_Z = 'hb_cover_z'
 
 
 def front_size(front):
@@ -289,6 +294,14 @@ def front_size(front):
     if front.get(PROP_FRONT_LENGTH_UP):
         return width, length
     return length, width
+
+
+def front_bottom_z(front):
+    """Parent-frame z of a front's bottom edge. A front cut length-up
+    has its origin at its TOP edge, so its height comes off it."""
+    if front.get(PROP_FRONT_LENGTH_UP):
+        return front.location.z - front_size(front)[1]
+    return front.location.z
 # Per-front idprops (on each drawer FRONT object). A drawer stack fills
 # its opening: the fronts the stack owns share the remaining span
 # equally. Typing a front's height hands that front its own
@@ -2656,25 +2669,18 @@ class ClosetStarter(GeoNodeCage):
             for i, child in enumerate(doors):
                 x = -lo + i * (leaf + h_gap)
                 part = GeoNodeCutpart(child)
-                # A swinging door is cut with its length running up it,
-                # so the grain runs down the door on a grained sheet.
-                # A lift-up or a tilt-out pivots about an edge in the
-                # old frame and is left in it.
-                up = child.get('hb_hinge', 'LEFT') in ('LEFT', 'RIGHT')
-                if up:
-                    child[PROP_FRONT_LENGTH_UP] = 1
-                    child.location = (x, front_y, -bo + d_h)
-                    child.rotation_euler = (math.radians(90),
-                                            math.radians(90), 0.0)
-                    part.set_input('Length', d_h)
-                    part.set_input('Width', leaf)
-                else:
-                    if PROP_FRONT_LENGTH_UP in child:
-                        del child[PROP_FRONT_LENGTH_UP]
-                    child.location = (x, front_y, -bo)
-                    child.rotation_euler = (math.radians(90), 0.0, 0.0)
-                    part.set_input('Length', leaf)
-                    part.set_input('Width', d_h)
+                # Every door - swinging, lift-up or tilt-out hamper - is
+                # cut with its length running up it, so the grain runs
+                # down the door on a grained sheet (4.3 cut all three
+                # this way). apply_door_open pivots each about its own
+                # edge from this frame.
+                up = True
+                child[PROP_FRONT_LENGTH_UP] = 1
+                child.location = (x, front_y, -bo + d_h)
+                child.rotation_euler = (math.radians(90),
+                                        math.radians(90), 0.0)
+                part.set_input('Length', d_h)
+                part.set_input('Width', leaf)
                 part.set_input('Thickness', const.FRONT_THICKNESS)
                 _stamp_warning(child, _door_size_warning(
                     leaf, d_h, child.get('hb_hinge', 'LEFT'), width))
@@ -2756,10 +2762,27 @@ class ClosetStarter(GeoNodeCage):
                 child[PROP_FRONT_HEIGHT_SOLVED] = dh
                 if not child.get(PROP_UNLOCK_FRONT_HEIGHT, 0):
                     child[PROP_FRONT_HEIGHT] = dh
-                child.location = (-lo, front_y, z)
                 part = GeoNodeCutpart(child)
-                part.set_input('Length', width + lo + ro)
-                part.set_input('Width', dh)
+                # Length is the grain axis - the nest places a grained
+                # part unrotated - so a vertical-grain front is cut with
+                # its length running up it, the way a door is, rather
+                # than painted with a turned texture (4.3 turned the
+                # part too). The front stands exactly where it did.
+                from . import materials_closets
+                if materials_closets.front_grain(child, True) == 'VERTICAL':
+                    child[PROP_FRONT_LENGTH_UP] = 1
+                    child.location = (-lo, front_y, z + dh)
+                    child.rotation_euler = (math.radians(90),
+                                            math.radians(90), 0.0)
+                    part.set_input('Length', dh)
+                    part.set_input('Width', width + lo + ro)
+                else:
+                    if PROP_FRONT_LENGTH_UP in child:
+                        del child[PROP_FRONT_LENGTH_UP]
+                    child.location = (-lo, front_y, z)
+                    child.rotation_euler = (math.radians(90), 0.0, 0.0)
+                    part.set_input('Length', width + lo + ro)
+                    part.set_input('Width', dh)
                 part.set_input('Thickness', const.FRONT_THICKNESS)
                 # Per-front box-system override wins over the opening
                 # default; its material follows the resolved system.
@@ -3340,13 +3363,25 @@ class ClosetStarter(GeoNodeCage):
         interior_h = bay['interior_h']
         full = width + lo + ro
         leaf = (full - h_gap) / 2.0 if len(doors) == 2 else full
+        d_h = interior_h + to + bo
         for i, child in enumerate(doors):
             x = -lo + i * (leaf + h_gap)
-            z = bay['interior_z'] - bo
+            # Cut length-up like an opening's doors, so the grain runs
+            # down the door on the sheet; the origin is the top edge.
+            z = bay['interior_z'] - bo + d_h
+            child[PROP_FRONT_LENGTH_UP] = 1
             child.location = (x, front_y, z)
+            child.rotation_euler = (math.radians(90),
+                                    math.radians(90), 0.0)
+            # A bay-wide door has no opening cage over it, so it carries
+            # the clear width and the bay-local floor of what it covers
+            # for whatever needs the opening behind it (hamper basket
+            # and flap-stay drilling).
+            child[PROP_COVER_WIDTH] = width
+            child[PROP_COVER_BOTTOM_Z] = bay['interior_z']
             part = GeoNodeCutpart(child)
-            part.set_input('Length', leaf)
-            part.set_input('Width', interior_h + to + bo)
+            part.set_input('Length', d_h)
+            part.set_input('Width', leaf)
             part.set_input('Thickness', const.FRONT_THICKNESS)
             _stamp_warning(child, _door_size_warning(
                 leaf, interior_h + to + bo,
@@ -3558,6 +3593,14 @@ class ClosetStarter(GeoNodeCage):
                                     front['hb_door_cy'],
                                     front['hb_door_cz']))
                 @ Matrix.Rotation(math.radians(90.0), 4, 'X'))
+        if front.get(PROP_FRONT_LENGTH_UP):
+            # Cut length-up: the shut frame is also turned a quarter
+            # about the face (Euler 90, 90, 0).
+            shut = (Matrix.Translation((front['hb_door_cx'],
+                                        front['hb_door_cy'],
+                                        front['hb_door_cz']))
+                    @ Matrix.Rotation(math.radians(90.0), 4, 'Y')
+                    @ Matrix.Rotation(math.radians(90.0), 4, 'X'))
         model.matrix_parent_inverse = shut.inverted()
         model.location = (width / 2.0, face_y, floor_z + HAMPER_BAG_HANG)
         # A back-side front faces +Y, so its bags run back the other way.
@@ -6362,6 +6405,28 @@ def apply_door_open(door, frac):
     # the room: LEFT hinge -> negative Z rotation, RIGHT -> positive.
     # Back-side island doors mirror.
     swing = -1.0 if side == 'BACK' else 1.0
+    if hinge in ('TOP', 'BOTTOM') and door.get(PROP_FRONT_LENGTH_UP):
+        # Cut length-up, the front's origin is its TOP edge (stashed as
+        # cz) and its closed frame is turned a quarter about its face.
+        # A lift-up pivots about that top edge, so the origin stays put;
+        # a tilt-out hamper pivots about its bottom edge, h below, and
+        # the origin swings with the top. Either way the closed frame is
+        # turned about the room's X by the opening angle.
+        h = door.get('hb_door_h', 0.0)
+        if hinge == 'TOP':
+            ang = -DOOR_OPEN_ANGLE * frac * swing
+            door.location = (cx, cy, cz)
+        else:
+            ang = HAMPER_TILT_ANGLE * frac * swing
+            door.location = (cx,
+                             cy - math.sin(ang) * h,
+                             cz - h + math.cos(ang) * h)
+        # Euler (90, 90, 0) in XYZ order is Ry @ Rx.
+        closed = (Matrix.Rotation(math.radians(90.0), 3, 'Y')
+                  @ Matrix.Rotation(math.radians(90.0), 3, 'X'))
+        door.rotation_euler = (Matrix.Rotation(ang, 3, 'X')
+                               @ closed).to_euler('XYZ')
+        return
     if hinge == 'TOP':
         # Lift-up: pivot at the TOP edge (a line parallel to +X at the
         # door top), the bottom swinging out into the room (-Y) and up.
@@ -7203,6 +7268,7 @@ def _part_span(obj, st):
         # squeezed bank claims the room it is actually taking up.
         h = float(obj.get(PROP_FRONT_HEIGHT_SOLVED,
                           obj.get(PROP_FRONT_HEIGHT, 0.0)))
+        z = front_bottom_z(obj)
         return (z, z + h, "a drawer") if h > 0.0 else None
     return None
 
