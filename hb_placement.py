@@ -1492,7 +1492,18 @@ class DimensionOperatorMixin:
     
     # Snap radius in pixels
     SNAP_RADIUS = 20
-    
+
+    # Typing a number after the first click sets the dimension's length
+    # (Enter confirms); the mouse still picks the direction. Operators
+    # whose preview can't follow a typed point turn this off.
+    supports_typed_length = True
+
+    # The typed-length grammar is the placement one (5'6", 3 1/2, 600mm).
+    parse_typed_distance = PlacementMixin.parse_typed_distance
+    _parse_feet_inches = PlacementMixin._parse_feet_inches
+    _extract_number = PlacementMixin._extract_number
+    _number_to_scene_units = PlacementMixin._number_to_scene_units
+
     def init_dimension_state(self):
         """Initialize dimension operator state. Call in invoke()."""
         self.dim_state = self.DIM_STATE_FIRST
@@ -1509,9 +1520,13 @@ class DimensionOperatorMixin:
         self.ortho_mode = False
         self.ortho_direction = 'AUTO'  # 'AUTO', 'HORIZONTAL', 'VERTICAL'
         
+        # Typed length (second point) and the mouse point it follows
+        self.dim_typed = ""
+        self._dim_mouse_point = None
+
         # Draw handler reference
         self._dim_draw_handle = None
-    
+
     def add_dimension_draw_handler(self, context):
         """Add the visual feedback draw handler."""
         args = (self, context)
@@ -1542,7 +1557,11 @@ class DimensionOperatorMixin:
         if self.dim_state == self.DIM_STATE_FIRST:
             return f"Click first point{snap_text} | O: ortho | Right-click/Esc: cancel"
         elif self.dim_state == self.DIM_STATE_SECOND:
-            return f"Click second point{snap_text}{ortho_text} | O: toggle ortho | Right-click/Esc: cancel"
+            if self.dim_typed:
+                return (f"Length: {self.dim_typed}_{ortho_text} | Move mouse: direction"
+                        " | Enter: confirm | Backspace | Esc: clear typing")
+            typed_hint = " | Type a length" if self.supports_typed_length else ""
+            return f"Click second point{snap_text}{ortho_text}{typed_hint} | O: toggle ortho | Right-click/Esc: cancel"
         else:  # OFFSET
             return "Move to set offset, click to place | Right-click/Esc: cancel"
     
@@ -1588,10 +1607,99 @@ class DimensionOperatorMixin:
             self.ortho_mode = False
             self.ortho_direction = 'AUTO'
     
+    def typed_length_axes(self, context):
+        """(horizontal, vertical) world unit vectors a typed length runs
+        along, for operators whose dimensions are always horizontal or
+        vertical; None (the default) runs it straight toward the mouse,
+        for aligned dimensions."""
+        return None
+
+    def _typed_length_point(self, context):
+        """The second point the typed length gives: from the first
+        point, toward the mouse, that far. None while nothing usable is
+        typed."""
+        try:
+            length = self.parse_typed_distance(self.dim_typed)
+        except Exception:
+            length = None
+        if not length or length <= 0 or self.first_point is None:
+            return None
+        mouse = self._dim_mouse_point
+        d = (mouse - self.first_point) if mouse is not None else Vector((1, 0, 0))
+        axes = self.typed_length_axes(context)
+        if axes is None:
+            axes = (Vector((1, 0, 0)), Vector((0, 1, 0)))
+            if not self.ortho_mode and d.length > 1e-9:
+                return self.first_point + d.normalized() * length
+        h, v = axes
+        if self.ortho_mode and self.ortho_direction in ('HORIZONTAL', 'VERTICAL'):
+            axis = h if self.ortho_direction == 'HORIZONTAL' else v
+        else:
+            axis = h if abs(d.dot(h)) >= abs(d.dot(v)) else v
+        sign = -1.0 if d.dot(axis) < 0 else 1.0
+        return self.first_point + axis * (sign * length)
+
+    def _point_preview_at(self, context, point):
+        """Show the second point at ``point`` (not a snap)."""
+        self.current_point = point.copy()
+        self.is_snapped = False
+        screen = view3d_utils.location_3d_to_region_2d(
+            context.region, context.region_data, point)
+        if screen is not None:
+            self.snap_screen_pos = (screen.x, screen.y)
+
+    def _handle_typed_length(self, context, event):
+        """Keys for a typed length while picking the second point.
+        Returns 'RUNNING_MODAL' when the key was used, else None."""
+        if event.value != 'PRESS':
+            return None
+        key = event.type
+        if key in NUMBER_KEYS:
+            ch = NUMBER_KEYS[key]
+        elif key == 'QUOTE':
+            ch = '"' if event.shift else "'"
+        elif key == 'SPACE' and self.dim_typed:
+            ch = ' '
+        else:
+            ch = None
+        if ch is not None:
+            if self._dim_mouse_point is None and self.current_point is not None:
+                self._dim_mouse_point = self.current_point.copy()
+            self.dim_typed += ch
+        elif not self.dim_typed:
+            return None
+        elif key == 'BACK_SPACE':
+            self.dim_typed = self.dim_typed[:-1]
+        elif key == 'ESC':
+            self.dim_typed = ""
+        elif key in {'RET', 'NUMPAD_ENTER'}:
+            point = self._typed_length_point(context)
+            if point is None:
+                return 'RUNNING_MODAL'
+            self._point_preview_at(context, point)
+            self.update_dimension_preview(context)
+            self.second_point = point.copy()
+            self.dim_typed = ""
+            self.dim_state = self.DIM_STATE_OFFSET
+            self.update_dimension_header(context)
+            return 'RUNNING_MODAL'
+        else:
+            return None
+        # Point the preview at the typed length, or back at the mouse
+        # once the typing is cleared.
+        point = self._typed_length_point(context) if self.dim_typed else None
+        if point is None:
+            point = self._dim_mouse_point
+        if point is not None:
+            self._point_preview_at(context, point)
+            self.update_dimension_preview(context)
+        self.update_dimension_header(context)
+        return 'RUNNING_MODAL'
+
     def handle_dimension_event(self, context, event) -> str:
         """
         Handle common dimension events.
-        
+
         Returns:
             'RUNNING_MODAL' - continue
             'FINISHED' - dimension complete
@@ -1599,7 +1707,13 @@ class DimensionOperatorMixin:
             'PASS_THROUGH' - pass event to Blender
             None - event not handled, let subclass handle it
         """
-        # Update visual feedback on mouse move
+        if (self.supports_typed_length
+                and self.dim_state == self.DIM_STATE_SECOND):
+            result = self._handle_typed_length(context, event)
+            if result is not None:
+                return result
+
+# Update visual feedback on mouse move
         if event.type == 'MOUSEMOVE':
             coord = (event.mouse_region_x, event.mouse_region_y)
             
@@ -1615,7 +1729,14 @@ class DimensionOperatorMixin:
                 # Apply ortho constraint for second point
                 if self.dim_state == self.DIM_STATE_SECOND and self.current_point and self.ortho_mode:
                     self.current_point = self.apply_ortho_constraint(self.current_point)
-            
+
+                # A typed length keeps its size; the mouse only steers it.
+                if self.dim_state == self.DIM_STATE_SECOND and self.current_point:
+                    self._dim_mouse_point = self.current_point.copy()
+                    typed = self._typed_length_point(context) if self.dim_typed else None
+                    if typed is not None:
+                        self._point_preview_at(context, typed)
+
             # Update live preview
             if self.dim_state in (self.DIM_STATE_SECOND, self.DIM_STATE_OFFSET) and self.current_point:
                 self.update_dimension_preview(context)
