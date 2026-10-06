@@ -2439,9 +2439,12 @@ def register():
         name="Closet Opening Props", type=Closet_Opening_Props)
     bpy.types.Object.hb_closet_slab = PointerProperty(
         name="Slab Countertop Props", type=Closet_Slab_Countertop_Props)
+    # Files that saved their colours by list place open on the right one.
+    materials_closets.register_handlers()
 
 
 def unregister():
+    materials_closets.unregister_handlers()
     for pcoll in preview_collections.values():
         try:
             bpy.utils.previews.remove(pcoll)

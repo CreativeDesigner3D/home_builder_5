@@ -23,6 +23,7 @@ lifetime gotcha).
 """
 import math
 import os
+import zlib
 import bpy
 
 from ... import hb_utils
@@ -119,20 +120,54 @@ def get_countertop_material_names():
     return _ctop_names_cache
 
 
+# A .blend stores an enum by its NUMBER, and a plain 3-tuple item is
+# numbered by its place in the list - so a swatch added to the library
+# (Dalia, between Cosmos and Finesse) moved every colour after it and an
+# old file opened on the wrong one. Each colour is numbered from its
+# name instead, clear of the small numbers the old places were saved as
+# (so a file saved before this is told apart and migrated on load,
+# migrate_saved_materials). A list's default keeps 0 - White, the first
+# countertop laminate, Match Closet - which is both what an untouched
+# dropdown reads as and what it was saved as before.
+_STABLE_ID_BASE = 100000
+
+
+def stable_id(name):
+    """The number a colour is saved as - the same for that name in every
+    library, whatever else is added."""
+    return _STABLE_ID_BASE + zlib.crc32(name.encode('utf-8')) % 2000000000
+
+
+def _stable_items(names, default=None):
+    items = []
+    used = set()
+    for n in names:
+        num = 0 if n == default else stable_id(n)
+        while num in used:      # a crc clash in the one list
+            num += 1
+        used.add(num)
+        items.append((n, n, "", 'NONE', num))
+    return items
+
+
 def countertop_material_enum_items(self, context):
     global _ctop_enum_cache
     if _ctop_enum_cache is None:
-        items = [(n, n, "") for n in get_countertop_material_names()]
+        items = _stable_items(get_countertop_material_names(),
+                              default=DEFAULT_COUNTERTOP_MATERIAL)
         _ctop_enum_cache = items or [('NONE', "None",
-                                      "No countertop materials library")]
+                                      "No countertop materials library",
+                                      'NONE', 0)]
     return _ctop_enum_cache
 
 
 def material_enum_items(self, context):
     global _enum_cache
     if _enum_cache is None:
-        items = [(n, n, "") for n in get_material_names()]
-        _enum_cache = items or [('NONE', "None", "No materials library")]
+        items = _stable_items(get_material_names(),
+                              default=DEFAULT_MATERIAL)
+        _enum_cache = items or [('NONE', "None", "No materials library",
+                                 'NONE', 0)]
     return _enum_cache
 
 
@@ -142,10 +177,69 @@ def match_enum_items(self, context):
     global _match_enum_cache
     if _match_enum_cache is None:
         items = [(MATCH, "Match Closet",
-                  "Follow the closet material selection")]
-        items += [(n, n, "") for n in get_material_names()]
+                  "Follow the closet material selection", 'NONE', 0)]
+        items += _stable_items(get_material_names())
         _match_enum_cache = items
     return _match_enum_cache
+
+
+# The room's colour dropdowns and how each was numbered before:
+# 'plain' = place in the material list, 'match' = Match Closet at 0 then
+# the material list, 'countertop' = place in the countertop list.
+_SAVED_MATERIAL_PROPS = (
+    ('closet_material', 'plain'),
+    ('closet_front_material', 'match'),
+    ('closet_edge_material', 'match'),
+    ('closet_front_edge_material', 'match'),
+    ('closet_countertop_material', 'countertop'),
+)
+
+
+def migrate_saved_materials(scene):
+    """Turn colours a file saved by their old place in the list into the
+    stable numbers, reading each place against the list as it stood (the
+    library's own order, which only changes when a swatch is added).
+    Already-stable values, Match Closet and settings never touched are
+    left alone; nothing is repainted. Returns how many were changed."""
+    props = getattr(scene, 'hb_closets', None)
+    if props is None:
+        return 0
+    changed = 0
+    for prop, kind in _SAVED_MATERIAL_PROPS:
+        raw = props.get(prop)
+        if not isinstance(raw, int) or raw >= _STABLE_ID_BASE or raw == 0:
+            continue            # stable already, or the default (0 then
+                                # and now)
+        if kind == 'match':
+            names, idx = get_material_names(), raw - 1
+        elif kind == 'countertop':
+            names, idx = get_countertop_material_names(), raw
+        else:
+            names, idx = get_material_names(), raw
+        if not 0 <= idx < len(names):
+            continue
+        props[prop] = stable_id(names[idx])
+        changed += 1
+    return changed
+
+
+@bpy.app.handlers.persistent
+def _migrate_materials_load_post(_dummy):
+    for scene in bpy.data.scenes:
+        try:
+            migrate_saved_materials(scene)
+        except Exception:
+            pass
+
+
+def register_handlers():
+    if _migrate_materials_load_post not in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.append(_migrate_materials_load_post)
+
+
+def unregister_handlers():
+    if _migrate_materials_load_post in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(_migrate_materials_load_post)
 
 
 def refresh():
