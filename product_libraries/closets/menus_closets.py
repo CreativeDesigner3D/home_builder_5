@@ -28,6 +28,8 @@ class HOME_BUILDER_MT_closet_starter_commands(bpy.types.Menu):
                                  text="Duplicate Mirror", icon='MOD_MIRROR')
             op.source_starter_name = _dup_root.name
             op.mirror = True
+        layout.operator("hb_closets.save_closet_to_library",
+                        text="Save Closet to Library...", icon='ASSET_MANAGER')
         # Re-opens the placement-time clearance dialog; cancels itself
         # with an info report when no corner neighbor qualifies.
         layout.operator("hb_closets.set_corner_clearance",

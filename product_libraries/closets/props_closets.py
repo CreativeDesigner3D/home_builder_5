@@ -2082,6 +2082,8 @@ class Closets_Scene_Props(PropertyGroup):
         name="Show Countertops", default=False)  # type: ignore
     show_molding_options: BoolProperty(
         name="Show Molding", default=False)  # type: ignore
+    show_user_library: BoolProperty(
+        name="My Closets", default=False)  # type: ignore
     show_design_warnings: BoolProperty(
         name="Show Design Warnings", default=True)  # type: ignore
 
@@ -2387,6 +2389,10 @@ class Closets_Scene_Props(PropertyGroup):
     # =====================================================================
     # UI: master draw entry point (called by view3d_sidebar)
     # =====================================================================
+    def draw_user_library_ui(self, layout, context):
+        from .operators import ops_user_library
+        ops_user_library.draw_library_section(layout, context)
+
     def draw_library_ui(self, layout, context):
         col = layout.column(align=True)
 
@@ -2406,6 +2412,8 @@ class Closets_Scene_Props(PropertyGroup):
                  self.draw_closet_sizes_ui),
                 ('show_starter_library', "Closet Starters",
                  self.draw_starter_library_ui),
+                ('show_user_library', "My Closets",
+                 self.draw_user_library_ui),
                 ('show_design_warnings', "Design Warnings",
                  self.draw_design_warnings_ui),
             ]

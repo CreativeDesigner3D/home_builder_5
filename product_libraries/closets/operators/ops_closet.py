@@ -653,6 +653,11 @@ class hb_closets_OT_place_starter(bpy.types.Operator,
         description="Duplicate mode only: flip the copy left-to-right "
                     "(bay order and door swings)",
         default=False)  # type: ignore
+    discard_source: bpy.props.BoolProperty(
+        name="Discard Source",
+        description="Duplicate mode only: remove the source when the "
+                    "placement ends (a closet loaded from the library)",
+        default=False, options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
 
     # Live modal state; reset per session in invoke().
     _preview_cage = None
@@ -836,7 +841,21 @@ class hb_closets_OT_place_starter(bpy.types.Operator,
         self._clear_stack_highlight()
         self.remove_placement_dim_handler()
 
+    def _discard_library_source(self):
+        """Remove a library closet's appended source once its placement
+        is over - it was only there to be copied."""
+        src = self._source_obj
+        if not self.discard_source or src is None:
+            return
+        try:
+            if src.name in bpy.data.objects:
+                types_closets._remove_part_tree(src)
+        except ReferenceError:
+            pass
+        self._source_obj = None
+
     def _cancel(self, context):
+        self._discard_library_source()
         self._clear_stack_highlight()
         self.remove_placement_dim_handler()
         self._delete_preview()
@@ -1703,6 +1722,14 @@ class hb_closets_OT_place_starter(bpy.types.Operator,
         self._delete_preview()
 
         if self._source_obj is not None:
+            if self.discard_source:
+                try:
+                    return self._finalize_duplicate(
+                        context, captured_parent, captured_world,
+                        captured_local_loc, captured_local_rot,
+                        captured_width)
+                finally:
+                    self._discard_library_source()
             return self._finalize_duplicate(
                 context, captured_parent, captured_world,
                 captured_local_loc, captured_local_rot, captured_width)
