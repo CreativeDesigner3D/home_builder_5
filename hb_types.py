@@ -663,6 +663,70 @@ def ensure_drawer_box_side_inputs(ng):
     if not ng.nodes.get('Side Set Material'):
         _split_drawer_box_sides(ng)
     _widen_drawer_box_boards(ng)
+    _drawer_box_side_thickness(ng)
+
+
+# Nodes of GeoNodeDrawerBox that read Material Thickness for the sides:
+# the two side sizes and offsets, and the 2T taken off the back and
+# sub-front widths so they meet the sides' inner faces.
+_DRAWER_BOX_SIDE_T_NODES = ('Size', 'Math', 'Combine XYZ.002', 'Math.003',
+                            'Math.007', 'Math.012')
+
+
+def _drawer_box_side_thickness(ng):
+    """'Side Thickness' (default 0 = Material Thickness) for the sides
+    alone. A metal box's sides are thinner steel than the board its
+    back and sub-front are drawn in (4.3: Avantech 13mm, Metabox 1/8");
+    Material Thickness still sets the back, sub-front and bottom depth."""
+    if ng.nodes.get('Side Thickness Switch') or not ng.nodes.get(
+            'Side Group Input'):
+        return
+    names = {it.name for it in ng.interface.items_tree
+             if getattr(it, 'in_out', None) == 'INPUT'}
+    if 'Side Thickness' not in names:
+        sock = ng.interface.new_socket('Side Thickness', in_out='INPUT',
+                                       socket_type='NodeSocketFloat')
+        sock.default_value = 0.0
+    gi = ng.nodes['Side Group Input']
+    x0, y0 = gi.location.x, gi.location.y - 500
+    given = ng.nodes.new('FunctionNodeCompare')
+    given.name = 'Side Thickness Given'
+    given.data_type = 'FLOAT'
+    given.operation = 'GREATER_THAN'
+    given.location = (x0 + 200, y0)
+    ng.links.new(gi.outputs['Side Thickness'], given.inputs[0])
+    given.inputs[1].default_value = 0.0
+    pick = ng.nodes.new('GeometryNodeSwitch')
+    pick.name = 'Side Thickness Switch'
+    pick.input_type = 'FLOAT'
+    pick.location = (x0 + 400, y0)
+    ng.links.new(given.outputs[0], pick.inputs['Switch'])
+    ng.links.new(gi.outputs['Material Thickness'], pick.inputs['False'])
+    ng.links.new(gi.outputs['Side Thickness'], pick.inputs['True'])
+    side_t = pick.outputs['Output']
+    for link in list(ng.links):
+        if (link.from_node.type == 'GROUP_INPUT'
+                and link.from_node != gi
+                and link.from_socket.name == 'Material Thickness'
+                and link.to_node.name in _DRAWER_BOX_SIDE_T_NODES):
+            to_socket = link.to_socket
+            ng.links.remove(link)
+            ng.links.new(side_t, to_socket)
+    # The bottom's width shares its 2T with its depth: give the width
+    # its own twice-the-side.
+    width = ng.nodes.get('T*2.002')
+    if width is not None:
+        twice = ng.nodes.new('ShaderNodeMath')
+        twice.name = 'Side T*2'
+        twice.operation = 'MULTIPLY'
+        twice.inputs[1].default_value = 2.0
+        twice.location = (x0 + 600, y0)
+        ng.links.new(side_t, twice.inputs[0])
+        for link in list(ng.links):
+            if link.to_node == width and link.from_node.name == 'T*2':
+                to_socket = link.to_socket
+                ng.links.remove(link)
+                ng.links.new(twice.outputs[0], to_socket)
 
 
 def _widen_drawer_box_boards(ng):

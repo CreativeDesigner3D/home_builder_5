@@ -639,6 +639,31 @@ def apply_front_member_materials(front_obj, is_drawer, front_mat=None):
     front_obj.update_tag()
 
 
+# Colours whose edgebanding is not made in 3mm (4.3 props_closet: the
+# "Edgebanding Color not available in 3mm" warning on Door Edgebanding).
+NO_3MM_EDGE_COLORS = ('Cannes', 'Cosmos', 'Finesse', 'Novablack', 'Pietra',
+                      'Samadhi', 'Canvas', 'Sheer Linen', 'Dalia')
+
+
+def front_edge_color_name(props):
+    """Name of the colour the fronts are banded in (the Front Edgebanding
+    selection, through Match to the fronts and then the closet colour),
+    read from the selections alone - safe to call while drawing."""
+    closet = getattr(props, 'closet_material', '') or DEFAULT_MATERIAL
+    front = getattr(props, 'closet_front_material', MATCH)
+    if front in ('', MATCH):
+        front = closet
+    edge = getattr(props, 'closet_front_edge_material', MATCH)
+    return front if edge in ('', MATCH) else edge
+
+
+def front_edge_lacks_3mm(props):
+    """True when the fronts are set to 3mm banding in a colour that has
+    none."""
+    return (getattr(props, 'closet_door_edgeband', '1MM') == '3MM'
+            and front_edge_color_name(props) in NO_3MM_EDGE_COLORS)
+
+
 def _resolve_edge_base(prop_name, fallback):
     """Edgebanding base material for one of the edge dropdowns: an
     explicit selection, or `fallback` (the matching surface material)

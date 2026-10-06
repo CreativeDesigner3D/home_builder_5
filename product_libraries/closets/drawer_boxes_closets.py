@@ -214,7 +214,8 @@ def box_warning(box_type, avail_h, avail_d, wood_d):
 # A wood (dovetail) box is built the prior library's way: 3/4" sides,
 # sub-front and back, a 1/4" bottom let in 1/2" up, all in White
 # (types_drawer_boxes.py Drawer_Left_Side prompts, closet_parts
-# Wood_Box_Part). The metal systems keep the node group's 5/8".
+# Wood_Box_Part). A metal box's back and sub-front keep the node
+# group's 5/8"; its sides take their steel from _METAL_LOOK.
 WOOD_BOX_MATERIAL = 'White'
 _WOOD_SIDE_THICKNESS = inch(0.75)
 _METAL_SIDE_THICKNESS = inch(0.625)
@@ -227,15 +228,16 @@ _BOX_BOTTOM_Z = inch(0.5)
 # cage is the bottom/back (an Avantech 24mm narrower than its opening, a
 # Metabox 31mm - what pricing and the cut parts read); the sides stand
 # out past it to where 4.3 put them - an Avantech's 1/4" in from the
-# opening, a Metabox's 15.5 - 3mm in.
+# opening, a Metabox's 15.5 - 3mm in - in 4.3's steel: 13mm Avantech
+# sides, 1/8" Metabox sides.
 # system -> (side finish, bottom/back finish or None = the closet's,
-#            side outset)
+#            side outset, side thickness)
 _METAL_LOOK = {
     'AVANTECH': ('Slate Graphite', 'Storm Silver Gray',
-                 _mm(12) - inch(0.25)),
+                 _mm(12) - inch(0.25), _mm(13)),
     'AVANTECH_ILL': ('Slate Graphite', 'Storm Silver Gray',
-                     _mm(12) - inch(0.25)),
-    'METABOX': ('Metabox White', None, _mm(15.5) - _mm(12.5)),
+                     _mm(12) - inch(0.25), _mm(13)),
+    'METABOX': ('Metabox White', None, _mm(15.5) - _mm(12.5), inch(0.125)),
 }
 
 
@@ -250,10 +252,10 @@ def style_box(gb, box_type):
     side = (_WOOD_SIDE_THICKNESS if box_type == 'WOOD'
             else _METAL_SIDE_THICKNESS)
     material = box_material(box_type)
-    side_mat, use_side, outset = None, False, 0.0
+    side_mat, use_side, outset, side_t = None, False, 0.0, 0.0
     look = _METAL_LOOK.get(box_type)
     if look is not None:
-        side_name, body_name, outset = look
+        side_name, body_name, outset, side_t = look
         from . import pulls_closets
         side_mat = pulls_closets.load_finish_material(side_name)
         use_side = side_mat is not None
@@ -271,7 +273,8 @@ def style_box(gb, box_type):
                           ("Material", material),
                           ("Side Material", side_mat),
                           ("Use Side Material", use_side),
-                          ("Side Outset", outset)):
+                          ("Side Outset", outset),
+                          ("Side Thickness", side_t)):
         try:
             gb.set_input(socket, value)
         except Exception:

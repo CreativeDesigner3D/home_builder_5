@@ -2213,6 +2213,11 @@ class Closets_Scene_Props(PropertyGroup):
         col.label(text="Edgebanding:")
         col.prop(self, 'closet_edge_material', text="Closet Edge")
         col.prop(self, 'closet_front_edge_material', text="Front Edge")
+        if materials_closets.front_edge_lacks_3mm(self):
+            warn = col.box()
+            warn.alert = True
+            warn.label(text="Edgebanding Color not available in 3mm",
+                       icon='ERROR')
 
     # =====================================================================
     # UI: door and drawer front styles (Options tab)
@@ -2222,6 +2227,11 @@ class Closets_Scene_Props(PropertyGroup):
         col.prop(self, 'closet_front_style', text="Front Style")
         col.prop(self, 'closet_panel_type', text="Door Panel")
         col.prop(self, 'closet_door_edgeband', text="Edgebanding")
+        if materials_closets.front_edge_lacks_3mm(self):
+            warn = col.box()
+            warn.alert = True
+            warn.label(text="Edgebanding Color not available in 3mm",
+                       icon='ERROR')
 
         col.separator()
         col.prop(self, 'closet_seed_door_shelves',
