@@ -2336,13 +2336,26 @@ class Closets_Scene_Props(PropertyGroup):
         at the size it has been given. Each part carries its own
         warning, written when it was last drawn, so this gathers what
         is already there rather than working anything out again."""
-        from . import types_closets
+        from . import types_closets, molding_closets
         col = layout.column(align=True)
         found = []
+        keys = (types_closets.PROP_BOX_WARNING,
+                types_closets.PROP_ACCESSORY_WARNING,
+                types_closets.PROP_STYLE_WARNING)
+        no_shield = not molding_closets.light_shield_available(
+            context.scene)
         for obj in context.scene.objects:
-            message = obj.get(types_closets.PROP_BOX_WARNING, '')
-            if message:
-                found.append((obj.name, message))
+            seen = set()
+            for key in keys:
+                for message in str(obj.get(key, '') or '').split('; '):
+                    if message and message not in seen:
+                        seen.add(message)
+                        found.append((obj.name, message))
+            if (no_shield and obj.get(molding_closets.TAG_MOLDING)
+                    and obj.get(molding_closets.PROP_MOLDING_KIND,
+                                'CROWN') == 'CROWN'):
+                found.append((obj.name, "Light Shield not available "
+                                        "for this material"))
         if not found:
             col.label(text="No design warnings.")
             return

@@ -633,3 +633,7 @@ ACCESSORY_PLACEHOLDER_MATERIAL = 'Accessory Placeholder'
 ACCESSORY_DROP_GRID = inch(1.0)
 ACCESSORY_FLOOR_SNAP = inch(1.0)
 ACCESSORY_FLOOR_REACH = inch(5.0)
+
+# A top accent shelf longer than this is cut in two: this much, then
+# the rest (4.3 calc_split_top, 95").
+TOP_ACCENT_MAX_LENGTH = inch(95.0)

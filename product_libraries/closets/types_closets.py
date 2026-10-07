@@ -283,6 +283,9 @@ PROP_BOX_SIZE_TAG = 'hb_box_size_tag'
 # box and on its front so the panels can read it without working it
 # out again. Empty/absent means there is nothing to say.
 PROP_BOX_WARNING = 'hb_box_warning'
+# Why a front is not the style it was given, or cannot be ordered in it
+# (fronts_closets.apply_style_to_front).
+PROP_STYLE_WARNING = 'hb_style_warning'
 PROP_OPEN_HEIGHT = 'hb_open_height'
 # Marks the shelf a drawer bank carries on top of itself. It is a fixed
 # shelf like any other, but it is placed by the bank rather than by
@@ -3076,8 +3079,12 @@ class ClosetStarter(GeoNodeCage):
                              inch(2.0))
                 spec = dbx.size_box(box_type, size_h, size_d, wood_h,
                                     wood_d)
+                # A wood box's depth override is judged as the depth
+                # it stands in for: under 9.75" is too shallow for the
+                # shortest slide (4.3 Wood_Drawer_Box set_drawer_prompts).
                 warn = dbx.box_warning(box_type, size_h, size_d,
-                                       wood_d)
+                                       _dov if (_dov > 0.0 and is_wood)
+                                       else wood_d)
                 _stamp_warning(child, "; ".join(
                     m for m in (warn, tray_warn) if m))
                 box_d = spec[1] if spec is not None else wood_d
@@ -3088,6 +3095,10 @@ class ClosetStarter(GeoNodeCage):
                     box['hb_drawer_box_type'] = box_type
                     box['hb_drawer_box_size'] = (spec[2] if spec
                                                  else 'NONE')
+                    # The drawer's own clear opening, override or not:
+                    # the Microvellum drawer export reports the box by
+                    # it, as 4.3 did.
+                    box[PROP_OPEN_HEIGHT] = avail_h
                     _stamp_warning(box, warn)
                     _set_part_hidden(box, spec is None)
                 if box is not None and spec is not None:
@@ -5627,6 +5638,17 @@ class ClosetStarter(GeoNodeCage):
                         x1 = j1 + ovh
                 pieces.append((x0, x1, top, depth))
 
+        # A piece longer than the stock is split, 95" from its start and
+        # the rest after it (4.3 calc_split_top).
+        cap = const.TOP_ACCENT_MAX_LENGTH
+        split = []
+        for x0, x1, top, depth in pieces:
+            while x1 - x0 > cap + 1.0e-4:
+                split.append((x0, x0 + cap, top, depth))
+                x0 += cap
+            split.append((x0, x1, top, depth))
+        pieces = split
+
         # One part per piece, made or dropped to match.
         while len(shelves) > len(pieces):
             _remove_part_tree(shelves.pop())
@@ -7503,6 +7525,14 @@ def carry_over_lock_flags(root):
             pass
 
 
+def _left_neighbour_bay(root, bay):
+    """The bay standing next to this one on its left, if any."""
+    bays = sorted([c for c in root.children if c.get(TAG_BAY_CAGE)],
+                  key=lambda o: o.location.x)
+    i = bays.index(bay) if bay in bays else -1
+    return bays[i - 1] if i > 0 else None
+
+
 def hide_removed_parts(root):
     """Keep every part deleted by hand out of the build, with the rail
     covers that go with it: a rail's covers, and the cover at either end
@@ -7518,16 +7548,63 @@ def hide_removed_parts(root):
             host = obj.parent
             if host is None:
                 continue
-            word = ('Back' if 'Back' in obj.name
-                    else 'Side' if 'Side' in obj.name else '')
+            key = str(obj.get('hb_l_wall_part') or '')
+            word = key.split(' ')[0] if key else ''
+            # A bay's left cover is the claw it shares with the bay to
+            # its left, unless that bay covers its own right end (a
+            # doubled junction, or rails at different heights). While
+            # that bay's rail is still up, the cover stays.
+            keep_left = False
+            if host.get(TAG_BAY_CAGE):
+                left = _left_neighbour_bay(root, host)
+                if left is not None:
+                    l_rail = next((c for c in left.children
+                                   if c.get('hb_part_role')
+                                   == PART_ROLE_HANG_RAIL), None)
+                    l_right = next((c for c in left.children
+                                    if c.get('hb_part_role')
+                                    == PART_ROLE_HANG_RAIL_COVER
+                                    and c.get('hb_cover_side')
+                                    == 'RIGHT'), None)
+                    keep_left = (l_rail is not None
+                                 and not l_rail.hide_viewport
+                                 and not l_rail.get(PROP_PART_REMOVED)
+                                 and (l_right is None
+                                      or l_right.hide_viewport))
             for c in host.children:
                 if c.get('hb_part_role') != PART_ROLE_HANG_RAIL_COVER:
                     continue
                 # A corner unit's rails each carry their own covers,
                 # told apart by the wall they run along.
-                if host is root and word and word not in c.name:
+                if host is root and word and not str(
+                        c.get('hb_l_wall_part') or '').startswith(word):
+                    continue
+                if (keep_left and c.get('hb_cover_side') == 'LEFT'
+                        and not c.get(PROP_PART_REMOVED)):
                     continue
                 _set_part_hidden(c, True)
+        elif (role == PART_ROLE_PANEL and obj.parent is root
+                and not any(c.get(TAG_BAY_CAGE) for c in root.children)):
+            # A corner unit's panel: the cover at the rail end on it.
+            # Its end panels carry the outer covers (the back wall's
+            # at the right wing end, the side wall's at the left), the
+            # partition both inner ones.
+            if obj.get('hb_l_partition'):
+                names = ('Back Corner Cover', 'Side Corner Cover')
+            else:
+                ends = sorted([c for c in root.children
+                               if c.get('hb_part_role') == PART_ROLE_PANEL
+                               and not c.get('hb_l_partition')],
+                              key=lambda o: o.get('hb_panel_index', 0))
+                names = ()
+                if ends and obj is ends[0]:
+                    names = ('Back Cover',)
+                elif len(ends) > 1 and obj is ends[1]:
+                    names = ('Side Cover',)
+            for c in root.children:
+                if (c.get('hb_part_role') == PART_ROLE_HANG_RAIL_COVER
+                        and c.get('hb_l_wall_part') in names):
+                    _set_part_hidden(c, True)
         elif role == PART_ROLE_PANEL and obj.parent is root:
             try:
                 t = float(GeoNodeCutpart(obj).get_input('Thickness') or 0.0)

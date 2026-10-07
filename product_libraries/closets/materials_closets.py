@@ -714,6 +714,20 @@ NO_3MM_EDGE_COLORS = ('Cannes', 'Cosmos', 'Finesse', 'Novablack', 'Pietra',
                       'Samadhi', 'Canvas', 'Sheer Linen', 'Dalia')
 
 
+# Colours not made as five-piece doors (4.3 ops_closet: "Material Color
+# not available for 5 Piece Doors").
+NO_5PIECE_COLORS = ('Cannes', 'Cosmos', 'Finesse', 'Novablack', 'Pietra',
+                    'Samadhi')
+
+
+def front_color_name(props):
+    """Name of the colour the fronts are made in (the Front Material
+    selection, through Match to the closet colour)."""
+    closet = getattr(props, 'closet_material', '') or DEFAULT_MATERIAL
+    front = getattr(props, 'closet_front_material', MATCH)
+    return closet if front in ('', MATCH) else front
+
+
 def front_edge_color_name(props):
     """Name of the colour the fronts are banded in (the Front Edgebanding
     selection, through Match to the fronts and then the closet colour),
@@ -965,3 +979,8 @@ def update_room(self=None, context=None):
                 types_closets.PART_ROLE_MISC,
                 types_closets.PART_ROLE_CONTINUOUS_TOP):
             apply_to_part(obj)
+    try:
+        from . import fronts_closets
+        fronts_closets.refresh_color_warnings(scene)
+    except Exception:
+        pass

@@ -200,6 +200,43 @@ def current_style():
                    'closet_front_style', 'SLAB')
 
 
+# Why a front is not the style it was given (types_closets.
+# PROP_STYLE_WARNING), written each time its style is applied.
+_PROP_STYLE_WARNING = 'hb_style_warning'
+
+
+def _style_warning(front_obj, message):
+    if message:
+        front_obj[_PROP_STYLE_WARNING] = message
+    elif _PROP_STYLE_WARNING in front_obj:
+        del front_obj[_PROP_STYLE_WARNING]
+
+
+_COLOR_WARNING = "Material Color not available for 5 Piece Doors"
+
+
+def refresh_color_warnings(scene):
+    """Re-judge every styled front against the front colour, for a
+    colour change that does not re-solve the room."""
+    try:
+        from . import materials_closets
+        bad = (materials_closets.front_color_name(scene.hb_closets)
+               in materials_closets.NO_5PIECE_COLORS)
+    except Exception:
+        return
+    for obj in scene.objects:
+        # Closet fronts only: cabinet doors carry a style name too.
+        if (obj.get('hb_part_role') not in ('CLOSET_DOOR_FRONT',
+                                            'CLOSET_DRAWER_FRONT')
+                or not obj.get('DOOR_STYLE_NAME')):
+            continue
+        current = obj.get(_PROP_STYLE_WARNING, '')
+        if bad:
+            _style_warning(obj, _COLOR_WARNING)
+        elif current == _COLOR_WARNING:
+            _style_warning(obj, '')
+
+
 def _strip_style(front_obj):
     for mod in list(front_obj.modifiers):
         if mod.type == 'NODES' and 'Door Style' in mod.name:
@@ -224,9 +261,20 @@ def apply_style_to_front(front_obj, is_drawer, style=None):
     if style is None:
         style = current_style()
     spec = _SPECS.get(style)
+    _style_warning(front_obj, '')
     if spec is None:  # SLAB / unknown
         _strip_style(front_obj)
         return
+    try:
+        from . import materials_closets
+        no_5piece = (materials_closets.front_color_name(
+            bpy.context.scene.hb_closets)
+            in materials_closets.NO_5PIECE_COLORS)
+    except Exception:
+        no_5piece = False
+    if no_5piece:
+        # Built as asked, but not a front that can be ordered.
+        _style_warning(front_obj, _COLOR_WARNING)
     stile_in, rail_in, drawer_rail_in, miter = spec
     rail_in = drawer_rail_in if is_drawer else rail_in
     stile = inch(stile_in)
@@ -257,6 +305,8 @@ def apply_style_to_front(front_obj, is_drawer, style=None):
             or f_width < 2.0 * stile + inch(1.0)
             or f_height < 2.0 * rail + inch(1.0)):
         _strip_style(front_obj)
+        _style_warning(front_obj,
+                       "Front too small - defaulting to Slab style")
         return
 
     existing = None
