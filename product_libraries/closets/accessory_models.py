@@ -384,17 +384,27 @@ def build_hamper_engage(w_in=24, d_in=14):
     # the top rim rails the bags hang from
     b.box(rail_w, 0.013, 0.006, -rail_w / 2.0, 0.021, -0.020)
     b.box(rail_w, 0.013, 0.006, -rail_w / 2.0, d - 0.034, -0.020)
-    # hanger rails across, and their brackets
-    bag_w = (rail_w - 0.022) / 2.0
-    xs = (-rail_w / 2.0 + 0.014, -0.019, 0.010,
-          rail_w / 2.0 - 0.022)
-    for x in xs[:4]:
+    # hanger rails across, and their brackets - one wide bag at 18,
+    # two beyond
+    if w_in <= 18:
+        bag_w = rail_w - 0.014
+        xs = (-rail_w / 2.0 + 0.014, rail_w / 2.0 - 0.022)
+        bracket_xs = (-rail_w / 2.0 + 0.011, rail_w / 2.0 - 0.035)
+        bag_x0s = (-rail_w / 2.0 + 0.007,)
+    else:
+        bag_w = (rail_w - 0.022) / 2.0
+        xs = (-rail_w / 2.0 + 0.014, -0.019, 0.010,
+              rail_w / 2.0 - 0.022)
+        bracket_xs = (-rail_w / 2.0 + 0.011, -0.021,
+                      rail_w / 2.0 - 0.035)
+        bag_x0s = (-rail_w / 2.0 + 0.007, 0.004)
+    for x in xs:
         b.box(0.008, d - 0.013, 0.060, x, 0.007, -0.043)
-    for x in (-rail_w / 2.0 + 0.011, -0.021, rail_w / 2.0 - 0.035):
+    for x in bracket_xs:
         for y in (0.054, d - 0.111):
             b.box(0.014, 0.057, 0.085, x, y, -0.118)
-    # two deep fabric bags
-    for x0 in (-rail_w / 2.0 + 0.007, 0.004):
+    # the deep fabric bags
+    for x0 in bag_x0s:
         b.open_box(bag_w, d - 0.077, 0.476, x0, 0.038, -0.511,
                    0.006, _fabric())
     return b.done('Pull Out Hamper %d' % w_in)
@@ -404,11 +414,19 @@ def build_hamper_synergy(w_in=24, d_in=14):
     w, d = w_in * _IN, d_in * _IN
     b = _Build()
     rail_w = _chassis_slim(b, w, d)
-    bag_w = (rail_w - 0.024) / 2.0
-    for x in (-rail_w / 2.0 + 0.018, 0.011, -0.020,
-              rail_w / 2.0 - 0.026):
+    # one wide bag at 18, two beyond
+    if w_in <= 18:
+        bag_w = rail_w - 0.032
+        xs = (-rail_w / 2.0 + 0.018, rail_w / 2.0 - 0.026)
+        bag_x0s = (-rail_w / 2.0 + 0.016,)
+    else:
+        bag_w = (rail_w - 0.024) / 2.0
+        xs = (-rail_w / 2.0 + 0.018, 0.011, -0.020,
+              rail_w / 2.0 - 0.026)
+        bag_x0s = (-rail_w / 2.0 + 0.016, 0.009)
+    for x in xs:
         b.box(0.008, d - 0.013, 0.061, x, 0.008, -0.021)
-    for x0 in (-rail_w / 2.0 + 0.016, 0.009):
+    for x0 in bag_x0s:
         b.open_box(bag_w, d - 0.073, 0.497, x0, 0.036, -0.507,
                    0.006, _fabric())
         # the stiff flat front the bag hangs behind
