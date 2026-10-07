@@ -1,6 +1,6 @@
-# RAG — Blender 5.2 Python API para o BlenderToMob
+# RAG — Blender 5.2 Python API para o CAFFMob Draw
 
-Base de conhecimento consultável (por pessoas e por agentes de IA) para desenvolver o BlenderToMob contra a
+Base de conhecimento consultável (por pessoas e por agentes de IA) para desenvolver o CAFFMob Draw contra a
 **Blender 5.2.2 LTS Python API**. Gerada a partir de `blender_python_reference_5_2.zip` (build Sphinx oficial da referência).
 
 | Camada | Conteúdo | Tamanho |
@@ -19,7 +19,7 @@ Base de conhecimento consultável (por pessoas e por agentes de IA) para desenvo
 2. [`project/02_padroes_blender_5_2.md`](project/02_padroes_blender_5_2.md) — receitas verificadas: operador com undo, PropertyGroup, handlers, modal + GPU, raycast, BMesh, depsgraph, libraries.load, drivers.
 3. [`project/03_compatibilidade_5x.md`](project/03_compatibilidade_5x.md) — mudanças 5.0/5.2 que tocam o projeto (inputs de Geometry Nodes, `bpy.props` × custom properties, shaders).
 4. [`project/04_armadilhas.md`](project/04_armadilhas.md) — crashes, undo, dados desatualizados, threads, contexto de operadores.
-5. [`project/01_mapa_api_blendertomob.md`](project/01_mapa_api_blendertomob.md) — cada símbolo da API usado em `blendertomob/`, com contagem e link (gerado).
+5. [`project/01_mapa_api_blendertomob.md`](project/01_mapa_api_blendertomob.md) — cada símbolo da API usado em `caffmob_draw/`, com contagem e link (gerado).
 
 ## Consultar
 
@@ -47,8 +47,8 @@ Sem ferramenta: `grep -rn "SpaceView3D.draw_handler_add" docs/rag/blender-api/co
 ## Verificar código contra a 5.2
 
 ```bash
-python3 docs/rag/tools/check_api.py                   # varre blendertomob/; exit 1 se usar API inexistente no 5.2
-python3 docs/rag/tools/check_api.py blendertomob/operators/walls.py
+python3 docs/rag/tools/check_api.py                   # varre caffmob_draw/; exit 1 se usar API inexistente no 5.2
+python3 docs/rag/tools/check_api.py caffmob_draw/operators/walls.py
 python3 docs/rag/tools/check_api.py --map docs/rag/project/01_mapa_api_blendertomob.md   # regenera o mapa
 ```
 
@@ -60,8 +60,8 @@ Ao escrever ou revisar código que toca `bpy`, `bmesh`, `gpu`, `blf`, `mathutils
 2. **Não confie na memória para assinaturas.** Confirme cada chamada com `rag_search.py --symbol <nome>` ou busca livre.
    A API muda entre versões (ex.: inputs de GN no 5.2, armazenamento de `bpy.props` no 5.0, nomes de shaders builtin).
 3. **Cite a fonte** (`docs/rag/blender-api/corpus/<página>.md#<símbolo>`) ao justificar uma escolha de API.
-4. **Rode `check_api.py`** após editar arquivos em `blendertomob/`; trate `[UNKNOWN in 5.2]` como erro.
-5. Diferenças entre versões vão para `blendertomob/compat.py` (com `bpy.app.version`), nunca espalhadas pelo código.
+4. **Rode `check_api.py`** após editar arquivos em `caffmob_draw/`; trate `[UNKNOWN in 5.2]` como erro.
+5. Diferenças entre versões vão para `caffmob_draw/compat.py` (com `bpy.app.version`), nunca espalhadas pelo código.
 6. Validação em runtime: `blender --background --factory-startup --python-exit-code 1 --python tests/blender_smoke.py`.
 
 ## Usar com embeddings / vetor

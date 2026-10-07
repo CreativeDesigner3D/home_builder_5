@@ -3,7 +3,7 @@
 import unittest
 
 import _bootstrap  # noqa: F401
-from blendertomob.data import units
+from caffmob_draw.data import units
 
 
 class ParseLengthTest(unittest.TestCase):

@@ -3,8 +3,8 @@ requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
 [tool.pyright]
-include = [".", "blendertomob"]
-extraPaths = ["/home/theleoinfo/.local/lib/python3.10/site-packages", "blendertomob"]
+include = [".", "caffmob_draw"]
+extraPaths = ["/home/theleoinfo/.local/lib/python3.10/site-packages", "caffmob_draw"]
 pythonVersion = "3.10"
 reportMissingImports = "none"
 reportMissingModuleSource = "none"

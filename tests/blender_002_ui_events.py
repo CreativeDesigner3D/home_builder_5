@@ -23,17 +23,17 @@ from mathutils import Vector
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-import blendertomob as addon  # noqa: E402
+import caffmob_draw as addon  # noqa: E402
 
 addon.register()
 # Sem a extensão instalada não há preferências do add-on (cor da parede).
 type(bpy.context.window_manager.home_builder).get_user_preferences = \
     lambda self, c: types.SimpleNamespace(wall_color=(0.5, 0.5, 0.5, 1.0), door_window_color=(0.3, 0.3, 0.3, 1.0))
 
-from blendertomob import hb_utils  # noqa: E402
-from blendertomob.product_libraries.frameless import types_frameless as tf  # noqa: E402
-from blendertomob.walls2d import ops_editor, props  # noqa: E402
-from blendertomob.walls2d import window as w2d  # noqa: E402
+from caffmob_draw import hb_utils  # noqa: E402
+from caffmob_draw.product_libraries.frameless import types_frameless as tf  # noqa: E402
+from caffmob_draw.walls2d import ops_editor, props  # noqa: E402
+from caffmob_draw.walls2d import window as w2d  # noqa: E402
 
 FAILURES = []
 
@@ -138,13 +138,13 @@ def script():
         ev(win, 'MOUSEMOVE', 'NOTHING', *pa)
         ev(win, 'RIGHTMOUSE', 'PRESS', *pa)
         yield 0.15
-        started = 'BTM_OT_move_over_drag' in modal_ids(ctx)
+        started = 'CAFFMOB_OT_move_over_drag' in modal_ids(ctx)
         for k in range(1, 8):
             ev(win, 'MOUSEMOVE', 'NOTHING', pa[0] + (pb[0] - pa[0]) * k / 7, pa[1] + (pb[1] - pa[1]) * k / 7)
             yield 0.05
         ev(win, 'RIGHTMOUSE', 'RELEASE', *pb)
         yield 0.5
-        dialog = 'BTM_OT_move_over_dialog' in modal_ids(ctx)
+        dialog = 'CAFFMOB_OT_move_over_dialog' in modal_ids(ctx)
         check(f"Mover Sobre com botão direito ({mode})", started and dialog, str(modal_ids(ctx)))
         ev(win, 'ESC', 'PRESS', *pb)
         ev(win, 'ESC', 'RELEASE', *pb)
@@ -159,7 +159,7 @@ def script():
 
     # 2. Editor de Paredes: ferramentas pelo painel, lápis, fechamento, OK; Cancelar com confirmação.
     with ctx.temp_override(window=win, area=area, region=region):
-        bpy.ops.btm.wall_editor('INVOKE_DEFAULT')
+        bpy.ops.caffmob.wall_editor('INVOKE_DEFAULT')
     yield 1.5
     s = props.session()
     ewin, earea, ereg = w2d.editor_area(ctx)
@@ -230,11 +230,11 @@ def script():
 
     # Cancelar com alterações: Esc pergunta; "Não" mantém o editor; Esc de novo + "Sim" fecha sem mudar o 3D.
     with ctx.temp_override(window=win, area=area, region=region):
-        bpy.ops.btm.wall_editor('INVOKE_DEFAULT')
+        bpy.ops.caffmob.wall_editor('INVOKE_DEFAULT')
     yield 1.5
     s = props.session()
     ewin, earea, ereg = w2d.editor_area(ctx)
-    from blendertomob import hb_types
+    from caffmob_draw import hb_types
     lengths_before = sorted(round(hb_types.GeoNodeWall(w).get_input('Length'), 4) for w in walls)
     ci, si = 0, 0
     s.selected = (ci, si)
@@ -264,7 +264,7 @@ def script():
         bpy.data.objects.remove(w, do_unlink=True)
     yield 0.3
     with ctx.temp_override(window=win, area=area, region=region):
-        bpy.ops.btm.wall_editor('INVOKE_DEFAULT')
+        bpy.ops.caffmob.wall_editor('INVOKE_DEFAULT')
     yield 1.5
     s = props.session()
     ewin, earea, ereg = w2d.editor_area(ctx)
@@ -302,7 +302,7 @@ def script():
 
     before = {o.name for o in scene.objects if o.get('IS_WALL_BP')}
     with ctx.temp_override(window=win, area=area, region=region):
-        r = bpy.ops.home_builder_walls.draw_walls('INVOKE_DEFAULT')
+        r = bpy.ops.caffmob_walls.draw_walls('INVOKE_DEFAULT')
     yield 0.4
     for co in ((0.0, 0.0, 0.0), (3.0, 0.0, 0.0), (3.0, 2.0, 0.0), (0.0, 2.0, 0.0)):
         x, y = to_win(co)
@@ -317,13 +317,13 @@ def script():
         yield 0.05
     yield from tap(win, sx + 10, sy + 4)
     yield 0.3
-    asked = 'home_builder_walls_OT_draw_walls' in [m for m in modal_ids(ctx)] or 'HOME_BUILDER_WALLS_OT_draw_walls' in \
+    asked = 'CAFFMOB_WALLS_OT_draw_walls' in [m for m in modal_ids(ctx)] or 'CAFFMOB_WALLS_OT_draw_walls' in \
         modal_ids(ctx)
     ev(win, 'RET', 'PRESS', sx + 10, sy + 4)
     ev(win, 'RET', 'RELEASE', sx + 10, sy + 4)
     yield 0.5
     new_walls = [o for o in scene.objects if o.get('IS_WALL_BP') and o.name not in before]
-    from blendertomob.walls2d import scene_io
+    from caffmob_draw.walls2d import scene_io
     chains = scene_io.read_plan(scene).chains
     closed = any(c.closed and c.segment_count() == 4 for c in chains)
     check("Desenhar Paredes 3D: ímã pergunta (modal continua após o clique)", asked, f"r={r} modais={modal_ids(ctx)}")

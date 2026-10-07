@@ -1,0 +1,1244 @@
+diff -ruN -x __pycache__ tests/blender_002_smoke.py /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/tests/blender_002_smoke.py
+--- tests/blender_002_smoke.py	2026-10-05 19:24:52.677462329 -0300
++++ /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/tests/blender_002_smoke.py	2026-10-06 23:42:53.175854816 -0300
+@@ -17,23 +17,23 @@
+ 
+ ROOT = Path(__file__).resolve().parents[1]
+ sys.path.insert(0, str(ROOT))
+-import blendertomob as addon  # noqa: E402
++import caffmob_draw as addon  # noqa: E402
+ 
+ addon.register()
+ addon.load_file_post(None)
+ 
+-from blendertomob import hb_types, hb_utils  # noqa: E402
+-from blendertomob.canvas2d.view import View2D  # noqa: E402
+-from blendertomob.cutting import json_exporter, part_extractor  # noqa: E402
+-from blendertomob.geometry_free import mesh  # noqa: E402
+-from blendertomob.measure import scene_cotas  # noqa: E402
+-from blendertomob.move_over import align, ops_move_on_wall  # noqa: E402
+-from blendertomob.move_over import scene as move_scene  # noqa: E402
+-from blendertomob.operators import ops_wall_extras  # noqa: E402
+-from blendertomob.product_libraries.closets import types_closets as tc  # noqa: E402
+-from blendertomob.product_libraries.frameless import types_frameless as tf  # noqa: E402
+-from blendertomob.selection import classify  # noqa: E402
+-from blendertomob.walls2d import apply, model, ops_editor, props, scene_io, window  # noqa: E402
++from caffmob_draw import hb_types, hb_utils  # noqa: E402
++from caffmob_draw.canvas2d.view import View2D  # noqa: E402
++from caffmob_draw.cutting import json_exporter, part_extractor  # noqa: E402
++from caffmob_draw.geometry_free import mesh  # noqa: E402
++from caffmob_draw.measure import scene_cotas  # noqa: E402
++from caffmob_draw.move_over import align, ops_move_on_wall  # noqa: E402
++from caffmob_draw.move_over import scene as move_scene  # noqa: E402
++from caffmob_draw.operators import ops_wall_extras  # noqa: E402
++from caffmob_draw.product_libraries.closets import types_closets as tc  # noqa: E402
++from caffmob_draw.product_libraries.frameless import types_frameless as tf  # noqa: E402
++from caffmob_draw.selection import classify  # noqa: E402
++from caffmob_draw.walls2d import apply, model, ops_editor, props, scene_io, window  # noqa: E402
+ 
+ ctx = bpy.context
+ scene = ctx.scene
+@@ -53,9 +53,9 @@
+ 
+ 
+ # 1. Registro.
+-for idname in ('BTM_OT_wall_editor', 'BTM_OT_wall_editor_modal', 'BTM_OT_wall_editor_ok', 'BTM_OT_wall_remove',
+-               'BTM_OT_wall_lower', 'BTM_OT_wall_visibility', 'BTM_OT_geometry_create', 'BTM_OT_geometry_duplicate',
+-               'BTM_OT_move_on_wall', 'BTM_OT_move_over_drag'):
++for idname in ('CAFFMOB_OT_wall_editor', 'CAFFMOB_OT_wall_editor_modal', 'CAFFMOB_OT_wall_editor_ok', 'CAFFMOB_OT_wall_remove',
++               'CAFFMOB_OT_wall_lower', 'CAFFMOB_OT_wall_visibility', 'CAFFMOB_OT_geometry_create', 'CAFFMOB_OT_geometry_duplicate',
++               'CAFFMOB_OT_move_on_wall', 'CAFFMOB_OT_move_over_drag'):
+     assert bpy.types.Operator.bl_rna_get_subclass_py(idname) is not None, idname
+ for idname in ('BTM_PT_wall_editor_tools', 'BTM_PT_wall_editor_segment', 'BTM_PT_wall_editor_grid',
+                'BTM_PT_object_properties'):
+@@ -144,7 +144,7 @@
+ # 3c. Pisos e tetos existentes acompanham o contorno no OK (A005); paredes da camada nova aparecem como referência
+ #     na planta (A004).
+ apply.apply_plan(ctx, model.WallPlan([model.rectangle(4.0, 3.0)]))
+-assert bpy.ops.home_builder_walls.add_floor() == {'FINISHED'}
++assert bpy.ops.caffmob_walls.add_floor() == {'FINISHED'}
+ floor = next(o for o in scene.objects if o.get('IS_FLOOR_BP'))
+ floor_width = floor.dimensions.x + floor.dimensions.y
+ plan = scene_io.read_plan(scene)
+@@ -156,7 +156,7 @@
+ for obj in walls():
+     ops_wall_extras.remove_wall(obj)
+ bpy.data.objects.remove(floor, do_unlink=True)
+-from blendertomob.geometry import mesh_gen  # noqa: E402
++from caffmob_draw.geometry import mesh_gen  # noqa: E402
+ btm_wall = bpy.data.objects.new("ParedeNova", bpy.data.meshes.new("ParedeNova"))
+ scene.collection.objects.link(btm_wall)
+ btm_wall.btm_plane.object_kind = 'WALL'
+@@ -182,7 +182,7 @@
+ # 3e. Todo operador citado nos painéis, menus e HUD do add-on existe (A002).
+ import re  # noqa: E402
+ missing = set()
+-for path in (ROOT / "blendertomob").rglob("*.py"):
++for path in (ROOT / "caffmob_draw").rglob("*.py"):
+     for idname in re.findall(r'\.operator(?:_menu_enum)?\(\s*"([a-z0-9_]+\.[a-z0-9_]+)"', path.read_text()):
+         module, name = idname.split(".")
+         try:
+@@ -211,15 +211,15 @@
+                                              modules=part_extractor.module_entries(scene))
+ assert json_exporter.validate_global_json(payload) == [], json_exporter.validate_global_json(payload)
+ with ctx.temp_override(active_object=placa, selected_objects=[placa]):
+-    assert bpy.ops.btm.geometry_duplicate() == {'FINISHED'}
++    assert bpy.ops.caffmob.geometry_duplicate() == {'FINISHED'}
+ copy = ctx.view_layer.objects.active
+ assert copy != placa and close(copy.location.x, 0.8) and close(copy.btm_geometry.thickness, 0.025)
+ with ctx.temp_override(active_object=copy):
+-    bpy.ops.btm.geometry_mirror()
++    bpy.ops.caffmob.geometry_mirror()
+ assert close(copy.location.x, 0.0)
+ name = copy.name
+ with ctx.temp_override(active_object=copy):
+-    bpy.ops.btm.geometry_delete()
++    bpy.ops.caffmob.geometry_delete()
+ assert name not in bpy.data.objects
+ for obj in (placa, caixa):
+     bpy.data.objects.remove(obj, do_unlink=True)
+@@ -231,26 +231,26 @@
+ loose = mesh.create_object(ctx, 'CAIXA', "Solto")
+ loose.parent = first
+ with ctx.temp_override(active_object=first, selected_objects=[first]):
+-    bpy.ops.btm.wall_lower()
++    bpy.ops.caffmob.wall_lower()
+ assert first.get('btm_wall_lowered') and first.hide_viewport
+ assert any(c.get('btm_lowered_proxy') for c in first.children)
+ with ctx.temp_override(active_object=first, selected_objects=[first]):
+-    bpy.ops.btm.wall_lower()
++    bpy.ops.caffmob.wall_lower()
+ assert not first.get('btm_wall_lowered') and not first.hide_viewport
+ assert not any(c.get('btm_lowered_proxy') for c in first.children)
+ with ctx.temp_override(active_object=first, selected_objects=[first]):
+-    bpy.ops.btm.wall_visibility(mode='WIRE')
++    bpy.ops.caffmob.wall_visibility(mode='WIRE')
+ assert first.display_type == 'WIRE'
+ with ctx.temp_override(active_object=first, selected_objects=[first]):
+-    bpy.ops.btm.wall_visibility(mode='VISIBLE')
++    bpy.ops.caffmob.wall_visibility(mode='VISIBLE')
+ assert first.display_type == 'TEXTURED'
+ with ctx.temp_override(active_object=first, selected_objects=[first]):
+-    bpy.ops.btm.wall_remove(mode='SEGMENT', remove_modules=False)
++    bpy.ops.caffmob.wall_remove(mode='SEGMENT', remove_modules=False)
+ assert len(walls()) == 3 and bpy.data.objects["Solto"].parent is None
+ assert [(c.closed, c.segment_count()) for c in scene_io.read_plan(scene).chains] == [(False, 3)]
+ keep = walls()[0]
+ with ctx.temp_override(active_object=keep, selected_objects=[keep]):
+-    bpy.ops.btm.wall_remove(mode='KEEP')
++    bpy.ops.caffmob.wall_remove(mode='KEEP')
+ assert walls() == [keep]
+ 
+ # 6. "Mover na Parede": o balcão desliza ao longo da parede e para no vizinho.
+@@ -468,7 +468,7 @@
+ hb_types.GeoNodeWall(mureta).set_input('End Height', 1.1)
+ plan = scene_io.read_plan(scene)
+ assert apply.height_mismatches(plan, 2.8) and not any("1100" in t for t in apply.height_mismatches(plan, 2.8))
+-from blendertomob.walls2d import apply as _ap  # noqa: E402
++from caffmob_draw.walls2d import apply as _ap  # noqa: E402
+ changed = _ap.sync_project_height(ctx, 2.8)                                              # Configurações (D-38)
+ assert changed == 3, changed
+ assert close(hb_types.GeoNodeWall(mureta).get_input('Height'), 1.1)
+@@ -479,7 +479,7 @@
+     ops_wall_extras.remove_wall(w)
+ 
+ # Seta do gizmo com porta (D-31): devolve 0 em vez de erro.
+-from blendertomob.inspection import gizmo as _gizmo  # noqa: E402
++from caffmob_draw.inspection import gizmo as _gizmo  # noqa: E402
+ _gizmo._state['front'] = types.SimpleNamespace(hinged=True, get=lambda: 45.0)
+ assert _gizmo.BTM_GGT_front_open._arrow_get(None) == 0.0
+ _gizmo._state['front'] = None
+@@ -489,8 +489,8 @@
+ import os  # noqa: E402
+ import tempfile  # noqa: E402
+ from mathutils import Vector  # noqa: E402
+-from blendertomob.inspection import fronts  # noqa: E402
+-from blendertomob.inspection import room_door_math as rd  # noqa: E402
++from caffmob_draw.inspection import fronts  # noqa: E402
++from caffmob_draw.inspection import room_door_math as rd  # noqa: E402
+ 
+ 
+ def room_door(name, inside, left, double, x):
+@@ -543,7 +543,7 @@
+ addon.unregister()
+ assert not hasattr(bpy.types.Object, 'btm_geometry') and not hasattr(bpy.types.WindowManager, 'btm_wall_editor')
+ leftover = []                                    # D-32: nenhum operador do pacote sobra (pelo bl_idname)
+-for path in (ROOT / "blendertomob").rglob("*.py"):
++for path in (ROOT / "caffmob_draw").rglob("*.py"):
+     for idname in re.findall(r'bl_idname\s*=\s*["\']([a-z0-9_]+\.[a-z0-9_]+)["\']', path.read_text()):
+         module, name = idname.split(".")
+         try:
+diff -ruN -x __pycache__ tests/blender_002_ui_events.py /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/tests/blender_002_ui_events.py
+--- tests/blender_002_ui_events.py	2026-10-05 19:25:16.176687331 -0300
++++ /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/tests/blender_002_ui_events.py	2026-10-06 23:42:54.241834149 -0300
+@@ -23,17 +23,17 @@
+ 
+ ROOT = Path(__file__).resolve().parents[1]
+ sys.path.insert(0, str(ROOT))
+-import blendertomob as addon  # noqa: E402
++import caffmob_draw as addon  # noqa: E402
+ 
+ addon.register()
+ # Sem a extensão instalada não há preferências do add-on (cor da parede).
+ type(bpy.context.window_manager.home_builder).get_user_preferences = \
+     lambda self, c: types.SimpleNamespace(wall_color=(0.5, 0.5, 0.5, 1.0), door_window_color=(0.3, 0.3, 0.3, 1.0))
+ 
+-from blendertomob import hb_utils  # noqa: E402
+-from blendertomob.product_libraries.frameless import types_frameless as tf  # noqa: E402
+-from blendertomob.walls2d import ops_editor, props  # noqa: E402
+-from blendertomob.walls2d import window as w2d  # noqa: E402
++from caffmob_draw import hb_utils  # noqa: E402
++from caffmob_draw.product_libraries.frameless import types_frameless as tf  # noqa: E402
++from caffmob_draw.walls2d import ops_editor, props  # noqa: E402
++from caffmob_draw.walls2d import window as w2d  # noqa: E402
+ 
+ FAILURES = []
+ 
+@@ -138,13 +138,13 @@
+         ev(win, 'MOUSEMOVE', 'NOTHING', *pa)
+         ev(win, 'RIGHTMOUSE', 'PRESS', *pa)
+         yield 0.15
+-        started = 'BTM_OT_move_over_drag' in modal_ids(ctx)
++        started = 'CAFFMOB_OT_move_over_drag' in modal_ids(ctx)
+         for k in range(1, 8):
+             ev(win, 'MOUSEMOVE', 'NOTHING', pa[0] + (pb[0] - pa[0]) * k / 7, pa[1] + (pb[1] - pa[1]) * k / 7)
+             yield 0.05
+         ev(win, 'RIGHTMOUSE', 'RELEASE', *pb)
+         yield 0.5
+-        dialog = 'BTM_OT_move_over_dialog' in modal_ids(ctx)
++        dialog = 'CAFFMOB_OT_move_over_dialog' in modal_ids(ctx)
+         check(f"Mover Sobre com botão direito ({mode})", started and dialog, str(modal_ids(ctx)))
+         ev(win, 'ESC', 'PRESS', *pb)
+         ev(win, 'ESC', 'RELEASE', *pb)
+@@ -159,7 +159,7 @@
+ 
+     # 2. Editor de Paredes: ferramentas pelo painel, lápis, fechamento, OK; Cancelar com confirmação.
+     with ctx.temp_override(window=win, area=area, region=region):
+-        bpy.ops.btm.wall_editor('INVOKE_DEFAULT')
++        bpy.ops.caffmob.wall_editor('INVOKE_DEFAULT')
+     yield 1.5
+     s = props.session()
+     ewin, earea, ereg = w2d.editor_area(ctx)
+@@ -230,11 +230,11 @@
+ 
+     # Cancelar com alterações: Esc pergunta; "Não" mantém o editor; Esc de novo + "Sim" fecha sem mudar o 3D.
+     with ctx.temp_override(window=win, area=area, region=region):
+-        bpy.ops.btm.wall_editor('INVOKE_DEFAULT')
++        bpy.ops.caffmob.wall_editor('INVOKE_DEFAULT')
+     yield 1.5
+     s = props.session()
+     ewin, earea, ereg = w2d.editor_area(ctx)
+-    from blendertomob import hb_types
++    from caffmob_draw import hb_types
+     lengths_before = sorted(round(hb_types.GeoNodeWall(w).get_input('Length'), 4) for w in walls)
+     ci, si = 0, 0
+     s.selected = (ci, si)
+@@ -264,7 +264,7 @@
+         bpy.data.objects.remove(w, do_unlink=True)
+     yield 0.3
+     with ctx.temp_override(window=win, area=area, region=region):
+-        bpy.ops.btm.wall_editor('INVOKE_DEFAULT')
++        bpy.ops.caffmob.wall_editor('INVOKE_DEFAULT')
+     yield 1.5
+     s = props.session()
+     ewin, earea, ereg = w2d.editor_area(ctx)
+@@ -302,7 +302,7 @@
+ 
+     before = {o.name for o in scene.objects if o.get('IS_WALL_BP')}
+     with ctx.temp_override(window=win, area=area, region=region):
+-        r = bpy.ops.home_builder_walls.draw_walls('INVOKE_DEFAULT')
++        r = bpy.ops.caffmob_walls.draw_walls('INVOKE_DEFAULT')
+     yield 0.4
+     for co in ((0.0, 0.0, 0.0), (3.0, 0.0, 0.0), (3.0, 2.0, 0.0), (0.0, 2.0, 0.0)):
+         x, y = to_win(co)
+@@ -317,13 +317,13 @@
+         yield 0.05
+     yield from tap(win, sx + 10, sy + 4)
+     yield 0.3
+-    asked = 'home_builder_walls_OT_draw_walls' in [m for m in modal_ids(ctx)] or 'HOME_BUILDER_WALLS_OT_draw_walls' in \
++    asked = 'CAFFMOB_WALLS_OT_draw_walls' in [m for m in modal_ids(ctx)] or 'CAFFMOB_WALLS_OT_draw_walls' in \
+         modal_ids(ctx)
+     ev(win, 'RET', 'PRESS', sx + 10, sy + 4)
+     ev(win, 'RET', 'RELEASE', sx + 10, sy + 4)
+     yield 0.5
+     new_walls = [o for o in scene.objects if o.get('IS_WALL_BP') and o.name not in before]
+-    from blendertomob.walls2d import scene_io
++    from caffmob_draw.walls2d import scene_io
+     chains = scene_io.read_plan(scene).chains
+     closed = any(c.closed and c.segment_count() == 4 for c in chains)
+     check("Desenhar Paredes 3D: ímã pergunta (modal continua após o clique)", asked, f"r={r} modais={modal_ids(ctx)}")
+diff -ruN -x __pycache__ tests/blender_identity_smoke.py /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/tests/blender_identity_smoke.py
+--- tests/blender_identity_smoke.py	2026-10-06 23:38:53.974866548 -0300
++++ /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/tests/blender_identity_smoke.py	2026-10-06 23:42:54.239834188 -0300
+@@ -66,8 +66,8 @@
+ from caffmob_draw.standards import io_json  # noqa: E402
+ assert json_exporter.FORMAT == "caffmob_draw.project", json_exporter.FORMAT
+ assert io_json.FORMAT == "caffmob_draw.dimension-standard", io_json.FORMAT
+-assert "blendertomob.project" in json_exporter.ACCEPTED_FORMATS
+-assert "blendertomob.dimension-standard" in io_json.ACCEPTED_FORMATS
++assert "caffmob_draw.project" in json_exporter.ACCEPTED_FORMATS
++assert "caffmob_draw.dimension-standard" in io_json.ACCEPTED_FORMATS
+ 
+ # 6. Desregistrar sem sobras (pelo bl_idname).
+ addon.unregister()
+diff -ruN -x __pycache__ tests/blender_increment1_smoke.py /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/tests/blender_increment1_smoke.py
+--- tests/blender_increment1_smoke.py	2026-10-01 03:55:55.161371004 -0300
++++ /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/tests/blender_increment1_smoke.py	2026-10-06 23:42:54.467829775 -0300
+@@ -16,9 +16,9 @@
+ 
+ ROOT = Path(__file__).resolve().parents[1]
+ sys.path.insert(0, str(ROOT))
+-import blendertomob as addon  # noqa: E402
+-from blendertomob.cutting import part_extractor  # noqa: E402
+-from blendertomob.standards import api as standards_api  # noqa: E402
++import caffmob_draw as addon  # noqa: E402
++from caffmob_draw.cutting import part_extractor  # noqa: E402
++from caffmob_draw.standards import api as standards_api  # noqa: E402
+ 
+ FIXTURE = ROOT / "tests" / "fixtures" / "dimensionexport_me_moveis.xml"
+ 
+@@ -32,10 +32,10 @@
+ assert standards_api.get_value(scene, 'COZ.sheets.LAT.thickness') == 15.0
+ 
+ # 2. Gabinetes: um balcão frameless e um roupeiro closets.
+-assert bpy.ops.btm.standards_duplicate() == {'FINISHED'}
++assert bpy.ops.caffmob.standards_duplicate() == {'FINISHED'}
+ assert standards_api.active_definition(scene).name.startswith("Padrão Brasil")
+-from blendertomob.product_libraries.frameless import types_frameless  # noqa: E402
+-from blendertomob.product_libraries.closets import types_closets  # noqa: E402
++from caffmob_draw.product_libraries.frameless import types_frameless  # noqa: E402
++from caffmob_draw.product_libraries.closets import types_closets  # noqa: E402
+ 
+ cabinet = types_frameless.BaseCabinet()
+ cabinet.create("Balcão Teste")
+@@ -65,20 +65,20 @@
+ assert [p.uid for p in again] == [p.uid for p in parts], "uids instáveis entre extrações"
+ 
+ # 5. Plano de corte, JSON v2 e CSV.
+-assert bpy.ops.btm.calculate_nesting() == {'FINISHED'}
++assert bpy.ops.caffmob.calculate_nesting() == {'FINISHED'}
+ assert not scene.btm_settings.cut_plan_stale
+ with tempfile.TemporaryDirectory() as directory:
+     json_path = Path(directory) / 'projeto.json'
+-    assert bpy.ops.btm.export_cut_plan_json(filepath=str(json_path)) == {'FINISHED'}
++    assert bpy.ops.caffmob.export_cut_plan_json(filepath=str(json_path)) == {'FINISHED'}
+     payload = json.loads(json_path.read_text(encoding='utf-8'))
+     assert payload['schema_version'] == '2.0.0'
+     assert len(payload['parts']) == len(parts)
+     csv_path = Path(directory) / 'pecas.csv'
+-    assert bpy.ops.btm.export_parts_csv(filepath=str(csv_path)) == {'FINISHED'}
++    assert bpy.ops.caffmob.export_parts_csv(filepath=str(csv_path)) == {'FINISHED'}
+     assert csv_path.read_text(encoding='utf-8-sig').count('\n') == len(parts) + 1
+ 
+ # 6. Importar o padrão do Promob.
+-assert bpy.ops.btm.standards_import_promob(filepath=str(FIXTURE)) == {'FINISHED'}
++assert bpy.ops.caffmob.standards_import_promob(filepath=str(FIXTURE)) == {'FINISHED'}
+ names = [d.name for d in scene.btm_standards.definitions]
+ assert "ME MOVEIS - COZ. ESCR." in names, names
+ 
+diff -ruN -x __pycache__ tests/blender_inspection_smoke.py /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/tests/blender_inspection_smoke.py
+--- tests/blender_inspection_smoke.py	2026-10-03 06:41:02.845048801 -0300
++++ /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/tests/blender_inspection_smoke.py	2026-10-06 23:42:53.077856716 -0300
+@@ -17,16 +17,16 @@
+ 
+ ROOT = Path(__file__).resolve().parents[1]
+ sys.path.insert(0, str(ROOT))
+-import blendertomob as addon  # noqa: E402
++import caffmob_draw as addon  # noqa: E402
+ 
+ addon.register()
+ addon.load_file_post(None)
+ 
+-from blendertomob import hb_placement, hb_types, hb_utils  # noqa: E402
+-from blendertomob.inspection import fronts  # noqa: E402
+-from blendertomob.product_libraries.closets import types_closets as tc  # noqa: E402
+-from blendertomob.product_libraries.face_frame import types_face_frame as tff  # noqa: E402
+-from blendertomob.product_libraries.frameless import types_frameless as tf  # noqa: E402
++from caffmob_draw import hb_placement, hb_types, hb_utils  # noqa: E402
++from caffmob_draw.inspection import fronts  # noqa: E402
++from caffmob_draw.product_libraries.closets import types_closets as tc  # noqa: E402
++from caffmob_draw.product_libraries.face_frame import types_face_frame as tff  # noqa: E402
++from caffmob_draw.product_libraries.frameless import types_frameless as tf  # noqa: E402
+ 
+ 
+ def settle():
+@@ -61,7 +61,7 @@
+ for obj in [o for o in scene.objects if o.get(tc.TAG_OPENING_CAGE)]:
+     obj[tc.PROP_DOOR_SWING] = 'DOUBLE'
+ tc.recalculate_closet_starter(starter.obj)
+-assert bpy.ops.btm.cabinet_builder(width=0.6) == {'FINISHED'}
++assert bpy.ops.caffmob.cabinet_builder(width=0.6) == {'FINISHED'}
+ quick = bpy.context.object
+ quick.location.x = 9.5
+ quick.btm_cabinet.door_swing = 'LEFT'
+@@ -73,15 +73,15 @@
+     assert expected in kinds, (expected, kinds)
+ 
+ # 2. Plano de corte calculado; abrir portas não deve marcá-lo como desatualizado.
+-assert bpy.ops.btm.calculate_nesting() == {'FINISHED'}
++assert bpy.ops.caffmob.calculate_nesting() == {'FINISHED'}
+ settle()
+ assert not scene.btm_settings.cut_plan_stale
+ 
+ # 3. Abrir a 45° e 90° e conferir a conversão para cada linha.
+-assert bpy.ops.btm.fronts_set_open(scope='ALL', mode='OPEN_45') == {'FINISHED'}
++assert bpy.ops.caffmob.fronts_set_open(scope='ALL', mode='OPEN_45') == {'FINISHED'}
+ settle()
+ assert all(v == 45.0 for (lib, kind), v in values(scene).items() if kind == 'DOOR'), values(scene)
+-assert bpy.ops.btm.fronts_set_open(scope='ALL', mode='OPEN_90') == {'FINISHED'}
++assert bpy.ops.caffmob.fronts_set_open(scope='ALL', mode='OPEN_90') == {'FINISHED'}
+ settle()
+ opened = values(scene)
+ assert all(v == 90.0 for (lib, kind), v in opened.items() if kind == 'DOOR'), opened
+@@ -96,9 +96,9 @@
+ # 4. Interferência: obstáculo à frente da porta do balcão.
+ bpy.ops.mesh.primitive_cube_add(size=0.1, location=(0.3, -0.9, 0.5))
+ bpy.context.object.name = "Obstaculo"
+-assert bpy.ops.btm.fronts_set_open(scope='ALL', mode='CLOSE') == {'FINISHED'}
++assert bpy.ops.caffmob.fronts_set_open(scope='ALL', mode='CLOSE') == {'FINISHED'}
+ settle()
+-assert bpy.ops.btm.check_front_interference(scope='ALL') == {'FINISHED'}
++assert bpy.ops.caffmob.check_front_interference(scope='ALL') == {'FINISHED'}
+ state = bpy.context.window_manager.btm_inspection
+ hits = {(i.module_name, i.hit_name) for i in state.interferences}
+ assert ('Balcao', 'Obstaculo') in hits, hits
+@@ -107,7 +107,7 @@
+ bpy.data.objects.remove(bpy.data.objects["Obstaculo"], do_unlink=True)
+ 
+ # 5. Salvar fechado, tela aberta; reabrir fechado (RN-14).
+-assert bpy.ops.btm.fronts_set_open(scope='ALL', mode='OPEN_90') == {'FINISHED'}
++assert bpy.ops.caffmob.fronts_set_open(scope='ALL', mode='OPEN_90') == {'FINISHED'}
+ settle()
+ path = os.path.join(tempfile.mkdtemp(), "inspecao.blend")
+ bpy.ops.wm.save_as_mainfile(filepath=path)
+diff -ruN -x __pycache__ tests/blender_legacy_smoke.py /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/tests/blender_legacy_smoke.py
+--- tests/blender_legacy_smoke.py	2026-09-29 02:30:05.712590993 -0300
++++ /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/tests/blender_legacy_smoke.py	2026-10-06 23:42:54.254833897 -0300
+@@ -5,7 +5,7 @@
+ import bpy
+ 
+ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+-import blendertomob as addon
++import caffmob_draw as addon
+ 
+ addon.register()
+ addon.load_file_post(None)
+@@ -21,7 +21,7 @@
+ calculator.set_total_distance('2.0')
+ assert obj.animation_data.drivers[-1].data_path == 'home_builder.calculator_distance'
+ original = bpy.context.scene
+-assert bpy.ops.blendertomob.duplicate_room(new_name='Ambiente de teste') == {'FINISHED'}
++assert bpy.ops.caffmob.duplicate_room(new_name='Ambiente de teste') == {'FINISHED'}
+ duplicate = bpy.context.window.scene
+ assert duplicate != original
+ assert duplicate.home_builder.sort_order > original.home_builder.sort_order
+diff -ruN -x __pycache__ tests/blender_smoke.py /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/tests/blender_smoke.py
+--- tests/blender_smoke.py	2026-10-03 06:41:10.619137811 -0300
++++ /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/tests/blender_smoke.py	2026-10-06 23:42:53.330851809 -0300
+@@ -7,8 +7,8 @@
+ import bpy
+ 
+ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+-import blendertomob as addon
+-from blendertomob.cutting.part_extractor import extract_parts_from_scene
++import caffmob_draw as addon
++from caffmob_draw.cutting.part_extractor import extract_parts_from_scene
+ 
+ addon.register()
+ addon.load_file_post(None)
+@@ -16,23 +16,23 @@
+ assert 'wall_color' in addon.BTM_AddonPreferences.bl_rna.properties
+ assert 'dimension_settings' in bpy.context.scene.btm_settings.bl_rna.properties
+ assert extract_parts_from_scene(bpy.context) == [], 'Default cube must not produce cabinet parts'
+-assert bpy.ops.btm.cabinet_builder(width=0.9) == {'FINISHED'}
++assert bpy.ops.caffmob.cabinet_builder(width=0.9) == {'FINISHED'}
+ first = bpy.context.object
+ assert abs(first.btm_cabinet.width - 0.9) < 1e-6
+ assert len(first.data.vertices) > 0
+-assert bpy.ops.btm.cabinet_builder() == {'FINISHED'}
++assert bpy.ops.caffmob.cabinet_builder() == {'FINISHED'}
+ second = bpy.context.object
+ assert first != second
+ parts = extract_parts_from_scene(bpy.context)
+ assert len(parts) == 14, [(p.id, p.module_ref) for p in parts]
+ assert {p.module_ref for p in parts} == {first.name, second.name}
+-assert bpy.ops.btm.calculate_nesting() == {'FINISHED'}
++assert bpy.ops.caffmob.calculate_nesting() == {'FINISHED'}
+ cache = json.loads(bpy.context.scene['btm_nesting_json_cache'])
+ assert cache['stats']['total_placed_parts'] == 14
+ assert cache['stats']['unplaced_count'] == 0
+ with tempfile.TemporaryDirectory() as directory:
+     output = str(Path(directory) / 'cut_plan.json')
+-    assert bpy.ops.btm.export_cut_plan_json(filepath=output) == {'FINISHED'}
++    assert bpy.ops.caffmob.export_cut_plan_json(filepath=output) == {'FINISHED'}
+     exported = json.loads(Path(output).read_text())
+     assert exported['schema_version'] == '2.0.0'
+     assert len(exported['parts']) == 14
+@@ -41,8 +41,8 @@
+ 
+ def assert_clean_unregister():
+     """T047: nada do add-on pode sobrar depois do unregister (propriedades, previews, handlers, timers)."""
+-    from blendertomob.cutting import stale
+-    from blendertomob.standards import migration, previews
++    from caffmob_draw.cutting import stale
++    from caffmob_draw.standards import migration, previews
+     assert not hasattr(bpy.types.Scene, 'btm_settings')
+     assert not hasattr(bpy.types.Scene, 'btm_standards')
+     assert not hasattr(bpy.types.WindowManager, 'btm_standards_draft')
+@@ -51,12 +51,12 @@
+     assert addon.load_file_post not in bpy.app.handlers.load_post
+     assert not bpy.app.timers.is_registered(migration._startup_timer)
+     # Operadores e grupos de gizmo registrados em Python só aparecem pelo RNA (o nome da classe não vale).
+-    assert bpy.types.Operator.bl_rna_get_subclass_py('BTM_OT_standards_configurator') is None
++    assert bpy.types.Operator.bl_rna_get_subclass_py('CAFFMOB_OT_standards_configurator') is None
+     # Inspeção (T079): gizmo, estado, operadores, handlers de salvar, draw handlers e timer do gizmo.
+-    from blendertomob.inspection import gizmo, overlay, save_guard
++    from caffmob_draw.inspection import gizmo, overlay, save_guard
+     assert not hasattr(bpy.types.WindowManager, 'btm_inspection')
+     assert bpy.types.GizmoGroup.bl_rna_get_subclass_py('BTM_GGT_front_open') is None
+-    assert bpy.types.Operator.bl_rna_get_subclass_py('BTM_OT_inspect_fronts') is None
++    assert bpy.types.Operator.bl_rna_get_subclass_py('CAFFMOB_OT_inspect_fronts') is None
+     assert save_guard.save_pre not in bpy.app.handlers.save_pre
+     assert save_guard.save_post not in bpy.app.handlers.save_post
+     assert save_guard.save_post not in bpy.app.handlers.save_post_fail
+diff -ruN -x __pycache__ tests/_bootstrap.py /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/tests/_bootstrap.py
+--- tests/_bootstrap.py	2026-10-05 04:03:47.738548238 -0300
++++ /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/tests/_bootstrap.py	2026-10-06 23:42:53.114855999 -0300
+@@ -1,8 +1,8 @@
+-"""Permite importar módulos puros de `blendertomob/` sem executar os `__init__.py` que dependem de `bpy`.
++"""Permite importar módulos puros de `caffmob_draw/` sem executar os `__init__.py` que dependem de `bpy`.
+ 
+-Registra pacotes vazios (`blendertomob`, `blendertomob.cutting`, …) em `sys.modules`; os submódulos são então
++Registra pacotes vazios (`caffmob_draw`, `caffmob_draw.cutting`, …) em `sys.modules`; os submódulos são então
+ importados normalmente, inclusive com imports relativos entre eles.
+-Uso nos testes: `import _bootstrap  # noqa: F401` antes de `from blendertomob.data import units`.
++Uso nos testes: `import _bootstrap  # noqa: F401` antes de `from caffmob_draw.data import units`.
+ """
+ 
+ import sys
+@@ -10,7 +10,7 @@
+ from pathlib import Path
+ 
+ ROOT = Path(__file__).resolve().parents[1]
+-PACKAGE = ROOT / "blendertomob"
++PACKAGE = ROOT / "caffmob_draw"
+ FIXTURES = Path(__file__).resolve().parent / "fixtures"
+ 
+ 
+@@ -22,6 +22,6 @@
+     sys.modules[name] = module
+ 
+ 
+-_stub("blendertomob", PACKAGE)
++_stub("caffmob_draw", PACKAGE)
+ for _sub in ("cutting", "data", "standards", "inspection", "selection", "canvas2d", "move_over", "measure", "walls2d"):
+-    _stub(f"blendertomob.{_sub}", PACKAGE / _sub)
++    _stub(f"caffmob_draw.{_sub}", PACKAGE / _sub)
+diff -ruN -x __pycache__ tests/test_canvas2d_view.py /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/tests/test_canvas2d_view.py
+--- tests/test_canvas2d_view.py	2026-10-05 03:11:28.318816363 -0300
++++ /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/tests/test_canvas2d_view.py	2026-10-06 23:42:55.464810497 -0300
+@@ -1,9 +1,9 @@
+-"""Testes do núcleo das telas 2D (T009): `blendertomob/canvas2d/view.py`."""
++"""Testes do núcleo das telas 2D (T009): `caffmob_draw/canvas2d/view.py`."""
+ 
+ import unittest
+ 
+ import _bootstrap  # noqa: F401
+-from blendertomob.canvas2d import view as v
++from caffmob_draw.canvas2d import view as v
+ 
+ 
+ class ViewTest(unittest.TestCase):
+diff -ruN -x __pycache__ tests/test_classify.py /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/tests/test_classify.py
+--- tests/test_classify.py	2026-10-05 03:11:23.672553964 -0300
++++ /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/tests/test_classify.py	2026-10-06 23:42:52.757862933 -0300
+@@ -1,9 +1,9 @@
+-"""Testes do classificador de tipo de objeto (T013): `blendertomob/selection/classify.py`."""
++"""Testes do classificador de tipo de objeto (T013): `caffmob_draw/selection/classify.py`."""
+ 
+ import unittest
+ 
+ import _bootstrap  # noqa: F401
+-from blendertomob.selection import classify as c
++from caffmob_draw.selection import classify as c
+ 
+ 
+ class Obj(dict):
+diff -ruN -x __pycache__ tests/test_cotas.py /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/tests/test_cotas.py
+--- tests/test_cotas.py	2026-10-05 04:16:17.254779337 -0300
++++ /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/tests/test_cotas.py	2026-10-06 23:42:51.557886277 -0300
+@@ -1,9 +1,9 @@
+-"""Testes das cotas de módulo na parede (T012): `blendertomob/measure/cotas.py`."""
++"""Testes das cotas de módulo na parede (T012): `caffmob_draw/measure/cotas.py`."""
+ 
+ import unittest
+ 
+ import _bootstrap  # noqa: F401
+-from blendertomob.measure import cotas as c
++from caffmob_draw.measure import cotas as c
+ 
+ WALL = 3.0
+ CEILING = 2.6
+diff -ruN -x __pycache__ tests/test_dimension_schema.py /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/tests/test_dimension_schema.py
+--- tests/test_dimension_schema.py	2026-10-01 03:54:52.743225514 -0300
++++ /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/tests/test_dimension_schema.py	2026-10-06 23:42:53.046857318 -0300
+@@ -4,7 +4,7 @@
+ from pathlib import Path
+ 
+ import _bootstrap  # noqa: F401
+-from blendertomob.data import dimension_schema as ds
++from caffmob_draw.data import dimension_schema as ds
+ 
+ REFS = Path(_bootstrap.PACKAGE) / "assets" / "dimension_refs"
+ 
+diff -ruN -x __pycache__ tests/test_identity.py /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/tests/test_identity.py
+--- tests/test_identity.py	2026-10-06 23:38:53.972866534 -0300
++++ /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/tests/test_identity.py	2026-10-06 23:43:26.165236528 -0300
+@@ -22,6 +22,8 @@
+ PACKAGE = ROOT / "caffmob_draw"
+ OLD_NAMES = re.compile(r"Home Builder|Blender to Mob|Blender To Mob|BlenderToMob")
+ EDITOR_WINDOW_CATEGORY = "Editor de Paredes"
++# A migração precisa citar os nomes antigos para encontrá-los (biblioteca de assets e extensão anteriores).
++LEGACY_REFERENCE_FILES = {"compat_identity.py"}
+ 
+ 
+ def package_sources():
+@@ -50,7 +52,8 @@
+ 
+     def test_sem_nome_antigo_visivel(self):
+         found = [f"{p.relative_to(ROOT)}:{line}: {value[:60]!r}"
+-                 for p in package_sources() for line, value in visible_strings(p) if OLD_NAMES.search(value)]
++                 for p in package_sources() if p.name not in LEGACY_REFERENCE_FILES
++                 for line, value in visible_strings(p) if OLD_NAMES.search(value)]
+         self.assertEqual(found, [])
+ 
+     def test_operadores_com_prefixo_caffmob(self):
+diff -ruN -x __pycache__ tests/test_inspection_math.py /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/tests/test_inspection_math.py
+--- tests/test_inspection_math.py	2026-10-03 06:31:41.532256410 -0300
++++ /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/tests/test_inspection_math.py	2026-10-06 23:42:54.665825943 -0300
+@@ -1,10 +1,10 @@
+-"""Testes da matemática de abertura de frentes (T052): `blendertomob/inspection/pivot_math.py`."""
++"""Testes da matemática de abertura de frentes (T052): `caffmob_draw/inspection/pivot_math.py`."""
+ 
+ import math
+ import unittest
+ 
+ import _bootstrap  # noqa: F401
+-from blendertomob.inspection import pivot_math as pm
++from caffmob_draw.inspection import pivot_math as pm
+ 
+ 
+ def close(a, b, tol=1e-9):
+diff -ruN -x __pycache__ tests/test_move_over_align.py /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/tests/test_move_over_align.py
+--- tests/test_move_over_align.py	2026-10-05 03:11:23.669553795 -0300
++++ /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/tests/test_move_over_align.py	2026-10-06 23:42:54.285833297 -0300
+@@ -1,10 +1,10 @@
+-"""Testes do alinhamento do "Mover Sobre" (T011): `blendertomob/move_over/align.py`."""
++"""Testes do alinhamento do "Mover Sobre" (T011): `caffmob_draw/move_over/align.py`."""
+ 
+ import unittest
+ 
+ import _bootstrap  # noqa: F401
+-from blendertomob.canvas2d.view import View2D
+-from blendertomob.move_over import align as al
++from caffmob_draw.canvas2d.view import View2D
++from caffmob_draw.move_over import align as al
+ 
+ # B: balcão 600 × 550 × 720 (frente em Y = −0,55, fundo em Y = 0). A: aéreo 400 × 350 × 700, solto ao lado.
+ B = ((0.0, -0.55, 0.0), (0.6, 0.0, 0.72))
+diff -ruN -x __pycache__ tests/test_packaging.py /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/tests/test_packaging.py
+--- tests/test_packaging.py	2026-10-06 22:18:07.836599537 -0300
++++ /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/tests/test_packaging.py	2026-10-06 23:42:53.171854893 -0300
+@@ -1,6 +1,6 @@
+-"""Testes do empacotamento (BUG-20261006-SCVF): só o pacote `blendertomob/` é uma extensão do Blender.
++"""Testes do empacotamento (BUG-20261006-SCVF): só o pacote `caffmob_draw/` é uma extensão do Blender.
+ 
+-- Reprodução: nenhum `blender_manifest.toml` fora de `blendertomob/` (a raiz do repositório não pode parecer uma
++- Reprodução: nenhum `blender_manifest.toml` fora de `caffmob_draw/` (a raiz do repositório não pode parecer uma
+   extensão com o mesmo id).
+ - Regressão: o manifesto do pacote existe e tem o id da extensão; o zip gerado pelo `build.py` leva o manifesto na raiz
+   do arquivo (instalável por Edit › Preferences › Get Extensions › Install from Disk).
+@@ -17,7 +17,7 @@
+ import zipfile
+ 
+ ROOT = pathlib.Path(__file__).resolve().parents[1]
+-PACKAGE = ROOT / "blendertomob"
++PACKAGE = ROOT / "caffmob_draw"
+ IGNORED_DIRS = {".git", ".kilo", ".claude", ".agents", "docs", "_reversa_sdd", "_reversa_forward", "_reversa_bugs",
+                 "node_modules", "__pycache__"}
+ 
+@@ -35,23 +35,23 @@
+     def test_raiz_nao_e_extensao(self):
+         """Reprodução: o único manifesto de extensão do repositório é o do pacote."""
+         outside = [str(p.relative_to(ROOT)) for p in manifests() if PACKAGE not in p.parents]
+-        self.assertEqual(outside, [], "manifesto de extensão fora de blendertomob/ (a raiz parece instalável)")
++        self.assertEqual(outside, [], "manifesto de extensão fora de caffmob_draw/ (a raiz parece instalável)")
+ 
+     def test_manifesto_do_pacote(self):
+         """Regressão: o pacote continua com manifesto válido."""
+         text = (PACKAGE / "blender_manifest.toml").read_text()
+         data = dict(re.findall(r'^(\w+)\s*=\s*"([^"]*)"', text, re.M))
+-        self.assertEqual(data["id"], "blendertomob")
++        self.assertEqual(data["id"], "caffmob_draw")
+         self.assertEqual(data["type"], "add-on")
+         self.assertTrue(data["blender_version_min"].startswith("5."))
+ 
+     def test_zip_tem_manifesto_na_raiz(self):
+         """Regressão: o build.py gera um zip com o manifesto na raiz do arquivo."""
+         with tempfile.TemporaryDirectory() as tmp:
+-            shutil.copytree(PACKAGE, os.path.join(tmp, "blendertomob"))   # cópia: link exige permissão no Windows
++            shutil.copytree(PACKAGE, os.path.join(tmp, "caffmob_draw"))   # cópia: link exige permissão no Windows
+             shutil.copy(ROOT / "build.py", tmp)
+             subprocess.run([sys.executable, "build.py"], cwd=tmp, check=True, capture_output=True)
+-            with zipfile.ZipFile(os.path.join(tmp, "blendertomob.zip")) as zf:
++            with zipfile.ZipFile(os.path.join(tmp, "caffmob_draw.zip")) as zf:
+                 names = zf.namelist()
+             self.assertIn("blender_manifest.toml", names)
+             self.assertIn("__init__.py", names)
+diff -ruN -x __pycache__ tests/test_production_contracts.py /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/tests/test_production_contracts.py
+--- tests/test_production_contracts.py	2026-10-01 03:55:54.134384085 -0300
++++ /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/tests/test_production_contracts.py	2026-10-06 23:42:54.444830220 -0300
+@@ -8,8 +8,8 @@
+ from pathlib import Path
+ 
+ import _bootstrap  # noqa: F401
+-from blendertomob.cutting import csv_exporter, json_exporter
+-from blendertomob.cutting.nesting import NestingPart, optimize_nesting
++from caffmob_draw.cutting import csv_exporter, json_exporter
++from caffmob_draw.cutting.nesting import NestingPart, optimize_nesting
+ 
+ 
+ def sample_parts():
+diff -ruN -x __pycache__ tests/test_promob_io.py /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/tests/test_promob_io.py
+--- tests/test_promob_io.py	2026-10-01 03:54:53.785210217 -0300
++++ /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/tests/test_promob_io.py	2026-10-06 23:42:53.040857434 -0300
+@@ -9,8 +9,8 @@
+ from pathlib import Path
+ 
+ import _bootstrap  # noqa: F401
+-from blendertomob.data import dimension_schema as ds
+-from blendertomob.standards import io_promob
++from caffmob_draw.data import dimension_schema as ds
++from caffmob_draw.standards import io_promob
+ 
+ FIXTURE = _bootstrap.FIXTURES / "dimensionexport_me_moveis.xml"
+ 
+diff -ruN -x __pycache__ tests/test_room_door_math.py /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/tests/test_room_door_math.py
+--- tests/test_room_door_math.py	2026-10-05 14:42:10.937771606 -0300
++++ /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/tests/test_room_door_math.py	2026-10-06 23:42:50.936898376 -0300
+@@ -1,4 +1,4 @@
+-"""Testes da folha 3D das portas de ambiente (T043): `blendertomob/inspection/room_door_math.py`.
++"""Testes da folha 3D das portas de ambiente (T043): `caffmob_draw/inspection/room_door_math.py`.
+ 
+ As pontas esperadas vêm do símbolo `GeoNodeDoorSwing` medido no Blender 5.2: porta de 0,90 m em parede de 0,15 m,
+ folha aberta a 90° chega a y = −0,75 (para dentro) ou y = +0,90 (para fora).
+@@ -7,7 +7,7 @@
+ import unittest
+ 
+ import _bootstrap  # noqa: F401
+-from blendertomob.inspection import room_door_math as rd
++from caffmob_draw.inspection import room_door_math as rd
+ 
+ W, T, H, DOOR = 0.9, 0.15, 2.1, 0.0381
+ 
+diff -ruN -x __pycache__ tests/test_units.py /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/tests/test_units.py
+--- tests/test_units.py	2026-10-01 03:54:51.718240598 -0300
++++ /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/tests/test_units.py	2026-10-06 23:42:50.521906477 -0300
+@@ -3,7 +3,7 @@
+ import unittest
+ 
+ import _bootstrap  # noqa: F401
+-from blendertomob.data import units
++from caffmob_draw.data import units
+ 
+ 
+ class ParseLengthTest(unittest.TestCase):
+diff -ruN -x __pycache__ tests/test_walls2d_convert.py /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/tests/test_walls2d_convert.py
+--- tests/test_walls2d_convert.py	2026-10-05 15:31:04.297160890 -0300
++++ /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/tests/test_walls2d_convert.py	2026-10-06 23:42:54.594827317 -0300
+@@ -1,9 +1,9 @@
+-"""Testes da conversão das paredes da camada nova (T045): `blendertomob/walls2d/convert.py`."""
++"""Testes da conversão das paredes da camada nova (T045): `caffmob_draw/walls2d/convert.py`."""
+ 
+ import unittest
+ 
+ import _bootstrap  # noqa: F401
+-from blendertomob.walls2d import convert
++from caffmob_draw.walls2d import convert
+ 
+ 
+ def seg(a, b, t=0.15, h=2.6):
+diff -ruN -x __pycache__ tests/test_walls2d_heights.py /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/tests/test_walls2d_heights.py
+--- tests/test_walls2d_heights.py	2026-10-05 19:21:36.633475619 -0300
++++ /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/tests/test_walls2d_heights.py	2026-10-06 23:42:53.266853050 -0300
+@@ -1,9 +1,9 @@
+-"""Testes da regra do pé-direito do projeto (T077): `blendertomob/walls2d/heights.py`."""
++"""Testes da regra do pé-direito do projeto (T077): `caffmob_draw/walls2d/heights.py`."""
+ 
+ import unittest
+ 
+ import _bootstrap  # noqa: F401
+-from blendertomob.walls2d import heights as h
++from caffmob_draw.walls2d import heights as h
+ 
+ 
+ def wall(name, height, end_height=None, btm=None, legacy=None):
+diff -ruN -x __pycache__ tests/test_walls2d_model.py /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/tests/test_walls2d_model.py
+--- tests/test_walls2d_model.py	2026-10-05 19:21:36.627474796 -0300
++++ /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/tests/test_walls2d_model.py	2026-10-06 23:42:54.468829755 -0300
+@@ -1,10 +1,10 @@
+-"""Testes do modelo de paredes do Editor de Paredes (T010, T058): `blendertomob/walls2d/model.py`."""
++"""Testes do modelo de paredes do Editor de Paredes (T010, T058): `caffmob_draw/walls2d/model.py`."""
+ 
+ import math
+ import unittest
+ 
+ import _bootstrap  # noqa: F401
+-from blendertomob.walls2d import model as m
++from caffmob_draw.walls2d import model as m
+ 
+ 
+ class ModeloTest(unittest.TestCase):
+--- build.py	2026-08-07 05:26:54.555183319 -0300
++++ /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/build.py	2026-10-06 23:42:53.084856581 -0300
+@@ -3,8 +3,8 @@
+ import zipfile
+ 
+ def build_zip():
+-    zip_filename = "blendertomob.zip"
+-    source_dir = "blendertomob"
++    zip_filename = "caffmob_draw.zip"
++    source_dir = "caffmob_draw"
+ 
+     if not os.path.exists(source_dir):
+         print(f"Error: Source directory '{source_dir}' does not exist.")
+--- pyproject.toml	2026-08-07 05:26:24.139867853 -0300
++++ /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/pyproject.toml	2026-10-06 23:42:54.588827433 -0300
+@@ -3,8 +3,8 @@
+ build-backend = "setuptools.build_meta"
+ 
+ [tool.pyright]
+-include = [".", "blendertomob"]
+-extraPaths = ["/home/theleoinfo/.local/lib/python3.10/site-packages", "blendertomob"]
++include = [".", "caffmob_draw"]
++extraPaths = ["/home/theleoinfo/.local/lib/python3.10/site-packages", "caffmob_draw"]
+ pythonVersion = "3.10"
+ reportMissingImports = "none"
+ reportMissingModuleSource = "none"
+--- pyrightconfig.json	2026-08-14 05:53:29.901992711 -0300
++++ /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/pyrightconfig.json	2026-10-06 23:42:54.254833897 -0300
+@@ -1,7 +1,7 @@
+ {
+   "include": [
+     ".",
+-    "blendertomob"
++    "caffmob_draw"
+   ],
+   "exclude": [
+     "**/__pycache__",
+@@ -14,7 +14,7 @@
+       "pythonVersion": "3.11",
+       "extraPaths": [
+         ".",
+-        "blendertomob",
++        "caffmob_draw",
+         "/home/theleoinfo/.local/lib/python3.10/site-packages"
+       ]
+     }
+--- .gitignore	2026-10-01 06:24:15.989717328 -0300
++++ /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/.gitignore	2026-10-06 23:42:55.602807832 -0300
+@@ -175,3 +175,4 @@
+ # RAG (docs/rag): local search cache and the source reference zip (~100 MB, regenerable)
+ docs/rag/blender-api/index/.bm25.cache.pickle
+ blender_python_reference_*.zip
++caffmob_draw.zip
+--- CLAUDE.md	2026-10-06 19:41:34.590925421 -0300
++++ /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/CLAUDE.md	2026-10-06 23:45:05.828614588 -0300
+@@ -328,17 +328,17 @@
+ 5. **Ordem recomendada, com o motivo de cada posição:** fechar o que ficou aberto na última rodada, destravar as
+    cadeias maiores, agrupar o que sai no mesmo deploy e fazer antes o de menor risco.
+ 6. Diga a contagem (livres de abertas) e **não execute** nada: só recomende.
+-# BlenderToMob — instruções para agentes
++# CAFFMob Draw — instruções para agentes
+ 
+-Extensão do Blender para marcenaria paramétrica e projeto de interiores (inspirada no Promob, herdeira do Home Builder).
++Extensão do Blender para marcenaria paramétrica e projeto de interiores (inspirada no Promob).
+ Este arquivo vale para Claude Code, Codex, Kilo e demais agentes (`AGENTS.md` é um link simbólico para ele).
+ 
+ ## Onde editar
+ 
+-- **`blendertomob/` é o pacote da extensão** — é o que `build.py` empacota. Edite sempre aqui.
++- **`caffmob_draw/` é o pacote da extensão** — é o que `build.py` empacota. Edite sempre aqui.
+ - Os `*.py`, `operators/`, `product_libraries/` etc. na **raiz** são uma cópia antiga espelhada: não edite, não empacotam.
+ - `_reversa_sdd/` contém specs de domínio/arquitetura (geradas pelo Reversa); consulte para regras de negócio.
+-- Não versionar: `*.blend`, `blendertomob.zip`, `blender_python_reference_*.zip`, `manual-treinamento-promob.pdf`.
++- Não versionar: `*.blend`, `caffmob_draw.zip`, `blender_python_reference_*.zip`, `manual-treinamento-promob.pdf`.
+ 
+ ## API do Blender: consulte o RAG, não a memória
+ 
+@@ -355,7 +355,7 @@
+    python3 docs/rag/tools/rag_search.py --symbol bpy.types.Scene.ray_cast
+    python3 docs/rag/tools/rag_search.py "draw handler POST_PIXEL" -k 5
+    ```
+-3. Depois de editar `blendertomob/`, rode o verificador — `[UNKNOWN in 5.2]` é erro:
++3. Depois de editar `caffmob_draw/`, rode o verificador — `[UNKNOWN in 5.2]` é erro:
+    ```bash
+    python3 docs/rag/tools/check_api.py
+    ```
+@@ -363,11 +363,11 @@
+ 
+ ## Regras do código
+ 
+-- Diferenças entre versões do Blender ficam em `blendertomob/compat.py` (via `bpy.app.version`), nunca espalhadas.
++- Diferenças entre versões do Blender ficam em `caffmob_draw/compat.py` (via `bpy.app.version`), nunca espalhadas.
+ - Inputs de Geometry Nodes: use `compat.get_gn_input` / `set_gn_input` / `gn_input_data_path` — nunca `mod["Socket_X"]`
+   (caminho < 5.2). `hb_utils.py` tem helpers duplicados: mantenha os dois em sincronia ou consolide em `compat.py`.
+ - Propriedades `bpy.props` são lidas por atributo (`obj.btm_cabinet.width`), nunca por `obj["..."]` (armazenamento separado desde o 5.0).
+-- Operadores que alteram dados: `bl_options = {'REGISTER', 'UNDO'}` (ou `{'UNDO'}`). Código novo usa `bl_idname` `btm.*` ou `blendertomob.*`.
++- Operadores que alteram dados: `bl_options = {'REGISTER', 'UNDO'}` (ou `{'UNDO'}`). Código novo usa `bl_idname` `btm.*` ou `caffmob_draw.*`.
+ - Anotações `bpy.props` levam `# type: ignore` (convenção do repo para o Pyright).
+ - Todo `draw_handler_add` / `modal_handler_add` / `load_post.append` tem remoção correspondente em todos os caminhos de saída e no `unregister()`.
+ - Handlers de aplicação usam `@persistent`; `unregister()` desfaz tudo que `register()` fez (propriedades em `bpy.types.*` inclusive).
+@@ -378,8 +378,8 @@
+ ## Comandos
+ 
+ ```bash
+-ruff check blendertomob/                             # lint
++ruff check caffmob_draw/                             # lint
+ python3 docs/rag/tools/check_api.py                  # compatibilidade com a API 5.2
+ blender --background --factory-startup --python-exit-code 1 --python tests/blender_smoke.py   # teste de fumaça no Blender
+-python3 build.py                                     # gera blendertomob.zip (Edit → Preferences → Get Extensions → Install from Disk)
++python3 build.py                                     # gera caffmob_draw.zip (Edit → Preferences → Get Extensions → Install from Disk)
+ ```
+--- README.md	2026-10-06 22:19:28.167150337 -0300
++++ /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/README.md	2026-10-06 23:42:53.580846960 -0300
+@@ -1,14 +1,14 @@
+-# BlenderToMob
++# CAFFMob Draw
+ 
+-BlenderToMob is a modern, modular Blender add-on / extension designed for parametric cabinetry and interior design (inspired by Promob). It provides tools for walls (including curvature and custom angles), floor creation, dynamic snapping, parent insertion planes, and cabinetry layout.
++CAFFMob Draw is a modern, modular Blender add-on / extension designed for parametric cabinetry and interior design (inspired by Promob). It provides tools for walls (including curvature and custom angles), floor creation, dynamic snapping, parent insertion planes, and cabinetry layout.
+ 
+ ## Project Structure
+ 
+ The project follows a modular structure to maintain clean separation of concerns:
+ 
+-- `blendertomob/` - Main package for the Blender extension.
++- `caffmob_draw/` - Main package for the Blender extension.
+   - `blender_manifest.toml` - Metadata for the Blender extension (Blender 5.2+). This is the only extension manifest:
+-    install only the `blendertomob.zip` generated by `python3 build.py` (the repository root is not an extension).
++    install only the `caffmob_draw.zip` generated by `python3 build.py` (the repository root is not an extension).
+   - `__init__.py` - Entry point for registering and unregistering all add-on classes.
+   - `data/` - Holds Custom Properties and PropertyGroups representing entities like walls and parent planes.
+   - `operators/` - Contains operators for interactive wall building, cabinetry insertion, and alignment.
+@@ -23,13 +23,13 @@
+ 
+ ```bash
+ python3 docs/rag/tools/rag_search.py "draw handler POST_PIXEL"      # search the API reference
+-python3 docs/rag/tools/check_api.py                                  # check blendertomob/ against the 5.2 API
++python3 docs/rag/tools/check_api.py                                  # check caffmob_draw/ against the 5.2 API
+ ```
+ 
+ ## Getting Started
+ 
+ ### Packaging the Extension
+-To package the extension into a zip file (`blendertomob.zip`) that can be installed directly in Blender, run the helper build script from the root directory:
++To package the extension into a zip file (`caffmob_draw.zip`) that can be installed directly in Blender, run the helper build script from the root directory:
+ 
+ ```bash
+ python3 build.py
+@@ -39,6 +39,6 @@
+ 1. Open **Blender 4.2+**.
+ 2. Go to **Edit -> Preferences -> Get Extensions**.
+ 3. Click the gear icon in the top right and select **Install from Disk...**
+-4. Select the generated `blendertomob.zip` file.
+-5. Search for "BlenderToMob" and ensure it is activated.
+-6. Open the 3D Viewport sidebar (press `N`) to access the **BlenderToMob** panels.
++4. Select the generated `caffmob_draw.zip` file.
++5. Search for "CAFFMob Draw" and ensure it is activated.
++6. Open the 3D Viewport sidebar (press `N`) to access the **CAFFMob Draw** panels.
+diff -ruN -x __pycache__ docs/usuario/configurador-e-producao.md /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/docs/usuario/configurador-e-producao.md
+--- docs/usuario/configurador-e-producao.md	2026-10-01 04:20:12.484733147 -0300
++++ /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/docs/usuario/configurador-e-producao.md	2026-10-06 23:42:53.951839764 -0300
+@@ -1,7 +1,7 @@
+ # Configurador de Dimensões e produção
+ 
+-Guia rápido para quem projeta e produz móveis planejados no BlenderToMob.
+-Tudo fica na barra lateral da Viewport 3D (tecla **N**), aba **Blender to Mob**.
++Guia rápido para quem projeta e produz móveis planejados no CAFFMob Draw.
++Tudo fica na barra lateral da Viewport 3D (tecla **N**), aba **CAFFMob Draw**.
+ 
+ ## 1. Unidade de medida
+ 
+@@ -69,4 +69,4 @@
+ ## 5. Arquivos antigos
+ 
+ Ao abrir um projeto feito antes do Padrão de Dimensões, as configurações antigas de espessuras e componentes que tinham sido alteradas viram a definição **Migrada**, que passa a ser a ativa.
+-Projetos com gabinetes do Home Builder sem configuração própria começam no **Padrão EUA (HB5)**, para não mudar medidas já desenhadas. Os demais começam no **Padrão Brasil**.
++Projetos com gabinetes do CAFFMob Draw sem configuração própria começam no **Padrão EUA (HB5)**, para não mudar medidas já desenhadas. Os demais começam no **Padrão Brasil**.
+diff -ruN -x __pycache__ docs/usuario/editor-paredes-e-mover-sobre.md /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/docs/usuario/editor-paredes-e-mover-sobre.md
+--- docs/usuario/editor-paredes-e-mover-sobre.md	2026-10-05 19:25:59.581594075 -0300
++++ /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/docs/usuario/editor-paredes-e-mover-sobre.md	2026-10-06 23:45:05.828614588 -0300
+@@ -1,7 +1,7 @@
+ # Editor de paredes, propriedades, "Mover Sobre" e geometria
+ 
+ Guia rápido das ferramentas da planta e do posicionamento.
+-Tudo fica na barra lateral da Viewport 3D (tecla **N**), aba **Blender to Mob**.
++Tudo fica na barra lateral da Viewport 3D (tecla **N**), aba **CAFFMob Draw**.
+ 
+ ## 1. Editor de Paredes (planta 2D)
+ 
+@@ -10,7 +10,7 @@
+ O editor abre numa janela própria, com a planta vista de cima. Ele só mostra paredes.
+ Paredes feitas com o construtor antigo (camada nova) aparecem tracejadas, só como referência. Se elas estiverem
+ selecionadas ao abrir o editor, ele pergunta:
+-- **Converter para paredes editáveis:** viram trechos normais da planta; no OK, são trocadas por paredes do Home Builder 5 no mesmo lugar.
++- **Converter para paredes editáveis:** viram trechos normais da planta; no OK, são trocadas por paredes normais do CAFFMob Draw no mesmo lugar.
+ - **Só referência:** continuam tracejadas.
+ Nada vai para o 3D até você clicar em **OK** (no fim do painel). **Cancelar** (ou **Esc**) fecha sem mudar nada; se você
+ já mudou algo, ele pergunta antes de descartar.
+diff -ruN -x __pycache__ docs/usuario/inspecao-e-movimento.md /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/docs/usuario/inspecao-e-movimento.md
+--- docs/usuario/inspecao-e-movimento.md	2026-10-03 06:41:30.466361366 -0300
++++ /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/docs/usuario/inspecao-e-movimento.md	2026-10-06 23:42:54.567827839 -0300
+@@ -2,7 +2,7 @@
+ 
+ Guia rápido para conferir um projeto abrindo portas, basculantes e gavetas, antes de mostrar ao cliente ou mandar para a produção.
+ Funciona nos móveis de cozinha (frameless), face frame, dormitório (closets) e no Módulo Rápido.
+-O painel fica na barra lateral da Viewport 3D (tecla **N**), aba **Blender to Mob** › **CONSTRUTOR** › **Inspeção de Portas e Gavetas**.
++O painel fica na barra lateral da Viewport 3D (tecla **N**), aba **CAFFMob Draw** › **CONSTRUTOR** › **Inspeção de Portas e Gavetas**.
+ 
+ ## 1. Abrir com um clique
+ 
+@@ -36,7 +36,7 @@
+ ## 5. Verificar interferência
+ 
+ 1. Clique em **Verificar Interferência**.
+-2. O BlenderToMob gira cada porta de fechada até 90° e desliza cada gaveta até o fim. Ele avisa quando uma delas bate em outro objeto, como parede, sanca, módulo vizinho ou geometria livre.
++2. O CAFFMob Draw gira cada porta de fechada até 90° e desliza cada gaveta até o fim. Ele avisa quando uma delas bate em outro objeto, como parede, sanca, módulo vizinho ou geometria livre.
+ 3. A lista mostra **módulo › frente × objeto atingido**. A lupa centraliza a vista no ponto do choque, que fica marcado com uma cruz vermelha.
+ 4. O próprio módulo não conta (a porta encosta na lateral dele normalmente). Encostar sem atravessar também não conta.
+ 
+diff -ruN -x __pycache__ docs/rag/project/00_visao_geral.md /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/docs/rag/project/00_visao_geral.md
+--- docs/rag/project/00_visao_geral.md	2026-09-29 02:27:46.985752278 -0300
++++ /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/docs/rag/project/00_visao_geral.md	2026-10-06 23:42:53.049857259 -0300
+@@ -1,4 +1,4 @@
+-# Visão geral do BlenderToMob para quem consulta o RAG
++# Visão geral do CAFFMob Draw para quem consulta o RAG
+ 
+ Contexto mínimo do repositório para interpretar a referência da API do Blender 5.2 à luz deste código.
+ 
+@@ -6,20 +6,20 @@
+ 
+ - **Referência do RAG:** Blender **5.2.2 LTS** Python API (`docs/rag/blender-api/index/manifest.json`).
+ - **Manifesto da extensão:** `blender_manifest.toml` declara `blender_version_min = "4.2.0"`, mas o código já depende de APIs 5.x
+-  (ex.: `blendertomob/compat.py` usa `NodesModifier.properties`, adicionado no 5.2). Ao escrever código novo,
+-  **o alvo é 5.2**; se precisar manter 4.2–5.1, isole a diferença em `blendertomob/compat.py` com `bpy.app.version`.
++  (ex.: `caffmob_draw/compat.py` usa `NodesModifier.properties`, adicionado no 5.2). Ao escrever código novo,
++  **o alvo é 5.2**; se precisar manter 4.2–5.1, isole a diferença em `caffmob_draw/compat.py` com `bpy.app.version`.
+ 
+ ## Onde está o código de verdade
+ 
+ | Caminho | Papel |
+ |---|---|
+-| `blendertomob/` | **Pacote da extensão** (é o que `build.py` empacota em `blendertomob.zip`). Edite aqui. |
+-| `*.py`, `operators/`, `product_libraries/`… na raiz | Cópia antiga/espelhada do pacote (herança do Home Builder). Não é empacotada. |
++| `caffmob_draw/` | **Pacote da extensão** (é o que `build.py` empacota em `caffmob_draw.zip`). Edite aqui. |
++| `*.py`, `operators/`, `product_libraries/`… na raiz | Cópia antiga/espelhada do pacote (herança do CAFFMob Draw). Não é empacotada. |
+ | `tests/blender_smoke.py` | Teste de fumaça que roda dentro do Blender (`blender --background --factory-startup --python-exit-code 1 --python tests/blender_smoke.py`). |
+ | `_reversa_sdd/` | Especificações/arquitetura geradas pelo Reversa (domínio, ERD, operadores, UI). Complementa este RAG no lado de negócio. |
+ | `docs/rag/` | Este RAG: referência da API 5.2 + conhecimento curado do projeto. |
+ 
+-## Fluxo de registro (`blendertomob/__init__.py`)
++## Fluxo de registro (`caffmob_draw/__init__.py`)
+ 
+ 1. Hot-reload dos submódulos já importados (`importlib.reload`) para iterar sem reiniciar o Blender.
+ 2. `register()` registra, em ordem: assets → `BTM_AddonPreferences` (`bl_idname = __package__`) → camada de dados moderna (`data`) → props legadas (`hb_props`, `hb_project`…) → operadores legados → operadores/UI/overlays modernos (`btm_operators`, `ui`, `overlays`) → UI legada → bibliotecas de produtos (closets, face_frame, frameless, wood_hoods, molding).
+@@ -29,10 +29,10 @@
+ 
+ ## Convenções do código
+ 
+-- **Namespaces de operadores (`bl_idname`)**: `hb_face_frame.*`, `hb_frameless.*`, `hb_closets.*`, `home_builder_*.*` (herdados do Home Builder),
+-  `blendertomob.*` e `btm.*` (código novo). Código novo usa `btm.` ou `blendertomob.`.
++- **Namespaces de operadores (`bl_idname`)**: `hb_face_frame.*`, `hb_frameless.*`, `hb_closets.*`, `home_builder_*.*` (herdados do CAFFMob Draw),
++  `caffmob_draw.*` e `btm.*` (código novo). Código novo usa `btm.` ou `caffmob_draw.`.
+ - **`bl_options`**: operadores que alteram dados usam `{'UNDO'}` ou `{'REGISTER', 'UNDO'}` (ver `bpy.types.Operator` → "Modifying Blender Data & Undo").
+-- **Painéis**: sidebar da Viewport 3D (`bl_space_type='VIEW_3D'`, `bl_region_type='UI'`), abas `"Blender to Mob"` e `"Home Builder"`.
++- **Painéis**: sidebar da Viewport 3D (`bl_space_type='VIEW_3D'`, `bl_region_type='UI'`), abas `"CAFFMob Draw"` e `"CAFFMob Draw"`.
+ - **Propriedades do domínio**: `PointerProperty` em `bpy.types.Object` (`btm_cabinet`, `btm_wall`, `btm_opening`, `btm_plane`, `home_builder`, `face_frame_*`, `hb_closet_*`)
+   e em `bpy.types.Scene` (`btm_settings`, `hb_frameless`, `hb_face_frame`, `hb_closets`…).
+ - **Geometria paramétrica**: modificadores Geometry Nodes (`modifiers.new(type='NODES')`) carregados de `.blend` via `bpy.data.libraries.load`, com inputs lidos/escritos
+@@ -46,12 +46,12 @@
+ 
+ | Tarefa | Código | Referência 5.2 |
+ |---|---|---|
+-| Novo operador | `blendertomob/operators/` | `bpy.types.Operator`, `bpy.props`, `info_gotchas_operators` |
+-| Painel / menu | `blendertomob/ui/` | `bpy.types.Panel`, `bpy.types.Menu`, `bpy.types.UILayout` |
+-| Propriedade persistente | `blendertomob/data/properties.py`, `hb_props.py` | `bpy.props`, `bpy.types.PropertyGroup` |
+-| Geometria por código | `blendertomob/geometry/mesh_gen.py` | `bmesh`, `bmesh.ops`, `bpy.types.Mesh`, `info_gotchas_meshes` |
++| Novo operador | `caffmob_draw/operators/` | `bpy.types.Operator`, `bpy.props`, `info_gotchas_operators` |
++| Painel / menu | `caffmob_draw/ui/` | `bpy.types.Panel`, `bpy.types.Menu`, `bpy.types.UILayout` |
++| Propriedade persistente | `caffmob_draw/data/properties.py`, `hb_props.py` | `bpy.props`, `bpy.types.PropertyGroup` |
++| Geometria por código | `caffmob_draw/geometry/mesh_gen.py` | `bmesh`, `bmesh.ops`, `bpy.types.Mesh`, `info_gotchas_meshes` |
+ | Geometry Nodes / drivers | `hb_types.py`, `compat.py`, `geometry/door_controller.py` | `bpy.types.NodesModifier`, `bpy.types.bpy_struct.driver_add`, `bpy.types.Driver` |
+ | Overlay / cotas na viewport | `overlays/draw_handlers.py`, `hb_placement.py`, `hb_gpu_draw.py` | `gpu`, `gpu.shader`, `gpu.state`, `gpu_extras.batch`, `blf` |
+ | Snapping / raycast | `hb_snap.py` | `bpy.types.Scene.ray_cast`, `bpy_extras.view3d_utils` |
+-| Plano de corte / nesting | `blendertomob/cutting/` | (Python puro; `bpy.types.Depsgraph` para ler objetos avaliados) |
++| Plano de corte / nesting | `caffmob_draw/cutting/` | (Python puro; `bpy.types.Depsgraph` para ler objetos avaliados) |
+ | Layouts 2D / pranchas | `hb_layouts.py` | `bpy.types.GreasePencil`, `bpy.types.GreasePencilLineartModifier`, `bpy.types.Camera` |
+diff -ruN -x __pycache__ docs/rag/project/01_mapa_api_blendertomob.md /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/docs/rag/project/01_mapa_api_blendertomob.md
+--- docs/rag/project/01_mapa_api_blendertomob.md	2026-09-29 02:27:46.985752278 -0300
++++ /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/docs/rag/project/01_mapa_api_blendertomob.md	2026-10-06 23:42:51.599885459 -0300
+@@ -1,7 +1,7 @@
+-# Mapa de API do Blender usada pelo BlenderToMob
++# Mapa de API do Blender usada pelo CAFFMob Draw
+ 
+ > Gerado por `python3 docs/rag/tools/check_api.py --map docs/rag/project/01_mapa_api_blendertomob.md`.
+-> 148 arquivos de `blendertomob/` varridos. Links apontam para a referência 5.2 em `docs/rag/blender-api/corpus/`.
++> 148 arquivos de `caffmob_draw/` varridos. Links apontam para a referência 5.2 em `docs/rag/blender-api/corpus/`.
+ > Só referências escritas por extenso (ex.: `bpy.types.Object`) aparecem; acessos via variável (`obj.location`) não.
+ 
+ ## bpy.utils
+diff -ruN -x __pycache__ docs/rag/project/02_padroes_blender_5_2.md /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/docs/rag/project/02_padroes_blender_5_2.md
+--- docs/rag/project/02_padroes_blender_5_2.md	2026-09-29 02:27:46.985752278 -0300
++++ /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/docs/rag/project/02_padroes_blender_5_2.md	2026-10-06 23:42:54.469829736 -0300
+@@ -1,4 +1,4 @@
+-# Padrões de código Blender 5.2 usados no BlenderToMob
++# Padrões de código Blender 5.2 usados no CAFFMob Draw
+ 
+ Receitas verificadas contra a referência 5.2 (assinaturas copiadas do corpus). Cada seção aponta a página de origem
+ em `docs/rag/blender-api/corpus/`. Use estes padrões em vez de reinventar.
+@@ -12,7 +12,7 @@
+ 
+ class BTM_OT_exemplo(bpy.types.Operator):
+     """Descrição curta (vira tooltip)"""
+-    bl_idname = "btm.exemplo"          # namespace novo: btm.* ou blendertomob.*
++    bl_idname = "btm.exemplo"          # namespace novo: btm.* ou caffmob_draw.*
+     bl_label = "Exemplo"
+     bl_options = {'REGISTER', 'UNDO'}  # obrigatório quando o operador modifica dados
+ 
+diff -ruN -x __pycache__ docs/rag/project/03_compatibilidade_5x.md /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/docs/rag/project/03_compatibilidade_5x.md
+--- docs/rag/project/03_compatibilidade_5x.md	2026-09-29 02:27:46.985752278 -0300
++++ /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/docs/rag/project/03_compatibilidade_5x.md	2026-10-06 23:42:53.267853031 -0300
+@@ -1,4 +1,4 @@
+-# Compatibilidade Blender 5.x no BlenderToMob
++# Compatibilidade Blender 5.x no CAFFMob Draw
+ 
+ O que mudou na API e afeta (ou pode afetar) este código. Fonte primária: `corpus/change_log.md` (cobre **5.1 → 5.2**)
+ e as notas das próprias páginas da referência. Mudanças anteriores ao 5.1 não estão no changelog do zip;
+@@ -7,7 +7,7 @@
+ ## Como checar automaticamente
+ 
+ ```bash
+-python3 docs/rag/tools/check_api.py            # varre blendertomob/, sai com código 1 se houver referência inexistente no 5.2
++python3 docs/rag/tools/check_api.py            # varre caffmob_draw/, sai com código 1 se houver referência inexistente no 5.2
+ python3 docs/rag/tools/check_api.py arquivo.py # só um arquivo
+ ```
+ 
+@@ -16,7 +16,7 @@
+ (`VIEW3D_MT_*` etc., que não constam na referência). **Não** checa acesso via variável (`obj.algo`) — para isso use
+ `rag_search.py --symbol bpy.types.Object.algo`.
+ 
+-Estado em 2026-09-28: `blendertomob/` (148 arquivos) sem referências desconhecidas.
++Estado em 2026-09-28: `caffmob_draw/` (148 arquivos) sem referências desconhecidas.
+ 
+ ## Inputs de modificadores Geometry Nodes (5.2) — afeta o núcleo paramétrico
+ 
+@@ -37,7 +37,7 @@
+ 
+ - `nome` é o nome do socket na interface do grupo; o helper resolve o `identifier` via `node_group.interface.items_tree[nome].identifier`
+   e mantém cache (invalidado em `KeyError`/`AttributeError`).
+-- **Duplicação conhecida:** `blendertomob/hb_utils.py` tem helpers equivalentes (linhas ~8–60). Ao alterar a lógica, mantenha os dois
++- **Duplicação conhecida:** `caffmob_draw/hb_utils.py` tem helpers equivalentes (linhas ~8–60). Ao alterar a lógica, mantenha os dois
+   em sincronia ou consolide em `compat.py`.
+ 
+ ## Propriedades `bpy.props` × custom properties (5.0)
+@@ -61,7 +61,7 @@
+ | Mudança | Onde afeta | Ação |
+ |---|---|---|
+ | `WindowManager.invoke_popup(operator, *, width=300, auto_keymap=False)` — novo argumento `auto_keymap` | Popups de operador | Compatível (argumento opcional). |
+-| `Panel.bl_icon` / `Panel.bl_icon_value` adicionados ("Icon override for the panel category tab") | Abas "Blender to Mob"/"Home Builder" da sidebar | Opcional: ícone na aba de categoria (só 5.2+; proteja com `bpy.app.version`). |
++| `Panel.bl_icon` / `Panel.bl_icon_value` adicionados ("Icon override for the panel category tab") | Abas "CAFFMob Draw"/"CAFFMob Draw" da sidebar | Opcional: ícone na aba de categoria (só 5.2+; proteja com `bpy.app.version`). |
+ | `Menu.draw_preset(self, context)` — antes `(self, _context)` | Menus de preset | Só nomes de parâmetro. |
+ | `Node.poll(ntree)` / `NodeCustomGroup.poll(ntree)` — antes `_ntree` | Nós customizados (não usados hoje) | — |
+ | `UILayout.template_palette(data, property)` — removido `color` | Não usado | — |
+diff -ruN -x __pycache__ docs/rag/project/04_armadilhas.md /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/docs/rag/project/04_armadilhas.md
+--- docs/rag/project/04_armadilhas.md	2026-09-29 02:27:46.985752278 -0300
++++ /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/docs/rag/project/04_armadilhas.md	2026-10-06 23:42:53.076856736 -0300
+@@ -1,4 +1,4 @@
+-# Armadilhas da API do Blender que já afetam (ou podem afetar) o BlenderToMob
++# Armadilhas da API do Blender que já afetam (ou podem afetar) o CAFFMob Draw
+ 
+ Resumo dirigido ao projeto das páginas `info_gotcha*.md`, `info_best_practice.md` e notas da referência 5.2.
+ Para o texto completo: `python3 docs/rag/tools/rag_search.py "<assunto>" --category guide --full`.
+diff -ruN -x __pycache__ docs/rag/tools/check_api.py /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/docs/rag/tools/check_api.py
+--- docs/rag/tools/check_api.py	2026-09-29 02:27:46.986752250 -0300
++++ /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/docs/rag/tools/check_api.py	2026-10-06 23:42:53.141855475 -0300
+@@ -11,7 +11,7 @@
+ checked -- only dotted references written out in full.
+ 
+ Usage:
+-    python3 docs/rag/tools/check_api.py              # scans blendertomob/
++    python3 docs/rag/tools/check_api.py              # scans caffmob_draw/
+     python3 docs/rag/tools/check_api.py path/ file.py
+     python3 docs/rag/tools/check_api.py --json
+ """
+@@ -104,7 +104,7 @@
+         "# Mapa de API do Blender usada pelo BlenderToMob",
+         "",
+         "> Gerado por `python3 docs/rag/tools/check_api.py --map docs/rag/project/01_mapa_api_blendertomob.md`.",
+-        f"> {n_files} arquivos de `blendertomob/` varridos. Links apontam para a referência 5.2 em `docs/rag/blender-api/corpus/`.",
++        f"> {n_files} arquivos de `caffmob_draw/` varridos. Links apontam para a referência 5.2 em `docs/rag/blender-api/corpus/`.",
+         "> Só referências escritas por extenso (ex.: `bpy.types.Object`) aparecem; acessos via variável (`obj.location`) não.",
+         "",
+     ]
+@@ -122,7 +122,7 @@
+ 
+ def main():
+     ap = argparse.ArgumentParser()
+-    ap.add_argument("paths", nargs="*", default=[str(ROOT / "blendertomob")])
++    ap.add_argument("paths", nargs="*", default=[str(ROOT / "caffmob_draw")])
+     ap.add_argument("--json", action="store_true")
+     ap.add_argument("--map", metavar="OUT.md", help="write a Markdown map: API symbol used -> count -> reference page")
+     args = ap.parse_args()
+--- docs/rag/README.md	2026-09-30 06:35:46.657329657 -0300
++++ /tmp/claude-1000/-home-theleoinfo-www-BlenderToMob/885d8680-540f-422b-be2b-a2f95c2f8efd/scratchpad/wt/docs/rag/README.md	2026-10-06 23:42:50.522906458 -0300
+@@ -1,6 +1,6 @@
+-# RAG — Blender 5.2 Python API para o BlenderToMob
++# RAG — Blender 5.2 Python API para o CAFFMob Draw
+ 
+-Base de conhecimento consultável (por pessoas e por agentes de IA) para desenvolver o BlenderToMob contra a
++Base de conhecimento consultável (por pessoas e por agentes de IA) para desenvolver o CAFFMob Draw contra a
+ **Blender 5.2.2 LTS Python API**. Gerada a partir de `blender_python_reference_5_2.zip` (build Sphinx oficial da referência).
+ 
+ | Camada | Conteúdo | Tamanho |
+@@ -19,7 +19,7 @@
+ 2. [`project/02_padroes_blender_5_2.md`](project/02_padroes_blender_5_2.md) — receitas verificadas: operador com undo, PropertyGroup, handlers, modal + GPU, raycast, BMesh, depsgraph, libraries.load, drivers.
+ 3. [`project/03_compatibilidade_5x.md`](project/03_compatibilidade_5x.md) — mudanças 5.0/5.2 que tocam o projeto (inputs de Geometry Nodes, `bpy.props` × custom properties, shaders).
+ 4. [`project/04_armadilhas.md`](project/04_armadilhas.md) — crashes, undo, dados desatualizados, threads, contexto de operadores.
+-5. [`project/01_mapa_api_blendertomob.md`](project/01_mapa_api_blendertomob.md) — cada símbolo da API usado em `blendertomob/`, com contagem e link (gerado).
++5. [`project/01_mapa_api_blendertomob.md`](project/01_mapa_api_blendertomob.md) — cada símbolo da API usado em `caffmob_draw/`, com contagem e link (gerado).
+ 
+ ## Consultar
+ 
+@@ -47,8 +47,8 @@
+ ## Verificar código contra a 5.2
+ 
+ ```bash
+-python3 docs/rag/tools/check_api.py                   # varre blendertomob/; exit 1 se usar API inexistente no 5.2
+-python3 docs/rag/tools/check_api.py blendertomob/operators/walls.py
++python3 docs/rag/tools/check_api.py                   # varre caffmob_draw/; exit 1 se usar API inexistente no 5.2
++python3 docs/rag/tools/check_api.py caffmob_draw/operators/walls.py
+ python3 docs/rag/tools/check_api.py --map docs/rag/project/01_mapa_api_blendertomob.md   # regenera o mapa
+ ```
+ 
+@@ -60,8 +60,8 @@
+ 2. **Não confie na memória para assinaturas.** Confirme cada chamada com `rag_search.py --symbol <nome>` ou busca livre.
+    A API muda entre versões (ex.: inputs de GN no 5.2, armazenamento de `bpy.props` no 5.0, nomes de shaders builtin).
+ 3. **Cite a fonte** (`docs/rag/blender-api/corpus/<página>.md#<símbolo>`) ao justificar uma escolha de API.
+-4. **Rode `check_api.py`** após editar arquivos em `blendertomob/`; trate `[UNKNOWN in 5.2]` como erro.
+-5. Diferenças entre versões vão para `blendertomob/compat.py` (com `bpy.app.version`), nunca espalhadas pelo código.
++4. **Rode `check_api.py`** após editar arquivos em `caffmob_draw/`; trate `[UNKNOWN in 5.2]` como erro.
++5. Diferenças entre versões vão para `caffmob_draw/compat.py` (com `bpy.app.version`), nunca espalhadas pelo código.
+ 6. Validação em runtime: `blender --background --factory-startup --python-exit-code 1 --python tests/blender_smoke.py`.
+ 
+ ## Usar com embeddings / vetor

@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 import _bootstrap  # noqa: F401
-from blendertomob.data import dimension_schema as ds
+from caffmob_draw.data import dimension_schema as ds
 
 REFS = Path(_bootstrap.PACKAGE) / "assets" / "dimension_refs"
 

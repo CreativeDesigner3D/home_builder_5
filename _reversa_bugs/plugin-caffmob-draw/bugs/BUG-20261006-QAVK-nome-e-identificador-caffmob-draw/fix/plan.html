@@ -1,0 +1,71 @@
+<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Plano de correção · #1 e #2 · CAFFMob Draw (fase A)</title><style>
+body{background:#0d1117;color:#e6edf3;font:14px system-ui,sans-serif;margin:0;padding:16px;max-width:1080px}
+h1{font-size:20px}h2{font-size:16px;margin-top:24px;border-bottom:1px solid #30363d;padding-bottom:4px}
+.meta{color:#8b949e;font-size:12px}.tag{display:inline-block;border:1px solid #e5484d;color:#ff9592;border-radius:6px;padding:1px 6px;font-size:12px;margin-right:6px}
+.mid{border-color:#f5a524;color:#ffca16}table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid #30363d;padding:6px;text-align:left;font-size:13px;vertical-align:top}
+a{color:#58a6ff}code{background:#161b22;padding:1px 4px;border-radius:4px}.wrap{overflow-x:auto}svg{max-width:100%;height:auto}</style></head><body>
+<h1>#1 BUG-20261006-NO4Q + #2 BUG-20261006-QAVK · Plano de correção (fase A)</h1>
+<p class="meta">Contexto: plugin-caffmob-draw · 2026-10-06 · <span class="tag">critical</span><span class="tag">P0</span><span class="tag mid">change_risk: média</span></p>
+
+<h2>Defeitos e causa raiz</h2>
+<p><b>#1:</b> a interface legada do Home Builder 5 manteve a própria aba (<code>bl_category = "Home Builder"</code>, 9 painéis raiz)
+e a camada nova criou outra ("Blender to Mob", 3 painéis raiz). <b>#2:</b> a identidade nunca foi definida como CAFFMob Draw:
+manifesto <code>blendertomob</code>/"Blender to Mob", pasta <code>blendertomob/</code>, 402 operadores em 15 prefixos
+(<code>hb_*</code>, <code>home_builder*</code>, <code>btm</code>, <code>blendertomob</code>), 40 textos visíveis com os nomes antigos.</p>
+<p><b>Estado:</b> confirmed nos dois. Evidência: <a href="../evidence/reproduction.md">evidence/reproduction.md</a>.</p>
+
+<h2>Estratégia escolhida: fase A agora, fase B depois</h2>
+<p>Tudo que o usuário vê e o identificador da extensão viram <b>CAFFMob Draw</b> agora. O que está <b>gravado nos .blend</b>
+(propriedades <code>home_builder</code>, <code>hb_*</code>, <code>btm_*</code>, os <code>MENU_ID</code> dos objetos e as chaves <code>IS_*</code>) mantém o
+nome interno nesta fase: 20 de 21 bibliotecas do pacote e todos os projetos salvos dependem desses nomes. A fase B (bug novo)
+renomeia esses dados com migração automática.</p>
+
+<h2>Correction Change Set proposto</h2>
+<div class="wrap"><table><tr><th>CHG</th><th>tipo</th><th>artefato</th><th>propósito</th></tr>
+<tr><td>CHG-001</td><td>test</td><td><code>tests/test_identity.py</code> (novo) e <code>tests/blender_identity_smoke.py</code> (novo)</td><td>Reprodução e regressão (abaixo).</td></tr>
+<tr><td>CHG-002</td><td>code</td><td>pasta <code>blendertomob/</code> → <code>caffmob_draw/</code> (git mv); <code>blender_manifest.toml</code> (id <code>caffmob_draw</code>, nome "CAFFMob Draw"); <code>build.py</code> → <code>caffmob_draw.zip</code>; <code>.gitignore</code>, <code>pyproject.toml</code>, <code>pyrightconfig.json</code></td><td>Identificador e pacote.</td></tr>
+<tr><td>CHG-003</td><td>code</td><td>402 <code>bl_idname</code> de operadores e todas as referências exatas (<code>layout.operator</code>, <code>bpy.ops.*</code>, atalhos, catálogo, HUD, testes)</td><td>Prefixos → <code>caffmob</code>, <code>caffmob_walls</code>, <code>caffmob_layouts</code>, <code>caffmob_details</code>, <code>caffmob_doors_windows</code>, <code>caffmob_obstacles</code>, <code>caffmob_stairs</code>, <code>caffmob_annotations</code>, <code>caffmob_frameless</code>, <code>caffmob_face_frame</code>, <code>caffmob_closets</code>, <code>caffmob_general</code>, <code>caffmob_catalog</code> (sem colisões; maior nome 59/64).</td></tr>
+<tr><td>CHG-004</td><td>code</td><td>uma aba só "CAFFMob Draw" (10 painéis raiz da Viewport 3D); 40 textos visíveis; HUD; traduções</td><td>Nenhuma aba nem texto "Home Builder" / "Blender to Mob".</td></tr>
+<tr><td>CHG-005</td><td>migration</td><td><code>caffmob_draw/compat_identity.py</code> (novo), chamado no <code>register()</code></td><td>Copiar as pastas de dados do usuário da extensão antiga (biblioteca de detalhes, cores de acabamento) se a nova estiver vazia; renomear a biblioteca de assets "Home Builder" → "CAFFMob Draw" nas preferências; avisar se a extensão antiga ainda estiver ativa.</td></tr>
+<tr><td>CHG-006</td><td>api-contract</td><td><code>cutting/json_exporter.py</code>, <code>standards/io_json.py</code></td><td>Exportar <code>caffmob_draw.project</code> / <code>caffmob_draw.dimension-standard</code>; a leitura aceita também os nomes antigos.</td></tr>
+<tr><td>CHG-007</td><td>documentation</td><td><code>CLAUDE.md</code> (Onde editar, Comandos), <code>README.md</code>, <code>docs/usuario/*</code>, <code>docs/rag/project/*</code>, <code>docs/rag/tools/check_api.py</code></td><td>Caminhos e nome novos. Os registros históricos do Reversa (<code>_reversa_*</code>) ficam como estão.</td></tr>
+<tr><td>CHG-008</td><td>data-repair</td><td>Blender do titular (MCP 9876)</td><td>Backup das preferências; desinstalar a extensão <code>blendertomob</code>; instalar <code>caffmob_draw.zip</code>; conferir a migração.</td></tr>
+</table></div>
+
+<h2>Testes planejados</h2>
+<ul>
+<li><b>Reprodução</b> (<code>tests/test_identity.py</code>, Python puro): manifesto com id <code>caffmob_draw</code> e nome "CAFFMob Draw"; nenhum texto visível
+com "Home Builder"/"Blender to Mob"/"BlenderToMob" (constantes de texto e docstrings de classe); todo <code>bl_idname</code> de operador
+começa com <code>caffmob</code>; todo painel da barra lateral da Viewport 3D com <code>bl_category = "CAFFMob Draw"</code>. Falham hoje.</li>
+<li><b>Regressão</b> (<code>tests/blender_identity_smoke.py</code>, Blender): o pacote registra e desregistra sem sobras; existe uma única aba de painéis
+do plugin; todos os operadores citados na interface existem; os <code>MENU_ID</code> gravados (<code>HOME_BUILDER_MT_*</code>) continuam resolvendo;
+um <code>.blend</code> salvo antes abre com móveis e paredes funcionando; o JSON antigo continua sendo lido. As 6 fumaças e o teste de
+interface existentes, atualizados para o pacote novo, também precisam passar.</li></ul>
+
+<h2>Riscos e o que fica de fora</h2>
+<ul><li>change_risk <b>média</b>: diff mecânico grande (centenas de arquivos); a extensão antiga precisa ser desinstalada antes, porque as
+duas registrariam as mesmas propriedades; as preferências do add-on (cores) voltam ao padrão com o id novo; contrato JSON com nome novo
+(leitura compatível).</li>
+<li><b>Fase B (fora):</b> nomes das propriedades gravadas (<code>home_builder</code>, <code>hb_*</code>, <code>btm_*</code>), <code>MENU_ID</code>/<code>bl_idname</code> de menus,
+nomes de classes Python e de painéis, chaves <code>IS_*</code>; tradução para português de todos os rótulos legados.</li></ul>
+
+<h2>Mini-grafo</h2>
+<svg viewBox="0 0 760 200" width="760" height="200"><defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#8aa"/></marker></defs>
+<a href="../../BUG-20261006-NO4Q-interface-home-builder-separada/bug.md"><rect x="40" y="70" width="230" height="60" rx="10" fill="#1c2128" stroke="#e5484d" stroke-width="3"/><text x="52" y="94" fill="#e6edf3" font-size="13" font-weight="600">#1 NO4Q</text><text x="52" y="114" fill="#c9d1d9" font-size="11">Home Builder separado</text></a>
+<a href="../bug.md"><rect x="470" y="70" width="240" height="60" rx="10" fill="#1c2128" stroke="#e5484d" stroke-width="3"/><text x="482" y="94" fill="#e6edf3" font-size="13" font-weight="600">#2 QAVK</text><text x="482" y="114" fill="#c9d1d9" font-size="11">nome CAFFMob Draw</text></a>
+<a href="../../BUG-20261006-SCVF-copia-antiga-na-raiz-e-addon-legado/bug.md"><rect x="270" y="150" width="220" height="44" rx="10" fill="#1c2128" stroke="#30a46c" stroke-width="2"/><text x="282" y="177" fill="#3dd68c" font-size="12">#3 SCVF · resolved · fixed</text></a>
+<line x1="470" y1="100" x2="270" y2="100" stroke="#8aa" stroke-dasharray="6 4" marker-end="url(#a)"/><text x="330" y="92" fill="#9bb" font-size="11">related-to (proposed)</text>
+<line x1="330" y1="150" x2="200" y2="130" stroke="#8aa" stroke-dasharray="6 4" marker-end="url(#a)"/>
+</svg>
+
+<h2>Matriz de relações</h2>
+<div class="wrap"><table><tr><th>origem</th><th>tipo</th><th>destino</th><th>estado</th></tr>
+<tr><td><a href="../bug.md">#2 QAVK</a></td><td>related-to</td><td><a href="../../BUG-20261006-NO4Q-interface-home-builder-separada/bug.md">#1 NO4Q</a></td><td>proposed → supported (mesmos arquivos e mesma causa de identidade)</td></tr>
+<tr><td><a href="../../BUG-20261006-SCVF-copia-antiga-na-raiz-e-addon-legado/bug.md">#3 SCVF</a></td><td>related-to</td><td><a href="../../BUG-20261006-NO4Q-interface-home-builder-separada/bug.md">#1 NO4Q</a></td><td>proposed</td></tr>
+</table></div>
+
+<h2>Ordem dentro da sessão</h2>
+<ol><li>CHG-002 (pasta e manifesto) e CHG-003 (operadores) juntos, porque os testes e imports dependem do caminho novo.</li>
+<li>CHG-004 (aba e textos), CHG-005 (migração), CHG-006 (JSON), CHG-007 (documentação).</li><li>CHG-008 no Blender do titular, por último.</li></ol>
+</body></html>

@@ -1,0 +1,21 @@
+schema_version = "1.0.0"
+
+id = "caffmob_draw"
+version = "1.0.1"
+name = "CAFFMob Draw"
+tagline = "Parametric cabinetry and interior design CAD tools for Blender"
+maintainer = "TheLeoInfo"
+type = "add-on"
+
+blender_version_min = "5.2.0"
+
+license = [
+    "SPDX:GPL-3.0-or-later",
+]
+# Metadata for online extensions directory, categorizing the add-on
+tags = ["3D View", "Add Mesh", "Modeling", "Scene"]
+location = "View3D > Sidebar > CAFFMob Draw"
+description = "Functional parametric interior design and cabinetry tools (inspired by Promob), including wall-building, floors, snap rules, and nested cut-list optimization."
+
+[permissions]
+files = "Save projects and export cut plans, PDFs and layouts"

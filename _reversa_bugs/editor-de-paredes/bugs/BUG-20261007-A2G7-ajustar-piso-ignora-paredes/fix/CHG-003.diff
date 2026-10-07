@@ -1,0 +1,9 @@
+--- tests/_bootstrap.py	2026-10-06 23:57:27.401524218 -0300
++++ tests/_bootstrap.py	2026-10-07 03:16:59.344441139 -0300
+@@ -23,5 +23,5 @@
+ 
+ 
+ _stub("caffmob_draw", PACKAGE)
+-for _sub in ("cutting", "data", "standards", "inspection", "selection", "canvas2d", "move_over", "measure", "walls2d"):
++for _sub in ("cutting", "data", "standards", "inspection", "selection", "canvas2d", "move_over", "measure", "walls2d", "geometry"):
+     _stub(f"caffmob_draw.{_sub}", PACKAGE / _sub)

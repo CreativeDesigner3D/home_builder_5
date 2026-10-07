@@ -1,0 +1,38 @@
+--- a/blender_manifest.toml
++++ /dev/null (arquivo removido)
+@@ -1,34 +0,0 @@
+-schema_version = "1.0.0"
+-
+-id = "blendertomob"
+-version = "1.0.1"
+-name = "Blender to Mob"
+-tagline = "Parametric cabinetry and interior design CAD tools for Blender"
+-maintainer = "TheLeoInfo"
+-type = "add-on"
+-
+-website = "https://github.com/theLeonardoLima/BlenderPremiumMob"
+-
+-tags = ["3D View", "Add Mesh", "Modeling", "Scene"]
+-
+-blender_version_min = "4.2.0"
+-
+-license = [
+-    "SPDX:GPL-3.0-or-later",
+-]
+-
+-copyright = [
+-    "2024-2026 TheLeoInfo",
+-]
+-
+-platforms = ["windows-x64", "windows-arm64", "macos-arm64", "macos-x64", "linux-x64"]
+-
+-[permissions]
+-files = "Save and load project files, export cut plan JSON, export PDFs and technical layouts"
+-
+-[build]
+-paths_exclude_pattern = [
+-    "__pycache__/",
+-    ".*",
+-    "*.zip",
+-]
+\ No newline at end of file

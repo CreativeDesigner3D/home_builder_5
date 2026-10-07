@@ -11,7 +11,7 @@ subclasses are ignored. Attribute access through variables (obj.foo) is not
 checked -- only dotted references written out in full.
 
 Usage:
-    python3 docs/rag/tools/check_api.py              # scans blendertomob/
+    python3 docs/rag/tools/check_api.py              # scans caffmob_draw/
     python3 docs/rag/tools/check_api.py path/ file.py
     python3 docs/rag/tools/check_api.py --json
 """
@@ -104,7 +104,7 @@ def write_map(out, used, n_files):
         "# Mapa de API do Blender usada pelo BlenderToMob",
         "",
         "> Gerado por `python3 docs/rag/tools/check_api.py --map docs/rag/project/01_mapa_api_blendertomob.md`.",
-        f"> {n_files} arquivos de `blendertomob/` varridos. Links apontam para a referência 5.2 em `docs/rag/blender-api/corpus/`.",
+        f"> {n_files} arquivos de `caffmob_draw/` varridos. Links apontam para a referência 5.2 em `docs/rag/blender-api/corpus/`.",
         "> Só referências escritas por extenso (ex.: `bpy.types.Object`) aparecem; acessos via variável (`obj.location`) não.",
         "",
     ]
@@ -122,7 +122,7 @@ def write_map(out, used, n_files):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("paths", nargs="*", default=[str(ROOT / "blendertomob")])
+    ap.add_argument("paths", nargs="*", default=[str(ROOT / "caffmob_draw")])
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--map", metavar="OUT.md", help="write a Markdown map: API symbol used -> count -> reference page")
     args = ap.parse_args()

@@ -1,9 +1,9 @@
-"""Testes das cotas de módulo na parede (T012): `blendertomob/measure/cotas.py`."""
+"""Testes das cotas de módulo na parede (T012): `caffmob_draw/measure/cotas.py`."""
 
 import unittest
 
 import _bootstrap  # noqa: F401
-from blendertomob.measure import cotas as c
+from caffmob_draw.measure import cotas as c
 
 WALL = 3.0
 CEILING = 2.6

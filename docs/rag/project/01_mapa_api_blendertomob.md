@@ -1,7 +1,7 @@
-# Mapa de API do Blender usada pelo BlenderToMob
+# Mapa de API do Blender usada pelo CAFFMob Draw
 
 > Gerado por `python3 docs/rag/tools/check_api.py --map docs/rag/project/01_mapa_api_blendertomob.md`.
-> 148 arquivos de `blendertomob/` varridos. Links apontam para a referência 5.2 em `docs/rag/blender-api/corpus/`.
+> 148 arquivos de `caffmob_draw/` varridos. Links apontam para a referência 5.2 em `docs/rag/blender-api/corpus/`.
 > Só referências escritas por extenso (ex.: `bpy.types.Object`) aparecem; acessos via variável (`obj.location`) não.
 
 ## bpy.utils

@@ -1,9 +1,9 @@
-"""Testes do classificador de tipo de objeto (T013): `blendertomob/selection/classify.py`."""
+"""Testes do classificador de tipo de objeto (T013): `caffmob_draw/selection/classify.py`."""
 
 import unittest
 
 import _bootstrap  # noqa: F401
-from blendertomob.selection import classify as c
+from caffmob_draw.selection import classify as c
 
 
 class Obj(dict):

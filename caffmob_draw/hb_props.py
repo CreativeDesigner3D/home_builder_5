@@ -1,0 +1,983 @@
+import bpy
+from bpy.types import (
+        PropertyGroup,
+        )
+from bpy.props import (
+        BoolProperty,
+        FloatProperty,
+        FloatVectorProperty,
+        IntProperty,
+        PointerProperty,
+        StringProperty,
+        CollectionProperty,
+        EnumProperty,
+        )
+from . import hb_utils, hb_types
+from .units import inch
+from .hb_types import Variable
+
+def update_main_tab(self,context):
+    # TODO: Load the correct library based on the main_tab
+    print("update_main_tab")
+
+
+def update_product_tab(self,context):
+    # TODO: Load the correct library based on the product_tab
+    print("update_product_tab")
+
+
+def update_line_thickness(self, context):
+    """Update all curve line thicknesses in the scene."""
+    for obj in context.scene.objects:
+        if obj.type == 'CURVE':
+            # Skip dimensions (they have their own thickness via geometry nodes)
+            if obj.get('IS_2D_ANNOTATION'):
+                continue
+            # Update detail lines, polylines, circles, rectangles
+            if obj.get('IS_DETAIL_LINE') or obj.get('IS_DETAIL_POLYLINE') or obj.get('IS_DETAIL_CIRCLE'):
+                obj.data.bevel_depth = self.annotation_line_thickness
+
+
+def update_line_color(self, context):
+    """Update all annotation line colors in the scene."""
+    color = tuple(self.annotation_line_color) + (1.0,)  # Add alpha
+    for obj in context.scene.objects:
+        if obj.type == 'CURVE':
+            if obj.get('IS_DETAIL_LINE') or obj.get('IS_DETAIL_POLYLINE') or obj.get('IS_DETAIL_CIRCLE'):
+                obj.color = color
+                # Update material if exists
+                if obj.data.materials:
+                    mat = obj.data.materials[0]
+                    if mat and mat.use_nodes:
+                        bsdf = mat.node_tree.nodes.get("Principled BSDF")
+                        if bsdf:
+                            bsdf.inputs["Base Color"].default_value = color
+
+
+def update_text_size(self, context):
+    """Update all text annotation sizes in the scene."""
+    for obj in context.scene.objects:
+        if obj.type == 'FONT' and obj.get('IS_DETAIL_TEXT'):
+            obj.data.size = self.annotation_text_size
+
+
+def update_text_color(self, context):
+    """Update all text annotation colors in the scene."""
+    color = tuple(self.annotation_text_color) + (1.0,)  # Add alpha
+    for obj in context.scene.objects:
+        if obj.type == 'FONT' and obj.get('IS_DETAIL_TEXT'):
+            obj.color = color
+            if obj.data.materials:
+                mat = obj.data.materials[0]
+                if mat and mat.use_nodes:
+                    bsdf = mat.node_tree.nodes.get("Principled BSDF")
+                    if bsdf:
+                        bsdf.inputs["Base Color"].default_value = color
+
+
+def update_ceiling_height(self, context):
+    """Update cabinet heights when ceiling height changes."""
+
+    # BlenderToMob (D-38, RF-43): as paredes de altura cheia acompanham o pé-direito do projeto.
+    try:
+        from .walls2d import apply as walls2d_apply
+        walls2d_apply.sync_project_height(context, self.ceiling_height)
+    except Exception as exc:          # não impede o recálculo dos armários abaixo
+        print("CAFFMob Draw: falha ao atualizar o pé-direito das paredes:", exc)
+
+    # Check if frameless props exist on the current scene
+    if not hasattr(context.scene, 'hb_frameless'):
+        return
+
+    frameless_props = context.scene.hb_frameless
+
+    # Recalculate tall and upper cabinet heights based on new ceiling height
+    frameless_props.tall_cabinet_height = self.ceiling_height - frameless_props.default_top_cabinet_clearance
+    frameless_props.upper_cabinet_height = self.ceiling_height - frameless_props.default_top_cabinet_clearance - frameless_props.default_wall_cabinet_location
+
+    # Mirror for face_frame's parallel scene props. Each library owns
+    # its own clearance + wall_location, so the formulas are applied
+    # against face_frame's values, not frameless's.
+    if hasattr(context.scene, 'hb_face_frame'):
+        ff_props = context.scene.hb_face_frame
+        ff_props.tall_cabinet_height = (self.ceiling_height
+                                        - ff_props.default_top_cabinet_clearance)
+        ff_props.upper_cabinet_height = (self.ceiling_height
+                                         - ff_props.default_top_cabinet_clearance
+                                         - ff_props.default_wall_cabinet_location)
+
+
+def update_dimension_text_size(self, context):
+    """Update all dimension text sizes in the scene."""
+    for obj in context.scene.objects:
+        if obj.get('IS_DIMENSION'):
+            dim = hb_types.GeoNodeDimension(obj)
+            dim.set_input("Text Size", self.annotation_dimension_text_size)
+
+
+def update_dimension_tick_length(self, context):
+    """Update all dimension arrow sizes in the scene."""
+    for obj in context.scene.objects:
+        if obj.get('IS_DIMENSION'):
+            dim = hb_types.GeoNodeDimension(obj)
+            dim.set_input("Tick Length", self.annotation_dimension_tick_length)
+
+
+def update_dimension_line_thickness(self, context):
+    """Update all dimension line and tick thicknesses in the scene."""
+    for obj in context.scene.objects:
+        if obj.get('IS_DIMENSION'):
+            dim = hb_types.GeoNodeDimension(obj)
+            dim.set_input("Line Thickness", self.annotation_dimension_line_thickness)
+            dim.set_input("Tick Thickness", self.annotation_dimension_tick_thickness)
+
+
+def update_font(self, context):
+    """Update all text annotations to use the selected font."""
+    if not self.annotation_font:
+        return
+    for obj in context.scene.objects:
+        if obj.type == 'FONT' and obj.get('IS_DETAIL_TEXT'):
+            obj.data.font = self.annotation_font
+
+def update_annotation_paper_size(self, context):
+    """Recalculate world annotation sizes when paper-space sizes change."""
+    scene = context.scene
+    if not scene.get('IS_LAYOUT_VIEW'):
+        return
+    if not self.annotation_auto_scale:
+        return
+    from .operators.layouts import recalculate_annotation_sizes_for_scene
+    recalculate_annotation_sizes_for_scene(scene)
+
+
+def update_auto_scale(self, context):
+    """When auto-scale is toggled on, recalculate all annotation sizes."""
+    if self.annotation_auto_scale:
+        from .operators.layouts import recalculate_annotation_sizes_for_scene
+        recalculate_annotation_sizes_for_scene(context.scene)
+
+
+def update_show_entry_door_and_window_cages(self, context):
+    for obj in context.scene.objects:
+        if obj.get('IS_ENTRY_DOOR_BP'):
+            obj.display_type = 'TEXTURED' if self.show_entry_door_and_window_cages else 'WIRE'
+            obj.show_in_front = True if self.show_entry_door_and_window_cages else False
+        if obj.get('IS_WINDOW_BP'):
+            obj.display_type = 'TEXTURED' if self.show_entry_door_and_window_cages else 'WIRE'
+            obj.show_in_front = True if self.show_entry_door_and_window_cages else False
+
+
+def update_molding_package(self, context):
+    """Re-apply the room's molding packages whenever a package dropdown
+    (or the recessed-kick toggle) changes - the dropdown IS the UI."""
+    from .molding import ops as molding_ops
+    molding_ops.on_package_changed(self, context)
+
+
+def _molding_crown_items(self, context):
+    from .molding import packages
+    return packages.enum_items('CROWN')
+
+
+def _molding_base_items(self, context):
+    from .molding import packages
+    return packages.enum_items('BASE')
+
+
+def _molding_light_rail_items(self, context):
+    from .molding import packages
+    return packages.enum_items('LIGHT_RAIL')
+
+
+def _molding_crown_profile_items(self, context):
+    from .molding import packages
+    return packages.profile_enum_items('Crown Molding')
+
+
+def _molding_spacer_profile_items(self, context):
+    from .molding import packages
+    return packages.profile_enum_items('Spacer')
+
+
+def _molding_cap_profile_items(self, context):
+    from .molding import packages
+    return packages.profile_enum_items('Furniture Caps')
+
+
+def _molding_base_profile_items(self, context):
+    from .molding import packages
+    return packages.profile_enum_items('Base Molding')
+
+
+def _molding_light_rail_profile_items(self, context):
+    from .molding import packages
+    return packages.profile_enum_items('Light Rail')
+
+
+def update_wall_material(self, context):
+    """Update all wall material inputs when wall material changes."""
+    mat = self.wall_material
+    if not mat:
+        return
+    material_inputs = [
+        'Top Surface', 'Bottom Surface',
+        'Inside Face', 'Outside Face',
+        'Left Edge', 'Right Edge',
+    ]
+    for obj in context.scene.objects:
+        if obj.get('IS_WALL_BP'):
+            wall = hb_types.GeoNodeWall(obj)
+            for input_name in material_inputs:
+                wall.set_input(input_name, mat)
+
+class Calculator_Prompt(PropertyGroup):
+    distance_value: FloatProperty(name="Distance Value",subtype='DISTANCE',precision=5)# type: ignore
+    equal: BoolProperty(name="Equal",default=True)# type: ignore
+    include: BoolProperty(name="Include In Calculation",default=True)# type: ignore
+
+    def draw(self,layout):
+        row = layout.row()
+        row.active = False if self.equal else True
+        row.prop(self,'distance_value',text=self.name)
+        row.prop(self,'equal',text="")
+
+    def get_var(self,calculator_name,name):
+        prompt_path = 'home_builder.calculators["' + calculator_name + '"].prompts["' + self.name + '"]'
+        return Variable(self.id_data, prompt_path + '.distance_value',name)
+
+    def get_value(self):
+        return self.distance_value
+
+    def set_value(self,value):
+        self.distance_value = value
+
+
+class Calculator(PropertyGroup):
+    prompts: CollectionProperty(name="Prompts",type=Calculator_Prompt)# type: ignore
+    distance_obj: PointerProperty(name="Distance Obj",type=bpy.types.Object)# type: ignore
+
+    def set_total_distance(self,expression="",variables=[],value=0):
+        data_path = 'home_builder.calculator_distance'
+        driver = self.distance_obj.driver_add(data_path)
+        hb_utils.add_driver_variables(driver,variables)
+        driver.driver.expression = expression
+
+    def draw(self,layout):
+        col = layout.column(align=True)
+        box = col.box()
+        row = box.row()
+        row.label(text=self.name)
+        props = row.operator('pc_prompts.add_calculator_prompt',text="",icon='ADD')
+        props.calculator_name = self.name
+        props.obj_name = self.id_data.name
+        props = row.operator('pc_prompts.edit_calculator',text="",icon='OUTLINER_DATA_GP_LAYER')
+        props.calculator_name = self.name
+        props.obj_name = self.id_data.name
+
+        box.prop(self.distance_obj.home_builder,'calculator_distance')
+        box = col.box()
+        for prompt in self.prompts:
+            prompt.draw(box)
+        box = col.box()
+        row = box.row()
+        row.scale_y = 1.3
+        props = row.operator('pc_prompts.run_calculator')
+        props.calculator_name = self.name
+        props.obj_name = self.id_data.name
+
+    def add_calculator_prompt(self,name):
+        prompt = self.prompts.add()
+        prompt.name = name
+        return prompt
+
+    def get_calculator_prompt(self,name):
+        if name in self.prompts:
+            return self.prompts[name]
+
+    def remove_calculator_prompt(self,name):
+        pass
+
+    def calculate(self):
+        if not self.distance_obj:
+            return
+        self.distance_obj.hide_viewport = False
+        bpy.context.view_layer.update()
+        non_equal_prompts_total_value = 0
+        equal_prompt_qty = 0
+        calc_prompts = []
+        for prompt in self.prompts:
+            if prompt.equal:
+                if prompt.include:
+                    equal_prompt_qty += 1
+                calc_prompts.append(prompt)
+            else:
+                if prompt.include:
+                    non_equal_prompts_total_value += prompt.distance_value
+
+        if equal_prompt_qty > 0:
+            prompt_value = (self.distance_obj.home_builder.calculator_distance - non_equal_prompts_total_value) / equal_prompt_qty
+
+            for prompt in calc_prompts:
+                if prompt.include:
+                    prompt.distance_value = prompt_value
+                else:
+                    prompt.distance_value = 0
+
+            self.id_data.location = self.id_data.location
+
+
+class Home_Builder_Object_Props(PropertyGroup):
+
+    mod_name: StringProperty(name="Mod Name", default="")
+
+    connected_object: PointerProperty(name="Connected Object",
+                                      type=bpy.types.Object,
+                                      description="This is the used to store objects that are connected together.")# type: ignore
+
+    calculators: CollectionProperty(type=Calculator, name="Calculators")# type: ignore
+    calculator_distance: FloatProperty(name="Calculator Distance",subtype='DISTANCE')# type: ignore
+    calculator_index: IntProperty(name="Calculator Index")# type: ignore
+
+    def add_property(self,name,type,value,combobox_items=[]):
+        obj = self.id_data
+        if type == 'CHECKBOX':
+            obj[name] = value
+            obj.id_properties_ensure()
+            pm = obj.id_properties_ui(name)
+            pm.update(description='HOME_BUILDER_PROP')
+
+        if type == 'DISTANCE':
+            obj[name] = value
+            obj.id_properties_ensure()
+            pm = obj.id_properties_ui(name)
+            pm.update(subtype='DISTANCE',description='HOME_BUILDER_PROP')
+
+        if type == 'ANGLE':
+            obj[name] = value
+            obj.id_properties_ensure()
+            pm = obj.id_properties_ui(name)
+            pm.update(subtype='ANGLE',description='HOME_BUILDER_PROP')
+
+        if type == 'PERCENTAGE':
+            obj[name] = value
+            obj.id_properties_ensure()
+            pm = obj.id_properties_ui(name)
+            pm.update(subtype='PERCENTAGE',min=0,max=100,description='HOME_BUILDER_PROP')
+
+        if type == 'QUANTITY':
+            obj[name] = value
+            obj.id_properties_ensure()
+            pm = obj.id_properties_ui(name)
+            pm.update(min=0,description='HOME_BUILDER_PROP')
+
+        if type == 'COMBOBOX':
+            obj[name] = value
+            cb_list = []
+            for item in combobox_items:
+                tup_item = (item,item,item)
+                cb_list.append(tup_item)
+            pm = obj.id_properties_ui(name)
+            pm.update(description='HOME_BUILDER_PROP',items=cb_list)
+
+    def add_calculator(self,calculator_name,calculator_object):
+        calculator = self.calculators.add()
+        calculator.distance_obj = calculator_object
+        calculator.name = calculator_name
+        return calculator
+
+    def driver_prop(self, prop_name, expression, variables=[]):
+        """Add driver to Blender Property
+
+        Args:
+            prop_name: Name of the property
+            expression: Expression to set
+            variables: Variables to use in the expression
+
+        """
+
+        driver = self.id_data.driver_add(f'["{prop_name}"]')
+        hb_utils.add_driver_variables(driver,variables)
+        driver.driver.expression = expression
+
+    def add_driver(self,property_name,index,expression,variables):
+        if index == -1:
+            driver = self.id_data.driver_add(property_name)
+        else:
+            driver = self.id_data.driver_add(property_name,index)
+        hb_utils.add_driver_variables(driver,variables)
+        driver.driver.expression = expression
+
+    def var_prop(self, prop_name, name):
+        """Get a variable from a property"""
+        return Variable(self.id_data,'["' + prop_name + '"]',name)
+
+    @classmethod
+    def register(cls):
+        bpy.types.Object.home_builder = PointerProperty(
+            name="PyCab Props",
+            description="PyCab Props",
+            type=cls,
+        )
+
+    @classmethod
+    def unregister(cls):
+        if hasattr(bpy.types.Object, 'home_builder'):
+            del bpy.types.Object.home_builder
+
+
+
+def get_molding_categories(self, context):
+    """Get molding categories for enum dropdown across all library paths."""
+    from .product_libraries.frameless.operators import ops_crown
+    return ops_crown.get_molding_categories()
+
+
+def get_molding_items(self, context):
+    """Get molding items in the selected category for enum dropdown."""
+    category = self.molding_category if hasattr(self, 'molding_category') else ''
+    if not category or category == 'NONE':
+        return [('NONE', "Select Category First", "")]
+
+    from .product_libraries.frameless.operators import ops_crown
+    items_data = ops_crown.get_molding_items(category)
+    items = [(item['name'], item['name'], item['name']) for item in items_data]
+
+    return items if items else [('NONE', "No Moldings", "")]
+
+
+
+class Home_Builder_Scene_Props(PropertyGroup):
+    main_tab: EnumProperty(name="Library Tabs",
+                          items=[('ROOM',"Room","Show the Room Library"),
+                                 ('PRODUCTS',"Product","Show the Products Library")],
+                          default='ROOM',
+                          update=update_main_tab)# type: ignore
+
+    product_tab: EnumProperty(name="Product Tab",
+                          items=[('FRAMELESS',"Frameless","Show the Frameless Library"),
+                                 ('FACE FRAME',"Custom Wood Products - Face Frame","Show the Custom Wood Products - Face Frame Library"),
+                                 ('CLOSET',"Pulito - Closet","Show the Pulito - Closet Library")],
+                          default='FRAMELESS',
+                          update=update_product_tab)# type: ignore
+
+    room_name: StringProperty(name="Room Name", default="")  # type: ignore
+    room_type: StringProperty(name="Room Type", default="")  # type: ignore
+    sort_order: IntProperty(name="Sort Order", default=0, description="Order for sorting scenes") # type: ignore
+
+    wall_type: EnumProperty(name="Wall Type",
+                          items=[('Exterior',"Exterior","Exterior Wall"),
+                                 ('Interior',"Interior","Interior Wall"),
+                                 ('Half',"Half","Half Wall"),
+                                 ('Fake',"Fake","Fake Wall")],
+                          default='Exterior')# type: ignore
+
+    ceiling_height: FloatProperty(name="Ceiling Height", default=inch(96),subtype='DISTANCE',precision=5,update=update_ceiling_height)  # type: ignore
+    half_wall_height: FloatProperty(name="Half Wall Height", default=inch(42),subtype='DISTANCE',precision=5)  # type: ignore
+    fake_wall_height: FloatProperty(name="Fake Wall Height", default=inch(34),subtype='DISTANCE',precision=5)  # type: ignore
+    wall_thickness: FloatProperty(name="Wall Thickness", default=inch(4.5),subtype='DISTANCE',precision=5)  # type: ignore
+    exterior_wall_thickness: FloatProperty(name="Exterior Wall Thickness", default=inch(6),subtype='DISTANCE',precision=5)# type: ignore
+    interior_wall_thickness: FloatProperty(name="Interior Wall Thickness", default=inch(4.5),subtype='DISTANCE',precision=5)# type: ignore
+
+    door_single_width: FloatProperty(name="Door Single Width", default=inch(36),subtype='DISTANCE',precision=5)  # type: ignore
+    door_double_width: FloatProperty(name="Door Double Width", default=inch(72),subtype='DISTANCE',precision=5)  # type: ignore
+    door_height: FloatProperty(name="Door Height", default=inch(84),subtype='DISTANCE',precision=5)  # type: ignore
+    window_width: FloatProperty(name="Window Width", default=inch(34),subtype='DISTANCE',precision=5)  # type: ignore
+    window_height: FloatProperty(name="Window Height", default=inch(34),subtype='DISTANCE',precision=5)  # type: ignore
+    window_height_from_floor: FloatProperty(name="Window Height From Floor", default=inch(36),subtype='DISTANCE',precision=5)  # type: ignore
+
+    wall_material: PointerProperty(name="Wall Material", type=bpy.types.Material, update=update_wall_material)# type: ignore
+
+    show_entry_doors_and_windows: BoolProperty(name="Show Entry Doors and Windows", default=False)  # type: ignore
+    show_obstacles: BoolProperty(name="Show Obstacles", default=False)  # type: ignore
+    show_decorations: BoolProperty(name="Show Decorations", default=False)  # type: ignore
+    show_materials: BoolProperty(name="Show Materials", default=False)  # type: ignore
+    show_room_settings: BoolProperty(name="Show Room Settings", default=False)  # type: ignore
+    show_link_objects_from_rooms: BoolProperty(name="Show Link Objects From Rooms", default=False)  # type: ignore
+
+    show_entry_door_and_window_cages: BoolProperty(name="Show Entry Door and Window Cages", default=True,update=update_show_entry_door_and_window_cages)  # type: ignore
+
+    # ---- Room molding packages ----
+    # Per-room dropdowns; picking one applies the package to the whole
+    # room immediately (see molding/ops.apply_scene_packages).
+    molding_crown_package: EnumProperty(
+        name="Crown Molding",
+        description="Crown molding package applied across this room's upper and tall cabinets",
+        items=_molding_crown_items,
+        update=update_molding_package,
+    )  # type: ignore
+    molding_base_package: EnumProperty(
+        name="Base Molding",
+        description="Base molding package applied across this room's base and tall cabinets",
+        items=_molding_base_items,
+        update=update_molding_package,
+    )  # type: ignore
+    molding_light_rail_package: EnumProperty(
+        name="Light Rail",
+        description="Light-rail package applied under this room's upper cabinets",
+        items=_molding_light_rail_items,
+        update=update_molding_package,
+    )  # type: ignore
+    molding_base_include_recessed: BoolProperty(
+        name="Include Recessed Toe Kicks",
+        description="Run base molding across recessed (notched) toe kicks at each cabinet's setback face; otherwise the molding returns into the finished kick",
+        default=False,
+        update=update_molding_package,
+    )  # type: ignore
+    molding_crown_reveal: FloatProperty(
+        name="Crown Reveal",
+        description="Exposed face-frame band between the top of the doors and the crown molding - the crown mounts this distance above the door top",
+        default=inch(0.625), min=0.0,
+        unit='LENGTH', precision=4,
+        update=update_molding_package,
+    )  # type: ignore
+    molding_crown_stack_offset: FloatProperty(
+        name="Stack Offset",
+        description="For stacked crown packages: how far up the spacer the crown molding sits, measured from the spacer's bottom",
+        default=inch(3.5), min=0.0,
+        unit='LENGTH', precision=4,
+        update=update_molding_package,
+    )  # type: ignore
+    molding_crown_furniture_cap: BoolProperty(
+        name="Furniture Cap",
+        description="Cap the cabinet tops with a furniture cap - independent of the crown package below it",
+        default=False,
+        update=update_molding_package,
+    )  # type: ignore
+    molding_cap_offset: FloatProperty(
+        name="Cap Offset",
+        description="Adjust the furniture cap from its default position sitting on top of the tallest molding (negative lowers it)",
+        default=0.0,
+        soft_min=-inch(6.0), soft_max=inch(6.0),
+        unit='LENGTH', precision=4,
+        update=update_molding_package,
+    )  # type: ignore
+    molding_crown_profile: EnumProperty(
+        name="Crown Profile",
+        description="Crown profile from the installed molding pack (Default uses the package's standard profile)",
+        items=_molding_crown_profile_items,
+        update=update_molding_package,
+    )  # type: ignore
+    molding_spacer_profile: EnumProperty(
+        name="Spacer Profile",
+        description="Spacer profile from the installed molding pack (Default uses the package's standard profile)",
+        items=_molding_spacer_profile_items,
+        update=update_molding_package,
+    )  # type: ignore
+    molding_cap_profile: EnumProperty(
+        name="Furniture Cap Profile",
+        description="Furniture cap profile from the installed molding pack (Default uses the package's standard profile)",
+        items=_molding_cap_profile_items,
+        update=update_molding_package,
+    )  # type: ignore
+    molding_base_profile: EnumProperty(
+        name="Base Molding Profile",
+        description="Base molding profile from the installed molding pack (Default uses the package's standard profile)",
+        items=_molding_base_profile_items,
+        update=update_molding_package,
+    )  # type: ignore
+    molding_base_shoe: BoolProperty(
+        name="Base Shoe",
+        description="Apply a base shoe along the toe kicks - against the front of the base molding when one is selected, directly at the kick face otherwise",
+        default=False,
+        update=update_molding_package,
+    )  # type: ignore
+    molding_light_rail_profile: EnumProperty(
+        name="Light Rail Profile",
+        description="Light-rail profile from the installed molding pack (Default uses the package's standard profile)",
+        items=_molding_light_rail_profile_items,
+        update=update_molding_package,
+    )  # type: ignore
+
+    # Molding library selection
+    molding_category: EnumProperty(
+        name="Molding Category",
+        description="Select molding category",
+        items=get_molding_categories
+    )# type: ignore
+
+    molding_selection: EnumProperty(
+        name="Molding",
+        description="Select molding profile",
+        items=get_molding_items
+    )# type: ignore
+
+
+    # ==========================================================================
+    # ANNOTATION PROPERTIES
+    # ==========================================================================
+
+    # Line properties
+    annotation_line_thickness: FloatProperty(
+        name="Line Thickness",
+        description="Thickness of annotation lines",
+        default=inch(.05),
+        min=0.0005,
+        max=0.1,
+        precision=4,
+        unit='LENGTH',
+        update=update_line_thickness
+    )# type: ignore
+
+    annotation_line_color: FloatVectorProperty(
+        name="Line Color",
+        description="Color for annotation lines",
+        subtype='COLOR',
+        default=(0.0, 0.0, 0.0),
+        min=0.0,
+        max=1.0,
+        update=update_line_color
+    )# type: ignore
+
+    # Text properties
+    annotation_font: PointerProperty(
+        name="Font",
+        description="Font for text annotations",
+        type=bpy.types.VectorFont,
+        update=update_font
+    )# type: ignore
+
+    annotation_text_size: FloatProperty(
+        name="Text Size",
+        description="Size of text annotations",
+        default=0.05,
+        min=0.001,
+        max=2.0,
+        precision=4,
+        unit='LENGTH',
+        update=update_text_size
+    )# type: ignore
+
+    annotation_text_color: FloatVectorProperty(
+        name="Text Color",
+        description="Color for text annotations",
+        subtype='COLOR',
+        default=(0.0, 0.0, 0.0),
+        min=0.0,
+        max=1.0,
+        update=update_text_color
+    )# type: ignore
+
+    # Dimension properties
+    annotation_dimension_text_size: FloatProperty(
+        name="Dimension Text Size",
+        description="Size of dimension text",
+        default=inch(2),
+        min=0.001,
+        max=2.0,
+        precision=4,
+        unit='LENGTH',
+        update=update_dimension_text_size
+    )# type: ignore
+
+    annotation_dimension_tick_length: FloatProperty(
+        name="Tick Length",
+        description="Size of dimension ticks",
+        default=inch(1),
+        min=0.001,
+        max=1.0,
+        precision=4,
+        unit='LENGTH',
+        update=update_dimension_tick_length
+    )# type: ignore
+
+    annotation_dimension_line_thickness: FloatProperty(
+        name="Dimension Line Thickness",
+        description="Thickness of dimension lines",
+        default=inch(.05),
+        min=0.0001,
+        max=0.1,
+        precision=4,
+        unit='LENGTH',
+        update=update_dimension_line_thickness
+    )# type: ignore
+
+    annotation_dimension_tick_thickness: FloatProperty(
+        name="Dimension Tick Thickness",
+        description="Thickness of dimension ticks",
+        default=inch(.05),
+        min=0.0001,
+        max=0.1,
+        precision=4,
+        unit='LENGTH',
+        update=update_dimension_line_thickness
+    )# type: ignore
+
+    annotation_dimension_extend_line: FloatProperty(
+        name="Extend Line",
+        description="Size of dimension extend line",
+        default=inch(1),
+        min=0.001,
+        max=1.0,
+        precision=4,
+        unit='LENGTH',
+        update=update_dimension_tick_length
+    )# type: ignore
+
+    # ==========================================================================
+    # AUTO-SCALE ANNOTATION PROPERTIES (Paper Space)
+    # ==========================================================================
+
+    annotation_auto_scale: BoolProperty(
+        name="Auto Scale",
+        description="Automatically scale annotation sizes to maintain consistent "
+                    "paper appearance when drawing scale changes",
+        default=True,
+        update=update_auto_scale
+    )# type: ignore
+
+    # Paper-space sizes (in inches on paper)
+    annotation_text_paper_height: FloatProperty(
+        name="Text Height (Paper)",
+        description="Text height on paper in inches",
+        default=0.15,
+        min=0.01,
+        max=1.0,
+        precision=4,
+        step=1,
+        update=update_annotation_paper_size
+    )# type: ignore
+
+    annotation_line_paper_thickness: FloatProperty(
+        name="Line Thickness (Paper)",
+        description="Annotation line thickness on paper in inches",
+        default=0.004,
+        min=0.001,
+        max=0.1,
+        precision=4,
+        step=1,
+        update=update_annotation_paper_size
+    )# type: ignore
+
+    annotation_dim_text_paper_height: FloatProperty(
+        name="Dim Text Height (Paper)",
+        description="Dimension text height on paper in inches",
+        default=0.15,  # matched to annotation_text_paper_height
+        min=0.01,
+        max=1.0,
+        precision=4,
+        step=1,
+        update=update_annotation_paper_size
+    )# type: ignore
+
+    annotation_dim_tick_paper_length: FloatProperty(
+        name="Dim Tick Length (Paper)",
+        description="Dimension tick mark length on paper in inches",
+        default=0.04,
+        min=0.01,
+        max=0.5,
+        precision=4,
+        step=1,
+        update=update_annotation_paper_size
+    )# type: ignore
+
+    annotation_dim_line_paper_thickness: FloatProperty(
+        name="Dim Line Thickness (Paper)",
+        description="Dimension line thickness on paper in inches",
+        default=0.004,
+        min=0.001,
+        max=0.1,
+        precision=4,
+        step=1,
+        update=update_annotation_paper_size
+    )# type: ignore
+
+    annotation_dim_tick_paper_thickness: FloatProperty(
+        name="Dim Tick Thickness (Paper)",
+        description="Dimension tick thickness on paper in inches",
+        default=0.002,
+        min=0.001,
+        max=0.1,
+        precision=4,
+        step=1,
+        update=update_annotation_paper_size
+    )# type: ignore
+
+    @classmethod
+    def register(cls):
+        bpy.types.Scene.home_builder = PointerProperty(
+            name="CAFFMob Draw Props",
+            description="CAFFMob Draw Props",
+            type=cls,
+        )
+
+    @classmethod
+    def unregister(cls):
+        if hasattr(bpy.types.Scene, 'home_builder'):
+            del bpy.types.Scene.home_builder
+
+class Home_Builder_Window_Manager_Props(PropertyGroup):
+
+    progress: FloatProperty(name="Progress",default=1.0)# type: ignore
+
+    def get_user_preferences(self,context):
+        preferences = context.preferences
+        add_on_prefs = preferences.addons[__package__].preferences
+        return add_on_prefs
+
+    @classmethod
+    def register(cls):
+        bpy.types.WindowManager.home_builder = PointerProperty(
+            name="CAFFMob Draw Props",
+            description="CAFFMob Draw Props",
+            type=cls,
+        )
+
+    @classmethod
+    def unregister(cls):
+        if hasattr(bpy.types.WindowManager, 'home_builder'):
+            del bpy.types.WindowManager.home_builder
+
+class HB_Wall_Editor_Props(PropertyGroup):
+    """Propriedades globais e de instância para a ferramenta Editor de Parede."""
+    unit_system: EnumProperty(
+        name="Unidade de Medida",
+        description="Unidade selecionada para entrada e exibição dinâmica",
+        items=[
+            ('MM', "mm (Milímetros)", "Milímetros"),
+            ('CM', "cm (Centímetros)", "Centímetros"),
+            ('M', "m (Metros)", "Metros"),
+            ('IN', "in (Polegadas)", "Polegadas"),
+            ('FT', "ft (Pés)", "Pés"),
+        ],
+        default='MM'
+    ) # type: ignore
+
+    length: FloatProperty(
+        name="Comprimento",
+        description="Comprimento da parede em metros",
+        default=1.7,
+        unit='LENGTH',
+        precision=4
+    ) # type: ignore
+
+    height: FloatProperty(
+        name="Altura",
+        description="Altura da parede em metros",
+        default=2.6,
+        unit='LENGTH',
+        precision=4
+    ) # type: ignore
+
+    thickness: FloatProperty(
+        name="Espessura",
+        description="Espessura da parede em metros",
+        default=0.15,
+        unit='LENGTH',
+        precision=4
+    ) # type: ignore
+
+    offset: FloatProperty(
+        name="Afastamento",
+        description="Afastamento do chão (nível) em metros",
+        default=0.0,
+        unit='LENGTH',
+        precision=4
+    ) # type: ignore
+
+    angle_absolute: FloatProperty(
+        name="Ângulo Absoluto",
+        description="Ângulo absoluto no plano (padrão 270° - aponta para baixo)",
+        default=4.71238898,
+        unit='ROTATION',
+        subtype='ANGLE',
+        precision=4
+    ) # type: ignore
+
+    angle_relative: FloatProperty(
+        name="Ângulo Relativo",
+        description="Ângulo em relação à parede anterior",
+        default=4.71238898,
+        unit='ROTATION',
+        subtype='ANGLE',
+        precision=4
+    ) # type: ignore
+
+    orientation: EnumProperty(
+        name="Orientação",
+        description="Lado da espessura em relação ao eixo de desenho",
+        items=[
+            ('RIGHT', "Direita", "Espessura alinhada à direita do vetor"),
+            ('LEFT', "Esquerda", "Espessura alinhada à esquerda do vetor"),
+        ],
+        default='RIGHT'
+    ) # type: ignore
+
+    step_linear: FloatProperty(
+        name="Incr. Linear",
+        description="Passo de ajuste linear",
+        default=0.05,
+        unit='LENGTH',
+        precision=4
+    ) # type: ignore
+
+    step_angular: FloatProperty(
+        name="Incr. Angular",
+        description="Trava magnética de rotação (padrão 45°)",
+        default=0.78539816,
+        unit='ROTATION',
+        subtype='ANGLE',
+        precision=4
+    ) # type: ignore
+
+    wall_type: EnumProperty(
+        name="Tipo da Parede",
+        description="Tipo de estrutura da parede",
+        items=[
+            ('NORMAL', "Normal", "Parede alvenaria / padrão"),
+            ('DRYWALL', "Drywall", "Parede gesso drywall"),
+        ],
+        default='NORMAL'
+    ) # type: ignore
+
+    save_as_default: BoolProperty(
+        name="Utilizar valores como padrão",
+        description="Salvar estes valores como padrão para as próximas paredes",
+        default=False
+    ) # type: ignore
+
+    @classmethod
+    def register(cls):
+        bpy.types.Scene.hb_wall_editor = PointerProperty(
+            name="Wall Editor Props",
+            description="Propriedades do Editor de Parede",
+            type=cls,
+        )
+
+    @classmethod
+    def unregister(cls):
+        if hasattr(bpy.types.Scene, 'hb_wall_editor'):
+            del bpy.types.Scene.hb_wall_editor
+
+
+classes = (
+    Calculator_Prompt,
+    Calculator,
+    Home_Builder_Object_Props,
+    Home_Builder_Scene_Props,
+    Home_Builder_Window_Manager_Props,
+    HB_Wall_Editor_Props,
+)
+
+def register():
+    for cls in classes:
+        reg_cls = (cls if cls.is_registered else getattr(bpy.types, cls.__name__, None))
+        if reg_cls:
+            try:
+                bpy.utils.unregister_class(reg_cls)
+            except Exception:
+                pass
+        try:
+            bpy.utils.register_class(cls)
+        except Exception:
+            pass
+
+
+def unregister():
+    for cls in reversed(classes):
+        reg_cls = (cls if cls.is_registered else getattr(bpy.types, cls.__name__, None))
+        if reg_cls:
+            try:
+                bpy.utils.unregister_class(reg_cls)
+            except Exception:
+                pass

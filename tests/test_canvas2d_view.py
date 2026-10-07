@@ -1,9 +1,9 @@
-"""Testes do núcleo das telas 2D (T009): `blendertomob/canvas2d/view.py`."""
+"""Testes do núcleo das telas 2D (T009): `caffmob_draw/canvas2d/view.py`."""
 
 import unittest
 
 import _bootstrap  # noqa: F401
-from blendertomob.canvas2d import view as v
+from caffmob_draw.canvas2d import view as v
 
 
 class ViewTest(unittest.TestCase):

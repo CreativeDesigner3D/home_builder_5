@@ -16,9 +16,9 @@ import bpy
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-import blendertomob as addon  # noqa: E402
-from blendertomob.cutting import part_extractor  # noqa: E402
-from blendertomob.standards import api as standards_api  # noqa: E402
+import caffmob_draw as addon  # noqa: E402
+from caffmob_draw.cutting import part_extractor  # noqa: E402
+from caffmob_draw.standards import api as standards_api  # noqa: E402
 
 FIXTURE = ROOT / "tests" / "fixtures" / "dimensionexport_me_moveis.xml"
 
@@ -32,10 +32,10 @@ assert active is not None and active.name == "Padrão Brasil", active and active
 assert standards_api.get_value(scene, 'COZ.sheets.LAT.thickness') == 15.0
 
 # 2. Gabinetes: um balcão frameless e um roupeiro closets.
-assert bpy.ops.btm.standards_duplicate() == {'FINISHED'}
+assert bpy.ops.caffmob.standards_duplicate() == {'FINISHED'}
 assert standards_api.active_definition(scene).name.startswith("Padrão Brasil")
-from blendertomob.product_libraries.frameless import types_frameless  # noqa: E402
-from blendertomob.product_libraries.closets import types_closets  # noqa: E402
+from caffmob_draw.product_libraries.frameless import types_frameless  # noqa: E402
+from caffmob_draw.product_libraries.closets import types_closets  # noqa: E402
 
 cabinet = types_frameless.BaseCabinet()
 cabinet.create("Balcão Teste")
@@ -65,20 +65,20 @@ again, _ = part_extractor.extract_production_parts(bpy.context)
 assert [p.uid for p in again] == [p.uid for p in parts], "uids instáveis entre extrações"
 
 # 5. Plano de corte, JSON v2 e CSV.
-assert bpy.ops.btm.calculate_nesting() == {'FINISHED'}
+assert bpy.ops.caffmob.calculate_nesting() == {'FINISHED'}
 assert not scene.btm_settings.cut_plan_stale
 with tempfile.TemporaryDirectory() as directory:
     json_path = Path(directory) / 'projeto.json'
-    assert bpy.ops.btm.export_cut_plan_json(filepath=str(json_path)) == {'FINISHED'}
+    assert bpy.ops.caffmob.export_cut_plan_json(filepath=str(json_path)) == {'FINISHED'}
     payload = json.loads(json_path.read_text(encoding='utf-8'))
-    assert payload['schema_version'] == '2.0.0'
+    assert payload['schema_version'] == '2.1.0'
     assert len(payload['parts']) == len(parts)
     csv_path = Path(directory) / 'pecas.csv'
-    assert bpy.ops.btm.export_parts_csv(filepath=str(csv_path)) == {'FINISHED'}
+    assert bpy.ops.caffmob.export_parts_csv(filepath=str(csv_path)) == {'FINISHED'}
     assert csv_path.read_text(encoding='utf-8-sig').count('\n') == len(parts) + 1
 
 # 6. Importar o padrão do Promob.
-assert bpy.ops.btm.standards_import_promob(filepath=str(FIXTURE)) == {'FINISHED'}
+assert bpy.ops.caffmob.standards_import_promob(filepath=str(FIXTURE)) == {'FINISHED'}
 names = [d.name for d in scene.btm_standards.definitions]
 assert "ME MOVEIS - COZ. ESCR." in names, names
 

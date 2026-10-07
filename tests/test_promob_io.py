@@ -9,8 +9,8 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import _bootstrap  # noqa: F401
-from blendertomob.data import dimension_schema as ds
-from blendertomob.standards import io_promob
+from caffmob_draw.data import dimension_schema as ds
+from caffmob_draw.standards import io_promob
 
 FIXTURE = _bootstrap.FIXTURES / "dimensionexport_me_moveis.xml"
 

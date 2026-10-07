@@ -1,4 +1,4 @@
-# Armadilhas da API do Blender que já afetam (ou podem afetar) o BlenderToMob
+# Armadilhas da API do Blender que já afetam (ou podem afetar) o CAFFMob Draw
 
 Resumo dirigido ao projeto das páginas `info_gotcha*.md`, `info_best_practice.md` e notas da referência 5.2.
 Para o texto completo: `python3 docs/rag/tools/rag_search.py "<assunto>" --category guide --full`.

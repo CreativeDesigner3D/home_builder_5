@@ -1,10 +1,10 @@
-"""Testes do modelo de paredes do Editor de Paredes (T010, T058): `blendertomob/walls2d/model.py`."""
+"""Testes do modelo de paredes do Editor de Paredes (T010, T058): `caffmob_draw/walls2d/model.py`."""
 
 import math
 import unittest
 
 import _bootstrap  # noqa: F401
-from blendertomob.walls2d import model as m
+from caffmob_draw.walls2d import model as m
 
 
 class ModeloTest(unittest.TestCase):

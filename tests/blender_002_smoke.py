@@ -17,23 +17,23 @@ import bpy
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-import blendertomob as addon  # noqa: E402
+import caffmob_draw as addon  # noqa: E402
 
 addon.register()
 addon.load_file_post(None)
 
-from blendertomob import hb_types, hb_utils  # noqa: E402
-from blendertomob.canvas2d.view import View2D  # noqa: E402
-from blendertomob.cutting import json_exporter, part_extractor  # noqa: E402
-from blendertomob.geometry_free import mesh  # noqa: E402
-from blendertomob.measure import scene_cotas  # noqa: E402
-from blendertomob.move_over import align, ops_move_on_wall  # noqa: E402
-from blendertomob.move_over import scene as move_scene  # noqa: E402
-from blendertomob.operators import ops_wall_extras  # noqa: E402
-from blendertomob.product_libraries.closets import types_closets as tc  # noqa: E402
-from blendertomob.product_libraries.frameless import types_frameless as tf  # noqa: E402
-from blendertomob.selection import classify  # noqa: E402
-from blendertomob.walls2d import apply, model, ops_editor, props, scene_io, window  # noqa: E402
+from caffmob_draw import hb_types, hb_utils  # noqa: E402
+from caffmob_draw.canvas2d.view import View2D  # noqa: E402
+from caffmob_draw.cutting import json_exporter, part_extractor  # noqa: E402
+from caffmob_draw.geometry_free import mesh  # noqa: E402
+from caffmob_draw.measure import scene_cotas  # noqa: E402
+from caffmob_draw.move_over import align, ops_move_on_wall  # noqa: E402
+from caffmob_draw.move_over import scene as move_scene  # noqa: E402
+from caffmob_draw.operators import ops_wall_extras  # noqa: E402
+from caffmob_draw.product_libraries.closets import types_closets as tc  # noqa: E402
+from caffmob_draw.product_libraries.frameless import types_frameless as tf  # noqa: E402
+from caffmob_draw.selection import classify  # noqa: E402
+from caffmob_draw.walls2d import apply, model, ops_editor, props, scene_io, window  # noqa: E402
 
 ctx = bpy.context
 scene = ctx.scene
@@ -53,9 +53,9 @@ def close(a, b, tol=1e-4):
 
 
 # 1. Registro.
-for idname in ('BTM_OT_wall_editor', 'BTM_OT_wall_editor_modal', 'BTM_OT_wall_editor_ok', 'BTM_OT_wall_remove',
-               'BTM_OT_wall_lower', 'BTM_OT_wall_visibility', 'BTM_OT_geometry_create', 'BTM_OT_geometry_duplicate',
-               'BTM_OT_move_on_wall', 'BTM_OT_move_over_drag'):
+for idname in ('CAFFMOB_OT_wall_editor', 'CAFFMOB_OT_wall_editor_modal', 'CAFFMOB_OT_wall_editor_ok', 'CAFFMOB_OT_wall_remove',
+               'CAFFMOB_OT_wall_lower', 'CAFFMOB_OT_wall_visibility', 'CAFFMOB_OT_geometry_create', 'CAFFMOB_OT_geometry_duplicate',
+               'CAFFMOB_OT_move_on_wall', 'CAFFMOB_OT_move_over_drag'):
     assert bpy.types.Operator.bl_rna_get_subclass_py(idname) is not None, idname
 for idname in ('BTM_PT_wall_editor_tools', 'BTM_PT_wall_editor_segment', 'BTM_PT_wall_editor_grid',
                'BTM_PT_object_properties'):
@@ -144,7 +144,7 @@ for obj in walls():
 # 3c. Pisos e tetos existentes acompanham o contorno no OK (A005); paredes da camada nova aparecem como referência
 #     na planta (A004).
 apply.apply_plan(ctx, model.WallPlan([model.rectangle(4.0, 3.0)]))
-assert bpy.ops.home_builder_walls.add_floor() == {'FINISHED'}
+assert bpy.ops.caffmob_walls.add_floor() == {'FINISHED'}
 floor = next(o for o in scene.objects if o.get('IS_FLOOR_BP'))
 floor_width = floor.dimensions.x + floor.dimensions.y
 plan = scene_io.read_plan(scene)
@@ -156,7 +156,7 @@ assert floor.dimensions.x + floor.dimensions.y > floor_width + 0.5, (floor_width
 for obj in walls():
     ops_wall_extras.remove_wall(obj)
 bpy.data.objects.remove(floor, do_unlink=True)
-from blendertomob.geometry import mesh_gen  # noqa: E402
+from caffmob_draw.geometry import mesh_gen  # noqa: E402
 btm_wall = bpy.data.objects.new("ParedeNova", bpy.data.meshes.new("ParedeNova"))
 scene.collection.objects.link(btm_wall)
 btm_wall.btm_plane.object_kind = 'WALL'
@@ -182,7 +182,7 @@ props.end()
 # 3e. Todo operador citado nos painéis, menus e HUD do add-on existe (A002).
 import re  # noqa: E402
 missing = set()
-for path in (ROOT / "blendertomob").rglob("*.py"):
+for path in (ROOT / "caffmob_draw").rglob("*.py"):
     for idname in re.findall(r'\.operator(?:_menu_enum)?\(\s*"([a-z0-9_]+\.[a-z0-9_]+)"', path.read_text()):
         module, name = idname.split(".")
         try:
@@ -211,15 +211,15 @@ payload = json_exporter.build_global_payload(project={"name": "Smoke", "uid": "P
                                              modules=part_extractor.module_entries(scene))
 assert json_exporter.validate_global_json(payload) == [], json_exporter.validate_global_json(payload)
 with ctx.temp_override(active_object=placa, selected_objects=[placa]):
-    assert bpy.ops.btm.geometry_duplicate() == {'FINISHED'}
+    assert bpy.ops.caffmob.geometry_duplicate() == {'FINISHED'}
 copy = ctx.view_layer.objects.active
 assert copy != placa and close(copy.location.x, 0.8) and close(copy.btm_geometry.thickness, 0.025)
 with ctx.temp_override(active_object=copy):
-    bpy.ops.btm.geometry_mirror()
+    bpy.ops.caffmob.geometry_mirror()
 assert close(copy.location.x, 0.0)
 name = copy.name
 with ctx.temp_override(active_object=copy):
-    bpy.ops.btm.geometry_delete()
+    bpy.ops.caffmob.geometry_delete()
 assert name not in bpy.data.objects
 for obj in (placa, caixa):
     bpy.data.objects.remove(obj, do_unlink=True)
@@ -231,26 +231,26 @@ assert len(ops_wall_extras.chain_of(first)) == 4
 loose = mesh.create_object(ctx, 'CAIXA', "Solto")
 loose.parent = first
 with ctx.temp_override(active_object=first, selected_objects=[first]):
-    bpy.ops.btm.wall_lower()
+    bpy.ops.caffmob.wall_lower()
 assert first.get('btm_wall_lowered') and first.hide_viewport
 assert any(c.get('btm_lowered_proxy') for c in first.children)
 with ctx.temp_override(active_object=first, selected_objects=[first]):
-    bpy.ops.btm.wall_lower()
+    bpy.ops.caffmob.wall_lower()
 assert not first.get('btm_wall_lowered') and not first.hide_viewport
 assert not any(c.get('btm_lowered_proxy') for c in first.children)
 with ctx.temp_override(active_object=first, selected_objects=[first]):
-    bpy.ops.btm.wall_visibility(mode='WIRE')
+    bpy.ops.caffmob.wall_visibility(mode='WIRE')
 assert first.display_type == 'WIRE'
 with ctx.temp_override(active_object=first, selected_objects=[first]):
-    bpy.ops.btm.wall_visibility(mode='VISIBLE')
+    bpy.ops.caffmob.wall_visibility(mode='VISIBLE')
 assert first.display_type == 'TEXTURED'
 with ctx.temp_override(active_object=first, selected_objects=[first]):
-    bpy.ops.btm.wall_remove(mode='SEGMENT', remove_modules=False)
+    bpy.ops.caffmob.wall_remove(mode='SEGMENT', remove_modules=False)
 assert len(walls()) == 3 and bpy.data.objects["Solto"].parent is None
 assert [(c.closed, c.segment_count()) for c in scene_io.read_plan(scene).chains] == [(False, 3)]
 keep = walls()[0]
 with ctx.temp_override(active_object=keep, selected_objects=[keep]):
-    bpy.ops.btm.wall_remove(mode='KEEP')
+    bpy.ops.caffmob.wall_remove(mode='KEEP')
 assert walls() == [keep]
 
 # 6. "Mover na Parede": o balcão desliza ao longo da parede e para no vizinho.
@@ -468,7 +468,7 @@ hb_types.GeoNodeWall(mureta).set_input('Height', 1.1)
 hb_types.GeoNodeWall(mureta).set_input('End Height', 1.1)
 plan = scene_io.read_plan(scene)
 assert apply.height_mismatches(plan, 2.8) and not any("1100" in t for t in apply.height_mismatches(plan, 2.8))
-from blendertomob.walls2d import apply as _ap  # noqa: E402
+from caffmob_draw.walls2d import apply as _ap  # noqa: E402
 changed = _ap.sync_project_height(ctx, 2.8)                                              # Configurações (D-38)
 assert changed == 3, changed
 assert close(hb_types.GeoNodeWall(mureta).get_input('Height'), 1.1)
@@ -479,7 +479,7 @@ for w in walls():
     ops_wall_extras.remove_wall(w)
 
 # Seta do gizmo com porta (D-31): devolve 0 em vez de erro.
-from blendertomob.inspection import gizmo as _gizmo  # noqa: E402
+from caffmob_draw.inspection import gizmo as _gizmo  # noqa: E402
 _gizmo._state['front'] = types.SimpleNamespace(hinged=True, get=lambda: 45.0)
 assert _gizmo.BTM_GGT_front_open._arrow_get(None) == 0.0
 _gizmo._state['front'] = None
@@ -489,8 +489,8 @@ import math  # noqa: E402
 import os  # noqa: E402
 import tempfile  # noqa: E402
 from mathutils import Vector  # noqa: E402
-from blendertomob.inspection import fronts  # noqa: E402
-from blendertomob.inspection import room_door_math as rd  # noqa: E402
+from caffmob_draw.inspection import fronts  # noqa: E402
+from caffmob_draw.inspection import room_door_math as rd  # noqa: E402
 
 
 def room_door(name, inside, left, double, x):
@@ -543,7 +543,7 @@ addon.register()
 addon.unregister()
 assert not hasattr(bpy.types.Object, 'btm_geometry') and not hasattr(bpy.types.WindowManager, 'btm_wall_editor')
 leftover = []                                    # D-32: nenhum operador do pacote sobra (pelo bl_idname)
-for path in (ROOT / "blendertomob").rglob("*.py"):
+for path in (ROOT / "caffmob_draw").rglob("*.py"):
     for idname in re.findall(r'bl_idname\s*=\s*["\']([a-z0-9_]+\.[a-z0-9_]+)["\']', path.read_text()):
         module, name = idname.split(".")
         try:

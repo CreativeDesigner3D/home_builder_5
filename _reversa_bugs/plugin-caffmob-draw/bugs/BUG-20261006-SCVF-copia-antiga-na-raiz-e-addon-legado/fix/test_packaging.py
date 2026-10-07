@@ -1,0 +1,62 @@
+"""Testes do empacotamento (BUG-20261006-SCVF): só o pacote `blendertomob/` é uma extensão do Blender.
+
+- Reprodução: nenhum `blender_manifest.toml` fora de `blendertomob/` (a raiz do repositório não pode parecer uma
+  extensão com o mesmo id).
+- Regressão: o manifesto do pacote existe e tem o id da extensão; o zip gerado pelo `build.py` leva o manifesto na raiz
+  do arquivo (instalável por Edit › Preferences › Get Extensions › Install from Disk).
+"""
+
+import os
+import pathlib
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import unittest
+import zipfile
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+PACKAGE = ROOT / "blendertomob"
+IGNORED_DIRS = {".git", ".kilo", ".claude", ".agents", "docs", "_reversa_sdd", "_reversa_forward", "_reversa_bugs",
+                "node_modules", "__pycache__"}
+
+
+def manifests():
+    found = []
+    for dirpath, dirnames, filenames in os.walk(ROOT):
+        dirnames[:] = [d for d in dirnames if d not in IGNORED_DIRS]
+        if "blender_manifest.toml" in filenames:
+            found.append(pathlib.Path(dirpath, "blender_manifest.toml"))
+    return found
+
+
+class EmpacotamentoTest(unittest.TestCase):
+    def test_raiz_nao_e_extensao(self):
+        """Reprodução: o único manifesto de extensão do repositório é o do pacote."""
+        outside = [str(p.relative_to(ROOT)) for p in manifests() if PACKAGE not in p.parents]
+        self.assertEqual(outside, [], "manifesto de extensão fora de blendertomob/ (a raiz parece instalável)")
+
+    def test_manifesto_do_pacote(self):
+        """Regressão: o pacote continua com manifesto válido."""
+        text = (PACKAGE / "blender_manifest.toml").read_text()
+        data = dict(re.findall(r'^(\w+)\s*=\s*"([^"]*)"', text, re.M))
+        self.assertEqual(data["id"], "blendertomob")
+        self.assertEqual(data["type"], "add-on")
+        self.assertTrue(data["blender_version_min"].startswith("5."))
+
+    def test_zip_tem_manifesto_na_raiz(self):
+        """Regressão: o build.py gera um zip com o manifesto na raiz do arquivo."""
+        with tempfile.TemporaryDirectory() as tmp:
+            shutil.copytree(PACKAGE, os.path.join(tmp, "blendertomob"))   # cópia: link exige permissão no Windows
+            shutil.copy(ROOT / "build.py", tmp)
+            subprocess.run([sys.executable, "build.py"], cwd=tmp, check=True, capture_output=True)
+            with zipfile.ZipFile(os.path.join(tmp, "blendertomob.zip")) as zf:
+                names = zf.namelist()
+            self.assertIn("blender_manifest.toml", names)
+            self.assertIn("__init__.py", names)
+            self.assertFalse(any("__pycache__" in n for n in names))
+
+
+if __name__ == "__main__":
+    unittest.main()

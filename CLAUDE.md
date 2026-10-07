@@ -197,7 +197,14 @@ O Reversa escreve **apenas** em `.reversa/` e `_reversa_sdd/`.
 
 ## Como usar
 
-Digite `/reversa` para ativar o Reversa e iniciar ou retomar a análise do projeto.
+Use o fluxo adequado no chat:
+
+- `/reversa` — descobrir e documentar um sistema existente
+- `/reversa-new` — criar PRD e specs para um projeto novo
+- `/reversa-forward` — implementar ou evoluir código a partir das specs
+- `/reversa-migrate` — planejar a migração de um sistema legado
+- `/reversa-docs` — gerar o mini-site visual da documentação
+- `/reversa-agents-help` — consultar o catálogo completo de agentes
 
 ## Comportamento ao ativar
 
@@ -208,11 +215,9 @@ Quando o usuário digitar `/reversa` ou a palavra `reversa` sozinha em uma mensa
 
 ## Regra não-negociável
 
-Nunca apague, modifique ou sobrescreva arquivos pré-existentes do projeto legado.
-O Reversa escreve **apenas** em `.reversa/` e `_reversa_sdd/`.
-
-
-## Política de edição do legado (Reversa)
+Por padrão, nunca apague, modifique ou sobrescreva arquivos pré-existentes do projeto legado:
+o Reversa escreve apenas em `.reversa/`, `_reversa_sdd/`, `_reversa_docs/`, `_reversa_forward/`, `_reversa_bugs/` e `_reversa_refactor/`.
+A única exceção é a política configurável abaixo, controlada exclusivamente pelo usuário.
 
 Antes de criar, modificar ou apagar qualquer arquivo fora das pastas próprias do Reversa, leia `.reversa/reversa-config.json` e obedeça ao resultado:
 
@@ -222,6 +227,9 @@ Antes de criar, modificar ou apagar qualquer arquivo fora das pastas próprias d
 - `allowLegacyEdits: true` com `allowedPaths` vazio ou ausente: projeto liberado; avise uma vez por sessão que a liberação é irrestrita.
 
 Nunca crie nem edite `.reversa/reversa-config.json` por iniciativa própria: pedido na conversa não é liberação implícita, alterações nesse arquivo são ato exclusivo do usuário.
+
+---
+Regenerar o RAG (nova versão da referência): ver "Regenerar" em [`docs/rag/README.md`](docs/rag/README.md).
 
 
 ---
@@ -275,16 +283,16 @@ Nunca crie nem edite `.reversa/reversa-config.json` por iniciativa própria: ped
 
 Use o fluxo adequado no chat:
 
-- `/reversa` — descobrir e documentar um sistema existente
-- `/reversa-new` — criar PRD e specs para um projeto novo
-- `/reversa-forward` — implementar ou evoluir código a partir das specs
-- `/reversa-migrate` — planejar a migração de um sistema legado
-- `/reversa-docs` — gerar o mini-site visual da documentação
-- `/reversa-agents-help` — consultar o catálogo completo de agentes
+- `reversa` — descobrir e documentar um sistema existente
+- `reversa-new` — criar PRD e specs para um projeto novo
+- `reversa-forward` — implementar ou evoluir código a partir das specs
+- `reversa-migrate` — planejar a migração de um sistema legado
+- `reversa-docs` — gerar o mini-site visual da documentação
+- `reversa-agents-help` — consultar o catálogo completo de agentes
 
 ## Comportamento ao ativar
 
-Quando o usuário digitar `/reversa` ou a palavra `reversa` sozinha em uma mensagem:
+Quando o usuário digitar `reversa` sozinho em uma mensagem:
 
 1. Ative o skill `reversa` disponível em `.agents/skills/reversa/SKILL.md`
 2. Leia o SKILL.md na íntegra e siga exatamente as instruções do Reversa
@@ -304,7 +312,6 @@ Antes de criar, modificar ou apagar qualquer arquivo fora das pastas próprias d
 
 Nunca crie nem edite `.reversa/reversa-config.json` por iniciativa própria: pedido na conversa não é liberação implícita, alterações nesse arquivo são ato exclusivo do usuário.
 
----
 
 ## Próximas ações recomendadas (Reversa)
 
@@ -321,17 +328,17 @@ Quando pedirem as próximas ações recomendadas, ou as que não dependem de out
 5. **Ordem recomendada, com o motivo de cada posição:** fechar o que ficou aberto na última rodada, destravar as
    cadeias maiores, agrupar o que sai no mesmo deploy e fazer antes o de menor risco.
 6. Diga a contagem (livres de abertas) e **não execute** nada: só recomende.
-# BlenderToMob — instruções para agentes
+# CAFFMob Draw — instruções para agentes
 
-Extensão do Blender para marcenaria paramétrica e projeto de interiores (inspirada no Promob, herdeira do Home Builder).
+Extensão do Blender para marcenaria paramétrica e projeto de interiores (inspirada no Promob).
 Este arquivo vale para Claude Code, Codex, Kilo e demais agentes (`AGENTS.md` é um link simbólico para ele).
 
 ## Onde editar
 
-- **`blendertomob/` é o pacote da extensão** — é o que `build.py` empacota. Edite sempre aqui.
+- **`caffmob_draw/` é o pacote da extensão** — é o que `build.py` empacota. Edite sempre aqui.
 - Os `*.py`, `operators/`, `product_libraries/` etc. na **raiz** são uma cópia antiga espelhada: não edite, não empacotam.
 - `_reversa_sdd/` contém specs de domínio/arquitetura (geradas pelo Reversa); consulte para regras de negócio.
-- Não versionar: `*.blend`, `blendertomob.zip`, `blender_python_reference_*.zip`, `manual-treinamento-promob.pdf`.
+- Não versionar: `*.blend`, `caffmob_draw.zip`, `blender_python_reference_*.zip`, `manual-treinamento-promob.pdf`.
 
 ## API do Blender: consulte o RAG, não a memória
 
@@ -348,7 +355,7 @@ A referência completa + guia do projeto está em [`docs/rag/`](docs/rag/README.
    python3 docs/rag/tools/rag_search.py --symbol bpy.types.Scene.ray_cast
    python3 docs/rag/tools/rag_search.py "draw handler POST_PIXEL" -k 5
    ```
-3. Depois de editar `blendertomob/`, rode o verificador — `[UNKNOWN in 5.2]` é erro:
+3. Depois de editar `caffmob_draw/`, rode o verificador — `[UNKNOWN in 5.2]` é erro:
    ```bash
    python3 docs/rag/tools/check_api.py
    ```
@@ -356,11 +363,11 @@ A referência completa + guia do projeto está em [`docs/rag/`](docs/rag/README.
 
 ## Regras do código
 
-- Diferenças entre versões do Blender ficam em `blendertomob/compat.py` (via `bpy.app.version`), nunca espalhadas.
+- Diferenças entre versões do Blender ficam em `caffmob_draw/compat.py` (via `bpy.app.version`), nunca espalhadas.
 - Inputs de Geometry Nodes: use `compat.get_gn_input` / `set_gn_input` / `gn_input_data_path` — nunca `mod["Socket_X"]`
   (caminho < 5.2). `hb_utils.py` tem helpers duplicados: mantenha os dois em sincronia ou consolide em `compat.py`.
 - Propriedades `bpy.props` são lidas por atributo (`obj.btm_cabinet.width`), nunca por `obj["..."]` (armazenamento separado desde o 5.0).
-- Operadores que alteram dados: `bl_options = {'REGISTER', 'UNDO'}` (ou `{'UNDO'}`). Código novo usa `bl_idname` `btm.*` ou `blendertomob.*`.
+- Operadores que alteram dados: `bl_options = {'REGISTER', 'UNDO'}` (ou `{'UNDO'}`). Código novo usa `bl_idname` `btm.*` ou `caffmob_draw.*`.
 - Anotações `bpy.props` levam `# type: ignore` (convenção do repo para o Pyright).
 - Todo `draw_handler_add` / `modal_handler_add` / `load_post.append` tem remoção correspondente em todos os caminhos de saída e no `unregister()`.
 - Handlers de aplicação usam `@persistent`; `unregister()` desfaz tudo que `register()` fez (propriedades em `bpy.types.*` inclusive).
@@ -371,10 +378,8 @@ A referência completa + guia do projeto está em [`docs/rag/`](docs/rag/README.
 ## Comandos
 
 ```bash
-ruff check blendertomob/                             # lint
+ruff check caffmob_draw/                             # lint
 python3 docs/rag/tools/check_api.py                  # compatibilidade com a API 5.2
 blender --background --factory-startup --python-exit-code 1 --python tests/blender_smoke.py   # teste de fumaça no Blender
-python3 build.py                                     # gera blendertomob.zip (Edit → Preferences → Get Extensions → Install from Disk)
+python3 build.py                                     # gera caffmob_draw.zip (Edit → Preferences → Get Extensions → Install from Disk)
 ```
-
-Regenerar o RAG (nova versão da referência): ver "Regenerar" em [`docs/rag/README.md`](docs/rag/README.md).

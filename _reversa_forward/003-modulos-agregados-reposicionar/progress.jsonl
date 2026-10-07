@@ -1,0 +1,71 @@
+{"ts": "2026-10-07T02:14:56-03:00", "action": "T001", "status": "done", "files": ["caffmob_draw/customize/spec.py"]}
+{"ts": "2026-10-07T02:14:56-03:00", "action": "T002", "status": "done", "files": ["caffmob_draw/customize/manifest.py"]}
+{"ts": "2026-10-07T02:14:56-03:00", "action": "T003", "status": "done", "files": ["caffmob_draw/aggregates/limits.py"]}
+{"ts": "2026-10-07T02:14:56-03:00", "action": "T004", "status": "done", "files": ["caffmob_draw/aggregates/sweep.py"]}
+{"ts": "2026-10-07T02:14:56-03:00", "action": "T005", "status": "done", "files": ["caffmob_draw/move_over/reposition.py"]}
+{"ts": "2026-10-07T02:14:56-03:00", "action": "T006", "status": "done", "files": ["caffmob_draw/inspection/pivot_math.py"]}
+{"ts": "2026-10-07T02:14:56-03:00", "action": "T007", "status": "done", "files": ["caffmob_draw/customize/props.py"]}
+{"ts": "2026-10-07T02:14:57-03:00", "action": "T008", "status": "done", "files": ["caffmob_draw/aggregates/props.py"]}
+{"ts": "2026-10-07T02:14:57-03:00", "action": "T009", "status": "done", "files": ["caffmob_draw/move_over/props.py"]}
+{"ts": "2026-10-07T02:14:57-03:00", "action": "T010", "status": "done", "files": ["caffmob_draw/data/properties.py"]}
+{"ts": "2026-10-07T02:14:57-03:00", "action": "T011", "status": "done", "files": ["caffmob_draw/__init__.py", "caffmob_draw/customize/__init__.py", "caffmob_draw/aggregates/__init__.py"]}
+{"ts": "2026-10-07T02:15:51-03:00", "action": "T012", "status": "done", "files": ["tests/test_customize_spec.py"]}
+{"ts": "2026-10-07T02:15:51-03:00", "action": "T013", "status": "done", "files": ["tests/test_module_manifest.py"]}
+{"ts": "2026-10-07T02:15:51-03:00", "action": "T014", "status": "done", "files": ["tests/test_aggregate_limits.py"]}
+{"ts": "2026-10-07T02:15:51-03:00", "action": "T015", "status": "done", "files": ["tests/test_leaf_sweep.py"]}
+{"ts": "2026-10-07T02:15:51-03:00", "action": "T016", "status": "done", "files": ["tests/test_reposition.py"]}
+{"ts": "2026-10-07T02:15:51-03:00", "action": "T017", "status": "done", "files": ["tests/test_inspection_math.py"]}
+{"ts": "2026-10-07T02:16:17-03:00", "action": "T045", "status": "done", "files": ["caffmob_draw/cutting/machining.py"]}
+{"ts": "2026-10-07T02:16:17-03:00", "action": "T018", "status": "done", "files": ["tests/test_cut_plan_machining.py"]}
+{"ts": "2026-10-07T02:22:31-03:00", "action": "T019", "status": "done", "files": ["caffmob_draw/customize/adapters/__init__.py", "caffmob_draw/customize/adapters/common.py", "caffmob_draw/compat.py"]}
+{"ts": "2026-10-07T02:22:31-03:00", "action": "T020", "status": "done", "files": ["caffmob_draw/customize/adapters/frameless.py"]}
+{"ts": "2026-10-07T02:22:31-03:00", "action": "T021", "status": "done", "files": ["caffmob_draw/customize/adapters/frameless.py"]}
+{"ts": "2026-10-07T02:22:31-03:00", "action": "T022", "status": "done", "files": ["caffmob_draw/customize/adapters/frameless.py"]}
+{"ts": "2026-10-07T02:22:31-03:00", "action": "T023", "status": "done", "files": ["caffmob_draw/customize/adapters/frameless.py", "caffmob_draw/customize/adapters/common.py"]}
+{"ts": "2026-10-07T02:22:31-03:00", "action": "T024", "status": "done", "files": ["caffmob_draw/product_libraries/frameless/types_frameless.py"]}
+{"ts": "2026-10-07T02:22:31-03:00", "action": "T025", "status": "done", "files": ["caffmob_draw/customize/adapters/frameless.py", "caffmob_draw/customize/props.py", "caffmob_draw/customize/spec.py"]}
+{"ts": "2026-10-07T02:22:31-03:00", "action": "T026", "status": "done", "files": ["caffmob_draw/customize/reapply.py", "caffmob_draw/product_libraries/frameless/operators/ops_opening.py", "caffmob_draw/product_libraries/frameless/operators/ops_styles.py", "caffmob_draw/product_libraries/frameless/props_hb_frameless.py"]}
+{"ts": "2026-10-07T02:26:02-03:00", "action": "T027", "status": "done", "files": ["caffmob_draw/customize/library_io.py"]}
+{"ts": "2026-10-07T02:26:02-03:00", "action": "T028", "status": "done", "files": ["caffmob_draw/customize/library_io.py"]}
+{"ts": "2026-10-07T02:26:02-03:00", "action": "T029", "status": "done", "files": ["caffmob_draw/customize/ops_library.py"]}
+{"ts": "2026-10-07T02:26:02-03:00", "action": "T030", "status": "done", "files": ["caffmob_draw/customize/ops_customize.py"]}
+{"ts": "2026-10-07T02:26:02-03:00", "action": "T031", "status": "done", "files": ["caffmob_draw/customize/panels.py", "caffmob_draw/customize/__init__.py"]}
+{"ts": "2026-10-07T02:29:02-03:00", "action": "T032", "status": "done", "files": ["caffmob_draw/customize/adapters/face_frame.py"]}
+{"ts": "2026-10-07T02:29:02-03:00", "action": "T033", "status": "done", "files": ["caffmob_draw/customize/adapters/face_frame.py", "caffmob_draw/customize/adapters/common.py"]}
+{"ts": "2026-10-07T02:29:02-03:00", "action": "T034", "status": "done", "files": ["caffmob_draw/product_libraries/face_frame/types_face_frame.py"]}
+{"ts": "2026-10-07T02:30:33-03:00", "action": "T035", "status": "done", "files": ["caffmob_draw/customize/adapters/closets.py"]}
+{"ts": "2026-10-07T02:30:33-03:00", "action": "T036", "status": "done", "files": ["caffmob_draw/customize/adapters/closets.py"]}
+{"ts": "2026-10-07T02:30:33-03:00", "action": "T037", "status": "done", "files": ["caffmob_draw/product_libraries/closets/types_closets.py"]}
+{"ts": "2026-10-07T02:32:25-03:00", "action": "T038", "status": "done", "files": ["caffmob_draw/geometry/mesh_gen.py", "caffmob_draw/data/properties.py"]}
+{"ts": "2026-10-07T02:32:25-03:00", "action": "T039", "status": "done", "files": ["caffmob_draw/geometry/door_controller.py"]}
+{"ts": "2026-10-07T02:32:25-03:00", "action": "T040", "status": "done", "files": ["caffmob_draw/customize/adapters/btm.py", "caffmob_draw/customize/reapply.py"]}
+{"ts": "2026-10-07T02:35:42-03:00", "action": "T041", "status": "done", "files": ["caffmob_draw/aggregates/convert.py"]}
+{"ts": "2026-10-07T02:35:42-03:00", "action": "T042", "status": "done", "files": ["caffmob_draw/aggregates/apply.py"]}
+{"ts": "2026-10-07T02:35:42-03:00", "action": "T043", "status": "done", "files": ["caffmob_draw/aggregates/perforate.py"]}
+{"ts": "2026-10-07T02:35:42-03:00", "action": "T044", "status": "done", "files": ["caffmob_draw/aggregates/perforate.py"]}
+{"ts": "2026-10-07T02:35:42-03:00", "action": "T046", "status": "done", "files": ["caffmob_draw/aggregates/production.py", "caffmob_draw/cutting/part_sources.py"]}
+{"ts": "2026-10-07T02:35:42-03:00", "action": "T047", "status": "done", "files": ["caffmob_draw/aggregates/ops_import.py"]}
+{"ts": "2026-10-07T02:35:42-03:00", "action": "T048", "status": "done", "files": ["caffmob_draw/aggregates/ops_aggregate.py", "caffmob_draw/aggregates/__init__.py"]}
+{"ts": "2026-10-07T02:38:36-03:00", "action": "T049", "status": "done", "files": ["caffmob_draw/aggregates/leaf.py", "caffmob_draw/aggregates/ops_aggregate.py"]}
+{"ts": "2026-10-07T02:38:36-03:00", "action": "T050", "status": "done", "files": ["caffmob_draw/inspection/adapters/aggregate_leaf.py", "caffmob_draw/inspection/fronts.py"]}
+{"ts": "2026-10-07T02:38:36-03:00", "action": "T051", "status": "done", "files": ["caffmob_draw/aggregates/collision.py"]}
+{"ts": "2026-10-07T02:38:36-03:00", "action": "T052", "status": "done", "files": ["caffmob_draw/aggregates/leaf.py"]}
+{"ts": "2026-10-07T02:38:36-03:00", "action": "T053", "status": "done", "files": ["caffmob_draw/aggregates/overlay.py"]}
+{"ts": "2026-10-07T02:38:36-03:00", "action": "T054", "status": "done", "files": ["caffmob_draw/aggregates/panels.py", "caffmob_draw/aggregates/__init__.py"]}
+{"ts": "2026-10-07T02:41:15-03:00", "action": "T055", "status": "done", "files": ["caffmob_draw/move_over/scene.py"]}
+{"ts": "2026-10-07T02:41:15-03:00", "action": "T056", "status": "done", "files": ["caffmob_draw/move_over/ops_dialog.py"]}
+{"ts": "2026-10-07T02:41:15-03:00", "action": "T057", "status": "done", "files": ["caffmob_draw/move_over/ops_dialog.py"]}
+{"ts": "2026-10-07T02:41:15-03:00", "action": "T058", "status": "done", "files": ["caffmob_draw/move_over/ops_substitute.py", "caffmob_draw/move_over/__init__.py"]}
+{"ts": "2026-10-07T02:41:15-03:00", "action": "T059", "status": "done", "files": ["caffmob_draw/move_over/insertion_plane.py"]}
+{"ts": "2026-10-07T02:41:15-03:00", "action": "T060", "status": "done", "files": ["caffmob_draw/hb_snap.py"]}
+{"ts": "2026-10-07T02:41:15-03:00", "action": "T061", "status": "done", "files": ["caffmob_draw/ui/object_properties.py"]}
+{"ts": "2026-10-07T02:42:50-03:00", "action": "T062", "status": "done", "files": ["caffmob_draw/cutting/json_exporter.py", "tests/test_production_contracts.py", "tests/blender_smoke.py", "tests/blender_increment1_smoke.py"]}
+{"ts": "2026-10-07T02:42:50-03:00", "action": "T063", "status": "done", "files": ["caffmob_draw/cutting/part_sources.py", "caffmob_draw/cutting/nesting.py", "caffmob_draw/cutting/part_extractor.py"]}
+{"ts": "2026-10-07T02:42:58-03:00", "action": "T064", "status": "done", "files": ["caffmob_draw/__init__.py", "caffmob_draw/customize/__init__.py", "caffmob_draw/aggregates/__init__.py", "caffmob_draw/move_over/__init__.py"]}
+{"ts": "2026-10-07T02:43:43-03:00", "action": "T065", "status": "done", "files": ["caffmob_draw/ui/save_feedback.py", "caffmob_draw/ui/__init__.py"]}
+{"ts": "2026-10-07T02:45:20-03:00", "action": "T066", "status": "done", "files": ["tests/blender_003_customize_smoke.py", "tests/_blender_env.py"]}
+{"ts": "2026-10-07T02:45:20-03:00", "action": "T067", "status": "done", "files": ["tests/blender_003_aggregates_smoke.py"]}
+{"ts": "2026-10-07T02:45:20-03:00", "action": "T068", "status": "done", "files": ["tests/blender_003_move_over_smoke.py"]}
+{"ts": "2026-10-07T02:46:08-03:00", "action": "T069", "status": "done", "files": ["docs/usuario/modulos-personalizaveis.md"]}
+{"ts": "2026-10-07T02:46:08-03:00", "action": "T070", "status": "done", "files": ["docs/usuario/agregados-e-folhas.md"]}
+{"ts": "2026-10-07T02:46:08-03:00", "action": "T071", "status": "done", "files": ["docs/usuario/editor-paredes-e-mover-sobre.md"]}

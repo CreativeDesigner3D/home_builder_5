@@ -1,0 +1,9 @@
+PREFS addons: ['bl_ext.lab_blender_org.mcp', 'bl_ext.user_default.blendertomob', 'bl_pkg', 'blendertomob', 'cycles', 'io_anim_bvh', 'io_curve_svg', 'io_mesh_uv_layout', 'io_scene_fbx', 'io_scene_gltf2', 'pose_library']
+MÓDULOS com 'home'/'builder'/'mob': [('bl_ext.user_default.blendertomob', (True, True))]
+DIR extensions .cache ['compat.dat']
+DIR extensions blender_org ['.blender_ext']
+DIR extensions lab_blender_org ['mcp', '.blender_ext']
+DIR extensions user_default ['blendertomob', '.blender_ext']
+MANIFEST {'id': 'blendertomob', 'version': '1.0.1', 'name': 'Blender to Mob', 'tagline': 'Parametric cabinetry and interior design CAD tools for Blender', 'maintainer': 'TheLeoInfo'}
+ABAS N: {'Tool': 68, 'View': 8, 'Item': 2, 'Animation': 4, 'glTF Variants': 1, 'Blender to Mob': 9, 'Home Builder': 96}
+

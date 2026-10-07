@@ -1,0 +1,70 @@
+<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Plano de correção · #6 A2G7</title><style>
+body{background:#0d1117;color:#e6edf3;font:14px system-ui,sans-serif;margin:0;padding:16px;max-width:1100px}
+.meta{color:#8b949e;font-size:12px}.cards{display:flex;gap:12px;flex-wrap:wrap;margin:16px 0}
+.card{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:12px 16px;min-width:120px}
+.card b{font-size:18px;display:block}svg{max-width:100%;height:auto;background:#0d1117}
+table{border-collapse:collapse;width:100%;margin-top:8px}td,th{border-bottom:1px solid #30363d;padding:6px;text-align:left;font-size:13px;vertical-align:top}
+a{color:#58a6ff}.wrap{overflow-x:auto}code{background:#161b22;padding:1px 4px;border-radius:4px}
+.ok{color:#3fb950}.warn{color:#d29922}.bad{color:#e5484d}h2{margin-top:28px}</style></head><body>
+<h1>Plano de correção · #6 BUG-20261007-A2G7</h1>
+<p class="meta">Contexto <b>editor-de-paredes</b> · 2026-10-07 · /reversa-debugger-fix · <a href="../bug.md">bug.md</a></p>
+<div class="cards"><div class="card"><b class="bad">high</b>severidade</div><div class="card"><b>P1</b>prioridade</div>
+<div class="card"><b>3/3</b>reprodução (determinístico)</div><div class="card"><b class="ok">confirmed</b>causa raiz</div>
+<div class="card"><b class="warn">média</b>risco da mudança</div></div>
+
+<h2>Defeito e causa raiz</h2>
+<p>"Ajustar Piso" (CONSTRUTOR) gera um piso 5 x 5 m na origem para salas feitas pelo editor de paredes ou pelo construtor, e
+um contorno errado (fecho convexo, face externa) para paredes da camada nova.</p>
+<ol>
+<li><code>operators/floor_builder.py:14-25</code> reconhece parede por <code>btm_plane.object_kind == 'WALL'</code>, que é o padrão de <b>todo</b> objeto (<code>data/properties.py:184-193</code>): um balcão também conta.</li>
+<li>As paredes do Home Builder 5 têm a geometria só no Geometry Nodes: a malha tem 0 vértices e <code>mesh_gen.generate_floor_from_walls</code> não acha pontos (<code>mesh_gen.py:136-147</code>).</li>
+<li>Sem pontos, cai no quadrado fixo de 5 x 5 m (<code>floor_builder.py:73-75</code>).</li>
+<li>Com pontos (camada nova), o fecho convexo (<code>mesh_gen.py:148</code>, regra R-02) cobre o recorte da sala em L e passa pela face externa (área 15,06 m²).</li>
+</ol>
+<p>Evidência: <a href="../evidence/reproduction.md">evidence/reproduction.md</a> (3 casos, 3/3).</p>
+
+<h2>Estratégia escolhida: correção direta</h2>
+<p>Reconhecer paredes pelas marcas reais (<code>IS_WALL_BP</code> do Home Builder 5; <code>btm_wall_segments</code> da camada nova), montar
+o contorno pela <b>face interna</b> das cadeias fechadas (o mesmo princípio do "Add Floor", que já funciona), um piso por sala no
+mesmo objeto, sem deslocamento, e um retângulo pelas pontas das paredes só quando não houver sala fechada. Escolhida porque a
+causa é única e confirmada; não há hipóteses concorrentes.</p>
+
+<h2>Correction Change Set proposto</h2>
+<table><tr><th>CHG</th><th>tipo</th><th>artefato</th><th>propósito</th></tr>
+<tr><td>CHG-001</td><td>code</td><td><code>caffmob_draw/geometry/floor_outline.py</code> (novo, Python puro)</td><td>Contorno interno: laço do Home Builder (origens + espessura em +Y; se a espessura cai para dentro, desloca a espessura inteira), laço da camada nova (linha de centro → face interna por <code>walls2d.convert</code>), retângulo de fallback, orientação anti-horária</td></tr>
+<tr><td>CHG-002</td><td>code</td><td><code>caffmob_draw/operators/floor_builder.py</code></td><td>Paredes por marca real; cadeias pelo <code>walls.find_wall_chains</code>; um polígono por sala fechada; piso com matriz identidade; sem o quadrado de 5 x 5 m quando há paredes</td></tr>
+<tr><td>CHG-003</td><td>specification</td><td><code>_reversa_sdd/addenda/bug-BUG-20261007-A2G7-v001.md</code></td><td>Adendo à R-02 (se o veredito for <i>spec-desatualizada</i>): contorno pela face interna, polígono ordenado, não mais fecho convexo</td></tr>
+</table>
+
+<h2>Testes planejados</h2>
+<table><tr><th>teste</th><th>tipo</th><th>o que prova</th></tr>
+<tr><td><code>tests/blender_bug_A2G7_floor.py</code> caso 1</td><td>reprodução</td><td>Sala 4 x 3 m do editor: o piso ocupa 0..4 x 0..3 (face interna), não 5 x 5 m na origem</td></tr>
+<tr><td>caso 2</td><td>reprodução</td><td>Sala em L do editor com um balcão na cena: área do piso = 12 m² (L interno), balcão ignorado</td></tr>
+<tr><td>caso 3</td><td>regressão</td><td>Sala em L da camada nova: área = face interna (sem recorte coberto, dentro da espessura)</td></tr>
+<tr><td>caso 4</td><td>regressão</td><td>Mudar as paredes e ajustar de novo atualiza o mesmo piso, com matriz identidade (sem deslocamento)</td></tr>
+<tr><td><code>tests/test_floor_outline.py</code></td><td>regressão (puro)</td><td>Laço horário x anti-horário, L côncavo, segmentos da camada nova, fallback retangular</td></tr>
+</table>
+
+<h2>Riscos e o que fica de fora</h2>
+<ul>
+<li><b>Risco médio:</b> muda só o comportamento do botão "Ajustar Piso"; não toca dados salvos nem contratos; reversível pelo desfazer.</li>
+<li>Fora: o padrão <code>object_kind = 'WALL'</code> do enum continua (mudar afeta arquivos salvos). Os outros usos dele (<code>opening_builder.py</code>, <code>ui/panels.py:_scene_has_walls</code>, <code>walls2d/scene_io.is_other_layer_wall</code>) ficam para correção própria (achado A012).</li>
+<li>Fora: <code>mesh_gen.generate_floor_from_walls</code> fica como está (sem outro chamador depois da correção).</li>
+<li>Fora: atualização automática deste piso pelo editor 2D (o editor atualiza os pisos <code>IS_FLOOR_BP</code> do "Add Floor").</li>
+<li>Achado lateral (feature 003): <code>move_over/props.py</code> registra uma classe com o mesmo nome Python <code>BTM_PG_InsertionPlane</code> da classe de <code>Object.btm_plane</code> (<code>data/properties.py:182</code>). Os testes passam, mas o nome repetido deve ser trocado numa correção separada.</li>
+</ul>
+
+<h2>Mini-grafo</h2>
+<div class="wrap"><svg viewBox="0 0 640 170" width="640" height="170"><defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#8aa"/></marker></defs>
+<line x1="290" y1="85" x2="360" y2="85" stroke="#8aa" stroke-dasharray="6 4" marker-end="url(#a)"/><text x="325" y="76" fill="#9bb" font-size="11" text-anchor="middle">related-to</text>
+<a href="../bug.md"><rect x="30" y="35" width="260" height="100" rx="10" fill="#1c2128" stroke="#58a6ff" stroke-width="3"/><text x="42" y="60" fill="#e6edf3" font-size="13" font-weight="600">#6 A2G7 (este)</text><text x="42" y="82" fill="#c9d1d9" font-size="12">Ajustar Piso ignora as paredes</text><text x="42" y="102" fill="#8b949e" font-size="11">high · paredes</text><text x="42" y="122" fill="#d29922" font-size="11">open · diagnosing</text></a>
+<a href="../../BUG-20261007-YIMY-porta-bloco-fora-da-parede/bug.md"><rect x="360" y="35" width="260" height="100" rx="10" fill="#1c2128" stroke="#e5484d" stroke-width="2"/><text x="372" y="60" fill="#e6edf3" font-size="13" font-weight="600">#7 YIMY</text><text x="372" y="82" fill="#c9d1d9" font-size="12">Porta e janela viram bloco liso</text><text x="372" y="102" fill="#8b949e" font-size="11">high · paredes</text><text x="372" y="122" fill="#e5484d" font-size="11">open · triaging</text></a></svg></div>
+
+<h2>Relações</h2>
+<table><tr><th>origem</th><th>tipo</th><th>destino</th><th>estado</th></tr>
+<tr><td><a href="../bug.md">#6 BUG-20261007-A2G7</a></td><td>related-to</td><td><a href="../../BUG-20261007-YIMY-porta-bloco-fora-da-parede/bug.md">#7 BUG-20261007-YIMY</a></td><td>proposed (mesma área; sem causa comum comprovada)</td></tr>
+</table>
+<h2>Ordem sugerida</h2>
+<p>#6 primeiro (causa confirmada, independente); depois #7, que começa pela reprodução com janela.</p>
+</body></html>

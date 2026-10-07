@@ -3,8 +3,8 @@ import os
 import zipfile
 
 def build_zip():
-    zip_filename = "blendertomob.zip"
-    source_dir = "blendertomob"
+    zip_filename = "caffmob_draw.zip"
+    source_dir = "caffmob_draw"
 
     if not os.path.exists(source_dir):
         print(f"Error: Source directory '{source_dir}' does not exist.")

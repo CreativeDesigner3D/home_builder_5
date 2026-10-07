@@ -1,9 +1,9 @@
-"""Testes da regra do pé-direito do projeto (T077): `blendertomob/walls2d/heights.py`."""
+"""Testes da regra do pé-direito do projeto (T077): `caffmob_draw/walls2d/heights.py`."""
 
 import unittest
 
 import _bootstrap  # noqa: F401
-from blendertomob.walls2d import heights as h
+from caffmob_draw.walls2d import heights as h
 
 
 def wall(name, height, end_height=None, btm=None, legacy=None):

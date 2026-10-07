@@ -8,8 +8,8 @@ import unittest
 from pathlib import Path
 
 import _bootstrap  # noqa: F401
-from blendertomob.cutting import csv_exporter, json_exporter
-from blendertomob.cutting.nesting import NestingPart, optimize_nesting
+from caffmob_draw.cutting import csv_exporter, json_exporter
+from caffmob_draw.cutting.nesting import NestingPart, optimize_nesting
 
 
 def sample_parts():
@@ -60,11 +60,25 @@ class GlobalJsonTest(unittest.TestCase):
     def test_payload_valido(self):
         payload = sample_payload()
         self.assertEqual(json_exporter.validate_global_json(payload), [])
-        self.assertEqual(payload["schema_version"], "2.0.0")
+        self.assertEqual(payload["schema_version"], "2.1.0")      # 2.1: `machining` (feature 003)
         self.assertEqual(payload["unit"], "mm")
         part = payload["parts"][0]
         self.assertEqual(part["edges"][0], {"side": 1, "material_id": None, "thickness_mm": 0.4})
         self.assertIn(part["material_id"], {m["id"] for m in payload["materials"]})
+        self.assertEqual(part["machining"], [])
+
+    def test_versao_2_0_continua_valida(self):
+        payload = sample_payload()
+        payload["schema_version"] = "2.0.0"
+        for part in payload["parts"]:
+            del part["machining"]
+        self.assertEqual(json_exporter.validate_global_json(payload), [])
+
+    def test_machining_validado(self):
+        payload = sample_payload()
+        payload["parts"][0]["machining"] = [{"kind": "FURO", "x_mm": 1, "y_mm": 1, "end_x_mm": 2, "end_y_mm": 2,
+                                             "depth_mm": 3}]
+        self.assertTrue(any("machining[0].kind" in e for e in json_exporter.validate_global_json(payload)))
 
     def test_erro_aponta_caminho(self):
         payload = sample_payload()
@@ -117,7 +131,7 @@ class GlobalJsonTest(unittest.TestCase):
               "parts_catalog": [NestingPart(id="p1", name="Base", width=500, height=600).to_dict()],
               "sheets": [], "unplaced_parts": []}
         v2 = json_exporter.convert_v1(v1)
-        self.assertEqual(v2["schema_version"], "2.0.0")
+        self.assertEqual(v2["schema_version"], json_exporter.SCHEMA_VERSION)
         self.assertEqual(json_exporter.validate_global_json(v2), [])
         self.assertEqual(v2["parts"][0]["uid"], "p1")
 

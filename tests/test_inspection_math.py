@@ -1,10 +1,10 @@
-"""Testes da matemática de abertura de frentes (T052): `blendertomob/inspection/pivot_math.py`."""
+"""Testes da matemática de abertura de frentes (T052): `caffmob_draw/inspection/pivot_math.py`."""
 
 import math
 import unittest
 
 import _bootstrap  # noqa: F401
-from blendertomob.inspection import pivot_math as pm
+from caffmob_draw.inspection import pivot_math as pm
 
 
 def close(a, b, tol=1e-9):
@@ -33,6 +33,16 @@ class ValoresTest(unittest.TestCase):
         self.assertEqual(pm.clamp_angle(-10), 0.0)
         self.assertEqual(pm.clamp_angle(95), 90.0)
         self.assertEqual(pm.clamp_fraction(1.5), 1.0)
+
+    def test_maximo_por_folha(self):
+        self.assertEqual(pm.clamp_angle(150), 90.0)
+        self.assertEqual(pm.clamp_angle(150, maximum=180.0), 150.0)
+        self.assertEqual(pm.clamp_angle(200, maximum=180.0), 180.0)
+        hinge = pm.side_hinge((0.0, 0.0, 1.0), (1.0, 0.0, 0.0), (0.0, -1.0, 0.0))
+        euler, _loc = pm.pose_for(hinge, 120.0, maximum=180.0)
+        self.assertAlmostEqual(abs(euler[2]), math.radians(120.0))
+        euler, _loc = pm.pose_for(hinge, 120.0)
+        self.assertAlmostEqual(abs(euler[2]), math.radians(90.0))
 
     def test_conversoes_entre_linhas(self):
         self.assertAlmostEqual(pm.degrees_to_fraction(90, pm.FACE_FRAME_MAX_ANGLE), 0.9)

@@ -1,7 +1,7 @@
 {
   "include": [
     ".",
-    "blendertomob"
+    "caffmob_draw"
   ],
   "exclude": [
     "**/__pycache__",
@@ -14,7 +14,7 @@
       "pythonVersion": "3.11",
       "extraPaths": [
         ".",
-        "blendertomob",
+        "caffmob_draw",
         "/home/theleoinfo/.local/lib/python3.10/site-packages"
       ]
     }

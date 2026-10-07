@@ -1,4 +1,4 @@
-"""Testes da folha 3D das portas de ambiente (T043): `blendertomob/inspection/room_door_math.py`.
+"""Testes da folha 3D das portas de ambiente (T043): `caffmob_draw/inspection/room_door_math.py`.
 
 As pontas esperadas vêm do símbolo `GeoNodeDoorSwing` medido no Blender 5.2: porta de 0,90 m em parede de 0,15 m,
 folha aberta a 90° chega a y = −0,75 (para dentro) ou y = +0,90 (para fora).
@@ -7,7 +7,7 @@ folha aberta a 90° chega a y = −0,75 (para dentro) ou y = +0,90 (para fora).
 import unittest
 
 import _bootstrap  # noqa: F401
-from blendertomob.inspection import room_door_math as rd
+from caffmob_draw.inspection import room_door_math as rd
 
 W, T, H, DOOR = 0.9, 0.15, 2.1, 0.0381
 

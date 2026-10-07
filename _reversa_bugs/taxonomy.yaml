@@ -1,0 +1,27 @@
+# Vocabulário controlado do registro de bugs (semeado de _reversa_sdd/ em 2026-10-06).
+area:
+  - plugin              # identidade, instalação, registro, preferências
+  - paredes             # editor de paredes 2D, construtor 3D, operações de parede
+  - modulos             # bibliotecas de móveis (frameless, face frame, closets, módulo rápido)
+  - producao            # lista de peças, plano de corte, exportação
+  - interface           # painéis, HUD, menus, traduções
+module:
+  - hb_core
+  - ui
+  - operators
+  - overlays
+  - wall_editor         # walls2d/ (feature 002)
+  - frameless
+  - face_frame
+  - closets
+  - product_common
+  - catalog_molding
+  - cutting
+  - geometry
+  - hb_placement
+  - hb_layouts
+  - data
+  - inspection          # feature 001, incremento 3
+feature:
+  - 001-addon-moveis-planejados
+  - 002-editor-parede-mover-sobre

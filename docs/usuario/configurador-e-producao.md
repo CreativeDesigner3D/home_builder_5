@@ -1,7 +1,7 @@
 # Configurador de Dimensões e produção
 
-Guia rápido para quem projeta e produz móveis planejados no BlenderToMob.
-Tudo fica na barra lateral da Viewport 3D (tecla **N**), aba **Blender to Mob**.
+Guia rápido para quem projeta e produz móveis planejados no CAFFMob Draw.
+Tudo fica na barra lateral da Viewport 3D (tecla **N**), aba **CAFFMob Draw**.
 
 ## 1. Unidade de medida
 
@@ -69,4 +69,4 @@ Os tamanhos de chapa, o refilo, a espessura da serra, a rotação e o veio ficam
 ## 5. Arquivos antigos
 
 Ao abrir um projeto feito antes do Padrão de Dimensões, as configurações antigas de espessuras e componentes que tinham sido alteradas viram a definição **Migrada**, que passa a ser a ativa.
-Projetos com gabinetes do Home Builder sem configuração própria começam no **Padrão EUA (HB5)**, para não mudar medidas já desenhadas. Os demais começam no **Padrão Brasil**.
+Projetos com gabinetes do CAFFMob Draw sem configuração própria começam no **Padrão EUA (HB5)**, para não mudar medidas já desenhadas. Os demais começam no **Padrão Brasil**.

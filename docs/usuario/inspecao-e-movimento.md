@@ -2,7 +2,7 @@
 
 Guia rápido para conferir um projeto abrindo portas, basculantes e gavetas, antes de mostrar ao cliente ou mandar para a produção.
 Funciona nos móveis de cozinha (frameless), face frame, dormitório (closets) e no Módulo Rápido.
-O painel fica na barra lateral da Viewport 3D (tecla **N**), aba **Blender to Mob** › **CONSTRUTOR** › **Inspeção de Portas e Gavetas**.
+O painel fica na barra lateral da Viewport 3D (tecla **N**), aba **CAFFMob Draw** › **CONSTRUTOR** › **Inspeção de Portas e Gavetas**.
 
 ## 1. Abrir com um clique
 
@@ -36,7 +36,7 @@ Para guardar o projeto aberto (por exemplo, para um render), ligue **Salvar com 
 ## 5. Verificar interferência
 
 1. Clique em **Verificar Interferência**.
-2. O BlenderToMob gira cada porta de fechada até 90° e desliza cada gaveta até o fim. Ele avisa quando uma delas bate em outro objeto, como parede, sanca, módulo vizinho ou geometria livre.
+2. O CAFFMob Draw gira cada porta de fechada até 90° e desliza cada gaveta até o fim. Ele avisa quando uma delas bate em outro objeto, como parede, sanca, módulo vizinho ou geometria livre.
 3. A lista mostra **módulo › frente × objeto atingido**. A lupa centraliza a vista no ponto do choque, que fica marcado com uma cruz vermelha.
 4. O próprio módulo não conta (a porta encosta na lateral dele normalmente). Encostar sem atravessar também não conta.
 

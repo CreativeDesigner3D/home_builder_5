@@ -1,4 +1,4 @@
-# Padrões de código Blender 5.2 usados no BlenderToMob
+# Padrões de código Blender 5.2 usados no CAFFMob Draw
 
 Receitas verificadas contra a referência 5.2 (assinaturas copiadas do corpus). Cada seção aponta a página de origem
 em `docs/rag/blender-api/corpus/`. Use estes padrões em vez de reinventar.
@@ -12,7 +12,7 @@ import bpy
 
 class BTM_OT_exemplo(bpy.types.Operator):
     """Descrição curta (vira tooltip)"""
-    bl_idname = "btm.exemplo"          # namespace novo: btm.* ou blendertomob.*
+    bl_idname = "btm.exemplo"          # namespace novo: btm.* ou caffmob_draw.*
     bl_label = "Exemplo"
     bl_options = {'REGISTER', 'UNDO'}  # obrigatório quando o operador modifica dados
 

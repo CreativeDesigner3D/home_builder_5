@@ -1,10 +1,10 @@
-"""Testes do alinhamento do "Mover Sobre" (T011): `blendertomob/move_over/align.py`."""
+"""Testes do alinhamento do "Mover Sobre" (T011): `caffmob_draw/move_over/align.py`."""
 
 import unittest
 
 import _bootstrap  # noqa: F401
-from blendertomob.canvas2d.view import View2D
-from blendertomob.move_over import align as al
+from caffmob_draw.canvas2d.view import View2D
+from caffmob_draw.move_over import align as al
 
 # B: balcão 600 × 550 × 720 (frente em Y = −0,55, fundo em Y = 0). A: aéreo 400 × 350 × 700, solto ao lado.
 B = ((0.0, -0.55, 0.0), (0.6, 0.0, 0.72))

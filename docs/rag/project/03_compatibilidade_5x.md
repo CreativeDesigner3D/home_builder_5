@@ -1,4 +1,4 @@
-# Compatibilidade Blender 5.x no BlenderToMob
+# Compatibilidade Blender 5.x no CAFFMob Draw
 
 O que mudou na API e afeta (ou pode afetar) este código. Fonte primária: `corpus/change_log.md` (cobre **5.1 → 5.2**)
 e as notas das próprias páginas da referência. Mudanças anteriores ao 5.1 não estão no changelog do zip;
@@ -7,7 +7,7 @@ quando citadas aqui, a fonte é indicada.
 ## Como checar automaticamente
 
 ```bash
-python3 docs/rag/tools/check_api.py            # varre blendertomob/, sai com código 1 se houver referência inexistente no 5.2
+python3 docs/rag/tools/check_api.py            # varre caffmob_draw/, sai com código 1 se houver referência inexistente no 5.2
 python3 docs/rag/tools/check_api.py arquivo.py # só um arquivo
 ```
 
@@ -16,7 +16,7 @@ e nomes em `gpu.shader.from_builtin('...')`. Ignora operadores/classes/proprieda
 (`VIEW3D_MT_*` etc., que não constam na referência). **Não** checa acesso via variável (`obj.algo`) — para isso use
 `rag_search.py --symbol bpy.types.Object.algo`.
 
-Estado em 2026-09-28: `blendertomob/` (148 arquivos) sem referências desconhecidas.
+Estado em 2026-09-28: `caffmob_draw/` (148 arquivos) sem referências desconhecidas.
 
 ## Inputs de modificadores Geometry Nodes (5.2) — afeta o núcleo paramétrico
 
@@ -37,7 +37,7 @@ Estado em 2026-09-28: `blendertomob/` (148 arquivos) sem referências desconheci
 
 - `nome` é o nome do socket na interface do grupo; o helper resolve o `identifier` via `node_group.interface.items_tree[nome].identifier`
   e mantém cache (invalidado em `KeyError`/`AttributeError`).
-- **Duplicação conhecida:** `blendertomob/hb_utils.py` tem helpers equivalentes (linhas ~8–60). Ao alterar a lógica, mantenha os dois
+- **Duplicação conhecida:** `caffmob_draw/hb_utils.py` tem helpers equivalentes (linhas ~8–60). Ao alterar a lógica, mantenha os dois
   em sincronia ou consolide em `compat.py`.
 
 ## Propriedades `bpy.props` × custom properties (5.0)
@@ -61,7 +61,7 @@ só serve para Blender antigo.
 | Mudança | Onde afeta | Ação |
 |---|---|---|
 | `WindowManager.invoke_popup(operator, *, width=300, auto_keymap=False)` — novo argumento `auto_keymap` | Popups de operador | Compatível (argumento opcional). |
-| `Panel.bl_icon` / `Panel.bl_icon_value` adicionados ("Icon override for the panel category tab") | Abas "Blender to Mob"/"Home Builder" da sidebar | Opcional: ícone na aba de categoria (só 5.2+; proteja com `bpy.app.version`). |
+| `Panel.bl_icon` / `Panel.bl_icon_value` adicionados ("Icon override for the panel category tab") | Abas "CAFFMob Draw"/"CAFFMob Draw" da sidebar | Opcional: ícone na aba de categoria (só 5.2+; proteja com `bpy.app.version`). |
 | `Menu.draw_preset(self, context)` — antes `(self, _context)` | Menus de preset | Só nomes de parâmetro. |
 | `Node.poll(ntree)` / `NodeCustomGroup.poll(ntree)` — antes `_ntree` | Nós customizados (não usados hoje) | — |
 | `UILayout.template_palette(data, property)` — removido `color` | Não usado | — |

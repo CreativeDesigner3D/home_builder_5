@@ -1,0 +1,61 @@
+<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Plano de correção · BUG-20261006-SCVF</title><style>
+body{background:#0d1117;color:#e6edf3;font:14px system-ui,sans-serif;margin:0;padding:16px;max-width:1000px}
+h1{font-size:20px}h2{font-size:16px;margin-top:24px;border-bottom:1px solid #30363d;padding-bottom:4px}
+.meta{color:#8b949e;font-size:12px}.tag{display:inline-block;border:1px solid #e5484d;color:#ff9592;border-radius:6px;padding:1px 6px;font-size:12px;margin-right:6px}
+.ok{border-color:#30a46c;color:#3dd68c}table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid #30363d;padding:6px;text-align:left;font-size:13px;vertical-align:top}
+a{color:#58a6ff}code{background:#161b22;padding:1px 4px;border-radius:4px}.wrap{overflow-x:auto}svg{max-width:100%;height:auto}</style></head><body>
+<h1>#3 BUG-20261006-SCVF · Plano de correção</h1>
+<p class="meta">Contexto: plugin-caffmob-draw · 2026-10-06 · <span class="tag">critical</span><span class="tag">P0</span><span class="tag ok">change_risk: baixa</span></p>
+
+<h2>Defeito e causa raiz</h2>
+<p>A raiz do repositório guarda um <code>blender_manifest.toml</code> de extensão (sobra do commit <code>ff10e80</code>) com o mesmo
+<code>id = "blendertomob"</code> do pacote real. O <code>build.py</code> empacota só <code>blendertomob/</code>, mas o manifesto da raiz (e o
+<code>README.md</code>, que o descreve como o manifesto da extensão) faz a raiz parecer instalável. Nas preferências deste Blender ficou um
+add-on legado <code>blendertomob</code> que falha a cada abertura.</p>
+<p><b>Estado:</b> confirmed. Evidência: <a href="../evidence/reproduction.md">evidence/reproduction.md</a> (ZIP do repositório com dois manifestos;
+a raiz não registra por falta de <code>ui/</code>; preferências com o add-on legado). A hipótese de que esta cópia causa o erro ao salvar no
+Windows (#4) foi <b>refutada</b> e registrada como <code>rejected</code>.</p>
+
+<h2>Estratégia escolhida</h2>
+<p>Correção direta: tirar da raiz o único arquivo que a faz parecer uma extensão, corrigir a documentação e limpar a entrada legada
+das preferências. Mudança mínima; o código antigo espelhado na raiz continua lá (remoção ampla fica fora deste bug).</p>
+
+<h2>Correction Change Set proposto</h2>
+<div class="wrap"><table><tr><th>CHG</th><th>tipo</th><th>artefato</th><th>propósito</th></tr>
+<tr><td>CHG-001</td><td>test</td><td><code>tests/test_packaging.py</code> (novo)</td><td>Reprodução: nenhum <code>blender_manifest.toml</code> fora de <code>blendertomob/</code>. Regressão: o manifesto do pacote existe, tem o id da extensão e o <code>build.py</code> põe o manifesto na raiz do zip.</td></tr>
+<tr><td>CHG-002</td><td>configuration</td><td><code>blender_manifest.toml</code> (raiz) — <b>remover</b></td><td>A raiz deixa de ser uma extensão; o único manifesto é <code>blendertomob/blender_manifest.toml</code>.</td></tr>
+<tr><td>CHG-003</td><td>documentation</td><td><code>README.md</code> (linha 10)</td><td>Apontar o manifesto real (<code>blendertomob/blender_manifest.toml</code>) e dizer que só o <code>blendertomob.zip</code> do <code>build.py</code> se instala.</td></tr>
+<tr><td>CHG-004</td><td>data-repair</td><td>Preferências do Blender do titular (MCP 9876)</td><td>Dry-run: listar a entrada <code>blendertomob</code>. Reparo: desativar/remover essa entrada e salvar as preferências. Backup: cópia do <code>userpref.blend</code> antes. Rollback: restaurar a cópia.</td></tr>
+</table></div>
+
+<h2>Testes planejados</h2>
+<ul><li><b>Reprodução</b> (<code>test_raiz_nao_e_extensao</code>): falha hoje porque existe <code>blender_manifest.toml</code> na raiz com id <code>blendertomob</code>.</li>
+<li><b>Regressão</b> (<code>test_manifesto_do_pacote</code>, <code>test_zip_tem_manifesto_na_raiz</code>): o pacote real continua com manifesto válido e o zip gerado continua instalável.</li></ul>
+
+<h2>Riscos e o que fica de fora</h2>
+<ul><li>change_risk <b>baixa</b>: o arquivo removido não é lido pelo build nem pelo Blender ao instalar o zip; nenhum dado de projeto muda.</li>
+<li>Fica de fora: apagar o código antigo espelhado na raiz (operação ampla, pede decisão própria); a renomeação para CAFFMob Draw (#2) e a unificação da interface (#1); o erro do Windows (#4), que precisa de outra causa.</li></ul>
+
+<h2>Mini-grafo</h2>
+<svg viewBox="0 0 760 220" width="760" height="220"><defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#8aa"/></marker></defs>
+<a href="../bug.md"><rect x="270" y="80" width="220" height="60" rx="10" fill="#1c2128" stroke="#e5484d" stroke-width="3"/><text x="282" y="104" fill="#e6edf3" font-size="13" font-weight="600">#3 SCVF</text><text x="282" y="124" fill="#c9d1d9" font-size="11">cópia antiga na raiz</text></a>
+<a href="../../BUG-20261006-NO4Q-interface-home-builder-separada/bug.md"><rect x="20" y="10" width="200" height="56" rx="10" fill="#1c2128" stroke="#e5484d" stroke-width="2"/><text x="32" y="34" fill="#e6edf3" font-size="13">#1 NO4Q</text><text x="32" y="52" fill="#c9d1d9" font-size="11">Home Builder separado</text></a>
+<a href="../../BUG-20261006-QAVK-nome-e-identificador-caffmob-draw/bug.md"><rect x="20" y="150" width="200" height="56" rx="10" fill="#1c2128" stroke="#e5484d" stroke-width="2"/><text x="32" y="174" fill="#e6edf3" font-size="13">#2 QAVK</text><text x="32" y="192" fill="#c9d1d9" font-size="11">nome CAFFMob Draw</text></a>
+<a href="../../../../editor-de-paredes/bugs/BUG-20261006-KFAR-erro-ao-salvar-no-windows/bug.md"><rect x="540" y="80" width="200" height="56" rx="10" fill="#1c2128" stroke="#e5484d" stroke-width="2"/><text x="552" y="104" fill="#e6edf3" font-size="13">#4 KFAR</text><text x="552" y="122" fill="#c9d1d9" font-size="11">salvar no Windows</text></a>
+<line x1="270" y1="100" x2="220" y2="40" stroke="#8aa" stroke-dasharray="6 4" marker-end="url(#a)"/><text x="200" y="75" fill="#9bb" font-size="11">related-to</text>
+<line x1="220" y1="178" x2="270" y2="130" stroke="#8aa" stroke-dasharray="6 4" marker-end="url(#a)"/><text x="200" y="150" fill="#9bb" font-size="11">related-to</text>
+<line x1="540" y1="110" x2="490" y2="110" stroke="#e5484d" stroke-dasharray="2 4" marker-end="url(#a)"/><text x="470" y="72" fill="#ff9592" font-size="11">caused-by (rejected)</text>
+</svg>
+
+<h2>Matriz de relações</h2>
+<div class="wrap"><table><tr><th>origem</th><th>tipo</th><th>destino</th><th>estado</th></tr>
+<tr><td><a href="../bug.md">#3 SCVF</a></td><td>related-to</td><td><a href="../../BUG-20261006-NO4Q-interface-home-builder-separada/bug.md">#1 NO4Q</a></td><td>proposed</td></tr>
+<tr><td><a href="../../BUG-20261006-QAVK-nome-e-identificador-caffmob-draw/bug.md">#2 QAVK</a></td><td>related-to</td><td><a href="../../BUG-20261006-NO4Q-interface-home-builder-separada/bug.md">#1 NO4Q</a></td><td>proposed</td></tr>
+<tr><td><a href="../../../../editor-de-paredes/bugs/BUG-20261006-KFAR-erro-ao-salvar-no-windows/bug.md">#4 KFAR</a></td><td>caused-by</td><td><a href="../bug.md">#3 SCVF</a></td><td>rejected</td></tr>
+</table></div>
+
+<h2>Ordem sugerida depois deste</h2>
+<ol><li>#4 KFAR: sem causa confirmada; caminho provável <code>instrumentation-required</code> (registrar o erro no Windows).</li>
+<li>#1 + #2 juntos (renomear uma vez só, com migração).</li><li>#5: virar feature via <code>/reversa-requirements</code>.</li></ol>
+</body></html>

@@ -1,9 +1,9 @@
-"""Testes da conversão das paredes da camada nova (T045): `blendertomob/walls2d/convert.py`."""
+"""Testes da conversão das paredes da camada nova (T045): `caffmob_draw/walls2d/convert.py`."""
 
 import unittest
 
 import _bootstrap  # noqa: F401
-from blendertomob.walls2d import convert
+from caffmob_draw.walls2d import convert
 
 
 def seg(a, b, t=0.15, h=2.6):

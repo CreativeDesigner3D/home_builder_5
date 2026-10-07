@@ -1,7 +1,7 @@
 # Editor de paredes, propriedades, "Mover Sobre" e geometria
 
 Guia rápido das ferramentas da planta e do posicionamento.
-Tudo fica na barra lateral da Viewport 3D (tecla **N**), aba **Blender to Mob**.
+Tudo fica na barra lateral da Viewport 3D (tecla **N**), aba **CAFFMob Draw**.
 
 ## 1. Editor de Paredes (planta 2D)
 
@@ -10,7 +10,7 @@ pelo grupo **Parede** da janela de propriedades.
 O editor abre numa janela própria, com a planta vista de cima. Ele só mostra paredes.
 Paredes feitas com o construtor antigo (camada nova) aparecem tracejadas, só como referência. Se elas estiverem
 selecionadas ao abrir o editor, ele pergunta:
-- **Converter para paredes editáveis:** viram trechos normais da planta; no OK, são trocadas por paredes do Home Builder 5 no mesmo lugar.
+- **Converter para paredes editáveis:** viram trechos normais da planta; no OK, são trocadas por paredes normais do CAFFMob Draw no mesmo lugar.
 - **Só referência:** continuam tracejadas.
 Nada vai para o 3D até você clicar em **OK** (no fim do painel). **Cancelar** (ou **Esc**) fecha sem mudar nada; se você
 já mudou algo, ele pergunta antes de descartar.
@@ -98,6 +98,17 @@ Com um módulo selecionado, as cotas também aparecem desenhadas no 3D.
    - **Vista frontal:** clique perto de uma altura para alinhar a base de A. Clique acima do topo de B para empilhar A sobre B.
    - Os campos aceitam medidas digitadas; **Tab** passa para o próximo.
 4. **Enter** confirma e **Esc** cancela; A volta para onde estava. A janela avisa se A ficar sobreposto a outro módulo.
+
+Na mesma janela (recursos do Reposicionar do Promob):
+- **Rotação:** gira A em graus em torno do centro da base dele.
+- **Passo:** as setas movem A em X e na profundidade; **Page Up** e **Page Down** movem na altura.
+- **Posição relativa / absoluta:** troca o que os campos X, Y e Z mostram, a distância até B ou a posição no projeto. Nada se move ao trocar. No modo absoluto, o valor digitado vira a posição no projeto.
+- **Salvar posição:** guarda a posição de A em relação a B, com a rotação. Os botões ao lado aplicam uma posição salva a outro par, por exemplo o mesmo nicho em outro quarto.
+- **Substituir:** troca A por um módulo da biblioteca de módulos, no mesmo canto de referência e com a mesma rotação.
+
+**Plano de inserção:** no menu de contexto do objeto, escolha **Usar como plano de inserção** e clique numa face.
+As inserções e os movimentos que não acertam nenhum objeto passam a usar essa face no lugar do piso. Para desfazer,
+use **Limpar plano de inserção**, que fica no mesmo menu e em **Propriedades** › **Movimentação**.
 
 **Mover na Parede:** use o botão no grupo **Cotas**. O módulo segue o mouse ao longo da parede, sem se afastar dela; com **Shift**, ele sobe e desce.
 Com **Evitar Sobreposição** ligado, o módulo para no vizinho e nas pontas da parede. As cotas mudam ao vivo no cabeçalho e no 3D.

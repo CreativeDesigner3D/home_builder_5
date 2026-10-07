@@ -5,7 +5,7 @@ from pathlib import Path
 import bpy
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import blendertomob as addon
+import caffmob_draw as addon
 
 addon.register()
 addon.load_file_post(None)
@@ -21,7 +21,7 @@ assert abs(obj.path_resolve(variable.data_path) - 0.6) < 1e-6
 calculator.set_total_distance('2.0')
 assert obj.animation_data.drivers[-1].data_path == 'home_builder.calculator_distance'
 original = bpy.context.scene
-assert bpy.ops.blendertomob.duplicate_room(new_name='Ambiente de teste') == {'FINISHED'}
+assert bpy.ops.caffmob.duplicate_room(new_name='Ambiente de teste') == {'FINISHED'}
 duplicate = bpy.context.window.scene
 assert duplicate != original
 assert duplicate.home_builder.sort_order > original.home_builder.sort_order
