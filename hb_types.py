@@ -664,6 +664,55 @@ def ensure_drawer_box_side_inputs(ng):
         _split_drawer_box_sides(ng)
     _widen_drawer_box_boards(ng)
     _drawer_box_side_thickness(ng)
+    _drawer_box_side_height(ng)
+
+
+def _drawer_box_side_height(ng):
+    """'Side Height Reduce' (default 0): how much lower the sides stand
+    than the box, their bottoms where they were - an Avantech
+    Illumination box's sides are 6.35mm short of it in 4.3. A Z scale
+    about the box bottom on the two side moves."""
+    if ng.nodes.get('Side Height Scale') or not ng.nodes.get(
+            'Side Group Input'):
+        return
+    names = {it.name for it in ng.interface.items_tree
+             if getattr(it, 'in_out', None) == 'INPUT'}
+    if 'Side Height Reduce' not in names:
+        sock = ng.interface.new_socket('Side Height Reduce', in_out='INPUT',
+                                       socket_type='NodeSocketFloat')
+        sock.default_value = 0.0
+    gi = ng.nodes['Side Group Input']
+    x0, y0 = gi.location.x, gi.location.y - 800
+    left = ng.nodes.get('Side Move Left')
+    right = ng.nodes.get('Side Move Right')
+    if left is None or right is None:
+        return
+    short = ng.nodes.new('ShaderNodeMath')
+    short.name = 'Side Height Short'
+    short.operation = 'SUBTRACT'
+    short.location = (x0 + 200, y0)
+    ng.links.new(gi.outputs['Dim Z'], short.inputs[0])
+    ng.links.new(gi.outputs['Side Height Reduce'], short.inputs[1])
+    floor = ng.nodes.new('ShaderNodeMath')
+    floor.name = 'Side Height Floor'
+    floor.operation = 'MAXIMUM'
+    floor.inputs[1].default_value = 1.0e-6
+    floor.location = (x0 + 200, y0 - 160)
+    ng.links.new(gi.outputs['Dim Z'], floor.inputs[0])
+    ratio = ng.nodes.new('ShaderNodeMath')
+    ratio.name = 'Side Height Ratio'
+    ratio.operation = 'DIVIDE'
+    ratio.location = (x0 + 400, y0)
+    ng.links.new(short.outputs[0], ratio.inputs[0])
+    ng.links.new(floor.outputs[0], ratio.inputs[1])
+    scale = ng.nodes.new('ShaderNodeCombineXYZ')
+    scale.name = 'Side Height Scale'
+    scale.inputs['X'].default_value = 1.0
+    scale.inputs['Y'].default_value = 1.0
+    scale.location = (x0 + 600, y0)
+    ng.links.new(ratio.outputs[0], scale.inputs['Z'])
+    for move in (left, right):
+        ng.links.new(scale.outputs['Vector'], move.inputs['Scale'])
 
 
 # Nodes of GeoNodeDrawerBox that read Material Thickness for the sides:

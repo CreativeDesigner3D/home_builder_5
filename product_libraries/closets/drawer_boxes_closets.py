@@ -275,7 +275,12 @@ def style_box(gb, box_type):
                           ("Side Material", side_mat),
                           ("Use Side Material", use_side),
                           ("Side Outset", outset),
-                          ("Side Thickness", side_t)):
+                          ("Side Thickness", side_t),
+                          # 4.3 stood an illumination box's sides 6.35mm
+                          # short of the box (HETTICH_AvanTech_You).
+                          ("Side Height Reduce",
+                           _mm(6.35) if box_type == 'AVANTECH_ILL'
+                           else 0.0)):
         try:
             gb.set_input(socket, value)
         except Exception:
