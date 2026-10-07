@@ -820,7 +820,11 @@ def apply_to_starter(root, carcass_name=None, front_name=None):
             # be wrong twice over - it is not a sheet good, and its
             # finish is a line on the order.
             continue
-        if role in (role_door, role_drawer):
+        if role == role_drawer and child.get('hb_accessory_front'):
+            # An ironing board front is a closet part, not one of the
+            # fronts: 4.3 painted it in the closet colour and band.
+            mat, edge = carcass, carcass_edge
+        elif role in (role_door, role_drawer):
             # Grain is worked out per front rather than once for the
             # run, so a drawer turned the other way gets the rotated
             # material while its neighbours do not.

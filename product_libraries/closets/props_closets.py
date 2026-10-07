@@ -1019,8 +1019,8 @@ class Closet_Starter_Props(PropertyGroup):
         default=True, update=_update_starter_prop)  # type: ignore
     l_top_opening_height: FloatProperty(
         name="Top Opening Height",
-        description="Floor to the underside of the shelf between the "
-                    "two rods",
+        description="Clear opening over the shelf between the two "
+                    "rods: its top to the underside of the top shelf",
         default=const.L_DOUBLE_TOP_OPENING, min=0.0,
         unit='LENGTH', precision=4,
         update=_update_starter_prop)  # type: ignore

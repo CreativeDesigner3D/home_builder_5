@@ -221,6 +221,14 @@ _WOOD_SIDE_THICKNESS = inch(0.75)
 _METAL_SIDE_THICKNESS = inch(0.625)
 _BOX_BOTTOM_THICKNESS = inch(0.25)
 _BOX_BOTTOM_Z = inch(0.5)
+# A metal box's bottom is the board the shop cuts for it, drawn where
+# 4.3 drew it: an Avantech's 5/8" bottom 30mm up its sides, a Metabox's
+# 3/4" bottom on the box floor. system -> (thickness, height off floor)
+_METAL_BOTTOM = {
+    'AVANTECH': (inch(0.625), _mm(30)),
+    'AVANTECH_ILL': (inch(0.625), _mm(30)),
+    'METABOX': (inch(0.75), 0.0),
+}
 
 
 # A metal box is two-tone, with its sides standing outside the bottom
@@ -256,6 +264,8 @@ def style_box(gb, box_type):
             else _METAL_SIDE_THICKNESS)
     material = box_material(box_type)
     side_mat, use_side, outset, side_t = None, False, 0.0, 0.0
+    bottom_t, bottom_z = _METAL_BOTTOM.get(
+        box_type, (_BOX_BOTTOM_THICKNESS, _BOX_BOTTOM_Z))
     look = _METAL_LOOK.get(box_type)
     if look is not None:
         side_name, body_name, outset, side_t = look
@@ -269,8 +279,8 @@ def style_box(gb, box_type):
             body = pulls_closets.load_finish_material(body_name)
         material = body or material
     for socket, value in (("Material Thickness", side),
-                          ("Bottom Thickness", _BOX_BOTTOM_THICKNESS),
-                          ("Drawer Bottom Z Location", _BOX_BOTTOM_Z),
+                          ("Bottom Thickness", bottom_t),
+                          ("Drawer Bottom Z Location", bottom_z),
                           ("Material", material),
                           ("Side Material", side_mat),
                           ("Use Side Material", use_side),

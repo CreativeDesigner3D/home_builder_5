@@ -344,10 +344,10 @@ PROP_DOOR_SWING = 'hb_door_swing'
 # carried over on open. See carry_over_hampers().
 PROP_IS_HAMPER = 'hb_is_hamper'
 # The catalog entry a hamper front draws its bags from, and how far
-# over the opening floor the bag set's top (the model's origin) hangs
-# so the bags stand just clear of the floor.
+# under the top of the front the bag set's top (the model's origin)
+# hangs (4.3 Hamper insert: door_height - 4").
 HAMPER_ACCESSORY_KEY = 'TILT_OUT_HAMPER'
-HAMPER_BAG_HANG = inch(22.0)
+HAMPER_BAG_BELOW_TOP = inch(4.0)
 # How many fronts each swing hangs. A tilt-out hamper is a single
 # bottom-hinged front, so it counts the same as any other single.
 FRONT_QTY_BY_SWING = {'LEFT': 1, 'RIGHT': 1, 'DOUBLE': 2,
@@ -1217,7 +1217,10 @@ def layout_slab_countertop(obj):
     if not is_slab_countertop(obj):
         return
     sp = obj.hb_closet_slab
-    thk = const.COUNTERTOP_THICKNESS
+    # Laminate comes 1 1/8"; a top cut from the closet material is a
+    # shelf, as thick as one - the run's own tops' rule (4.3 sized its
+    # Countertop insert so too).
+    thk = room_countertop_thickness(bpy.context.scene.hb_closets)
     oh_l, oh_r, oh_f = sp.overhang_left, sp.overhang_right, sp.overhang_front
     shift = float(obj.get(PROP_SLAB_LEFT_SHIFT, 0.0))
     if abs(shift - oh_l) > 1e-9:
@@ -2112,6 +2115,15 @@ class ClosetStarter(GeoNodeCage):
         # Where each bay's rail hangs, in run space, and which junctions
         # are doubled - what decides whether a rail end shares its claw
         # with the next bay's (see the covers below).
+        # One rail height for the run: what was typed, or - until a
+        # height is typed - the prior library's, the lowest bay top less
+        # the rail drop (4.3 update_one_hang_rail_height), so the rails
+        # never fall to the floor the moment the option is ticked.
+        if (sp.use_one_hang_rail_height and layout['bays']
+                and sp.hang_rail_height_location <= 0.0):
+            sp.hang_rail_height_location = (
+                min(b['z0'] + b['height'] for b in layout['bays'])
+                - const.HANG_RAIL_DROP)
         rail_z = [sp.hang_rail_height_location
                   if sp.use_one_hang_rail_height
                   else b['z0'] + b['height'] - const.HANG_RAIL_DROP
@@ -3786,7 +3798,15 @@ class ClosetStarter(GeoNodeCage):
                     @ Matrix.Rotation(math.radians(90.0), 4, 'Y')
                     @ Matrix.Rotation(math.radians(90.0), 4, 'X'))
         model.matrix_parent_inverse = shut.inverted()
-        model.location = (width / 2.0, face_y, floor_z + HAMPER_BAG_HANG)
+        # The bag set's top hangs 4" under the top of the front (4.3
+        # Hamper: door_height - 4"), wherever the front stands.
+        if front.get(PROP_FRONT_LENGTH_UP):
+            front_top = float(front['hb_door_cz'])
+        else:
+            front_top = (float(front['hb_door_cz'])
+                         + float(front.get('hb_door_h', 0.0)))
+        model.location = (width / 2.0, face_y,
+                          front_top - HAMPER_BAG_BELOW_TOP)
         # A back-side front faces +Y, so its bags run back the other way.
         model.rotation_euler = (0.0, 0.0,
                                 math.pi if side == 'BACK' else 0.0)
@@ -6201,6 +6221,9 @@ class LShelfClosetStarter(GeoNodeCage):
             # partition's wall starts clear of it. Each rail is
             # lengthened at its outer end only - the two meet at the
             # corner, so there is nowhere for the inner ends to go.
+            if (sp.use_one_hang_rail_height
+                    and sp.hang_rail_height_location <= 0.0):
+                sp.hang_rail_height_location = H - const.HANG_RAIL_DROP
             rail_z = (sp.hang_rail_height_location
                       if sp.use_one_hang_rail_height
                       else H - const.HANG_RAIL_DROP)
@@ -6323,9 +6346,13 @@ class LShelfClosetStarter(GeoNodeCage):
                     # The one shelf a double hang has is the one
                     # between its two rods, and where it sits is what
                     # divides the hanging into a long half and a short
-                    # one - so it is set rather than spaced.
-                    z = min(max(sp.l_top_opening_height, z_bottom + st),
-                            z_top - st)
+                    # one - so it is set rather than spaced. The Top
+                    # Opening Height is the clear opening over it, down
+                    # from the underside of the top shelf (4.3
+                    # Closet_Rod_Corner_Insert: height - toh - mt), as a
+                    # run's double hang measures it.
+                    z = min(max(z_top - st - sp.l_top_opening_height,
+                                z_bottom + st), z_top - st)
                 else:
                     z = z_bottom + (z_top - z_bottom) * i / (n - 1)
                 # Top and bottom are the carcass and are always fixed.
