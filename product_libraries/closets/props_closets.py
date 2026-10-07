@@ -178,6 +178,11 @@ def _update_room_solve(self, context):
         for obj in scene.objects:
             if obj.get(types_closets.TAG_STARTER_CAGE):
                 types_closets.recalculate_closet_starter(obj)
+    # A slab top stands on its own rather than in a run, so it is sized
+    # again here (the room's countertop thickness is one of its figures).
+    for obj in scene.objects:
+        if types_closets.is_slab_countertop(obj):
+            types_closets.layout_slab_countertop(obj)
 
 
 def _thickness_lock_update(attr):

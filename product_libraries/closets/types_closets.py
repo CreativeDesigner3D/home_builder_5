@@ -1609,6 +1609,7 @@ class ClosetStarter(GeoNodeCage):
             _DISTRIBUTING_WIDTHS.discard(cabinet_id)
 
         self.recalculate()
+        hide_removed_parts(self.obj)
 
     def _build_parts(self, bay_qty, scene_props):
         """Create panels, starter-level parts, and bay subtrees. All
@@ -2849,8 +2850,11 @@ class ClosetStarter(GeoNodeCage):
             if covered:
                 slant_msgs.append("Slanted Shoe Shelf behind door, "
                                   "final placement may be different.")
-            if (max(shelf_w - 2 * f_inset, inch(1.0)) + 1.0e-6
-                    >= const.SHOE_FENCE_MAX_LENGTH):
+            # Read the way the fence is priced (4.3 Metal_Shoe_Fence:
+            # metres to 2 places), so a fence the price leaves out is
+            # one this warns about.
+            if (round(max(shelf_w - 2 * f_inset, inch(1.0)), 2)
+                    >= round(const.SHOE_FENCE_MAX_LENGTH, 2)):
                 slant_msgs.append("Shoe Shelf Fence exceeds 35 Inches")
             for i, child in enumerate(slants):
                 z = spacing * i + rise
@@ -5797,6 +5801,7 @@ class ClosetStarter(GeoNodeCage):
             _DISTRIBUTING_WIDTHS.discard(cabinet_id)
 
         self.recalculate()
+        hide_removed_parts(self.obj)
         return bay.obj
 
     def delete_bay(self, bay_index):
@@ -5838,6 +5843,7 @@ class ClosetStarter(GeoNodeCage):
             _DISTRIBUTING_WIDTHS.discard(cabinet_id)
 
         self.recalculate()
+        hide_removed_parts(self.obj)
         return True
 
 
@@ -5957,6 +5963,7 @@ class LShelfClosetStarter(GeoNodeCage):
         finally:
             _RECALCULATING.discard(cabinet_id)
         self.recalculate()
+        hide_removed_parts(self.obj)
 
     def _build_parts(self, scene_props):
         # Wing end panels (verticals like the run panels).
@@ -7186,14 +7193,11 @@ def _end_keys(starter):
 
 
 def default_slant_qty(opening):
-    """Starting slanted shoe shelf count for an opening: one per 12\" of
-    its height, at least one - the prior library seeded Shelf Quantity
-    this way for every insert dropped in an opening (ops_drop_closet)."""
-    try:
-        interior_h = GeoNodeCage(opening).get_input('Dim Z')
-    except Exception:
-        interior_h = 0.0
-    return max(1, int(interior_h / inch(12.0)))
+    """Starting slanted shoe shelf count for an opening: one. 4.3's
+    slanted shelf drop started at one and took more off the arrow keys
+    (pro_closet_OT_drop_slanted_shelves, shelf_qty = 1); its one-per-12"
+    seed belonged to the other inserts' drop, which this never ran."""
+    return 1
 
 
 def find_accessory_cage(obj):
@@ -7500,10 +7504,53 @@ def carry_over_lock_flags(root):
 
 
 def hide_removed_parts(root):
-    """Keep every part deleted by hand out of the build."""
-    for obj in root.children_recursive:
-        if obj.get(PROP_PART_REMOVED):
-            _set_part_hidden(obj, True)
+    """Keep every part deleted by hand out of the build, with the rail
+    covers that go with it: a rail's covers, and the cover at either end
+    of a rail that clipped onto a panel taken out (a cover is the claw's,
+    and without the rail or the panel there is no claw)."""
+    removed = [o for o in root.children_recursive
+               if o.get(PROP_PART_REMOVED)]
+    for obj in removed:
+        _set_part_hidden(obj, True)
+    for obj in removed:
+        role = obj.get('hb_part_role')
+        if role == PART_ROLE_HANG_RAIL:
+            host = obj.parent
+            if host is None:
+                continue
+            word = ('Back' if 'Back' in obj.name
+                    else 'Side' if 'Side' in obj.name else '')
+            for c in host.children:
+                if c.get('hb_part_role') != PART_ROLE_HANG_RAIL_COVER:
+                    continue
+                # A corner unit's rails each carry their own covers,
+                # told apart by the wall they run along.
+                if host is root and word and word not in c.name:
+                    continue
+                _set_part_hidden(c, True)
+        elif role == PART_ROLE_PANEL and obj.parent is root:
+            try:
+                t = float(GeoNodeCutpart(obj).get_input('Thickness') or 0.0)
+            except Exception:
+                t = 0.0
+            px = obj.location.x
+            for bay in root.children:
+                if not bay.get(TAG_BAY_CAGE):
+                    continue
+                try:
+                    bw = float(GeoNodeCage(bay).get_input('Dim X') or 0.0)
+                except Exception:
+                    continue
+                bx = bay.location.x
+                sides = []
+                if abs(bx - (px + t)) < 1e-3:
+                    sides.append('LEFT')
+                if abs(bx + bw - px) < 1e-3:
+                    sides.append('RIGHT')
+                for c in bay.children:
+                    if (c.get('hb_part_role') == PART_ROLE_HANG_RAIL_COVER
+                            and c.get('hb_cover_side') in sides):
+                        _set_part_hidden(c, True)
 
 
 def recalculate_closet_starter(obj):
