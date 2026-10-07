@@ -2940,6 +2940,12 @@ class hb_closets_OT_add_doors(_ClosetInsertDialog, bpy.types.Operator):
                 "Single bottom-hinged front that tilts out, with a wire "
                 "basket behind it")],
         default='LEFT')  # type: ignore
+    side: bpy.props.EnumProperty(
+        name="Side",
+        description="Face of the bay a bay-wide front hangs on (a double "
+                    "island has a back face too)",
+        items=[('FRONT', "Front", ""), ('BACK', "Back", "")],
+        default='FRONT')  # type: ignore
 
     def invoke(self, context, event):
         # Direct action, no dialog (menu entries carry the props).
@@ -2959,14 +2965,17 @@ class hb_closets_OT_add_doors(_ClosetInsertDialog, bpy.types.Operator):
             # write burst is held to the one solve at the end.
             with types_closets.suspend_recalc():
                 bp = bay.hb_closet_bay
-                bp.door_swing = swing
-                # Bay-wide doors supersede opening doors on the front
-                # side; door openings get default adjustable shelves
-                # behind them (seed_door_shelves skips occupied ones).
+                if self.side == 'BACK':
+                    bp.back_door_swing = swing
+                else:
+                    bp.door_swing = swing
+                # Bay-wide doors supersede opening doors on their side;
+                # door openings get default adjustable shelves behind
+                # them (seed_door_shelves skips occupied ones).
                 for op in bay.children:
                     if (op.get(types_closets.TAG_OPENING_CAGE)
                             and op.get(types_closets.PROP_OPENING_SIDE,
-                                       'FRONT') == 'FRONT'):
+                                       'FRONT') == self.side):
                         op.hb_closet_opening.door_swing = ''
                         if swing and swing != 'TILT_OUT':
                             types_closets.seed_door_shelves(op)
@@ -6772,7 +6781,10 @@ class hb_closets_OT_delete_part(bpy.types.Operator):
             bay = types_closets.find_bay_cage(obj)
             with types_closets.suspend_recalc():
                 if bay is not None:
-                    bay.hb_closet_bay.door_swing = ''
+                    if obj.get(types_closets.PROP_BAY_DOOR_SIDE) == 'BACK':
+                        bay.hb_closet_bay.back_door_swing = ''
+                    else:
+                        bay.hb_closet_bay.door_swing = ''
                 if root is not None:
                     types_closets.recalculate_closet_starter(root)
             return {'FINISHED'}

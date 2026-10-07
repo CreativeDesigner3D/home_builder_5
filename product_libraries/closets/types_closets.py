@@ -356,6 +356,14 @@ FRONT_QTY_BY_SWING = {'LEFT': 1, 'RIGHT': 1, 'DOUBLE': 2,
 # storage the group replaced, kept so a file saved before the change can
 # be carried over on open. See carry_over_bay_fronts().
 PROP_BAY_DOOR_SWING = 'hb_bay_door_swing'
+# Which face of the bay a bay-wide door hangs on; FRONT when unset.
+PROP_BAY_DOOR_SIDE = 'hb_bay_door_side'
+
+
+def bay_door_swing(bay_obj, side='FRONT'):
+    """The bay-wide front's swing on one face of the bay ('' for none)."""
+    bp = bay_obj.hb_closet_bay
+    return bp.back_door_swing if side == 'BACK' else bp.door_swing
 PROP_BAY_IS_HAMPER = 'hb_bay_is_hamper'
 PROP_CUBBY_COLS = 'hb_cubby_cols'
 PROP_CUBBY_ROWS = 'hb_cubby_rows'
@@ -2711,8 +2719,8 @@ class ClosetStarter(GeoNodeCage):
             covered = bool(groups.get(PART_ROLE_DOOR))
             if not covered:
                 bay = find_bay_cage(opening)
-                covered = bool(bay is not None
-                               and bay.hb_closet_bay.door_swing)
+                covered = bool(bay is not None and bay_door_swing(
+                    bay, opening.get(PROP_OPENING_SIDE, 'FRONT')))
             if covered:
                 slant_msgs.append("Slanted Shoe Shelf behind door, "
                                   "final placement may be different.")
@@ -3413,15 +3421,16 @@ class ClosetStarter(GeoNodeCage):
         return front.obj
 
     def _reconcile_bay_doors(self, bay_obj, side):
-        """Bay-wide doors: parented to the bay cage, hb_bay_door=1.
-        FRONT side only for now (double-island back-side bay doors are a
-        follow-up)."""
-        swing = (bay_obj.hb_closet_bay.door_swing
-                 if side == 'FRONT' else '')
+        """Bay-wide doors: parented to the bay cage, hb_bay_door=1, on
+        one face of it each (a double island has two). Each face keeps
+        to its own doors - counting the other face's as its own had the
+        back's empty swing remove the front's on every solve."""
+        swing = bay_door_swing(bay_obj, side)
         qty = FRONT_QTY_BY_SWING.get(swing, 0)
         existing = [c for c in bay_obj.children
                     if c.get('hb_part_role') == PART_ROLE_DOOR
-                    and c.get('hb_bay_door')]
+                    and c.get('hb_bay_door')
+                    and c.get(PROP_BAY_DOOR_SIDE, 'FRONT') == side]
         existing.sort(key=lambda o: o.get('hb_door_index', 0))
         hamper = 1 if swing == 'TILT_OUT' else 0
         name = 'Hamper Front' if hamper else 'Door'
@@ -3433,8 +3442,11 @@ class ClosetStarter(GeoNodeCage):
             front.obj.parent = bay_obj
             front.obj['hb_part_role'] = PART_ROLE_DOOR
             front.obj['hb_bay_door'] = 1
+            front.obj[PROP_BAY_DOOR_SIDE] = side
             front.obj['MENU_ID'] = 'HOME_BUILDER_MT_closet_part_commands'
             front.obj.rotation_euler.x = math.radians(90)
+            if side == 'BACK':
+                front.set_input('Mirror Z', True)
             front.obj['hb_door_index'] = len(existing)
             front.obj['hb_is_hamper'] = hamper
             existing.append(front.obj)
@@ -3469,7 +3481,12 @@ class ClosetStarter(GeoNodeCage):
         # takes the room's overlays as they come.
         lo, ro, to, bo = front_overlays(scene_props)
         h_gap = scene_props.horizontal_gap
-        front_y = base_y - o_depth - scene_props.door_to_cabinet_gap
+        # The back face's doors stand off the bay's back the way its
+        # openings' doors do, extruding away from it (Mirror Z).
+        if side == 'BACK':
+            front_y = base_y + scene_props.door_to_cabinet_gap
+        else:
+            front_y = base_y - o_depth - scene_props.door_to_cabinet_gap
         width = bay['width']
         interior_h = bay['interior_h']
         full = width + lo + ro
@@ -3502,7 +3519,10 @@ class ClosetStarter(GeoNodeCage):
                                height=interior_h + to + bo)
             self._layout_hamper_basket(
                 child, width, bay['interior_z'],
-                front_y + scene_props.door_to_cabinet_gap, side)
+                front_y + (scene_props.door_to_cabinet_gap
+                           if side == 'FRONT'
+                           else -scene_props.door_to_cabinet_gap),
+                side)
             self._position_front_pull(
                 child, 'hamper' if child.get('hb_is_hamper') else 'door',
                 side)
@@ -3511,8 +3531,7 @@ class ClosetStarter(GeoNodeCage):
     def _reconcile_doors(self, opening, side):
         # A bay-wide door supersedes opening doors on its side.
         bay = find_bay_cage(opening)
-        if (side == 'FRONT' and bay is not None
-                and bay.hb_closet_bay.door_swing):
+        if bay is not None and bay_door_swing(bay, side):
             swing = ''
         else:
             swing = opening.hb_closet_opening.door_swing
@@ -8182,6 +8201,7 @@ def clear_bay_contents(bay_obj):
     # the update callback, so clearing the front here costs no solve of
     # its own; the caller recalculates once when the strip is done.
     bay_obj.hb_closet_bay.property_unset('door_swing')
+    bay_obj.hb_closet_bay.property_unset('back_door_swing')
     bay_obj.hb_closet_bay.property_unset('is_hamper')
     bay_obj.hb_closet_bay.property_unset('open_door')
     for child in list(bay_obj.children):
@@ -8575,7 +8595,6 @@ def clear_hamper_shelves(root):
     for bay in root.children:
         if not bay.get(TAG_BAY_CAGE):
             continue
-        bay_swing = bay.hb_closet_bay.door_swing
         for opening in bay.children:
             if not opening.get(TAG_OPENING_CAGE):
                 continue
@@ -8583,11 +8602,11 @@ def clear_hamper_shelves(root):
             if not op.adj_shelf_qty:
                 continue
             swing = op.door_swing
-            # A bay-wide front spans the openings on the front side of
-            # the bay, so that is the front they stand behind.
-            if not swing and opening.get(
-                    PROP_OPENING_SIDE, 'FRONT') == 'FRONT':
-                swing = bay_swing
+            # A bay-wide front spans the openings on its face of the
+            # bay, so that is the front they stand behind.
+            if not swing:
+                swing = bay_door_swing(
+                    bay, opening.get(PROP_OPENING_SIDE, 'FRONT'))
             if swing == 'TILT_OUT':
                 stale.append(op)
     # Nothing here has an update callback behind it, so the writes cost

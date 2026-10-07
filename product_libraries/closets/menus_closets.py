@@ -95,6 +95,12 @@ class HOME_BUILDER_MT_closet_bay_commands(bpy.types.Menu):
                     text="Bay Configuration", icon='PRESET')
         layout.menu("HOME_BUILDER_MT_closet_doors_drawers",
                     text="Add Doors & Drawers", icon='SNAP_VOLUME')
+        _starter = types_closets.find_starter_root(context.active_object)
+        if (_starter is not None and isinstance(
+                types_closets._wrap_starter(_starter),
+                types_closets.DoubleIslandClosetStarter)):
+            layout.menu("HOME_BUILDER_MT_closet_back_doors",
+                        text="Add Back Doors", icon='SNAP_VOLUME')
         layout.separator()
         layout.operator("hb_closets.copy_bay",
                         text="Copy Bay", icon='COPYDOWN')
@@ -333,6 +339,23 @@ class HOME_BUILDER_MT_closet_doors_drawers(bpy.types.Menu):
         layout.operator("hb_closets.add_drawers", text="Add Drawers...")
 
 
+class HOME_BUILDER_MT_closet_back_doors(bpy.types.Menu):
+    """A double island bay's back-face doors, spanning the whole bay
+    the way the bay's front doors do."""
+    bl_label = "Add Back Doors"
+
+    def draw(self, context):
+        layout = self.layout
+        for swing, text in (('LEFT', "Left Swing"),
+                            ('RIGHT', "Right Swing"),
+                            ('DOUBLE', "Double Door"),
+                            ('TILT_OUT', "Tilt Out Hamper"),
+                            ('NONE', "Remove Back Doors")):
+            op = layout.operator("hb_closets.add_doors", text=text)
+            op.swing = swing
+            op.side = 'BACK'
+
+
 class HOME_BUILDER_MT_closet_part_commands(bpy.types.Menu):
     """Right-click menu for a closet part. Each role adds what it has
     to offer - a shelf its Add/Remove, a partition its Panel
@@ -504,6 +527,7 @@ classes = (
     HOME_BUILDER_MT_closet_change_bay,
     HOME_BUILDER_MT_closet_change_opening,
     HOME_BUILDER_MT_closet_doors_drawers,
+    HOME_BUILDER_MT_closet_back_doors,
     HOME_BUILDER_MT_closet_accessories,
     HOME_BUILDER_MT_closet_accessories_opening,
     HOME_BUILDER_MT_closet_accessories_panel,

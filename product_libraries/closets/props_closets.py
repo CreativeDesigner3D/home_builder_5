@@ -1190,6 +1190,14 @@ class Closet_Bay_Props(PropertyGroup):
                     "LIFT_UP or TILT_OUT. Empty leaves the bay's "
                     "openings to carry their own fronts",
         default='', update=_update_bay_prop)  # type: ignore
+    # The same on a double island's back face (4.3 hung doors on its back
+    # opening as on its front). Empty for every other run.
+    back_door_swing: bpy.props.StringProperty(
+        name="Back Door",
+        description="Front spanning the whole bay on a double island's "
+                    "back face: LEFT, RIGHT, DOUBLE, LIFT_UP or TILT_OUT. "
+                    "Empty leaves the back openings their own fronts",
+        default='', update=_update_bay_prop)  # type: ignore
     # A tilt-out hamper is one of the fronts the bay can carry now, so
     # it is read off door_swing rather than held beside it. This is kept
     # only so a bay drawn before the change still comes back a hamper:
