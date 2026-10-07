@@ -3028,8 +3028,9 @@ class ClosetStarter(GeoNodeCage):
         vertical bar the same distance in from the latch edge whether
         they are slab or five-piece, held at the height the door's own
         convention calls for (Base / Tall / Upper); drawers a centered
-        horizontal bar; hampers a horizontal bar near the top. BACK-side
-        island fronts are pending (mirrored mounting).
+        horizontal bar; hampers a horizontal bar near the top. A BACK-side
+        island front is mirrored through its face (Mirror Z), so its pull
+        goes on the -Z face and is turned to point out of it.
 
         An opening can say how the pulls on its own fronts sit, or that
         it wants none at all; anything it has not taken over follows the
@@ -3046,7 +3047,13 @@ class ClosetStarter(GeoNodeCage):
         op = opening.hb_closet_opening if opening is not None else None
         pull_obj = None
         selection = pulls_closets.selection_for(kind, front)
-        if side != 'BACK' and not (op is not None and op.no_pulls):
+        part = GeoNodeCutpart(front)
+        # Only a back front built mirrored has the face worked out
+        # below; any other back front keeps going without a pull.
+        back_side = side == 'BACK'
+        mirrored = bool(part.get_input('Mirror Z')) if back_side else False
+        if (not (op is not None and op.no_pulls)
+                and (mirrored or not back_side)):
             pull_obj = pulls_closets.resolve_pull_object(selection)
         if pull_obj is None:
             for child in existing:
@@ -3088,7 +3095,6 @@ class ClosetStarter(GeoNodeCage):
         double = bool(op.double_pull_on_front) if op is not None else False
         pull_spacing = (float(op.distance_between_pulls) if op is not None
                         else const.DISTANCE_BETWEEN_PULLS)
-        part = GeoNodeCutpart(front)
         width, height = front_size(front)
         thickness = part.get_input('Thickness')
         # A front cut length-up sits in a frame turned a quarter about
@@ -3096,7 +3102,7 @@ class ClosetStarter(GeoNodeCage):
         # across, up, out - is turned the same way on the way in.
         length_up = bool(front.get(PROP_FRONT_LENGTH_UP))
         half = pulls_closets.pull_length(pull_obj) / 2.0
-        z = thickness
+        z = -thickness if back_side else thickness
 
         if kind == 'drawer':
             # The drawer figure is measured to the middle of the pull,
@@ -3193,6 +3199,14 @@ class ClosetStarter(GeoNodeCage):
             inst['hb_part_role'] = 'PULL'
             inst['IS_CABINET_PULL'] = True
             existing.append(inst)
+        # A back-side front faces the other way out of the same frame:
+        # half a turn about its own up axis points the pull out of the
+        # -Z face. Across and up are unchanged, so the hinge rules above
+        # still hold the pull off the hinge edge.
+        if back_side:
+            from mathutils import Euler, Matrix
+            flip = Matrix.Rotation(math.pi, 3, 'Y')
+            rot = (flip @ Euler(rot).to_matrix()).to_euler()
         # Everything above is worked out in the face's own terms -
         # across, up, out. A front cut length-up sits in a frame turned
         # a quarter about that face, so the answer is turned with it on
