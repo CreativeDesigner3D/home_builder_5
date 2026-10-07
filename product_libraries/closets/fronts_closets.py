@@ -188,7 +188,13 @@ def apply_style_to_front(front_obj, is_drawer, style=None):
     except Exception:
         return
     min_h, min_w = _MIN_SIZES.get(style, (0.0, 0.0))
-    if (f_height < inch(min_h) or f_width < inch(min_w)
+    # The style minimums are read as 4.3 read them
+    # (valid_door_size_for_style): 'height' against the part's Length and
+    # 'width' against its Width. That is the front's true height on a
+    # door or a vertical-grain drawer front, and its width across on a
+    # drawer front cut length-across.
+    if (part.get_input('Length') < inch(min_h)
+            or part.get_input('Width') < inch(min_w)
             or f_width < 2.0 * stile + inch(1.0)
             or f_height < 2.0 * rail + inch(1.0)):
         _strip_style(front_obj)

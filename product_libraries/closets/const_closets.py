@@ -227,8 +227,9 @@ BACKSPLASH_THICKNESS = inch(0.75)
 COUNTERTOP_END_RADIUS = inch(1.5)
 
 # Amount an end panel grows past the section top when it is extended to
-# wrap a countertop.
-EXTEND_PANEL_AMOUNT = inch(1.125)
+# wrap a countertop. Nothing until one is typed, as in 4.3 (its Extend
+# Panel Amount started at 0); stacking a run on a base sets its own.
+EXTEND_PANEL_AMOUNT = 0.0
 
 # Bridge shelves spanning the gap to a corner neighbor.
 BRIDGE_SHELF_WIDTH = inch(14.0)
