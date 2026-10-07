@@ -710,8 +710,11 @@ def remove_bay_cleat(root, uid):
 
 def solve_starter_layout(root):
     """The solved layout of a run as it stands, without writing it."""
+    starter = _wrap_starter(root)
+    if not isinstance(starter, ClosetStarter):
+        starter = ClosetStarter(root)
     return solver.compute_layout(
-        ClosetStarter(root)._spec_from_props(run_sizes(root)))
+        starter._spec_from_props(run_sizes(root)))
 
 
 # ---------------------------------------------------------------------------
@@ -1777,6 +1780,7 @@ class ClosetStarter(GeoNodeCage):
             right_panel_off=sp.turn_off_right_panel,
             extend_panels=sp.extend_panels_to_countertop,
             extend_amount=sp.extend_panel_amount,
+            bottomless_to_floor=bool(self.is_double),
             bays=bays,
         )
 
@@ -2308,10 +2312,13 @@ class ClosetStarter(GeoNodeCage):
                 center_back['IS_VERTICAL_GRAIN_BACK'] = 1
                 center_back.rotation_euler = (math.radians(90),
                                               math.radians(-90), 0.0)
-                center_back.location = (bay['width'], -cb_y,
-                                        bay['interior_z'])
+                # It stands on the bottom shelf's line even where the
+                # bottom is off and the openings run on to the floor
+                # (4.3: kick + st up, whatever Remove Bottom says).
+                cb_z = bay['bottom_z'] + st
+                center_back.location = (bay['width'], -cb_y, cb_z)
                 part = GeoNodeCutpart(center_back)
-                part.set_input('Length', bay['interior_h'])
+                part.set_input('Length', max(bay['top_z'] - cb_z, 0.001))
                 part.set_input('Width', bay['width'])
                 part.set_input('Thickness', st)
                 _set_part_hidden(center_back, not bp.include_center_back)
