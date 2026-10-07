@@ -10046,6 +10046,17 @@ class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
         update=_update_cabinet_dim,
     )  # type: ignore
 
+    # GLASS_SHELF only. Glass is ordered by thickness (1/4", 3/8",
+    # 1/2" ...), so it is its own field rather than the wood shelf
+    # thickness.
+    glass_thickness: FloatProperty(
+        name="Glass Thickness",
+        description="Thickness of each glass shelf",
+        default=units.inch(0.375), min=units.inch(0.0625),
+        unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
     # PULLOUT_SHELF / ROLLOUT
     # Multi-count assembly fields. qty defaults to 2 (typical use); the
     # auto rule (when unlock_qty is False) fills the opening from

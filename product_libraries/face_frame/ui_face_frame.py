@@ -1535,6 +1535,8 @@ def _draw_interior_items_section(layout, target_props, target_name=""):
                 # from the cavity depth, so the field only shows
                 # where it acts.
                 sub.prop(item, 'shelf_setback', text="Setback")
+            if item.kind == 'GLASS_SHELF':
+                sub.prop(item, 'glass_thickness', text="Thickness")
             sub.prop(item, 'bottom_offset', text="From Bottom")
             sub.prop(item, 'shelf_support', text="Support")
             if item.kind in {'ADJUSTABLE_SHELF', 'HALF_DEPTH_SHELF',
