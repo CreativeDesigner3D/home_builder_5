@@ -676,31 +676,31 @@ def apply_front_member_materials(front_obj, is_drawer, front_mat=None,
         p_vert, p_horiz = vertical_variant(carcass_mat), carcass_mat
     grain = front_grain(front_obj, is_drawer)
     panel = p_horiz if grain == 'HORIZONTAL' else p_vert
-    # Door panel type: glass selections replace the wood panel (drawer
-    # fronts always keep the wood panel). Clear Glass reuses the shared
+    # Panel type: glass selections replace the wood panel, on drawer
+    # and hamper fronts as on doors (4.3 assign_door_style gave every
+    # styled front the room's panel type). Clear Glass reuses the shared
     # generated door-panel glass (Glass BSDF + Transparent mix - the
     # library's plain glass material doesn't read as glass in render);
     # Mirror / Frosted come from the materials library. The tag lets
     # the 2D layer hatch glass panels later.
     is_glass = False
-    if not is_drawer:
-        panel_type = door_panel_type(front_obj)
-        if panel_type != 'Vertical Grain':
-            glass = None
-            if panel_type == 'Clear Glass':
-                try:
-                    from ..face_frame.props_hb_face_frame import (
-                        Face_Frame_Cabinet_Style)
-                    glass = (Face_Frame_Cabinet_Style
-                             ._get_glass_panel_material())
-                except Exception:
-                    glass = None
-            if glass is None:
-                glass = load_material(panel_type)
-            if glass is not None:
-                panel = glass
-                is_glass = True
-        front_obj['hb_panel_type'] = panel_type
+    panel_type = door_panel_type(front_obj)
+    if panel_type != 'Vertical Grain':
+        glass = None
+        if panel_type == 'Clear Glass':
+            try:
+                from ..face_frame.props_hb_face_frame import (
+                    Face_Frame_Cabinet_Style)
+                glass = (Face_Frame_Cabinet_Style
+                         ._get_glass_panel_material())
+            except Exception:
+                glass = None
+        if glass is None:
+            glass = load_material(panel_type)
+        if glass is not None:
+            panel = glass
+            is_glass = True
+    front_obj['hb_panel_type'] = panel_type
     front_obj['IS_PREP_FOR_GLASS'] = is_glass
     _set_modifier_material(mod, 'Stile Material', vert_mat)
     _set_modifier_material(mod, 'Rail Material', horiz_mat)

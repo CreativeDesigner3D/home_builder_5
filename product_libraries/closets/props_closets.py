@@ -1904,7 +1904,8 @@ class Closets_Scene_Props(PropertyGroup):
 
     closet_panel_type: EnumProperty(
         name="Door Panel",
-        description="Center panel on 5-piece doors: wood or glass",
+        description="Center panel on 5-piece doors and drawer fronts: "
+                    "wood or glass",
         items=materials_closets.PANEL_TYPES,
         default='Vertical Grain',
         update=materials_closets.update_room)  # type: ignore

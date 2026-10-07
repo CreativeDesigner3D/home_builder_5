@@ -3302,9 +3302,13 @@ class ClosetStarter(GeoNodeCage):
             x = width / 2.0
             y = h_edge
             rot = (math.radians(-90.0), 0.0, 0.0)
-            if pulls_closets.is_edge_pull(
-                    pulls_closets.current_pull_stem(selection)):
+            lift_stem = pulls_closets.current_pull_stem(selection).upper()
+            if pulls_closets.is_edge_pull(lift_stem):
                 y = 0.0
+                rot = (math.radians(-90.0), 0.0, math.radians(180.0))
+            elif lift_stem == 'MODERN KNOB':
+                # 4.3 turned a modern knob the other way round on a
+                # lift-up door (rot z -90 against the bar's 90).
                 rot = (math.radians(-90.0), 0.0, math.radians(180.0))
         else:
             hinge = front.get('hb_hinge', 'LEFT')
@@ -3750,8 +3754,9 @@ class ClosetStarter(GeoNodeCage):
         """Hang the tilt-out hamper's frame and bags behind its front.
 
         The bags are the catalog's Tilt Out Hamper, at the largest
-        width it is bought in that the opening takes (the narrowest
-        where none fits - the front already warns about that). They
+        width it is bought in that the opening takes; an opening
+        narrower than the narrowest gets none (4.3 hid its bags under
+        18" - the front already warns about that). They
         are a child of the front so they tilt out with it, set where
         they stand with the front shut: centred across the opening,
         just behind its face, bags hanging to the opening floor. A
@@ -3764,9 +3769,9 @@ class ClosetStarter(GeoNodeCage):
         band = path = None
         if acc_def is not None and acc_def.bands:
             fits = [b for b in acc_def.bands if b[1] <= width + 0.0005]
-            band = (max(fits, key=lambda b: b[1]) if fits
-                    else min(acc_def.bands, key=lambda b: b[1]))
-            path = acc_def.path_for(band)
+            if fits:
+                band = max(fits, key=lambda b: b[1])
+                path = acc_def.path_for(band)
         if band is None or not acc.model_is_installed(path):
             for obj in found:
                 _remove_part_tree(obj)
@@ -4319,6 +4324,14 @@ class ClosetStarter(GeoNodeCage):
         elif want_w > 0.0 and width + 0.0005 < want_w:
             msg = ("%s needs %s of width; this opening is %s"
                    % (acc_def.label, _in_str(want_w), _in_str(width)))
+        elif (acc_def.is_sized and want_w > 0.0
+              and abs(width - want_w) > 0.0005):
+            # A basket is bought at its width, not cut to the opening,
+            # so one narrower than the opening leaves a gap either side
+            # (4.3 Wire_Basket.validate_size: any mismatch).
+            msg = ("Opening width does not match the %s width (%s); this "
+                   "opening is %s" % (acc_def.label, _in_str(want_w),
+                                      _in_str(width)))
         elif want_d > 0.0 and depth + 0.0005 < want_d:
             msg = ("%s needs %s of depth; this opening is %s"
                    % (acc_def.label, _in_str(want_d), _in_str(depth)))
