@@ -3925,10 +3925,16 @@ class hb_closets_OT_place_misc_part(bpy.types.Operator,
             # is measured from the bay interior bottom, so the segment
             # offset goes on before the snap and comes off after -
             # holes stay lined up across a split.
+            # That lattice is where a cammed shelf's underside goes,
+            # its middle on the bore. A dropped shelf rests on pins in
+            # the bore, so it stands half a thickness higher, its
+            # underside on the bore line (4.3 ops_drop_closet: 'Part:
+            # Adj Shelf' snapped, then up by shelf_thickness / 2).
             seg_bottom = self._opening.get('hb_seg_bottom', 0.0)
+            st = types_closets.run_sizes(self._opening).shelf_thickness
             z = (const.snap_system_hole(seg_bottom + local_z)
-                 - seg_bottom)
-            return max(0.0, min(z, interior_h)), False
+                 - seg_bottom + st / 2.0)
+            return max(0.0, min(z, interior_h - st)), False
         # A cleat dropped near the floor takes the floor, and one
         # dropped near the top takes the top and hangs from it. Between
         # the two it stays where it is put. Both are read off where the
