@@ -8552,6 +8552,10 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
 
     def _load_fields(self, context, opening):
         """Read the dialog's fields off the opening."""
+        # A pull figure typed the old way is read over before it is
+        # shown, so the box and what it then writes back mean the same.
+        if types_closets.pull_v_needs_reading(opening):
+            types_closets.recalculate_closet_starter(opening)
         # An empty opening reads back as zero of everything. The dialog
         # opens on the quantity a user would want if they picked that
         # interior, so a zero falls back to the standard starting count;

@@ -300,6 +300,47 @@ PROP_COVER_WIDTH = 'hb_cover_w'
 PROP_COVER_BOTTOM_Z = 'hb_cover_z'
 
 
+def _convert_legacy_pull_v(opening, op, door_v, rule, bottom_w,
+                           height, half, v_tall, v_base):
+    """Read a door pull figure typed before Tall was measured from the
+    door bottom over to the same place on the door, once.
+
+    The figure meant what the rule of the day made of it: on Tall a
+    height off the floor, on Base down from the door top, on Upper up
+    from its bottom - and Auto then chose by the old test (Upper once
+    the door bottom reached the tall height, Tall while the tall height
+    fit under a Base pull, else Base). The pull is held where that put
+    it and the figure rewritten for the rule the door is on now."""
+    old = str(op.door_pull_location or 'AUTO')
+    if old == 'AUTO':
+        if bottom_w >= v_tall:
+            old = 'UPPER'
+        elif (v_tall - bottom_w) + half <= height - v_base - half:
+            old = 'TALL'
+        else:
+            old = 'BASE'
+    if old == 'TALL':
+        center = door_v - bottom_w + half
+    elif old == 'BASE':
+        center = height - door_v - half
+    else:
+        center = door_v + half
+    new_v = (height - center - half) if rule == 'BASE' else (center - half)
+    new_v = max(new_v, 0.0)
+    if abs(new_v - door_v) > 1e-6:
+        op.door_pull_vertical_location = new_v
+    opening[PROP_PULL_V_FROM_BOTTOM] = 1
+    return new_v
+
+
+def pull_v_needs_reading(opening):
+    """Whether an opening still holds a door pull figure typed the old
+    way (read over on its next recalculation)."""
+    op = getattr(opening, 'hb_closet_opening', None)
+    return (op is not None and bool(op.unlock_door_pull_vertical)
+            and not opening.get(PROP_PULL_V_FROM_BOTTOM))
+
+
 def front_size(front):
     """(width across, height up) of a front, whichever way it is cut."""
     part = GeoNodeCutpart(front)
@@ -3384,21 +3425,30 @@ class ClosetStarter(GeoNodeCage):
                 bottom_w -= height
             rule = (op.door_pull_location if op is not None else 'AUTO')
             if rule == 'AUTO':
-                if bottom_w > const.DOOR_PULL_UPPER_ABOVE:
+                # 4.3 tested the opening the door covers (the insert's
+                # height off the floor and its own height), not the
+                # door with its overlays; a bay-wide door has no
+                # opening and is read off itself.
+                at_z, tall_h = bottom_w, height
+                if opening is not None:
+                    try:
+                        at_z = split_preview._world_matrix(
+                            opening).translation.z
+                        tall_h = float(GeoNodeCage(opening).get_input(
+                            'Dim Z') or height)
+                    except Exception:
+                        at_z, tall_h = bottom_w, height
+                if at_z > const.DOOR_PULL_UPPER_ABOVE:
                     rule = 'UPPER'
-                elif height > const.DOOR_PULL_TALL_OVER:
+                elif tall_h > const.DOOR_PULL_TALL_OVER:
                     rule = 'TALL'
                 else:
                     rule = 'BASE'
             if (door_v is not None and opening is not None
                     and not opening.get(PROP_PULL_V_FROM_BOTTOM)):
-                # A Tall figure typed before Tall was measured from the
-                # door bottom meant a height off the floor: read it
-                # over once to the same place on the door.
-                if rule == 'TALL':
-                    door_v = max(door_v - bottom_w, 0.0)
-                    op.door_pull_vertical_location = door_v
-                opening[PROP_PULL_V_FROM_BOTTOM] = 1
+                door_v = _convert_legacy_pull_v(
+                    opening, op, door_v, rule, bottom_w, height, half,
+                    v_tall, v_base)
             if door_v is not None:
                 # A figure the opening typed in is read the same way the
                 # room's is for whichever convention the door landed on:
@@ -4252,10 +4302,20 @@ class ClosetStarter(GeoNodeCage):
                 geo.set_input('Dim X', scene_props.panel_thickness)
                 geo.set_input('Dim Y', cage_d)
                 geo.set_input('Dim Z', const.ACCESSORY_PANEL_CAGE_H)
+                if acc_def.custom:
+                    # A custom one on the panel face (4.3's Accessory
+                    # Panel): a box as tall as it was said to stand,
+                    # with its name on it.
+                    h = custom_accessory_height(cage)
+                    geo.set_input('Dim Z', h)
                 self._layout_panel_accessory(
                     cage, acc_def, kids, width, depth,
                     scene_props.panel_thickness)
-                if not self._fit_cage_to_model(cage, kids):
+                if acc_def.custom:
+                    self._acc_custom_box(
+                        cage, kids, scene_props.panel_thickness, cage_d,
+                        custom_accessory_height(cage))
+                elif not self._fit_cage_to_model(cage, kids):
                     self._size_placeholder(
                         kids, scene_props.panel_thickness, cage_d,
                         const.ACCESSORY_PANEL_CAGE_H)
@@ -8536,7 +8596,8 @@ def serialize_opening(opening):
             int(opening.hb_closet_opening.unlock_door_pull_vertical),
             float(opening.hb_closet_opening.door_pull_vertical_location),
             int(opening.hb_closet_opening.unlock_door_pull_edge),
-            float(opening.hb_closet_opening.door_pull_horizontal_offset)],
+            float(opening.hb_closet_opening.door_pull_horizontal_offset),
+            int(bool(opening.get(PROP_PULL_V_FROM_BOTTOM)))],
         # Whether this opening is closed at the back, and how, so a
         # copy is backed the way the original was.
         'back': [int(opening.hb_closet_opening.add_back),
@@ -8625,8 +8686,12 @@ def apply_opening_data(opening, data, recalc=True):
         if len(pulls) > 11:
             _op.unlock_door_pull_vertical = bool(pulls[8])
             _op.door_pull_vertical_location = float(pulls[9])
-            # Copied off an opening that reads it the current way.
-            opening[PROP_PULL_V_FROM_BOTTOM] = 1
+            # The figure reads the way the opening it was copied from
+            # read it; an old one is read over on the next recalc.
+            if len(pulls) > 12 and pulls[12]:
+                opening[PROP_PULL_V_FROM_BOTTOM] = 1
+            elif PROP_PULL_V_FROM_BOTTOM in opening:
+                del opening[PROP_PULL_V_FROM_BOTTOM]
             _op.unlock_door_pull_edge = bool(pulls[10])
             _op.door_pull_horizontal_offset = float(pulls[11])
     if data.get('door_swing'):
