@@ -428,13 +428,16 @@ class hb_closets_OT_toggle_mode(bpy.types.Operator):
 # Placement modal
 # ---------------------------------------------------------------------------
 def _flip_bay_swing(bay):
-    """LEFT<->RIGHT flip of a bay-wide front's swing; DOUBLE, LIFT_UP
-    and empty values pass through unchanged."""
+    """LEFT<->RIGHT flip of a bay-wide front's swing, the front face's
+    and a double island's back face's alike; DOUBLE, LIFT_UP and empty
+    values pass through unchanged."""
     bp = bay.hb_closet_bay
-    if bp.door_swing == 'LEFT':
-        bp.door_swing = 'RIGHT'
-    elif bp.door_swing == 'RIGHT':
-        bp.door_swing = 'LEFT'
+    for attr in ('door_swing', 'back_door_swing'):
+        swing = getattr(bp, attr)
+        if swing == 'LEFT':
+            setattr(bp, attr, 'RIGHT')
+        elif swing == 'RIGHT':
+            setattr(bp, attr, 'LEFT')
 
 
 def _clear_front_open_state(opening, role):
