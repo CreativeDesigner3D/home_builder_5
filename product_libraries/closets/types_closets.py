@@ -1437,6 +1437,8 @@ class ClosetStarter(GeoNodeCage):
     # islands have no wall side, so their classes clear this.
     has_hang_rail = True
     ctop_overhang_all = False
+    # Whether a new run's countertop starts with its backsplash on.
+    starts_with_backsplash = True
     # None = use the scene default panel depth at create time.
     default_depth = None
 
@@ -1501,13 +1503,16 @@ class ClosetStarter(GeoNodeCage):
             # it is as thick as one.
             sp.countertop_thickness = (
                 room_countertop_thickness(scene_props))
-            # A double-sided island is reachable from every side, so its
-            # top overhangs all round; everything else only overhangs at
-            # the front until a prompt says otherwise.
+            # An island is reachable from every side, so its top
+            # overhangs all round (4.3 Closet_Island: 1.5" on all four,
+            # single or double); everything else only overhangs at the
+            # front until a prompt says otherwise.
             if self.ctop_overhang_all:
                 for side in ('front', 'rear', 'left', 'right'):
                     setattr(sp, 'countertop_overhang_' + side,
                             const.ISLAND_CTOP_OVERHANG)
+            if not self.starts_with_backsplash:
+                sp.include_backsplash = False
             sp.width = scene_props.default_closet_width
             sp.height = self.default_height(scene_props)
             sp.depth = (self.default_depth
@@ -3258,11 +3263,19 @@ class ClosetStarter(GeoNodeCage):
             y = height - v_drawer
             rot = (math.radians(-90.0), 0.0, 0.0)
         elif front.get('hb_hinge') == 'TOP':
-            # Lift-up door: horizontal bar centered near the bottom edge
-            # (the free edge that lifts).
+            # Lift-up door: horizontal bar centered across the door, its
+            # middle the From Edge figure up from the bottom edge (the
+            # free edge that lifts) - 4.3 add_lift_up_door_pull:
+            # door_length - Pull Horizontal Location. An edge pull sits
+            # on that edge (4.3 zeroed the figure for one), turned to
+            # wrap it.
             x = width / 2.0
-            y = v_base + half
+            y = h_edge
             rot = (math.radians(-90.0), 0.0, 0.0)
+            if pulls_closets.is_edge_pull(
+                    pulls_closets.current_pull_stem(selection)):
+                y = 0.0
+                rot = (math.radians(-90.0), 0.0, math.radians(180.0))
         else:
             hinge = front.get('hb_hinge', 'LEFT')
             # The same distance in from the latch edge on every door,
@@ -5672,6 +5685,10 @@ class IslandClosetStarter(ClosetStarter):
     default_closet_type = 'ISLAND'
     has_countertop = True
     has_applied_back = True
+    # 4.3 put every island's top over all four sides and placed it with
+    # its backsplash off (drop_island: Turn Off Backsplash).
+    ctop_overhang_all = True
+    starts_with_backsplash = False
 
 
 class DoubleIslandClosetStarter(IslandClosetStarter):
@@ -5680,7 +5697,6 @@ class DoubleIslandClosetStarter(IslandClosetStarter):
     overhangs all around. Each bay carries FRONT and BACK openings."""
     has_applied_back = False
     is_double = True
-    ctop_overhang_all = True
     default_depth = const.ISLAND_DOUBLE_DEPTH
 
 
