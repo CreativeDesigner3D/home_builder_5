@@ -1723,42 +1723,53 @@ class Closets_Scene_Props(PropertyGroup):
         description="Floor to the top of wall-mounted hanging starters",
         default=const.HANGING_TOP_HEIGHT, unit='LENGTH', precision=4,
         update=_system_default_height('hanging_top_height'))  # type: ignore
+    # A part thickness, the shelf clip gap or setback changed: every
+    # run that has not taken the figure over re-solves at once, as
+    # the gaps and reveals below do.
     panel_thickness: FloatProperty(
         name="Panel Thickness", default=const.PANEL_THICKNESS,
-        unit='LENGTH', precision=4)  # type: ignore
+        unit='LENGTH', precision=4,
+        update=_update_room_solve)  # type: ignore
     shelf_thickness: FloatProperty(
         name="Shelf Thickness", default=const.SHELF_THICKNESS,
-        unit='LENGTH', precision=4)  # type: ignore
+        unit='LENGTH', precision=4,
+        update=_update_room_solve)  # type: ignore
     divider_thickness: FloatProperty(
         name="Cubby Divider Thickness",
         description="What the uprights in a cubby grid are cut from. "
                     "The shelves across the grid follow the shelf "
                     "thickness",
         default=const.DIVIDER_THICKNESS,
-        unit='LENGTH', precision=4)  # type: ignore
+        unit='LENGTH', precision=4,
+        update=_update_room_solve)  # type: ignore
     batten_thickness: FloatProperty(
         name="Batten Thickness",
         description="How thick the scribe strip on the end of a run is",
         default=const.BATTEN_THICKNESS,
-        unit='LENGTH', precision=4)  # type: ignore
+        unit='LENGTH', precision=4,
+        update=_update_room_solve)  # type: ignore
     batten_width: FloatProperty(
         name="Batten Width",
         description="How wide the scribe strip on the end of a run is. "
                     "Whatever it carries past the panel edge is what "
                     "there is to scribe to the wall",
         default=const.BATTEN_WIDTH,
-        unit='LENGTH', precision=4)  # type: ignore
+        unit='LENGTH', precision=4,
+        update=_update_room_solve)  # type: ignore
     # The room's standard for how a shelf on clips is cut. An opening
     # can take either figure over for itself.
     shelf_clip_gap: FloatProperty(
         name="Shelf Clip Gap", default=const.SHELF_CLIP_GAP,
-        min=0.0, unit='LENGTH', precision=4)  # type: ignore
+        min=0.0, unit='LENGTH', precision=4,
+        update=_update_room_solve)  # type: ignore
     shelf_setback: FloatProperty(
         name="Shelf Setback", default=const.SHELF_SETBACK,
-        min=0.0, unit='LENGTH', precision=4)  # type: ignore
+        min=0.0, unit='LENGTH', precision=4,
+        update=_update_room_solve)  # type: ignore
     countertop_thickness: FloatProperty(
         name="Countertop Thickness", default=const.COUNTERTOP_THICKNESS,
-        unit='LENGTH', precision=4)  # type: ignore
+        unit='LENGTH', precision=4,
+        update=_update_room_solve)  # type: ignore
     toe_kick_height: FloatProperty(
         name="Toe Kick Height", default=const.DEFAULT_TOE_KICK_HEIGHT,
         unit='LENGTH', precision=4)  # type: ignore
@@ -2005,7 +2016,7 @@ class Closets_Scene_Props(PropertyGroup):
                     "made in. One not offered in it is made in black, "
                     "or the first fabric it comes in",
         items=accessories_closets.ACCESSORY_FABRIC_ITEMS,
-        default='Fabric Beach',
+        default='Fabric Slate',     # 4.3's default fabric
         update=accessories_closets.update_room_finishes)  # type: ignore
 
     closet_drawer_box: EnumProperty(
@@ -2026,9 +2037,9 @@ class Closets_Scene_Props(PropertyGroup):
         name="Shelves Behind Doors",
         description="Put adjustable shelves into an opening when a "
                     "door is added to it, where the opening is still "
-                    "empty. Turn this off to add a door and nothing "
-                    "else, the way the prior library did",
-        default=True)  # type: ignore
+                    "empty. Off, adding a door adds nothing else, the "
+                    "way the prior library did",
+        default=False)  # type: ignore
 
     notch_panels_for_base_board: BoolProperty(
         name="Notch Panels for Base Board",
@@ -2392,8 +2403,12 @@ class Closets_Scene_Props(PropertyGroup):
         sub = col.row()
         sub.enabled = not self.use_closet_material_for_countertops
         sub.prop(self, 'closet_countertop_material', text="Material")
-        col.label(text="Thickness: %s" % _thickness_label(
-            countertop_thickness_for(self)))
+        if self.use_closet_material_for_countertops:
+            col.label(text="Thickness: %s" % _thickness_label(
+                countertop_thickness_for(self)))
+        else:
+            # Typed for the room, as 4.3's Countertop Thickness was.
+            col.prop(self, 'countertop_thickness', text="Thickness")
 
     # =====================================================================
     # UI: molding (Options tab)

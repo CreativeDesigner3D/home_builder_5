@@ -35,6 +35,11 @@ class HOME_BUILDER_MT_closet_starter_commands(bpy.types.Menu):
         layout.operator("hb_closets.set_corner_clearance",
                         text="Corner Clearance...", icon='SNAP_EDGE')
         layout.separator()
+        if _dup_root is not None and any(
+                c.get(types_closets.PROP_PART_REMOVED)
+                for c in _dup_root.children_recursive):
+            layout.operator("hb_closets.restore_removed_parts",
+                            icon='LOOP_BACK')
         layout.operator("hb_closets.delete_starter",
                         text="Delete Starter", icon='X')
 
@@ -403,6 +408,13 @@ class HOME_BUILDER_MT_closet_part_commands(bpy.types.Menu):
                 == types_closets.PART_ROLE_ROD):
             layout.operator("hb_closets.rod_prompts",
                             text="Rod Properties...", icon='WINDOW')
+            drilled = bool(obj.get(types_closets.PROP_ROD_MACHINING))
+            op = layout.operator(
+                "hb_closets.rod_bracket_machining",
+                text=("Remove Rod Bracket Holes" if drilled
+                      else "Add Rod Bracket Holes"),
+                icon='TOOL_SETTINGS')
+            op.drill = not drilled
             layout.separator()
         slab = None
         if types_closets.is_slab_countertop(obj):

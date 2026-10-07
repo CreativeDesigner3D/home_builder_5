@@ -135,6 +135,13 @@ PROP_ACCESSORY_MODEL = 'hb_accessory_model'
 PROP_ACCESSORY_PANEL_LOC = 'hb_accessory_panel_loc'
 PART_ROLE_ACCESSORY_RIG = 'CLOSET_ACCESSORY_RIG'
 PROP_ACCESSORY_SETBACK = 'hb_accessory_setback'
+# A carcass part deleted by hand (4.3 Delete Part took any part out).
+# The solve still builds it, so it is kept hidden - not drawn, priced,
+# cut or drilled - and Restore Removed Parts brings it back.
+PROP_PART_REMOVED = 'hb_part_removed'
+# On a rod: bore the panels at its ends for its brackets at Prepare
+# (spaces_manufacturing machining_closets.PROP_ROD_MACHINING).
+PROP_ROD_MACHINING = 'hb_rod_machining'
 # On an opening: its typed door pull height is read the current way
 # (Tall up from the door bottom). Absent, a Tall figure typed before
 # that change is a height off the floor and is read over once.
@@ -7492,6 +7499,13 @@ def carry_over_lock_flags(root):
             pass
 
 
+def hide_removed_parts(root):
+    """Keep every part deleted by hand out of the build."""
+    for obj in root.children_recursive:
+        if obj.get(PROP_PART_REMOVED):
+            _set_part_hidden(obj, True)
+
+
 def recalculate_closet_starter(obj):
     """Public recalc entry point for prop update callbacks and operators.
     Accepts the root or any descendant; no-ops while that starter is
@@ -7513,6 +7527,7 @@ def recalculate_closet_starter(obj):
     carry_over_front_locks(root)
     clear_hamper_shelves(root)
     _wrap_starter(root).recalculate()
+    hide_removed_parts(root)
     mark_parts(root)
     stamp_part_menus(root)
     stamp_panel_limits(root)
@@ -7963,12 +7978,14 @@ def _cap_insert(cage, opening, root, st):
 
 
 def room_countertop_thickness(scene_props):
-    """How thick the room's tops are. A countertop laminate is bought
-    as a 1 1/8" slab and comes in no other thickness, so that is fixed;
-    a top in the closet material is a shelf, as thick as one."""
+    """How thick the room's tops are: the room's Countertop Thickness
+    (1 1/8" by default, the laminate slab), typed for the room as 4.3's
+    was; a top in the closet material is a shelf, as thick as one."""
     if scene_props.use_closet_material_for_countertops:
         return scene_props.shelf_thickness
-    return const.COUNTERTOP_THICKNESS
+    return float(getattr(scene_props, 'countertop_thickness',
+                         const.COUNTERTOP_THICKNESS)
+                 or const.COUNTERTOP_THICKNESS)
 
 
 def _sync_countertop_thickness(root):

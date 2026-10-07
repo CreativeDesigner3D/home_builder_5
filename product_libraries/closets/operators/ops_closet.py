@@ -6945,6 +6945,34 @@ class hb_closets_OT_cleat_prompts(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class hb_closets_OT_restore_removed_parts(bpy.types.Operator):
+    """Bring back every part deleted from this closet"""
+    bl_idname = "hb_closets.restore_removed_parts"
+    bl_label = "Restore Removed Parts"
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        root = types_closets.find_starter_root(context.active_object)
+        return root is not None and any(
+            c.get(types_closets.PROP_PART_REMOVED)
+            for c in root.children_recursive)
+
+    def execute(self, context):
+        root = types_closets.find_starter_root(context.active_object)
+        n = 0
+        for c in root.children_recursive:
+            if c.get(types_closets.PROP_PART_REMOVED):
+                del c[types_closets.PROP_PART_REMOVED]
+                c.hide_viewport = False
+                c.hide_render = False
+                n += 1
+        types_closets.recalculate_closet_starter(root)
+        self.report({'INFO'}, "%d part%s restored"
+                    % (n, "" if n == 1 else "s"))
+        return {'FINISHED'}
+
+
 class hb_closets_OT_delete_part(bpy.types.Operator):
     """Delete the active interior part. Config-driven parts (adjustable
     shelves, drawers, doors, cubby parts) decrement their opening's
@@ -6966,6 +6994,24 @@ class hb_closets_OT_delete_part(bpy.types.Operator):
                   types_closets.PART_ROLE_CAPTURED_BACK,
                   types_closets.PART_ROLE_ACCESSORY}
 
+    # Parts the solve builds from the closet's settings. 4.3 deleted any
+    # part outright; here one is marked removed and kept out of the
+    # build (types_closets.hide_removed_parts).
+    CARCASS_ROLES = {types_closets.PART_ROLE_PANEL,
+                     types_closets.PART_ROLE_TOE_KICK,
+                     types_closets.PART_ROLE_TOP_SHELF,
+                     types_closets.PART_ROLE_BOTTOM_SHELF,
+                     types_closets.PART_ROLE_CLEAT,
+                     types_closets.PART_ROLE_HANG_RAIL,
+                     types_closets.PART_ROLE_HANG_RAIL_COVER,
+                     types_closets.PART_ROLE_FILLER,
+                     types_closets.PART_ROLE_ACCENT_SHELF,
+                     types_closets.PART_ROLE_BATTEN,
+                     types_closets.PART_ROLE_COUNTERTOP,
+                     types_closets.PART_ROLE_BACKSPLASH,
+                     types_closets.PART_ROLE_APPLIED_BACK,
+                     types_closets.PART_ROLE_DRAWER_STRETCHER}
+
     @classmethod
     def poll(cls, context):
         obj = context.active_object
@@ -6974,6 +7020,13 @@ class hb_closets_OT_delete_part(bpy.types.Operator):
         if types_closets.find_accessory_cage(obj) is not None:
             return True
         role = obj.get('hb_part_role')
+        if (role == types_closets.PART_ROLE_DRAWER_BOX
+                and obj.get('hb_rollout')):
+            return True
+        if role in cls.CARCASS_ROLES and not (
+                role == types_closets.PART_ROLE_CLEAT and obj.parent
+                and obj.parent.get(types_closets.TAG_OPENING_CAGE)):
+            return types_closets.find_starter_root(obj) is not None
         if obj.get(types_closets.PROP_ISLAND_INSET_BACK):
             return False    # an island's inset back is its structure
         if role == types_closets.PART_ROLE_CLEAT:
@@ -6995,6 +7048,24 @@ class hb_closets_OT_delete_part(bpy.types.Operator):
                or context.active_object)
         role = obj.get('hb_part_role')
         root = types_closets.find_starter_root(obj)
+        if (role == types_closets.PART_ROLE_DRAWER_BOX
+                and obj.get('hb_rollout')):
+            # A rollout tray comes off the opening's count.
+            opening = types_closets.find_opening_cage(obj)
+            if opening is not None:
+                op = opening.hb_closet_opening
+                op.rollout_qty = max(0, int(op.rollout_qty) - 1)
+                types_closets.recalculate_closet_starter(opening)
+            return {'FINISHED'}
+        if role in self.CARCASS_ROLES and not (
+                role == types_closets.PART_ROLE_CLEAT and obj.parent
+                and obj.parent.get(types_closets.TAG_OPENING_CAGE)):
+            obj[types_closets.PROP_PART_REMOVED] = 1
+            if root is not None:
+                types_closets.recalculate_closet_starter(root)
+            self.report({'INFO'}, "%s removed - Restore Removed Parts on "
+                        "the closet brings it back" % obj.name)
+            return {'FINISHED'}
         # A bay-wide door lives on the bay cage; clearing its config
         # removes it (the reconciler drops the part on recalc).
         if role == types_closets.PART_ROLE_DOOR and obj.get('hb_bay_door'):
@@ -9202,6 +9273,42 @@ class hb_closets_OT_set_corner_clearance(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class hb_closets_OT_rod_bracket_machining(bpy.types.Operator):
+    """Bore the panels at each end of the selected rods for their
+    brackets (4.3 Add Closet Rod Machining): two holes 32mm apart,
+    centred on the rod, drilled at Prepare. Run again to take it off"""
+    bl_idname = "hb_closets.rod_bracket_machining"
+    bl_label = "Rod Bracket Holes"
+    bl_options = {'UNDO'}
+
+    drill: bpy.props.BoolProperty(default=True)  # type: ignore
+
+    @staticmethod
+    def _rods(context):
+        objs = list(context.selected_objects or ())
+        if context.active_object is not None:
+            objs.append(context.active_object)
+        return {o for o in objs
+                if o.get('hb_part_role') == types_closets.PART_ROLE_ROD}
+
+    @classmethod
+    def poll(cls, context):
+        return bool(cls._rods(context))
+
+    def execute(self, context):
+        rods = self._rods(context)
+        for rod in rods:
+            if self.drill:
+                rod[types_closets.PROP_ROD_MACHINING] = 1
+            elif types_closets.PROP_ROD_MACHINING in rod:
+                del rod[types_closets.PROP_ROD_MACHINING]
+        self.report({'INFO'}, "%d rod%s %s" % (
+            len(rods), "" if len(rods) == 1 else "s",
+            "drilled for brackets" if self.drill
+            else "no longer drilled"))
+        return {'FINISHED'}
+
+
 class hb_closets_OT_change_hanger(bpy.types.Operator):
     """Pick the model for the selected hanger (Room Default follows the
     sidebar Hangers option). The dropdown previews live in the dialog."""
@@ -9497,8 +9604,10 @@ classes = (
     hb_closets_OT_lock_l_shelf,
     hb_closets_OT_lock_shelf,
     hb_closets_OT_update_toe_kicks,
+    hb_closets_OT_rod_bracket_machining,
     hb_closets_OT_update_hanging_heights,
     hb_closets_OT_cleat_prompts,
+    hb_closets_OT_restore_removed_parts,
     hb_closets_OT_delete_part,
     hb_closets_OT_delete_starter,
     hb_closets_OT_starter_prompts,

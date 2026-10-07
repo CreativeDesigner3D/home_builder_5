@@ -142,7 +142,7 @@ def has_provider():
 # when nothing is offered, and for the dropdowns to have a shape.
 ACCESSORY_COLORS = (
     'Chrome', 'Black', 'Slate', 'Matte Nickel', 'Matte Aluminum',
-    'Matte Gold', 'White',
+    'Matte Gold', 'White', 'Slate Graphite',
 )
 ACCESSORY_FABRICS = ('Fabric Beach', 'Fabric Slate', 'Fabric Black')
 
