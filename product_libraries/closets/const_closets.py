@@ -84,7 +84,7 @@ BAY_WIDTH_TARGET = inch(30.0)
 # Warnings.
 BAY_MAX_WIDTH = inch(30.0)
 MIN_BAY_QTY = 1
-MAX_BAY_QTY = 9
+MAX_BAY_QTY = 8
 
 # Panel heights by starter type. The mm values are the 32mm-system
 # heights: Base 819mm = 32.25", Tall 2131mm = 83.94", Hanging 1267mm = 49.88".

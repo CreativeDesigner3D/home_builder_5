@@ -81,6 +81,17 @@ def _update_starter_prop(self, context):
     types_closets.recalculate_closet_starter(self.id_data)
 
 
+def _update_l_interior(self, context):
+    """A rod put in a corner hangs off the back partition: 4.3 widened
+    that partition to 14" if it was narrower, and ran the rod along the
+    side wall unless the partition had been flipped onto it."""
+    if self.l_interior in ('ROD', 'DOUBLE'):
+        if self.l_back_width < inch(14.0):
+            self['l_back_width'] = inch(14.0)
+        self['l_rod_on_left'] = not self.l_flip_partition
+    _update_starter_prop(self, context)
+
+
 def sync_end_overhangs(sp, sides=('LEFT', 'RIGHT')):
     """Set the countertop's side overhang and exposed-end flag from
     what stands at that end of the run. A wall filler means the run
@@ -1010,7 +1021,7 @@ class Closet_Starter_Props(PropertyGroup):
             ('DOUBLE', "Double Hang",
              "Two rods with a fixed shelf between them"),
         ],
-        default='ADJ', update=_update_starter_prop)  # type: ignore
+        default='ADJ', update=_update_l_interior)  # type: ignore
     l_rod_on_left: BoolProperty(
         name="Rod On The Side Wall",
         description="Hang the rod along the side wall rather than the "

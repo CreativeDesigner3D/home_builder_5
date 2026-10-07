@@ -635,7 +635,8 @@ def door_panel_type(front_obj):
                    'Vertical Grain')
 
 
-def apply_front_member_materials(front_obj, is_drawer, front_mat=None):
+def apply_front_member_materials(front_obj, is_drawer, front_mat=None,
+                                 carcass_mat=None):
     """Grain-correct materials on a styled front's Door Style modifier:
     stiles (vertical members) carry vertical grain, rails horizontal,
     and the panel follows the front's grain setting. The textures read
@@ -643,7 +644,11 @@ def apply_front_member_materials(front_obj, is_drawer, front_mat=None):
     on the way the front is cut: a length-up front (see fronts_closets)
     reads the plain material up itself and the rotated variant across,
     a length-across front the reverse. No-op for slab fronts (no
-    modifier)."""
+    modifier).
+
+    The wood panel is cut in the closet colour, not the front colour -
+    4.3's door and drawer front panel material was the closet surface
+    material whatever the fronts were in."""
     mod = next((m for m in front_obj.modifiers
                 if m.type == 'NODES' and 'Door Style' in m.name), None)
     if mod is None or mod.node_group is None:
@@ -658,8 +663,19 @@ def apply_front_member_materials(front_obj, is_drawer, front_mat=None):
         vert_mat, horiz_mat = front_mat, rotated
     else:
         vert_mat, horiz_mat = rotated, front_mat
+    if carcass_mat is None:
+        carcass_mat = load_material(
+            getattr(props, 'closet_material', DEFAULT_MATERIAL))
+    if carcass_mat is None:
+        carcass_mat = front_mat
+    if carcass_mat is front_mat:
+        p_vert, p_horiz = vert_mat, horiz_mat
+    elif front_obj.get('hb_front_length_up'):
+        p_vert, p_horiz = carcass_mat, vertical_variant(carcass_mat)
+    else:
+        p_vert, p_horiz = vertical_variant(carcass_mat), carcass_mat
     grain = front_grain(front_obj, is_drawer)
-    panel = horiz_mat if grain == 'HORIZONTAL' else vert_mat
+    panel = p_horiz if grain == 'HORIZONTAL' else p_vert
     # Door panel type: glass selections replace the wood panel (drawer
     # fronts always keep the wood panel). Clear Glass reuses the shared
     # generated door-panel glass (Glass BSDF + Transparent mix - the
@@ -877,7 +893,8 @@ def apply_to_starter(root, carcass_name=None, front_name=None):
             continue
         if role in (role_door, role_drawer):
             apply_front_member_materials(child, role == role_drawer,
-                                         front_mat=front)
+                                         front_mat=front,
+                                         carcass_mat=carcass)
     return True
 
 

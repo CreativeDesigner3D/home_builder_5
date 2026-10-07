@@ -3375,7 +3375,8 @@ class ClosetStarter(GeoNodeCage):
                 x = width if hinge == 'LEFT' else 0.0
                 rot = (math.radians(-90.0), 0.0,
                        math.radians(-90.0 if hinge == 'LEFT' else 90.0))
-            elif 'DROPPED' in stem:
+            elif stem in ('DROPPED KNOB', 'DROPPED 160'):
+                # (DROPPED MODERN 128 stays upright, as 4.3 left it.)
                 rot = (math.radians(-90.0), 0.0, 0.0)
                 # Lying across the door it can be wider than the From
                 # Edge figure leaves room for (a DROPPED 160 hung 2"
@@ -5994,11 +5995,14 @@ class LShelfClosetStarter(GeoNodeCage):
 
         The figures are the prior library's: twelve inches off the
         opposite wall, three quarters of an inch clear at each end,
-        and hung the standard drop below whatever is above it."""
+        and hung the standard drop below whatever is above it. Both are
+        measured from the opening, which stands the wall offset in from
+        each wall (4.3 hung the rod off the corner's opening)."""
         sp = self.obj.hb_closet_starter
         on_left = bool(sp.l_rod_on_left)
-        out = const.L_ROD_FROM_WALL
-        gap = const.L_ROD_END_GAP
+        wo = self.obj.get('hb_l_wall_offset', const.L_WALL_OFFSET)
+        out = wo + const.L_ROD_FROM_WALL
+        gap = wo + const.L_ROD_END_GAP
         for rod, z_top in zip(rods, z_tops):
             geo = GeoNodeObject(rod)
             if on_left:
