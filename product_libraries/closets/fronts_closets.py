@@ -25,6 +25,7 @@ needed, and every socket keeps its plain meaning (stile widths on
 stiles, rail widths on rails).
 """
 import math
+import os
 
 import bpy
 
@@ -72,24 +73,82 @@ _PANEL_INSET = 0.0
 
 
 WRAP_GROUP_NAME = 'Closet Door Style'
+
+# The Contemporary and Combination fronts carry an inner profile (4.3
+# assign_door_style): Contemporary the Traditional profile round the
+# panel, set 3/4" in from the frame; Combination the Brunswick profile on
+# its top and bottom rails only. CPM_5PIECEDOOR draws no inner profile, so
+# these build on GeoNode5PieceDoor - the prior library's door builder,
+# which ships with HB5 and takes the same sockets plus the profiles -
+# through a wrapper of their own.
+# style -> (inner profile, top/bottom-only profile, inner profile inset)
+_PROFILED = {
+    'CONTEMPORARY_SHAKER': ('InsideTraditionalDoorProfile', None,
+                            inch(0.75)),
+    'CONTEMPORARY_MITER': ('InsideTraditionalDoorProfile', None,
+                           inch(0.75)),
+    'COMBINATION': (None, 'InsideBrunswickDoorProfile', 0.0),
+}
+PROFILED_BASE = 'GeoNode5PieceDoor'
+PROFILED_WRAP_NAME = 'Closet Door Style Profiled'
+_WRAP_NAMES = (WRAP_GROUP_NAME, PROFILED_WRAP_NAME)
+
+
+def _profiled_base_group():
+    ng = bpy.data.node_groups.get(PROFILED_BASE)
+    if ng is None:
+        from ... import hb_types
+        path = os.path.join(hb_types.geometry_nodes_path,
+                            PROFILED_BASE + '.blend')
+        with bpy.data.libraries.load(path) as (src, dst):
+            dst.node_groups = [PROFILED_BASE]
+        ng = bpy.data.node_groups.get(PROFILED_BASE)
+    return ng
+
+
+def _profile_object(name):
+    """The inner profile curve, appended once from the door profiles."""
+    if not name:
+        return None
+    obj = bpy.data.objects.get(name)
+    if obj is not None:
+        return obj
+    from ..common import door_profiles
+    try:
+        with bpy.data.libraries.load(
+                door_profiles.profile_path('INNER', name)) as (src, dst):
+            dst.objects = [n for n in src.objects if n == name] or \
+                list(src.objects)[:1]
+    except Exception:
+        return None
+    return next((o for o in dst.objects if o is not None), None)
+
+
+def _base_of(group):
+    """The builder a style modifier runs: the group itself, or the one a
+    rotation wrapper runs."""
+    if group is not None and group.name in _WRAP_NAMES:
+        return next((n.node_tree for n in group.nodes
+                     if n.type == 'GROUP' and n.node_tree is not None),
+                    None)
+    return group
 # Bump to rebuild the wrapper's node graph in existing files (the group
 # datablock is kept, so scene modifiers pick the rebuild up in place).
 _WRAP_VERSION = 2
 
 
-def _wrapped_door_group(base_group):
-    """Find-or-create the rotation wrapper around the shared 5-piece
-    builder (see the module docstring). Mirrors the base interface so
-    socket-by-name writes work unchanged. The builder re-homes its
-    output, so after rotating back the result is translated to the
-    INPUT geometry's bounding-box corner (X/Y only) - otherwise the
-    door lands shifted by its own width."""
-    ng = bpy.data.node_groups.get(WRAP_GROUP_NAME)
+def _wrapped_door_group(base_group, name=WRAP_GROUP_NAME):
+    """Find-or-create the rotation wrapper around a 5-piece builder (see
+    the module docstring). Mirrors the base interface so socket-by-name
+    writes work unchanged. The builder re-homes its output, so after
+    rotating back the result is translated to the INPUT geometry's
+    bounding-box corner (X/Y only) - otherwise the door lands shifted by
+    its own width."""
+    ng = bpy.data.node_groups.get(name)
     if ng is not None and ng.get('hb_wrap_version') == _WRAP_VERSION:
         return ng
     if ng is None:
-        ng = bpy.data.node_groups.new(WRAP_GROUP_NAME,
-                                      'GeometryNodeTree')
+        ng = bpy.data.node_groups.new(name, 'GeometryNodeTree')
         for item in base_group.interface.items_tree:
             if item.item_type == 'SOCKET':
                 ng.interface.new_socket(item.name, in_out=item.in_out,
@@ -205,6 +264,14 @@ def apply_style_to_front(front_obj, is_drawer, style=None):
         if mod.type == 'NODES' and 'Door Style' in mod.name:
             existing = mod
             break
+    profiled = _PROFILED.get(style)
+    if existing is not None and profiled is None:
+        # Back from a profiled style to a plain one: the profiled builder
+        # is not the plain one, so the modifier is made afresh.
+        base = _base_of(existing.node_group)
+        if base is not None and base.name == PROFILED_BASE:
+            front_obj.modifiers.remove(existing)
+            existing = None
     if existing is not None:
         style_mod = hb_types.CabinetPartModifier()
         style_mod.obj = front_obj
@@ -219,28 +286,27 @@ def apply_style_to_front(front_obj, is_drawer, style=None):
     # An out-of-date wrapper rebuilds in place, keeping the datablock
     # every scene modifier already references.
     mod = style_mod.mod
-    ngroup = mod.node_group
-    if ngroup is not None:
+    # The builder this style runs - the profiled one for a profiled
+    # style, else whichever plain one the modifier already carries -
+    # straight through for a front cut length-up (it already runs its
+    # length the way the builder was authored for), or inside its
+    # rotation wrapper for one cut across. Worked out from the builder
+    # each time, so nothing is ever wrapped twice (a double wrap turns
+    # the build 180 and swaps the members back) and an out-of-date
+    # wrapper rebuilds in place, keeping the datablock every scene
+    # modifier already references.
+    base = (_profiled_base_group() if profiled is not None
+            else _base_of(mod.node_group))
+    if base is not None:
         if length_up:
-            # Already running its length the way the builder was
-            # authored for, so it goes straight through it. A front
-            # that was wrapped before it was stood up is handed back
-            # the plain builder.
-            if ngroup.name == WRAP_GROUP_NAME:
-                base = next((n.node_tree for n in ngroup.nodes
-                             if n.type == 'GROUP' and n.node_tree
-                             is not None), None)
-                if base is not None:
-                    mod.node_group = base
-        elif ngroup.name.startswith('CPM_5PIECEDOOR'):
-            mod.node_group = _wrapped_door_group(ngroup)
-        elif (ngroup.name == WRAP_GROUP_NAME
-                and ngroup.get('hb_wrap_version') != _WRAP_VERSION):
-            base = next((n.node_tree for n in ngroup.nodes
-                         if n.type == 'GROUP' and n.node_tree
-                         is not None), None)
-            if base is not None:
-                _wrapped_door_group(base)
+            if mod.node_group is not base:
+                mod.node_group = base
+        else:
+            wrap = _wrapped_door_group(
+                base, PROFILED_WRAP_NAME if profiled is not None
+                else WRAP_GROUP_NAME)
+            if mod.node_group is not wrap:
+                mod.node_group = wrap
 
     style_mod.set_input('Left Stile Width', stile)
     style_mod.set_input('Right Stile Width', stile)
@@ -249,6 +315,12 @@ def apply_style_to_front(front_obj, is_drawer, style=None):
     style_mod.set_input('Use Miter', miter)
     style_mod.set_input('Panel Thickness', _PANEL_THICKNESS)
     style_mod.set_input('Panel Inset', _PANEL_INSET)
+    if profiled is not None:
+        inner, top_bottom, inset = profiled
+        style_mod.set_input('Inner Profile', _profile_object(inner))
+        style_mod.set_input('Inner Top Bottom Profile',
+                            _profile_object(top_bottom))
+        style_mod.set_input('Inner Profile Inset', inset)
     front_obj['DOOR_STYLE_NAME'] = style
     # Freshly added modifiers have empty material sockets; give the
     # members grain-correct materials right away.
