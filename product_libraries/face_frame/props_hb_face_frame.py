@@ -2899,7 +2899,6 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         'ROLLOUT_SPACER',
         'TRAY_DIVIDER', 'TRAY_LOCKED_SHELF',
         'VANITY_SHELF', 'VANITY_SUPPORT',
-        'RETRACT_PARTITION',
         'INTERIOR_FIXED_SHELF', 'INTERIOR_DIVISION',
         # Corner cabinet carcass kicks. Corner finish kicks are visible
         # exterior (listed above). The corner sides / backs / angled
@@ -2936,6 +2935,10 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
     # rollouts / trays) are excluded.
     _BAY_FINISH_SHELF_ROLES = {
         'ADJUSTABLE_SHELF', 'INTERIOR_FIXED_SHELF', 'BAY_SHELF', 'VANITY_SHELF',
+        # What stands behind retracting doors shows when they slide
+        # back, so it follows the opening's finish like the shelves.
+        'RETRACT_PARTITION', 'INSERT_SIDE', 'INSERT_TOP', 'INSERT_BOTTOM',
+        'INSERT_BACK', 'COMPONENT_SHELF', 'COMPONENT_HANGER',
         # Corner cabinet shelves live under the cabinet root (no bay /
         # opening cage above them), so the bay / opening finish walk
         # resolves to not-finished; the cabinet-level
@@ -10832,6 +10835,37 @@ class Face_Frame_Opening_Props(PropertyGroup):
             ('NONE', "None", "No pocket partitions"),
         ],
         default='NOTCHED',
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    # What fills the opening between a side-mount retracting door's
+    # pockets.
+    retracting_interior: EnumProperty(
+        name="Interior",
+        items=[
+            ('PARTITIONS', "Partitions & Shelves",
+             "Removable partitions close off the pockets; shelves sit "
+             "between them"),
+            ('INSERT', "Insert Cabinet",
+             "A separate cabinet set inside, clear of the pockets; the "
+             "opening's shelves go inside it"),
+            ('COMPONENT_SHELF', "Component Shelf",
+             "A shelf hung from the cabinet top, clear of the pockets"),
+        ],
+        default='PARTITIONS',
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    retracting_box_setback: FloatProperty(
+        name="Setback",
+        description="How far the insert cabinet or component shelf sits "
+                    "back from the face frame",
+        default=units.inch(2.25), min=0.0, unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    component_shelf_clearance: FloatProperty(
+        name="Clearance Above",
+        description="Clear height between the component shelf and the "
+                    "cabinet top",
+        default=units.inch(18.0), min=0.0, unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
     )  # type: ignore
     # Powered opener option for the deluxe lift-up mechanisms.

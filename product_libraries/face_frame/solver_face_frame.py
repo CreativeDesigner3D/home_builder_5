@@ -6424,6 +6424,21 @@ def interior_descriptors_for_opening(opening_obj, layout, rect, cab_props):
 
     root = _interior_tree_root(opening_obj)
     op_props = opening_obj.face_frame_opening
+    insert_box = retracting_insert_box(open_rect, op_props)
+    if root is None and insert_box is not None:
+        # Behind an insert cabinet the opening's items go inside the
+        # insert, laid out in its own cavity with no pocket clearances
+        # (its sides already stand clear of the doors).
+        x0, y0, z0, w, d, h = insert_box['inner']
+        inner = {'cage_dim_x': w, 'cage_dim_y': d, 'cage_dim_z': h,
+                 'cage_x': 0.0, 'cage_z': 0.0,
+                 'reveal_top': 0.0, 'reveal_bottom': 0.0,
+                 'reveal_left': 0.0, 'reveal_right': 0.0}
+        out = [_shifted_descriptor(desc, (x0, y0, z0))
+               for desc in interior_item_descriptors(
+                   layout, inner, cab_props, op_props, None)]
+        out.extend(insert_box['parts'])
+        return out
     if root is None:
         # Where the face frame opening's edges sit in the (lined) cavity,
         # for the retracting-door pocket clearances.
@@ -6442,6 +6457,9 @@ def interior_descriptors_for_opening(opening_obj, layout, rect, cab_props):
         out = [_shifted_descriptor(d, (left_in, 0.0, 0.0)) for d in out]
     out.extend(retracting_partition_descriptors(
         layout, open_rect, cab_props, op_props))
+    out.extend(retracting_component_shelf_descriptors(open_rect, op_props))
+    if insert_box is not None:
+        out.extend(insert_box['parts'])
     return out
 
 
@@ -6462,6 +6480,117 @@ RETRACT_PARTITION_HELD_SHORT = inch(2.0)
 RETRACT_HINGE_FROM_END = inch(3.0)
 RETRACT_HINGE_STEPS = ((96.17, 7), (81.17, 6), (66.17, 5), (51.17, 4),
                        (36.17, 3))
+
+
+# Insert cabinet / component shelf behind retracting doors. Both are
+# 3/4" boxes set back off the face frame so the doors' hinges and
+# slides clear them; the insert also has to pass in through the face
+# frame opening, so it stops this far under the opening's clear height.
+RETRACT_BOX_THICKNESS = inch(0.75)
+RETRACT_INSERT_BACK_THICKNESS = inch(0.25)
+RETRACT_INSERT_HEIGHT_CLEARANCE = inch(0.125)
+# Component shelf clearance off each pocket side of the opening:
+# standard 2-1/2", bi-fold 4" single / 4-1/2" a side for a pair.
+RETRACT_COMPONENT_CLEAR = inch(2.5)
+RETRACT_COMPONENT_BIFOLD_CLEAR = inch(4.0)
+RETRACT_COMPONENT_BIFOLD_PAIR_CLEAR = inch(4.5)
+
+
+def _retract_interior(op_props):
+    """The opening's retracting-door interior choice, or None when the
+    opening has no side-mount retracting door."""
+    if getattr(op_props, 'front_type', None) != 'DOOR':
+        return None
+    if not any(retracting_pocket_sides(op_props)):
+        return None
+    return getattr(op_props, 'retracting_interior', 'PARTITIONS')
+
+
+def retracting_insert_box(rect, op_props):
+    """{'parts': [descriptors], 'inner': (x, y, z, w, d, h)} for an
+    insert cabinet behind a side-mount retracting door, in opening-cage
+    coordinates, or None when the opening doesn't call for one."""
+    if _retract_interior(op_props) != 'INSERT':
+        return None
+    pocket_l, pocket_r = retracting_pocket_sides(op_props)
+    clear = (RETRACT_BIFOLD_POCKET_CLEAR
+             if op_props.door_mechanism == 'RETRACTING_BIFOLD'
+             else RETRACT_POCKET_CLEAR)
+    t = RETRACT_BOX_THICKNESS
+    bt = RETRACT_INSERT_BACK_THICKNESS
+    dim_x, dim_y, dim_z = (rect['cage_dim_x'], rect['cage_dim_y'],
+                           rect['cage_dim_z'])
+    x_l = rect.get('reveal_left', 0.0) + (clear if pocket_l else 0.0)
+    x_r = dim_x - rect.get('reveal_right', 0.0) - (clear if pocket_r else 0.0)
+    setback = getattr(op_props, 'retracting_box_setback', inch(2.25))
+    width = x_r - x_l
+    depth = dim_y - setback
+    clear_h = (dim_z - rect.get('reveal_top', 0.0)
+               - rect.get('reveal_bottom', 0.0))
+    height = min(dim_z, clear_h) - RETRACT_INSERT_HEIGHT_CLEARANCE
+    if width <= 2.0 * t or depth <= bt or height <= 2.0 * t:
+        return None
+    parts = [
+        {'kind': 'RETRACT_INSERT', 'role': 'INSERT_SIDE',
+         'name': 'Insert Left Side', 'orientation': 'VERTICAL',
+         'position': (x_l, dim_y, 0.0), 'dims': (height, depth, t)},
+        {'kind': 'RETRACT_INSERT', 'role': 'INSERT_SIDE',
+         'name': 'Insert Right Side', 'orientation': 'VERTICAL',
+         'position': (x_r - t, dim_y, 0.0), 'dims': (height, depth, t)},
+        {'kind': 'RETRACT_INSERT', 'role': 'INSERT_BOTTOM',
+         'name': 'Insert Bottom', 'orientation': 'HORIZONTAL',
+         'position': (x_l + t, setback, 0.0),
+         'dims': (width - 2.0 * t, depth - bt, t)},
+        {'kind': 'RETRACT_INSERT', 'role': 'INSERT_TOP',
+         'name': 'Insert Top', 'orientation': 'HORIZONTAL',
+         'position': (x_l + t, setback, height - t),
+         'dims': (width - 2.0 * t, depth - bt, t)},
+        {'kind': 'RETRACT_INSERT', 'role': 'INSERT_BACK',
+         'name': 'Insert Back', 'orientation': 'BACK',
+         'position': (x_l + t, dim_y, t),
+         'dims': (width - 2.0 * t, height - 2.0 * t, bt)},
+    ]
+    inner = (x_l + t, setback, t, width - 2.0 * t, depth - bt,
+             height - 2.0 * t)
+    return {'parts': parts, 'inner': inner}
+
+
+def retracting_component_shelf_descriptors(rect, op_props):
+    """A component shelf hung from the cabinet top behind a side-mount
+    retracting door: the shelf plus a hanger at each end running up to
+    the top, in opening-cage coordinates. Empty unless chosen."""
+    if _retract_interior(op_props) != 'COMPONENT_SHELF':
+        return []
+    pocket_l, pocket_r = retracting_pocket_sides(op_props)
+    if op_props.door_mechanism == 'RETRACTING_BIFOLD':
+        clear = (RETRACT_COMPONENT_BIFOLD_PAIR_CLEAR
+                 if pocket_l and pocket_r else RETRACT_COMPONENT_BIFOLD_CLEAR)
+    else:
+        clear = RETRACT_COMPONENT_CLEAR
+    t = RETRACT_BOX_THICKNESS
+    dim_x, dim_y, dim_z = (rect['cage_dim_x'], rect['cage_dim_y'],
+                           rect['cage_dim_z'])
+    x_l = rect.get('reveal_left', 0.0) + (clear if pocket_l else 0.0)
+    x_r = dim_x - rect.get('reveal_right', 0.0) - (clear if pocket_r else 0.0)
+    setback = getattr(op_props, 'retracting_box_setback', inch(2.25))
+    above = getattr(op_props, 'component_shelf_clearance', inch(18.0))
+    depth = dim_y - setback
+    z = dim_z - above - t
+    if x_r - x_l <= 2.0 * t or depth <= 0.0 or z <= 0.0:
+        return []
+    hanger_h = dim_z - z
+    return [
+        {'kind': 'RETRACT_COMPONENT', 'role': 'COMPONENT_HANGER',
+         'name': 'Component Hanger Left', 'orientation': 'VERTICAL',
+         'position': (x_l, dim_y, z), 'dims': (hanger_h, depth, t)},
+        {'kind': 'RETRACT_COMPONENT', 'role': 'COMPONENT_HANGER',
+         'name': 'Component Hanger Right', 'orientation': 'VERTICAL',
+         'position': (x_r - t, dim_y, z), 'dims': (hanger_h, depth, t)},
+        {'kind': 'RETRACT_COMPONENT', 'role': 'COMPONENT_SHELF',
+         'name': 'Component Shelf', 'orientation': 'HORIZONTAL',
+         'position': (x_l + t, setback, z),
+         'dims': (x_r - x_l - 2.0 * t, depth, t)},
+    ]
 
 
 def retracting_hinge_heights(door_bottom, door_top):
@@ -6486,7 +6615,8 @@ def retracting_partition_descriptors(layout, rect, cab_props, op_props):
     if getattr(op_props, 'front_type', None) != 'DOOR':
         return []
     style = getattr(op_props, 'retracting_partitions', 'NOTCHED')
-    if style == 'NONE':
+    if (style == 'NONE' or getattr(op_props, 'retracting_interior',
+                                   'PARTITIONS') != 'PARTITIONS'):
         return []
     pocket_l, pocket_r = retracting_pocket_sides(op_props)
     if not (pocket_l or pocket_r):

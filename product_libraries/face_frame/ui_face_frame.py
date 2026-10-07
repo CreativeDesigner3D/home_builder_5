@@ -1295,7 +1295,14 @@ def draw_opening_properties(layout, opening_obj):
             if op.door_mechanism in ('LIFT_UP_DELUXE', 'LIFT_UP_BIFOLD'):
                 fcol.prop(op, 'lift_up_servo', text="Servo Drive")
             if op.door_mechanism in ('RETRACTING', 'RETRACTING_BIFOLD'):
-                fcol.prop(op, 'retracting_partitions', text="Partitions")
+                fcol.prop(op, 'retracting_interior', text="Interior")
+                if op.retracting_interior == 'PARTITIONS':
+                    fcol.prop(op, 'retracting_partitions', text="Partitions")
+                else:
+                    fcol.prop(op, 'retracting_box_setback', text="Setback")
+                if op.retracting_interior == 'COMPONENT_SHELF':
+                    fcol.prop(op, 'component_shelf_clearance',
+                              text="Clearance Above")
 
         # Chase fit (drawer / pullout only): how this opening's drawer
         # box responds to the cabinet's pipe chase. Hidden unless the

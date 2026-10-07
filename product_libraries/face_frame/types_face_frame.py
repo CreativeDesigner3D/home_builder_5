@@ -1008,6 +1008,13 @@ PART_ROLE_VANITY_SHELF = 'VANITY_SHELF'
 PART_ROLE_VANITY_SUPPORT = 'VANITY_SUPPORT'
 # Removable pocket partition behind a side-mount retracting door.
 PART_ROLE_RETRACT_PARTITION = 'RETRACT_PARTITION'
+# Insert cabinet / component shelf behind a side-mount retracting door.
+PART_ROLE_INSERT_SIDE = 'INSERT_SIDE'
+PART_ROLE_INSERT_TOP = 'INSERT_TOP'
+PART_ROLE_INSERT_BOTTOM = 'INSERT_BOTTOM'
+PART_ROLE_INSERT_BACK = 'INSERT_BACK'
+PART_ROLE_COMPONENT_SHELF = 'COMPONENT_SHELF'
+PART_ROLE_COMPONENT_HANGER = 'COMPONENT_HANGER'
 PART_ROLE_ACCESSORY_LABEL = 'ACCESSORY_LABEL'
 # Front types whose opening carries a drawer box. Accessories put in one
 # of these are shown by the geometry built inside the box, so their name
@@ -1187,6 +1194,12 @@ INTERIOR_PART_ROLES = frozenset({
     PART_ROLE_VANITY_SHELF,
     PART_ROLE_VANITY_SUPPORT,
     PART_ROLE_RETRACT_PARTITION,
+    PART_ROLE_INSERT_SIDE,
+    PART_ROLE_INSERT_TOP,
+    PART_ROLE_INSERT_BOTTOM,
+    PART_ROLE_INSERT_BACK,
+    PART_ROLE_COMPONENT_SHELF,
+    PART_ROLE_COMPONENT_HANGER,
     PART_ROLE_ACCESSORY_LABEL,
     PART_ROLE_BAR_STORAGE,
     PART_ROLE_CLOSET_ROD,
@@ -15402,6 +15415,9 @@ class FaceFrameCabinet(GeoNodeCage):
                         Origin = back-bottom; length runs +Z (up), width
                         runs -Y (forward). Matches Mid Division /
                         Partition Skin convention.
+          BACK        - rotation_euler.x = 90 deg. Origin = back-left-
+                        bottom; length runs +X, width +Z (up), thickness
+                        -Y (forward from the back face).
 
         Tagged IS_FACE_FRAME_INTERIOR_PART so the wipe pass picks it up
         on every recalc.
@@ -15420,6 +15436,8 @@ class FaceFrameCabinet(GeoNodeCage):
             part.obj.rotation_euler.y = math.radians(-90)
             part.set_input('Mirror Y', True)
             part.set_input('Mirror Z', True)
+        elif orientation == 'BACK':
+            part.obj.rotation_euler.x = math.radians(90)
         # HORIZONTAL falls through with default rotation/mirror.
 
         length, width, thickness = desc['dims']
