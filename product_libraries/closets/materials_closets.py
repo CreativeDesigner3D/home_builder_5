@@ -790,6 +790,16 @@ def apply_to_starter(root, carcass_name=None, front_name=None):
     ctop_edge = rotated_variant(ctop)
     fence_cache = {}
     for child in root.children_recursive:
+        if child.get('IS_CLOSET_MOLDING') and child.type == 'CURVE':
+            # Molding is cut in the closet colour and follows it when the
+            # colour changes (4.3 update_closet_material_in_room).
+            if carcass is not None:
+                mats = child.data.materials
+                if not mats:
+                    mats.append(carcass)
+                elif mats[0] is not carcass:
+                    mats[0] = carcass
+            continue
         if child.type != 'MESH':
             continue
         role = child.get('hb_part_role')
@@ -843,6 +853,12 @@ def apply_to_starter(root, carcass_name=None, front_name=None):
             # part that never sees a sheet.
             mat = load_negative_material()
             edge = mat
+        elif role in (types_closets.PART_ROLE_HANG_RAIL,
+                      types_closets.PART_ROLE_BATTEN):
+            # Stock bought in the closet colour, the same all round
+            # rather than banded (4.3 Hang_Rail / Batten: the surface
+            # material on all four edges).
+            mat, edge = carcass, rotated_variant(carcass)
         else:
             mat, edge = carcass, carcass_edge
         if mat is None:
