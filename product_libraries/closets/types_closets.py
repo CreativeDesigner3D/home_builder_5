@@ -2132,8 +2132,11 @@ class ClosetStarter(GeoNodeCage):
             # a floor bay has a bottom to set in.
             inset_b = ((sp.inset_bottom + bp.bottom_shelf_inset)
                        if bay['floor'] else 0.0)
-            # ...or further, to clear the room's baseboard.
-            if bay['floor']:
+            # ...or further, to clear the room's baseboard. An island
+            # stands off the walls, so it has none to clear (4.3 never
+            # set an island's bottom in; its panels are not notched
+            # either).
+            if bay['floor'] and not isinstance(self, IslandClosetStarter):
                 inset_b = max(inset_b,
                               baseboard_shelf_inset(bay['bottom_z']))
             inset_b = max(0.0, min(inset_b, bay['depth'] - 0.001))
