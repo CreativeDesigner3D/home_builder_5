@@ -314,6 +314,10 @@ PROP_FRONT_HEIGHT_SOLVED = 'hb_front_height_solved'
 # Heights a pasted drawer bank is owed, left on the opening until the
 # fronts it describes have been built and can be handed them.
 PROP_PASTED_FRONT_PINS = 'hb_pasted_front_pins'
+# The jewelry trays a pasted drawer bank is owed, bottom drawer first,
+# joined by '|' ('' for a drawer without one). Handed over and torn up
+# the same way as the pins.
+PROP_PASTED_FRONT_TRAYS = 'hb_pasted_front_trays'
 # The name the flag was saved under before the padlocks were made to
 # read one way across the library. Same meaning, so it carries straight
 # across. See carry_over_front_locks().
@@ -3436,6 +3440,14 @@ class ClosetStarter(GeoNodeCage):
                 front[PROP_FRONT_HEIGHT] = float(h)
                 front[PROP_UNLOCK_FRONT_HEIGHT] = int(lk)
             del opening[PROP_PASTED_FRONT_PINS]
+        trays = opening.get(PROP_PASTED_FRONT_TRAYS)
+        if trays is not None:
+            for front, color in zip(fronts, str(trays).split('|')):
+                if color and color != 'NONE':
+                    front[PROP_JEWELRY_TRAY] = color
+                elif PROP_JEWELRY_TRAY in front:
+                    del front[PROP_JEWELRY_TRAY]
+            del opening[PROP_PASTED_FRONT_TRAYS]
         while len(boxes) < qty:
             box = GeoNodeDrawerBox()
             box.create('Drawer Box')
@@ -7988,6 +8000,14 @@ def serialize_opening(opening):
                  if c.get('hb_part_role') == PART_ROLE_DRAWER_FRONT
                  and not c.get('hb_rollout')),
                 key=lambda o: o.get('hb_drawer_index', 0))],
+        # The jewelry tray in each of those drawers, same order.
+        'drawer_trays': [
+            str(c.get(PROP_JEWELRY_TRAY, '') or '')
+            for c in sorted(
+                (c for c in opening.children
+                 if c.get('hb_part_role') == PART_ROLE_DRAWER_FRONT
+                 and not c.get('hb_rollout')),
+                key=lambda o: o.get('hb_drawer_index', 0))],
         'door_swing': opening.hb_closet_opening.door_swing,
         # How far the fronts here are drawn standing open, so a copy
         # reads the way the original did.
@@ -8045,7 +8065,48 @@ def serialize_opening(opening):
         'rods': [float(c.get('hb_z_offset', 0.0))
                  for c in opening.children
                  if c.get('hb_part_role') == PART_ROLE_ROD],
+        # The accessories hung here, each as the settings on its cage;
+        # what is built under one is worked out again on the solve.
+        'accessories': [_accessory_settings(c) for c in opening.children
+                        if c.get('hb_part_role') == PART_ROLE_ACCESSORY],
     }
+
+
+# Cage settings an accessory copy leaves behind: the ones add_accessory
+# sets for itself, and the warning, which the solve works out afresh.
+_ACCESSORY_COPY_SKIP = {'hb_part_role', 'MENU_ID', 'PROMPT_ID',
+                        PROP_ACCESSORY_WARNING}
+
+
+def _accessory_settings(cage):
+    """An accessory cage's own settings as plain values - its catalog
+    key and every choice made on it, including any a host add-on keeps
+    there."""
+    out = {}
+    for k in cage.keys():
+        if k.startswith('_') or k in _ACCESSORY_COPY_SKIP:
+            continue
+        v = cage[k]
+        if hasattr(v, 'to_list'):
+            v = v.to_list()
+        elif hasattr(v, 'to_dict'):
+            v = v.to_dict()
+        out[k] = v
+    return out
+
+
+def _paste_accessories(opening, rows):
+    """Hang copied accessories in an opening, each with the settings
+    it was copied with. One the catalog no longer offers is left out."""
+    for row in rows or ():
+        cage = add_accessory(opening, row.get(PROP_ACCESSORY_KEY, ''))
+        if cage is None:
+            continue
+        for k, v in row.items():
+            try:
+                cage[k] = v
+            except Exception:
+                pass
 
 
 def apply_opening_data(opening, data, recalc=True):
@@ -8070,6 +8131,9 @@ def apply_opening_data(opening, data, recalc=True):
         if pins:
             opening[PROP_PASTED_FRONT_PINS] = [
                 float(v) for pair in pins for v in pair]
+        trays = data.get('drawer_trays') or ()
+        if any(trays):
+            opening[PROP_PASTED_FRONT_TRAYS] = '|'.join(trays)
     if data.get('rollout_qty'):
         opening.hb_closet_opening.rollout_qty = data['rollout_qty']
         opening.hb_closet_opening.rollout_height = data.get('rollout_h',
@@ -8156,6 +8220,7 @@ def apply_opening_data(opening, data, recalc=True):
         data.get('open_drawer', 0.0))
     for z in data.get('rods', ()):
         add_rod(opening, z)
+    _paste_accessories(opening, data.get('accessories'))
     if recalc and root is not None:
         recalculate_closet_starter(root)
 
