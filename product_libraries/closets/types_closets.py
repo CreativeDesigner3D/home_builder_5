@@ -135,6 +135,10 @@ PROP_ACCESSORY_MODEL = 'hb_accessory_model'
 PROP_ACCESSORY_PANEL_LOC = 'hb_accessory_panel_loc'
 PART_ROLE_ACCESSORY_RIG = 'CLOSET_ACCESSORY_RIG'
 PROP_ACCESSORY_SETBACK = 'hb_accessory_setback'
+# Whether a panel accessory keeps itself centred front to back (4.3's
+# Auto Center prompt). Unset, a hook and its like centre until a
+# figure is typed.
+PROP_ACCESSORY_AUTO_CENTER = 'hb_accessory_auto_center'
 # A cleat accessory hung on a wall rather than in an opening. It has
 # no opening to follow, so its figures are all its own.
 PROP_ACCESSORY_ON_WALL = 'hb_accessory_on_wall'
@@ -1085,6 +1089,28 @@ def add_opening_shelf(opening_obj, z_offset):
                             role=PART_ROLE_ADJ_SHELF)
     shelf[PROP_SHELF_HELD] = 1
     return shelf
+
+
+# A cleat dropped into an opening can be cut short, made wider and set
+# along the opening, as 4.3's Cleat prompts allowed (Length, Width,
+# Horizontal Location). Unset, it spans the opening at the standard
+# width.
+PROP_CLEAT_LENGTH = 'hb_cleat_length'
+PROP_CLEAT_WIDTH = 'hb_cleat_width'
+PROP_CLEAT_X = 'hb_cleat_x'
+
+
+def opening_cleat_values(cleat, width):
+    """(length, width, x) a cleat dropped into an opening is cut and set
+    at in an opening `width` wide."""
+    c_len = float(cleat.get(PROP_CLEAT_LENGTH, 0.0) or 0.0)
+    length = width if c_len <= 0.0 else min(c_len, width)
+    c_w = float(cleat.get(PROP_CLEAT_WIDTH, 0.0) or 0.0)
+    if c_w <= 0.0:
+        c_w = const.CLEAT_WIDTH
+    x = max(0.0, min(float(cleat.get(PROP_CLEAT_X, 0.0) or 0.0),
+                     width - length))
+    return length, c_w, x
 
 
 def add_opening_cleat(opening_obj, z_offset, anchor_top=False):
@@ -2558,13 +2584,14 @@ class ClosetStarter(GeoNodeCage):
                 top = bool(child.get('hb_anchor_top'))
                 z = interior_h - z_off if top else z_off
                 z = max(0.0, min(z, interior_h))
+                c_len, c_w, c_x = opening_cleat_values(child, width)
                 child.location = (
-                    0.0, -depth if side == 'BACK' else 0.0, z)
+                    c_x, -depth if side == 'BACK' else 0.0, z)
                 part = GeoNodeCutpart(child)
                 part.set_input('Mirror Y', top)
                 part.set_input('Mirror Z', side == 'BACK')
-                part.set_input('Length', width)
-                part.set_input('Width', const.CLEAT_WIDTH)
+                part.set_input('Length', c_len)
+                part.set_input('Width', c_w)
                 part.set_input('Thickness', st)
             elif role == PART_ROLE_ROD:
                 op = opening.hb_closet_opening
@@ -2809,6 +2836,11 @@ class ClosetStarter(GeoNodeCage):
                     fpart.set_input('Thickness', const.SHOE_FENCE_HEIGHT)
                     if fence_mat is not None:
                         _set_fence_finish(fpart, fence_mat)
+        if len(adj) > const.ADJ_SHELF_QTY_WARN:
+            # 4.3 Adjustable_Shelves.draw_prompts: "Must be less
+            # than 12".
+            slant_msgs.append("Shelf Quantity must be less than %d"
+                              % (const.ADJ_SHELF_QTY_WARN + 1))
         _stamp_warning(opening, "; ".join(slant_msgs))
 
         # ----- Doors (1 leaf, or 2 for DOUBLE swing) -----
@@ -3028,7 +3060,9 @@ class ClosetStarter(GeoNodeCage):
                     dbx.style_box(gb, box_type)
                 # Open-drawer support: stash closed Y + travel, then apply
                 # the persistent open state (Open Door mode toggles it).
-                travel = min(box_d, inch(12.0))
+                # Fully open it comes out the depth of the opening, as
+                # 4.3's drawer slid (y = -gap - depth * open%).
+                travel = depth
                 _stash_drawer_closed(child, box, travel, side)
                 apply_drawer_open(child, current_open_frac(child))
                 # The stretcher belonging to this drawer sits in the
@@ -3336,8 +3370,10 @@ class ClosetStarter(GeoNodeCage):
             # use BASE. Naming one instead holds the door to it.
             # An opening that has taken the vertical figure over feeds
             # it to whichever of the three the door lands on, so the one
-            # number reads from the right edge either way. Clamped to
-            # stay on the front.
+            # number reads from the right edge either way. Tall is
+            # measured up from the door bottom like Upper, as 4.3
+            # measured it ("Distance from Bottom of Tall Door").
+            # Clamped to stay on the front.
             bottom_w = split_preview._world_matrix(front).translation.z
             if length_up:
                 # A length-up front carries its origin at the top
@@ -3347,26 +3383,24 @@ class ClosetStarter(GeoNodeCage):
             if rule == 'AUTO':
                 if bottom_w >= v_tall:
                     rule = 'UPPER'
-                elif (v_tall - bottom_w) + half <= height - v_base - half:
+                elif v_tall + half <= height - v_base - half:
                     rule = 'TALL'
                 else:
                     rule = 'BASE'
             if door_v is not None:
                 # A figure the opening typed in is read the same way the
                 # room's is for whichever convention the door landed on:
-                # down from the top on BASE, off the floor on TALL, up
-                # from the bottom on UPPER. The box says which, so the
+                # down from the top on BASE, up from the bottom on TALL
+                # and UPPER. The box says which, so the
                 # number means one thing.
                 if rule == 'BASE':
                     y = height - door_v - half
-                elif rule == 'TALL':
-                    y = (door_v - bottom_w) + half
                 else:
                     y = door_v + half
             elif rule == 'BASE':
                 y = height - v_base - half
             elif rule == 'TALL':
-                y = (v_tall - bottom_w) + half
+                y = v_tall + half
             else:                                   # UPPER
                 y = v_upper + half
             y = min(max(y, half), max(height - half, half))
@@ -8157,6 +8191,17 @@ def accessory_model_depth(cage):
     return 0.0
 
 
+def auto_center(cage, acc_def):
+    """Whether this accessory keeps itself centred front to back: what
+    was set on it, else - the way it started - a hook and its like
+    until a figure is typed against them."""
+    flag = cage.get(PROP_ACCESSORY_AUTO_CENTER)
+    if flag is not None:
+        return bool(flag)
+    return (cage.get(PROP_ACCESSORY_SETBACK) is None
+            and bool(getattr(acc_def, 'center_depth', False)))
+
+
 def accessory_setback(cage, acc_def, depth=None, model_depth=None):
     """How far back from the front of the opening an accessory is
     mounted, measured to its own front edge.
@@ -8167,13 +8212,17 @@ def accessory_setback(cage, acc_def, depth=None, model_depth=None):
     changes rather than at a fixed distance that only centres one size
     of closet. Everything else takes what the catalog says, which for a
     rack or a pull-out is near the front where it is reached from.
+
+    Auto Center (4.3's prompt on every panel accessory) holds it in the
+    middle whatever was typed, re-centring as the depth changes.
     """
     given = cage.get(PROP_ACCESSORY_SETBACK)
-    if given is not None:
+    auto = auto_center(cage, acc_def)
+    if given is not None and not auto:
         return max(0.0, float(given))
     if acc_def is None:
         return 0.0
-    if getattr(acc_def, 'center_depth', False):
+    if auto:
         if depth is None:
             depth = _cage_dim_y(cage.parent)
         if depth > 0.0:

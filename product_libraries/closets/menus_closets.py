@@ -498,6 +498,12 @@ class HOME_BUILDER_MT_closet_part_commands(bpy.types.Menu):
                          types_closets.PART_ROLE_HANG_RAIL_COVER,
                          types_closets.PART_ROLE_BRIDGE_SHELF)
         offered = False
+        if (role == types_closets.PART_ROLE_CLEAT and obj.parent is not None
+                and obj.parent.get(types_closets.TAG_OPENING_CAGE)):
+            # A cleat dropped into an opening is sized on its own.
+            layout.operator("hb_closets.cleat_prompts",
+                            text="Cleat Properties...", icon='WINDOW')
+            offered = True
         if role in opening_roles:
             layout.operator("hb_closets.opening_prompts",
                             text="Opening Properties...", icon='WINDOW')

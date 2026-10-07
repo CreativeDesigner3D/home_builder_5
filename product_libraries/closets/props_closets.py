@@ -1540,7 +1540,8 @@ class Closet_Opening_Props(PropertyGroup):
         description="Set how high this opening's door pulls sit, instead "
                     "of following the room. Read the way the convention "
                     "above reads it: Base down from the door top, Upper "
-                    "up from the door bottom, Tall off the floor",
+                    "up from the door bottom, Tall up from the door "
+                    "bottom",
         default=False)  # type: ignore
     door_pull_vertical_location: FloatProperty(
         name="Door Pull Vertical Location",
@@ -1953,7 +1954,8 @@ class Closets_Scene_Props(PropertyGroup):
         update=pulls_closets.update_room)  # type: ignore
     pull_vertical_location_tall: FloatProperty(
         name="Tall",
-        description="Pull height off the floor on a tall door",
+        description="Pull height up from the bottom of a tall door to "
+                    "the pull",
         default=units.inch(45.0), unit='LENGTH',
         update=pulls_closets.update_room)  # type: ignore
     pull_vertical_location_upper: FloatProperty(
@@ -2148,6 +2150,10 @@ class Closets_Scene_Props(PropertyGroup):
         row = col.row()
         row.label(text="Hanging Top Height:")
         row.prop(self, 'hanging_top_height', text="")
+        # Pushes the figure to the hanging closets already placed; a
+        # new one takes it as it is placed.
+        row.operator('hb_closets.update_hanging_heights', text="",
+                     icon='FILE_REFRESH')
         row = col.row()
         row.label(text="Corner Size:")
         row.prop(self, 'default_corner_closet_size', text="")
@@ -2181,9 +2187,13 @@ class Closets_Scene_Props(PropertyGroup):
             sub.prop(self, 'shelf_setback', text="Setback")
 
         box = layout.box()
-        box.prop(self, 'show_toe_kick_sizes', text="Toe Kick",
+        row = box.row()
+        row.prop(self, 'show_toe_kick_sizes', text="Toe Kick",
                  icon='TRIA_DOWN' if self.show_toe_kick_sizes
                  else 'TRIA_RIGHT', emboss=False)
+        # Pushes height and setback to every closet already placed.
+        row.operator('hb_closets.update_toe_kicks', text="",
+                     icon='FILE_REFRESH')
         if self.show_toe_kick_sizes:
             sub = box.column(align=True)
             sub.prop(self, 'toe_kick_height', text="Height")

@@ -2300,6 +2300,11 @@ class hb_closets_OT_add_adj_shelves(bpy.types.Operator):
         col = self.layout.column(align=True)
         _locked_field(col, self, 'qty', 'unlock_qty',
                       text="Shelf Quantity")
+        if self.unlock_qty and self.qty > const.ADJ_SHELF_QTY_WARN:
+            row = col.row()
+            row.alert = True
+            row.label(text="Must be less than %d"
+                      % (const.ADJ_SHELF_QTY_WARN + 1), icon='ERROR')
         col = self.layout.column(align=True)
         _locked_field(col, self, 'clip_gap', 'unlock_clip_gap',
                       text="Clip Gap")
@@ -5534,6 +5539,11 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
         description="How far up the opening the accessory sits. Below "
                     "zero hangs it down past the bottom of the partition",
         unit='LENGTH', precision=4)  # type: ignore
+    auto_center: bpy.props.BoolProperty(
+        name="Auto Center",
+        description="Keep it centred front to back on the panel, moving "
+                    "with the depth of the opening",
+        default=False)  # type: ignore
     setback: bpy.props.FloatProperty(
         name="Back From The Front", min=0.0, unit='LENGTH',
         precision=4,
@@ -5648,6 +5658,7 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
             # figure it centred at, or typing in this box would move it.
             self.setback = float(
                 types_closets.accessory_setback(obj, acc_def))
+            self.auto_center = types_closets.auto_center(obj, acc_def)
         if acc_def is not None and acc_def.is_sized:
             b_w, b_h, b_d = types_closets.basket_values(
                 obj, acc_def, width)
@@ -5697,7 +5708,10 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
             # Where it sits front to back. It screws to a panel face,
             # so how far in from the front is a choice - unlike a
             # pull-out, which lands on its runners at the front.
-            col.prop(self, 'setback')
+            col.prop(self, 'auto_center')
+            sub = col.column()
+            sub.enabled = not self.auto_center
+            sub.prop(self, 'setback')
         if acc_def.is_sized:
             # Three sizes rather than one, because it is made to any
             # of them: how wide, how tall and how deep.
@@ -5796,8 +5810,11 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
                 obj[types_closets.PROP_ACCESSORY_OPEN_H] = float(
                     self.opening_height)
             if acc_def is not None and acc_def.family == acc.FAMILY_PANEL:
-                obj[types_closets.PROP_ACCESSORY_SETBACK] = float(
-                    self.setback)
+                obj[types_closets.PROP_ACCESSORY_AUTO_CENTER] = (
+                    1 if self.auto_center else 0)
+                if not self.auto_center:
+                    obj[types_closets.PROP_ACCESSORY_SETBACK] = float(
+                        self.setback)
             if acc_def is not None and acc_def.is_sized:
                 for prop, sizes, chosen in (
                         (types_closets.PROP_BASKET_W, acc_def.widths,
@@ -6769,6 +6786,148 @@ class hb_closets_OT_lock_shelf(bpy.types.Operator):
             return {'FINISHED'}
 
         return {'CANCELLED'}
+
+
+def _scene_starters(context):
+    return [o for o in context.scene.objects
+            if o.get(types_closets.TAG_STARTER_CAGE)
+            and not o.get('hb_preview')]
+
+
+class hb_closets_OT_update_toe_kicks(bpy.types.Operator):
+    """Give every closet already in the room the room's toe kick height
+    and setback. Units with no kick keep none (4.3 Update Toe Kick
+    Prompts)."""
+    bl_idname = "hb_closets.update_toe_kicks"
+    bl_label = "Update Toe Kicks"
+    bl_options = {'UNDO'}
+
+    def execute(self, context):
+        room = context.scene.hb_closets
+        n = 0
+        for root in _scene_starters(context):
+            sp = root.hb_closet_starter
+            with types_closets.suspend_recalc():
+                if sp.toe_kick_height > 0.0:
+                    sp.toe_kick_height = room.toe_kick_height
+                sp.toe_kick_setback = room.toe_kick_setback
+            types_closets.recalculate_closet_starter(root)
+            n += 1
+        self.report({'INFO'}, "Toe kicks updated on %d closets" % n)
+        return {'FINISHED'}
+
+
+class hb_closets_OT_update_hanging_heights(bpy.types.Operator):
+    """Stand every Hanging closet already in the room to the room's
+    Hanging Top Height (4.3 Update Closet Sizes)."""
+    bl_idname = "hb_closets.update_hanging_heights"
+    bl_label = "Update Hanging Heights"
+    bl_options = {'UNDO'}
+
+    def execute(self, context):
+        room = context.scene.hb_closets
+        want = const.snap_system_height_down(room.hanging_top_height)
+        n = 0
+        for root in _scene_starters(context):
+            if root.get('CLASS_NAME') != 'HangingClosetStarter':
+                continue
+            sp = root.hb_closet_starter
+            if abs(sp.height - want) > 1e-5:
+                sp.height = want
+                n += 1
+        self.report({'INFO'}, "%d hanging closets updated" % n)
+        return {'FINISHED'}
+
+
+class hb_closets_OT_cleat_prompts(bpy.types.Operator):
+    """Size and place a cleat dropped into an opening: how long and
+    wide it is cut, how high it stands and how far along the opening
+    it starts (4.3 Cleat prompts)."""
+    bl_idname = "hb_closets.cleat_prompts"
+    bl_label = "Cleat Properties"
+    bl_options = {'UNDO'}
+
+    full_width: bpy.props.BoolProperty(
+        name="Full Opening Width",
+        description="Cut it to the opening's width and follow the "
+                    "opening when that changes",
+        default=True)  # type: ignore
+    length: bpy.props.FloatProperty(
+        name="Length", min=0.0, unit='LENGTH', precision=4)  # type: ignore
+    width: bpy.props.FloatProperty(
+        name="Width", min=0.0, unit='LENGTH', precision=4)  # type: ignore
+    anchor_top: bpy.props.BoolProperty(
+        name="Hang From Top",
+        description="Measure its height down from the top of the "
+                    "opening instead of up from the bottom",
+        default=False)  # type: ignore
+    location: bpy.props.FloatProperty(
+        name="Vertical Location", min=0.0, unit='LENGTH',
+        precision=4)  # type: ignore
+    x_location: bpy.props.FloatProperty(
+        name="Horizontal Location", min=0.0, unit='LENGTH',
+        precision=4,
+        description="How far in from the left of the opening it "
+                    "starts")  # type: ignore
+
+    @staticmethod
+    def _cleat(context):
+        obj = context.active_object
+        if (obj is None
+                or obj.get('hb_part_role') != types_closets.PART_ROLE_CLEAT
+                or obj.parent is None
+                or not obj.parent.get(types_closets.TAG_OPENING_CAGE)):
+            return None
+        return obj
+
+    @classmethod
+    def poll(cls, context):
+        return cls._cleat(context) is not None
+
+    def invoke(self, context, event):
+        obj = self._cleat(context)
+        width = types_closets._cage_dim_x(obj.parent)
+        c_len, c_w, c_x = types_closets.opening_cleat_values(obj, width)
+        self.full_width = float(
+            obj.get(types_closets.PROP_CLEAT_LENGTH, 0.0) or 0.0) <= 0.0
+        self.length = c_len
+        self.width = c_w
+        self.x_location = c_x
+        self.anchor_top = bool(obj.get('hb_anchor_top'))
+        self.location = float(obj.get('hb_z_offset', 0.0))
+        return context.window_manager.invoke_props_dialog(self, width=300)
+
+    def draw(self, context):
+        col = self.layout.column(align=True)
+        col.prop(self, 'full_width')
+        sub = col.column(align=True)
+        sub.enabled = not self.full_width
+        sub.prop(self, 'length')
+        sub.prop(self, 'x_location')
+        col = self.layout.column(align=True)
+        col.prop(self, 'width')
+        col.prop(self, 'anchor_top')
+        col.prop(self, 'location',
+                 text="From Top" if self.anchor_top else "From Bottom")
+
+    def execute(self, context):
+        obj = self._cleat(context)
+        if obj is None:
+            return {'CANCELLED'}
+        width = types_closets._cage_dim_x(obj.parent)
+        if self.full_width or self.length >= width - 1e-5:
+            obj[types_closets.PROP_CLEAT_LENGTH] = 0.0
+            obj[types_closets.PROP_CLEAT_X] = 0.0
+        else:
+            obj[types_closets.PROP_CLEAT_LENGTH] = float(self.length)
+            obj[types_closets.PROP_CLEAT_X] = float(self.x_location)
+        obj[types_closets.PROP_CLEAT_WIDTH] = (
+            0.0 if abs(self.width - const.CLEAT_WIDTH) < 1e-6
+            else float(self.width))
+        obj['hb_anchor_top'] = 1 if self.anchor_top else 0
+        obj['hb_z_offset'] = float(self.location)
+        types_closets.recalculate_closet_starter(obj)
+        return {'FINISHED'}
 
 
 class hb_closets_OT_delete_part(bpy.types.Operator):
@@ -8325,7 +8484,8 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
         description="Set how high this opening's door pulls sit, instead "
                     "of following the room. Read the way the convention "
                     "above reads it: Base down from the door top, Upper "
-                    "up from the door bottom, Tall off the floor",
+                    "up from the door bottom, Tall up from the door "
+                    "bottom",
         default=False)  # type: ignore
     door_pull_vertical_location: bpy.props.FloatProperty(
         name="Door Pull Vertical Location",
@@ -8630,7 +8790,7 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
             v_label = "From Top"
             v_locked = as_length(cp.pull_vertical_location_base)
         elif rule == 'TALL':
-            v_label = "Off The Floor"
+            v_label = "From Bottom"
             v_locked = as_length(cp.pull_vertical_location_tall)
         elif rule == 'UPPER':
             v_label = "From Bottom"
@@ -9316,6 +9476,9 @@ classes = (
     hb_closets_OT_front_pull,
     hb_closets_OT_lock_l_shelf,
     hb_closets_OT_lock_shelf,
+    hb_closets_OT_update_toe_kicks,
+    hb_closets_OT_update_hanging_heights,
+    hb_closets_OT_cleat_prompts,
     hb_closets_OT_delete_part,
     hb_closets_OT_delete_starter,
     hb_closets_OT_starter_prompts,
