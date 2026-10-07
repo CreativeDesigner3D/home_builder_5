@@ -4642,7 +4642,41 @@ def front_overlay(rect, cab_props, opening_props, side):
     if (side in ('left', 'right') and rect.get(f'corner_{side}')
             and not getattr(opening_props, f'unlock_{side}_overlay')):
         return FULL_CORNER_SIDE_OVERLAY
-    return resolved_overlay(cab_props, opening_props, side)
+    overlay = resolved_overlay(cab_props, opening_props, side)
+    # Side-mount retracting doors ride up off the member below so they
+    # can slide back into the opening; an unlocked bottom overlay wins.
+    if (side == 'bottom'
+            and getattr(opening_props, 'door_mechanism', 'NONE')
+            in SIDE_RETRACTING_MECHANISMS
+            and not getattr(opening_props, 'unlock_bottom_overlay', False)):
+        overlay = min(overlay, -RETRACTING_DOOR_HOLD_UP)
+    return overlay
+
+
+# Side-mount retracting doors (swing, then slide back into a pocket on
+# the hinge side). The top-mount door retracts upward and has none of
+# the side-pocket rules below.
+SIDE_RETRACTING_MECHANISMS = ('RETRACTING', 'RETRACTING_BIFOLD')
+# Gap under a side-mount retracting door: held up off the member below.
+RETRACTING_DOOR_HOLD_UP = inch(0.125)
+# Notch cut into the member above a side-mount retracting door at each
+# pocket side, so the door's top overlay can slide back behind it:
+# this wide in from the opening edge, and this much taller than the
+# door's top overlay.
+RETRACTING_RAIL_NOTCH_WIDTH = inch(1.5)
+RETRACTING_BIFOLD_RAIL_NOTCH_WIDTH = inch(3.0)
+RETRACTING_RAIL_NOTCH_EXTRA = inch(0.125)
+
+
+def retracting_pocket_sides(opening_props):
+    """(left, right) - which sides of the opening a side-mount
+    retracting door pockets on, from its hinge side. Both False when
+    the opening has no side-mount retracting mechanism."""
+    if getattr(opening_props, 'door_mechanism',
+               'NONE') not in SIDE_RETRACTING_MECHANISMS:
+        return (False, False)
+    hinge = getattr(opening_props, 'hinge_side', 'RIGHT')
+    return (hinge in ('LEFT', 'DOUBLE'), hinge in ('RIGHT', 'DOUBLE'))
 
 
 
@@ -5929,9 +5963,9 @@ def _retracting_clearances(opening_ff):
     if mech not in ('RETRACTING', 'RETRACTING_BIFOLD'):
         return (0.0, 0.0, 0.0, 0.0)
     per_side = inch(3.25) if mech == 'RETRACTING' else inch(4.75)
-    hinge = getattr(opening_ff, 'hinge_side', 'RIGHT')
-    left = per_side if hinge in ('LEFT', 'DOUBLE') else 0.0
-    right = per_side if hinge in ('RIGHT', 'DOUBLE') else 0.0
+    pocket_l, pocket_r = retracting_pocket_sides(opening_ff)
+    left = per_side if pocket_l else 0.0
+    right = per_side if pocket_r else 0.0
     return (left, right, inch(3.0), 0.0)
 
 

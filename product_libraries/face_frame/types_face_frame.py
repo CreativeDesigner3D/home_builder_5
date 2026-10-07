@@ -3966,6 +3966,11 @@ class FaceFrameCabinet(GeoNodeCage):
         # frame's final geometry. No-op + cleanup when none assigned.
         self._apply_cabinet_columns(layout)
 
+        # Side-mount retracting doors: notch the member above each
+        # pocket side so the door's top overlay can slide back behind
+        # it. Last, once every rail has its final size and place.
+        self._apply_retracting_rail_notches(layout)
+
 
     # ------------------------------------------------------------------
     # Round-top doors: the face frame follows the arc
@@ -4787,6 +4792,139 @@ class FaceFrameCabinet(GeoNodeCage):
             if idx > used:
                 mod.show_viewport = False
                 mod.show_render = False
+
+    # ------------------------------------------------------------------
+    # Retracting doors: rail notches over the pocket sides
+    # ------------------------------------------------------------------
+    # A side-mount retracting door swings square, then slides back into
+    # the cabinet along its hinge side. Its top overlay laps the member
+    # above, so that member is notched at each pocket side: in from the
+    # opening edge by the notch width, up past the door's top overlay.
+    _RETRACT_NOTCH_MOD = 'Retract Notch'
+    # Wood the notched member always keeps above the notch.
+    _RETRACT_NOTCH_MIN_KEEP = inch(0.5)
+
+    def _retracting_rail_notches(self, layout):
+        """[(x0, x1, z_bottom, height), ...] in cabinet space: one
+        notch per pocket side of every side-mount retracting door
+        opening. z_bottom is the opening's clear top (the bottom of the
+        member above it)."""
+        out = []
+        if layout.cabinet_type == 'PANEL':
+            return out
+        for bi in range(layout.bay_count):
+            leaves = solver.bay_openings(layout, bi).get('leaves', [])
+            if not leaves:
+                continue
+            bx, _by, bz = solver.bay_cage_position(layout, bi)
+            for r in leaves:
+                cage = bpy.data.objects.get(r['obj_name'])
+                props = getattr(cage, 'face_frame_opening', None)
+                if props is None or props.front_type != 'DOOR':
+                    continue
+                pocket_l, pocket_r = solver.retracting_pocket_sides(props)
+                if not (pocket_l or pocket_r):
+                    continue
+                width = (solver.RETRACTING_BIFOLD_RAIL_NOTCH_WIDTH
+                         if props.door_mechanism == 'RETRACTING_BIFOLD'
+                         else solver.RETRACTING_RAIL_NOTCH_WIDTH)
+                top_ol = solver.front_overlay(
+                    r, self.obj.face_frame_cabinet, props, 'top')
+                height = top_ol + solver.RETRACTING_RAIL_NOTCH_EXTRA
+                if height <= 1e-6:
+                    continue
+                x_lo = bx + r['cage_x'] + r['reveal_left']
+                x_hi = bx + r['cage_x'] + r['cage_dim_x'] - r['reveal_right']
+                z_top = bz + r['cage_z'] + r['cage_dim_z'] - r['reveal_top']
+                width = min(width, (x_hi - x_lo) / 2.0)
+                if pocket_l:
+                    out.append((x_lo, x_lo + width, z_top, height))
+                if pocket_r:
+                    out.append((x_hi - width, x_hi, z_top, height))
+        return out
+
+    def _apply_retracting_rail_notches(self, layout):
+        """Cut each retracting-door notch into the rail above it
+        (CPM_CUTOUT, named apart from user Cutouts) and hide any left
+        over from an earlier recalc."""
+        notches = self._retracting_rail_notches(layout)
+        members = []
+        for obj in self.obj.children_recursive:
+            role = obj.get('hb_part_role') or ''
+            if (not role.endswith('_RAIL') or obj.get(self._ARCH_RAIL_TAG)
+                    or obj.get('IS_MANUAL_PART')):
+                continue
+            has_old = any(m.name.startswith(self._RETRACT_NOTCH_MOD)
+                          for m in obj.modifiers)
+            if not notches and not has_old:
+                continue
+            box = self._cutpart_box_local(obj)
+            if box is not None:
+                members.append((obj, box))
+        eps = inch(1.0 / 32.0)
+        over = inch(0.1)
+        for obj, box in members:
+            x0, x1, _y0, _y1, z0, z1 = box
+            mine = [n for n in notches
+                    if abs(n[2] - z0) <= eps
+                    and n[1] > x0 + 1e-6 and n[0] < x1 - 1e-6]
+            used = 0
+            if mine:
+                part = GeoNodeCutpart(obj)
+                try:
+                    thickness = part.get_input('Thickness')
+                    # The cutout measures from the board's low corner:
+                    # on a mirrored axis the board runs negative, so
+                    # shift local coordinates up by its size there.
+                    ox = (part.get_input('Length')
+                          if part.get_input('Mirror X') else 0.0)
+                    oy = (part.get_input('Width')
+                          if part.get_input('Mirror Y') else 0.0)
+                except Exception:
+                    thickness = inch(0.75)
+                    ox = oy = 0.0
+                inv = self._part_local_matrix(obj).inverted()
+            for nx0, nx1, nz, height in mine:
+                height = min(height, (z1 - z0) - self._RETRACT_NOTCH_MIN_KEEP)
+                if height <= 1e-6:
+                    continue
+                # A cut reaching a member end runs past it too.
+                cx0 = x0 - over if nx0 <= x0 + 1e-6 else nx0
+                cx1 = x1 + over if nx1 >= x1 - 1e-6 else nx1
+                corners = [inv @ Vector((x, (box[2] + box[3]) / 2.0, z))
+                           for x in (cx0, cx1) for z in (nz - over,
+                                                         nz + height)]
+                lx = [c.x + ox for c in corners]
+                ly = [c.y + oy for c in corners]
+                name = (self._RETRACT_NOTCH_MOD if used == 0
+                        else f"{self._RETRACT_NOTCH_MOD} {used + 1}")
+                used += 1
+                mod = obj.modifiers.get(name)
+                if mod is None:
+                    part.add_part_modifier('CPM_CUTOUT', name)
+                    mod = obj.modifiers.get(name)
+                    if mod is None:
+                        continue
+                ng = mod.node_group
+                if ng is None:
+                    continue
+                for iname, val in (('X', min(lx)), ('End X', max(lx)),
+                                   ('Y', min(ly)), ('End Y', max(ly)),
+                                   ('Route Depth', thickness + over),
+                                   ('Flip Z', False)):
+                    ni = ng.interface.items_tree.get(iname)
+                    if ni is not None:
+                        hb_utils.set_gn_input(mod, ni.identifier, val)
+                mod.show_viewport = True
+                mod.show_render = True
+            for mod in obj.modifiers:
+                if not mod.name.startswith(self._RETRACT_NOTCH_MOD):
+                    continue
+                suffix = mod.name[len(self._RETRACT_NOTCH_MOD):].strip()
+                idx = int(suffix) if suffix.isdigit() else 1
+                if idx > used:
+                    mod.show_viewport = False
+                    mod.show_render = False
 
     def _create_mid_stile_half(self, gap_index):
         """Right-half companion board; same part config as the mid
