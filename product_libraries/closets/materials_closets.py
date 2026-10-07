@@ -138,16 +138,23 @@ def stable_id(name):
     return _STABLE_ID_BASE + zlib.crc32(name.encode('utf-8')) % 2000000000
 
 
-def _stable_items(names, default=None):
-    items = []
+def stable_numbers(names, default=None):
+    """The saved number for each name in a dropdown list: its stable id,
+    0 for the list's default."""
+    nums = []
     used = set()
     for n in names:
         num = 0 if n == default else stable_id(n)
         while num in used:      # a crc clash in the one list
             num += 1
         used.add(num)
-        items.append((n, n, "", 'NONE', num))
-    return items
+        nums.append(num)
+    return nums
+
+
+def _stable_items(names, default=None):
+    return [(n, n, "", 'NONE', num)
+            for n, num in zip(names, stable_numbers(names, default))]
 
 
 def countertop_material_enum_items(self, context):
@@ -223,13 +230,59 @@ def migrate_saved_materials(scene):
     return changed
 
 
+# The pull, hanger and molding dropdowns were numbered by place too, and
+# moved the same way when a handle, hanger or profile file was added.
+# Each is listed with the order it was numbered in before (its default
+# first then and now, so 0 needs no migrating); Custom's 1000 was always
+# its own.
+def _saved_selection_lists():
+    from . import pulls_closets as pc, molding_closets as mc
+    pulls = pc.get_pull_files()
+    hangers = pc.get_hanger_files()
+    return (
+        ('closet_pull', pulls + ['NONE'], pc.pull_enum_items),
+        ('closet_drawer_pull', [pc.SAME_AS_DOORS] + pulls + ['NONE'],
+         pc.drawer_pull_enum_items),
+        ('closet_hanger_model', hangers + ['NONE'], pc.hanger_enum_items),
+        ('closet_crown_profile', mc.get_profile_files('CROWN'),
+         mc.profile_enum_items),
+        ('closet_base_profile', mc.get_profile_files('BASE'),
+         mc.base_profile_enum_items),
+    )
+
+
+def migrate_saved_selections(scene):
+    """migrate_saved_materials for the pull, hanger and molding
+    dropdowns. Returns how many were changed."""
+    props = getattr(scene, 'hb_closets', None)
+    if props is None:
+        return 0
+    changed = 0
+    for prop, old_order, items_fn in _saved_selection_lists():
+        raw = props.get(prop)
+        if (not isinstance(raw, int) or raw >= _STABLE_ID_BASE
+                or raw in (0, 1000)):
+            continue
+        if not 0 <= raw < len(old_order):
+            continue
+        name = old_order[raw]
+        num = next((item[4] for item in items_fn(props, bpy.context)
+                    if item[0] == name and len(item) > 4), None)
+        if num is None:
+            continue
+        props[prop] = num
+        changed += 1
+    return changed
+
+
 @bpy.app.handlers.persistent
 def _migrate_materials_load_post(_dummy):
     for scene in bpy.data.scenes:
-        try:
-            migrate_saved_materials(scene)
-        except Exception:
-            pass
+        for migrate in (migrate_saved_materials, migrate_saved_selections):
+            try:
+                migrate(scene)
+            except Exception:
+                pass
 
 
 def register_handlers():

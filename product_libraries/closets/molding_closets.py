@@ -98,10 +98,16 @@ def _thumb_icon(kind, stem):
 def _enum_items(kind):
     items = _enum_cache.get(kind)
     if items is None:
+        # Numbered by name, the standard profile at 0 (its default), so
+        # a profile file added later does not move what a file saved
+        # (materials_closets.stable_numbers).
+        from .materials_closets import stable_numbers
+        files = get_profile_files(kind)
         items = []
-        for i, fname in enumerate(get_profile_files(kind)):
+        for fname, num in zip(files, stable_numbers(files,
+                                                    KINDS[kind][1])):
             stem = os.path.splitext(fname)[0]
-            items.append((fname, stem, "", _thumb_icon(kind, stem), i))
+            items.append((fname, stem, "", _thumb_icon(kind, stem), num))
         items = items or [('NONE', "None", "No profiles found")]
         _enum_cache[kind] = items
     return items
