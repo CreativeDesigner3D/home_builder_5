@@ -85,6 +85,11 @@ BAY_WIDTH_TARGET = inch(30.0)
 BAY_MAX_WIDTH = inch(30.0)
 MIN_BAY_QTY = 1
 MAX_BAY_QTY = 8
+# A panel ironing board hangs at a set height off the room floor
+# whatever opening it is in (4.3 Ironing_Board ironingboard_from_floor):
+# the Deluxe Swivel at 24.1845", the Premier Pop-Up at 7.4".
+IRONING_BOARD_FROM_FLOOR = inch(24.1845)
+IRONING_BOARD_POPUP_FROM_FLOOR = inch(7.4)
 # More adjustable shelves than this in one opening is warned about.
 ADJ_SHELF_QTY_WARN = 11
 
@@ -326,6 +331,11 @@ DOOR_PULL_FROM_EDGE = inch(1.5)
 # Whichever one a door lands on, it is set the same distance in from the
 # latch edge - slab and five-piece alike - so a run of mixed fronts reads
 # as a set and the pull sits on the stile clear of the rail miter.
+# Auto picks the convention the way 4.3's door drop did: a door that
+# starts more than 30" off the floor is an Upper, one taller than 50" a
+# Tall, anything else a Base (ops_drop_closet, Pull Location).
+DOOR_PULL_UPPER_ABOVE = inch(30.0)
+DOOR_PULL_TALL_OVER = inch(50.0)
 DOOR_PULL_LOCATION_ITEMS = [
     ('AUTO', "Auto",
      "Pick the convention from where the door sits in the run"),

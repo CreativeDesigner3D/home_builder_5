@@ -135,6 +135,10 @@ PROP_ACCESSORY_MODEL = 'hb_accessory_model'
 PROP_ACCESSORY_PANEL_LOC = 'hb_accessory_panel_loc'
 PART_ROLE_ACCESSORY_RIG = 'CLOSET_ACCESSORY_RIG'
 PROP_ACCESSORY_SETBACK = 'hb_accessory_setback'
+# On an opening: its typed door pull height is read the current way
+# (Tall up from the door bottom). Absent, a Tall figure typed before
+# that change is a height off the floor and is read over once.
+PROP_PULL_V_FROM_BOTTOM = 'hb_pull_v_from_bottom'
 # Whether a panel accessory keeps itself centred front to back (4.3's
 # Auto Center prompt). Unset, a hook and its like centre until a
 # figure is typed.
@@ -3362,12 +3366,11 @@ class ClosetStarter(GeoNodeCage):
                 x = offset
             # Base / Tall / Upper, each measured from somewhere
             # different: BASE holds the pull down from the TOP edge,
-            # UPPER holds it up from the BOTTOM edge, TALL holds it at a
-            # height off the floor whatever the door is doing. On Auto
-            # the rule is read off the door: hold it at the TALL height;
-            # when the door bottom is already above that height use
-            # UPPER; when the tall height would land past the door top
-            # use BASE. Naming one instead holds the door to it.
+            # UPPER and TALL hold it up from the BOTTOM edge. On Auto
+            # the rule is read off the door as 4.3 read it: starting
+            # more than 30" off the floor it is an UPPER, taller than
+            # 50" a TALL, otherwise a BASE. Naming one instead holds
+            # the door to it.
             # An opening that has taken the vertical figure over feeds
             # it to whichever of the three the door lands on, so the one
             # number reads from the right edge either way. Tall is
@@ -3381,12 +3384,21 @@ class ClosetStarter(GeoNodeCage):
                 bottom_w -= height
             rule = (op.door_pull_location if op is not None else 'AUTO')
             if rule == 'AUTO':
-                if bottom_w >= v_tall:
+                if bottom_w > const.DOOR_PULL_UPPER_ABOVE:
                     rule = 'UPPER'
-                elif v_tall + half <= height - v_base - half:
+                elif height > const.DOOR_PULL_TALL_OVER:
                     rule = 'TALL'
                 else:
                     rule = 'BASE'
+            if (door_v is not None and opening is not None
+                    and not opening.get(PROP_PULL_V_FROM_BOTTOM)):
+                # A Tall figure typed before Tall was measured from the
+                # door bottom meant a height off the floor: read it
+                # over once to the same place on the door.
+                if rule == 'TALL':
+                    door_v = max(door_v - bottom_w, 0.0)
+                    op.door_pull_vertical_location = door_v
+                opening[PROP_PULL_V_FROM_BOTTOM] = 1
             if door_v is not None:
                 # A figure the opening typed in is read the same way the
                 # room's is for whichever convention the door landed on:
@@ -4213,6 +4225,9 @@ class ClosetStarter(GeoNodeCage):
             # it be: a rack or a hook can hang down past the bottom of
             # a partition. An insert stands on a shelf, so it cannot.
             z = float(cage.get(PROP_ACCESSORY_Z, 0.0))
+            fixed = fixed_accessory_z(cage.parent, acc_def, cage)
+            if fixed is not None:
+                z = fixed
             if 0.0 <= z < const.ACCESSORY_BOTTOM_SNAP_TOL:
                 z = 0.0
             z = min(z, max(interior_h - acc_def.height, 0.0))
@@ -5859,8 +5874,9 @@ class LShelfClosetStarter(GeoNodeCage):
                                   if self.has_toe_kick else 0.0)
             sp.toe_kick_setback = scene_props.toe_kick_setback
             sp.include_countertop = False
-            sp.l_left_depth = float(scene_props.default_panel_depth)
-            sp.l_right_depth = float(scene_props.default_panel_depth)
+            # 4.3's corner wings took the tall panel depth.
+            sp.l_left_depth = float(scene_props.default_tall_panel_depth)
+            sp.l_right_depth = float(scene_props.default_tall_panel_depth)
             sp.l_shelf_qty = const.L_SHELF_QTY
             sp.l_back_width = float(const.L_BACK_STRIP_WIDTH)
             sp.l_flip_partition = False
@@ -6570,7 +6586,8 @@ class CornerFillerStarter(GeoNodeCage):
     is_filler = True
 
     def default_height(self, scene_props):
-        return const.BASE_PANEL_HEIGHT
+        # The room's base height, as 4.3's filler took it.
+        return const.snap_system_height_down(scene_props.base_panel_height)
 
     def create_starter(self, name, bay_qty=1):
         self.create(name)
@@ -6581,9 +6598,10 @@ class CornerFillerStarter(GeoNodeCage):
         sp = self.obj.hb_closet_starter
         scene_props = bpy.context.scene.hb_closets
         sp.closet_type = self.default_closet_type
-        # Deep enough to close the corner two runs of the room's own
-        # depth leave between them, plus the board that faces it.
-        reach = (float(scene_props.default_panel_depth)
+        # Deep enough to close the corner two base runs of the room's
+        # own depth leave between them, plus the board that faces it
+        # (4.3: default_base_panel_depth + 1.5").
+        reach = (float(scene_props.default_base_panel_depth)
                  + const.CORNER_FILLER_WIDTH)
         sp.width = reach
         sp.depth = reach
@@ -8038,6 +8056,32 @@ def cleat_hook_height(cage):
     return height if height > 0.0 else const.CLEAT_HOOK_HEIGHT
 
 
+def fixed_accessory_z(opening, acc_def, cage=None):
+    """The height over its opening floor an accessory is held at no
+    matter where it is put, or None for one that sits where it is put.
+
+    A storage box stands on the opening floor (4.3 dropped it there on
+    every move). A panel ironing board hangs at its model's height off
+    the room floor (4.3 ironingboard_from_floor) - so in a raised
+    opening it can read below the opening's own floor."""
+    key = getattr(acc_def, 'key', '')
+    if key == 'STORAGE_BOX':
+        return 0.0
+    if key == 'IRONING_BOARD':
+        model = str(cage.get(PROP_ACCESSORY_MODEL, '')) if cage else ''
+        off_floor = (const.IRONING_BOARD_POPUP_FROM_FLOOR
+                     if 'Pop' in model else const.IRONING_BOARD_FROM_FLOOR)
+        floor_z = 0.0
+        if opening is not None:
+            try:
+                from ..face_frame import split_preview
+                floor_z = split_preview._world_matrix(opening).translation.z
+            except Exception:
+                floor_z = opening.matrix_world.translation.z
+        return off_floor - floor_z
+    return None
+
+
 def accessory_drop_height(opening, acc_def, raw_z, skip=None,
                           dodge=True):
     """Where an accessory actually lands when it is dropped at a
@@ -8055,6 +8099,9 @@ def accessory_drop_height(opening, acc_def, raw_z, skip=None,
     the opening's contents are on the other side of the panel and
     are not in its way."""
     from . import accessories_closets as acc
+    fixed = fixed_accessory_z(opening, acc_def, skip)
+    if fixed is not None:
+        return fixed
     grid = const.ACCESSORY_DROP_GRID
     z = round(raw_z / grid) * grid if grid > 0.0 else raw_z
     if acc_def.family == acc.FAMILY_CLEAT:
@@ -8578,6 +8625,8 @@ def apply_opening_data(opening, data, recalc=True):
         if len(pulls) > 11:
             _op.unlock_door_pull_vertical = bool(pulls[8])
             _op.door_pull_vertical_location = float(pulls[9])
+            # Copied off an opening that reads it the current way.
+            opening[PROP_PULL_V_FROM_BOTTOM] = 1
             _op.unlock_door_pull_edge = bool(pulls[10])
             _op.door_pull_horizontal_offset = float(pulls[11])
     if data.get('door_swing'):

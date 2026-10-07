@@ -730,10 +730,17 @@ class hb_closets_OT_place_starter(bpy.types.Operator,
         self._last_clearances = {}
         self._detent_hit = set()
         if self._is_corner:
-            # Corner L units are fixed-footprint singles: no gap fill,
-            # no bay tiling.
-            self._cabinet_width = const.L_SHELF_SIZE
-            self._cabinet_depth = const.L_SHELF_SIZE
+            # Corner units are fixed-footprint singles: no gap fill, no
+            # bay tiling. An L unit is the room's Corner Closet Size
+            # square; a corner filler is square to the base depth plus
+            # its board (4.3 Corner_Closet / corner filler Dim X = Y).
+            if getattr(cls, 'is_filler', False):
+                size = (float(scene_props.default_base_panel_depth)
+                        + const.CORNER_FILLER_WIDTH)
+            else:
+                size = float(scene_props.default_corner_closet_size)
+            self._cabinet_width = size
+            self._cabinet_depth = size
             self.bay_qty = 1
         else:
             self._cabinet_width = scene_props.default_closet_width
@@ -5750,6 +5757,11 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
             # after - which is how the prior library had it too.
             box.label(text="Height is set by placing it.",
                       icon='INFO')
+        elif types_closets.fixed_accessory_z(
+                obj.parent, acc_def, obj) is not None:
+            # Held where the prior library held it: a storage box on
+            # the floor, an ironing board at its own height.
+            col.label(text="Height is set by the accessory.", icon='INFO')
         else:
             col.prop(self, 'location')
         warning = obj.get(types_closets.PROP_ACCESSORY_WARNING, '')
@@ -8989,6 +9001,7 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
         _op.door_pull_location = self.door_pull_location
         _op.unlock_door_pull_vertical = self.unlock_door_pull_vertical
         _op.door_pull_vertical_location = self.door_pull_vertical_location
+        opening[types_closets.PROP_PULL_V_FROM_BOTTOM] = 1
         _op.unlock_door_pull_edge = self.unlock_door_pull_edge
         _op.door_pull_horizontal_offset = self.door_pull_horizontal_offset
         _op.add_back = self.add_back
