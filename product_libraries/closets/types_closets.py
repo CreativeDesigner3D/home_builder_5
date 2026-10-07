@@ -2701,13 +2701,15 @@ class ClosetStarter(GeoNodeCage):
             adj.sort(key=lambda o: o.get('hb_adj_index', 0))
             # The prior library took every shelf's own thickness out
             # of the opening first, shared what was left between the
-            # shelves and the space above and below them, then added a
-            # thickness back for each shelf underneath. The clear space
-            # between one shelf and the next is the same the whole way
-            # up, which is what a shelf is set by.
+            # shelves and the space above and below them, then set
+            # shelf n at n spacings plus n thicknesses up (4.3
+            # Adjustable_Shelves: spacing*i + mt*i, i from 1). The clear
+            # space between one shelf and the next is the same the
+            # whole way up; the bottom gap is a thickness more than
+            # that and the top one a thickness less, as 4.3 had them.
             spacing = (interior_h - st * len(adj)) / (len(adj) + 1)
             for i, child in enumerate(adj):
-                z = max(0.0, min(spacing * (i + 1) + st * i,
+                z = max(0.0, min((spacing + st) * (i + 1),
                                  interior_h - st))
                 child.location = (clip, shelf_y, z)
                 part = GeoNodeCutpart(child)
@@ -6376,7 +6378,13 @@ class LShelfClosetStarter(GeoNodeCage):
                     z = min(max(z_top - st - sp.l_top_opening_height,
                                 z_bottom + st), z_top - st)
                 else:
-                    z = z_bottom + (z_top - z_bottom) * i / (n - 1)
+                    # Spaced as 4.3 Adjustable_L_Shelves spaced them
+                    # in the opening over the bottom shelf: n spacings
+                    # plus n thicknesses up, which comes to a thickness
+                    # above an even split of bottom to top.
+                    z = min(z_bottom + st
+                            + (z_top - z_bottom) * i / (n - 1),
+                            z_top - st)
                 # Top and bottom are the carcass and are always fixed.
                 # In between, a shelf is adjustable or locked - the
                 # same board either way, held on pins or on cams, so

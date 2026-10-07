@@ -1020,6 +1020,34 @@ class hb_closets_OT_place_starter(bpy.types.Operator,
                 continue
         return insets
 
+    def _opening_insets(self, wall, gap_start, gap_end, z0, height):
+        """(left, right) automatic 1/2" pull-offs where the gap edge is
+        the casing of a door or window beside the run - 4.3 held a
+        closet that far off one unless an offset was typed
+        (ops_drop_closet: left/right_window_door_offset). Only an
+        opening the run actually meets counts: one a low run passes
+        under does not bound it."""
+        tol = units.inch(0.25)
+        insets = [0.0, 0.0]
+        for child in wall.children:
+            if not ('IS_ENTRY_DOOR_BP' in child or 'IS_WINDOW_BP' in child):
+                continue
+            try:
+                geo = hb_types.GeoNodeObject(child)
+                w = geo.get_input('Dim X')
+                h = geo.get_input('Dim Z')
+            except Exception:
+                continue
+            cz = child.location.z
+            if not (z0 < cz + h and cz < z0 + height):
+                continue
+            x0 = child.location.x
+            if abs(gap_start - (x0 + w)) <= tol:
+                insets[0] = const.CORNER_PULL_OFF
+            if abs(gap_end - x0) <= tol:
+                insets[1] = const.CORNER_PULL_OFF
+        return insets
+
     # ---------------- positioning ----------------
 
     def _position_from_hit(self, context):
@@ -1255,6 +1283,15 @@ class hb_closets_OT_place_starter(bpy.types.Operator,
             auto_left = 0.0
         if gap_end < wall_length - 1e-6:
             auto_right = 0.0
+        # The same 1/2" off a door or window casing the gap stops at.
+        try:
+            open_left, open_right = self._opening_insets(
+                wall, gap_start, gap_end, cage_obj.location.z,
+                cabinet_height)
+        except Exception:
+            open_left = open_right = 0.0
+        auto_left = max(auto_left, open_left)
+        auto_right = max(auto_right, open_right)
         self._auto_left_inset = auto_left
         self._auto_right_inset = auto_right
 
@@ -6710,7 +6747,9 @@ class hb_closets_OT_lock_shelf(bpy.types.Operator):
                         seg_h = 0.0
                     n = total + 1
                     gap = (seg_h - st * n) / (n + 1)
-                    dealt_z = gap * (n_below + 1) + st * n_below
+                    # Where the solve deals shelf n_below + 1 (4.3:
+                    # n spacings plus n thicknesses up).
+                    dealt_z = (gap + st) * (n_below + 1)
                     rejoin = abs(dealt_z - local_z) <= units.inch(1 / 16)
                 with types_closets.suspend_recalc():
                     if total:
