@@ -230,8 +230,11 @@ _BOX_BOTTOM_Z = inch(0.5)
 # out past it to where 4.3 put them - an Avantech's 1/4" in from the
 # opening, a Metabox's 15.5 - 3mm in - in 4.3's steel: 13mm Avantech
 # sides, 1/8" Metabox sides.
-# system -> (side finish, bottom/back finish or None = the closet's,
-#            side outset, side thickness)
+# system -> (side finish, bottom/back finish or None = White closet
+#            board, side outset, side thickness). A Metabox's bottom and
+#            back are cut from White board whatever the room's colour
+#            (4.3 Metabox_Drawer_Bottom/Back: get_default_closet_material,
+#            which is always White).
 _METAL_LOOK = {
     'AVANTECH': ('Slate Graphite', 'Storm Silver Gray',
                  _mm(12) - inch(0.25), _mm(13)),
@@ -261,9 +264,7 @@ def style_box(gb, box_type):
         use_side = side_mat is not None
         if body_name is None:
             from . import materials_closets
-            body = materials_closets.load_material(getattr(
-                bpy.context.scene.hb_closets, 'closet_material', '')
-                or materials_closets.DEFAULT_MATERIAL)
+            body = materials_closets.load_material(WOOD_BOX_MATERIAL)
         else:
             body = pulls_closets.load_finish_material(body_name)
         material = body or material

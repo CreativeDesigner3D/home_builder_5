@@ -794,8 +794,8 @@ def apply_to_starter(root, carcass_name=None, front_name=None):
             continue
         role = child.get('hb_part_role')
         if child.get('hb_drawer_box_type'):
-            # A box's finish is its system's - a Metabox's bottom and
-            # back are the closet colour, so it follows a new one.
+            # A box's finish is its system's, whatever the room's
+            # colour (a Metabox's bottom and back are White board).
             from . import drawer_boxes_closets
             drawer_boxes_closets.style_box(
                 hb_types.GeoNodeObject(child), child['hb_drawer_box_type'])
