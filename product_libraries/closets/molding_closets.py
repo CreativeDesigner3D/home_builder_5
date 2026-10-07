@@ -313,7 +313,39 @@ def _add_molding(root, profile, kind):
 
 def add_crown_to_starter(root, profile):
     """Crown along the top front edge of every bay tall enough for it."""
+    if str(root.get('CLASS_NAME', '')).startswith('LShelf'):
+        return _add_corner_crown(root, profile)
     return _add_molding(root, profile, 'CROWN')
+
+
+def _add_corner_crown(root, profile):
+    """Crown round an L-shelf corner unit's front: up the left wing's
+    front edge to the inside corner and along the right wing's, with a
+    return to the wall at a finished end - the prior library's
+    assign_crown_curve_to_corner_closet, so the crown on the runs either
+    side carries through the corner. Traced the way a run's is (the room
+    on the right of travel). Skipped, like a run's bay, when its top is
+    under the minimum height."""
+    from . import types_closets
+    clear_starter_molding(root, 'CROWN')
+    sp = root.hb_closet_starter
+    pt = types_closets.run_sizes(root).panel_thickness
+    W, D, H = sp.width, sp.depth, sp.height
+    l_pt = 0.0 if sp.turn_off_left_panel else pt
+    r_pt = 0.0 if sp.turn_off_right_panel else pt
+    ld = min(sp.l_left_depth, W - r_pt)
+    rd = min(sp.l_right_depth, D - l_pt)
+    if root.matrix_world.translation.z + H < MIN_CROWN_HEIGHT - inch(0.05):
+        return 0
+    pts = []
+    if sp.left_finished_end:
+        pts.append((0.0, -D))
+    pts += [(ld, -D), (ld, -rd), (W, -rd)]
+    if sp.right_finished_end:
+        pts.append((W, 0.0))
+    obj = _new_curve(root, profile, H, 'CROWN')
+    _fill_spline(obj, pts)
+    return 1
 
 
 def add_base_to_starter(root, profile):

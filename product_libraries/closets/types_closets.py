@@ -2004,14 +2004,15 @@ class ClosetStarter(GeoNodeCage):
         pt = scene_props.panel_thickness
         have = {c.get('hb_batten'): c for c in self.obj.children
                 if c.get('hb_batten')}
-        for side in ('LEFT', 'RIGHT'):
-            c = have.get(side)
+        for key in _end_keys(self):
+            side, back = key.split('_')[0], key.endswith('_BACK')
+            c = have.get(key)
             if c is None:
                 p = CabinetPart()
-                p.create(f'{side.title()} Batten')
+                p.create(f'{side.title()}{" Back" if back else ""} Batten')
                 p.obj.parent = self.obj
                 p.obj['hb_part_role'] = PART_ROLE_BATTEN
-                p.obj['hb_batten'] = side
+                p.obj['hb_batten'] = key
                 c = p.obj
             bay = bays[0] if side == 'LEFT' else bays[-1]
             panel = panels[0] if side == 'LEFT' else panels[-1]
@@ -2022,13 +2023,16 @@ class ClosetStarter(GeoNodeCage):
             # Width runs off the outside of the run: away from -X on the
             # left, toward +X on the right.
             part.set_input('Mirror Y', side == 'RIGHT')
-            part.set_input('Mirror Z', False)
+            # An island's back face takes a strip of its own, standing
+            # proud of the back (4.3 Closet_Island: a front and a back
+            # batten at each end).
+            part.set_input('Mirror Z', back)
             # Anchor on the face of the end panel that faces the run, so
             # the strip laps the panel and overhangs the outside.
             x = panel['x'] + pt if side == 'LEFT' else panel['x']
             # The panel entry already carries the height and the floor /
             # extend-to-countertop drop, so the strip tracks the panel.
-            c.location = (x, -bay['depth'], panel['z'])
+            c.location = (x, 0.0 if back else -bay['depth'], panel['z'])
             part.set_input('Length', panel['length'])
             part.set_input('Width', scene_props.batten_width)
             part.set_input('Thickness', scene_props.batten_thickness)
@@ -2052,18 +2056,19 @@ class ClosetStarter(GeoNodeCage):
         st = scene_props.shelf_thickness
         have = {c.get('hb_filler'): c for c in self.obj.children
                 if c.get('hb_filler')}
-        for side in ('LEFT', 'RIGHT'):
-            c = have.get(side)
+        for key in _end_keys(self):
+            side, back = key.split('_')[0], key.endswith('_BACK')
+            c = have.get(key)
             width = (sp.left_side_wall_filler if side == 'LEFT'
                      else sp.right_side_wall_filler)
             if c is None:
                 if width <= 0.0:
                     continue
                 p = CabinetPart()
-                p.create(f'{side.title()} Filler')
+                p.create(f'{side.title()}{" Back" if back else ""} Filler')
                 p.obj.parent = self.obj
                 p.obj['hb_part_role'] = PART_ROLE_FILLER
-                p.obj['hb_filler'] = side
+                p.obj['hb_filler'] = key
                 # Match the reference filler frame: Length -> vertical, Width
                 # -> outward in X, Thickness -> depth at the front.
                 p.obj.rotation_euler.y = math.radians(-90)
@@ -2078,11 +2083,16 @@ class ClosetStarter(GeoNodeCage):
             # RIGHT filler mirrors. Set each recalculate so pre-existing
             # fillers self-correct.
             GeoNodeCutpart(c).set_input('Mirror Y', side == 'RIGHT')
+            # An island's back face is closed the same way (4.3
+            # Closet_Island: a front and a back filler at each end), the
+            # back one flush with the back face, extruding in.
+            GeoNodeCutpart(c).set_input('Mirror Z', not back)
             x = 0.0 if side == 'LEFT' else sp.width
             # The end panel's span: the bay's, plus any Extend Panels
             # drop below a hanging bay.
             end_panel = layout['panels'][0 if side == 'LEFT' else -1]
-            c.location = (x, -bay['depth'], end_panel['z'])
+            c.location = (x, 0.0 if back else -bay['depth'],
+                          end_panel['z'])
             part = GeoNodeCutpart(c)
             part.set_input('Length', end_panel['length'])
             part.set_input('Width', max(width, 0.001))
@@ -3335,6 +3345,25 @@ class ClosetStarter(GeoNodeCage):
                 y = v_upper + half
             y = min(max(y, half), max(height - half, half))
             rot = (math.radians(-90.0), 0.0, math.radians(90.0))
+            # As 4.3 turned them on a door (add_door_pull): a dropped
+            # pull hangs across the door the way it does on a drawer, a
+            # modern knob is turned the other way, and an edge pull sits
+            # on the latch edge (4.3 zeroed the From Edge figure for
+            # one), turned to wrap it.
+            stem = pulls_closets.current_pull_stem(selection).upper()
+            if pulls_closets.is_edge_pull(stem):
+                x = width if hinge == 'LEFT' else 0.0
+                rot = (math.radians(-90.0), 0.0,
+                       math.radians(-90.0 if hinge == 'LEFT' else 90.0))
+            elif 'DROPPED' in stem:
+                rot = (math.radians(-90.0), 0.0, 0.0)
+                # Lying across the door it can be wider than the From
+                # Edge figure leaves room for (a DROPPED 160 hung 2"
+                # off a door in 4.3): its end is kept 1/4" inside.
+                offset = max(h_edge, half + units.inch(0.25))
+                x = width - offset if hinge == 'LEFT' else offset
+            elif stem == 'MODERN KNOB':
+                rot = (math.radians(-90.0), 0.0, math.radians(180.0))
 
         # One pull, or a pair straddling the middle of the front where
         # the opening has asked for two.
@@ -5716,6 +5745,11 @@ class LShelfClosetStarter(GeoNodeCage):
     has_toe_kick = True
     floor_mounted = True
     is_corner = True
+    # Its panels stand against the walls the way a run's do, so they
+    # are notched around the room's baseboard the same way (4.3 notched
+    # every corner Panel: left, right and back).
+    _BASEBOARD_NOTCHES = ClosetStarter._BASEBOARD_NOTCHES
+    _notch_for_baseboard = ClosetStarter._notch_for_baseboard
     has_hang_rail = True
     # Placement flags read by the place modal.
     default_depth = const.L_SHELF_SIZE
@@ -6056,6 +6090,9 @@ class LShelfClosetStarter(GeoNodeCage):
             kick = sp.toe_kick_height if floor else 0.0
             setback = sp.toe_kick_setback
 
+            # How far the unit's panels stand off the floor - what the
+            # baseboard notches are measured from; an upper corner hangs.
+            floor_z = self.obj.matrix_world.translation.z
             panels = sorted([c for c in self.obj.children
                              if c.get('hb_part_role') == PART_ROLE_PANEL
                              and not c.get('hb_l_partition')],
@@ -6080,6 +6117,7 @@ class LShelfClosetStarter(GeoNodeCage):
                 p['hb_drill_through'] = (
                     1 if sp.drill_through_right else 0)
                 _set_part_hidden(p, right_off)
+                self._notch_for_baseboard(p, floor_z, pt)
                 # Left wing end panel: plane faces Y at y = -(D - pt),
                 # spanning the left wing depth (rotate the vertical
                 # panel 90 about Z so its Width runs along +X).
@@ -6096,6 +6134,7 @@ class LShelfClosetStarter(GeoNodeCage):
                 p['hb_finished_end'] = 1 if sp.left_finished_end else 0
                 p['hb_drill_through'] = 1 if sp.drill_through_left else 0
                 _set_part_hidden(p, left_off)
+                self._notch_for_baseboard(p, floor_z, pt)
 
             # Back Partition (defaults, verified against a live
             # corner build): unflipped it lies parallel to the
@@ -6121,6 +6160,7 @@ class LShelfClosetStarter(GeoNodeCage):
             # rot_z 90 + Mirror Z False extends -Y (back wall);
             # rot_z 0 + Mirror Z True extends +X (side wall).
             gp.set_input('Mirror Z', bool(flip))
+            self._notch_for_baseboard(partition, floor_z, pt)
 
             # ----- Wall cleats -----
             # A cleat against each wall for the unit to be fixed with,
@@ -6956,6 +6996,25 @@ def default_adj_shelf_qty(opening):
     except Exception:
         interior_h = 0.0
     return max(1, min(12, int(interior_h / inch(12.0))))
+
+
+def _end_keys(starter):
+    """The battens / fillers a run carries at its ends: one each end,
+    and an island a second at each end on its back face."""
+    if isinstance(starter, IslandClosetStarter):
+        return ('LEFT', 'RIGHT', 'LEFT_BACK', 'RIGHT_BACK')
+    return ('LEFT', 'RIGHT')
+
+
+def default_slant_qty(opening):
+    """Starting slanted shoe shelf count for an opening: one per 12\" of
+    its height, at least one - the prior library seeded Shelf Quantity
+    this way for every insert dropped in an opening (ops_drop_closet)."""
+    try:
+        interior_h = GeoNodeCage(opening).get_input('Dim Z')
+    except Exception:
+        interior_h = 0.0
+    return max(1, int(interior_h / inch(12.0)))
 
 
 def find_accessory_cage(obj):

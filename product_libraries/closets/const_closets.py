@@ -481,7 +481,6 @@ CUBBY_PLACEMENT_ITEMS = [
 CUBBY_MIN_REMAINDER = inch(6.0)
 # Slanted shoe shelves: angled shelves stacked bottom-up, each with a
 # metal shoe fence across the front. Sizes ported from the prior library.
-SLANT_SHELF_DEFAULT_QTY = 4
 SLANT_SHELF_SPACING = inch(8.0)       # Distance Between Shelves
 SLANT_SHELF_ANGLE_DEG = 17.25         # Shelf Angle (degrees)
 SLANT_SHELF_SETBACK = inch(0.125)     # front setback with the metal fence

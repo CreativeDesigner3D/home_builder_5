@@ -3412,7 +3412,8 @@ class hb_closets_OT_add_slanted_shelves(_ClosetInsertDialog,
         opening = _active_opening_for_insert(context)
         if opening is not None:
             op = opening.hb_closet_opening
-            self.qty = int(op.slant_qty) or const.SLANT_SHELF_DEFAULT_QTY
+            self.qty = (int(op.slant_qty)
+                        or types_closets.default_slant_qty(opening))
             self.spacing = float(op.slant_spacing)
             self.angle = float(op.slant_angle)
             self.color = types_closets.shoe_fence_color(op.slant_color)
@@ -8362,7 +8363,8 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
         self.cubby_setback = float(op.cubby_setback)
         self.rollout_qty = int(op.rollout_qty) or const.ROLLOUT_DEFAULT_QTY
         self.rollout_height = float(op.rollout_height)
-        self.slant_qty = int(op.slant_qty) or const.SLANT_SHELF_DEFAULT_QTY
+        self.slant_qty = (int(op.slant_qty)
+                          or types_closets.default_slant_qty(opening))
         self.slant_spacing = float(op.slant_spacing)
         self.slant_angle = float(op.slant_angle)
         self.slant_color = types_closets.shoe_fence_color(
@@ -9170,9 +9172,11 @@ class hb_closets_OT_add_molding(bpy.types.Operator):
                else molding_closets.add_crown_to_starter)
         made = 0
         for obj in context.scene.objects:
+            # A corner unit takes crown round its L front (as the prior
+            # library ran it); it has no base of its own.
             if (obj.get(types_closets.TAG_STARTER_CAGE)
-                    and not str(obj.get('CLASS_NAME', '')
-                                ).startswith('LShelf')):
+                    and not (base and str(obj.get('CLASS_NAME', '')
+                                          ).startswith('LShelf'))):
                 made += add(obj, profile)
         if made == 0:
             skipped = ("hanging bays are skipped" if base
