@@ -6003,6 +6003,13 @@ def interior_item_descriptors(layout, rect, cab_props, opening_props,
     # side(s), hold back from the front, and lose the top-mount door's
     # height. Other insert kinds are left as authored for now.
     cl_l, cl_r, cl_f, cl_t = _retracting_clearances(opening_ff)
+    # The pocket clearances are measured from the face frame opening's
+    # edges, which sit in from the cage edges behind the stiles (an
+    # interior region carries no edge offset and measures from its own).
+    if cl_l:
+        cl_l += rect.get('retract_edge_l', 0.0)
+    if cl_r:
+        cl_r += rect.get('retract_edge_r', 0.0)
     shelf_rect = rect
     if cl_l or cl_r or cl_t:
         shelf_rect = dict(rect)
@@ -6403,6 +6410,9 @@ def interior_descriptors_for_opening(opening_obj, layout, rect, cab_props):
     shifts back by the left inset, so the whole tree (splits included)
     lands in the lined cavity without each item kind knowing about it.
     """
+    # The pocket partitions are placed off the face frame opening, not
+    # the lined cavity, so they read the rect as it comes in.
+    open_rect = rect
     left_in, right_in, top_in = finish_liner_insets(opening_obj, layout, rect)
     if left_in or right_in or top_in:
         rect = dict(rect)
@@ -6415,6 +6425,13 @@ def interior_descriptors_for_opening(opening_obj, layout, rect, cab_props):
     root = _interior_tree_root(opening_obj)
     op_props = opening_obj.face_frame_opening
     if root is None:
+        # Where the face frame opening's edges sit in the (lined) cavity,
+        # for the retracting-door pocket clearances.
+        rect = dict(rect)
+        rect['retract_edge_l'] = max(0.0, rect.get('reveal_left', 0.0)
+                                     - left_in)
+        rect['retract_edge_r'] = max(0.0, rect.get('reveal_right', 0.0)
+                                     - right_in)
         out = interior_item_descriptors(layout, rect, cab_props,
                                         op_props, op_props)
     else:
@@ -6423,6 +6440,95 @@ def interior_descriptors_for_opening(opening_obj, layout, rect, cab_props):
                             layout, cab_props, out, op_props)
     if left_in:
         out = [_shifted_descriptor(d, (left_in, 0.0, 0.0)) for d in out]
+    out.extend(retracting_partition_descriptors(
+        layout, open_rect, cab_props, op_props))
+    return out
+
+
+# Removable pocket partitions behind side-mount retracting doors. Each
+# stands this far clear of the face frame opening's edge on a pocket
+# side (the door, its hinges and slide ride in that gap), runs the full
+# cavity height and depth, and gives the shelves between them something
+# to hang on.
+RETRACT_PARTITION_THICKNESS = inch(0.75)
+RETRACT_POCKET_CLEAR = inch(2.5)
+RETRACT_BIFOLD_POCKET_CLEAR = inch(3.25)
+# Hinge access: a half-round notch on the partition's front edge at
+# each hinge, or the whole partition held back from the face frame.
+RETRACT_PARTITION_NOTCH_DIA = inch(2.0)
+RETRACT_PARTITION_HELD_SHORT = inch(2.0)
+# Hinge layout on the door: one this far in from each end, the rest
+# spaced evenly between, and one more each time the door passes a step.
+RETRACT_HINGE_FROM_END = inch(3.0)
+RETRACT_HINGE_STEPS = ((96.17, 7), (81.17, 6), (66.17, 5), (51.17, 4),
+                       (36.17, 3))
+
+
+def retracting_hinge_heights(door_bottom, door_top):
+    """Hinge centres up a door running door_bottom..door_top."""
+    height = door_top - door_bottom
+    if height <= 2.0 * RETRACT_HINGE_FROM_END:
+        return [door_bottom + height / 2.0]
+    qty = 2
+    for limit, n in RETRACT_HINGE_STEPS:
+        if height > inch(limit):
+            qty = n
+            break
+    lo = door_bottom + RETRACT_HINGE_FROM_END
+    hi = door_top - RETRACT_HINGE_FROM_END
+    return [lo + (hi - lo) * i / (qty - 1) for i in range(qty)]
+
+
+def retracting_partition_descriptors(layout, rect, cab_props, op_props):
+    """Pocket partitions for a side-mount retracting door opening, in
+    opening-cage coordinates. Empty when the opening has no such
+    mechanism or its partitions are turned off."""
+    if getattr(op_props, 'front_type', None) != 'DOOR':
+        return []
+    style = getattr(op_props, 'retracting_partitions', 'NOTCHED')
+    if style == 'NONE':
+        return []
+    pocket_l, pocket_r = retracting_pocket_sides(op_props)
+    if not (pocket_l or pocket_r):
+        return []
+    clear = (RETRACT_BIFOLD_POCKET_CLEAR
+             if op_props.door_mechanism == 'RETRACTING_BIFOLD'
+             else RETRACT_POCKET_CLEAR)
+    t = RETRACT_PARTITION_THICKNESS
+    dim_x, dim_y, dim_z = (rect['cage_dim_x'], rect['cage_dim_y'],
+                           rect['cage_dim_z'])
+    front = RETRACT_PARTITION_HELD_SHORT if style == 'HELD_SHORT' else 0.0
+    depth = dim_y - front
+    if depth <= 0.0 or dim_z <= 0.0:
+        return []
+    notches = []
+    if style == 'NOTCHED':
+        bottom = (rect.get('reveal_bottom', 0.0)
+                  - front_overlay(rect, cab_props, op_props, 'bottom'))
+        top = (dim_z - rect.get('reveal_top', 0.0)
+               + front_overlay(rect, cab_props, op_props, 'top'))
+        notches = [z for z in retracting_hinge_heights(bottom, top)
+                   if 0.0 < z < dim_z]
+    xs = []
+    if pocket_l:
+        xs.append(('Left', rect.get('reveal_left', 0.0) + clear))
+    if pocket_r:
+        xs.append(('Right', dim_x - rect.get('reveal_right', 0.0)
+                   - clear - t))
+    out = []
+    for side, x in xs:
+        if x < 0.0 or x + t > dim_x:
+            continue
+        out.append({
+            'kind':         'RETRACT_PARTITION',
+            'role':         'RETRACT_PARTITION',
+            'name':         'Retract Partition %s' % side,
+            'orientation':  'VERTICAL',
+            'position':     (x, dim_y, 0.0),
+            'dims':         (dim_z, depth, t),
+            'notch_heights': notches,
+            'notch_diameter': RETRACT_PARTITION_NOTCH_DIA,
+        })
     return out
 
 

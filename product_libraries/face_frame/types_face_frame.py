@@ -1006,6 +1006,8 @@ PART_ROLE_TRAY_DIVIDER = 'TRAY_DIVIDER'
 PART_ROLE_TRAY_LOCKED_SHELF = 'TRAY_LOCKED_SHELF'
 PART_ROLE_VANITY_SHELF = 'VANITY_SHELF'
 PART_ROLE_VANITY_SUPPORT = 'VANITY_SUPPORT'
+# Removable pocket partition behind a side-mount retracting door.
+PART_ROLE_RETRACT_PARTITION = 'RETRACT_PARTITION'
 PART_ROLE_ACCESSORY_LABEL = 'ACCESSORY_LABEL'
 # Front types whose opening carries a drawer box. Accessories put in one
 # of these are shown by the geometry built inside the box, so their name
@@ -1184,6 +1186,7 @@ INTERIOR_PART_ROLES = frozenset({
     PART_ROLE_TRAY_LOCKED_SHELF,
     PART_ROLE_VANITY_SHELF,
     PART_ROLE_VANITY_SUPPORT,
+    PART_ROLE_RETRACT_PARTITION,
     PART_ROLE_ACCESSORY_LABEL,
     PART_ROLE_BAR_STORAGE,
     PART_ROLE_CLOSET_ROD,
@@ -14878,6 +14881,8 @@ class FaceFrameCabinet(GeoNodeCage):
                 self._create_interior_face_frame_part(
                     opening_obj, desc,
                 )
+            elif kind == 'RETRACT_PARTITION':
+                self._create_retract_partition(opening_obj, desc)
             else:
                 # All remaining mesh-based interior parts route through
                 # the generic factory; orientation in the descriptor
@@ -15421,6 +15426,36 @@ class FaceFrameCabinet(GeoNodeCage):
         part.set_input('Length', length)
         part.set_input('Width', width)
         part.set_input('Thickness', thickness)
+        return part
+
+    def _create_retract_partition(self, opening_obj, desc):
+        """A retracting door's pocket partition: a vertical panel with a
+        half-round notch on its front edge at each hinge, so the hinge
+        can be reached and adjusted from inside the cabinet."""
+        part = self._create_interior_mesh_part(opening_obj, desc)
+        heights = desc.get('notch_heights') or ()
+        if not heights:
+            return part
+        length, width, thickness = desc['dims']
+        dia = min(desc.get('notch_diameter', inch(2.0)), width)
+        arch_cutout.ensure_node_group()
+        for i, z in enumerate(heights):
+            # Length runs up the partition, Width from its front edge
+            # (Y = 0 measured from the board's low corner) to the back.
+            x0 = min(max(z - dia / 2.0, 0.0), max(length - dia, 0.0))
+            cpm = part.add_part_modifier(
+                'CPM_ARCHCUTOUT', 'Hinge Notch %d' % (i + 1))
+            cpm.set_input('X', x0)
+            cpm.set_input('End X', x0 + dia)
+            cpm.set_input('Y', 0.0)
+            cpm.set_input('End Y', dia / 2.0)
+            cpm.set_input('Flat Side', 2)
+            cpm.set_input('Open Edge', True)
+            cpm.set_input('Full Circle', False)
+            cpm.set_input('Route Depth', thickness)
+            cpm.set_input('Flip Z', False)
+            cpm.mod.show_viewport = True
+            cpm.mod.show_render = True
         return part
 
     def _create_galley_rollout_top(self, opening_obj, desc):

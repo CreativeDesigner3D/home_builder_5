@@ -2899,6 +2899,7 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         'ROLLOUT_SPACER',
         'TRAY_DIVIDER', 'TRAY_LOCKED_SHELF',
         'VANITY_SHELF', 'VANITY_SUPPORT',
+        'RETRACT_PARTITION',
         'INTERIOR_FIXED_SHELF', 'INTERIOR_DIVISION',
         # Corner cabinet carcass kicks. Corner finish kicks are visible
         # exterior (listed above). The corner sides / backs / angled
@@ -10814,6 +10815,23 @@ class Face_Frame_Opening_Props(PropertyGroup):
     ]
     door_mechanism: EnumProperty(
         name="Door Mechanism", items=DOOR_MECHANISM_ITEMS, default='NONE',
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    # Removable partitions closing off the pockets a side-mount
+    # retracting door slides into (see
+    # solver_face_frame.retracting_partition_descriptors).
+    retracting_partitions: EnumProperty(
+        name="Partitions",
+        items=[
+            ('NOTCHED', "Notched",
+             "Partitions with a half-round notch at each hinge for "
+             "hinge access"),
+            ('HELD_SHORT', "Held Short",
+             "Partitions held back from the face frame so the hinges "
+             "clear without notches"),
+            ('NONE', "None", "No pocket partitions"),
+        ],
+        default='NOTCHED',
         update=_update_cabinet_dim,
     )  # type: ignore
     # Powered opener option for the deluxe lift-up mechanisms.
