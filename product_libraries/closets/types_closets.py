@@ -200,6 +200,9 @@ PART_ROLE_CENTER_BACK = 'CLOSET_CENTER_BACK'
 # A back held in one opening, captured between the panels and shelves
 # around it, rather than applied across the outside of the bay.
 PART_ROLE_CAPTURED_BACK = 'CLOSET_CAPTURED_BACK'
+# An opening's captured back cut Length-up (vertical grain); pricing
+# reads its height off Length when this is set.
+PROP_BACK_LENGTH_UP = 'hb_back_length_up'
 # Corner-clearance bridge parts (starter-root children, lazily created
 # by _layout_bridge_parts). Driven by starter-root idprops so the types
 # module stays hot-reloadable:
@@ -2594,20 +2597,27 @@ class ClosetStarter(GeoNodeCage):
             child = cap_back[0]
             b_inset = max(0.0, min(float(_shp.back_inset),
                                    max(depth - st, 0.0)))
+            # Cut vertical grain - Length up the back, Width across - as
+            # the prior library cut every captured back (ops_drop_closet:
+            # dim_x = opening height). Stood up the way the island backs
+            # are (rot (90, -90, 0), origin on the right-hand edge), so
+            # it fills the same space it did cut across.
+            child.rotation_euler = (math.radians(90),
+                                    math.radians(-90), 0.0)
             child.location = (
-                0.0,
+                width,
                 -(depth - b_inset) if side == 'BACK' else -b_inset,
                 0.0)
+            child[PROP_BACK_LENGTH_UP] = 1
             part = GeoNodeCutpart(child)
             part.set_input('Mirror Z', side == 'BACK')
-            part.set_input('Length', width)
-            part.set_input('Width', interior_h)
+            part.set_input('Length', interior_h)
+            part.set_input('Width', width)
             part.set_input('Thickness', st)
-            # Corner reliefs. On the part X runs in from the side and Y
-            # down from the top edge. Flip Y True picks the top edge and
-            # Flip X picks the right-hand side: the cut lands on the
-            # corner at the part origin with both False (probed on the
-            # L shelf, which is cut the same way).
+            # Corner reliefs. On the part X runs up the back and Y in from
+            # its right-hand edge: Flip X True puts the cut at the top,
+            # and Flip Y True on the left - 4.3's vertical-grain back
+            # (Captured_Back.add_notch_machine_tokens).
             n_w = max(min(float(_shp.back_notch_width), width), 0.001)
             n_h = max(min(float(_shp.back_notch_height), interior_h),
                       0.001)
@@ -2618,20 +2628,19 @@ class ClosetStarter(GeoNodeCage):
             # otherwise Notch Left cuts the right-hand corner for
             # everyone working from that side.
             back_side = side == 'BACK'
-            for mod_name, flip_x, cuts in (
-                    ('Notch Left', back_side, _shp.back_notch_left),
-                    ('Notch Right', not back_side,
-                     _shp.back_notch_right)):
+            for mod_name, flip_y, cuts in (
+                    ('Notch Left', not back_side, _shp.back_notch_left),
+                    ('Notch Right', back_side, _shp.back_notch_right)):
                 mod = child.modifiers.get(mod_name)
                 if mod is None:
                     continue
                 cpm = CabinetPartModifier(child)
                 cpm.mod = mod
-                cpm.set_input('X', n_w)
-                cpm.set_input('Y', n_h)
+                cpm.set_input('X', n_h)
+                cpm.set_input('Y', n_w)
                 cpm.set_input('Route Depth', st + 0.001)
-                cpm.set_input('Flip X', flip_x)
-                cpm.set_input('Flip Y', True)
+                cpm.set_input('Flip X', True)
+                cpm.set_input('Flip Y', flip_y)
                 mod.show_viewport = bool(cuts)
                 mod.show_render = bool(cuts)
 
