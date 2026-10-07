@@ -1409,6 +1409,19 @@ WEDGE_CUT_PART_ROLES = frozenset({
     PART_ROLE_LEFT_KICK_RETURN, PART_ROLE_RIGHT_KICK_RETURN,
 })
 
+# Sloped top: the carcass top follows a ceiling that slopes down toward
+# the wall. The top panel tilts onto the slope; this cutter trims the
+# sides, back, divisions and shelves above it. The face frame keeps its
+# full height at the front.
+PART_ROLE_SLOPE_CUTTER = 'SLOPE_CUTTER'
+SLOPE_CUT_MOD_NAME = 'Sloped Top'
+SLOPE_CUT_PART_ROLES = frozenset({
+    PART_ROLE_LEFT_SIDE, PART_ROLE_RIGHT_SIDE,
+    PART_ROLE_LEFT_SIDE_SEAM, PART_ROLE_RIGHT_SIDE_SEAM,
+    PART_ROLE_BACK, PART_ROLE_FINISHED_BACK,
+    PART_ROLE_MID_DIVISION,
+})
+
 # Pipe chase: full-height notch at a back corner (or the back middle)
 # for plumbing / vent runs. Same lazy box-cutter + boolean pattern as
 # the tip-up wedge, driven by the chase_* cabinet props. Cover panels
@@ -3929,6 +3942,12 @@ class FaceFrameCabinet(GeoNodeCage):
             for _k in ('WEDGE_LENGTH', 'WEDGE_HEIGHT'):
                 if _k in self.obj:
                     del self.obj[_k]
+
+        # Sloped top: tilt the top panel down toward the wall and trim
+        # what stands above it. After part reconciliation (which resets
+        # the top's position and size every pass) so it re-applies
+        # cleanly. No-op + cleanup when off.
+        self._reconcile_sloped_top(layout)
 
         # Pipe chase: full-height back-corner / back-middle notch with
         # cover panels. Re-applied here so it survives part
@@ -8040,6 +8059,167 @@ class FaceFrameCabinet(GeoNodeCage):
         for i in range(count):
             j = (i + 1) % count
             bm.faces.new((left[i], right[i], right[j], left[j]))
+
+    # =====================================================================
+    # Sloped top: the carcass top follows a ceiling sloping to the wall
+    # =====================================================================
+    def _top_parts(self):
+        return [c for c in self.obj.children
+                if c.get('hb_part_role') == PART_ROLE_TOP]
+
+    def _sloped_top_shape(self, layout, tops):
+        """The slope, as (y_front, z_front, k) in cabinet units, or None
+        when this cabinet's top is flat.
+
+        The slope runs from the front edge of the carcass top (just
+        behind the face frame, at its normal height) down to the wall,
+        dropping k per unit of depth, so the cabinet measures its full
+        height at the face and the typed back height at the wall.
+        """
+        cab = self.obj.face_frame_cabinet
+        if not getattr(cab, 'sloped_top', False) or not tops:
+            return None
+        top = tops[0]
+        width = CabinetPart(top).get_input('Width')
+        y_front = top.location.y - width
+        z_front = top.location.z
+        run = -y_front
+        drop = layout.dim_z - cab.sloped_top_back_height
+        if run <= 0.0 or drop <= 0.0 or drop >= z_front:
+            return None
+        return y_front, z_front, drop / run
+
+    def _iter_slope_cut_targets(self):
+        """Root cage, carcass parts and interior parts (shelves, which
+        would otherwise poke through the slope at the back)."""
+        yield self.obj
+        stack = list(self.obj.children)
+        while stack:
+            obj = stack.pop()
+            if obj.get('hb_part_role') == PART_ROLE_SLOPE_CUTTER:
+                continue
+            if (obj.get('hb_part_role') in SLOPE_CUT_PART_ROLES
+                    or (obj.type == 'MESH'
+                        and obj.get('IS_FACE_FRAME_INTERIOR_PART'))):
+                yield obj
+            stack.extend(obj.children)
+
+    def _ensure_slope_cutter(self):
+        for child in self.obj.children:
+            if child.get('hb_part_role') == PART_ROLE_SLOPE_CUTTER:
+                return child
+        mesh = bpy.data.meshes.new('Sloped Top Cutter')
+        cutter = hb_utils.new_object('Sloped Top Cutter', mesh)
+        cutter['hb_part_role'] = PART_ROLE_SLOPE_CUTTER
+        cutter.parent = self.obj
+        cutter.display_type = 'WIRE'
+        cutter.hide_render = True
+        cutter.hide_viewport = True
+        for coll in self.obj.users_collection:
+            coll.objects.link(cutter)
+            break
+        return cutter
+
+    def _position_slope_cutter(self, cutter_obj, layout, shape):
+        """Everything above the slope line, from the back of the face
+        frame back past the wall. Nothing in front of the carcass top's
+        front edge is cut, so the face frame keeps its full height."""
+        y_front, z_front, k = shape
+        margin = inch(1.0)
+        y_back = margin
+        z_top = layout.dim_z + inch(12.0)
+        section = ((y_front, z_front),
+                   (y_back, z_front - k * (y_back - y_front)),
+                   (y_back, z_top), (y_front, z_top))
+        x_min, x_max = -margin, layout.dim_x + margin
+        bm = bmesh.new()
+        left = [bm.verts.new((x_min, y, z)) for y, z in section]
+        right = [bm.verts.new((x_max, y, z)) for y, z in section]
+        bm.verts.ensure_lookup_table()
+        bm.faces.new(left)
+        bm.faces.new(tuple(reversed(right)))
+        n = len(section)
+        for i in range(n):
+            j = (i + 1) % n
+            bm.faces.new((left[i], right[i], right[j], left[j]))
+        bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+        bm.to_mesh(cutter_obj.data)
+        bm.free()
+        cutter_obj.location = (0.0, 0.0, 0.0)
+
+    def _cleanup_slope_cutter_and_cuts(self):
+        for part in self._iter_slope_cut_targets():
+            mod = part.modifiers.get(SLOPE_CUT_MOD_NAME)
+            if mod is not None:
+                part.modifiers.remove(mod)
+        for child in list(self.obj.children):
+            if child.get('hb_part_role') == PART_ROLE_SLOPE_CUTTER:
+                mesh = child.data
+                bpy.data.objects.remove(child, do_unlink=True)
+                if mesh is not None and mesh.users == 0:
+                    bpy.data.meshes.remove(mesh)
+
+    def _reconcile_sloped_top(self, layout):
+        """Slope the carcass top, or put it back flat.
+
+        Each top panel pivots on its front edge and tilts down toward
+        the wall; its depth grows to the sloped length so it still
+        reaches the back. Part reconciliation resets the top's position
+        and depth every pass but not its rotation, so the rotation is
+        set here either way.
+
+        Published on the root for drawings: the back height, the slope
+        angle and the top's sloped length.
+        """
+        tops = self._top_parts()
+        shape = (self._sloped_top_shape(layout, tops)
+                 if self._has_carcass() else None)
+        for top in tops:
+            top.rotation_euler = (0.0, 0.0, 0.0)
+        if shape is None:
+            self._cleanup_slope_cutter_and_cuts()
+            for key in ('SLOPED_TOP_BACK_HEIGHT', 'SLOPED_TOP_ANGLE',
+                        'SLOPED_TOP_LENGTH'):
+                if key in self.obj:
+                    del self.obj[key]
+            return
+        _y_front, _z_front, k = shape
+        angle = math.atan(k)
+        stretch = math.hypot(1.0, k)
+        sloped_length = 0.0
+        for top in tops:
+            part = CabinetPart(top)
+            width = part.get_input('Width')
+            # Origin is the panel's back edge on its top face; the panel
+            # runs forward (-Y) from it. Drop the back edge onto the
+            # slope. Tilted, the panel's lower front edge swings forward
+            # by its thickness * sin(angle) into the face frame, so the
+            # panel stops short by thickness * tan(angle) along the
+            # slope, which puts that edge back on the frame's back face.
+            loc = top.location.copy()
+            top.location = (loc.x, loc.y, loc.z - k * width)
+            top.rotation_euler = (-angle, 0.0, 0.0)
+            length = (width * stretch
+                      - part.get_input('Thickness') * math.tan(angle))
+            part.set_input('Width', length)
+            sloped_length = max(sloped_length, length)
+        cutter = self._ensure_slope_cutter()
+        self._position_slope_cutter(cutter, layout, shape)
+        for part in self._iter_slope_cut_targets():
+            mod = part.modifiers.get(SLOPE_CUT_MOD_NAME)
+            if mod is None:
+                mod = part.modifiers.new(name=SLOPE_CUT_MOD_NAME,
+                                         type='BOOLEAN')
+                mod.operation = 'DIFFERENCE'
+                mod.solver = 'EXACT'
+            if mod.object is not cutter:
+                mod.object = cutter
+        one_inch = inch(1.0)
+        cab = self.obj.face_frame_cabinet
+        self.obj['SLOPED_TOP_BACK_HEIGHT'] = round(
+            cab.sloped_top_back_height / one_inch, 3)
+        self.obj['SLOPED_TOP_ANGLE'] = round(math.degrees(angle), 2)
+        self.obj['SLOPED_TOP_LENGTH'] = round(sloped_length / one_inch, 3)
 
     # =====================================================================
     # Accessible sink: knee clearance raked out of the carcass underside

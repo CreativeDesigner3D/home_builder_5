@@ -8767,6 +8767,23 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         name="Wedge Max Height", default=units.inch(3.0),
         unit='LENGTH', precision=4, min=0.0, update=_update_cabinet_dim,
     )  # type: ignore
+    # Sloped top: the cabinet keeps its full height at the face and drops
+    # to the height typed here at the wall, for a ceiling that slopes
+    # down toward the wall. The top panel tilts onto the slope and the
+    # carcass is trimmed under it (types_face_frame._reconcile_sloped_top).
+    sloped_top: BoolProperty(
+        name="Sloped Top", default=False,
+        description="Slope the cabinet top down toward the wall, for a "
+                    "sloped ceiling. The face keeps the cabinet height",
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    sloped_top_back_height: FloatProperty(
+        name="Height at Back",
+        description="Cabinet height at the wall. The top slopes from the "
+                    "full height at the face down to this",
+        default=units.inch(84.0), min=0.0, unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
     # Pipe chase: full-height notch at a back corner (or the back middle)
     # so the cabinet clears plumbing / vent runs, with cover panels
     # closing the opening from the cabinet interior. The typed size is

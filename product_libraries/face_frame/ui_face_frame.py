@@ -580,6 +580,25 @@ def draw_wedge(layout, root):
         box.operator("hb_face_frame.add_refrigerator_wedge", icon='MOD_BEVEL')
 
 
+def draw_sloped_top(layout, root):
+    """Sloped top toggle + back height. Cabinets with a solid top panel
+    (uppers and talls) only."""
+    if not any(c.get('hb_part_role') == types_face_frame.PART_ROLE_TOP
+               for c in root.children):
+        return
+    cab = root.face_frame_cabinet
+    box = layout.box()
+    box.prop(cab, 'sloped_top', icon='IPO_LINEAR')
+    if cab.sloped_top:
+        box.prop(cab, 'sloped_top_back_height', text="Height at Back")
+        # The recalc publishes the angle only when it could slope the top.
+        if 'SLOPED_TOP_ANGLE' not in root:
+            box.label(text="Back height must be below the cabinet height",
+                      icon='ERROR')
+        else:
+            box.label(text=f"Slope {root['SLOPED_TOP_ANGLE']:g}°")
+
+
 def _is_floating_shelf(obj):
     """True when obj (or its cabinet root) is a floating shelf."""
     root = types_face_frame.find_cabinet_root(obj)
@@ -2329,6 +2348,7 @@ class HB_FACE_FRAME_PT_construction(bpy.types.Panel):
         draw_refrigerator_options(self.layout, root)
         draw_galley_options(self.layout, root)
         draw_wedge(self.layout, root)
+        draw_sloped_top(self.layout, root)
 
 
 class HB_FACE_FRAME_PT_face_frame_defaults(bpy.types.Panel):
