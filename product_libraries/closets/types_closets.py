@@ -2307,8 +2307,10 @@ class ClosetStarter(GeoNodeCage):
                 # bay by the overlay, and either starts above the kick
                 # and bottom shelf or runs on down to the floor.
                 ov = sp.applied_back_overlay
+                # Off the bottom shelf's line whether or not the bottom
+                # is there (4.3 add_applied_back: kick + st - overlay).
                 back_z = (0.0 if sp.back_to_floor
-                          else max(bay['interior_z'] - ov, 0.0))
+                          else max(bay['bottom_z'] + st - ov, 0.0))
                 back.location = (-ov, 0.0, back_z)
                 part = GeoNodeCutpart(back)
                 part.set_input('Length', bay['width'] + ov * 2.0)
@@ -2334,9 +2336,12 @@ class ClosetStarter(GeoNodeCage):
                 inset = self._ensure_inset_back(bay_obj)
                 inset.rotation_euler = (math.radians(90),
                                         math.radians(-90), 0.0)
-                inset.location = (bay['width'], -st, bay['interior_z'])
+                # On the bottom shelf's line, Remove Bottom or not (4.3:
+                # tkh + st up, opening height - 2 st long).
+                inset_z = bay['bottom_z'] + st
+                inset.location = (bay['width'], -st, inset_z)
                 part = GeoNodeCutpart(inset)
-                part.set_input('Length', bay['interior_h'])
+                part.set_input('Length', max(bay['top_z'] - inset_z, 0.001))
                 part.set_input('Width', bay['width'])
                 part.set_input('Thickness', st)
                 _set_part_hidden(inset, False)
