@@ -2271,6 +2271,7 @@ def draw_cabinet_wide(layout, root):
     draw_construction(box, cab_props)
     draw_refrigerator_options(layout, root)
     draw_galley_options(layout, root)
+    draw_sloped_top(layout, root)
     box = layout.box()
     box.label(text="Face Frame Defaults", icon='MESH_GRID')
     draw_face_frame_defaults(box, cab_props)

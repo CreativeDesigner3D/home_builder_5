@@ -1212,6 +1212,8 @@ class hb_face_frame_OT_cabinet_prompts(bpy.types.Operator):
             ui_face_frame.draw_refrigerator_options(layout, root)
             # Accessible sink apron (self-gated to that product).
             ui_face_frame.draw_ada_sink_options(layout, root)
+            # Sloped top (self-gated to cabinets with a solid top).
+            ui_face_frame.draw_sloped_top(layout, root)
         elif self.active_tab == 'FACE_FRAME':
             ui_face_frame.draw_face_frame_defaults(layout, cab_props)
 
