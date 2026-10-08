@@ -476,10 +476,11 @@ def draw_construction(layout, cab_props):
                 col.prop(cab_props, 'furniture_top_radius_back_right',
                          text="Back Right")
 
-    # Decorative bottom-rail profile (valance) - base / upper. The chosen
-    # '* Cutter' curve is cut into the bottom rail with fixed end details and
-    # a stretched middle (see types_face_frame._apply_bottom_rail_profile).
-    if cab_props.cabinet_type in ('BASE', 'UPPER'):
+    # Decorative bottom-rail profile (valance) - base / tall / upper. The
+    # chosen '* Cutter' curve is cut into the bottom rail with fixed end
+    # details and a stretched middle (see
+    # types_face_frame._apply_bottom_rail_profile).
+    if cab_props.cabinet_type in ('BASE', 'TALL', 'UPPER'):
         rpbox = layout.box()
         rpbox.prop(cab_props, 'show_bottom_rail_profile',
                    text="Bottom Rail Profile",

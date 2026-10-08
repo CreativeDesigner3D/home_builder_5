@@ -7431,13 +7431,13 @@ class FaceFrameCabinet(GeoNodeCage):
 
     def _apply_bottom_rail_profile(self, layout):
         """Cut the chosen decorative profile into the bottom rail(s). Gated on
-        BASE / UPPER; a no-op + full cleanup otherwise. One cutter per
+        BASE / TALL / UPPER; a no-op + full cleanup otherwise. One cutter per
         bottom-rail segment; each segment resolves its own profile (per-bay
         override, else the cabinet-level pick); the profile's end details
         stay fixed while its flat middle stretches to each rail's length."""
         cab_props = self.obj.face_frame_cabinet
         cab_default = getattr(cab_props, 'bottom_rail_profile', 'NONE')
-        if layout.cabinet_type not in ('BASE', 'UPPER'):
+        if layout.cabinet_type not in ('BASE', 'TALL', 'UPPER'):
             self._cleanup_bottom_rail_profile_cutters()
             return
         poly_cache = {}
