@@ -1191,9 +1191,10 @@ class hb_closets_OT_place_starter(bpy.types.Operator,
 
     def _position_corner_on_wall(self, context, wall, wall_length, cursor_x):
         """A corner L unit or corner filler on a wall follows the cursor
-        along it the way the prior library's drop_corner did: it snaps
-        to the left or right end of the free gap under the cursor, to
-        the gap's center, or else to the grid, and butts against a
+        along it the way the prior library's drop_corner did: the cursor
+        is its left edge; it snaps to the left end of the free gap under
+        the cursor, to the gap's center, to the right end when it would
+        run past it, or else to the grid, and butts against a
         closet or cabinet beside it rather than running into it. In the
         right half of the wall it turns -90 so its wings hug that end;
         in the left half it stands square with its corner at its left
@@ -1217,29 +1218,20 @@ class hb_closets_OT_place_starter(bpy.types.Operator,
             gap_start, gap_end = 0.0, wall_length
         gap_width = gap_end - gap_start
 
-        engage_corner = max(size / 2.0, units.inch(6.0))
-        release_corner = engage_corner + units.inch(1.0)
-        engage_center = units.inch(4.0)
-        release_center = engage_center + units.inch(1.0)
-        left_thresh = (release_corner if self._gap_snap == 'LEFT'
-                       else engage_corner)
-        right_thresh = (release_corner if self._gap_snap == 'RIGHT'
-                        else engage_corner)
-        center_thresh = (release_center if self._gap_snap == 'CENTER'
-                         else engage_center)
-        near_left = (cursor_x - gap_start) < left_thresh
-        near_right = (gap_end - cursor_x) < right_thresh
-        near_center = (abs(cursor_x - (gap_start + gap_end) / 2.0)
-                       < center_thresh and size < gap_width)
-        if near_left and near_right:
-            self._gap_snap = ('LEFT' if (cursor_x - gap_start)
-                              < (gap_end - cursor_x) else 'RIGHT')
-        elif near_left:
+        # Snapping the way 4.3's drop_corner did: the cursor is the
+        # unit's LEFT edge on the snap grid. Within 5" of the left end
+        # of the gap it pulls to it; with the cursor within 5" of the
+        # gap's center it centers; running past the right end it stops
+        # there; anywhere else it stands where the cursor is.
+        tol = units.inch(5.0)
+        grid_x = hb_snap.snap_value_to_grid(
+            cursor_x, context.scene.unit_settings)
+        if (cursor_x - gap_start) < tol:
             self._gap_snap = 'LEFT'
-        elif near_right:
-            self._gap_snap = 'RIGHT'
-        elif near_center:
+        elif abs((gap_start + gap_end) / 2.0 - cursor_x) < tol:
             self._gap_snap = 'CENTER'
+        elif gap_end - (grid_x + size) <= 0.0:
+            self._gap_snap = 'RIGHT'
         else:
             self._gap_snap = None
 
@@ -1250,8 +1242,7 @@ class hb_closets_OT_place_starter(bpy.types.Operator,
         elif self._gap_snap == 'CENTER':
             placement_x = gap_start + (gap_width - size) / 2.0
         else:
-            placement_x = hb_snap.snap_value_to_grid(
-                cursor_x - size / 2.0, context.scene.unit_settings)
+            placement_x = grid_x
         # Never past what it butts against (a gap narrower than the unit
         # leaves it at the gap's left end).
         placement_x = max(gap_start, min(placement_x, gap_end - size))
@@ -2430,8 +2421,8 @@ class hb_closets_OT_add_part(bpy.types.Operator,
 
     def _update_wall_rod(self, context):
         """No opening under the cursor: a rod goes on the bare wall as a
-        free 25" rod at the cursor (4.3 drop_closet_rod), gridded along
-        the wall and up it."""
+        free 25" rod at the cursor on the wall face (4.3
+        drop_closet_rod), gridded along the wall and up it."""
         wall = None
         if self._event is not None:
             hidden = []
@@ -2474,10 +2465,14 @@ class hb_closets_OT_add_part(bpy.types.Operator,
             x = max(0.0, min(x, max(wall_len - length, 0.0)))
         if wall_h > 0.0:
             z = max(const.ROD_RADIUS, min(z, wall_h - const.ROD_RADIUS))
-        self._preview.location = (x, -const.ROD_FROM_REAR, z)
+        # Against the wall face (4.3: Dim Y 0, From Rear / From Front
+        # 0) - its centreline a radius off it, as layout_wall_rod
+        # holds it; the rod's own dialog stands it off the wall
+        # afterwards.
+        self._preview.location = (x, -const.ROD_RADIUS, z)
         self._preview.rotation_euler = (0.0, 0.0, 0.0)
         wm = wall.matrix_world
-        y_dim = -const.ROD_FROM_REAR
+        y_dim = -const.ROD_RADIUS
         self._placement_dim_specs = [hb_placement.PlacementDimSpec(
             wm @ Vector((x, y_dim, 0.0)), wm @ Vector((x, y_dim, z)),
             units.unit_to_string(context.scene.unit_settings, z), None)]
@@ -2708,6 +2703,16 @@ class hb_closets_OT_add_part(bpy.types.Operator,
         return {'RUNNING_MODAL'}
 
 
+def _held_adj_count(qty, held):
+    """The adjustable shelf count a dialog stands for: what the field
+    says, or - while the field still shows the clamped figure of an
+    opening saved with more shelves than it offers - the opening's own
+    count, left alone (as _held_drawer_count does for drawers)."""
+    if held > const.ADJ_SHELF_QTY_MAX and qty == const.ADJ_SHELF_QTY_MAX:
+        return held
+    return qty
+
+
 class hb_closets_OT_add_adj_shelves(bpy.types.Operator):
     """Set the adjustable shelf count for the active opening (shelves
     space themselves evenly)."""
@@ -2715,8 +2720,14 @@ class hb_closets_OT_add_adj_shelves(bpy.types.Operator):
     bl_label = "Adjustable Shelves"
     bl_options = {'UNDO'}
 
+    # 4.3 had twelve shelf slots.
     qty: bpy.props.IntProperty(name="Shelf Quantity", default=3,
-                               min=0, max=20)  # type: ignore
+                               min=0, max=12)  # type: ignore
+    # The count the opening had when the dialog opened. One saved with
+    # more shelves than the field allows keeps its count until the
+    # field is changed (_held_adj_count).
+    held_qty: bpy.props.IntProperty(
+        default=0, options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
     unlock_qty: bpy.props.BoolProperty(
         name="Shelf Quantity",
         description="Hold the count typed here instead of following "
@@ -2760,8 +2771,9 @@ class hb_closets_OT_add_adj_shelves(bpy.types.Operator):
         op = opening.hb_closet_opening
         self.unlock_qty = bool(op.unlock_adj_qty)
         existing = int(op.adj_shelf_qty)
-        self.qty = (existing if self.unlock_qty and existing
-                    else types_closets.default_adj_shelf_qty(opening))
+        self.held_qty = (existing if self.unlock_qty and existing
+                         else types_closets.default_adj_shelf_qty(opening))
+        self.qty = min(self.held_qty, const.ADJ_SHELF_QTY_MAX)
         room = context.scene.hb_closets
         # A figure the opening has not taken over reads back as the
         # room's, so there is something to see before unlocking it.
@@ -2784,6 +2796,11 @@ class hb_closets_OT_add_adj_shelves(bpy.types.Operator):
             row.alert = True
             row.label(text="Must be less than %d"
                       % (const.ADJ_SHELF_QTY_WARN + 1), icon='ERROR')
+        held = _held_adj_count(self.qty, self.held_qty)
+        if self.unlock_qty and held > self.qty:
+            col.label(text="This opening has %d shelves; leave the "
+                           "count at %d to keep them"
+                           % (held, self.qty), icon='INFO')
         col = self.layout.column(align=True)
         _locked_field(col, self, 'clip_gap', 'unlock_clip_gap',
                       text="Clip Gap")
@@ -2796,9 +2813,11 @@ class hb_closets_OT_add_adj_shelves(bpy.types.Operator):
             return {'CANCELLED'}
         op = opening.hb_closet_opening
         op.unlock_adj_qty = self.unlock_qty
-        op.adj_shelf_qty = (
-            self.qty if self.unlock_qty
-            else types_closets.default_adj_shelf_qty(opening))
+        held = _held_adj_count(self.qty, self.held_qty)
+        if not (self.unlock_qty and held > const.ADJ_SHELF_QTY_MAX):
+            op.adj_shelf_qty = (
+                self.qty if self.unlock_qty
+                else types_closets.default_adj_shelf_qty(opening))
         op.unlock_shelf_clip_gap = self.unlock_clip_gap
         op.shelf_clip_gap = self.clip_gap
         op.unlock_shelf_setback = self.unlock_setback
@@ -4089,6 +4108,11 @@ class hb_closets_OT_add_slanted_shelves(_ClosetInsertDialog,
         name="Fence Color",
         items=types_closets.SHOE_FENCE_COLOR_ITEMS,
         default=types_closets.SHOE_FENCE_COLORS[0])  # type: ignore
+    location_z: bpy.props.FloatProperty(
+        name="Vertical Location",
+        description="Height of the bottom shoe shelf off the floor of "
+                    "the opening",
+        default=0.0, min=0.0, unit='LENGTH', precision=4)  # type: ignore
 
     def invoke(self, context, event):
         opening = _active_opening_for_insert(context)
@@ -4099,6 +4123,7 @@ class hb_closets_OT_add_slanted_shelves(_ClosetInsertDialog,
             self.spacing = float(op.slant_spacing)
             self.angle = float(op.slant_angle)
             self.color = types_closets.shoe_fence_color(op.slant_color)
+            self.location_z = float(op.slant_z)
         return context.window_manager.invoke_props_dialog(self, width=280)
 
     def execute(self, context):
@@ -4107,6 +4132,7 @@ class hb_closets_OT_add_slanted_shelves(_ClosetInsertDialog,
             'slant_spacing': self.spacing,
             'slant_angle': self.angle,
             'slant_color': self.color,
+            'slant_z': self.location_z,
             # This dialog sets the library's own fence, so it clears any
             # other line an opening was carrying.
             'slant_fence_line': '',
@@ -4387,7 +4413,15 @@ class hb_closets_OT_adj_shelf_step(bpy.types.Operator):
         if opening is None or root is None:
             return {'CANCELLED'}
         qty = int(opening.hb_closet_opening.adj_shelf_qty)
-        opening.hb_closet_opening.adj_shelf_qty = max(0, qty + self.delta)
+        # Twelve is the most an opening is given (4.3's shelf slots);
+        # adding past it does nothing rather than clamping a count an
+        # older job saved higher.
+        if self.delta > 0 and qty + self.delta > const.ADJ_SHELF_QTY_MAX:
+            self.report({'WARNING'}, "An opening holds at most %d "
+                        "adjustable shelves" % const.ADJ_SHELF_QTY_MAX)
+            return {'CANCELLED'}
+        types_closets.set_adj_shelf_qty(opening.hb_closet_opening,
+                                        qty + self.delta)
         # Stepping the count by hand takes it over: the height rule
         # would deal the step right back out on the next solve.
         opening.hb_closet_opening.unlock_adj_qty = True
@@ -4588,18 +4622,19 @@ class hb_closets_OT_place_misc_part(bpy.types.Operator,
         if self._preview is None:
             return None, False
         if self.kind == 'SHELF':
-            # 32mm system: a shelf lands on a system hole. The lattice
-            # is measured from the bay interior bottom, so the segment
-            # offset goes on before the snap and comes off after -
-            # holes stay lined up across a split.
-            # That lattice is where a cammed shelf's underside goes,
-            # its middle on the bore. A dropped shelf rests on pins in
-            # the bore, so it stands half a thickness higher, its
-            # underside on the bore line (4.3 ops_drop_closet: 'Part:
-            # Adj Shelf' snapped, then up by shelf_thickness / 2).
+            # As 4.3 dropped one (ops_drop_closet 'Part: Adj Shelf'):
+            # the cursor rounded DOWN to a 32mm step, then up half a
+            # thickness - the shelf rests on pins in the bore, its
+            # underside on the bore line. The steps are the bay's
+            # drilled holes (const.snap_system_hole's lattice, from the
+            # bay interior bottom), so the segment offset goes on
+            # before the snap and comes off after.
             seg_bottom = self._opening.get('hb_seg_bottom', 0.0)
             st = types_closets.run_sizes(self._opening).shelf_thickness
-            z = (const.snap_system_hole(seg_bottom + local_z)
+            pitch = const.SYSTEM_PITCH
+            n = math.floor((seg_bottom + local_z - const.SYSTEM_HOLE_BASE)
+                           / pitch + 1e-9)
+            z = (const.SYSTEM_HOLE_BASE + max(0, n) * pitch
                  - seg_bottom + st / 2.0)
             return max(0.0, min(z, interior_h - st)), False
         # A cleat dropped near the floor takes the floor, and one
@@ -5022,6 +5057,92 @@ class hb_closets_OT_rod_prompts(bpy.types.Operator):
         root = types_closets.find_starter_root(obj)
         if root is not None:
             types_closets.recalculate_closet_starter(root)
+        return {'FINISHED'}
+
+
+class hb_closets_OT_wall_rod_prompts(bpy.types.Operator):
+    """Size and place a rod dropped on a bare wall (4.3 Closet_Rod_Part
+    out of an opening: Width, Vertical Location, Set Distance From
+    Front / Dim From Rear, Remove Hangers)"""
+    bl_idname = "hb_closets.wall_rod_prompts"
+    bl_label = "Rod Properties"
+    bl_options = {'UNDO'}
+
+    width: bpy.props.FloatProperty(
+        name="Width", min=0.0,
+        unit='LENGTH', precision=4)  # type: ignore
+    height: bpy.props.FloatProperty(
+        name="Vertical Location",
+        description="How far off the floor the rod hangs",
+        unit='LENGTH', precision=4)  # type: ignore
+    set_from_front: bpy.props.BoolProperty(
+        name="Set Distance From Front")  # type: ignore
+    from_front: bpy.props.FloatProperty(
+        name="Dim From Front", min=0.0,
+        unit='LENGTH', precision=4)  # type: ignore
+    from_rear: bpy.props.FloatProperty(
+        name="Dim From Rear", min=0.0,
+        unit='LENGTH', precision=4)  # type: ignore
+    remove_hangers: bpy.props.BoolProperty(
+        name="Remove Hangers",
+        description="Leave the display hangers off this rod")  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (obj is not None
+                and obj.get('hb_part_role') == types_closets.PART_ROLE_ROD
+                and bool(obj.get(types_closets.PROP_WALL_ROD)))
+
+    def invoke(self, context, event):
+        obj = context.active_object
+        try:
+            self.width = float(
+                hb_types.GeoNodeObject(obj).get_input('Dim X') or 0.0)
+        except Exception:
+            self.width = float(types_closets.WALL_ROD_LENGTH)
+        self.height = float(obj.location.z)
+        self.set_from_front = bool(
+            obj.get(types_closets.PROP_WALL_ROD_SET_FROM_FRONT))
+        # A rod saved before it carried its own figures reads its
+        # distance off the wall from where it stands.
+        off_wall = max(0.0, -float(obj.location.y))
+        self.from_rear = float(obj.get(
+            types_closets.PROP_WALL_ROD_FROM_REAR, off_wall))
+        self.from_front = float(obj.get(
+            types_closets.PROP_WALL_ROD_FROM_FRONT, off_wall))
+        self.remove_hangers = bool(
+            obj.get(types_closets.PROP_WALL_ROD_REMOVE_HANGERS))
+        return context.window_manager.invoke_props_dialog(self, width=250)
+
+    def draw(self, context):
+        box = self.layout.box()
+        col = box.column(align=True)
+        col.prop(self, 'width')
+        col.prop(self, 'height')
+        col = box.column(align=True)
+        col.prop(self, 'set_from_front')
+        if self.set_from_front:
+            col.prop(self, 'from_front')
+        else:
+            col.prop(self, 'from_rear')
+        box = self.layout.box()
+        box.prop(self, 'remove_hangers')
+
+    def execute(self, context):
+        obj = context.active_object
+        if obj is None or not obj.get(types_closets.PROP_WALL_ROD):
+            return {'CANCELLED'}
+        hb_types.GeoNodeObject(obj).set_input(
+            'Dim X', max(float(self.width), units.inch(1.0)))
+        obj.location.z = float(self.height)
+        obj[types_closets.PROP_WALL_ROD_SET_FROM_FRONT] = (
+            1 if self.set_from_front else 0)
+        obj[types_closets.PROP_WALL_ROD_FROM_FRONT] = float(self.from_front)
+        obj[types_closets.PROP_WALL_ROD_FROM_REAR] = float(self.from_rear)
+        obj[types_closets.PROP_WALL_ROD_REMOVE_HANGERS] = (
+            1 if self.remove_hangers else 0)
+        types_closets.layout_wall_rod(obj)
         return {'FINISHED'}
 
 
@@ -5524,6 +5645,8 @@ class hb_closets_OT_add_accessory(bpy.types.Operator):
                     % types_closets._in_str(clear))
             if self.model != 'NONE':
                 cage[types_closets.PROP_ACCESSORY_MODEL] = self.model
+                # The model chosen can be sold in less than the line.
+                types_closets.seat_default_finish(cage, acc_def)
             if acc_def is not None and acc_def.family == acc.FAMILY_PANEL:
                 cage[types_closets.PROP_ACCESSORY_PANEL_LOC] = (
                     self.panel_location)
@@ -5535,23 +5658,31 @@ class hb_closets_OT_add_accessory(bpy.types.Operator):
             # only exists once the run has been solved.
             types_closets.seat_insert_on_shelf(cage, clear)
             _settle_new_opening(context, root)
-        _report_finish_fallback(self, acc_def)
+        _report_finish_fallback(self, acc_def, cage)
         return {'FINISHED'}
 
 
-def _report_finish_fallback(op, acc_def):
+def _report_finish_fallback(op, acc_def, cage=None):
     """Say so when an accessory just placed is not made in the room's
-    default finish or fabric and was made in black instead."""
+    default finish or fabric and was made in black instead. Given the
+    accessory, it is judged by what its model or size is sold in."""
     from .. import accessories_closets as acc
     if acc_def is None:
         return
-    color, fabric, missing = acc.default_finish(acc_def)
+    model, size, label = '', None, acc_def.label
+    if cage is not None:
+        try:
+            model, size, label = acc.finish_variant(cage, acc_def)
+        except Exception:
+            model, size, label = '', None, acc_def.label
+    color, fabric, missing = acc.default_finish(acc_def, None, model,
+                                                size)
     if not missing:
         return
     used = tuple(v for v in (color, fabric)
                  if v and v not in acc._room_defaults())
     op.report({'WARNING'},
-              acc.notice_lines([(acc_def.label, missing, used)])[0])
+              acc.notice_lines([(label, missing, used)])[0])
 
 
 def _corner_wing_hit(obj, o_l, d_l, x_margin):
@@ -5800,6 +5931,9 @@ class hb_closets_OT_place_accessory(bpy.types.Operator,
                 and self.model != 'NONE'):
             cage[types_closets.PROP_ACCESSORY_MODEL] = self.model
         acc_def = acc.get(self.accessory)
+        if acc_def is not None:
+            # Made in what the model it now carries is sold in.
+            types_closets.seat_default_finish(cage, acc_def)
         if acc_def is not None and acc_def.family == acc.FAMILY_PANEL:
             cage[types_closets.PROP_ACCESSORY_PANEL_LOC] = (
                 acc.PANEL_LOCATION_KEYS[self._face])
@@ -5820,6 +5954,10 @@ class hb_closets_OT_place_accessory(bpy.types.Operator,
         if (self.properties.is_property_set('model')
                 and self.model != 'NONE'):
             cage[types_closets.PROP_ACCESSORY_MODEL] = self.model
+            from .. import accessories_closets as acc
+            acc_def = acc.get(self.accessory)
+            if acc_def is not None:
+                types_closets.seat_default_finish(cage, acc_def)
             types_closets.layout_wall_accessory(cage)
         self._cage = cage
         self._opening = None
@@ -5947,11 +6085,19 @@ class hb_closets_OT_place_accessory(bpy.types.Operator,
         outside = is_panel and acc.PANEL_LOCATION_KEYS[
             self._face] in (acc.PANEL_OUTSIDE_LEFT,
                             acc.PANEL_OUTSIDE_RIGHT)
-        # On an outside face the opening's contents are on the other
-        # side of the panel; nothing in there is in its way.
-        z = types_closets.accessory_drop_height(
-            opening, acc_def, raw, skip=self._cage,
-            dodge=not outside)
+        # Over an accessory already in the opening it stacks flush on
+        # top of it (cursor in its upper half) or under it (lower
+        # half), as 4.3 dropped one onto another.
+        stacked = types_closets.stack_on_accessory(
+            opening, acc_def, raw, skip=self._cage)
+        if stacked is not None:
+            z = stacked[0]
+        else:
+            # On an outside face the opening's contents are on the
+            # other side of the panel; nothing in there is in its way.
+            z = types_closets.accessory_drop_height(
+                opening, acc_def, raw, skip=self._cage,
+                dodge=not outside)
         self._cage[types_closets.PROP_ACCESSORY_Z] = z
         if acc_def.family == acc.FAMILY_PANEL:
             self._cage[types_closets.PROP_ACCESSORY_PANEL_LOC] = (
@@ -5961,7 +6107,12 @@ class hb_closets_OT_place_accessory(bpy.types.Operator,
         self._show_dims(opening, acc_def, z)
         where = types_closets._in_str(z)
         why = ""
-        if z <= 1e-6:
+        if stacked is not None:
+            why = (" (on top of %s)" if z >= types_closets.accessory_span(
+                stacked[1], acc.get(stacked[1].get(
+                    types_closets.PROP_ACCESSORY_KEY, '')))[1] - 1e-6
+                else " (under %s)") % stacked[1].name
+        elif z <= 1e-6:
             why = " (on the floor)"
         elif abs(z - raw) > const.ACCESSORY_DROP_GRID:
             why = " (moved to keep it clear)"
@@ -6151,7 +6302,7 @@ class hb_closets_OT_place_accessory(bpy.types.Operator,
             context.view_layer.objects.active = cage
             self._end(context)
             self.report({'INFO'}, self._note)
-            _report_finish_fallback(self, acc_def)
+            _report_finish_fallback(self, acc_def, cage)
             if event.shift:
                 bpy.ops.hb_closets.place_accessory(
                     'INVOKE_DEFAULT', accessory=self.accessory,
@@ -6174,6 +6325,61 @@ def _size_index(sizes, value):
         if abs(size - value) < 1e-6:
             return str(i)
     return '0'
+
+
+def _acc_variant(op, acc_def):
+    """(model, size, key) the accessory dialog has chosen, as far as
+    they narrow what it is sold in (accessories_closets.sold_finishes):
+    the band for a line sold per model, the (w, h, d) for a wire basket
+    sold per size. `key` names the pair so a change can be seen."""
+    model = ''
+    size = None
+    if acc_def.model_finishes and op.model not in ('', 'NONE'):
+        model = op.model
+    if acc_def.size_colors and acc_def.is_sized:
+        try:
+            size = (acc_def.widths[int(op.basket_width)],
+                    acc_def.heights[int(op.basket_height)],
+                    acc_def.depths[int(op.basket_depth)])
+        except (IndexError, ValueError, TypeError):
+            size = None
+    key = model + '|' + ('%d,%d,%d' % tuple(
+        int(round(v / 0.0254)) for v in size) if size else '')
+    return model, size, key
+
+
+def _acc_offered_colors(op, acc_def):
+    """The finishes the chosen model / size is sold in. The one the
+    accessory held when the dialog opened stays on the list while that
+    model / size does, so one saved in a finish no longer sold still
+    reads back (its warning says so)."""
+    from .. import accessories_closets as acc
+    model, size, key = _acc_variant(op, acc_def)
+    sold = acc.sold_finishes(acc_def, model, size)
+    names = list(sold[0]) if sold and sold[0] else list(acc_def.colors)
+    extra = ''
+    if (op.held_color and op.held_color not in names
+            and op.held_variant == key):
+        extra = op.held_color
+        names.append(extra)
+    return names, extra
+
+
+def _acc_offered_fabrics(op, acc_def, color):
+    """The fabrics sold with `color` on the chosen model, the held one
+    kept as the finishes are."""
+    from .. import accessories_closets as acc
+    model, size, key = _acc_variant(op, acc_def)
+    sold = acc.sold_finishes(acc_def, model, size)
+    names = list(acc_def.fabrics)
+    if sold and sold[1]:
+        names = [f for f in names if (color, f) in sold[1]] or names
+    extra = ''
+    if (op.held_fabric and op.held_fabric not in names
+            and op.held_variant == key and color == op.held_color):
+        extra = op.held_fabric
+        names.append(extra)
+    return names, extra
 
 
 def _accessory_can_fit(obj, acc_def):
@@ -6272,9 +6478,12 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
 
     def _color_items(self, context):
         acc_def = _accessory_of(context.active_object)
-        names = acc_def.colors if acc_def is not None else ()
+        names, extra = ((_acc_offered_colors(self, acc_def))
+                        if acc_def is not None and acc_def.colors
+                        else ((), ''))
         return _held('prompt_colour',
-                     [(n, n, "") for n in names]
+                     [(n, n + " (not sold)" if n == extra else n, "")
+                      for n in names]
                      or [('NONE', "As It Comes", "")])
 
     def _width_items(self, context):
@@ -6289,9 +6498,12 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
 
     def _fabric_items(self, context):
         acc_def = _accessory_of(context.active_object)
-        names = acc_def.fabrics if acc_def is not None else ()
+        names, extra = ((_acc_offered_fabrics(self, acc_def, self.color))
+                        if acc_def is not None and acc_def.fabrics
+                        else ((), ''))
         return _held('prompt_fabric',
-                     [(n, n, "") for n in names]
+                     [(n, n + " (not sold)" if n == extra else n, "")
+                      for n in names]
                      or [('NONE', "As It Comes", "")])
 
     model: bpy.props.EnumProperty(
@@ -6302,6 +6514,23 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
         name="Finish", items=_color_items)  # type: ignore
     fabric: bpy.props.EnumProperty(
         name="Fabric", items=_fabric_items)  # type: ignore
+    # What the finish lists are kept against (_keep_sold): the finish
+    # and fabric the accessory held when the dialog opened and the
+    # model / size it held them at, so one saved in something no longer
+    # sold reads back; and the last model / size and finish seen, so a
+    # change to either re-picks from what is sold.
+    held_color: bpy.props.StringProperty(
+        options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+    held_fabric: bpy.props.StringProperty(
+        options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+    held_variant: bpy.props.StringProperty(
+        options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+    last_variant: bpy.props.StringProperty(
+        options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+    cur_color: bpy.props.StringProperty(
+        options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+    cur_fabric: bpy.props.StringProperty(
+        options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
     location: bpy.props.FloatProperty(
         name="Height Off Opening Floor",
         description="How far up the opening the accessory sits. Below "
@@ -6404,6 +6633,29 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
                 self.panel_location = stored
             except TypeError:
                 pass
+        # The finishes offered hang on the model and size, so those are
+        # read first, and what it holds is kept on the lists for as
+        # long as they stay as they are.
+        _def = _accessory_of(obj)
+        if _def is not None and _def.is_sized:
+            try:
+                _w = (types_closets.wall_accessory_length(obj)
+                      if obj.get(types_closets.PROP_ACCESSORY_ON_WALL)
+                      else types_closets._cage_dim_x(obj.parent))
+                b_w, b_h, b_d = types_closets.basket_values(
+                    obj, _def, _w)
+                self.basket_width = _size_index(_def.widths, b_w)
+                self.basket_height = _size_index(_def.heights, b_h)
+                self.basket_depth = _size_index(_def.depths, b_d)
+            except Exception:
+                pass
+        self.held_color = str(
+            obj.get(types_closets.PROP_ACCESSORY_COLOR, '') or '')
+        self.held_fabric = str(
+            obj.get(types_closets.PROP_ACCESSORY_FABRIC, '') or '')
+        if _def is not None:
+            self.held_variant = _acc_variant(self, _def)[2]
+            self.last_variant = self.held_variant
         stored = obj.get(types_closets.PROP_ACCESSORY_COLOR, '')
         if stored:
             try:
@@ -6416,6 +6668,10 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
                 self.fabric = stored
             except TypeError:
                 pass
+        self.cur_color = self.color if _def is not None and _def.colors \
+            else ''
+        self.cur_fabric = self.fabric if _def is not None and \
+            _def.fabrics else ''
         self.location = float(
             obj.get(types_closets.PROP_ACCESSORY_Z, 0.0))
         # A cleat is shown the length it actually is rather than the
@@ -6532,8 +6788,9 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
                       icon='INFO')
         elif types_closets.fixed_accessory_z(
                 obj.parent, acc_def, obj) is not None:
-            # Held where the prior library held it: a storage box on
-            # the floor, an ironing board at its own height.
+            # Held where the prior library held it: an ironing board
+            # at its own height. (A storage box is only put on the
+            # floor when dropped; its height can be typed here.)
             col.label(text="Height is set by the accessory.", icon='INFO')
         else:
             col.prop(self, 'location')
@@ -6557,10 +6814,47 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
         sitting still and jumping once the dialog is closed. Backing
         out of the dialog leaves what was tried applied - the same as
         dragging the thing by hand and thinking better of it."""
+        self._keep_sold(context)
         self._apply(context)
         return True
 
+    def _keep_sold(self, context):
+        """Keep the finish and fabric to what the chosen model / size
+        is sold in. A model or size change re-reads both lists: the
+        finish held so far stays if that model / size is sold in it,
+        and otherwise the room's default (black where that is not sold
+        either) is picked. A finish change does the same for the
+        fabric, which on a hamper depends on the finish."""
+        from .. import accessories_closets as acc
+        acc_def = _accessory_of(context.active_object)
+        if acc_def is None:
+            return
+        model, size, key = _acc_variant(self, acc_def)
+        changed = key != self.last_variant
+        room_c, room_f = acc._room_defaults(context.scene)
+        prev_color = self.cur_color
+        if acc_def.colors:
+            colors = _acc_offered_colors(self, acc_def)[0]
+            if changed and colors:
+                want = prev_color
+                if want not in colors:
+                    want = acc._pick(tuple(colors), room_c,
+                                     acc.FALLBACK_COLOR)[0]
+                self.color = want
+            self.cur_color = self.color
+        if acc_def.fabrics:
+            fabrics = _acc_offered_fabrics(self, acc_def, self.color)[0]
+            if (changed or self.color != prev_color) and fabrics:
+                want = self.cur_fabric
+                if want not in fabrics:
+                    want = acc._pick(tuple(fabrics), room_f,
+                                     acc.FALLBACK_FABRIC)[0]
+                self.fabric = want
+            self.cur_fabric = self.fabric
+        self.last_variant = key
+
     def execute(self, context):
+        self._keep_sold(context)
         return ({'FINISHED'} if self._apply(context) else {'CANCELLED'})
 
     def _apply(self, context):
@@ -6576,9 +6870,9 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
             if acc_def is not None and acc_def.family == acc.FAMILY_PANEL:
                 obj[types_closets.PROP_ACCESSORY_PANEL_LOC] = (
                     self.panel_location)
-            if self.color != 'NONE':
+            if self.color not in ('NONE', ''):
                 obj[types_closets.PROP_ACCESSORY_COLOR] = self.color
-            if self.fabric != 'NONE':
+            if self.fabric not in ('NONE', ''):
                 obj[types_closets.PROP_ACCESSORY_FABRIC] = self.fabric
             if acc_def is not None and acc_def.custom:
                 obj[types_closets.PROP_CUSTOM_NAME] = self.custom_name
@@ -7087,6 +7381,107 @@ class hb_closets_OT_delete_bay_cleat(bpy.types.Operator):
         return {'FINISHED'}
 
 
+def _bay_cleat_entry(obj):
+    """(root, entry) for a support cleat dropped under some bays, else
+    (None, None)."""
+    uid = obj.get(types_closets.PROP_BAY_CLEAT) if obj is not None \
+        else None
+    root = obj.parent if uid is not None else None
+    if root is None or not hasattr(root, 'hb_closet_starter'):
+        return None, None
+    for entry in root.hb_closet_starter.bay_cleats:
+        if entry.uid == uid:
+            return root, entry
+    return None, None
+
+
+def _bay_cleat_full_length(root, entry):
+    """The span a support cleat entry is laid out over, end partition
+    to end partition, or 0.0 when its bays cannot be found."""
+    bays = _starter_bays(root)
+    index = {b.name: i for i, b in enumerate(bays)}
+    i, j = index.get(entry.first_bay), index.get(entry.last_bay)
+    if i is None or j is None:
+        return 0.0
+    layout = types_closets.solve_starter_layout(root)
+    pt = types_closets.run_sizes(root).panel_thickness
+    return float(types_closets.bottom_cleat_span(
+        layout, min(i, j), max(i, j), pt)[1])
+
+
+class hb_closets_OT_bay_cleat_prompts(bpy.types.Operator):
+    """Size and place a support cleat dropped under hanging bays: how
+    long and wide it is cut, and where it stands (4.3 Cleat prompts)"""
+    bl_idname = "hb_closets.bay_cleat_prompts"
+    bl_label = "Cleat Properties"
+    bl_options = {'UNDO'}
+
+    full_length: bpy.props.BoolProperty(
+        name="Full Length",
+        description="Run it end partition to end partition under its "
+                    "bays, following them when they change",
+        default=True)  # type: ignore
+    length: bpy.props.FloatProperty(
+        name="Length", min=0.0, unit='LENGTH', precision=4)  # type: ignore
+    width: bpy.props.FloatProperty(
+        name="Width", min=0.0, unit='LENGTH', precision=4)  # type: ignore
+    z_offset: bpy.props.FloatProperty(
+        name="Vertical Location",
+        description="How far the cleat is raised (negative: dropped) "
+                    "from the underside of the bottom shelf",
+        unit='LENGTH', precision=4)  # type: ignore
+    x_offset: bpy.props.FloatProperty(
+        name="Horizontal Location", min=0.0, unit='LENGTH', precision=4,
+        description="How far in from the left end of its span it "
+                    "starts")  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        return _bay_cleat_entry(context.active_object)[1] is not None
+
+    def invoke(self, context, event):
+        root, entry = _bay_cleat_entry(context.active_object)
+        full = _bay_cleat_full_length(root, entry)
+        self.full_length = float(entry.length) <= 0.0
+        self.x_offset = float(entry.x_offset)
+        self.length = (float(entry.length) if entry.length > 0.0
+                       else max(full - self.x_offset, 0.0))
+        self.width = (float(entry.width) if entry.width > 0.0
+                      else const.CLEAT_WIDTH)
+        self.z_offset = float(entry.z_offset)
+        return context.window_manager.invoke_props_dialog(self, width=300)
+
+    def draw(self, context):
+        col = self.layout.column(align=True)
+        col.prop(self, 'full_length')
+        sub = col.column(align=True)
+        sub.enabled = not self.full_length
+        sub.prop(self, 'length')
+        sub.prop(self, 'x_offset')
+        col = self.layout.column(align=True)
+        col.prop(self, 'width')
+        col.prop(self, 'z_offset')
+
+    def execute(self, context):
+        root, entry = _bay_cleat_entry(context.active_object)
+        if entry is None:
+            return {'CANCELLED'}
+        full = _bay_cleat_full_length(root, entry)
+        if self.full_length or (full > 0.0
+                                and self.x_offset <= 1e-6
+                                and self.length >= full - 1e-5):
+            entry.length = 0.0
+            entry.x_offset = 0.0
+        else:
+            entry.length = float(self.length)
+            entry.x_offset = float(self.x_offset)
+        entry.width = (0.0 if abs(self.width - const.CLEAT_WIDTH) < 1e-6
+                       else float(self.width))
+        entry.z_offset = float(self.z_offset)
+        types_closets.recalculate_closet_starter(root)
+        return {'FINISHED'}
+
+
 class hb_closets_OT_continuous_top_prompts(bpy.types.Operator):
     """Set how deep the active continuous top is and how far it runs
     past each end of what it caps. The length is what those come to,
@@ -7506,7 +7901,8 @@ class hb_closets_OT_lock_shelf(bpy.types.Operator):
             if not obj.get(types_closets.PROP_SHELF_HELD):
                 op = opening.hb_closet_opening
                 with types_closets.suspend_recalc():
-                    op.adj_shelf_qty = max(0, int(op.adj_shelf_qty) - 1)
+                    types_closets.set_adj_shelf_qty(
+                        op, int(op.adj_shelf_qty) - 1)
                     if op.adj_shelf_qty:
                         op.unlock_adj_qty = True
             types_closets._remove_part_tree(obj)
@@ -7573,10 +7969,16 @@ class hb_closets_OT_lock_shelf(bpy.types.Operator):
                     # Where the solve deals shelf n_below + 1 (4.3:
                     # n spacings plus n thicknesses up).
                     dealt_z = (gap + st) * (n_below + 1)
-                    rejoin = abs(dealt_z - local_z) <= units.inch(1 / 16)
+                    # Only while the count it rejoins stays inside the
+                    # twelve an opening is dealt; past that it stays a
+                    # shelf at its own height rather than vanishing
+                    # into a clamped count.
+                    rejoin = (abs(dealt_z - local_z) <= units.inch(1 / 16)
+                              and total + 1 <= const.ADJ_SHELF_QTY_MAX)
                 with types_closets.suspend_recalc():
                     if total:
-                        op.adj_shelf_qty = total + (1 if rejoin else 0)
+                        types_closets.set_adj_shelf_qty(
+                            op, total + (1 if rejoin else 0))
                         op.unlock_adj_qty = True
                 if not rejoin:
                     types_closets.add_opening_shelf(opening, local_z)
@@ -7638,7 +8040,8 @@ class hb_closets_OT_adj_shelf_prompts(bpy.types.Operator):
             # own height.
             op = opening.hb_closet_opening
             with types_closets.suspend_recalc():
-                op.adj_shelf_qty = max(0, int(op.adj_shelf_qty) - 1)
+                types_closets.set_adj_shelf_qty(
+                    op, int(op.adj_shelf_qty) - 1)
                 if op.adj_shelf_qty:
                     op.unlock_adj_qty = True
             types_closets._remove_part_tree(obj)
@@ -7899,6 +8302,23 @@ class hb_closets_OT_delete_part(bpy.types.Operator):
     bl_label = "Delete Closet Part"
     bl_options = {'UNDO'}
 
+    # A part of an opening's insert (a drawer front, an adjustable
+    # shelf, a cubby divider or shelf, a door) takes the whole insert
+    # out of its opening, as 4.3's Delete Insert did. Remove One sets
+    # this to take that one piece off the insert's count instead.
+    one: bpy.props.BoolProperty(
+        name="Remove One",
+        default=False,
+        options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+
+    # The insert each part belongs to (types_closets.INTERIOR_FIELDS).
+    INSERT_OF_ROLE = {
+        types_closets.PART_ROLE_ADJ_SHELF: 'ADJ_SHELVES',
+        types_closets.PART_ROLE_DRAWER_FRONT: 'DRAWERS',
+        types_closets.PART_ROLE_CUBBY_DIVISION: 'CUBBIES',
+        types_closets.PART_ROLE_CUBBY_SHELF: 'CUBBIES',
+    }
+
     PART_ROLES = {types_closets.PART_ROLE_FIXED_SHELF,
                   types_closets.PART_ROLE_ADJ_SHELF,
                   types_closets.PART_ROLE_ROD,
@@ -8021,6 +8441,26 @@ class hb_closets_OT_delete_part(bpy.types.Operator):
         opening = types_closets.find_opening_cage(obj)
         remove_obj = True
 
+        insert = self.INSERT_OF_ROLE.get(role)
+        if opening is not None and insert and not self.one:
+            # Delete Insert (4.3): the whole drawer stack (its cap
+            # shelf goes with the count), every adjustable shelf -
+            # dealt or put at a height of its own - or the cubby grid.
+            op = opening.hb_closet_opening
+            with types_closets.suspend_recalc():
+                for name, empty in types_closets.INTERIOR_FIELDS[
+                        insert].items():
+                    setattr(op, name, empty)
+                if insert == 'ADJ_SHELVES':
+                    op.unlock_adj_qty = False
+                    for c in list(opening.children):
+                        if (c.get('hb_part_role')
+                                == types_closets.PART_ROLE_ADJ_SHELF):
+                            types_closets._remove_part_tree(c)
+            if root is not None:
+                types_closets.recalculate_closet_starter(root)
+            return {'FINISHED'}
+
         if opening is not None:
             tcm = types_closets
             if role == tcm.PART_ROLE_ADJ_SHELF:
@@ -8029,8 +8469,8 @@ class hb_closets_OT_delete_part(bpy.types.Operator):
                 # taking one off the count.
                 if not obj.get(tcm.PROP_SHELF_HELD):
                     qty = int(opening.hb_closet_opening.adj_shelf_qty)
-                    opening.hb_closet_opening.adj_shelf_qty = max(
-                        0, qty - 1)
+                    tcm.set_adj_shelf_qty(opening.hb_closet_opening,
+                                          qty - 1)
             elif role == tcm.PART_ROLE_DRAWER_FRONT:
                 # The regenerator removes the highest-index front AND its
                 # box; let it own the removal.
@@ -8080,16 +8520,29 @@ class hb_closets_OT_delete_starter(bpy.types.Operator):
     bl_label = "Delete Closet Starter"
     bl_options = {'UNDO'}
 
+    # Set from a menu on one unit (a corner unit's Bays-mode menu, a
+    # corner filler's part menu): delete that unit only, not every run
+    # something is selected in.
+    only_active: bpy.props.BoolProperty(
+        default=False,
+        options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+
     @classmethod
     def poll(cls, context):
         return types_closets.find_starter_root(context.active_object) is not None
 
     def execute(self, context):
         roots = set()
-        for obj in context.selected_objects:
-            root = types_closets.find_starter_root(obj)
-            if root is not None:
-                roots.add(root)
+        if not self.only_active:
+            for obj in context.selected_objects:
+                root = types_closets.find_starter_root(obj)
+                if root is not None:
+                    roots.add(root)
+        # Right-clicked from a selection-mode cage (a corner unit's
+        # Bays-mode menu) the active object may not be selected.
+        active = types_closets.find_starter_root(context.active_object)
+        if active is not None:
+            roots.add(active)
         for root in roots:
             types_closets.delete_starter(root)
         return {'FINISHED'}
@@ -8135,6 +8588,41 @@ def _starter_bays(root):
     return sorted([c for c in root.children
                    if c.get(types_closets.TAG_BAY_CAGE)],
                   key=lambda o: o.get('hb_bay_index', 0))
+
+
+def _last_sharing_bay(bay):
+    """True for the one bay of its run still sharing the run width. 4.3
+    hid the Equal toggle on the last equal opening so one opening always
+    takes up the slack; this bay's padlock is held shut the same way."""
+    if bay.hb_closet_bay.unlock_width:
+        return False
+    root = types_closets.find_starter_root(bay)
+    if root is None:
+        return True
+    return sum(1 for b in _starter_bays(root)
+               if not b.hb_closet_bay.unlock_width) <= 1
+
+
+def _width_field(parent, bay, text=""):
+    """A bay's width and its padlock - the padlock left out on the last
+    bay sharing the run width, whose width is whatever is left over."""
+    bp = bay.hb_closet_bay
+    if not _last_sharing_bay(bay):
+        return _locked_field(parent, bp, 'width', 'unlock_width', text=text)
+    cell = parent.row(align=True)
+    field = cell.row(align=True)
+    field.enabled = False
+    field.prop(bp, 'width', text=text)
+    cell.label(text="", icon='BLANK1')
+    return cell
+
+
+def _has_hang_line(sp, is_corner=False, is_filler=False):
+    """A run its bays can hang from - a Tall or Hanging run, the ones
+    4.3 gave a Hanging Height and an Overall Height padlock (a base run
+    or an island has one Height)."""
+    return (not is_corner and not is_filler
+            and sp.closet_type in ('TALL', 'HANGING'))
 
 
 # How much of a per-bay row the option name takes, leaving the rest for
@@ -8326,10 +8814,47 @@ def _corner_hang_prop():
         precision=4, options={'SKIP_SAVE'})
 
 
+# 4.3 picked a corner's Hanging Height off the 32mm panel heights
+# (PANEL_HEIGHTS, no Custom). A corner already hanging somewhere off
+# that list shows the nearest height on it and keeps its own until
+# another is picked.
+_CORNER_HANG_ITEMS = const.PANEL_HEIGHT_PRESET_ITEMS
+
+
+def _nearest_panel_height_key(value):
+    """The PANEL_HEIGHT_ITEMS key nearest a distance, however far off
+    the 32mm steps it sits."""
+    mm = float(value) / const.millimeter(1.0)
+    n = int(round((mm - const.PANEL_HEIGHT_MIN_MM) / 32.0))
+    n = min(max(n, 0),
+            (const.PANEL_HEIGHT_MAX_MM - const.PANEL_HEIGHT_MIN_MM) // 32)
+    return str(const.PANEL_HEIGHT_MIN_MM + n * 32)
+
+
+def _update_corner_hang_preset(self, context):
+    self.hanging_height = const.millimeter(
+        int(self.hanging_height_preset))
+
+
+def _corner_hang_preset_prop():
+    return bpy.props.EnumProperty(
+        name="Hanging Height",
+        description="Floor to the top of this corner while it hangs, on "
+                    "the 32mm system",
+        items=_CORNER_HANG_ITEMS,
+        default='2131',
+        options={'SKIP_SAVE'},
+        update=_update_corner_hang_preset)
+
+
 def _corner_mount_load(op, root):
     op.is_floor_mounted = _corner_is_floor(root)
-    op.hanging_height = (_corner_hang_top(root) if not op.is_floor_mounted
-                         else bpy.context.scene.hb_closets.hanging_top_height)
+    top = (_corner_hang_top(root) if not op.is_floor_mounted
+           else bpy.context.scene.hb_closets.hanging_top_height)
+    # The dropdown first (it writes its own height), then the unit's
+    # own height over it, so an off-list one is kept until changed.
+    op.hanging_height_preset = _nearest_panel_height_key(top)
+    op.hanging_height = top
 
 
 def _corner_mount_check(op, root):
@@ -8355,7 +8880,7 @@ def _corner_mount_draw(layout, op, hanging_box=False):
     else:
         col.prop(op, 'is_floor_mounted')
     if not op.is_floor_mounted:
-        col.prop(op, 'hanging_height')
+        col.prop(op, 'hanging_height_preset')
 
 
 class hb_closets_OT_corner_bay_prompts(bpy.types.Operator):
@@ -8370,6 +8895,7 @@ class hb_closets_OT_corner_bay_prompts(bpy.types.Operator):
         options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
     is_floor_mounted: _corner_floor_prop()  # type: ignore
     hanging_height: _corner_hang_prop()  # type: ignore
+    hanging_height_preset: _corner_hang_preset_prop()  # type: ignore
 
     @classmethod
     def poll(cls, context):
@@ -8706,6 +9232,7 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
     # so the dialog carries it (4.3 Is Floor Mounted / Is Hanging).
     is_floor_mounted: _corner_floor_prop()  # type: ignore
     hanging_height: _corner_hang_prop()  # type: ignore
+    hanging_height_preset: _corner_hang_preset_prop()  # type: ignore
 
     @classmethod
     def poll(cls, context):
@@ -8726,6 +9253,12 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
             sp = root.hb_closet_starter
             _sync_height_dropdown(sp)
             _sync_kick_dropdown(sp)
+            # 4.3's Overall Height padlock opens closed each session, on
+            # the run height (written as storage, so nothing is applied).
+            sp['set_all_heights'] = False
+            key = const.nearest_panel_height_key(sp.height)
+            if key:
+                _set_enum_silent(sp, 'overall_height_preset', key)
             # A new dialog session: a rail height typed in an earlier
             # one gives way when a height changes in this one.
             root['hb_rail_typed'] = False
@@ -8825,6 +9358,8 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
         row.label(text="Height")
         row.label(text="Depth")
         row.label(text="Mounting")
+        set_all = (_has_hang_line(sp, is_corner, is_filler)
+                   and sp.set_all_heights)
         for bay in bays:
             bp = bay.hb_closet_bay
             row = box.row(align=True)
@@ -8835,8 +9370,20 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
             # rest of the run is redistributed to fill the run width; a
             # bay holding its own height or depth keeps that while the
             # run size changes.
-            _locked_field(row, bp, 'width', 'unlock_width')
-            _locked_field(row, bp, 'height', 'unlock_height')
+            _width_field(row, bay)
+            if set_all:
+                # Overall Height owns every bay's height while its
+                # padlock is open, so each reads it back (4.3).
+                sub = row.row(align=True)
+                sub.enabled = False
+                sub.prop(bp, 'height', text="")
+                sub.label(text="", icon='BLANK1')
+            elif bp.unlock_height:
+                # A bay's own height is picked off the 32mm list, as
+                # the bay dialog offers it.
+                _locked_field(row, bp, 'height_preset', 'unlock_height')
+            else:
+                _locked_field(row, bp, 'height', 'unlock_height')
             _locked_field(row, bp, 'depth', 'unlock_depth')
             row.prop(bp, 'floor_mounted', toggle=True,
                      text="Floor" if bp.floor_mounted else "Hanging",
@@ -9050,11 +9597,34 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
         # The run height and depth carry to every bay that has not been
         # handed one of its own. The Bays table is where a bay takes a
         # size over, and where it gives it back.
-        col.prop(sp, 'height_preset', text="Height")
-        if sp.height_preset == 'CUSTOM':
-            col.prop(sp, 'height', text="Custom Height")
+        if _has_hang_line(sp, is_corner, is_filler):
+            # 4.3's pair on a run that hangs: Overall Height behind its
+            # padlock writes one height to every bay, and the Hanging
+            # Height below moves the hang line alone.
+            row = col.row(align=True)
+            row.prop(sp, 'set_all_heights', text="",
+                     icon=('UNLOCKED' if sp.set_all_heights
+                           else 'LOCKED'))
+            if sp.set_all_heights:
+                row.prop(sp, 'overall_height_preset', text="")
+            else:
+                row.label(text="Set Height Below")
+        else:
+            col.prop(sp, 'height_preset', text="Height")
+            if sp.height_preset == 'CUSTOM':
+                col.prop(sp, 'height', text="Custom Height")
         col.prop(sp, 'depth')
         self._draw_location(split.column(align=True), root, sp)
+        if _has_hang_line(sp, is_corner, is_filler):
+            row = box.row()
+            row.label(text="Hanging Height:")
+            row.prop(sp, 'hanging_height_preset', text="")
+            if sp.hanging_height_preset == 'CUSTOM':
+                # Off the 32mm steps: said rather than typed, as the
+                # run height is not the hang line on a Hanging run.
+                from .. import props_closets
+                row.label(text=types_closets._in_str(
+                    props_closets.hang_line(sp)))
 
         # A countertop belongs to a unit that has a top to sit on - a
         # base run or an island. A tall or hanging unit finishes at its
@@ -9407,7 +9977,7 @@ class hb_closets_OT_bay_prompts(bpy.types.Operator):
         box = layout.box()
         box.label(text="Bay %d" % (bp.bay_index + 1), icon='MOD_ARRAY')
         col = box.column(align=True)
-        _locked_field(col, bp, 'width', 'unlock_width', text="Width")
+        _width_field(col, bay, text="Width")
         # Height and depth follow the run until the padlock hands one of
         # them to this bay, so both stay quiet until it does. The custom
         # height only has somewhere to go once the bay owns its height.
@@ -9947,7 +10517,11 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
         name="Shelf Quantity",
         description="How many adjustable shelves to space through the "
                     "opening",
-        default=3, min=0, max=20)  # type: ignore
+        default=3, min=0, max=12)  # type: ignore
+    # The shelf count the opening had when the dialog opened (see
+    # _held_adj_count).
+    held_shelf_qty: bpy.props.IntProperty(
+        default=0, options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
     # How the shelves here are cut. Both are the room's until this
     # opening takes one over.
     unlock_clip_gap: bpy.props.BoolProperty(
@@ -10075,6 +10649,11 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
                     "metal fence stands",
         default=const.SHOE_FENCE_BACK_INSET, min=0.0,
         unit='LENGTH', precision=4)  # type: ignore
+    slant_z: bpy.props.FloatProperty(
+        name="Vertical Location",
+        description="Height of the bottom shoe shelf off the floor of "
+                    "the opening",
+        default=0.0, min=0.0, unit='LENGTH', precision=4)  # type: ignore
 
     door_swing: bpy.props.EnumProperty(
         name="Door",
@@ -10336,8 +10915,10 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
         # nothing is written until they accept.
         op = opening.hb_closet_opening
         self.fill = _opening_fill(opening)
-        self.shelf_qty = (int(op.adj_shelf_qty)
-                          or types_closets.default_adj_shelf_qty(opening))
+        self.held_shelf_qty = (int(op.adj_shelf_qty)
+                               or types_closets.default_adj_shelf_qty(
+                                   opening))
+        self.shelf_qty = min(self.held_shelf_qty, const.ADJ_SHELF_QTY_MAX)
         _room = context.scene.hb_closets
         self.unlock_clip_gap = bool(op.unlock_shelf_clip_gap)
         self.clip_gap = float(
@@ -10364,8 +10945,14 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
         if types_closets.cubby_band_cap(opening) is not None:
             self.cubby_placement = op.cubby_placement
             self.cubby_height = float(op.cubby_height)
-        else:
+        elif op.cubby_cols > 1 or op.cubby_rows > 1:
+            # A grid already filling the opening reads back as one.
             self.cubby_placement = 'FILL'
+            self.cubby_height = const.CUBBY_HEIGHT
+        else:
+            # Cubbies picked here for the first time go in as 4.3's
+            # did and as Add Cubbies puts them: a band at the bottom.
+            self.cubby_placement = 'BOTTOM'
             self.cubby_height = const.CUBBY_HEIGHT
         self.rollout_qty = int(op.rollout_qty) or const.ROLLOUT_DEFAULT_QTY
         self.rollout_height = float(op.rollout_height)
@@ -10377,6 +10964,7 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
             op.slant_color)
         self.slant_fence_inset = float(op.slant_fence_inset)
         self.slant_back_inset = float(op.slant_back_inset)
+        self.slant_z = float(op.slant_z)
         self.door_swing = op.door_swing or 'NONE'
         self.open_door = float(op.open_door)
         self.open_drawer = float(op.open_drawer)
@@ -10429,6 +11017,11 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
                 row.alert = True
                 row.label(text="Must be less than %d"
                           % (const.ADJ_SHELF_QTY_WARN + 1), icon='ERROR')
+            held = _held_adj_count(self.shelf_qty, self.held_shelf_qty)
+            if held > self.shelf_qty:
+                col.label(text="This opening has %d shelves; leave the "
+                               "count at %d to keep them"
+                               % (held, self.shelf_qty), icon='INFO')
             _locked_field(col, self, 'clip_gap', 'unlock_clip_gap',
                           text="Clip Gap")
             _locked_field(col, self, 'setback', 'unlock_setback',
@@ -10484,6 +11077,7 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
             col.prop(self, 'slant_color')
             col.prop(self, 'slant_fence_inset')
             col.prop(self, 'slant_back_inset')
+            col.prop(self, 'slant_z')
             # These sit on clips as well, so the gap reaches them.
             # Their setback is the fence's, so it is not offered.
             _locked_field(col, self, 'clip_gap', 'unlock_clip_gap',
@@ -10783,16 +11377,21 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
         # padlock, as the Adjustable Shelves dialog does - otherwise
         # the opening re-deals its count by height and the typed
         # figure snaps back.
+        _shelves = _held_adj_count(self.shelf_qty, self.held_shelf_qty)
         if fill == 'ADJ_SHELVES':
             _held = (int(opening.hb_closet_opening.adj_shelf_qty)
                      or types_closets.default_adj_shelf_qty(opening))
-            if int(self.shelf_qty) != _held:
+            if int(_shelves) != _held:
                 opening.hb_closet_opening.unlock_adj_qty = True
 
         # One interior at a time: zero out the fills that were not
-        # picked, then write the picked one's settings.
-        opening.hb_closet_opening.adj_shelf_qty = (
-            self.shelf_qty if fill == 'ADJ_SHELVES' else 0)
+        # picked, then write the picked one's settings. A saved count
+        # over the field's twelve is left as it stands (the property
+        # would clamp it).
+        if not (fill == 'ADJ_SHELVES'
+                and _shelves > const.ADJ_SHELF_QTY_MAX):
+            opening.hb_closet_opening.adj_shelf_qty = (
+                self.shelf_qty if fill == 'ADJ_SHELVES' else 0)
         opening.hb_closet_opening.drawer_qty = (
             _held_drawer_count(self.drawer_qty, self.held_drawer_qty)
             if fill == 'DRAWERS' else 0)
@@ -10838,6 +11437,7 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
                 self.slant_fence_inset
             opening.hb_closet_opening.slant_back_inset = \
                 self.slant_back_inset
+            opening.hb_closet_opening.slant_z = self.slant_z
 
         opening.hb_closet_opening.door_swing = swing
 
@@ -11449,7 +12049,9 @@ classes = (
     hb_closets_OT_bay_countertop_prompts,
     hb_closets_OT_delete_bay_countertop,
     hb_closets_OT_delete_bay_cleat,
+    hb_closets_OT_bay_cleat_prompts,
     hb_closets_OT_rod_prompts,
+    hb_closets_OT_wall_rod_prompts,
     hb_closets_OT_misc_part_prompts,
     hb_closets_OT_panel_prompts,
     hb_closets_OT_add_adj_shelves,

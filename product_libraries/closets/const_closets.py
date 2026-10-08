@@ -92,6 +92,10 @@ IRONING_BOARD_FROM_FLOOR = inch(24.1845)
 IRONING_BOARD_POPUP_FROM_FLOOR = inch(7.4)
 # More adjustable shelves than this in one opening is warned about.
 ADJ_SHELF_QTY_WARN = 11
+# The most adjustable shelves an opening is dealt or offered: 4.3 had
+# twelve shelf slots (types_closet.py Shelf 1-12). Older jobs can hold
+# more; the dialogs leave such a count alone until it is changed.
+ADJ_SHELF_QTY_MAX = 12
 
 # Panel heights by starter type. The mm values are the 32mm-system
 # heights: Base 819mm = 32.25", Tall 2131mm = 83.94", Hanging 1267mm = 49.88".

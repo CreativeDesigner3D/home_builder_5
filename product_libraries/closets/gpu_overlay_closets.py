@@ -779,6 +779,14 @@ def _commit(obj, kind, value):
         obj.hb_closet_starter.depth = value
         return True
     if kind == 'BAY_W':
+        # The last bay sharing the run width takes up the slack, so it
+        # is never locked (4.3 hid its Equal toggle; the dialogs grey
+        # its width out, TOGGLE_LOCK passes it by) - a width typed on
+        # its label is not taken.
+        if (not obj.hb_closet_bay.unlock_width
+                and sum(1 for b in _iter_bay_cages(obj.parent)
+                        if not b.hb_closet_bay.unlock_width) <= 1):
+            return False
         # Fires _update_bay_width: auto-locks + redistributes the rest.
         obj.hb_closet_bay.width = value
         return True
@@ -1005,7 +1013,10 @@ class hb_closets_OT_edit_dim_label(bpy.types.Operator):
                 self._finish(context)
                 return {'CANCELLED'}
             self._finish(context)
-            _commit(obj, self.kind, value)
+            if not _commit(obj, self.kind, value) and self.kind == 'BAY_W':
+                self.report({'INFO'},
+                            "The last bay sharing the run width takes "
+                            "what is left - set another bay's width")
             return {'FINISHED'}
 
         if event.type in {'X', 'DEL'}:
@@ -1102,6 +1113,12 @@ class hb_closets_OT_dim_label_click(bpy.types.Operator):
                     bp = bay.hb_closet_bay
                     if bp.unlock_width:
                         _reset_to_auto(bay, 'BAY_W')
+                    elif sum(1 for b in _iter_bay_cages(bay.parent)
+                             if not b.hb_closet_bay.unlock_width) <= 1:
+                        # The last bay sharing the run width takes up
+                        # the slack, so it is never locked (4.3 hid its
+                        # Equal toggle).
+                        pass
                     else:
                         # Give the bay its own width, held at what it
                         # measures now while the rest of the run is

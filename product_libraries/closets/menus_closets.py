@@ -75,6 +75,12 @@ class HOME_BUILDER_MT_closet_corner_bay_commands(bpy.types.Menu):
         layout = self.layout
         layout.operator("hb_closets.corner_bay_prompts",
                         text="Corner Properties...", icon='WINDOW')
+        # 4.3's corner right-click offered Delete Starter beside its
+        # prompts (ui_closet.py CLOSET_MT_closet_commands).
+        layout.separator()
+        op = layout.operator("hb_closets.delete_starter",
+                             text="Delete", icon='X')
+        op.only_active = True
 
 
 class HOME_BUILDER_MT_closet_corner_opening_commands(bpy.types.Menu):
@@ -462,6 +468,14 @@ class HOME_BUILDER_MT_closet_part_commands(bpy.types.Menu):
                 icon='TOOL_SETTINGS')
             op.drill = not drilled
             layout.separator()
+        if (obj is not None and obj.get('hb_part_role')
+                == types_closets.PART_ROLE_ROD
+                and obj.get(types_closets.PROP_WALL_ROD)):
+            # A rod dropped on a bare wall (4.3 Closet_Rod_Part prompts
+            # out of an opening).
+            layout.operator("hb_closets.wall_rod_prompts",
+                            text="Rod Properties...", icon='WINDOW')
+            layout.separator()
         slab = None
         if types_closets.is_slab_countertop(obj):
             slab = obj
@@ -493,6 +507,8 @@ class HOME_BUILDER_MT_closet_part_commands(bpy.types.Menu):
             layout.separator()
         if (obj is not None
                 and obj.get(types_closets.PROP_BAY_CLEAT) is not None):
+            layout.operator("hb_closets.bay_cleat_prompts",
+                            text="Cleat Properties...", icon='WINDOW')
             layout.operator("hb_closets.delete_bay_cleat",
                             text="Delete Support Cleat", icon='X')
             layout.separator()
@@ -612,8 +628,37 @@ class HOME_BUILDER_MT_closet_part_commands(bpy.types.Menu):
         # to a setting and are changed there (4.3 had no delete on
         # them either).
         if bpy.ops.hb_closets.delete_part.poll():
+            # A piece of an opening's insert deletes the insert (4.3
+            # Delete Insert); Remove One takes off just that piece. A
+            # door is its opening's whole front either way.
+            in_insert = (
+                role in (types_closets.PART_ROLE_ADJ_SHELF,
+                         types_closets.PART_ROLE_DRAWER_FRONT,
+                         types_closets.PART_ROLE_CUBBY_DIVISION,
+                         types_closets.PART_ROLE_CUBBY_SHELF,
+                         types_closets.PART_ROLE_DOOR)
+                and obj.get('hb_l_index') is None
+                and not obj.get('hb_bay_door')
+                and types_closets.find_opening_cage(obj) is not None)
             layout.operator("hb_closets.delete_part",
-                            text="Delete Part", icon='X')
+                            text="Delete Insert" if in_insert
+                            else "Delete Part", icon='X')
+            if in_insert and role != types_closets.PART_ROLE_DOOR:
+                op = layout.operator("hb_closets.delete_part",
+                                     text="Remove One", icon='REMOVE')
+                op.one = True
+        # An inside-corner filler has no bay to right-click in Bays
+        # mode - its boards and top are what is clicked - so the whole
+        # filler is deleted from them (4.3 offered Delete Starter on
+        # the inside corner filler's own menu).
+        _root = types_closets.find_starter_root(obj)
+        _cls = (types_closets.WRAP_CLASS_REGISTRY.get(
+            _root.get('CLASS_NAME', '')) if _root is not None else None)
+        if (_cls is not None and getattr(_cls, 'is_filler', False)
+                and obj is not None and obj.parent is _root):
+            op = layout.operator("hb_closets.delete_starter",
+                                 text="Delete Corner Filler", icon='X')
+            op.only_active = True
 
 
 classes = (

@@ -297,6 +297,89 @@ def _height_preset_items(self, context):
     return const.PANEL_HEIGHT_PRESET_ITEMS
 
 
+def hang_line(sp):
+    """Floor to a run's hang line - the top of the run in the room.
+    A Hanging run keeps its top where it is when its height changes by
+    moving its origin, so the origin is not always on the floor and
+    the run height alone is not the hang line."""
+    root = sp.id_data
+    return float(root.matrix_world.translation.z) + float(sp.height)
+
+
+def _hang_height_items(self, context):
+    """The 32mm lattice; Custom only while the hang line sits off it
+    (a run kept from an older file, or one moved by hand)."""
+    if not const.nearest_panel_height_key(hang_line(self)):
+        return const.PANEL_HEIGHT_PRESET_ITEMS_LEGACY
+    return const.PANEL_HEIGHT_PRESET_ITEMS
+
+
+def _get_hanging_height_preset(self):
+    return const.panel_height_preset_index(
+        const.nearest_panel_height_key(hang_line(self)))
+
+
+def _set_hanging_height_preset(self, value):
+    """4.3 Hanging Height: put the hang line, and only the hang line,
+    at the height picked, measured from the floor.
+
+    A floor bay still following the run height is handed the height it
+    stands at first, so it stays where it is while the hanging bays go
+    up or down with the line. A run with every bay hanging moves as a
+    whole - its origin, the way a Hanging run already keeps its top -
+    so no bay changes size. One with a floor bay keeps its origin and
+    takes the difference in its height; the bays stand on the 32mm
+    system whatever that comes to, so it is written as it is rather
+    than snapped off the line picked."""
+    if value == const.PANEL_HEIGHT_CUSTOM_INDEX:
+        return
+    key = const.PANEL_HEIGHT_ITEMS[value][0]
+    delta = const.millimeter(int(key)) - hang_line(self)
+    if abs(delta) < 1e-6:
+        return
+    from . import types_closets
+    root = self.id_data
+    bays = types_closets._run_bays(root)
+    with types_closets.suspend_recalc():
+        if (self.closet_type == 'HANGING' and bays
+                and not any(b.hb_closet_bay.floor_mounted for b in bays)):
+            root.location.z += delta
+        else:
+            for bay in bays:
+                bp = bay.hb_closet_bay
+                if bp.floor_mounted and not bp.unlock_height:
+                    bp.height = self.height
+                    bp.unlock_height = True
+            new = max(float(self.height) + delta, const.PANEL_MIN_HEIGHT)
+            # The origin stays put: the hang line is what moves.
+            root['hb_last_height'] = new
+            self['height'] = new
+            self['height_preset'] = const.panel_height_preset_index(
+                const.nearest_panel_height_key(new))
+        types_closets.recalculate_closet_starter(root)
+
+
+def _set_all_bay_heights(sp, root):
+    """4.3 Overall Height with its padlock open: every opening takes the
+    one height - a floor bay from the floor up, a hanging bay down from
+    the hang line - each handed it as its own."""
+    from . import types_closets
+    h = const.millimeter(int(sp.overall_height_preset))
+    idx = const.panel_height_preset_index(sp.overall_height_preset)
+    with types_closets.suspend_recalc():
+        for bay in types_closets._run_bays(root):
+            bp = bay.hb_closet_bay
+            bp.unlock_height = True
+            bp.height = h
+            bp['height_preset'] = idx
+        types_closets.recalculate_closet_starter(root)
+
+
+def _update_overall_height(self, context):
+    if self.set_all_heights:
+        _set_all_bay_heights(self, self.id_data)
+
+
 def _update_bay_open_door(self, context):
     """The bay's open percentage speaks for every front across it, so a
     front someone had clicked open hands its own answer back and follows
@@ -621,6 +704,30 @@ class Closet_Bay_Cleat_Props(PropertyGroup):
     uid: StringProperty(options={'HIDDEN'})  # type: ignore
     first_bay: StringProperty(options={'HIDDEN'})  # type: ignore
     last_bay: StringProperty(options={'HIDDEN'})  # type: ignore
+    # 4.3 Cleat prompts (Length, Width, Vertical and Horizontal
+    # Location). Each is kept against where the cleat is laid out on its
+    # own - under the bottom shelf, end partition to end partition - so
+    # nothing set leaves it there, following the bays as they change.
+    length: FloatProperty(
+        name="Length",
+        description="How long the cleat is cut. Nothing runs it the "
+                    "full span of its bays",
+        default=0.0, min=0.0, unit='LENGTH', precision=4)  # type: ignore
+    width: FloatProperty(
+        name="Width",
+        description="How deep the cleat is cut. Nothing is the standard "
+                    "cleat width",
+        default=0.0, min=0.0, unit='LENGTH', precision=4)  # type: ignore
+    z_offset: FloatProperty(
+        name="Vertical Location",
+        description="How far the cleat is raised (negative: dropped) "
+                    "from the underside of the bottom shelf",
+        default=0.0, unit='LENGTH', precision=4)  # type: ignore
+    x_offset: FloatProperty(
+        name="Horizontal Location",
+        description="How far in from the left end of its span the cleat "
+                    "starts",
+        default=0.0, min=0.0, unit='LENGTH', precision=4)  # type: ignore
 
 
 class Closet_Starter_Props(PropertyGroup):
@@ -687,6 +794,30 @@ class Closet_Starter_Props(PropertyGroup):
         items=_height_preset_items,
         default=const.PANEL_HEIGHT_DEFAULT_INDEX,
         update=_update_height_preset)  # type: ignore
+
+    # 4.3's pair on a run that hangs (Tall and Hanging): the hang line
+    # on its own, and one height written to every bay at once. The hang
+    # line is the run height read another way, so it stores nothing.
+    hanging_height_preset: EnumProperty(
+        name="Hanging Height",
+        description="Floor to the hang line the hanging bays hang from. "
+                    "Floor bays stay at the height they stand at",
+        items=_hang_height_items,
+        get=_get_hanging_height_preset,
+        set=_set_hanging_height_preset)  # type: ignore
+    set_all_heights: BoolProperty(
+        name="Set All Opening Heights",
+        description="Give every bay the Overall Height at once. Off sets "
+                    "each bay's height in the Bays table",
+        default=False,
+        update=_update_overall_height)  # type: ignore
+    overall_height_preset: EnumProperty(
+        name="Overall Height",
+        description="The height every bay takes while Set All Opening "
+                    "Heights is on",
+        items=const.PANEL_HEIGHT_ITEMS,
+        default='2131',
+        update=_update_overall_height)  # type: ignore
 
     closet_type: EnumProperty(
         name="Closet Type",
@@ -1381,7 +1512,7 @@ class Closet_Opening_Props(PropertyGroup):
         name="Shelf Quantity",
         description="How many adjustable shelves to space through the "
                     "opening",
-        default=0, min=0, max=20)  # type: ignore
+        default=0, min=0, max=12)  # type: ignore
     # The count follows the opening's height (one shelf per foot, the
     # prior library's rule) until someone takes it over, so a resize
     # re-deals the shelves. The padlock in the shelf dialog sets this.
@@ -1502,6 +1633,14 @@ class Closet_Opening_Props(PropertyGroup):
         description="How far back from the front edge of the shelf the "
                     "metal fence stands",
         default=const.SHOE_FENCE_BACK_INSET, min=0.0,
+        unit='LENGTH', precision=4)  # type: ignore
+    # 4.3 Slanted Shoe Shelves' Vertical Location: how far up the
+    # opening the stack starts. Nothing means the opening floor.
+    slant_z: FloatProperty(
+        name="Vertical Location",
+        description="Height of the bottom shoe shelf off the floor of "
+                    "the opening",
+        default=0.0, min=0.0,
         unit='LENGTH', precision=4)  # type: ignore
 
     # ----- Cubbies -----
@@ -1783,6 +1922,7 @@ class Closet_Opening_Props(PropertyGroup):
         'rollout_qty', 'rollout_height',
         'slant_qty', 'slant_spacing', 'slant_angle', 'slant_color',
         'slant_fence_line', 'slant_fence_inset', 'slant_back_inset',
+        'slant_z',
         'cubby_cols', 'cubby_rows', 'cubby_setback',
         'cubby_placement', 'cubby_height',
         'door_swing', 'is_hamper',
