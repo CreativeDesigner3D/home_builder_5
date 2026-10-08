@@ -22,6 +22,7 @@ from bpy.props import (
         BoolProperty,
         CollectionProperty,
         FloatProperty,
+        FloatVectorProperty,
         IntProperty,
         PointerProperty,
         EnumProperty,
@@ -79,6 +80,32 @@ def _update_starter_prop(self, context):
     module load order can't create a cycle."""
     from . import types_closets
     types_closets.recalculate_closet_starter(self.id_data)
+
+
+def _update_hang_rail_height(self, context):
+    """The one rail height was typed: hold it against the automatic
+    lowest-top figure for the rest of this dialog session (the dialogs
+    clear the mark when they open). The build writes the automatic
+    figure straight into storage, so only a typed value lands here."""
+    self.id_data['hb_rail_typed'] = True
+    _update_starter_prop(self, context)
+
+
+def _update_l_interior(self, context):
+    """A rod put in a corner hangs off the back partition: the reference widened
+    that partition to 14" if it was narrower, and ran the rod along the
+    side wall unless the partition had been flipped onto it."""
+    if self.l_interior in ('ROD', 'DOUBLE'):
+        if self.l_back_width < inch(14.0):
+            self['l_back_width'] = inch(14.0)
+        self['l_rod_on_left'] = not self.l_flip_partition
+    elif self.l_interior in ('ADJ', 'LOCK') and int(self.l_shelf_qty) == 0:
+        # Shelves put into an empty corner deal one a foot through
+        # the opening, as the reference's L shelves insert did when dropped.
+        from . import types_closets
+        self['l_shelf_qty'] = types_closets.default_l_shelf_qty(
+            self.id_data)
+    _update_starter_prop(self, context)
 
 
 def sync_end_overhangs(sp, sides=('LEFT', 'RIGHT')):
@@ -167,6 +194,25 @@ def _update_room_solve(self, context):
         for obj in scene.objects:
             if obj.get(types_closets.TAG_STARTER_CAGE):
                 types_closets.recalculate_closet_starter(obj)
+    # A slab top stands on its own rather than in a run, so it is sized
+    # again here (the room's countertop thickness is one of its figures).
+    for obj in scene.objects:
+        if types_closets.is_slab_countertop(obj):
+            types_closets.layout_slab_countertop(obj)
+
+
+def _update_lock_shelf_color(self, context):
+    """The room's lock-shelf colour changed: repaint every run in that
+    room with it (reference Lock Shelf Color). The setting belongs to the
+    room's scene, and each part reads its colour from the scene it
+    stands in (types_closets.lock_shelf_color), so the room repainted
+    is the one whose setting changed, not whichever scene is current."""
+    from . import types_closets
+    scene = self.id_data if isinstance(self.id_data, bpy.types.Scene) \
+        else (getattr(context, 'scene', None) or bpy.context.scene)
+    for obj in scene.objects:
+        if obj.get(types_closets.TAG_STARTER_CAGE):
+            types_closets.mark_parts(obj)
 
 
 def _thickness_lock_update(attr):
@@ -199,6 +245,39 @@ def _update_kick_preset(self, context):
         _update_starter_prop(self, context)
 
 
+_ROOM_KICK_ITEMS = const.KICK_HEIGHT_ITEMS + [
+    ('CUSTOM', "Custom", "A height off the standard kicks")]
+
+
+def _get_room_kick_preset(self):
+    """Room kick dropdown reads the room's kick distance: Custom when
+    Custom was picked (toe_kick_custom) or the distance matches no
+    standard kick, otherwise the standard kick it matches."""
+    key = const.kick_height_key(self.toe_kick_height)
+    keys = [item[0] for item in _ROOM_KICK_ITEMS]
+    if self.toe_kick_custom or not key:
+        return keys.index('CUSTOM')
+    return keys.index(key)
+
+
+def _update_room_kick_height(self, context):
+    """A kick distance typed off the standard list marks the room's
+    kick Custom, so the field stays open for it."""
+    if not const.kick_height_key(self.toe_kick_height):
+        self['toe_kick_custom'] = True
+
+
+def _set_room_kick_preset(self, value):
+    """Picking a standard kick sets the room's kick distance; Custom
+    keeps the distance and opens it for typing."""
+    key = _ROOM_KICK_ITEMS[value][0]
+    if key == 'CUSTOM':
+        self.toe_kick_custom = True
+    else:
+        self.toe_kick_custom = False
+        self.toe_kick_height = const.millimeter(int(key))
+
+
 def _update_height_preset(self, context):
     """Section-height dropdown changed: set the distance to the chosen
     standard height (the key is millimetres). 'CUSTOM' leaves the typed
@@ -216,6 +295,89 @@ def _height_preset_items(self, context):
     if self.get('height_preset') == const.PANEL_HEIGHT_CUSTOM_INDEX:
         return const.PANEL_HEIGHT_PRESET_ITEMS_LEGACY
     return const.PANEL_HEIGHT_PRESET_ITEMS
+
+
+def hang_line(sp):
+    """Floor to a run's hang line - the top of the run in the room.
+    A Hanging run keeps its top where it is when its height changes by
+    moving its origin, so the origin is not always on the floor and
+    the run height alone is not the hang line."""
+    root = sp.id_data
+    return float(root.matrix_world.translation.z) + float(sp.height)
+
+
+def _hang_height_items(self, context):
+    """The 32mm lattice; Custom only while the hang line sits off it
+    (a run kept from an older file, or one moved by hand)."""
+    if not const.nearest_panel_height_key(hang_line(self)):
+        return const.PANEL_HEIGHT_PRESET_ITEMS_LEGACY
+    return const.PANEL_HEIGHT_PRESET_ITEMS
+
+
+def _get_hanging_height_preset(self):
+    return const.panel_height_preset_index(
+        const.nearest_panel_height_key(hang_line(self)))
+
+
+def _set_hanging_height_preset(self, value):
+    """Hanging Height, as in the reference version: put the hang line, and only the hang line,
+    at the height picked, measured from the floor.
+
+    A floor bay still following the run height is handed the height it
+    stands at first, so it stays where it is while the hanging bays go
+    up or down with the line. A run with every bay hanging moves as a
+    whole - its origin, the way a Hanging run already keeps its top -
+    so no bay changes size. One with a floor bay keeps its origin and
+    takes the difference in its height; the bays stand on the 32mm
+    system whatever that comes to, so it is written as it is rather
+    than snapped off the line picked."""
+    if value == const.PANEL_HEIGHT_CUSTOM_INDEX:
+        return
+    key = const.PANEL_HEIGHT_ITEMS[value][0]
+    delta = const.millimeter(int(key)) - hang_line(self)
+    if abs(delta) < 1e-6:
+        return
+    from . import types_closets
+    root = self.id_data
+    bays = types_closets._run_bays(root)
+    with types_closets.suspend_recalc():
+        if (self.closet_type == 'HANGING' and bays
+                and not any(b.hb_closet_bay.floor_mounted for b in bays)):
+            root.location.z += delta
+        else:
+            for bay in bays:
+                bp = bay.hb_closet_bay
+                if bp.floor_mounted and not bp.unlock_height:
+                    bp.height = self.height
+                    bp.unlock_height = True
+            new = max(float(self.height) + delta, const.PANEL_MIN_HEIGHT)
+            # The origin stays put: the hang line is what moves.
+            root['hb_last_height'] = new
+            self['height'] = new
+            self['height_preset'] = const.panel_height_preset_index(
+                const.nearest_panel_height_key(new))
+        types_closets.recalculate_closet_starter(root)
+
+
+def _set_all_bay_heights(sp, root):
+    """Overall Height (as in the reference version) with its padlock open: every opening takes the
+    one height - a floor bay from the floor up, a hanging bay down from
+    the hang line - each handed it as its own."""
+    from . import types_closets
+    h = const.millimeter(int(sp.overall_height_preset))
+    idx = const.panel_height_preset_index(sp.overall_height_preset)
+    with types_closets.suspend_recalc():
+        for bay in types_closets._run_bays(root):
+            bp = bay.hb_closet_bay
+            bp.unlock_height = True
+            bp.height = h
+            bp['height_preset'] = idx
+        types_closets.recalculate_closet_starter(root)
+
+
+def _update_overall_height(self, context):
+    if self.set_all_heights:
+        _set_all_bay_heights(self, self.id_data)
 
 
 def _update_bay_open_door(self, context):
@@ -238,6 +400,18 @@ def _update_bay_prop(self, context):
     passes that write these props in bulk cost nothing."""
     from . import types_closets
     types_closets.recalculate_closet_starter(self.id_data)
+
+
+def _update_rod_options(self, context):
+    """Room rod type, finish or hangers changed: re-solve the closets,
+    whose rods take them on the solve, then re-dress the free rods on
+    the walls, which no solve reaches."""
+    pulls_closets.update_room(self, context)
+    from . import types_closets
+    scene = getattr(context, 'scene', None) or bpy.context.scene
+    for obj in scene.objects:
+        if obj.get(types_closets.PROP_WALL_ROD):
+            types_closets.layout_wall_rod(obj)
 
 
 def _update_bay_height_preset(self, context):
@@ -530,6 +704,30 @@ class Closet_Bay_Cleat_Props(PropertyGroup):
     uid: StringProperty(options={'HIDDEN'})  # type: ignore
     first_bay: StringProperty(options={'HIDDEN'})  # type: ignore
     last_bay: StringProperty(options={'HIDDEN'})  # type: ignore
+    # The reference's Cleat prompts (Length, Width, Vertical and Horizontal
+    # Location). Each is kept against where the cleat is laid out on its
+    # own - under the bottom shelf, end partition to end partition - so
+    # nothing set leaves it there, following the bays as they change.
+    length: FloatProperty(
+        name="Length",
+        description="How long the cleat is cut. Nothing runs it the "
+                    "full span of its bays",
+        default=0.0, min=0.0, unit='LENGTH', precision=4)  # type: ignore
+    width: FloatProperty(
+        name="Width",
+        description="How deep the cleat is cut. Nothing is the standard "
+                    "cleat width",
+        default=0.0, min=0.0, unit='LENGTH', precision=4)  # type: ignore
+    z_offset: FloatProperty(
+        name="Vertical Location",
+        description="How far the cleat is raised (negative: dropped) "
+                    "from the underside of the bottom shelf",
+        default=0.0, unit='LENGTH', precision=4)  # type: ignore
+    x_offset: FloatProperty(
+        name="Horizontal Location",
+        description="How far in from the left end of its span the cleat "
+                    "starts",
+        default=0.0, min=0.0, unit='LENGTH', precision=4)  # type: ignore
 
 
 class Closet_Starter_Props(PropertyGroup):
@@ -596,6 +794,30 @@ class Closet_Starter_Props(PropertyGroup):
         items=_height_preset_items,
         default=const.PANEL_HEIGHT_DEFAULT_INDEX,
         update=_update_height_preset)  # type: ignore
+
+    # The reference's pair on a run that hangs (Tall and Hanging): the hang line
+    # on its own, and one height written to every bay at once. The hang
+    # line is the run height read another way, so it stores nothing.
+    hanging_height_preset: EnumProperty(
+        name="Hanging Height",
+        description="Floor to the hang line the hanging bays hang from. "
+                    "Floor bays stay at the height they stand at",
+        items=_hang_height_items,
+        get=_get_hanging_height_preset,
+        set=_set_hanging_height_preset)  # type: ignore
+    set_all_heights: BoolProperty(
+        name="Set All Opening Heights",
+        description="Give every bay the Overall Height at once. Off sets "
+                    "each bay's height in the Bays table",
+        default=False,
+        update=_update_overall_height)  # type: ignore
+    overall_height_preset: EnumProperty(
+        name="Overall Height",
+        description="The height every bay takes while Set All Opening "
+                    "Heights is on",
+        items=const.PANEL_HEIGHT_ITEMS,
+        default='2131',
+        update=_update_overall_height)  # type: ignore
 
     closet_type: EnumProperty(
         name="Closet Type",
@@ -952,9 +1174,11 @@ class Closet_Starter_Props(PropertyGroup):
     hang_rail_height_location: FloatProperty(
         name="Hang Rail Height",
         description="Rail height above the floor when Use One Hang Rail "
-                    "Height is on",
+                    "Height is on. Follows the lowest opening top less "
+                    "3 5/16\" whenever a height changes, unless typed in "
+                    "the dialog that changed it",
         default=0.0, unit='LENGTH', precision=4,
-        update=_update_starter_prop)  # type: ignore
+        update=_update_hang_rail_height)  # type: ignore
 
     # Side wall fillers: a front scribe
     # strip standing past the end of the run to close the gap to a side
@@ -999,18 +1223,23 @@ class Closet_Starter_Props(PropertyGroup):
     l_interior: EnumProperty(
         name="Corner Holds",
         description="What goes inside the corner unit",
+        # Numbered so saved units keep what they hold: 'NONE' came
+        # later and takes the next number, though it lists first.
         items=[
+            ('NONE', "Empty",
+             "Only the top and bottom - the reference version's corner "
+             "as it was dropped", 4),
             ('ADJ', "Adjustable Shelves",
              "Shelves on pins, moved by hand. Any one of them can be "
-             "locked afterwards"),
+             "locked afterwards", 0),
             ('LOCK', "Lock Shelves",
-             "Shelves fixed on cams, holding the unit square"),
+             "Shelves fixed on cams, holding the unit square", 1),
             ('ROD', "Single Hanging Rod",
-             "One rod along a wing, for full-length hanging"),
+             "One rod along a wing, for full-length hanging", 2),
             ('DOUBLE', "Double Hang",
-             "Two rods with a fixed shelf between them"),
+             "Two rods with a fixed shelf between them", 3),
         ],
-        default='ADJ', update=_update_starter_prop)  # type: ignore
+        default='ADJ', update=_update_l_interior)  # type: ignore
     l_rod_on_left: BoolProperty(
         name="Rod On The Side Wall",
         description="Hang the rod along the side wall rather than the "
@@ -1019,11 +1248,37 @@ class Closet_Starter_Props(PropertyGroup):
         default=True, update=_update_starter_prop)  # type: ignore
     l_top_opening_height: FloatProperty(
         name="Top Opening Height",
-        description="Floor to the underside of the shelf between the "
-                    "two rods",
+        description="Clear opening over the shelf between the two "
+                    "rods: its top to the underside of the top shelf",
         default=const.L_DOUBLE_TOP_OPENING, min=0.0,
         unit='LENGTH', precision=4,
         update=_update_starter_prop)  # type: ignore
+    # Where a corner rod stands across its wing (reference
+    # Closet_Rod_Corner_Insert: Closet Rod Location From Rear / From
+    # Front, Set Distance From Front, Remove Hangers).
+    l_rod_from_rear: FloatProperty(
+        name="Rod Dim From Rear",
+        description="How far the rod stands out from the wall behind "
+                    "the wing it runs along",
+        default=const.L_ROD_FROM_WALL, min=0.0,
+        unit='LENGTH', precision=4,
+        update=_update_starter_prop)  # type: ignore
+    l_rod_set_from_front: BoolProperty(
+        name="Set Distance From Front",
+        description="Measure the rod back from the front of its wing "
+                    "instead of out from the wall",
+        default=False, update=_update_starter_prop)  # type: ignore
+    l_rod_from_front: FloatProperty(
+        name="Dim From Front",
+        description="How far the rod stands back from the front of the "
+                    "wing it runs along",
+        default=inch(2.0), min=0.0,
+        unit='LENGTH', precision=4,
+        update=_update_starter_prop)  # type: ignore
+    l_remove_hangers: BoolProperty(
+        name="Remove Hangers",
+        description="Leave the display hangers off the corner's rods",
+        default=False, update=_update_starter_prop)  # type: ignore
 
     l_shelf_qty: IntProperty(
         name="Shelf Quantity",
@@ -1166,18 +1421,30 @@ class Closet_Bay_Props(PropertyGroup):
                     "their own panel",
         default=False, update=_update_bay_prop)  # type: ignore
 
-    # Double-sided islands only: the divider between the two faces.
+    # Double-sided islands only: the divider between the two faces. As
+    # the reference version had it, the divider is always there; ticked it
+    # sits centered, unticked it sits at Center Back Location, measured
+    # in from the island's FRONT face, and both faces' openings size to
+    # it (reference add_double_opening).
     include_center_back: BoolProperty(
         name="Center Back",
-        description="Close this bay's two faces off from each other with "
-                    "a divider panel",
+        description="Keep this bay's divider centered between the two "
+                    "faces. Untick to place it with Center Back Location",
         default=True, update=_update_bay_prop)  # type: ignore
     center_back_location: FloatProperty(
         name="Center Back Location",
-        description="How far in from the island's back face the divider "
-                    "sits. Leave at 0 to keep it centered",
+        description="How far in from the island's front face the divider "
+                    "sits - the depth of the front opening. The back "
+                    "opening takes what is left behind the divider",
         default=0.0, min=0.0, unit='LENGTH', precision=4,
         update=_update_bay_prop)  # type: ignore
+    # Files saved while the checkbox above meant "include the divider"
+    # could have it switched off. That is carried over here so those
+    # islands come back without one; nothing new sets it.
+    remove_center_back: BoolProperty(
+        name="Remove Center Back",
+        description="Leave this bay's divider out (set by an older file)",
+        default=False, update=_update_bay_prop)  # type: ignore
 
     # ----- Bay-wide front -----
     # A front that spans the whole bay rather than one opening. Held as a
@@ -1189,6 +1456,14 @@ class Closet_Bay_Props(PropertyGroup):
         description="Front spanning the whole bay: LEFT, RIGHT, DOUBLE, "
                     "LIFT_UP or TILT_OUT. Empty leaves the bay's "
                     "openings to carry their own fronts",
+        default='', update=_update_bay_prop)  # type: ignore
+    # The same on a double island's back face (the reference hung doors on its back
+    # opening as on its front). Empty for every other run.
+    back_door_swing: bpy.props.StringProperty(
+        name="Back Door",
+        description="Front spanning the whole bay on a double island's "
+                    "back face: LEFT, RIGHT, DOUBLE, LIFT_UP or TILT_OUT. "
+                    "Empty leaves the back openings their own fronts",
         default='', update=_update_bay_prop)  # type: ignore
     # A tilt-out hamper is one of the fronts the bay can carry now, so
     # it is read off door_swing rather than held beside it. This is kept
@@ -1237,7 +1512,7 @@ class Closet_Opening_Props(PropertyGroup):
         name="Shelf Quantity",
         description="How many adjustable shelves to space through the "
                     "opening",
-        default=0, min=0, max=20)  # type: ignore
+        default=0, min=0, max=12)  # type: ignore
     # The count follows the opening's height (one shelf per foot, the
     # prior library's rule) until someone takes it over, so a resize
     # re-deals the shelves. The padlock in the shelf dialog sets this.
@@ -1282,8 +1557,9 @@ class Closet_Opening_Props(PropertyGroup):
         default=0, min=0, max=10)  # type: ignore
     drawer_front_height: FloatProperty(
         name="Front Height",
-        description="Height of each drawer front. The top drawer takes up "
-                    "whatever height is left over",
+        description="Height of a drawer front the opening holds; fronts "
+                    "left to share split what the opening has left "
+                    "equally",
         default=const.DRAWER_FRONT_HEIGHT,
         unit='LENGTH', precision=4)  # type: ignore
     # Held as a plain string rather than an enum so an opening keeps a box
@@ -1358,6 +1634,14 @@ class Closet_Opening_Props(PropertyGroup):
                     "metal fence stands",
         default=const.SHOE_FENCE_BACK_INSET, min=0.0,
         unit='LENGTH', precision=4)  # type: ignore
+    # The reference's Slanted Shoe Shelves' Vertical Location: how far up the
+    # opening the stack starts. Nothing means the opening floor.
+    slant_z: FloatProperty(
+        name="Vertical Location",
+        description="Height of the bottom shoe shelf off the floor of "
+                    "the opening",
+        default=0.0, min=0.0,
+        unit='LENGTH', precision=4)  # type: ignore
 
     # ----- Cubbies -----
     # One column by one row is "no cubbies"; the regenerator only builds
@@ -1374,6 +1658,20 @@ class Closet_Opening_Props(PropertyGroup):
                     "from the front edge of the opening",
         default=const.CUBBY_SETBACK,
         min=0.0, unit='LENGTH', precision=4)  # type: ignore
+    # Where the grid went when it was put in (the reference's Cubbies kept its
+    # Placement and Cubby Height editable): a band at the bottom or top
+    # capped by a shelf, or the whole opening. Read back by the Cubbies
+    # and Opening dialogs so the band can be resized or moved later.
+    cubby_placement: EnumProperty(
+        name="Placement",
+        description="Whether the grid takes a band of the opening or "
+                    "the whole of it",
+        items=const.CUBBY_PLACEMENT_ITEMS, default='FILL')  # type: ignore
+    cubby_height: FloatProperty(
+        name="Cubby Height",
+        description="How tall the band of cubbies stands",
+        default=const.CUBBY_HEIGHT, min=0.0,
+        unit='LENGTH', precision=4)  # type: ignore
 
     # ----- Front -----
     # Empty means no front. Held as a string for the same reason as the
@@ -1520,7 +1818,8 @@ class Closet_Opening_Props(PropertyGroup):
         description="Set how high this opening's door pulls sit, instead "
                     "of following the room. Read the way the convention "
                     "above reads it: Base down from the door top, Upper "
-                    "up from the door bottom, Tall off the floor",
+                    "up from the door bottom, Tall up from the door "
+                    "bottom",
         default=False)  # type: ignore
     door_pull_vertical_location: FloatProperty(
         name="Door Pull Vertical Location",
@@ -1623,7 +1922,9 @@ class Closet_Opening_Props(PropertyGroup):
         'rollout_qty', 'rollout_height',
         'slant_qty', 'slant_spacing', 'slant_angle', 'slant_color',
         'slant_fence_line', 'slant_fence_inset', 'slant_back_inset',
+        'slant_z',
         'cubby_cols', 'cubby_rows', 'cubby_setback',
+        'cubby_placement', 'cubby_height',
         'door_swing', 'is_hamper',
         'rod_set_from_front', 'rod_from_front', 'rod_from_rear',
         'rod_width_deduction', 'remove_hangers',
@@ -1668,6 +1969,23 @@ class Closets_Scene_Props(PropertyGroup):
     default_accent_overhang: FloatProperty(
         name="Accent Shelf Overhang", default=const.TOP_ACCENT_OVERHANG,
         unit='LENGTH', precision=4)  # type: ignore
+    # Whether a new run is built with its hang rails (the prior
+    # library's Add Hanging Rail for closet starters). Seeds the run's
+    # Remove Hang Rail; runs already in the room keep theirs.
+    # Access gap left at a corner where a run meets a perpendicular one
+    # (the reference version's Adjacent Closet Spacing). Seeds the Corner
+    # Clearance dialog that placement opens; each corner keeps its own.
+    corner_clearance: FloatProperty(
+        name="Corner Clearance",
+        description="Gap a new run leaves between its end and a "
+                    "perpendicular closet at the corner",
+        default=inch(12.0), min=0.0, unit='LENGTH',
+        precision=4)  # type: ignore
+    add_hanging_rail: BoolProperty(
+        name="Add Hanging Rail",
+        description="Build new closet runs with a hanging rail; each run "
+                    "can still turn its own off or on",
+        default=True)  # type: ignore
     base_panel_height: FloatProperty(
         name="Base Panel Height", default=const.BASE_PANEL_HEIGHT,
         unit='LENGTH', precision=4,
@@ -1685,45 +2003,75 @@ class Closets_Scene_Props(PropertyGroup):
         description="Floor to the top of wall-mounted hanging starters",
         default=const.HANGING_TOP_HEIGHT, unit='LENGTH', precision=4,
         update=_system_default_height('hanging_top_height'))  # type: ignore
+    # A part thickness, the shelf clip gap or setback changed: every
+    # run that has not taken the figure over re-solves at once, as
+    # the gaps and reveals below do.
     panel_thickness: FloatProperty(
         name="Panel Thickness", default=const.PANEL_THICKNESS,
-        unit='LENGTH', precision=4)  # type: ignore
+        unit='LENGTH', precision=4,
+        update=_update_room_solve)  # type: ignore
     shelf_thickness: FloatProperty(
         name="Shelf Thickness", default=const.SHELF_THICKNESS,
-        unit='LENGTH', precision=4)  # type: ignore
+        unit='LENGTH', precision=4,
+        update=_update_room_solve)  # type: ignore
     divider_thickness: FloatProperty(
         name="Cubby Divider Thickness",
         description="What the uprights in a cubby grid are cut from. "
                     "The shelves across the grid follow the shelf "
                     "thickness",
         default=const.DIVIDER_THICKNESS,
-        unit='LENGTH', precision=4)  # type: ignore
+        unit='LENGTH', precision=4,
+        update=_update_room_solve)  # type: ignore
     batten_thickness: FloatProperty(
         name="Batten Thickness",
         description="How thick the scribe strip on the end of a run is",
         default=const.BATTEN_THICKNESS,
-        unit='LENGTH', precision=4)  # type: ignore
+        unit='LENGTH', precision=4,
+        update=_update_room_solve)  # type: ignore
     batten_width: FloatProperty(
         name="Batten Width",
         description="How wide the scribe strip on the end of a run is. "
                     "Whatever it carries past the panel edge is what "
                     "there is to scribe to the wall",
         default=const.BATTEN_WIDTH,
-        unit='LENGTH', precision=4)  # type: ignore
+        unit='LENGTH', precision=4,
+        update=_update_room_solve)  # type: ignore
     # The room's standard for how a shelf on clips is cut. An opening
     # can take either figure over for itself.
     shelf_clip_gap: FloatProperty(
         name="Shelf Clip Gap", default=const.SHELF_CLIP_GAP,
-        min=0.0, unit='LENGTH', precision=4)  # type: ignore
+        min=0.0, unit='LENGTH', precision=4,
+        update=_update_room_solve)  # type: ignore
     shelf_setback: FloatProperty(
         name="Shelf Setback", default=const.SHELF_SETBACK,
-        min=0.0, unit='LENGTH', precision=4)  # type: ignore
+        min=0.0, unit='LENGTH', precision=4,
+        update=_update_room_solve)  # type: ignore
     countertop_thickness: FloatProperty(
         name="Countertop Thickness", default=const.COUNTERTOP_THICKNESS,
-        unit='LENGTH', precision=4)  # type: ignore
+        unit='LENGTH', precision=4,
+        update=_update_room_solve)  # type: ignore
+    # The room's kick is picked from the 32mm kick list the way the reference's
+    # Default Toe Kick Height was. The dropdown holds nothing of its own:
+    # it reads and writes toe_kick_height, which placement and Update Toe
+    # Kicks copy to the runs. A height off the list (a file made before
+    # the list) reads as Custom and keeps its typed distance.
+    toe_kick_height_preset: EnumProperty(
+        name="Toe Kick Height",
+        description="Standard toe-kick height for closets placed in "
+                    "this room",
+        items=_ROOM_KICK_ITEMS,
+        get=_get_room_kick_preset,
+        set=_set_room_kick_preset)  # type: ignore
+    # Custom picked on the dropdown: the typed distance is shown and
+    # kept even when it lands on a standard kick. A distance off the
+    # list reads as Custom without it.
+    toe_kick_custom: BoolProperty(
+        name="Custom Toe Kick Height", default=False,
+        options={'HIDDEN'})  # type: ignore
     toe_kick_height: FloatProperty(
         name="Toe Kick Height", default=const.DEFAULT_TOE_KICK_HEIGHT,
-        unit='LENGTH', precision=4)  # type: ignore
+        unit='LENGTH', precision=4,
+        update=_update_room_kick_height)  # type: ignore
     toe_kick_setback: FloatProperty(
         name="Toe Kick Setback", default=const.DEFAULT_TOE_KICK_SETBACK,
         unit='LENGTH', precision=4)  # type: ignore
@@ -1867,7 +2215,8 @@ class Closets_Scene_Props(PropertyGroup):
 
     closet_panel_type: EnumProperty(
         name="Door Panel",
-        description="Center panel on 5-piece doors: wood or glass",
+        description="Center panel on 5-piece doors and drawer fronts: "
+                    "wood or glass",
         items=materials_closets.PANEL_TYPES,
         default='Vertical Grain',
         update=materials_closets.update_room)  # type: ignore
@@ -1879,7 +2228,7 @@ class Closets_Scene_Props(PropertyGroup):
         description="Run the grain up the drawer fronts instead of "
                     "across them",
         default=False,
-        update=materials_closets.update_room)  # type: ignore
+        update=materials_closets.update_drawer_grain)  # type: ignore
 
     closet_pull: EnumProperty(
         name="Pull",
@@ -1915,7 +2264,8 @@ class Closets_Scene_Props(PropertyGroup):
         update=pulls_closets.update_room)  # type: ignore
     pull_vertical_location_tall: FloatProperty(
         name="Tall",
-        description="Pull height off the floor on a tall door",
+        description="Pull height up from the bottom of a tall door to "
+                    "the pull",
         default=units.inch(45.0), unit='LENGTH',
         update=pulls_closets.update_room)  # type: ignore
     pull_vertical_location_upper: FloatProperty(
@@ -1937,17 +2287,17 @@ class Closets_Scene_Props(PropertyGroup):
         name="Rod Type",
         items=pulls_closets.ROD_TYPES,
         default='OVAL',
-        update=pulls_closets.update_room)  # type: ignore
+        update=_update_rod_options)  # type: ignore
     closet_rod_finish: EnumProperty(
         name="Rod Finish",
         items=pulls_closets.ROD_FINISHES,
         default='Polished Chrome',
-        update=pulls_closets.update_room)  # type: ignore
+        update=_update_rod_options)  # type: ignore
     closet_hanger_model: EnumProperty(
         name="Hangers",
         description="Display hanger model shown on closet rods",
         items=pulls_closets.hanger_enum_items,
-        update=pulls_closets.update_room)  # type: ignore
+        update=_update_rod_options)  # type: ignore
 
     # What accessories are made in unless one is set otherwise: new
     # ones arrive in it, and changing it re-dresses the room's. One not
@@ -1965,7 +2315,7 @@ class Closets_Scene_Props(PropertyGroup):
                     "made in. One not offered in it is made in black, "
                     "or the first fabric it comes in",
         items=accessories_closets.ACCESSORY_FABRIC_ITEMS,
-        default='Fabric Beach',
+        default='Fabric Slate',     # the reference's default fabric
         update=accessories_closets.update_room_finishes)  # type: ignore
 
     closet_drawer_box: EnumProperty(
@@ -1981,14 +2331,30 @@ class Closets_Scene_Props(PropertyGroup):
         items=fronts_closets.FRONT_STYLES,
         default='SLAB',
         update=fronts_closets.update_room)  # type: ignore
+    # The reference's Update Doors in Room: a style change can restyle the doors,
+    # the drawer fronts, or both. The kind left out keeps the style it
+    # had (fronts_closets.update_room).
+    front_style_update_doors: BoolProperty(
+        name="Update Doors",
+        description="Restyle the doors in the room when the front style "
+                    "changes. Off, they keep the style they have",
+        default=True,
+        update=fronts_closets.note_room_style)  # type: ignore
+    front_style_update_drawer_fronts: BoolProperty(
+        name="Update Drawer Fronts",
+        description="Restyle the drawer fronts in the room when the "
+                    "front style changes. Off, they keep the style they "
+                    "have",
+        default=True,
+        update=fronts_closets.note_room_style)  # type: ignore
 
     closet_seed_door_shelves: BoolProperty(
         name="Shelves Behind Doors",
         description="Put adjustable shelves into an opening when a "
                     "door is added to it, where the opening is still "
-                    "empty. Turn this off to add a door and nothing "
-                    "else, the way the prior library did",
-        default=True)  # type: ignore
+                    "empty. Off, adding a door adds nothing else, the "
+                    "way the reference version did",
+        default=False)  # type: ignore
 
     notch_panels_for_base_board: BoolProperty(
         name="Notch Panels for Base Board",
@@ -2047,6 +2413,17 @@ class Closets_Scene_Props(PropertyGroup):
     show_toe_kick_sizes: BoolProperty(
         name="Show Toe Kick Sizes", default=False)  # type: ignore
 
+    # The marking on fixed shelves and finished ends (reference Lock Shelf
+    # Color). The default stays the library's stronger orange rather
+    # than the reference's peach (see const.LOCK_SHELF_COLOR).
+    lock_shelf_color: FloatVectorProperty(
+        name="Lock Shelf Color",
+        description="Viewport colour marking fixed (locked) shelves and "
+                    "finished end panels",
+        subtype='COLOR_GAMMA', size=4, min=0.0, max=1.0,
+        default=const.LOCK_SHELF_COLOR,
+        update=_update_lock_shelf_color)  # type: ignore
+
     # ---- Options tab section toggles ----
     show_material_options: BoolProperty(
         name="Show Materials", default=False)  # type: ignore
@@ -2064,6 +2441,8 @@ class Closets_Scene_Props(PropertyGroup):
         name="Show Countertops", default=False)  # type: ignore
     show_molding_options: BoolProperty(
         name="Show Molding", default=False)  # type: ignore
+    show_user_library: BoolProperty(
+        name="My Closets", default=False)  # type: ignore
     show_design_warnings: BoolProperty(
         name="Show Design Warnings", default=True)  # type: ignore
 
@@ -2108,12 +2487,20 @@ class Closets_Scene_Props(PropertyGroup):
         row = col.row()
         row.label(text="Hanging Top Height:")
         row.prop(self, 'hanging_top_height', text="")
+        # Pushes the figure to the hanging closets already placed; a
+        # new one takes it as it is placed.
+        row.operator('hb_closets.update_hanging_heights', text="",
+                     icon='FILE_REFRESH')
         row = col.row()
         row.label(text="Corner Size:")
         row.prop(self, 'default_corner_closet_size', text="")
         row = col.row()
         row.label(text="Accent Overhang:")
         row.prop(self, 'default_accent_overhang', text="")
+        row = col.row()
+        row.label(text="Corner Clearance:")
+        row.prop(self, 'corner_clearance', text="")
+        col.prop(self, 'add_hanging_rail')
 
         box = layout.box()
         box.prop(self, 'show_thickness_sizes', text="Part Thicknesses",
@@ -2135,14 +2522,21 @@ class Closets_Scene_Props(PropertyGroup):
             sub = box.column(align=True)
             sub.prop(self, 'shelf_clip_gap', text="Clip Gap")
             sub.prop(self, 'shelf_setback', text="Setback")
+            box.prop(self, 'lock_shelf_color', text="Lock Shelf Color")
 
         box = layout.box()
-        box.prop(self, 'show_toe_kick_sizes', text="Toe Kick",
+        row = box.row()
+        row.prop(self, 'show_toe_kick_sizes', text="Toe Kick",
                  icon='TRIA_DOWN' if self.show_toe_kick_sizes
                  else 'TRIA_RIGHT', emboss=False)
+        # Pushes height and setback to every closet already placed.
+        row.operator('hb_closets.update_toe_kicks', text="",
+                     icon='FILE_REFRESH')
         if self.show_toe_kick_sizes:
             sub = box.column(align=True)
-            sub.prop(self, 'toe_kick_height', text="Height")
+            sub.prop(self, 'toe_kick_height_preset', text="Height")
+            if self.toe_kick_height_preset == 'CUSTOM':
+                sub.prop(self, 'toe_kick_height', text="Custom Height")
             sub.prop(self, 'toe_kick_setback', text="Setback")
 
     # =====================================================================
@@ -2189,6 +2583,11 @@ class Closets_Scene_Props(PropertyGroup):
         col.label(text="Edgebanding:")
         col.prop(self, 'closet_edge_material', text="Closet Edge")
         col.prop(self, 'closet_front_edge_material', text="Front Edge")
+        if materials_closets.front_edge_lacks_3mm(self):
+            warn = col.box()
+            warn.alert = True
+            warn.label(text="Edgebanding Color not available in 3mm",
+                       icon='ERROR')
 
     # =====================================================================
     # UI: door and drawer front styles (Options tab)
@@ -2196,12 +2595,34 @@ class Closets_Scene_Props(PropertyGroup):
     def draw_front_options_ui(self, layout, context):
         col = layout.column(align=True)
         col.prop(self, 'closet_front_style', text="Front Style")
+        row = col.row(align=True)
+        row.prop(self, 'front_style_update_doors', text="Doors",
+                 toggle=True)
+        row.prop(self, 'front_style_update_drawer_fronts',
+                 text="Drawer Fronts", toggle=True)
         col.prop(self, 'closet_panel_type', text="Door Panel")
         col.prop(self, 'closet_door_edgeband', text="Edgebanding")
+        if materials_closets.front_edge_lacks_3mm(self):
+            warn = col.box()
+            warn.alert = True
+            warn.label(text="Edgebanding Color not available in 3mm",
+                       icon='ERROR')
 
         col.separator()
         col.prop(self, 'closet_seed_door_shelves',
                  text="Shelves Behind Doors")
+
+        # Every front in the room stood open or shut at once, for the
+        # drawing, where the reference kept its Open/Close Doors buttons.
+        row = layout.row(align=True)
+        op = row.operator('hb_closets.open_room_fronts',
+                          text="Open Doors", icon='HIDE_OFF')
+        op.open = True
+        op.fronts = 'ALL'
+        op = row.operator('hb_closets.open_room_fronts',
+                          text="Close Doors", icon='HIDE_ON')
+        op.open = False
+        op.fronts = 'ALL'
 
         # How every front in the room hangs. Room figures - a change
         # here re-solves every run; any one opening can still take an
@@ -2243,10 +2664,13 @@ class Closets_Scene_Props(PropertyGroup):
         col.prop(self, 'pull_vertical_location_upper', text="Upper Vertical")
         col.prop(self, 'center_pulls_on_drawer_front',
                  text="Center Drawer Pulls")
-        sub = col.row()
-        sub.enabled = not self.center_pulls_on_drawer_front
-        sub.prop(self, 'pull_vertical_location_drawers',
-                 text="Drawer Vertical")
+        # A tilt-out hamper takes this figure even where drawer pulls
+        # are centered (the reference always offered it), so the row stays live;
+        # while centered it is only the hampers' figure.
+        col.prop(self, 'pull_vertical_location_drawers',
+                 text=("Hamper Vertical"
+                       if self.center_pulls_on_drawer_front
+                       else "Drawer Vertical"))
 
     # =====================================================================
     # UI: drawers (Options tab)
@@ -2256,13 +2680,26 @@ class Closets_Scene_Props(PropertyGroup):
         at the size it has been given. Each part carries its own
         warning, written when it was last drawn, so this gathers what
         is already there rather than working anything out again."""
-        from . import types_closets
+        from . import types_closets, molding_closets
         col = layout.column(align=True)
         found = []
+        keys = (types_closets.PROP_BOX_WARNING,
+                types_closets.PROP_ACCESSORY_WARNING,
+                types_closets.PROP_STYLE_WARNING)
+        no_shield = not molding_closets.light_shield_available(
+            context.scene)
         for obj in context.scene.objects:
-            message = obj.get(types_closets.PROP_BOX_WARNING, '')
-            if message:
-                found.append((obj.name, message))
+            seen = set()
+            for key in keys:
+                for message in str(obj.get(key, '') or '').split('; '):
+                    if message and message not in seen:
+                        seen.add(message)
+                        found.append((obj.name, message))
+            if (no_shield and obj.get(molding_closets.TAG_MOLDING)
+                    and obj.get(molding_closets.PROP_MOLDING_KIND,
+                                'CROWN') == 'CROWN'):
+                found.append((obj.name, "Light Shield not available "
+                                        "for this material"))
         if not found:
             col.label(text="No design warnings.")
             return
@@ -2280,6 +2717,16 @@ class Closets_Scene_Props(PropertyGroup):
 
         col.separator()
         col.prop(self, 'closet_drawer_vertical_grain')
+
+        row = layout.row(align=True)
+        op = row.operator('hb_closets.open_room_fronts',
+                          text="Open Drawers", icon='HIDE_OFF')
+        op.open = True
+        op.fronts = 'DRAWERS'
+        op = row.operator('hb_closets.open_room_fronts',
+                          text="Close Drawers", icon='HIDE_ON')
+        op.open = False
+        op.fronts = 'DRAWERS'
 
     # =====================================================================
     # UI: rods and hangers (Options tab)
@@ -2328,8 +2775,12 @@ class Closets_Scene_Props(PropertyGroup):
         sub = col.row()
         sub.enabled = not self.use_closet_material_for_countertops
         sub.prop(self, 'closet_countertop_material', text="Material")
-        col.label(text="Thickness: %s" % _thickness_label(
-            countertop_thickness_for(self)))
+        if self.use_closet_material_for_countertops:
+            col.label(text="Thickness: %s" % _thickness_label(
+                countertop_thickness_for(self)))
+        else:
+            # Typed for the room, as the reference's Countertop Thickness was.
+            col.prop(self, 'countertop_thickness', text="Thickness")
 
     # =====================================================================
     # UI: molding (Options tab)
@@ -2338,6 +2789,13 @@ class Closets_Scene_Props(PropertyGroup):
         col = layout.column(align=True)
         col.label(text="Crown:")
         col.prop(self, 'closet_crown_profile', text="Profile")
+        if (molding_closets.resolve_crown_profile(
+                self.closet_crown_profile or molding_closets.DEFAULT_PROFILE,
+                context.scene)
+                != (self.closet_crown_profile
+                    or molding_closets.DEFAULT_PROFILE)):
+            col.label(text="Light shield not available for this material "
+                      "- adds L crown", icon='INFO')
         row = col.row(align=True)
         row.scale_y = 1.3
         row.operator('hb_closets.add_molding', text="Add Crown Molding",
@@ -2358,6 +2816,10 @@ class Closets_Scene_Props(PropertyGroup):
     # =====================================================================
     # UI: master draw entry point (called by view3d_sidebar)
     # =====================================================================
+    def draw_user_library_ui(self, layout, context):
+        from .operators import ops_user_library
+        ops_user_library.draw_library_section(layout, context)
+
     def draw_library_ui(self, layout, context):
         col = layout.column(align=True)
 
@@ -2377,6 +2839,8 @@ class Closets_Scene_Props(PropertyGroup):
                  self.draw_closet_sizes_ui),
                 ('show_starter_library', "Closet Starters",
                  self.draw_starter_library_ui),
+                ('show_user_library', "My Closets",
+                 self.draw_user_library_ui),
                 ('show_design_warnings', "Design Warnings",
                  self.draw_design_warnings_ui),
             ]
@@ -2439,9 +2903,12 @@ def register():
         name="Closet Opening Props", type=Closet_Opening_Props)
     bpy.types.Object.hb_closet_slab = PointerProperty(
         name="Slab Countertop Props", type=Closet_Slab_Countertop_Props)
+    # Files that saved their colours by list place open on the right one.
+    materials_closets.register_handlers()
 
 
 def unregister():
+    materials_closets.unregister_handlers()
     for pcoll in preview_collections.values():
         try:
             bpy.utils.previews.remove(pcoll)

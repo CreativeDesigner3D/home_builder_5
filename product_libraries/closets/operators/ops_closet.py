@@ -428,13 +428,16 @@ class hb_closets_OT_toggle_mode(bpy.types.Operator):
 # Placement modal
 # ---------------------------------------------------------------------------
 def _flip_bay_swing(bay):
-    """LEFT<->RIGHT flip of a bay-wide front's swing; DOUBLE, LIFT_UP
-    and empty values pass through unchanged."""
+    """LEFT<->RIGHT flip of a bay-wide front's swing, the front face's
+    and a double island's back face's alike; DOUBLE, LIFT_UP and empty
+    values pass through unchanged."""
     bp = bay.hb_closet_bay
-    if bp.door_swing == 'LEFT':
-        bp.door_swing = 'RIGHT'
-    elif bp.door_swing == 'RIGHT':
-        bp.door_swing = 'LEFT'
+    for attr in ('door_swing', 'back_door_swing'):
+        swing = getattr(bp, attr)
+        if swing == 'LEFT':
+            setattr(bp, attr, 'RIGHT')
+        elif swing == 'RIGHT':
+            setattr(bp, attr, 'LEFT')
 
 
 def _clear_front_open_state(opening, role):
@@ -505,8 +508,17 @@ def _stack_top_of_base(base):
     top when it carries one."""
     bsp = base.hb_closet_starter
     if _stack_is_tall(base):
-        return bsp.height + (types_closets.run_sizes(base).shelf_thickness
-                             if bsp.add_top_accent_shelf else 0.0)
+        st = types_closets.run_sizes(base).shelf_thickness
+        if bsp.add_top_accent_shelf:
+            # A stepped run's accent shelf is cut in pieces at their own
+            # tops; a stack stands on the highest of them.
+            tops = [c.location.z + st for c in base.children
+                    if c.get('hb_part_role')
+                    == types_closets.PART_ROLE_ACCENT_SHELF
+                    and not c.hide_viewport]
+            if tops:
+                return max(tops)
+        return bsp.height + (st if bsp.add_top_accent_shelf else 0.0)
     return bsp.height + (bsp.countertop_thickness
                          if bsp.include_countertop else 0.0)
 
@@ -653,6 +665,11 @@ class hb_closets_OT_place_starter(bpy.types.Operator,
         description="Duplicate mode only: flip the copy left-to-right "
                     "(bay order and door swings)",
         default=False)  # type: ignore
+    discard_source: bpy.props.BoolProperty(
+        name="Discard Source",
+        description="Duplicate mode only: remove the source when the "
+                    "placement ends (a closet loaded from the library)",
+        default=False, options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
 
     # Live modal state; reset per session in invoke().
     _preview_cage = None
@@ -713,16 +730,25 @@ class hb_closets_OT_place_starter(bpy.types.Operator,
         self._last_clearances = {}
         self._detent_hit = set()
         if self._is_corner:
-            # Corner L units are fixed-footprint singles: no gap fill,
-            # no bay tiling.
-            self._cabinet_width = const.L_SHELF_SIZE
-            self._cabinet_depth = const.L_SHELF_SIZE
+            # Corner units are fixed-footprint singles: no gap fill, no
+            # bay tiling. An L unit is the room's Corner Closet Size
+            # square; a corner filler is square to the base depth plus
+            # its board (reference Corner_Closet / corner filler Dim X = Y).
+            if getattr(cls, 'is_filler', False):
+                size = (float(scene_props.default_base_panel_depth)
+                        + const.CORNER_FILLER_WIDTH)
+            else:
+                size = float(scene_props.default_corner_closet_size)
+            self._cabinet_width = size
+            self._cabinet_depth = size
             self.bay_qty = 1
         else:
             self._cabinet_width = scene_props.default_closet_width
-            self._cabinet_depth = (cls.default_depth
-                                   if cls.default_depth is not None
-                                   else scene_props.default_panel_depth)
+            self._cabinet_depth = (
+                cls.default_depth if cls.default_depth is not None
+                else cls_inst._default_depth_for_type(scene_props)
+                if hasattr(cls_inst, '_default_depth_for_type')
+                else scene_props.default_panel_depth)
         # Auto-fill widths picked up over a wall reset to this off-wall
         # (typed widths persist - they clear fill mode).
         self._default_free_width = self._cabinet_width
@@ -731,7 +757,10 @@ class hb_closets_OT_place_starter(bpy.types.Operator,
             # no bay > 42"); fill mode recomputes it per wall gap.
             self.bay_qty = types_closets.auto_bay_qty(self._cabinet_width)
         self._cabinet_height = cls_inst.default_height(scene_props)
-        self._fill_mode = not self._is_corner
+        # An island drops at its own width even pointed at a wall, as
+        # the reference version dropped one (drop_island: fill_on False);
+        # F still stretches it.
+        self._fill_mode = not self._is_corner and not self._is_island
         self._auto_bay_qty = not self._is_corner
         if self._source_obj is not None:
             # Seed from the source's real dimensions and bay count.
@@ -832,11 +861,30 @@ class hb_closets_OT_place_starter(bpy.types.Operator,
 
     def cancel(self, context):
         # The window manager can end the modal without an event (file
-        # load, window closed): never leave the highlight drawing.
+        # load, window closed): never leave the highlight drawing, nor a
+        # library closet's hidden source behind.
         self._clear_stack_highlight()
         self.remove_placement_dim_handler()
+        try:
+            self._discard_library_source()
+        except Exception:
+            pass
+
+    def _discard_library_source(self):
+        """Remove a library closet's appended source once its placement
+        is over - it was only there to be copied."""
+        src = self._source_obj
+        if not self.discard_source or src is None:
+            return
+        try:
+            if src.name in bpy.data.objects:
+                types_closets._remove_part_tree(src)
+        except ReferenceError:
+            pass
+        self._source_obj = None
 
     def _cancel(self, context):
+        self._discard_library_source()
         self._clear_stack_highlight()
         self.remove_placement_dim_handler()
         self._delete_preview()
@@ -896,6 +944,13 @@ class hb_closets_OT_place_starter(bpy.types.Operator,
                 self._gap_snap = None
                 self._reposition_with_offsets(bpy.context)
         self.stop_typing()
+
+    def _unfilled_width(self):
+        """The width a drop goes back to with fill off: a copy's own
+        width, else the starter's default."""
+        if self._source_obj is not None:
+            return self._source_obj.hb_closet_starter.width
+        return self._default_free_width
 
     def _apply_width(self, width, fill_mode):
         """Set the preview width. fill_mode=False is the typed path (the
@@ -990,6 +1045,34 @@ class hb_closets_OT_place_starter(bpy.types.Operator,
                     insets[i] = const.CORNER_PULL_OFF
             except Exception:
                 continue
+        return insets
+
+    def _opening_insets(self, wall, gap_start, gap_end, z0, height):
+        """(left, right) automatic 1/2" pull-offs where the gap edge is
+        the casing of a door or window beside the run - the reference held a
+        closet that far off one unless an offset was typed
+        (left/right_window_door_offset). Only an
+        opening the run actually meets counts: one a low run passes
+        under does not bound it."""
+        tol = units.inch(0.25)
+        insets = [0.0, 0.0]
+        for child in wall.children:
+            if not ('IS_ENTRY_DOOR_BP' in child or 'IS_WINDOW_BP' in child):
+                continue
+            try:
+                geo = hb_types.GeoNodeObject(child)
+                w = geo.get_input('Dim X')
+                h = geo.get_input('Dim Z')
+            except Exception:
+                continue
+            cz = child.location.z
+            if not (z0 < cz + h and cz < z0 + height):
+                continue
+            x0 = child.location.x
+            if abs(gap_start - (x0 + w)) <= tol:
+                insets[0] = const.CORNER_PULL_OFF
+            if abs(gap_end - x0) <= tol:
+                insets[1] = const.CORNER_PULL_OFF
         return insets
 
     # ---------------- positioning ----------------
@@ -1111,6 +1194,192 @@ class hb_closets_OT_place_starter(bpy.types.Operator,
         if context.area is not None:
             context.area.tag_redraw()
 
+    def _position_corner_on_wall(self, context, wall, wall_length, cursor_x):
+        """A corner L unit or corner filler on a wall follows the cursor
+        along it the way the reference version's drop_corner did: the cursor
+        is its left edge; it snaps to the left end of the free gap under
+        the cursor, to the gap's center, to the right end when it would
+        run past it, or else to the grid, and butts against a
+        closet or cabinet beside it rather than running into it. In the
+        right half of the wall it turns -90 so its wings hug that end;
+        in the left half it stands square with its corner at its left
+        edge."""
+        cage_obj = self._preview_cage.obj
+        size = self._cabinet_width
+        try:
+            wall_thickness = hb_types.GeoNodeWall(wall).get_input('Thickness')
+        except Exception:
+            wall_thickness = 0.0
+        try:
+            gap_start, gap_end, _snap = self.find_placement_gap_by_side(
+                wall, cursor_x, size, True, wall_thickness,
+                object_z_start=cage_obj.location.z,
+                object_height=self._preview_cage.get_input('Dim Z'),
+                object_depth=self._preview_cage.get_input('Dim Y'),
+                exclude_obj=cage_obj)
+        except Exception:
+            gap_start = gap_end = None
+        if gap_start is None:
+            gap_start, gap_end = 0.0, wall_length
+        gap_width = gap_end - gap_start
+
+        # Snapping the way the reference's drop_corner did: the cursor is the
+        # unit's LEFT edge on the snap grid. Within 5" of the left end
+        # of the gap it pulls to it; with the cursor within 5" of the
+        # gap's center it centers; running past the right end it stops
+        # there; anywhere else it stands where the cursor is.
+        tol = units.inch(5.0)
+        grid_x = hb_snap.snap_value_to_grid(
+            cursor_x, context.scene.unit_settings)
+        if (cursor_x - gap_start) < tol:
+            self._gap_snap = 'LEFT'
+        elif abs((gap_start + gap_end) / 2.0 - cursor_x) < tol:
+            self._gap_snap = 'CENTER'
+        elif gap_end - (grid_x + size) <= 0.0:
+            self._gap_snap = 'RIGHT'
+        else:
+            self._gap_snap = None
+
+        if self._gap_snap == 'LEFT':
+            placement_x = gap_start
+        elif self._gap_snap == 'RIGHT':
+            placement_x = gap_end - size
+        elif self._gap_snap == 'CENTER':
+            placement_x = gap_start + (gap_width - size) / 2.0
+        else:
+            placement_x = grid_x
+        # Never past what it butts against (a gap narrower than the unit
+        # leaves it at the gap's left end).
+        placement_x = max(gap_start, min(placement_x, gap_end - size))
+
+        # Over a window, cabinet or closet it clears in height, the
+        # unit centers on it instead (reference drop_corner).
+        over = self._center_target(wall, wall_thickness,
+                                   cage_obj.location.z,
+                                   self._preview_cage.get_input('Dim Z'))
+        # Held inside the free gap there; where it does not fit the
+        # unit keeps the placement worked out above.
+        found = (self._centered_x(wall, over, size, True)
+                 if over is not None else None)
+        if found is not None:
+            placement_x, gap_start, gap_end = found
+            self._gap_snap = 'CENTER'
+
+        cage_obj.location.y = 0.0
+        # Dropped anywhere in the right half of the wall the unit turns
+        # -90 so its wings hug that end, as the reference's drop_corner turned it
+        # (left edge past half the wall's length).
+        if placement_x > wall_length / 2.0:
+            cage_obj.location.x = placement_x + size
+            cage_obj.rotation_euler = (0, 0, math.radians(-90))
+        else:
+            cage_obj.location.x = placement_x
+            cage_obj.rotation_euler = (0, 0, 0)
+        self._gap_wall = None
+        self._placement_dim_specs = self._build_dim_specs_on_wall(
+            context, wall, wall_thickness, gap_start, gap_end,
+            placement_x, size)
+        if context.area is not None:
+            context.area.tag_redraw()
+
+    # -- Centering a starter over what is under it ----------------------
+    # Over a cabinet, appliance, window or closet on the wall that it
+    # clears in height, any starter - base, tall or hanging - and a
+    # corner unit centers itself on that thing at its default width
+    # rather than filling the gap (reference drop_starter / drop_corner: a
+    # cage under the cursor with no height collision snaps the drop to
+    # the cage's center).
+
+    _CENTER_MARKERS = hb_placement.CABINET_MARKERS | {'IS_WINDOW_BP'}
+
+    def _center_target(self, wall, wall_thickness, z_start, height):
+        """The wall-hung object under the cursor a starter or corner
+        centers on, or None."""
+        if self._preview_cage is None or getattr(self, '_is_island', False):
+            return None
+        # A corner unit only goes on the front of a wall.
+        on_front = (True if getattr(self, '_is_corner', False)
+                    else self._place_on_front)
+        obj = self.hit_object
+        while obj is not None and obj.parent is not wall:
+            obj = obj.parent
+        if (obj is None or obj is self._preview_cage.obj
+                or not any(m in obj for m in self._CENTER_MARKERS)):
+            return None
+        try:
+            geo = hb_types.GeoNodeObject(obj)
+            width = float(geo.get_input('Dim X'))
+            obj_h = float(geo.get_input('Dim Z'))
+        except Exception:
+            return None
+        if width <= 0.0:
+            return None
+        if 'IS_WINDOW_BP' not in obj:
+            # Only something on the side being placed on; a window goes
+            # through the wall, so it counts from either side.
+            if (obj.location.y < wall_thickness / 2.0) != on_front:
+                return None
+        z0 = obj.location.z
+        if z_start < z0 + obj_h - 1e-4 and z0 < z_start + height - 1e-4:
+            return None   # they clash in height
+        return obj
+
+    def _centered_x(self, wall, target, width, on_front):
+        """Where a unit `width` wide centered on `target` goes, held
+        inside the free gap at that spot so it never runs into what is
+        beside it - or None when the gap is narrower than the unit,
+        which leaves the usual placement to it."""
+        geo = hb_types.GeoNodeObject(target)
+        t_width = float(geo.get_input('Dim X'))
+        # A cabinet hung on the back of the wall is rotated about its
+        # right end, so its left edge is its origin less its width.
+        t_x = target.location.x
+        if abs(target.rotation_euler.z) > 1e-3 and 'IS_WINDOW_BP' not in target:
+            t_x -= t_width
+        placement_x = t_x + (t_width - width) / 2.0
+        cage = self._preview_cage
+        try:
+            wall_geo = hb_types.GeoNodeWall(wall)
+            wall_thickness = wall_geo.get_input('Thickness')
+            wall_length = wall_geo.get_input('Length')
+        except Exception:
+            wall_thickness = wall_length = 0.0
+        try:
+            gap_start, gap_end, _snap = self.find_placement_gap_by_side(
+                wall, t_x + t_width / 2.0, width, on_front, wall_thickness,
+                object_z_start=cage.obj.location.z,
+                object_height=cage.get_input('Dim Z'),
+                object_depth=cage.get_input('Dim Y'),
+                exclude_obj=cage.obj)
+        except Exception:
+            gap_start = gap_end = None
+        if gap_start is None:
+            gap_start, gap_end = 0.0, wall_length
+        if gap_end - gap_start < width - 1e-6:
+            return None
+        return (max(gap_start, min(placement_x, gap_end - width)),
+                gap_start, gap_end)
+
+    def _position_centered_over(self, context, wall, target):
+        """Center the starter on `target` at its default width. In fill
+        mode too: the reference tested the cage under the cursor before its fill
+        branch, so pointing at one centered rather than filled. False
+        when it does not fit there, and nothing is changed."""
+        width = (self._unfilled_width() if self._fill_mode
+                 else self._cabinet_width)
+        found = self._centered_x(wall, target, width, self._place_on_front)
+        if found is None:
+            return False
+        placement_x, gap_start, gap_end = found
+        if self._fill_mode:
+            self._apply_width(width, fill_mode=True)
+        width = self._cabinet_width
+        self._gap_wall = None
+        self._gap_snap = 'CENTER'
+        self._place_cage_on_wall(context, wall, placement_x, width,
+                                 gap_start, gap_end)
+        return True
+
     def _update_place_on_front(self, context, wall, local_hit_y, wall_thickness):
         """Which side of the wall the cursor is on, with hysteresis. In a
         plan view the raycast often hits the wall TOP face, so project
@@ -1157,18 +1426,8 @@ class hb_closets_OT_place_starter(bpy.types.Operator,
                 cage_obj.matrix_parent_inverse.identity()
             local_hit = wall.matrix_world.inverted() @ self.hit_location
             cage_obj.location.z = self._mount_z(context.scene.hb_closets)
-            if local_hit.x <= wall_length / 2.0:
-                cage_obj.location.x = 0.0
-                cage_obj.location.y = 0.0
-                cage_obj.rotation_euler = (0, 0, 0)
-            else:
-                cage_obj.location.x = wall_length
-                cage_obj.location.y = 0.0
-                cage_obj.rotation_euler = (0, 0, math.radians(-90))
-            self._gap_wall = None
-            self._placement_dim_specs = []
-            if context.area is not None:
-                context.area.tag_redraw()
+            self._position_corner_on_wall(context, wall, wall_length,
+                                          local_hit.x)
             return
         try:
             wall_geo = hb_types.GeoNodeWall(wall)
@@ -1190,6 +1449,11 @@ class hb_closets_OT_place_starter(bpy.types.Operator,
 
         cabinet_height = self._preview_cage.get_input('Dim Z')
         cabinet_depth = self._preview_cage.get_input('Dim Y')
+        over = self._center_target(wall, wall_thickness,
+                                   cage_obj.location.z, cabinet_height)
+        if (over is not None
+                and self._position_centered_over(context, wall, over)):
+            return
         try:
             result = self.find_placement_gap_by_side(
                 wall, cursor_x, self._cabinet_width,
@@ -1201,11 +1465,10 @@ class hb_closets_OT_place_starter(bpy.types.Operator,
             )
         except Exception:
             result = (None, None, None)
-        gap_start, gap_end, snap_x = result
+        gap_start, gap_end, _snap_x = result
         if gap_start is None:
             gap_start = 0.0
             gap_end = wall_length
-            snap_x = max(gap_start, cursor_x - self._cabinet_width / 2)
 
         self._gap_left_boundary = gap_start
         self._gap_right_boundary = gap_end
@@ -1217,16 +1480,30 @@ class hb_closets_OT_place_starter(bpy.types.Operator,
         # - the clearance dialog owns that case) AND the connected wall
         # turns into the placement side (_corner_insets). Stored per
         # side so a typed offset on one end replaces its own pull-off
-        # while the other end keeps its automatic one.
+        # while the other end keeps its automatic one. Only a fill
+        # takes it: the reference pulled off an inside corner in its fill branch
+        # alone (get_fill_offset), and a starter snapped or set down
+        # at its own width goes right to the wall.
         try:
             auto_left, auto_right = self._corner_insets(
                 wall, wall_geo, wall_length, wall_thickness)
         except Exception:
             auto_left = auto_right = 0.0
+        if not self._fill_mode:
+            auto_left = auto_right = 0.0
         if gap_start > 1e-6:
             auto_left = 0.0
         if gap_end < wall_length - 1e-6:
             auto_right = 0.0
+        # The same 1/2" off a door or window casing the gap stops at.
+        try:
+            open_left, open_right = self._opening_insets(
+                wall, gap_start, gap_end, cage_obj.location.z,
+                cabinet_height)
+        except Exception:
+            open_left = open_right = 0.0
+        auto_left = max(auto_left, open_left)
+        auto_right = max(auto_right, open_right)
         self._auto_left_inset = auto_left
         self._auto_right_inset = auto_right
 
@@ -1243,43 +1520,40 @@ class hb_closets_OT_place_starter(bpy.types.Operator,
 
         gap_width = max(gap_end - gap_start, units.inch(1.0))
 
-        # Edge / center snap with hysteresis (fixed-floor engage zone so
-        # narrow starters still get a usable zone; wider release so the
-        # snap doesn't pop at the boundary). Fill mode pins to gap_start.
-        engage_corner = max(self._cabinet_width / 2, units.inch(6.0))
-        release_corner = engage_corner + units.inch(1.0)
-        engage_center = units.inch(4.0)
-        release_center = engage_center + units.inch(1.0)
-        left_thresh = release_corner if self._gap_snap == 'LEFT' else engage_corner
-        right_thresh = release_corner if self._gap_snap == 'RIGHT' else engage_corner
-        center_thresh = release_center if self._gap_snap == 'CENTER' else engage_center
-
-        near_left = (cursor_x - gap_start) < left_thresh
-        near_right = (gap_end - cursor_x) < right_thresh
+        # Snapping the way the reference's drop_starter did: the cursor is the
+        # closet's LEFT edge (as the room sees it, so the wall's far end
+        # on its back face). Within 5" of the left end of the gap it
+        # pulls to it; with the cursor within 5" of the gap's center it
+        # centers; reaching the right end it stops there; anywhere else
+        # it stands on the scene's snap grid. Fill mode pins to
+        # gap_start.
+        tol = units.inch(5.0)
         gap_center = (gap_start + gap_end) / 2
-        near_center = (abs(cursor_x - gap_center) < center_thresh
-                       and self._cabinet_width < gap_width)
-
         if self._fill_mode:
             self._gap_snap = None
-        elif near_left and near_right:
-            self._gap_snap = ('LEFT' if (cursor_x - gap_start) < (gap_end - cursor_x)
-                              else 'RIGHT')
-        elif near_left:
-            self._gap_snap = 'LEFT'
-        elif near_right:
-            self._gap_snap = 'RIGHT'
-        elif near_center:
-            self._gap_snap = 'CENTER'
-        else:
-            self._gap_snap = None
-
-        if self._fill_mode:
             self._apply_width(gap_width, fill_mode=True)
             placement_x = gap_start
             width = gap_width
         else:
             width = min(self._cabinet_width, gap_width)
+            grid_x = hb_snap.snap_value_to_grid(
+                cursor_x, context.scene.unit_settings)
+            if self._place_on_front:
+                free_x = grid_x
+                at_left = (cursor_x - gap_start) < tol
+                at_right = gap_end - (free_x + width) <= 0.0
+            else:
+                free_x = grid_x - width
+                at_left = (gap_end - cursor_x) < tol
+                at_right = free_x - gap_start <= 0.0
+            if at_left:
+                self._gap_snap = 'LEFT' if self._place_on_front else 'RIGHT'
+            elif abs(gap_center - cursor_x) < tol:
+                self._gap_snap = 'CENTER'
+            elif at_right:
+                self._gap_snap = 'RIGHT' if self._place_on_front else 'LEFT'
+            else:
+                self._gap_snap = None
             if self._gap_snap == 'LEFT':
                 placement_x = gap_start
             elif self._gap_snap == 'RIGHT':
@@ -1287,7 +1561,7 @@ class hb_closets_OT_place_starter(bpy.types.Operator,
             elif self._gap_snap == 'CENTER':
                 placement_x = gap_start + (gap_width - width) / 2
             else:
-                placement_x = max(gap_start, min(snap_x, gap_end - width))
+                placement_x = max(gap_start, min(free_x, gap_end - width))
 
         self._place_cage_on_wall(context, wall, placement_x, width,
                                  gap_start, gap_end)
@@ -1571,7 +1845,9 @@ class hb_closets_OT_place_starter(bpy.types.Operator,
                 context,
                 f"{title}  -  {bay_label} ({mode})  -  "
                 f"width: {width_str}  -  "
-                + ("F: fill gap   " if self._source_obj is not None else "")
+                + ("" if getattr(self, '_is_corner', False)
+                   else "F: fill gap (%s)   "
+                   % ("on" if self._fill_mode else "off"))
                 + "W/numbers: width   Up/Down: bays   Left/Right: gap offset   "
                 "R: rotate   Click/Enter: place   Esc: cancel")
 
@@ -1591,6 +1867,11 @@ class hb_closets_OT_place_starter(bpy.types.Operator,
 
         if (event.type == 'W' and event.value == 'PRESS'
                 and self.placement_state == hb_placement.PlacementState.PLACING):
+            # W takes fill off, so until a width is typed the starter
+            # drops at its default width (reference drop_starter: W clears
+            # fill_on).
+            if self._fill_mode and not getattr(self, '_is_corner', False):
+                self._apply_width(self._unfilled_width(), fill_mode=False)
             self.start_typing(hb_placement.TypingTarget.WIDTH)
             self._update_header(context)
             return {'RUNNING_MODAL'}
@@ -1603,17 +1884,16 @@ class hb_closets_OT_place_starter(bpy.types.Operator,
             self._update_header(context)
             return {'RUNNING_MODAL'}
 
-        # 'F' (duplicate mode only) toggles fill-the-gap. The copy
-        # starts at the source's width; F stretches it to the wall
-        # gap (bay count pinned - the copied bays widen), F again
-        # restores the source width.
+        # 'F' toggles fill-the-gap on every starter drop, as the prior
+        # library's F did. A new starter starts filling and F drops it
+        # back to the default width; a copy starts at the source's
+        # width and F stretches it to the wall gap (bay count pinned -
+        # the copied bays widen), F again restores the source width.
         if (event.type == 'F' and event.value == 'PRESS'
-                and self._source_obj is not None
                 and not getattr(self, '_is_corner', False)
                 and self.placement_state == hb_placement.PlacementState.PLACING):
             if self._fill_mode:
-                self._apply_width(self._source_obj.hb_closet_starter.width,
-                                  fill_mode=False)
+                self._apply_width(self._unfilled_width(), fill_mode=False)
             else:
                 self._fill_mode = True
                 if self.hit_location is not None:
@@ -1635,7 +1915,37 @@ class hb_closets_OT_place_starter(bpy.types.Operator,
         # without the mouse (while typing, Enter first applies the value).
         if (event.type in {'LEFTMOUSE', 'RET', 'NUMPAD_ENTER'}
                 and event.value == 'PRESS'):
-            return self._finalize(context)
+            starter_name = self.starter_name
+            from_library = self._source_obj is not None
+            self._clearance_dialog = False
+            result = self._finalize(context)
+            # Shift+click goes straight on to placing another of the
+            # same starter, corner or island (reference drop_starter /
+            # drop_corner / drop_island: event.shift re-runs the drop).
+            # Started from a timer, once this placement's undo step is
+            # pushed, so the next preview cage is not caught in it; and
+            # not at all when the corner clearance dialog is up, which
+            # the next drop would close unapplied.
+            if (event.shift and result == {'FINISHED'}
+                    and not from_library and not self._clearance_dialog):
+                # A timer runs with no window or view of its own, so the
+                # drop is handed back the viewport this one ran in.
+                window, area = context.window, context.area
+                region = (next((r for r in area.regions
+                                if r.type == 'WINDOW'), None)
+                          if area is not None else None)
+
+                def _place_next(name=starter_name):
+                    try:
+                        with bpy.context.temp_override(
+                                window=window, area=area, region=region):
+                            bpy.ops.hb_closets.place_starter(
+                                'INVOKE_DEFAULT', starter_name=name)
+                    except (RuntimeError, ReferenceError, TypeError):
+                        pass
+                    return None
+                bpy.app.timers.register(_place_next, first_interval=0.01)
+            return result
 
         if event.type == 'UP_ARROW' and event.value == 'PRESS':
             new_qty = min(self.bay_qty + 1, _BAY_QTY_MAX)
@@ -1703,6 +2013,27 @@ class hb_closets_OT_place_starter(bpy.types.Operator,
         self._delete_preview()
 
         if self._source_obj is not None:
+            if self.discard_source:
+                source = self._source_obj
+                try:
+                    result = self._finalize_duplicate(
+                        context, captured_parent, captured_world,
+                        captured_local_loc, captured_local_rot,
+                        captured_width)
+                finally:
+                    self._discard_library_source()
+                # The library source was appended hidden, and the copy
+                # carries that over: show the placed closet. Parts the
+                # closet switches off use hide_viewport, not this.
+                placed = context.view_layer.objects.active
+                if (placed is not None and placed is not source
+                        and placed.get(types_closets.TAG_STARTER_CAGE)):
+                    for obj in [placed] + list(placed.children_recursive):
+                        try:
+                            obj.hide_set(False)
+                        except RuntimeError:
+                            pass
+                return result
             return self._finalize_duplicate(
                 context, captured_parent, captured_world,
                 captured_local_loc, captured_local_rot, captured_width)
@@ -1756,14 +2087,20 @@ class hb_closets_OT_place_starter(bpy.types.Operator,
             matches = _detect_corner_closet_neighbor(root)
             if matches:
                 kwargs = {'closet_name': root.name}
+                clearance = getattr(context.scene.hb_closets,
+                                    'corner_clearance', None)
                 for neighbor, placed_end, gap in matches:
                     k = placed_end.lower()
+                    if clearance is not None:
+                        kwargs[f'clearance_{k}'] = clearance
                     kwargs[f'has_{k}'] = True
                     kwargs[f'neighbor_{k}'] = neighbor.name
                     kwargs[f'gap_{k}'] = gap
                 try:
                     bpy.ops.hb_closets.set_corner_clearance(
                         'INVOKE_DEFAULT', **kwargs)
+                    # Shift+click must not start the next drop over it.
+                    self._clearance_dialog = True
                 except RuntimeError:
                     pass
 
@@ -1833,14 +2170,20 @@ class hb_closets_OT_place_starter(bpy.types.Operator,
             matches = _detect_corner_closet_neighbor(root)
             if matches:
                 kwargs = {'closet_name': root.name}
+                clearance = getattr(context.scene.hb_closets,
+                                    'corner_clearance', None)
                 for neighbor, placed_end, gap in matches:
                     k = placed_end.lower()
+                    if clearance is not None:
+                        kwargs[f'clearance_{k}'] = clearance
                     kwargs[f'has_{k}'] = True
                     kwargs[f'neighbor_{k}'] = neighbor.name
                     kwargs[f'gap_{k}'] = gap
                 try:
                     bpy.ops.hb_closets.set_corner_clearance(
                         'INVOKE_DEFAULT', **kwargs)
+                    # Shift+click must not start the next drop over it.
+                    self._clearance_dialog = True
                 except RuntimeError:
                     pass
 
@@ -1876,12 +2219,89 @@ class hb_closets_OT_insert_bay(bpy.types.Operator):
         root = types_closets.find_starter_root(bay)
         if bay is None or root is None:
             return {'CANCELLED'}
+        if len(_starter_bays(root)) >= const.MAX_BAY_QTY:
+            self.report({'WARNING'}, "A closet holds at most %d bays"
+                        % const.MAX_BAY_QTY)
+            return {'CANCELLED'}
         starter = types_closets._wrap_starter(root)
         new_bay = starter.insert_bay(bay.get('hb_bay_index', 0),
                                      self.direction)
         if new_bay is not None:
             _apply_finish(root)
             _apply_selection_shading(context, root)
+        return {'FINISHED'}
+
+
+class hb_closets_OT_change_number_of_openings(bpy.types.Operator):
+    """Change how many bays (openings) the closet has, keeping its
+    overall width: bays are added or taken off at the right end and
+    the width is shared between them evenly (the reference version's Change Number of
+    Openings)"""
+    bl_idname = "hb_closets.change_number_of_openings"
+    bl_label = "Change Number of Openings"
+    bl_options = {'UNDO'}
+
+    qty: bpy.props.IntProperty(
+        name="Number of Openings", default=1,
+        min=1, max=const.MAX_BAY_QTY)  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        root = types_closets.find_starter_root(context.active_object)
+        if root is None:
+            return False
+        cls_ = types_closets.WRAP_CLASS_REGISTRY.get(
+            root.get('CLASS_NAME', ''))
+        # A corner unit or filler is one bay by what it is.
+        return not getattr(cls_, 'is_corner', False) and bool(
+            _starter_bays(root))
+
+    def invoke(self, context, event):
+        root = types_closets.find_starter_root(context.active_object)
+        n = len(_starter_bays(root))
+        if n > const.MAX_BAY_QTY:
+            # An older run can have more; the dialog cannot show its
+            # count, and OK would delete bays.
+            self.report({'WARNING'},
+                        "This closet has %d bays, more than the %d the "
+                        "dialog handles - delete bays one at a time "
+                        "instead" % (n, const.MAX_BAY_QTY))
+            return {'CANCELLED'}
+        self.qty = max(1, n)
+        return context.window_manager.invoke_props_dialog(self, width=260)
+
+    def draw(self, context):
+        self.layout.prop(self, 'qty')
+
+    def execute(self, context):
+        root = types_closets.find_starter_root(context.active_object)
+        if root is None:
+            return {'CANCELLED'}
+        if len(_starter_bays(root)) > const.MAX_BAY_QTY:
+            self.report({'WARNING'}, "This closet has more than %d bays"
+                        % const.MAX_BAY_QTY)
+            return {'CANCELLED'}
+        sp = root.hb_closet_starter
+        width = float(sp.width)
+        starter = types_closets._wrap_starter(root)
+        want = max(1, min(int(self.qty), const.MAX_BAY_QTY))
+        while len(_starter_bays(root)) < want:
+            n = len(_starter_bays(root))
+            if starter.insert_bay(n - 1, 'AFTER') is None:
+                break
+        while len(_starter_bays(root)) > want:
+            n = len(_starter_bays(root))
+            if not starter.delete_bay(n - 1):
+                break
+        # Evenly across the width the closet had.
+        with types_closets.suspend_recalc():
+            for bay in _starter_bays(root):
+                bay.hb_closet_bay.unlock_width = False
+                bay.hb_closet_bay.width = 0.0
+            sp.width = width
+        types_closets.recalculate_closet_starter(root)
+        _apply_finish(root)
+        _apply_selection_shading(context, root)
         return {'FINISHED'}
 
 
@@ -1932,13 +2352,19 @@ class hb_closets_OT_add_part(bpy.types.Operator,
     part_type: bpy.props.EnumProperty(
         name="Part Type",
         items=[('FIXED_SHELF', "Fixed Shelf", "Fixed shelf at a set height"),
-               ('ROD', "Closet Rod", "Closet rod at a set height")],
+               ('ROD', "Closet Rod", "Closet rod at a set height"),
+               ('ROLLOUT', "Rollout Tray",
+                "One pull-out tray at a set height")],
         default='FIXED_SHELF')  # type: ignore
 
     _preview = None
     _opening = None
+    _event = None
+    _refused = None
 
     def _make_preview(self, opening):
+        if self.part_type == 'ROLLOUT':
+            return self._make_rollout_preview(opening)
         if self.part_type == 'ROD':
             obj = types_closets.add_rod(opening, const.ROD_TOP_OFFSET)
         else:
@@ -1948,9 +2374,48 @@ class hb_closets_OT_add_part(bpy.types.Operator,
         obj['hb_preview'] = 1
         return obj
 
+    def _make_rollout_preview(self, opening):
+        """One more tray in the opening, held at a 4" height and at a
+        height of its own, the way the reference version dropped a single
+        rollout (one 4" tray at the cursor). The
+        opening's tray count owns the trays, so the preview is the
+        newest one the count makes."""
+        def _trays():
+            return {c for c in opening.children if c.get('hb_rollout')
+                    and c.get('hb_part_role')
+                    == types_closets.PART_ROLE_DRAWER_BOX}
+
+        op = opening.hb_closet_opening
+        if op.rollout_qty >= 12:
+            return None
+        # The trays already there, so the one the count adds is told
+        # apart by being new rather than by its index (an index can tie
+        # with an older tray's after one has been taken out).
+        before = _trays()
+        op.rollout_qty += 1
+        root = types_closets.find_starter_root(opening)
+        if root is not None:
+            types_closets.recalculate_closet_starter(root)
+        added = _trays() - before
+        if not added:
+            op.rollout_qty -= 1
+            return None
+        tray = added.pop()
+        tray[types_closets.PROP_TRAY_HEIGHT] = const.ROLLOUT_HEIGHT
+        tray[types_closets.PROP_UNLOCK_TRAY_HEIGHT] = 1
+        tray[types_closets.PROP_UNLOCK_TRAY_Z] = 1
+        tray['hb_preview'] = 1
+        return tray
+
     def _drop_preview(self):
         if self._preview is not None:
             try:
+                if (self._preview.get('hb_rollout')
+                        and self._opening is not None):
+                    # The tray count made it, so the count gives it up;
+                    # it is the newest tray, the one a lower count drops.
+                    op = self._opening.hb_closet_opening
+                    op.rollout_qty = max(0, op.rollout_qty - 1)
                 # Tree remove: a preview part may have grown children
                 # (rod hangers) that a bare remove would strand.
                 types_closets._remove_part_tree(self._preview)
@@ -1958,6 +2423,66 @@ class hb_closets_OT_add_part(bpy.types.Operator,
                 pass
         self._preview = None
         self._opening = None
+
+    def _update_wall_rod(self, context):
+        """No opening under the cursor: a rod goes on the bare wall as a
+        free 25" rod at the cursor on the wall face (reference
+        drop_closet_rod), gridded along the wall and up it."""
+        wall = None
+        if self._event is not None:
+            hidden = []
+            if self._preview is not None:
+                for o in [self._preview] + list(
+                        self._preview.children_recursive):
+                    if not o.hide_get():
+                        o.hide_set(True)
+                        hidden.append(o)
+            try:
+                self.update_snap(context, self._event)
+            finally:
+                for o in hidden:
+                    o.hide_set(False)
+            if self.hit_location is not None:
+                wall = _detect_wall(self, context)
+        if wall is None:
+            return
+        if (self._preview is None
+                or not self._preview.get(types_closets.PROP_WALL_ROD)
+                or self._preview.parent is not wall):
+            root_prev = (types_closets.find_starter_root(self._opening)
+                         if self._opening else None)
+            self._drop_preview()
+            if root_prev is not None:
+                types_closets.recalculate_closet_starter(root_prev)
+            self._preview = types_closets.add_wall_rod(wall, preview=True)
+        length = types_closets.WALL_ROD_LENGTH
+        local = wall.matrix_world.inverted() @ Vector(self.hit_location)
+        grid = const.ACCESSORY_DROP_GRID
+        x = round((local.x - length / 2.0) / grid) * grid
+        z = round(local.z / grid) * grid
+        try:
+            wall_geo = hb_types.GeoNodeWall(wall)
+            wall_len = float(wall_geo.get_input('Length') or 0.0)
+            wall_h = float(wall_geo.get_input('Height') or 0.0)
+        except Exception:
+            wall_len = wall_h = 0.0
+        if wall_len > 0.0:
+            x = max(0.0, min(x, max(wall_len - length, 0.0)))
+        if wall_h > 0.0:
+            z = max(const.ROD_RADIUS, min(z, wall_h - const.ROD_RADIUS))
+        # Against the wall face (reference: Dim Y 0, From Rear / From Front
+        # 0) - its centreline a radius off it, as layout_wall_rod
+        # holds it; the rod's own dialog stands it off the wall
+        # afterwards.
+        self._preview.location = (x, -const.ROD_RADIUS, z)
+        self._preview.rotation_euler = (0.0, 0.0, 0.0)
+        wm = wall.matrix_world
+        y_dim = -const.ROD_RADIUS
+        self._placement_dim_specs = [hb_placement.PlacementDimSpec(
+            wm @ Vector((x, y_dim, 0.0)), wm @ Vector((x, y_dim, z)),
+            units.unit_to_string(context.scene.unit_settings, z), None)]
+        if context.area is not None:
+            context.area.tag_redraw()
 
     def _opening_interior_h(self, opening):
         try:
@@ -1970,7 +2495,8 @@ class hb_closets_OT_add_part(bpy.types.Operator,
         drop under the shelf above; plain otherwise."""
         if self._preview is None:
             return
-        color = const.LOCK_SHELF_COLOR if locked else const.PLAIN_PART_COLOR
+        color = (types_closets.lock_shelf_color() if locked
+                 else const.PLAIN_PART_COLOR)
         for obj in (self._preview, *self._preview.children_recursive):
             obj.color = color
 
@@ -1984,16 +2510,28 @@ class hb_closets_OT_add_part(bpy.types.Operator,
         preview part sizes itself like a committed part."""
         resolved = self._resolve_opening_under_cursor(context)
         if resolved is None:
+            if self.part_type == 'ROD':
+                self._update_wall_rod(context)
             return
         opening, local_z = resolved[0], resolved[1]
-        if opening is not self._opening:
+        if opening is not self._opening or self._preview is None:
+            # An opening that already turned the part away (a full
+            # stack of trays) is left alone while the cursor stays on
+            # it, rather than asked again on every move.
+            if self._preview is None and opening is self._refused:
+                return
+            had_preview = self._preview is not None
             root_prev = (types_closets.find_starter_root(self._opening)
-                         if self._opening else None)
+                         if self._opening and had_preview else None)
             self._drop_preview()
-            self._preview = self._make_preview(opening)
-            self._opening = opening
             if root_prev is not None:
                 types_closets.recalculate_closet_starter(root_prev)
+            self._opening = opening
+            self._preview = self._make_preview(opening)
+            if self._preview is None:
+                self._refused = opening
+                return
+            self._refused = None
 
         interior_h = self._opening_interior_h(opening)
         # 32mm system: shelf/rod locations land on system holes. The
@@ -2004,20 +2542,30 @@ class hb_closets_OT_add_part(bpy.types.Operator,
         z = const.snap_system_hole(seg_bottom + local_z) - seg_bottom
         z = max(0.0, min(z, interior_h))
         if self.part_type == 'ROD':
-            # The standard drop under the shelf or top above wins over
-            # the hole lattice when the cursor is near it: a rod hangs
-            # from cups under the shelf, not on a system hole.
-            # It never rises past that drop either: a rod closer to the
-            # shelf above than its cups allow cannot be hung, so a drag
-            # upward stops there and the rod takes the lock colour.
+            # As the reference dropped a rod: the cursor height on the scene's
+            # 1" grid rather than the hole lattice (a rod hangs from
+            # cups, not on a system hole), and within 5" of the top of
+            # the opening it jumps to the standard drop under the shelf
+            # or top above (2.145"). It never rises past that drop
+            # either: a rod closer to the shelf above than its cups
+            # allow cannot be hung, so it takes the lock colour there.
             z_hang = interior_h - const.ROD_TOP_OFFSET
-            if z_hang > 0.0 and (abs(local_z - z_hang) < units.inch(1.0)
+            w0 = opening.matrix_world.translation.z
+            z = hb_snap.snap_value_to_grid(
+                w0 + local_z, context.scene.unit_settings) - w0
+            z = max(0.0, min(z, interior_h))
+            if z_hang > 0.0 and (z > interior_h - units.inch(5.0)
                                  or z > z_hang):
                 z = z_hang
             self._paint_rod(z_hang > 0.0 and abs(z - z_hang) < 1e-6)
             # Stored as distance from the opening top (rods ride the top).
             self._preview['hb_z_offset'] = float(interior_h - z)
             self._preview['hb_anchor_top'] = 1
+        elif self.part_type == 'ROLLOUT':
+            # The tray's bottom on the hole the cursor is at, kept
+            # inside the opening.
+            z = max(0.0, min(z, interior_h - const.ROLLOUT_HEIGHT))
+            self._preview[types_closets.PROP_TRAY_Z] = float(z)
         else:
             self._preview['hb_z_offset'] = float(z)
             self._preview['hb_anchor_top'] = 0
@@ -2068,11 +2616,14 @@ class hb_closets_OT_add_part(bpy.types.Operator,
             self.report({'WARNING'}, "No 3D viewport available")
             return {'CANCELLED'}
         self.add_placement_dim_handler(context)
-        label = ("closet rod" if self.part_type == 'ROD'
-                 else "fixed shelf")
+        label = {'ROD': "closet rod",
+                 'ROLLOUT': "rollout tray"}.get(self.part_type,
+                                               "fixed shelf")
+        where = ("an opening or a bare wall" if self.part_type == 'ROD'
+                 else "an opening")
         hb_placement.draw_header_text(
             context,
-            f"Add {label}: hover an opening, click to place "
+            f"Add {label}: hover {where}, click to place "
             "(keeps adding), Right-click/Esc to finish")
         context.window.cursor_set('CROSSHAIR')
         context.window_manager.modal_handler_add(self)
@@ -2101,10 +2652,27 @@ class hb_closets_OT_add_part(bpy.types.Operator,
             # raycast, so no hide/unhide dance around the preview.
             self.mouse_pos = Vector((event.mouse_region_x,
                                      event.mouse_region_y))
-            self._update_preview(context)
+            # Kept for the wall raycast a rod off every opening takes;
+            # an event is only good during the call that got it.
+            self._event = event
+            try:
+                self._update_preview(context)
+            finally:
+                self._event = None
             return {'RUNNING_MODAL'}
 
         if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
+            if (self._preview is not None and self._opening is None
+                    and self._preview.get(types_closets.PROP_WALL_ROD)):
+                # A free rod on the wall: it stays as it is, hangers
+                # and all, and a fresh one follows the cursor on.
+                rod = self._preview
+                del rod['hb_preview']
+                types_closets.layout_wall_rod(rod)
+                self._preview = types_closets.add_wall_rod(
+                    rod.parent, preview=True)
+                self._preview.location = rod.location.copy()
+                return {'RUNNING_MODAL'}
             if self._preview is not None and self._opening is not None:
                 # Commit: the preview IS the part. Clearing the preview
                 # flag lets the reconciler adopt a fixed shelf as a
@@ -2113,6 +2681,11 @@ class hb_closets_OT_add_part(bpy.types.Operator,
                 committed_opening = self._opening
                 if 'hb_preview' in self._preview:
                     del self._preview['hb_preview']
+                if (self._preview.get('hb_part_role')
+                        == types_closets.PART_ROLE_FIXED_SHELF):
+                    # A dropped fixed shelf is a lock shelf (as in the reference), so it
+                    # can be unlocked back onto clips.
+                    self._preview[types_closets.PROP_SHELF_LOCKED] = 1
                 if self.part_type == 'ROD':
                     self._paint_rod(False)
                 root = types_closets.find_starter_root(committed_opening)
@@ -2135,6 +2708,16 @@ class hb_closets_OT_add_part(bpy.types.Operator,
         return {'RUNNING_MODAL'}
 
 
+def _held_adj_count(qty, held):
+    """The adjustable shelf count a dialog stands for: what the field
+    says, or - while the field still shows the clamped figure of an
+    opening saved with more shelves than it offers - the opening's own
+    count, left alone (as _held_drawer_count does for drawers)."""
+    if held > const.ADJ_SHELF_QTY_MAX and qty == const.ADJ_SHELF_QTY_MAX:
+        return held
+    return qty
+
+
 class hb_closets_OT_add_adj_shelves(bpy.types.Operator):
     """Set the adjustable shelf count for the active opening (shelves
     space themselves evenly)."""
@@ -2142,8 +2725,14 @@ class hb_closets_OT_add_adj_shelves(bpy.types.Operator):
     bl_label = "Adjustable Shelves"
     bl_options = {'UNDO'}
 
+    # The reference had twelve shelf slots.
     qty: bpy.props.IntProperty(name="Shelf Quantity", default=3,
-                               min=0, max=20)  # type: ignore
+                               min=0, max=12)  # type: ignore
+    # The count the opening had when the dialog opened. One saved with
+    # more shelves than the field allows keeps its count until the
+    # field is changed (_held_adj_count).
+    held_qty: bpy.props.IntProperty(
+        default=0, options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
     unlock_qty: bpy.props.BoolProperty(
         name="Shelf Quantity",
         description="Hold the count typed here instead of following "
@@ -2187,8 +2776,9 @@ class hb_closets_OT_add_adj_shelves(bpy.types.Operator):
         op = opening.hb_closet_opening
         self.unlock_qty = bool(op.unlock_adj_qty)
         existing = int(op.adj_shelf_qty)
-        self.qty = (existing if self.unlock_qty and existing
-                    else types_closets.default_adj_shelf_qty(opening))
+        self.held_qty = (existing if self.unlock_qty and existing
+                         else types_closets.default_adj_shelf_qty(opening))
+        self.qty = min(self.held_qty, const.ADJ_SHELF_QTY_MAX)
         room = context.scene.hb_closets
         # A figure the opening has not taken over reads back as the
         # room's, so there is something to see before unlocking it.
@@ -2206,6 +2796,16 @@ class hb_closets_OT_add_adj_shelves(bpy.types.Operator):
         col = self.layout.column(align=True)
         _locked_field(col, self, 'qty', 'unlock_qty',
                       text="Shelf Quantity")
+        if self.unlock_qty and self.qty > const.ADJ_SHELF_QTY_WARN:
+            row = col.row()
+            row.alert = True
+            row.label(text="Must be less than %d"
+                      % (const.ADJ_SHELF_QTY_WARN + 1), icon='ERROR')
+        held = _held_adj_count(self.qty, self.held_qty)
+        if self.unlock_qty and held > self.qty:
+            col.label(text="This opening has %d shelves; leave the "
+                           "count at %d to keep them"
+                           % (held, self.qty), icon='INFO')
         col = self.layout.column(align=True)
         _locked_field(col, self, 'clip_gap', 'unlock_clip_gap',
                       text="Clip Gap")
@@ -2218,9 +2818,11 @@ class hb_closets_OT_add_adj_shelves(bpy.types.Operator):
             return {'CANCELLED'}
         op = opening.hb_closet_opening
         op.unlock_adj_qty = self.unlock_qty
-        op.adj_shelf_qty = (
-            self.qty if self.unlock_qty
-            else types_closets.default_adj_shelf_qty(opening))
+        held = _held_adj_count(self.qty, self.held_qty)
+        if not (self.unlock_qty and held > const.ADJ_SHELF_QTY_MAX):
+            op.adj_shelf_qty = (
+                self.qty if self.unlock_qty
+                else types_closets.default_adj_shelf_qty(opening))
         op.unlock_shelf_clip_gap = self.unlock_clip_gap
         op.shelf_clip_gap = self.clip_gap
         op.unlock_shelf_setback = self.unlock_setback
@@ -2430,6 +3032,47 @@ def _pin_rollout_trays(opening, rows):
             tray[types_closets.PROP_UNLOCK_TRAY_Z] = 0
 
 
+# The most drawers the dialogs offer. Older jobs can hold more.
+_DRAWER_QTY_MAX = 8
+
+
+def _held_drawer_count(qty, held):
+    """The drawer count a dialog stands for: what the field says, or -
+    while the field still shows the clamped figure of a bank saved with
+    more drawers than it offers - the bank's own count, left alone."""
+    if held > _DRAWER_QTY_MAX and qty == _DRAWER_QTY_MAX:
+        return held
+    return qty
+
+
+def _drawer_stack_height(opening):
+    """Floor to the top of the shelf over a drawer bank, as it stands
+    (reference Drawer Stack Height: the top shelf's height plus 3/4"). That
+    is the cap shelf of a bank not filling its opening, or the shelf
+    the opening stops under when it fills it. None with no bank."""
+    if opening is None or not int(opening.hb_closet_opening.drawer_qty):
+        return None
+    st = types_closets.run_sizes(opening).shelf_thickness
+    cap = next((c for c in opening.children
+                if c.get(types_closets.PROP_DRAWER_CAP)), None)
+    if cap is not None:
+        return float(cap.matrix_world.translation.z) + st
+    h = _opening_seg_height(opening)
+    if h is None:
+        return None
+    return float(opening.matrix_world.translation.z) + h + st
+
+
+def _draw_drawer_stack_height(layout, context, opening):
+    height = _drawer_stack_height(opening)
+    if height is None:
+        return
+    row = layout.row()
+    row.enabled = False
+    row.label(text="Drawer Stack Height: " + units.unit_to_string(
+        context.scene.unit_settings, height))
+
+
 class hb_closets_OT_add_drawers(_ClosetInsertDialog, bpy.types.Operator):
     """Set the drawer stack for the active opening (fronts stack from
     the bottom; each drawer gets a box behind its front). Filling the
@@ -2441,8 +3084,17 @@ class hb_closets_OT_add_drawers(_ClosetInsertDialog, bpy.types.Operator):
     bl_options = {'UNDO'}
     interior_kind = 'DRAWERS'
 
+    # The reference offered one to eight drawers.
     qty: bpy.props.IntProperty(name="Drawer Quantity", default=3,
-                               min=0, max=10)  # type: ignore
+                               min=0, max=8)  # type: ignore
+    # The count the opening had when the dialog opened. A bank saved
+    # with more drawers than the field allows keeps its count until the
+    # field is changed (_count).
+    held_qty: bpy.props.IntProperty(
+        default=0, options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+
+    def _count(self):
+        return _held_drawer_count(self.qty, self.held_qty)
     fill: bpy.props.BoolProperty(
         name="Fill Opening",
         description="Divide the whole opening between the drawers - a "
@@ -2488,10 +3140,14 @@ class hb_closets_OT_add_drawers(_ClosetInsertDialog, bpy.types.Operator):
         opening = _active_opening_for_insert(context)
         if opening is not None:
             op = opening.hb_closet_opening
-            self.qty = int(op.drawer_qty) or 3
+            # An opening with no bank yet opens on the count that fills
+            # it, as the reference version's Drawers Filled did.
+            self.held_qty = (int(op.drawer_qty)
+                             or types_closets.default_drawer_qty(opening))
+            self.qty = min(self.held_qty, _DRAWER_QTY_MAX)
             self.drawer_box = op.drawer_box_override or 'DEFAULT'
             self.stretcher_width = float(op.drawer_stretcher_width)
-            pairs = _read_drawer_front_heights(opening, self.qty)
+            pairs = _read_drawer_front_heights(opening, self._count())
             for i, (equal, key) in enumerate(pairs, 1):
                 setattr(self, 'front_%d_equal' % i, equal)
                 setattr(self, 'front_%d_height' % i, key)
@@ -2507,7 +3163,7 @@ class hb_closets_OT_add_drawers(_ClosetInsertDialog, bpy.types.Operator):
         not filling the opening holds every front at its own size."""
         return [(self.fill and bool(getattr(self, 'front_%d_equal' % i)),
                  getattr(self, 'front_%d_height' % i))
-                for i in range(1, self.qty + 1)]
+                for i in range(1, self._count() + 1)]
 
     def _heights(self, context):
         """What each front in the bank will measure, worked out the way
@@ -2519,7 +3175,7 @@ class hb_closets_OT_add_drawers(_ClosetInsertDialog, bpy.types.Operator):
         if opening is None:
             return [const.drawer_front_height(key)
                     for _equal, key in sizes]
-        span = types_closets.drawer_front_span(opening, self.qty)
+        span = types_closets.drawer_front_span(opening, self._count())
         return types_closets._distribute_front_heights(
             span, [(const.drawer_front_height(key), not equal)
                    for equal, key in sizes])
@@ -2533,6 +3189,9 @@ class hb_closets_OT_add_drawers(_ClosetInsertDialog, bpy.types.Operator):
         col.prop(self, 'drawer_box')
         col.prop(self, 'stretcher_width')
         col.prop(self, 'fill')
+        # The bank as it is built now (reference Drawer Stack Height).
+        _draw_drawer_stack_height(box, context,
+                                  _active_opening_for_insert(context))
 
         # A row per drawer, top drawer first and numbered from the top
         # the way the shop counts them. The bank is still stored and
@@ -2542,6 +3201,10 @@ class hb_closets_OT_add_drawers(_ClosetInsertDialog, bpy.types.Operator):
         # the height it is getting and one holding a size shows the
         # size instead, the ones still sharing taking up the
         # difference. Not filling it, every drawer is a size to set.
+        if self._count() > self.qty:
+            box.label(text="This bank has %d drawers; leave the count "
+                           "at %d to keep them" % (self._count(), self.qty),
+                      icon='INFO')
         if self.qty <= 0:
             return
         heights = self._heights(context)
@@ -2549,7 +3212,7 @@ class hb_closets_OT_add_drawers(_ClosetInsertDialog, bpy.types.Operator):
         box = layout.box()
         box.label(text="Drawer Heights", icon='MESH_GRID')
         col = box.column(align=True)
-        for n, i in enumerate(range(self.qty, 0, -1), 1):
+        for n, i in enumerate(range(self._count(), 0, -1), 1):
             row = col.row(align=True)
             row.label(text="Drawer %d" % n)
             if not self.fill:
@@ -2568,7 +3231,7 @@ class hb_closets_OT_add_drawers(_ClosetInsertDialog, bpy.types.Operator):
         # sizes on screen read as what gets built.
         opening = _active_opening_for_insert(context)
         if opening is not None:
-            span = types_closets.drawer_front_span(opening, self.qty)
+            span = types_closets.drawer_front_span(opening, self._count())
             wanted = sum(const.drawer_front_height(key)
                          for equal, key in self._sizes() if not equal)
             sharing = sum(1 for equal, _k in self._sizes() if equal)
@@ -2584,7 +3247,7 @@ class hb_closets_OT_add_drawers(_ClosetInsertDialog, bpy.types.Operator):
             # Change Opening semantics: the drawers replace whatever
             # the opening was holding, rods and doors included.
             types_closets.clear_opening_contents(opening)
-        opening.hb_closet_opening.drawer_qty = self.qty
+        opening.hb_closet_opening.drawer_qty = self._count()
         opening.hb_closet_opening.drawer_stretcher_width = \
             self.stretcher_width
         # 'Use Default' clears the per-opening override so the box system
@@ -2645,11 +3308,16 @@ class hb_closets_OT_drawer_accessory(bpy.types.Operator):
     override_depth: bpy.props.FloatProperty(
         name="Depth", default=0.0, min=0.0,
         unit='LENGTH', precision=4,
-        description="Force the box depth (0 = system size)")  # type: ignore
+        description="Size the box from this depth instead of the "
+                    "opening's - it still steps to a standard slide "
+                    "length. A wood box is built to this depth as typed "
+                    "(0 = from the opening)")  # type: ignore
     override_height: bpy.props.FloatProperty(
         name="Height", default=0.0, min=0.0,
         unit='LENGTH', precision=4,
-        description="Force the box height (0 = system size)")  # type: ignore
+        description="Size the box from this height instead of the "
+                    "opening's - it still steps to a standard box "
+                    "height (0 = from the opening)")  # type: ignore
     grain: bpy.props.EnumProperty(
         name="Grain",
         description="Which way the grain runs on this drawer front, "
@@ -2878,6 +3546,12 @@ class hb_closets_OT_add_doors(_ClosetInsertDialog, bpy.types.Operator):
                 "Single bottom-hinged front that tilts out, with a wire "
                 "basket behind it")],
         default='LEFT')  # type: ignore
+    side: bpy.props.EnumProperty(
+        name="Side",
+        description="Face of the bay a bay-wide front hangs on (a double "
+                    "island has a back face too)",
+        items=[('FRONT', "Front", ""), ('BACK', "Back", "")],
+        default='FRONT')  # type: ignore
 
     def invoke(self, context, event):
         # Direct action, no dialog (menu entries carry the props).
@@ -2897,14 +3571,17 @@ class hb_closets_OT_add_doors(_ClosetInsertDialog, bpy.types.Operator):
             # write burst is held to the one solve at the end.
             with types_closets.suspend_recalc():
                 bp = bay.hb_closet_bay
-                bp.door_swing = swing
-                # Bay-wide doors supersede opening doors on the front
-                # side; door openings get default adjustable shelves
-                # behind them (seed_door_shelves skips occupied ones).
+                if self.side == 'BACK':
+                    bp.back_door_swing = swing
+                else:
+                    bp.door_swing = swing
+                # Bay-wide doors supersede opening doors on their side;
+                # door openings get default adjustable shelves behind
+                # them (seed_door_shelves skips occupied ones).
                 for op in bay.children:
                     if (op.get(types_closets.TAG_OPENING_CAGE)
                             and op.get(types_closets.PROP_OPENING_SIDE,
-                                       'FRONT') == 'FRONT'):
+                                       'FRONT') == self.side):
                         op.hb_closet_opening.door_swing = ''
                         if swing and swing != 'TILT_OUT':
                             types_closets.seed_door_shelves(op)
@@ -2960,20 +3637,21 @@ class hb_closets_OT_add_cubbies(_ClosetInsertDialog, bpy.types.Operator):
             if op.cubby_cols > 1 or op.cubby_rows > 1:
                 self.cols = int(op.cubby_cols)
                 self.rows = int(op.cubby_rows)
-                # An opening already holding a grid is full of it, so
-                # that is what reads back. Asking for a band from here
-                # moves the grid into the band.
-                self.placement = 'FILL'
+                # A grid reads back where it was put and how tall its
+                # band stands, so either can be changed afterwards
+                # (reference Cubbies). A band whose capping shelf has gone
+                # since - or a grid from before this was recorded -
+                # fills its opening, and reads back that way.
+                if types_closets.cubby_band_cap(opening) is not None:
+                    self.placement = op.cubby_placement
+                    self.cubby_height = float(op.cubby_height)
+                else:
+                    self.placement = 'FILL'
             else:
                 self.cols = 3
                 self.rows = 3
                 self.placement = 'BOTTOM'
             self.setback = float(op.cubby_setback)
-            # A band is capped by a shelf and a shelf runs the width of
-            # the bay, so a column of a divided segment takes the grid
-            # whole rather than a band of it.
-            if types_closets.segment_columns(opening) > 1:
-                self.placement = 'FILL'
         return context.window_manager.invoke_props_dialog(self, width=250)
 
     def draw(self, context):
@@ -2981,82 +3659,49 @@ class hb_closets_OT_add_cubbies(_ClosetInsertDialog, bpy.types.Operator):
         col.prop(self, 'cols')
         col.prop(self, 'rows')
         col.prop(self, 'setback')
-        opening = _active_opening_for_insert(context)
         col = self.layout.column(align=True)
-        if (opening is not None
-                and types_closets.segment_columns(opening) > 1):
-            # Nothing to choose: the column takes the whole grid.
-            col.label(text="Column takes the whole grid", icon='INFO')
-        else:
-            col.prop(self, 'placement')
-            if self.placement != 'FILL':
-                col.prop(self, 'cubby_height')
+        col.prop(self, 'placement')
+        if self.placement != 'FILL':
+            col.prop(self, 'cubby_height')
 
     def execute(self, context):
         values = {'cubby_cols': self.cols,
                   'cubby_rows': self.rows,
-                  'cubby_setback': self.setback}
-        if self.placement == 'FILL':
-            return self._commit(context, values)
+                  'cubby_setback': self.setback,
+                  'cubby_placement': 'FILL'}
         opening = _active_opening_for_insert(context)
         if opening is None:
             return {'CANCELLED'}
-        bay = types_closets.find_bay_cage(opening)
+        banded = types_closets.cubby_band_cap(opening) is not None
+        if self.placement == 'FILL' and not banded:
+            return self._commit(context, values)
         root = types_closets.find_starter_root(opening)
-        try:
-            seg_h = float(hb_types.GeoNodeCage(opening).get_input('Dim Z'))
-        except Exception:
-            seg_h = 0.0
-        st = types_closets.run_sizes(opening).shelf_thickness
-        band = float(self.cubby_height)
-        # A band is only worth having while it leaves a usable opening
-        # behind it. Anything tighter than that is a filled opening,
-        # which is what it becomes.
-        if (bay is None or root is None
-                or band + st + const.CUBBY_MIN_REMAINDER > seg_h):
-            return self._commit(context, values)
-        # The shelf that caps a band runs the width of the bay, so a
-        # column of a divided segment cannot be banded without cutting
-        # the columns beside it in two. The column takes the grid whole
-        # instead, which is the one thing that stays inside it.
-        if types_closets.segment_columns(opening) > 1:
-            self.report({'INFO'},
-                        "Divided opening: the grid fills the column")
-            return self._commit(context, values)
-        side = opening.get(types_closets.PROP_OPENING_SIDE, 'FRONT')
-        # The shelf caps the band: measured up from the bottom of the
-        # opening for a bottom band, down from its top for a top one.
-        # It splits the opening in two the same way a shelf dropped in
-        # by hand does, so the leftover is an opening like any other.
-        z = band if self.placement == 'BOTTOM' else seg_h - band - st
-        types_closets.add_fixed_shelf(opening, z)
-        types_closets.recalculate_closet_starter(root)
-        # A split leaves the opening standing as the lower of the two
-        # segments, holding what was already in it - so a bottom band
-        # is the opening itself and a top band is the new segment above
-        # it. Reading it that way keeps the grid in the column it was
-        # asked for; counting openings across the bay does not, because
-        # a segment divided elsewhere puts more than one of them on a
-        # row.
-        row = int(opening.get('hb_opening_index', 0))
-        if self.placement == 'BOTTOM':
-            target = opening
-        else:
-            above = [c for c in bay.children
-                     if c.get(types_closets.TAG_OPENING_CAGE)
-                     and c.get(types_closets.PROP_OPENING_SIDE,
-                               'FRONT') == side
-                     and int(c.get('hb_opening_index', -1)) == row + 1]
-            if len(above) != 1:
-                return {'CANCELLED'}
-            target = above[0]
-        for name, value in values.items():
-            setattr(target.hb_closet_opening, name, value)
-        types_closets.clear_other_interiors(target, self.interior_kind)
-        types_closets.recalculate_closet_starter(root)
+        # The band is capped by a lock shelf as the reference's Cubbies were - a
+        # splitting shelf in a whole segment, one cut to the column in
+        # a divided one. Only an opening with no room for the band and
+        # its shelf takes the grid whole (apply_cubbies). A band already
+        # in is resized or moved (edit_cubbies).
+        target = types_closets.edit_cubbies(
+            opening, self.cols, self.rows, self.setback,
+            self.placement, self.cubby_height)
+        if target is None or root is None:
+            return {'CANCELLED'}
         _apply_finish(root)
         _apply_selection_shading(context, root)
         return {'FINISHED'}
+
+
+_TOO_MANY_DIVISIONS = (
+    "This row has more divisions than the dialog can hold - drag them "
+    "or delete some instead")
+
+
+def _bay_interior_width(bay):
+    """The width a bay's divisions are measured across (its cage)."""
+    try:
+        return float(hb_types.GeoNodeCage(bay).get_input('Dim X'))
+    except Exception:
+        return 0.0
 
 
 class hb_closets_OT_divide_opening(bpy.types.Operator):
@@ -3088,6 +3733,14 @@ class hb_closets_OT_divide_opening(bpy.types.Operator):
                     "over instead of holding a width of its own",
         size=_MAX_DIVISIONS + 1,
         default=(True,) * (_MAX_DIVISIONS + 1))  # type: ignore
+    # Re-open a division already in (the reference reopened its splitter's
+    # prompts on right-click): the group of the division named here -
+    # or of the right-clicked division or column - is edited in place
+    # rather than a new one put inside the opening.
+    edit: bpy.props.BoolProperty(
+        options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+    target_div: bpy.props.StringProperty(
+        options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
 
     # Read once on invoke so the dialog can show what the sharing
     # columns work out to. Never read by execute, which measures the
@@ -3097,7 +3750,30 @@ class hb_closets_OT_divide_opening(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
+        obj = context.active_object
+        if obj is not None and obj.get('hb_part_role') == \
+                types_closets.PART_ROLE_DIVISION:
+            return True
         return _active_opening_for_insert(context) is not None
+
+    def _edit_group(self, context):
+        """(bay, every division in the bay, the group's divisions) when
+        editing one, else None."""
+        obj = (bpy.data.objects.get(self.target_div)
+               if self.target_div else None)
+        if obj is None:
+            active = context.active_object
+            if not self.edit and (
+                    active is None or active.get('hb_part_role')
+                    != types_closets.PART_ROLE_DIVISION):
+                return None
+            obj = types_closets.division_to_edit(active)
+        if obj is None or obj.parent is None:
+            return None
+        bay = obj.parent
+        divs = [c for c in bay.children
+                if c.get('hb_part_role') == types_closets.PART_ROLE_DIVISION]
+        return bay, divs, types_closets.division_group_members(divs, obj)
 
     def _solve(self, span, pt):
         """Width of every column, left to right."""
@@ -3126,6 +3802,38 @@ class hb_closets_OT_divide_opening(bpy.types.Operator):
             return "%.4f" % value
 
     def invoke(self, context, event):
+        group = self._edit_group(context)
+        if group is not None and group[2]:
+            # Opened on what is there: how many divisions, the span
+            # they share and each column's width, sharing or held.
+            bay, divs, members = group
+            if len(members) > _MAX_DIVISIONS:
+                # An older file's row is read as one set, nested
+                # divisions and all; more than the dialog holds could
+                # only be shown by dropping some, so it is not opened.
+                self.report({'WARNING'}, _TOO_MANY_DIVISIONS)
+                return {'CANCELLED'}
+            self.target_div = members[0].name
+            self._pt = float(types_closets.run_sizes(bay).panel_thickness)
+            bay_w = _bay_interior_width(bay)
+            x0, x1 = types_closets.division_group_span(
+                divs, members, bay_w, self._pt)
+            self._span = x1 - x0
+            self.qty = len(members)
+            now = types_closets.division_group_widths(
+                divs, members, bay_w, self._pt)
+            share = [bool(v) for v in members[0].get(
+                types_closets.PROP_DIV_SHARE, ())]
+            if len(share) != len(now):
+                # An older division has no columns written down: equal
+                # ones read as sharing, anything else as held.
+                equal = max(now) - min(now) < 1e-4
+                share = [equal] * len(now)
+            for i in range(_MAX_DIVISIONS + 1):
+                self.share[i] = share[i] if i < len(share) else True
+                self.widths[i] = now[i] if i < len(now) else now[-1]
+            return context.window_manager.invoke_props_dialog(
+                self, width=320)
         opening = _active_opening_for_insert(context)
         if opening is None:
             return {'CANCELLED'}
@@ -3169,7 +3877,67 @@ class hb_closets_OT_divide_opening(bpy.types.Operator):
             layout.label(text="That leaves a column too narrow to build",
                          icon='ERROR')
 
+    def _columns(self):
+        """(share, widths) for the group's columns as the dialog has
+        them - the last sharing one stands in when none is."""
+        n = int(self.qty) + 1
+        share = [bool(self.share[i]) for i in range(n)]
+        if not any(share):
+            share[n - 1] = True
+        return share, [float(self.widths[i]) for i in range(n)]
+
+    def _execute_edit(self, context, group):
+        """Re-lay a division group already in: the same divisions moved
+        when the count is unchanged, otherwise the group taken out and
+        put back in with the new count, keeping its number so the
+        groups inside its columns still stand inside them."""
+        bay, divs, members = group
+        if len(members) > _MAX_DIVISIONS:
+            self.report({'WARNING'}, _TOO_MANY_DIVISIONS)
+            return {'CANCELLED'}
+        root = types_closets.find_starter_root(bay)
+        if root is None:
+            return {'CANCELLED'}
+        pt = float(types_closets.run_sizes(bay).panel_thickness)
+        x0, x1 = types_closets.division_group_span(
+            divs, members, _bay_interior_width(bay), pt)
+        widths = self._solve(x1 - x0, pt)
+        if min(widths) < const.DIVISION_MIN_WIDTH:
+            self.report({'WARNING'},
+                        "The opening is too narrow to divide that far")
+            return {'CANCELLED'}
+        share, held = self._columns()
+        g = types_closets._div_group(members[0])
+        if members[0].get(types_closets.PROP_DIV_GROUP) is None:
+            # Older divisions taken on as a group are numbered below
+            # every group already in the bay: anything put inside one
+            # of their columns since came after them.
+            g = min([types_closets._div_group(d) for d in divs
+                     if d.get(types_closets.PROP_DIV_GROUP) is not None]
+                    + [0]) - 2
+        # The dialog opens on the group's own count, so only a count the
+        # person changed rebuilds the divisions; otherwise the same ones
+        # are moved.
+        if len(members) != int(self.qty):
+            new = []
+            x = x0
+            for i in range(int(self.qty)):
+                x += widths[i]
+                new.append(types_closets.add_division(members[0], x))
+                x += pt
+            for div in members:
+                types_closets._remove_part_tree(div)
+            members = [d for d in new if d is not None]
+        types_closets.set_division_group(members, g, share, held)
+        types_closets.recalculate_closet_starter(root)
+        _apply_finish(root)
+        _apply_selection_shading(context, root)
+        return {'FINISHED'}
+
     def execute(self, context):
+        group = self._edit_group(context)
+        if group is not None and group[2]:
+            return self._execute_edit(context, group)
         opening = _active_opening_for_insert(context)
         if opening is None:
             return {'CANCELLED'}
@@ -3190,10 +3958,18 @@ class hb_closets_OT_divide_opening(bpy.types.Operator):
         # from the left edge of the opening rather than from zero - an
         # opening that is already a column does not start at the panel.
         x = float(opening.get('hb_seg_left', 0.0))
+        bay = types_closets.find_bay_cage(opening)
+        g = types_closets.next_division_group(bay) if bay else 0
+        new = []
         for i in range(int(self.qty)):
             x += widths[i]
-            types_closets.add_division(opening, x)
+            new.append(types_closets.add_division(opening, x))
             x += pt
+        # Remembered as one group, so it can be opened again and its
+        # equal columns stay equal when the bay is resized.
+        share, held = self._columns()
+        types_closets.set_division_group(
+            [d for d in new if d is not None], g, share, held)
         types_closets.recalculate_closet_starter(root)
         _apply_finish(root)
         _apply_selection_shading(context, root)
@@ -3210,7 +3986,8 @@ class hb_closets_OT_add_rollouts(_ClosetInsertDialog, bpy.types.Operator):
     bl_options = {'UNDO'}
     interior_kind = 'ROLLOUTS'
 
-    qty: bpy.props.IntProperty(name="Quantity", default=3,
+    qty: bpy.props.IntProperty(name="Quantity",
+                               default=const.ROLLOUT_DEFAULT_QTY,
                                min=0, max=12)  # type: ignore
     rollout_height: bpy.props.FloatProperty(
         name="Rollout Height",
@@ -3336,15 +4113,22 @@ class hb_closets_OT_add_slanted_shelves(_ClosetInsertDialog,
         name="Fence Color",
         items=types_closets.SHOE_FENCE_COLOR_ITEMS,
         default=types_closets.SHOE_FENCE_COLORS[0])  # type: ignore
+    location_z: bpy.props.FloatProperty(
+        name="Vertical Location",
+        description="Height of the bottom shoe shelf off the floor of "
+                    "the opening",
+        default=0.0, min=0.0, unit='LENGTH', precision=4)  # type: ignore
 
     def invoke(self, context, event):
         opening = _active_opening_for_insert(context)
         if opening is not None:
             op = opening.hb_closet_opening
-            self.qty = int(op.slant_qty) or const.SLANT_SHELF_DEFAULT_QTY
+            self.qty = (int(op.slant_qty)
+                        or types_closets.default_slant_qty(opening))
             self.spacing = float(op.slant_spacing)
             self.angle = float(op.slant_angle)
             self.color = types_closets.shoe_fence_color(op.slant_color)
+            self.location_z = float(op.slant_z)
         return context.window_manager.invoke_props_dialog(self, width=280)
 
     def execute(self, context):
@@ -3353,6 +4137,7 @@ class hb_closets_OT_add_slanted_shelves(_ClosetInsertDialog,
             'slant_spacing': self.spacing,
             'slant_angle': self.angle,
             'slant_color': self.color,
+            'slant_z': self.location_z,
             # This dialog sets the library's own fence, so it clears any
             # other line an opening was carrying.
             'slant_fence_line': '',
@@ -3474,7 +4259,9 @@ class hb_closets_OT_copy_opening(bpy.types.Operator):
 
 
 class hb_closets_OT_paste_opening(bpy.types.Operator):
-    """Replace the active opening's contents with the copied opening."""
+    """Replace the contents of every selected opening with the copied
+    opening. Shift-select several openings to paste into them all at
+    once, as Change Opening does."""
     bl_idname = "hb_closets.paste_opening"
     bl_label = "Paste Opening"
     bl_options = {'UNDO'}
@@ -3486,13 +4273,33 @@ class hb_closets_OT_paste_opening(bpy.types.Operator):
                 is not None)
 
     def execute(self, context):
-        opening = _active_opening_for_insert(context)
-        if opening is None:
+        openings = _selected_openings(context)
+        if not openings:
+            opening = _active_opening_for_insert(context)
+            openings = [opening] if opening is not None else []
+        if not openings:
             return {'CANCELLED'}
-        root = types_closets.find_starter_root(opening)
-        types_closets.apply_opening_data(opening, _opening_clipboard)
-        _apply_finish(root)
-        _apply_selection_shading(context, root)
+        applied = 0
+        roots = []
+        for opening in openings:
+            try:
+                types_closets.apply_opening_data(opening,
+                                                 _opening_clipboard)
+            except ReferenceError:
+                # An earlier paste re-segmented this cage away.
+                continue
+            applied += 1
+            root = types_closets.find_starter_root(opening)
+            if root is not None and root not in roots:
+                roots.append(root)
+        if not applied:
+            return {'CANCELLED'}
+        for root in roots:
+            _apply_finish(root)
+            _apply_selection_shading(context, root)
+        _reselect_cages(context, openings)
+        if applied > 1:
+            self.report({'INFO'}, f"Pasted into {applied} openings")
         return {'FINISHED'}
 
 
@@ -3611,7 +4418,15 @@ class hb_closets_OT_adj_shelf_step(bpy.types.Operator):
         if opening is None or root is None:
             return {'CANCELLED'}
         qty = int(opening.hb_closet_opening.adj_shelf_qty)
-        opening.hb_closet_opening.adj_shelf_qty = max(0, qty + self.delta)
+        # Twelve is the most an opening is given (the reference's shelf slots);
+        # adding past it does nothing rather than clamping a count an
+        # older job saved higher.
+        if self.delta > 0 and qty + self.delta > const.ADJ_SHELF_QTY_MAX:
+            self.report({'WARNING'}, "An opening holds at most %d "
+                        "adjustable shelves" % const.ADJ_SHELF_QTY_MAX)
+            return {'CANCELLED'}
+        types_closets.set_adj_shelf_qty(opening.hb_closet_opening,
+                                        qty + self.delta)
         # Stepping the count by hand takes it over: the height rule
         # would deal the step right back out on the next solve.
         opening.hb_closet_opening.unlock_adj_qty = True
@@ -3812,14 +4627,21 @@ class hb_closets_OT_place_misc_part(bpy.types.Operator,
         if self._preview is None:
             return None, False
         if self.kind == 'SHELF':
-            # 32mm system: a shelf lands on a system hole. The lattice
-            # is measured from the bay interior bottom, so the segment
-            # offset goes on before the snap and comes off after -
-            # holes stay lined up across a split.
+            # As the reference dropped one ('Part: Adj Shelf'):
+            # the cursor rounded DOWN to a 32mm step, then up half a
+            # thickness - the shelf rests on pins in the bore, its
+            # underside on the bore line. The steps are the bay's
+            # drilled holes (const.snap_system_hole's lattice, from the
+            # bay interior bottom), so the segment offset goes on
+            # before the snap and comes off after.
             seg_bottom = self._opening.get('hb_seg_bottom', 0.0)
-            z = (const.snap_system_hole(seg_bottom + local_z)
-                 - seg_bottom)
-            return max(0.0, min(z, interior_h)), False
+            st = types_closets.run_sizes(self._opening).shelf_thickness
+            pitch = const.SYSTEM_PITCH
+            n = math.floor((seg_bottom + local_z - const.SYSTEM_HOLE_BASE)
+                           / pitch + 1e-9)
+            z = (const.SYSTEM_HOLE_BASE + max(0, n) * pitch
+                 - seg_bottom + st / 2.0)
+            return max(0.0, min(z, interior_h - st)), False
         # A cleat dropped near the floor takes the floor, and one
         # dropped near the top takes the top and hangs from it. Between
         # the two it stays where it is put. Both are read off where the
@@ -3830,15 +4652,12 @@ class hb_closets_OT_place_misc_part(bpy.types.Operator,
         if top or z < units.inch(10.0):
             z = 0.0
         else:
-            # Between the two bands it lands on a system hole, the same
-            # lattice a shelf lands on: a cleat is drilled to the panel
-            # like anything else, and a height read straight off the
-            # cursor changes with every pixel the mouse moves - which
-            # solved the whole run again for a part that had not
-            # visibly moved.
-            seg_bottom = self._opening.get('hb_seg_bottom', 0.0)
-            z = max(0.0, min(const.snap_system_hole(seg_bottom + z)
-                             - seg_bottom, interior_h))
+            # Between the two bands it stays at the cursor's height, as
+            # the reference dropped it - read to the nearest 1/16" so the run is
+            # not solved again for every pixel the mouse moves when the
+            # part has not visibly moved.
+            step = units.inch(0.0625)
+            z = max(0.0, min(round(z / step) * step, interior_h))
         return z, top
 
     def _part_band(self, context, z, top, interior_h):
@@ -3944,9 +4763,10 @@ class hb_closets_OT_place_misc_part(bpy.types.Operator,
 
     def _support_target(self, opening, local_z):
         """(root, bay, span) when a cleat at this cursor height in this
-        opening supports its bay from below: the cursor is in the
-        bottom few inches of the lowest opening of a hanging bay, and
-        that bay can take a support cleat."""
+        opening supports its bay from below: the cursor is within 5"
+        of the bottom of the lowest opening of any bay, floor or
+        hanging (reference apply_cleat_as_bottom_support), and that bay can
+        take a support cleat."""
         if self.kind != 'CLEAT' or local_z > self.SUPPORT_BAND:
             return None
         if opening.get('hb_seg_bottom', 0.0) > 1e-4:
@@ -4134,7 +4954,9 @@ class hb_closets_OT_place_misc_part(bpy.types.Operator,
             context.view_layer.objects.active = obj
             self.report({'INFO'}, "Placed %s"
                         % types_closets.LOOSE_PARTS[self.kind][0].lower())
-            if not self._fits_openings:
+            # A misc part ends with the one, unless Shift is held to
+            # drop another (the reference's drop_part re-ran itself on Shift).
+            if not self._fits_openings and not event.shift:
                 self._end(context)
                 return {'FINISHED'}
             self._placed_any = True
@@ -4158,9 +4980,9 @@ class hb_closets_OT_rod_prompts(bpy.types.Operator):
     from_top: bpy.props.FloatProperty(
         name="Distance From Top",
         description="How far down from the shelf or top above the rod's "
-                    "centerline sits. A rod hangs at least the standard "
-                    "drop below it",
-        min=const.ROD_TOP_OFFSET, unit='LENGTH',
+                    "centerline sits (the opening's Rod Top Offset "
+                    "allows 0 too, as the reference version did)",
+        min=0.0, unit='LENGTH',
         precision=4)  # type: ignore
     set_from_front: bpy.props.BoolProperty(
         name="Set Distance From Front",
@@ -4172,12 +4994,22 @@ class hb_closets_OT_rod_prompts(bpy.types.Operator):
     from_rear: bpy.props.FloatProperty(
         name="Dim From Rear", min=0.0,
         unit='LENGTH', precision=4)  # type: ignore
+    # The opening's own Remove Hangers (Opening Properties > Interior),
+    # offered here too as the reference's rod dialog did.
+    remove_hangers: bpy.props.BoolProperty(
+        name="Remove Hangers",
+        description="Leave the display hangers off the rods in this "
+                    "opening")  # type: ignore
 
     @classmethod
     def poll(cls, context):
         obj = context.active_object
         return (obj is not None
                 and obj.get('hb_part_role') == types_closets.PART_ROLE_ROD
+                and not obj.get(types_closets.PROP_WALL_ROD)
+                # A corner unit's rods are set from its Corner Opening
+                # Properties (hb_closets.corner_opening_prompts).
+                and obj.get('hb_l_index') is None
                 and obj.parent is not None
                 and hasattr(obj.parent, 'hb_closet_opening'))
 
@@ -4196,6 +5028,7 @@ class hb_closets_OT_rod_prompts(bpy.types.Operator):
         self.set_from_front = bool(op.rod_set_from_front)
         self.from_front = float(op.rod_from_front)
         self.from_rear = float(op.rod_from_rear)
+        self.remove_hangers = bool(op.remove_hangers)
         return context.window_manager.invoke_props_dialog(self, width=300)
 
     def draw(self, context):
@@ -4212,6 +5045,8 @@ class hb_closets_OT_rod_prompts(bpy.types.Operator):
             col.prop(self, 'from_front')
         else:
             col.prop(self, 'from_rear')
+        box = layout.box()
+        box.prop(self, 'remove_hangers')
 
     def execute(self, context):
         obj = context.active_object
@@ -4223,9 +5058,96 @@ class hb_closets_OT_rod_prompts(bpy.types.Operator):
         op.rod_set_from_front = self.set_from_front
         op.rod_from_front = self.from_front
         op.rod_from_rear = self.from_rear
+        op.remove_hangers = self.remove_hangers
         root = types_closets.find_starter_root(obj)
         if root is not None:
             types_closets.recalculate_closet_starter(root)
+        return {'FINISHED'}
+
+
+class hb_closets_OT_wall_rod_prompts(bpy.types.Operator):
+    """Size and place a rod dropped on a bare wall (reference Closet_Rod_Part
+    out of an opening: Width, Vertical Location, Set Distance From
+    Front / Dim From Rear, Remove Hangers)"""
+    bl_idname = "hb_closets.wall_rod_prompts"
+    bl_label = "Rod Properties"
+    bl_options = {'UNDO'}
+
+    width: bpy.props.FloatProperty(
+        name="Width", min=0.0,
+        unit='LENGTH', precision=4)  # type: ignore
+    height: bpy.props.FloatProperty(
+        name="Vertical Location",
+        description="How far off the floor the rod hangs",
+        unit='LENGTH', precision=4)  # type: ignore
+    set_from_front: bpy.props.BoolProperty(
+        name="Set Distance From Front")  # type: ignore
+    from_front: bpy.props.FloatProperty(
+        name="Dim From Front", min=0.0,
+        unit='LENGTH', precision=4)  # type: ignore
+    from_rear: bpy.props.FloatProperty(
+        name="Dim From Rear", min=0.0,
+        unit='LENGTH', precision=4)  # type: ignore
+    remove_hangers: bpy.props.BoolProperty(
+        name="Remove Hangers",
+        description="Leave the display hangers off this rod")  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (obj is not None
+                and obj.get('hb_part_role') == types_closets.PART_ROLE_ROD
+                and bool(obj.get(types_closets.PROP_WALL_ROD)))
+
+    def invoke(self, context, event):
+        obj = context.active_object
+        try:
+            self.width = float(
+                hb_types.GeoNodeObject(obj).get_input('Dim X') or 0.0)
+        except Exception:
+            self.width = float(types_closets.WALL_ROD_LENGTH)
+        self.height = float(obj.location.z)
+        self.set_from_front = bool(
+            obj.get(types_closets.PROP_WALL_ROD_SET_FROM_FRONT))
+        # A rod saved before it carried its own figures reads its
+        # distance off the wall from where it stands.
+        off_wall = max(0.0, -float(obj.location.y))
+        self.from_rear = float(obj.get(
+            types_closets.PROP_WALL_ROD_FROM_REAR, off_wall))
+        self.from_front = float(obj.get(
+            types_closets.PROP_WALL_ROD_FROM_FRONT, off_wall))
+        self.remove_hangers = bool(
+            obj.get(types_closets.PROP_WALL_ROD_REMOVE_HANGERS))
+        return context.window_manager.invoke_props_dialog(self, width=250)
+
+    def draw(self, context):
+        box = self.layout.box()
+        col = box.column(align=True)
+        col.prop(self, 'width')
+        col.prop(self, 'height')
+        col = box.column(align=True)
+        col.prop(self, 'set_from_front')
+        if self.set_from_front:
+            col.prop(self, 'from_front')
+        else:
+            col.prop(self, 'from_rear')
+        box = self.layout.box()
+        box.prop(self, 'remove_hangers')
+
+    def execute(self, context):
+        obj = context.active_object
+        if obj is None or not obj.get(types_closets.PROP_WALL_ROD):
+            return {'CANCELLED'}
+        hb_types.GeoNodeObject(obj).set_input(
+            'Dim X', max(float(self.width), units.inch(1.0)))
+        obj.location.z = float(self.height)
+        obj[types_closets.PROP_WALL_ROD_SET_FROM_FRONT] = (
+            1 if self.set_from_front else 0)
+        obj[types_closets.PROP_WALL_ROD_FROM_FRONT] = float(self.from_front)
+        obj[types_closets.PROP_WALL_ROD_FROM_REAR] = float(self.from_rear)
+        obj[types_closets.PROP_WALL_ROD_REMOVE_HANGERS] = (
+            1 if self.remove_hangers else 0)
+        types_closets.layout_wall_rod(obj)
         return {'FINISHED'}
 
 
@@ -4587,6 +5509,20 @@ def _hamper_front_into(op, context, opening):
     return {'FINISHED'}
 
 
+def _accessory_target_opening(obj):
+    """The opening an accessory added from obj goes into: its own
+    opening, or a corner unit's opening (which takes panel accessories
+    only)."""
+    opening = types_closets.find_opening_cage(obj)
+    if opening is not None:
+        return opening
+    root = types_closets.find_starter_root(obj)
+    if root is None:
+        return None
+    return next((c for c in root.children
+                 if c.get(types_closets.TAG_CORNER_OPENING_CAGE)), None)
+
+
 class hb_closets_OT_add_accessory(bpy.types.Operator):
     """Hang an accessory in the active opening.
 
@@ -4633,8 +5569,7 @@ class hb_closets_OT_add_accessory(bpy.types.Operator):
     @classmethod
     def poll(cls, context):
         from .. import accessories_closets as acc
-        if types_closets.find_opening_cage(
-                context.active_object) is None:
+        if _accessory_target_opening(context.active_object) is None:
             cls.poll_message_set("Select an opening first")
             return False
         if not acc.catalog():
@@ -4678,13 +5613,18 @@ class hb_closets_OT_add_accessory(bpy.types.Operator):
 
     def execute(self, context):
         from .. import accessories_closets as acc
-        opening = types_closets.find_opening_cage(context.active_object)
+        opening = _accessory_target_opening(context.active_object)
         if opening is None:
             return {'CANCELLED'}
         acc_def = acc.get(self.accessory)
         if self.accessory == 'NONE' or acc_def is None:
             self.report({'WARNING'},
                         "That accessory is no longer offered")
+            return {'CANCELLED'}
+        if (opening.get(types_closets.TAG_CORNER_OPENING_CAGE)
+                and acc_def.family != acc.FAMILY_PANEL):
+            self.report({'WARNING'},
+                        "A corner takes panel accessories only")
             return {'CANCELLED'}
         if self.accessory == TILT_OUT_HAMPER_KEY:
             return _hamper_front_into(self, context, opening)
@@ -4710,6 +5650,8 @@ class hb_closets_OT_add_accessory(bpy.types.Operator):
                     % types_closets._in_str(clear))
             if self.model != 'NONE':
                 cage[types_closets.PROP_ACCESSORY_MODEL] = self.model
+                # The model chosen can be sold in less than the line.
+                types_closets.seat_default_finish(cage, acc_def)
             if acc_def is not None and acc_def.family == acc.FAMILY_PANEL:
                 cage[types_closets.PROP_ACCESSORY_PANEL_LOC] = (
                     self.panel_location)
@@ -4721,28 +5663,89 @@ class hb_closets_OT_add_accessory(bpy.types.Operator):
             # only exists once the run has been solved.
             types_closets.seat_insert_on_shelf(cage, clear)
             _settle_new_opening(context, root)
-        _report_finish_fallback(self, acc_def)
+        _report_finish_fallback(self, acc_def, cage)
         return {'FINISHED'}
 
 
-def _report_finish_fallback(op, acc_def):
+def _report_finish_fallback(op, acc_def, cage=None):
     """Say so when an accessory just placed is not made in the room's
-    default finish or fabric and was made in black instead."""
+    default finish or fabric and was made in black instead. Given the
+    accessory, it is judged by what its model or size is sold in."""
     from .. import accessories_closets as acc
     if acc_def is None:
         return
-    color, fabric, missing = acc.default_finish(acc_def)
+    model, size, label = '', None, acc_def.label
+    if cage is not None:
+        try:
+            model, size, label = acc.finish_variant(cage, acc_def)
+        except Exception:
+            model, size, label = '', None, acc_def.label
+    color, fabric, missing = acc.default_finish(acc_def, None, model,
+                                                size)
     if not missing:
         return
     used = tuple(v for v in (color, fabric)
                  if v and v not in acc._room_defaults())
     op.report({'WARNING'},
-              acc.notice_lines([(acc_def.label, missing, used)])[0])
+              acc.notice_lines([(label, missing, used)])[0])
 
 
-def _opening_under_cursor(context, region, mouse_pos, x_margin=0.0):
+def _corner_wing_hit(obj, o_l, d_l, x_margin):
+    """Where a mouse ray (in a corner opening's frame) meets the front
+    of one of the corner's two wings, as (t, z, local_x, in_rect), or
+    None. A corner takes panel accessories only, and each wing ends at
+    the one panel they hang on - so the hit is handed back in the
+    terms the face picker reads: a back wall wing hit as the right
+    half of an opening (its end panel's faces), a side wall wing hit
+    as the left half, and one just past either end as that panel's
+    outside face."""
+    root = types_closets.find_starter_root(obj)
+    if root is None:
+        return None
+    try:
+        cage = hb_types.GeoNodeCage(obj)
+        o_w = float(cage.get_input('Dim X'))
+        o_d = float(cage.get_input('Dim Y'))
+        o_h = float(cage.get_input('Dim Z'))
+    except Exception:
+        return None
+    sp = root.hb_closet_starter
+    ld = min(float(sp.l_left_depth), o_w)
+    rd = min(float(sp.l_right_depth), o_d)
+    best = None
+    # Back wall wing: its front is the plane y = -rd, from the side
+    # wall wing's front (x = ld) out to the end of the unit.
+    if abs(d_l.y) > 1e-8:
+        t = (-rd - o_l.y) / d_l.y
+        p = o_l + d_l * t
+        if t > 0.0 and -0.001 <= p.z <= o_h + 0.001:
+            if ld - 0.001 <= p.x <= o_w + 0.001:
+                best = (t, p.z, o_w, True)
+            elif o_w < p.x <= o_w + x_margin + 0.001:
+                best = (t, p.z, o_w + 1.0, False)
+    # Side wall wing: its front is the plane x = ld, from the back
+    # wall wing's front (y = -rd) out to the end of the unit.
+    if abs(d_l.x) > 1e-8:
+        t = (ld - o_l.x) / d_l.x
+        p = o_l + d_l * t
+        if t > 0.0 and -0.001 <= p.z <= o_h + 0.001:
+            hit = None
+            if -o_d - 0.001 <= p.y <= -rd + 0.001:
+                hit = (t, p.z, 0.0, True)
+            elif -o_d - x_margin - 0.001 <= p.y < -o_d:
+                hit = (t, p.z, -1.0, False)
+            if hit is not None and (
+                    best is None or (not hit[3], hit[0])
+                    < (not best[3], best[0])):
+                best = hit
+    return best
+
+
+def _opening_under_cursor(context, region, mouse_pos, x_margin=0.0,
+                          corners=False):
     """(opening, local_z, interior_h, local_x, open_w, in_rect) for
-    the opening under the mouse.
+    the opening under the mouse. With corners, a corner unit's opening
+    is offered too, read wing by wing (_corner_wing_hit).
 
     Closet interiors are open-backed, so a scene raycast usually
     sails THROUGH an opening and hits the wall/floor behind it (and
@@ -4771,7 +5774,9 @@ def _opening_under_cursor(context, region, mouse_pos, x_margin=0.0):
     shown = {}
     best = None
     for obj in context.scene.objects:
-        if not obj.get(types_closets.TAG_OPENING_CAGE):
+        is_corner = bool(
+            corners and obj.get(types_closets.TAG_CORNER_OPENING_CAGE))
+        if not obj.get(types_closets.TAG_OPENING_CAGE) and not is_corner:
             continue
         # A closet that cannot be seen - its wall hidden or isolated
         # away, the closet hidden, local view - is not a place to put
@@ -4796,6 +5801,14 @@ def _opening_under_cursor(context, region, mouse_pos, x_margin=0.0):
         inv = split_preview._world_matrix(obj).inverted()
         o_l = inv @ origin
         d_l = inv.to_3x3() @ direction
+        if is_corner:
+            hit = _corner_wing_hit(obj, o_l, d_l, x_margin)
+            if hit is not None:
+                t, z, l_x, in_rect = hit
+                key = (0 if in_rect else 1, t)
+                if best is None or key < best[0]:
+                    best = (key, obj, z, o_h, l_x, o_w, in_rect)
+            continue
         if abs(d_l.y) < 1e-8:
             continue
         side = obj.get(types_closets.PROP_OPENING_SIDE, 'FRONT')
@@ -4923,6 +5936,9 @@ class hb_closets_OT_place_accessory(bpy.types.Operator,
                 and self.model != 'NONE'):
             cage[types_closets.PROP_ACCESSORY_MODEL] = self.model
         acc_def = acc.get(self.accessory)
+        if acc_def is not None:
+            # Made in what the model it now carries is sold in.
+            types_closets.seat_default_finish(cage, acc_def)
         if acc_def is not None and acc_def.family == acc.FAMILY_PANEL:
             cage[types_closets.PROP_ACCESSORY_PANEL_LOC] = (
                 acc.PANEL_LOCATION_KEYS[self._face])
@@ -4943,6 +5959,10 @@ class hb_closets_OT_place_accessory(bpy.types.Operator,
         if (self.properties.is_property_set('model')
                 and self.model != 'NONE'):
             cage[types_closets.PROP_ACCESSORY_MODEL] = self.model
+            from .. import accessories_closets as acc
+            acc_def = acc.get(self.accessory)
+            if acc_def is not None:
+                types_closets.seat_default_finish(cage, acc_def)
             types_closets.layout_wall_accessory(cage)
         self._cage = cage
         self._opening = None
@@ -5038,9 +6058,12 @@ class hb_closets_OT_place_accessory(bpy.types.Operator,
         # A panel accessory is caught a little past each end of the
         # run too, so the outside of an end panel can be pointed at.
         margin = 0.30 if is_panel else 0.0
+        # A corner unit takes panel accessories only, on its wing
+        # panels; anything else is not offered one.
         resolved = _opening_under_cursor(context, self.region,
                                          self.mouse_pos,
-                                         x_margin=margin)
+                                         x_margin=margin,
+                                         corners=is_panel)
         if resolved is None:
             # A cleat with no opening under it takes a wall instead -
             # the prior library dropped its hook cleats anywhere a
@@ -5067,11 +6090,19 @@ class hb_closets_OT_place_accessory(bpy.types.Operator,
         outside = is_panel and acc.PANEL_LOCATION_KEYS[
             self._face] in (acc.PANEL_OUTSIDE_LEFT,
                             acc.PANEL_OUTSIDE_RIGHT)
-        # On an outside face the opening's contents are on the other
-        # side of the panel; nothing in there is in its way.
-        z = types_closets.accessory_drop_height(
-            opening, acc_def, raw, skip=self._cage,
-            dodge=not outside)
+        # Over an accessory already in the opening it stacks flush on
+        # top of it (cursor in its upper half) or under it (lower
+        # half), as the reference dropped one onto another.
+        stacked = types_closets.stack_on_accessory(
+            opening, acc_def, raw, skip=self._cage)
+        if stacked is not None:
+            z = stacked[0]
+        else:
+            # On an outside face the opening's contents are on the
+            # other side of the panel; nothing in there is in its way.
+            z = types_closets.accessory_drop_height(
+                opening, acc_def, raw, skip=self._cage,
+                dodge=not outside)
         self._cage[types_closets.PROP_ACCESSORY_Z] = z
         if acc_def.family == acc.FAMILY_PANEL:
             self._cage[types_closets.PROP_ACCESSORY_PANEL_LOC] = (
@@ -5081,7 +6112,12 @@ class hb_closets_OT_place_accessory(bpy.types.Operator,
         self._show_dims(opening, acc_def, z)
         where = types_closets._in_str(z)
         why = ""
-        if z <= 1e-6:
+        if stacked is not None:
+            why = (" (on top of %s)" if z >= types_closets.accessory_span(
+                stacked[1], acc.get(stacked[1].get(
+                    types_closets.PROP_ACCESSORY_KEY, '')))[1] - 1e-6
+                else " (under %s)") % stacked[1].name
+        elif z <= 1e-6:
             why = " (on the floor)"
         elif abs(z - raw) > const.ACCESSORY_DROP_GRID:
             why = " (moved to keep it clear)"
@@ -5271,7 +6307,7 @@ class hb_closets_OT_place_accessory(bpy.types.Operator,
             context.view_layer.objects.active = cage
             self._end(context)
             self.report({'INFO'}, self._note)
-            _report_finish_fallback(self, acc_def)
+            _report_finish_fallback(self, acc_def, cage)
             if event.shift:
                 bpy.ops.hb_closets.place_accessory(
                     'INVOKE_DEFAULT', accessory=self.accessory,
@@ -5294,6 +6330,61 @@ def _size_index(sizes, value):
         if abs(size - value) < 1e-6:
             return str(i)
     return '0'
+
+
+def _acc_variant(op, acc_def):
+    """(model, size, key) the accessory dialog has chosen, as far as
+    they narrow what it is sold in (accessories_closets.sold_finishes):
+    the band for a line sold per model, the (w, h, d) for a wire basket
+    sold per size. `key` names the pair so a change can be seen."""
+    model = ''
+    size = None
+    if acc_def.model_finishes and op.model not in ('', 'NONE'):
+        model = op.model
+    if acc_def.size_colors and acc_def.is_sized:
+        try:
+            size = (acc_def.widths[int(op.basket_width)],
+                    acc_def.heights[int(op.basket_height)],
+                    acc_def.depths[int(op.basket_depth)])
+        except (IndexError, ValueError, TypeError):
+            size = None
+    key = model + '|' + ('%d,%d,%d' % tuple(
+        int(round(v / 0.0254)) for v in size) if size else '')
+    return model, size, key
+
+
+def _acc_offered_colors(op, acc_def):
+    """The finishes the chosen model / size is sold in. The one the
+    accessory held when the dialog opened stays on the list while that
+    model / size does, so one saved in a finish no longer sold still
+    reads back (its warning says so)."""
+    from .. import accessories_closets as acc
+    model, size, key = _acc_variant(op, acc_def)
+    sold = acc.sold_finishes(acc_def, model, size)
+    names = list(sold[0]) if sold and sold[0] else list(acc_def.colors)
+    extra = ''
+    if (op.held_color and op.held_color not in names
+            and op.held_variant == key):
+        extra = op.held_color
+        names.append(extra)
+    return names, extra
+
+
+def _acc_offered_fabrics(op, acc_def, color):
+    """The fabrics sold with `color` on the chosen model, the held one
+    kept as the finishes are."""
+    from .. import accessories_closets as acc
+    model, size, key = _acc_variant(op, acc_def)
+    sold = acc.sold_finishes(acc_def, model, size)
+    names = list(acc_def.fabrics)
+    if sold and sold[1]:
+        names = [f for f in names if (color, f) in sold[1]] or names
+    extra = ''
+    if (op.held_fabric and op.held_fabric not in names
+            and op.held_variant == key and color == op.held_color):
+        extra = op.held_fabric
+        names.append(extra)
+    return names, extra
 
 
 def _accessory_can_fit(obj, acc_def):
@@ -5374,6 +6465,14 @@ class hb_closets_OT_fit_opening_to_accessory(bpy.types.Operator):
         return {'FINISHED'}
 
 
+def _accessory_front(cage):
+    """The drop-down front an insert accessory (the ironing drawer)
+    hangs off its cage, or None."""
+    return next((c for c in cage.children
+                 if c.get('hb_part_role')
+                 == types_closets.PART_ROLE_DRAWER_FRONT), None)
+
+
 class hb_closets_OT_accessory_prompts(bpy.types.Operator):
     """Finish, fabric and height for the active accessory. What is
     offered depends on the accessory: one sold in a single finish has
@@ -5384,9 +6483,12 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
 
     def _color_items(self, context):
         acc_def = _accessory_of(context.active_object)
-        names = acc_def.colors if acc_def is not None else ()
+        names, extra = ((_acc_offered_colors(self, acc_def))
+                        if acc_def is not None and acc_def.colors
+                        else ((), ''))
         return _held('prompt_colour',
-                     [(n, n, "") for n in names]
+                     [(n, n + " (not sold)" if n == extra else n, "")
+                      for n in names]
                      or [('NONE', "As It Comes", "")])
 
     def _width_items(self, context):
@@ -5401,9 +6503,12 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
 
     def _fabric_items(self, context):
         acc_def = _accessory_of(context.active_object)
-        names = acc_def.fabrics if acc_def is not None else ()
+        names, extra = ((_acc_offered_fabrics(self, acc_def, self.color))
+                        if acc_def is not None and acc_def.fabrics
+                        else ((), ''))
         return _held('prompt_fabric',
-                     [(n, n, "") for n in names]
+                     [(n, n + " (not sold)" if n == extra else n, "")
+                      for n in names]
                      or [('NONE', "As It Comes", "")])
 
     model: bpy.props.EnumProperty(
@@ -5414,11 +6519,33 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
         name="Finish", items=_color_items)  # type: ignore
     fabric: bpy.props.EnumProperty(
         name="Fabric", items=_fabric_items)  # type: ignore
+    # What the finish lists are kept against (_keep_sold): the finish
+    # and fabric the accessory held when the dialog opened and the
+    # model / size it held them at, so one saved in something no longer
+    # sold reads back; and the last model / size and finish seen, so a
+    # change to either re-picks from what is sold.
+    held_color: bpy.props.StringProperty(
+        options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+    held_fabric: bpy.props.StringProperty(
+        options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+    held_variant: bpy.props.StringProperty(
+        options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+    last_variant: bpy.props.StringProperty(
+        options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+    cur_color: bpy.props.StringProperty(
+        options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+    cur_fabric: bpy.props.StringProperty(
+        options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
     location: bpy.props.FloatProperty(
         name="Height Off Opening Floor",
         description="How far up the opening the accessory sits. Below "
                     "zero hangs it down past the bottom of the partition",
         unit='LENGTH', precision=4)  # type: ignore
+    auto_center: bpy.props.BoolProperty(
+        name="Auto Center",
+        description="Keep it centred front to back on the panel, moving "
+                    "with the depth of the opening",
+        default=False)  # type: ignore
     setback: bpy.props.FloatProperty(
         name="Back From The Front", min=0.0, unit='LENGTH',
         precision=4,
@@ -5468,6 +6595,16 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
         description="Leave the drop-down front off and show the "
                     "compartment open - the prior library's "
                     "option")  # type: ignore
+    # How far the drop-down front is drawn standing open (reference Open
+    # Drawer on the ironing drawer, offered while it has a front). The
+    # front carries its own figure, as it hangs off the accessory rather
+    # than an opening.
+    open_drawer: bpy.props.FloatProperty(
+        name="Open Drawer",
+        description="How far the drawer front is drawn standing open. "
+                    "For the drawing only",
+        default=0.0, min=0.0, max=100.0,
+        subtype='PERCENTAGE', precision=0)  # type: ignore
     opening_height: bpy.props.FloatProperty(
         name="Drawer Opening Height", min=0.0, unit='LENGTH',
         precision=4,
@@ -5501,6 +6638,29 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
                 self.panel_location = stored
             except TypeError:
                 pass
+        # The finishes offered hang on the model and size, so those are
+        # read first, and what it holds is kept on the lists for as
+        # long as they stay as they are.
+        _def = _accessory_of(obj)
+        if _def is not None and _def.is_sized:
+            try:
+                _w = (types_closets.wall_accessory_length(obj)
+                      if obj.get(types_closets.PROP_ACCESSORY_ON_WALL)
+                      else types_closets._cage_dim_x(obj.parent))
+                b_w, b_h, b_d = types_closets.basket_values(
+                    obj, _def, _w)
+                self.basket_width = _size_index(_def.widths, b_w)
+                self.basket_height = _size_index(_def.heights, b_h)
+                self.basket_depth = _size_index(_def.depths, b_d)
+            except Exception:
+                pass
+        self.held_color = str(
+            obj.get(types_closets.PROP_ACCESSORY_COLOR, '') or '')
+        self.held_fabric = str(
+            obj.get(types_closets.PROP_ACCESSORY_FABRIC, '') or '')
+        if _def is not None:
+            self.held_variant = _acc_variant(self, _def)[2]
+            self.last_variant = self.held_variant
         stored = obj.get(types_closets.PROP_ACCESSORY_COLOR, '')
         if stored:
             try:
@@ -5513,6 +6673,10 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
                 self.fabric = stored
             except TypeError:
                 pass
+        self.cur_color = self.color if _def is not None and _def.colors \
+            else ''
+        self.cur_fabric = self.fabric if _def is not None and \
+            _def.fabrics else ''
         self.location = float(
             obj.get(types_closets.PROP_ACCESSORY_Z, 0.0))
         # A cleat is shown the length it actually is rather than the
@@ -5533,6 +6697,7 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
             # figure it centred at, or typing in this box would move it.
             self.setback = float(
                 types_closets.accessory_setback(obj, acc_def))
+            self.auto_center = types_closets.auto_center(obj, acc_def)
         if acc_def is not None and acc_def.is_sized:
             b_w, b_h, b_d = types_closets.basket_values(
                 obj, acc_def, width)
@@ -5546,6 +6711,9 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
         self.hook_inset = inset
         self.remove_front = bool(
             obj.get(types_closets.PROP_ACCESSORY_NO_FRONT))
+        front = _accessory_front(obj)
+        self.open_drawer = (float(front.get('hb_drawer_open', 0.0)) * 100.0
+                            if front is not None else 0.0)
         self.opening_height = float(
             obj.get(types_closets.PROP_ACCESSORY_OPEN_H, 0.0) or 0.0)
         self.custom_name = str(
@@ -5582,7 +6750,10 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
             # Where it sits front to back. It screws to a panel face,
             # so how far in from the front is a choice - unlike a
             # pull-out, which lands on its runners at the front.
-            col.prop(self, 'setback')
+            col.prop(self, 'auto_center')
+            sub = col.column()
+            sub.enabled = not self.auto_center
+            sub.prop(self, 'setback')
         if acc_def.is_sized:
             # Three sizes rather than one, because it is made to any
             # of them: how wide, how tall and how deep.
@@ -5612,12 +6783,20 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
             col = box.column(align=True)
             col.prop(self, 'opening_height')
             col.prop(self, 'remove_front')
+            if not self.remove_front and _accessory_front(obj) is not None:
+                col.prop(self, 'open_drawer')
             # It stands on a shelf. Letting a height be typed here
             # would lift it off that shelf and leave it on nothing, so
             # where it sits is settled when it is placed and not
             # after - which is how the prior library had it too.
             box.label(text="Height is set by placing it.",
                       icon='INFO')
+        elif types_closets.fixed_accessory_z(
+                obj.parent, acc_def, obj) is not None:
+            # Held where the reference version held it: an ironing board
+            # at its own height. (A storage box is only put on the
+            # floor when dropped; its height can be typed here.)
+            col.label(text="Height is set by the accessory.", icon='INFO')
         else:
             col.prop(self, 'location')
         warning = obj.get(types_closets.PROP_ACCESSORY_WARNING, '')
@@ -5640,10 +6819,47 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
         sitting still and jumping once the dialog is closed. Backing
         out of the dialog leaves what was tried applied - the same as
         dragging the thing by hand and thinking better of it."""
+        self._keep_sold(context)
         self._apply(context)
         return True
 
+    def _keep_sold(self, context):
+        """Keep the finish and fabric to what the chosen model / size
+        is sold in. A model or size change re-reads both lists: the
+        finish held so far stays if that model / size is sold in it,
+        and otherwise the room's default (black where that is not sold
+        either) is picked. A finish change does the same for the
+        fabric, which on a hamper depends on the finish."""
+        from .. import accessories_closets as acc
+        acc_def = _accessory_of(context.active_object)
+        if acc_def is None:
+            return
+        model, size, key = _acc_variant(self, acc_def)
+        changed = key != self.last_variant
+        room_c, room_f = acc._room_defaults(context.scene)
+        prev_color = self.cur_color
+        if acc_def.colors:
+            colors = _acc_offered_colors(self, acc_def)[0]
+            if changed and colors:
+                want = prev_color
+                if want not in colors:
+                    want = acc._pick(tuple(colors), room_c,
+                                     acc.FALLBACK_COLOR)[0]
+                self.color = want
+            self.cur_color = self.color
+        if acc_def.fabrics:
+            fabrics = _acc_offered_fabrics(self, acc_def, self.color)[0]
+            if (changed or self.color != prev_color) and fabrics:
+                want = self.cur_fabric
+                if want not in fabrics:
+                    want = acc._pick(tuple(fabrics), room_f,
+                                     acc.FALLBACK_FABRIC)[0]
+                self.fabric = want
+            self.cur_fabric = self.fabric
+        self.last_variant = key
+
     def execute(self, context):
+        self._keep_sold(context)
         return ({'FINISHED'} if self._apply(context) else {'CANCELLED'})
 
     def _apply(self, context):
@@ -5659,9 +6875,9 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
             if acc_def is not None and acc_def.family == acc.FAMILY_PANEL:
                 obj[types_closets.PROP_ACCESSORY_PANEL_LOC] = (
                     self.panel_location)
-            if self.color != 'NONE':
+            if self.color not in ('NONE', ''):
                 obj[types_closets.PROP_ACCESSORY_COLOR] = self.color
-            if self.fabric != 'NONE':
+            if self.fabric not in ('NONE', ''):
                 obj[types_closets.PROP_ACCESSORY_FABRIC] = self.fabric
             if acc_def is not None and acc_def.custom:
                 obj[types_closets.PROP_CUSTOM_NAME] = self.custom_name
@@ -5678,11 +6894,17 @@ class hb_closets_OT_accessory_prompts(bpy.types.Operator):
             if acc_def is not None and acc_def.family == acc.FAMILY_INSERT:
                 obj[types_closets.PROP_ACCESSORY_NO_FRONT] = (
                     1 if self.remove_front else 0)
+                front = _accessory_front(obj)
+                if front is not None and not self.remove_front:
+                    front['hb_drawer_open'] = float(self.open_drawer) / 100.0
                 obj[types_closets.PROP_ACCESSORY_OPEN_H] = float(
                     self.opening_height)
             if acc_def is not None and acc_def.family == acc.FAMILY_PANEL:
-                obj[types_closets.PROP_ACCESSORY_SETBACK] = float(
-                    self.setback)
+                obj[types_closets.PROP_ACCESSORY_AUTO_CENTER] = (
+                    1 if self.auto_center else 0)
+                if not self.auto_center:
+                    obj[types_closets.PROP_ACCESSORY_SETBACK] = float(
+                        self.setback)
             if acc_def is not None and acc_def.is_sized:
                 for prop, sizes, chosen in (
                         (types_closets.PROP_BASKET_W, acc_def.widths,
@@ -6164,6 +7386,107 @@ class hb_closets_OT_delete_bay_cleat(bpy.types.Operator):
         return {'FINISHED'}
 
 
+def _bay_cleat_entry(obj):
+    """(root, entry) for a support cleat dropped under some bays, else
+    (None, None)."""
+    uid = obj.get(types_closets.PROP_BAY_CLEAT) if obj is not None \
+        else None
+    root = obj.parent if uid is not None else None
+    if root is None or not hasattr(root, 'hb_closet_starter'):
+        return None, None
+    for entry in root.hb_closet_starter.bay_cleats:
+        if entry.uid == uid:
+            return root, entry
+    return None, None
+
+
+def _bay_cleat_full_length(root, entry):
+    """The span a support cleat entry is laid out over, end partition
+    to end partition, or 0.0 when its bays cannot be found."""
+    bays = _starter_bays(root)
+    index = {b.name: i for i, b in enumerate(bays)}
+    i, j = index.get(entry.first_bay), index.get(entry.last_bay)
+    if i is None or j is None:
+        return 0.0
+    layout = types_closets.solve_starter_layout(root)
+    pt = types_closets.run_sizes(root).panel_thickness
+    return float(types_closets.bottom_cleat_span(
+        layout, min(i, j), max(i, j), pt)[1])
+
+
+class hb_closets_OT_bay_cleat_prompts(bpy.types.Operator):
+    """Size and place a support cleat dropped under hanging bays: how
+    long and wide it is cut, and where it stands (as in the reference version)"""
+    bl_idname = "hb_closets.bay_cleat_prompts"
+    bl_label = "Cleat Properties"
+    bl_options = {'UNDO'}
+
+    full_length: bpy.props.BoolProperty(
+        name="Full Length",
+        description="Run it end partition to end partition under its "
+                    "bays, following them when they change",
+        default=True)  # type: ignore
+    length: bpy.props.FloatProperty(
+        name="Length", min=0.0, unit='LENGTH', precision=4)  # type: ignore
+    width: bpy.props.FloatProperty(
+        name="Width", min=0.0, unit='LENGTH', precision=4)  # type: ignore
+    z_offset: bpy.props.FloatProperty(
+        name="Vertical Location",
+        description="How far the cleat is raised (negative: dropped) "
+                    "from the underside of the bottom shelf",
+        unit='LENGTH', precision=4)  # type: ignore
+    x_offset: bpy.props.FloatProperty(
+        name="Horizontal Location", min=0.0, unit='LENGTH', precision=4,
+        description="How far in from the left end of its span it "
+                    "starts")  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        return _bay_cleat_entry(context.active_object)[1] is not None
+
+    def invoke(self, context, event):
+        root, entry = _bay_cleat_entry(context.active_object)
+        full = _bay_cleat_full_length(root, entry)
+        self.full_length = float(entry.length) <= 0.0
+        self.x_offset = float(entry.x_offset)
+        self.length = (float(entry.length) if entry.length > 0.0
+                       else max(full - self.x_offset, 0.0))
+        self.width = (float(entry.width) if entry.width > 0.0
+                      else const.CLEAT_WIDTH)
+        self.z_offset = float(entry.z_offset)
+        return context.window_manager.invoke_props_dialog(self, width=300)
+
+    def draw(self, context):
+        col = self.layout.column(align=True)
+        col.prop(self, 'full_length')
+        sub = col.column(align=True)
+        sub.enabled = not self.full_length
+        sub.prop(self, 'length')
+        sub.prop(self, 'x_offset')
+        col = self.layout.column(align=True)
+        col.prop(self, 'width')
+        col.prop(self, 'z_offset')
+
+    def execute(self, context):
+        root, entry = _bay_cleat_entry(context.active_object)
+        if entry is None:
+            return {'CANCELLED'}
+        full = _bay_cleat_full_length(root, entry)
+        if self.full_length or (full > 0.0
+                                and self.x_offset <= 1e-6
+                                and self.length >= full - 1e-5):
+            entry.length = 0.0
+            entry.x_offset = 0.0
+        else:
+            entry.length = float(self.length)
+            entry.x_offset = float(self.x_offset)
+        entry.width = (0.0 if abs(self.width - const.CLEAT_WIDTH) < 1e-6
+                       else float(self.width))
+        entry.z_offset = float(self.z_offset)
+        types_closets.recalculate_closet_starter(root)
+        return {'FINISHED'}
+
+
 class hb_closets_OT_continuous_top_prompts(bpy.types.Operator):
     """Set how deep the active continuous top is and how far it runs
     past each end of what it caps. The length is what those come to,
@@ -6429,6 +7752,11 @@ class hb_closets_OT_front_style(bpy.types.Operator):
     def execute(self, context):
         roots = []
         for obj in self._fronts(context):
+            # Set here, the style is the person's own, not one a room
+            # change held the front at.
+            from .. import fronts_closets
+            if fronts_closets.PROP_STYLE_HELD_BY_ROOM in obj:
+                del obj[fronts_closets.PROP_STYLE_HELD_BY_ROOM]
             if self.style == 'FOLLOW':
                 if types_closets.PROP_FRONT_STYLE in obj:
                     del obj[types_closets.PROP_FRONT_STYLE]
@@ -6549,8 +7877,11 @@ class hb_closets_OT_lock_shelf(bpy.types.Operator):
                 cls.poll_message_set(
                     "The cap shelf belongs to its drawer bank")
                 return False
-            return (obj.get('hb_l_index') is None
-                    and not obj.get('hb_preview'))
+            if not types_closets.is_unlockable_shelf(obj):
+                cls.poll_message_set(
+                    "This shelf belongs to the bay's configuration")
+                return False
+            return True
         return False
 
     def execute(self, context):
@@ -6575,11 +7906,13 @@ class hb_closets_OT_lock_shelf(bpy.types.Operator):
             if not obj.get(types_closets.PROP_SHELF_HELD):
                 op = opening.hb_closet_opening
                 with types_closets.suspend_recalc():
-                    op.adj_shelf_qty = max(0, int(op.adj_shelf_qty) - 1)
+                    types_closets.set_adj_shelf_qty(
+                        op, int(op.adj_shelf_qty) - 1)
                     if op.adj_shelf_qty:
                         op.unlock_adj_qty = True
             types_closets._remove_part_tree(obj)
-            types_closets.add_fixed_shelf(opening, z)
+            locked = types_closets.add_fixed_shelf(opening, z)
+            locked[types_closets.PROP_SHELF_LOCKED] = 1
             _apply_finish(root)
             types_closets.recalculate_closet_starter(root)
             _apply_selection_shading(context, root, keep_active=False)
@@ -6638,11 +7971,19 @@ class hb_closets_OT_lock_shelf(bpy.types.Operator):
                         seg_h = 0.0
                     n = total + 1
                     gap = (seg_h - st * n) / (n + 1)
-                    dealt_z = gap * (n_below + 1) + st * n_below
-                    rejoin = abs(dealt_z - local_z) <= units.inch(1 / 16)
+                    # Where the solve deals shelf n_below + 1 (reference:
+                    # n spacings plus n thicknesses up).
+                    dealt_z = (gap + st) * (n_below + 1)
+                    # Only while the count it rejoins stays inside the
+                    # twelve an opening is dealt; past that it stays a
+                    # shelf at its own height rather than vanishing
+                    # into a clamped count.
+                    rejoin = (abs(dealt_z - local_z) <= units.inch(1 / 16)
+                              and total + 1 <= const.ADJ_SHELF_QTY_MAX)
                 with types_closets.suspend_recalc():
                     if total:
-                        op.adj_shelf_qty = total + (1 if rejoin else 0)
+                        types_closets.set_adj_shelf_qty(
+                            op, total + (1 if rejoin else 0))
                         op.unlock_adj_qty = True
                 if not rejoin:
                     types_closets.add_opening_shelf(opening, local_z)
@@ -6654,6 +7995,330 @@ class hb_closets_OT_lock_shelf(bpy.types.Operator):
         return {'CANCELLED'}
 
 
+class hb_closets_OT_adj_shelf_prompts(bpy.types.Operator):
+    """Set the height of the active adjustable shelf (reference Adj_Shelf
+    Vertical Location). A shelf the opening deals out comes off the
+    count and stands at the height given on its own clips; the shelves
+    left keep their spacing"""
+    bl_idname = "hb_closets.adj_shelf_prompts"
+    bl_label = "Adjustable Shelf Properties"
+    bl_options = {'UNDO'}
+
+    vertical_location: bpy.props.FloatProperty(
+        name="Vertical Location",
+        description="Underside of the shelf above the bottom of its "
+                    "opening",
+        min=0.0, unit='LENGTH', precision=4)  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (obj is not None
+                and obj.get('hb_part_role')
+                == types_closets.PART_ROLE_ADJ_SHELF
+                and obj.get('hb_l_index') is None
+                and types_closets.find_opening_cage(obj) is not None)
+
+    def invoke(self, context, event):
+        # The layout stands every clip shelf at its opening-local
+        # height, dealt or held, so the location is the height.
+        self.vertical_location = max(
+            0.0, float(context.active_object.location.z))
+        return context.window_manager.invoke_props_dialog(self, width=300)
+
+    def draw(self, context):
+        self.layout.prop(self, 'vertical_location')
+
+    def execute(self, context):
+        obj = context.active_object
+        opening = types_closets.find_opening_cage(obj)
+        root = types_closets.find_starter_root(obj)
+        if opening is None or root is None:
+            return {'CANCELLED'}
+        z = float(self.vertical_location)
+        if obj.get(types_closets.PROP_SHELF_HELD):
+            obj['hb_z_offset'] = z
+            obj['hb_anchor_top'] = 0
+        else:
+            # Out of the count the way Lock Shelf takes one, with the
+            # count held so the rest keep their spacing; back in at its
+            # own height.
+            op = opening.hb_closet_opening
+            with types_closets.suspend_recalc():
+                types_closets.set_adj_shelf_qty(
+                    op, int(op.adj_shelf_qty) - 1)
+                if op.adj_shelf_qty:
+                    op.unlock_adj_qty = True
+            types_closets._remove_part_tree(obj)
+            obj = types_closets.add_opening_shelf(opening, z)
+        _apply_finish(root)
+        types_closets.recalculate_closet_starter(root)
+        _apply_selection_shading(context, root, keep_active=False)
+        return {'FINISHED'}
+
+
+# Per-part comments (as the reference's Part Info comment_1..3).
+# Comment 1 is stamped automatically on export by downstream manufacturing
+# (closet_numbers: P# on a panel, W#B# elsewhere, as 'hb_comment_1') and
+# is rewritten every time, so a comment typed here never goes into that
+# key: it is kept as an override beside it, which closet_numbers.comment
+# reads first. Comments 2 and 3 are the user's alone. The reference wrote those
+# two only into its own room XML, which has no counterpart here, so they
+# stay on the part as notes and no export claims to carry them.
+PROP_USER_COMMENT_1 = 'hb_user_comment_1'
+PROP_COMMENT_2 = 'hb_comment_2'
+PROP_COMMENT_3 = 'hb_comment_3'
+
+
+class hb_closets_OT_part_comments(bpy.types.Operator):
+    """The active part's comments, as the reference version's Part Info panel had them:
+    comment 1 is the part's stamped number unless overridden here (and
+    goes to the shop output either way); comments 2 and 3 are notes
+    kept on the part"""
+    bl_idname = "hb_closets.part_comments"
+    bl_label = "Part Comments"
+    bl_options = {'UNDO'}
+
+    comment_1: bpy.props.StringProperty(
+        name="Comment 1",
+        description="Replaces the stamped number (P# / W#B#) in the shop "
+                    "output. Leave empty to keep the stamp")  # type: ignore
+    comment_2: bpy.props.StringProperty(
+        name="Comment 2",
+        description="A note kept on the part (not exported)")  # type: ignore
+    comment_3: bpy.props.StringProperty(
+        name="Comment 3",
+        description="A note kept on the part (not exported)")  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (obj is not None and bool(obj.get('hb_part_role'))
+                and types_closets.find_starter_root(obj) is not None)
+
+    def invoke(self, context, event):
+        obj = context.active_object
+        self.comment_1 = str(obj.get(PROP_USER_COMMENT_1, '') or '')
+        self.comment_2 = str(obj.get(PROP_COMMENT_2, '') or '')
+        self.comment_3 = str(obj.get(PROP_COMMENT_3, '') or '')
+        return context.window_manager.invoke_props_dialog(self, width=320)
+
+    def draw(self, context):
+        obj = context.active_object
+        layout = self.layout
+        stamp = str(obj.get('hb_comment_1', '') or '')
+        row = layout.row()
+        row.enabled = False
+        row.label(text="Stamped: " + (stamp or "(set on export)"))
+        col = layout.column(align=True)
+        col.prop(self, 'comment_1', text="Comment 1")
+        col.prop(self, 'comment_2', text="Comment 2")
+        col.prop(self, 'comment_3', text="Comment 3")
+
+    def execute(self, context):
+        obj = context.active_object
+        for key, value in ((PROP_USER_COMMENT_1, self.comment_1),
+                           (PROP_COMMENT_2, self.comment_2),
+                           (PROP_COMMENT_3, self.comment_3)):
+            value = value.strip()
+            if value:
+                obj[key] = value
+            elif key in obj:
+                del obj[key]
+        return {'FINISHED'}
+
+
+def _scene_starters(context):
+    return [o for o in context.scene.objects
+            if o.get(types_closets.TAG_STARTER_CAGE)
+            and not o.get('hb_preview')]
+
+
+class hb_closets_OT_update_toe_kicks(bpy.types.Operator):
+    """Give every closet already in the room the room's toe kick height
+    and setback. Units with no kick keep none (the reference's Update Toe Kick
+    Prompts)."""
+    bl_idname = "hb_closets.update_toe_kicks"
+    bl_label = "Update Toe Kicks"
+    bl_options = {'UNDO'}
+
+    def execute(self, context):
+        room = context.scene.hb_closets
+        n = 0
+        for root in _scene_starters(context):
+            sp = root.hb_closet_starter
+            with types_closets.suspend_recalc():
+                if sp.toe_kick_height > 0.0:
+                    sp.toe_kick_height = room.toe_kick_height
+                    _sync_kick_dropdown(sp)
+                sp.toe_kick_setback = room.toe_kick_setback
+            types_closets.recalculate_closet_starter(root)
+            n += 1
+        self.report({'INFO'}, "Toe kicks updated on %d closets" % n)
+        return {'FINISHED'}
+
+
+class hb_closets_OT_update_hanging_heights(bpy.types.Operator):
+    """Stand every Hanging closet already in the room to the room's
+    Hanging Top Height (as the reference's Update Closet Sizes)."""
+    bl_idname = "hb_closets.update_hanging_heights"
+    bl_label = "Update Hanging Heights"
+    bl_options = {'UNDO'}
+
+    def execute(self, context):
+        from .. import props_closets
+        room = context.scene.hb_closets
+        # The Hanging Top Height is the hang line - floor to the top of
+        # the run - not the run height. A Hanging run keeps its top fixed
+        # when its height changes, so writing the height would only grow
+        # it downward and leave the line where it was.
+        want = const.snap_system_height_down(room.hanging_top_height)
+        n = 0
+        for root in _scene_starters(context):
+            if root.get('CLASS_NAME') != 'HangingClosetStarter':
+                continue
+            sp = root.hb_closet_starter
+            delta = want - props_closets.hang_line(sp)
+            if abs(delta) <= 1e-5:
+                continue
+            bays = types_closets._run_bays(root)
+            if bays and any(b.hb_closet_bay.floor_mounted for b in bays):
+                # A floor bay stays standing: the Hanging Height path
+                # moves the line and only the line.
+                key = const.nearest_panel_height_key(want)
+                if not key:
+                    continue
+                sp.hanging_height_preset = key
+            else:
+                # Every bay hangs: the run moves as a whole, its height
+                # (and hb_last_height with it) untouched, so the recalc
+                # does not shift it again.
+                root.location.z += delta
+                root['hb_last_height'] = float(sp.height)
+            n += 1
+        self.report({'INFO'}, "%d hanging closets updated" % n)
+        return {'FINISHED'}
+
+
+class hb_closets_OT_cleat_prompts(bpy.types.Operator):
+    """Size and place a cleat dropped into an opening: how long and
+    wide it is cut, how high it stands and how far along the opening
+    it starts (as in the reference version)."""
+    bl_idname = "hb_closets.cleat_prompts"
+    bl_label = "Cleat Properties"
+    bl_options = {'UNDO'}
+
+    full_width: bpy.props.BoolProperty(
+        name="Full Opening Width",
+        description="Cut it to the opening's width and follow the "
+                    "opening when that changes",
+        default=True)  # type: ignore
+    length: bpy.props.FloatProperty(
+        name="Length", min=0.0, unit='LENGTH', precision=4)  # type: ignore
+    width: bpy.props.FloatProperty(
+        name="Width", min=0.0, unit='LENGTH', precision=4)  # type: ignore
+    anchor_top: bpy.props.BoolProperty(
+        name="Hang From Top",
+        description="Measure its height down from the top of the "
+                    "opening instead of up from the bottom",
+        default=False)  # type: ignore
+    location: bpy.props.FloatProperty(
+        name="Vertical Location", min=0.0, unit='LENGTH',
+        precision=4)  # type: ignore
+    x_location: bpy.props.FloatProperty(
+        name="Horizontal Location", min=0.0, unit='LENGTH',
+        precision=4,
+        description="How far in from the left of the opening it "
+                    "starts")  # type: ignore
+
+    @staticmethod
+    def _cleat(context):
+        obj = context.active_object
+        if (obj is None
+                or obj.get('hb_part_role') != types_closets.PART_ROLE_CLEAT
+                or obj.parent is None
+                or not obj.parent.get(types_closets.TAG_OPENING_CAGE)):
+            return None
+        return obj
+
+    @classmethod
+    def poll(cls, context):
+        return cls._cleat(context) is not None
+
+    def invoke(self, context, event):
+        obj = self._cleat(context)
+        width = types_closets._cage_dim_x(obj.parent)
+        c_len, c_w, c_x = types_closets.opening_cleat_values(obj, width)
+        self.full_width = float(
+            obj.get(types_closets.PROP_CLEAT_LENGTH, 0.0) or 0.0) <= 0.0
+        self.length = c_len
+        self.width = c_w
+        self.x_location = c_x
+        self.anchor_top = bool(obj.get('hb_anchor_top'))
+        self.location = float(obj.get('hb_z_offset', 0.0))
+        return context.window_manager.invoke_props_dialog(self, width=300)
+
+    def draw(self, context):
+        col = self.layout.column(align=True)
+        col.prop(self, 'full_width')
+        sub = col.column(align=True)
+        sub.enabled = not self.full_width
+        sub.prop(self, 'length')
+        sub.prop(self, 'x_location')
+        col = self.layout.column(align=True)
+        col.prop(self, 'width')
+        col.prop(self, 'anchor_top')
+        col.prop(self, 'location',
+                 text="From Top" if self.anchor_top else "From Bottom")
+
+    def execute(self, context):
+        obj = self._cleat(context)
+        if obj is None:
+            return {'CANCELLED'}
+        width = types_closets._cage_dim_x(obj.parent)
+        if self.full_width or self.length >= width - 1e-5:
+            obj[types_closets.PROP_CLEAT_LENGTH] = 0.0
+            obj[types_closets.PROP_CLEAT_X] = 0.0
+        else:
+            obj[types_closets.PROP_CLEAT_LENGTH] = float(self.length)
+            obj[types_closets.PROP_CLEAT_X] = float(self.x_location)
+        obj[types_closets.PROP_CLEAT_WIDTH] = (
+            0.0 if abs(self.width - const.CLEAT_WIDTH) < 1e-6
+            else float(self.width))
+        obj['hb_anchor_top'] = 1 if self.anchor_top else 0
+        obj['hb_z_offset'] = float(self.location)
+        types_closets.recalculate_closet_starter(obj)
+        return {'FINISHED'}
+
+
+class hb_closets_OT_restore_removed_parts(bpy.types.Operator):
+    """Bring back every part deleted from this closet"""
+    bl_idname = "hb_closets.restore_removed_parts"
+    bl_label = "Restore Removed Parts"
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        root = types_closets.find_starter_root(context.active_object)
+        return root is not None and any(
+            c.get(types_closets.PROP_PART_REMOVED)
+            for c in root.children_recursive)
+
+    def execute(self, context):
+        root = types_closets.find_starter_root(context.active_object)
+        n = 0
+        for c in root.children_recursive:
+            if c.get(types_closets.PROP_PART_REMOVED):
+                del c[types_closets.PROP_PART_REMOVED]
+                c.hide_viewport = False
+                c.hide_render = False
+                n += 1
+        types_closets.recalculate_closet_starter(root)
+        self.report({'INFO'}, "%d part%s restored"
+                    % (n, "" if n == 1 else "s"))
+        return {'FINISHED'}
+
+
 class hb_closets_OT_delete_part(bpy.types.Operator):
     """Delete the active interior part. Config-driven parts (adjustable
     shelves, drawers, doors, cubby parts) decrement their opening's
@@ -6661,6 +8326,23 @@ class hb_closets_OT_delete_part(bpy.types.Operator):
     bl_idname = "hb_closets.delete_part"
     bl_label = "Delete Closet Part"
     bl_options = {'UNDO'}
+
+    # A part of an opening's insert (a drawer front, an adjustable
+    # shelf, a cubby divider or shelf, a door) takes the whole insert
+    # out of its opening, as the reference's Delete Insert did. Remove One sets
+    # this to take that one piece off the insert's count instead.
+    one: bpy.props.BoolProperty(
+        name="Remove One",
+        default=False,
+        options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+
+    # The insert each part belongs to (types_closets.INTERIOR_FIELDS).
+    INSERT_OF_ROLE = {
+        types_closets.PART_ROLE_ADJ_SHELF: 'ADJ_SHELVES',
+        types_closets.PART_ROLE_DRAWER_FRONT: 'DRAWERS',
+        types_closets.PART_ROLE_CUBBY_DIVISION: 'CUBBIES',
+        types_closets.PART_ROLE_CUBBY_SHELF: 'CUBBIES',
+    }
 
     PART_ROLES = {types_closets.PART_ROLE_FIXED_SHELF,
                   types_closets.PART_ROLE_ADJ_SHELF,
@@ -6675,6 +8357,32 @@ class hb_closets_OT_delete_part(bpy.types.Operator):
                   types_closets.PART_ROLE_CAPTURED_BACK,
                   types_closets.PART_ROLE_ACCESSORY}
 
+    # Parts the solve builds from the closet's settings. The reference deleted any
+    # part outright; here one is marked removed and kept out of the
+    # build (types_closets.hide_removed_parts).
+    CARCASS_ROLES = {types_closets.PART_ROLE_PANEL,
+                     types_closets.PART_ROLE_TOE_KICK,
+                     types_closets.PART_ROLE_TOP_SHELF,
+                     types_closets.PART_ROLE_BOTTOM_SHELF,
+                     types_closets.PART_ROLE_CLEAT,
+                     types_closets.PART_ROLE_HANG_RAIL,
+                     types_closets.PART_ROLE_HANG_RAIL_COVER,
+                     types_closets.PART_ROLE_FILLER,
+                     types_closets.PART_ROLE_ACCENT_SHELF,
+                     types_closets.PART_ROLE_BATTEN,
+                     types_closets.PART_ROLE_COUNTERTOP,
+                     types_closets.PART_ROLE_BACKSPLASH,
+                     types_closets.PART_ROLE_APPLIED_BACK,
+                     types_closets.PART_ROLE_DRAWER_STRETCHER,
+                     # Each of these is a lasting object the build keeps
+                     # (a bridge shelf per corner side and slot, a
+                     # fence per slanted shelf, a box per drawer), so a
+                     # mark on it holds through the next solve the way
+                     # it does on a panel.
+                     types_closets.PART_ROLE_BRIDGE_SHELF,
+                     types_closets.PART_ROLE_SHOE_FENCE,
+                     types_closets.PART_ROLE_DRAWER_BOX}
+
     @classmethod
     def poll(cls, context):
         obj = context.active_object
@@ -6683,6 +8391,21 @@ class hb_closets_OT_delete_part(bpy.types.Operator):
         if types_closets.find_accessory_cage(obj) is not None:
             return True
         role = obj.get('hb_part_role')
+        if (role == types_closets.PART_ROLE_DRAWER_BOX
+                and obj.get('hb_rollout')):
+            return True
+        # A slanted shelf comes off its opening's count; a bay's center
+        # back is the bay's Remove Center Back.
+        if role == types_closets.PART_ROLE_SLANTED_SHELF:
+            return types_closets.find_opening_cage(obj) is not None
+        if role == types_closets.PART_ROLE_CENTER_BACK:
+            return types_closets.find_bay_cage(obj) is not None
+        if role in cls.CARCASS_ROLES and not (
+                role == types_closets.PART_ROLE_CLEAT and obj.parent
+                and obj.parent.get(types_closets.TAG_OPENING_CAGE)):
+            return types_closets.find_starter_root(obj) is not None
+        if obj.get(types_closets.PROP_ISLAND_INSET_BACK):
+            return False    # an island's inset back is its structure
         if role == types_closets.PART_ROLE_CLEAT:
             # A cleat dropped into an opening is the person's, and
             # theirs to take out again. The one a bay carries across
@@ -6702,18 +8425,66 @@ class hb_closets_OT_delete_part(bpy.types.Operator):
                or context.active_object)
         role = obj.get('hb_part_role')
         root = types_closets.find_starter_root(obj)
+        if (role == types_closets.PART_ROLE_DRAWER_BOX
+                and obj.get('hb_rollout')):
+            # A rollout tray comes off the opening's count.
+            opening = types_closets.find_opening_cage(obj)
+            if opening is not None:
+                op = opening.hb_closet_opening
+                op.rollout_qty = max(0, int(op.rollout_qty) - 1)
+                types_closets.recalculate_closet_starter(opening)
+            return {'FINISHED'}
+        if role == types_closets.PART_ROLE_CENTER_BACK:
+            bay = types_closets.find_bay_cage(obj)
+            if bay is not None:
+                bay.hb_closet_bay.remove_center_back = True
+                if root is not None:
+                    types_closets.recalculate_closet_starter(root)
+            return {'FINISHED'}
+        if role in self.CARCASS_ROLES and not (
+                role == types_closets.PART_ROLE_CLEAT and obj.parent
+                and obj.parent.get(types_closets.TAG_OPENING_CAGE)):
+            obj[types_closets.PROP_PART_REMOVED] = 1
+            if root is not None:
+                types_closets.recalculate_closet_starter(root)
+            self.report({'INFO'}, "%s removed - Restore Removed Parts on "
+                        "the closet brings it back" % obj.name)
+            return {'FINISHED'}
         # A bay-wide door lives on the bay cage; clearing its config
         # removes it (the reconciler drops the part on recalc).
         if role == types_closets.PART_ROLE_DOOR and obj.get('hb_bay_door'):
             bay = types_closets.find_bay_cage(obj)
             with types_closets.suspend_recalc():
                 if bay is not None:
-                    bay.hb_closet_bay.door_swing = ''
+                    if obj.get(types_closets.PROP_BAY_DOOR_SIDE) == 'BACK':
+                        bay.hb_closet_bay.back_door_swing = ''
+                    else:
+                        bay.hb_closet_bay.door_swing = ''
                 if root is not None:
                     types_closets.recalculate_closet_starter(root)
             return {'FINISHED'}
         opening = types_closets.find_opening_cage(obj)
         remove_obj = True
+
+        insert = self.INSERT_OF_ROLE.get(role)
+        if opening is not None and insert and not self.one:
+            # Delete Insert (as in the reference): the whole drawer stack (its cap
+            # shelf goes with the count), every adjustable shelf -
+            # dealt or put at a height of its own - or the cubby grid.
+            op = opening.hb_closet_opening
+            with types_closets.suspend_recalc():
+                for name, empty in types_closets.INTERIOR_FIELDS[
+                        insert].items():
+                    setattr(op, name, empty)
+                if insert == 'ADJ_SHELVES':
+                    op.unlock_adj_qty = False
+                    for c in list(opening.children):
+                        if (c.get('hb_part_role')
+                                == types_closets.PART_ROLE_ADJ_SHELF):
+                            types_closets._remove_part_tree(c)
+            if root is not None:
+                types_closets.recalculate_closet_starter(root)
+            return {'FINISHED'}
 
         if opening is not None:
             tcm = types_closets
@@ -6723,8 +8494,8 @@ class hb_closets_OT_delete_part(bpy.types.Operator):
                 # taking one off the count.
                 if not obj.get(tcm.PROP_SHELF_HELD):
                     qty = int(opening.hb_closet_opening.adj_shelf_qty)
-                    opening.hb_closet_opening.adj_shelf_qty = max(
-                        0, qty - 1)
+                    tcm.set_adj_shelf_qty(opening.hb_closet_opening,
+                                          qty - 1)
             elif role == tcm.PART_ROLE_DRAWER_FRONT:
                 # The regenerator removes the highest-index front AND its
                 # box; let it own the removal.
@@ -6741,6 +8512,12 @@ class hb_closets_OT_delete_part(bpy.types.Operator):
             elif role == tcm.PART_ROLE_CUBBY_SHELF:
                 rows = int(opening.hb_closet_opening.cubby_rows)
                 opening.hb_closet_opening.cubby_rows = max(1, rows - 1)
+                remove_obj = False
+            elif role == tcm.PART_ROLE_SLANTED_SHELF:
+                # The regenerator takes the top shelf and its fence off
+                # the count; let it own the removal.
+                qty = int(opening.hb_closet_opening.slant_qty)
+                opening.hb_closet_opening.slant_qty = max(0, qty - 1)
                 remove_obj = False
             elif role == tcm.PART_ROLE_CAPTURED_BACK:
                 # The back is a setting on the opening rather than a
@@ -6768,16 +8545,29 @@ class hb_closets_OT_delete_starter(bpy.types.Operator):
     bl_label = "Delete Closet Starter"
     bl_options = {'UNDO'}
 
+    # Set from a menu on one unit (a corner unit's Bays-mode menu, a
+    # corner filler's part menu): delete that unit only, not every run
+    # something is selected in.
+    only_active: bpy.props.BoolProperty(
+        default=False,
+        options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+
     @classmethod
     def poll(cls, context):
         return types_closets.find_starter_root(context.active_object) is not None
 
     def execute(self, context):
         roots = set()
-        for obj in context.selected_objects:
-            root = types_closets.find_starter_root(obj)
-            if root is not None:
-                roots.add(root)
+        if not self.only_active:
+            for obj in context.selected_objects:
+                root = types_closets.find_starter_root(obj)
+                if root is not None:
+                    roots.add(root)
+        # Right-clicked from a selection-mode cage (a corner unit's
+        # Bays-mode menu) the active object may not be selected.
+        active = types_closets.find_starter_root(context.active_object)
+        if active is not None:
+            roots.add(active)
         for root in roots:
             types_closets.delete_starter(root)
         return {'FINISHED'}
@@ -6802,10 +8592,62 @@ def _sync_height_dropdown(pgroup):
         const.nearest_panel_height_key(pgroup.height))
 
 
+def _sync_kick_dropdown(sp):
+    """Point a starter's toe-kick dropdown at the standard kick matching
+    its distance, or Custom when the distance sits off the 32mm steps.
+    The distance is the figure the build reads and is also set from the
+    room (placement, Update Toe Kicks), so the dropdown is brought back
+    into line with it whenever a dialog opens rather than left on
+    whatever it was last picked as."""
+    _set_enum_silent(sp, 'toe_kick_height_preset',
+                     const.kick_height_key(sp.toe_kick_height) or 'CUSTOM')
+
+
+# The standard opening heights with a typed height for one off the
+# ladder: the splitter (fixed shelf) and corner double hang dialogs.
+_SPLITTER_HEIGHT_ITEMS = const.OPENING_HEIGHT_ITEMS + [
+    ('CUSTOM', "Custom", "Type a height of your own")]
+
+
 def _starter_bays(root):
     return sorted([c for c in root.children
                    if c.get(types_closets.TAG_BAY_CAGE)],
                   key=lambda o: o.get('hb_bay_index', 0))
+
+
+def _last_sharing_bay(bay):
+    """True for the one bay of its run still sharing the run width. The reference
+    hid the Equal toggle on the last equal opening so one opening always
+    takes up the slack; this bay's padlock is held shut the same way."""
+    if bay.hb_closet_bay.unlock_width:
+        return False
+    root = types_closets.find_starter_root(bay)
+    if root is None:
+        return True
+    return sum(1 for b in _starter_bays(root)
+               if not b.hb_closet_bay.unlock_width) <= 1
+
+
+def _width_field(parent, bay, text=""):
+    """A bay's width and its padlock - the padlock left out on the last
+    bay sharing the run width, whose width is whatever is left over."""
+    bp = bay.hb_closet_bay
+    if not _last_sharing_bay(bay):
+        return _locked_field(parent, bp, 'width', 'unlock_width', text=text)
+    cell = parent.row(align=True)
+    field = cell.row(align=True)
+    field.enabled = False
+    field.prop(bp, 'width', text=text)
+    cell.label(text="", icon='BLANK1')
+    return cell
+
+
+def _has_hang_line(sp, is_corner=False, is_filler=False):
+    """A run its bays can hang from - a Tall or Hanging run, the ones
+    the reference gave a Hanging Height and an Overall Height padlock (a base run
+    or an island has one Height)."""
+    return (not is_corner and not is_filler
+            and sp.closet_type in ('TALL', 'HANGING'))
 
 
 # How much of a per-bay row the option name takes, leaving the rest for
@@ -6927,6 +8769,145 @@ def _corner_root(context):
     return root
 
 
+def _corner_is_floor(root):
+    """Whether an inside corner (or corner filler) stands on the floor.
+    Its closet type says so, as it does for the toe kick."""
+    return root.hb_closet_starter.closet_type != 'HANGING'
+
+
+def _corner_hang_top(root):
+    """Floor to the top of a corner unit or filler - its Hanging Height
+    when it is hung (the reference read a hung corner's height this way)."""
+    return float(root.location.z) + float(root.hb_closet_starter.height)
+
+
+def _set_corner_mounting(root, floor, hang_top=None):
+    """Stand a corner unit or corner filler on the floor, or hang it
+    with its top at hang_top (reference Is Floor Mounted / Is Hanging with
+    Hanging Height). A hung unit is lifted off the floor and loses its
+    toe kick; one set back down drops to the floor and is the kind of
+    unit it was before it was lifted. Hanging with no height given
+    hangs it at the room's Hanging Top Height, the way a hanging run is
+    placed. Returns True when anything changed."""
+    sp = root.hb_closet_starter
+    changed = False
+    with types_closets.suspend_recalc():
+        if floor != _corner_is_floor(root):
+            changed = True
+            if floor:
+                sp.closet_type = root.get('hb_floor_closet_type', 'TALL')
+                cls = types_closets.WRAP_CLASS_REGISTRY.get(
+                    root.get('CLASS_NAME', ''))
+                if (getattr(cls, 'has_toe_kick', False)
+                        and sp.toe_kick_height <= 0.0):
+                    sp.toe_kick_height = (
+                        bpy.context.scene.hb_closets.toe_kick_height)
+            else:
+                root['hb_floor_closet_type'] = sp.closet_type
+                sp.closet_type = 'HANGING'
+                if hang_top is None:
+                    hang_top = float(
+                        bpy.context.scene.hb_closets.hanging_top_height)
+        if floor:
+            z = 0.0
+        else:
+            if hang_top is None:
+                hang_top = _corner_hang_top(root)
+            z = max(0.0, float(hang_top) - float(sp.height))
+        if abs(root.location.z - z) > 1e-6:
+            root.location.z = z
+            changed = True
+    if changed:
+        types_closets.recalculate_closet_starter(root)
+    return changed
+
+
+# The Floor Mounted / Hanging Height pair the corner dialogs share.
+def _corner_floor_prop():
+    return bpy.props.BoolProperty(
+        name="Is Floor Mounted",
+        description="Stand this corner on the floor. Off hangs it on "
+                    "the wall with its top at the Hanging Height",
+        default=True, options={'SKIP_SAVE'})
+
+
+def _corner_hang_prop():
+    return bpy.props.FloatProperty(
+        name="Hanging Height",
+        description="Floor to the top of this corner while it hangs",
+        default=const.HANGING_TOP_HEIGHT, min=0.0, unit='LENGTH',
+        precision=4, options={'SKIP_SAVE'})
+
+
+# The reference picked a corner's Hanging Height off the 32mm panel heights
+# (PANEL_HEIGHTS, no Custom). A corner already hanging somewhere off
+# that list shows the nearest height on it and keeps its own until
+# another is picked.
+_CORNER_HANG_ITEMS = const.PANEL_HEIGHT_PRESET_ITEMS
+
+
+def _nearest_panel_height_key(value):
+    """The PANEL_HEIGHT_ITEMS key nearest a distance, however far off
+    the 32mm steps it sits."""
+    mm = float(value) / const.millimeter(1.0)
+    n = int(round((mm - const.PANEL_HEIGHT_MIN_MM) / 32.0))
+    n = min(max(n, 0),
+            (const.PANEL_HEIGHT_MAX_MM - const.PANEL_HEIGHT_MIN_MM) // 32)
+    return str(const.PANEL_HEIGHT_MIN_MM + n * 32)
+
+
+def _update_corner_hang_preset(self, context):
+    self.hanging_height = const.millimeter(
+        int(self.hanging_height_preset))
+
+
+def _corner_hang_preset_prop():
+    return bpy.props.EnumProperty(
+        name="Hanging Height",
+        description="Floor to the top of this corner while it hangs, on "
+                    "the 32mm system",
+        items=_CORNER_HANG_ITEMS,
+        default='2131',
+        options={'SKIP_SAVE'},
+        update=_update_corner_hang_preset)
+
+
+def _corner_mount_load(op, root):
+    op.is_floor_mounted = _corner_is_floor(root)
+    top = (_corner_hang_top(root) if not op.is_floor_mounted
+           else bpy.context.scene.hb_closets.hanging_top_height)
+    # The dropdown first (it writes its own height), then the unit's
+    # own height over it, so an off-list one is kept until changed.
+    op.hanging_height_preset = _nearest_panel_height_key(top)
+    op.hanging_height = top
+
+
+def _corner_mount_check(op, root):
+    """Apply the dialog's mounting fields when they differ from the
+    unit. Returns True when the unit changed."""
+    if root is None:
+        return False
+    floor = bool(op.is_floor_mounted)
+    if floor == _corner_is_floor(root) and (
+            floor or abs(_corner_hang_top(root) - op.hanging_height) < 1e-6):
+        return False
+    return _set_corner_mounting(root, floor,
+                                None if floor else op.hanging_height)
+
+
+def _corner_mount_draw(layout, op, hanging_box=False):
+    """Is Floor Mounted (or, for the filler, the reference's Is Hanging - the same
+    switch read the other way) and the height it hangs at."""
+    col = layout.column(align=True)
+    if hanging_box:
+        col.prop(op, 'is_floor_mounted', text="Is Hanging",
+                 invert_checkbox=True)
+    else:
+        col.prop(op, 'is_floor_mounted')
+    if not op.is_floor_mounted:
+        col.prop(op, 'hanging_height_preset')
+
+
 class hb_closets_OT_corner_bay_prompts(bpy.types.Operator):
     """Size and build of a corner unit: how far it reaches along each
     wall, how deep each wing is, how tall it stands, and the partition
@@ -6937,17 +8918,30 @@ class hb_closets_OT_corner_bay_prompts(bpy.types.Operator):
 
     target_name: bpy.props.StringProperty(
         options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+    is_floor_mounted: _corner_floor_prop()  # type: ignore
+    hanging_height: _corner_hang_prop()  # type: ignore
+    hanging_height_preset: _corner_hang_preset_prop()  # type: ignore
 
     @classmethod
     def poll(cls, context):
         return _corner_root(context) is not None
 
     def invoke(self, context, event):
-        self.target_name = _corner_root(context).name
+        root = _corner_root(context)
+        self.target_name = root.name
+        _corner_mount_load(self, root)
+        _sync_kick_dropdown(root.hb_closet_starter)
+        root['hb_rail_typed'] = False
         return context.window_manager.invoke_props_dialog(
             self, width=360, confirm_text="Done")
 
+    def check(self, context):
+        root = bpy.data.objects.get(self.target_name)
+        _corner_mount_check(self, root)
+        return True
+
     def execute(self, context):
+        _corner_mount_check(self, bpy.data.objects.get(self.target_name))
         return {'FINISHED'}
 
     def draw(self, context):
@@ -6966,6 +8960,16 @@ class hb_closets_OT_corner_bay_prompts(bpy.types.Operator):
         col = box.column(align=True)
         col.prop(sp, 'l_left_depth', text="Side Wall Wing Depth")
         col.prop(sp, 'l_right_depth', text="Back Wall Wing Depth")
+        box = layout.box()
+        box.label(text="Mounting", icon='SNAP_VERTEX')
+        _corner_mount_draw(box, self)
+        if self.is_floor_mounted:
+            # Only a corner standing on the floor carries a kick.
+            col = box.column(align=True)
+            col.prop(sp, 'toe_kick_height_preset')
+            if sp.toe_kick_height_preset == 'CUSTOM':
+                col.prop(sp, 'toe_kick_height')
+            col.prop(sp, 'toe_kick_setback')
         box = layout.box()
         box.label(text="Construction", icon='MOD_BUILD')
         col = box.column(align=True)
@@ -6992,18 +8996,69 @@ class hb_closets_OT_corner_opening_prompts(bpy.types.Operator):
 
     target_name: bpy.props.StringProperty(
         options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+    # A double hang's Top Opening Height, picked from the standard
+    # opening heights as the reference's corner rod prompts did, with a typed
+    # height for one off the ladder.
+    top_opening_preset: bpy.props.EnumProperty(
+        name="Top Opening Height", items=_SPLITTER_HEIGHT_ITEMS,
+        default=const.TOP_OPENING_HEIGHT_KEY,
+        options={'SKIP_SAVE'})  # type: ignore
+    top_opening_height: bpy.props.FloatProperty(
+        name="Custom Height", default=const.L_DOUBLE_TOP_OPENING,
+        min=0.0, unit='LENGTH', precision=4,
+        options={'SKIP_SAVE'})  # type: ignore
 
     @classmethod
     def poll(cls, context):
         return _corner_root(context) is not None
 
     def invoke(self, context, event):
-        self.target_name = _corner_root(context).name
+        root = _corner_root(context)
+        self.target_name = root.name
+        h = float(root.hb_closet_starter.l_top_opening_height)
+        self.top_opening_height = h
+        self.top_opening_preset = (
+            const.nearest_opening_height_key(h) or 'CUSTOM')
         return context.window_manager.invoke_props_dialog(
             self, width=340, confirm_text="Done")
 
+    def _apply(self):
+        root = bpy.data.objects.get(self.target_name)
+        if root is None:
+            return
+        sp = root.hb_closet_starter
+        if sp.l_interior != 'DOUBLE':
+            return
+        target = (self.top_opening_height
+                  if self.top_opening_preset == 'CUSTOM'
+                  else const.opening_height(self.top_opening_preset))
+        if abs(sp.l_top_opening_height - target) > 1e-6:
+            sp.l_top_opening_height = target
+
+    def check(self, context):
+        self._apply()
+        return True
+
     def execute(self, context):
+        self._apply()
         return {'FINISHED'}
+
+    @staticmethod
+    def _bottom_opening_height(root):
+        """The double hang's lower opening, read-only: the top of the
+        bottom shelf up to the underside of the shelf between the rods."""
+        shelves = sorted(
+            [c for c in root.children if c.get('hb_l_index') is not None
+             and c.get('hb_part_role') in (
+                 types_closets.PART_ROLE_FIXED_SHELF,
+                 types_closets.PART_ROLE_ADJ_SHELF)],
+            key=lambda o: o.get('hb_l_index', 0))
+        middle = [s for s in shelves if not s.get('hb_l_carcass')]
+        if not shelves or not middle:
+            return None
+        st = types_closets.run_sizes(root).shelf_thickness
+        return max(0.0, float(middle[0].location.z)
+                   - float(shelves[0].location.z) - st)
 
     def draw(self, context):
         root = bpy.data.objects.get(self.target_name)
@@ -7016,17 +9071,39 @@ class hb_closets_OT_corner_opening_prompts(bpy.types.Operator):
         col.prop(sp, 'l_interior')
         if sp.l_interior in ('ADJ', 'LOCK'):
             col.prop(sp, 'l_shelf_qty')
-        else:
+        elif sp.l_interior in ('ROD', 'DOUBLE'):
             # A rod runs along one wing rather than turning the corner,
             # so which wing is the question.
             col.prop(sp, 'l_rod_on_left')
             if sp.l_interior == 'DOUBLE':
-                col.prop(sp, 'l_top_opening_height')
+                box = layout.box()
+                row = box.row()
+                row.label(text="Top Opening Height")
+                row.prop(self, 'top_opening_preset', text="")
+                if self.top_opening_preset == 'CUSTOM':
+                    box.prop(self, 'top_opening_height')
+                bottom = self._bottom_opening_height(root)
+                if bottom is not None:
+                    row = box.row()
+                    row.enabled = False
+                    row.label(text="Bottom Opening Height")
+                    row.label(text=units.unit_to_string(
+                        context.scene.unit_settings, bottom))
+            # Where the rod stands across its wing, and its hangers
+            # (reference Closet_Rod_Corner_Insert prompts).
+            box = layout.box()
+            col = box.column(align=True)
+            col.prop(sp, 'l_rod_set_from_front')
+            if sp.l_rod_set_from_front:
+                col.prop(sp, 'l_rod_from_front')
+            else:
+                col.prop(sp, 'l_rod_from_rear')
+            box.prop(sp, 'l_remove_hangers')
         warning = root.get(types_closets.PROP_ACCESSORY_WARNING, '')
         if warning:
             layout.box().label(text=warning, icon='ERROR')
-        layout.label(text="A corner holds shelves and rods only",
-                     icon='INFO')
+        layout.label(text="A corner holds shelves, rods and panel "
+                          "accessories", icon='INFO')
 
 
 class hb_closets_OT_corner_opening_config(bpy.types.Operator):
@@ -7037,7 +9114,8 @@ class hb_closets_OT_corner_opening_config(bpy.types.Operator):
 
     interior: bpy.props.EnumProperty(
         name="Holds",
-        items=[('ADJ', "Adjustable Shelves", ""),
+        items=[('NONE', "Empty", ""),
+               ('ADJ', "Adjustable Shelves", ""),
                ('LOCK', "Lock Shelves", ""),
                ('ROD', "Hanging Rod", ""),
                ('DOUBLE', "Double Hang", "")])  # type: ignore
@@ -7054,24 +9132,183 @@ class hb_closets_OT_corner_opening_config(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class _IslandDialogDims:
+    """Temporary dimensions shown while an island's Starter Properties
+    dialog is open (the reference drew wall-to-island and width/depth dims for
+    the life of its island prompts): the clearance from each face out
+    to the nearest wall or closet, measured the way placement measures
+    it (_island_clearances), and the island's width and depth. Nothing
+    is added to the scene - they are drawn by the placement dimension
+    drawer from a handler that lives only as long as the dialog."""
+
+    _active = None
+
+    def __init__(self, root):
+        # Held by session uid rather than name: the dialog can rename
+        # the island while it is open.
+        self.root_uid = root.session_uid
+        self._root = root
+        self._placement_dim_specs = []
+        self._sig = None
+        self._handle = None
+
+    def _find_root(self):
+        try:
+            if self._root is not None \
+                    and self._root.session_uid == self.root_uid:
+                return self._root
+        except ReferenceError:
+            pass
+        self._root = next((o for o in bpy.data.objects
+                           if o.session_uid == self.root_uid), None)
+        return self._root
+
+    @classmethod
+    def start(cls, root):
+        cls.stop()
+        dims = cls(root)
+        dims._handle = bpy.types.SpaceView3D.draw_handler_add(
+            cls._draw, (), 'WINDOW', 'POST_PIXEL')
+        cls._active = dims
+        _redraw_viewports(bpy.context)
+
+    @classmethod
+    def stop(cls):
+        dims = cls._active
+        cls._active = None
+        if dims is not None and dims._handle is not None:
+            try:
+                bpy.types.SpaceView3D.draw_handler_remove(
+                    dims._handle, 'WINDOW')
+            except Exception:
+                pass
+            _redraw_viewports(bpy.context)
+
+    @classmethod
+    def _draw(cls):
+        dims = cls._active
+        if dims is None:
+            return
+        try:
+            dims._refresh(bpy.context)
+            hb_placement.draw_placement_dimensions(dims, bpy.context)
+        except Exception:
+            pass
+
+    def _refresh(self, context):
+        root = self._find_root()
+        if root is None:
+            self._placement_dim_specs = []
+            return
+        sp = root.hb_closet_starter
+        mw = root.matrix_world
+        sig = (tuple(round(v, 5) for row in mw for v in row),
+               round(sp.width, 5), round(sp.depth, 5),
+               round(sp.height, 5))
+        if sig == self._sig:
+            return
+        self._sig = sig
+        w, d, h = float(sp.width), float(sp.depth), float(sp.height)
+        z0 = float(mw.translation.z)
+        us = context.scene.unit_settings
+        specs = []
+        x_axis = (mw.to_3x3() @ Vector((1.0, 0.0, 0.0))).normalized()
+        y_axis = (mw.to_3x3() @ Vector((0.0, 1.0, 0.0))).normalized()
+        centers = {'FRONT': (Vector((w / 2.0, -d, 0.0)), -y_axis),
+                   'BACK': (Vector((w / 2.0, 0.0, 0.0)), y_axis),
+                   'LEFT': (Vector((0.0, -d / 2.0, 0.0)), -x_axis),
+                   'RIGHT': (Vector((w, -d / 2.0, 0.0)), x_axis)}
+        clearances = _island_clearances(root, w, d, z0, h, context.scene)
+        z_dim = z0 + units.inch(1.0)
+        for side, (local, normal) in centers.items():
+            entry = clearances.get(side)
+            if entry is None:
+                continue
+            dist = entry[0]
+            s = mw @ local
+            e = s + normal * dist
+            s.z = e.z = z_dim
+            specs.append(hb_placement.PlacementDimSpec(
+                s, e, units.unit_to_string(us, dist), None))
+        z_top = z0 + h + units.inch(4.0)
+        for a, b, value in (((0.0, 0.0), (w, 0.0), w),
+                            ((w, 0.0), (w, -d), d)):
+            s = mw @ Vector((a[0], a[1], 0.0))
+            e = mw @ Vector((b[0], b[1], 0.0))
+            s.z = e.z = z_top
+            specs.append(hb_placement.PlacementDimSpec(
+                s, e, units.unit_to_string(us, value), None))
+        self._placement_dim_specs = specs
+
+
+def _is_island_root(root):
+    cls = types_closets.WRAP_CLASS_REGISTRY.get(root.get('CLASS_NAME', ''))
+    return cls is not None and issubclass(
+        cls, types_closets.IslandClosetStarter)
+
+
 class hb_closets_OT_starter_prompts(bpy.types.Operator):
     """Edit the active starter's sizes and options."""
     bl_idname = "hb_closets.starter_prompts"
     bl_label = "Closet Starter Properties"
     bl_options = {'UNDO'}
 
+    # A corner unit or corner filler has no bays to carry its mounting,
+    # so the dialog carries it (reference Is Floor Mounted / Is Hanging).
+    is_floor_mounted: _corner_floor_prop()  # type: ignore
+    hanging_height: _corner_hang_prop()  # type: ignore
+    hanging_height_preset: _corner_hang_preset_prop()  # type: ignore
+
     @classmethod
     def poll(cls, context):
         return types_closets.find_starter_root(context.active_object) is not None
+
+    @staticmethod
+    def _corner_unit(context):
+        root = types_closets.find_starter_root(context.active_object)
+        if root is None:
+            return None
+        cls = types_closets.WRAP_CLASS_REGISTRY.get(
+            root.get('CLASS_NAME', ''))
+        return root if getattr(cls, 'is_corner', False) else None
 
     def invoke(self, context, event):
         root = types_closets.find_starter_root(context.active_object)
         if root is not None:
             sp = root.hb_closet_starter
             _sync_height_dropdown(sp)
+            _sync_kick_dropdown(sp)
+            # The reference's Overall Height padlock opens closed each session, on
+            # the run height (written as storage, so nothing is applied).
+            sp['set_all_heights'] = False
+            key = const.nearest_panel_height_key(sp.height)
+            if key:
+                _set_enum_silent(sp, 'overall_height_preset', key)
+            # A new dialog session: a rail height typed in an earlier
+            # one gives way when a height changes in this one.
+            root['hb_rail_typed'] = False
             for bay in _starter_bays(root):
                 _sync_height_dropdown(bay.hb_closet_bay)
+            # An island shows its clearances to the walls and its
+            # width and depth while the dialog is open (as in the reference).
+            if _is_island_root(root):
+                _IslandDialogDims.start(root)
+            else:
+                _IslandDialogDims.stop()
+        corner = self._corner_unit(context)
+        if corner is not None:
+            _corner_mount_load(self, corner)
         return context.window_manager.invoke_props_dialog(self, width=560)
+
+    def cancel(self, context):
+        _IslandDialogDims.stop()
+
+    def check(self, context):
+        corner = self._corner_unit(context)
+        if corner is None:
+            return False
+        _corner_mount_check(self, corner)
+        return True
 
     def _draw_location(self, col, root, sp):
         """Where the unit sits, beside its dimensions on every tab, the
@@ -7101,10 +9338,12 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
             col = box.column(align=True)
             col.prop(sp, 'filler_left_width')
             col.prop(sp, 'filler_right_width')
+            _corner_mount_draw(box, self, hanging_box=True)
             return
         if is_corner:
             box = layout.box()
             box.label(text="Corner", icon='MOD_BEVEL')
+            _corner_mount_draw(box, self)
             col = box.column(align=True)
             col.prop(sp, 'l_left_depth')
             col.prop(sp, 'l_right_depth')
@@ -7112,7 +9351,7 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
             col.prop(sp, 'l_interior')
             if sp.l_interior in ('ADJ', 'LOCK'):
                 col.prop(sp, 'l_shelf_qty')
-            else:
+            elif sp.l_interior in ('ROD', 'DOUBLE'):
                 # A rod runs along one wing rather than turning the
                 # corner, so which wing is the question.
                 col.prop(sp, 'l_rod_on_left')
@@ -7144,6 +9383,8 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
         row.label(text="Height")
         row.label(text="Depth")
         row.label(text="Mounting")
+        set_all = (_has_hang_line(sp, is_corner, is_filler)
+                   and sp.set_all_heights)
         for bay in bays:
             bp = bay.hb_closet_bay
             row = box.row(align=True)
@@ -7154,8 +9395,20 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
             # rest of the run is redistributed to fill the run width; a
             # bay holding its own height or depth keeps that while the
             # run size changes.
-            _locked_field(row, bp, 'width', 'unlock_width')
-            _locked_field(row, bp, 'height', 'unlock_height')
+            _width_field(row, bay)
+            if set_all:
+                # Overall Height owns every bay's height while its
+                # padlock is open, so each reads it back (as in the reference).
+                sub = row.row(align=True)
+                sub.enabled = False
+                sub.prop(bp, 'height', text="")
+                sub.label(text="", icon='BLANK1')
+            elif bp.unlock_height:
+                # A bay's own height is picked off the 32mm list, as
+                # the bay dialog offers it.
+                _locked_field(row, bp, 'height_preset', 'unlock_height')
+            else:
+                _locked_field(row, bp, 'height', 'unlock_height')
             _locked_field(row, bp, 'depth', 'unlock_depth')
             row.prop(bp, 'floor_mounted', toggle=True,
                      text="Floor" if bp.floor_mounted else "Hanging",
@@ -7357,7 +9610,11 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
         # than a caption, the way the face frame dialog heads itself,
         # so a run can be named where it is edited.
         box = layout.box()
-        box.prop(root, 'name', text="", icon='OUTLINER_OB_LATTICE')
+        # The starter's hide toggle beside its name, as the reference's starter
+        # prompts had it.
+        row = box.row(align=True)
+        row.prop(root, 'name', text="", icon='OUTLINER_OB_LATTICE')
+        row.prop(root, 'hide_viewport', text="")
         split = box.split(factor=0.55)
         col = split.column(align=True)
         col.label(text="Dimensions:")
@@ -7365,11 +9622,34 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
         # The run height and depth carry to every bay that has not been
         # handed one of its own. The Bays table is where a bay takes a
         # size over, and where it gives it back.
-        col.prop(sp, 'height_preset', text="Height")
-        if sp.height_preset == 'CUSTOM':
-            col.prop(sp, 'height', text="Custom Height")
+        if _has_hang_line(sp, is_corner, is_filler):
+            # The reference's pair on a run that hangs: Overall Height behind its
+            # padlock writes one height to every bay, and the Hanging
+            # Height below moves the hang line alone.
+            row = col.row(align=True)
+            row.prop(sp, 'set_all_heights', text="",
+                     icon=('UNLOCKED' if sp.set_all_heights
+                           else 'LOCKED'))
+            if sp.set_all_heights:
+                row.prop(sp, 'overall_height_preset', text="")
+            else:
+                row.label(text="Set Height Below")
+        else:
+            col.prop(sp, 'height_preset', text="Height")
+            if sp.height_preset == 'CUSTOM':
+                col.prop(sp, 'height', text="Custom Height")
         col.prop(sp, 'depth')
         self._draw_location(split.column(align=True), root, sp)
+        if _has_hang_line(sp, is_corner, is_filler):
+            row = box.row()
+            row.label(text="Hanging Height:")
+            row.prop(sp, 'hanging_height_preset', text="")
+            if sp.hanging_height_preset == 'CUSTOM':
+                # Off the 32mm steps: said rather than typed, as the
+                # run height is not the hang line on a Hanging run.
+                from .. import props_closets
+                row.label(text=types_closets._in_str(
+                    props_closets.hang_line(sp)))
 
         # A countertop belongs to a unit that has a top to sit on - a
         # base run or an island. A tall or hanging unit finishes at its
@@ -7394,6 +9674,7 @@ class hb_closets_OT_starter_prompts(bpy.types.Operator):
             self._draw_sizes(layout, root, sp, bays, is_corner, is_filler)
 
     def execute(self, context):
+        _IslandDialogDims.stop()
         return {'FINISHED'}
 
 
@@ -7464,6 +9745,31 @@ def _top_opening_height(bay, side='FRONT'):
         return None
     try:
         return abs(float(hb_types.GeoNodeCage(opening).get_input('Dim Z')))
+    except Exception:
+        return None
+
+
+def _bottom_opening_height(bay, side='FRONT'):
+    """How tall the bottom opening of a bay measures - the one under
+    every splitting shelf, or in a double hang the room the lower hang
+    takes up to the line the upper one finishes at. None wherever
+    _top_opening_height has nothing to read either. Shown read-only
+    beside the top opening height, as the reference did."""
+    if not _bay_split_shelves(bay, side):
+        rod = _double_hang_lower_rod(bay, side)
+        if rod is None:
+            return None
+        return max(0.0, float(rod.location.z) + const.ROD_TOP_OFFSET)
+    openings = sorted(
+        [c for c in bay.children
+         if c.get(types_closets.TAG_OPENING_CAGE)
+         and c.get(types_closets.PROP_OPENING_SIDE, 'FRONT') == side],
+        key=lambda o: o.get('hb_opening_index', 0))
+    if not openings:
+        return None
+    try:
+        return abs(float(
+            hb_types.GeoNodeCage(openings[0]).get_input('Dim Z')))
     except Exception:
         return None
 
@@ -7626,6 +9932,12 @@ class hb_closets_OT_bay_prompts(bpy.types.Operator):
         self.target_name = bay.name if bay is not None else ""
         if bay is not None:
             self._load_fields(bay)
+            # A new dialog session: a bay height changed here moves a
+            # one-height hang rail again (types_closets
+            # _one_hang_rail_height).
+            root = types_closets.find_starter_root(bay)
+            if root is not None:
+                root['hb_rail_typed'] = False
             parts = list(_bay_split_shelves(bay))
             rod = _double_hang_lower_rod(bay)
             if rod is not None:
@@ -7690,7 +10002,7 @@ class hb_closets_OT_bay_prompts(bpy.types.Operator):
         box = layout.box()
         box.label(text="Bay %d" % (bp.bay_index + 1), icon='MOD_ARRAY')
         col = box.column(align=True)
-        _locked_field(col, bp, 'width', 'unlock_width', text="Width")
+        _width_field(col, bay, text="Width")
         # Height and depth follow the run until the padlock hands one of
         # them to this bay, so both stay quiet until it does. The custom
         # height only has somewhere to go once the bay owns its height.
@@ -7735,6 +10047,15 @@ class hb_closets_OT_bay_prompts(bpy.types.Operator):
             row.prop(self, 'top_opening_preset', text="")
             if self.top_opening_preset == 'CUSTOM':
                 box.prop(self, 'top_opening_height')
+            # What is left under it, read-only: it follows the top
+            # opening and the bay height rather than being set itself.
+            bottom = _bottom_opening_height(bay)
+            if bottom is not None:
+                row = box.row()
+                row.enabled = False
+                row.label(text="Bottom Opening Height")
+                row.label(text=units.unit_to_string(
+                    context.scene.unit_settings, bottom))
 
         # A front across a whole bay has no opening dialog of its own,
         # so how far it is drawn standing open belongs here.
@@ -7754,8 +10075,12 @@ class hb_closets_OT_bay_prompts(bpy.types.Operator):
             col = box.column(align=True)
             col.prop(bp, 'include_center_back')
             sub = col.column(align=True)
-            sub.enabled = bp.include_center_back
+            sub.enabled = not bp.include_center_back
             sub.prop(bp, 'center_back_location')
+            # Only an older file can have the divider out; offered so it
+            # can be put back, never to take one out.
+            if bp.remove_center_back:
+                col.prop(bp, 'remove_center_back')
 
         _draw_revert(layout, self)
 
@@ -7804,6 +10129,240 @@ class hb_closets_OT_bay_prompts(bpy.types.Operator):
             if root is not None:
                 types_closets.recalculate_closet_starter(root)
         return {'FINISHED'}
+
+
+def _opening_top(opening):
+    """Bay-interior height of the top of an opening segment."""
+    try:
+        h = abs(float(hb_types.GeoNodeCage(opening).get_input('Dim Z')))
+    except Exception:
+        h = 0.0
+    return float(opening.get('hb_seg_bottom', 0.0)) + h
+
+
+def _fixed_shelf_openings(shelf):
+    """(bay, opening below, opening above) for a committed fixed shelf
+    standing in a bay, either opening None where there is none."""
+    bay = types_closets.find_bay_cage(shelf)
+    if bay is None:
+        return None, None, None
+    side = shelf.get(types_closets.PROP_OPENING_SIDE, 'FRONT')
+    z = float(shelf.get('hb_z_offset', 0.0))
+    st = types_closets.run_sizes(bay).shelf_thickness
+    below = _opening_at_height(bay, side, z - 1e-4)
+    above = _opening_at_height(bay, side, z + st + 1e-4)
+    return bay, below, above
+
+
+def _opening_seg_height(opening):
+    if opening is None:
+        return None
+    try:
+        return abs(float(hb_types.GeoNodeCage(opening).get_input('Dim Z')))
+    except Exception:
+        return None
+
+
+class hb_closets_OT_fixed_shelf_prompts(bpy.types.Operator):
+    """Size the openings either side of a fixed shelf: pick the height
+    of the one above or of the one below from the standard opening
+    heights and the shelf moves to suit, the other following (as the reference's
+    Splitter Vertical Prompts)"""
+    bl_idname = "hb_closets.fixed_shelf_prompts"
+    bl_label = "Fixed Shelf Properties"
+    bl_options = {'UNDO'}
+
+    set_height_location: bpy.props.EnumProperty(
+        name="Set Height Location",
+        items=[('TOP', "Top", "Set the height of the opening above"),
+               ('BOTTOM', "Bottom", "Set the height of the opening "
+                                    "below")],
+        default='TOP')  # type: ignore
+    top_opening_preset: bpy.props.EnumProperty(
+        name="Top Opening Height", items=_SPLITTER_HEIGHT_ITEMS,
+        default=const.TOP_OPENING_HEIGHT_KEY)  # type: ignore
+    top_opening_height: bpy.props.FloatProperty(
+        name="Custom Height", default=const.TOP_SHELF_OPENING_HEIGHT,
+        min=units.inch(1.0), unit='LENGTH', precision=4)  # type: ignore
+    bottom_opening_preset: bpy.props.EnumProperty(
+        name="Bottom Opening Height", items=_SPLITTER_HEIGHT_ITEMS,
+        default=const.TOP_OPENING_HEIGHT_KEY)  # type: ignore
+    bottom_opening_height: bpy.props.FloatProperty(
+        name="Custom Height", default=const.TOP_SHELF_OPENING_HEIGHT,
+        min=units.inch(1.0), unit='LENGTH', precision=4)  # type: ignore
+
+    live: bpy.props.BoolProperty(
+        default=False, options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+    orig_state: bpy.props.StringProperty(
+        default="", options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+    target_name: bpy.props.StringProperty(
+        default="", options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+    # The last request applied (_request), so only a new pick moves
+    # the shelf.
+    applied_req: bpy.props.StringProperty(
+        default="", options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+    revert_changes: _live_revert_prop()  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        if (obj is None or obj.get('hb_part_role')
+                != types_closets.PART_ROLE_FIXED_SHELF):
+            return False
+        if (obj.get('hb_l_index') is not None
+                or obj.get(types_closets.PROP_DRAWER_CAP)
+                or obj.get('hb_preview')):
+            return False
+        # Only a shelf the bay has adopted measures from the bay.
+        return (obj.parent is not None
+                and bool(obj.parent.get(types_closets.TAG_BAY_CAGE)))
+
+    def _shelf(self):
+        return bpy.data.objects.get(self.target_name)
+
+    def _load_fields(self, shelf):
+        _bay, below, above = _fixed_shelf_openings(shelf)
+        for which, opening in (('top', above), ('bottom', below)):
+            h = _opening_seg_height(opening)
+            if h is None:
+                continue
+            setattr(self, which + '_opening_height', max(h, units.inch(1.0)))
+            setattr(self, which + '_opening_preset',
+                    const.nearest_opening_height_key(h) or 'CUSTOM')
+
+    def invoke(self, context, event):
+        shelf = context.active_object
+        self.target_name = shelf.name
+        self._load_fields(shelf)
+        self.applied_req = self._request()
+        self.orig_state = json.dumps(
+            {'z': float(shelf.get('hb_z_offset', 0.0))})
+        self.live = True
+        return context.window_manager.invoke_props_dialog(
+            self, width=320, confirm_text="Done")
+
+    def _target(self, which):
+        if getattr(self, which + '_opening_preset') == 'CUSTOM':
+            return getattr(self, which + '_opening_height')
+        return const.opening_height(getattr(self, which + '_opening_preset'))
+
+    def _request(self):
+        """What the dialog is asking for on the side it is set to: a
+        mode switch, or a field already showing what is built, asks for
+        nothing new."""
+        which = 'top' if self.set_height_location == 'TOP' else 'bottom'
+        return "%s|%s|%.6f" % (
+            self.set_height_location,
+            getattr(self, which + '_opening_preset'),
+            getattr(self, which + '_opening_height'))
+
+    def _apply(self, context):
+        shelf = self._shelf()
+        if shelf is None:
+            return
+        # Only a height the person picked moves the shelf. Loading the
+        # fields or switching Top/Bottom re-reads what is built, and
+        # snapping that to a preset would nudge the shelf for nothing.
+        request = self._request()
+        if request == self.applied_req:
+            return
+        if not self.applied_req.startswith(self.set_height_location + "|"):
+            self.applied_req = request
+            return
+        self.applied_req = request
+        bay, below, above = _fixed_shelf_openings(shelf)
+        if bay is None:
+            return
+        st = types_closets.run_sizes(bay).shelf_thickness
+        z = float(shelf.get('hb_z_offset', 0.0))
+        if self.set_height_location == 'TOP':
+            current = _opening_seg_height(above)
+            if current is None:
+                return
+            new_z = z + (current - self._target('top'))
+        else:
+            current = _opening_seg_height(below)
+            if current is None:
+                return
+            new_z = z + (self._target('bottom') - current)
+        # Never through the shelf or bay floor below, nor the shelf or
+        # bay top above: each opening keeps at least an inch.
+        lo = (float(below.get('hb_seg_bottom', 0.0)) if below is not None
+              else 0.0) + units.inch(1.0)
+        # With no opening read above, nothing caps the move upward.
+        hi = (_opening_top(above) - st - units.inch(1.0)
+              if above is not None else float('inf'))
+        new_z = min(max(new_z, lo), max(hi, lo))
+        if abs(new_z - z) <= 1e-6:
+            return
+        shelf['hb_z_offset'] = float(new_z)
+        root = types_closets.find_starter_root(bay)
+        if root is not None:
+            types_closets.recalculate_closet_starter(root)
+
+    def check(self, context):
+        if not self.live:
+            return False
+        shelf = self._shelf()
+        if self.revert_changes:
+            self.revert_changes = False
+            if shelf is not None and self.orig_state:
+                shelf['hb_z_offset'] = float(
+                    json.loads(self.orig_state)['z'])
+                root = types_closets.find_starter_root(shelf)
+                if root is not None:
+                    types_closets.recalculate_closet_starter(root)
+                self._load_fields(shelf)
+                self.applied_req = self._request()
+            return True
+        self._apply(context)
+        # The opening not being set follows the shelf.
+        if shelf is not None:
+            other = ('bottom' if self.set_height_location == 'TOP'
+                     else 'top')
+            _bay, below, above = _fixed_shelf_openings(shelf)
+            h = _opening_seg_height(below if other == 'bottom' else above)
+            if h is not None:
+                setattr(self, other + '_opening_height',
+                        max(h, units.inch(1.0)))
+                setattr(self, other + '_opening_preset',
+                        const.nearest_opening_height_key(h) or 'CUSTOM')
+        return True
+
+    def cancel(self, context):
+        _keep_live_changes(self, "Fixed Shelf Properties")
+
+    def execute(self, context):
+        self.live = False
+        self._apply(context)
+        return {'FINISHED'}
+
+    def draw(self, context):
+        layout = self.layout
+        shelf = self._shelf()
+        if shelf is None:
+            layout.label(text="This shelf is gone")
+            return
+        _bay, below, above = _fixed_shelf_openings(shelf)
+        us = context.scene.unit_settings
+        box = layout.box()
+        box.row().prop(self, 'set_height_location', expand=True)
+        for which, label, opening in (('top', "Top", above),
+                                      ('bottom', "Bottom", below)):
+            row = box.row()
+            row.label(text=label + " Opening Height:")
+            mode = 'TOP' if which == 'top' else 'BOTTOM'
+            if self.set_height_location == mode:
+                row.prop(self, which + '_opening_preset', text="")
+                if getattr(self, which + '_opening_preset') == 'CUSTOM':
+                    box.prop(self, which + '_opening_height')
+            else:
+                h = _opening_seg_height(opening)
+                sub = row.row()
+                sub.enabled = False
+                sub.label(text=units.unit_to_string(us, h)
+                          if h is not None else "-")
+        _draw_revert(layout, self)
 
 
 # ---------------------------------------------------------------------------
@@ -7868,6 +10427,74 @@ def _opening_dims(opening):
         return (0.0, 0.0, 0.0)
 
 
+def _side_overlay_options(opening, side):
+    """(half, full, run) overlay figures for one side of an opening's
+    front: a half overlay sharing the panel or shelf with the next
+    front, a full overlay held back only by the side's reveal (reference
+    Half Overlay Top/Bottom/Left/Right off), and what the run gives
+    the side when the opening does not take it over."""
+    run = types_closets.find_starter_root(opening)
+    if run is None:
+        return None
+    sizes = types_closets.run_sizes(run)
+    if side in ('left', 'right'):
+        t, gap = sizes.panel_thickness, sizes.horizontal_gap
+    else:
+        t, gap = sizes.shelf_thickness, sizes.vertical_gap
+    reveal = getattr(sizes, '%s_reveal' % side)
+    resolved = dict(zip(('left', 'right', 'top', 'bottom'),
+                        types_closets.front_overlays(sizes)))
+    return (t - gap) / 2.0, t - reveal, resolved[side]
+
+
+# Set while the Opening dialog reads its checkboxes back, so reading
+# one does not write its side's overlay.
+_LOADING_OVERLAYS = set()
+
+
+def _read_half_overlays(op_dialog, opening):
+    """Tick each Half Overlay checkbox whose side currently works out
+    to a half overlay."""
+    _LOADING_OVERLAYS.add(id(op_dialog))
+    try:
+        for side in ('left', 'right', 'top', 'bottom'):
+            figures = _side_overlay_options(opening, side)
+            if figures is None:
+                continue
+            half, _full, run_value = figures
+            value = (getattr(op_dialog, '%s_overlay' % side)
+                     if getattr(op_dialog, 'unlock_%s_overlay' % side)
+                     else run_value)
+            setattr(op_dialog, 'half_overlay_%s' % side,
+                    abs(value - half) <= 1e-5)
+    finally:
+        _LOADING_OVERLAYS.clear()
+
+
+def _half_overlay_update(side):
+    """A Half Overlay checkbox in the Opening dialog: write the side's
+    overlay as a half or a full overlay (the reference's checkboxes), taking the
+    side over from the run only where the figure differs from the
+    run's."""
+    def _update(self, context):
+        if _LOADING_OVERLAYS:
+            return
+        opening = self._target(context)
+        if opening is None:
+            return
+        figures = _side_overlay_options(opening, side)
+        if figures is None:
+            return
+        half, full, run_value = figures
+        value = half if getattr(self, 'half_overlay_%s' % side) else full
+        if abs(value - run_value) <= 1e-6:
+            setattr(self, 'unlock_%s_overlay' % side, False)
+        else:
+            setattr(self, 'unlock_%s_overlay' % side, True)
+        setattr(self, '%s_overlay' % side, value)
+    return _update
+
+
 class hb_closets_OT_opening_prompts(bpy.types.Operator):
     """Edit what fills the active opening: its size readout, the interior
     (shelves / drawers / cubbies / trays / shoe shelves) with that
@@ -7915,7 +10542,11 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
         name="Shelf Quantity",
         description="How many adjustable shelves to space through the "
                     "opening",
-        default=3, min=0, max=20)  # type: ignore
+        default=3, min=0, max=12)  # type: ignore
+    # The shelf count the opening had when the dialog opened (see
+    # _held_adj_count).
+    held_shelf_qty: bpy.props.IntProperty(
+        default=0, options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
     # How the shelves here are cut. Both are the room's until this
     # opening takes one over.
     unlock_clip_gap: bpy.props.BoolProperty(
@@ -7950,7 +10581,11 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
     drawer_qty: bpy.props.IntProperty(
         name="Drawer Quantity",
         description="How many drawers to stack in the opening",
-        default=3, min=1, max=10)  # type: ignore
+        default=3, min=1, max=8)  # type: ignore
+    # The count the opening had on opening the dialog; a bank saved
+    # with more than the field allows keeps it until the field changes.
+    held_drawer_qty: bpy.props.IntProperty(
+        default=0, options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
     drawer_front_height: bpy.props.FloatProperty(
         name="Front Height",
         description="Height of each drawer front. The top drawer takes up "
@@ -7982,11 +10617,25 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
                     "from the front edge of the opening",
         default=0.00635,  # 1/4"
         min=0.0, unit='LENGTH', precision=4)  # type: ignore
+    # Where the grid stands and how tall its band is (the reference's Cubbies kept
+    # both editable). Moving the band splits or merges openings, which
+    # Revert Changes cannot put back, so these apply on Done.
+    cubby_placement: bpy.props.EnumProperty(
+        name="Placement",
+        description="Whether the grid takes a band of the opening or "
+                    "the whole of it. Applied on Done",
+        items=const.CUBBY_PLACEMENT_ITEMS, default='FILL')  # type: ignore
+    cubby_height: bpy.props.FloatProperty(
+        name="Cubby Height",
+        description="How tall the band of cubbies stands. Applied on "
+                    "Done",
+        default=const.CUBBY_HEIGHT, min=0.0,
+        unit='LENGTH', precision=4)  # type: ignore
 
     rollout_qty: bpy.props.IntProperty(
         name="Quantity",
         description="How many pull-out trays to space through the opening",
-        default=3, min=1, max=12)  # type: ignore
+        default=const.ROLLOUT_DEFAULT_QTY, min=1, max=12)  # type: ignore
     rollout_height: bpy.props.FloatProperty(
         name="Rollout Height", description="Height of each tray",
         default=0.1016,  # 4"
@@ -8025,6 +10674,11 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
                     "metal fence stands",
         default=const.SHOE_FENCE_BACK_INSET, min=0.0,
         unit='LENGTH', precision=4)  # type: ignore
+    slant_z: bpy.props.FloatProperty(
+        name="Vertical Location",
+        description="Height of the bottom shoe shelf off the floor of "
+                    "the opening",
+        default=0.0, min=0.0, unit='LENGTH', precision=4)  # type: ignore
 
     door_swing: bpy.props.EnumProperty(
         name="Door",
@@ -8166,6 +10820,26 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
         default=const.DEFAULT_OVERLAY, unit='LENGTH',
         precision=4)  # type: ignore
 
+    # The reference's Half Overlay checkboxes on a door, lift up or hamper: each
+    # sets its side to a half overlay or a full one (held back only by
+    # the reveal), through the overlays above.
+    half_overlay_left: bpy.props.BoolProperty(
+        name="Left", description="Half overlay on the left (off: full "
+                                 "overlay)",
+        default=True, update=_half_overlay_update('left'))  # type: ignore
+    half_overlay_right: bpy.props.BoolProperty(
+        name="Right", description="Half overlay on the right (off: full "
+                                  "overlay)",
+        default=True, update=_half_overlay_update('right'))  # type: ignore
+    half_overlay_top: bpy.props.BoolProperty(
+        name="Top", description="Half overlay at the top (off: full "
+                                "overlay)",
+        default=True, update=_half_overlay_update('top'))  # type: ignore
+    half_overlay_bottom: bpy.props.BoolProperty(
+        name="Bottom", description="Half overlay at the bottom (off: "
+                                   "full overlay)",
+        default=True, update=_half_overlay_update('bottom'))  # type: ignore
+
     # How this opening's fronts are pulled. Anything left locked follows
     # the room's Options tab; a pair of pulls and their spacing are this
     # opening's own either way.
@@ -8203,7 +10877,8 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
         description="Set how high this opening's door pulls sit, instead "
                     "of following the room. Read the way the convention "
                     "above reads it: Base down from the door top, Upper "
-                    "up from the door bottom, Tall off the floor",
+                    "up from the door bottom, Tall up from the door "
+                    "bottom",
         default=False)  # type: ignore
     door_pull_vertical_location: bpy.props.FloatProperty(
         name="Door Pull Vertical Location",
@@ -8255,14 +10930,20 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
 
     def _load_fields(self, context, opening):
         """Read the dialog's fields off the opening."""
+        # A pull figure typed the old way is read over before it is
+        # shown, so the box and what it then writes back mean the same.
+        if types_closets.pull_v_needs_reading(opening):
+            types_closets.recalculate_closet_starter(opening)
         # An empty opening reads back as zero of everything. The dialog
         # opens on the quantity a user would want if they picked that
         # interior, so a zero falls back to the standard starting count;
         # nothing is written until they accept.
         op = opening.hb_closet_opening
         self.fill = _opening_fill(opening)
-        self.shelf_qty = (int(op.adj_shelf_qty)
-                          or types_closets.default_adj_shelf_qty(opening))
+        self.held_shelf_qty = (int(op.adj_shelf_qty)
+                               or types_closets.default_adj_shelf_qty(
+                                   opening))
+        self.shelf_qty = min(self.held_shelf_qty, const.ADJ_SHELF_QTY_MAX)
         _room = context.scene.hb_closets
         self.unlock_clip_gap = bool(op.unlock_shelf_clip_gap)
         self.clip_gap = float(
@@ -8272,7 +10953,9 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
         self.setback = float(
             op.shelf_setback if op.unlock_shelf_setback
             else _room.shelf_setback)
-        self.drawer_qty = int(op.drawer_qty) or 3
+        self.held_drawer_qty = (int(op.drawer_qty)
+                                or types_closets.default_drawer_qty(opening))
+        self.drawer_qty = min(self.held_drawer_qty, _DRAWER_QTY_MAX)
         self.drawer_grain = op.drawer_grain or 'DEFAULT'
         self.drawer_front_height = float(op.drawer_front_height)
         self.drawer_box = op.drawer_box_override or 'DEFAULT'
@@ -8284,15 +10967,29 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
             self.cubby_cols = 3
             self.cubby_rows = 3
         self.cubby_setback = float(op.cubby_setback)
+        if types_closets.cubby_band_cap(opening) is not None:
+            self.cubby_placement = op.cubby_placement
+            self.cubby_height = float(op.cubby_height)
+        elif op.cubby_cols > 1 or op.cubby_rows > 1:
+            # A grid already filling the opening reads back as one.
+            self.cubby_placement = 'FILL'
+            self.cubby_height = const.CUBBY_HEIGHT
+        else:
+            # Cubbies picked here for the first time go in as the reference's
+            # did and as Add Cubbies puts them: a band at the bottom.
+            self.cubby_placement = 'BOTTOM'
+            self.cubby_height = const.CUBBY_HEIGHT
         self.rollout_qty = int(op.rollout_qty) or const.ROLLOUT_DEFAULT_QTY
         self.rollout_height = float(op.rollout_height)
-        self.slant_qty = int(op.slant_qty) or const.SLANT_SHELF_DEFAULT_QTY
+        self.slant_qty = (int(op.slant_qty)
+                          or types_closets.default_slant_qty(opening))
         self.slant_spacing = float(op.slant_spacing)
         self.slant_angle = float(op.slant_angle)
         self.slant_color = types_closets.shoe_fence_color(
             op.slant_color)
         self.slant_fence_inset = float(op.slant_fence_inset)
         self.slant_back_inset = float(op.slant_back_inset)
+        self.slant_z = float(op.slant_z)
         self.door_swing = op.door_swing or 'NONE'
         self.open_door = float(op.open_door)
         self.open_drawer = float(op.open_drawer)
@@ -8316,6 +11013,7 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
                     bool(getattr(op, 'unlock_%s_overlay' % side)))
             setattr(self, '%s_overlay' % side,
                     float(getattr(op, '%s_overlay' % side)))
+        _read_half_overlays(self, opening)
         for name in ('no_pulls', 'unlock_center_pull',
                      'center_pull_on_front', 'unlock_pull_location',
                      'double_pull_on_front', 'unlock_door_pull_vertical',
@@ -8337,6 +11035,18 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
         col = box.column(align=True)
         if self.fill == 'ADJ_SHELVES':
             col.prop(self, 'shelf_qty')
+            # Warned as Add Shelves warns (the reference alerted at any count
+            # over 11).
+            if self.shelf_qty > const.ADJ_SHELF_QTY_WARN:
+                row = col.row()
+                row.alert = True
+                row.label(text="Must be less than %d"
+                          % (const.ADJ_SHELF_QTY_WARN + 1), icon='ERROR')
+            held = _held_adj_count(self.shelf_qty, self.held_shelf_qty)
+            if held > self.shelf_qty:
+                col.label(text="This opening has %d shelves; leave the "
+                               "count at %d to keep them"
+                               % (held, self.shelf_qty), icon='INFO')
             _locked_field(col, self, 'clip_gap', 'unlock_clip_gap',
                           text="Clip Gap")
             _locked_field(col, self, 'setback', 'unlock_setback',
@@ -8346,9 +11056,15 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
             # to ask for here: a single drawer is sized on its own label
             # or in the Drawers dialog, and the rest share what is left.
             col.prop(self, 'drawer_qty')
+            held = _held_drawer_count(self.drawer_qty, self.held_drawer_qty)
+            if held > self.drawer_qty:
+                col.label(text="This bank has %d drawers; leave the count "
+                               "at %d to keep them"
+                               % (held, self.drawer_qty), icon='INFO')
             col.prop(self, 'drawer_box')
             col.prop(self, 'drawer_stretcher_width')
             col.prop(self, 'open_drawer')
+            _draw_drawer_stack_height(col, context, self._target(context))
             # Which way the grain runs on every drawer front in
             # here. Left on Use Default they follow the room, with
             # its setting read back so there is something to compare
@@ -8368,6 +11084,14 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
             col.prop(self, 'cubby_cols')
             col.prop(self, 'cubby_rows')
             col.prop(self, 'cubby_setback')
+            col = box.column(align=True)
+            col.prop(self, 'cubby_placement')
+            if self.cubby_placement != 'FILL':
+                col.prop(self, 'cubby_height')
+            opening = self._target(context)
+            if opening is not None and self._band_changed(opening):
+                col.label(text="Placement and height apply on Done",
+                          icon='INFO')
         elif self.fill == 'ROLLOUTS':
             col.prop(self, 'rollout_qty')
             col.prop(self, 'rollout_height')
@@ -8378,6 +11102,7 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
             col.prop(self, 'slant_color')
             col.prop(self, 'slant_fence_inset')
             col.prop(self, 'slant_back_inset')
+            col.prop(self, 'slant_z')
             # These sit on clips as well, so the gap reaches them.
             # Their setback is the fence's, so it is not offered.
             _locked_field(col, self, 'clip_gap', 'unlock_clip_gap',
@@ -8461,6 +11186,12 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
             sub = box.column(align=True)
             sub.enabled = self.door_swing != 'NONE'
             sub.prop(self, 'open_door')
+            # The reference's Half Overlays row on a door, lift up or hamper.
+            if self.door_swing != 'NONE':
+                sub.label(text="Half Overlays")
+                row = sub.row(align=True)
+                for side in ('left', 'right', 'top', 'bottom'):
+                    row.prop(self, 'half_overlay_%s' % side, toggle=True)
         # What the room works out for a front, and any side this opening
         # has taken over. A locked side reads back the room's figure, so
         # there is something to measure against before unlocking it.
@@ -8507,7 +11238,7 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
             v_label = "From Top"
             v_locked = as_length(cp.pull_vertical_location_base)
         elif rule == 'TALL':
-            v_label = "Off The Floor"
+            v_label = "From Bottom"
             v_locked = as_length(cp.pull_vertical_location_tall)
         elif rule == 'UPPER':
             v_label = "From Bottom"
@@ -8539,10 +11270,13 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
                       else "Measured")
         centered = (self.center_pull_on_front if self.unlock_center_pull
                     else cp.center_pulls_on_drawer_front)
+        # A tilt-out hamper's pull is always measured from the top, even
+        # where drawer pulls are centered, so it keeps the figure live.
+        hamper = self.door_swing == 'TILT_OUT'
         _takeover_row(col, self, 'unlock_pull_location',
                       'drawer_pull_vertical_location',
                       as_length(cp.pull_vertical_location_drawers),
-                      label="From Top", enabled=not centered)
+                      label="From Top", enabled=hamper or not centered)
         row = col.row(align=True)
         row.prop(self, 'double_pull_on_front', text="Two Per Front")
         sub = row.row(align=True)
@@ -8585,8 +11319,12 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
             return True
         sig = _operator_signature(self)
         if sig != self.applied_sig:
-            self.applied_sig = sig
             self._apply(context)
+            # A typed overlay may have made a side half or full.
+            opening = self._target(context)
+            if opening is not None:
+                _read_half_overlays(self, opening)
+            self.applied_sig = _operator_signature(self)
         return True
 
     def cancel(self, context):
@@ -8612,9 +11350,35 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
             _apply_finish(root)
             _apply_selection_shading(context, root)
 
+    def _band_changed(self, opening):
+        """Whether the cubby placement or band height asked for differs
+        from what the opening is built as."""
+        if self.fill != 'CUBBIES' or self.door_swing == 'TILT_OUT':
+            return False
+        op = opening.hb_closet_opening
+        banded = types_closets.cubby_band_cap(opening) is not None
+        built = op.cubby_placement if banded else 'FILL'
+        if self.cubby_placement != built:
+            return True
+        return (built != 'FILL'
+                and abs(self.cubby_height - op.cubby_height) > 1e-6)
+
     def execute(self, context):
         self.live = False
-        return self._apply(context)
+        result = self._apply(context)
+        opening = self._target(context)
+        if result == {'FINISHED'} and opening is not None \
+                and self._band_changed(opening):
+            target = types_closets.edit_cubbies(
+                opening, self.cubby_cols, self.cubby_rows,
+                self.cubby_setback, self.cubby_placement,
+                self.cubby_height)
+            root = types_closets.find_starter_root(
+                target if target is not None else opening)
+            if root is not None:
+                _apply_finish(root)
+                _apply_selection_shading(context, root)
+        return result
 
     def _apply(self, context):
         opening = self._target(context)
@@ -8634,12 +11398,28 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
                  else self.door_swing)
         fill = 'NONE' if swing == 'TILT_OUT' else self.fill
 
+        # A shelf count typed over what the opening holds closes its
+        # padlock, as the Adjustable Shelves dialog does - otherwise
+        # the opening re-deals its count by height and the typed
+        # figure snaps back.
+        _shelves = _held_adj_count(self.shelf_qty, self.held_shelf_qty)
+        if fill == 'ADJ_SHELVES':
+            _held = (int(opening.hb_closet_opening.adj_shelf_qty)
+                     or types_closets.default_adj_shelf_qty(opening))
+            if int(_shelves) != _held:
+                opening.hb_closet_opening.unlock_adj_qty = True
+
         # One interior at a time: zero out the fills that were not
-        # picked, then write the picked one's settings.
-        opening.hb_closet_opening.adj_shelf_qty = (
-            self.shelf_qty if fill == 'ADJ_SHELVES' else 0)
+        # picked, then write the picked one's settings. A saved count
+        # over the field's twelve is left as it stands (the property
+        # would clamp it).
+        if not (fill == 'ADJ_SHELVES'
+                and _shelves > const.ADJ_SHELF_QTY_MAX):
+            opening.hb_closet_opening.adj_shelf_qty = (
+                self.shelf_qty if fill == 'ADJ_SHELVES' else 0)
         opening.hb_closet_opening.drawer_qty = (
-            self.drawer_qty if fill == 'DRAWERS' else 0)
+            _held_drawer_count(self.drawer_qty, self.held_drawer_qty)
+            if fill == 'DRAWERS' else 0)
         opening.hb_closet_opening.rollout_qty = (
             self.rollout_qty if fill == 'ROLLOUTS' else 0)
         opening.hb_closet_opening.slant_qty = (
@@ -8682,6 +11462,7 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
                 self.slant_fence_inset
             opening.hb_closet_opening.slant_back_inset = \
                 self.slant_back_inset
+            opening.hb_closet_opening.slant_z = self.slant_z
 
         opening.hb_closet_opening.door_swing = swing
 
@@ -8703,6 +11484,7 @@ class hb_closets_OT_opening_prompts(bpy.types.Operator):
         _op.door_pull_location = self.door_pull_location
         _op.unlock_door_pull_vertical = self.unlock_door_pull_vertical
         _op.door_pull_vertical_location = self.door_pull_vertical_location
+        opening[types_closets.PROP_PULL_V_FROM_BOTTOM] = 1
         _op.unlock_door_pull_edge = self.unlock_door_pull_edge
         _op.door_pull_horizontal_offset = self.door_pull_horizontal_offset
         _op.add_back = self.add_back
@@ -8899,6 +11681,42 @@ class hb_closets_OT_set_corner_clearance(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class hb_closets_OT_rod_bracket_machining(bpy.types.Operator):
+    """Bore the panels at each end of the selected rods for their
+    brackets (as the reference's Add Closet Rod Machining): two holes 32mm apart,
+    centred on the rod, drilled at Prepare. Run again to take it off"""
+    bl_idname = "hb_closets.rod_bracket_machining"
+    bl_label = "Rod Bracket Holes"
+    bl_options = {'UNDO'}
+
+    drill: bpy.props.BoolProperty(default=True)  # type: ignore
+
+    @staticmethod
+    def _rods(context):
+        objs = list(context.selected_objects or ())
+        if context.active_object is not None:
+            objs.append(context.active_object)
+        return {o for o in objs
+                if o.get('hb_part_role') == types_closets.PART_ROLE_ROD}
+
+    @classmethod
+    def poll(cls, context):
+        return bool(cls._rods(context))
+
+    def execute(self, context):
+        rods = self._rods(context)
+        for rod in rods:
+            if self.drill:
+                rod[types_closets.PROP_ROD_MACHINING] = 1
+            elif types_closets.PROP_ROD_MACHINING in rod:
+                del rod[types_closets.PROP_ROD_MACHINING]
+        self.report({'INFO'}, "%d rod%s %s" % (
+            len(rods), "" if len(rods) == 1 else "s",
+            "drilled for brackets" if self.drill
+            else "no longer drilled"))
+        return {'FINISHED'}
+
+
 class hb_closets_OT_change_hanger(bpy.types.Operator):
     """Pick the model for the selected hanger (Room Default follows the
     sidebar Hangers option). The dropdown previews live in the dialog."""
@@ -8999,6 +11817,97 @@ class hb_closets_OT_randomize_hangers(bpy.types.Operator):
         return {'FINISHED'}
 
 
+# How far Open Doors / Open Drawers stands every front open, as the reference's
+# closet.open_doors did.
+ROOM_OPEN_PERCENT = 70.0
+
+
+def set_room_fronts_open(scene, percent, doors=True, drawers=True):
+    """Stand every closet door and/or drawer in the scene open by a
+    percentage (0 closes them). Writes the Open Door / Open Drawer
+    figures on each opening and bay, hands back any one front's own
+    clicked state so it follows them again, and moves the fronts there
+    and then - only the drawing changes, so nothing is rebuilt.
+    Returns how many fronts it moved."""
+    pct = float(percent)
+    count = 0
+    is_door = types_closets.PART_ROLE_DOOR
+    is_drawer = types_closets.PART_ROLE_DRAWER_FRONT
+    # Each front is moved by what it is: a drawer front, or a tilt-out
+    # hamper (a front that pulls out like one), answers Open Drawers;
+    # every other door answers Open Doors. The figure written is the
+    # one that front reads (current_open_frac): an opening's Open Door
+    # or Open Drawer by its role, or for a front across a whole bay the
+    # bay's Open Door, whichever kind it is.
+    fronts = []
+    for obj in scene.objects:
+        role = obj.get('hb_part_role')
+        if role not in (is_door, is_drawer):
+            continue
+        drawer_like = role == is_drawer or bool(obj.get('hb_is_hamper'))
+        if not (drawers if drawer_like else doors):
+            continue
+        fronts.append(obj)
+    with types_closets.suspend_recalc():
+        for obj in fronts:
+            parent = obj.parent
+            if parent is None:
+                continue
+            if parent.get(types_closets.TAG_OPENING_CAGE):
+                op = parent.hb_closet_opening
+                name = ('open_door' if obj.get('hb_part_role') == is_door
+                        else 'open_drawer')
+                if abs(getattr(op, name) - pct) > 1e-6:
+                    setattr(op, name, pct)
+            elif parent.get(types_closets.TAG_BAY_CAGE):
+                bp = parent.hb_closet_bay
+                if abs(bp.open_door - pct) > 1e-6:
+                    # Written past its update, which would re-solve the
+                    # run: the fronts are moved below, nothing else
+                    # changes.
+                    bp['open_door'] = pct
+        for obj in fronts:
+            if obj.get('hb_part_role') == is_door:
+                if 'hb_door_open' in obj:
+                    del obj['hb_door_open']
+                types_closets.apply_door_open(
+                    obj, types_closets.current_open_frac(obj))
+            else:
+                if 'hb_drawer_open' in obj:
+                    del obj['hb_drawer_open']
+                types_closets.apply_drawer_open(
+                    obj, types_closets.current_open_frac(obj))
+            count += 1
+    return count
+
+
+class hb_closets_OT_open_room_fronts(bpy.types.Operator):
+    """Stand every closet door and drawer front in the room open, or
+    close them all. For the drawing only"""
+    bl_idname = "hb_closets.open_room_fronts"
+    bl_label = "Open Doors & Drawers"
+    bl_options = {'UNDO'}
+
+    open: bpy.props.BoolProperty(
+        name="Open", default=True,
+        description="Open the fronts (70%) rather than close them")  # type: ignore
+    fronts: bpy.props.EnumProperty(
+        name="Fronts",
+        items=[('ALL', "All", "Doors and drawer fronts"),
+               ('DOORS', "Doors", "Doors only"),
+               ('DRAWERS', "Drawers", "Drawer fronts only")],
+        default='ALL')  # type: ignore
+
+    def execute(self, context):
+        count = set_room_fronts_open(
+            context.scene, ROOM_OPEN_PERCENT if self.open else 0.0,
+            doors=self.fronts in ('ALL', 'DOORS'),
+            drawers=self.fronts in ('ALL', 'DRAWERS'))
+        if not count:
+            self.report({'INFO'}, "No closet fronts in the room")
+        return {'FINISHED'}
+
+
 class hb_closets_OT_install_model_pack(bpy.types.Operator):
     """Install a downloaded model pack (.zip of hanger .blend files)
     into the user data folder - packed models never live in the
@@ -9079,6 +11988,12 @@ class hb_closets_OT_add_molding(bpy.types.Operator):
         # rather than quietly adding nothing.
         profile_name = (getattr(context.scene.hb_closets, prop_name, '')
                         or molding_closets.KINDS[kind][1])
+        swapped = False
+        if not base:
+            resolved = molding_closets.resolve_crown_profile(profile_name,
+                                                             context.scene)
+            swapped = resolved != profile_name
+            profile_name = resolved
         profile = molding_closets.load_profile(profile_name, kind)
         label = "Base" if base else "Crown"
         if profile is None:
@@ -9088,16 +12003,23 @@ class hb_closets_OT_add_molding(bpy.types.Operator):
                else molding_closets.add_crown_to_starter)
         made = 0
         for obj in context.scene.objects:
+            # A corner unit takes crown round its L front (as the prior
+            # library ran it); it has no base of its own.
             if (obj.get(types_closets.TAG_STARTER_CAGE)
-                    and not str(obj.get('CLASS_NAME', '')
-                                ).startswith('LShelf')):
+                    and not (base and str(obj.get('CLASS_NAME', '')
+                                          ).startswith('LShelf'))):
                 made += add(obj, profile)
         if made == 0:
             skipped = ("hanging bays are skipped" if base
                        else "bays under 60\" are skipped")
             self.report({'INFO'}, f"No qualifying runs ({skipped})")
             return {'CANCELLED'}
-        self.report({'INFO'}, f"Added {label.lower()} to {made} runs")
+        if swapped:
+            self.report({'WARNING'},
+                        f"Added L crown to {made} runs - light shield is "
+                        "not available for this material")
+        else:
+            self.report({'INFO'}, f"Added {label.lower()} to {made} runs")
         return {'FINISHED'}
 
 
@@ -9138,6 +12060,7 @@ classes = (
     hb_closets_OT_toggle_mode,
     hb_closets_OT_place_starter,
     hb_closets_OT_insert_bay,
+    hb_closets_OT_change_number_of_openings,
     hb_closets_OT_delete_bay,
     hb_closets_OT_add_part,
     hb_closets_OT_place_misc_part,
@@ -9151,7 +12074,9 @@ classes = (
     hb_closets_OT_bay_countertop_prompts,
     hb_closets_OT_delete_bay_countertop,
     hb_closets_OT_delete_bay_cleat,
+    hb_closets_OT_bay_cleat_prompts,
     hb_closets_OT_rod_prompts,
+    hb_closets_OT_wall_rod_prompts,
     hb_closets_OT_misc_part_prompts,
     hb_closets_OT_panel_prompts,
     hb_closets_OT_add_adj_shelves,
@@ -9180,10 +12105,18 @@ classes = (
     hb_closets_OT_front_pull,
     hb_closets_OT_lock_l_shelf,
     hb_closets_OT_lock_shelf,
+    hb_closets_OT_adj_shelf_prompts,
+    hb_closets_OT_part_comments,
+    hb_closets_OT_update_toe_kicks,
+    hb_closets_OT_rod_bracket_machining,
+    hb_closets_OT_update_hanging_heights,
+    hb_closets_OT_cleat_prompts,
+    hb_closets_OT_restore_removed_parts,
     hb_closets_OT_delete_part,
     hb_closets_OT_delete_starter,
     hb_closets_OT_starter_prompts,
     hb_closets_OT_bay_prompts,
+    hb_closets_OT_fixed_shelf_prompts,
     hb_closets_OT_opening_prompts,
     hb_closets_OT_set_corner_clearance,
     hb_closets_OT_add_molding,
@@ -9191,6 +12124,29 @@ classes = (
     hb_closets_OT_change_hanger,
     hb_closets_OT_install_model_pack,
     hb_closets_OT_randomize_hangers,
+    hb_closets_OT_open_room_fronts,
 )
 
-register, unregister = bpy.utils.register_classes_factory(classes)
+_register_classes, _unregister_classes = \
+    bpy.utils.register_classes_factory(classes)
+
+
+@bpy.app.handlers.persistent
+def _stop_island_dims_on_load(*_args):
+    """A file opening while an island dialog is up closes the dialog
+    without telling it; its temporary dims go with the old file."""
+    _IslandDialogDims.stop()
+
+
+def register():
+    _register_classes()
+    if _stop_island_dims_on_load not in bpy.app.handlers.load_pre:
+        bpy.app.handlers.load_pre.append(_stop_island_dims_on_load)
+
+
+def unregister():
+    # An island dialog's temporary dims must not outlive the add-on.
+    _IslandDialogDims.stop()
+    if _stop_island_dims_on_load in bpy.app.handlers.load_pre:
+        bpy.app.handlers.load_pre.remove(_stop_island_dims_on_load)
+    _unregister_classes()

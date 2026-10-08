@@ -146,11 +146,16 @@ def get_hanger_files():
 
 
 def hanger_enum_items(self, context):
+    """Numbered by name (materials_closets.stable_numbers) so a hanger
+    model installed later does not move what a file saved."""
     global _hanger_enum_cache
     if _hanger_enum_cache is None:
-        items = [(f, os.path.splitext(f)[0], "")
-                 for f in get_hanger_files()]
-        items.append(('NONE', "None", "No hangers"))
+        from .materials_closets import stable_numbers
+        files = get_hanger_files()
+        nums = stable_numbers(files + ['NONE'], DEFAULT_HANGER)
+        items = [(f, os.path.splitext(f)[0], "", 'NONE', n)
+                 for f, n in zip(files, nums)]
+        items.append(('NONE', "None", "No hangers", 'NONE', nums[-1]))
         _hanger_enum_cache = items
     return _hanger_enum_cache
 
@@ -160,10 +165,12 @@ def hanger_override_enum_items(self, context):
     first (follow the scene Hangers option), then the models."""
     global _hanger_override_enum_cache
     if _hanger_override_enum_cache is None:
+        from .materials_closets import stable_numbers
+        files = get_hanger_files()
         items = [('SCENE', "Room Default",
-                  "Follow the Hangers option in the sidebar")]
-        items += [(f, os.path.splitext(f)[0], "")
-                  for f in get_hanger_files()]
+                  "Follow the Hangers option in the sidebar", 'NONE', 0)]
+        items += [(f, os.path.splitext(f)[0], "", 'NONE', n)
+                  for f, n in zip(files, stable_numbers(files))]
         _hanger_override_enum_cache = items
     return _hanger_override_enum_cache
 
@@ -332,18 +339,31 @@ def pull_enum_items(self, context):
     Cached module-level - dynamic-enum string-lifetime gotcha."""
     global _enum_cache
     if _enum_cache is None:
-        items = []
-        for i, fname in enumerate(get_pull_files()):
-            stem = os.path.splitext(fname)[0]
-            items.append((fname, stem, "", _thumb_icon(stem), i))
-        items.append(('NONE', "None", "No pulls", 'X', len(items)))
-        # Numbered clear of the handle files: files store this enum by
-        # number, so adding a handle file must not land on Custom.
-        items.append((CUSTOM_PULL, "Custom",
-                      "A plain bar pull at the size typed below",
-                      'MODIFIER', 1000))
-        _enum_cache = items
+        _enum_cache = _handle_items(None)
     return _enum_cache
+
+
+def _handle_items(lead):
+    """Every handle, then None and Custom, numbered by name rather than
+    place (materials_closets.stable_numbers): a file stores this enum by
+    number, so adding a handle file must not move what it saved. `lead`
+    is the item a per-front or drawer list starts with, at 0; without
+    one the standard handle has 0, the dropdown's default."""
+    from .materials_closets import stable_numbers
+    files = get_pull_files()
+    nums = stable_numbers(files + ['NONE'],
+                          None if lead else DEFAULT_PULL)
+    items = [lead] if lead else []
+    for fname, num in zip(files, nums):
+        stem = os.path.splitext(fname)[0]
+        items.append((fname, stem, "", _thumb_icon(stem), num))
+    items.append(('NONE', "None", "No pulls", 'X', nums[-1]))
+    # Numbered clear of the handle files and their stable numbers, as it
+    # always was.
+    items.append((CUSTOM_PULL, "Custom",
+                  "A plain bar pull at the size typed below",
+                  'MODIFIER', 1000))
+    return items
 
 
 def drawer_pull_enum_items(self, context):
@@ -352,12 +372,9 @@ def drawer_pull_enum_items(self, context):
     handle."""
     global _drawer_enum_cache
     if _drawer_enum_cache is None:
-        items = [(SAME_AS_DOORS, "Same as Doors",
-                  "Drawer fronts use the door pull", 'LINKED', 0)]
-        for key, label, desc, icon, num in pull_enum_items(self, context):
-            items.append((key, label, desc, icon,
-                          num if num >= 1000 else num + 1))
-        _drawer_enum_cache = items
+        _drawer_enum_cache = _handle_items(
+            (SAME_AS_DOORS, "Same as Doors",
+             "Drawer fronts use the door pull", 'LINKED', 0))
     return _drawer_enum_cache
 
 
@@ -365,13 +382,40 @@ def front_pull_enum_items(self, context):
     """Per-front pull dropdown: Follow The Room, then every handle."""
     global _front_enum_cache
     if _front_enum_cache is None:
-        items = [(FOLLOW_ROOM, "Follow The Room",
-                  "Use the room's door or drawer pull", 'LINKED', 0)]
-        for key, label, desc, icon, num in pull_enum_items(self, context):
-            items.append((key, label, desc, icon,
-                          num if num >= 1000 else num + 1))
-        _front_enum_cache = items
+        _front_enum_cache = _handle_items(
+            (FOLLOW_ROOM, "Follow The Room",
+             "Use the room's door or drawer pull", 'LINKED', 0))
     return _front_enum_cache
+
+
+# A machining add-on that owns the pull drilling choice registers a
+# function here, scene -> True when the room is set to go out with no
+# pulls at all (set_pulls_off_provider). With none registered, pulls are
+# on.
+_pulls_off_provider = None
+
+
+def set_pulls_off_provider(fn):
+    """Register (or clear, with None) the function that says whether a
+    scene's pulls are switched off by its pull drilling choice."""
+    global _pulls_off_provider
+    _pulls_off_provider = fn
+
+
+def pulls_off_for_room(scene=None):
+    """True when the room's pull drilling is No Pull No Drill: the job
+    goes out with no pulls at all, so none are drawn (or costed, which
+    counts the pull objects) - the reference version's 'Turn Off Pulls' on
+    every front. The choice lives with whatever machining add-on
+    registered itself (set_pulls_off_provider); without one pulls are
+    on."""
+    if _pulls_off_provider is None:
+        return False
+    scene = scene or bpy.context.scene
+    try:
+        return bool(_pulls_off_provider(scene))
+    except Exception:
+        return False
 
 
 def selection_for(kind, front=None):
@@ -434,6 +478,13 @@ def _apply_finish_to_pull(pull_obj, finish=None):
         return
     mats.clear()
     mats.append(mat)
+
+
+def is_edge_pull(stem):
+    """An ELITE pull is an edge pull: it rides the top edge of a drawer
+    front rather than its face (the reference put an ELITE pick's drawer pulls on
+    the top edge - Drawer Vertical 0, not centered)."""
+    return str(stem or '').upper().startswith('ELITE')
 
 
 def current_pull_stem(selection=None):

@@ -23,6 +23,7 @@ lifetime gotcha).
 """
 import math
 import os
+import zlib
 import bpy
 
 from ... import hb_utils
@@ -119,20 +120,61 @@ def get_countertop_material_names():
     return _ctop_names_cache
 
 
+# A .blend stores an enum by its NUMBER, and a plain 3-tuple item is
+# numbered by its place in the list - so a swatch added to the library
+# (Dalia, between Cosmos and Finesse) moved every colour after it and an
+# old file opened on the wrong one. Each colour is numbered from its
+# name instead, clear of the small numbers the old places were saved as
+# (so a file saved before this is told apart and migrated on load,
+# migrate_saved_materials). A list's default keeps 0 - White, the first
+# countertop laminate, Match Closet - which is both what an untouched
+# dropdown reads as and what it was saved as before.
+_STABLE_ID_BASE = 100000
+
+
+def stable_id(name):
+    """The number a colour is saved as - the same for that name in every
+    library, whatever else is added."""
+    return _STABLE_ID_BASE + zlib.crc32(name.encode('utf-8')) % 2000000000
+
+
+def stable_numbers(names, default=None):
+    """The saved number for each name in a dropdown list: its stable id,
+    0 for the list's default."""
+    nums = []
+    used = set()
+    for n in names:
+        num = 0 if n == default else stable_id(n)
+        while num in used:      # a crc clash in the one list
+            num += 1
+        used.add(num)
+        nums.append(num)
+    return nums
+
+
+def _stable_items(names, default=None):
+    return [(n, n, "", 'NONE', num)
+            for n, num in zip(names, stable_numbers(names, default))]
+
+
 def countertop_material_enum_items(self, context):
     global _ctop_enum_cache
     if _ctop_enum_cache is None:
-        items = [(n, n, "") for n in get_countertop_material_names()]
+        items = _stable_items(get_countertop_material_names(),
+                              default=DEFAULT_COUNTERTOP_MATERIAL)
         _ctop_enum_cache = items or [('NONE', "None",
-                                      "No countertop materials library")]
+                                      "No countertop materials library",
+                                      'NONE', 0)]
     return _ctop_enum_cache
 
 
 def material_enum_items(self, context):
     global _enum_cache
     if _enum_cache is None:
-        items = [(n, n, "") for n in get_material_names()]
-        _enum_cache = items or [('NONE', "None", "No materials library")]
+        items = _stable_items(get_material_names(),
+                              default=DEFAULT_MATERIAL)
+        _enum_cache = items or [('NONE', "None", "No materials library",
+                                 'NONE', 0)]
     return _enum_cache
 
 
@@ -142,10 +184,202 @@ def match_enum_items(self, context):
     global _match_enum_cache
     if _match_enum_cache is None:
         items = [(MATCH, "Match Closet",
-                  "Follow the closet material selection")]
-        items += [(n, n, "") for n in get_material_names()]
+                  "Follow the closet material selection", 'NONE', 0)]
+        items += _stable_items(get_material_names())
         _match_enum_cache = items
     return _match_enum_cache
+
+
+# The room's colour dropdowns and how each was numbered before:
+# 'plain' = place in the material list, 'match' = Match Closet at 0 then
+# the material list, 'countertop' = place in the countertop list.
+_SAVED_MATERIAL_PROPS = (
+    ('closet_material', 'plain'),
+    ('closet_front_material', 'match'),
+    ('closet_edge_material', 'match'),
+    ('closet_front_edge_material', 'match'),
+    ('closet_countertop_material', 'countertop'),
+)
+
+
+def migrate_saved_materials(scene):
+    """Turn colours a file saved by their old place in the list into the
+    stable numbers, reading each place against the list as it stood (the
+    library's own order, which only changes when a swatch is added).
+    Already-stable values, Match Closet and settings never touched are
+    left alone; nothing is repainted. Returns how many were changed."""
+    props = getattr(scene, 'hb_closets', None)
+    if props is None:
+        return 0
+    changed = 0
+    for prop, kind in _SAVED_MATERIAL_PROPS:
+        raw = props.get(prop)
+        if not isinstance(raw, int) or raw >= _STABLE_ID_BASE or raw == 0:
+            continue            # stable already, or the default (0 then
+                                # and now)
+        if kind == 'match':
+            names, idx = get_material_names(), raw - 1
+        elif kind == 'countertop':
+            names, idx = get_countertop_material_names(), raw
+        else:
+            names, idx = get_material_names(), raw
+        if not 0 <= idx < len(names):
+            continue
+        props[prop] = stable_id(names[idx])
+        changed += 1
+    return changed
+
+
+# The pull, hanger and molding dropdowns were numbered by place too, and
+# moved the same way when a handle, hanger or profile file was added.
+# Each is listed with the order it was numbered in before (its default
+# first then and now, so 0 needs no migrating); Custom's 1000 was always
+# its own.
+def _saved_selection_lists():
+    from . import pulls_closets as pc, molding_closets as mc
+    pulls = pc.get_pull_files()
+    hangers = pc.get_hanger_files()
+    return (
+        ('closet_pull', pulls + ['NONE'], pc.pull_enum_items),
+        ('closet_drawer_pull', [pc.SAME_AS_DOORS] + pulls + ['NONE'],
+         pc.drawer_pull_enum_items),
+        ('closet_hanger_model', hangers + ['NONE'], pc.hanger_enum_items),
+        ('closet_crown_profile', mc.get_profile_files('CROWN'),
+         mc.profile_enum_items),
+        ('closet_base_profile', mc.get_profile_files('BASE'),
+         mc.base_profile_enum_items),
+    )
+
+
+def _migrate_by_place(owner, prop, old_order, items_fn):
+    """Rewrite one dropdown saved by its place in `old_order` as the
+    number its item has now. Values that are already stable, the default
+    (0, then and now) and Custom's 1000 are left alone, so running it
+    again changes nothing. Returns 1 when it changed the value."""
+    raw = owner.get(prop)
+    if (not isinstance(raw, int) or raw >= _STABLE_ID_BASE
+            or raw in (0, 1000)):
+        return 0
+    if not 0 <= raw < len(old_order):
+        return 0
+    name = old_order[raw]
+    num = next((item[4] for item in items_fn(owner, bpy.context)
+                if item[0] == name and len(item) > 4), None)
+    if num is None:
+        return 0
+    owner[prop] = num
+    return 1
+
+
+def migrate_saved_selections(scene):
+    """migrate_saved_materials for the pull, hanger and molding
+    dropdowns. Returns how many were changed."""
+    props = getattr(scene, 'hb_closets', None)
+    if props is None:
+        return 0
+    changed = 0
+    for prop, old_order, items_fn in _saved_selection_lists():
+        changed += _migrate_by_place(props, prop, old_order, items_fn)
+    return changed
+
+
+def migrate_frameless_selections(scene):
+    """The frameless library picks its sheet material, door and drawer
+    pulls and crown profile from these same lists, so a frameless job
+    saved them by place too: every cabinet style's material, and the
+    room's pulls and crown profile, are read over the same way. Returns
+    how many were changed."""
+    props = getattr(scene, 'hb_frameless', None)
+    if props is None:
+        return 0
+    from . import pulls_closets as pc, molding_closets as mc
+    changed = 0
+    names = get_material_names()
+    for style in getattr(props, 'cabinet_styles', ()):
+        changed += _migrate_by_place(style, 'sheet_material', names,
+                                     material_enum_items)
+    pulls = pc.get_pull_files() + ['NONE']
+    for prop in ('door_pull_selection', 'drawer_pull_selection'):
+        changed += _migrate_by_place(props, prop, pulls,
+                                     pc.pull_enum_items)
+    changed += _migrate_by_place(props, 'crown_profile',
+                                 mc.get_profile_files('CROWN'),
+                                 mc.profile_enum_items)
+    return changed
+
+
+# Every scene in a file saved by this version carries it (stamped on
+# save); a scene without it was saved before, and is read over once on
+# load by the steps below, then stamped so it is never read again. Bump
+# the version, and gate a new step on it, when a saved setting changes
+# meaning again.
+DATA_VERSION_KEY = 'hb_closets_data_version'
+DATA_VERSION = 1
+
+
+def _data_version(scene):
+    try:
+        return int(scene.get(DATA_VERSION_KEY, 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _saved_file_steps():
+    from . import types_closets
+    return (migrate_saved_materials, migrate_saved_selections,
+            migrate_frameless_selections,
+            types_closets.migrate_saved_layout)
+
+
+@bpy.app.handlers.persistent
+def _migrate_materials_load_post(_dummy):
+    # A new file (no path - the startup file) has nothing saved to read
+    # over: it is only stamped, so its rooms keep the new defaults.
+    saved = bool(bpy.data.filepath)
+    # Whether the file already uses the new meanings has to be read
+    # before the colour step rewrites list places into stable ids.
+    from . import types_closets
+    types_closets._LOAD_FILE_NEW_FORMAT = (
+        types_closets._file_in_new_format() if saved else None)
+    try:
+        _run_saved_file_steps(saved)
+    finally:
+        types_closets._LOAD_FILE_NEW_FORMAT = None
+
+
+def _run_saved_file_steps(saved):
+    for scene in bpy.data.scenes:
+        if _data_version(scene) >= DATA_VERSION:
+            continue
+        if saved:
+            for migrate in _saved_file_steps():
+                try:
+                    migrate(scene)
+                except Exception:
+                    pass
+        scene[DATA_VERSION_KEY] = DATA_VERSION
+
+
+@bpy.app.handlers.persistent
+def _stamp_data_version_save_pre(_dummy):
+    """Whatever is saved now is saved in the current meaning."""
+    for scene in bpy.data.scenes:
+        if _data_version(scene) < DATA_VERSION:
+            scene[DATA_VERSION_KEY] = DATA_VERSION
+
+
+def register_handlers():
+    if _migrate_materials_load_post not in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.append(_migrate_materials_load_post)
+    if _stamp_data_version_save_pre not in bpy.app.handlers.save_pre:
+        bpy.app.handlers.save_pre.append(_stamp_data_version_save_pre)
+
+
+def unregister_handlers():
+    if _migrate_materials_load_post in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(_migrate_materials_load_post)
+    if _stamp_data_version_save_pre in bpy.app.handlers.save_pre:
+        bpy.app.handlers.save_pre.remove(_stamp_data_version_save_pre)
 
 
 def refresh():
@@ -218,6 +452,138 @@ def load_core_material():
     return mat
 
 
+# Which edges each kind of part is banded on - the same table downstream
+# costing charges banding by (and the reference version's
+# per-class ebl1/ebl2/ebw1/ebw2), so the model shows
+# the banding the shop puts on and the cut list, labels and export
+# (which read the edge slots) say the same. L2 is the front edge. A part
+# not listed - fronts, tops, purchased rails - is banded all round.
+BAND_EDGES = {
+    'CLOSET_PANEL': ('L2', 'W1', 'W2'),
+    'CLOSET_BOTTOM_SHELF': ('L2',),
+    'CLOSET_TOP_SHELF': ('L2',),
+    'CLOSET_FIXED_SHELF': ('L2',),
+    'CLOSET_ADJ_SHELF': ('L2',),
+    'CLOSET_CLEAT': ('L2',),
+    'CLOSET_CUBBY_DIVISION': ('L2',),
+    'CLOSET_CUBBY_SHELF': ('L2',),
+    'CLOSET_BRIDGE_SHELF': ('L2',),
+    'CLOSET_COUNTERTOP': ('L1', 'L2', 'W1', 'W2'),
+    'CLOSET_BACKSPLASH': ('L1', 'L2', 'W1', 'W2'),
+    'CLOSET_APPLIED_BACK': ('L1', 'L2', 'W1', 'W2'),
+    'CLOSET_TOE_KICK': (),
+    'CLOSET_CENTER_BACK': (),
+    'CLOSET_HOOK_CLEAT': ('L1', 'L2', 'W1', 'W2'),
+    'CLOSET_FILLER': ('L1', 'W1', 'W2'),
+    'CLOSET_DRAWER_STRETCHER': ('L2',),
+    'CLOSET_CAPTURED_BACK': (),
+    'CLOSET_DIVISION': ('L2',),
+    'CLOSET_SLANTED_SHELF': ('L2',),
+    'CLOSET_TOP_ACCENT_SHELF': ('L1', 'L2'),
+    # The reference banded a continuous top on its front and both ends (Top_Accent_Shelf
+    # ebl2, plus ebw1 / ebw2 set by the drop).
+    'CLOSET_CONTINUOUS_TOP': ('L2', 'W1', 'W2'),
+    'CLOSET_IRONING_BOARD_MOUNT': ('L1', 'L2', 'W1', 'W2'),
+    'CLOSET_L_LOCK_SHELF': ('L2',),
+    'CLOSET_L_ADJ_SHELF': ('L2',),
+}
+# Parts with a generic role band as the part they are (downstream
+# _ACCESSORY_PART_ROLES / _LOOSE_PART_ROLES).
+_ACCESSORY_BAND_ROLES = {
+    'Hook Cleat': 'CLOSET_HOOK_CLEAT',
+    'Ironing Board Mount': 'CLOSET_IRONING_BOARD_MOUNT',
+    'Accessory Shelf': 'CLOSET_FIXED_SHELF',
+}
+_LOOSE_BAND_ROLES = {
+    'BACK': 'CLOSET_CAPTURED_BACK',
+    'CLEAT': 'CLOSET_CLEAT',
+    'SHELF': 'CLOSET_ADJ_SHELF',
+    'COUNTERTOP': 'CLOSET_COUNTERTOP',
+}
+
+
+def banded_edges(obj):
+    """The edges (of W1 W2 L1 L2) a part is banded on, or None for all
+    four. A misc part bands the edges ticked on it; any other part what
+    its kind always does (BAND_EDGES)."""
+    if is_bandable_misc_part(obj):
+        return tuple(e for e in MISC_BAND_EDGES if obj.get('hb_band_' + e))
+    role = obj.get('hb_part_role')
+    if obj.get('hb_l_index') is not None:
+        if role == 'CLOSET_ADJ_SHELF':
+            role = 'CLOSET_L_ADJ_SHELF'
+        elif role in ('CLOSET_FIXED_SHELF', 'CLOSET_TOP_SHELF',
+                      'CLOSET_BOTTOM_SHELF'):
+            role = 'CLOSET_L_LOCK_SHELF'
+    elif role == 'CLOSET_ACCESSORY_PART':
+        role = _ACCESSORY_BAND_ROLES.get(obj.get('hb_acc_part'), role)
+    elif role == 'CLOSET_MISC_PART':
+        role = _LOOSE_BAND_ROLES.get(obj.get('hb_loose_kind'), role)
+    edges = BAND_EDGES.get(role)
+    if edges is None:
+        return None
+    extra = _context_band_edges(obj, role)
+    return edges + tuple(e for e in extra if e not in edges)
+
+
+def _context_band_edges(obj, role):
+    """Edges the reference version banded beyond a part's usual ones because
+    of where it stands, mapped to HB5's frame - checked
+    live on both 2026-10-06 (reference: shelf / panel L1 = back, cleat L1 =
+    top; HB5: L1 = back, cleat L2 = top):
+
+    - an island's partitions and its top and bottom shelves show their
+      back as well as their front: + the back edge (L1);
+    - a cleat in a bay with its bottom removed has nothing under it, so
+      its bottom edge shows too: + L1 (reference 'ebl2 = remove_bottom')."""
+    if role in ('CLOSET_PANEL', 'CLOSET_TOP_SHELF', 'CLOSET_BOTTOM_SHELF'):
+        cur = obj.parent
+        while cur is not None:
+            if cur.get('IS_CLOSET_STARTER_CAGE'):
+                if 'Island' in str(cur.get('CLASS_NAME', '')):
+                    return ('L1',)
+                break
+            cur = cur.parent
+        return ()
+    if role == 'CLOSET_CLEAT' and obj.get('hb_part_role') == 'CLOSET_CLEAT':
+        bay = obj.parent
+        bp = getattr(bay, 'hb_closet_bay', None) if bay is not None else None
+        if bp is not None and bool(getattr(bp, 'remove_bottom', False)):
+            return ('L1',)
+    return ()
+
+
+def refresh_banding(obj):
+    """Re-band a part in the banding it already wears, for when which
+    edges it bands on changes with the layout (a cleat whose bay loses
+    its bottom) rather than with a finish. No-op on an unfinished part."""
+    from ... import hb_types
+    try:
+        part = hb_types.GeoNodeCutpart(obj)
+        core = bpy.data.materials.get(CORE_MATERIAL)
+        edge = None
+        for e in MISC_BAND_EDGES:
+            mat = part.get_input('Edge ' + e)
+            if mat is not None and mat is not core:
+                edge = mat
+                break
+        if edge is not None:
+            _set_edges(part, obj, edge)
+    except Exception:
+        pass
+
+
+def _set_edges(part, obj, edge):
+    """Band the edges `obj` is banded on in `edge`; the rest show the
+    bare board core."""
+    banded = banded_edges(obj)
+    core = load_core_material() if banded is not None \
+        and len(banded) < len(MISC_BAND_EDGES) else None
+    for e in MISC_BAND_EDGES:
+        part.set_input('Edge ' + e,
+                       edge if (banded is None or e in banded) else core)
+
+
 def is_bandable_misc_part(obj):
     """A true misc part - not the loose back / cleat / shelf, which band
     the way the part they stand in for always does."""
@@ -240,6 +606,10 @@ def _mapping_variant(mat, suffix, rot_x=0.0, rot_z=0.0):
     if variant is None:
         variant = mat.copy()
         variant.name = name
+    # The colour the variant is cut from: a turned texture is a drawing
+    # concern, so cut lists, nests and costing read the sheet by this
+    # rather than by the variant's own name ('Dalia GRAIN V').
+    variant['hb_base_material'] = mat.get('hb_base_material', mat.name)
     mapping = next((n for n in variant.node_tree.nodes
                     if n.type == 'MAPPING'), None)
     if mapping is not None:
@@ -355,7 +725,8 @@ def door_panel_type(front_obj):
                    'Vertical Grain')
 
 
-def apply_front_member_materials(front_obj, is_drawer, front_mat=None):
+def apply_front_member_materials(front_obj, is_drawer, front_mat=None,
+                                 carcass_mat=None):
     """Grain-correct materials on a styled front's Door Style modifier:
     stiles (vertical members) carry vertical grain, rails horizontal,
     and the panel follows the front's grain setting. The textures read
@@ -363,7 +734,11 @@ def apply_front_member_materials(front_obj, is_drawer, front_mat=None):
     on the way the front is cut: a length-up front (see fronts_closets)
     reads the plain material up itself and the rotated variant across,
     a length-across front the reverse. No-op for slab fronts (no
-    modifier)."""
+    modifier).
+
+    The wood panel is cut in the closet colour, not the front colour -
+    the reference's door and drawer front panel material was the closet surface
+    material whatever the fronts were in."""
     mod = next((m for m in front_obj.modifiers
                 if m.type == 'NODES' and 'Door Style' in m.name), None)
     if mod is None or mod.node_group is None:
@@ -378,38 +753,88 @@ def apply_front_member_materials(front_obj, is_drawer, front_mat=None):
         vert_mat, horiz_mat = front_mat, rotated
     else:
         vert_mat, horiz_mat = rotated, front_mat
+    if carcass_mat is None:
+        carcass_mat = load_material(
+            getattr(props, 'closet_material', DEFAULT_MATERIAL))
+    if carcass_mat is None:
+        carcass_mat = front_mat
+    if carcass_mat is front_mat:
+        p_vert, p_horiz = vert_mat, horiz_mat
+    elif front_obj.get('hb_front_length_up'):
+        p_vert, p_horiz = carcass_mat, vertical_variant(carcass_mat)
+    else:
+        p_vert, p_horiz = vertical_variant(carcass_mat), carcass_mat
     grain = front_grain(front_obj, is_drawer)
-    panel = horiz_mat if grain == 'HORIZONTAL' else vert_mat
-    # Door panel type: glass selections replace the wood panel (drawer
-    # fronts always keep the wood panel). Clear Glass reuses the shared
+    panel = p_horiz if grain == 'HORIZONTAL' else p_vert
+    # Panel type: glass selections replace the wood panel, on drawer
+    # and hamper fronts as on doors (reference assign_door_style gave every
+    # styled front the room's panel type). Clear Glass reuses the shared
     # generated door-panel glass (Glass BSDF + Transparent mix - the
     # library's plain glass material doesn't read as glass in render);
     # Mirror / Frosted come from the materials library. The tag lets
     # the 2D layer hatch glass panels later.
     is_glass = False
-    if not is_drawer:
-        panel_type = door_panel_type(front_obj)
-        if panel_type != 'Vertical Grain':
-            glass = None
-            if panel_type == 'Clear Glass':
-                try:
-                    from ..face_frame.props_hb_face_frame import (
-                        Face_Frame_Cabinet_Style)
-                    glass = (Face_Frame_Cabinet_Style
-                             ._get_glass_panel_material())
-                except Exception:
-                    glass = None
-            if glass is None:
-                glass = load_material(panel_type)
-            if glass is not None:
-                panel = glass
-                is_glass = True
-        front_obj['hb_panel_type'] = panel_type
+    panel_type = door_panel_type(front_obj)
+    if panel_type != 'Vertical Grain':
+        glass = None
+        if panel_type == 'Clear Glass':
+            try:
+                from ..face_frame.props_hb_face_frame import (
+                    Face_Frame_Cabinet_Style)
+                glass = (Face_Frame_Cabinet_Style
+                         ._get_glass_panel_material())
+            except Exception:
+                glass = None
+        if glass is None:
+            glass = load_material(panel_type)
+        if glass is not None:
+            panel = glass
+            is_glass = True
+    front_obj['hb_panel_type'] = panel_type
     front_obj['IS_PREP_FOR_GLASS'] = is_glass
     _set_modifier_material(mod, 'Stile Material', vert_mat)
     _set_modifier_material(mod, 'Rail Material', horiz_mat)
     _set_modifier_material(mod, 'Panel Material', panel)
     front_obj.update_tag()
+
+
+# Colours whose edgebanding is not made in 3mm (the reference's
+# "Edgebanding Color not available in 3mm" warning on Door Edgebanding).
+NO_3MM_EDGE_COLORS = ('Cannes', 'Cosmos', 'Finesse', 'Novablack', 'Pietra',
+                      'Samadhi', 'Canvas', 'Sheer Linen', 'Dalia')
+
+
+# Colours not made as five-piece doors (the reference's "Material Color
+# not available for 5 Piece Doors").
+NO_5PIECE_COLORS = ('Cannes', 'Cosmos', 'Finesse', 'Novablack', 'Pietra',
+                    'Samadhi')
+
+
+def front_color_name(props):
+    """Name of the colour the fronts are made in (the Front Material
+    selection, through Match to the closet colour)."""
+    closet = getattr(props, 'closet_material', '') or DEFAULT_MATERIAL
+    front = getattr(props, 'closet_front_material', MATCH)
+    return closet if front in ('', MATCH) else front
+
+
+def front_edge_color_name(props):
+    """Name of the colour the fronts are banded in (the Front Edgebanding
+    selection, through Match to the fronts and then the closet colour),
+    read from the selections alone - safe to call while drawing."""
+    closet = getattr(props, 'closet_material', '') or DEFAULT_MATERIAL
+    front = getattr(props, 'closet_front_material', MATCH)
+    if front in ('', MATCH):
+        front = closet
+    edge = getattr(props, 'closet_front_edge_material', MATCH)
+    return front if edge in ('', MATCH) else edge
+
+
+def front_edge_lacks_3mm(props):
+    """True when the fronts are set to 3mm banding in a colour that has
+    none."""
+    return (getattr(props, 'closet_door_edgeband', '1MM') == '3MM'
+            and front_edge_color_name(props) in NO_3MM_EDGE_COLORS)
 
 
 def _resolve_edge_base(prop_name, fallback):
@@ -485,9 +910,26 @@ def apply_to_starter(root, carcass_name=None, front_name=None):
     ctop_edge = rotated_variant(ctop)
     fence_cache = {}
     for child in root.children_recursive:
+        if child.get('IS_CLOSET_MOLDING') and child.type == 'CURVE':
+            # Molding is cut in the closet colour and follows it when the
+            # colour changes (reference update_closet_material_in_room).
+            if carcass is not None:
+                mats = child.data.materials
+                if not mats:
+                    mats.append(carcass)
+                elif mats[0] is not carcass:
+                    mats[0] = carcass
+            continue
         if child.type != 'MESH':
             continue
         role = child.get('hb_part_role')
+        if child.get('hb_drawer_box_type'):
+            # A box's finish is its system's, whatever the room's
+            # colour (a Metabox's bottom and back are White board).
+            from . import drawer_boxes_closets
+            drawer_boxes_closets.style_box(
+                hb_types.GeoNodeObject(child), child['hb_drawer_box_type'])
+            continue
         if role == types_closets.PART_ROLE_ACCESSORY_BLOCK:
             # A stand-in for something missing. It is meant to look
             # nothing like the room, so it keeps its red.
@@ -498,7 +940,11 @@ def apply_to_starter(root, carcass_name=None, front_name=None):
             # be wrong twice over - it is not a sheet good, and its
             # finish is a line on the order.
             continue
-        if role in (role_door, role_drawer):
+        if role == role_drawer and child.get('hb_accessory_front'):
+            # An ironing board front is a closet part, not one of the
+            # fronts: the reference painted it in the closet colour and band.
+            mat, edge = carcass, carcass_edge
+        elif role in (role_door, role_drawer):
             # Grain is worked out per front rather than once for the
             # run, so a drawer turned the other way gets the rotated
             # material while its neighbours do not.
@@ -531,24 +977,28 @@ def apply_to_starter(root, carcass_name=None, front_name=None):
             # part that never sees a sheet.
             mat = load_negative_material()
             edge = mat
+        elif role in (types_closets.PART_ROLE_HANG_RAIL,
+                      types_closets.PART_ROLE_BATTEN):
+            # Stock bought in the closet colour, the same all round
+            # rather than banded (reference Hang_Rail / Batten: the surface
+            # material on all four edges).
+            mat, edge = carcass, rotated_variant(carcass)
         else:
             mat, edge = carcass, carcass_edge
         if mat is None:
             continue
         part = hb_types.GeoNodeCutpart(child)
-        # A misc part shows bare core on the edges it isn't banded on.
-        core = load_core_material() if is_bandable_misc_part(child) else None
         try:
             part.set_input('Top Surface', mat)
             part.set_input('Bottom Surface', mat)
-            for e in MISC_BAND_EDGES:
-                banded = core is None or child.get('hb_band_' + e)
-                part.set_input('Edge ' + e, edge if banded else core)
+            # Unbanded edges show the bare board core.
+            _set_edges(part, child, edge)
         except Exception:
             continue
         if role in (role_door, role_drawer):
             apply_front_member_materials(child, role == role_drawer,
-                                         front_mat=front)
+                                         front_mat=front,
+                                         carcass_mat=carcass)
     return True
 
 
@@ -584,17 +1034,27 @@ def apply_to_part(obj, carcass_name=None):
         return True
     edge = rotated_variant(
         _resolve_edge_base('closet_edge_material', carcass))
-    core = load_core_material() if is_bandable_misc_part(obj) else None
     try:
         part = hb_types.GeoNodeCutpart(obj)
         part.set_input('Top Surface', carcass)
         part.set_input('Bottom Surface', carcass)
-        for e in MISC_BAND_EDGES:
-            banded = core is None or obj.get('hb_band_' + e)
-            part.set_input('Edge ' + e, edge if banded else core)
+        # Unbanded edges show the bare board core.
+        _set_edges(part, obj, edge)
     except Exception:
         return False
     return True
+
+
+def update_drawer_grain(self=None, context=None):
+    """Room Vertical Grain update: a drawer front's grain decides which
+    way it is CUT (length up for vertical), not only how it is painted,
+    so every starter is laid out again before it is re-finished."""
+    scene = getattr(context, 'scene', None) or bpy.context.scene
+    from . import types_closets
+    for obj in list(scene.objects):
+        if obj.get(types_closets.TAG_STARTER_CAGE):
+            types_closets.recalculate_closet_starter(obj)
+    update_room(self, context)
 
 
 def update_room(self=None, context=None):
@@ -609,3 +1069,8 @@ def update_room(self=None, context=None):
                 types_closets.PART_ROLE_MISC,
                 types_closets.PART_ROLE_CONTINUOUS_TOP):
             apply_to_part(obj)
+    try:
+        from . import fronts_closets
+        fronts_closets.refresh_color_warnings(scene)
+    except Exception:
+        pass

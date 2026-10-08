@@ -71,7 +71,8 @@ PART_SECTIONS = [
          "landing on the nearest system hole",
          'hb_closets.add_part', {'part_type': 'FIXED_SHELF'}),
         ('Closet Rod', "Rod",
-         "A hanging rod in an opening at the height it is dropped",
+         "A hanging rod in an opening at the height it is dropped; "
+         "on a bare wall, a free 25 inch rod",
          'hb_closets.add_part', {'part_type': 'ROD'}),
     ]),
     # The shared laundry appliances and the tall cabinet housing a stacked

@@ -36,6 +36,30 @@ PROP_MOLDING_KIND = 'hb_molding_kind'
 
 MIN_CROWN_HEIGHT = inch(60.0)
 
+# The light shield is only made in some colours; on any other the crown
+# goes on without it - the reference version's rule
+# (Molding_Part.has_valid_materials, get_profile).
+LIGHT_SHIELD_PROFILE = DEFAULT_PROFILE
+PLAIN_L_CROWN_PROFILE = 'L Crown.blend'
+LIGHT_SHIELD_MATERIALS = frozenset(
+    ('White', 'Phantom Charcoal', 'Phantom Ecru', 'Veranda Teak'))
+
+
+def light_shield_available(scene=None):
+    """True when the room's closet colour comes with a light shield."""
+    scene = scene or bpy.context.scene
+    props = getattr(scene, 'hb_closets', None)
+    return getattr(props, 'closet_material', '') in LIGHT_SHIELD_MATERIALS
+
+
+def resolve_crown_profile(name, scene=None):
+    """The crown profile actually put on: the light shield profile turns
+    into the plain L crown where the colour has no light shield."""
+    if (name == LIGHT_SHIELD_PROFILE and not light_shield_available(scene)
+            and PLAIN_L_CROWN_PROFILE in get_profile_files('CROWN')):
+        return PLAIN_L_CROWN_PROFILE
+    return name
+
 # kind -> (directory, default profile, label used for object names)
 KINDS = {
     'CROWN': (CROWN_DIR, DEFAULT_PROFILE, "Crown Molding"),
@@ -74,10 +98,16 @@ def _thumb_icon(kind, stem):
 def _enum_items(kind):
     items = _enum_cache.get(kind)
     if items is None:
+        # Numbered by name, the standard profile at 0 (its default), so
+        # a profile file added later does not move what a file saved
+        # (materials_closets.stable_numbers).
+        from .materials_closets import stable_numbers
+        files = get_profile_files(kind)
         items = []
-        for i, fname in enumerate(get_profile_files(kind)):
+        for fname, num in zip(files, stable_numbers(files,
+                                                    KINDS[kind][1])):
             stem = os.path.splitext(fname)[0]
-            items.append((fname, stem, "", _thumb_icon(kind, stem), i))
+            items.append((fname, stem, "", _thumb_icon(kind, stem), num))
         items = items or [('NONE', "None", "No profiles found")]
         _enum_cache[kind] = items
     return items
@@ -283,7 +313,39 @@ def _add_molding(root, profile, kind):
 
 def add_crown_to_starter(root, profile):
     """Crown along the top front edge of every bay tall enough for it."""
+    if str(root.get('CLASS_NAME', '')).startswith('LShelf'):
+        return _add_corner_crown(root, profile)
     return _add_molding(root, profile, 'CROWN')
+
+
+def _add_corner_crown(root, profile):
+    """Crown round an L-shelf corner unit's front: up the left wing's
+    front edge to the inside corner and along the right wing's, with a
+    return to the wall at a finished end - the reference version's
+    assign_crown_curve_to_corner_closet, so the crown on the runs either
+    side carries through the corner. Traced the way a run's is (the room
+    on the right of travel). Skipped, like a run's bay, when its top is
+    under the minimum height."""
+    from . import types_closets
+    clear_starter_molding(root, 'CROWN')
+    sp = root.hb_closet_starter
+    pt = types_closets.run_sizes(root).panel_thickness
+    W, D, H = sp.width, sp.depth, sp.height
+    l_pt = 0.0 if sp.turn_off_left_panel else pt
+    r_pt = 0.0 if sp.turn_off_right_panel else pt
+    ld = min(sp.l_left_depth, W - r_pt)
+    rd = min(sp.l_right_depth, D - l_pt)
+    if root.matrix_world.translation.z + H < MIN_CROWN_HEIGHT - inch(0.05):
+        return 0
+    pts = []
+    if sp.left_finished_end:
+        pts.append((0.0, -D))
+    pts += [(ld, -D), (ld, -rd), (W, -rd)]
+    if sp.right_finished_end:
+        pts.append((W, 0.0))
+    obj = _new_curve(root, profile, H, 'CROWN')
+    _fill_spline(obj, pts)
+    return 1
 
 
 def add_base_to_starter(root, profile):
