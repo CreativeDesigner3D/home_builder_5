@@ -211,9 +211,97 @@ def box_warning(box_type, avail_h, avail_d, wood_d):
     return ''
 
 
+# A wood (dovetail) box is built the reference version's way: 3/4" sides,
+# sub-front and back, a 1/4" bottom let in 1/2" up, all in White
+# (Drawer_Left_Side prompts, Wood_Box_Part). A metal box's back and sub-front keep the node
+# group's 5/8"; its sides take their steel from _METAL_LOOK.
+WOOD_BOX_MATERIAL = 'White'
+_WOOD_SIDE_THICKNESS = inch(0.75)
+_METAL_SIDE_THICKNESS = inch(0.625)
+_BOX_BOTTOM_THICKNESS = inch(0.25)
+_BOX_BOTTOM_Z = inch(0.5)
+# A metal box's bottom is the board the shop cuts for it, drawn where
+# the reference drew it: an Avantech's 5/8" bottom 30mm up its sides, a Metabox's
+# 3/4" bottom on the box floor. system -> (thickness, height off floor)
+_METAL_BOTTOM = {
+    'AVANTECH': (inch(0.625), _mm(30)),
+    'AVANTECH_ILL': (inch(0.625), _mm(30)),
+    'METABOX': (inch(0.75), 0.0),
+}
+
+
+# A metal box is two-tone, with its sides standing outside the bottom
+# and back it carries. The box
+# cage is the bottom/back (an Avantech 24mm narrower than its opening, a
+# Metabox 31mm - what costing and the cut parts read); the sides stand
+# out past it to where the reference put them - an Avantech's 1/4" in from the
+# opening, a Metabox's 15.5 - 3mm in - in the reference's steel: 13mm Avantech
+# sides, 1/8" Metabox sides.
+# system -> (side finish, bottom/back finish or None = White closet
+#            board, side outset, side thickness). A Metabox's bottom and
+#            back are cut from White board whatever the room's colour
+#            (reference Metabox_Drawer_Bottom/Back: get_default_closet_material,
+#            which is always White).
+_METAL_LOOK = {
+    'AVANTECH': ('Slate Graphite', 'Storm Silver Gray',
+                 _mm(12) - inch(0.25), _mm(13)),
+    'AVANTECH_ILL': ('Slate Graphite', 'Storm Silver Gray',
+                     _mm(12) - inch(0.25), _mm(13)),
+    'METABOX': ('Metabox White', None, _mm(15.5) - _mm(12.5), inch(0.125)),
+}
+
+
+def style_box(gb, box_type):
+    """Board thickness and finish of one drawer box for its system. Every
+    slot is written, so a box changing system follows it both ways."""
+    from ... import hb_types
+    try:
+        hb_types.ensure_drawer_box_side_inputs(gb.obj.modifiers[0].node_group)
+    except Exception:
+        pass
+    side = (_WOOD_SIDE_THICKNESS if box_type == 'WOOD'
+            else _METAL_SIDE_THICKNESS)
+    material = box_material(box_type)
+    side_mat, use_side, outset, side_t = None, False, 0.0, 0.0
+    bottom_t, bottom_z = _METAL_BOTTOM.get(
+        box_type, (_BOX_BOTTOM_THICKNESS, _BOX_BOTTOM_Z))
+    look = _METAL_LOOK.get(box_type)
+    if look is not None:
+        side_name, body_name, outset, side_t = look
+        from . import pulls_closets
+        side_mat = pulls_closets.load_finish_material(side_name)
+        use_side = side_mat is not None
+        if body_name is None:
+            from . import materials_closets
+            body = materials_closets.load_material(WOOD_BOX_MATERIAL)
+        else:
+            body = pulls_closets.load_finish_material(body_name)
+        material = body or material
+    for socket, value in (("Material Thickness", side),
+                          ("Bottom Thickness", bottom_t),
+                          ("Drawer Bottom Z Location", bottom_z),
+                          ("Material", material),
+                          ("Side Material", side_mat),
+                          ("Use Side Material", use_side),
+                          ("Side Outset", outset),
+                          ("Side Thickness", side_t),
+                          # The reference stood an illumination box's sides 6.35mm
+                          # short of the box (HETTICH_AvanTech_You).
+                          ("Side Height Reduce",
+                           _mm(6.35) if box_type == 'AVANTECH_ILL'
+                           else 0.0)):
+        try:
+            gb.set_input(socket, value)
+        except Exception:
+            pass
+
+
 def box_material(box_type):
-    """Existing-or-appended system material for the box (None keeps the
-    node group's default wood look)."""
+    """Existing-or-appended material for the box: the system's finish,
+    or White for a wood box (None for no box)."""
+    if box_type == 'WOOD':
+        from . import materials_closets
+        return materials_closets.load_material(WOOD_BOX_MATERIAL)
     name = _BOX_MATERIALS.get(box_type)
     if not name:
         return None

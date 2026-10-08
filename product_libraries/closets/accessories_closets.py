@@ -142,7 +142,7 @@ def has_provider():
 # when nothing is offered, and for the dropdowns to have a shape.
 ACCESSORY_COLORS = (
     'Chrome', 'Black', 'Slate', 'Matte Nickel', 'Matte Aluminum',
-    'Matte Gold', 'White',
+    'Matte Gold', 'White', 'Slate Graphite',
 )
 ACCESSORY_FABRICS = ('Fabric Beach', 'Fabric Slate', 'Fabric Black')
 
@@ -182,17 +182,79 @@ def _pick(offered, wanted, fallback):
     return offered[0], True
 
 
-def default_finish(acc_def, scene=None):
+def _size_key(size):
+    """(w, h, d) in metres as whole inches, the way a provider names a
+    size it is sold at."""
+    return tuple(int(round(v / 0.0254)) for v in size)
+
+
+def sold_finishes(acc_def, model='', size=None):
+    """(colors, pairs) one model or size of an accessory is sold in, as
+    its provider says, or None where it says nothing for it.
+
+    `pairs` is the set of (finish, fabric) sold together, or None when
+    the fabric does not depend on the finish. A line can be offered in
+    a finish or fabric that one of its models is not made in - an
+    Engage hamper comes only with Beach or Slate fabric, a Synergy
+    one only with black - and a size the provider does not list in a
+    finish is a size it does not make in it."""
+    if model and acc_def.model_finishes.get(model):
+        pairs = acc_def.model_finishes[model]
+        colors = tuple(c for c in acc_def.colors
+                       if any(p[0] == c for p in pairs))
+        return colors, pairs
+    if size is not None and acc_def.size_colors:
+        colors = acc_def.size_colors.get(_size_key(size))
+        if colors:
+            return tuple(c for c in acc_def.colors if c in colors), None
+    return None
+
+
+def default_finish(acc_def, scene=None, model='', size=None):
     """(color, fabric, missing) an accessory takes from the room.
 
     `missing` names what the room asked for that this accessory is not
-    made in - ('Matte Aluminum',) and the like - empty when it is."""
+    made in - ('Matte Aluminum',) and the like - empty when it is.
+    Given the model (band) or size it is made at, it falls back within
+    what that model or size is sold in."""
     want_c, want_f = _room_defaults(scene)
-    color, c_miss = _pick(acc_def.colors, want_c, FALLBACK_COLOR)
-    fabric, f_miss = _pick(acc_def.fabrics, want_f, FALLBACK_FABRIC)
+    sold = sold_finishes(acc_def, model, size)
+    colors = sold[0] if sold and sold[0] else acc_def.colors
+    color, c_miss = _pick(colors, want_c, FALLBACK_COLOR)
+    fabrics = acc_def.fabrics
+    if sold and sold[1]:
+        fabrics = tuple(f for f in acc_def.fabrics
+                        if (color, f) in sold[1]) or fabrics
+    fabric, f_miss = _pick(fabrics, want_f, FALLBACK_FABRIC)
     missing = tuple(w for w, m in ((want_c, c_miss), (want_f, f_miss))
                     if m)
     return color, fabric, missing
+
+
+def finish_variant(obj, acc_def):
+    """(model, size, label) a placed accessory is made at, for the
+    finish fallback: the band's model, or a sized one's (w, h, d), and
+    the line's label naming it. ('', None, label) where neither
+    narrows what it is sold in."""
+    from . import types_closets as tc
+    model = ''
+    size = None
+    label = acc_def.label
+    if acc_def.model_finishes:
+        model = str(obj.get(tc.PROP_ACCESSORY_MODEL, '') or '')
+        band = acc_def.band_by_model(model) if model else None
+        if band is not None:
+            label = '%s %s' % (acc_def.label, band[0])
+    elif acc_def.size_colors and acc_def.is_sized:
+        try:
+            size = tc.basket_values(obj, acc_def,
+                                    tc._cage_dim_x(obj.parent))
+        except Exception:
+            size = None
+        if size is not None:
+            w, h, d = _size_key(size)
+            label = '%s %d"W x %d"H x %d"D' % (acc_def.label, w, h, d)
+    return model, size, label
 
 
 def unavailable_finishes(scene=None):
@@ -206,14 +268,20 @@ def unavailable_finishes(scene=None):
         if obj.get('hb_part_role') != tc.PART_ROLE_ACCESSORY:
             continue
         d = get(obj.get(tc.PROP_ACCESSORY_KEY, ''))
-        if d is None or d.key in rows:
+        if d is None:
             continue
-        color, fabric, missing = default_finish(d, scene)
+        # One row per line, or per model / size where those are sold
+        # in different finishes.
+        model, size, label = finish_variant(obj, d)
+        row_key = (d.key, label)
+        if row_key in rows:
+            continue
+        color, fabric, missing = default_finish(d, scene, model, size)
         if missing:
             used = [v for v, offered in ((color, d.colors),
                                          (fabric, d.fabrics))
                     if offered and v not in _room_defaults(scene)]
-            rows[d.key] = (d.label, missing, tuple(used))
+            rows[row_key] = (label, missing, tuple(used))
     return sorted(rows.values())
 
 
@@ -231,7 +299,8 @@ def apply_room_finishes(scene=None):
         d = get(obj.get(tc.PROP_ACCESSORY_KEY, ''))
         if d is None:
             continue
-        color, fabric, _missing = default_finish(d, scene)
+        model, size, _label = finish_variant(obj, d)
+        color, fabric, _missing = default_finish(d, scene, model, size)
         obj[tc.PROP_ACCESSORY_COLOR] = color
         obj[tc.PROP_ACCESSORY_FABRIC] = fabric
         if obj.get(tc.PROP_ACCESSORY_ON_WALL):
@@ -370,6 +439,8 @@ def load_accessory_model(path):
                 if o is not None and o.type == 'MESH'), None)
     if obj is None:
         return None
+    from . import accessory_models
+    accessory_models.stamp_finish_slots(obj)
     _accessory_models[path] = obj
     return obj
 
@@ -528,7 +599,7 @@ class AccessoryDef:
                  'center_depth', 'model_y', 'model_z',
                  'floor_snap',
                  'colors', 'fabrics', 'ready', 'description', 'menu',
-                 'hook_qty', 'custom')
+                 'hook_qty', 'custom', 'model_finishes', 'size_colors')
 
     def __init__(self, key, label, family, model='', model_path='',
                  bands=(), band_axis=BAND_BY_WIDTH, width=0.0, height=0.0,
@@ -539,7 +610,7 @@ class AccessoryDef:
                  model_y=0.0,
                  model_z=0.0, floor_snap=False, colors=(), fabrics=(),
                  ready=False, description="", menu='', hook_qty=0,
-                 custom=False):
+                 custom=False, model_finishes=None, size_colors=None):
         self.key = key
         self.label = label
         self.family = family
@@ -581,6 +652,20 @@ class AccessoryDef:
         # how tall it stands, and it is drawn as a labelled box across
         # the opening - for something the catalog does not carry.
         self.custom = bool(custom)
+        # What each model / size is actually sold in, where the provider
+        # says (see sold_finishes): {model filename: frozenset of
+        # (finish, fabric)} and {(w, h, d) inches: (finish, ...)}.
+        self.model_finishes = {
+            str(m): frozenset((str(p[0]), str(p[1])) for p in pairs)
+            for m, pairs in (model_finishes or {}).items()}
+        self.size_colors = {}
+        for row in size_colors or ():
+            try:
+                w, h, d, colors = row
+                self.size_colors[(int(w), int(h), int(d))] = tuple(
+                    str(c) for c in colors)
+            except Exception:
+                continue
 
     @property
     def is_sized(self):
@@ -721,7 +806,9 @@ def _def_from_item(item):
         description=item.get('description') or '',
         menu=item.get('menu') or '',
         hook_qty=int(item.get('hook_qty') or 0),
-        custom=bool(item.get('custom')))
+        custom=bool(item.get('custom')),
+        model_finishes=item.get('model_finishes') or None,
+        size_colors=item.get('size_colors') or None)
 
 
 _catalog_cache = None

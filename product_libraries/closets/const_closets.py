@@ -84,7 +84,18 @@ BAY_WIDTH_TARGET = inch(30.0)
 # Warnings.
 BAY_MAX_WIDTH = inch(30.0)
 MIN_BAY_QTY = 1
-MAX_BAY_QTY = 9
+MAX_BAY_QTY = 8
+# A panel ironing board hangs at a set height off the room floor
+# whatever opening it is in (reference Ironing_Board ironingboard_from_floor):
+# the Deluxe Swivel at 24.1845", the Premier Pop-Up at 7.4".
+IRONING_BOARD_FROM_FLOOR = inch(24.1845)
+IRONING_BOARD_POPUP_FROM_FLOOR = inch(7.4)
+# More adjustable shelves than this in one opening is warned about.
+ADJ_SHELF_QTY_WARN = 11
+# The most adjustable shelves an opening is dealt or offered: the reference had
+# twelve shelf slots (Shelf 1-12). Older jobs can hold
+# more; the dialogs leave such a count alone until it is changed.
+ADJ_SHELF_QTY_MAX = 12
 
 # Panel heights by starter type. The mm values are the 32mm-system
 # heights: Base 819mm = 32.25", Tall 2131mm = 83.94", Hanging 1267mm = 49.88".
@@ -212,6 +223,16 @@ KICK_HEIGHT_ITEMS = [
     ('320', '12 1/2"', '12 1/2"'),
 ]
 
+
+def kick_height_key(value):
+    """KICK_HEIGHT_ITEMS identifier for a kick distance, or '' when the
+    distance is not one of the standard kicks (within half a mm)."""
+    mm = value / millimeter(1.0)
+    for key, _name, _desc in KICK_HEIGHT_ITEMS:
+        if abs(int(key) - mm) <= 0.5:
+            return key
+    return ''
+
 # ---------------------------------------------------------------------------
 # Countertop (Base and Island starters)
 # ---------------------------------------------------------------------------
@@ -227,8 +248,13 @@ BACKSPLASH_THICKNESS = inch(0.75)
 COUNTERTOP_END_RADIUS = inch(1.5)
 
 # Amount an end panel grows past the section top when it is extended to
-# wrap a countertop.
-EXTEND_PANEL_AMOUNT = inch(1.125)
+# wrap a countertop. Nothing until one is typed, as in the reference (its Extend
+# Panel Amount started at 0); stacking a run on a base sets its own.
+EXTEND_PANEL_AMOUNT = 0.0
+# What the amount defaulted to before. A file saved then with Extend
+# Panels on and the amount never typed stored nothing for it, so it is
+# written into those runs on load (types_closets.migrate_saved_layout).
+EXTEND_PANEL_AMOUNT_LEGACY = inch(1.125)
 
 # Bridge shelves spanning the gap to a corner neighbor.
 BRIDGE_SHELF_WIDTH = inch(14.0)
@@ -315,18 +341,26 @@ DOOR_PULL_VERTICAL_LOCATION = inch(2.0)
 DOOR_PULL_FROM_EDGE = inch(1.5)
 # Where a door's pull sits on it. Three conventions, each measured from
 # somewhere different: Base holds the pull down from the TOP edge of the
-# door, Upper holds it up from the BOTTOM edge, and Tall holds it at a
-# height off the floor whatever the door is doing. Auto reads the door's
+# door, Upper holds it up from the BOTTOM edge, and Tall holds it at the
+# taller tall figure up from the bottom edge too (reference: "Distance from
+# Bottom of Tall Door", add_door_pull pl==1). Auto reads the door's
 # own place in the run and picks the one that suits it, which is what an
 # opening starts on; naming one holds the door to it.
 # Whichever one a door lands on, it is set the same distance in from the
 # latch edge - slab and five-piece alike - so a run of mixed fronts reads
 # as a set and the pull sits on the stile clear of the rail miter.
+# Auto picks the convention the way the reference's door drop did: a door that
+# starts more than 30" off the floor is an Upper, one taller than 50" a
+# Tall, anything else a Base (Pull Location).
+DOOR_PULL_UPPER_ABOVE = inch(30.0)
+DOOR_PULL_TALL_OVER = inch(50.0)
 DOOR_PULL_LOCATION_ITEMS = [
     ('AUTO', "Auto",
      "Pick the convention from where the door sits in the run"),
     ('BASE', "Base", "Hold the pull down from the top edge of the door"),
-    ('TALL', "Tall", "Hold the pull at the tall height off the floor"),
+    ('TALL', "Tall",
+     "Hold the pull at the tall height up from the bottom edge of the "
+     "door"),
     ('UPPER', "Upper",
      "Hold the pull up from the bottom edge of the door"),
 ]
@@ -346,7 +380,9 @@ DRAWER_FRONT_HEIGHT = millimeter(156.82)   # 6 1/4" front
 # when the stack fills its opening (mirrors MIN_BAY_WIDTH for widths).
 MIN_DRAWER_FRONT = inch(2.0)
 DRAWER_BOX_HEIGHT_DEDUCT = inch(1.25)
-DRAWER_BOX_DEPTH_DEDUCT = inch(0.875)  # wood box, back of opening
+# Wood box, back of opening: the depth the box is sized from is the
+# opening's less this (reference closet.add_drawers, insert_depth - 3/4").
+DRAWER_BOX_DEPTH_DEDUCT = inch(0.75)
 # How far back from the face the stretcher between one drawer and
 # the next runs. The prior library's figure.
 DRAWER_STRETCHER_WIDTH = inch(6.0)
@@ -446,9 +482,15 @@ SHELF_SETBACK = inch(0.0)
 # Pullout trays (rollouts): drawer boxes with no fronts, spaced in an
 # opening. Each tray stands ROLLOUT_HEIGHT tall (default 4"); the side
 # clearance for the slides is ROLLOUT_SLIDE_GAP per side.
-ROLLOUT_DEFAULT_QTY = 3
+ROLLOUT_DEFAULT_QTY = 1                # the reference placed one tray
 ROLLOUT_HEIGHT = inch(4.0)
 ROLLOUT_SLIDE_GAP = inch(0.327)
+# Reference Pullout_Tray: each side is held in by the Left/Right Overlay as
+# well as the slide gap, and the sides stand the Drawer Bottom Gap off
+# the floor of the tray's room and the Drawer Top Gap under its top.
+ROLLOUT_SIDE_OVERLAY = inch(0.3125)
+ROLLOUT_BOTTOM_GAP = inch(0.5512)
+ROLLOUT_TOP_GAP = inch(0.44882)
 # Smallest gap left between stacked trays / above and below the stack.
 ROLLOUT_MIN_GAP = inch(1.0)
 # A tray shorter than this is not worth building, so a stack that is
@@ -479,7 +521,6 @@ CUBBY_PLACEMENT_ITEMS = [
 CUBBY_MIN_REMAINDER = inch(6.0)
 # Slanted shoe shelves: angled shelves stacked bottom-up, each with a
 # metal shoe fence across the front. Sizes ported from the prior library.
-SLANT_SHELF_DEFAULT_QTY = 4
 SLANT_SHELF_SPACING = inch(8.0)       # Distance Between Shelves
 SLANT_SHELF_ANGLE_DEG = 17.25         # Shelf Angle (degrees)
 SLANT_SHELF_SETBACK = inch(0.125)     # front setback with the metal fence
@@ -616,3 +657,7 @@ ACCESSORY_PLACEHOLDER_MATERIAL = 'Accessory Placeholder'
 ACCESSORY_DROP_GRID = inch(1.0)
 ACCESSORY_FLOOR_SNAP = inch(1.0)
 ACCESSORY_FLOOR_REACH = inch(5.0)
+
+# A top accent shelf longer than this is cut in two: this much, then
+# the rest (reference calc_split_top, 95").
+TOP_ACCENT_MAX_LENGTH = inch(95.0)

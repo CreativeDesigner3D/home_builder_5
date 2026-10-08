@@ -72,7 +72,7 @@ def compute_layout(spec):
 
     spec attributes: width, height, pt (panel thickness), st (shelf
     thickness), kick_height, kick_setback, extend_panels / extend_amount,
-    and bays - a list of dicts with width, locked, height, depth, floor,
+    bottomless_to_floor (optional), and bays - a list of dicts with width, locked, height, depth, floor,
     remove_bottom, remove_cleat.
 
     Returns a dict:
@@ -157,7 +157,21 @@ def compute_layout(spec):
         z0 = 0.0 if b['floor'] else spec.height - b['height']
         bottom_z = kick                       # bay-local underside of bottom shelf
         top_z = b['height'] - spec.st         # bay-local underside of top shelf
-        interior_z = bottom_z + spec.st
+        # A floor bay with its bottom removed has no kick either, so its
+        # opening drops by the kick height and starts a shelf thickness
+        # off the floor (reference add_opening: IF(floor, IF(remove_bottom, 0,
+        # kick_height), ...) + s_thickness). bottom_z stays where the
+        # shelf would stand - the hidden bottom and a bridge beside the
+        # bay still read it. A hanging bay's opening is unchanged, as in
+        # the reference.
+        # A double island's goes all the way to the floor (reference
+        # add_double_opening: IF(remove_bottom, 0, st) on top of the kick
+        # term), so it has no shelf thickness under it either.
+        floor_rb = b['floor'] and b['remove_bottom']
+        if floor_rb and getattr(spec, 'bottomless_to_floor', False):
+            interior_z = 0.0
+        else:
+            interior_z = (0.0 if floor_rb else bottom_z) + spec.st
         interior_h = max(top_z - interior_z, const.MIN_BAY_WIDTH / 4.0)
         # Cleat rides the bottom shelf; with the bottom removed it drops
         # to the bay envelope bottom (as in the prior library: the cleat

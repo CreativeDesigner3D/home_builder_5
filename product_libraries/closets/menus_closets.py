@@ -8,6 +8,14 @@ import bpy
 from . import types_closets
 
 
+def _parents(obj):
+    """obj's parents, nearest first."""
+    current = obj.parent if obj is not None else None
+    while current is not None:
+        yield current
+        current = current.parent
+
+
 class HOME_BUILDER_MT_closet_starter_commands(bpy.types.Menu):
     """Right-click menu for a closet starter root."""
     bl_label = "Closet Starter Commands"
@@ -16,6 +24,12 @@ class HOME_BUILDER_MT_closet_starter_commands(bpy.types.Menu):
         layout = self.layout
         layout.operator("hb_closets.starter_prompts",
                         text="Starter Properties...", icon='WINDOW')
+        # The reference's Change Number of Openings: 1 to 8 bays across the same
+        # overall width. Not offered on a corner unit (one bay).
+        if bpy.ops.hb_closets.change_number_of_openings.poll():
+            layout.operator("hb_closets.change_number_of_openings",
+                            text="Change Number of Openings...",
+                            icon='MOD_ARRAY')
         # Duplicate: copy-and-place. Seeds the placement modal from
         # this starter; the drop deep-copies the hierarchy so all bay
         # configs come along. F in the modal toggles fill-the-gap.
@@ -28,11 +42,18 @@ class HOME_BUILDER_MT_closet_starter_commands(bpy.types.Menu):
                                  text="Duplicate Mirror", icon='MOD_MIRROR')
             op.source_starter_name = _dup_root.name
             op.mirror = True
+        layout.operator("hb_closets.save_closet_to_library",
+                        text="Save Closet to Library...", icon='ASSET_MANAGER')
         # Re-opens the placement-time clearance dialog; cancels itself
         # with an info report when no corner neighbor qualifies.
         layout.operator("hb_closets.set_corner_clearance",
                         text="Corner Clearance...", icon='SNAP_EDGE')
         layout.separator()
+        if _dup_root is not None and any(
+                c.get(types_closets.PROP_PART_REMOVED)
+                for c in _dup_root.children_recursive):
+            layout.operator("hb_closets.restore_removed_parts",
+                            icon='LOOP_BACK')
         layout.operator("hb_closets.delete_starter",
                         text="Delete Starter", icon='X')
 
@@ -54,11 +75,17 @@ class HOME_BUILDER_MT_closet_corner_bay_commands(bpy.types.Menu):
         layout = self.layout
         layout.operator("hb_closets.corner_bay_prompts",
                         text="Corner Properties...", icon='WINDOW')
+        # The reference's corner right-click offered Delete Starter beside its
+        # prompts.
+        layout.separator()
+        op = layout.operator("hb_closets.delete_starter",
+                             text="Delete", icon='X')
+        op.only_active = True
 
 
 class HOME_BUILDER_MT_closet_corner_opening_commands(bpy.types.Menu):
-    """Right-click on a corner unit in Openings mode. Shelves and rods
-    are all a corner takes."""
+    """Right-click on a corner unit in Openings mode. A corner takes
+    shelves and rods, and accessories that hang on its panels."""
     bl_label = "Corner Opening Commands"
 
     def draw(self, context):
@@ -66,13 +93,20 @@ class HOME_BUILDER_MT_closet_corner_opening_commands(bpy.types.Menu):
         layout.operator("hb_closets.corner_opening_prompts",
                         text="Opening Properties...", icon='WINDOW')
         layout.separator()
-        for key, label in (('ADJ', "Adjustable Shelves"),
+        for key, label in (('NONE', "Empty"),
+                           ('ADJ', "Adjustable Shelves"),
                            ('LOCK', "Lock Shelves"),
                            ('ROD', "Hanging Rod"),
                            ('DOUBLE', "Double Hang")):
             op = layout.operator("hb_closets.corner_opening_config",
                                  text=label)
             op.interior = key
+        from . import accessories_closets as acc
+        if acc.catalog_items(family=acc.FAMILY_PANEL):
+            layout.separator()
+            layout.menu("HOME_BUILDER_MT_closet_accessories_panel",
+                        text="Add Panel Accessory",
+                        icon='OUTLINER_OB_GROUP_INSTANCE')
 
 
 class HOME_BUILDER_MT_closet_bay_commands(bpy.types.Menu):
@@ -93,6 +127,12 @@ class HOME_BUILDER_MT_closet_bay_commands(bpy.types.Menu):
                     text="Bay Configuration", icon='PRESET')
         layout.menu("HOME_BUILDER_MT_closet_doors_drawers",
                     text="Add Doors & Drawers", icon='SNAP_VOLUME')
+        _starter = types_closets.find_starter_root(context.active_object)
+        if (_starter is not None and isinstance(
+                types_closets._wrap_starter(_starter),
+                types_closets.DoubleIslandClosetStarter)):
+            layout.menu("HOME_BUILDER_MT_closet_back_doors",
+                        text="Add Back Doors", icon='SNAP_VOLUME')
         layout.separator()
         layout.operator("hb_closets.copy_bay",
                         text="Copy Bay", icon='COPYDOWN')
@@ -132,6 +172,12 @@ def _draw_add_part_entries(layout):
                     text="Adjustable Shelves...", icon='ALIGN_JUSTIFY')
     layout.operator("hb_closets.divide_opening",
                     text="Divide Opening...", icon='MOD_ARRAY')
+    # A column of a divided opening can open the division that made
+    # it again, as the reference's splitter did on right-click.
+    if types_closets.division_to_edit(bpy.context.active_object):
+        op = layout.operator("hb_closets.divide_opening",
+                             text="Edit Division...", icon='MOD_ARRAY')
+        op.edit = True
     layout.separator()
     layout.menu("HOME_BUILDER_MT_closet_doors_drawers",
                 text="Add Doors & Drawers", icon='SNAP_VOLUME')
@@ -233,6 +279,11 @@ class HOME_BUILDER_MT_closet_accessories_insert(
         layout = self.layout
         layout.operator("hb_closets.add_rollouts",
                         text="Rollout Trays...", icon='MESH_PLANE')
+        # One tray dropped at the height pointed at, as the prior
+        # library's single Rollout drop placed it.
+        layout.operator("hb_closets.add_part",
+                        text="Drop One Rollout Tray",
+                        icon='MESH_PLANE').part_type = 'ROLLOUT'
         layout.operator("hb_closets.add_slanted_shelves",
                         text="Slanted Shoe Shelves...", icon='SORTBYEXT')
         layout.operator("hb_closets.add_cubbies",
@@ -331,6 +382,23 @@ class HOME_BUILDER_MT_closet_doors_drawers(bpy.types.Menu):
         layout.operator("hb_closets.add_drawers", text="Add Drawers...")
 
 
+class HOME_BUILDER_MT_closet_back_doors(bpy.types.Menu):
+    """A double island bay's back-face doors, spanning the whole bay
+    the way the bay's front doors do."""
+    bl_label = "Add Back Doors"
+
+    def draw(self, context):
+        layout = self.layout
+        for swing, text in (('LEFT', "Left Swing"),
+                            ('RIGHT', "Right Swing"),
+                            ('DOUBLE', "Double Door"),
+                            ('TILT_OUT', "Tilt Out Hamper"),
+                            ('NONE', "Remove Back Doors")):
+            op = layout.operator("hb_closets.add_doors", text=text)
+            op.swing = swing
+            op.side = 'BACK'
+
+
 class HOME_BUILDER_MT_closet_part_commands(bpy.types.Menu):
     """Right-click menu for a closet part. Each role adds what it has
     to offer - a shelf its Add/Remove, a partition its Panel
@@ -348,6 +416,8 @@ class HOME_BUILDER_MT_closet_part_commands(bpy.types.Menu):
         if (obj is not None and obj.get('hb_part_role')
                 == types_closets.PART_ROLE_ADJ_SHELF
                 and obj.get('hb_l_index') is None):
+            layout.operator("hb_closets.adj_shelf_prompts",
+                            text="Shelf Properties...", icon='WINDOW')
             if not obj.get(types_closets.PROP_SHELF_HELD):
                 op = layout.operator("hb_closets.adj_shelf_step",
                                      text="Add Shelf", icon='ADD')
@@ -360,23 +430,50 @@ class HOME_BUILDER_MT_closet_part_commands(bpy.types.Menu):
                                  icon='DECORATE_LOCKED')
             op.lock = True
             layout.separator()
-        # A fixed shelf someone could have locked can be unlocked back
-        # onto clips. The bank's cap shelf and the corner's shelves are
-        # not offered: the cap belongs to its drawers, and the corner
-        # has a lock of its own.
+        # A fixed shelf sizes the openings either side of it (reference
+        # splitter prompts). One that was locked or dropped in can also
+        # be unlocked back onto clips - not the shelves a bay
+        # configuration builds, which the reference offered no unlock on either.
+        # The bank's cap shelf and the corner's shelves are not
+        # offered: the cap belongs to its drawers, and the corner has a
+        # lock of its own.
         if (obj is not None and obj.get('hb_part_role')
                 == types_closets.PART_ROLE_FIXED_SHELF
                 and obj.get('hb_l_index') is None
                 and not obj.get(types_closets.PROP_DRAWER_CAP)
                 and not obj.get('hb_preview')):
-            op = layout.operator("hb_closets.lock_shelf",
-                                 text="Unlock Shelf",
-                                 icon='DECORATE_UNLOCKED')
-            op.lock = False
+            layout.operator("hb_closets.fixed_shelf_prompts",
+                            text="Fixed Shelf Properties...",
+                            icon='WINDOW')
+            if types_closets.is_unlockable_shelf(obj):
+                op = layout.operator("hb_closets.lock_shelf",
+                                     text="Unlock Shelf",
+                                     icon='DECORATE_UNLOCKED')
+                op.lock = False
             layout.separator()
         if (obj is not None and obj.get('hb_part_role')
-                == types_closets.PART_ROLE_ROD):
-            layout.operator("hb_closets.rod_prompts",
+                == types_closets.PART_ROLE_ROD
+                and not obj.get(types_closets.PROP_WALL_ROD)):
+            # A corner unit's rods belong to its opening dialog (reference
+            # Closet_Rod_Corner_Insert prompts).
+            layout.operator("hb_closets.corner_opening_prompts"
+                            if obj.get('hb_l_index') is not None
+                            else "hb_closets.rod_prompts",
+                            text="Rod Properties...", icon='WINDOW')
+            drilled = bool(obj.get(types_closets.PROP_ROD_MACHINING))
+            op = layout.operator(
+                "hb_closets.rod_bracket_machining",
+                text=("Remove Rod Bracket Holes" if drilled
+                      else "Add Rod Bracket Holes"),
+                icon='TOOL_SETTINGS')
+            op.drill = not drilled
+            layout.separator()
+        if (obj is not None and obj.get('hb_part_role')
+                == types_closets.PART_ROLE_ROD
+                and obj.get(types_closets.PROP_WALL_ROD)):
+            # A rod dropped on a bare wall (reference Closet_Rod_Part prompts
+            # out of an opening).
+            layout.operator("hb_closets.wall_rod_prompts",
                             text="Rod Properties...", icon='WINDOW')
             layout.separator()
         slab = None
@@ -399,8 +496,19 @@ class HOME_BUILDER_MT_closet_part_commands(bpy.types.Menu):
             layout.operator("hb_closets.panel_prompts",
                             text="Panel Properties...", icon='WINDOW')
             layout.separator()
+        if (obj is not None and obj.get('hb_part_role')
+                == types_closets.PART_ROLE_DIVISION):
+            # Re-opens the Divide Opening this division came from, on
+            # the columns it made (the reference's splitter prompts).
+            op = layout.operator("hb_closets.divide_opening",
+                                 text="Division Properties...",
+                                 icon='WINDOW')
+            op.edit = True
+            layout.separator()
         if (obj is not None
                 and obj.get(types_closets.PROP_BAY_CLEAT) is not None):
+            layout.operator("hb_closets.bay_cleat_prompts",
+                            text="Cleat Properties...", icon='WINDOW')
             layout.operator("hb_closets.delete_bay_cleat",
                             text="Delete Support Cleat", icon='X')
             layout.separator()
@@ -454,9 +562,17 @@ class HOME_BUILDER_MT_closet_part_commands(bpy.types.Menu):
         # hardware. Panels offer the starter dialog too: that is where
         # the Panels section stands.
         role = obj.get('hb_part_role') if obj is not None else None
+        # Fronts and the insert parts (cubby dividers and shelves,
+        # slanted shelves) open the opening's dialog too, where their
+        # insert is set up - the reference offered each its insert's prompts.
         opening_roles = (types_closets.PART_ROLE_SHOE_FENCE,
                          types_closets.PART_ROLE_DRAWER_BOX,
-                         types_closets.PART_ROLE_DRAWER_STRETCHER)
+                         types_closets.PART_ROLE_DRAWER_STRETCHER,
+                         types_closets.PART_ROLE_DOOR,
+                         types_closets.PART_ROLE_DRAWER_FRONT,
+                         types_closets.PART_ROLE_CUBBY_DIVISION,
+                         types_closets.PART_ROLE_CUBBY_SHELF,
+                         types_closets.PART_ROLE_SLANTED_SHELF)
         bay_roles = (types_closets.PART_ROLE_BOTTOM_SHELF,
                      types_closets.PART_ROLE_TOP_SHELF,
                      types_closets.PART_ROLE_TOE_KICK,
@@ -473,9 +589,24 @@ class HOME_BUILDER_MT_closet_part_commands(bpy.types.Menu):
                          types_closets.PART_ROLE_HANG_RAIL_COVER,
                          types_closets.PART_ROLE_BRIDGE_SHELF)
         offered = False
+        if (role == types_closets.PART_ROLE_CLEAT and obj.parent is not None
+                and obj.parent.get(types_closets.TAG_OPENING_CAGE)):
+            # A cleat dropped into an opening is sized on its own.
+            layout.operator("hb_closets.cleat_prompts",
+                            text="Cleat Properties...", icon='WINDOW')
+            offered = True
         if role in opening_roles:
-            layout.operator("hb_closets.opening_prompts",
-                            text="Opening Properties...", icon='WINDOW')
+            # A front across a whole bay hangs off the bay rather than
+            # an opening; its settings are the bay dialog's.
+            in_opening = any(p.get(types_closets.TAG_OPENING_CAGE)
+                             for p in _parents(obj))
+            if in_opening or role not in (types_closets.PART_ROLE_DOOR,
+                                          types_closets.PART_ROLE_DRAWER_FRONT):
+                layout.operator("hb_closets.opening_prompts",
+                                text="Opening Properties...", icon='WINDOW')
+            elif types_closets.find_bay_cage(obj) is not None:
+                layout.operator("hb_closets.bay_prompts",
+                                text="Bay Properties...", icon='WINDOW')
             offered = True
         if (role in bay_roles
                 and types_closets.find_bay_cage(obj) is not None):
@@ -488,8 +619,46 @@ class HOME_BUILDER_MT_closet_part_commands(bpy.types.Menu):
             offered = True
         if offered:
             layout.separator()
-        layout.operator("hb_closets.delete_part",
-                        text="Delete Part", icon='X')
+        # The reference's Part Info comments (comment 1 overrides the stamped
+        # number; 2 and 3 are free text).
+        if role:
+            layout.operator("hb_closets.part_comments",
+                            text="Part Comments...", icon='TEXT')
+        # Offered only on a part that can be taken out; the rest belong
+        # to a setting and are changed there (the reference had no delete on
+        # them either).
+        if bpy.ops.hb_closets.delete_part.poll():
+            # A piece of an opening's insert deletes the insert (reference
+            # Delete Insert); Remove One takes off just that piece. A
+            # door is its opening's whole front either way.
+            in_insert = (
+                role in (types_closets.PART_ROLE_ADJ_SHELF,
+                         types_closets.PART_ROLE_DRAWER_FRONT,
+                         types_closets.PART_ROLE_CUBBY_DIVISION,
+                         types_closets.PART_ROLE_CUBBY_SHELF,
+                         types_closets.PART_ROLE_DOOR)
+                and obj.get('hb_l_index') is None
+                and not obj.get('hb_bay_door')
+                and types_closets.find_opening_cage(obj) is not None)
+            layout.operator("hb_closets.delete_part",
+                            text="Delete Insert" if in_insert
+                            else "Delete Part", icon='X')
+            if in_insert and role != types_closets.PART_ROLE_DOOR:
+                op = layout.operator("hb_closets.delete_part",
+                                     text="Remove One", icon='REMOVE')
+                op.one = True
+        # An inside-corner filler has no bay to right-click in Bays
+        # mode - its boards and top are what is clicked - so the whole
+        # filler is deleted from them (the reference offered Delete Starter on
+        # the inside corner filler's own menu).
+        _root = types_closets.find_starter_root(obj)
+        _cls = (types_closets.WRAP_CLASS_REGISTRY.get(
+            _root.get('CLASS_NAME', '')) if _root is not None else None)
+        if (_cls is not None and getattr(_cls, 'is_filler', False)
+                and obj is not None and obj.parent is _root):
+            op = layout.operator("hb_closets.delete_starter",
+                                 text="Delete Corner Filler", icon='X')
+            op.only_active = True
 
 
 classes = (
@@ -502,6 +671,7 @@ classes = (
     HOME_BUILDER_MT_closet_change_bay,
     HOME_BUILDER_MT_closet_change_opening,
     HOME_BUILDER_MT_closet_doors_drawers,
+    HOME_BUILDER_MT_closet_back_doors,
     HOME_BUILDER_MT_closet_accessories,
     HOME_BUILDER_MT_closet_accessories_opening,
     HOME_BUILDER_MT_closet_accessories_panel,
