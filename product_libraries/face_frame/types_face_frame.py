@@ -31,6 +31,7 @@ from ...units import inch
 from ...hb_details import apply_label_style
 from ..common import types_appliances
 from ..common import turned_leg
+from ..common import bun_foot
 from ..common import arch_cutout
 from ..frameless.types_frameless import CabinetPart
 from ..frameless.types_products import HalfWall as _FramelessHalfWall
@@ -3156,6 +3157,11 @@ class FaceFrameCabinet(GeoNodeCage):
                 self._ensure_loose_kick_part(
                     PART_ROLE_LOOSE_KICK_END_RIGHT, 'Loose Kick End Right',
                     kind='END', mirror_z=False)
+                # Bun feet: created on first use only, then shown / hidden
+                # like the ladder as the kick type and exposure change.
+                for corner in solver.BUN_FOOT_CORNERS:
+                    if solver.has_bun_foot(layout, corner):
+                        self._ensure_bun_foot_part(corner)
             else:
                 kick_subfront_segs = []
                 kick_subrear_segs = []
@@ -3653,6 +3659,19 @@ class FaceFrameCabinet(GeoNodeCage):
                 part.set_input('Length', seg['length'])
                 part.set_input('Width', seg['width'])
                 part.set_input('Thickness', seg['thickness'])
+
+            elif role.startswith(solver.PART_ROLE_BUN_FOOT_PREFIX):
+                corner = child.get('hb_bun_foot_corner', '')
+                visible = solver.has_bun_foot(layout, corner)
+                child.hide_viewport = not visible
+                child.hide_render = not visible
+                if not visible:
+                    continue
+                place = solver.bun_foot_placement(layout, corner)
+                child.location = (place['x'], place['y'], place['z'])
+                bun_foot.fit_cutpart(child, layout.bun_foot_style,
+                                     place['height'],
+                                     place['outer_x'], place['outer_y'])
 
             elif role == PART_ROLE_BLIND_PANEL_LEFT:
                 # Visible when the left end is a blind corner stile AND
@@ -11811,6 +11830,22 @@ class FaceFrameCabinet(GeoNodeCage):
         if kind == 'END':
             part.obj.rotation_euler.z = math.radians(-90)
         part.set_input('Mirror Z', mirror_z)
+        return part.obj
+
+    def _ensure_bun_foot_part(self, corner):
+        """Lazy-create the bun foot under one corner. Unrotated, so the
+        cutpart box runs Length along X, Width along Y and Thickness up;
+        the dispatch loop sizes it and draws the foot into its mesh."""
+        role = solver.bun_foot_part_role(corner)
+        for child in self.obj.children:
+            if child.get('hb_part_role') == role:
+                return child
+        part = CabinetPart()
+        part.create('Bun Foot ' + corner.replace('_', ' ').title())
+        part.obj.parent = self.obj
+        part.obj['hb_part_role'] = role
+        part.obj['hb_bun_foot_corner'] = corner
+        part.obj['CABINET_PART'] = True
         return part.obj
 
     def _ensure_blind_panel(self, role, name, mirror_y):

@@ -298,6 +298,8 @@ def draw_construction(layout, cab_props):
         if cab_props.show_toe_kick:
             col = box.column(align=True)
             col.prop(cab_props, 'toe_kick_type', text="Type")
+            if cab_props.toe_kick_type == 'BUN_FEET':
+                col.prop(cab_props, 'bun_foot_style', text="Foot")
             col.prop(cab_props, 'toe_kick_height', text="Height")
             # Floating vanity construction: only a floating kick can
             # carry it, and the height above is then the gap it floats.
@@ -309,7 +311,8 @@ def draw_construction(layout, cab_props):
             col.prop(cab_props, 'inset_toe_kick_right', text="Right Inset")
             if (cab_props.corner_type == 'NONE'
                     and cab_props.toe_kick_type in ('NOTCH', 'LOOSE',
-                                                    'LOOSE_FLUSH')):
+                                                    'LOOSE_FLUSH',
+                                                    'BUN_FEET')):
                 col.prop(cab_props, 'inset_toe_kick_rear', text="Rear Inset")
             # Back insets pull each arm's rear (wall-side) rail off its wall;
             # corner cabinets only (no wall-side rail on a straight run).

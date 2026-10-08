@@ -27,6 +27,7 @@ import bpy
 from ...units import inch
 from . import island_pair
 from . import shelf_nosing
+from ..common import bun_foot
 from . import bar_storage
 
 
@@ -194,6 +195,7 @@ class FaceFrameLayout:
             if (self.has_toe_kick
                 and self.toe_kick_type in REAR_INSET_KICK_TYPES)
             else 0.0)
+        _init_bun_feet(self, cab)
         self.back_bottom_inset = cab.back_bottom_inset
         # Tip-up wedge inputs (refrigerator / tall). Computed dims are
         # derived live in wedge_geometry(); only the inputs persist.
@@ -1042,7 +1044,7 @@ def side_bottom_z(layout, bay_index, side='LEFT'):
     # (a "leg"), the finished side drops with it so the leg reads solid down
     # to the floor. The side belongs to an end bay (LEFT = bay 0, RIGHT =
     # last bay), so the matching end-stile-to-floor flag governs the drop.
-    floating = (layout.toe_kick_type in ('FLOATING', 'LOOSE', 'LOOSE_FLUSH')
+    floating = (layout.toe_kick_type in FLOATING_KICK_TYPES
                 or layout.bays[bay_index].get('floating_bay'))
     if floating:
         side_stile_to_floor = (left_stile_to_floor(layout) if side == 'LEFT'
@@ -1101,7 +1103,12 @@ KICK_REAR_BEAM_SHALLOW_DEPTH = inch(15.0)
 
 
 # Toe kick types a rear inset applies to (see Layout.kick_inset_back).
-REAR_INSET_KICK_TYPES = ('NOTCH', 'LOOSE', 'LOOSE_FLUSH')
+REAR_INSET_KICK_TYPES = ('NOTCH', 'LOOSE', 'LOOSE_FLUSH', 'BUN_FEET')
+# Toe kick types that build the loose ladder sub-base. BUN_FEET is a
+# recessed ladder with a foot under each exposed corner.
+LOOSE_KICK_TYPES = ('LOOSE', 'LOOSE_FLUSH', 'BUN_FEET')
+# Toe kick types whose carcass floats on a base (sides stop at the kick).
+FLOATING_KICK_TYPES = ('FLOATING',) + LOOSE_KICK_TYPES
 
 # Thickness each applied back type adds behind the carcass back. The rear
 # inset is measured from the outermost back face, so the number typed is
@@ -1723,7 +1730,7 @@ def has_loose_kick(layout):
     Both LOOSE and LOOSE_FLUSH build the ladder; they differ only in the
     ladder's front setback (see loose_kick_setback)."""
     return (layout.has_toe_kick
-            and layout.toe_kick_type in ('LOOSE', 'LOOSE_FLUSH'))
+            and layout.toe_kick_type in LOOSE_KICK_TYPES)
 
 
 def loose_kick_setback(layout):
@@ -1733,6 +1740,10 @@ def loose_kick_setback(layout):
     loose_kick_end (board length) and loose_kick_front_rail (front Y)."""
     if layout.toe_kick_type == 'LOOSE_FLUSH':
         return 0.0
+    if layout.toe_kick_type == 'BUN_FEET':
+        # Behind the feet, on every cabinet of the run alike so the kick
+        # line stays straight where an inner cabinet has no feet.
+        return max(layout.tks, layout.bun_foot_depth)
     return layout.tks
 
 
@@ -1796,7 +1807,7 @@ def loose_kick_has_finish(layout):
     LOOSE_FLUSH is left bare: its ladder front is already flush with
     the cabinet front, so a skin there would stand proud of it."""
     return (has_loose_kick(layout)
-            and layout.toe_kick_type == 'LOOSE'
+            and layout.toe_kick_type in ('LOOSE', 'BUN_FEET')
             and layout.include_finish_kick)
 
 
@@ -1827,6 +1838,79 @@ def loose_kick_back_y(layout):
     if has_rear_kick_inset(layout):
         return min(0.0, rear_kick_face_y(layout, 0))
     return 0.0
+
+
+# ---------------------------------------------------------------------------
+# Bun feet - a recessed loose ladder with a foot under each exposed corner
+# ---------------------------------------------------------------------------
+# BUN_FEET floats the carcass on the loose ladder like LOOSE and stands a
+# foot under every corner the room leaves in view: both front corners of
+# an exposed end, and the back corners too where the back is exposed (an
+# island). The ladder pulls in behind the feet - setback and end insets
+# grow to at least the foot's footprint - so the feet stand proud of the
+# kick. The foot fills the kick height.
+PART_ROLE_BUN_FOOT_PREFIX = 'BUN_FOOT_'
+BUN_FOOT_CORNERS = ('FRONT_LEFT', 'FRONT_RIGHT', 'BACK_LEFT', 'BACK_RIGHT')
+
+
+def _init_bun_feet(layout, cab):
+    """Resolve which corners carry a foot and widen the ladder insets to
+    clear them. Straight cabinets only; corner cabinets build a plain
+    recessed ladder."""
+    layout.bun_foot_style = getattr(cab, 'bun_foot_style',
+                                    bun_foot.DEFAULT_STYLE)
+    layout.bun_foot_width, layout.bun_foot_depth = bun_foot.footprint(
+        layout.bun_foot_style)
+    layout.bun_foot_corners = ()
+    if not (layout.has_toe_kick and layout.toe_kick_type == 'BUN_FEET'
+            and layout.corner_type == 'NONE'):
+        return
+    left = getattr(cab, 'left_exposure', 'EXPOSED') == 'EXPOSED'
+    right = getattr(cab, 'right_exposure', 'EXPOSED') == 'EXPOSED'
+    back = getattr(cab, 'back_exposure', 'EXPOSED') == 'EXPOSED'
+    corners = []
+    if left:
+        corners.append('FRONT_LEFT')
+    if right:
+        corners.append('FRONT_RIGHT')
+    if back and left:
+        corners.append('BACK_LEFT')
+    if back and right:
+        corners.append('BACK_RIGHT')
+    layout.bun_foot_corners = tuple(corners)
+    w, d = layout.bun_foot_width, layout.bun_foot_depth
+    clear_x = max(layout.tks, w)
+    if left:
+        layout.kick_inset_left = max(layout.kick_inset_left, clear_x)
+    if right:
+        layout.kick_inset_right = max(layout.kick_inset_right, clear_x)
+    if back and (left or right):
+        layout.kick_inset_back = max(layout.kick_inset_back, d)
+
+
+def has_bun_foot(layout, corner):
+    return corner in layout.bun_foot_corners
+
+
+def bun_foot_part_role(corner):
+    return PART_ROLE_BUN_FOOT_PREFIX + corner
+
+
+def bun_foot_placement(layout, corner):
+    """Origin (the foot box's min corner) and which box sides face out.
+    The outer faces land flush with the cabinet end and the front (or
+    the carcass back); the foot spans the kick height."""
+    w, d = layout.bun_foot_width, layout.bun_foot_depth
+    left = corner.endswith('LEFT')
+    front = corner.startswith('FRONT')
+    x = 0.0 if left else layout.dim_x - w
+    y = -layout.dim_y if front else -d
+    return {
+        'x': x, 'y': y, 'z': 0.0,
+        'height': layout.tkh,
+        'outer_x': 'MIN' if left else 'MAX',
+        'outer_y': 'MIN' if front else 'MAX',
+    }
 
 
 def loose_kick_rear_rail(layout):
@@ -3134,7 +3218,7 @@ def carcass_back_segments(layout):
             # has_toe_kick so uppers (toe_kick_type forced to FLOATING)
             # keep their box-bottom 0.0 origin.
             floating_carcass = layout.has_toe_kick and (
-                layout.toe_kick_type in ('FLOATING', 'LOOSE', 'LOOSE_FLUSH')
+                layout.toe_kick_type in FLOATING_KICK_TYPES
                 or first_bay.get('floating_bay'))
             if floating_carcass:
                 z_origin = bay_bottom_z(layout, start)

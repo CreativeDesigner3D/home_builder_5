@@ -29,6 +29,7 @@ from . import finish_colors, wood_materials, style_options, shelf_nosing
 from . import wood_top_edge
 from . import decorative_corner
 from . import cabinet_column
+from ..common import bun_foot
 
 
 # Finish-end / back conditions. Module-level so both Cabinet_Props and
@@ -3384,6 +3385,16 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
             # to overwrite it with the cabinet's own finish on every
             # rebuild, so painting a beadboard end came undone the next
             # time anything resized the cabinet.
+            # Bun feet draw their own mesh the same way; finish wood.
+            if child.get('HB_STATIC_BUN_FOOT'):
+                slot_mat = ov_mat if ov_mat is not None else finish_mat
+                if slot_mat is not None:
+                    me = child.data
+                    while len(me.materials) < 1:
+                        me.materials.append(None)
+                    me.materials[0] = slot_mat
+                continue
+
             if ((role in ('BEADBOARD', 'SHIPLAP', 'V_GROOVE', 'WOOD_TOP',
                           'WOOD_TOP_EDGE', 'INSET_PANEL')
                  or child.get('hb_return_member'))
@@ -6145,6 +6156,31 @@ def _update_cabinet_dim(self, context):
     types_face_frame.recalculate_face_frame_cabinet(obj)
 
 
+def _update_toe_kick_type(self, context):
+    """Kick type change. Switching to bun feet stands the cabinet on
+    the feet at their stock height."""
+    if self.toe_kick_type == 'BUN_FEET' and _size_kick_to_bun_foot(self):
+        return      # the height write recalculated
+    _update_cabinet_dim(self, context)
+
+
+def _update_bun_foot_style(self, context):
+    """A new foot style brings its own stock height to the kick."""
+    if self.toe_kick_type == 'BUN_FEET' and _size_kick_to_bun_foot(self):
+        return
+    _update_cabinet_dim(self, context)
+
+
+def _size_kick_to_bun_foot(cab):
+    """Set the kick height to the foot's stock height. True when it
+    changed (toe_kick_height's own update then rebuilt the cabinet)."""
+    height = bun_foot.stock_height(cab.bun_foot_style)
+    if abs(cab.toe_kick_height - height) <= 1e-6:
+        return False
+    cab.toe_kick_height = height
+    return True
+
+
 # Revolving-door susans carry 1-1/2" front stiles whatever the style's
 # stile width is - the door turns with the susan, so the frame opening
 # is sized to it rather than to the style. Both the revolving exterior
@@ -8721,9 +8757,18 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
             ('LOOSE_FLUSH', "Loose Flush (Ladder Base)",
              "Like Loose, but the ladder sub-base sits FLUSH with the "
              "cabinet front (setback 0) instead of recessed"),
+            ('BUN_FEET', "Bun Feet",
+             "Like Loose, with a bun foot under each exposed corner and "
+             "the ladder recessed behind the feet"),
         ],
         default='NOTCH',
-        update=_update_cabinet_dim,
+        update=_update_toe_kick_type,
+    )  # type: ignore
+    bun_foot_style: EnumProperty(
+        name="Bun Foot Style",
+        items=bun_foot.style_items(),
+        default=bun_foot.DEFAULT_STYLE,
+        update=_update_bun_foot_style,
     )  # type: ignore
     toe_kick_height: FloatProperty(
         # Floored at zero: on a NOTCH kick a negative height is a recess

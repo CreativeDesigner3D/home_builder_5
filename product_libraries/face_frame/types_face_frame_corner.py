@@ -380,6 +380,9 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         """
         has_kick = self._has_toe_kick()
         tk = cab_props.toe_kick_type if has_kick else 'NOTCH'
+        if tk == 'BUN_FEET':
+            # No feet on corner cabinets; they keep the recessed ladder.
+            tk = 'LOOSE'
         return SimpleNamespace(
             has_kick=has_kick,
             tk=tk,

@@ -64,10 +64,18 @@ def rear_kick_inset_active(cab):
     """True when a straight cabinet's toe kick is recessed at the back
     (Face_Frame_Cabinet_Props.inset_toe_kick_rear): its applied back
     then stops at the kick top instead of covering the band."""
-    return (cab.cabinet_type in ('BASE', 'TALL')
-            and getattr(cab, 'inset_toe_kick_rear', 0.0) > 0.0
-            and cab.toe_kick_type in ('NOTCH', 'LOOSE', 'LOOSE_FLUSH')
-            and getattr(cab, 'corner_type', 'NONE') == 'NONE')
+    if (cab.cabinet_type not in ('BASE', 'TALL')
+            or getattr(cab, 'corner_type', 'NONE') != 'NONE'):
+        return False
+    # Bun feet under the back corners recess the back of the kick too.
+    if (cab.toe_kick_type == 'BUN_FEET'
+            and getattr(cab, 'back_exposure', 'EXPOSED') == 'EXPOSED'
+            and 'EXPOSED' in (getattr(cab, 'left_exposure', 'EXPOSED'),
+                              getattr(cab, 'right_exposure', 'EXPOSED'))):
+        return True
+    return (getattr(cab, 'inset_toe_kick_rear', 0.0) > 0.0
+            and cab.toe_kick_type in ('NOTCH', 'LOOSE', 'LOOSE_FLUSH',
+                                      'BUN_FEET'))
 
 
 def _toe_kick_band(cab, side):

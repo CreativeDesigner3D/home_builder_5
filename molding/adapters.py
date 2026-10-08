@@ -94,7 +94,7 @@ def collect_bridges(scene):
 # Facts
 # ---------------------------------------------------------------------------
 
-_RECESSED_FF_KICKS = {'NOTCH', 'LOOSE', 'FLOATING'}
+_RECESSED_FF_KICKS = {'NOTCH', 'LOOSE', 'FLOATING', 'BUN_FEET'}
 
 # Cages that are a cabinet in their own right rather than a part of the
 # one above them.
