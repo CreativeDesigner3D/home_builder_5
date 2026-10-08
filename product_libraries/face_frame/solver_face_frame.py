@@ -5056,6 +5056,70 @@ def _inset_panel_leaf(layout, rect, role, name):
     }
 
 
+class _SwingProxy:
+    """Wraps an opening_props instance and reports a given
+    swing_percent (every other field passes through)."""
+    __slots__ = ('_inner', '_swing')
+    def __init__(self, inner, swing):
+        object.__setattr__(self, '_inner', inner)
+        object.__setattr__(self, '_swing', swing)
+    def __getattr__(self, name):
+        if name == 'swing_percent':
+            return self._swing
+        return getattr(self._inner, name)
+
+
+# A retracting door in the open preview stops this far clear of the
+# frame on its way into the pocket, and this far short of the back.
+RETRACT_SLIDE_SIDE_CLEAR = inch(0.125)
+RETRACT_SLIDE_BACK_CLEAR = inch(0.25)
+
+
+def _retracting_door_leaves(layout, rect, cab_props, opening_props, role,
+                            base_name):
+    """Leaves for a side-mount retracting door (single or pair). The
+    first half of swing_percent swings the door square; the second
+    half slides it back into the cabinet and over into its pocket, clear
+    of the frame it overlaid, until its front edge is behind the face
+    frame."""
+    swing = opening_props.swing_percent
+    swing_part = min(2.0 * swing, 1.0)
+    slide_part = max(2.0 * swing - 1.0, 0.0)
+    proxy = _SwingProxy(opening_props, swing_part)
+    if opening_props.hinge_side == 'DOUBLE':
+        leaves = _double_door_leaves(layout, rect, cab_props, proxy, role)
+        hinges = ('LEFT', 'RIGHT')
+    else:
+        width, height = _door_panel_size(rect, cab_props, opening_props)
+        leaf = _single_door_leaf_pivot(layout, rect, cab_props, proxy)
+        leaf['role'] = role
+        leaf['name'] = base_name
+        leaf['part_dims'] = (height, width, cab_props.door_thickness)
+        leaf['hinge'] = opening_props.hinge_side
+        leaves = [leaf]
+        hinges = (opening_props.hinge_side,)
+    if slide_part <= 0.0:
+        return leaves
+    back_y = _ff_back_y_bay_local(layout)
+    for leaf, hinge in zip(leaves, hinges):
+        px, py, pz = leaf['pivot_position']
+        leaf_w = leaf['part_dims'][1]
+        overlay = front_overlay(rect, cab_props, opening_props,
+                                'left' if hinge == 'LEFT' else 'right')
+        shift_x = max(overlay, 0.0) + RETRACT_SLIDE_SIDE_CLEAR
+        if hinge == 'RIGHT':
+            shift_x = -shift_x
+        # Squared, the door stands forward of its pivot by its width;
+        # slid this far its front edge clears the back of the frame,
+        # but never so far its back edge reaches the cabinet back.
+        slide = leaf_w + (back_y - py) + RETRACT_SLIDE_SIDE_CLEAR
+        room = rect['cage_dim_y'] - RETRACT_SLIDE_BACK_CLEAR - py
+        slide = max(0.0, min(slide, room))
+        leaf['pivot_position'] = (px + shift_x * slide_part,
+                                  py + slide * slide_part, pz)
+    return leaves
+
+
 class _ZeroSwingProxy:
     """Wraps an opening_props instance and reports swing_percent as 0.
     Used for FALSE_FRONT so the leaf builder can be reused without
@@ -5208,6 +5272,10 @@ def front_leaves(layout, rect, cab_props, opening_props):
         )]
 
     # DOOR
+    if (opening_props.hinge_side in ('LEFT', 'RIGHT', 'DOUBLE')
+            and any(retracting_pocket_sides(opening_props))):
+        return _retracting_door_leaves(layout, rect, cab_props,
+                                       opening_props, role, base_name)
     if cab_props.id_data.get('HB_TRIVIEW_DOORS'):
         # Tri-view medicine cabinet: three mirror doors in one opening.
         return _triple_door_leaves(
