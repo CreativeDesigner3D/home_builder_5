@@ -6094,6 +6094,31 @@ def interior_item_descriptors(layout, rect, cab_props, opening_props,
                 d['position'] = (x + cl_l, y, z)
         return descs
 
+    # Everything else behind a retracting door (rollouts, pullouts, tray
+    # dividers, rods, bar storage) is laid out between the pockets: the
+    # partition's inner face stands in for the face frame opening edge
+    # on each pocket side, so slide spacers start there instead of
+    # filling the pocket from the carcass side.
+    item_rect, item_shift = rect, 0.0
+    pocket_l, pocket_r = retracting_pocket_widths(opening_ff)
+    if pocket_l or pocket_r:
+        item_rect = dict(rect)
+        cut_l = (rect.get('retract_edge_l', 0.0) + pocket_l) if pocket_l else 0.0
+        cut_r = (rect.get('retract_edge_r', 0.0) + pocket_r) if pocket_r else 0.0
+        item_rect['cage_dim_x'] = max(0.0, rect['cage_dim_x'] - cut_l - cut_r)
+        if pocket_l:
+            item_rect['reveal_left'] = 0.0
+        if pocket_r:
+            item_rect['reveal_right'] = 0.0
+        item_shift = cut_l
+
+    def _between_pockets(descs):
+        if item_shift:
+            for d in descs:
+                x, y, z = d['position']
+                d['position'] = (x + item_shift, y, z)
+        return descs
+
     out = []
     for item_index, item in enumerate(opening_props.interior_items):
         if item.kind == 'ADJUSTABLE_SHELF':
@@ -6141,24 +6166,28 @@ def interior_item_descriptors(layout, rect, cab_props, opening_props,
                 item, shelf_rect, cage_dim_y,
                 max(item.shelf_setback, cl_f))))
         elif item.kind == 'PULLOUT_SHELF':
-            out.extend(_pullout_shelf_descriptors(rect, cage_dim_y, item))
+            out.extend(_between_pockets(_pullout_shelf_descriptors(
+                item_rect, cage_dim_y, item)))
         elif item.kind == 'ROLLOUT':
-            out.extend(_rollout_descriptors(rect, cage_dim_y, item,
-                                            item_index))
+            out.extend(_between_pockets(_rollout_descriptors(
+                item_rect, cage_dim_y, item, item_index)))
         elif item.kind == 'TRAY_DIVIDERS':
-            out.extend(_tray_dividers_descriptors(rect, cage_dim_y, item))
+            out.extend(_between_pockets(_tray_dividers_descriptors(
+                item_rect, cage_dim_y, item)))
         elif item.kind == 'VANITY_SHELVES':
-            out.extend(_vanity_shelves_descriptors(rect, cage_dim_y, item))
+            out.extend(_between_pockets(_vanity_shelves_descriptors(
+                item_rect, cage_dim_y, item)))
         elif item.kind == 'ACCESSORY':
-            out.append(_accessory_label_descriptor(
-                rect, cage_dim_y, item.accessory_label
-            ))
+            out.extend(_between_pockets([_accessory_label_descriptor(
+                item_rect, cage_dim_y, item.accessory_label
+            )]))
         elif item.kind == 'CLOSET_ROD':
-            out.append(_closet_rod_descriptor(rect, cage_dim_y, item))
+            out.extend(_between_pockets([_closet_rod_descriptor(
+                item_rect, cage_dim_y, item)]))
         elif item.kind in bar_storage.KINDS:
-            desc = _bar_storage_descriptor(rect, cage_dim_y, item)
+            desc = _bar_storage_descriptor(item_rect, cage_dim_y, item)
             if desc is not None:
-                out.append(desc)
+                out.extend(_between_pockets([desc]))
     return out
 
 
@@ -6659,6 +6688,23 @@ def retracting_component_shelf_descriptors(rect, op_props):
          'position': (x_l + t, setback, z),
          'dims': (x_r - x_l - 2.0 * t, depth, t)},
     ]
+
+
+def retracting_pocket_widths(op_props):
+    """(left, right) width each side-mount retracting pocket takes off
+    the face frame opening, partition included: the clear the door rides
+    in plus the partition. 0.0 on a side with no pocket. Used whether or
+    not the partitions are built -- the pocket has to stay clear."""
+    if op_props is None:
+        return (0.0, 0.0)
+    pocket_l, pocket_r = retracting_pocket_sides(op_props)
+    if not (pocket_l or pocket_r):
+        return (0.0, 0.0)
+    clear = (RETRACT_BIFOLD_POCKET_CLEAR
+             if op_props.door_mechanism == 'RETRACTING_BIFOLD'
+             else RETRACT_POCKET_CLEAR)
+    width = clear + RETRACT_PARTITION_THICKNESS
+    return (width if pocket_l else 0.0, width if pocket_r else 0.0)
 
 
 def retracting_hinge_heights(door_bottom, door_top):
