@@ -408,10 +408,14 @@ class HB_GENERAL_OT_hide(bpy.types.Operator):
             root = _product_root(obj)
             if root is not None and root not in roots:
                 roots.append(root)
+        # Children that live only in other scenes (drawing annotations
+        # parented to a cabinet) stay out: hide_viewport is per object,
+        # so hiding them here would blank them in those drawings too.
+        scene_objects = context.scene.objects
         targets = []
         for root in roots:
             for obj in [root] + list(root.children_recursive):
-                if obj not in targets:
+                if obj not in targets and scene_objects.get(obj.name) is obj:
                     targets.append(obj)
         return targets
 
@@ -458,11 +462,28 @@ class HB_GENERAL_OT_show_all_hidden(bpy.types.Operator):
         default=False,
         options={'SKIP_SAVE'})  # type: ignore
 
+    @staticmethod
+    def _claimed(context):
+        """Claimed objects in this scene, plus claimed children of them
+        that live only in other scenes. Hide used to reach those
+        (drawing annotations parented to a cabinet), and they could
+        never be restored from the scene they were hidden in."""
+        scene_objects = context.scene.objects
+        found = []
+        for obj in scene_objects:
+            if obj.get(ISOLATE_HIDDEN_TAG):
+                found.append(obj)
+        for obj in bpy.data.objects:
+            if (obj.get(ISOLATE_HIDDEN_TAG)
+                    and scene_objects.get(obj.name) is not obj
+                    and obj.parent is not None
+                    and scene_objects.get(obj.parent.name) is obj.parent):
+                found.append(obj)
+        return found
+
     def execute(self, context):
         count = 0
-        for obj in context.scene.objects:
-            if not obj.get(ISOLATE_HIDDEN_TAG):
-                continue
+        for obj in self._claimed(context):
             if obj.get(ISOLATE_CAGE_TAG):
                 # hide_viewport belongs to the selection mode.
                 try:
