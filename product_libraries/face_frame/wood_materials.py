@@ -43,6 +43,13 @@ def update_finish_material(cabinet_style):
     """
     material = cabinet_style.material
     material_rotated = cabinet_style.material_rotated
+    # A style edited before its materials are built (or after one was
+    # deleted) has nothing to update yet; the next style apply builds
+    # them from these values.
+    if (material is None or material_rotated is None
+            or material.node_tree is None
+            or material_rotated.node_tree is None):
+        return
 
     mat_node = None
     rotated_node = None
@@ -264,6 +271,13 @@ def update_finish_material_from_catalog(cabinet_style):
     """
     material = cabinet_style.material
     material_rotated = cabinet_style.material_rotated
+    # A style edited before its materials are built (or after one was
+    # deleted) has nothing to update yet; the next style apply builds
+    # them from these values.
+    if (material is None or material_rotated is None
+            or material.node_tree is None
+            or material_rotated.node_tree is None):
+        return
 
     mat_node = None
     rotated_node = None
