@@ -451,6 +451,13 @@ class HB_GENERAL_OT_show_all_hidden(bpy.types.Operator):
                       "commands")
     bl_options = {'UNDO'}
 
+    stock_fallback: bpy.props.BoolProperty(
+        name="Stock Fallback",
+        description=("When nothing was hidden by the hide commands, fall "
+                     "back to Blender's own Reveal Hidden"),
+        default=False,
+        options={'SKIP_SAVE'})  # type: ignore
+
     def execute(self, context):
         count = 0
         for obj in context.scene.objects:
@@ -469,6 +476,9 @@ class HB_GENERAL_OT_show_all_hidden(bpy.types.Operator):
             count += 1
         if count:
             self.report({'INFO'}, f"Restored {count} hidden object(s)")
+        elif self.stock_fallback:
+            # Bound to Alt+H: keep revealing what a plain hide took away.
+            return bpy.ops.object.hide_view_clear('EXEC_DEFAULT')
         else:
             self.report({'INFO'}, "No hidden objects found")
         return {'FINISHED'}
@@ -673,11 +683,43 @@ classes = (
 )
 
 
+# H / Alt+H in Object Mode run the product-aware hide and Show All
+# Hidden, so the keyboard hides a whole product the way the context menu
+# does. Shift+H (hide unselected) keeps its stock binding.
+_addon_keymaps = []
+
+
+def _register_keymaps():
+    kc = bpy.context.window_manager.keyconfigs.addon
+    if not kc:
+        return
+    km = kc.keymaps.new(name='Object Mode', space_type='EMPTY')
+    kmi = km.keymap_items.new(HB_GENERAL_OT_hide.bl_idname, 'H', 'PRESS')
+    kmi.properties.scope = 'PRODUCT'
+    kmi.properties.isolate = False
+    _addon_keymaps.append((km, kmi))
+    kmi = km.keymap_items.new(HB_GENERAL_OT_show_all_hidden.bl_idname,
+                              'H', 'PRESS', alt=True)
+    kmi.properties.stock_fallback = True
+    _addon_keymaps.append((km, kmi))
+
+
+def _unregister_keymaps():
+    for km, kmi in _addon_keymaps:
+        try:
+            km.keymap_items.remove(kmi)
+        except Exception:
+            pass
+    _addon_keymaps.clear()
+
+
 def register():
     for cls in classes:
         bpy.utils.register_class(cls)
+    _register_keymaps()
 
 
 def unregister():
+    _unregister_keymaps()
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
