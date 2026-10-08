@@ -256,6 +256,18 @@ def _update_bay_prop(self, context):
     types_closets.recalculate_closet_starter(self.id_data)
 
 
+def _update_rod_options(self, context):
+    """Room rod type, finish or hangers changed: re-solve the closets,
+    whose rods take them on the solve, then re-dress the free rods on
+    the walls, which no solve reaches."""
+    pulls_closets.update_room(self, context)
+    from . import types_closets
+    scene = getattr(context, 'scene', None) or bpy.context.scene
+    for obj in scene.objects:
+        if obj.get(types_closets.PROP_WALL_ROD):
+            types_closets.layout_wall_rod(obj)
+
+
 def _update_bay_height_preset(self, context):
     """Bay height dropdown changed (the key is millimetres). Held to
     one solve - the distance and the padlock both recalc."""
@@ -1182,18 +1194,30 @@ class Closet_Bay_Props(PropertyGroup):
                     "their own panel",
         default=False, update=_update_bay_prop)  # type: ignore
 
-    # Double-sided islands only: the divider between the two faces.
+    # Double-sided islands only: the divider between the two faces. As
+    # the prior library had it, the divider is always there; ticked it
+    # sits centered, unticked it sits at Center Back Location, measured
+    # in from the island's FRONT face, and both faces' openings size to
+    # it (types_closet.py add_double_opening).
     include_center_back: BoolProperty(
         name="Center Back",
-        description="Close this bay's two faces off from each other with "
-                    "a divider panel",
+        description="Keep this bay's divider centered between the two "
+                    "faces. Untick to place it with Center Back Location",
         default=True, update=_update_bay_prop)  # type: ignore
     center_back_location: FloatProperty(
         name="Center Back Location",
-        description="How far in from the island's back face the divider "
-                    "sits. Leave at 0 to keep it centered",
+        description="How far in from the island's front face the divider "
+                    "sits - the depth of the front opening. The back "
+                    "opening takes what is left behind the divider",
         default=0.0, min=0.0, unit='LENGTH', precision=4,
         update=_update_bay_prop)  # type: ignore
+    # Files saved while the checkbox above meant "include the divider"
+    # could have it switched off. That is carried over here so those
+    # islands come back without one; nothing new sets it.
+    remove_center_back: BoolProperty(
+        name="Remove Center Back",
+        description="Leave this bay's divider out (set by an older file)",
+        default=False, update=_update_bay_prop)  # type: ignore
 
     # ----- Bay-wide front -----
     # A front that spans the whole bay rather than one opening. Held as a
@@ -1993,17 +2017,17 @@ class Closets_Scene_Props(PropertyGroup):
         name="Rod Type",
         items=pulls_closets.ROD_TYPES,
         default='OVAL',
-        update=pulls_closets.update_room)  # type: ignore
+        update=_update_rod_options)  # type: ignore
     closet_rod_finish: EnumProperty(
         name="Rod Finish",
         items=pulls_closets.ROD_FINISHES,
         default='Polished Chrome',
-        update=pulls_closets.update_room)  # type: ignore
+        update=_update_rod_options)  # type: ignore
     closet_hanger_model: EnumProperty(
         name="Hangers",
         description="Display hanger model shown on closet rods",
         items=pulls_closets.hanger_enum_items,
-        update=pulls_closets.update_room)  # type: ignore
+        update=_update_rod_options)  # type: ignore
 
     # What accessories are made in unless one is set otherwise: new
     # ones arrive in it, and changing it re-dresses the room's. One not
@@ -2283,6 +2307,18 @@ class Closets_Scene_Props(PropertyGroup):
         col.prop(self, 'closet_seed_door_shelves',
                  text="Shelves Behind Doors")
 
+        # Every front in the room stood open or shut at once, for the
+        # drawing, where 4.3 kept its Open/Close Doors buttons.
+        row = layout.row(align=True)
+        op = row.operator('hb_closets.open_room_fronts',
+                          text="Open Doors", icon='HIDE_OFF')
+        op.open = True
+        op.fronts = 'ALL'
+        op = row.operator('hb_closets.open_room_fronts',
+                          text="Close Doors", icon='HIDE_ON')
+        op.open = False
+        op.fronts = 'ALL'
+
         # How every front in the room hangs. Room figures - a change
         # here re-solves every run; any one opening can still take an
         # overlay side over for itself in its own dialog.
@@ -2323,10 +2359,13 @@ class Closets_Scene_Props(PropertyGroup):
         col.prop(self, 'pull_vertical_location_upper', text="Upper Vertical")
         col.prop(self, 'center_pulls_on_drawer_front',
                  text="Center Drawer Pulls")
-        sub = col.row()
-        sub.enabled = not self.center_pulls_on_drawer_front
-        sub.prop(self, 'pull_vertical_location_drawers',
-                 text="Drawer Vertical")
+        # A tilt-out hamper takes this figure even where drawer pulls
+        # are centered (4.3 always offered it), so the row stays live;
+        # while centered it is only the hampers' figure.
+        col.prop(self, 'pull_vertical_location_drawers',
+                 text=("Hamper Vertical"
+                       if self.center_pulls_on_drawer_front
+                       else "Drawer Vertical"))
 
     # =====================================================================
     # UI: drawers (Options tab)
@@ -2373,6 +2412,16 @@ class Closets_Scene_Props(PropertyGroup):
 
         col.separator()
         col.prop(self, 'closet_drawer_vertical_grain')
+
+        row = layout.row(align=True)
+        op = row.operator('hb_closets.open_room_fronts',
+                          text="Open Drawers", icon='HIDE_OFF')
+        op.open = True
+        op.fronts = 'DRAWERS'
+        op = row.operator('hb_closets.open_room_fronts',
+                          text="Close Drawers", icon='HIDE_ON')
+        op.open = False
+        op.fronts = 'DRAWERS'
 
     # =====================================================================
     # UI: rods and hangers (Options tab)

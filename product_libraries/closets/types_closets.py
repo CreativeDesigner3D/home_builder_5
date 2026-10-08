@@ -790,8 +790,9 @@ def solve_starter_layout(root):
 # ---------------------------------------------------------------------------
 # The room's baseboard (scene.home_builder.base_board and its sizes). A
 # notched baseboard stays on the wall, so the closet is built around it:
-# partitions standing on the floor are notched at the bottom rear, and a
-# bottom shelf or cleat low enough to meet it is held clear.
+# partitions standing on the floor are notched at the bottom rear. A
+# bottom shelf or cleat low enough to meet any baseboard is held clear
+# of it, notched or not, as the prior library held it.
 # ---------------------------------------------------------------------------
 
 # A toe kick preset steps on 32mm and can read a hair over the inch size
@@ -817,22 +818,38 @@ def room_baseboard():
     return strips, float(hb.base_board_route_clearance)
 
 
+def _baseboard_to_clear():
+    """(height, depth, clearance) of the baseboard a bottom shelf and
+    cleat are held clear of, or None. Unlike the notches, this goes by
+    the baseboard alone - whatever is to happen to it, notched round or
+    taken off at install - and by its first strip only, the quarter
+    round in front of a double notch not counted (4.3
+    Closet_Starter.set_inset_props: base_board_height_1 / width_1)."""
+    hb = getattr(bpy.context.scene, 'home_builder', None)
+    if hb is None or getattr(hb, 'base_board', 'NONE') == 'NONE':
+        return None
+    h1, w1 = hb.base_board_height_1, hb.base_board_width_1
+    if h1 <= 0.0 or w1 <= 0.0:
+        return None
+    return h1, w1, float(hb.base_board_route_clearance)
+
+
 def baseboard_shelf_inset(z):
     """How far a shelf whose underside is at ``z`` has to stand off the
     wall to clear the baseboard, or 0."""
-    strips, clr = room_baseboard()
-    depth = max((d for h, d in strips
-                 if h + BASEBOARD_HEIGHT_TOL >= z), default=0.0)
-    return depth + clr if depth > 0.0 else 0.0
+    board = _baseboard_to_clear()
+    if board is None or board[0] + BASEBOARD_HEIGHT_TOL < z:
+        return 0.0
+    return board[1] + board[2]
 
 
 def baseboard_cleat_raise(z):
     """How far a cleat whose underside is at ``z`` has to rise to clear
     the baseboard behind it, or 0."""
-    strips, clr = room_baseboard()
-    top = max((h for h, d in strips
-               if h + BASEBOARD_HEIGHT_TOL >= z), default=0.0)
-    return max(top - z + clr, 0.0) if top > 0.0 else 0.0
+    board = _baseboard_to_clear()
+    if board is None or board[0] + BASEBOARD_HEIGHT_TOL < z:
+        return 0.0
+    return max(board[0] - z + board[2], 0.0)
 
 
 def _stamp_warning(obj, message):
@@ -1199,6 +1216,50 @@ def add_rod(opening_obj, z_offset):
     return rod.obj
 
 
+# A rod dropped on a bare wall rather than into an opening: a free rod
+# at the length the prior library gave one (drop_closet_rod: 25" on the
+# wall), its centerline as far off the wall as an opening's rod stands
+# off the back. No opening works it out, so it keeps the length and the
+# place it was given.
+PROP_WALL_ROD = 'hb_wall_rod'
+WALL_ROD_LENGTH = inch(25.0)
+
+
+def add_wall_rod(wall_obj, preview=False):
+    """Create a loose rod on a wall. Placed by the caller in the wall's
+    local frame; layout_wall_rod dresses it. A placement preview is
+    flagged before it is dressed, so it never grows hangers."""
+    rod = ClosetRod()
+    rod.create()
+    rod.obj.parent = wall_obj
+    rod.obj['hb_part_role'] = PART_ROLE_ROD
+    rod.obj[PROP_WALL_ROD] = 1
+    if preview:
+        rod.obj['hb_preview'] = 1
+    GeoNodeObject(rod.obj).set_input('Dim X', WALL_ROD_LENGTH)
+    layout_wall_rod(rod.obj)
+    return rod.obj
+
+
+def layout_wall_rod(rod_obj):
+    """Profile, finish and hangers for a loose wall rod, from the room's
+    rod options the way an opening's rod takes them."""
+    rod_geo = GeoNodeObject(rod_obj)
+    props = bpy.context.scene.hb_closets
+    rod_geo.set_input(
+        'Is Oval', getattr(props, 'closet_rod_type', 'OVAL') == 'OVAL')
+    try:
+        from . import pulls_closets
+        rod_mat = pulls_closets.load_finish_material(
+            getattr(props, 'closet_rod_finish', 'Polished Chrome'))
+        if rod_mat is not None:
+            rod_geo.set_input('Material', rod_mat)
+        pulls_closets.reconcile_rod_hangers(
+            rod_obj, float(rod_geo.get_input('Dim X') or 0.0))
+    except Exception:
+        pass
+
+
 # The loose parts, and the size and stance each one starts at away
 # from an opening. Dropped on its own a part is not worked out by
 # anything afterwards, so what it arrives as is all the help there is -
@@ -1500,6 +1561,286 @@ def add_division(opening_obj, x_offset):
     return div.obj
 
 
+# The divisions one Divide Opening put in are a group, as 4.3's
+# splitter was one insert: each carries the group's number and the
+# group's columns - which of them share an equal cut of the span and
+# the width each one that does not is holding. The span is what lies
+# between the divisions of earlier groups either side (or the bay's
+# sides), so a group stays put inside the column it divided. Every
+# solve lays the group out again from that, so equal columns stay
+# equal and held ones keep their width as the bay is resized; the
+# sharing columns take up the difference. A division with no group
+# (from an older file, or a group someone took a division out of)
+# stands where it was put, as before.
+PROP_DIV_GROUP = 'hb_div_group'
+PROP_DIV_SHARE = 'hb_div_share'
+PROP_DIV_WIDTHS = 'hb_div_widths'
+# Where the last solve stood a grouped division, so one dragged by hand
+# since can be told apart and the group can take the drag on board.
+PROP_DIV_SOLVED_X = 'hb_div_solved_x'
+# The divisions either side the group's span runs between, by name (''
+# for the bay's side), written down on its first solve. The span is
+# read from these rather than worked out again, so a shelf taken out
+# that merges two rows cannot hand the group someone else's division
+# for an edge; a group whose edges are gone or no longer stand in its
+# row is let go (its divisions stay where they are).
+PROP_DIV_LO = 'hb_div_lo'
+PROP_DIV_HI = 'hb_div_hi'
+# The row the group stood in when its edges were written: the names of
+# the splitting shelves under and over it ('|'-joined, '' for the bay's
+# bottom or top).
+PROP_DIV_ROW = 'hb_div_row'
+
+
+def _div_group(div):
+    g = div.get(PROP_DIV_GROUP)
+    return -1 if g is None else int(g)
+
+
+def forget_division_group(div):
+    for key in (PROP_DIV_GROUP, PROP_DIV_SHARE, PROP_DIV_WIDTHS,
+                PROP_DIV_SOLVED_X, PROP_DIV_LO, PROP_DIV_HI,
+                PROP_DIV_ROW):
+        if key in div:
+            del div[key]
+
+
+def set_division_group(divs, group, share, widths):
+    """Make divs (left to right) one group with these columns. Its
+    edges are worked out afresh on the next solve."""
+    for div in divs:
+        div[PROP_DIV_GROUP] = int(group)
+        div[PROP_DIV_SHARE] = [1 if s else 0 for s in share]
+        div[PROP_DIV_WIDTHS] = [float(w) for w in widths]
+        for key in (PROP_DIV_SOLVED_X, PROP_DIV_LO, PROP_DIV_HI,
+                    PROP_DIV_ROW):
+            if key in div:
+                del div[key]
+
+
+def next_division_group(bay_obj):
+    """A group number no division in the bay is using, above them all."""
+    return 1 + max([_div_group(c) for c in bay_obj.children
+                    if c.get('hb_part_role') == PART_ROLE_DIVISION]
+                   + [-1])
+
+
+def solve_division_widths(share, widths, span, pt):
+    """Width of every column of a group, left to right: held columns
+    their width, the sharing ones an equal cut of the rest. Something
+    has to take up the slack, so with none sharing the last one does."""
+    n = len(share)
+    sharing = [bool(s) for s in share]
+    if not any(sharing):
+        sharing[-1] = True
+    out = [0.0] * n
+    held = 0.0
+    for i in range(n):
+        if not sharing[i]:
+            out[i] = max(float(widths[i]), 0.0)
+            held += out[i]
+    rest = [i for i in range(n) if sharing[i]]
+    each = (span - (n - 1) * pt - held) / len(rest)
+    for i in rest:
+        out[i] = each
+    return out
+
+
+def division_group_members(divs, div):
+    """The divisions of div's group in its row, left to right. A
+    division with no group answers for every ungrouped one in its row,
+    so an older file's divisions are edited together."""
+    g = _div_group(div)
+    row = int(div.get('hb_row', 0))
+    side = div.get(PROP_OPENING_SIDE, 'FRONT')
+    members = [d for d in divs
+               if _div_group(d) == g and int(d.get('hb_row', 0)) == row
+               and d.get(PROP_OPENING_SIDE, 'FRONT') == side]
+    members.sort(key=lambda o: float(o.get('hb_x_offset', 0.0)))
+    return members
+
+
+def _division_group_bounds(divs, members):
+    """(lo, hi): the divisions a group's span runs between - the
+    written-down ones when there are (None for the bay's side), else
+    the nearest earlier-group divisions either side in its row. False
+    when a written-down edge is gone or has left the group's row."""
+    lo_name = members[0].get(PROP_DIV_LO)
+    hi_name = members[0].get(PROP_DIV_HI)
+    row = int(members[0].get('hb_row', 0))
+    side = members[0].get(PROP_OPENING_SIDE, 'FRONT')
+    if lo_name is not None and hi_name is not None:
+        by_name = {d.name: d for d in divs}
+        out = []
+        for name in (lo_name, hi_name):
+            if not name:
+                out.append(None)
+                continue
+            d = by_name.get(name)
+            if (d is None or d in members
+                    or int(d.get('hb_row', 0)) != row
+                    or d.get(PROP_OPENING_SIDE, 'FRONT') != side):
+                return False
+            out.append(d)
+        return tuple(out)
+    g = _div_group(members[0])
+    lo_x = float(members[0].get('hb_x_offset', 0.0))
+    hi_x = float(members[-1].get('hb_x_offset', 0.0))
+    earlier = [d for d in divs
+               if d not in members and _div_group(d) < g
+               and int(d.get('hb_row', 0)) == row
+               and d.get(PROP_OPENING_SIDE, 'FRONT') == side]
+    left = [d for d in earlier
+            if float(d.get('hb_x_offset', 0.0)) < lo_x - 1e-6]
+    right = [d for d in earlier
+             if float(d.get('hb_x_offset', 0.0)) > hi_x + 1e-6]
+    lo = max(left, key=lambda o: float(o.get('hb_x_offset', 0.0))) \
+        if left else None
+    hi = min(right, key=lambda o: float(o.get('hb_x_offset', 0.0))) \
+        if right else None
+    return lo, hi
+
+
+def division_group_span(divs, members, bay_w, pt):
+    """(x0, x1): where a group's first column starts and its last one
+    ends - the faces of the divisions either side it runs between
+    (_division_group_bounds), or the bay's sides."""
+    bounds = _division_group_bounds(divs, members)
+    if bounds is not False:
+        lo, hi = bounds
+        x0 = (float(lo.get('hb_x_offset', 0.0)) + pt) if lo else 0.0
+        x1 = float(hi.get('hb_x_offset', 0.0)) if hi else bay_w
+        return x0, x1
+    g = _div_group(members[0])
+    row = int(members[0].get('hb_row', 0))
+    side = members[0].get(PROP_OPENING_SIDE, 'FRONT')
+    lo_x = float(members[0].get('hb_x_offset', 0.0))
+    hi_x = float(members[-1].get('hb_x_offset', 0.0))
+    earlier = [float(d.get('hb_x_offset', 0.0)) for d in divs
+               if d not in members and _div_group(d) < g
+               and int(d.get('hb_row', 0)) == row
+               and d.get(PROP_OPENING_SIDE, 'FRONT') == side]
+    left = [x for x in earlier if x < lo_x - 1e-6]
+    right = [x for x in earlier if x > hi_x + 1e-6]
+    x0 = (max(left) + pt) if left else 0.0
+    x1 = min(right) if right else bay_w
+    return x0, x1
+
+
+def division_group_widths(divs, members, bay_w, pt):
+    """The columns a group stands at now, left to right."""
+    x0, x1 = division_group_span(divs, members, bay_w, pt)
+    xs = [float(d.get('hb_x_offset', 0.0)) for d in members]
+    edges = [x0] + [x + pt for x in xs]
+    ends = xs + [x1]
+    return [max(e - s, 0.0) for s, e in zip(edges, ends)]
+
+
+def division_to_edit(obj):
+    """The division whose group a right-click on obj re-opens: obj
+    itself when it is a division, or for a column, the division beside
+    it from the most recent group - the one that made this column.
+    None when obj is neither."""
+    if obj is None:
+        return None
+    if obj.get('hb_part_role') == PART_ROLE_DIVISION:
+        return obj
+    if not obj.get(TAG_OPENING_CAGE):
+        return None
+    bay = obj.parent
+    if bay is None:
+        return None
+    row = int(obj.get('hb_opening_index', 0))
+    side = obj.get(PROP_OPENING_SIDE, 'FRONT')
+    divs = sorted([c for c in bay.children
+                   if c.get('hb_part_role') == PART_ROLE_DIVISION
+                   and int(c.get('hb_row', 0)) == row
+                   and c.get(PROP_OPENING_SIDE, 'FRONT') == side],
+                  key=lambda o: float(o.get('hb_x_offset', 0.0)))
+    j = int(obj.get('hb_col_index', 0))
+    beside = [divs[i] for i in (j - 1, j) if 0 <= i < len(divs)]
+    if not beside:
+        return None
+    return max(beside, key=_div_group)
+
+
+def solve_division_groups(divs, bay_w, pt, row_shelves=None):
+    """Lay every Divide Opening group in a bay side out again across
+    its span (see PROP_DIV_GROUP). Earlier groups first, since a later
+    one stands inside a column of one of them. row_shelves maps each
+    row to a key naming the splitting shelves under and over it (see
+    PROP_DIV_ROW)."""
+    groups = {}
+    for d in divs:
+        if d.get(PROP_DIV_GROUP) is None:
+            continue
+        key = (int(d.get('hb_row', 0)), _div_group(d))
+        groups.setdefault(key, []).append(d)
+    for key in sorted(groups, key=lambda k: k[1]):
+        members = sorted(groups[key],
+                         key=lambda o: float(o.get('hb_x_offset', 0.0)))
+        share = [bool(v) for v in members[0].get(PROP_DIV_SHARE, ())]
+        widths = [float(v) for v in members[0].get(PROP_DIV_WIDTHS, ())]
+        if len(share) != len(members) + 1 or len(widths) != len(share):
+            # A division was taken out of it (or one dragged in from
+            # elsewhere): what is left stands where it is.
+            for d in members:
+                forget_division_group(d)
+            continue
+        bounds = _division_group_bounds(divs, members)
+        # The row a group stands in is known by the shelves under and
+        # over it. Taking one of those out runs two rows together, and
+        # then the span the group was given no longer says where it
+        # is, so the group is let go rather than re-laid against
+        # divisions it was never inside.
+        row_key = (row_shelves or {}).get(key[0])
+        stored_row = members[0].get(PROP_DIV_ROW)
+        if (row_key is not None and stored_row is not None
+                and stored_row != row_key):
+            bounds = False
+        if bounds is False:
+            for d in members:
+                forget_division_group(d)
+            continue
+        lo, hi = bounds
+        if members[0].get(PROP_DIV_LO) is None:
+            for d in members:
+                d[PROP_DIV_LO] = lo.name if lo else ''
+                d[PROP_DIV_HI] = hi.name if hi else ''
+        if row_key is not None and stored_row is None:
+            for d in members:
+                d[PROP_DIV_ROW] = row_key
+        moved = [i for i, d in enumerate(members)
+                 if d.get(PROP_DIV_SOLVED_X) is not None
+                 and abs(float(d['hb_x_offset'])
+                         - float(d[PROP_DIV_SOLVED_X])) > 1e-6]
+        if moved:
+            # Dragged by hand: the columns either side of a moved
+            # division hold the widths the drag left them. Columns that
+            # come out all equal (a cancelled drag) go back to sharing.
+            now = division_group_widths(divs, members, bay_w, pt)
+            for i in moved:
+                for j in (i, i + 1):
+                    share[j] = False
+                    widths[j] = now[j]
+            if max(now) - min(now) < 1e-4:
+                share = [True] * len(share)
+            set_division_group(members, key[1], share, widths)
+            for d in members:
+                d[PROP_DIV_LO] = lo.name if lo else ''
+                d[PROP_DIV_HI] = hi.name if hi else ''
+                if row_key is not None:
+                    d[PROP_DIV_ROW] = row_key
+        x0, x1 = division_group_span(divs, members, bay_w, pt)
+        cols = solve_division_widths(share, widths, x1 - x0, pt)
+        x = x0
+        for i, d in enumerate(members):
+            x += cols[i]
+            d['hb_x_offset'] = float(x)
+            d[PROP_DIV_SOLVED_X] = float(x)
+            x += pt
+
+
 # ---------------------------------------------------------------------------
 # Starter base class
 # ---------------------------------------------------------------------------
@@ -1544,11 +1885,14 @@ class ClosetStarter(GeoNodeCage):
 
     def _default_depth_for_type(self, scene_props):
         """Per-type default panel depth, falling back to
-        the general default_panel_depth."""
+        the general default_panel_depth. A single island takes the base
+        depth, as the prior library sized it (types_closet.py
+        Closet_Island: default_base_panel_depth)."""
         return {
             'BASE': scene_props.default_base_panel_depth,
             'TALL': scene_props.default_tall_panel_depth,
             'HANGING': scene_props.default_hanging_panel_depth,
+            'ISLAND': scene_props.default_base_panel_depth,
         }.get(self.default_closet_type, scene_props.default_panel_depth)
 
     def _default_bay_height(self, scene_props, sp):
@@ -1848,6 +2192,37 @@ class ClosetStarter(GeoNodeCage):
             except (KeyError, TypeError):
                 pass
 
+    def _migrate_center_back_meaning(self):
+        """Double islands saved while Center Back meant "include the
+        divider" and its location was measured in from the BACK face.
+        Turn them over once to the prior library's meaning (ticked =
+        centered, location from the FRONT face): a divider that was
+        switched off stays off through remove_center_back, and one that
+        was moved keeps its place, now counted from the front."""
+        if self.obj.get('hb_center_back_from_front'):
+            return
+        self.obj['hb_center_back_from_front'] = 1
+        if not self.is_double:
+            return
+        st = run_sizes(self.obj).shelf_thickness
+        for bay_obj in self._sorted_bays():
+            bp = bay_obj.hb_closet_bay
+            was_on = bool(bp.include_center_back)
+            from_back = float(bp.center_back_location)
+            if not was_on:
+                bp.remove_center_back = True
+            if from_back > 0.0:
+                # The old value placed the divider's front face that far
+                # in from the back; the front opening is what is left in
+                # front of it.
+                bp.include_center_back = False
+                bp.center_back_location = max(
+                    bp.depth - from_back, 0.0)
+            else:
+                bp.include_center_back = True
+                bp.center_back_location = max(
+                    (bp.depth - st) / 2.0, 0.0)
+
     def _spec_from_props(self, scene_props):
         sp = self.obj.hb_closet_starter
         bay_objs = self._sorted_bays()
@@ -1902,6 +2277,7 @@ class ClosetStarter(GeoNodeCage):
             # writes here can't recurse - the update callbacks bail
             # while this starter is in _RECALCULATING.
             self._migrate_double_panel_numbering()
+            self._migrate_center_back_meaning()
             for bay_obj in self._sorted_bays():
                 bp = bay_obj.hb_closet_bay
                 if not bp.unlock_height:
@@ -2431,12 +2807,29 @@ class ClosetStarter(GeoNodeCage):
                     from . import materials_closets
                     materials_closets.apply_to_part(inset)
 
+            # Where a double island's divider sits decides both faces'
+            # depths (4.3 add_double_opening): the front opening is
+            # Center Back Location deep (half the depth less the divider
+            # when centered), the divider follows, and the back opening
+            # takes what is left behind it.
+            front_d = (bay['depth'] - st) / 2.0
+            if self.is_double and (bp.include_center_back
+                                   or bp.center_back_location <= 0.0):
+                # While centered the location reads the centered depth,
+                # kept up as the bay's depth changes, so unticking Center
+                # Back leaves the divider where it was. Written as an
+                # idprop so no update callback runs off it.
+                centered = max(front_d, 0.0)
+                if abs(bp.center_back_location - centered) > 1e-7:
+                    bp['center_back_location'] = centered
+            if self.is_double and not bp.include_center_back:
+                front_d = bp.center_back_location
+            front_d = max(0.01, min(front_d, bay['depth'] - st - 0.01))
+            back_d = bay['depth'] - front_d - st
+
             center_back = self._bay_part(bay_obj, PART_ROLE_CENTER_BACK)
             if center_back is not None:
-                cb_y = bp.center_back_location
-                if cb_y <= 0.0:
-                    cb_y = bay['depth'] / 2.0 + st / 2.0
-                cb_y = min(cb_y, bay['depth'])
+                cb_y = bay['depth'] - front_d
                 center_back['IS_VERTICAL_GRAIN_BACK'] = 1
                 center_back.rotation_euler = (math.radians(90),
                                               math.radians(-90), 0.0)
@@ -2449,7 +2842,7 @@ class ClosetStarter(GeoNodeCage):
                 part.set_input('Length', max(bay['top_z'] - cb_z, 0.001))
                 part.set_input('Width', bay['width'])
                 part.set_input('Thickness', st)
-                _set_part_hidden(center_back, not bp.include_center_back)
+                _set_part_hidden(center_back, bp.remove_center_back)
 
             # Openings. Fixed shelves are SPLITTERS: committed shelves
             # live at bay level and divide the interior into segments,
@@ -2458,13 +2851,12 @@ class ClosetStarter(GeoNodeCage):
             # the opening count to the segments, and preserves contents
             # when a shelf removal merges segments.
             self._reconcile_bay_openings(bay_obj)
-            half_depth = (bay['depth'] - st) / 2.0
             sides = ('FRONT', 'BACK') if self.is_double else ('FRONT',)
             for side in sides:
                 if self.is_double:
-                    o_depth = half_depth
+                    o_depth = back_d if side == 'BACK' else front_d
                     base_y = (0.0 if side == 'BACK'
-                              else -(bay['depth'] / 2.0 + st / 2.0))
+                              else -(bay['depth'] - front_d))
                 elif isinstance(self, IslandClosetStarter):
                     # A single island's opening stops in front of its
                     # inset back (4.3: opening_depth - s_thickness).
@@ -2498,6 +2890,19 @@ class ClosetStarter(GeoNodeCage):
                 # because what it is is a panel standing inside a bay.
                 pt = scene_props.panel_thickness
                 row_x = [[] for _ in bottoms]
+                # Divisions put in together by Divide Opening keep the
+                # column widths they were given across the span they
+                # divide, so equal columns stay equal as the bay is
+                # resized.
+                cut_names = [sh.name for sh in
+                             self._bay_split_shelves(bay_obj, side)]
+                row_shelves = {
+                    k: '%s|%s' % (cut_names[k - 1] if k > 0 else '',
+                                  cut_names[k] if k < len(cut_names)
+                                  else '')
+                    for k in range(len(bottoms))}
+                solve_division_groups(self._bay_divisions(bay_obj, side),
+                                      bay['width'], pt, row_shelves)
                 for div in self._bay_divisions(bay_obj, side):
                     k = min(max(int(div.get('hb_row', 0)), 0),
                             len(bottoms) - 1)
@@ -2505,6 +2910,8 @@ class ClosetStarter(GeoNodeCage):
                     x_off = max(0.0, min(float(div.get('hb_x_offset', 0.0)),
                                          bay['width'] - pt))
                     div['hb_x_offset'] = float(x_off)
+                    if PROP_DIV_SOLVED_X in div:
+                        div[PROP_DIV_SOLVED_X] = float(x_off)
                     div['hb_seg_bottom'] = float(bottoms[k])
                     div.location = (x_off, base_y,
                                     bay['interior_z'] + bottoms[k])
@@ -5938,6 +6345,20 @@ class LShelfClosetStarter(GeoNodeCage):
     # every corner Panel: left, right and back).
     _BASEBOARD_NOTCHES = ClosetStarter._BASEBOARD_NOTCHES
     _notch_for_baseboard = ClosetStarter._notch_for_baseboard
+    # A panel accessory hangs on a wing panel the way it hangs on a
+    # run's partition (4.3 let accessories into a corner's opening),
+    # so the run's accessory machinery is borrowed whole.
+    _acc_model = ClosetStarter._acc_model
+    _acc_placeholder = ClosetStarter._acc_placeholder
+    _placeholder_material = ClosetStarter._placeholder_material
+    _size_placeholder = ClosetStarter._size_placeholder
+    _fit_cage_to_model = ClosetStarter._fit_cage_to_model
+    _acc_custom_box = ClosetStarter._acc_custom_box
+    _model_front_reach = ClosetStarter._model_front_reach
+    _model_depth = ClosetStarter._model_depth
+    _accessory_setback = ClosetStarter._accessory_setback
+    _layout_panel_accessory = ClosetStarter._layout_panel_accessory
+    _warn_accessory_fit = ClosetStarter._warn_accessory_fit
     has_hang_rail = True
     # Placement flags read by the place modal.
     default_depth = const.L_SHELF_SIZE
@@ -6238,6 +6659,88 @@ class LShelfClosetStarter(GeoNodeCage):
                 GeoNodeCutpart(shelf).add_part_modifier(
                     'CPM_RADIUSNOTCH', 'L Radius')
         return shelves
+
+    def _corner_accessories(self, opening, W, D, LD, RD, l_pt, r_pt,
+                            wo, interior_h, scene_props):
+        """Lay out the accessories hung in a corner unit.
+
+        A corner takes panel accessories only - a hook, a valet, a
+        rack on a wing panel - since it has no square opening for
+        anything that spans one. The left faces are the side wall
+        wing's end panel, the right faces the back wall wing's. Each
+        wing is laid out as a run lays out an opening that ends at
+        that panel: the back wall wing is the opening's own frame, and
+        the side wall wing is the same frame turned a quarter so its
+        front faces the room. Anything else found in here is emptied,
+        the way a run empties an accessory its catalog no longer
+        offers."""
+        from . import accessories_closets as acc
+        pt = scene_props.panel_thickness
+        for cage in [c for c in opening.children
+                     if c.get('hb_part_role') == PART_ROLE_ACCESSORY]:
+            kids = {}
+            for child in cage.children:
+                kids.setdefault(child.get('hb_part_role'),
+                                []).append(child)
+            acc_def = acc.get(cage.get(PROP_ACCESSORY_KEY, ''))
+            if acc_def is None or acc_def.family != acc.FAMILY_PANEL:
+                for group in kids.values():
+                    for child in group:
+                        _remove_part_tree(child)
+                continue
+            if not acc_def.is_sized and not acc_def.custom:
+                self._acc_model(cage, acc_def, kids)
+            z = float(cage.get(PROP_ACCESSORY_Z, 0.0))
+            fixed = fixed_accessory_z(opening, acc_def, cage)
+            if fixed is not None:
+                z = fixed
+            if 0.0 <= z < const.ACCESSORY_BOTTOM_SNAP_TOL:
+                z = 0.0
+            z = min(z, max(interior_h - acc_def.height, 0.0))
+            cage[PROP_ACCESSORY_Z] = z
+            loc = cage.get(PROP_ACCESSORY_PANEL_LOC,
+                           acc.PANEL_DEFAULT_LOCATION)
+            if loc not in acc.PANEL_LOCATION_KEYS:
+                loc = acc.PANEL_DEFAULT_LOCATION
+                cage[PROP_ACCESSORY_PANEL_LOC] = loc
+            if loc in (acc.PANEL_INSIDE_LEFT, acc.PANEL_OUTSIDE_LEFT):
+                # Side wall wing: its end panel's inside face is the
+                # frame's x = 0, its front the wing depth out from the
+                # side wall, and the room it reaches into runs back to
+                # the back wall.
+                depth = LD
+                width = max(D - l_pt - wo, 0.0)
+                cage.location = (0.0, -(D - l_pt), z)
+                cage.rotation_euler = (0.0, 0.0, math.radians(90))
+            else:
+                # Back wall wing: the opening's own frame, its end
+                # panel's inside face at x = W - pt.
+                depth = RD
+                width = max(W - r_pt - wo, 0.0)
+                cage.location = (0.0, 0.0, z)
+                cage.rotation_euler = (0.0, 0.0, 0.0)
+            band = accessory_band(cage, acc_def, width)
+            want_w = acc_def.band_width(band)
+            want_d = acc_def.band_depth(band)
+            cage_d = min(want_d or depth, depth)
+            geo = GeoNodeCage(cage)
+            geo.set_input('Dim X', pt)
+            geo.set_input('Dim Y', cage_d)
+            geo.set_input('Dim Z', const.ACCESSORY_PANEL_CAGE_H)
+            if acc_def.custom:
+                geo.set_input('Dim Z', custom_accessory_height(cage))
+            # The right faces are measured from x = 0 of the frame, so
+            # the back wing passes where its panel's inside face is.
+            self._layout_panel_accessory(cage, acc_def, kids,
+                                         W - r_pt, depth, pt)
+            if acc_def.custom:
+                self._acc_custom_box(cage, kids, pt, cage_d,
+                                     custom_accessory_height(cage))
+            elif not self._fit_cage_to_model(cage, kids):
+                self._size_placeholder(kids, pt, cage_d,
+                                       const.ACCESSORY_PANEL_CAGE_H)
+            self._warn_accessory_fit(cage, acc_def, want_w, want_d,
+                                     width, depth, interior_h, z)
 
     def recalculate(self):
         cabinet_id = id(self.obj)
@@ -6651,6 +7154,12 @@ class LShelfClosetStarter(GeoNodeCage):
             self._layout_l_rods(rods, W, D, LD, RD, l_pt, r_pt, tops)
             self._warn_l_rod(W, D)
             self._layout_corner_cages(W, D, H, LD, RD, z_bottom + st, z_top)
+            opening = next((c for c in self.obj.children
+                            if c.get(TAG_CORNER_OPENING_CAGE)), None)
+            if opening is not None:
+                self._corner_accessories(
+                    opening, W, D, LD, RD, l_pt, r_pt, wo,
+                    max(z_top - (z_bottom + st), 0.001), scene_props)
 
             self.set_input('Dim X', W)
             self.set_input('Dim Y', D)
@@ -7204,6 +7713,17 @@ def default_adj_shelf_qty(opening):
     except Exception:
         interior_h = 0.0
     return max(1, min(12, int(interior_h / inch(12.0))))
+
+
+def default_drawer_qty(opening):
+    """Starting drawer count for an opening the bank fills: one drawer
+    per 6" of opening height, at least one and at most eight (4.3
+    Drawers Filled: min(int(Dim Z / 6"), 8))."""
+    try:
+        interior_h = GeoNodeCage(opening).get_input('Dim Z')
+    except Exception:
+        interior_h = 0.0
+    return max(1, min(8, int(interior_h / inch(6.0))))
 
 
 def _end_keys(starter):
@@ -8040,6 +8560,10 @@ def fit_opening_to_accessory(cage):
     acc_def = acc.get(cage.get(PROP_ACCESSORY_KEY, ''))
     got = {'width': 0.0, 'depth': 0.0, 'height': 0.0}
     if opening is None or acc_def is None:
+        return got
+    # A corner unit's opening is not a bay's: its wings are sized in
+    # its own dialog, so there is nothing here to fit.
+    if not opening.get(TAG_OPENING_CAGE):
         return got
     root = find_starter_root(opening)
     bay = opening.parent
@@ -8907,11 +9431,22 @@ def serialize_bay(bay_obj):
         # A division travels as the segment it is in and how far across
         # the bay it stands, which is what puts it back where it was in
         # a bay of the same width.
+        # A division that came from a Divide Opening carries its group
+        # along too - the number and the columns - so a pasted bay's
+        # divisions can be opened again and keep equal columns equal.
+        # Groups are numbered per bay and the target bay is cleared
+        # before the paste, so the numbers travel as they are; where
+        # each group's span runs is worked out again in the new bay.
         'divisions': sorted(
-            [int(c.get('hb_row', 0)), float(c.get('hb_x_offset', 0.0))]
-            for c in bay_obj.children
-            if c.get('hb_part_role') == PART_ROLE_DIVISION
-            and c.get(PROP_OPENING_SIDE, 'FRONT') == 'FRONT'),
+            ([int(c.get('hb_row', 0)), float(c.get('hb_x_offset', 0.0))]
+             + ([int(c[PROP_DIV_GROUP]),
+                 [int(v) for v in c.get(PROP_DIV_SHARE, ())],
+                 [float(v) for v in c.get(PROP_DIV_WIDTHS, ())]]
+                if c.get(PROP_DIV_GROUP) is not None else [])
+             for c in bay_obj.children
+             if c.get('hb_part_role') == PART_ROLE_DIVISION
+             and c.get(PROP_OPENING_SIDE, 'FRONT') == 'FRONT'),
+            key=lambda e: (e[0], e[1])),
         'openings': [serialize_opening(o) for o in _front_openings(bay_obj)],
     }
 
@@ -8940,11 +9475,17 @@ def apply_bay_data(bay_obj, data):
     divisions = data.get('divisions', ())
     if divisions:
         segments = _front_openings(bay_obj)
-        for row, x in divisions:
+        for entry in divisions:
+            row, x = entry[0], entry[1]
             target = next(
                 (o for o in segments
                  if int(o.get('hb_opening_index', 0)) == int(row)), front)
-            add_division(target, float(x))
+            div = add_division(target, float(x))
+            if div is not None and len(entry) >= 5:
+                # Its Divide Opening group (an older clipboard has
+                # none, and those land as plain divisions).
+                set_division_group([div], int(entry[2]), entry[3],
+                                   entry[4])
         recalculate_closet_starter(root)   # adopt divisions -> columns
 
     # The construction flags each carry a solve of their own; holding
@@ -9176,8 +9717,16 @@ def _cfg_double_hang_shelf(opening, root):
         _cfg_rod(above[0])
 
 
+def _config_door_swing(width):
+    """The front a configuration hangs on an opening this wide: a pair
+    over 18", otherwise one left-hand door (4.3 ops_drop_closet
+    update_prompts: Door Swing 2 over 18", else 0)."""
+    return 'DOUBLE' if width > inch(18.0) + 1e-6 else 'LEFT'
+
+
 def _cfg_doors(opening):
-    opening.hb_closet_opening.door_swing = 'DOUBLE'
+    width = GeoNodeCage(opening).get_input('Dim X') or 0.0
+    opening.hb_closet_opening.door_swing = _config_door_swing(width)
     seed_door_shelves(opening)
 
 
@@ -9294,8 +9843,8 @@ def apply_bay_config(bay_obj, config):
         splits = [ih / 2.0]
         actions = [(1, _cfg_doors)]
     elif config == 'FULL_HEIGHT_DOORS':
-        # Bay-wide double doors, no split.
-        bay_door = 'DOUBLE'
+        # Bay-wide doors, no split: a pair, or one door on a narrow bay.
+        bay_door = _config_door_swing(bp.width)
     else:
         return False
 
