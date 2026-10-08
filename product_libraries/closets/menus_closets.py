@@ -24,6 +24,12 @@ class HOME_BUILDER_MT_closet_starter_commands(bpy.types.Menu):
         layout = self.layout
         layout.operator("hb_closets.starter_prompts",
                         text="Starter Properties...", icon='WINDOW')
+        # 4.3's Change Number of Openings: 1 to 8 bays across the same
+        # overall width. Not offered on a corner unit (one bay).
+        if bpy.ops.hb_closets.change_number_of_openings.poll():
+            layout.operator("hb_closets.change_number_of_openings",
+                            text="Change Number of Openings...",
+                            icon='MOD_ARRAY')
         # Duplicate: copy-and-place. Seeds the placement modal from
         # this starter; the drop deep-copies the hierarchy so all bay
         # configs come along. F in the modal toggles fill-the-gap.
@@ -81,7 +87,8 @@ class HOME_BUILDER_MT_closet_corner_opening_commands(bpy.types.Menu):
         layout.operator("hb_closets.corner_opening_prompts",
                         text="Opening Properties...", icon='WINDOW')
         layout.separator()
-        for key, label in (('ADJ', "Adjustable Shelves"),
+        for key, label in (('NONE', "Empty"),
+                           ('ADJ', "Adjustable Shelves"),
                            ('LOCK', "Lock Shelves"),
                            ('ROD', "Hanging Rod"),
                            ('DOUBLE', "Double Hang")):
@@ -403,6 +410,8 @@ class HOME_BUILDER_MT_closet_part_commands(bpy.types.Menu):
         if (obj is not None and obj.get('hb_part_role')
                 == types_closets.PART_ROLE_ADJ_SHELF
                 and obj.get('hb_l_index') is None):
+            layout.operator("hb_closets.adj_shelf_prompts",
+                            text="Shelf Properties...", icon='WINDOW')
             if not obj.get(types_closets.PROP_SHELF_HELD):
                 op = layout.operator("hb_closets.adj_shelf_step",
                                      text="Add Shelf", icon='ADD')
@@ -415,24 +424,35 @@ class HOME_BUILDER_MT_closet_part_commands(bpy.types.Menu):
                                  icon='DECORATE_LOCKED')
             op.lock = True
             layout.separator()
-        # A fixed shelf someone could have locked can be unlocked back
-        # onto clips. The bank's cap shelf and the corner's shelves are
-        # not offered: the cap belongs to its drawers, and the corner
-        # has a lock of its own.
+        # A fixed shelf sizes the openings either side of it (4.3
+        # splitter prompts). One that was locked or dropped in can also
+        # be unlocked back onto clips - not the shelves a bay
+        # configuration builds, which 4.3 offered no unlock on either.
+        # The bank's cap shelf and the corner's shelves are not
+        # offered: the cap belongs to its drawers, and the corner has a
+        # lock of its own.
         if (obj is not None and obj.get('hb_part_role')
                 == types_closets.PART_ROLE_FIXED_SHELF
                 and obj.get('hb_l_index') is None
                 and not obj.get(types_closets.PROP_DRAWER_CAP)
                 and not obj.get('hb_preview')):
-            op = layout.operator("hb_closets.lock_shelf",
-                                 text="Unlock Shelf",
-                                 icon='DECORATE_UNLOCKED')
-            op.lock = False
+            layout.operator("hb_closets.fixed_shelf_prompts",
+                            text="Fixed Shelf Properties...",
+                            icon='WINDOW')
+            if types_closets.is_unlockable_shelf(obj):
+                op = layout.operator("hb_closets.lock_shelf",
+                                     text="Unlock Shelf",
+                                     icon='DECORATE_UNLOCKED')
+                op.lock = False
             layout.separator()
         if (obj is not None and obj.get('hb_part_role')
                 == types_closets.PART_ROLE_ROD
                 and not obj.get(types_closets.PROP_WALL_ROD)):
-            layout.operator("hb_closets.rod_prompts",
+            # A corner unit's rods belong to its opening dialog (4.3
+            # Closet_Rod_Corner_Insert prompts).
+            layout.operator("hb_closets.corner_opening_prompts"
+                            if obj.get('hb_l_index') is not None
+                            else "hb_closets.rod_prompts",
                             text="Rod Properties...", icon='WINDOW')
             drilled = bool(obj.get(types_closets.PROP_ROD_MACHINING))
             op = layout.operator(
@@ -583,8 +603,17 @@ class HOME_BUILDER_MT_closet_part_commands(bpy.types.Menu):
             offered = True
         if offered:
             layout.separator()
-        layout.operator("hb_closets.delete_part",
-                        text="Delete Part", icon='X')
+        # 4.3's Part Info comments (comment 1 overrides the stamped
+        # number; 2 and 3 are free text).
+        if role:
+            layout.operator("hb_closets.part_comments",
+                            text="Part Comments...", icon='TEXT')
+        # Offered only on a part that can be taken out; the rest belong
+        # to a setting and are changed there (4.3 had no delete on
+        # them either).
+        if bpy.ops.hb_closets.delete_part.poll():
+            layout.operator("hb_closets.delete_part",
+                            text="Delete Part", icon='X')
 
 
 classes = (

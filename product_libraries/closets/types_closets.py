@@ -236,6 +236,26 @@ PROP_ADJ_SHELF_QTY = 'hb_adj_shelf_qty'
 # machines like one, but the count does not own it: it is not dealt,
 # not re-spaced, and not taken away when the count comes down.
 PROP_SHELF_HELD = 'hb_shelf_held'
+# A fixed shelf someone locked or dropped in (4.3's Lock Shelf part).
+# Informational only: what Unlock Shelf goes by is the mark below.
+PROP_SHELF_LOCKED = 'hb_shelf_locked'
+# A fixed shelf the library builds as structure - a bay configuration's
+# splits, a double hang's mid shelf, a cubby band's cap, the shelf over
+# an insert accessory. 4.3 offered no Unlock on those. Any other fixed
+# shelf (locked or dropped in, including ones in jobs saved before the
+# mark existed) can be unlocked (is_unlockable_shelf).
+PROP_CFG_SHELF = 'hb_cfg_shelf'
+
+
+def is_unlockable_shelf(obj):
+    """Whether Unlock Shelf may put this fixed shelf back on clips."""
+    return (obj is not None
+            and obj.get('hb_part_role') == PART_ROLE_FIXED_SHELF
+            and obj.get('hb_l_index') is None
+            and not obj.get('hb_preview')
+            and not obj.get(PROP_DRAWER_CAP)
+            and not obj.get(PROP_CFG_SHELF)
+            and not obj.get(PROP_COLUMN_SHELF))
 PROP_DRAWER_QTY = 'hb_drawer_qty'
 PROP_ROLLOUT_QTY = 'hb_rollout_qty'
 PROP_ROLLOUT_HEIGHT = 'hb_rollout_height'
@@ -291,6 +311,14 @@ PROP_OPEN_HEIGHT = 'hb_open_height'
 # shelf like any other, but it is placed by the bank rather than by
 # what it was given, because only the bank knows where it stops.
 PROP_DRAWER_CAP = 'hb_drawer_cap'
+# Marks a lock shelf that stands inside one opening rather than
+# splitting the bay: the shelf a cubby band or a mid-shelf double hang
+# puts in a column of a divided segment, cut to the column the way
+# 4.3's insert cut its shelf to the opening it was dropped in. It is
+# not adopted as a splitter. PROP_CUBBY_BAND on it ('BOTTOM' / 'TOP')
+# says the opening's cubby grid stands in the band it caps.
+PROP_COLUMN_SHELF = 'hb_column_shelf'
+PROP_CUBBY_BAND = 'hb_cubby_band'
 # Marks a front that is cut with its length running UP it rather than
 # across. Length is the grain axis - every nester places a grained part
 # unrotated, so a part cut across its length reads its grain sideways -
@@ -688,7 +716,9 @@ def bottom_cleat_span(layout, first, last, pt):
     x1 = b['x'] + b['width']
     if under_panel(right, after):
         x1 = max(x1, right['x'] + pt)
-    return x0, x1 - x0, a['z0']
+    # Under the bottom shelf: the bay's foot for a hanging bay, up on
+    # the toe kick for a floor one.
+    return x0, x1 - x0, a['z0'] + a.get('bottom_z', 0.0)
 
 
 def _place_bottom_cleat(cleat, span, scene_props):
@@ -704,17 +734,20 @@ def _place_bottom_cleat(cleat, span, scene_props):
 
 
 def bay_cleat_bays(layout, bay_i):
-    """(first, last) for a support cleat under hanging bay `bay_i`: it
-    and its neighbours either side hung at the same height. None for a
-    floor bay - it stands on the floor."""
+    """(first, last) for a support cleat under bay `bay_i`, floor or
+    hanging: it and its neighbours either side whose openings stand at
+    the same height and are as tall (4.3 apply_cleat_as_bottom_support:
+    neighbouring main openings within 0.1" in Dim Z and location)."""
     bays = layout['bays']
     b = bays[bay_i]
-    if b['floor']:
-        return None
+    tol = inch(0.1)
 
     def same(k):
         o = bays[k]
-        return not o['floor'] and abs(o['z0'] - b['z0']) < 1e-3
+        return (bool(o['floor']) == bool(b['floor'])
+                and abs((o['z0'] + o['interior_z'])
+                        - (b['z0'] + b['interior_z'])) < tol
+                and abs(o['interior_h'] - b['interior_h']) < tol)
 
     first = last = bay_i
     while first > 0 and same(first - 1):
@@ -726,18 +759,20 @@ def bay_cleat_bays(layout, bay_i):
 
 def bay_cleat_target(root, bay_obj):
     """(first, last, layout) for a support cleat dropped under
-    `bay_obj`, or None when it can't take one: a floor bay, the run's
-    Bottom Cleat already runs under it, or another support cleat
-    already covers one of the bays."""
+    `bay_obj`, or None when it can't take one: the run's Bottom Cleat
+    already runs under it, or another support cleat already covers one
+    of the bays."""
     if root is None or bay_obj is None:
         return None
     sp = root.hb_closet_starter
-    if getattr(sp, 'bottom_cleat', False):
-        return None
     bays = ClosetStarter(root)._sorted_bays()
     if bay_obj not in bays:
         return None
     layout = solve_starter_layout(root)
+    # The run's Bottom Cleat runs under its hanging bays only.
+    if (getattr(sp, 'bottom_cleat', False)
+            and not layout['bays'][bays.index(bay_obj)]['floor']):
+        return None
     rng = bay_cleat_bays(layout, bays.index(bay_obj))
     if rng is None:
         return None
@@ -912,6 +947,28 @@ def _hang_rail_cover_z(rail_z, shelf_thickness):
     return (rail_z + const.HANG_RAIL_DROP - shelf_thickness
             - const.HANG_RAIL_COVER_TOP_OFFSET
             - const.HANG_RAIL_COVER_WIDTH)
+
+
+def _one_hang_rail_height(obj, sp, low_top):
+    """The run's one rail height when Use One Hang Rail Height is on.
+
+    4.3 (update_one_hang_rail_height) put the rail at the lowest opening
+    top less the rail drop every time its dialog changed. Here that
+    figure is taken whenever the lowest top moves (a bay or run height
+    changed) or no height is set yet. A height typed into the dialog
+    holds for that dialog session ('hb_rail_typed', cleared when the
+    run's dialogs open), and a typed height also holds while no height
+    changes - so a rail set by hand is not thrown away by an unrelated
+    edit. The figure is written to storage directly so it is not taken
+    for a typed one."""
+    auto = low_top - const.HANG_RAIL_DROP
+    prev = obj.get('hb_rail_low_top')
+    moved = prev is not None and abs(float(prev) - low_top) > 1e-6
+    if (sp.hang_rail_height_location <= 0.0
+            or (moved and not obj.get('hb_rail_typed'))):
+        sp['hang_rail_height_location'] = auto
+    obj['hb_rail_low_top'] = low_top
+    return sp.hang_rail_height_location
 
 
 # Every surface and edge slot on a cutpart. A purchased metal rail is one
@@ -1245,9 +1302,11 @@ def add_wall_rod(wall_obj, preview=False):
     return rod.obj
 
 
-def layout_wall_rod(rod_obj):
+def layout_wall_rod(rod_obj, allow_hangers=True):
     """Profile, finish and hangers for a loose wall rod, from the room's
-    rod options the way an opening's rod takes them."""
+    rod options the way an opening's rod takes them. A corner unit's
+    rods take theirs the same way, leaving the hangers off when the
+    unit is set to Remove Hangers (allow_hangers False)."""
     rod_geo = GeoNodeObject(rod_obj)
     props = bpy.context.scene.hb_closets
     rod_geo.set_input(
@@ -1259,7 +1318,8 @@ def layout_wall_rod(rod_obj):
         if rod_mat is not None:
             rod_geo.set_input('Material', rod_mat)
         pulls_closets.reconcile_rod_hangers(
-            rod_obj, float(rod_geo.get_input('Dim X') or 0.0))
+            rod_obj, float(rod_geo.get_input('Dim X') or 0.0),
+            allow=allow_hangers)
     except Exception:
         pass
 
@@ -2385,7 +2445,8 @@ class ClosetStarter(GeoNodeCage):
         strips, clr = room_baseboard()
         want = [] if (skip or isinstance(self, IslandClosetStarter)
                       or not getattr(bpy.context.scene.hb_closets,
-                                     'notch_panels_for_base_board', True))             else [(h - z + clr, d + clr) for h, d in strips if h > z]
+                                     'notch_panels_for_base_board', True)) \
+            else [(h - z + clr, d + clr) for h, d in strips if h > z]
         for i, name in enumerate(self._BASEBOARD_NOTCHES):
             mod = child.modifiers.get(name)
             if i >= len(want):
@@ -2577,15 +2638,13 @@ class ClosetStarter(GeoNodeCage):
         # Where each bay's rail hangs, in run space, and which junctions
         # are doubled - what decides whether a rail end shares its claw
         # with the next bay's (see the covers below).
-        # One rail height for the run: what was typed, or - until a
-        # height is typed - the prior library's, the lowest bay top less
-        # the rail drop (4.3 update_one_hang_rail_height), so the rails
-        # never fall to the floor the moment the option is ticked.
-        if (sp.use_one_hang_rail_height and layout['bays']
-                and sp.hang_rail_height_location <= 0.0):
-            sp.hang_rail_height_location = (
-                min(b['z0'] + b['height'] for b in layout['bays'])
-                - const.HANG_RAIL_DROP)
+        # One rail height for the run: the prior library's, the lowest
+        # bay top less the rail drop (4.3 update_one_hang_rail_height),
+        # followed as heights change unless typed (_one_hang_rail_height).
+        if sp.use_one_hang_rail_height and layout['bays']:
+            _one_hang_rail_height(
+                self.obj, sp,
+                min(b['z0'] + b['height'] for b in layout['bays']))
         rail_z = [sp.hang_rail_height_location
                   if sp.use_one_hang_rail_height
                   else b['z0'] + b['height'] - const.HANG_RAIL_DROP
@@ -2988,6 +3047,7 @@ class ClosetStarter(GeoNodeCage):
         self._reconcile_rollouts(opening)
         self._reconcile_captured_back(opening)
         self._reconcile_cubbies(opening)
+        self._reconcile_column_shelves(opening)
 
         lo, ro, to, bo = front_overlays(scene_props, opening)
         v_gap = scene_props.vertical_gap
@@ -3039,6 +3099,13 @@ class ClosetStarter(GeoNodeCage):
                 part.set_input('Length', width)
                 part.set_input('Width', shelf_room)
                 part.set_input('Thickness', st)
+                _bay = (find_bay_cage(opening)
+                        if child.get(PROP_COLUMN_SHELF) else None)
+                if _bay is not None:
+                    # Its cleat hangs under it across the column, as
+                    # a bay shelf's does across the bay.
+                    self._lay_out_shelf_cleat(
+                        child, _bay, {'width': width}, st)
             elif role == PART_ROLE_CLEAT:
                 # A cleat dropped into an opening spans it at the back
                 # the way a bay's cleat spans the bay, and rides the
@@ -3587,21 +3654,17 @@ class ClosetStarter(GeoNodeCage):
         if rollouts:
             rollouts.sort(key=lambda o: o.get('hb_rollout_index', 0))
             from . import drawer_boxes_closets as dbx
-            # A tray is a wood box on slides, which is what the prior
-            # library built every one of them out of, so it is built
-            # to the standard sizes a wood box is bought in. The
-            # Rollout Height the opening is given is the room a tray
-            # is allotted in the stack; the tray steps down to the
-            # largest standard height that room takes.
-            # A tray is a box only, no front, the way the prior library
-            # built it: held in from each side by the clearance the
-            # slides want. The depth steps down the same way, from the
-            # depth of the opening. The tray is held at the face it
-            # serves, so what it gives up comes off the back.
-            box_x = const.ROLLOUT_SLIDE_GAP
-            box_w = max(width - 2 * const.ROLLOUT_SLIDE_GAP, inch(2.0))
-            _bd = dbx.wood_depth(depth)
-            box_d = max(depth if _bd is None else _bd, inch(2.0))
+            # A tray is sized from its room the way 4.3's Pullout_Tray
+            # was, not stepped to a standard wood box: each side held
+            # in by the overlay and the slide gap, the sides standing
+            # the bottom gap off the floor of the room and the top gap
+            # under its top, and the box running the full depth of the
+            # opening. A 4" tray in a 24" x 14" opening comes to
+            # 22.72 x 3.0 x 14.
+            _in = const.ROLLOUT_SIDE_OVERLAY + const.ROLLOUT_SLIDE_GAP
+            box_x = _in
+            box_w = max(width - 2 * _in, inch(2.0))
+            box_d = max(depth, inch(2.0))
             y_box = (-box_d if side == 'BACK' else -depth)
             n = len(rollouts)
             stack_h = float(opening.hb_closet_opening.rollout_height)
@@ -3637,19 +3700,17 @@ class ClosetStarter(GeoNodeCage):
                                  max(interior_h - h, 0.0))
                 else:
                     z_tray = z
-                # A tray steps down to the largest standard wood box
-                # the room the stack set aside for it takes, and
-                # stands off the floor of that room the way a wood box
-                # stands off the floor of a drawer opening. Where the
-                # room is smaller than the smallest standard the tray
-                # keeps the parametric height so there is still one
-                # that fits, and the warning gives the reason in the
-                # words the prior library used for it.
-                bh = dbx.wood_height(h)
-                bh = h if bh is None else bh
-                lift = min(dbx.floor_gap('WOOD'), max(0.0, h - bh))
+                # The sides are the room less the gap under them and
+                # the gap over them (4.3: height - b_gap - t_gap).
+                lift = const.ROLLOUT_BOTTOM_GAP
+                bh = max(h - lift - const.ROLLOUT_TOP_GAP, inch(0.5))
                 box['hb_drawer_box_type'] = 'WOOD'
                 box['hb_drawer_box_size'] = 'WOOD'
+                # The room the tray stands in is its opening, which is
+                # what the Microvellum drawer row reads a box's
+                # standard height from - the box itself is no longer
+                # a standard height to read back.
+                box[PROP_OPEN_HEIGHT] = h
                 _stamp_warning(box, dbx.box_warning('WOOD', h, depth,
                                                     depth))
                 _set_part_hidden(box, False)
@@ -3678,6 +3739,20 @@ class ClosetStarter(GeoNodeCage):
         # library had it: a grid can be divided in something other than
         # what its shelves are made of.
         dt = scene_props.divider_thickness
+        # A band capped by a shelf standing in the column holds the
+        # grid in the band rather than the whole opening (4.3 Cubbies:
+        # the grid takes Cubby Height under or over its lock shelf).
+        g_lo, g_h = 0.0, interior_h
+        _cap = next((c for c in children
+                     if c.get(PROP_COLUMN_SHELF) and c.get(PROP_CUBBY_BAND)),
+                    None)
+        if _cap is not None:
+            _cz = float(_cap.location.z)
+            if _cap.get(PROP_CUBBY_BAND) == 'TOP':
+                g_lo = min(_cz + st, interior_h)
+                g_h = interior_h - g_lo
+            else:
+                g_h = _cz
         divs = groups.get(PART_ROLE_CUBBY_DIVISION, [])
         if divs:
             divs.sort(key=lambda o: o.get('hb_cubby_index', 0))
@@ -3685,18 +3760,18 @@ class ClosetStarter(GeoNodeCage):
             cell_w = (width - len(divs) * dt) / cols
             for j, child in enumerate(divs):
                 x = cell_w * (j + 1) + dt * j
-                child.location = (x, 0.0, 0.0)
+                child.location = (x, 0.0, g_lo)
                 part = GeoNodeCutpart(child)
-                part.set_input('Length', interior_h)
+                part.set_input('Length', max(g_h, 0.001))
                 part.set_input('Width', cub_depth)
                 part.set_input('Thickness', dt)
         cub_shelves = groups.get(PART_ROLE_CUBBY_SHELF, [])
         if cub_shelves:
             cub_shelves.sort(key=lambda o: o.get('hb_cubby_index', 0))
             rows = len(cub_shelves) + 1
-            cell_h = (interior_h - len(cub_shelves) * st) / rows
+            cell_h = (g_h - len(cub_shelves) * st) / rows
             for k, child in enumerate(cub_shelves):
-                z = cell_h * (k + 1) + st * k
+                z = g_lo + cell_h * (k + 1) + st * k
                 child.location = (0.0, 0.0, z)
                 part = GeoNodeCutpart(child)
                 part.set_input('Length', width)
@@ -4993,7 +5068,17 @@ class ClosetStarter(GeoNodeCage):
             # already builds for a hamper front, and the same motion
             # the prior library gave this front.
             front['hb_hinge'] = 'BOTTOM'
-            _apply_front_style(front, is_drawer=True)
+            # Always a slab, whatever style the room or the front was
+            # given: 4.3's Ironing_Board_Front took no door style.
+            # Stamped, so a report reading the front's style reads slab
+            # rather than falling back to the room's.
+            front[PROP_FRONT_STYLE] = 'SLAB'
+            try:
+                from . import fronts_closets
+                fronts_closets.apply_style_to_front(front, True,
+                                                    style='SLAB')
+            except Exception:
+                pass
             # The pull follows the OPENING's settings (no pulls, 
             # location, doubles), not the cage's.
             self._position_front_pull(front, 'drawer', side,
@@ -5398,6 +5483,29 @@ class ClosetStarter(GeoNodeCage):
                         'CPM_CORNERNOTCH', name)
         return back
 
+    def _reconcile_column_shelves(self, opening):
+        """A shelf standing in a column (PROP_COLUMN_SHELF) belongs to
+        what put it there, and goes when the opening leaves it: a
+        cubby band's cap once the opening holds no grid, a double
+        hang's shelf once the opening takes another interior or is
+        left with fewer than its two rods. Otherwise whatever replaced
+        them would be laid out through the shelf."""
+        op = opening.hb_closet_opening
+        has_grid = int(op.cubby_cols) > 1 or int(op.cubby_rows) > 1
+        other_fill = bool(op.adj_shelf_qty or op.drawer_qty
+                          or op.rollout_qty or op.slant_qty or has_grid)
+        rods = sum(1 for c in opening.children
+                   if c.get('hb_part_role') == PART_ROLE_ROD)
+        for c in list(opening.children):
+            if not c.get(PROP_COLUMN_SHELF):
+                continue
+            if c.get(PROP_CUBBY_BAND):
+                gone = not has_grid
+            else:
+                gone = other_fill or rods < 2
+            if gone:
+                _remove_part_tree(c)
+
     def _reconcile_cubbies(self, opening):
         cols = max(1, int(opening.hb_closet_opening.cubby_cols))
         rows = max(1, int(opening.hb_closet_opening.cubby_rows))
@@ -5497,14 +5605,16 @@ class ClosetStarter(GeoNodeCage):
             new_shelves = [c for c in opening.children
                            if c.get('hb_part_role') == PART_ROLE_FIXED_SHELF
                            and not c.get('hb_preview')
-                           and not c.get(PROP_DRAWER_CAP)]
+                           and not c.get(PROP_DRAWER_CAP)
+                           and not c.get(PROP_COLUMN_SHELF)]
             if len(new_shelves) == 1:
                 self._carry_shelves_above(opening, new_shelves[0], carry)
             for child in list(opening.children):
                 # The shelf a drawer bank carries on top of itself is
                 # part of the bank, not a shelf someone put in to split
-                # the bay. It stays where it is.
-                if child.get(PROP_DRAWER_CAP):
+                # the bay. It stays where it is, and so does the shelf
+                # standing in one column of a divided segment.
+                if child.get(PROP_DRAWER_CAP) or child.get(PROP_COLUMN_SHELF):
                     continue
                 if (child.get('hb_part_role') == PART_ROLE_FIXED_SHELF
                         and not child.get('hb_preview')):
@@ -5753,7 +5863,9 @@ class ClosetStarter(GeoNodeCage):
             if not entry.uid or i is None or j is None:
                 continue
             i, j = min(i, j), max(i, j)
-            if any(b['floor'] for b in bays[i:j + 1]):
+            # One cleat runs under bays standing the same way; a span
+            # that has come to mix floor and hanging bays builds none.
+            if len({bool(b['floor']) for b in bays[i:j + 1]}) > 1:
                 continue
             cleat = have.get(entry.uid)
             if cleat is None:
@@ -6207,7 +6319,8 @@ class ClosetStarter(GeoNodeCage):
         panel index >= k+1 and bay index >= k.
         """
         bays = self._sorted_bays()
-        if not bays:
+        # A run holds at most MAX_BAY_QTY openings (4.3's eight).
+        if not bays or len(bays) >= const.MAX_BAY_QTY:
             return None
         anchor_index = max(0, min(anchor_index, len(bays) - 1))
         anchor_bay = bays[anchor_index]
@@ -6419,7 +6532,11 @@ class LShelfClosetStarter(GeoNodeCage):
             # 4.3's corner wings took the tall panel depth.
             sp.l_left_depth = float(scene_props.default_tall_panel_depth)
             sp.l_right_depth = float(scene_props.default_tall_panel_depth)
-            sp.l_shelf_qty = const.L_SHELF_QTY
+            # A new corner is dropped empty - its top and bottom only,
+            # as 4.3's corner was until an insert went in. Shelves put
+            # in it deal their count by height then (default_l_shelf_qty).
+            sp.l_interior = 'NONE'
+            sp.l_shelf_qty = 0
             sp.l_back_width = float(const.L_BACK_STRIP_WIDTH)
             sp.l_flip_partition = False
             # Construction default with no prompt (wall offset).
@@ -6518,7 +6635,7 @@ class LShelfClosetStarter(GeoNodeCage):
         carcass, not shelves someone asked for - and the double hang
         adds the one between the rods, which is always fixed."""
         sp = self.obj.hb_closet_starter
-        if sp.l_interior == 'ROD':
+        if sp.l_interior in ('ROD', 'NONE'):
             return 2
         if sp.l_interior == 'DOUBLE':
             return 3
@@ -6609,7 +6726,14 @@ class LShelfClosetStarter(GeoNodeCage):
         sp = self.obj.hb_closet_starter
         on_left = bool(sp.l_rod_on_left)
         wo = self.obj.get('hb_l_wall_offset', const.L_WALL_OFFSET)
-        out = wo + const.L_ROD_FROM_WALL
+        # Out from the wall behind the rod's wing (Rod Dim From Rear),
+        # or back from the front of that wing (Dim From Front). The
+        # wings are measured from the walls.
+        if sp.l_rod_set_from_front:
+            wing = LD if on_left else RD
+            out = max(wing - sp.l_rod_from_front, wo)
+        else:
+            out = wo + sp.l_rod_from_rear
         gap = wo + const.L_ROD_END_GAP
         for rod, z_top in zip(rods, z_tops):
             geo = GeoNodeObject(rod)
@@ -6625,6 +6749,9 @@ class LShelfClosetStarter(GeoNodeCage):
                 rod.location = (gap, -out, z_top - const.ROD_TOP_OFFSET)
             geo.set_input('Dim X', length)
             rod['hb_l_on_left'] = 1 if on_left else 0
+            # Profile, finish and hangers as any other rod takes them
+            # (4.3's corner rod hung three hangers, Remove Hangers off).
+            layout_wall_rod(rod, allow_hangers=not sp.l_remove_hangers)
 
     def _warn_l_rod(self, W, D):
         """A rod needs the wing it does not run along to be deep
@@ -6920,9 +7047,8 @@ class LShelfClosetStarter(GeoNodeCage):
             # partition's wall starts clear of it. Each rail is
             # lengthened at its outer end only - the two meet at the
             # corner, so there is nowhere for the inner ends to go.
-            if (sp.use_one_hang_rail_height
-                    and sp.hang_rail_height_location <= 0.0):
-                sp.hang_rail_height_location = H - const.HANG_RAIL_DROP
+            if sp.use_one_hang_rail_height:
+                _one_hang_rail_height(self.obj, sp, H)
             rail_z = (sp.hang_rail_height_location
                       if sp.use_one_hang_rail_height
                       else H - const.HANG_RAIL_DROP)
@@ -7380,7 +7506,9 @@ def find_bay_cage(obj):
     return None
 
 
-DOOR_OPEN_ANGLE = math.radians(110.0)
+# How far a door (or lift-up) swings fully open - 4.3's Door
+# Rotation prompt, 120 degrees.
+DOOR_OPEN_ANGLE = math.radians(120.0)
 # A tilt-out hamper front pivots at its bottom edge and tilts out this
 # far when fully open (angle from the prior library).
 HAMPER_TILT_ANGLE = math.radians(50.0)
@@ -7733,12 +7861,24 @@ def _stash_drawer_closed(front, box, dist, side):
 def default_adj_shelf_qty(opening):
     """Sensible starting shelf count for an opening: aim for ~one shelf
     per 12" of interior height (the prior library's default spacing),
-    clamped to at least one."""
+    at least one and otherwise uncapped, as 4.3 dealt them - more than
+    the warning allows is said, not prevented."""
     try:
         interior_h = GeoNodeCage(opening).get_input('Dim Z')
     except Exception:
         interior_h = 0.0
-    return max(1, min(12, int(interior_h / inch(12.0))))
+    return max(1, int(interior_h / inch(12.0)))
+
+
+def default_l_shelf_qty(root):
+    """Shelves for a corner unit given shelves: one per 12" of the
+    clear opening between its bottom and top, at least one - 4.3's
+    L shelves insert, max(1, int(Dim Z / 12")), on drop."""
+    sp = root.hb_closet_starter
+    st = run_sizes(root).shelf_thickness
+    kick = sp.toe_kick_height if sp.closet_type != 'HANGING' else 0.0
+    clear = float(sp.height) - kick - 2.0 * st
+    return max(1, min(12, int(clear / inch(12.0))))
 
 
 def default_drawer_qty(opening):
@@ -8311,21 +8451,46 @@ def part_marker_color(obj):
     both read off the viewport rather than out of a prompt.
     """
     role = obj.get('hb_part_role')
-    if role in LOCK_SHELF_ROLES:
-        return const.LOCK_SHELF_COLOR
-    if role == PART_ROLE_PANEL and obj.get('hb_finished_end'):
-        return const.LOCK_SHELF_COLOR
+    if role in LOCK_SHELF_ROLES or (role == PART_ROLE_PANEL
+                                    and obj.get('hb_finished_end')):
+        return lock_shelf_color(obj)
     return None
+
+
+def lock_shelf_color(obj=None):
+    """The room's lock-shelf marking colour (4.3 Lock Shelf Color), or
+    the library default where there are no closet settings. Read from
+    the scene the part stands in - each room is a scene with settings
+    of its own - and from the current scene for anything not yet in
+    one (a placement preview)."""
+    scene = None
+    if obj is not None:
+        try:
+            users = obj.users_scene
+            scene = users[0] if users else None
+        except Exception:
+            scene = None
+    try:
+        scene = scene or bpy.context.scene
+        return tuple(scene.hb_closets.lock_shelf_color)
+    except Exception:
+        return const.LOCK_SHELF_COLOR
 
 
 def mark_parts(root):
     """Paint a run's parts after it has been solved, so a shelf that
     has just been fixed or an end that has just been finished says so
     without waiting for anything else to happen."""
+    # One room, one colour: read it off the run's scene once rather
+    # than per part.
+    marked = lock_shelf_color(root)
     for obj in root.children_recursive:
         if obj.get('hb_part_role') not in _MARKABLE_ROLES:
             continue
-        obj.color = part_marker_color(obj) or const.PLAIN_PART_COLOR
+        role = obj.get('hb_part_role')
+        is_marked = role in LOCK_SHELF_ROLES or (
+            role == PART_ROLE_PANEL and obj.get('hb_finished_end'))
+        obj.color = marked if is_marked else const.PLAIN_PART_COLOR
 
 
 # The library-built parts whose options live in one of the closet
@@ -8645,7 +8810,7 @@ def _cap_insert(cage, opening, root, st):
         return
     if interior_h - cap_z - st < _INSERT_MIN_ABOVE:
         return
-    add_fixed_shelf(opening, cap_z)
+    add_fixed_shelf(opening, cap_z)[PROP_CFG_SHELF] = 1
     if root is not None:
         _recalculate_now(root)
     bpy.context.view_layer.update()
@@ -8711,7 +8876,7 @@ def seat_insert_on_shelf(cage, z):
     want_floor = opening.matrix_world.translation.z + z + st
     above = _opening_at_height(bay, want_floor, st)
     if above is None:
-        add_fixed_shelf(opening, z)
+        add_fixed_shelf(opening, z)[PROP_CFG_SHELF] = 1
         # The opening above a new shelf is made by the recalc that
         # adopts the shelf as a splitter, so that recalc has to have
         # run before there is anywhere to put the accessory. Held-back
@@ -9507,6 +9672,14 @@ def serialize_bay(bay_obj):
             and c.get('hb_shelf_cleat')
             and not c.get('hb_preview')
             and c.get(PROP_OPENING_SIDE, 'FRONT') == 'FRONT'),
+        # Which are structure (PROP_CFG_SHELF) rather than locked by
+        # hand, so a pasted bay offers Unlock on the same shelves.
+        'cfg_shelves': sorted(
+            c.get('hb_z_offset', 0.0) for c in bay_obj.children
+            if c.get('hb_part_role') == PART_ROLE_FIXED_SHELF
+            and c.get(PROP_CFG_SHELF)
+            and not c.get('hb_preview')
+            and c.get(PROP_OPENING_SIDE, 'FRONT') == 'FRONT'),
         # A division travels as the segment it is in and how far across
         # the bay it stands, which is what puts it back where it was in
         # a bay of the same width.
@@ -9545,8 +9718,11 @@ def apply_bay_data(bay_obj, data):
     if front is None:
         return False
     cleats = list(data.get('shelf_cleats', ()))
+    cfg = list(data.get('cfg_shelves', ()))
     for z in data.get('shelves', ()):
-        add_fixed_shelf(front, z, cleat=z in cleats)
+        shelf = add_fixed_shelf(front, z, cleat=z in cleats)
+        if z in cfg:
+            shelf[PROP_CFG_SHELF] = 1
     recalculate_closet_starter(root)   # adopt shelves -> segments
 
     # Divisions go in against the segments the shelves have just made,
@@ -9758,29 +9934,44 @@ def _cfg_double_hang(opening):
             const.DOUBLE_HANG_TOP_OPENING + const.ROD_TOP_OFFSET)
 
 
-# Least room under the double hang's shelf that still makes a hang.
-_DOUBLE_HANG_MIN_LOWER = inch(24.0)
+def add_column_shelf(opening, z_offset, anchor_top=False, cleat=False):
+    """A lock shelf standing inside one opening, cut to it, that does
+    not split the bay (PROP_COLUMN_SHELF) - what a column of a divided
+    segment takes where a whole segment takes a splitting shelf."""
+    shelf = add_fixed_shelf(opening, z_offset, anchor_top=anchor_top,
+                            cleat=cleat)
+    shelf[PROP_COLUMN_SHELF] = 1
+    shelf[PROP_CFG_SHELF] = 1
+    return shelf
 
 
 def _cfg_double_hang_shelf(opening, root):
-    """Double hang in one opening, built the way the bay's Double Hang
-    is: a fixed shelf (with its cleat) where the upper hang's room
-    finishes, a rod under it in the opening above and a rod under the
-    shelf in the opening below.
+    """Double hang in one opening, built the way 4.3's Hang Dbl Mid
+    Shelf was: a lock shelf (with its cleat) at the Top Opening Height
+    down from the top (height - 40.8248" - st), a rod under the top of
+    the opening and a rod under the shelf.
 
-    A column of a divided segment can't take the shelf - it runs the
-    width of the bay and would cut the columns beside it in two - and
-    an opening too short to leave both hangs their room (the upper
-    hang's top opening, and at least a short hang under the shelf) has
-    nowhere to put it; both get the two rods with nothing between
-    them."""
+    A whole segment is split by the shelf, so each hang is an opening
+    of its own. A column of a divided segment takes the shelf cut to
+    the column instead (a shelf running the bay would cut the columns
+    beside it in two), with both rods in the column. Only an opening
+    with no room under the shelf at all gets the two rods alone."""
     seg_h = _cage_dim_z(opening)
     st = run_sizes(root).shelf_thickness
     z = seg_h - const.DOUBLE_HANG_TOP_OPENING - st
-    if segment_columns(opening) > 1 or z < _DOUBLE_HANG_MIN_LOWER:
+    if z <= 0.0:
         _cfg_double_hang(opening)
         return
-    add_fixed_shelf(opening, z, cleat=True)
+    if segment_columns(opening) > 1:
+        # Held from the top, as 4.3's shelf was, so a taller or
+        # shorter column keeps the upper hang's room.
+        add_column_shelf(opening, const.DOUBLE_HANG_TOP_OPENING + st,
+                         anchor_top=True, cleat=True)
+        add_rod(opening, const.ROD_TOP_OFFSET)
+        add_rod(opening, const.DOUBLE_HANG_TOP_OPENING + st
+                + const.ROD_TOP_OFFSET)
+        return
+    add_fixed_shelf(opening, z, cleat=True)[PROP_CFG_SHELF] = 1
     recalculate_closet_starter(root)   # adopt the shelf -> two segments
     # The split leaves this opening as the lower segment; the upper one
     # is the opening on the next row up in the same side.
@@ -9794,6 +9985,192 @@ def _cfg_double_hang_shelf(opening, root):
     _cfg_rod(opening)
     if len(above) == 1:
         _cfg_rod(above[0])
+
+
+def apply_cubbies(opening, cols, rows, setback, placement='BOTTOM',
+                  band=const.CUBBY_HEIGHT):
+    """Put a cubby grid in an opening the way 4.3's Cubbies insert
+    did: in a band of `band` at the bottom or top capped by a lock
+    shelf, the rest of the opening left open - or the whole opening
+    for 'FILL'. Returns the opening the grid went into, or None.
+
+    A whole segment is split by the capping shelf, so the band is an
+    opening of its own. A column of a divided segment takes the shelf
+    cut to the column instead and holds the grid in the band under or
+    over it. Only an opening with no room for the band and its shelf
+    takes the grid whole."""
+    root = find_starter_root(opening)
+    if root is None:
+        return None
+    values = {'cubby_cols': int(cols), 'cubby_rows': int(rows),
+              'cubby_setback': float(setback)}
+    target = opening
+    bay = find_bay_cage(opening)
+    seg_h = _cage_dim_z(opening)
+    st = run_sizes(opening).shelf_thickness
+    band = float(band)
+    if (placement in ('BOTTOM', 'TOP') and bay is not None
+            and band + st < seg_h - 0.001):
+        if segment_columns(opening) > 1:
+            # One band at a time: a band asked for again replaces it.
+            for old in [c for c in opening.children
+                        if c.get(PROP_COLUMN_SHELF)
+                        and c.get(PROP_CUBBY_BAND)]:
+                _remove_part_tree(old)
+            if placement == 'BOTTOM':
+                cap = add_column_shelf(opening, band)
+            else:
+                cap = add_column_shelf(opening, band + st, anchor_top=True)
+            cap[PROP_CUBBY_BAND] = placement
+        else:
+            # The shelf caps the band: up from the bottom of the
+            # opening for a bottom band, down from its top for a top
+            # one. It splits the opening the way a shelf dropped in by
+            # hand does, so the leftover is an opening like any other.
+            side = opening.get(PROP_OPENING_SIDE, 'FRONT')
+            row = int(opening.get('hb_opening_index', 0))
+            z = band if placement == 'BOTTOM' else seg_h - band - st
+            cap = add_fixed_shelf(opening, z)
+            # Marked so the band can be found and resized later.
+            cap[PROP_CUBBY_BAND] = placement
+            cap[PROP_CFG_SHELF] = 1
+            recalculate_closet_starter(root)
+            # A split leaves the opening standing as the lower of the
+            # two segments - so a bottom band is the opening itself
+            # and a top band is the new segment above it, read from
+            # the row rather than counted across the bay.
+            if placement == 'TOP':
+                above = [c for c in bay.children
+                         if c.get(TAG_OPENING_CAGE)
+                         and c.get(PROP_OPENING_SIDE, 'FRONT') == side
+                         and int(c.get('hb_opening_index', -1)) == row + 1]
+                if len(above) != 1:
+                    return None
+                target = above[0]
+        values['cubby_placement'] = placement
+        values['cubby_height'] = band
+    else:
+        values['cubby_placement'] = 'FILL'
+    for name, value in values.items():
+        setattr(target.hb_closet_opening, name, value)
+    clear_other_interiors(target, 'CUBBIES')
+    recalculate_closet_starter(root)
+    return target
+
+
+def _segment_at(bay, side, z):
+    """The whole-width opening segment on one side of a bay covering
+    bay-interior height z, or None."""
+    for c in bay.children:
+        if (not c.get(TAG_OPENING_CAGE)
+                or c.get(PROP_OPENING_SIDE, 'FRONT') != side):
+            continue
+        bottom = float(c.get('hb_seg_bottom', 0.0))
+        if bottom - 1e-6 <= z <= bottom + _cage_dim_z(c) + 1e-6:
+            return c
+    return None
+
+
+def cubby_band_cap(opening):
+    """The shelf capping a cubby band put in an opening, or None: the
+    column shelf in a divided segment, or the splitting shelf over a
+    bottom band / under a top band in a whole one."""
+    placement = opening.hb_closet_opening.cubby_placement
+    if placement not in ('BOTTOM', 'TOP'):
+        return None
+    for c in opening.children:
+        if c.get(PROP_COLUMN_SHELF) and c.get(PROP_CUBBY_BAND):
+            return c
+    bay = find_bay_cage(opening)
+    if bay is None:
+        return None
+    side = opening.get(PROP_OPENING_SIDE, 'FRONT')
+    st = run_sizes(opening).shelf_thickness
+    bottom = float(opening.get('hb_seg_bottom', 0.0))
+    want = (bottom + _cage_dim_z(opening) if placement == 'BOTTOM'
+            else bottom - st)
+    for c in bay.children:
+        if (c.get('hb_part_role') == PART_ROLE_FIXED_SHELF
+                and c.get(PROP_CUBBY_BAND)
+                and c.get(PROP_OPENING_SIDE, 'FRONT') == side
+                and abs(float(c.get('hb_z_offset', 0.0)) - want) < 1e-3):
+            return c
+    return None
+
+
+def edit_cubbies(opening, cols, rows, setback, placement='BOTTOM',
+                 band=const.CUBBY_HEIGHT):
+    """Change a cubby grid already in an opening, keeping 4.3's
+    Placement and Cubby Height editable after the grid went in.
+
+    A band kept where it is but asked for a new height moves its
+    capping shelf, so what stands in the rest of the opening is left
+    alone. A band asked to move (bottom to top, or to fill) takes its
+    capping shelf out - the two openings merge, keeping their contents
+    - and the grid goes in again the new way. An opening with no band
+    is handled as a fresh grid (apply_cubbies)."""
+    op = opening.hb_closet_opening
+    has_grid = op.cubby_cols > 1 or op.cubby_rows > 1
+    cap = cubby_band_cap(opening) if has_grid else None
+    if cap is None:
+        return apply_cubbies(opening, cols, rows, setback, placement, band)
+    root = find_starter_root(opening)
+    if root is None:
+        return None
+    current = op.cubby_placement
+    st = run_sizes(opening).shelf_thickness
+    band = float(band)
+    if placement == current:
+        if cap.get(PROP_COLUMN_SHELF):
+            seg_h = _cage_dim_z(opening)
+            band = min(max(band, inch(1.0)), seg_h - st - inch(1.0))
+            cap['hb_z_offset'] = float(
+                band if placement == 'BOTTOM' else band + st)
+        else:
+            bay = find_bay_cage(opening)
+            side = opening.get(PROP_OPENING_SIDE, 'FRONT')
+            bottom = float(opening.get('hb_seg_bottom', 0.0))
+            top = bottom + _cage_dim_z(opening)
+            cap_z = float(cap.get('hb_z_offset', 0.0))
+            if placement == 'BOTTOM':
+                other = _segment_at(bay, side, cap_z + st + 1e-4)
+                hi = (float(other.get('hb_seg_bottom', 0.0))
+                      + _cage_dim_z(other)) if other else cap_z + st
+                z = min(max(bottom + band, bottom + inch(1.0)),
+                        hi - st - inch(1.0))
+            else:
+                other = _segment_at(bay, side, cap_z - 1e-4)
+                lo = (float(other.get('hb_seg_bottom', 0.0))
+                      if other else cap_z)
+                z = max(min(top - band - st, top - st - inch(1.0)),
+                        lo + inch(1.0))
+            cap['hb_z_offset'] = float(z)
+        op.cubby_cols = int(cols)
+        op.cubby_rows = int(rows)
+        op.cubby_setback = float(setback)
+        op.cubby_height = band
+        recalculate_closet_starter(root)
+        return opening
+    # Moving the band: out with its shelf, then in again the new way in
+    # what the opening is once merged.
+    bay = find_bay_cage(opening)
+    side = opening.get(PROP_OPENING_SIDE, 'FRONT')
+    probe = float(opening.get('hb_seg_bottom', 0.0)) + 1e-3
+    column = bool(cap.get(PROP_COLUMN_SHELF))
+    _remove_part_tree(cap)
+    recalculate_closet_starter(root)
+    target = opening if column or bay is None else (
+        _segment_at(bay, side, probe) or opening)
+    if placement == 'FILL':
+        for name, value in (('cubby_cols', int(cols)),
+                            ('cubby_rows', int(rows)),
+                            ('cubby_setback', float(setback)),
+                            ('cubby_placement', 'FILL')):
+            setattr(target.hb_closet_opening, name, value)
+        clear_other_interiors(target, 'CUBBIES')
+        recalculate_closet_starter(root)
+        return target
+    return apply_cubbies(target, cols, rows, setback, placement, band)
 
 
 def _config_door_swing(width):
@@ -9860,8 +10237,9 @@ def apply_bay_config(bay_obj, config):
     cleat_at = None
     bay_door = None           # FULL_HEIGHT_DOORS -> bay-wide double door
     if config == 'ADJ_SHELVES':
+        # One a foot, uncapped, as 4.3 dealt them (int(Dim Z / 12")).
         opening.hb_closet_opening.adj_shelf_qty = max(
-            1, min(8, int(ih / inch(12.0))))
+            1, int(ih / inch(12.0)))
     elif config == 'DOUBLE_HANG':
         # Two rods in the one opening, the upper one taking the room a
         # double hang is set out at. No shelf between them.
@@ -9928,7 +10306,8 @@ def apply_bay_config(bay_obj, config):
         return False
 
     for z in splits:
-        add_fixed_shelf(opening, z, cleat=(z == cleat_at))
+        add_fixed_shelf(opening, z, cleat=(z == cleat_at))[
+            PROP_CFG_SHELF] = 1
     recalculate_closet_starter(root)   # adopt splits -> segments
 
     openings = sorted(
@@ -10001,8 +10380,12 @@ def apply_opening_config(opening, config):
         # No shelves behind a tilt-out - the basket takes the opening.
         opening.hb_closet_opening.door_swing = 'TILT_OUT'
     elif config == 'CUBBIES':
-        opening.hb_closet_opening.cubby_cols = 3
-        opening.hb_closet_opening.cubby_rows = 3
+        # 4.3 Cubbies: two shelves by two dividers in a band at the
+        # bottom of the opening, capped by a lock shelf, the rest open
+        # - the Add Cubbies dialog's default.
+        return apply_cubbies(
+            opening, 3, 3, opening.hb_closet_opening.cubby_setback,
+            'BOTTOM', const.CUBBY_HEIGHT) is not None
     elif config == 'ROLLOUTS':
         opening.hb_closet_opening.rollout_qty = const.ROLLOUT_DEFAULT_QTY
         opening.hb_closet_opening.rollout_height = const.ROLLOUT_HEIGHT

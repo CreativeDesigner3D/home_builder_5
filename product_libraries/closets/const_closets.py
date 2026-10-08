@@ -219,6 +219,16 @@ KICK_HEIGHT_ITEMS = [
     ('320', '12 1/2"', '12 1/2"'),
 ]
 
+
+def kick_height_key(value):
+    """KICK_HEIGHT_ITEMS identifier for a kick distance, or '' when the
+    distance is not one of the standard kicks (within half a mm)."""
+    mm = value / millimeter(1.0)
+    for key, _name, _desc in KICK_HEIGHT_ITEMS:
+        if abs(int(key) - mm) <= 0.5:
+            return key
+    return ''
+
 # ---------------------------------------------------------------------------
 # Countertop (Base and Island starters)
 # ---------------------------------------------------------------------------
@@ -464,9 +474,15 @@ SHELF_SETBACK = inch(0.0)
 # Pullout trays (rollouts): drawer boxes with no fronts, spaced in an
 # opening. Each tray stands ROLLOUT_HEIGHT tall (default 4"); the side
 # clearance for the slides is ROLLOUT_SLIDE_GAP per side.
-ROLLOUT_DEFAULT_QTY = 3
+ROLLOUT_DEFAULT_QTY = 1                # 4.3 placed one tray
 ROLLOUT_HEIGHT = inch(4.0)
 ROLLOUT_SLIDE_GAP = inch(0.327)
+# 4.3 Pullout_Tray: each side is held in by the Left/Right Overlay as
+# well as the slide gap, and the sides stand the Drawer Bottom Gap off
+# the floor of the tray's room and the Drawer Top Gap under its top.
+ROLLOUT_SIDE_OVERLAY = inch(0.3125)
+ROLLOUT_BOTTOM_GAP = inch(0.5512)
+ROLLOUT_TOP_GAP = inch(0.44882)
 # Smallest gap left between stacked trays / above and below the stack.
 ROLLOUT_MIN_GAP = inch(1.0)
 # A tray shorter than this is not worth building, so a stack that is

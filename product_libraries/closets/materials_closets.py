@@ -393,7 +393,9 @@ BAND_EDGES = {
     'CLOSET_DIVISION': ('L2',),
     'CLOSET_SLANTED_SHELF': ('L2',),
     'CLOSET_TOP_ACCENT_SHELF': ('L1', 'L2'),
-    'CLOSET_CONTINUOUS_TOP': ('L1', 'L2'),
+    # 4.3 banded a continuous top on its front and both ends (Top_Accent_Shelf
+    # ebl2, plus ebw1 / ebw2 set by the drop).
+    'CLOSET_CONTINUOUS_TOP': ('L2', 'W1', 'W2'),
     'CLOSET_IRONING_BOARD_MOUNT': ('L1', 'L2', 'W1', 'W2'),
     'CLOSET_L_LOCK_SHELF': ('L2',),
     'CLOSET_L_ADJ_SHELF': ('L2',),
@@ -488,7 +490,8 @@ def _set_edges(part, obj, edge):
     """Band the edges `obj` is banded on in `edge`; the rest show the
     bare board core."""
     banded = banded_edges(obj)
-    core = load_core_material() if banded is not None         and len(banded) < len(MISC_BAND_EDGES) else None
+    core = load_core_material() if banded is not None \
+        and len(banded) < len(MISC_BAND_EDGES) else None
     for e in MISC_BAND_EDGES:
         part.set_input('Edge ' + e,
                        edge if (banded is None or e in banded) else core)

@@ -382,11 +382,68 @@ def apply_style_to_front(front_obj, is_drawer, style=None):
         pass
 
 
+# The room style the fronts were last restyled to, so a change can tell
+# what the fronts left out of it were wearing.
+_PROP_LAST_ROOM_STYLE = 'hb_last_front_style'
+
+
+# A front style written by a room change that skipped the front's kind
+# (not by the person), so the next change that updates that kind can
+# take it off again. Front Style on the front itself clears it.
+PROP_STYLE_HELD_BY_ROOM = 'hb_style_held_by_room'
+
+
+def _hold_fronts_out_of_restyle(scene, old_style):
+    """4.3 Update Doors in Room could restyle only the doors or only
+    the drawer fronts. A kind left out keeps the style it had by being
+    given it as its own (a front with a style of its own is not touched
+    by the room's). Hampers follow the room either way, as in 4.3."""
+    room = scene.hb_closets
+    doors = getattr(room, 'front_style_update_doors', True)
+    drawers = getattr(room, 'front_style_update_drawer_fronts', True)
+    from . import types_closets
+    for obj in scene.objects:
+        role = obj.get('hb_part_role')
+        if role == types_closets.PART_ROLE_DOOR:
+            update = doors or obj.get('hb_hinge') == 'BOTTOM'
+        elif role == types_closets.PART_ROLE_DRAWER_FRONT:
+            update = drawers
+        else:
+            continue
+        held = bool(obj.get(PROP_STYLE_HELD_BY_ROOM))
+        if update:
+            # The skip is one-shot (4.3): a front held back by an
+            # earlier change follows the room again once its kind is
+            # updated. A style set on the front itself is left alone.
+            if held:
+                del obj[PROP_STYLE_HELD_BY_ROOM]
+                if types_closets.PROP_FRONT_STYLE in obj:
+                    del obj[types_closets.PROP_FRONT_STYLE]
+        elif not obj.get(types_closets.PROP_FRONT_STYLE):
+            obj[types_closets.PROP_FRONT_STYLE] = old_style
+            obj[PROP_STYLE_HELD_BY_ROOM] = 1
+
+
+def note_room_style(self=None, context=None):
+    """Update Doors / Update Drawer Fronts toggled: remember the style
+    the fronts are wearing now, so the next style change knows what to
+    leave the fronts it skips in."""
+    scene = getattr(context, 'scene', None) or bpy.context.scene
+    scene[_PROP_LAST_ROOM_STYLE] = current_style()
+
+
 def update_room(self=None, context=None):
     """Dropdown update callback: recalculate every starter - the front
-    layout passes re-apply the style to each front."""
+    layout passes re-apply the style to each front. Doors or drawer
+    fronts the room is set not to update keep the style they had
+    (_hold_fronts_out_of_restyle)."""
     scene = getattr(context, 'scene', None) or bpy.context.scene
     from . import types_closets
+    new_style = current_style()
+    old_style = scene.get(_PROP_LAST_ROOM_STYLE)
+    if old_style and old_style != new_style:
+        _hold_fronts_out_of_restyle(scene, old_style)
+    scene[_PROP_LAST_ROOM_STYLE] = new_style
     for obj in scene.objects:
         if obj.get(types_closets.TAG_STARTER_CAGE):
             types_closets.recalculate_closet_starter(obj)
