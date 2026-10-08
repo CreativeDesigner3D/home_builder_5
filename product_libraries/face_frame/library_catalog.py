@@ -329,12 +329,20 @@ def _front_style_fields(kind):
     it until their padlock is opened. Hardware callouts and the profile overrides stay
     in the sidebar."""
     five_piece = lambda p: p.door_type == '5_PIECE'
+
+    def grained(p):
+        # MDF panels have no grain; still shown if an older file left a
+        # direction set on one.
+        from .props_hb_face_frame import panel_is_mdf
+        return not (panel_is_mdf(p.front_panel)
+                    and p.grain_direction == 'NONE')
+
     fields = [
         ('label', None, "Catalog"),
         ('enum', 'front_series', "Series"),
         ('enum', 'front_shape', "Shape"),
         ('enum', 'front_panel', "Panel"),
-        ('enum', 'grain_direction', "Grain Direction"),
+        ('enum', 'grain_direction', "Grain Direction", {'when': grained}),
         ('gap', None, None, {'when': five_piece}),
         ('label', None, "Frame Widths", {'when': five_piece}),
         ('locked', 'stile_width', "Stile Width",

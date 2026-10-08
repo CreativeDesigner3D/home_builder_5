@@ -572,10 +572,31 @@ def update_front_shape(self, context):
     _propagate_door_style(self, context)
 
 
+def panel_is_mdf(panel):
+    """True for the MDF panel choices (flat, raised, beadboard, reverse,
+    profile slab). MDF carries no wood grain."""
+    return 'MDF' in (panel or '')
+
+
+def _sync_grain_to_panel(ds):
+    """An MDF panel has no grain: switch the style to grain NONE. The
+    style remembers that the switch was automatic, so moving back to a
+    grained panel restores VERTICAL; a NONE the user picked stays."""
+    if panel_is_mdf(ds.front_panel):
+        if ds.grain_direction != 'NONE':
+            ds['_grain_auto_none'] = True
+            ds.grain_direction = 'NONE'
+    elif ds.get('_grain_auto_none'):
+        del ds['_grain_auto_none']
+        if ds.grain_direction == 'NONE':
+            ds.grain_direction = 'VERTICAL'
+
+
 def update_front_panel(self, context):
     """Panel chosen -> re-derive the frame construction from the series, push
     to assigned fronts, and re-apply materials so a Prep-for-Glass panel
     renders as glass immediately (and switching away restores the finish)."""
+    _sync_grain_to_panel(self)
     _apply_series_frame_to_door_style(self)
     _refresh_auto_front_style_name(self)
     _propagate_door_style(self, context)
@@ -5938,7 +5959,12 @@ class Face_Frame_Door_Style(PropertyGroup):
         col.prop(self, "front_shape", text="Shape")
         col.prop(self, "front_panel", text="Panel")
 
-        box.prop(self, "grain_direction", text="Grain Direction")
+        grain_row = box.row()
+        # MDF panels have no grain; still editable if an older file left
+        # a direction set on one.
+        grain_row.enabled = not (panel_is_mdf(self.front_panel)
+                                 and self.grain_direction == 'NONE')
+        grain_row.prop(self, "grain_direction", text="Grain Direction")
 
         # Hardware callouts: the checkbox DECLARES the option for the
         # job (style-page legend line); the brush button paints which
