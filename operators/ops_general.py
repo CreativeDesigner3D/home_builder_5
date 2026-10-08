@@ -306,6 +306,10 @@ def _product_root(obj):
     return obj
 
 
+# Marks a selection cage claimed through hide_set alone (see _hide_object).
+ISOLATE_CAGE_TAG = 'HB_ISOLATED_CAGE'
+
+
 def _hide_object(obj):
     """Hide one object and claim it, unless something already hid it.
 
@@ -313,7 +317,23 @@ def _hide_object(obj):
     product logic keeps cutters, disabled partitions and construction
     helpers hidden, and the user may have hidden things by hand. Show
     All Hidden only restores what carries the claim.
+
+    Selection cages are the exception. Switching selection modes shows
+    and hides them through hide_viewport, so a cage that was out of
+    sight for the current mode would come back on the next mode change.
+    Every cage is claimed through hide_set alone instead, which the mode
+    switch never touches, and hide_viewport stays with the mode.
     """
+    if 'IS_GEONODE_CAGE' in obj:
+        try:
+            visible = not obj.hide_get() and not obj.hide_viewport
+            if not obj.hide_get():
+                obj.hide_set(True)
+                obj[ISOLATE_HIDDEN_TAG] = True
+                obj[ISOLATE_CAGE_TAG] = True
+            return visible
+        except RuntimeError:
+            pass  # not in the active view layer: fall through
     try:
         if obj.hide_get():
             return False
@@ -436,7 +456,15 @@ class HB_GENERAL_OT_show_all_hidden(bpy.types.Operator):
         for obj in context.scene.objects:
             if not obj.get(ISOLATE_HIDDEN_TAG):
                 continue
-            _set_hidden(obj, False)
+            if obj.get(ISOLATE_CAGE_TAG):
+                # hide_viewport belongs to the selection mode.
+                try:
+                    obj.hide_set(False)
+                except RuntimeError:
+                    pass
+                del obj[ISOLATE_CAGE_TAG]
+            else:
+                _set_hidden(obj, False)
             del obj[ISOLATE_HIDDEN_TAG]
             count += 1
         if count:

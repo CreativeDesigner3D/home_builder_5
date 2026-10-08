@@ -1256,6 +1256,18 @@ class home_builder_layouts_OT_add_dimension(bpy.types.Operator, hb_placement.Dim
         
         return (best_point, best_dist)
     
+    def typed_length_axes(self, context):
+        """Layout dims are horizontal or vertical on the page: X / Y in
+        plan, along the wall / up in an elevation."""
+        if context.scene.get('IS_ELEVATION_VIEW', False):
+            wall_rotation_z = 0
+            source_wall_name = context.scene.get('SOURCE_WALL')
+            if source_wall_name and source_wall_name in bpy.data.objects:
+                wall_rotation_z = bpy.data.objects[source_wall_name].rotation_euler.z
+            along = Matrix.Rotation(wall_rotation_z, 3, 'Z') @ Vector((1, 0, 0))
+            return along, Vector((0, 0, 1))
+        return Vector((1, 0, 0)), Vector((0, 1, 0))
+
     def get_plane_point(self, context, coord):
         """Convert 2D mouse coordinates to 3D point on the appropriate layout plane."""
         region = context.region
@@ -1467,6 +1479,8 @@ class home_builder_layouts_OT_add_dimension_3d(bpy.types.Operator, hb_placement.
     bl_idname = "home_builder_layouts.add_dimension_3d"
     bl_label = "Add Dimension (3D View)"
     bl_description = "Click two points to add a dimension in 3D view. Press O for ortho lock."
+    # Its dims follow the view plane, which a typed point can't steer.
+    supports_typed_length = False
     bl_options = {'UNDO'}
     
     # Preview dimension

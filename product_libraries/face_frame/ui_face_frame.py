@@ -580,6 +580,25 @@ def draw_wedge(layout, root):
         box.operator("hb_face_frame.add_refrigerator_wedge", icon='MOD_BEVEL')
 
 
+def draw_sloped_top(layout, root):
+    """Sloped top toggle + back height. Cabinets with a solid top panel
+    (uppers and talls) only."""
+    if not any(c.get('hb_part_role') == types_face_frame.PART_ROLE_TOP
+               for c in root.children):
+        return
+    cab = root.face_frame_cabinet
+    box = layout.box()
+    box.prop(cab, 'sloped_top', icon='IPO_LINEAR')
+    if cab.sloped_top:
+        box.prop(cab, 'sloped_top_back_height', text="Height at Back")
+        # The recalc publishes the angle only when it could slope the top.
+        if 'SLOPED_TOP_ANGLE' not in root:
+            box.label(text="Back height must be below the cabinet height",
+                      icon='ERROR')
+        else:
+            box.label(text=f"Slope {root['SLOPED_TOP_ANGLE']:g}°")
+
+
 def _is_floating_shelf(obj):
     """True when obj (or its cabinet root) is a floating shelf."""
     root = types_face_frame.find_cabinet_root(obj)
@@ -864,6 +883,7 @@ def draw_valance_product(layout, root):
     col.prop(cab, 'width', text="Width")
     col.prop(cab, 'depth', text="Depth")
     col.prop(cab, 'height', text="Height")
+    col.prop(val, 'height_off_floor', text="Height Off Floor")
 
     box = layout.box()
     box.label(text="Finished Ends")
@@ -1534,6 +1554,8 @@ def _draw_interior_items_section(layout, target_props, target_name=""):
                 # from the cavity depth, so the field only shows
                 # where it acts.
                 sub.prop(item, 'shelf_setback', text="Setback")
+            if item.kind == 'GLASS_SHELF':
+                sub.prop(item, 'glass_thickness', text="Thickness")
             sub.prop(item, 'bottom_offset', text="From Bottom")
             sub.prop(item, 'shelf_support', text="Support")
             if item.kind in {'ADJUSTABLE_SHELF', 'HALF_DEPTH_SHELF',
@@ -2249,6 +2271,7 @@ def draw_cabinet_wide(layout, root):
     draw_construction(box, cab_props)
     draw_refrigerator_options(layout, root)
     draw_galley_options(layout, root)
+    draw_sloped_top(layout, root)
     box = layout.box()
     box.label(text="Face Frame Defaults", icon='MESH_GRID')
     draw_face_frame_defaults(box, cab_props)
@@ -2326,6 +2349,7 @@ class HB_FACE_FRAME_PT_construction(bpy.types.Panel):
         draw_refrigerator_options(self.layout, root)
         draw_galley_options(self.layout, root)
         draw_wedge(self.layout, root)
+        draw_sloped_top(self.layout, root)
 
 
 class HB_FACE_FRAME_PT_face_frame_defaults(bpy.types.Panel):

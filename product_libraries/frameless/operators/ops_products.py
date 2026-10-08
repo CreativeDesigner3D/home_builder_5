@@ -28,6 +28,10 @@ class hb_frameless_OT_product_prompts(bpy.types.Operator):
     width: bpy.props.FloatProperty(name="Width", unit='LENGTH', precision=5)  # type: ignore
     height: bpy.props.FloatProperty(name="Height", unit='LENGTH', precision=5)  # type: ignore
     depth: bpy.props.FloatProperty(name="Depth", unit='LENGTH', precision=5)  # type: ignore
+    height_off_floor: bpy.props.FloatProperty(
+        name="Height Off Floor",
+        description="How high the bottom of the product sits off the floor",
+        unit='LENGTH', precision=5)  # type: ignore
 
     product = None
     part_type = ""
@@ -56,6 +60,7 @@ class hb_frameless_OT_product_prompts(bpy.types.Operator):
             self.width = self.product.get_input('Dim X')
             self.height = self.product.get_input('Dim Z')
             self.depth = self.product.get_input('Dim Y')
+        self.height_off_floor = product_bp.matrix_world.translation.z
 
         wm = context.window_manager
         return wm.invoke_props_dialog(self, width=350)
@@ -69,6 +74,13 @@ class hb_frameless_OT_product_prompts(bpy.types.Operator):
             self.product.set_input('Dim X', self.width)
             self.product.set_input('Dim Z', self.height)
             self.product.set_input('Dim Y', self.depth)
+        # Moved up or down by the difference, so it keeps its place on a
+        # wall whatever the wall's own height off the floor.
+        obj = self.product.obj
+        dz = self.height_off_floor - obj.matrix_world.translation.z
+        if abs(dz) > 1e-6:
+            obj.location.z += dz
+            context.view_layer.update()
         # Product parts are solved rather than driven, so an edit only
         # reaches them when the solver is run.
         types_products.recalculate_product(self.product.obj)
@@ -115,6 +127,10 @@ class hb_frameless_OT_product_prompts(bpy.types.Operator):
         row = col.row(align=True)
         row.label(text="Depth:")
         row.prop(self, 'depth', text="")
+
+        row = col.row(align=True)
+        row.label(text="Height Off Floor:")
+        row.prop(self, 'height_off_floor', text="")
 
         # --- Product-specific properties ---
         if self.part_type == 'FLOATING_SHELF':

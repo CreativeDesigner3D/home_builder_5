@@ -8767,6 +8767,23 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         name="Wedge Max Height", default=units.inch(3.0),
         unit='LENGTH', precision=4, min=0.0, update=_update_cabinet_dim,
     )  # type: ignore
+    # Sloped top: the cabinet keeps its full height at the face and drops
+    # to the height typed here at the wall, for a ceiling that slopes
+    # down toward the wall. The top panel tilts onto the slope and the
+    # carcass is trimmed under it (types_face_frame._reconcile_sloped_top).
+    sloped_top: BoolProperty(
+        name="Sloped Top", default=False,
+        description="Slope the cabinet top down toward the wall, for a "
+                    "sloped ceiling. The face keeps the cabinet height",
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    sloped_top_back_height: FloatProperty(
+        name="Height at Back",
+        description="Cabinet height at the wall. The top slopes from the "
+                    "full height at the face down to this",
+        default=units.inch(84.0), min=0.0, unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
     # Pipe chase: full-height notch at a back corner (or the back middle)
     # so the cabinet clears plumbing / vent runs, with cover panels
     # closing the opening from the cabinet interior. The typed size is
@@ -10042,6 +10059,17 @@ class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
         name="Nosing Height",
         description="Overall height of an extra-height nosing. Clover / Kelli ignore this and match the shelf thickness",
         default=units.inch(1.5), min=units.inch(0.125),
+        unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
+    # GLASS_SHELF only. Glass is ordered by thickness (1/4", 3/8",
+    # 1/2" ...), so it is its own field rather than the wood shelf
+    # thickness.
+    glass_thickness: FloatProperty(
+        name="Glass Thickness",
+        description="Thickness of each glass shelf",
+        default=units.inch(0.375), min=units.inch(0.0625),
         unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
     )  # type: ignore
@@ -13713,6 +13741,20 @@ class Face_Frame_Column_Beam_Props(PropertyGroup):
     )  # type: ignore
 
 
+def _get_valance_height_off_floor(self):
+    return self.id_data.matrix_world.translation.z
+
+
+def _set_valance_height_off_floor(self, value):
+    # Moved by the difference, so the edit works whatever the valance
+    # hangs from (a wall, or a wall off the floor).
+    obj = self.id_data
+    dz = value - obj.matrix_world.translation.z
+    if abs(dz) > 1e-6:
+        obj.location.z += dz
+        bpy.context.view_layer.update()
+
+
 class Face_Frame_Valance_Props(PropertyGroup):
     """Options for a Valance product (a decorative board spanning the
     gap between two upper cabinets).
@@ -13754,6 +13796,13 @@ class Face_Frame_Valance_Props(PropertyGroup):
         name="Top Scribe Amount", default=units.inch(0.25),
         unit='LENGTH', precision=4, update=_update_cabinet_dim,
         description="Drop the cover down from the top edge by this amount",
+    )  # type: ignore
+    # Not stored: reads and moves the valance object itself.
+    height_off_floor: FloatProperty(
+        name="Height Off Floor", unit='LENGTH', precision=4,
+        get=_get_valance_height_off_floor,
+        set=_set_valance_height_off_floor,
+        description="How high the bottom of the valance sits off the floor",
     )  # type: ignore
 
 

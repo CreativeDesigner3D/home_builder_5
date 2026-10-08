@@ -132,6 +132,10 @@ BASE_PRESETS = {
     'THREE_DRAWERS_EQUAL':     H(L('DRAWER'), L('DRAWER'), L('DRAWER')),
     'TWO_DRAWERS':             H(L('DRAWER'), L('DRAWER')),
     'ONE_DRAWER':              L('DRAWER'),
+    # Drawer-look drawers: one working drawer shown as N stacked drawer
+    # fronts. Single opening, same as the Change Opening entries.
+    'DRAWER_LOOKS_2_DRAWER':   L('DRAWER_LOOKS_2_DRAWER'),
+    'DRAWER_LOOKS_3_DRAWER':   L('DRAWER_LOOKS_3_DRAWER'),
     'FALSE_FRONT':             L('FALSE_FRONT'),
     'PULLOUT':                 L('PULLOUT'),
     # Top drawer pins to top_drawer_opening_height (like the drawer+door
@@ -358,6 +362,8 @@ BASE_MENU_ENTRIES = [
     ('THREE_DRAWERS',            "3 Drawers"),
     ('TWO_DRAWERS',              "2 Drawers"),
     ('ONE_DRAWER',               "1 Drawer"),
+    ('DRAWER_LOOKS_2_DRAWER',    "Drawer - Looks like 2 Drawers"),
+    ('DRAWER_LOOKS_3_DRAWER',    "Drawer - Looks like 3 Drawers"),
     ('FALSE_FRONT',              "False Front"),
     ('FALSE_FRONT_DOOR',         "False Front 1 Door"),
     ('FALSE_FRONT_DOUBLE_DOOR',  "False Front 2 Door"),

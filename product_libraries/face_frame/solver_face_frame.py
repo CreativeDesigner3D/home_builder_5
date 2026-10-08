@@ -3743,6 +3743,34 @@ def partition_skin_panels(layout, gap_index):
         d = skin_bay['depth']
         return (-layout.dim_y + d, d - layout.fft)
 
+    def _step_skin(side, skin_bay_idx, bottom_z, top_z, slot):
+        """A step skin finishes the neighbour's wall where it shows past
+        the step. Past the step the skin bay has no carcass, so what
+        shows is the neighbour's own division panel: the skin runs that
+        bay's depth, and when depths differ it also covers the missing
+        panel on the skin bay's side (the setup is two panels thick)."""
+        other_bay = layout.bays[gap_index + 1 if skin_bay_idx == gap_index
+                                else gap_index]
+        y, width = _y_and_width(other_bay)
+        x = _x_origin(side)
+        thickness = _side_thickness(side)
+        if thickness > 1e-6 and not _epsilon_eq(bay_a['depth'],
+                                                 bay_b['depth']):
+            dt = layout.division_thickness
+            thickness += dt
+            if side == 'RIGHT':
+                x -= dt
+        return {
+            'slot':      slot,
+            'side':      side,
+            'x':         x,
+            'y':         y,
+            'z':         bottom_z,
+            'length':    top_z - bottom_z,
+            'width':     width,
+            'thickness': thickness,
+        }
+
     # A bay flagged floating raises its floor (kick_height holds the lift), so
     # the floors-differ step below would ALSO fire on the floating side and
     # overlap the slot-2 floating finish. When exactly one adjacent bay floats
@@ -3766,17 +3794,7 @@ def partition_skin_panels(layout, gap_index):
             bottom_z, top_z = floor_a, floor_b
         skin_bay = layout.bays[skin_bay_idx]
         top_z += skin_bay['bottom_rail_width'] - layout.mt
-        y, width = _y_and_width(skin_bay)
-        skins.append({
-            'slot':      0,
-            'side':      side,
-            'x':         _x_origin(side),
-            'y':         y,
-            'z':         bottom_z,
-            'length':    top_z - bottom_z,
-            'width':     width,
-            'thickness': _side_thickness(side),
-        })
+        skins.append(_step_skin(side, skin_bay_idx, bottom_z, top_z, 0))
 
     # ----- Slot 1: top step (Upper / Tall only - solid top panel) -----
     if layout.cabinet_type in {'UPPER', 'TALL'}:
@@ -3792,20 +3810,9 @@ def partition_skin_panels(layout, gap_index):
                 side = 'RIGHT'
                 skin_bay_idx = gap_index + 1
                 lower_top, upper_top = top_b, top_a
-            skin_bay = layout.bays[skin_bay_idx]
             bottom_z = lower_top - layout.top_scribe
             top_z = upper_top
-            y, width = _y_and_width(skin_bay)
-            skins.append({
-                'slot':      1,
-                'side':      side,
-                'x':         _x_origin(side),
-                'y':         y,
-                'z':         bottom_z,
-                'length':    top_z - bottom_z,
-                'width':     width,
-                'thickness': _side_thickness(side),
-            })
+            skins.append(_step_skin(side, skin_bay_idx, bottom_z, top_z, 1))
 
     # ----- Slot 2: floating-bay finish (base / tall) -----
     # A floating bay has no toe kick, so below its carcass bottom the mid-stile
@@ -5259,6 +5266,8 @@ def appliance_notch_depths(rect, opening_props):
 # cabinet), z in [0, cage_dim_z] (z = 0 at top of bay's bottom panel).
 # ---------------------------------------------------------------------------
 SHELF_THICKNESS = inch(0.75)
+# Default glass shelf thickness; each glass shelf item can override it.
+GLASS_SHELF_THICKNESS = inch(0.375)
 SHELF_X_CLEARANCE = inch(1.0 / 16.0)   # side gap for shelf-pin clearance
 SHELF_FRONT_SETBACK = inch(0.25)       # tucked behind the face frame plane
 SHELF_BACK_SETBACK = inch(0.25)        # finger gap to the back panel
@@ -5333,7 +5342,7 @@ def auto_shelf_qty(opening_height, depth):
 def _shelf_stack_descriptors(rect, cage_dim_y, qty, setback,
                               kind, role, name_prefix,
                               nosing_style='NONE', nosing_height=0.0,
-                              z0=0.0):
+                              z0=0.0, thickness=SHELF_THICKNESS):
     """Stacked horizontal shelves filling a region. Geometry is
     identical for adjustable and glass shelves; the kind/role tag
     drives downstream material handling and selection. setback is
@@ -5350,6 +5359,9 @@ def _shelf_stack_descriptors(rect, cage_dim_y, qty, setback,
     SHELF_NOSING descriptor per shelf; the nosing front face lands
     where the plain shelf front would have been, so the overall depth
     is unchanged.
+
+    thickness is the shelf board thickness (glass shelves pass the
+    item's glass thickness; wood shelves keep SHELF_THICKNESS).
     """
     if qty <= 0:
         return []
@@ -5357,7 +5369,7 @@ def _shelf_stack_descriptors(rect, cage_dim_y, qty, setback,
     cage_dim_z = rect['cage_dim_z']
 
     z0 = max(0.0, min(z0, cage_dim_z))
-    interior_h = (cage_dim_z - z0) - qty * SHELF_THICKNESS
+    interior_h = (cage_dim_z - z0) - qty * thickness
     if interior_h <= 0:
         return []
     # One gap per shelf plus the one above the last; the gap under the
@@ -5375,14 +5387,14 @@ def _shelf_stack_descriptors(rect, cage_dim_y, qty, setback,
     for k in range(qty):
         # Shelf k bottom-face Z: one spacing gap after the last shelf,
         # and one before the first unless the stack was raised.
-        z = z0 + (k if raised else k + 1) * spacing + k * SHELF_THICKNESS
+        z = z0 + (k if raised else k + 1) * spacing + k * thickness
         items.append({
             'kind':     kind,
             'role':     role,
             'name':     f'{name_prefix} {k + 1}',
             'orientation': 'HORIZONTAL',
             'position': (SHELF_X_CLEARANCE, setback + nose_d, z),
-            'dims':     (length, width, SHELF_THICKNESS),
+            'dims':     (length, width, thickness),
         })
         if nosing and length > 0.0:
             items.append({
@@ -5392,10 +5404,10 @@ def _shelf_stack_descriptors(rect, cage_dim_y, qty, setback,
                 # Origin: back face against the shelf front edge, top
                 # flush with the shelf top.
                 'position': (SHELF_X_CLEARANCE, setback + nose_d,
-                             z + SHELF_THICKNESS),
+                             z + thickness),
                 'length':   length,
                 'style':    nosing_style,
-                'shelf_thickness': SHELF_THICKNESS,
+                'shelf_thickness': thickness,
                 'height':   nosing_height,
             })
     return items
@@ -5449,11 +5461,12 @@ def _shelf_standard_descriptor(rect, cage_dim_y, setback, z0=0.0):
     }
 
 
-def _glass_shelf_descriptors(rect, cage_dim_y, qty, setback, z0=0.0):
+def _glass_shelf_descriptors(rect, cage_dim_y, qty, setback, z0=0.0,
+                             thickness=GLASS_SHELF_THICKNESS):
     return _shelf_stack_descriptors(
         rect, cage_dim_y, qty, setback,
         'GLASS_SHELF', 'GLASS_SHELF', 'Glass Shelf',
-        z0=z0,
+        z0=z0, thickness=thickness,
     )
 
 
@@ -6012,6 +6025,8 @@ def interior_item_descriptors(layout, rect, cab_props, opening_props,
                 shelf_rect, cage_dim_y, item.shelf_qty,
                 max(item.shelf_setback, cl_f),
                 z0=getattr(item, 'bottom_offset', 0.0),
+                thickness=getattr(item, 'glass_thickness',
+                                  GLASS_SHELF_THICKNESS),
             )))
             out.extend(_pocket_shifted(_shelf_standards_for(
                 item, shelf_rect, cage_dim_y,

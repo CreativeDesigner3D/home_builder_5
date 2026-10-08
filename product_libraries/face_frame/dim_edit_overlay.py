@@ -76,6 +76,9 @@ TICK_PX         = 5
 # Height dims run up the cage's left side this far in (capped at a
 # quarter of the width for narrow cages).
 HEIGHT_DIM_INSET = 0.0762
+# Zoomed out past this (a product's front under this many px both wide
+# and tall), an unselected product's labels are left off.
+MIN_PRODUCT_PX  = 80
 
 # Characters accepted by the typed-distance grammar (parse_typed_distance):
 # digits, decimal point, fractions, feet/inch marks, embedded spaces.
@@ -392,6 +395,28 @@ def _run_dims_size(obj):
             split_preview._world_matrix(obj))
 
 
+def _too_small_on_screen(region, rv3d, obj, min_px):
+    """Whether a cabinet or appliance is zoomed out so far that its
+    front is under ``min_px`` both wide and tall -- smaller than the
+    labels it would carry. Its labels then stay off rather than crowd
+    the view or drift away from it looking for room."""
+    try:
+        size = _run_dims_size(obj)
+    except Exception:
+        return False
+    if size is None:
+        return False
+    dim_x, depth, dim_z, mw = size
+    fy = -depth
+    pts = [view3d_utils.location_3d_to_region_2d(
+               region, rv3d, mw @ Vector(p))
+           for p in ((0.0, fy, 0.0), (dim_x, fy, 0.0), (0.0, fy, dim_z))]
+    if any(p is None for p in pts):
+        return False
+    return ((pts[1] - pts[0]).length < min_px
+            and (pts[2] - pts[0]).length < min_px)
+
+
 def _run_targets(obj, seen_spans):
     """Cabinets-mode targets for where a cabinet or appliance sits on
     its wall (see common/wall_run_dims), on its front plane, each with
@@ -612,10 +637,11 @@ def _rects_touch(a, b, margin=2.0):
             and a[1] < b[1] + b[3] + margin and b[1] < a[1] + a[3] + margin)
 
 
-def _slide_clear(region, rv3d, line, rect, placed):
+def _slide_clear(region, rv3d, line, rect, placed, side=True):
     """``rect`` moved along its own dimension line to the nearest spot
     clear of the ``placed`` label rects -- or just off the line when it
-    has no room -- or None when nothing nearby is clear. Labels that share a point on screen (a bay's W over a
+    has no room and ``side`` allows it -- or None when nothing nearby is
+    clear. Labels that share a point on screen (a bay's W over a
     rail's width, a gap over a cabinet width) otherwise hide each
     other; sliding keeps each one on the line it measures."""
     if line is None:
@@ -644,6 +670,8 @@ def _slide_clear(region, rv3d, line, rect, placed):
             here = (a.x + u.x * t - w / 2.0, a.y + u.y * t - h / 2.0, w, h)
             if not any(_rects_touch(here, other[4]) for other in placed):
                 return here
+    if not side:
+        return None
     # Zoomed out the line is too short to slide on: step off to its
     # side instead, as near the line as stays clear.
     side = abs(w * u.y) + abs(h * u.x) + 4.0
@@ -817,6 +845,7 @@ def compute_labels(context, region, rv3d, lines_out=None):
         pass
     font_sz = FONT_SIZE * s
     blf.size(0, font_sz)
+    min_px = MIN_PRODUCT_PX * s
 
     labels = []
     space = getattr(context, 'space_data', None)
@@ -824,10 +853,20 @@ def compute_labels(context, region, rv3d, lines_out=None):
     seen_spans = set()
     picked = _selected_label_names(context)
 
-    def _emit(targets):
+    def _editing(cage, kind):
+        return (_edit is not None and _edit['name'] == cage.name
+                and _edit['kind'] == kind)
+
+    def _emit(targets, keep=True):
         """Project a product's targets and add the ones on screen. One
         copy, so a cabinet label and an appliance label can't drift
-        apart in size, marker or hit rect."""
+        apart in size, marker or hit rect.
+
+        ``keep`` is for the selection's labels: they always show, and
+        may step off their line to find room. Any other label that can't
+        find a clear spot on its own line is left off, so a busy view
+        thins out instead of pushing labels away from what they
+        measure."""
         for target in targets:
             # An optional 8th element carries the target's own world
             # dimension line (wall-run dims); else _dim_line_world.
@@ -867,12 +906,15 @@ def compute_labels(context, region, rv3d, lines_out=None):
             if any(_rects_touch(rect, other[4]) for other in labels):
                 # Still on top of a label already out: slide it along
                 # its own dimension line to a clear spot.
+                held = keep or _editing(cage, kind)
                 moved = _slide_clear(
                     region, rv3d,
                     own_line or _dim_line_world(cage, kind, value),
-                    rect, labels)
+                    rect, labels, side=held)
                 if moved is not None:
                     rect = moved
+                elif not held:
+                    continue
             # Skip labels fully outside the region.
             if rect[0] + w < 0 or rect[0] > region.width:
                 continue
@@ -898,7 +940,11 @@ def compute_labels(context, region, rv3d, lines_out=None):
             if scope in ('SELECTED', 'SELECTED_CABINET') \
                     and appliance.name not in sel_names:
                 continue
-            _emit(_run_targets(appliance, seen_spans))
+            keep = appliance.name in picked
+            if not keep and _too_small_on_screen(region, rv3d, appliance,
+                                                 min_px):
+                continue
+            _emit(_run_targets(appliance, seen_spans), keep)
 
     roots = list(_iter_cabinet_roots(scene)) if mode is not None else []
     wall_apps = (list(wall_run_dims.iter_wall_appliances(scene))
@@ -916,6 +962,10 @@ def compute_labels(context, region, rv3d, lines_out=None):
         # is selected (sel_names carries each selected object's
         # ancestors, so the root is in it).
         if scope == 'SELECTED_CABINET' and cabinet.name not in sel_names:
+            continue
+        # Zoomed far out, only the selection keeps its labels.
+        keep = cabinet.name in picked
+        if not keep and _too_small_on_screen(region, rv3d, cabinet, min_px):
             continue
         # Displayed values come from the SAME properties a commit writes
         # (face_frame_bay.width / face_frame_opening.size), never the cage
@@ -1023,7 +1073,7 @@ def compute_labels(context, region, rv3d, lines_out=None):
         # same list, so filtered labels are not clickable either.
         if scope == 'SELECTED':
             targets = [t for t in targets if t[0].name in sel_names]
-        _emit(targets)
+        _emit(targets, keep)
 
     # Appliances on a wall: the rest of them, after the cabinets.
     _emit_wall_appliances([a for a in wall_apps if a.name not in picked])

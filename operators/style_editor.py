@@ -18,7 +18,11 @@ A catalog declares editors in OPTION_EDITORS:
     {key: {'owner':    fn(context) -> the item being edited, or None,
            'header':   fn(context, item) -> {'title', 'lines', 'swatch'},
            'sections': ((label, fields | {'blocks': fn(context)}), ...),
-           'footer':   ((label, operator[, prop, value]), ...)}}
+           'footer':   ((label, operator[, prop, value]), ...),
+           'footer_note': fn(context, item, section label) -> str}}
+
+The note is a line over the footer saying what its commands act on --
+the whole item, whichever section is open.
 """
 
 import bpy
@@ -50,6 +54,7 @@ TAB_W = 116
 TAB_H = 24
 TAB_GAP = 2
 FOOTER_H = 24
+NOTE_H = 16
 CLOSE = 18
 FONT = 10
 GAP_FROM_STRIP = 10
@@ -130,6 +135,10 @@ def _layout(context, area):
     footer_y = panel[1] + pad
     body_top = header[1] - 8 * s
     body_bottom = footer_y + FOOTER_H * s + 8 * s
+    note = None
+    if spec.get('footer_note') and spec.get('footer'):
+        note = (x + pad, body_bottom, width - 2 * pad, NOTE_H * s)
+        body_bottom += NOTE_H * s + 6 * s
 
     tabs = []
     for i, (label, _content) in enumerate(spec['sections']):
@@ -148,7 +157,7 @@ def _layout(context, area):
                                      bw, FOOTER_H * s)))
     return {'panel': panel, 'header': header, 'close': close,
             'tabs': tabs, 'fields': fields, 'buttons': buttons,
-            'spec': spec, 'body': (body_bottom, body_top)}
+            'note': note, 'spec': spec, 'body': (body_bottom, body_top)}
 
 
 def _entries(context, lay):
@@ -248,6 +257,24 @@ def _draw():
     body_bottom, body_top = lay['body']
     draw_rect(shader, fx, body_bottom, 1 * s, body_top - body_bottom,
               Theme.SEPARATOR)
+
+    # What the footer acts on: a rule across the window and a line of
+    # text, so its commands don't read as part of the open section.
+    if lay['note'] is not None:
+        nx, ny, nw, nh = lay['note']
+        draw_rect(shader, nx, ny + nh + 3 * s, nw, 1 * s, Theme.SEPARATOR)
+        try:
+            label = lay['tabs'][_state['section']][1]
+        except IndexError:
+            label = ""
+        try:
+            note = spec['footer_note'](context, owner, label) if owner else ""
+        except Exception:
+            note = ""
+        if note:
+            draw_text(font_id, nx, ny + nh * 0.25, FONT * s,
+                      Theme.TEXT_HEADER, fit_text(font_id, FONT * s,
+                                                  str(note), nw))
 
     # Footer commands.
     for (label, *_rest), rect in lay['buttons']:

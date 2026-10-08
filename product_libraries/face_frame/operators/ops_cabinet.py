@@ -1212,6 +1212,8 @@ class hb_face_frame_OT_cabinet_prompts(bpy.types.Operator):
             ui_face_frame.draw_refrigerator_options(layout, root)
             # Accessible sink apron (self-gated to that product).
             ui_face_frame.draw_ada_sink_options(layout, root)
+            # Sloped top (self-gated to cabinets with a solid top).
+            ui_face_frame.draw_sloped_top(layout, root)
         elif self.active_tab == 'FACE_FRAME':
             ui_face_frame.draw_face_frame_defaults(layout, cab_props)
 
@@ -1501,7 +1503,7 @@ class hb_face_frame_OT_set_drawer_box_construction(bpy.types.Operator):
     bl_options = {'UNDO', 'INTERNAL'}
 
     code: bpy.props.StringProperty(default="", options={'HIDDEN'})  # type: ignore
-    opening_name: bpy.props.StringProperty(default="", options={'HIDDEN'})  # type: ignore
+    opening_name: bpy.props.StringProperty(default="", options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
 
     def execute(self, context):
         opening = (bpy.data.objects.get(self.opening_name)
@@ -1524,7 +1526,7 @@ class hb_face_frame_OT_set_drawer_slides(bpy.types.Operator):
     bl_options = {'UNDO', 'INTERNAL'}
 
     code: bpy.props.StringProperty(default="", options={'HIDDEN'})  # type: ignore
-    opening_name: bpy.props.StringProperty(default="", options={'HIDDEN'})  # type: ignore
+    opening_name: bpy.props.StringProperty(default="", options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
 
     def execute(self, context):
         opening = (bpy.data.objects.get(self.opening_name)
@@ -2721,7 +2723,7 @@ class hb_face_frame_OT_add_rollout_above(bpy.types.Operator):
                       "already there")
     bl_options = {'UNDO'}
 
-    opening_name: bpy.props.StringProperty(default='')  # type: ignore
+    opening_name: bpy.props.StringProperty(default='', options={'SKIP_SAVE'})  # type: ignore
 
     def execute(self, context):
         opening_obj = bpy.data.objects.get(self.opening_name)
@@ -3158,6 +3160,7 @@ class hb_face_frame_OT_add_interior_item(bpy.types.Operator):
         description="Object name to target instead of active_object "
                     "(used when the panel renders inside a modal popup)",
         default="",
+        options={'SKIP_SAVE'},
     )  # type: ignore
 
     @classmethod
@@ -3240,6 +3243,7 @@ class hb_face_frame_OT_remove_interior_item(bpy.types.Operator):
         name="Target Name",
         description="Object name to target instead of active_object",
         default="",
+        options={'SKIP_SAVE'},
     )  # type: ignore
 
     @classmethod
@@ -3292,6 +3296,7 @@ class hb_face_frame_OT_apply_shelf_nosing_to_room(bpy.types.Operator):
         name="Target Name",
         description="Object name to target instead of active_object",
         default="",
+        options={'SKIP_SAVE'},
     )  # type: ignore
 
     def execute(self, context):
@@ -3373,7 +3378,7 @@ class hb_face_frame_OT_add_rollout_box(bpy.types.Operator):
     bl_options = {'UNDO'}
 
     item_index: bpy.props.IntProperty(default=-1)  # type: ignore
-    target_name: bpy.props.StringProperty(default="")  # type: ignore
+    target_name: bpy.props.StringProperty(default="", options={'SKIP_SAVE'})  # type: ignore
 
     def execute(self, context):
         target = _resolve_interior_target(self, context)
@@ -3411,7 +3416,7 @@ class hb_face_frame_OT_remove_rollout_box(bpy.types.Operator):
 
     item_index: bpy.props.IntProperty(default=-1)  # type: ignore
     box_index: bpy.props.IntProperty(default=-1)  # type: ignore
-    target_name: bpy.props.StringProperty(default="")  # type: ignore
+    target_name: bpy.props.StringProperty(default="", options={'SKIP_SAVE'})  # type: ignore
 
     def execute(self, context):
         target = _resolve_interior_target(self, context)
@@ -3601,6 +3606,7 @@ class hb_face_frame_OT_add_interior_division(bpy.types.Operator):
 
     target_name: bpy.props.StringProperty(
         name="Target Name", default="",
+        options={'SKIP_SAVE'},
     )  # type: ignore
 
     @classmethod
@@ -3652,6 +3658,7 @@ class hb_face_frame_OT_add_interior_fixed_shelf(bpy.types.Operator):
 
     target_name: bpy.props.StringProperty(
         name="Target Name", default="",
+        options={'SKIP_SAVE'},
     )  # type: ignore
 
     @classmethod
@@ -3737,6 +3744,7 @@ class hb_face_frame_OT_remove_interior_split(bpy.types.Operator):
         name="Target Name",
         description="Region object whose parent split should be removed",
         default="",
+        options={'SKIP_SAVE'},
     )  # type: ignore
 
     @classmethod
@@ -3840,6 +3848,7 @@ class hb_face_frame_OT_show_interior_add_menu(bpy.types.Operator):
 
     target_name: bpy.props.StringProperty(
         name="Target Name", default="",
+        options={'SKIP_SAVE'},
     )  # type: ignore
 
     def execute(self, context):
@@ -4492,7 +4501,7 @@ class hb_face_frame_OT_add_pullout_accessory(bpy.types.Operator):
     product: bpy.props.EnumProperty(name="Model", items=_pullout_product_enum)  # type: ignore
     # Explicit target so the bay route (where the active object is the bay,
     # not the freshly-built pullout opening) doesn't depend on selection.
-    opening_name: bpy.props.StringProperty(default="", options={'HIDDEN'})  # type: ignore
+    opening_name: bpy.props.StringProperty(default="", options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
     opening_width: bpy.props.FloatProperty(
         name="Opening Width", unit='LENGTH', precision=4, min=0.0,
         description="Clear opening width for the pullout (sets the bay width)",
@@ -4621,7 +4630,7 @@ class hb_face_frame_OT_add_interior_accessory(bpy.types.Operator):
     )
     bl_options = {'UNDO'}
 
-    target_name: bpy.props.StringProperty(default="", options={'HIDDEN'})  # type: ignore
+    target_name: bpy.props.StringProperty(default="", options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
     host: bpy.props.StringProperty(default=_INTERIOR_HOST, options={'HIDDEN'})  # type: ignore
     product: bpy.props.EnumProperty(name="Accessory", items=_interior_product_enum)  # type: ignore
 
@@ -4945,7 +4954,7 @@ class hb_face_frame_OT_accessory_menu(bpy.types.Operator):
     bl_description = "Browse and add a catalog accessory to the opening"
     bl_options = {'UNDO'}
 
-    target_name: bpy.props.StringProperty(default="", options={'HIDDEN'})  # type: ignore
+    target_name: bpy.props.StringProperty(default="", options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
     filter_text: bpy.props.StringProperty(
         name="Search",
         description="Filter accessories by name, section, group or code",

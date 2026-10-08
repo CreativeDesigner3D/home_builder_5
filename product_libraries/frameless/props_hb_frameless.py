@@ -661,6 +661,10 @@ def _build_drawer_box_system_items():
 
 
 _drawer_box_system_items = _build_drawer_box_system_items()
+# New rooms build Avantech boxes; Sized to the Drawer stays a pick.
+_DRAWER_BOX_DEFAULT = next(
+    (i for i, item in enumerate(_drawer_box_system_items)
+     if item[0] == 'AVANTECH'), 0)
 
 
 def update_drawer_box_system(self, context):
@@ -804,6 +808,30 @@ def get_match_material_enum_items(self, context):
         _match_enum_cache = items
         _match_enum_names = names
     return _match_enum_cache
+
+
+_interior_enum_cache = None
+_interior_enum_names = None
+INTERIOR_STANDARD = 'STANDARD'
+
+
+def get_interior_material_enum_items(self, context):
+    """The standard white melamine first (what an unset pick reads as,
+    so older styles keep their interior), Match Cabinet, then the
+    library's sheet materials. Cached for the same reason as the match
+    list above."""
+    global _interior_enum_cache, _interior_enum_names
+    m = _sheet_materials()
+    names = tuple(m.get_material_names())
+    if _interior_enum_cache is None or names != _interior_enum_names:
+        items = [(INTERIOR_STANDARD, INTERIOR_MATERIAL,
+                  "The standard %s melamine interior" % INTERIOR_MATERIAL),
+                 (m.MATCH, "Match Cabinet",
+                  "The interior in the cabinet material")]
+        items += [(n, n, "") for n in names if n != INTERIOR_MATERIAL]
+        _interior_enum_cache = items
+        _interior_enum_names = names
+    return _interior_enum_cache
 
 
 def _cabinets_wearing_style(style):
@@ -1019,6 +1047,13 @@ class Frameless_Cabinet_Style(PropertyGroup):
         items=get_match_material_enum_items,
         update=update_style_materials,
     )  # type: ignore
+    interior_sheet_material: EnumProperty(
+        name="Interior Material",
+        description="Sheet material for the cabinet interior (Match "
+                    "Cabinet = the cabinet material inside and out)",
+        items=get_interior_material_enum_items,
+        update=update_style_materials,
+    )  # type: ignore
     edge_material: EnumProperty(
         name="Cabinet Edgebanding",
         description="Edgebanding on carcass parts (Match = the cabinet "
@@ -1103,11 +1138,18 @@ class Frameless_Cabinet_Style(PropertyGroup):
         return mat, m.rotated_variant(mat)
 
     def get_interior_material(self):
-        """The interior is always the white melamine; a Finished
-        Interior cabinet runs the cabinet material through instead (see
-        apply_materials_to_cabinet)."""
+        """The style's interior pick: the standard white melamine unless
+        it says otherwise. A Finished Interior cabinet runs the cabinet
+        material through instead (see apply_materials_to_cabinet)."""
         m = _sheet_materials()
-        mat = m.load_material(INTERIOR_MATERIAL)
+        pick = self.interior_sheet_material
+        if pick == m.MATCH:
+            mat, _ = self.get_finish_material()
+        else:
+            mat = None
+            if pick not in ('', INTERIOR_STANDARD):
+                mat = m.load_material(pick)
+            mat = mat or m.load_material(INTERIOR_MATERIAL)
         return mat, m.rotated_variant(mat)
 
     def get_front_material(self):
@@ -1264,6 +1306,7 @@ class Frameless_Cabinet_Style(PropertyGroup):
         col = box.column(align=True)
         col.prop(self, "sheet_material", text="Material")
         col.prop(self, "front_material", text="Fronts")
+        col.prop(self, "interior_sheet_material", text="Interior")
 
         col = box.column(align=True)
         col.label(text="Edgebanding:")
@@ -2247,6 +2290,7 @@ class Frameless_Scene_Props(PropertyGroup):
                     "their standard heights and lengths, or boxes sized "
                     "to each drawer's own clearances",
         items=drawer_box_system_items,
+        default=_DRAWER_BOX_DEFAULT,
         update=update_drawer_box_system)  # type: ignore
 
     countertop_material: EnumProperty(

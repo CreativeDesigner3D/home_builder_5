@@ -264,6 +264,7 @@ OPTION_PAGES = {
         'fields': (
             ('enum', 'sheet_material', "Material"),
             ('enum', 'front_material', "Fronts"),
+            ('enum', 'interior_sheet_material', "Interior"),
             ('enum', 'edge_material', "Cabinet Edge"),
             ('enum', 'front_edge_material', "Front Edge"),
             ('enum', 'door_overlay_type', "Door Overlay"),
@@ -436,6 +437,7 @@ OPTION_PAGES = {
             ('distance', 'countertop_overhang_front', "Front Overhang"),
             ('distance', 'countertop_overhang_sides', "Side Overhang"),
             ('distance', 'countertop_overhang_back', "Back Overhang"),
+            ('enum', 'countertop_material', "Material"),
             ('actions', (("Add Countertops", 'hb_frameless.add_countertops',
                           'selected_only', False),
                          ("Add to Selected", 'hb_frameless.add_countertops',
