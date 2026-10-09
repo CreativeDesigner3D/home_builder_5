@@ -8243,11 +8243,13 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
     # manual count survives the host recalc. On the shared propgroup but
     # only read for applied panels (PanelFaceFrameCabinet roots).
     panel_split_auto: BoolProperty(
-        name="Auto Openings", default=True,
-        description="When on, the applied panel's number of openings "
-                    "follows its width. Inserting or deleting a bay "
-                    "turns this off so your opening count survives "
-                    "recalculation",
+        name="Lay Out by Columns & Rows", default=True,
+        description="On: the panel's openings are laid out by the "
+                    "Openings Across / Openings High counts below "
+                    "(0 sizes them from the panel). Off: the openings "
+                    "stay as edited by hand - inserting or deleting a "
+                    "bay or splitting an opening turns this off so "
+                    "those edits survive recalculation",
         update=_update_panel_split_auto)  # type: ignore
     # Explicit vertical-division override for the width ladder. 0 keeps
     # the automatic count. Rail-matched side panels (the panel mirrors

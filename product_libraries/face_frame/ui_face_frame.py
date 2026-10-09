@@ -723,12 +723,24 @@ def draw_panel_layout(layout, root):
     part's right-click menu."""
     cab_props = root.face_frame_cabinet
 
-    layout.prop(cab_props, 'panel_split_auto')
+    # What the panel looks like now, so the counts below read as the
+    # openings on this end rather than as abstract numbers.
+    across, _high = _draw_panel_openings_preview(layout, root)
+
+    layout.prop(cab_props, 'panel_split_auto',
+                text="Lay Out by Columns & Rows")
     col = layout.column()
     col.enabled = cab_props.panel_split_auto
-    col.prop(cab_props, 'panel_vertical_bays', text="Columns (0 = Auto)")
+    col.prop(cab_props, 'panel_vertical_bays',
+             text="Openings Across (0 = Auto)")
+    asked = cab_props.panel_vertical_bays
+    if cab_props.panel_split_auto and across and asked > across:
+        # Stacked rows split each row's opening in place, which takes
+        # one centered stile - so at most 2 across.
+        col.label(text="Only %d across fit when the panel has rows"
+                  % across, icon='ERROR')
     col.prop(cab_props, 'panel_horizontal_rows',
-             text="Rows (0 = Match Cabinet)")
+             text="Openings High (0 = Match Cabinet)")
 
     rows = cab_props.panel_horizontal_rows
     if rows > 1:
@@ -771,9 +783,51 @@ def draw_panel_layout(layout, root):
                           "Column %d" % (i + 1))
 
     if not cab_props.panel_split_auto:
-        layout.label(text="Openings are pinned to your manual edits",
-                     icon='INFO')
+        info = layout.column(align=True)
+        info.label(text="Openings are pinned to your manual edits.",
+                   icon='INFO')
+        info.label(text="Check Lay Out by Columns & Rows to set them here.",
+                   icon='BLANK1')
     layout.prop(cab_props, 'panel_x_frame')
+
+
+def _panel_opening_grid(root):
+    """(across, high) of the openings the panel has now, read off the
+    built opening cages in the panel's own space; (0, 0) when none."""
+    tag = types_face_frame.TAG_OPENING_CAGE
+    inv = root.matrix_world.inverted()
+    xs, zs = set(), set()
+    for child in root.children_recursive:
+        if not child.get(tag):
+            continue
+        # A split opening holds its pieces; only the pieces show.
+        if any(c.get(tag) for c in child.children_recursive):
+            continue
+        p = inv @ child.matrix_world.translation
+        xs.add(round(p.x, 3))
+        zs.add(round(p.z, 3))
+    return len(xs), len(zs)
+
+
+def _draw_panel_openings_preview(layout, root):
+    """A small grid of the panel's openings as they are built now: one
+    square per opening, laid out across and up the panel face. Returns
+    the (across, high) it showed."""
+    across, high = _panel_opening_grid(root)
+    box = layout.box()
+    if not across or not high:
+        box.label(text="No openings on this panel yet", icon='INFO')
+        return across, high
+    total = across * high
+    box.label(text="Openings on this panel: %d (%d across x %d high)"
+              % (total, across, high))
+    grid = box.column(align=True)
+    for _r in range(min(high, 8)):
+        row = grid.row(align=True)
+        row.alignment = 'CENTER'
+        for _c in range(min(across, 8)):
+            row.label(text="", icon='MESH_PLANE')
+    return across, high
 
 
 def _is_mantle(obj):
