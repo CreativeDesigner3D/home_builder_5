@@ -938,6 +938,37 @@ class Home_Builder_Scene_Props(PropertyGroup):
         update=update_dimension_tick_length
     )# type: ignore
 
+    # Additional text placement saved by Dimension Options > Set As
+    # Default. Applied when the dialog opens on a dimension that has no
+    # additional text yet, so a suffix typed there lands where the last
+    # saved one did.
+    annotation_dimension_additional_text_saved: BoolProperty(
+        name="Additional Text Defaults Saved",
+        default=False,
+    )# type: ignore
+
+    annotation_dimension_additional_text_x: FloatProperty(
+        name="Additional Text X Offset",
+        default=0.0,
+        precision=4,
+        unit='LENGTH',
+    )# type: ignore
+
+    annotation_dimension_additional_text_y: FloatProperty(
+        name="Additional Text Y Offset",
+        default=0.0,
+        precision=4,
+        unit='LENGTH',
+    )# type: ignore
+
+    annotation_dimension_additional_text_size: FloatProperty(
+        name="Additional Text Size",
+        default=inch(2),
+        min=0.0,
+        precision=4,
+        unit='LENGTH',
+    )# type: ignore
+
     # ==========================================================================
     # AUTO-SCALE ANNOTATION PROPERTIES (Paper Space)
     # ==========================================================================
