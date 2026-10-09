@@ -792,6 +792,9 @@ def remove_geometry(cage_obj, restore_annotations=False):
         bpy.data.objects.remove(child, do_unlink=True)
         if me is not None and me.users == 0:
             bpy.data.meshes.remove(me)
+    # With no modeled leaf the swing annotation draws the arc again; a
+    # build that models one hides it and draws its own symbol.
+    _show_swing_arc(cage_obj, True)
     if restore_annotations:
         _ensure_annotation_text(cage_obj, True)
 
@@ -1596,10 +1599,51 @@ def _door_type_symbol(cage_obj, kind, opts, x0, x1, T, y_center, st, ct,
             lines.append(((x, y), (x + w, y)))
         ty = y + s * (st / 2.0 + inch(1.0))
         dashed.append(((tx0, ty), (tx1, ty)))
+    return _symbol_object(cage_obj, "Door Type Symbol", lines, dashed)
+
+
+SWING_SYMBOL_ANGLE = 90.0       # degrees the plan leaf is drawn open at
+SWING_ARC_STEPS = 24
+
+
+def _swing_symbol(cage_obj, leaves, y_front, st, swing_inside):
+    """Plan swing symbol for the modeled leaves: each leaf drawn open at
+    SWING_SYMBOL_ANGLE with its arc back to the closed latch edge. Both
+    come from the same open-swing transform the slab is posed with, so
+    the symbol hinges exactly where the 3D leaf does. The closed slab
+    itself is the modeled door, so no outline is drawn for it.
+    ``leaves`` is ((x, width, hinge), ...) as passed to _build_slab."""
+    lines = []
+    for x, w, hinge in leaves:
+        full = _leaf_open_transform(x, y_front, st, w, hinge, swing_inside,
+                                    SWING_SYMBOL_ANGLE)
+        corners = [full @ Vector(c) for c in (
+            (x, y_front, 0.0), (x + w, y_front, 0.0),
+            (x + w, y_front + st, 0.0), (x, y_front + st, 0.0))]
+        for i in range(4):
+            a, b = corners[i], corners[(i + 1) % 4]
+            lines.append(((a.x, a.y), (b.x, b.y)))
+        # The arc runs from the open leaf's tip back to where the latch
+        # edge closes, on the face the leaf pivots on.
+        pivot_y = y_front if swing_inside else y_front + st
+        latch = Vector((x + w if hinge == 'L' else x, pivot_y, 0.0))
+        prev = latch
+        for step in range(1, SWING_ARC_STEPS + 1):
+            deg = SWING_SYMBOL_ANGLE * step / SWING_ARC_STEPS
+            p = _leaf_open_transform(x, y_front, st, w, hinge, swing_inside,
+                                     deg) @ latch
+            lines.append(((prev.x, prev.y), (p.x, p.y)))
+            prev = p
+    return _symbol_object(cage_obj, "Door Swing Symbol", lines)
+
+
+def _symbol_object(cage_obj, name, lines, dashed=()):
+    """A plan symbol child built from strokes. It goes with the door
+    swings (show_door_swings) and is rebuilt with the geometry."""
     verts, faces, slots = _symbol_lines(lines, dashed)
     if not verts:
         return None
-    obj = _new_child(cage_obj, "Door Type Symbol")
+    obj = _new_child(cage_obj, name)
     obj['IS_2D_ANNOTATION'] = True
     obj[DOOR_SYMBOL_FLAG] = True
     # Plan drawings shade by object color; black like the swing arc so
@@ -1853,7 +1897,9 @@ def build_door_geometry(cage_obj):
     slab_h = z_top - th_h
     slab_zone_w = door_x1 - door_x0
     is_double, is_left, swing_inside = _swing_state(cage_obj)
-    _show_swing_arc(cage_obj, kind == 'SWING')
+    # Every modeled door draws its own plan symbol from its leaves; the
+    # annotation stays only as the carrier of handing, side and double.
+    _show_swing_arc(cage_obj, False)
     _fit_swing_to_leaf(cage_obj, door_x0, W - (door_x1 - door_x0), st)
     if kind != 'SWING':
         side = -1.0 if swing_inside else 1.0
@@ -1886,17 +1932,16 @@ def build_door_geometry(cage_obj):
     open_deg = max(float(opts['open_angle']), 0.0)
     if is_double and slab_zone_w > inch(24):
         half = slab_zone_w / 2.0
-        _build_slab(cage_obj, "Door Slab Left", opts, half, slab_h,
-                    door_x0, y_center_front, hinge='L',
-                    swing_inside=swing_inside, open_deg=open_deg)
-        _build_slab(cage_obj, "Door Slab Right", opts, half, slab_h,
-                    door_x0 + half, y_center_front, hinge='R',
-                    swing_inside=swing_inside, open_deg=open_deg)
+        leaves = (("Door Slab Left", door_x0, half, 'L'),
+                  ("Door Slab Right", door_x0 + half, half, 'R'))
     else:
-        _build_slab(cage_obj, "Door Slab", opts, slab_zone_w, slab_h,
-                    door_x0, y_center_front,
-                    hinge=slab_hinge,
-                    swing_inside=swing_inside, open_deg=open_deg)
+        leaves = (("Door Slab", door_x0, slab_zone_w, slab_hinge),)
+    for name, x, w, hinge in leaves:
+        _build_slab(cage_obj, name, opts, w, slab_h, x, y_center_front,
+                    hinge=hinge, swing_inside=swing_inside,
+                    open_deg=open_deg)
+    _swing_symbol(cage_obj, [(x, w, hinge) for _n, x, w, hinge in leaves],
+                  y_center_front, st, swing_inside)
 
     frame = _new_child(cage_obj, "Door Frame")
     _finish_mesh(frame, verts, faces, slots, [trim_mat])
