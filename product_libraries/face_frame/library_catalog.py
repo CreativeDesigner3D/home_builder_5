@@ -66,13 +66,15 @@ SECTIONS = (
         'rows': (
             # No dedicated Oven product: the Oven button places the
             # built-in tall oven tower.
-            ("Cabinet", (("Sink", "Sink"),
-                         ("Cooktop", "Cooktop Base"),
-                         ("Refrigerator", "Refrigerator Cabinet"),
-                         ("Oven", "Built in Tall"))),
+            # Labels name the cabinet so these read apart from the
+            # standalone appliances (two "Refrigerator"s otherwise).
+            ("Cabinet", (("Sink Base", "Sink"),
+                         ("Cooktop Base", "Cooktop Base"),
+                         ("Refrig. Tall", "Refrigerator Cabinet"),
+                         ("Oven Tall", "Built in Tall"))),
             ("Standalone", (("Dishwasher", "Dishwasher"),
                             ("Range", "Range"),
-                            ("Hood", "Range Hood"),
+                            ("Metal Hood", "Range Hood"),
                             ("Refrigerator", "Standalone Refrigerator"))),
             # Generic under-counter appliance (beverage centre, wine
             # fridge, ice maker) - relabel after placing via Set Label.
