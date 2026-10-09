@@ -963,6 +963,24 @@ def setup_iso_freestyle(scene):
 # interior split nodes are plain empties with no geo modifier, so they are
 # matched separately.
 
+def raw_world_matrix(obj, root):
+    """World matrix of obj, a descendant of root, composed from the raw
+    transforms between them on top of root's own matrix_world.
+    matrix_world is only refreshed by a depsgraph pass over a scene that
+    holds the object, so a part that lives only in layout scenes (e.g.
+    return-wall fills) can report a stale one -- often the world origin.
+    root (a wall) is trusted as-is: walls are placed by constraints,
+    which raw transforms can't reproduce."""
+    m = obj.matrix_basis.copy()
+    while obj.parent is not None and obj.parent is not root:
+        m = obj.matrix_parent_inverse @ m
+        obj = obj.parent
+        m = obj.matrix_basis @ m
+    if obj.parent is None:
+        return m
+    return root.matrix_world @ obj.matrix_parent_inverse @ m
+
+
 def is_cage_object(obj) -> bool:
     """True if obj is a cage container that should be excluded from layout views."""
     return bool(
@@ -1641,12 +1659,15 @@ class ElevationView(LayoutView):
             is_cage = is_cage_object(child)
             is_helper = is_helper_object(child)
             
-            if is_cage or is_helper:
+            # Viewport-hidden parts (an appliance's detailed model while
+            # it shows as a plain box) aren't drawn, so they don't count.
+            if is_cage or is_helper or child.hide_viewport:
                 continue
             
             # Use bounding box for mesh objects
             if hasattr(child, 'bound_box') and child.type == 'MESH':
-                bbox_corners = [child.matrix_world @ Vector(corner) for corner in child.bound_box]
+                child_matrix = raw_world_matrix(child, wall_obj)
+                bbox_corners = [child_matrix @ Vector(corner) for corner in child.bound_box]
                 bbox_local = [wall_matrix_inv @ corner for corner in bbox_corners]
                 
                 child_min_x = min(c.x for c in bbox_local)
@@ -2051,11 +2072,13 @@ class PlanView(LayoutView):
             is_cage = is_cage_object(child)
             is_helper = is_helper_object(child)
             
-            if is_cage or is_helper:
+            # Viewport-hidden parts (an appliance's detailed model while
+            # it shows as a plain box) aren't drawn, so they don't count.
+            if is_cage or is_helper or child.hide_viewport:
                 continue
             
             # Get child's world position and convert to wall's local space
-            child_world_pos = child.matrix_world.translation
+            child_world_pos = raw_world_matrix(child, wall_obj).translation
             child_local_pos = wall_matrix_inv @ child_world_pos
             
             # Get child dimensions if it's a geo node object
@@ -2235,11 +2258,13 @@ class View3D(LayoutView):
             is_cage = is_cage_object(child)
             is_helper = is_helper_object(child)
             
-            if is_cage or is_helper:
+            # Viewport-hidden parts (an appliance's detailed model while
+            # it shows as a plain box) aren't drawn, so they don't count.
+            if is_cage or is_helper or child.hide_viewport:
                 continue
             
             # Get child's world position and convert to wall's local space
-            child_world_pos = child.matrix_world.translation
+            child_world_pos = raw_world_matrix(child, wall_obj).translation
             child_local_pos = wall_matrix_inv @ child_world_pos
             
             # Get child dimensions if it's a geo node object
@@ -2953,7 +2978,9 @@ class MultiView(LayoutView):
                 for ch in o.children:
                     visit(ch)
                 return
-            if not is_cage_object(o) and not is_helper_object(o):
+            # Viewport-hidden parts aren't drawn, so they don't count.
+            if (not is_cage_object(o) and not is_helper_object(o)
+                    and not o.hide_viewport):
                 try:
                     if hasattr(o, 'bound_box') and o.type != 'EMPTY':
                         o_eval = o.evaluated_get(depsgraph)
