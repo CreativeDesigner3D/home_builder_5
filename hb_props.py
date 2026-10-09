@@ -1060,4 +1060,56 @@ classes = (
     Home_Builder_Window_Manager_Props,
 )
 
-register, unregister = bpy.utils.register_classes_factory(classes)                     
+_register_classes, _unregister_classes = bpy.utils.register_classes_factory(classes)
+
+
+# Root tag of each library's products, by the product_tab that browses it.
+_LIBRARY_ROOT_TAGS = (('FRAMELESS', 'IS_FRAMELESS_CABINET_CAGE'),
+                      ('FACE FRAME', 'IS_FACE_FRAME_CABINET_CAGE'),
+                      ('CLOSET', 'IS_CLOSET_STARTER_CAGE'))
+
+
+def _dominant_library(scene):
+    """The product_tab whose products the scene holds most of, or None
+    when it holds none."""
+    counts = dict.fromkeys((tab for tab, _tag in _LIBRARY_ROOT_TAGS), 0)
+    for obj in scene.objects:
+        for tab, tag in _LIBRARY_ROOT_TAGS:
+            if obj.get(tag):
+                counts[tab] += 1
+                break
+    best = max(counts, key=counts.get)
+    return best if counts[best] else None
+
+
+@bpy.app.handlers.persistent
+def _match_library_to_contents(*_args):
+    """Open each room on the library it was drawn with.
+
+    A room still on the default library (Frameless) that holds mostly
+    another library's products is switched to that library, so the
+    browser, selection modes and panels match what is in the room. A
+    room set to any other library is the user's choice and is left
+    alone."""
+    for scene in bpy.data.scenes:
+        hb = getattr(scene, 'home_builder', None)
+        if hb is None or hb.product_tab != 'FRAMELESS':
+            continue
+        try:
+            want = _dominant_library(scene)
+        except Exception:
+            continue
+        if want and want != hb.product_tab:
+            hb.product_tab = want
+
+
+def register():
+    _register_classes()
+    if _match_library_to_contents not in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.append(_match_library_to_contents)
+
+
+def unregister():
+    if _match_library_to_contents in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(_match_library_to_contents)
+    _unregister_classes()                     
