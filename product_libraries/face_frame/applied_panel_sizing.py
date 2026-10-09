@@ -67,12 +67,14 @@ def rear_kick_inset_active(cab):
     if (cab.cabinet_type not in ('BASE', 'TALL')
             or getattr(cab, 'corner_type', 'NONE') != 'NONE'):
         return False
-    # Bun feet under the back corners recess the back of the kick too.
-    if (cab.toe_kick_type == 'BUN_FEET'
-            and getattr(cab, 'back_exposure', 'EXPOSED') == 'EXPOSED'
-            and 'EXPOSED' in (getattr(cab, 'left_exposure', 'EXPOSED'),
-                              getattr(cab, 'right_exposure', 'EXPOSED'))):
-        return True
+    # Bun feet under the back corners recess the back of the kick too,
+    # and a cabinet open underneath has no kick at the back to cover.
+    if cab.toe_kick_type == 'BUN_FEET':
+        from . import solver_face_frame as solver
+        if getattr(cab, 'bun_feet_open', False):
+            return True
+        if {'BACK_LEFT', 'BACK_RIGHT'} & set(solver.bun_foot_corners(cab)):
+            return True
     return (getattr(cab, 'inset_toe_kick_rear', 0.0) > 0.0
             and cab.toe_kick_type in ('NOTCH', 'LOOSE', 'LOOSE_FLUSH',
                                       'BUN_FEET'))

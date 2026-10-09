@@ -1730,7 +1730,9 @@ def has_loose_kick(layout):
     Both LOOSE and LOOSE_FLUSH build the ladder; they differ only in the
     ladder's front setback (see loose_kick_setback)."""
     return (layout.has_toe_kick
-            and layout.toe_kick_type in LOOSE_KICK_TYPES)
+            and layout.toe_kick_type in LOOSE_KICK_TYPES
+            and not (layout.toe_kick_type == 'BUN_FEET'
+                     and getattr(layout, 'bun_feet_open', False)))
 
 
 def loose_kick_setback(layout):
@@ -1849,22 +1851,25 @@ def loose_kick_back_y(layout):
 # island). The ladder pulls in behind the feet - setback and end insets
 # grow to at least the foot's footprint - so the feet stand proud of the
 # kick. The foot fills the kick height.
+#
+# Two per-cabinet options change that: the corners can be picked by hand
+# (bun_foot_corner_mode CUSTOM - any corner, including back corners
+# against a wall), and the cabinet can be left open underneath
+# (bun_feet_open), standing on the feet alone with no ladder behind them.
 PART_ROLE_BUN_FOOT_PREFIX = 'BUN_FOOT_'
 BUN_FOOT_CORNERS = ('FRONT_LEFT', 'FRONT_RIGHT', 'BACK_LEFT', 'BACK_RIGHT')
 
 
-def _init_bun_feet(layout, cab):
-    """Resolve which corners carry a foot and widen the ladder insets to
-    clear them. Straight cabinets only; corner cabinets build a plain
-    recessed ladder."""
-    layout.bun_foot_style = getattr(cab, 'bun_foot_style',
-                                    bun_foot.DEFAULT_STYLE)
-    layout.bun_foot_width, layout.bun_foot_depth = bun_foot.footprint(
-        layout.bun_foot_style)
-    layout.bun_foot_corners = ()
-    if not (layout.has_toe_kick and layout.toe_kick_type == 'BUN_FEET'
-            and layout.corner_type == 'NONE'):
-        return
+def bun_foot_corners(cab, mode=None):
+    """The corners of a straight bun-feet cabinet that carry a foot:
+    the hand-picked ones, or by default every corner the room leaves in
+    view (front corners of an exposed end, back corners too when the
+    back is exposed). ``mode`` overrides the cabinet's corner mode."""
+    if mode is None:
+        mode = getattr(cab, 'bun_foot_corner_mode', 'AUTO')
+    if mode == 'CUSTOM':
+        return tuple(c for c in BUN_FOOT_CORNERS
+                     if getattr(cab, 'bun_foot_' + c.lower(), False))
     left = getattr(cab, 'left_exposure', 'EXPOSED') == 'EXPOSED'
     right = getattr(cab, 'right_exposure', 'EXPOSED') == 'EXPOSED'
     back = getattr(cab, 'back_exposure', 'EXPOSED') == 'EXPOSED'
@@ -1877,14 +1882,32 @@ def _init_bun_feet(layout, cab):
         corners.append('BACK_LEFT')
     if back and right:
         corners.append('BACK_RIGHT')
-    layout.bun_foot_corners = tuple(corners)
+    return tuple(corners)
+
+
+def _init_bun_feet(layout, cab):
+    """Resolve which corners carry a foot and widen the ladder insets to
+    clear them. Straight cabinets only; corner cabinets build a plain
+    recessed ladder."""
+    layout.bun_foot_style = getattr(cab, 'bun_foot_style',
+                                    bun_foot.DEFAULT_STYLE)
+    layout.bun_foot_width, layout.bun_foot_depth = bun_foot.footprint(
+        layout.bun_foot_style)
+    layout.bun_foot_corners = ()
+    layout.bun_feet_open = False
+    if not (layout.has_toe_kick and layout.toe_kick_type == 'BUN_FEET'
+            and layout.corner_type == 'NONE'):
+        return
+    layout.bun_feet_open = bool(getattr(cab, 'bun_feet_open', False))
+    corners = bun_foot_corners(cab)
+    layout.bun_foot_corners = corners
     w, d = layout.bun_foot_width, layout.bun_foot_depth
     clear_x = max(layout.tks, w)
-    if left:
+    if 'FRONT_LEFT' in corners or 'BACK_LEFT' in corners:
         layout.kick_inset_left = max(layout.kick_inset_left, clear_x)
-    if right:
+    if 'FRONT_RIGHT' in corners or 'BACK_RIGHT' in corners:
         layout.kick_inset_right = max(layout.kick_inset_right, clear_x)
-    if back and (left or right):
+    if 'BACK_LEFT' in corners or 'BACK_RIGHT' in corners:
         layout.kick_inset_back = max(layout.kick_inset_back, d)
 
 

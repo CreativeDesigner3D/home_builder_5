@@ -300,6 +300,19 @@ def draw_construction(layout, cab_props):
             col.prop(cab_props, 'toe_kick_type', text="Type")
             if cab_props.toe_kick_type == 'BUN_FEET':
                 col.prop(cab_props, 'bun_foot_style', text="Foot")
+                if cab_props.corner_type == 'NONE':
+                    col.prop(cab_props, 'bun_feet_open')
+                    col.prop(cab_props, 'bun_foot_corner_mode', text="")
+                    if cab_props.bun_foot_corner_mode == 'CUSTOM':
+                        grid = col.grid_flow(row_major=True, columns=2, align=True)
+                        grid.prop(cab_props, 'bun_foot_back_left',
+                                  toggle=True)
+                        grid.prop(cab_props, 'bun_foot_back_right',
+                                  toggle=True)
+                        grid.prop(cab_props, 'bun_foot_front_left',
+                                  toggle=True)
+                        grid.prop(cab_props, 'bun_foot_front_right',
+                                  toggle=True)
             col.prop(cab_props, 'toe_kick_height', text="Height")
             # Floating vanity construction: only a floating kick can
             # carry it, and the height above is then the gap it floats.

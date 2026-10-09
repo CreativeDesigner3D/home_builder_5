@@ -6176,6 +6176,18 @@ def _update_bun_foot_style(self, context):
     _update_cabinet_dim(self, context)
 
 
+def _update_bun_foot_corner_mode(self, context):
+    """Switching to hand-picked corners starts from the corners the
+    cabinet has now, so nothing moves until a corner is changed."""
+    if self.bun_foot_corner_mode == 'CUSTOM':
+        from . import solver_face_frame as solver
+        current = solver.bun_foot_corners(self, mode='AUTO')
+        for corner in solver.BUN_FOOT_CORNERS:
+            # Raw writes: one rebuild below instead of one per corner.
+            self['bun_foot_' + corner.lower()] = corner in current
+    _update_cabinet_dim(self, context)
+
+
 def _size_kick_to_bun_foot(cab):
     """Set the kick height to the foot's stock height. True when it
     changed (toe_kick_height's own update then rebuilt the cabinet)."""
@@ -8774,6 +8786,37 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         items=bun_foot.style_items(),
         default=bun_foot.DEFAULT_STYLE,
         update=_update_bun_foot_style,
+    )  # type: ignore
+    bun_feet_open: BoolProperty(
+        name="Open Underneath",
+        description=("Stand the cabinet on the feet alone, with no "
+                     "recessed kick behind them"),
+        default=False,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    bun_foot_corner_mode: EnumProperty(
+        name="Bun Foot Corners",
+        items=[
+            ('AUTO', "Exposed Corners",
+             "A foot under every corner the room leaves in view"),
+            ('CUSTOM', "Choose Corners",
+             "Pick which corners get a foot, including back corners "
+             "against a wall"),
+        ],
+        default='AUTO',
+        update=_update_bun_foot_corner_mode,
+    )  # type: ignore
+    bun_foot_front_left: BoolProperty(
+        name="Front Left", default=True, update=_update_cabinet_dim,
+    )  # type: ignore
+    bun_foot_front_right: BoolProperty(
+        name="Front Right", default=True, update=_update_cabinet_dim,
+    )  # type: ignore
+    bun_foot_back_left: BoolProperty(
+        name="Back Left", default=False, update=_update_cabinet_dim,
+    )  # type: ignore
+    bun_foot_back_right: BoolProperty(
+        name="Back Right", default=False, update=_update_cabinet_dim,
     )  # type: ignore
     toe_kick_height: FloatProperty(
         # Floored at zero: on a NOTCH kick a negative height is a recess
