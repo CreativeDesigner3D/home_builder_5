@@ -1374,6 +1374,8 @@ class hb_face_frame_OT_paint_door_hardware(_paint_front_brush, bpy.types.Operato
             return
         hw[self.callout] = state
         _props.set_front_door_hw(front, hw, store)
+        from .. import door_hardware_overlay
+        door_hardware_overlay.invalidate()
         self._count += 1
         context.workspace.status_text_set(
             f"{self.callout} {'ON' if state else 'OFF'}: {front.name}  |  "

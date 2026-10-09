@@ -2156,6 +2156,8 @@ def _on_hw_field(self, context):
                                      'TL': self.touch_latches,
                                      'FR': self.finger_rout},
                              _frame_store(front))
+    from .. import door_hardware_overlay
+    door_hardware_overlay.invalidate()
 
 
 class hb_face_frame_OT_set_door_hardware(bpy.types.Operator):
