@@ -1342,6 +1342,7 @@ BARN_FLOOR_GAP = inch(0.5)
 BARN_TRACK = (inch(1.5), inch(0.375))   # height, depth
 SYMBOL_LINE = inch(0.14)        # the swing arc's stroke
 SYMBOL_DASH = (inch(3.0), inch(2.0))
+SYMBOL_COLOR = (0.0, 0.0, 0.0, 1.0)
 
 
 def door_type(opts):
@@ -1601,6 +1602,9 @@ def _door_type_symbol(cage_obj, kind, opts, x0, x1, T, y_center, st, ct,
     obj = _new_child(cage_obj, "Door Type Symbol")
     obj['IS_2D_ANNOTATION'] = True
     obj[DOOR_SYMBOL_FLAG] = True
+    # Plan drawings shade by object color; black like the swing arc so
+    # the symbol doesn't vanish white-on-white.
+    obj.color = SYMBOL_COLOR
     _finish_mesh(obj, verts, faces, slots, [])
     try:
         props = bpy.context.scene.home_builder

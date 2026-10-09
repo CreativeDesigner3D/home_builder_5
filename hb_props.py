@@ -1103,13 +1103,28 @@ def _match_library_to_contents(*_args):
             hb.product_tab = want
 
 
+@bpy.app.handlers.persistent
+def _darken_door_type_symbols(*_args):
+    """Door type symbols (bi-fold, sliding, pocket, barn) saved before
+    they carried a color draw white in plan; give them the swing arc's
+    black."""
+    for obj in bpy.data.objects:
+        if obj.get('IS_DOOR_TYPE_SYMBOL') and tuple(obj.color)[:3] != (0, 0, 0):
+            obj.color = (0.0, 0.0, 0.0, 1.0)
+
+
+_LOAD_HANDLERS = (_match_library_to_contents, _darken_door_type_symbols)
+
+
 def register():
     _register_classes()
-    if _match_library_to_contents not in bpy.app.handlers.load_post:
-        bpy.app.handlers.load_post.append(_match_library_to_contents)
+    for handler in _LOAD_HANDLERS:
+        if handler not in bpy.app.handlers.load_post:
+            bpy.app.handlers.load_post.append(handler)
 
 
 def unregister():
-    if _match_library_to_contents in bpy.app.handlers.load_post:
-        bpy.app.handlers.load_post.remove(_match_library_to_contents)
+    for handler in _LOAD_HANDLERS:
+        if handler in bpy.app.handlers.load_post:
+            bpy.app.handlers.load_post.remove(handler)
     _unregister_classes()                     
