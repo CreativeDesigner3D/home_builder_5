@@ -123,7 +123,10 @@ class hb_face_frame_OT_update_finish_toe_kicks(bpy.types.Operator):
                 if cab.cabinet_type == 'PANEL':
                     continue
                 changed = False
-                if cab.include_finish_toe_kick != include:
+                # A flush kick only takes a finish kick when it is
+                # turned on by hand, so the push never adds one there.
+                flush_on = include and cab.toe_kick_type == 'FLUSH'
+                if not flush_on and cab.include_finish_toe_kick != include:
                     cab.include_finish_toe_kick = include
                     changed = True
                 if include and cab.finish_toe_kick_type != kick_type:

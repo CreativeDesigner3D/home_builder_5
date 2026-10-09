@@ -6158,9 +6158,14 @@ def _update_cabinet_dim(self, context):
 
 def _update_toe_kick_type(self, context):
     """Kick type change. Switching to bun feet stands the cabinet on
-    the feet at their stock height."""
+    the feet at their stock height. Switching to a flush kick turns the
+    finish toe kick off: the wide bottom rail is the finished face, so a
+    finish kick there has to be asked for explicitly."""
     if self.toe_kick_type == 'BUN_FEET' and _size_kick_to_bun_foot(self):
         return      # the height write recalculated
+    if self.toe_kick_type == 'FLUSH' and self.include_finish_toe_kick:
+        self.include_finish_toe_kick = False
+        return      # the include write recalculated
     _update_cabinet_dim(self, context)
 
 
