@@ -6113,8 +6113,8 @@ class HB_UL_face_frame_door_styles(UIList):
 # Object-level PropertyGroups - face frame cabinet & bay state
 # ---------------------------------------------------------------------------
 FINISH_TOE_KICK_TYPE_ITEMS = [
-    ('APPLIED', "Applied 1/4\"",
-     "Thin applied finish toe kick over the toe kick front"),
+    ('APPLIED', "Scribe - Standard 1/4\"",
+     "Standard 1/4\" scribe finish toe kick, sent loose and fit on site"),
     ('SOLID', "Solid Lumber 3/4\"",
      "3/4\" solid lumber with square edges used as the finish toe kick"),
 ]
