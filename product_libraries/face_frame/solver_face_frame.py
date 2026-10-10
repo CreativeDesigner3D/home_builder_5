@@ -93,6 +93,9 @@ class FaceFrameLayout:
         # Lazy import avoids any circular at module load
         from . import types_face_frame
         self._cabinet_tag = types_face_frame.TAG_BAY_CAGE
+        # Kept for the few answers that depend on what stands beside the
+        # cabinet (see _finish_kick_reaches_edge).
+        self._cabinet_obj = cabinet_obj
 
         cab = cabinet_obj.face_frame_cabinet
         self.cabinet_type = cab.cabinet_type
@@ -1403,13 +1406,75 @@ def has_finish_kick(layout):
     return has_kick_subfront(layout) and layout.include_finish_kick
 
 
+def _finish_kick_reaches_edge(layout, side):
+    """(reaches_edge, decided_by_neighbours) for the finish kick at one
+    cabinet end ('LEFT' / 'RIGHT').
+
+    A shown end - finished, paneled, an applied skin, or an island end
+    the run behind covers with its notched board - takes the finish
+    kick out to the cabinet's edge to cover the side's notch. A FLUSH_X
+    end never does: its strip runs to the floor through the kick zone.
+    An unfinished end runs to the edge only when the kick line carries
+    on past it (a wall or another floor-standing cabinet); beside an
+    appliance, an open gap or a blind corner's face it stops flush
+    with the subfront behind it.
+    """
+    if side == 'LEFT':
+        fin, covered = layout.l_fin_end, layout.l_covered_thickness
+    else:
+        fin, covered = layout.r_fin_end, layout.r_covered_thickness
+    if covered is not None:
+        return True, False
+    if fin == 'FLUSH_X':
+        return False, False
+    if fin != 'UNFINISHED':
+        return True, False
+    cab_obj = getattr(layout, '_cabinet_obj', None)
+    if cab_obj is None:
+        return True, False
+    from . import exposure
+    try:
+        reach = exposure.kick_continues_past_end(cab_obj, side.lower())
+    except Exception:
+        return True, False
+    return reach, True
+
+
+def _stamp_finish_kick_reach(layout, reach):
+    """Record on the cabinet which ends' finish kick reach was decided
+    by its neighbours, so a later neighbour change can tell whether the
+    cabinet needs rebuilding (exposure.finish_kick_reach_stale)."""
+    cab_obj = getattr(layout, '_cabinet_obj', None)
+    if cab_obj is None:
+        return
+    from . import exposure
+    key = exposure.FINISH_KICK_REACH_KEY
+    value = [reach.get('LEFT', -1), reach.get('RIGHT', -1)]
+    try:
+        current = cab_obj.get(key)
+        if current is not None and list(current) == value:
+            return
+        if value == [-1, -1]:
+            if current is not None:
+                del cab_obj[key]
+            return
+        cab_obj[key] = value
+    except Exception:
+        pass
+
+
 def finish_kick_segments(layout):
     """Finish toe kick segments. Same passthrough as the subfront so a
-    segmented subfront gets a matching segmented finish, but X spans
-    the FULL cabinet width at the ends (not captured between sides) -
+    segmented subfront gets a matching segmented finish, but X runs
+    out to the cabinet's edge at a shown end or where the kick line
+    carries on into a neighbour (not captured between sides) -
     interior breaks still meet at the carcass meeting plane to line up
     with the subfront break behind them. Y sits in front of the
     subfront so its back face is flush with the subfront's front.
+
+    An unfinished end with no kick beyond it (an appliance, an open
+    gap, a blind corner's face) or a FLUSH_X end stops flush with the
+    subfront's end instead - see _finish_kick_reaches_edge.
 
     Stile-to-floor exception: that side's carcass panel has no notch
     and is solid through the kick Y range, so a full-width finish kick
@@ -1418,12 +1483,23 @@ def finish_kick_segments(layout):
     behind the stile separately.
     """
     if loose_kick_has_finish(layout):
+        _stamp_finish_kick_reach(layout, {})
         return [loose_kick_finish_segment(layout)]
     if not has_finish_kick(layout):
+        _stamp_finish_kick_reach(layout, {})
         return []
     segments = []
     last_bay = layout.bay_count - 1
     finish_t = layout.finish_kick_thickness
+    # Ends whose reach the neighbours decided: 1 = edge, 0 = subfront.
+    neighbour_reach = {}
+
+    def end_reaches_edge(side):
+        reach, by_neighbours = _finish_kick_reaches_edge(layout, side)
+        if by_neighbours:
+            neighbour_reach[side] = 1 if reach else 0
+        return reach
+
     for start, end in _compute_segments(layout, _kick_subfront_passthrough):
         first_bay = layout.bays[start]
         if first_bay.get('remove_bottom') or first_bay.get('remove_carcass'):
@@ -1437,8 +1513,10 @@ def finish_kick_segments(layout):
                 left_x = layout.kick_inset_left
             elif left_stile_to_floor(layout):
                 left_x = carcass_inner_left_x(layout)
-            else:
+            elif end_reaches_edge('LEFT'):
                 left_x = 0.0
+            else:
+                left_x = carcass_inner_left_x(layout)
         else:
             if _void_gap(layout, start - 1):
                 # The to-floor division finishing the void blocks the
@@ -1451,8 +1529,10 @@ def finish_kick_segments(layout):
                 right_x = layout.dim_x - layout.kick_inset_right
             elif right_stile_to_floor(layout):
                 right_x = carcass_inner_right_x(layout)
-            else:
+            elif end_reaches_edge('RIGHT'):
                 right_x = layout.dim_x
+            else:
+                right_x = carcass_inner_right_x(layout)
         else:
             if _void_gap(layout, end):
                 right_x = _mid_div_left_outer_x(layout, end)
@@ -1500,6 +1580,7 @@ def finish_kick_segments(layout):
             'width':      first_bay['kick_height'],
             'thickness':  finish_t,
         })
+    _stamp_finish_kick_reach(layout, neighbour_reach)
     return segments
 
 
