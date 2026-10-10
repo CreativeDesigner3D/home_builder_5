@@ -119,6 +119,9 @@ class FaceFrameLayout:
         # Material thicknesses
         self.mt = cab.material_thickness
         self.bt = cab.back_thickness
+        # An unlocked back thickness is taken exactly as typed - no
+        # construction (floating vanity) default is layered over it.
+        self.unlock_bt = getattr(cab, 'unlock_back_thickness', False)
         self.fft = cab.face_frame_thickness
 
         # Cabinet default overlays. Retained for the removed-mid-rail gap
@@ -630,12 +633,47 @@ def back_thickness(layout):
     _reconcile_finished_back for the applied piece.
 
     A floating vanity is the exception: its back is 3/4 by construction,
-    so a cabinet still carrying the 1/4 default gets the vanity's.
+    so a cabinet still carrying the 1/4 default gets the vanity's -
+    unless the back thickness is unlocked, which builds exactly the
+    value the cabinet carries.
     """
+    if getattr(layout, 'unlock_bt', False):
+        return layout.bt
     if (getattr(layout, 'floating_vanity', False)
             and layout.bt <= FLOATING_VANITY_BACK_THICKNESS - 1e-6):
         return FLOATING_VANITY_BACK_THICKNESS
     return layout.bt
+
+
+# Stock an applied back is built from when its thickness is left locked:
+# a FINISHED back is a 3/4 panel, a textured (beadboard / shiplap /
+# v-groove) back a 1/4 skin.
+FINISHED_BACK_THICKNESS = inch(0.75)
+TEXTURED_BACK_THICKNESS = inch(0.25)
+
+
+def standard_finished_back_thickness(condition):
+    """Locked thickness of the applied back built for `condition`."""
+    if condition == 'FINISHED':
+        return FINISHED_BACK_THICKNESS
+    return TEXTURED_BACK_THICKNESS
+
+
+def finished_back_thickness(cab, condition):
+    """Thickness of the applied FINISHED / textured back panel layered
+    behind the carcass back. The cabinet's finished_back_thickness when
+    unlocked, else the standard stock for the condition."""
+    if getattr(cab, 'unlock_finished_back_thickness', False):
+        return cab.finished_back_thickness
+    return standard_finished_back_thickness(condition)
+
+
+def standard_back_thickness(cab):
+    """Locked carcass back thickness: the floating vanity's 3/4 back on
+    a floating vanity, else the 1/4 standard."""
+    if is_floating_vanity(cab):
+        return FLOATING_VANITY_BACK_THICKNESS
+    return inch(0.25)
 
 
 def is_floating_vanity(cab):

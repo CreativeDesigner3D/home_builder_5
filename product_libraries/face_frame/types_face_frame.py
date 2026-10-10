@@ -9763,7 +9763,9 @@ class FaceFrameCabinet(GeoNodeCage):
     def _build_finished_back(self, layout, segment, existing):
         """One FINISHED back panel, on this segment's own back plane."""
         cab = self.obj.face_frame_cabinet
-        thickness = inch(0.75)
+        # 3/4 stock unless the cabinet's finished back thickness is
+        # unlocked.
+        thickness = solver.finished_back_thickness(cab, 'FINISHED')
         if existing is None:
             part = CabinetPart()
             part.create('Finished Back')
@@ -11209,7 +11211,10 @@ class FaceFrameCabinet(GeoNodeCage):
                 bpy.data.objects.remove(part_obj, do_unlink=True)
                 part_obj = None
 
-            thickness = inch(0.25)
+            # Side skins are 1/4 stock; the BACK skin follows the
+            # cabinet's finished back thickness (1/4 unless unlocked).
+            thickness = (solver.finished_back_thickness(cab, condition)
+                         if side == 'BACK' else inch(0.25))
 
             # LEFT / RIGHT skins track the carcass side panel's vertical
             # extent (side_bottom_z runs to the floor for NOTCH / FLUSH
@@ -11242,7 +11247,7 @@ class FaceFrameCabinet(GeoNodeCage):
             else:  # BACK
                 # Origin sits at Y=+thickness so the part fills [0, thickness]
                 # in cabinet Y - directly behind the carcass back, same as
-                # FINISHED_BACK but 1/4 thick.
+                # FINISHED_BACK but at the textured back's thickness.
                 # A rear-inset kick recesses the back, so the skin stops
                 # at the kick top like the finished back does.
                 back_z = (layout.bays[0]['kick_height']
@@ -20736,7 +20741,11 @@ def break_cabinet_at_gap(cabinet, gap_index, shrink_side='AUTO'):
             'default_top_overlay', 'default_bottom_overlay',
             'default_left_overlay', 'default_right_overlay',
             'material_thickness', 'face_frame_thickness',
+            # Lock toggles ahead of their values: a toggle's update
+            # rewrites the value, and the copied value must win.
+            'unlock_back_thickness', 'unlock_finished_back_thickness',
             'door_thickness', 'back_thickness', 'division_thickness',
+            'finished_back_thickness',
             'finish_toe_kick_type', 'finish_toe_kick_thickness',
             'toe_kick_type', 'toe_kick_height', 'toe_kick_setback',
             'toe_kick_thickness', 'back_bottom_inset', 'inset_toe_kick_rear',

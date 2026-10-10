@@ -6156,6 +6156,42 @@ def _update_cabinet_dim(self, context):
     types_face_frame.recalculate_face_frame_cabinet(obj)
 
 
+def _update_unlock_back_thickness(self, context):
+    """Lock toggle for the carcass back thickness. Unlocking keeps the
+    back the cabinet builds today (a floating vanity's 3/4 included) and
+    makes the field editable; re-locking snaps it back to the standard
+    back for the construction."""
+    from . import solver_face_frame as solver
+    if not self.unlock_back_thickness:
+        value = solver.standard_back_thickness(self)
+    elif solver.is_floating_vanity(self):
+        value = max(self.back_thickness,
+                    solver.FLOATING_VANITY_BACK_THICKNESS)
+    else:
+        value = self.back_thickness
+    if abs(value - self.back_thickness) > 1e-9:
+        self.back_thickness = value  # its own update recalculates
+    else:
+        _update_cabinet_dim(self, context)
+
+
+def _update_unlock_finished_back_thickness(self, context):
+    """Lock toggle for the applied finished / textured back thickness.
+    Unlocking seeds the field with the stock the back is built from now,
+    so nothing moves until the value is edited; locked, the value is
+    ignored and the standard stock is built."""
+    if (self.unlock_finished_back_thickness
+            and self.back_finished_end_condition in (
+                'FINISHED', 'BEADBOARD', 'SHIPLAP', 'V_GROOVE')):
+        from . import solver_face_frame as solver
+        value = solver.standard_finished_back_thickness(
+            self.back_finished_end_condition)
+        if abs(value - self.finished_back_thickness) > 1e-9:
+            self.finished_back_thickness = value  # recalculates
+            return
+    _update_cabinet_dim(self, context)
+
+
 def _update_toe_kick_type(self, context):
     """Kick type change. Switching to bun feet stands the cabinet on
     the feet at their stock height. Switching to a flush kick turns the
@@ -8744,6 +8780,35 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
 
     back_thickness: FloatProperty(
         name="Back Thickness", default=units.inch(0.25), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    # Carcass back (the unfinished liner) thickness lock. Locked, the
+    # back is the standard 1/4 (a floating vanity's 3/4); unlocked, the
+    # back_thickness typed here is built as-is, and every part sized
+    # off the back (sides, shelves, interiors) follows it.
+    unlock_back_thickness: BoolProperty(
+        name="Unlock Back Thickness",
+        description="Override the carcass back (liner) thickness; re-lock "
+                    "to snap back to the standard back",
+        default=False, update=_update_unlock_back_thickness,
+    )  # type: ignore
+    # Applied finished back thickness. Locked, a FINISHED back is a 3/4
+    # panel and a beadboard / shiplap / v-groove back a 1/4 skin; once
+    # unlocked, this value is used for whichever of them is built. The
+    # applied back is layered behind the carcass back, so it only adds
+    # to the cabinet's overall depth - the box is unchanged.
+    unlock_finished_back_thickness: BoolProperty(
+        name="Unlock Finished Back Thickness",
+        description="Override the finished / textured back panel "
+                    "thickness; re-lock to use the standard stock",
+        default=False, update=_update_unlock_finished_back_thickness,
+    )  # type: ignore
+    finished_back_thickness: FloatProperty(
+        name="Finished Back Thickness",
+        description="Thickness of the applied finished or textured back "
+                    "panel, used while unlocked",
+        default=units.inch(0.75), min=units.inch(0.125),
+        soft_max=units.inch(1.5), unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
     )  # type: ignore
     # Mid-division panels are typically thinner than carcass sides /

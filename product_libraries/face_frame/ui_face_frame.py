@@ -2167,6 +2167,39 @@ def draw_finished_ends(layout, cab_props):
             ext = col.row(align=True)
             ext.prop(cab_props, 'back_finished_extend_left', text="Extend L")
             ext.prop(cab_props, 'back_finished_extend_right', text="Extend R")
+        # Applied finished / textured back stock: 3/4 finished, 1/4
+        # textured while locked; unlock to build another thickness.
+        if side == 'back' and fin_type in (
+                'FINISHED', 'BEADBOARD', 'SHIPLAP', 'V_GROOVE'):
+            unlocked = cab_props.unlock_finished_back_thickness
+            trow = col.row(align=True)
+            field = trow.row(align=True)
+            field.enabled = unlocked
+            if unlocked:
+                field.prop(cab_props, 'finished_back_thickness',
+                           text="Finished Back Thickness")
+            else:
+                # Locked, the stored value is ignored: show the stock
+                # actually built for this back type.
+                from . import solver_face_frame
+                field.label(text="Finished Back Thickness:  "
+                            + units.unit_to_string(
+                                bpy.context.scene.unit_settings,
+                                solver_face_frame
+                                .standard_finished_back_thickness(fin_type)))
+            trow.prop(cab_props, 'unlock_finished_back_thickness', text="",
+                      icon='UNLOCKED' if unlocked else 'LOCKED')
+
+    # Carcass back (the unfinished liner behind the interior). Locked it
+    # is the standard back for the construction; unlock to set another.
+    if cab_props.back_finished_end_condition != 'WORKING_FF':
+        unlocked = cab_props.unlock_back_thickness
+        brow = col.row(align=True)
+        field = brow.row(align=True)
+        field.enabled = unlocked
+        field.prop(cab_props, 'back_thickness', text="Carcass Back Thickness")
+        brow.prop(cab_props, 'unlock_back_thickness', text="",
+                  icon='UNLOCKED' if unlocked else 'LOCKED')
 
     # Shiplap course width and direction: one setting each, shared by
     # every shiplap side.
