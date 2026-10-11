@@ -1066,8 +1066,11 @@ def compute_labels(context, region, rv3d, lines_out=None):
                         locked = False
                 except Exception:
                     continue
+                # Rails run across the frame, so their member width
+                # reads as a height on screen; stiles keep W.
+                prefix = "H " if 'RAIL' in (role or '') else "W "
                 targets.append((part, 'PART', editable, locked,
-                                value, "W ", None))
+                                value, prefix, None))
         # SELECTED scope: keep only labels whose cage is part of the
         # current selection. The click handlers hit-test against this
         # same list, so filtered labels are not clickable either.
