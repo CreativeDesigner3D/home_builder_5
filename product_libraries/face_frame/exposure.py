@@ -970,6 +970,12 @@ def auto_floating_shelf_finish(shelf_obj):
     return (left_finished, right_finished)
 
 
+def _refit_cabinet_group_of(obj):
+    """Refit the cabinet group cage obj belongs to, if any."""
+    from ..common import cabinet_groups
+    cabinet_groups.refit_group_of(obj)
+
+
 def recalc_with_neighbors(cab_obj):
     """Placement convenience: recalc this cabinet, the immediate L/R
     face-frame neighbors whose facing side just changed coverage, and
@@ -979,6 +985,9 @@ def recalc_with_neighbors(cab_obj):
     # cab_obj may have just been placed or moved: every world-space read
     # below goes through hb_utils.world_matrix, so no depsgraph pass is
     # needed first.
+    # A cabinet placed or moved inside a cabinet group stretches the
+    # group cage to cover it again. World transforms don't change.
+    _refit_cabinet_group_of(cab_obj)
     with scene_scan(), types_face_frame.suspend_recalc():
         recalc_cabinet_exposure(cab_obj)
         left, right = _find_immediate_face_frame_neighbors(cab_obj)
@@ -1014,6 +1023,7 @@ def recalc_after_appliance_placement(app_obj):
     """Placement hook for appliances. Refreshes any face-frame cabinet
     whose side now abuts the placed appliance.
     """
+    _refit_cabinet_group_of(app_obj)
     parent = app_obj.parent
     if parent is None:
         return

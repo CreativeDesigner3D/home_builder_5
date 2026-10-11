@@ -34,6 +34,7 @@ from .product_libraries import frameless
 from .product_libraries.common import wood_hoods
 from .product_libraries.common import door_window_geo
 from .product_libraries.common import appliance_geo
+from .product_libraries.common import cabinet_groups
 # Must stay below the product libraries: this tab imports the face frame
 # library, and pulling that in earlier starts it mid-way through its own
 # import graph, which breaks the cabinet types.
@@ -441,6 +442,7 @@ def register():
     wood_hoods.register()
     door_window_geo.register()
     appliance_geo.register()
+    cabinet_groups.register()
     molding.register()
     # catalog.register()
 
@@ -492,6 +494,7 @@ def unregister():
     # catalog.unregister()
     closets.unregister()
     molding.unregister()
+    cabinet_groups.unregister()
     appliance_geo.unregister()
     door_window_geo.unregister()
     wood_hoods.unregister()
