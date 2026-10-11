@@ -16679,6 +16679,10 @@ class FaceFrameAndDoorsCabinet(PanelFaceFrameCabinet):
     """
     default_opening_front_type = 'DOOR'
     fill_manual_bays = True
+    # Set between finished cabinets / walls as a finished front, never
+    # scribed: the scribe fields and Set Scribe are not offered (see
+    # shows_scribe_options). Stored scribe values are left as they are.
+    scribe_options = False
 
     def create(self, name="Face Frame and Doors", bay_qty=1):
         self.create_cabinet_root(name)
@@ -19725,6 +19729,17 @@ def default_front_type_for_root(root):
     return 'NONE'
 
 
+def shows_scribe_options(root):
+    """False when the product under ``root`` opts out of scribe options
+    (class attribute scribe_options = False), so the UI hides its
+    scribe fields and Set Scribe command. True for everything else,
+    including a missing root."""
+    if root is None:
+        return True
+    cls = WRAP_CLASS_REGISTRY.get(root.get('CLASS_NAME'), FaceFrameCabinet)
+    return getattr(cls, 'scribe_options', True)
+
+
 def applied_panel_geometry(layout, side):
     """Transform + dimensions for an applied panel covering one side of
     a cabinet. Returns (location, rotation_z, width, height, depth).
@@ -19929,7 +19944,14 @@ def _reconcile_standalone_panel(root):
         # so the rail grows without bound every recalc. A standalone panel
         # keeps its own style-driven face-frame widths; only the split
         # structure (ladder + auto openings + mid-stile widths) is applied.
-        aps.apply_panel_split_structure(root, root, 'BACK')
+        # The openings a column / row layout builds take the product's
+        # own default front: a door product (Face Frame and Doors) lays
+        # out working doors, not the inset panels of a plain Panel.
+        condition = ('WORKING_FF'
+                     if default_front_type_for_root(root) == 'DOOR'
+                     else 'PANELED')
+        aps.apply_panel_split_structure(root, root, 'BACK',
+                                        condition=condition)
         # X-Frame braces (the catalog's matching X-Frame Back).
         aps.apply_panel_x_frame(root, root, 'BACK')
         # Surface the panel's properties from any of its parts: stamp the

@@ -525,8 +525,9 @@ class HOME_BUILDER_MT_face_frame_part_commands(bpy.types.Menu):
         if role in (types_face_frame.PART_ROLE_LEFT_STILE,
                     types_face_frame.PART_ROLE_RIGHT_STILE,
                     types_face_frame.PART_ROLE_TOP_RAIL):
-            layout.operator("hb_face_frame.set_part_scribe",
-                            text="Set Scribe...", icon='SNAP_EDGE')
+            if types_face_frame.shows_scribe_options(panel_root):
+                layout.operator("hb_face_frame.set_part_scribe",
+                                text="Set Scribe...", icon='SNAP_EDGE')
             # Extension: the member itself built bigger than the
             # cabinet, to scribe on site (the box does not move).
             layout.operator("hb_face_frame.set_part_extension",

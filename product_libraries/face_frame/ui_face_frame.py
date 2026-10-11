@@ -1111,13 +1111,15 @@ def draw_face_frame_defaults(layout, cab_props):
         for i, ms in enumerate(cab_props.mid_stile_widths):
             _locked_field(mrow, ms, 'width', 'unlock', "Mid %d" % (i + 1))
 
-    # Scribe Options
-    scbox = layout.box()
-    scbox.label(text="Scribe Options")
-    sccol = scbox.column(align=True)
-    sccol.prop(cab_props, 'left_scribe', text="Left Scribe")
-    sccol.prop(cab_props, 'right_scribe', text="Right Scribe")
-    sccol.prop(cab_props, 'top_scribe', text="Top Scribe")
+    # Scribe Options - not offered on products that are not scribed
+    # (see types_face_frame.shows_scribe_options).
+    if types_face_frame.shows_scribe_options(cab_props.id_data):
+        scbox = layout.box()
+        scbox.label(text="Scribe Options")
+        sccol = scbox.column(align=True)
+        sccol.prop(cab_props, 'left_scribe', text="Left Scribe")
+        sccol.prop(cab_props, 'right_scribe', text="Right Scribe")
+        sccol.prop(cab_props, 'top_scribe', text="Top Scribe")
 
     # Stile to Floor (base / tall / lap only) -- both toggles on one row.
     if cab_props.cabinet_type in ('BASE', 'TALL', 'LAP_DRAWER'):
