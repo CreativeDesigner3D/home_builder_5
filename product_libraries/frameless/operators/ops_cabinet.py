@@ -8,6 +8,11 @@ import os
 from mathutils import Vector
 from .... import hb_utils, hb_types, hb_project, units
 
+# The angled front / angled back options are hidden from the prompts
+# dialog until they can be manufactured. A cabinet that already has one
+# turned on still shows it, so it can be edited or switched off.
+SHOW_ANGLED_OPTIONS = False
+
 class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
     bl_idname = "hb_frameless.cabinet_prompts"
     bl_label = "Cabinet Prompts"
@@ -102,6 +107,13 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
         obj = self.cabinet.obj
         return (not obj.get('IS_CORNER_CABINET')
                 and solver_frameless.carcass_kind(obj) in solver_frameless.STRAIGHT_KINDS)
+
+    def _show_angle_front(self):
+        return self._can_angle_front() and (SHOW_ANGLED_OPTIONS or self.angled_front)
+
+    def _show_angle_back(self):
+        return self._can_angle_back() and (SHOW_ANGLED_OPTIONS
+                                           or self.angled_back != '0')
 
     @classmethod
     def poll(cls, context):
@@ -259,7 +271,7 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
             row.label(text="Height Off Floor:")
             row.prop(self, 'height_off_floor', text="")
 
-        if self._can_angle_front():
+        if self._show_angle_front():
             box = layout.box()
             col = box.column(align=True)
             col.prop(self, 'angled_front')
@@ -287,7 +299,7 @@ class hb_frameless_OT_cabinet_prompts(bpy.types.Operator):
                         row.label(text=label)
                         row.prop(self, prop, text="")
 
-        if self._can_angle_back():
+        if self._show_angle_back():
             box = layout.box()
             col = box.column(align=True)
             row = col.row(align=True)
