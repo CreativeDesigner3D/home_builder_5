@@ -6357,8 +6357,8 @@ class FaceFrameCabinet(GeoNodeCage):
                 continue
             props = bay_obj.face_frame_bay
             kind = getattr(props, 'under_cabinet_appliance', 'NONE')
-            if kind != 'MICROWAVE':
-                appliance_geo.remove_under_cabinet_microwave(bay_obj)
+            if kind not in ('MICROWAVE', 'HOOD'):
+                appliance_geo.remove_under_cabinet_appliance(bay_obj)
             spec = self._UCA_SPECS.get(kind)
             if spec is None:
                 continue
@@ -6384,16 +6384,16 @@ class FaceFrameCabinet(GeoNodeCage):
                         and panel.location.z < z_top):
                     z_top = panel.location.z
 
-            if kind == 'MICROWAVE':
+            if kind in ('MICROWAVE', 'HOOD'):
                 # A real appliance the bay holds, so it models like any
-                # other microwave (Show Model); its corner goes from the
-                # cabinet's space into the bay's.
+                # other (Show Model); its corner goes from the cabinet's
+                # space into the bay's.
                 from mathutils import Vector
                 to_bay = (bay_obj.matrix_parent_inverse
                           @ bay_obj.matrix_basis).inverted()
                 corner = to_bay @ Vector((x0, 0.0, z_top - height))
-                appliance_geo.sync_under_cabinet_microwave(
-                    bay_obj, width, depth, height, tuple(corner),
+                appliance_geo.sync_under_cabinet_appliance(
+                    bay_obj, kind, width, depth, height, tuple(corner),
                     getattr(props, 'under_cabinet_appliance_finish',
                             'STAINLESS'))
                 continue
@@ -12963,7 +12963,7 @@ class FaceFrameCabinet(GeoNodeCage):
             # An upper bay's over-the-range microwave is kept by
             # _apply_under_cabinet_appliances, not here.
             held = appliance_geo.opening_appliance(bay_obj)
-            if held is None or not held.get(appliance_geo.OVER_RANGE_FLAG):
+            if not appliance_geo.is_under_bay_appliance(held):
                 appliance_geo.remove_opening_appliance(bay_obj)
         self._apply_sink_clearance(
             [c for c in bay_obj.children_recursive

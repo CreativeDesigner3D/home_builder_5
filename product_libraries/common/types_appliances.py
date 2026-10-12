@@ -206,6 +206,22 @@ class Hood(Appliance):
         self.add_property('CFM Rating', 'QUANTITY', 400)
 
 
+class UnderCabinetHood(Appliance):
+    """A slim vent hood hung under an upper cabinet's bay. Its own type,
+    not HOOD: a range hood stands on the wall by itself, and everything
+    that looks for one (wood hoods, finished ends beside a hood) must
+    not mistake this for it."""
+
+    width = inch(30)
+    height = inch(6)
+    depth = inch(18)
+
+    APPLIANCE_TYPE = 'UNDER_CABINET_HOOD'
+
+    def create(self, name="Under Cabinet Hood"):
+        self.create_appliance(name, 'UNDER_CABINET_HOOD', label='HOOD')
+
+
 class Sink(Appliance):
     """Kitchen or bathroom sink."""
     
