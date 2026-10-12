@@ -6715,10 +6715,11 @@ class hb_face_frame_OT_set_under_cabinet_appliance(bpy.types.Operator):
                       "under this upper bay, in 3D and on the elevations")
     bl_options = {'REGISTER', 'UNDO'}
 
-    # Per-kind starting sizes. Microwaves are a fixed 30" box; hoods are
-    # ordered to the cabinet, so their width starts at 0 (follow the bay).
+    # Per-kind starting sizes. Width starts at 0 for both: the appliance
+    # follows the bay's opening and the bay widths are left alone until
+    # a width is typed.
     _KIND_DEFAULTS = {
-        'MICROWAVE': (inch(30.0), inch(16.0), inch(15.0)),
+        'MICROWAVE': (0.0, inch(16.0), inch(15.0)),
         'HOOD': (0.0, inch(6.0), inch(17.5)),
     }
 
@@ -6732,7 +6733,7 @@ class hb_face_frame_OT_set_under_cabinet_appliance(bpy.types.Operator):
         default='MICROWAVE',
     )  # type: ignore
     width: bpy.props.FloatProperty(
-        name="Width", unit='LENGTH', precision=4, default=inch(30.0), min=0.0,
+        name="Width", unit='LENGTH', precision=4, default=0.0, min=0.0,
         description="Width of the appliance; the opening resizes to it. "
                     "0 leaves the widths alone",
     )  # type: ignore
