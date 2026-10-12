@@ -8885,6 +8885,32 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
     bun_foot_back_right: BoolProperty(
         name="Back Right", default=False, update=_update_cabinet_dim,
     )  # type: ignore
+    # Pull the feet in from the cabinet edges; each foot takes the two
+    # offsets that face its corner.
+    bun_foot_offset_front: FloatProperty(
+        name="Front Offset",
+        description="Move the front feet back from the cabinet face",
+        default=0.0, min=0.0, unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    bun_foot_offset_back: FloatProperty(
+        name="Back Offset",
+        description="Move the back feet forward from the cabinet back",
+        default=0.0, min=0.0, unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    bun_foot_offset_left: FloatProperty(
+        name="Left Offset",
+        description="Move the left feet in from the left end",
+        default=0.0, min=0.0, unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    bun_foot_offset_right: FloatProperty(
+        name="Right Offset",
+        description="Move the right feet in from the right end",
+        default=0.0, min=0.0, unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
     toe_kick_height: FloatProperty(
         # Floored at zero: on a NOTCH kick a negative height is a recess
         # cut upward into nothing, and on a FLOATING one it hangs the

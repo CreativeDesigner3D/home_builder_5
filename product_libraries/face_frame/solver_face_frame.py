@@ -1864,7 +1864,8 @@ def loose_kick_setback(layout):
     if layout.toe_kick_type == 'BUN_FEET':
         # Behind the feet, on every cabinet of the run alike so the kick
         # line stays straight where an inner cabinet has no feet.
-        return max(layout.tks, layout.bun_foot_depth)
+        return max(layout.tks,
+                   layout.bun_foot_depth + layout.bun_foot_offset_front)
     return layout.tks
 
 
@@ -1975,6 +1976,9 @@ def loose_kick_back_y(layout):
 # (bun_foot_corner_mode CUSTOM - any corner, including back corners
 # against a wall), and the cabinet can be left open underneath
 # (bun_feet_open), standing on the feet alone with no ladder behind them.
+# Each foot can also be pulled in from the cabinet edges: one offset per
+# side (front, back, left, right), and a foot takes the two that face its
+# corner. The ladder recesses further to stay behind the moved feet.
 PART_ROLE_BUN_FOOT_PREFIX = 'BUN_FOOT_'
 BUN_FOOT_CORNERS = ('FRONT_LEFT', 'FRONT_RIGHT', 'BACK_LEFT', 'BACK_RIGHT')
 
@@ -2014,6 +2018,9 @@ def _init_bun_feet(layout, cab):
         layout.bun_foot_style)
     layout.bun_foot_corners = ()
     layout.bun_feet_open = False
+    for side in ('front', 'back', 'left', 'right'):
+        setattr(layout, 'bun_foot_offset_' + side,
+                max(0.0, getattr(cab, 'bun_foot_offset_' + side, 0.0)))
     if not (layout.has_toe_kick and layout.toe_kick_type == 'BUN_FEET'
             and layout.corner_type == 'NONE'):
         return
@@ -2021,13 +2028,17 @@ def _init_bun_feet(layout, cab):
     corners = bun_foot_corners(cab)
     layout.bun_foot_corners = corners
     w, d = layout.bun_foot_width, layout.bun_foot_depth
-    clear_x = max(layout.tks, w)
     if 'FRONT_LEFT' in corners or 'BACK_LEFT' in corners:
-        layout.kick_inset_left = max(layout.kick_inset_left, clear_x)
+        layout.kick_inset_left = max(
+            layout.kick_inset_left,
+            layout.tks, w + layout.bun_foot_offset_left)
     if 'FRONT_RIGHT' in corners or 'BACK_RIGHT' in corners:
-        layout.kick_inset_right = max(layout.kick_inset_right, clear_x)
+        layout.kick_inset_right = max(
+            layout.kick_inset_right,
+            layout.tks, w + layout.bun_foot_offset_right)
     if 'BACK_LEFT' in corners or 'BACK_RIGHT' in corners:
-        layout.kick_inset_back = max(layout.kick_inset_back, d)
+        layout.kick_inset_back = max(layout.kick_inset_back,
+                                     d + layout.bun_foot_offset_back)
 
 
 def has_bun_foot(layout, corner):
@@ -2041,12 +2052,19 @@ def bun_foot_part_role(corner):
 def bun_foot_placement(layout, corner):
     """Origin (the foot box's min corner) and which box sides face out.
     The outer faces land flush with the cabinet end and the front (or
-    the carcass back); the foot spans the kick height."""
+    the carcass back), pulled in by that side's offset; the foot spans
+    the kick height."""
     w, d = layout.bun_foot_width, layout.bun_foot_depth
     left = corner.endswith('LEFT')
     front = corner.startswith('FRONT')
-    x = 0.0 if left else layout.dim_x - w
-    y = -layout.dim_y if front else -d
+    if left:
+        x = layout.bun_foot_offset_left
+    else:
+        x = layout.dim_x - w - layout.bun_foot_offset_right
+    if front:
+        y = -layout.dim_y + layout.bun_foot_offset_front
+    else:
+        y = -d - layout.bun_foot_offset_back
     return {
         'x': x, 'y': y, 'z': 0.0,
         'height': layout.tkh,

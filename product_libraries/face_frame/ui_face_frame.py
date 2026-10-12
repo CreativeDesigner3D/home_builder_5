@@ -313,6 +313,12 @@ def draw_construction(layout, cab_props):
                                   toggle=True)
                         grid.prop(cab_props, 'bun_foot_front_right',
                                   toggle=True)
+                    sub = col.column(align=True)
+                    sub.label(text="Foot Offsets")
+                    sub.prop(cab_props, 'bun_foot_offset_front', text="Front")
+                    sub.prop(cab_props, 'bun_foot_offset_back', text="Back")
+                    sub.prop(cab_props, 'bun_foot_offset_left', text="Left")
+                    sub.prop(cab_props, 'bun_foot_offset_right', text="Right")
             col.prop(cab_props, 'toe_kick_height', text="Height")
             # Floating vanity construction: only a floating kick can
             # carry it, and the height above is then the gap it floats.
