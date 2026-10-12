@@ -734,6 +734,27 @@ def bottom_cleat_span(layout, first, last, pt):
     bays = layout['bays']
     panels = layout['panels']
     a, b = bays[first], bays[last]
+    left_out, right_out = bottom_cleat_ends(layout, first, last)
+    left = panels[first]
+    right = panels[last + 1] if last + 1 < len(panels) else None
+    x0 = min(left['x'], a['x']) if left_out else a['x']
+    x1 = b['x'] + b['width']
+    if right_out:
+        x1 = max(x1, right['x'] + pt)
+    # Under the bottom shelf: the bay's foot for a hanging bay, up on
+    # the toe kick for a floor one.
+    return x0, x1 - x0, a['z0'] + a.get('bottom_z', 0.0)
+
+
+def bottom_cleat_ends(layout, first, last):
+    """(left, right): whether a support cleat under bays
+    `first`..`last` runs out under each end partition to its outside
+    face. Such an end stands past the panel above it with nothing
+    beside it, so it shows; an end stopped at a partition that runs on
+    down past the cleat butts into it."""
+    bays = layout['bays']
+    panels = layout['panels']
+    a = bays[first]
 
     def under_panel(panel, neighbor):
         if panel is None or panel.get('hidden'):
@@ -745,13 +766,7 @@ def bottom_cleat_span(layout, first, last, pt):
     right = panels[last + 1] if last + 1 < len(panels) else None
     before = bays[first - 1] if first > 0 else None
     after = bays[last + 1] if last + 1 < len(bays) else None
-    x0 = min(left['x'], a['x']) if under_panel(left, before) else a['x']
-    x1 = b['x'] + b['width']
-    if under_panel(right, after):
-        x1 = max(x1, right['x'] + pt)
-    # Under the bottom shelf: the bay's foot for a hanging bay, up on
-    # the toe kick for a floor one.
-    return x0, x1 - x0, a['z0'] + a.get('bottom_z', 0.0)
+    return under_panel(left, before), under_panel(right, after)
 
 
 def bay_cleat_span(entry, layout, first, last, pt):
@@ -770,7 +785,19 @@ def bay_cleat_span(entry, layout, first, last, pt):
             z0 + float(getattr(entry, 'z_offset', 0.0)))
 
 
-def _place_bottom_cleat(cleat, span, scene_props):
+def bay_cleat_ends(entry, layout, first, last, pt):
+    """bottom_cleat_ends for a support cleat entry: an end the entry's
+    Horizontal Location or Length pulls in from its partition no
+    longer runs out under it."""
+    left, right = bottom_cleat_ends(layout, first, last)
+    _x0, full, _z0 = bottom_cleat_span(layout, first, last, pt)
+    x, length, _z = bay_cleat_span(entry, layout, first, last, pt)
+    tol = inch(0.01)
+    return (left and x - _x0 < tol,
+            right and (x - _x0) + length > full - tol)
+
+
+def _place_bottom_cleat(cleat, span, scene_props, ends=(False, False)):
     x0, length, z0 = span
     # Mirror Y hangs it down from the underside of the bottom shelf
     # rather than standing it up into the bay.
@@ -780,6 +807,15 @@ def _place_bottom_cleat(cleat, span, scene_props):
     part.set_input('Length', length)
     part.set_input('Width', const.CLEAT_WIDTH)
     part.set_input('Thickness', scene_props.shelf_thickness)
+    # An end out past its end partition shows, so it is banded too;
+    # W1 is the end at the cleat's origin (the left), W2 the far one.
+    was = (cleat.get('hb_cleat_exposed_W1', 0),
+           cleat.get('hb_cleat_exposed_W2', 0))
+    cleat['hb_cleat_exposed_W1'] = 1 if ends[0] else 0
+    cleat['hb_cleat_exposed_W2'] = 1 if ends[1] else 0
+    if was != (cleat['hb_cleat_exposed_W1'], cleat['hb_cleat_exposed_W2']):
+        from . import materials_closets
+        materials_closets.refresh_banding(cleat)
 
 
 def bay_cleat_bays(layout, bay_i):
@@ -5992,7 +6028,8 @@ class ClosetStarter(GeoNodeCage):
                          and (start is None
                               or abs(bay['z0'] - bays[start]['z0']) < 1e-4))
                 if start is not None and not joins:
-                    runs.append(bottom_cleat_span(layout, start, i - 1, pt))
+                    runs.append((bottom_cleat_span(layout, start, i - 1, pt),
+                                 bottom_cleat_ends(layout, start, i - 1)))
                     start = None
                 if (start is None and bay is not None
                         and not bay['floor']):
@@ -6014,8 +6051,8 @@ class ClosetStarter(GeoNodeCage):
             part.obj['MENU_ID'] = 'HOME_BUILDER_MT_closet_part_commands'
             part.obj.rotation_euler.x = math.radians(90)
             cleats.append(part.obj)
-        for cleat, span in zip(cleats, runs):
-            _place_bottom_cleat(cleat, span, scene_props)
+        for cleat, (span, ends) in zip(cleats, runs):
+            _place_bottom_cleat(cleat, span, scene_props, ends)
 
     def _layout_bay_cleats(self, layout, scene_props, sp):
         """The support cleats under some of the hanging bays
@@ -6059,7 +6096,7 @@ class ClosetStarter(GeoNodeCage):
             keep.add(entry.uid)
             _place_bottom_cleat(
                 cleat, bay_cleat_span(entry, layout, i, j, pt),
-                scene_props)
+                scene_props, bay_cleat_ends(entry, layout, i, j, pt))
             if float(getattr(entry, 'width', 0.0)) > 0.0:
                 GeoNodeCutpart(cleat).set_input('Width',
                                                 float(entry.width))
