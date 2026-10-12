@@ -909,20 +909,18 @@ def _front_in_section(kind):
     return in_section
 
 
-def _front_project_tile_icons(kind, spec):
-    """A project style outside the section: add it to the section, edit
-    it, or delete it from the project."""
-    def can_delete(context, style):
-        count = len(getattr(_style_props(context), spec['collection'], ()))
-        return count > 1 or (count == 1 and kind == 'DRAWER')
-    return (
-        ('add', "Add to This Section", 'hb_face_frame.section_front_style',
-         {'kind': kind, 'action': 'ADD'}),
-        ('edit', "Edit", 'home_builder.options_edit_item',
-         {'collection': spec['collection']}),
-        ('delete', "Delete from the Project", spec['remove_op'], {},
-         can_delete),
-    )
+def _front_section_order(kind):
+    """sort key(context, style): the style's place in the active
+    cabinet style's section, the order the style page prints."""
+    from .props_hb_face_frame import section_front_styles
+
+    def key(context, style):
+        cs = _active_cabinet_style(context)
+        if cs is None:
+            return 0
+        names = section_front_styles(cs, kind, _style_props(context))
+        return names.index(style.name) if style.name in names else len(names)
+    return key
 
 
 def _front_tile_icons(kind, spec):
@@ -988,23 +986,24 @@ def _front_manager(kind, pool_key):
              'in_use': _front_in_use(kind),
              'count': _front_use_count(kind),
              'height': 190 if kind == 'DOOR' else 110}
-    # The active cabinet style's section first, then the rest of the
-    # project's styles to add from (see props section_front_styles).
-    in_section = _front_in_section(kind)
+    # Only the active cabinet style's section, in its order (see props
+    # section_front_styles). Other sections' styles stay out of sight:
+    # showing them let users edit another section's door thinking it
+    # was this one's. A new section gets its
+    # own copies (ops_styles._give_section_own_fronts).
     spec['tile_groups'] = [
-        dict(tiles, filter=in_section,
+        dict(tiles, filter=_front_in_section(kind),
+             sort=_front_section_order(kind),
              check=_front_tile_check(kind),
              icons=_front_tile_icons(kind, spec),
              new=("New", 'hb_face_frame.front_style_wizard',
                   {'kind': kind, 'step': 'START'})),
-        dict(tiles, filter=lambda c, st: not in_section(c, st),
-             heading=("Other %s in this project"
-                      % ("door styles" if kind == 'DOOR'
-                         else "drawer front styles")),
-             hide_empty=True,
-             icons=_front_project_tile_icons(kind, spec)),
     ]
-    spec['top_actions'] = (
+    move = ((("Move Earlier", 'hb_face_frame.section_front_style',
+              {'kind': kind, 'action': 'EARLIER'}, None),
+             ("Move Later", 'hb_face_frame.section_front_style',
+              {'kind': kind, 'action': 'LATER'}, None)),)
+    spec['top_actions'] = move + (
         ((("Matching Drawer Front", 'hb_face_frame.matching_drawer_front'),),)
         if kind == 'DOOR' else ())
     spec['pick_checks'] = (_front_default_check(kind),)
@@ -1284,6 +1283,28 @@ _DRAWER_STYLE_FIELDS = (
 )
 
 
+def _style_page_line_fields(kind):
+    """The section's typed DOORS / DRAWERS lines for the Style Section
+    page: a switch, the lines, and Add Line. Off, the page lists the
+    styles in use by itself; this is the user's way past it when it
+    reads wrong."""
+    flag, attr, noun = (('ss_door_rows_custom', 'ss_door_rows', "Door")
+                        if kind == 'DOOR' else
+                        ('ss_drawer_rows_custom', 'ss_drawer_rows',
+                         "Drawer Front"))
+    typed = lambda p: getattr(p, flag)
+    return (
+        ('label', None, "Style Page"),
+        ('bool', flag, "Type the %s Lines" % noun),
+        ('items', attr, None,
+         {'kind': 'text', 'prop': 'text', 'when': typed,
+          'remove': ('hb_face_frame.remove_style_page_row',
+                     lambda i, item, k=kind: {'index': i, 'kind': k})}),
+        ('actions', (("Add Line", 'hb_face_frame.add_style_page_row',
+                      'kind', kind),), None, {'when': typed}),
+    )
+
+
 def _tall_drawer_choices(context):
     op = 'hb_face_frame.set_tall_drawer_front_style'
     out = [("None", op, {'style': ""})]
@@ -1333,6 +1354,10 @@ def _front_manager_tab(key):
             out.append(('gap', None))
             out.extend(options_panel.field_blocks(
                 context, _tall_drawer_fields(context, cs), cs))
+        if cs is not None:
+            out.append(('gap', None))
+            out.extend(options_panel.field_blocks(
+                context, _style_page_line_fields(kind), cs))
         return out
     return {'blocks': blocks}
 

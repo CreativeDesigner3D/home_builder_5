@@ -1081,18 +1081,85 @@ def painted_front_styles():
     return out
 
 
+_SECTION_SLOTS = {'DOOR': 'section_door_default_slot',
+                  'DRAWER': 'section_drawer_default_slot'}
+
+
+def front_style_base_name(name):
+    """A front style's name without Blender's .NNN copy suffix -- what
+    a drawing calls it. Each style section keeps its own copy of a door
+    (see ops_styles._give_section_own_fronts), so two sections can hold
+    'Slab' and 'Slab.001' that are the same door to the shop."""
+    return re.sub(r"\.\d{3}$", "", name or "")
+
+
+def section_listed_order(cs, kind):
+    """The default and the section's own list as one ordered list of
+    names -- the default at its slot. This is the order the user set
+    with the move arrows, and the style page prints it."""
+    if cs is None:
+        return []
+    list_attr, default_attr, _pool = _SECTION_LISTS[kind]
+    listed = [r.name for r in getattr(cs, list_attr, ()) if r.name]
+    default = getattr(cs, default_attr, '')
+    if default and default != 'NONE':
+        slot = min(max(getattr(cs, _SECTION_SLOTS[kind], 0), 0),
+                   len(listed))
+        listed.insert(slot, default)
+    return listed
+
+
+def move_in_section(cs, kind, name, step):
+    """Move ``name`` one place earlier (step -1) or later (+1) in the
+    section's order. A style that is only there because it is painted
+    on the cabinets joins the list at the end first. True when it
+    moved."""
+    if cs is None or not name:
+        return False
+    list_attr, default_attr, _pool = _SECTION_LISTS[kind]
+    order = section_listed_order(cs, kind)
+    if name not in order:
+        order.append(name)
+    i = order.index(name)
+    j = i + step
+    if j < 0 or j >= len(order):
+        return False
+    order[i], order[j] = order[j], order[i]
+    default = getattr(cs, default_attr, '')
+    coll = getattr(cs, list_attr)
+    coll.clear()
+    for nm in order:
+        if nm != default:
+            coll.add().name = nm
+    if default in order:
+        setattr(cs, _SECTION_SLOTS[kind], order.index(default))
+    return True
+
+
+def _seed_style_page_lines(cs, kind):
+    """Turning a section's typed Style Section lines on starts them from
+    the styles it lists, so the page reads the same until edited."""
+    flag, attr = (('ss_door_rows_custom', 'ss_door_rows') if kind == 'DOOR'
+                  else ('ss_drawer_rows_custom', 'ss_drawer_rows'))
+    rows = getattr(cs, attr)
+    if not getattr(cs, flag) or len(rows):
+        return
+    for name in section_front_styles(cs, kind):
+        rows.add().text = front_style_base_name(name)
+
+
 def section_front_styles(cs, kind, ff=None):
     """The names of the door (kind 'DOOR') or drawer front ('DRAWER')
-    styles cabinet style ``cs``'s section uses, in order: its default,
-    its own list, the tall drawer style, then any other style painted on
-    its cabinets. Only names still in the project's pool."""
+    styles cabinet style ``cs``'s section uses, in order: its default
+    and its own list (section_listed_order), the tall drawer style, then
+    any other style painted on its cabinets. Only names still in the
+    project's pool."""
     if cs is None:
         return []
     ff = ff if ff is not None else get_style_props()
-    list_attr, default_attr, pool_attr = _SECTION_LISTS[kind]
+    _list_attr, _default_attr, pool_attr = _SECTION_LISTS[kind]
     pool = {ds.name for ds in getattr(ff, pool_attr, ())}
-    names = [getattr(cs, default_attr, '')]
-    names += [r.name for r in getattr(cs, list_attr, ())]
+    names = section_listed_order(cs, kind)
     if kind == 'DRAWER' and len(cs.extra_drawer_front_styles):
         names.append(cs.extra_drawer_front_styles[0].style)
     names += painted_front_styles().get((cs.name, kind), [])
@@ -2246,6 +2313,26 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
     # Free-text note lines printed in a NOTES section at the end of this
     # style's Style Section block (e.g. 'TOUCH LATCH = TL').
     ss_notes: CollectionProperty(type=Face_Frame_Style_Note)  # type: ignore
+    # Typed DOORS / DRAWERS style lines for the Style Section page. On,
+    # they print instead of the styles the section works out from the
+    # model, so a user can say exactly what the page needs.
+    ss_door_rows_custom: BoolProperty(
+        name="Type the Door Lines",
+        description="Print the typed lines as this style's doors on the "
+                    "Style Section page instead of the styles in use",
+        default=False,
+        update=lambda self, context: _seed_style_page_lines(self, 'DOOR'),
+    )  # type: ignore
+    ss_door_rows: CollectionProperty(type=Face_Frame_Style_Note)  # type: ignore
+    ss_drawer_rows_custom: BoolProperty(
+        name="Type the Drawer Front Lines",
+        description="Print the typed lines as this style's drawer fronts "
+                    "on the Style Section page instead of the styles in use",
+        default=False,
+        update=lambda self, context: _seed_style_page_lines(
+            self, 'DRAWER'),
+    )  # type: ignore
+    ss_drawer_rows: CollectionProperty(type=Face_Frame_Style_Note)  # type: ignore
 
     # ---- Style-section OVERRIDES for the catalog-backed fields ----
     # Each is blank by default: blank => the page shows the catalog/derived
@@ -2472,6 +2559,13 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         name="Section Drawer Front Styles",
         type=Face_Frame_Section_Front_Style,
     )  # type: ignore
+    # Where the default sits among the listed styles: the order the
+    # tabs show them and the style page prints them in (see
+    # section_listed_order). 0 puts it first.
+    section_door_default_slot: IntProperty(
+        name="Door Default Slot", default=0, min=0)  # type: ignore
+    section_drawer_default_slot: IntProperty(
+        name="Drawer Default Slot", default=0, min=0)  # type: ignore
 
     extra_door_styles: CollectionProperty(
         name="Extra Door Styles",
@@ -5735,6 +5829,8 @@ class Face_Frame_Door_Style(PropertyGroup):
         role = front_obj.get('hb_part_role')
         if role not in self._STYLEABLE_ROLES:
             return False
+        # Set again below when this build matches the door rail.
+        front_obj.pop('DOOR_RAIL_MATCHED', None)
 
         # Per-front style override: when the user explicitly assigns a style to
         # THIS front (paint / assign-to-selected), persist the choice on the
@@ -5943,6 +6039,11 @@ class Face_Frame_Door_Style(PropertyGroup):
                          or (frame_locked
                              and abs(eff_top_rail - self.rail_width) > 1e-6))),
         )
+        # A drawer front on the door's rail width prints as its own
+        # line on the style page (the '3R' variant of the style).
+        if rail_matched:
+            front_obj['DOOR_RAIL_MATCHED'] = round(
+                units.meter_to_inch(eff_top_rail), 3)
 
         # Material inheritance from the parent cabinet style lands once
         # cabinet-style material walking is implemented.
