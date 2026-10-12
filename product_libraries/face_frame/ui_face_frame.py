@@ -325,10 +325,16 @@ def draw_construction(layout, cab_props):
             if cab_props.toe_kick_type == 'FLOATING':
                 col.prop(cab_props, 'floating_vanity',
                          text="Floating Vanity Construction")
-            col.prop(cab_props, 'toe_kick_setback', text="Setback")
-            col.prop(cab_props, 'inset_toe_kick_left', text="Left Inset")
-            col.prop(cab_props, 'inset_toe_kick_right', text="Right Inset")
-            if (cab_props.corner_type == 'NONE'
+            # Open underneath has no kick behind the feet, so nothing
+            # to set back or inset.
+            open_feet = (cab_props.toe_kick_type == 'BUN_FEET'
+                         and cab_props.corner_type == 'NONE'
+                         and cab_props.bun_feet_open)
+            if not open_feet:
+                col.prop(cab_props, 'toe_kick_setback', text="Setback")
+                col.prop(cab_props, 'inset_toe_kick_left', text="Left Inset")
+                col.prop(cab_props, 'inset_toe_kick_right', text="Right Inset")
+            if (not open_feet and cab_props.corner_type == 'NONE'
                     and cab_props.toe_kick_type in ('NOTCH', 'LOOSE',
                                                     'LOOSE_FLUSH',
                                                     'BUN_FEET')):
