@@ -326,7 +326,7 @@ def draw_construction(layout, cab_props):
                 col.prop(cab_props, 'floating_vanity',
                          text="Floating Vanity Construction")
             # Open underneath has no kick behind the feet, so nothing
-            # to set back or inset.
+            # to set back, inset or finish.
             open_feet = (cab_props.toe_kick_type == 'BUN_FEET'
                          and cab_props.corner_type == 'NONE'
                          and cab_props.bun_feet_open)
@@ -344,11 +344,12 @@ def draw_construction(layout, cab_props):
             if cab_props.corner_type != 'NONE':
                 col.prop(cab_props, 'inset_toe_kick_back_left', text="Back Left Inset")
                 col.prop(cab_props, 'inset_toe_kick_back_right', text="Back Right Inset")
-            row = col.row(align=True)
-            row.prop(cab_props, 'include_finish_toe_kick', text="Finish Toe Kick")
-            sub = row.row(align=True)
-            sub.enabled = cab_props.include_finish_toe_kick
-            sub.prop(cab_props, 'finish_toe_kick_type', text="")
+            if not open_feet:
+                row = col.row(align=True)
+                row.prop(cab_props, 'include_finish_toe_kick', text="Finish Toe Kick")
+                sub = row.row(align=True)
+                sub.enabled = cab_props.include_finish_toe_kick
+                sub.prop(cab_props, 'finish_toe_kick_type', text="")
 
     box = layout.box()
     box.prop(cab_props, 'show_finished_ends', text="Finished Ends and Backs",
