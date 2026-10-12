@@ -6346,6 +6346,7 @@ class FaceFrameCabinet(GeoNodeCage):
         if layout.cabinet_type != 'UPPER':
             self._cleanup_under_cabinet_appliances()
             return
+        from ..common import appliance_geo
 
         fb_panels = [c for c in self.obj.children
                      if c.get('hb_part_role') == PART_ROLE_FINISHED_BOTTOM]
@@ -6356,6 +6357,8 @@ class FaceFrameCabinet(GeoNodeCage):
                 continue
             props = bay_obj.face_frame_bay
             kind = getattr(props, 'under_cabinet_appliance', 'NONE')
+            if kind != 'MICROWAVE':
+                appliance_geo.remove_under_cabinet_microwave(bay_obj)
             spec = self._UCA_SPECS.get(kind)
             if spec is None:
                 continue
@@ -6380,6 +6383,20 @@ class FaceFrameCabinet(GeoNodeCage):
                 if (p_x0 < x0 + width and p_x0 + (p_len or 0.0) > x0
                         and panel.location.z < z_top):
                     z_top = panel.location.z
+
+            if kind == 'MICROWAVE':
+                # A real appliance the bay holds, so it models like any
+                # other microwave (Show Model); its corner goes from the
+                # cabinet's space into the bay's.
+                from mathutils import Vector
+                to_bay = (bay_obj.matrix_parent_inverse
+                          @ bay_obj.matrix_basis).inverted()
+                corner = to_bay @ Vector((x0, 0.0, z_top - height))
+                appliance_geo.sync_under_cabinet_microwave(
+                    bay_obj, width, depth, height, tuple(corner),
+                    getattr(props, 'under_cabinet_appliance_finish',
+                            'STAINLESS'))
+                continue
 
             key = str(bay_index)
             live_keys.add(key)
@@ -12943,7 +12960,11 @@ class FaceFrameCabinet(GeoNodeCage):
             if cage is not None:
                 cutter = appliance_geo.sink_clearance_cutter(cage)
         else:
-            appliance_geo.remove_opening_appliance(bay_obj)
+            # An upper bay's over-the-range microwave is kept by
+            # _apply_under_cabinet_appliances, not here.
+            held = appliance_geo.opening_appliance(bay_obj)
+            if held is None or not held.get(appliance_geo.OVER_RANGE_FLAG):
+                appliance_geo.remove_opening_appliance(bay_obj)
         self._apply_sink_clearance(
             [c for c in bay_obj.children_recursive
              if c.get('hb_part_role') in self.SINK_CLEARANCE_SHELF_ROLES],
