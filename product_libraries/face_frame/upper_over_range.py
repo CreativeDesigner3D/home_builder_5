@@ -113,7 +113,8 @@ def apply(cab_obj, bay_plan, counts, spot, microwave):
     """Write the bay widths (a one-bay upper keeps its own), then hang
     the microwave under the center bay when asked for, sized to the
     cooking surface."""
-    if counts != (0, 0) and not _fridge.apply(cab_obj, bay_plan):
+    if counts != (0, 0) and not _fridge.apply(
+            cab_obj, bay_plan, free=_fridge.free_bays(counts)):
         return False
     if not microwave:
         return True

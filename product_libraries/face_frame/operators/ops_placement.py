@@ -4503,25 +4503,6 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         cab_props = cab_obj.face_frame_cabinet
         cab_props.width = captured_width
 
-        if fridge_raise is not None:
-            fridge, counts = fridge_raise
-            bay_plan = upper_over_refrigerator.plan(
-                cab_props, captured_local_loc.x, captured_local_loc.z,
-                fridge, counts)
-            if bay_plan is None or not upper_over_refrigerator.apply(
-                    cab_obj, bay_plan):
-                self.report({'WARNING'},
-                            f"Couldn't fit a raised bay over "
-                            f"{fridge[0].name}")
-        if range_center is not None:
-            spot, counts = range_center
-            bay_plan = upper_over_range.plan(
-                cab_props, captured_local_loc.x, captured_local_loc.z,
-                spot, counts)
-            if bay_plan is None or not upper_over_range.apply(
-                    cab_obj, bay_plan, counts, spot, self._range_microwave):
-                self.report({'WARNING'},
-                            f"Couldn't center a bay over {spot[0].name}")
 
         # Auto-apply a sensible default bay configuration so cabinets
         # come in populated instead of empty. All bays in a multi-bay
@@ -4614,6 +4595,31 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
             if 0 <= idx < len(scene_props.cabinet_styles):
                 active = scene_props.cabinet_styles[idx]
                 active.assign_style_to_cabinet(cab_obj)
+
+        # The bay layout over a refrigerator or range is worked out
+        # here, AFTER the style has set the real stile widths -- planned
+        # against the default stiles, every held bay came out short by
+        # the stile difference and the bays no longer added up.
+        if merged_into is None and fridge_raise is not None:
+            fridge, counts = fridge_raise
+            bay_plan = upper_over_refrigerator.plan(
+                cab_props, captured_local_loc.x, captured_local_loc.z,
+                fridge, counts)
+            if bay_plan is None or not upper_over_refrigerator.apply(
+                    cab_obj, bay_plan,
+                    free=upper_over_refrigerator.free_bays(counts)):
+                self.report({'WARNING'},
+                            f"Couldn't fit a raised bay over "
+                            f"{fridge[0].name}")
+        if merged_into is None and range_center is not None:
+            spot, counts = range_center
+            bay_plan = upper_over_range.plan(
+                cab_props, captured_local_loc.x, captured_local_loc.z,
+                spot, counts)
+            if bay_plan is None or not upper_over_range.apply(
+                    cab_obj, bay_plan, counts, spot, self._range_microwave):
+                self.report({'WARNING'},
+                            f"Couldn't center a bay over {spot[0].name}")
 
         # Align toe-kick setback when this cabinet abuts a BASE/TALL of
         # the opposite type - the deeper one's kick face is brought

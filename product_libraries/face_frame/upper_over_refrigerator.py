@@ -181,10 +181,21 @@ def plan(cab_props, upper_x0, upper_z, fridge, counts, raise_bay=True):
     return bays
 
 
-def apply(cab_obj, bay_plan):
-    """Write ``bay_plan`` onto the cabinet's bays: every width held (so
-    the stiles land where the plan put them), the raised bay's height
-    held at its raised size."""
+def free_bays(counts):
+    """Bay indices left to share out the width rather than held: the
+    bays right of the spanning one, else those left of it. Holding every
+    bay made the widths stop adding up whenever a stile changed."""
+    n_left, n_right = counts
+    if n_right:
+        return tuple(range(n_left + 1, n_left + 1 + n_right))
+    return tuple(range(n_left))
+
+
+def apply(cab_obj, bay_plan, free=()):
+    """Write ``bay_plan`` onto the cabinet's bays: widths held (so the
+    stiles land where the plan put them) except the ``free`` bays, which
+    take up the rest; the raised bay's height held at its raised
+    size."""
     from . import types_face_frame
     bays = sorted(
         [c for c in cab_obj.children if c.get(types_face_frame.TAG_BAY_CAGE)],
@@ -192,10 +203,13 @@ def apply(cab_obj, bay_plan):
     if len(bays) != len(bay_plan):
         return False
     with types_face_frame.suspend_recalc():
-        for bay_obj, (width, height) in zip(bays, bay_plan):
+        for i, (bay_obj, (width, height)) in enumerate(zip(bays, bay_plan)):
             bp = bay_obj.face_frame_bay
-            bp.unlock_width = True
-            bp.width = width
+            if i in free:
+                bp.unlock_width = False
+            else:
+                bp.unlock_width = True
+                bp.width = width
             if height is not None:
                 bp.unlock_height = True
                 bp.height = height
