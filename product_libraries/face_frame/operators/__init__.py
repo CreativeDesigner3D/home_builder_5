@@ -15,6 +15,7 @@ from . import ops_wedge
 from . import ops_pipe_chase
 from . import ops_pull_library
 from . import ops_draw_path
+from . import ops_center_bay
 
 
 def register():
@@ -35,9 +36,11 @@ def register():
     ops_pipe_chase.register()
     ops_pull_library.register()
     ops_draw_path.register()
+    ops_center_bay.register()
 
 
 def unregister():
+    ops_center_bay.unregister()
     ops_draw_path.unregister()
     ops_pull_library.unregister()
     ops_pipe_chase.unregister()

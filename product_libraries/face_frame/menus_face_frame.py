@@ -423,6 +423,10 @@ class HOME_BUILDER_MT_face_frame_bay_commands(bpy.types.Menu):
         layout.operator("hb_face_frame.set_equal_door_width",
                         text="Set Equal Door Width",
                         icon='ALIGN_JUSTIFY')
+        # Center this bay over an appliance or another cabinet's bay:
+        # its neighbors make room.
+        layout.operator("hb_face_frame.center_bay_over",
+                        text="Center Over...", icon='ALIGN_CENTER')
 
 
 class HOME_BUILDER_MT_face_frame_part_commands(bpy.types.Menu):
