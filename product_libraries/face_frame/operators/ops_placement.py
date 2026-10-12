@@ -43,7 +43,7 @@ from .. import bay_presets
 from .. import props_hb_face_frame
 from .. import exposure
 from .. import upper_over_refrigerator
-from .. import upper_over_range
+from .. import upper_bay_layout
 from ...common import appliance_geo
 from . import ops_cabinet
 from .... import hb_placement, hb_types, units
@@ -2780,13 +2780,16 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
 
     def _fridge_preview_specs(self, context, wall, wall_thickness,
                               placement_x, cabinet_width):
-        """While a fresh upper sits over a refrigerator it will raise a
-        bay onto, show that: the bays as they will be laid out (one box
-        instead of the even preview cells) with the raised bay's new
-        bottom on the fridge top, and a dim for how far it goes up.
-        Returns the extra dim specs; turns the preview off otherwise."""
+        """While a fresh upper sits over refrigerators, ranges or
+        cooktops, show the bays as they will be laid out
+        (upper_bay_layout): one box instead of the even preview cells,
+        each raised bay's new bottom on its fridge top with a dim for
+        how far it goes up, each centered bay marked -- with the
+        microwave under it when M has asked for one. Returns the extra
+        dim specs; turns the preview off otherwise."""
         cage_obj = self._preview_cage.obj
-        picked = None
+        layout = None
+        height = None
         if getattr(self, '_over_fridge', False):
             try:
                 height = self._preview_cage.get_input('Dim Z')
@@ -2795,18 +2798,13 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
             if height:
                 # The cage stands on its back corner when placed on the
                 # far face; the run's left edge is placement_x either way.
-                picked = upper_over_refrigerator.pick(
+                layout = upper_bay_layout.pick(
                     wall, placement_x, cabinet_width, cage_obj.location.y,
                     cage_obj.location.z + height)
-        if picked is None:
-            specs = self._range_preview_specs(
-                context, wall, wall_thickness, placement_x, cabinet_width)
-            if specs is None:
-                self._end_fridge_preview()
-                return []
-            return specs
-        self._set_over_range(context, False)
-        fridge, counts = picked
+        if layout is None:
+            self._end_fridge_preview()
+            return []
+        self._set_over_range(context, layout.has_range)
         self._fridge_preview_hit = True
         if not getattr(self, '_fridge_preview_on', False):
             self._fridge_preview_on = True
@@ -2817,89 +2815,52 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
 
         z0 = cage_obj.location.z
         z1 = z0 + height
-        top = fridge[3]
         depth = self._cabinet_depth
         y = -depth if self._place_on_front else wall_thickness + depth
         wm = wall.matrix_world
+        units_set = context.scene.unit_settings
+        green = (0.30, 0.95, 0.40, 1.0)
         segments = []
-        bays = upper_over_refrigerator.preview_bays(
-            placement_x, cabinet_width, fridge, counts)
-        for bx0, _bx1, _raised in bays[1:]:
+        specs = []
+        bays = layout.preview_bays()
+        for bx0, _bx1, _f in bays[1:]:
             segments.append((wm @ Vector((bx0, y, z0)),
                              wm @ Vector((bx0, y, z1))))
-        raised = next(b for b in bays if b[2])
-        segments.append((wm @ Vector((raised[0], y, top)),
-                         wm @ Vector((raised[1], y, top))))
+        for bx0, bx1, f in bays:
+            if f is None:
+                continue
+            if f.raised:
+                segments.append((wm @ Vector((bx0, y, f.top)),
+                                 wm @ Vector((bx1, y, f.top))))
+                mid = (bx0 + bx1) / 2.0
+                specs.append(hb_placement.PlacementDimSpec(
+                    wm @ Vector((mid, y, z0)), wm @ Vector((mid, y, f.top)),
+                    "Raise " + units.unit_to_string(units_set, f.top - z0),
+                    green))
+                continue
+            label = "Centered"
+            if self._range_microwave:
+                # The microwave hanging under the centered bay.
+                mz = z0 + units.inch(16.0)
+                x0, x1 = f.x0, f.x1
+                for p0, p1 in (((x0, z0), (x1, z0)), ((x1, z0), (x1, mz)),
+                               ((x1, mz), (x0, mz)), ((x0, mz), (x0, z0))):
+                    segments.append((wm @ Vector((p0[0], y, p0[1])),
+                                     wm @ Vector((p1[0], y, p1[1]))))
+                label = "Microwave"
+            specs.append(hb_placement.PlacementDimSpec(
+                wm @ Vector((f.x0, y, z0)), wm @ Vector((f.x1, y, z0)),
+                "%s %s" % (label, units.unit_to_string(units_set,
+                                                       f.x1 - f.x0)),
+                green))
         self._preview_outline_segments = segments
-
-        mid = (raised[0] + raised[1]) / 2.0
-        return [hb_placement.PlacementDimSpec(
-            wm @ Vector((mid, y, z0)), wm @ Vector((mid, y, top)),
-            "Raise " + units.unit_to_string(context.scene.unit_settings,
-                                            top - z0),
-            (0.30, 0.95, 0.40, 1.0))]
+        return specs
 
     def _set_over_range(self, context, on):
         """The header offers M only while over a range or cooktop."""
         if getattr(self, '_over_range_now', False) != on:
             self._over_range_now = on
             self._update_header(context)
-
-    def _range_preview_specs(self, context, wall, wall_thickness,
-                             placement_x, cabinet_width):
-        """While a fresh upper sits over a range or cooktop, draw the
-        bays as they will be laid out -- one centered over it -- and
-        the microwave under it when M has asked for one. Returns the
-        dim specs, or None when there's no range under the upper."""
-        cage_obj = self._preview_cage.obj
-        picked = None
-        if getattr(self, '_over_fridge', False):
-            picked = upper_over_range.pick(
-                wall, placement_x, cabinet_width, cage_obj.location.y)
-        if picked is None:
-            self._set_over_range(context, False)
-            return None
-        self._set_over_range(context, True)
-        spot, counts = picked
-        try:
-            height = self._preview_cage.get_input('Dim Z')
-        except Exception:
-            return None
-        self._fridge_preview_hit = True
-        if not getattr(self, '_fridge_preview_on', False):
-            self._fridge_preview_on = True
-            if self._array_modifier is not None:
-                self._array_modifier.count = 1
-        if abs(self._preview_cage.get_input('Dim X') - cabinet_width) > 1e-6:
-            self._preview_cage.set_input('Dim X', cabinet_width)
-
-        z0 = cage_obj.location.z
-        z1 = z0 + height
-        depth = self._cabinet_depth
-        y = -depth if self._place_on_front else wall_thickness + depth
-        wm = wall.matrix_world
-        segments = []
-        bays = upper_over_refrigerator.preview_bays(
-            placement_x, cabinet_width, spot, counts)
-        for bx0, _bx1, _center in bays[1:]:
-            segments.append((wm @ Vector((bx0, y, z0)),
-                             wm @ Vector((bx0, y, z1))))
-        x0, x1 = spot[1], spot[2]
-        label = "Centered"
-        if self._range_microwave:
-            # The microwave block hanging under the center bay.
-            mz = z0 + units.inch(16.0)
-            for a, b in (((x0, z0), (x1, z0)), ((x1, z0), (x1, mz)),
-                         ((x1, mz), (x0, mz)), ((x0, mz), (x0, z0))):
-                segments.append((wm @ Vector((a[0], y, a[1])),
-                                 wm @ Vector((b[0], y, b[1]))))
-            label = "Microwave"
-        self._preview_outline_segments = segments
-        return [hb_placement.PlacementDimSpec(
-            wm @ Vector((x0, y, z0)), wm @ Vector((x1, y, z0)),
-            "%s %s" % (label, units.unit_to_string(
-                context.scene.unit_settings, x1 - x0)),
-            (0.30, 0.95, 0.40, 1.0))]
 
     def _end_fridge_preview(self):
         self._preview_outline_segments = None
@@ -4322,10 +4283,11 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         captured_width = self._cabinet_width
         captured_bay_qty = self.bay_qty
 
-        # An upper dropped across a standalone refrigerator: pick the
-        # fridge it covers most and the bay count that puts one bay over
-        # it (the widths and the raise go on once the cabinet exists).
-        fridge_raise = None
+        # An upper dropped across refrigerators, ranges or cooktops:
+        # plan the bays around all of them (upper_bay_layout) -- the bay
+        # count now, the widths, raises and microwave once the cabinet
+        # exists and its style has set the stiles.
+        bay_layout = None
         if (getattr(self, '_over_fridge', False)
                 and captured_parent is not None
                 and captured_parent.get('IS_WALL_BP')):
@@ -4335,22 +4297,12 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
             except Exception:
                 captured_height = None
             if captured_height:
-                fridge_raise = upper_over_refrigerator.pick(
+                bay_layout = upper_bay_layout.pick(
                     captured_parent, captured_local_loc.x, captured_width,
                     captured_local_loc.y,
                     captured_local_loc.z + captured_height)
-                if fridge_raise is not None:
-                    captured_bay_qty = sum(fridge_raise[1]) + 1
-        # Otherwise a range or cooktop under it centers a bay on it.
-        range_center = None
-        if (fridge_raise is None and getattr(self, '_over_fridge', False)
-                and captured_parent is not None
-                and captured_parent.get('IS_WALL_BP')):
-            range_center = upper_over_range.pick(
-                captured_parent, captured_local_loc.x, captured_width,
-                captured_local_loc.y)
-            if range_center is not None and range_center[1] != (0, 0):
-                captured_bay_qty = sum(range_center[1]) + 1
+                if bay_layout is not None:
+                    captured_bay_qty = bay_layout.bay_count
 
         self._delete_preview()
 
@@ -4600,26 +4552,13 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         # here, AFTER the style has set the real stile widths -- planned
         # against the default stiles, every held bay came out short by
         # the stile difference and the bays no longer added up.
-        if merged_into is None and fridge_raise is not None:
-            fridge, counts = fridge_raise
-            bay_plan = upper_over_refrigerator.plan(
-                cab_props, captured_local_loc.x, captured_local_loc.z,
-                fridge, counts)
-            if bay_plan is None or not upper_over_refrigerator.apply(
-                    cab_obj, bay_plan,
-                    free=upper_over_refrigerator.free_bays(counts)):
+        if merged_into is None and bay_layout is not None:
+            bay_plan = bay_layout.plan(cab_props, captured_local_loc.z)
+            if bay_plan is None or not bay_layout.apply(
+                    cab_obj, bay_plan, microwave=self._range_microwave):
                 self.report({'WARNING'},
-                            f"Couldn't fit a raised bay over "
-                            f"{fridge[0].name}")
-        if merged_into is None and range_center is not None:
-            spot, counts = range_center
-            bay_plan = upper_over_range.plan(
-                cab_props, captured_local_loc.x, captured_local_loc.z,
-                spot, counts)
-            if bay_plan is None or not upper_over_range.apply(
-                    cab_obj, bay_plan, counts, spot, self._range_microwave):
-                self.report({'WARNING'},
-                            f"Couldn't center a bay over {spot[0].name}")
+                            "Couldn't lay the bays out over %s" % ", ".join(
+                                f.obj.name for f in bay_layout.features))
 
         # Align toe-kick setback when this cabinet abuts a BASE/TALL of
         # the opposite type - the deeper one's kick face is brought
