@@ -166,8 +166,9 @@ def _appliance_dimensions(scene_props, appliance_name):
     if appliance_name == "Range":
         return (scene_props.range_width, cls.height, cls.depth)
     if appliance_name == "Standalone Refrigerator":
-        return (scene_props.refrigerator_cabinet_width,
-                scene_props.refrigerator_height, cls.depth)
+        # A standalone unit starts at the appliance's own standard width,
+        # not the (wider) refrigerator cabinet width; type W to change it.
+        return (cls.width, scene_props.refrigerator_height, cls.depth)
     if appliance_name == "Range Hood":
         ceiling = bpy.context.scene.home_builder.ceiling_height
         mount_z = _appliance_z_location(scene_props, appliance_name)

@@ -148,7 +148,8 @@ class Refrigerator(Appliance):
     width = inch(36)
     height = inch(70)
     depth = inch(30)
-    
+    variable_width = True
+
     def create(self, name="Refrigerator"):
         self.create_appliance(name, 'REFRIGERATOR')
         
