@@ -96,6 +96,15 @@ END_HEIGHT_KEY = 'End Height'
 TOP_FULL, TOP_STRETCHERS, TOP_SINK = 0, 1, 2
 
 
+def back_tongue_length():
+    """How far the back runs into the grooves in the sides, bottom and
+    top: the tongue on each captured edge of the back. Zero builds the
+    butt back, set between the sides on top of the bottom with a base's
+    top in front of it."""
+    props = getattr(bpy.context.scene, 'hb_frameless', None)
+    return max(float(getattr(props, 'back_tongue_length', 0.0)), 0.0)
+
+
 # ---------------------------------------------------------------------------
 # Shared part writers
 # ---------------------------------------------------------------------------
@@ -461,6 +470,22 @@ class _Prompts:
         # stands back from the fronts.
         self.kick_end_inset = (0.0 if self.flush else
                                max(float(prompt(root, KICK_END_INSET_KEY, 0.0)), 0.0))
+        # A sink base keeps the butt back.
+        self.tongue = 0.0 if self.btc == TOP_SINK else back_tongue_length()
+
+
+def _set_back(part, p, inner, z0, z1, bottom, top):
+    """The back between the sides, from z0 up to z1 - the faces of what
+    it stands between. With a tongue it runs that far on into the grooves
+    in the sides, and into the bottom and top wherever `bottom` / `top`
+    say that panel captures it."""
+    t = p.tongue
+    if bottom:
+        z0 -= t
+    if top:
+        z1 += t
+    set_part(part, (p.mt - t, 0.0, z0), length=z1 - z0,
+             width=inner + t * 2.0, thickness=p.mt)
 
 
 def _solve_sides(parts, p, dim_x, dim_y, dim_z, tkh):
@@ -530,18 +555,24 @@ def _solve_base(root, parts, p, dim_x, dim_y, dim_z):
         set_part(part, (mt, 0.0, tkh), length=inner, width=dim_y,
                  thickness=mt, visible=not rb)
 
+    # A captured back stops under a full top, which then runs the full
+    # depth over it like the bottom; otherwise the back runs to the top
+    # of the cabinet and a full top sits in front of it.
+    top_captures = p.btc == TOP_FULL and p.tongue > 0.0
     part = parts.get('BACK')
     if part is not None:
-        set_part(part, (mt, 0.0, 0.0 if rb else tkh + mt),
-                 length=dim_z if rb else dim_z - tkh - mt,
-                 width=inner, thickness=mt)
+        _set_back(part, p, inner, 0.0 if rb else tkh + mt,
+                  dim_z - mt if top_captures else dim_z,
+                  bottom=not rb, top=top_captures)
 
     _solve_toe_kick(root, parts, p, dim_x, dim_y)
 
     part = parts.get('TOP')
     if part is not None:
-        set_part(part, (mt, -mt, dim_z), length=inner, width=dim_y - mt,
-                 thickness=mt, visible=p.btc == TOP_FULL)
+        top_y = 0.0 if top_captures else -mt
+        set_part(part, (mt, top_y, dim_z), length=inner,
+                 width=dim_y + top_y, thickness=mt,
+                 visible=p.btc == TOP_FULL)
 
     _solve_top_options(parts, p, dim_x, dim_y, dim_z, -p.sw - mt)
 
@@ -577,9 +608,8 @@ def _solve_tall(root, parts, p, dim_x, dim_y, dim_z):
 
     part = parts.get('BACK')
     if part is not None:
-        set_part(part, (mt, 0.0, 0.0 if rb else tkh + mt),
-                 length=(dim_z if rb else dim_z - tkh - mt) - mt,
-                 width=inner, thickness=mt)
+        _set_back(part, p, inner, 0.0 if rb else tkh + mt, dim_z - mt,
+                  bottom=not rb, top=True)
 
     _solve_toe_kick(root, parts, p, dim_x, dim_y)
 
@@ -609,8 +639,7 @@ def _solve_upper(root, parts, p, dim_x, dim_y, dim_z):
 
     part = parts.get('BACK')
     if part is not None:
-        set_part(part, (mt, 0.0, mt), length=dim_z - mt * 2.0, width=inner,
-                 thickness=mt)
+        _set_back(part, p, inner, mt, dim_z - mt, bottom=True, top=True)
 
     part = parts.get('TOP')
     if part is not None:
@@ -685,8 +714,8 @@ def _solve_lap_drawer(root, parts, p, dim_x, dim_y, dim_z):
     if part is not None:
         # Under a sink apron the back runs up to the top of the box.
         top_t = 0.0 if p.btc == TOP_SINK else mt
-        set_part(part, (mt, 0.0, mt), length=dim_z - mt - top_t,
-                 width=inner, thickness=mt)
+        _set_back(part, p, inner, mt, dim_z - top_t,
+                  bottom=True, top=p.btc == TOP_FULL)
 
     part = parts.get('TOP')
     if part is not None:
@@ -1158,7 +1187,9 @@ def _solve_angled_back(root, parts, p, dim_x, dim_y, dim_z):
         back_len = float(GeoNodeCutpart(back).get_input('Length'))
         if hand == 1:
             back.location.x = cx
-        GeoNodeCutpart(back).set_input('Width', max(dim_x - mt - cx, 0.0))
+        # Still captured in the groove of the side it keeps.
+        GeoNodeCutpart(back).set_input(
+            'Width', max(dim_x - mt - cx + p.tongue, 0.0))
     panel = parts.get('ANGLED_BACK')
     if panel is None:
         from . import types_frameless
