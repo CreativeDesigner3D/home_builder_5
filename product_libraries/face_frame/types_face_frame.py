@@ -20905,7 +20905,12 @@ def break_cabinet_at_gap(cabinet, gap_index, shrink_side='AUTO'):
                            - right_shrink)
 
         # Position new cabinet abutting original (using the now-final
-        # original width).
-        new_root.location.x = cabinet.location.x + cab_props.width
+        # original width). Step along the cabinet's rotated run vector,
+        # as merge does, so a rotated cabinet (island runs) breaks in
+        # place instead of landing along the parent's X axis.
+        run_in_parent = (
+            cabinet.rotation_euler.to_matrix() @ Vector((1.0, 0.0, 0.0))
+        )
+        new_root.location = cabinet.location + cab_props.width * run_in_parent
 
     return new_root
