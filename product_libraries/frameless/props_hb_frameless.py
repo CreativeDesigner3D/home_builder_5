@@ -706,6 +706,13 @@ def update_base_top_default(self, context):
     bpy.ops.hb_frameless.update_base_top_construction_prompts()
 
 
+def update_back_tongue_length(self, context):
+    from . import solver_frameless
+    for obj in context.scene.objects:
+        if solver_frameless.is_solved_cabinet(obj):
+            solver_frameless.recalculate_cabinet(obj)
+
+
 def update_include_drawer_boxes(self,context):
     if self.include_drawer_boxes:
         # Find all drawer fronts in the scene
@@ -2095,6 +2102,14 @@ class Frameless_Scene_Props(PropertyGroup):
                                                  unit='LENGTH',
                        update=update_material_thickness_default)# type: ignore
 
+    back_tongue_length: FloatProperty(name="Back Tongue Engagement",
+                                      description="How far the back runs into the grooves in the sides, bottom and top. "
+                                                  "0 builds the back between the sides, sitting on the bottom",
+                                      default=units.inch(.25),
+                                      min=0.0,
+                                      unit='LENGTH',
+                       update=update_back_tongue_length)# type: ignore
+
     default_toe_kick_height: FloatProperty(name="Default Toe Kick Height",
                                                  description="",
                                                  default=units.inch(4),
@@ -2560,6 +2575,8 @@ class Frameless_Scene_Props(PropertyGroup):
         row.operator('hb_frameless.update_material_thickness_prompts',text="",icon='FILE_REFRESH')
         row = size_box.row()
         row.prop(self,'default_carcass_part_thickness',text="Material Thickness")
+        row = size_box.row()
+        row.prop(self,'back_tongue_length',text="Back Tongue")
         size_box = layout.box()
         row = size_box.row()
         row.label(text="Toe Kick:")
