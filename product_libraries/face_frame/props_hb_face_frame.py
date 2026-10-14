@@ -10524,7 +10524,8 @@ class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
 
     # TRAY_DIVIDERS
     # Vertical dividers; tray_remove_shelf=False adds a horizontal locked
-    # shelf at tray_opening_height that the dividers stop against.
+    # shelf whose underside sits tray_opening_height above the dividers'
+    # bottom, so the value is the clear height for trays.
     tray_qty: IntProperty(
         name="Tray Qty", default=3, min=1, max=10,
         update=_update_cabinet_dim,
@@ -10536,7 +10537,7 @@ class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
     )  # type: ignore
     tray_opening_height: FloatProperty(
         name="Tray Opening Height",
-        description="Z position of the locked shelf above the tray dividers (only when Remove Locked Shelf is off)",
+        description="Clear height under the locked shelf, from the bottom of the dividers to the underside of the shelf (only when Remove Locked Shelf is off)",
         default=units.inch(20.5), unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
     )  # type: ignore

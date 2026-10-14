@@ -6057,8 +6057,9 @@ def _rollout_descriptors(rect, cage_dim_y, item, item_index=-1):
 # Tray dividers
 # ---------------------------------------------------------------------------
 # Vertical thin dividers spaced evenly across the opening's X span. With
-# Remove Locked Shelf off (default), the dividers stop at the underside
-# of a horizontal locked shelf at tray_opening_height; with it on, the
+# Remove Locked Shelf off (default), tray_opening_height is the clear
+# height under a horizontal locked shelf: the shelf's bottom face sits
+# there and the dividers fill the space below it. With it on, the
 # dividers run the full opening height. The locked shelf carries its own
 # part role so the wipe set picks it up alongside the dividers.
 def _tray_dividers_descriptors(rect, cage_dim_y, item):
@@ -6078,8 +6079,8 @@ def _tray_dividers_descriptors(rect, cage_dim_y, item):
     if remove_shelf:
         div_length = max(0.0, cage_dim_z - z0)
     else:
-        # Dividers stop just below the locked shelf's bottom face.
-        div_length = max(0.0, opening_height - SHELF_THICKNESS)
+        # Dividers fill the clear opening up to the shelf's bottom face.
+        div_length = max(0.0, opening_height)
 
     div_width = max(0.0, cage_dim_y - setback - SHELF_BACK_SETBACK)
 
@@ -6108,7 +6109,7 @@ def _tray_dividers_descriptors(rect, cage_dim_y, item):
             'name':         'Tray Locked Shelf',
             'orientation':  'HORIZONTAL',
             'position':     (SHELF_X_CLEARANCE, setback,
-                             z0 + max(0.0, opening_height - SHELF_THICKNESS)),
+                             z0 + max(0.0, opening_height)),
             'dims':         (shelf_length, shelf_width, SHELF_THICKNESS),
         })
     return out

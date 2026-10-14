@@ -6303,8 +6303,11 @@ class FaceFrameCabinet(GeoNodeCage):
                 item.kind = kind
                 opening_z = (inv @ cage.matrix_world.translation).z
                 if kind == 'TRAY_DIVIDERS':
+                    # Opening height is the clear space under the
+                    # locked shelf, so take the shelf off too.
                     item.tray_opening_height = max(
-                        sink_bottom - opening_z - inch(0.25), inch(6.0))
+                        sink_bottom - opening_z - inch(0.25)
+                        - solver.SHELF_THICKNESS, inch(6.0))
                 if kind == 'ROLLOUT':
                     item.hide_rollout_spacers = True
                     # The bowls are sized to clear the sink from the
