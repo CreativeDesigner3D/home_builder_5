@@ -2293,11 +2293,12 @@ class hb_closets_OT_change_number_of_openings(bpy.types.Operator):
             n = len(_starter_bays(root))
             if not starter.delete_bay(n - 1):
                 break
-        # Evenly across the width the closet had.
+        # Evenly across the width the closet had: unlocked bays share it.
+        # Writing a bay's width here would read as an edit and lock the
+        # bay at that value again.
         with types_closets.suspend_recalc():
             for bay in _starter_bays(root):
                 bay.hb_closet_bay.unlock_width = False
-                bay.hb_closet_bay.width = 0.0
             sp.width = width
         types_closets.recalculate_closet_starter(root)
         _apply_finish(root)
