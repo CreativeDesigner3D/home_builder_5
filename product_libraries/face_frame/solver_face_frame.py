@@ -1455,7 +1455,7 @@ def _finish_kick_reaches_edge(layout, side):
     An unfinished end runs to the edge only when the kick line carries
     on past it (a wall or another floor-standing cabinet); beside an
     appliance, an open gap or a blind corner's face it stops flush
-    with the subfront behind it.
+    with the side's outer face.
     """
     if side == 'LEFT':
         fin, covered = layout.l_fin_end, layout.l_covered_thickness
@@ -1512,7 +1512,8 @@ def finish_kick_segments(layout):
 
     An unfinished end with no kick beyond it (an appliance, an open
     gap, a blind corner's face) or a FLUSH_X end stops flush with the
-    subfront's end instead - see _finish_kick_reaches_edge.
+    outer face of the side instead, covering the subfront and the
+    side's edge beside it - see _finish_kick_reaches_edge.
 
     Stile-to-floor exception: that side's carcass panel has no notch
     and is solid through the kick Y range, so a full-width finish kick
@@ -1554,7 +1555,10 @@ def finish_kick_segments(layout):
             elif end_reaches_edge('LEFT'):
                 left_x = 0.0
             else:
-                left_x = carcass_inner_left_x(layout)
+                # Flush with the side's outer face: the board covers the
+                # subfront and the side's notched edge beside it, but
+                # not the scribe gap past the side.
+                left_x = left_scribe_offset(layout)
         else:
             if _void_gap(layout, start - 1):
                 # The to-floor division finishing the void blocks the
@@ -1570,7 +1574,7 @@ def finish_kick_segments(layout):
             elif end_reaches_edge('RIGHT'):
                 right_x = layout.dim_x
             else:
-                right_x = carcass_inner_right_x(layout)
+                right_x = layout.dim_x - right_scribe_offset(layout)
         else:
             if _void_gap(layout, end):
                 right_x = _mid_div_left_outer_x(layout, end)
