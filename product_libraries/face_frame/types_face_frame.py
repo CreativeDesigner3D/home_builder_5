@@ -275,6 +275,9 @@ TAG_MANTLE_PANEL = 'hb_mantle_panel_role'
 # Hidden prism cutters mitring a box product's front board into its
 # finished end panels (floating shelf / contemporary mantle).
 PART_ROLE_BOX_MITER_CUTTER = 'BOX_MITER_CUTTER'
+# Hidden prism cutters mitring a finish toe kick's end into the kick of
+# the run it meets at a square corner (solver.finish_kick_segments).
+PART_ROLE_FINISH_KICK_MITER_CUTTER = 'FINISH_KICK_MITER_CUTTER'
 
 VALANCE_TAG = 'IS_VALANCE_PRODUCT'
 PART_ROLE_VALANCE_BOARD = 'VALANCE_BOARD'
@@ -3541,6 +3544,7 @@ class FaceFrameCabinet(GeoNodeCage):
                 part.set_input('Length', seg['length'])
                 part.set_input('Width', seg['width'])
                 part.set_input('Thickness', seg['thickness'])
+                self._apply_finish_kick_miters(child, seg)
 
             elif role == PART_ROLE_LEFT_CORNER_FINISH_KICK:
                 visible = solver.has_left_corner_finish_kick(layout)
@@ -11594,6 +11598,89 @@ class FaceFrameCabinet(GeoNodeCage):
             if seg['start_bay'] in existing_starts:
                 continue
             self._create_finish_kick_part(seg['start_bay'])
+
+        # Drop the corner mitre cutters no end needs any more.
+        for side, key in (('LEFT', 'miter_left'), ('RIGHT', 'miter_right')):
+            if any(seg.get(key) for seg in segments):
+                continue
+            mod_name = self._finish_kick_miter_mod_name(side)
+            for child in list(self.obj.children):
+                if child.get('hb_part_role') == PART_ROLE_FINISH_TOE_KICK:
+                    mod = child.modifiers.get(mod_name)
+                    if mod is not None:
+                        child.modifiers.remove(mod)
+                elif (child.get('hb_part_role')
+                        == PART_ROLE_FINISH_KICK_MITER_CUTTER
+                        and child.get('hb_miter_side') == side):
+                    bpy.data.objects.remove(child, do_unlink=True)
+
+    # ---- finish toe kick corner mitres ----
+    # Where the finish kick turns a square corner with another run's
+    # kick, the board runs to the other kick's back face and a hidden
+    # prism cutter trims its front corner on the diagonal from the
+    # other kick's front face, so the two boards meet in a mitre.
+    @staticmethod
+    def _finish_kick_miter_mod_name(side):
+        return f'Kick Miter {side[0]}'
+
+    def _ensure_finish_kick_miter_cutter(self, side):
+        for child in self.obj.children:
+            if (child.get('hb_part_role') == PART_ROLE_FINISH_KICK_MITER_CUTTER
+                    and child.get('hb_miter_side') == side):
+                return child
+        name = f'Finish Kick Miter Cutter {side.title()}'
+        mesh = bpy.data.meshes.new(name)
+        cutter = hb_utils.new_object(name, mesh)
+        cutter['hb_part_role'] = PART_ROLE_FINISH_KICK_MITER_CUTTER
+        cutter['hb_miter_side'] = side
+        cutter.parent = self.obj
+        cutter.display_type = 'WIRE'
+        cutter.hide_render = True
+        cutter.hide_viewport = True
+        for coll in self.obj.users_collection:
+            coll.objects.link(cutter)
+            break
+        return cutter
+
+    def _apply_finish_kick_miters(self, part_obj, seg):
+        """Build / drop the corner mitre on each end of one finish kick
+        segment from its 'miter_left' / 'miter_right' (front_x, back_x)."""
+        y_front = seg['y']
+        y_back = seg['y'] + seg['thickness']
+        m = inch(2.0)
+        for side, key in (('LEFT', 'miter_left'), ('RIGHT', 'miter_right')):
+            mod_name = self._finish_kick_miter_mod_name(side)
+            miter = seg.get(key)
+            if not miter:
+                mod = part_obj.modifiers.get(mod_name)
+                if mod is not None:
+                    part_obj.modifiers.remove(mod)
+                continue
+            front_x, back_x = miter
+            out = -1.0 if side == 'LEFT' else 1.0
+            # The diagonal from the front face's end to the back face's
+            # end, run on past both so the boolean never grazes a face;
+            # the third point closes the triangle out in front.
+            a = Vector((front_x, y_front))
+            b = Vector((back_x, y_back))
+            d = b - a
+            if d.length < 1e-9:
+                continue
+            d.normalize()
+            a_far = a - d * m
+            b_far = b + d * m
+            pts = ((a_far.x, a_far.y),
+                   (b_far.x, b_far.y),
+                   (back_x + out * 2.0 * m, y_front - 2.0 * m))
+            cutter = self._ensure_finish_kick_miter_cutter(side)
+            self._wedge_prism_mesh(cutter, pts, seg['z'] - m,
+                                   seg['z'] + seg['width'] + m)
+            mod = part_obj.modifiers.get(mod_name)
+            if mod is None:
+                mod = part_obj.modifiers.new(name=mod_name, type='BOOLEAN')
+                mod.operation = 'DIFFERENCE'
+            if mod.object is not cutter:
+                mod.object = cutter
 
     def _reconcile_rear_finish_kicks(self, segments):
         """Finish boards on a rear-inset kick's back face, one per rear

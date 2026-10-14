@@ -1478,25 +1478,62 @@ def _finish_kick_reaches_edge(layout, side):
     return reach, True
 
 
-def _stamp_finish_kick_reach(layout, reach):
-    """Record on the cabinet which ends' finish kick reach was decided
-    by its neighbours, so a later neighbour change can tell whether the
-    cabinet needs rebuilding (exposure.finish_kick_reach_stale)."""
+def _finish_kick_corner(layout, side):
+    """Where the finish kick ends at one cabinet end ('LEFT' / 'RIGHT')
+    that meets a square-on run's kick at an inside corner, or None. See
+    exposure.finish_kick_corner. An island end the run behind covers
+    keeps its own treatment, and angled fronts are left out."""
+    if layout.is_angled:
+        return None
+    covered = (layout.l_covered_thickness if side == 'LEFT'
+               else layout.r_covered_thickness)
+    if covered is not None:
+        return None
+    cab_obj = getattr(layout, '_cabinet_obj', None)
+    if cab_obj is None:
+        return None
+    from . import exposure
+    try:
+        return exposure.finish_kick_corner(cab_obj, side.lower())
+    except Exception:
+        return None
+
+
+def _stamp_finish_kick_reach(layout, reach, corners=None):
+    """Record on the cabinet how each end's finish kick was decided by
+    its neighbours, so a later neighbour change can tell whether the
+    cabinet needs rebuilding (exposure.finish_kick_reach_stale).
+    corners maps a side to the finish_kick_corner result it was built
+    from."""
     cab_obj = getattr(layout, '_cabinet_obj', None)
     if cab_obj is None:
         return
     from . import exposure
-    key = exposure.FINISH_KICK_REACH_KEY
+    corners = corners or {}
     value = [reach.get('LEFT', -1), reach.get('RIGHT', -1)]
+    corner_value = []
+    partners = []
+    for side in ('LEFT', 'RIGHT'):
+        c = corners.get(side)
+        if c is None:
+            corner_value.extend((0.0, 0.0, 0.0))
+            partners.append('')
+        else:
+            corner_value.extend((float(c['back_x']), float(c['front_x']),
+                                 1.0 if c['miter'] else 0.0))
+            partners.append(c['partner'].name)
+    partners = '|'.join(partners)
     try:
-        current = cab_obj.get(key)
-        if current is not None and list(current) == value:
-            return
-        if value == [-1, -1]:
-            if current is not None:
-                del cab_obj[key]
-            return
-        cab_obj[key] = value
+        current = cab_obj.get(exposure.FINISH_KICK_REACH_KEY)
+        if current is None or list(current) != value:
+            cab_obj[exposure.FINISH_KICK_REACH_KEY] = value
+        current = cab_obj.get(exposure.FINISH_KICK_CORNER_KEY)
+        if (current is None or len(current) != 6
+                or any(abs(a - b) > 1e-9
+                       for a, b in zip(current, corner_value))):
+            cab_obj[exposure.FINISH_KICK_CORNER_KEY] = corner_value
+        if cab_obj.get(exposure.FINISH_KICK_CORNER_WITH_KEY) != partners:
+            cab_obj[exposure.FINISH_KICK_CORNER_WITH_KEY] = partners
     except Exception:
         pass
 
@@ -1515,6 +1552,12 @@ def finish_kick_segments(layout):
     outer face of the side instead, covering the subfront and the
     side's edge beside it - see _finish_kick_reaches_edge.
 
+    An end meeting a square-on run's kick at an inside corner (a blind
+    or voided corner, or one run butted against the other's face) runs
+    on to the corner instead and mitres with that kick: the segment's
+    'miter_left' / 'miter_right' carry (front_x, back_x), the X where
+    the board's front and back faces end, for the mitre cutter.
+
     Stile-to-floor exception: that side's carcass panel has no notch
     and is solid through the kick Y range, so a full-width finish kick
     would intersect it. Inset the cabinet-end X by the side's thickness
@@ -1530,14 +1573,24 @@ def finish_kick_segments(layout):
     segments = []
     last_bay = layout.bay_count - 1
     finish_t = layout.finish_kick_thickness
-    # Ends whose reach the neighbours decided: 1 = edge, 0 = subfront.
+    # How each end was decided - see exposure.FINISH_KICK_REACH_KEY.
     neighbour_reach = {}
+    corner_ends = {}
 
     def end_reaches_edge(side):
         reach, by_neighbours = _finish_kick_reaches_edge(layout, side)
         if by_neighbours:
             neighbour_reach[side] = 1 if reach else 0
+        else:
+            neighbour_reach[side] = 3
         return reach
+
+    def end_corner(side):
+        corner = _finish_kick_corner(layout, side)
+        if corner is not None:
+            neighbour_reach[side] = 2
+            corner_ends[side] = corner
+        return corner
 
     for start, end in _compute_segments(layout, _kick_subfront_passthrough):
         first_bay = layout.bays[start]
@@ -1545,6 +1598,7 @@ def finish_kick_segments(layout):
             continue
         if first_bay.get('floating_bay'):
             continue
+        left_miter = right_miter = None
         if start == 0:
             if layout.kick_inset_left > 0:
                 # Inset with return: finish kick covers the return's
@@ -1552,6 +1606,10 @@ def finish_kick_segments(layout):
                 left_x = layout.kick_inset_left
             elif left_stile_to_floor(layout):
                 left_x = carcass_inner_left_x(layout)
+            elif (corner := end_corner('LEFT')) is not None:
+                left_x = corner['back_x']
+                if corner['miter']:
+                    left_miter = (corner['front_x'], corner['back_x'])
             elif end_reaches_edge('LEFT'):
                 left_x = 0.0
             else:
@@ -1571,6 +1629,10 @@ def finish_kick_segments(layout):
                 right_x = layout.dim_x - layout.kick_inset_right
             elif right_stile_to_floor(layout):
                 right_x = carcass_inner_right_x(layout)
+            elif (corner := end_corner('RIGHT')) is not None:
+                right_x = corner['back_x']
+                if corner['miter']:
+                    right_miter = (corner['front_x'], corner['back_x'])
             elif end_reaches_edge('RIGHT'):
                 right_x = layout.dim_x
             else:
@@ -1621,8 +1683,10 @@ def finish_kick_segments(layout):
             'length':     ff_world_x_span_to_length(layout, right_x - left_x),
             'width':      first_bay['kick_height'],
             'thickness':  finish_t,
+            'miter_left':  left_miter,
+            'miter_right': right_miter,
         })
-    _stamp_finish_kick_reach(layout, neighbour_reach)
+    _stamp_finish_kick_reach(layout, neighbour_reach, corner_ends)
     return segments
 
 
