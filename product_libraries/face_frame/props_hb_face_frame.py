@@ -6578,6 +6578,19 @@ def _update_panel_rows(self, context):
         heights.add()
     while len(heights) > want:
         heights.remove(len(heights) - 1)
+    # Mid rails between manual rows start at the host cabinet's mid
+    # rail width, which follows the style's overlay, until a width is
+    # typed here. Writing it re-enters this callback, which recalcs.
+    if want > 0 and abs(cab.panel_row_rail_width - units.inch(1.5)) < 1e-6:
+        from . import types_face_frame
+        host = obj
+        if (obj.get(types_face_frame.TAG_APPLIED_PANEL_SIDE)
+                and obj.parent is not None):
+            host = obj.parent
+        host_w = host.face_frame_cabinet.bay_mid_rail_width
+        if abs(host_w - cab.panel_row_rail_width) > 1e-6:
+            cab.panel_row_rail_width = host_w
+            return
     _update_panel_split_auto(self, context)
 
 
