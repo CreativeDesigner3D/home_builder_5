@@ -6715,6 +6715,10 @@ class FaceFrameCabinet(GeoNodeCage):
         if extend == 0.0:
             child.rotation_euler.z = base_z
             return
+        # A hidden board (no loose kick) skips the dispatch restore, so
+        # scaling its leftover Length would compound on every recalc.
+        if child.hide_viewport:
+            return
         length = self._part_input(child, 'Length')
         if length is None:
             return
