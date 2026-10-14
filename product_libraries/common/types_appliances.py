@@ -148,7 +148,8 @@ class Refrigerator(Appliance):
     width = inch(36)
     height = inch(70)
     depth = inch(30)
-    
+    variable_width = True
+
     def create(self, name="Refrigerator"):
         self.create_appliance(name, 'REFRIGERATOR')
         
@@ -204,6 +205,22 @@ class Hood(Appliance):
         # Add hood-specific properties
         self.add_property('Hood Style', 'TEXT', 'Under Cabinet')  # Under Cabinet, Wall Mount, Island
         self.add_property('CFM Rating', 'QUANTITY', 400)
+
+
+class UnderCabinetHood(Appliance):
+    """A slim vent hood hung under an upper cabinet's bay. Its own type,
+    not HOOD: a range hood stands on the wall by itself, and everything
+    that looks for one (wood hoods, finished ends beside a hood) must
+    not mistake this for it."""
+
+    width = inch(30)
+    height = inch(6)
+    depth = inch(18)
+
+    APPLIANCE_TYPE = 'UNDER_CABINET_HOOD'
+
+    def create(self, name="Under Cabinet Hood"):
+        self.create_appliance(name, 'UNDER_CABINET_HOOD', label='HOOD')
 
 
 class Sink(Appliance):

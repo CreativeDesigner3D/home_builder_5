@@ -161,7 +161,10 @@ def calculate_ortho_scale(paper_size, scale_str, landscape=True):
 
 def update_layout_scale(self, context):
     """Callback when layout scale changes - updates camera ortho_scale."""
-    scene = context.scene
+    # The scene that owns the property, not the active one: a script can
+    # set the scale on a page that is not in the window (building pages,
+    # background mode), and the active scene would be the wrong camera.
+    scene = self if isinstance(self, bpy.types.Scene) else context.scene
     if not scene.get('IS_LAYOUT_VIEW'):
         return
     

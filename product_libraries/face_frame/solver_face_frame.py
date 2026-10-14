@@ -27,6 +27,7 @@ import bpy
 from ...units import inch
 from . import island_pair
 from . import shelf_nosing
+from ..common import bun_foot
 from . import bar_storage
 
 
@@ -92,6 +93,9 @@ class FaceFrameLayout:
         # Lazy import avoids any circular at module load
         from . import types_face_frame
         self._cabinet_tag = types_face_frame.TAG_BAY_CAGE
+        # Kept for the few answers that depend on what stands beside the
+        # cabinet (see _finish_kick_reaches_edge).
+        self._cabinet_obj = cabinet_obj
 
         cab = cabinet_obj.face_frame_cabinet
         self.cabinet_type = cab.cabinet_type
@@ -115,6 +119,9 @@ class FaceFrameLayout:
         # Material thicknesses
         self.mt = cab.material_thickness
         self.bt = cab.back_thickness
+        # An unlocked back thickness is taken exactly as typed - no
+        # construction (floating vanity) default is layered over it.
+        self.unlock_bt = getattr(cab, 'unlock_back_thickness', False)
         self.fft = cab.face_frame_thickness
 
         # Cabinet default overlays. Retained for the removed-mid-rail gap
@@ -194,6 +201,7 @@ class FaceFrameLayout:
             if (self.has_toe_kick
                 and self.toe_kick_type in REAR_INSET_KICK_TYPES)
             else 0.0)
+        _init_bun_feet(self, cab)
         self.back_bottom_inset = cab.back_bottom_inset
         # Tip-up wedge inputs (refrigerator / tall). Computed dims are
         # derived live in wedge_geometry(); only the inputs persist.
@@ -625,12 +633,47 @@ def back_thickness(layout):
     _reconcile_finished_back for the applied piece.
 
     A floating vanity is the exception: its back is 3/4 by construction,
-    so a cabinet still carrying the 1/4 default gets the vanity's.
+    so a cabinet still carrying the 1/4 default gets the vanity's -
+    unless the back thickness is unlocked, which builds exactly the
+    value the cabinet carries.
     """
+    if getattr(layout, 'unlock_bt', False):
+        return layout.bt
     if (getattr(layout, 'floating_vanity', False)
             and layout.bt <= FLOATING_VANITY_BACK_THICKNESS - 1e-6):
         return FLOATING_VANITY_BACK_THICKNESS
     return layout.bt
+
+
+# Stock an applied back is built from when its thickness is left locked:
+# a FINISHED back is a 3/4 panel, a textured (beadboard / shiplap /
+# v-groove) back a 1/4 skin.
+FINISHED_BACK_THICKNESS = inch(0.75)
+TEXTURED_BACK_THICKNESS = inch(0.25)
+
+
+def standard_finished_back_thickness(condition):
+    """Locked thickness of the applied back built for `condition`."""
+    if condition == 'FINISHED':
+        return FINISHED_BACK_THICKNESS
+    return TEXTURED_BACK_THICKNESS
+
+
+def finished_back_thickness(cab, condition):
+    """Thickness of the applied FINISHED / textured back panel layered
+    behind the carcass back. The cabinet's finished_back_thickness when
+    unlocked, else the standard stock for the condition."""
+    if getattr(cab, 'unlock_finished_back_thickness', False):
+        return cab.finished_back_thickness
+    return standard_finished_back_thickness(condition)
+
+
+def standard_back_thickness(cab):
+    """Locked carcass back thickness: the floating vanity's 3/4 back on
+    a floating vanity, else the 1/4 standard."""
+    if is_floating_vanity(cab):
+        return FLOATING_VANITY_BACK_THICKNESS
+    return inch(0.25)
 
 
 def is_floating_vanity(cab):
@@ -1042,7 +1085,7 @@ def side_bottom_z(layout, bay_index, side='LEFT'):
     # (a "leg"), the finished side drops with it so the leg reads solid down
     # to the floor. The side belongs to an end bay (LEFT = bay 0, RIGHT =
     # last bay), so the matching end-stile-to-floor flag governs the drop.
-    floating = (layout.toe_kick_type in ('FLOATING', 'LOOSE', 'LOOSE_FLUSH')
+    floating = (layout.toe_kick_type in FLOATING_KICK_TYPES
                 or layout.bays[bay_index].get('floating_bay'))
     if floating:
         side_stile_to_floor = (left_stile_to_floor(layout) if side == 'LEFT'
@@ -1101,7 +1144,12 @@ KICK_REAR_BEAM_SHALLOW_DEPTH = inch(15.0)
 
 
 # Toe kick types a rear inset applies to (see Layout.kick_inset_back).
-REAR_INSET_KICK_TYPES = ('NOTCH', 'LOOSE', 'LOOSE_FLUSH')
+REAR_INSET_KICK_TYPES = ('NOTCH', 'LOOSE', 'LOOSE_FLUSH', 'BUN_FEET')
+# Toe kick types that build the loose ladder sub-base. BUN_FEET is a
+# recessed ladder with a foot under each exposed corner.
+LOOSE_KICK_TYPES = ('LOOSE', 'LOOSE_FLUSH', 'BUN_FEET')
+# Toe kick types whose carcass floats on a base (sides stop at the kick).
+FLOATING_KICK_TYPES = ('FLOATING',) + LOOSE_KICK_TYPES
 
 # Thickness each applied back type adds behind the carcass back. The rear
 # inset is measured from the outermost back face, so the number typed is
@@ -1396,13 +1444,75 @@ def has_finish_kick(layout):
     return has_kick_subfront(layout) and layout.include_finish_kick
 
 
+def _finish_kick_reaches_edge(layout, side):
+    """(reaches_edge, decided_by_neighbours) for the finish kick at one
+    cabinet end ('LEFT' / 'RIGHT').
+
+    A shown end - finished, paneled, an applied skin, or an island end
+    the run behind covers with its notched board - takes the finish
+    kick out to the cabinet's edge to cover the side's notch. A FLUSH_X
+    end never does: its strip runs to the floor through the kick zone.
+    An unfinished end runs to the edge only when the kick line carries
+    on past it (a wall or another floor-standing cabinet); beside an
+    appliance, an open gap or a blind corner's face it stops flush
+    with the subfront behind it.
+    """
+    if side == 'LEFT':
+        fin, covered = layout.l_fin_end, layout.l_covered_thickness
+    else:
+        fin, covered = layout.r_fin_end, layout.r_covered_thickness
+    if covered is not None:
+        return True, False
+    if fin == 'FLUSH_X':
+        return False, False
+    if fin != 'UNFINISHED':
+        return True, False
+    cab_obj = getattr(layout, '_cabinet_obj', None)
+    if cab_obj is None:
+        return True, False
+    from . import exposure
+    try:
+        reach = exposure.kick_continues_past_end(cab_obj, side.lower())
+    except Exception:
+        return True, False
+    return reach, True
+
+
+def _stamp_finish_kick_reach(layout, reach):
+    """Record on the cabinet which ends' finish kick reach was decided
+    by its neighbours, so a later neighbour change can tell whether the
+    cabinet needs rebuilding (exposure.finish_kick_reach_stale)."""
+    cab_obj = getattr(layout, '_cabinet_obj', None)
+    if cab_obj is None:
+        return
+    from . import exposure
+    key = exposure.FINISH_KICK_REACH_KEY
+    value = [reach.get('LEFT', -1), reach.get('RIGHT', -1)]
+    try:
+        current = cab_obj.get(key)
+        if current is not None and list(current) == value:
+            return
+        if value == [-1, -1]:
+            if current is not None:
+                del cab_obj[key]
+            return
+        cab_obj[key] = value
+    except Exception:
+        pass
+
+
 def finish_kick_segments(layout):
     """Finish toe kick segments. Same passthrough as the subfront so a
-    segmented subfront gets a matching segmented finish, but X spans
-    the FULL cabinet width at the ends (not captured between sides) -
+    segmented subfront gets a matching segmented finish, but X runs
+    out to the cabinet's edge at a shown end or where the kick line
+    carries on into a neighbour (not captured between sides) -
     interior breaks still meet at the carcass meeting plane to line up
     with the subfront break behind them. Y sits in front of the
     subfront so its back face is flush with the subfront's front.
+
+    An unfinished end with no kick beyond it (an appliance, an open
+    gap, a blind corner's face) or a FLUSH_X end stops flush with the
+    subfront's end instead - see _finish_kick_reaches_edge.
 
     Stile-to-floor exception: that side's carcass panel has no notch
     and is solid through the kick Y range, so a full-width finish kick
@@ -1411,12 +1521,23 @@ def finish_kick_segments(layout):
     behind the stile separately.
     """
     if loose_kick_has_finish(layout):
+        _stamp_finish_kick_reach(layout, {})
         return [loose_kick_finish_segment(layout)]
     if not has_finish_kick(layout):
+        _stamp_finish_kick_reach(layout, {})
         return []
     segments = []
     last_bay = layout.bay_count - 1
     finish_t = layout.finish_kick_thickness
+    # Ends whose reach the neighbours decided: 1 = edge, 0 = subfront.
+    neighbour_reach = {}
+
+    def end_reaches_edge(side):
+        reach, by_neighbours = _finish_kick_reaches_edge(layout, side)
+        if by_neighbours:
+            neighbour_reach[side] = 1 if reach else 0
+        return reach
+
     for start, end in _compute_segments(layout, _kick_subfront_passthrough):
         first_bay = layout.bays[start]
         if first_bay.get('remove_bottom') or first_bay.get('remove_carcass'):
@@ -1430,8 +1551,10 @@ def finish_kick_segments(layout):
                 left_x = layout.kick_inset_left
             elif left_stile_to_floor(layout):
                 left_x = carcass_inner_left_x(layout)
-            else:
+            elif end_reaches_edge('LEFT'):
                 left_x = 0.0
+            else:
+                left_x = carcass_inner_left_x(layout)
         else:
             if _void_gap(layout, start - 1):
                 # The to-floor division finishing the void blocks the
@@ -1444,8 +1567,10 @@ def finish_kick_segments(layout):
                 right_x = layout.dim_x - layout.kick_inset_right
             elif right_stile_to_floor(layout):
                 right_x = carcass_inner_right_x(layout)
-            else:
+            elif end_reaches_edge('RIGHT'):
                 right_x = layout.dim_x
+            else:
+                right_x = carcass_inner_right_x(layout)
         else:
             if _void_gap(layout, end):
                 right_x = _mid_div_left_outer_x(layout, end)
@@ -1493,6 +1618,7 @@ def finish_kick_segments(layout):
             'width':      first_bay['kick_height'],
             'thickness':  finish_t,
         })
+    _stamp_finish_kick_reach(layout, neighbour_reach)
     return segments
 
 
@@ -1723,7 +1849,9 @@ def has_loose_kick(layout):
     Both LOOSE and LOOSE_FLUSH build the ladder; they differ only in the
     ladder's front setback (see loose_kick_setback)."""
     return (layout.has_toe_kick
-            and layout.toe_kick_type in ('LOOSE', 'LOOSE_FLUSH'))
+            and layout.toe_kick_type in LOOSE_KICK_TYPES
+            and not (layout.toe_kick_type == 'BUN_FEET'
+                     and getattr(layout, 'bun_feet_open', False)))
 
 
 def loose_kick_setback(layout):
@@ -1733,6 +1861,11 @@ def loose_kick_setback(layout):
     loose_kick_end (board length) and loose_kick_front_rail (front Y)."""
     if layout.toe_kick_type == 'LOOSE_FLUSH':
         return 0.0
+    if layout.toe_kick_type == 'BUN_FEET':
+        # Behind the feet, on every cabinet of the run alike so the kick
+        # line stays straight where an inner cabinet has no feet.
+        return max(layout.tks,
+                   layout.bun_foot_depth + layout.bun_foot_offset_front)
     return layout.tks
 
 
@@ -1796,7 +1929,7 @@ def loose_kick_has_finish(layout):
     LOOSE_FLUSH is left bare: its ladder front is already flush with
     the cabinet front, so a skin there would stand proud of it."""
     return (has_loose_kick(layout)
-            and layout.toe_kick_type == 'LOOSE'
+            and layout.toe_kick_type in ('LOOSE', 'BUN_FEET')
             and layout.include_finish_kick)
 
 
@@ -1827,6 +1960,117 @@ def loose_kick_back_y(layout):
     if has_rear_kick_inset(layout):
         return min(0.0, rear_kick_face_y(layout, 0))
     return 0.0
+
+
+# ---------------------------------------------------------------------------
+# Bun feet - a recessed loose ladder with a foot under each exposed corner
+# ---------------------------------------------------------------------------
+# BUN_FEET floats the carcass on the loose ladder like LOOSE and stands a
+# foot under every corner the room leaves in view: both front corners of
+# an exposed end, and the back corners too where the back is exposed (an
+# island). The ladder pulls in behind the feet - setback and end insets
+# grow to at least the foot's footprint - so the feet stand proud of the
+# kick. The foot fills the kick height.
+#
+# Two per-cabinet options change that: the corners can be picked by hand
+# (bun_foot_corner_mode CUSTOM - any corner, including back corners
+# against a wall), and the cabinet can be left open underneath
+# (bun_feet_open), standing on the feet alone with no ladder behind them.
+# Each foot can also be pulled in from the cabinet edges: one offset per
+# side (front, back, left, right), and a foot takes the two that face its
+# corner. The ladder recesses further to stay behind the moved feet.
+PART_ROLE_BUN_FOOT_PREFIX = 'BUN_FOOT_'
+BUN_FOOT_CORNERS = ('FRONT_LEFT', 'FRONT_RIGHT', 'BACK_LEFT', 'BACK_RIGHT')
+
+
+def bun_foot_corners(cab, mode=None):
+    """The corners of a straight bun-feet cabinet that carry a foot:
+    the hand-picked ones, or by default every corner the room leaves in
+    view (front corners of an exposed end, back corners too when the
+    back is exposed). ``mode`` overrides the cabinet's corner mode."""
+    if mode is None:
+        mode = getattr(cab, 'bun_foot_corner_mode', 'AUTO')
+    if mode == 'CUSTOM':
+        return tuple(c for c in BUN_FOOT_CORNERS
+                     if getattr(cab, 'bun_foot_' + c.lower(), False))
+    left = getattr(cab, 'left_exposure', 'EXPOSED') == 'EXPOSED'
+    right = getattr(cab, 'right_exposure', 'EXPOSED') == 'EXPOSED'
+    back = getattr(cab, 'back_exposure', 'EXPOSED') == 'EXPOSED'
+    corners = []
+    if left:
+        corners.append('FRONT_LEFT')
+    if right:
+        corners.append('FRONT_RIGHT')
+    if back and left:
+        corners.append('BACK_LEFT')
+    if back and right:
+        corners.append('BACK_RIGHT')
+    return tuple(corners)
+
+
+def _init_bun_feet(layout, cab):
+    """Resolve which corners carry a foot and widen the ladder insets to
+    clear them. Straight cabinets only; corner cabinets build a plain
+    recessed ladder."""
+    layout.bun_foot_style = getattr(cab, 'bun_foot_style',
+                                    bun_foot.DEFAULT_STYLE)
+    layout.bun_foot_width, layout.bun_foot_depth = bun_foot.footprint(
+        layout.bun_foot_style)
+    layout.bun_foot_corners = ()
+    layout.bun_feet_open = False
+    for side in ('front', 'back', 'left', 'right'):
+        setattr(layout, 'bun_foot_offset_' + side,
+                max(0.0, getattr(cab, 'bun_foot_offset_' + side, 0.0)))
+    if not (layout.has_toe_kick and layout.toe_kick_type == 'BUN_FEET'
+            and layout.corner_type == 'NONE'):
+        return
+    layout.bun_feet_open = bool(getattr(cab, 'bun_feet_open', False))
+    corners = bun_foot_corners(cab)
+    layout.bun_foot_corners = corners
+    w, d = layout.bun_foot_width, layout.bun_foot_depth
+    if 'FRONT_LEFT' in corners or 'BACK_LEFT' in corners:
+        layout.kick_inset_left = max(
+            layout.kick_inset_left,
+            layout.tks, w + layout.bun_foot_offset_left)
+    if 'FRONT_RIGHT' in corners or 'BACK_RIGHT' in corners:
+        layout.kick_inset_right = max(
+            layout.kick_inset_right,
+            layout.tks, w + layout.bun_foot_offset_right)
+    if 'BACK_LEFT' in corners or 'BACK_RIGHT' in corners:
+        layout.kick_inset_back = max(layout.kick_inset_back,
+                                     d + layout.bun_foot_offset_back)
+
+
+def has_bun_foot(layout, corner):
+    return corner in layout.bun_foot_corners
+
+
+def bun_foot_part_role(corner):
+    return PART_ROLE_BUN_FOOT_PREFIX + corner
+
+
+def bun_foot_placement(layout, corner):
+    """Origin (the foot box's min corner) and which box sides face out.
+    The outer faces land flush with the cabinet end and the front (or
+    the carcass back), pulled in by that side's offset; the foot spans
+    the kick height."""
+    w, d = layout.bun_foot_width, layout.bun_foot_depth
+    left = corner.endswith('LEFT')
+    front = corner.startswith('FRONT')
+    if left:
+        x = layout.bun_foot_offset_left
+    else:
+        x = layout.dim_x - w - layout.bun_foot_offset_right
+    if front:
+        y = -layout.dim_y + layout.bun_foot_offset_front
+    else:
+        y = -d - layout.bun_foot_offset_back
+    return {
+        'x': x, 'y': y, 'z': 0.0,
+        'height': layout.tkh,
+        'outer_x': 'MIN' if left else 'MAX',
+        'outer_y': 'MIN' if front else 'MAX',
+    }
 
 
 def loose_kick_rear_rail(layout):
@@ -3134,7 +3378,7 @@ def carcass_back_segments(layout):
             # has_toe_kick so uppers (toe_kick_type forced to FLOATING)
             # keep their box-bottom 0.0 origin.
             floating_carcass = layout.has_toe_kick and (
-                layout.toe_kick_type in ('FLOATING', 'LOOSE', 'LOOSE_FLUSH')
+                layout.toe_kick_type in FLOATING_KICK_TYPES
                 or first_bay.get('floating_bay'))
             if floating_carcass:
                 z_origin = bay_bottom_z(layout, start)

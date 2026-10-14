@@ -5276,7 +5276,9 @@ SERIES_EDGE_PROFILES = {
                    'Eclipse', 'Bay'),
     'Century':    ('Square', 'Chamfer'),
     'Konza':      ('Square',),
-    'Notable':    ('Square',),
+    # Notable slabs are ordered with no edge profile; a cabinet pick
+    # never applies to them.
+    'Notable':    (),
     'Bezel':      (),
     'Skyline':    (),
     'Harmony':    (),

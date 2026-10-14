@@ -31,6 +31,7 @@ from ...units import inch
 from ...hb_details import apply_label_style
 from ..common import types_appliances
 from ..common import turned_leg
+from ..common import bun_foot
 from ..common import arch_cutout
 from ..frameless.types_frameless import CabinetPart
 from ..frameless.types_products import HalfWall as _FramelessHalfWall
@@ -3156,6 +3157,11 @@ class FaceFrameCabinet(GeoNodeCage):
                 self._ensure_loose_kick_part(
                     PART_ROLE_LOOSE_KICK_END_RIGHT, 'Loose Kick End Right',
                     kind='END', mirror_z=False)
+                # Bun feet: created on first use only, then shown / hidden
+                # like the ladder as the kick type and exposure change.
+                for corner in solver.BUN_FOOT_CORNERS:
+                    if solver.has_bun_foot(layout, corner):
+                        self._ensure_bun_foot_part(corner)
             else:
                 kick_subfront_segs = []
                 kick_subrear_segs = []
@@ -3653,6 +3659,19 @@ class FaceFrameCabinet(GeoNodeCage):
                 part.set_input('Length', seg['length'])
                 part.set_input('Width', seg['width'])
                 part.set_input('Thickness', seg['thickness'])
+
+            elif role.startswith(solver.PART_ROLE_BUN_FOOT_PREFIX):
+                corner = child.get('hb_bun_foot_corner', '')
+                visible = solver.has_bun_foot(layout, corner)
+                child.hide_viewport = not visible
+                child.hide_render = not visible
+                if not visible:
+                    continue
+                place = solver.bun_foot_placement(layout, corner)
+                child.location = (place['x'], place['y'], place['z'])
+                bun_foot.fit_cutpart(child, layout.bun_foot_style,
+                                     place['height'],
+                                     place['outer_x'], place['outer_y'])
 
             elif role == PART_ROLE_BLIND_PANEL_LEFT:
                 # Visible when the left end is a blind corner stile AND
@@ -6327,6 +6346,7 @@ class FaceFrameCabinet(GeoNodeCage):
         if layout.cabinet_type != 'UPPER':
             self._cleanup_under_cabinet_appliances()
             return
+        from ..common import appliance_geo
 
         fb_panels = [c for c in self.obj.children
                      if c.get('hb_part_role') == PART_ROLE_FINISHED_BOTTOM]
@@ -6337,6 +6357,8 @@ class FaceFrameCabinet(GeoNodeCage):
                 continue
             props = bay_obj.face_frame_bay
             kind = getattr(props, 'under_cabinet_appliance', 'NONE')
+            if kind not in ('MICROWAVE', 'HOOD'):
+                appliance_geo.remove_under_cabinet_appliance(bay_obj)
             spec = self._UCA_SPECS.get(kind)
             if spec is None:
                 continue
@@ -6361,6 +6383,20 @@ class FaceFrameCabinet(GeoNodeCage):
                 if (p_x0 < x0 + width and p_x0 + (p_len or 0.0) > x0
                         and panel.location.z < z_top):
                     z_top = panel.location.z
+
+            if kind in ('MICROWAVE', 'HOOD'):
+                # A real appliance the bay holds, so it models like any
+                # other (Show Model); its corner goes from the cabinet's
+                # space into the bay's.
+                from mathutils import Vector
+                to_bay = (bay_obj.matrix_parent_inverse
+                          @ bay_obj.matrix_basis).inverted()
+                corner = to_bay @ Vector((x0, 0.0, z_top - height))
+                appliance_geo.sync_under_cabinet_appliance(
+                    bay_obj, kind, width, depth, height, tuple(corner),
+                    getattr(props, 'under_cabinet_appliance_finish',
+                            'STAINLESS'))
+                continue
 
             key = str(bay_index)
             live_keys.add(key)
@@ -6678,6 +6714,10 @@ class FaceFrameCabinet(GeoNodeCage):
         base_z = -math.pi / 2.0
         if extend == 0.0:
             child.rotation_euler.z = base_z
+            return
+        # A hidden board (no loose kick) skips the dispatch restore, so
+        # scaling its leftover Length would compound on every recalc.
+        if child.hide_viewport:
             return
         length = self._part_input(child, 'Length')
         if length is None:
@@ -7412,13 +7452,13 @@ class FaceFrameCabinet(GeoNodeCage):
 
     def _apply_bottom_rail_profile(self, layout):
         """Cut the chosen decorative profile into the bottom rail(s). Gated on
-        BASE / UPPER; a no-op + full cleanup otherwise. One cutter per
+        BASE / TALL / UPPER; a no-op + full cleanup otherwise. One cutter per
         bottom-rail segment; each segment resolves its own profile (per-bay
         override, else the cabinet-level pick); the profile's end details
         stay fixed while its flat middle stretches to each rail's length."""
         cab_props = self.obj.face_frame_cabinet
         cab_default = getattr(cab_props, 'bottom_rail_profile', 'NONE')
-        if layout.cabinet_type not in ('BASE', 'UPPER'):
+        if layout.cabinet_type not in ('BASE', 'TALL', 'UPPER'):
             self._cleanup_bottom_rail_profile_cutters()
             return
         poly_cache = {}
@@ -9744,7 +9784,9 @@ class FaceFrameCabinet(GeoNodeCage):
     def _build_finished_back(self, layout, segment, existing):
         """One FINISHED back panel, on this segment's own back plane."""
         cab = self.obj.face_frame_cabinet
-        thickness = inch(0.75)
+        # 3/4 stock unless the cabinet's finished back thickness is
+        # unlocked.
+        thickness = solver.finished_back_thickness(cab, 'FINISHED')
         if existing is None:
             part = CabinetPart()
             part.create('Finished Back')
@@ -11190,7 +11232,10 @@ class FaceFrameCabinet(GeoNodeCage):
                 bpy.data.objects.remove(part_obj, do_unlink=True)
                 part_obj = None
 
-            thickness = inch(0.25)
+            # Side skins are 1/4 stock; the BACK skin follows the
+            # cabinet's finished back thickness (1/4 unless unlocked).
+            thickness = (solver.finished_back_thickness(cab, condition)
+                         if side == 'BACK' else inch(0.25))
 
             # LEFT / RIGHT skins track the carcass side panel's vertical
             # extent (side_bottom_z runs to the floor for NOTCH / FLUSH
@@ -11223,7 +11268,7 @@ class FaceFrameCabinet(GeoNodeCage):
             else:  # BACK
                 # Origin sits at Y=+thickness so the part fills [0, thickness]
                 # in cabinet Y - directly behind the carcass back, same as
-                # FINISHED_BACK but 1/4 thick.
+                # FINISHED_BACK but at the textured back's thickness.
                 # A rear-inset kick recesses the back, so the skin stops
                 # at the kick top like the finished back does.
                 back_z = (layout.bays[0]['kick_height']
@@ -11811,6 +11856,22 @@ class FaceFrameCabinet(GeoNodeCage):
         if kind == 'END':
             part.obj.rotation_euler.z = math.radians(-90)
         part.set_input('Mirror Z', mirror_z)
+        return part.obj
+
+    def _ensure_bun_foot_part(self, corner):
+        """Lazy-create the bun foot under one corner. Unrotated, so the
+        cutpart box runs Length along X, Width along Y and Thickness up;
+        the dispatch loop sizes it and draws the foot into its mesh."""
+        role = solver.bun_foot_part_role(corner)
+        for child in self.obj.children:
+            if child.get('hb_part_role') == role:
+                return child
+        part = CabinetPart()
+        part.create('Bun Foot ' + corner.replace('_', ' ').title())
+        part.obj.parent = self.obj
+        part.obj['hb_part_role'] = role
+        part.obj['hb_bun_foot_corner'] = corner
+        part.obj['CABINET_PART'] = True
         return part.obj
 
     def _ensure_blind_panel(self, role, name, mirror_y):
@@ -12903,7 +12964,11 @@ class FaceFrameCabinet(GeoNodeCage):
             if cage is not None:
                 cutter = appliance_geo.sink_clearance_cutter(cage)
         else:
-            appliance_geo.remove_opening_appliance(bay_obj)
+            # An upper bay's over-the-range microwave is kept by
+            # _apply_under_cabinet_appliances, not here.
+            held = appliance_geo.opening_appliance(bay_obj)
+            if not appliance_geo.is_under_bay_appliance(held):
+                appliance_geo.remove_opening_appliance(bay_obj)
         self._apply_sink_clearance(
             [c for c in bay_obj.children_recursive
              if c.get('hb_part_role') in self.SINK_CLEARANCE_SHELF_ROLES],
@@ -16639,6 +16704,10 @@ class FaceFrameAndDoorsCabinet(PanelFaceFrameCabinet):
     """
     default_opening_front_type = 'DOOR'
     fill_manual_bays = True
+    # Set between finished cabinets / walls as a finished front, never
+    # scribed: the scribe fields and Set Scribe are not offered (see
+    # shows_scribe_options). Stored scribe values are left as they are.
+    scribe_options = False
 
     def create(self, name="Face Frame and Doors", bay_qty=1):
         self.create_cabinet_root(name)
@@ -19685,6 +19754,17 @@ def default_front_type_for_root(root):
     return 'NONE'
 
 
+def shows_scribe_options(root):
+    """False when the product under ``root`` opts out of scribe options
+    (class attribute scribe_options = False), so the UI hides its
+    scribe fields and Set Scribe command. True for everything else,
+    including a missing root."""
+    if root is None:
+        return True
+    cls = WRAP_CLASS_REGISTRY.get(root.get('CLASS_NAME'), FaceFrameCabinet)
+    return getattr(cls, 'scribe_options', True)
+
+
 def applied_panel_geometry(layout, side):
     """Transform + dimensions for an applied panel covering one side of
     a cabinet. Returns (location, rotation_z, width, height, depth).
@@ -19889,7 +19969,14 @@ def _reconcile_standalone_panel(root):
         # so the rail grows without bound every recalc. A standalone panel
         # keeps its own style-driven face-frame widths; only the split
         # structure (ladder + auto openings + mid-stile widths) is applied.
-        aps.apply_panel_split_structure(root, root, 'BACK')
+        # The openings a column / row layout builds take the product's
+        # own default front: a door product (Face Frame and Doors) lays
+        # out working doors, not the inset panels of a plain Panel.
+        condition = ('WORKING_FF'
+                     if default_front_type_for_root(root) == 'DOOR'
+                     else 'PANELED')
+        aps.apply_panel_split_structure(root, root, 'BACK',
+                                        condition=condition)
         # X-Frame braces (the catalog's matching X-Frame Back).
         aps.apply_panel_x_frame(root, root, 'BACK')
         # Surface the panel's properties from any of its parts: stamp the
@@ -20701,7 +20788,11 @@ def break_cabinet_at_gap(cabinet, gap_index, shrink_side='AUTO'):
             'default_top_overlay', 'default_bottom_overlay',
             'default_left_overlay', 'default_right_overlay',
             'material_thickness', 'face_frame_thickness',
+            # Lock toggles ahead of their values: a toggle's update
+            # rewrites the value, and the copied value must win.
+            'unlock_back_thickness', 'unlock_finished_back_thickness',
             'door_thickness', 'back_thickness', 'division_thickness',
+            'finished_back_thickness',
             'finish_toe_kick_type', 'finish_toe_kick_thickness',
             'toe_kick_type', 'toe_kick_height', 'toe_kick_setback',
             'toe_kick_thickness', 'back_bottom_inset', 'inset_toe_kick_rear',
@@ -20818,7 +20909,12 @@ def break_cabinet_at_gap(cabinet, gap_index, shrink_side='AUTO'):
                            - right_shrink)
 
         # Position new cabinet abutting original (using the now-final
-        # original width).
-        new_root.location.x = cabinet.location.x + cab_props.width
+        # original width). Step along the cabinet's rotated run vector,
+        # as merge does, so a rotated cabinet (island runs) breaks in
+        # place instead of landing along the parent's X axis.
+        run_in_parent = (
+            cabinet.rotation_euler.to_matrix() @ Vector((1.0, 0.0, 0.0))
+        )
+        new_root.location = cabinet.location + cab_props.width * run_in_parent
 
     return new_root

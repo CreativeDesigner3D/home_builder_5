@@ -505,9 +505,13 @@ class HOME_BUILDER_OT_show_dimension_properties(bpy.types.Operator):
     bl_options = {'UNDO'}
 
     # Batch actions (run in execute, after the live-preview check() edits).
-    update_all_dimensions: bpy.props.BoolProperty(name="Update All Dimensions")  # type: ignore
+    update_all_dimensions: bpy.props.BoolProperty(
+        name="Update All Dimensions",
+        description="Apply Text Size, Tick Length, Tick Thickness, Line Thickness and Extend Line to every dimension in this scene")  # type: ignore
     update_selected_dimensions: bpy.props.BoolProperty(name="Update Selected Dimensions")  # type: ignore
-    set_defaults: bpy.props.BoolProperty(name="Set As Default")  # type: ignore
+    set_defaults: bpy.props.BoolProperty(
+        name="Set As Default",
+        description="Save Text Size, Tick Length, Tick Thickness, Line Thickness, Extend Line and the Additional Text offset and size as this scene's defaults")  # type: ignore
 
     # Per-dimension inputs. HB5 dimensions are TICK-based (no arrow inputs)
     # and have no Replace Text input - both dropped vs the pyclone original.
@@ -565,6 +569,10 @@ class HOME_BUILDER_OT_show_dimension_properties(bpy.types.Operator):
             hb_props.annotation_dimension_line_thickness = self.line_thickness
             hb_props.annotation_dimension_text_size = self.text_size
             hb_props.annotation_dimension_extend_line = self.extend_line_amount
+            hb_props.annotation_dimension_additional_text_x = self.additional_text_offset_x_amount
+            hb_props.annotation_dimension_additional_text_y = self.additional_text_offset_y_amount
+            hb_props.annotation_dimension_additional_text_size = self.additional_text_size
+            hb_props.annotation_dimension_additional_text_saved = True
 
         if context.area:
             context.area.tag_redraw()
@@ -619,6 +627,14 @@ class HOME_BUILDER_OT_show_dimension_properties(bpy.types.Operator):
         self.additional_text_size = d.get_input("Additional Text Size")
         self.replace_text = d.get_input("Replace Text") or ""
         self.text_x_offset_amount = d.get_input("Offset Text X Amount")
+        # No additional text yet: start from the saved placement so a
+        # suffix typed here matches the ones already on the drawings.
+        hb_props = context.scene.home_builder
+        if (not self.additional_text
+                and hb_props.annotation_dimension_additional_text_saved):
+            self.additional_text_offset_x_amount = hb_props.annotation_dimension_additional_text_x
+            self.additional_text_offset_y_amount = hb_props.annotation_dimension_additional_text_y
+            self.additional_text_size = hb_props.annotation_dimension_additional_text_size
         return context.window_manager.invoke_props_dialog(self, width=400)
 
     def draw(self, context):
@@ -679,8 +695,8 @@ class HOME_BUILDER_OT_show_dimension_properties(bpy.types.Operator):
 
         box = layout.box()
         row = box.row()
-        row.prop(self, 'update_all_dimensions')
-        row.prop(self, 'set_defaults')
+        row.prop(self, 'update_all_dimensions', text="Apply Sizes to All")
+        row.prop(self, 'set_defaults', text="Save Sizes & Text Offset as Default")
 
 
 class HOME_BUILDER_MT_dimension_commands(bpy.types.Menu):

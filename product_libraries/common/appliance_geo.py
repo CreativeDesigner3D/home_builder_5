@@ -69,7 +69,8 @@ MODEL_PANEL_READY_FLAG = "APPLIANCE_MODEL_PANEL_READY"
 
 SUPPORTED_TYPES = {'REFRIGERATOR', 'RANGE', 'DISHWASHER', 'UNDER_COUNTER',
                    'HOOD', 'SINK', 'WALL_OVEN', 'MICROWAVE', 'COOKTOP',
-                   'WASHING_MACHINE', 'DRYER', 'STACKED_LAUNDRY'}
+                   'WASHING_MACHINE', 'DRYER', 'STACKED_LAUNDRY',
+                   'UNDER_CABINET_HOOD'}
 
 # Laundry: the washer, the dryer and the two stacked as one unit.
 LAUNDRY_TYPES = {'WASHING_MACHINE', 'DRYER', 'STACKED_LAUNDRY'}
@@ -104,6 +105,7 @@ OVEN_CONTROL_H = inch(4.0)        # a wall oven's control band
 MICRO_TRIM = inch(1.25)           # a built-in microwave's trim kit frame
 MICRO_PANEL_W = inch(6.0)         # its control panel, right of the door
 MICRO_RECESS = inch(0.5)          # the face sits this far behind the trim
+MICRO_VENT_H = inch(2.5)          # an over-the-range unit's vent band, on top
 SINK_WALL_T = inch(0.0625)
 SINK_BACK_DECK = inch(2.5)        # rim behind the bowls, where the faucet stands
 SINK_FRONT_RIM = inch(1.25)
@@ -357,6 +359,7 @@ _DEFAULTS_BY_TYPE = {
     'WALL_OVEN': _OVEN_DEFAULTS,
     'MICROWAVE': _MICROWAVE_DEFAULTS,
     'HOOD': _HOOD_DEFAULTS,
+    'UNDER_CABINET_HOOD': dict(_HOOD_DEFAULTS, hood_style='UNDER_CABINET'),
     'REFRIGERATOR': _FRIDGE_DEFAULTS,
     'RANGE': _RANGE_DEFAULTS,
     'DISHWASHER': _DISHWASHER_DEFAULTS,
@@ -373,9 +376,18 @@ def supports(cage_obj):
     return appliance_type(cage_obj) in SUPPORTED_TYPES
 
 
+# A microwave hung under an upper bay is an over-the-range unit: vent
+# band across the top, bar handle on the door.
+OVER_RANGE_FLAG = 'IS_OVER_RANGE_MICROWAVE'
+_OVER_RANGE_DEFAULTS = {'over_range': True, 'handle_style': 'BAR'}
+
+
 def defaults_for(cage_obj):
-    return dict(_DEFAULTS_BY_TYPE.get(appliance_type(cage_obj),
+    opts = dict(_DEFAULTS_BY_TYPE.get(appliance_type(cage_obj),
                                       _COMMON_DEFAULTS))
+    if cage_obj is not None and cage_obj.get(OVER_RANGE_FLAG):
+        opts.update(_OVER_RANGE_DEFAULTS)
+    return opts
 
 
 def stored_opts(cage_obj):
@@ -1332,6 +1344,96 @@ def _ensure_cabinet_appliance(parent_obj, cls, width, depth, height,
     return cage
 
 
+# The upper bay's appliance finishes (the pull metals) to the model's.
+_UNDER_CABINET_FINISHES = {'STAINLESS': 'STAINLESS', 'Black': 'BLACK',
+                           'Slate': 'BLACK_STAINLESS'}
+
+
+# An appliance an upper bay hangs under itself (a microwave or a slim
+# hood), kept by the bay's cabinet -- not by the sink / cooktop pass.
+UNDER_BAY_FLAG = 'IS_UNDER_BAY_APPLIANCE'
+_UNDER_BAY_CLASSES = {'MICROWAVE': 'Microwave', 'HOOD': 'UnderCabinetHood'}
+
+
+def is_under_bay_appliance(cage_obj):
+    return cage_obj is not None and bool(
+        cage_obj.get(UNDER_BAY_FLAG) or cage_obj.get(OVER_RANGE_FLAG))
+
+
+def sync_under_cabinet_appliance(bay_obj, kind, width, depth, height,
+                                 location, finish='STAINLESS'):
+    """The appliance (``kind`` 'MICROWAVE' or 'HOOD') an upper bay hangs
+    under itself: a real appliance cage held by the bay (like a sink
+    bay's sink), so it follows the Show Model switch -- a microwave
+    models as an over-the-range unit, a hood as a slim under-cabinet
+    canopy. ``location`` is its back-bottom-left corner in the bay's
+    own space; ``finish`` is the bay's appliance finish."""
+    from . import types_appliances
+    cls = getattr(types_appliances, _UNDER_BAY_CLASSES.get(kind, ''), None)
+    if cls is None:
+        return None
+    model_finish = _UNDER_CABINET_FINISHES.get(finish, 'STAINLESS')
+    existing = opening_appliance(bay_obj)
+    if existing is not None and (
+            not is_under_bay_appliance(existing)
+            or existing.get('APPLIANCE_TYPE') != cls.APPLIANCE_TYPE):
+        remove_opening_appliance(bay_obj)
+    cage = opening_appliance(bay_obj)
+    if cage is None:
+        # Flagged before the first build, so its defaults are the
+        # under-bay ones.
+        app = cls()
+        app.width, app.depth, app.height = width, depth, height
+        app.create()
+        cage = app.obj
+        cage.parent = bay_obj
+        cage[CABINET_APPLIANCE_FLAG] = True
+        cage[UNDER_BAY_FLAG] = True
+        if kind == 'MICROWAVE':
+            cage[OVER_RANGE_FLAG] = True
+        _link_like_cage(cage, bay_obj)
+    size = (round(width, 6), round(depth, 6), round(height, 6))
+    cage = _ensure_cabinet_appliance(
+        bay_obj, cls, width, depth, height, location,
+        seed={'finish': model_finish})
+    if cage is None:
+        return None
+    rebuild = False
+    if cage.get('UCA_FINISH') != finish:
+        cage['UCA_FINISH'] = finish
+        opts = stored_opts(cage)
+        if opts is not None and opts.get('finish') != model_finish:
+            opts = merged_opts(cage)
+            opts['finish'] = model_finish
+            set_opts(cage, opts)
+            rebuild = True
+    # A hood's canopy and filter are cut to the cage when built, so a
+    # bay that resized it rebuilds it.
+    if kind == 'HOOD' and tuple(cage.get('UCA_SIZE', ())) != size:
+        cage['UCA_SIZE'] = size
+        rebuild = True
+    if rebuild and stored_opts(cage) is not None:
+        build_geometry(cage)
+    return cage
+
+
+def sync_under_cabinet_microwave(bay_obj, width, depth, height, location,
+                                 finish='STAINLESS'):
+    return sync_under_cabinet_appliance(bay_obj, 'MICROWAVE', width, depth,
+                                        height, location, finish)
+
+
+def remove_under_cabinet_appliance(bay_obj):
+    """Take an upper bay's microwave or hood away, leaving anything
+    else."""
+    cage = opening_appliance(bay_obj)
+    if is_under_bay_appliance(cage):
+        remove_opening_appliance(bay_obj)
+
+
+remove_under_cabinet_microwave = remove_under_cabinet_appliance
+
+
 def remove_opening_appliance(opening_obj):
     """Take the appliance out of an opening that no longer houses one."""
     cage = opening_appliance(opening_obj)
@@ -1627,9 +1729,15 @@ def _build_microwave(cage_obj, opts):
                MICRO_RECESS, mat)
         _front(cg, "Trim Right", 'dim_x - %f' % trim, trim, trim,
                'dim_z - %f' % (2.0 * trim), MICRO_RECESS, mat)
-    # Door on the left, control panel on the right.
+    # Door on the left, control panel on the right; an over-the-range
+    # unit gives the top of the face to its vent band.
+    vent = MICRO_VENT_H if opts.get('over_range') else 0.0
+    top = trim + vent
+    if vent:
+        _front(cg, "Microwave Vent", trim, 'dim_z - %f' % top,
+               'dim_x - %f' % (2.0 * trim), vent - GAP, t, dark, y=face_y)
     door_w = 'dim_x - %f' % (2.0 * trim + MICRO_PANEL_W + GAP)
-    height = 'dim_z - %f' % (2.0 * trim)
+    height = 'dim_z - %f' % (trim + top)
     _front(cg, "Microwave Door", trim, trim, door_w, height, t, mat,
            y=face_y)
     inset = inch(1.5)
@@ -1649,14 +1757,14 @@ def _build_microwave(cage_obj, opts):
     wrap.driver_location('x', 'dim_x - %f' % (trim + MICRO_PANEL_W / 2.0),
                          [cg.dim_x])
     wrap.driver_location('y', face_y, [cg.dim_y])
-    wrap.driver_location('z', 'dim_z - %f' % (trim + inch(1.75)), [cg.dim_z])
+    wrap.driver_location('z', 'dim_z - %f' % (top + inch(1.75)), [cg.dim_z])
     obj = _keypad(cg, "Microwave Keypad", metal, lit)
     obj.rotation_euler.x = math.radians(90)
     wrap = _CageWrap(obj)
     wrap.driver_location('x', 'dim_x - %f' % (trim + MICRO_PANEL_W / 2.0),
                          [cg.dim_x])
     wrap.driver_location('y', face_y, [cg.dim_y])
-    wrap.driver_location('z', 'dim_z - %f' % (trim + inch(5.5)), [cg.dim_z])
+    wrap.driver_location('z', 'dim_z - %f' % (top + inch(5.5)), [cg.dim_z])
 
 
 # ---------------------------------------------------------------------------
@@ -2153,6 +2261,10 @@ def _build_hood(cage_obj, opts):
         style, inch(18.0))
     if total_h > 0.0:
         canopy_h = min(canopy_h, total_h)
+    if appliance_type(cage_obj) == 'UNDER_CABINET_HOOD' and not float(
+            opts.get('canopy_height', 0.0)):
+        # Hung under a bay, the cage IS the hood: the canopy fills it.
+        canopy_h = total_h
     duct_h = 'max(dim_z - %f, 0.0)' % canopy_h
     # Every style hangs its filter in a recess under the canopy, with
     # the lamps on the recess ceiling beside it.
@@ -2771,6 +2883,7 @@ _BUILDERS = {
     'WALL_OVEN': _build_wall_oven,
     'MICROWAVE': _build_microwave,
     'HOOD': _build_hood,
+    'UNDER_CABINET_HOOD': _build_hood,
     'REFRIGERATOR': _build_refrigerator,
     'RANGE': _build_range,
     'DISHWASHER': _build_dishwasher,
@@ -3064,7 +3177,7 @@ class HOME_BUILDER_OT_appliance_prompts(bpy.types.Operator):
         # rebuild when the options actually changed.
         opts = self._opts_dict()
         key = repr(sorted(opts.items())) + '|' + self.front_style
-        if appliance_type(self.appliance) == 'HOOD':
+        if appliance_type(self.appliance) in ('HOOD', 'UNDER_CABINET_HOOD'):
             # The canopy and filter are cut to the cage at build time,
             # so a size change is a rebuild too.
             key += '|%.5f,%.5f,%.5f' % (self.appliance_width,
@@ -3151,7 +3264,7 @@ class HOME_BUILDER_OT_appliance_prompts(bpy.types.Operator):
             col.prop(self, 'faucet')
             col.prop(self, 'counter_thickness')
             col.prop(self, 'bowl_depth')
-        elif appl == 'HOOD':
+        elif appl in ('HOOD', 'UNDER_CABINET_HOOD'):
             col.prop(self, 'hood_style')
             col.prop(self, 'canopy_height')
             col.prop(self, 'baffles')

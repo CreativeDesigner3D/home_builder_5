@@ -535,7 +535,9 @@ def _context_band_edges(obj, role):
     - an island's partitions and its top and bottom shelves show their
       back as well as their front: + the back edge (L1);
     - a cleat in a bay with its bottom removed has nothing under it, so
-      its bottom edge shows too: + L1 (reference 'ebl2 = remove_bottom')."""
+      its bottom edge shows too: + L1 (reference 'ebl2 = remove_bottom');
+    - a support cleat under the bays that runs out past an end partition
+      shows that end: + W1 / W2 for each such end (set at layout)."""
     if role in ('CLOSET_PANEL', 'CLOSET_TOP_SHELF', 'CLOSET_BOTTOM_SHELF'):
         cur = obj.parent
         while cur is not None:
@@ -550,6 +552,8 @@ def _context_band_edges(obj, role):
         bp = getattr(bay, 'hb_closet_bay', None) if bay is not None else None
         if bp is not None and bool(getattr(bp, 'remove_bottom', False)):
             return ('L1',)
+        return tuple(e for e in ('W1', 'W2')
+                     if obj.get('hb_cleat_exposed_' + e))
     return ()
 
 

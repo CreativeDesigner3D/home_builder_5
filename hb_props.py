@@ -938,6 +938,37 @@ class Home_Builder_Scene_Props(PropertyGroup):
         update=update_dimension_tick_length
     )# type: ignore
 
+    # Additional text placement saved by Dimension Options > Set As
+    # Default. Applied when the dialog opens on a dimension that has no
+    # additional text yet, so a suffix typed there lands where the last
+    # saved one did.
+    annotation_dimension_additional_text_saved: BoolProperty(
+        name="Additional Text Defaults Saved",
+        default=False,
+    )# type: ignore
+
+    annotation_dimension_additional_text_x: FloatProperty(
+        name="Additional Text X Offset",
+        default=0.0,
+        precision=4,
+        unit='LENGTH',
+    )# type: ignore
+
+    annotation_dimension_additional_text_y: FloatProperty(
+        name="Additional Text Y Offset",
+        default=0.0,
+        precision=4,
+        unit='LENGTH',
+    )# type: ignore
+
+    annotation_dimension_additional_text_size: FloatProperty(
+        name="Additional Text Size",
+        default=inch(2),
+        min=0.0,
+        precision=4,
+        unit='LENGTH',
+    )# type: ignore
+
     # ==========================================================================
     # AUTO-SCALE ANNOTATION PROPERTIES (Paper Space)
     # ==========================================================================
@@ -1060,4 +1091,71 @@ classes = (
     Home_Builder_Window_Manager_Props,
 )
 
-register, unregister = bpy.utils.register_classes_factory(classes)                     
+_register_classes, _unregister_classes = bpy.utils.register_classes_factory(classes)
+
+
+# Root tag of each library's products, by the product_tab that browses it.
+_LIBRARY_ROOT_TAGS = (('FRAMELESS', 'IS_FRAMELESS_CABINET_CAGE'),
+                      ('FACE FRAME', 'IS_FACE_FRAME_CABINET_CAGE'),
+                      ('CLOSET', 'IS_CLOSET_STARTER_CAGE'))
+
+
+def _dominant_library(scene):
+    """The product_tab whose products the scene holds most of, or None
+    when it holds none."""
+    counts = dict.fromkeys((tab for tab, _tag in _LIBRARY_ROOT_TAGS), 0)
+    for obj in scene.objects:
+        for tab, tag in _LIBRARY_ROOT_TAGS:
+            if obj.get(tag):
+                counts[tab] += 1
+                break
+    best = max(counts, key=counts.get)
+    return best if counts[best] else None
+
+
+@bpy.app.handlers.persistent
+def _match_library_to_contents(*_args):
+    """Open each room on the library it was drawn with.
+
+    A room still on the default library (Frameless) that holds mostly
+    another library's products is switched to that library, so the
+    browser, selection modes and panels match what is in the room. A
+    room set to any other library is the user's choice and is left
+    alone."""
+    for scene in bpy.data.scenes:
+        hb = getattr(scene, 'home_builder', None)
+        if hb is None or hb.product_tab != 'FRAMELESS':
+            continue
+        try:
+            want = _dominant_library(scene)
+        except Exception:
+            continue
+        if want and want != hb.product_tab:
+            hb.product_tab = want
+
+
+@bpy.app.handlers.persistent
+def _darken_door_type_symbols(*_args):
+    """Door type symbols (bi-fold, sliding, pocket, barn) saved before
+    they carried a color draw white in plan; give them the swing arc's
+    black."""
+    for obj in bpy.data.objects:
+        if obj.get('IS_DOOR_TYPE_SYMBOL') and tuple(obj.color)[:3] != (0, 0, 0):
+            obj.color = (0.0, 0.0, 0.0, 1.0)
+
+
+_LOAD_HANDLERS = (_match_library_to_contents, _darken_door_type_symbols)
+
+
+def register():
+    _register_classes()
+    for handler in _LOAD_HANDLERS:
+        if handler not in bpy.app.handlers.load_post:
+            bpy.app.handlers.load_post.append(handler)
+
+
+def unregister():
+    for handler in _LOAD_HANDLERS:
+        if handler in bpy.app.handlers.load_post:
+            bpy.app.handlers.load_post.remove(handler)
+    _unregister_classes()                     

@@ -143,10 +143,11 @@ def preview_bays(upper_x0, width, fridge, counts):
     return out
 
 
-def plan(cab_props, upper_x0, upper_z, fridge, counts):
+def plan(cab_props, upper_x0, upper_z, fridge, counts, raise_bay=True):
     """[(opening_width, raised_height or None)] per bay, left to right,
     for a built cabinet with ``sum(counts) + 1`` bays, or None when the
-    stiles leave no room."""
+    stiles leave no room. ``raise_bay`` False keeps the spanning bay at
+    full height -- an upper centered over a range (upper_over_range)."""
     _obj, f0, f1, top = fridge
     n_left, n_right = counts
     width = cab_props.width
@@ -167,22 +168,34 @@ def plan(cab_props, upper_x0, upper_z, fridge, counts):
     raised = (b - a
               - (lsw if not n_left else 0.0)
               - (rsw if not n_right else 0.0))
-    bays.append((raised, cab_props.height - (top - upper_z)))
+    bays.append((raised, cab_props.height - (top - upper_z)
+                 if raise_bay else None))
     if n_right:
         room = (width - b) - rsw - sum(mids[n_left:n_left + n_right])
         bays += [(room / n_right, None)] * n_right
 
     if any(w < MIN_RAISED_OPENING for w, _h in bays):
         return None
-    if bays[n_left][1] < MIN_RAISED_HEIGHT:
+    if raise_bay and bays[n_left][1] < MIN_RAISED_HEIGHT:
         return None
     return bays
 
 
-def apply(cab_obj, bay_plan):
-    """Write ``bay_plan`` onto the cabinet's bays: every width held (so
-    the stiles land where the plan put them), the raised bay's height
-    held at its raised size."""
+def free_bays(counts):
+    """Bay indices left to share out the width rather than held: the
+    bays right of the spanning one, else those left of it. Holding every
+    bay made the widths stop adding up whenever a stile changed."""
+    n_left, n_right = counts
+    if n_right:
+        return tuple(range(n_left + 1, n_left + 1 + n_right))
+    return tuple(range(n_left))
+
+
+def apply(cab_obj, bay_plan, free=()):
+    """Write ``bay_plan`` onto the cabinet's bays: widths held (so the
+    stiles land where the plan put them) except the ``free`` bays, which
+    take up the rest; the raised bay's height held at its raised
+    size."""
     from . import types_face_frame
     bays = sorted(
         [c for c in cab_obj.children if c.get(types_face_frame.TAG_BAY_CAGE)],
@@ -190,10 +203,13 @@ def apply(cab_obj, bay_plan):
     if len(bays) != len(bay_plan):
         return False
     with types_face_frame.suspend_recalc():
-        for bay_obj, (width, height) in zip(bays, bay_plan):
+        for i, (bay_obj, (width, height)) in enumerate(zip(bays, bay_plan)):
             bp = bay_obj.face_frame_bay
-            bp.unlock_width = True
-            bp.width = width
+            if i in free:
+                bp.unlock_width = False
+            else:
+                bp.unlock_width = True
+                bp.width = width
             if height is not None:
                 bp.unlock_height = True
                 bp.height = height

@@ -428,6 +428,133 @@ def _meeting_end_neighbor(cab_obj, side, corners_only=False):
     return None
 
 
+# ---------------------------------------------------------------------------
+# Toe kick continuation
+# ---------------------------------------------------------------------------
+
+def _reaches_kick_band(z0, kick_h, lo, hi):
+    """True when a neighbour spanning [lo, hi] reaches down into the toe
+    kick band [z0, z0 + kick_h] of a cabinet standing at z0 - i.e. it
+    stands on the same floor rather than hanging above the kick."""
+    top = z0 + max(kick_h, EPS * 10.0)
+    return lo < top - EPS and hi > z0 + EPS
+
+
+def _same_facing(obj_a, obj_b):
+    """True when two cabinets face the same way (their local +X axes
+    agree in plan). Keeps a back-to-back island run, whose back corner
+    can land on ours, from reading as a run continuing past our end."""
+    xa = hb_utils.world_matrix(obj_a).to_3x3() @ Vector((1.0, 0.0, 0.0))
+    xb = hb_utils.world_matrix(obj_b).to_3x3() @ Vector((1.0, 0.0, 0.0))
+    a = Vector((xa.x, xa.y))
+    b = Vector((xb.x, xb.y))
+    if a.length < 1e-6 or b.length < 1e-6:
+        return False
+    return a.normalized().dot(b.normalized()) > 0.99
+
+
+def kick_continues_past_end(cab_obj, side):
+    """True when the toe kick line carries on past cab_obj's given end
+    ('left' / 'right'), so a finish kick there should run out to the
+    cabinet's edge to meet it. That's the case when the end is closed
+    by a wall, or when another floor-standing cabinet meets the end -
+    a run neighbour on the same wall, a corner cabinet's arm end, or a
+    45-degree corner sink's closing corner.
+
+    False when nothing carrying a kick meets the end: an appliance, an
+    open gap, or the face of a blind corner cabinet the end butts
+    against. The finish kick then stops flush with the kick subfront
+    behind it rather than hanging past it by the side's thickness.
+    """
+    if not _is_face_frame_carcass(cab_obj):
+        return True
+    cab = cab_obj.face_frame_cabinet
+    kick_h = getattr(cab, 'toe_kick_height', 0.0)
+    parent = cab_obj.parent
+
+    if parent is None:
+        if _end_abuts_wall(cab_obj, side):
+            return True
+    else:
+        cab_x = cab_obj.location.x
+        if side == 'left' and cab_x <= EPS:
+            return True
+        wall_length = _wall_length(parent)
+        if (side == 'right' and wall_length is not None
+                and cab_x + cab.width >= wall_length - EPS):
+            return True
+        # Run neighbour on the same wall: its near edge lands on ours.
+        cab_z = cab_obj.location.z
+        target_x = cab_x if side == 'left' else cab_x + cab.width
+        for sib in parent.children:
+            if sib is cab_obj or not _is_face_frame_carcass(sib):
+                continue
+            xspan = _neighbor_xspan(sib)
+            if xspan is None:
+                continue
+            sib_near_x = xspan[1] if side == 'left' else xspan[0]
+            if abs(sib_near_x - target_x) > EPS:
+                continue
+            zspan = _neighbor_zspan(sib)
+            if zspan is not None and _reaches_kick_band(
+                    cab_z, kick_h, zspan[0], zspan[1]):
+                return True
+
+    # Neighbours the sibling scan can't see: a corner cabinet reaching
+    # over from the perpendicular wall, or (off-wall) another island
+    # cabinet whose end meets ours.
+    pt = _end_meet_point(cab_obj, side)
+    z0 = hb_utils.world_matrix(cab_obj).translation.z
+    corner_self = _is_corner_cabinet(cab_obj)
+    for obj in _scene_carcasses():
+        if obj is cab_obj:
+            continue
+        corner_other = _is_corner_cabinet(obj)
+        if parent is not None and not (corner_self or corner_other):
+            continue
+        o_z0 = hb_utils.world_matrix(obj).translation.z
+        if not _reaches_kick_band(
+                z0, kick_h, o_z0, o_z0 + obj.face_frame_cabinet.height):
+            continue
+        for other_side in ('left', 'right'):
+            if (_end_meet_point(obj, other_side) - pt).length > _CORNER_MEET_TOL:
+                continue
+            if corner_self or corner_other:
+                return True
+            if other_side != side and _same_facing(cab_obj, obj):
+                return True
+
+    if parent is not None and _abutting_corner_sink(cab_obj, side) is not None:
+        return True
+    return False
+
+
+def finish_kick_reach_stale(cab_obj):
+    """True when a neighbour change since the cabinet last built moves
+    where its finish kick should end. The solver records, per end it
+    had to decide, whether the kick ran to the cabinet's edge; this
+    re-asks the scene for those ends."""
+    recorded = cab_obj.get(FINISH_KICK_REACH_KEY)
+    if recorded is None:
+        return False
+    try:
+        recorded = list(recorded)
+    except TypeError:
+        return False
+    for side, value in zip(('left', 'right'), recorded):
+        if value not in (0, 1):
+            continue
+        if bool(value) != kick_continues_past_end(cab_obj, side):
+            return True
+    return False
+
+
+# Object ID-prop the solver stamps with [left, right] finish kick
+# reach: 1 = ran to the cabinet edge, 0 = stopped at the subfront,
+# -1 = that end wasn't decided by neighbours.
+FINISH_KICK_REACH_KEY = 'hb_finish_kick_reach'
+
+
 def _side_exposure(cab_obj, side):
     """Returns (exposure_state, dishwasher_adjacent, wall_edge).
 
@@ -734,6 +861,11 @@ def recalc_cabinet_exposure(cab_obj):
     from . import island_pair
     island_pair.sync(cab_obj)
 
+    # Where the finish kick ends follows the neighbours too, and a
+    # pinned side writes nothing above that would rebuild the cabinet.
+    if finish_kick_reach_stale(cab_obj):
+        types_face_frame.recalculate_face_frame_cabinet(cab_obj)
+
 
 # ---------------------------------------------------------------------------
 # Placement / sweep entry points
@@ -838,6 +970,12 @@ def auto_floating_shelf_finish(shelf_obj):
     return (left_finished, right_finished)
 
 
+def _refit_cabinet_group_of(obj):
+    """Refit the cabinet group cage obj belongs to, if any."""
+    from ..common import cabinet_groups
+    cabinet_groups.refit_group_of(obj)
+
+
 def recalc_with_neighbors(cab_obj):
     """Placement convenience: recalc this cabinet, the immediate L/R
     face-frame neighbors whose facing side just changed coverage, and
@@ -847,6 +985,9 @@ def recalc_with_neighbors(cab_obj):
     # cab_obj may have just been placed or moved: every world-space read
     # below goes through hb_utils.world_matrix, so no depsgraph pass is
     # needed first.
+    # A cabinet placed or moved inside a cabinet group stretches the
+    # group cage to cover it again. World transforms don't change.
+    _refit_cabinet_group_of(cab_obj)
     with scene_scan(), types_face_frame.suspend_recalc():
         recalc_cabinet_exposure(cab_obj)
         left, right = _find_immediate_face_frame_neighbors(cab_obj)
@@ -882,6 +1023,7 @@ def recalc_after_appliance_placement(app_obj):
     """Placement hook for appliances. Refreshes any face-frame cabinet
     whose side now abuts the placed appliance.
     """
+    _refit_cabinet_group_of(app_obj)
     parent = app_obj.parent
     if parent is None:
         return

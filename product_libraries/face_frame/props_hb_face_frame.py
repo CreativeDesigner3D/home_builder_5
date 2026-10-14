@@ -29,6 +29,7 @@ from . import finish_colors, wood_materials, style_options, shelf_nosing
 from . import wood_top_edge
 from . import decorative_corner
 from . import cabinet_column
+from ..common import bun_foot
 
 
 # Finish-end / back conditions. Module-level so both Cabinet_Props and
@@ -1080,18 +1081,85 @@ def painted_front_styles():
     return out
 
 
+_SECTION_SLOTS = {'DOOR': 'section_door_default_slot',
+                  'DRAWER': 'section_drawer_default_slot'}
+
+
+def front_style_base_name(name):
+    """A front style's name without Blender's .NNN copy suffix -- what
+    a drawing calls it. Each style section keeps its own copy of a door
+    (see ops_styles._give_section_own_fronts), so two sections can hold
+    'Slab' and 'Slab.001' that are the same door to the shop."""
+    return re.sub(r"\.\d{3}$", "", name or "")
+
+
+def section_listed_order(cs, kind):
+    """The default and the section's own list as one ordered list of
+    names -- the default at its slot. This is the order the user set
+    with the move arrows, and the style page prints it."""
+    if cs is None:
+        return []
+    list_attr, default_attr, _pool = _SECTION_LISTS[kind]
+    listed = [r.name for r in getattr(cs, list_attr, ()) if r.name]
+    default = getattr(cs, default_attr, '')
+    if default and default != 'NONE':
+        slot = min(max(getattr(cs, _SECTION_SLOTS[kind], 0), 0),
+                   len(listed))
+        listed.insert(slot, default)
+    return listed
+
+
+def move_in_section(cs, kind, name, step):
+    """Move ``name`` one place earlier (step -1) or later (+1) in the
+    section's order. A style that is only there because it is painted
+    on the cabinets joins the list at the end first. True when it
+    moved."""
+    if cs is None or not name:
+        return False
+    list_attr, default_attr, _pool = _SECTION_LISTS[kind]
+    order = section_listed_order(cs, kind)
+    if name not in order:
+        order.append(name)
+    i = order.index(name)
+    j = i + step
+    if j < 0 or j >= len(order):
+        return False
+    order[i], order[j] = order[j], order[i]
+    default = getattr(cs, default_attr, '')
+    coll = getattr(cs, list_attr)
+    coll.clear()
+    for nm in order:
+        if nm != default:
+            coll.add().name = nm
+    if default in order:
+        setattr(cs, _SECTION_SLOTS[kind], order.index(default))
+    return True
+
+
+def _seed_style_page_lines(cs, kind):
+    """Turning a section's typed Style Section lines on starts them from
+    the styles it lists, so the page reads the same until edited."""
+    flag, attr = (('ss_door_rows_custom', 'ss_door_rows') if kind == 'DOOR'
+                  else ('ss_drawer_rows_custom', 'ss_drawer_rows'))
+    rows = getattr(cs, attr)
+    if not getattr(cs, flag) or len(rows):
+        return
+    for name in section_front_styles(cs, kind):
+        rows.add().text = front_style_base_name(name)
+
+
 def section_front_styles(cs, kind, ff=None):
     """The names of the door (kind 'DOOR') or drawer front ('DRAWER')
-    styles cabinet style ``cs``'s section uses, in order: its default,
-    its own list, the tall drawer style, then any other style painted on
-    its cabinets. Only names still in the project's pool."""
+    styles cabinet style ``cs``'s section uses, in order: its default
+    and its own list (section_listed_order), the tall drawer style, then
+    any other style painted on its cabinets. Only names still in the
+    project's pool."""
     if cs is None:
         return []
     ff = ff if ff is not None else get_style_props()
-    list_attr, default_attr, pool_attr = _SECTION_LISTS[kind]
+    _list_attr, _default_attr, pool_attr = _SECTION_LISTS[kind]
     pool = {ds.name for ds in getattr(ff, pool_attr, ())}
-    names = [getattr(cs, default_attr, '')]
-    names += [r.name for r in getattr(cs, list_attr, ())]
+    names = section_listed_order(cs, kind)
     if kind == 'DRAWER' and len(cs.extra_drawer_front_styles):
         names.append(cs.extra_drawer_front_styles[0].style)
     names += painted_front_styles().get((cs.name, kind), [])
@@ -2245,6 +2313,26 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
     # Free-text note lines printed in a NOTES section at the end of this
     # style's Style Section block (e.g. 'TOUCH LATCH = TL').
     ss_notes: CollectionProperty(type=Face_Frame_Style_Note)  # type: ignore
+    # Typed DOORS / DRAWERS style lines for the Style Section page. On,
+    # they print instead of the styles the section works out from the
+    # model, so a user can say exactly what the page needs.
+    ss_door_rows_custom: BoolProperty(
+        name="Type the Door Lines",
+        description="Print the typed lines as this style's doors on the "
+                    "Style Section page instead of the styles in use",
+        default=False,
+        update=lambda self, context: _seed_style_page_lines(self, 'DOOR'),
+    )  # type: ignore
+    ss_door_rows: CollectionProperty(type=Face_Frame_Style_Note)  # type: ignore
+    ss_drawer_rows_custom: BoolProperty(
+        name="Type the Drawer Front Lines",
+        description="Print the typed lines as this style's drawer fronts "
+                    "on the Style Section page instead of the styles in use",
+        default=False,
+        update=lambda self, context: _seed_style_page_lines(
+            self, 'DRAWER'),
+    )  # type: ignore
+    ss_drawer_rows: CollectionProperty(type=Face_Frame_Style_Note)  # type: ignore
 
     # ---- Style-section OVERRIDES for the catalog-backed fields ----
     # Each is blank by default: blank => the page shows the catalog/derived
@@ -2471,6 +2559,13 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         name="Section Drawer Front Styles",
         type=Face_Frame_Section_Front_Style,
     )  # type: ignore
+    # Where the default sits among the listed styles: the order the
+    # tabs show them and the style page prints them in (see
+    # section_listed_order). 0 puts it first.
+    section_door_default_slot: IntProperty(
+        name="Door Default Slot", default=0, min=0)  # type: ignore
+    section_drawer_default_slot: IntProperty(
+        name="Drawer Default Slot", default=0, min=0)  # type: ignore
 
     extra_door_styles: CollectionProperty(
         name="Extra Door Styles",
@@ -3384,6 +3479,16 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
             # to overwrite it with the cabinet's own finish on every
             # rebuild, so painting a beadboard end came undone the next
             # time anything resized the cabinet.
+            # Bun feet draw their own mesh the same way; finish wood.
+            if child.get('HB_STATIC_BUN_FOOT'):
+                slot_mat = ov_mat if ov_mat is not None else finish_mat
+                if slot_mat is not None:
+                    me = child.data
+                    while len(me.materials) < 1:
+                        me.materials.append(None)
+                    me.materials[0] = slot_mat
+                continue
+
             if ((role in ('BEADBOARD', 'SHIPLAP', 'V_GROOVE', 'WOOD_TOP',
                           'WOOD_TOP_EDGE', 'INSET_PANEL')
                  or child.get('hb_return_member'))
@@ -5724,6 +5829,8 @@ class Face_Frame_Door_Style(PropertyGroup):
         role = front_obj.get('hb_part_role')
         if role not in self._STYLEABLE_ROLES:
             return False
+        # Set again below when this build matches the door rail.
+        front_obj.pop('DOOR_RAIL_MATCHED', None)
 
         # Per-front style override: when the user explicitly assigns a style to
         # THIS front (paint / assign-to-selected), persist the choice on the
@@ -5932,6 +6039,11 @@ class Face_Frame_Door_Style(PropertyGroup):
                          or (frame_locked
                              and abs(eff_top_rail - self.rail_width) > 1e-6))),
         )
+        # A drawer front on the door's rail width prints as its own
+        # line on the style page (the '3R' variant of the style).
+        if rail_matched:
+            front_obj['DOOR_RAIL_MATCHED'] = round(
+                units.meter_to_inch(eff_top_rail), 3)
 
         # Material inheritance from the parent cabinet style lands once
         # cabinet-style material walking is implemented.
@@ -6102,8 +6214,8 @@ class HB_UL_face_frame_door_styles(UIList):
 # Object-level PropertyGroups - face frame cabinet & bay state
 # ---------------------------------------------------------------------------
 FINISH_TOE_KICK_TYPE_ITEMS = [
-    ('APPLIED', "Applied 1/4\"",
-     "Thin applied finish toe kick over the toe kick front"),
+    ('APPLIED', "Scribe - Standard 1/4\"",
+     "Standard 1/4\" scribe finish toe kick, sent loose and fit on site"),
     ('SOLID', "Solid Lumber 3/4\"",
      "3/4\" solid lumber with square edges used as the finish toe kick"),
 ]
@@ -6143,6 +6255,84 @@ def _update_cabinet_dim(self, context):
         interior_items.on_props_changed(obj)
         return
     types_face_frame.recalculate_face_frame_cabinet(obj)
+
+
+def _update_unlock_back_thickness(self, context):
+    """Lock toggle for the carcass back thickness. Unlocking keeps the
+    back the cabinet builds today (a floating vanity's 3/4 included) and
+    makes the field editable; re-locking snaps it back to the standard
+    back for the construction."""
+    from . import solver_face_frame as solver
+    if not self.unlock_back_thickness:
+        value = solver.standard_back_thickness(self)
+    elif solver.is_floating_vanity(self):
+        value = max(self.back_thickness,
+                    solver.FLOATING_VANITY_BACK_THICKNESS)
+    else:
+        value = self.back_thickness
+    if abs(value - self.back_thickness) > 1e-9:
+        self.back_thickness = value  # its own update recalculates
+    else:
+        _update_cabinet_dim(self, context)
+
+
+def _update_unlock_finished_back_thickness(self, context):
+    """Lock toggle for the applied finished / textured back thickness.
+    Unlocking seeds the field with the stock the back is built from now,
+    so nothing moves until the value is edited; locked, the value is
+    ignored and the standard stock is built."""
+    if (self.unlock_finished_back_thickness
+            and self.back_finished_end_condition in (
+                'FINISHED', 'BEADBOARD', 'SHIPLAP', 'V_GROOVE')):
+        from . import solver_face_frame as solver
+        value = solver.standard_finished_back_thickness(
+            self.back_finished_end_condition)
+        if abs(value - self.finished_back_thickness) > 1e-9:
+            self.finished_back_thickness = value  # recalculates
+            return
+    _update_cabinet_dim(self, context)
+
+
+def _update_toe_kick_type(self, context):
+    """Kick type change. Switching to bun feet stands the cabinet on
+    the feet at their stock height. Switching to a flush kick turns the
+    finish toe kick off: the wide bottom rail is the finished face, so a
+    finish kick there has to be asked for explicitly."""
+    if self.toe_kick_type == 'BUN_FEET' and _size_kick_to_bun_foot(self):
+        return      # the height write recalculated
+    if self.toe_kick_type == 'FLUSH' and self.include_finish_toe_kick:
+        self.include_finish_toe_kick = False
+        return      # the include write recalculated
+    _update_cabinet_dim(self, context)
+
+
+def _update_bun_foot_style(self, context):
+    """A new foot style brings its own stock height to the kick."""
+    if self.toe_kick_type == 'BUN_FEET' and _size_kick_to_bun_foot(self):
+        return
+    _update_cabinet_dim(self, context)
+
+
+def _update_bun_foot_corner_mode(self, context):
+    """Switching to hand-picked corners starts from the corners the
+    cabinet has now, so nothing moves until a corner is changed."""
+    if self.bun_foot_corner_mode == 'CUSTOM':
+        from . import solver_face_frame as solver
+        current = solver.bun_foot_corners(self, mode='AUTO')
+        for corner in solver.BUN_FOOT_CORNERS:
+            # Raw writes: one rebuild below instead of one per corner.
+            self['bun_foot_' + corner.lower()] = corner in current
+    _update_cabinet_dim(self, context)
+
+
+def _size_kick_to_bun_foot(cab):
+    """Set the kick height to the foot's stock height. True when it
+    changed (toe_kick_height's own update then rebuilt the cabinet)."""
+    height = bun_foot.stock_height(cab.bun_foot_style)
+    if abs(cab.toe_kick_height - height) <= 1e-6:
+        return False
+    cab.toe_kick_height = height
+    return True
 
 
 # Revolving-door susans carry 1-1/2" front stiles whatever the style's
@@ -6388,6 +6578,19 @@ def _update_panel_rows(self, context):
         heights.add()
     while len(heights) > want:
         heights.remove(len(heights) - 1)
+    # Mid rails between manual rows start at the host cabinet's mid
+    # rail width, which follows the style's overlay, until a width is
+    # typed here. Writing it re-enters this callback, which recalcs.
+    if want > 0 and abs(cab.panel_row_rail_width - units.inch(1.5)) < 1e-6:
+        from . import types_face_frame
+        host = obj
+        if (obj.get(types_face_frame.TAG_APPLIED_PANEL_SIDE)
+                and obj.parent is not None):
+            host = obj.parent
+        host_w = host.face_frame_cabinet.bay_mid_rail_width
+        if abs(host_w - cab.panel_row_rail_width) > 1e-6:
+            cab.panel_row_rail_width = host_w
+            return
     _update_panel_split_auto(self, context)
 
 
@@ -8190,11 +8393,13 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
     # manual count survives the host recalc. On the shared propgroup but
     # only read for applied panels (PanelFaceFrameCabinet roots).
     panel_split_auto: BoolProperty(
-        name="Auto Openings", default=True,
-        description="When on, the applied panel's number of openings "
-                    "follows its width. Inserting or deleting a bay "
-                    "turns this off so your opening count survives "
-                    "recalculation",
+        name="Lay Out by Columns & Rows", default=True,
+        description="On: the panel's openings are laid out by the "
+                    "Openings Across / Openings High counts below "
+                    "(0 sizes them from the panel). Off: the openings "
+                    "stay as edited by hand - inserting or deleting a "
+                    "bay or splitting an opening turns this off so "
+                    "those edits survive recalculation",
         update=_update_panel_split_auto)  # type: ignore
     # Explicit vertical-division override for the width ladder. 0 keeps
     # the automatic count. Rail-matched side panels (the panel mirrors
@@ -8691,6 +8896,35 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         name="Back Thickness", default=units.inch(0.25), unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
     )  # type: ignore
+    # Carcass back (the unfinished liner) thickness lock. Locked, the
+    # back is the standard 1/4 (a floating vanity's 3/4); unlocked, the
+    # back_thickness typed here is built as-is, and every part sized
+    # off the back (sides, shelves, interiors) follows it.
+    unlock_back_thickness: BoolProperty(
+        name="Unlock Back Thickness",
+        description="Override the carcass back (liner) thickness; re-lock "
+                    "to snap back to the standard back",
+        default=False, update=_update_unlock_back_thickness,
+    )  # type: ignore
+    # Applied finished back thickness. Locked, a FINISHED back is a 3/4
+    # panel and a beadboard / shiplap / v-groove back a 1/4 skin; once
+    # unlocked, this value is used for whichever of them is built. The
+    # applied back is layered behind the carcass back, so it only adds
+    # to the cabinet's overall depth - the box is unchanged.
+    unlock_finished_back_thickness: BoolProperty(
+        name="Unlock Finished Back Thickness",
+        description="Override the finished / textured back panel "
+                    "thickness; re-lock to use the standard stock",
+        default=False, update=_update_unlock_finished_back_thickness,
+    )  # type: ignore
+    finished_back_thickness: FloatProperty(
+        name="Finished Back Thickness",
+        description="Thickness of the applied finished or textured back "
+                    "panel, used while unlocked",
+        default=units.inch(0.75), min=units.inch(0.125),
+        soft_max=units.inch(1.5), unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
     # Mid-division panels are typically thinner than carcass sides /
     # tops / bottoms (1/2" plywood) - exposed as its own prop so it can
     # diverge from material_thickness without changing other parts.
@@ -8721,8 +8955,74 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
             ('LOOSE_FLUSH', "Loose Flush (Ladder Base)",
              "Like Loose, but the ladder sub-base sits FLUSH with the "
              "cabinet front (setback 0) instead of recessed"),
+            ('BUN_FEET', "Bun Feet",
+             "Like Loose, with a bun foot under each exposed corner and "
+             "the ladder recessed behind the feet"),
         ],
         default='NOTCH',
+        update=_update_toe_kick_type,
+    )  # type: ignore
+    bun_foot_style: EnumProperty(
+        name="Bun Foot Style",
+        items=bun_foot.style_items(),
+        default=bun_foot.DEFAULT_STYLE,
+        update=_update_bun_foot_style,
+    )  # type: ignore
+    bun_feet_open: BoolProperty(
+        name="Open Underneath",
+        description=("Stand the cabinet on the feet alone, with no "
+                     "recessed kick behind them"),
+        default=False,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    bun_foot_corner_mode: EnumProperty(
+        name="Bun Foot Corners",
+        items=[
+            ('AUTO', "Exposed Corners",
+             "A foot under every corner the room leaves in view"),
+            ('CUSTOM', "Choose Corners",
+             "Pick which corners get a foot, including back corners "
+             "against a wall"),
+        ],
+        default='AUTO',
+        update=_update_bun_foot_corner_mode,
+    )  # type: ignore
+    bun_foot_front_left: BoolProperty(
+        name="Front Left", default=True, update=_update_cabinet_dim,
+    )  # type: ignore
+    bun_foot_front_right: BoolProperty(
+        name="Front Right", default=True, update=_update_cabinet_dim,
+    )  # type: ignore
+    bun_foot_back_left: BoolProperty(
+        name="Back Left", default=False, update=_update_cabinet_dim,
+    )  # type: ignore
+    bun_foot_back_right: BoolProperty(
+        name="Back Right", default=False, update=_update_cabinet_dim,
+    )  # type: ignore
+    # Pull the feet in from the cabinet edges; each foot takes the two
+    # offsets that face its corner.
+    bun_foot_offset_front: FloatProperty(
+        name="Front Offset",
+        description="Move the front feet back from the cabinet face",
+        default=0.0, min=0.0, unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    bun_foot_offset_back: FloatProperty(
+        name="Back Offset",
+        description="Move the back feet forward from the cabinet back",
+        default=0.0, min=0.0, unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    bun_foot_offset_left: FloatProperty(
+        name="Left Offset",
+        description="Move the left feet in from the left end",
+        default=0.0, min=0.0, unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    bun_foot_offset_right: FloatProperty(
+        name="Right Offset",
+        description="Move the right feet in from the right end",
+        default=0.0, min=0.0, unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
     )  # type: ignore
     toe_kick_height: FloatProperty(

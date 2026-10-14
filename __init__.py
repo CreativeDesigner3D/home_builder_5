@@ -34,6 +34,7 @@ from .product_libraries import frameless
 from .product_libraries.common import wood_hoods
 from .product_libraries.common import door_window_geo
 from .product_libraries.common import appliance_geo
+from .product_libraries.common import cabinet_groups
 # Must stay below the product libraries: this tab imports the face frame
 # library, and pulling that in earlier starts it mid-way through its own
 # import graph, which breaks the cabinet types.
@@ -52,7 +53,7 @@ from bpy.app.handlers import persistent
 bl_info = {
     "name": "Home Builder 5",
     "author": "Andrew Peel",
-    "version": (5, 2, 27),
+    "version": (5, 2, 34),
     "blender": (5, 1, 0),
     "location": "3D Viewport Sidebar",
     "description": "Library for Designing Interior Spaces",
@@ -441,6 +442,7 @@ def register():
     wood_hoods.register()
     door_window_geo.register()
     appliance_geo.register()
+    cabinet_groups.register()
     molding.register()
     # catalog.register()
 
@@ -492,6 +494,7 @@ def unregister():
     # catalog.unregister()
     closets.unregister()
     molding.unregister()
+    cabinet_groups.unregister()
     appliance_geo.unregister()
     door_window_geo.unregister()
     wood_hoods.unregister()

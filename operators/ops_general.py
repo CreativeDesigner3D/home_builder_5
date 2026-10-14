@@ -306,6 +306,55 @@ def _product_root(obj):
     return obj
 
 
+def _product_members(root):
+    """Every object under ``root`` that belongs to that product.
+
+    Products placed against a wall are parented to it, so a wall's
+    children include whole cabinets and appliances. Hiding the wall
+    should hide the wall, not the room: any child that resolves to a
+    product root of its own is left out together with its subtree.
+    Other roots keep everything under them.
+    """
+    if not root.get('IS_WALL_BP'):
+        return list(root.children_recursive)
+    members = []
+    stack = list(root.children)
+    while stack:
+        obj = stack.pop()
+        if _is_library_root(obj) or _product_root(obj) is not root:
+            continue
+        members.append(obj)
+        stack.extend(obj.children)
+    return members
+
+
+def _part_members(part):
+    """What hangs off one part of a product (a door's pull, a drawer's
+    front and box), stopping at any product root parented below it."""
+    members = []
+    stack = list(part.children)
+    while stack:
+        obj = stack.pop()
+        if _is_library_root(obj):
+            continue
+        members.append(obj)
+        stack.extend(obj.children)
+    return members
+
+
+def _is_library_root(obj):
+    """True when ``obj`` is the root of a library product (cabinet,
+    closet starter, appliance) rather than plain wall geometry."""
+    from .. import hb_utils
+    from ..product_libraries.face_frame import types_face_frame
+    from ..product_libraries.closets import types_closets
+    return (types_face_frame.find_cabinet_root(obj) is obj
+            or types_closets.find_starter_root(obj) is obj
+            or hb_utils.get_cabinet_bp(obj) is obj
+            or hb_utils.get_appliance_bp(obj) is obj
+            or bool(obj.get('IS_APPLIANCE')))
+
+
 # Marks a selection cage claimed through hide_set alone (see _hide_object).
 ISOLATE_CAGE_TAG = 'HB_ISOLATED_CAGE'
 
@@ -366,6 +415,9 @@ class HB_GENERAL_OT_hide(bpy.types.Operator):
     - PRODUCT -> the product root each selection resolves to, plus
       every object under it.
     - OBJECT  -> exactly the selected objects, for studying one part.
+    - AUTO    -> by what is selected: a product's root (the cabinet
+      cage) hides the whole product, any other object hides itself
+      and what hangs off it (a door and its pull). The H key.
 
     With ``isolate`` the sense is inverted: everything else in the room
     is hidden instead, leaving the chosen product or part on its own.
@@ -378,7 +430,10 @@ class HB_GENERAL_OT_hide(bpy.types.Operator):
         name="Scope",
         items=[('PRODUCT', "Product",
                 "The whole product and all of its parts"),
-               ('OBJECT', "Object", "Only the selected objects")],
+               ('OBJECT', "Object", "Only the selected objects"),
+               ('AUTO', "By Selection",
+                "A selected cabinet cage hides the whole cabinet; a "
+                "selected part hides that part")],
         default='PRODUCT')  # type: ignore
 
     isolate: bpy.props.BoolProperty(
@@ -389,6 +444,12 @@ class HB_GENERAL_OT_hide(bpy.types.Operator):
     @classmethod
     def description(cls, context, properties):
         noun = "product" if properties.scope == 'PRODUCT' else "part"
+        if properties.scope == 'AUTO':
+            if properties.isolate:
+                return ("Hide everything except the selection: a whole "
+                        "cabinet when its cage is selected, else the part")
+            return ("Hide the selection: a whole cabinet when its cage "
+                    "is selected, else just the selected part")
         if properties.isolate:
             return f"Hide everything except the selected {noun}"
         if properties.scope == 'PRODUCT':
@@ -403,18 +464,25 @@ class HB_GENERAL_OT_hide(bpy.types.Operator):
             selected = [context.active_object]
         if self.scope == 'OBJECT':
             return selected
-        roots = []
+        # Each pick is (object, its members): a product root carries the
+        # whole product; under AUTO a part carries what hangs off it,
+        # short of any product placed on it.
+        picks = []
         for obj in selected:
             root = _product_root(obj)
-            if root is not None and root not in roots:
-                roots.append(root)
+            if root is None:
+                continue
+            if self.scope == 'AUTO' and root is not obj:
+                picks.append((obj, _part_members(obj)))
+            elif root not in [p for p, _m in picks]:
+                picks.append((root, _product_members(root)))
         # Children that live only in other scenes (drawing annotations
         # parented to a cabinet) stay out: hide_viewport is per object,
         # so hiding them here would blank them in those drawings too.
         scene_objects = context.scene.objects
         targets = []
-        for root in roots:
-            for obj in [root] + list(root.children_recursive):
+        for pick, members in picks:
+            for obj in [pick] + members:
                 if obj not in targets and scene_objects.get(obj.name) is obj:
                     targets.append(obj)
         return targets
@@ -705,8 +773,9 @@ classes = (
 
 
 # H / Alt+H in Object Mode run the product-aware hide and Show All
-# Hidden, so the keyboard hides a whole product the way the context menu
-# does. Shift+H (hide unselected) keeps its stock binding.
+# Hidden. H goes by the selection: the cabinet cage hides the whole
+# cabinet (as the context menu's Hide does), a part hides that part.
+# Shift+H (hide unselected) keeps its stock binding.
 _addon_keymaps = []
 
 
@@ -716,7 +785,7 @@ def _register_keymaps():
         return
     km = kc.keymaps.new(name='Object Mode', space_type='EMPTY')
     kmi = km.keymap_items.new(HB_GENERAL_OT_hide.bl_idname, 'H', 'PRESS')
-    kmi.properties.scope = 'PRODUCT'
+    kmi.properties.scope = 'AUTO'
     kmi.properties.isolate = False
     _addon_keymaps.append((km, kmi))
     kmi = km.keymap_items.new(HB_GENERAL_OT_show_all_hidden.bl_idname,

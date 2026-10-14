@@ -298,29 +298,58 @@ def draw_construction(layout, cab_props):
         if cab_props.show_toe_kick:
             col = box.column(align=True)
             col.prop(cab_props, 'toe_kick_type', text="Type")
+            if cab_props.toe_kick_type == 'BUN_FEET':
+                col.prop(cab_props, 'bun_foot_style', text="Foot")
+                if cab_props.corner_type == 'NONE':
+                    col.prop(cab_props, 'bun_feet_open')
+                    col.prop(cab_props, 'bun_foot_corner_mode', text="")
+                    if cab_props.bun_foot_corner_mode == 'CUSTOM':
+                        grid = col.grid_flow(row_major=True, columns=2, align=True)
+                        grid.prop(cab_props, 'bun_foot_back_left',
+                                  toggle=True)
+                        grid.prop(cab_props, 'bun_foot_back_right',
+                                  toggle=True)
+                        grid.prop(cab_props, 'bun_foot_front_left',
+                                  toggle=True)
+                        grid.prop(cab_props, 'bun_foot_front_right',
+                                  toggle=True)
+                    sub = col.column(align=True)
+                    sub.label(text="Foot Offsets")
+                    sub.prop(cab_props, 'bun_foot_offset_front', text="Front")
+                    sub.prop(cab_props, 'bun_foot_offset_back', text="Back")
+                    sub.prop(cab_props, 'bun_foot_offset_left', text="Left")
+                    sub.prop(cab_props, 'bun_foot_offset_right', text="Right")
             col.prop(cab_props, 'toe_kick_height', text="Height")
             # Floating vanity construction: only a floating kick can
             # carry it, and the height above is then the gap it floats.
             if cab_props.toe_kick_type == 'FLOATING':
                 col.prop(cab_props, 'floating_vanity',
                          text="Floating Vanity Construction")
-            col.prop(cab_props, 'toe_kick_setback', text="Setback")
-            col.prop(cab_props, 'inset_toe_kick_left', text="Left Inset")
-            col.prop(cab_props, 'inset_toe_kick_right', text="Right Inset")
-            if (cab_props.corner_type == 'NONE'
+            # Open underneath has no kick behind the feet, so nothing
+            # to set back, inset or finish.
+            open_feet = (cab_props.toe_kick_type == 'BUN_FEET'
+                         and cab_props.corner_type == 'NONE'
+                         and cab_props.bun_feet_open)
+            if not open_feet:
+                col.prop(cab_props, 'toe_kick_setback', text="Setback")
+                col.prop(cab_props, 'inset_toe_kick_left', text="Left Inset")
+                col.prop(cab_props, 'inset_toe_kick_right', text="Right Inset")
+            if (not open_feet and cab_props.corner_type == 'NONE'
                     and cab_props.toe_kick_type in ('NOTCH', 'LOOSE',
-                                                    'LOOSE_FLUSH')):
+                                                    'LOOSE_FLUSH',
+                                                    'BUN_FEET')):
                 col.prop(cab_props, 'inset_toe_kick_rear', text="Rear Inset")
             # Back insets pull each arm's rear (wall-side) rail off its wall;
             # corner cabinets only (no wall-side rail on a straight run).
             if cab_props.corner_type != 'NONE':
                 col.prop(cab_props, 'inset_toe_kick_back_left', text="Back Left Inset")
                 col.prop(cab_props, 'inset_toe_kick_back_right', text="Back Right Inset")
-            row = col.row(align=True)
-            row.prop(cab_props, 'include_finish_toe_kick', text="Finish Toe Kick")
-            sub = row.row(align=True)
-            sub.enabled = cab_props.include_finish_toe_kick
-            sub.prop(cab_props, 'finish_toe_kick_type', text="")
+            if not open_feet:
+                row = col.row(align=True)
+                row.prop(cab_props, 'include_finish_toe_kick', text="Finish Toe Kick")
+                sub = row.row(align=True)
+                sub.enabled = cab_props.include_finish_toe_kick
+                sub.prop(cab_props, 'finish_toe_kick_type', text="")
 
     box = layout.box()
     box.prop(cab_props, 'show_finished_ends', text="Finished Ends and Backs",
@@ -473,10 +502,11 @@ def draw_construction(layout, cab_props):
                 col.prop(cab_props, 'furniture_top_radius_back_right',
                          text="Back Right")
 
-    # Decorative bottom-rail profile (valance) - base / upper. The chosen
-    # '* Cutter' curve is cut into the bottom rail with fixed end details and
-    # a stretched middle (see types_face_frame._apply_bottom_rail_profile).
-    if cab_props.cabinet_type in ('BASE', 'UPPER'):
+    # Decorative bottom-rail profile (valance) - base / tall / upper. The
+    # chosen '* Cutter' curve is cut into the bottom rail with fixed end
+    # details and a stretched middle (see
+    # types_face_frame._apply_bottom_rail_profile).
+    if cab_props.cabinet_type in ('BASE', 'TALL', 'UPPER'):
         rpbox = layout.box()
         rpbox.prop(cab_props, 'show_bottom_rail_profile',
                    text="Bottom Rail Profile",
@@ -706,12 +736,24 @@ def draw_panel_layout(layout, root):
     part's right-click menu."""
     cab_props = root.face_frame_cabinet
 
-    layout.prop(cab_props, 'panel_split_auto')
+    # What the panel looks like now, so the counts below read as the
+    # openings on this end rather than as abstract numbers.
+    across, _high = _draw_panel_openings_preview(layout, root)
+
+    layout.prop(cab_props, 'panel_split_auto',
+                text="Lay Out by Columns & Rows")
     col = layout.column()
     col.enabled = cab_props.panel_split_auto
-    col.prop(cab_props, 'panel_vertical_bays', text="Columns (0 = Auto)")
+    col.prop(cab_props, 'panel_vertical_bays',
+             text="Openings Across (0 = Auto)")
+    asked = cab_props.panel_vertical_bays
+    if cab_props.panel_split_auto and across and asked > across:
+        # Stacked rows split each row's opening in place, which takes
+        # one centered stile - so at most 2 across.
+        col.label(text="Only %d across fit when the panel has rows"
+                  % across, icon='ERROR')
     col.prop(cab_props, 'panel_horizontal_rows',
-             text="Rows (0 = Match Cabinet)")
+             text="Openings High (0 = Match Cabinet)")
 
     rows = cab_props.panel_horizontal_rows
     if rows > 1:
@@ -754,9 +796,51 @@ def draw_panel_layout(layout, root):
                           "Column %d" % (i + 1))
 
     if not cab_props.panel_split_auto:
-        layout.label(text="Openings are pinned to your manual edits",
-                     icon='INFO')
+        info = layout.column(align=True)
+        info.label(text="Openings are pinned to your manual edits.",
+                   icon='INFO')
+        info.label(text="Check Lay Out by Columns & Rows to set them here.",
+                   icon='BLANK1')
     layout.prop(cab_props, 'panel_x_frame')
+
+
+def _panel_opening_grid(root):
+    """(across, high) of the openings the panel has now, read off the
+    built opening cages in the panel's own space; (0, 0) when none."""
+    tag = types_face_frame.TAG_OPENING_CAGE
+    inv = root.matrix_world.inverted()
+    xs, zs = set(), set()
+    for child in root.children_recursive:
+        if not child.get(tag):
+            continue
+        # A split opening holds its pieces; only the pieces show.
+        if any(c.get(tag) for c in child.children_recursive):
+            continue
+        p = inv @ child.matrix_world.translation
+        xs.add(round(p.x, 3))
+        zs.add(round(p.z, 3))
+    return len(xs), len(zs)
+
+
+def _draw_panel_openings_preview(layout, root):
+    """A small grid of the panel's openings as they are built now: one
+    square per opening, laid out across and up the panel face. Returns
+    the (across, high) it showed."""
+    across, high = _panel_opening_grid(root)
+    box = layout.box()
+    if not across or not high:
+        box.label(text="No openings on this panel yet", icon='INFO')
+        return across, high
+    total = across * high
+    box.label(text="Openings on this panel: %d (%d across x %d high)"
+              % (total, across, high))
+    grid = box.column(align=True)
+    for _r in range(min(high, 8)):
+        row = grid.row(align=True)
+        row.alignment = 'CENTER'
+        for _c in range(min(across, 8)):
+            row.label(text="", icon='MESH_PLANE')
+    return across, high
 
 
 def _is_mantle(obj):
@@ -1040,13 +1124,15 @@ def draw_face_frame_defaults(layout, cab_props):
         for i, ms in enumerate(cab_props.mid_stile_widths):
             _locked_field(mrow, ms, 'width', 'unlock', "Mid %d" % (i + 1))
 
-    # Scribe Options
-    scbox = layout.box()
-    scbox.label(text="Scribe Options")
-    sccol = scbox.column(align=True)
-    sccol.prop(cab_props, 'left_scribe', text="Left Scribe")
-    sccol.prop(cab_props, 'right_scribe', text="Right Scribe")
-    sccol.prop(cab_props, 'top_scribe', text="Top Scribe")
+    # Scribe Options - not offered on products that are not scribed
+    # (see types_face_frame.shows_scribe_options).
+    if types_face_frame.shows_scribe_options(cab_props.id_data):
+        scbox = layout.box()
+        scbox.label(text="Scribe Options")
+        sccol = scbox.column(align=True)
+        sccol.prop(cab_props, 'left_scribe', text="Left Scribe")
+        sccol.prop(cab_props, 'right_scribe', text="Right Scribe")
+        sccol.prop(cab_props, 'top_scribe', text="Top Scribe")
 
     # Stile to Floor (base / tall / lap only) -- both toggles on one row.
     if cab_props.cabinet_type in ('BASE', 'TALL', 'LAP_DRAWER'):
@@ -2096,6 +2182,39 @@ def draw_finished_ends(layout, cab_props):
             ext = col.row(align=True)
             ext.prop(cab_props, 'back_finished_extend_left', text="Extend L")
             ext.prop(cab_props, 'back_finished_extend_right', text="Extend R")
+        # Applied finished / textured back stock: 3/4 finished, 1/4
+        # textured while locked; unlock to build another thickness.
+        if side == 'back' and fin_type in (
+                'FINISHED', 'BEADBOARD', 'SHIPLAP', 'V_GROOVE'):
+            unlocked = cab_props.unlock_finished_back_thickness
+            trow = col.row(align=True)
+            field = trow.row(align=True)
+            field.enabled = unlocked
+            if unlocked:
+                field.prop(cab_props, 'finished_back_thickness',
+                           text="Finished Back Thickness")
+            else:
+                # Locked, the stored value is ignored: show the stock
+                # actually built for this back type.
+                from . import solver_face_frame
+                field.label(text="Finished Back Thickness:  "
+                            + units.unit_to_string(
+                                bpy.context.scene.unit_settings,
+                                solver_face_frame
+                                .standard_finished_back_thickness(fin_type)))
+            trow.prop(cab_props, 'unlock_finished_back_thickness', text="",
+                      icon='UNLOCKED' if unlocked else 'LOCKED')
+
+    # Carcass back (the unfinished liner behind the interior). Locked it
+    # is the standard back for the construction; unlock to set another.
+    if cab_props.back_finished_end_condition != 'WORKING_FF':
+        unlocked = cab_props.unlock_back_thickness
+        brow = col.row(align=True)
+        field = brow.row(align=True)
+        field.enabled = unlocked
+        field.prop(cab_props, 'back_thickness', text="Carcass Back Thickness")
+        brow.prop(cab_props, 'unlock_back_thickness', text="",
+                  icon='UNLOCKED' if unlocked else 'LOCKED')
 
     # Shiplap course width and direction: one setting each, shared by
     # every shiplap side.

@@ -423,6 +423,10 @@ class HOME_BUILDER_MT_face_frame_bay_commands(bpy.types.Menu):
         layout.operator("hb_face_frame.set_equal_door_width",
                         text="Set Equal Door Width",
                         icon='ALIGN_JUSTIFY')
+        # Center this bay over an appliance or another cabinet's bay:
+        # its neighbors make room.
+        layout.operator("hb_face_frame.center_bay_over",
+                        text="Center Over...", icon='ALIGN_CENTER')
 
 
 class HOME_BUILDER_MT_face_frame_part_commands(bpy.types.Menu):
@@ -525,8 +529,9 @@ class HOME_BUILDER_MT_face_frame_part_commands(bpy.types.Menu):
         if role in (types_face_frame.PART_ROLE_LEFT_STILE,
                     types_face_frame.PART_ROLE_RIGHT_STILE,
                     types_face_frame.PART_ROLE_TOP_RAIL):
-            layout.operator("hb_face_frame.set_part_scribe",
-                            text="Set Scribe...", icon='SNAP_EDGE')
+            if types_face_frame.shows_scribe_options(panel_root):
+                layout.operator("hb_face_frame.set_part_scribe",
+                                text="Set Scribe...", icon='SNAP_EDGE')
             # Extension: the member itself built bigger than the
             # cabinet, to scribe on site (the box does not move).
             layout.operator("hb_face_frame.set_part_extension",

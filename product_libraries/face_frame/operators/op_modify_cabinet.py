@@ -263,6 +263,11 @@ def group_boundary_records(group_obj, layout):
     }
 
 
+def _refit_cabinet_group_of(obj):
+    from ...common import cabinet_groups
+    return cabinet_groups.refit_group_of(obj)
+
+
 def _collect_group_boundaries(group_obj):
     """Build the (boundary, layout) list for a single cabinet group.
 
@@ -1795,9 +1800,15 @@ class _GrabBaseMixin:
     def _end_drag(self, commit):
         if not self._drag_active:
             return
+        dragged = (self._drag_boundary or {}).get('cabinet_obj')
         if not commit:
             for state in (self._drag_snapshot or []):
                 self._restore_neighbor(state)
+            self._boundaries = self._collect()
+        # A resize can move a group member's edge past the group cage;
+        # refit the cage (world transforms are kept) and re-read the
+        # boundaries, whose group layout caches the cage size.
+        if dragged is not None and _refit_cabinet_group_of(dragged):
             self._boundaries = self._collect()
         self._drag_active = False
         self._drag_boundary = None

@@ -1081,15 +1081,20 @@ def build_page(rect, context, blocks_fn, lst):
 
 def _tile_indices(context, tiles, items):
     """Pool indices of the items a tile grid shows: those its 'filter'
-    passes, or all of them."""
+    passes, or all of them, ordered by its 'sort' key(context, item)
+    when it has one."""
     filt = tiles.get('filter')
-    if filt is None:
-        return list(range(len(items)))
     out = []
     for i, item in enumerate(items):
         try:
-            if filt(context, item):
+            if filt is None or filt(context, item):
                 out.append(i)
+        except Exception:
+            pass
+    sort = tiles.get('sort')
+    if sort is not None:
+        try:
+            out.sort(key=lambda i: sort(context, items[i]))
         except Exception:
             pass
     return out

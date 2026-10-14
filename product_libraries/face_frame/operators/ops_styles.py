@@ -107,15 +107,57 @@ def _copy_cabinet_style(src, dst):
     for prop in src.bl_rna.properties:
         pid = prop.identifier
         if (pid in ('rna_type', 'name', 'rename_anchor') or pid in cascade
-                or pid in own_materials or prop.is_readonly):
+                or pid in own_materials):
             continue
+        # Collections read as read-only in RNA, so test them first or
+        # they are never copied (notes, effects, section lists).
         if prop.type == 'COLLECTION':
             _copy_collection(getattr(src, pid), getattr(dst, pid))
+            continue
+        if prop.is_readonly:
             continue
         try:
             setattr(dst, pid, getattr(src, pid))
         except Exception:
             pass
+
+
+def _give_section_own_fronts(ff, cs_index):
+    """Point a newly copied cabinet style at copies of the door and
+    drawer front styles its section lists, so editing a door in one
+    style section never changes the other's (a new section used to
+    show the first one's doors, and editing them edited both). The
+    copies keep the original name with a .NNN, which the style page
+    drops."""
+    from .. import props_hb_face_frame as props
+    cs = ff.cabinet_styles[cs_index]
+    for kind, (pool_attr, _idx, default_attr, extra_attr,
+               _ovr) in _FRONT_POOLS.items():
+        pool = getattr(ff, pool_attr)
+        renamed = {}
+        for name in props.section_listed_order(cs, kind):
+            src_i = next((i for i, ds in enumerate(pool)
+                          if ds.name == name), -1)
+            if src_i < 0 or name in renamed:
+                continue
+            existing = [ds.name for ds in pool]
+            dst = pool.add()
+            dst.name = _next_unique_name(name, existing)
+            # add() can move the pool's items; look the source up again.
+            _copy_door_style(pool[src_i], dst)
+            renamed[name] = dst.name
+        cs = ff.cabinet_styles[cs_index]
+        if not renamed:
+            continue
+        with props.suspend_propagate():
+            default = getattr(cs, default_attr, '')
+            if default in renamed:
+                setattr(cs, default_attr, renamed[default])
+            for row in getattr(cs, props._SECTION_LISTS[kind][0]):
+                row.name = renamed.get(row.name, row.name)
+            for row in getattr(cs, extra_attr):
+                if row.style in renamed:
+                    row.style = renamed[row.style]
 
 
 class hb_face_frame_OT_add_cabinet_style(Operator):
@@ -141,6 +183,8 @@ class hb_face_frame_OT_add_cabinet_style(Operator):
         # Anchor the copy to its OWN name so its first rename only
         # re-tags cabinets assigned to IT, never the style it came from.
         new_style.rename_anchor = new_style.name
+        if src is not None:
+            _give_section_own_fronts(ff, len(ff.cabinet_styles) - 1)
         ff.active_cabinet_style_index = len(ff.cabinet_styles) - 1
         _refresh_style_colors(context)
         self.report({'INFO'}, f"Added cabinet style: {new_style.name}")
@@ -1374,6 +1418,8 @@ class hb_face_frame_OT_paint_door_hardware(_paint_front_brush, bpy.types.Operato
             return
         hw[self.callout] = state
         _props.set_front_door_hw(front, hw, store)
+        from .. import door_hardware_overlay
+        door_hardware_overlay.invalidate()
         self._count += 1
         context.workspace.status_text_set(
             f"{self.callout} {'ON' if state else 'OFF'}: {front.name}  |  "
@@ -1607,15 +1653,22 @@ class hb_face_frame_OT_section_front_style(Operator):
         default='DOOR')  # type: ignore
     action: bpy.props.EnumProperty(
         items=[('ADD', "Add to Section", ""),
-               ('REMOVE', "Remove from Section", "")],
+               ('REMOVE', "Remove from Section", ""),
+               ('EARLIER', "Move Earlier", ""),
+               ('LATER', "Move Later", "")],
         default='ADD')  # type: ignore
 
     @classmethod
     def description(cls, context, props):
-        return ("List the picked style on this cabinet style's section"
-                if props.action == 'ADD' else
-                "Take the picked style off this cabinet style's section "
-                "(it stays in the project)")
+        return {
+            'ADD': "List the picked style on this cabinet style's section",
+            'REMOVE': "Take the picked style off this cabinet style's "
+                      "section (it stays in the project)",
+            'EARLIER': "Move the picked style earlier in this section; "
+                       "the Style Section page lists them in this order",
+            'LATER': "Move the picked style later in this section; "
+                     "the Style Section page lists them in this order",
+        }[props.action]
 
     def execute(self, context):
         cs = _active_cabinet_style(context, -1)
@@ -1623,6 +1676,17 @@ class hb_face_frame_OT_section_front_style(Operator):
             get_style_props(context), self.kind)
         if cs is None or style is None:
             return {'CANCELLED'}
+        if self.action in ('EARLIER', 'LATER'):
+            step = -1 if self.action == 'EARLIER' else 1
+            if style.name not in props_hb_face_frame.section_front_styles(
+                    cs, self.kind):
+                self.report({'WARNING'}, "Pick one of this section's "
+                            "styles first")
+                return {'CANCELLED'}
+            if not props_hb_face_frame.move_in_section(
+                    cs, self.kind, style.name, step):
+                return {'CANCELLED'}
+            return {'FINISHED'}
         if self.action == 'ADD':
             props_hb_face_frame.add_to_section(cs, self.kind, style.name)
             self.report({'INFO'}, "%s added to %s" % (style.name, cs.name))
@@ -1856,6 +1920,67 @@ class hb_face_frame_OT_remove_style_note(Operator):
             return {'CANCELLED'}
         if 0 <= self.index < len(style.ss_notes):
             style.ss_notes.remove(self.index)
+        return {'FINISHED'}
+
+
+_SS_ROW_ATTRS = {'DOOR': 'ss_door_rows', 'DRAWER': 'ss_drawer_rows'}
+
+
+class hb_face_frame_OT_add_style_page_row(Operator):
+    """Add a typed door / drawer front line for the Style Section page.
+    The first one starts from what the page prints today."""
+    bl_idname = "hb_face_frame.add_style_page_row"
+    bl_label = "Add Line"
+    bl_description = ("Add a door / drawer front line printed on the "
+                      "Style Section page")
+    bl_options = {'REGISTER', 'UNDO'}
+
+    kind: bpy.props.EnumProperty(
+        items=[('DOOR', "Door", ""), ('DRAWER', "Drawer Front", "")],
+        default='DOOR')  # type: ignore
+    style_index: bpy.props.IntProperty(
+        name="Style Index", default=-1, options={'HIDDEN'})  # type: ignore
+
+    def execute(self, context):
+        style = _active_cabinet_style(context, self.style_index)
+        if style is None:
+            return {'CANCELLED'}
+        rows = getattr(style, _SS_ROW_ATTRS[self.kind])
+        if len(rows) == 0:
+            # Start from the styles the section lists, so the user
+            # edits the page's lines rather than retyping them.
+            for name in props_hb_face_frame.section_front_styles(
+                    style, self.kind, get_style_props(context)):
+                rows.add().text = props_hb_face_frame.front_style_base_name(
+                    name)
+            if len(rows):
+                return {'FINISHED'}
+        rows.add()
+        return {'FINISHED'}
+
+
+class hb_face_frame_OT_remove_style_page_row(Operator):
+    """Remove a typed door / drawer front line from the Style Section
+    page."""
+    bl_idname = "hb_face_frame.remove_style_page_row"
+    bl_label = "Remove Line"
+    bl_description = "Remove this line from the Style Section page"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    kind: bpy.props.EnumProperty(
+        items=[('DOOR', "Door", ""), ('DRAWER', "Drawer Front", "")],
+        default='DOOR')  # type: ignore
+    index: bpy.props.IntProperty(name="Index", default=-1)  # type: ignore
+    style_index: bpy.props.IntProperty(
+        name="Style Index", default=-1, options={'HIDDEN'})  # type: ignore
+
+    def execute(self, context):
+        style = _active_cabinet_style(context, self.style_index)
+        if style is None:
+            return {'CANCELLED'}
+        rows = getattr(style, _SS_ROW_ATTRS[self.kind])
+        if 0 <= self.index < len(rows):
+            rows.remove(self.index)
         return {'FINISHED'}
 
 
@@ -2184,6 +2309,8 @@ classes = (
     hb_face_frame_OT_remove_cabinet_extra_front_style,
     hb_face_frame_OT_add_style_note,
     hb_face_frame_OT_remove_style_note,
+    hb_face_frame_OT_add_style_page_row,
+    hb_face_frame_OT_remove_style_page_row,
     hb_face_frame_OT_add_cabinet_style,
     hb_face_frame_OT_remove_cabinet_style,
     hb_face_frame_OT_move_cabinet_style,
