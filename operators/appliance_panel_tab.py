@@ -211,11 +211,17 @@ def _set_grid(open_):
         _list.offset = 0.0
 
 
+# Panel sizes and reveals are built to 1/32", so they read to 1/32":
+# at 1/16" a 3/32" gap reads (and re-commits) as 1/8".
+SIZE_STEP = 32
+
+
 def _fmt(value):
-    """A size the way the rest of the add-on writes one."""
+    """A size the way the rest of the add-on writes one, to 1/32"."""
     scene = bpy.context.scene
     try:
-        return units.unit_to_string(scene.unit_settings, value)
+        return units.unit_to_string(scene.unit_settings, value,
+                                    step=SIZE_STEP)
     except Exception:
         return "%.3f\"" % units.meter_to_inch(value)
 
