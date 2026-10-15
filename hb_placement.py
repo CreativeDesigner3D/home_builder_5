@@ -40,6 +40,18 @@ def exclusion_set(exclude_obj):
         return frozenset((exclude_obj,))
 
 
+def _obstacle_wall_box(obstacle, wall_obj):
+    """Wall-local (x0, x1, y0, y1, z0, z1) of an obstacle mesh's bounds,
+    or None for an obstacle with no geometry."""
+    if obstacle.type != 'MESH' or not obstacle.data.vertices:
+        return None
+    to_wall = wall_obj.matrix_world.inverted() @ obstacle.matrix_world
+    pts = [to_wall @ Vector(c) for c in obstacle.bound_box]
+    return (min(p.x for p in pts), max(p.x for p in pts),
+            min(p.y for p in pts), max(p.y for p in pts),
+            min(p.z for p in pts), max(p.z for p in pts))
+
+
 def object_shown(obj, space=None):
     """Whether an object is on screen: not hidden, not under a wall that
     Hide Wall or Isolate Selected Walls put away, not in a collection
@@ -1069,6 +1081,22 @@ class PlacementMixin:
             if child.get('IS_SNAP_LINE'):
                 continue  # handled separately as zero-width boundaries
             if not self.blocks_placement(child):
+                continue
+            if child.get('IS_OBSTACLE'):
+                # A plain mesh parented in world space: only one marked
+                # to block placement counts, by its real footprint.
+                if not child.get('OBSTACLE_BLOCKS_PLACEMENT'):
+                    continue
+                box = _obstacle_wall_box(child, wall_obj)
+                if box is None:
+                    continue
+                x0, x1, y0, y1, z0, z1 = box
+                if ((y0 + y1) / 2.0 < wall_thickness / 2.0) != place_on_front:
+                    continue
+                if check_vertical and not (object_z_start < z1
+                                           and z0 < object_z_end):
+                    continue
+                children.append((max(0.0, x0), min(wall_length, x1), child))
                 continue
 
             # Doors/windows cut through both sides - always an obstacle.
