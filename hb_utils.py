@@ -825,45 +825,6 @@ def frame_all_objects():
         bpy.context.view_layer.objects.active = original_active
 
 
-def ensure_detail_camera(scene, margin=1.15):
-    """Give a detail scene a straight-down ortho camera fitted to its
-    drawing, so the viewport's camera button snaps back to the flat view
-    of the detail. The camera is set as scene.camera but not linked into
-    the scene, so nothing that walks the scene's objects (bounds, page
-    instancing, export) ever sees it. Refit on every call."""
-    from mathutils import Vector
-    xs, ys = [], []
-    for obj in scene.objects:
-        if obj.type not in ('MESH', 'CURVE', 'FONT') or obj.hide_viewport:
-            continue
-        for corner in obj.bound_box:
-            p = obj.matrix_world @ Vector(corner)
-            xs.append(p.x)
-            ys.append(p.y)
-    if xs:
-        cx, cy = (min(xs) + max(xs)) / 2.0, (min(ys) + max(ys)) / 2.0
-        size = max(max(xs) - min(xs), max(ys) - min(ys), 0.05) * margin
-    else:
-        cx = cy = 0.0
-        size = 1.0
-    name = scene.name + " Detail Camera"
-    cam = scene.camera
-    if cam is None or not cam.get('IS_DETAIL_CAMERA'):
-        cam = bpy.data.objects.get(name)
-        if cam is None or cam.type != 'CAMERA':
-            data = bpy.data.cameras.new(name)
-            cam = bpy.data.objects.new(name, data)
-            cam['IS_DETAIL_CAMERA'] = True
-        scene.camera = cam
-    cam.data.type = 'ORTHO'
-    cam.data.ortho_scale = size
-    cam.data.clip_start = 0.001
-    cam.data.clip_end = 100.0
-    cam.location = (cx, cy, 10.0)
-    cam.rotation_euler = (0.0, 0.0, 0.0)
-    return cam
-
-
 def is_room_scene(scene):
     """Check if a scene is a room scene (not layout or detail)."""
     if scene.get('IS_LAYOUT_VIEW'):
