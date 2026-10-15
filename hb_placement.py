@@ -2,6 +2,7 @@ import bpy
 import blf
 import gpu
 import math
+import re
 from collections import namedtuple
 from mathutils import Vector, Matrix
 from enum import Enum, auto
@@ -111,6 +112,9 @@ class TypingTarget(Enum):
     HEIGHT = auto()         # Object height
     DEPTH = auto()          # Object depth
 
+
+# Whole number, dash, fraction: "155-15/16" (a leading '-' is a sign).
+_COMPOUND_RE = re.compile(r'^-?(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?/\d+(?:\.\d+)?)$')
 
 # Keys that trigger number input
 NUMBER_KEYS = {
@@ -417,7 +421,19 @@ class PlacementMixin:
         s = s.strip()
         if not s:
             return None
-            
+
+        # Compound entry, CAD style: "155-15/16" = 155 + 15/16 (the dash
+        # joins the whole number and its fraction; sign follows the whole).
+        m = _COMPOUND_RE.match(s)
+        if m:
+            whole = float(m.group(1))
+            frac = self._extract_number(m.group(2))
+            return -(whole + frac) if s.startswith('-') else whole + frac
+
+        # Sum of terms: "155+15/16"
+        if '+' in s:
+            return sum(self._extract_number(t) for t in s.split('+'))
+
         # Check for fraction with whole number: "5 3/4"
         if ' ' in s and '/' in s:
             parts = s.split(' ')
