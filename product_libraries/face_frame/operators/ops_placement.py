@@ -210,6 +210,26 @@ def corbel_style_key(context=None):
     return scene.get(CORBEL_STYLE_SCENE_KEY)
 
 
+# What a corbel can mount on: cabinets of either library, and hoods.
+_CORBEL_PRODUCT_TAGS = ('IS_FACE_FRAME_CABINET_CAGE',
+                        'IS_FRAMELESS_CABINET_CAGE')
+
+
+def _corbel_mount_product(hit_object, preview_obj):
+    """The cabinet or hood root under the cursor, or None. Another
+    corbel is never a mount."""
+    cur = hit_object
+    while cur is not None:
+        if cur is preview_obj or cur.get(corbels.CORBEL_TAG):
+            return None
+        if any(cur.get(t) for t in _CORBEL_PRODUCT_TAGS):
+            return cur
+        if cur.get('IS_APPLIANCE') and cur.get('APPLIANCE_TYPE') == 'HOOD':
+            return cur
+        cur = cur.parent
+    return None
+
+
 def _find_center_snap(hit_object, wall, kinds, cab_z_range):
     """Walk up from hit_object looking for a center-snap target.
 
@@ -5131,6 +5151,18 @@ class hb_face_frame_OT_place_appliance(bpy.types.Operator,
                 f"  R:{units.unit_to_string(context.scene.unit_settings, self._right_offset)}"
             )
         width_key = "   W: width" if self._variable_width else ""
+        mount = getattr(self, '_corbel_mount', None)
+        if mount is not None:
+            snap = getattr(self, '_corbel_snap', None)
+            snap_text = {'START': "  (flush with end)",
+                         'END': "  (flush with end)",
+                         'CENTER': "  (centered)"}.get(snap, "")
+            hb_placement.draw_header_text(
+                context,
+                f"Corbel  -  {corbels.MOUNT_LABELS[mount]}{snap_text}  -  "
+                "move over an upper, hood or base back / end   "
+                "Click: place   Esc: cancel")
+            return
         hb_placement.draw_header_text(
             context,
             f"{self.appliance_name}  -  width: {width_in:.1f}\""
@@ -5332,11 +5364,67 @@ class hb_face_frame_OT_place_appliance(bpy.types.Operator,
     def _position_from_hit(self, context):
         if self.hit_location is None:
             return
+        if (self.appliance_name == "Corbel"
+                and self._position_on_product(context)):
+            return
+        self._corbel_mount = None
         wall = _detect_wall(self, context)
         if wall is not None:
             self._position_on_wall(context, wall)
         else:
             self._position_free(context)
+
+    def _position_on_product(self, context):
+        """Corbel over a cabinet or hood: mount it on that product (under
+        an upper / hood, or as a countertop support on a base's back or
+        end -- see corbels.pick_mount). False when the cursor is not
+        over one, so wall / free placement takes over."""
+        product = _corbel_mount_product(self.hit_object,
+                                        self._preview_cage.obj)
+        if product is None:
+            return False
+        try:
+            cage = hb_types.GeoNodeCage(product)
+            size = (cage.get_input('Dim X'), cage.get_input('Dim Y'),
+                    cage.get_input('Dim Z'))
+        except Exception:
+            return False
+        local_hit = product.matrix_world.inverted() @ self.hit_location
+        mount = corbels.pick_mount(
+            size, product.matrix_world.translation.z, local_hit)
+        if mount is None:
+            return False
+        matrix, snap = corbels.mount_matrix(
+            mount, size,
+            (self._appliance_width, self._appliance_depth,
+             self._appliance_height),
+            local_hit)
+        if matrix is None:
+            return False
+
+        cage_obj = self._preview_cage.obj
+        # On the product's wall when it has one, so the corbel reads as
+        # wall-mounted like the product does; never under the product
+        # itself (a cabinet's recalc owns its children).
+        parent = product.parent
+        if parent is not None and not parent.get('IS_WALL_BP'):
+            parent = None
+        if cage_obj.parent is not parent:
+            cage_obj.parent = parent
+            cage_obj.matrix_parent_inverse.identity()
+        cage_obj.matrix_world = product.matrix_world @ matrix
+
+        self._gap_wall = None
+        self._left_offset = None
+        self._right_offset = None
+        self._gap_snap = None
+        self._center_snap_state = None
+        if (mount, snap) != (getattr(self, '_corbel_mount', None),
+                             getattr(self, '_corbel_snap', None)):
+            self._corbel_mount = mount
+            self._corbel_snap = snap
+            self._update_header(context)
+        return True
 
     def _position_on_wall(self, context, wall):
         cage_obj = self._preview_cage.obj
@@ -5349,6 +5437,8 @@ class hb_face_frame_OT_place_appliance(bpy.types.Operator,
         if cage_obj.parent is not wall:
             cage_obj.parent = wall
             cage_obj.matrix_parent_inverse.identity()
+        # Back on the wall: a mount on a product may have turned it.
+        cage_obj.rotation_euler = (0.0, 0.0, 0.0)
 
         # Re-assert the mounting Z on every wall reposition: floor
         # appliances at wall-local 0, fixed-height ones (range hood) at

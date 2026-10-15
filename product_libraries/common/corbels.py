@@ -266,6 +266,107 @@ def build_mesh(style, name="Corbel"):
     return me
 
 
+# ---- Mounting on a product ---------------------------------------------------
+# Where a corbel goes on a cabinet or hood. Products share the cage frame:
+# origin at the back-left-bottom corner, x across the width, y from 0 at
+# the back to -depth at the front, z up. A mount is the corbel's frame in
+# that space, built from the face it stands against:
+#
+#   UNDER  under an upper / hood / shelf: back on the product's back plane
+#          (the wall), top against its underside, sliding along the width.
+#   BACK   countertop support on an island's back: standing against the
+#          back face, facing out, top at the product's top.
+#   LEFT / RIGHT   the same against an end panel.
+
+MOUNT_LABELS = {
+    'UNDER': "Under",
+    'BACK': "Countertop Support - Back",
+    'LEFT': "Countertop Support - Left End",
+    'RIGHT': "Countertop Support - Right End",
+}
+
+# Snap distances along the face: flush with an end, or centred.
+END_SNAP = inch(3.0)
+CENTER_SNAP = inch(2.0)
+
+# Products whose bottom sits at least this high take UNDER mounts; lower
+# ones take countertop supports, up to SUPPORT_MAX_HEIGHT tall (a tall
+# cabinet's top is no countertop).
+UNDER_MIN_Z = inch(20.0)
+SUPPORT_MAX_HEIGHT = inch(48.0)
+
+
+def pick_mount(product_size, product_bottom_z, local_hit):
+    """The face a corbel takes on a product, or None.
+
+    ``product_size`` is (width, depth, height); ``product_bottom_z`` the
+    product's bottom in world Z; ``local_hit`` the cursor hit in the
+    product's frame. Supports go on whichever of back / left / right is
+    nearest the cursor."""
+    w, d, h = product_size
+    if product_bottom_z >= UNDER_MIN_Z:
+        return 'UNDER'
+    if h > SUPPORT_MAX_HEIGHT:
+        return None
+    hx, hy = local_hit.x, local_hit.y
+    dist = {'BACK': abs(hy), 'LEFT': abs(hx), 'RIGHT': abs(hx - w)}
+    return min(dist, key=dist.get)
+
+
+def _snap_along(c, length, size):
+    """Corbel centre along a face of ``length``: clamped onto the face,
+    snapped flush to either end or to the middle when close.
+    Returns (centre, snap) with snap in START / END / CENTER / None."""
+    lo, hi = size / 2.0, length - size / 2.0
+    if hi < lo:
+        return length / 2.0, 'CENTER'
+    c = min(max(c, lo), hi)
+    if c - lo < END_SNAP:
+        return lo, 'START'
+    if hi - c < END_SNAP:
+        return hi, 'END'
+    if abs(c - length / 2.0) < CENTER_SNAP:
+        return length / 2.0, 'CENTER'
+    return c, None
+
+
+def mount_matrix(mount, product_size, corbel_size, local_hit):
+    """(Matrix, snap) placing a corbel cage on a product, in the
+    product's frame. ``corbel_size`` is (width, depth, height)."""
+    from mathutils import Matrix, Vector
+    pw, pd, ph = product_size
+    cw, _cd, chh = corbel_size
+    if mount == 'UNDER':
+        along, snap = _snap_along(local_hit.x, pw, cw)
+        centre = Vector((along, 0.0, -chh))
+        x_axis, y_axis = Vector((1, 0, 0)), Vector((0, 1, 0))
+    elif mount == 'BACK':
+        along, snap = _snap_along(local_hit.x, pw, cw)
+        centre = Vector((along, 0.0, ph - chh))
+        x_axis, y_axis = Vector((-1, 0, 0)), Vector((0, -1, 0))
+    elif mount in ('LEFT', 'RIGHT'):
+        # Measured from the back toward the front.
+        along, snap = _snap_along(-local_hit.y, pd, cw)
+        if mount == 'LEFT':
+            centre = Vector((0.0, -along, ph - chh))
+            x_axis, y_axis = Vector((0, -1, 0)), Vector((1, 0, 0))
+        else:
+            centre = Vector((pw, -along, ph - chh))
+            x_axis, y_axis = Vector((0, 1, 0)), Vector((-1, 0, 0))
+    else:
+        return None, None
+    # The corbel's front is its -Y, so y_axis points INTO the face it
+    # stands against and the body lands outside the product (inside its
+    # footprint for UNDER, which hangs below it).
+    z_axis = Vector((0, 0, 1))
+    origin = centre - x_axis * (cw / 2.0)
+    m = Matrix.Identity(4)
+    for i in range(3):
+        m[i][0], m[i][1], m[i][2], m[i][3] = (x_axis[i], y_axis[i],
+                                              z_axis[i], origin[i])
+    return m, snap
+
+
 # ---- Product ----------------------------------------------------------------
 
 class Corbel(GeoNodeCage):
