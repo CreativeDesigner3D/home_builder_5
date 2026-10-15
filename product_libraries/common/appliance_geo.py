@@ -1284,11 +1284,19 @@ def sync_galley_sink(root_obj, x, width, y_back, depth, top_z):
         seed={'sink_style': 'WORKSTATION', 'bowl_depth': inch(9.0)})
 
 
-def _drop_own_label(cage_obj):
+def _drop_own_label(cage_obj, new=False):
     """Remove an appliance's own label text. Run on every sync, not only
     when the cage is created, so a cage that kept its label heals on the
-    next recalc instead of printing the word over the cabinet front."""
-    for child in list(cage_obj.children):
+    next recalc instead of printing the word over the cabinet front.
+
+    ``new``: the cage was made in this same pass. Its ``children`` list
+    is cached and does not show the label yet, so look the label up by
+    its parent instead."""
+    if new:
+        children = [o for o in bpy.data.objects if o.parent == cage_obj]
+    else:
+        children = list(cage_obj.children)
+    for child in children:
         if not child.get('IS_APPLIANCE_TEXT'):
             continue
         data = child.data
@@ -1301,18 +1309,20 @@ def _drop_own_label(cage_obj):
 
 
 def _ensure_cabinet_appliance(parent_obj, cls, width, depth, height,
-                              location, top_anchored=False, seed=None):
+                              location, top_anchored=False, seed=None,
+                              fresh=False):
     """The appliance cage a cabinet part houses, created the first time
     and sized every time -- until its own prompts take its size over
     (SIZE_OWNED_FLAG), after which it keeps its size and is centred in
     the width it would have filled, holding its top or its bottom as
     ``top_anchored`` says. Its label is dropped: the cabinet already
-    carries one."""
+    carries one. ``fresh``: the caller made the cage in this pass."""
     cage = opening_appliance(parent_obj)
     if cage is not None and cage.get('APPLIANCE_TYPE') != getattr(
             cls, 'APPLIANCE_TYPE', cage.get('APPLIANCE_TYPE')):
         remove_opening_appliance(parent_obj)
         cage = None
+    created = fresh or cage is None
     if cage is None:
         app = cls()
         app.width, app.depth, app.height = width, depth, height
@@ -1332,7 +1342,7 @@ def _ensure_cabinet_appliance(parent_obj, cls, width, depth, height,
         own.set_input('Dim Y', depth)
         own.set_input('Dim Z', height)
     cage.location = location
-    _drop_own_label(cage)
+    _drop_own_label(cage, new=created)
     if stored_opts(cage) is None:
         seed_on_place(cage)
         if seed and stored_opts(cage) is not None:
@@ -1379,6 +1389,7 @@ def sync_under_cabinet_appliance(bay_obj, kind, width, depth, height,
             or existing.get('APPLIANCE_TYPE') != cls.APPLIANCE_TYPE):
         remove_opening_appliance(bay_obj)
     cage = opening_appliance(bay_obj)
+    fresh = cage is None
     if cage is None:
         # Flagged before the first build, so its defaults are the
         # under-bay ones.
@@ -1395,7 +1406,7 @@ def sync_under_cabinet_appliance(bay_obj, kind, width, depth, height,
     size = (round(width, 6), round(depth, 6), round(height, 6))
     cage = _ensure_cabinet_appliance(
         bay_obj, cls, width, depth, height, location,
-        seed={'finish': model_finish})
+        seed={'finish': model_finish}, fresh=fresh)
     if cage is None:
         return None
     rebuild = False
