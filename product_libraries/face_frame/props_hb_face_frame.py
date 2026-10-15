@@ -1484,9 +1484,13 @@ def _annotation_color(context):
 
 
 def apply_style_colors(context):
-    """Paint (or unpaint) every cabinet in the scene with its style's
+    """Paint (or unpaint) every cabinet in the project with its style's
     drawing colour, and put the viewport in object-colour mode to show
-    it. Returns the number of cabinets tinted."""
+    it. Returns the number of cabinets tinted.
+
+    The style pool is shared by every room, so a change to it (reorder,
+    add, remove) moves the colours in all rooms, not just the open one.
+    """
     from . import types_face_frame
     scene = context.scene
     props = get_style_props(context)
@@ -1500,7 +1504,7 @@ def apply_style_colors(context):
     # repainted to their own colour on the way past instead, which also
     # puts right any that an earlier build had already tinted.
     note_colour = _annotation_color(context)
-    for cage in [o for o in scene.objects
+    for cage in [o for o in bpy.data.objects
                  if o.get(types_face_frame.TAG_CABINET_CAGE)]:
         tint = _style_tint_for_cabinet(cage, styles) if on else None
         part_colour = (_NO_STYLE_TINT if tint is None
@@ -1520,7 +1524,7 @@ def apply_style_colors(context):
     # housed one was reached through its cabinet above). Only the panel
     # run is tinted, not the appliance model behind it.
     from . import appliance_panels
-    for app in [o for o in scene.objects if _is_panel_appliance(o)]:
+    for app in [o for o in bpy.data.objects if _is_panel_appliance(o)]:
         if appliance_panels._is_housed(app):
             continue
         tint = _style_tint_for_cabinet(app, styles) if on else None
