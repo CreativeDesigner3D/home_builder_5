@@ -51,6 +51,10 @@ class hb_face_frame_OT_draw_cabinet(bpy.types.Operator):
         if self.cabinet_name == "Corbel":
             bpy.ops.hb_face_frame.place_corbel('INVOKE_DEFAULT')
             return {'FINISHED'}
+        # A tambour is drawn by clicking its ends and its bow.
+        if self.cabinet_name == "Tambour":
+            bpy.ops.hb_face_frame.draw_tambour('INVOKE_DEFAULT')
+            return {'FINISHED'}
         # Appliance products: invoke the appliance placement modal
         # (cursor follow + wall snap, fixed width, single instance).
         if self.cabinet_name in types_face_frame.APPLIANCE_NAME_DISPATCH:

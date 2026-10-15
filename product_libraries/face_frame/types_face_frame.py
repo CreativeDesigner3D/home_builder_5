@@ -18948,23 +18948,44 @@ def apply_active_door_style_to_part(door_obj):
         door_obj['STYLE_NAME'] = ff.cabinet_styles[ff.active_cabinet_style_index].name
 
 
+def _active_finish():
+    """(cabinet style, exterior finish material) of the ACTIVE cabinet
+    style, or (None, None)."""
+    from . import props_hb_face_frame as props
+    ff = props.get_style_props()
+    if ff is None:
+        return None, None
+    idx = ff.active_cabinet_style_index
+    if not (0 <= idx < len(ff.cabinet_styles)):
+        return None, None
+    cs = ff.cabinet_styles[idx]
+    finish_mat, _rotated = cs.get_finish_material()
+    return (cs, finish_mat) if finish_mat is not None else (None, None)
+
+
 def apply_corbel_finish(corbel_obj):
     """Give a placed corbel the ACTIVE cabinet style's exterior finish
     and record the style as STYLE_NAME. A corbel's body is a static mesh,
     not a cutpart, so it carries the material in its own slot."""
-    from . import props_hb_face_frame as props
-    ff = props.get_style_props()
-    if ff is None:
-        return
-    idx = ff.active_cabinet_style_index
-    if not (0 <= idx < len(ff.cabinet_styles)):
-        return
-    cs = ff.cabinet_styles[idx]
-    finish_mat, _rotated = cs.get_finish_material()
+    cs, finish_mat = _active_finish()
     if finish_mat is None:
         return
     corbels.set_material(corbel_obj, finish_mat)
     corbel_obj['STYLE_NAME'] = cs.name
+
+
+def apply_tambour_finish(tambour_obj):
+    """The active style's exterior finish on a tambour's slats (a static
+    mesh, one material slot)."""
+    cs, finish_mat = _active_finish()
+    if finish_mat is None:
+        return
+    mats = tambour_obj.data.materials
+    if len(mats) == 0:
+        mats.append(finish_mat)
+    else:
+        mats[0] = finish_mat
+    tambour_obj['STYLE_NAME'] = cs.name
 
 
 def apply_active_finish_to_product(product_obj):

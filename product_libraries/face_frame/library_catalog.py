@@ -133,6 +133,7 @@ SECTIONS = (
                   ("Valance", "Valance"))),
             ("", (("Wood Top", "Wood Top"), ("Mantle", "Mantle"),
                   ("Corbel", "Corbel"))),
+            ("", (("Tambour", "Tambour"),)),
             ("Wrap", (("Column", "Column"), ("Beam", "Beam"))),
         ),
     },
