@@ -131,6 +131,14 @@ def styles():
     return out
 
 
+def find_style(key):
+    """The style for exactly ``key``, or None."""
+    for s in styles():
+        if s['key'] == key:
+            return s
+    return None
+
+
 def get_style(key=None):
     """The style for ``key``, else the first available one."""
     all_styles = styles()
@@ -143,6 +151,40 @@ def get_style(key=None):
 def style_size(style):
     """(width, depth, height) in meters."""
     return (inch(style['width']), inch(style['depth']), inch(style['height']))
+
+
+def _inch_text(v):
+    """Inches to the nearest 1/16 as shop text: 5-1/4", 13", 3/4"."""
+    sixteenths = int(round(v * 16))
+    whole, rest = divmod(sixteenths, 16)
+    if rest == 0:
+        return '%d"' % whole
+    num, den = rest, 16
+    while num % 2 == 0:
+        num //= 2
+        den //= 2
+    return ('%d-%d/%d"' % (whole, num, den)) if whole else ('%d/%d"' % (num, den))
+
+
+def size_text(style):
+    """W x D x H as shop text, e.g. 5-1/4" x 6-3/4" x 13-1/4"."""
+    return " x ".join(_inch_text(style[k])
+                      for k in ('width', 'depth', 'height'))
+
+
+def grouped_styles():
+    """[(group name, [styles])] in listing order: each provider's
+    ``vendor`` as its own group, the built-ins last as "Generic"."""
+    groups = []
+    for s in styles():
+        name = s.get('vendor') or "Generic"
+        for g in groups:
+            if g[0] == name:
+                g[1].append(s)
+                break
+        else:
+            groups.append((name, [s]))
+    return groups
 
 
 # EnumProperty item callbacks must keep their strings alive.
