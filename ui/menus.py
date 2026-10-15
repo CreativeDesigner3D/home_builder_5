@@ -842,6 +842,36 @@ class HOME_BUILDER_OT_toggle_text_bold(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class HOME_BUILDER_OT_set_text_line_spacing(bpy.types.Operator):
+    bl_idname = "home_builder.set_text_line_spacing"
+    bl_label = "Line Spacing"
+    bl_description = ("Set the space between lines of the selected annotation "
+                      "text (1.0 is normal)")
+    bl_options = {'UNDO'}
+
+    spacing: bpy.props.FloatProperty(
+        name="Line Spacing", min=0.1, max=5.0, default=1.0, step=5,
+        description="Distance between lines, as a multiple of the "
+                    "normal spacing")
+
+    @classmethod
+    def poll(cls, context):
+        return len(get_annotation_text_objects(context)) > 0
+
+    def invoke(self, context, event):
+        objs = get_annotation_text_objects(context)
+        active = context.object if context.object in objs else objs[0]
+        self.spacing = active.data.space_line
+        return context.window_manager.invoke_props_dialog(self)
+
+    def execute(self, context):
+        # The same Line Spacing as Blender's Paragraph panel, so the two
+        # never disagree.
+        for obj in get_annotation_text_objects(context):
+            obj.data.space_line = self.spacing
+        return {'FINISHED'}
+
+
 class HOME_BUILDER_MT_text_commands(bpy.types.Menu):
     """Right-click commands for a placed annotation text.
 
@@ -868,6 +898,8 @@ class HOME_BUILDER_MT_text_commands(bpy.types.Menu):
             props.alignment = value
         layout.operator("home_builder.toggle_text_bold", text="Bold",
                         icon='BOLD', depress=is_text_bold(obj))
+        layout.operator("home_builder.set_text_line_spacing",
+                        text="Line Spacing...", icon='LINENUMBERS_ON')
         layout.separator()
         # See Delete Dimension above: the stock delete can leave the
         # note alive in a layout view's content collection.
@@ -946,6 +978,7 @@ classes = (
     HOME_BUILDER_MT_dimension_commands,
     HOME_BUILDER_OT_set_text_alignment,
     HOME_BUILDER_OT_toggle_text_bold,
+    HOME_BUILDER_OT_set_text_line_spacing,
     HOME_BUILDER_MT_text_commands,
     HOME_BUILDER_OT_show_reference_image_properties,
     HOME_BUILDER_MT_reference_image_commands,
