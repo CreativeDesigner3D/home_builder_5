@@ -758,7 +758,17 @@ def _tile_edit_blocks(context, spec, pool):
                                        pool.text(item)), back))]
     if pool.summary is not None:
         blocks.append(('card', pool))
-    blocks.append(('field', (('text', pool.rename_prop, "Name"), item)))
+    # A page can lock the name (it then only reads) and say where the
+    # text that prints is set instead.
+    locked = spec.get('name_locked')
+    note = locked(context) if locked else None
+    if note:
+        blocks.append(('field', (('text', pool.rename_prop, "Name",
+                                  {'readonly': True, 'plain': True}),
+                                 item)))
+        blocks.append(('label', note))
+    else:
+        blocks.append(('field', (('text', pool.rename_prop, "Name"), item)))
     blocks.extend(_pick_checks(context, spec, pool))
     blocks.extend(_field_blocks(context, pool.fields, item))
     blocks.append(('gap', None))

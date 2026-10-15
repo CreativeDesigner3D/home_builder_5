@@ -974,6 +974,20 @@ def _front_default_check(kind):
     return check
 
 
+def _front_name_locked(kind):
+    """While the section types its own Style Page lines, those lines
+    print instead of the style names, so the name reads only and points
+    there; a second editable name box would just drift out of step."""
+    flag = 'ss_door_rows_custom' if kind == 'DOOR' else 'ss_drawer_rows_custom'
+
+    def locked(context):
+        cs = _active_cabinet_style(context)
+        if cs is not None and getattr(cs, flag, False):
+            return "Printed name: edit the Style Page lines below the tiles"
+        return None
+    return locked
+
+
 def _front_manager(kind, pool_key):
     spec = dict(OPTION_PAGES[pool_key])
     spec['title'] = ("Door Styles" if kind == 'DOOR'
@@ -982,6 +996,7 @@ def _front_manager(kind, pool_key):
     # The tiles are the list; Edit opens the pick's settings.
     spec['tiles_only'] = True
     spec['notes'] = _front_manager_notes(kind)
+    spec['name_locked'] = _front_name_locked(kind)
     tiles = {'picture': _front_tile_picture(kind),
              'in_use': _front_in_use(kind),
              'count': _front_use_count(kind),
