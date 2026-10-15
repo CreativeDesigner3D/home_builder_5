@@ -2601,12 +2601,16 @@ class Closets_Scene_Props(PropertyGroup):
         row.prop(self, 'front_style_update_drawer_fronts',
                  text="Drawer Fronts", toggle=True)
         col.prop(self, 'closet_panel_type', text="Door Panel")
-        col.prop(self, 'closet_door_edgeband', text="Edgebanding")
-        if materials_closets.front_edge_lacks_3mm(self):
-            warn = col.box()
-            warn.alert = True
-            warn.label(text="Edgebanding Color not available in 3mm",
-                       icon='ERROR')
+        # Closet fronts are banded in 1mm only. The choice stays on the
+        # room (pricing reads it), and shows only on a room still set to
+        # 3mm, so that room can be put back.
+        if self.closet_door_edgeband != '1MM':
+            col.prop(self, 'closet_door_edgeband', text="Edgebanding")
+            if materials_closets.front_edge_lacks_3mm(self):
+                warn = col.box()
+                warn.alert = True
+                warn.label(text="Edgebanding Color not available in 3mm",
+                           icon='ERROR')
 
         col.separator()
         col.prop(self, 'closet_seed_door_shelves',
