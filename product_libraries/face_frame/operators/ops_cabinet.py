@@ -1074,7 +1074,20 @@ class hb_face_frame_OT_wood_top_prompts(bpy.types.Operator):
         nose_col = col.column(align=True)
         nose_col.use_property_split = True
         nose_col.enabled = wt.edge_type == 'NONE'
-        nose_col.prop(wt, 'nosing_style')
+        if wt.top_type == 'SOLID':
+            # A solid top offers only profiles cut into the slab.
+            row = nose_col.split(factor=0.4, align=True)
+            row.context_pointer_set('wood_top', wt)
+            lab = row.row()
+            lab.alignment = 'RIGHT'
+            lab.label(text="Edge Profile")
+            label = next((name for key, name, _d
+                          in types_face_frame.wood_top_edge.EDGE_STYLE_ITEMS
+                          if key == wt.nosing_style), "None")
+            row.menu("HOME_BUILDER_MT_face_frame_solid_top_profiles",
+                     text=label)
+        else:
+            nose_col.prop(wt, 'nosing_style')
         if wt.nosing_style != 'NONE':
             if wt.nosing_style in types_face_frame.shelf_nosing.EXTRA_HEIGHT_STYLES:
                 nose_col.prop(wt, 'nosing_height')

@@ -815,6 +815,23 @@ class HOME_BUILDER_MT_face_frame_drawer_box_construction(bpy.types.Menu):
                 op.opening_name = opening.name
 
 
+class HOME_BUILDER_MT_face_frame_solid_top_profiles(bpy.types.Menu):
+    """The edge profiles a solid wood top offers (the wood top dialog
+    shows this in place of the full list). Expects ``wood_top`` in the
+    context."""
+    bl_label = "Edge Profile"
+
+    def draw(self, context):
+        from . import wood_top_edge
+        wt = getattr(context, 'wood_top', None)
+        if wt is None:
+            return
+        flow = self.layout.column_flow(columns=2)
+        for key, _label, _desc in wood_top_edge.EDGE_STYLE_ITEMS:
+            if key not in wood_top_edge.SOLID_TOP_EXCLUDED_STYLES:
+                flow.prop_enum(wt, 'nosing_style', key)
+
+
 class HOME_BUILDER_MT_face_frame_drawer_slides(bpy.types.Menu):
     """Which slide hardware the clicked drawer's / rollout's boxes run
     on. Same shape as the construction submenu: options come from the
@@ -1348,6 +1365,7 @@ classes = (
     HOME_BUILDER_MT_face_frame_interior_part_commands,
     HOME_BUILDER_MT_face_frame_drawer_box_construction,
     HOME_BUILDER_MT_face_frame_drawer_slides,
+    HOME_BUILDER_MT_face_frame_solid_top_profiles,
     HOME_BUILDER_MT_face_frame_drawer_box_commands,
     HOME_BUILDER_MT_face_frame_opening_commands,
     HOME_BUILDER_MT_face_frame_change_opening,

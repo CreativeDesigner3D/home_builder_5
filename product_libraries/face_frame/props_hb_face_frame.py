@@ -13779,6 +13779,11 @@ def _update_wood_top(self, context):
     obj = self.id_data
     if obj is None or not obj.get(types_face_frame.WOOD_TOP_TAG):
         return
+    if not wood_top_edge.style_allowed(self.top_type, self.nosing_style):
+        # Switched to a solid top: drop a band-only profile. The write
+        # runs its own update, which rebuilds.
+        self.nosing_style = 'NONE'
+        return
     top = types_face_frame.WoodTopPart()
     top.obj = obj
     top.rebuild()
@@ -13800,6 +13805,10 @@ def _update_wood_top_nosing_style(self, context):
     meets the board top and bottom.
     """
     global _SEEDING_NOSING_HEIGHT
+    if not wood_top_edge.style_allowed(self.top_type, self.nosing_style):
+        # Not offered on a solid top; don't let it reset the thickness.
+        self.nosing_style = 'NONE'
+        return
     want = wood_top_edge.STYLE_THICKNESS.get(self.nosing_style)
     if want is not None and abs(self.thickness - want) > 0.0001:
         # Writing the thickness runs its own update, which rebuilds.
