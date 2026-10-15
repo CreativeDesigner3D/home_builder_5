@@ -10739,6 +10739,13 @@ class Face_Frame_Drawer_Look_Opening(PropertyGroup):
         description="Hold this opening height; locked rows share the remainder equally",
         default=False, update=_update_cabinet_dim,
     )  # type: ignore
+    no_rail_above: BoolProperty(
+        name="Remove Rail",
+        description="No faux mid rail between this front and the one above: "
+                    "the two close up to the gap a removed mid rail leaves "
+                    "on a real drawer stack",
+        default=False, update=_update_cabinet_dim,
+    )  # type: ignore
 
 
 class Face_Frame_Opening_Props(PropertyGroup):

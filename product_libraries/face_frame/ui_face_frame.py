@@ -1427,6 +1427,12 @@ def draw_opening_properties(layout, opening_obj):
                     field.prop(item, 'size', text="Opening " + str(idx + 1))
                     hrow.prop(item, 'unlock_size', text="",
                               icon='UNLOCKED' if item.unlock_size else 'LOCKED')
+                    if idx > 0:
+                        # The faux rail between this front and the next
+                        # one down.
+                        below = op.drawer_look_openings[idx - 1]
+                        heights_box.prop(below, 'no_rail_above',
+                                         text="Remove Rail")
 
         # Tilt-out flag (false fronts only): label-only -- the 2D elevation
         # prints TILT-OUT instead of FALSE. No geometry change.

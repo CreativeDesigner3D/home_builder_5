@@ -13661,8 +13661,9 @@ class FaceFrameCabinet(GeoNodeCage):
         n = int(divisions)
         length, width, thickness = leaf['part_dims']
         cab_props = self.obj.face_frame_cabinet
-        overlays = (solver.resolved_overlay(cab_props, op_props, 'top')
-                    + solver.resolved_overlay(cab_props, op_props, 'bottom'))
+        ov_top = solver.resolved_overlay(cab_props, op_props, 'top')
+        ov_bottom = solver.resolved_overlay(cab_props, op_props, 'bottom')
+        overlays = ov_top + ov_bottom
         # Reveal between fronts = mid-rail width less the two overlapping
         # front overlays, matching a real drawer stack.
         reveal = max(0.0, cab_props.bay_mid_rail_width - overlays)
@@ -13678,8 +13679,15 @@ class FaceFrameCabinet(GeoNodeCage):
         # spec is bottom -> top; the top opening defaults to the scene Top
         # Drawer Opening Height (seeded by _update_drawer_look_divisions).
         rail_w = cab_props.bay_mid_rail_width
-        available = length - overlays - (n - 1) * rail_w
         openings = getattr(op_props, 'drawer_look_openings', None)
+        # A gap whose faux rail is removed takes no rail width; the fronts
+        # either side stop half the removed-rail gap short of its centre,
+        # as on a real stack with the mid rail removed.
+        no_rail = [False] * (n - 1)
+        if openings is not None and len(openings) == n:
+            no_rail = [bool(openings[k].no_rail_above) for k in range(n - 1)]
+        half_gap = solver.MID_RAIL_REMOVED_GAP / 2.0
+        available = length - overlays - no_rail.count(False) * rail_w
         if openings is not None and len(openings) == n:
             spec = [(o.size, bool(o.unlock_size)) for o in openings]
         elif leaf['role'] == PART_ROLE_DRAWER_FRONT:
@@ -13698,7 +13706,13 @@ class FaceFrameCabinet(GeoNodeCage):
             for k, (s, held) in enumerate(spec):
                 if not held and abs(openings[k].size - share) > 1e-6:
                     openings[k].size = share
-        heights = [(s if held else share) + overlays for (s, held) in spec]
+        heights = []
+        for k, (s, held) in enumerate(spec):
+            top = -half_gap if k < n - 1 and no_rail[k] else ov_top
+            bottom = -half_gap if k > 0 and no_rail[k - 1] else ov_bottom
+            heights.append((s if held else share) + top + bottom)
+        gaps = [solver.MID_RAIL_REMOVED_GAP if removed else reveal
+                for removed in no_rail]
         if any(h <= 0.0 for h in heights):
             return
 
@@ -13730,7 +13744,7 @@ class FaceFrameCabinet(GeoNodeCage):
             panel.set_input('Thickness', thickness)
             self._add_drawer_look_pull(panel.obj, h, width, thickness,
                                        scene_props)
-            if inset and i < n - 1:
+            if inset and i < n - 1 and not no_rail[i]:
                 rail_h = cab_props.bay_mid_rail_width
                 rail = CabinetPart()
                 rail.create("Drawer-Look Rail " + str(i + 1))
@@ -13749,7 +13763,8 @@ class FaceFrameCabinet(GeoNodeCage):
                 rail.set_input('Length', rail_h)
                 rail.set_input('Width', width)
                 rail.set_input('Thickness', thickness)
-            z += h + reveal
+            if i < n - 1:
+                z += h + gaps[i]
 
     def _build_door_look_fronts(self, front, leaf, op_props, pull=None):
         """Lay N applied door panels side by side on one DOOR leaf so it
