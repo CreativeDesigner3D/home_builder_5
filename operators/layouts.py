@@ -619,8 +619,10 @@ class home_builder_layouts_OT_go_to_layout_view(bpy.types.Operator):
                 lock_layout_camera(target_scene)
                 hb_utils.frame_camera_view()
             elif target_scene.get('IS_DETAIL_VIEW') or target_scene.get('IS_CROWN_DETAIL'):
-                # Detail views use top-down orthographic and frame all
+                # Detail views use top-down orthographic and frame all;
+                # the fitted camera is what the camera button returns to
                 hb_utils.set_layout_shading()
+                hb_utils.ensure_detail_camera(target_scene)
                 hb_utils.set_top_down_view()
                 hb_utils.frame_all_objects()
             elif hb_utils.is_room_scene(target_scene):
