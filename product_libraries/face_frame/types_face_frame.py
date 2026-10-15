@@ -10652,7 +10652,8 @@ class FaceFrameCabinet(GeoNodeCage):
                         # A textured bay takes a BACK liner to carry the
                         # texture: the carcass back behind it is finish
                         # stock, and flat.
-                        want_back=texture not in ('NONE', ''))
+                        want_back=texture not in ('NONE', ''),
+                        flush_back=texture not in ('NONE', ''))
                     for face, spec in specs:
                         self._emit_bay_finish_panel(bi, -1, face, spec, t,
                                                     existing, texture)
@@ -10701,7 +10702,7 @@ class FaceFrameCabinet(GeoNodeCage):
                         layout, region, bool(op.finish_opening_flush),
                         op.finish_opening_flush_depth, op_to_floor, t,
                         want_back=(not bay.get('finish_carcass')) or textured,
-                        want_top=False)
+                        want_top=False, flush_back=textured)
                     for face, spec in specs:
                         self._emit_bay_finish_panel(bi, oi, face, spec, t,
                                                     existing, texture)
@@ -10800,7 +10801,8 @@ class FaceFrameCabinet(GeoNodeCage):
         return None
 
     def _finish_region_specs(self, layout, region, flush, raw_depth, to_floor,
-                             t, want_back=False, want_top=True):
+                             t, want_back=False, want_top=True,
+                             flush_back=False):
         """Build the (face, spec) list for one finished region.
 
         `want_top` covers the ceiling of a FULL finish. A finished
@@ -10808,6 +10810,11 @@ class FaceFrameCabinet(GeoNodeCage):
         so an applied 1/4 ceiling is a part the shop does not build.
         Only a FLUSH finish tops the region, and there the top is part
         of the band that wraps the FF opening.
+
+        `flush_back` gives a FLUSH finish a BACK panel behind the FF
+        opening. A plain flush band stays open behind (an appliance
+        slides in), but a textured one needs a back to carry the
+        texture the region is supposed to show.
 
         `region` is cabinet-local: left_x / right_x / bottom_z / top_z, the
         cavity depth cage_dim_y, and the four reveals (cage edge -> FF
@@ -10858,6 +10865,18 @@ class FaceFrameCabinet(GeoNodeCage):
                                     mirror_y=True, mirror_z=True,
                                     loc=(op_left_x, band_back_y, op_bottom_z),
                                     length=op_width, width=depth)))
+            # The band's thickness is outboard of the opening, so the
+            # face the opening sees is the cutpart's origin plane.
+            for _face, spec in specs:
+                spec['visible_at_origin'] = True
+            if flush_back:
+                # Behind the opening, between the band faces, against
+                # the carcass back.
+                specs.append(
+                    ('BACK', dict(rot=(math.radians(90), math.radians(-90), 0.0),
+                                  mirror_y=True, mirror_z=False,
+                                  loc=(op_left_x, cavity_back_y, op_bottom_z),
+                                  length=op_height, width=op_width)))
         else:
             # FULL finish lining the full cavity depth on the cavity
             # walls. The sides and the ceiling are applied 1/4 parts;
@@ -11050,16 +11069,21 @@ class FaceFrameCabinet(GeoNodeCage):
             pitch = float(self.obj.face_frame_cabinet.shiplap_board_width) * 0.0254
         except (ValueError, AttributeError):
             pitch = TEXTURED_SHIPLAP_PITCH
+        # A flush band's visible face IS the origin plane (thickness runs
+        # outboard), so it carves like a textured end: no flip, no slide.
+        at_origin = bool(spec.get('visible_at_origin'))
         self._textured_panel_mesh(strip, spec['length'], spec['width'],
                                   thickness, texture,
-                                  mirror_z=not spec['mirror_z'],
+                                  mirror_z=(spec['mirror_z'] if at_origin
+                                            else not spec['mirror_z']),
                                   shiplap_pitch=pitch,
                                   shiplap_vertical=_shiplap_vertical(
                                       self.obj.face_frame_cabinet),
                                   v_groove_spacing=_v_groove_spacing(
                                       self.obj.face_frame_cabinet))
-        dz = -thickness if spec['mirror_z'] else thickness
-        strip.data.transform(Matrix.Translation((0.0, 0.0, dz)))
+        if not at_origin:
+            dz = -thickness if spec['mirror_z'] else thickness
+            strip.data.transform(Matrix.Translation((0.0, 0.0, dz)))
         strip.data.update()
 
     # =====================================================================
