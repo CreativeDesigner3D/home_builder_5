@@ -16,6 +16,7 @@ from . import ops_pipe_chase
 from . import ops_pull_library
 from . import ops_draw_path
 from . import ops_center_bay
+from . import ops_corbel
 
 
 def register():
@@ -37,9 +38,11 @@ def register():
     ops_pull_library.register()
     ops_draw_path.register()
     ops_center_bay.register()
+    ops_corbel.register()
 
 
 def unregister():
+    ops_corbel.unregister()
     ops_center_bay.unregister()
     ops_draw_path.unregister()
     ops_pull_library.unregister()

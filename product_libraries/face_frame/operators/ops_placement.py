@@ -45,6 +45,7 @@ from .. import exposure
 from .. import upper_over_refrigerator
 from .. import upper_bay_layout
 from ...common import appliance_geo
+from ...common import corbels
 from . import ops_cabinet
 from .... import hb_placement, hb_types, units
 
@@ -161,6 +162,8 @@ def _appliance_dimensions(scene_props, appliance_name):
     cls = types_face_frame.APPLIANCE_NAME_DISPATCH.get(appliance_name)
     if cls is None:
         return (units.inch(24), units.inch(34), units.inch(24))
+    if appliance_name == "Corbel":
+        return cls.size_for(corbel_style_key())
     if appliance_name == "Dishwasher":
         return (scene_props.dishwasher_width, cls.height, cls.depth)
     if appliance_name == "Range":
@@ -189,7 +192,22 @@ def _appliance_z_location(scene_props, appliance_name):
     """
     if appliance_name == "Range Hood":
         return scene_props.default_wall_cabinet_location
+    if appliance_name == "Corbel":
+        # Top of the corbel under the countertop overhang: its top at
+        # the base cabinet height.
+        _w, h, _d = corbels.Corbel.size_for(corbel_style_key())
+        return max(scene_props.base_cabinet_height - h, 0.0)
     return None  # caller falls back to cursor / hit Z
+
+
+# The corbel style the next placement uses: picked from the library's
+# style list right before placing, remembered for the next one.
+CORBEL_STYLE_SCENE_KEY = 'hb_corbel_style'
+
+
+def corbel_style_key(context=None):
+    scene = (context or bpy.context).scene
+    return scene.get(CORBEL_STYLE_SCENE_KEY)
 
 
 def _find_center_snap(hit_object, wall, kinds, cab_z_range):
@@ -5581,6 +5599,8 @@ class hb_face_frame_OT_place_appliance(bpy.types.Operator,
             hb_placement.clear_header_text(context)
             return {'CANCELLED'}
         appliance = cls()
+        if self.appliance_name == "Corbel":
+            appliance.style_key = corbel_style_key(context)
         # Apply preview-resolved dims so the final appliance matches
         # the cage the user just placed.
         appliance.width = self._appliance_width
@@ -5603,11 +5623,17 @@ class hb_face_frame_OT_place_appliance(bpy.types.Operator,
         else:
             app_obj.matrix_world = captured_world
 
-        # Refresh exposure on any face-frame cabinet that now abuts the
-        # placed appliance. Dishwasher placement is the headline case -
-        # adjacent cabinet sides auto-flip to FLUSH_X.
-        exposure.recalc_after_appliance_placement(app_obj)
-        appliance_geo.seed_on_place(app_obj)
+        if app_obj.get(corbels.CORBEL_TAG):
+            # A corbel is applied to a finished surface, not set beside
+            # it, so it leaves neighbouring ends alone. It takes the
+            # project's finish.
+            types_face_frame.apply_corbel_finish(app_obj)
+        else:
+            # Refresh exposure on any face-frame cabinet that now abuts
+            # the placed appliance. Dishwasher placement is the headline
+            # case - adjacent cabinet sides auto-flip to FLUSH_X.
+            exposure.recalc_after_appliance_placement(app_obj)
+            appliance_geo.seed_on_place(app_obj)
 
         for o in context.selected_objects:
             o.select_set(False)

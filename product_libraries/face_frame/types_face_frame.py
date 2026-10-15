@@ -30,6 +30,7 @@ from ...hb_types import (CabinetPartModifier, GeoNodeCage, GeoNodeCutpart,
 from ...units import inch
 from ...hb_details import apply_label_style
 from ..common import types_appliances
+from ..common import corbels
 from ..common import turned_leg
 from ..common import bun_foot
 from ..common import arch_cutout
@@ -18947,6 +18948,25 @@ def apply_active_door_style_to_part(door_obj):
         door_obj['STYLE_NAME'] = ff.cabinet_styles[ff.active_cabinet_style_index].name
 
 
+def apply_corbel_finish(corbel_obj):
+    """Give a placed corbel the ACTIVE cabinet style's exterior finish
+    and record the style as STYLE_NAME. A corbel's body is a static mesh,
+    not a cutpart, so it carries the material in its own slot."""
+    from . import props_hb_face_frame as props
+    ff = props.get_style_props()
+    if ff is None:
+        return
+    idx = ff.active_cabinet_style_index
+    if not (0 <= idx < len(ff.cabinet_styles)):
+        return
+    cs = ff.cabinet_styles[idx]
+    finish_mat, _rotated = cs.get_finish_material()
+    if finish_mat is None:
+        return
+    corbels.set_material(corbel_obj, finish_mat)
+    corbel_obj['STYLE_NAME'] = cs.name
+
+
 def apply_active_finish_to_product(product_obj):
     """Assign the project's ACTIVE cabinet style's exterior FINISH material
     to every cutpart under a non-cabinet face-frame PRODUCT (e.g. a Half
@@ -19815,6 +19835,9 @@ APPLIANCE_NAME_DISPATCH = {
     "Washer": types_appliances.WashingMachine,
     "Dryer": types_appliances.Dryer,
     "Stacked Washer Dryer": types_appliances.StackedWasherDryer,
+    # Not an appliance: a fixed-size decorative bracket that borrows the
+    # appliance placement (cursor follow, wall snap, one instance).
+    "Corbel": corbels.Corbel,
 }
 
 
