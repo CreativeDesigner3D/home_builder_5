@@ -8,7 +8,7 @@ remembered on the scene for the next one.
 
 import bpy
 
-from .... import hb_utils, hb_types
+from .... import hb_utils, hb_types, hb_placement
 from ...common import corbels
 from . import ops_placement
 
@@ -128,6 +128,56 @@ class hb_face_frame_OT_set_corbel_style(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class hb_face_frame_OT_duplicate_corbel_place(bpy.types.Operator):
+    """Place a copy of this corbel on any wall or cabinet"""
+    bl_idname = "hb_face_frame.duplicate_corbel_place"
+    bl_label = "Duplicate Corbel"
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return _corbel_root(context.active_object) is not None
+
+    def invoke(self, context, event):
+        root = _corbel_root(context.active_object)
+        bpy.ops.hb_face_frame.place_appliance(
+            'INVOKE_DEFAULT', appliance_name="Corbel", source_name=root.name)
+        return {'FINISHED'}
+
+
+class hb_face_frame_OT_duplicate_corbel(bpy.types.Operator):
+    """Duplicate the selected corbels, body and all, and move the copies"""
+    bl_idname = "hb_face_frame.duplicate_corbel"
+    bl_label = "Duplicate Corbels"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        # Only when everything selected is a corbel. Otherwise the poll
+        # fails and Shift+D falls through to Blender's own duplicate.
+        if context.mode != 'OBJECT':
+            return False
+        sel = context.selected_objects
+        return bool(sel) and all(_corbel_root(o) is not None for o in sel)
+
+    def invoke(self, context, event):
+        roots = _selected_corbels(context)
+        copies = []
+        for root in roots:
+            new = hb_placement.duplicate_object_hierarchy(context, root)
+            if new is not None:
+                copies.append(new)
+        if not copies:
+            return {'CANCELLED'}
+        bpy.ops.object.select_all(action='DESELECT')
+        for new in copies:
+            new.select_set(True)
+        context.view_layer.objects.active = copies[-1]
+        # The same grab Blender's Shift+D starts.
+        bpy.ops.transform.translate('INVOKE_DEFAULT')
+        return {'FINISHED'}
+
+
 class hb_face_frame_OT_delete_corbel(bpy.types.Operator):
     """Delete the selected corbels"""
     bl_idname = "hb_face_frame.delete_corbel"
@@ -155,6 +205,8 @@ class HOME_BUILDER_MT_corbel_commands(bpy.types.Menu):
             layout.separator()
         layout.menu(HOME_BUILDER_MT_corbel_change_style.__name__,
                     icon='MOD_BEVEL')
+        layout.operator("hb_face_frame.duplicate_corbel_place",
+                        text="Duplicate", icon='DUPLICATE')
         layout.separator()
         layout.operator("hb_face_frame.delete_corbel", text="Delete Corbel")
 
@@ -164,8 +216,35 @@ classes = (
     HOME_BUILDER_MT_corbel_change_style,
     hb_face_frame_OT_place_corbel,
     hb_face_frame_OT_set_corbel_style,
+    hb_face_frame_OT_duplicate_corbel_place,
+    hb_face_frame_OT_duplicate_corbel,
     hb_face_frame_OT_delete_corbel,
     HOME_BUILDER_MT_corbel_commands,
 )
 
-register, unregister = bpy.utils.register_classes_factory(classes)
+_register_classes, _unregister_classes = bpy.utils.register_classes_factory(
+    classes)
+
+# Shift+D on a corbel copies the whole corbel. The stock duplicate only
+# copies what is selected -- the cage -- and leaves the body behind.
+_addon_keymaps = []
+
+
+def register():
+    _register_classes()
+    kc = bpy.context.window_manager.keyconfigs.addon
+    if kc:
+        km = kc.keymaps.new(name='Object Mode', space_type='EMPTY')
+        kmi = km.keymap_items.new(hb_face_frame_OT_duplicate_corbel.bl_idname,
+                                  'D', 'PRESS', shift=True)
+        _addon_keymaps.append((km, kmi))
+
+
+def unregister():
+    for km, kmi in _addon_keymaps:
+        try:
+            km.keymap_items.remove(kmi)
+        except Exception:
+            pass
+    _addon_keymaps.clear()
+    _unregister_classes()

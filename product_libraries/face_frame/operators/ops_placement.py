@@ -4918,7 +4918,16 @@ class hb_face_frame_OT_place_appliance(bpy.types.Operator,
         default="",
     )  # type: ignore
 
+    source_name: bpy.props.StringProperty(
+        name="Source",
+        description="Place a copy of this placed item (a corbel) rather "
+                    "than a new one: its size, height and settings",
+        default="",
+        options={'HIDDEN', 'SKIP_SAVE'},
+    )  # type: ignore
+
     _preview_cage = None
+    _source_obj = None              # duplicate mode: item being copied
     _appliance_width: float = 0.0
     _appliance_height: float = 0.0
     _appliance_depth: float = 0.0
@@ -4948,7 +4957,15 @@ class hb_face_frame_OT_place_appliance(bpy.types.Operator,
             return {'CANCELLED'}
 
         scene_props = context.scene.hb_face_frame
-        w, h, d = _appliance_dimensions(scene_props, self.appliance_name)
+        self._source_obj = (bpy.data.objects.get(self.source_name)
+                            if self.source_name else None)
+        if self._source_obj is not None:
+            src_cage = hb_types.GeoNodeCage(self._source_obj)
+            w, h, d = (src_cage.get_input('Dim X'),
+                       src_cage.get_input('Dim Z'),
+                       src_cage.get_input('Dim Y'))
+        else:
+            w, h, d = _appliance_dimensions(scene_props, self.appliance_name)
         self._appliance_width = w
         self._appliance_height = h
         self._appliance_depth = d
@@ -4971,7 +4988,7 @@ class hb_face_frame_OT_place_appliance(bpy.types.Operator,
         # (range hood at the upper-cabinet base). Other appliances
         # follow the cursor Z so the user can rough in shelves /
         # islands at any height.
-        z_override = _appliance_z_location(scene_props, self.appliance_name)
+        z_override = self._z_override(context)
         if z_override is not None:
             cage_obj.location.z = z_override
         # Floor reference for free placement (see place_cabinet): floor
@@ -5062,6 +5079,14 @@ class hb_face_frame_OT_place_appliance(bpy.types.Operator,
             self._position_from_hit(context)
 
         return {'RUNNING_MODAL'}
+
+    def _z_override(self, context):
+        """The mounting Z: a copy keeps its source's height above the
+        floor; otherwise the appliance's own fixed height, or None."""
+        if self._source_obj is not None:
+            return self._source_obj.matrix_world.translation.z
+        return _appliance_z_location(context.scene.hb_face_frame,
+                                     self.appliance_name)
 
     # ---------------- preview cage ----------------
 
@@ -5331,8 +5356,7 @@ class hb_face_frame_OT_place_appliance(bpy.types.Operator,
         # placement (the cursor's screen height in a front elevation)
         # stuck to the cage when it came back onto the wall. Set before
         # gap detection so collision checks run at the mounted height.
-        z_override = _appliance_z_location(
-            context.scene.hb_face_frame, self.appliance_name)
+        z_override = self._z_override(context)
         cage_obj.location.z = 0.0 if z_override is None else z_override
 
         local_hit = wall.matrix_world.inverted() @ self.hit_location
@@ -5487,8 +5511,7 @@ class hb_face_frame_OT_place_appliance(bpy.types.Operator,
         # their configured Z when off-wall instead of dropping to the
         # cursor / snap-target Z; that anchor is what makes the hood
         # read as the bay above the range.
-        scene_props = context.scene.hb_face_frame
-        z_override = _appliance_z_location(scene_props, self.appliance_name)
+        z_override = self._z_override(context)
 
         if snap_result is not None:
             new_loc, new_rot = snap_result
@@ -5593,6 +5616,17 @@ class hb_face_frame_OT_place_appliance(bpy.types.Operator,
 
         self._delete_preview()
 
+        if self._source_obj is not None:
+            app_obj = hb_placement.duplicate_object_hierarchy(
+                context, self._source_obj)
+            if app_obj is None:
+                self.report({'ERROR'}, "Duplicate failed")
+                hb_placement.clear_header_text(context)
+                return {'CANCELLED'}
+            return self._finish_placed(
+                context, app_obj, captured_parent, captured_world,
+                captured_local_loc, captured_local_rot)
+
         cls = types_face_frame.APPLIANCE_NAME_DISPATCH.get(self.appliance_name)
         if cls is None:
             self.report({'ERROR'}, f"Unknown appliance: {self.appliance_name}")
@@ -5613,7 +5647,14 @@ class hb_face_frame_OT_place_appliance(bpy.types.Operator,
             hb_placement.clear_header_text(context)
             return {'CANCELLED'}
 
-        app_obj = appliance.obj
+        return self._finish_placed(
+            context, appliance.obj, captured_parent, captured_world,
+            captured_local_loc, captured_local_rot)
+
+    def _finish_placed(self, context, app_obj, captured_parent,
+                       captured_world, captured_local_loc,
+                       captured_local_rot):
+        """Drop the new (or copied) item where the preview cage was."""
         if captured_parent is not None:
             app_obj.parent = captured_parent
             hb_utils.note_parent_change()
@@ -5625,9 +5666,10 @@ class hb_face_frame_OT_place_appliance(bpy.types.Operator,
 
         if app_obj.get(corbels.CORBEL_TAG):
             # A corbel is applied to a finished surface, not set beside
-            # it, so it leaves neighbouring ends alone. It takes the
-            # project's finish.
-            types_face_frame.apply_corbel_finish(app_obj)
+            # it, so it leaves neighbouring ends alone. A new one takes
+            # the project's finish; a copy keeps its source's.
+            if self._source_obj is None:
+                types_face_frame.apply_corbel_finish(app_obj)
         else:
             # Refresh exposure on any face-frame cabinet that now abuts
             # the placed appliance. Dishwasher placement is the headline
