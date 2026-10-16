@@ -842,6 +842,16 @@ class HOME_BUILDER_OT_toggle_text_bold(bpy.types.Operator):
         return {'FINISHED'}
 
 
+# Line spacing each text had when the dialog opened, by object name, so
+# Cancel can put back what the live preview changed.
+_line_spacing_before = {}
+
+
+def _preview_line_spacing(self, context):
+    for obj in get_annotation_text_objects(context):
+        obj.data.space_line = self.spacing
+
+
 class HOME_BUILDER_OT_set_text_line_spacing(bpy.types.Operator):
     bl_idname = "home_builder.set_text_line_spacing"
     bl_label = "Line Spacing"
@@ -852,7 +862,8 @@ class HOME_BUILDER_OT_set_text_line_spacing(bpy.types.Operator):
     spacing: bpy.props.FloatProperty(
         name="Line Spacing", min=0.1, max=5.0, default=1.0, step=5,
         description="Distance between lines, as a multiple of the "
-                    "normal spacing")
+                    "normal spacing",
+        update=_preview_line_spacing)
 
     @classmethod
     def poll(cls, context):
@@ -860,6 +871,9 @@ class HOME_BUILDER_OT_set_text_line_spacing(bpy.types.Operator):
 
     def invoke(self, context, event):
         objs = get_annotation_text_objects(context)
+        _line_spacing_before.clear()
+        _line_spacing_before.update(
+            {o.name: o.data.space_line for o in objs})
         active = context.object if context.object in objs else objs[0]
         self.spacing = active.data.space_line
         return context.window_manager.invoke_props_dialog(self)
@@ -867,9 +881,18 @@ class HOME_BUILDER_OT_set_text_line_spacing(bpy.types.Operator):
     def execute(self, context):
         # The same Line Spacing as Blender's Paragraph panel, so the two
         # never disagree.
+        _line_spacing_before.clear()
         for obj in get_annotation_text_objects(context):
             obj.data.space_line = self.spacing
         return {'FINISHED'}
+
+    def cancel(self, context):
+        # The text already shows the previewed spacing; undo that.
+        for name, value in _line_spacing_before.items():
+            obj = bpy.data.objects.get(name)
+            if obj is not None and obj.type == 'FONT':
+                obj.data.space_line = value
+        _line_spacing_before.clear()
 
 
 class HOME_BUILDER_MT_text_commands(bpy.types.Menu):
