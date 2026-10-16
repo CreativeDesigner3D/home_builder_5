@@ -108,6 +108,22 @@ def _update_l_interior(self, context):
     _update_starter_prop(self, context)
 
 
+def _update_l_segment_interior(self, context):
+    """An opening over or under a fixed L shelf took new contents: the
+    same follow-ups the unit's own Corner Holds makes, the shelf count
+    dealt by this opening's height."""
+    sp = self.id_data.hb_closet_starter
+    if self.l_interior in ('ROD', 'DOUBLE'):
+        if sp.l_back_width < inch(14.0):
+            sp['l_back_width'] = inch(14.0)
+        sp['l_rod_on_left'] = not sp.l_flip_partition
+    elif self.l_interior in ('ADJ', 'LOCK') and int(self.l_shelf_qty) == 0:
+        from . import types_closets
+        self['l_shelf_qty'] = types_closets.default_l_shelf_qty(
+            self.id_data, self)
+    _update_starter_prop(self, context)
+
+
 def sync_end_overhangs(sp, sides=('LEFT', 'RIGHT')):
     """Set the countertop's side overhang and exposed-end flag from
     what stands at that end of the run. A wall filler means the run
@@ -730,6 +746,48 @@ class Closet_Bay_Cleat_Props(PropertyGroup):
         default=0.0, min=0.0, unit='LENGTH', precision=4)  # type: ignore
 
 
+# What a corner unit holds. Numbered so saved units keep what they
+# hold: 'NONE' came later and takes the next number, though it lists
+# first.
+L_INTERIOR_ITEMS = [
+    ('NONE', "Empty",
+     "Only the top and bottom - the reference version's corner "
+     "as it was dropped", 4),
+    ('ADJ', "Adjustable Shelves",
+     "Shelves on pins, moved by hand. Any one of them can be "
+     "locked afterwards", 0),
+    ('LOCK', "Lock Shelves",
+     "Shelves fixed on cams, holding the unit square", 1),
+    ('ROD', "Single Hanging Rod",
+     "One rod along a wing, for full-length hanging", 2),
+    ('DOUBLE', "Double Hang",
+     "Two rods with a fixed shelf between them", 3),
+]
+
+
+class Closet_L_Segment_Props(PropertyGroup):
+    """One opening of a corner unit that fixed L shelves divide: what it
+    holds, the way the unit's own Corner Holds says it for an undivided
+    corner. Listed bottom to top."""
+    l_interior: EnumProperty(
+        name="Corner Holds",
+        description="What goes inside this opening of the corner unit",
+        items=L_INTERIOR_ITEMS,
+        default='NONE', update=_update_l_segment_interior)  # type: ignore
+    l_shelf_qty: IntProperty(
+        name="Shelf Quantity",
+        description="L shelves in this opening",
+        default=0, min=0, max=12,
+        update=_update_starter_prop)  # type: ignore
+    l_top_opening_height: FloatProperty(
+        name="Top Opening Height",
+        description="Clear opening over the shelf between the two "
+                    "rods: its top to the underside of the shelf above",
+        default=const.L_DOUBLE_TOP_OPENING, min=0.0,
+        unit='LENGTH', precision=4,
+        update=_update_starter_prop)  # type: ignore
+
+
 class Closet_Starter_Props(PropertyGroup):
 
     # Where the starter sits along its wall, read off and written to the
@@ -1223,23 +1281,13 @@ class Closet_Starter_Props(PropertyGroup):
     l_interior: EnumProperty(
         name="Corner Holds",
         description="What goes inside the corner unit",
-        # Numbered so saved units keep what they hold: 'NONE' came
-        # later and takes the next number, though it lists first.
-        items=[
-            ('NONE', "Empty",
-             "Only the top and bottom - the reference version's corner "
-             "as it was dropped", 4),
-            ('ADJ', "Adjustable Shelves",
-             "Shelves on pins, moved by hand. Any one of them can be "
-             "locked afterwards", 0),
-            ('LOCK', "Lock Shelves",
-             "Shelves fixed on cams, holding the unit square", 1),
-            ('ROD', "Single Hanging Rod",
-             "One rod along a wing, for full-length hanging", 2),
-            ('DOUBLE', "Double Hang",
-             "Two rods with a fixed shelf between them", 3),
-        ],
+        items=L_INTERIOR_ITEMS,
         default='ADJ', update=_update_l_interior)  # type: ignore
+    # The openings fixed L shelves divide the corner into, bottom to
+    # top. Empty while nothing divides it: then the corner is one
+    # opening and the settings above say what it holds.
+    l_segments: CollectionProperty(
+        type=Closet_L_Segment_Props)  # type: ignore
     l_rod_on_left: BoolProperty(
         name="Rod On The Side Wall",
         description="Hang the rod along the side wall rather than the "
@@ -2887,6 +2935,7 @@ classes = (
     Closet_Bay_Countertop_Props,
     Closet_Slab_Countertop_Props,
     Closet_Bay_Cleat_Props,
+    Closet_L_Segment_Props,
     Closet_Starter_Props,
     Closet_Bay_Props,
     Closet_Opening_Props,
