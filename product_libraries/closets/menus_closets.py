@@ -102,8 +102,10 @@ class HOME_BUILDER_MT_closet_corner_opening_commands(bpy.types.Menu):
                                  text=label)
             op.interior = key
         layout.separator()
-        layout.operator("hb_closets.add_l_divider",
-                        text="Add Fixed L Shelf...", icon='ADD')
+        # Placed as the library places a fixed shelf: hover a height,
+        # click to put it down.
+        layout.operator("hb_closets.add_part", text="Add Fixed L Shelf",
+                        icon='ADD').part_type = 'FIXED_SHELF'
         from . import accessories_closets as acc
         if acc.catalog_items(family=acc.FAMILY_PANEL):
             layout.separator()
