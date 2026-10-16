@@ -14457,7 +14457,8 @@ class FaceFrameCabinet(GeoNodeCage):
         A published configuration pins the layout through the hint:
         CORE = slot core width, COREX = the core's offset from the
         left side (omitted = centred), BAND = back compartment depth,
-        CROSS = cross compartment depth (0 = none), MIDSPLIT = a rail
+        FRONT = front section depth (overrides BAND; the back
+        compartment takes the rest), CROSS = cross compartment depth (0 = none), MIDSPLIT = a rail
         across the middle slot that far from the front. Without them
         the tray lays itself out from the drawer size.
 
@@ -14496,6 +14497,14 @@ class FaceFrameCabinet(GeoNodeCage):
             band = inch(params['BAND'])
         else:
             band = min(max((iy1 - iy0) * 0.25, inch(4.0)), inch(6.625))
+        # FRONT pins the front section instead (tray front to the back
+        # rail's front face): a set whose slot length is fixed gives up
+        # back compartment, not slot, when the drawer is shallower than
+        # nominal. Falls back to BAND when the drawer is too shallow to
+        # leave a back compartment behind it.
+        front_sec = inch(params.get('FRONT', 0.0))
+        if front_sec > th and iy1 - (iy0 + front_sec) > th + inch(1.0):
+            band = iy1 - (iy0 + front_sec)
         core_back = iy1
         if band > th and (iy1 - band) - iy0 >= inch(6.0):
             core_back = iy1 - band
