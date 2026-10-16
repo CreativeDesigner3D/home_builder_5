@@ -4792,6 +4792,11 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         exposure.recalc_with_neighbors(cab_obj)
         _align_base_tall_toe_kick(cab_obj)
 
+        # A copied leg lands somewhere else, so its finished sides follow
+        # its new neighbours the way a freshly placed leg's do.
+        if cab_obj.get('IS_LEG_PRODUCT'):
+            cab_obj.leg_product.finish_type =                 exposure.auto_leg_finish_type(cab_obj)
+
         for o in context.selected_objects:
             o.select_set(False)
         cab_obj.select_set(True)

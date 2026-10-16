@@ -1110,6 +1110,18 @@ class HOME_BUILDER_MT_face_frame_leg_product_commands(bpy.types.Menu):
         layout = self.layout
         layout.operator("hb_face_frame.leg_product_prompts",
                         text="Leg Properties...", icon='WINDOW')
+        # Duplicate / Place: the same copy-and-place modal cabinets use.
+        # The drop deep-copies the whole leg, parts and settings, which a
+        # plain object duplicate (it copies only the selected root) can't.
+        root = types_face_frame.find_cabinet_root(context.active_object)
+        if root is not None:
+            op = layout.operator("hb_face_frame.place_cabinet",
+                                 text="Duplicate", icon='DUPLICATE')
+            op.source_cabinet_name = root.name
+            op = layout.operator("hb_face_frame.place_cabinet",
+                                 text="Place Leg", icon='SNAP_ON')
+            op.source_cabinet_name = root.name
+            op.move_source = True
         layout.separator()
         layout.operator("hb_face_frame.delete_cabinet",
                         text="Delete Leg", icon='X')
