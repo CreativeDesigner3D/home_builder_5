@@ -1165,6 +1165,17 @@ def has_rear_kick_inset(layout):
     return getattr(layout, 'kick_inset_back', 0.0) > 1e-6
 
 
+def back_floats(layout):
+    """True when an applied back stops at the kick top because the
+    carcass hangs open above the floor: a FLOATING base or tall with
+    neither end stile run down to the floor. A loose base still covers
+    its ladder, and a leg on either end carries the back down with it."""
+    return (layout.has_toe_kick
+            and layout.toe_kick_type == 'FLOATING'
+            and not left_stile_to_floor(layout)
+            and not right_stile_to_floor(layout))
+
+
 def rear_kick_face_y(layout, bay_index):
     """Cabinet Y of the rear kick face under ``bay_index``: the bay's
     outermost back face (carcass back plus any applied back) less the
@@ -3544,10 +3555,12 @@ def applied_back_segments(layout):
             'y':          -layout.dim_y + first_bay['depth'],
             # Floor to cabinet top, as the cabinet-wide applied back has
             # always run - it covers the toe-kick band at the bottom -
-            # unless a rear-inset kick recesses that band: then it stops
-            # at the top of the kick.
+            # unless a rear-inset kick recesses that band or the cabinet
+            # floats with nothing under it: then it stops at the top of
+            # the kick.
             'z':          (first_bay['kick_height']
-                           if has_rear_kick_inset(layout) else 0.0),
+                           if (has_rear_kick_inset(layout)
+                               or back_floats(layout)) else 0.0),
             'top_z':      layout.dim_z,
             'width':      right_x - left_x,
         })

@@ -99,6 +99,12 @@ def _toe_kick_band(cab, side):
     # kick top (solver.applied_back_segments) with no band to cover.
     if side == 'BACK' and rear_kick_inset_active(cab):
         return 0.0
+    # A floating cabinet's applied back stops at the kick top too
+    # (solver.back_floats) unless an end stile runs to the floor.
+    if (side == 'BACK' and cab.toe_kick_type == 'FLOATING'
+            and not cab.extend_left_stile_to_floor
+            and not cab.extend_right_stile_to_floor):
+        return 0.0
     return cab.toe_kick_height
 
 

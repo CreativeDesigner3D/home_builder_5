@@ -9836,10 +9836,11 @@ class FaceFrameCabinet(GeoNodeCage):
         # The panel lies on this segment's back face: y = that plane plus
         # its own thickness, since Mirror Y extrudes it back toward the
         # carcass.
-        # A rear-inset kick recesses the back of the kick zone, so the
-        # panel stops at the top of the kick instead of covering it.
+        # A rear-inset kick recesses the back of the kick zone, and a
+        # floating cabinet has nothing below it to cover, so the panel
+        # stops at the top of the kick.
         bottom_z = 0.0
-        if solver.has_rear_kick_inset(layout):
+        if solver.has_rear_kick_inset(layout) or solver.back_floats(layout):
             bottom_z = layout.bays[segment['start_bay']]['kick_height']
         # Sides run back past the box with no return closeout: the back
         # rides out with them, leaving a void behind the carcass. Only a
