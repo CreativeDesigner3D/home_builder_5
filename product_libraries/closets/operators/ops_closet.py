@@ -3310,6 +3310,10 @@ class hb_closets_OT_add_drawers(_ClosetInsertDialog, bpy.types.Operator):
         _pin_drawer_front_heights(opening, self._sizes())
 
         types_closets.recalculate_closet_starter(root)
+        if not self.fill and self._count() > 0:
+            # Not filling, the bank stops under a shelf that divides the
+            # opening: the space above becomes an opening of its own.
+            types_closets.split_above_drawer_bank(opening)
         _apply_finish(root)
         _apply_selection_shading(context, root)
         return {'FINISHED'}

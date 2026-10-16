@@ -324,6 +324,11 @@ PROP_OPEN_HEIGHT = 'hb_open_height'
 # shelf like any other, but it is placed by the bank rather than by
 # what it was given, because only the bank knows where it stops.
 PROP_DRAWER_CAP = 'hb_drawer_cap'
+# Marks the fixed shelf a drawer bank not filling its opening put over
+# itself to divide the opening, so the space above is an opening of its
+# own. Once it stands, the bank fills the opening under it and its cap
+# steps aside; resizing the bank moves this shelf with it.
+PROP_DRAWER_SPLIT = 'hb_drawer_split'
 # Marks a lock shelf that stands inside one opening rather than
 # splitting the bay: the shelf a cubby band or a mid-shelf double hang
 # puts in a column of a divided segment, cut to the column the way
@@ -8511,6 +8516,67 @@ def set_l_divider_z(shelf, z):
           if 0 <= j < len(divs) - 1 else float(sp.height) - st) - 2.0 * st
     shelf[PROP_L_DIVIDER_Z] = float(max(lo, min(z, hi)))
     recalculate_closet_starter(root)
+
+
+def split_above_drawer_bank(opening):
+    """A drawer bank that does not fill its opening stops under a shelf.
+    Make that a shelf that divides the opening, the way a fixed shelf
+    dropped there would, so the space over the drawers is an opening of
+    its own to pick and fill. The bank then reaches the top of the
+    opening under it, where its cap steps aside for the shelf. Run
+    again after the bank is resized, it moves the shelf it put in.
+
+    An opening that is one column of a divided segment is left capped:
+    a shelf dividing it would run across the columns beside it too."""
+    bay = opening.parent
+    if bay is None or not bay.get(TAG_BAY_CAGE):
+        return False
+    side = opening.get(PROP_OPENING_SIDE, 'FRONT')
+    row = int(opening.get('hb_opening_index', 0))
+    for other in bay.children:
+        if (other is not opening and other.get(TAG_OPENING_CAGE)
+                and other.get(PROP_OPENING_SIDE, 'FRONT') == side
+                and int(other.get('hb_opening_index', 0)) == row):
+            return False
+    cap = next((c for c in opening.children if c.get(PROP_DRAWER_CAP)),
+               None)
+    if cap is None:
+        return False
+    st = run_sizes(opening).shelf_thickness
+    want = float(cap.location.z)
+    # Fronts sized past the opening are squeezed to fit it, so the cap
+    # stands where the squeezed stack stops. The stack grows one for
+    # one with its fronts: the shelf goes where the sizes asked for.
+    fronts = [c for c in opening.children
+              if c.get('hb_part_role') == PART_ROLE_DRAWER_FRONT]
+    asked = sum(float(f.get(PROP_FRONT_HEIGHT, 0.0)) for f in fronts
+                if f.get(PROP_UNLOCK_FRONT_HEIGHT))
+    if fronts and all(f.get(PROP_UNLOCK_FRONT_HEIGHT) for f in fronts):
+        span = drawer_front_span(opening, len(fronts))
+        if asked > span:
+            want += asked - span
+    seg_bottom = float(opening.get('hb_seg_bottom', 0.0))
+    try:
+        height = float(GeoNodeCage(opening).get_input('Dim Z'))
+    except Exception:
+        return False
+    top = seg_bottom + height
+    above = [s for s in bay.children
+             if s.get(PROP_DRAWER_SPLIT)
+             and s.get(PROP_OPENING_SIDE, 'FRONT') == side
+             and abs(float(s.get('hb_z_offset', 0.0)) - top) < inch(0.01)]
+    if above:
+        if abs(float(above[0]['hb_z_offset']) - (seg_bottom + want)) < 1e-6:
+            return False
+        above[0]['hb_z_offset'] = float(seg_bottom + want)
+    elif want + st < height - inch(0.01):
+        shelf = add_fixed_shelf(opening, want)
+        shelf[PROP_SHELF_LOCKED] = 1
+        shelf[PROP_DRAWER_SPLIT] = 1
+    else:
+        return False
+    recalculate_closet_starter(opening)
+    return True
 
 
 def default_drawer_qty(opening):
