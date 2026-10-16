@@ -138,6 +138,9 @@ NUMBER_KEYS = {
     'PERIOD': '.', 'NUMPAD_PERIOD': '.',
     'MINUS': '-', 'NUMPAD_MINUS': '-',
     'SLASH': '/', 'NUMPAD_SLASH': '/',  # For fractions like 3/4
+    # Compound entry "155+15/16". The main-keyboard plus is Shift+EQUAL;
+    # the shift isn't checked, so a bare '=' types '+' as well.
+    'EQUAL': '+', 'PLUS': '+', 'NUMPAD_PLUS': '+',
 }
 
 
@@ -444,7 +447,11 @@ class PlacementMixin:
 
         # Sum of terms: "155+15/16"
         if '+' in s:
-            return sum(self._extract_number(t) for t in s.split('+'))
+            # Empty terms come from a trailing '+' mid-typing or a leading one.
+            terms = [t for t in s.split('+') if t.strip()]
+            if not terms:
+                return None
+            return sum(self._extract_number(t) for t in terms)
 
         # Check for fraction with whole number: "5 3/4"
         if ' ' in s and '/' in s:
