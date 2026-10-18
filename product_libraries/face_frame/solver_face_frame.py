@@ -380,6 +380,11 @@ class FaceFrameLayout:
             'finish_bay':         bp.finish_bay,
             'finish_bay_flush':   bp.finish_bay_flush,
             'finish_bay_flush_depth': bp.finish_bay_flush_depth,
+            'finish_bay_texture': getattr(bp, 'finish_bay_texture', 'NONE'),
+            'finish_bay_texture_scope': getattr(
+                bp, 'finish_bay_texture_scope', 'BACK_SIDES'),
+            'finish_bay_beadboard_pattern': getattr(
+                bp, 'finish_bay_beadboard_pattern', 'STANDARD'),
             # The carcass panels behind this bay (back / bottom) are cut
             # from finish stock rather than being lined with an applied
             # 1/4 panel - see _bay_finish_carcass.
@@ -502,6 +507,9 @@ class FaceFrameLayout:
             'finish_bay':         False,
             'finish_bay_flush':   False,
             'finish_bay_flush_depth': 0.0,
+            'finish_bay_texture': 'NONE',
+            'finish_bay_texture_scope': 'BACK_SIDES',
+            'finish_bay_beadboard_pattern': 'STANDARD',
             'finish_carcass':     False,
             'back_condition':     'DEFAULT',
             'tree':               None,

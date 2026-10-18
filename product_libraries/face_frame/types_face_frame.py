@@ -609,6 +609,21 @@ TEXTURED_PANEL_ROLES = {
 # shiplap course pitch (matches the wood-hood default board width);
 # v-groove plank spacing (the usual 4" sheet-goods layout).
 TEXTURED_BEADBOARD_SPACING = 1.6 * 0.0254
+# A wide-pattern beadboard interior: twice the standard spacing.
+TEXTURED_BEADBOARD_WIDE_SPACING = 3.2 * 0.0254
+
+
+def _interior_beadboard_spacing(pattern):
+    return (TEXTURED_BEADBOARD_WIDE_SPACING if pattern == 'WIDE'
+            else TEXTURED_BEADBOARD_SPACING)
+
+
+def _liner_texture(texture, scope, face):
+    """The texture one finished-interior liner carries: all of them, or
+    on a Back Only interior just the back."""
+    if scope == 'BACK' and face != 'BACK':
+        return 'NONE'
+    return texture
 TEXTURED_SHIPLAP_PITCH = 6.0 * 0.0254
 TEXTURED_V_GROOVE_SPACING = 4.0 * 0.0254
 
@@ -10656,9 +10671,14 @@ class FaceFrameCabinet(GeoNodeCage):
                         # stock, and flat.
                         want_back=texture not in ('NONE', ''),
                         flush_back=texture not in ('NONE', ''))
+                    scope = bay.get('finish_bay_texture_scope', 'BACK_SIDES')
+                    spacing = _interior_beadboard_spacing(
+                        bay.get('finish_bay_beadboard_pattern', 'STANDARD'))
                     for face, spec in specs:
-                        self._emit_bay_finish_panel(bi, -1, face, spec, t,
-                                                    existing, texture)
+                        self._emit_bay_finish_panel(
+                            bi, -1, face, spec, t, existing,
+                            _liner_texture(texture, scope, face),
+                            beadboard_spacing=spacing)
                         wanted.add((bi, -1, face))
                     continue
 
@@ -10705,9 +10725,15 @@ class FaceFrameCabinet(GeoNodeCage):
                         op.finish_opening_flush_depth, op_to_floor, t,
                         want_back=(not bay.get('finish_carcass')) or textured,
                         want_top=False, flush_back=textured)
+                    spacing = _interior_beadboard_spacing(
+                        op.finish_opening_beadboard_pattern)
                     for face, spec in specs:
-                        self._emit_bay_finish_panel(bi, oi, face, spec, t,
-                                                    existing, texture)
+                        self._emit_bay_finish_panel(
+                            bi, oi, face, spec, t, existing,
+                            _liner_texture(texture,
+                                           op.finish_opening_texture_scope,
+                                           face),
+                            beadboard_spacing=spacing)
                         wanted.add((bi, oi, face))
                     # The floor gets no liner - the part the opening sits
                     # on is finished instead.
@@ -10967,7 +10993,8 @@ class FaceFrameCabinet(GeoNodeCage):
                 spec['notch'] = (kick, notch_depth)
 
     def _emit_bay_finish_panel(self, bay_index, opening_index, face, spec,
-                               thickness, existing, texture='NONE'):
+                               thickness, existing, texture='NONE',
+                               beadboard_spacing=TEXTURED_BEADBOARD_SPACING):
         """Create or reuse one (bay_index, opening_index, face) finish liner
         and write its transform + cutpart dims from `spec`. opening_index
         is -1 for a whole-bay liner. Reuse-by-key keeps object identity
@@ -11000,7 +11027,8 @@ class FaceFrameCabinet(GeoNodeCage):
         part.set_input('Width',     spec['width'])
         part.set_input('Thickness', thickness)
         self._drive_finish_liner_notch(strip, spec, thickness)
-        self._texture_finish_panel(strip, spec, thickness, texture)
+        self._texture_finish_panel(strip, spec, thickness, texture,
+                                   beadboard_spacing)
 
     @staticmethod
     def _drive_finish_liner_notch(strip, spec, thickness):
@@ -11040,7 +11068,8 @@ class FaceFrameCabinet(GeoNodeCage):
         mod.show_viewport = notch is not None
         mod.show_render = notch is not None
 
-    def _texture_finish_panel(self, strip, spec, thickness, texture):
+    def _texture_finish_panel(self, strip, spec, thickness, texture,
+                              beadboard_spacing=TEXTURED_BEADBOARD_SPACING):
         """Carve a finish liner, or hand it back to its cutpart.
 
         Same static-mesh treatment the textured ends use, with one turn
@@ -11082,7 +11111,8 @@ class FaceFrameCabinet(GeoNodeCage):
                                   shiplap_vertical=_shiplap_vertical(
                                       self.obj.face_frame_cabinet),
                                   v_groove_spacing=_v_groove_spacing(
-                                      self.obj.face_frame_cabinet))
+                                      self.obj.face_frame_cabinet),
+                                  beadboard_spacing=beadboard_spacing)
         if not at_origin:
             dz = -thickness if spec['mirror_z'] else thickness
             strip.data.transform(Matrix.Translation((0.0, 0.0, dz)))
@@ -11097,7 +11127,8 @@ class FaceFrameCabinet(GeoNodeCage):
                              condition, mirror_z,
                              shiplap_pitch=TEXTURED_SHIPLAP_PITCH,
                              shiplap_vertical=False,
-                             v_groove_spacing=TEXTURED_V_GROOVE_SPACING):
+                             v_groove_spacing=TEXTURED_V_GROOVE_SPACING,
+                             beadboard_spacing=TEXTURED_BEADBOARD_SPACING):
         """Write the carved static mesh for a textured panel into
         ``part_obj``'s mesh data and hide its GN cutpart display.
 
@@ -11136,7 +11167,7 @@ class FaceFrameCabinet(GeoNodeCage):
             span_u, run = width, length      # profile across Y, extrude X
             spacing = (v_groove_spacing
                        if condition == 'V_GROOVE'
-                       else TEXTURED_BEADBOARD_SPACING)
+                       else beadboard_spacing)
             margin = max(2.0 * hw, 0.004)
             k = 1 + int(span_u / spacing) if spacing > 0 else 0
             centers = [span_u / 2.0 + (i + 0.5) * spacing

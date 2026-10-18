@@ -1189,6 +1189,10 @@ def draw_bay_finish_options(layout, bay_obj):
     if bp.finish_bay:
         col.prop(bp, 'finish_bay_material', text="Finish Color")
         col.prop(bp, 'finish_bay_texture', text="Texture")
+        if bp.finish_bay_texture not in ('NONE', ''):
+            col.prop(bp, 'finish_bay_texture_scope', text="Texture On")
+        if bp.finish_bay_texture == 'BEADBOARD':
+            col.prop(bp, 'finish_bay_beadboard_pattern', text="Beadboard")
         col.prop(bp, 'finish_bay_flush', text="Finish Flush")
         if bp.finish_bay_flush:
             col.prop(bp, 'finish_bay_flush_depth', text="Flush Depth")
@@ -1335,6 +1339,10 @@ def draw_opening_finish_options(layout, opening_obj):
     if op.finish_opening:
         col.prop(op, 'finish_opening_material', text="Finish Color")
         col.prop(op, 'finish_opening_texture', text="Texture")
+        if op.finish_opening_texture not in ('NONE', ''):
+            col.prop(op, 'finish_opening_texture_scope', text="Texture On")
+        if op.finish_opening_texture == 'BEADBOARD':
+            col.prop(op, 'finish_opening_beadboard_pattern', text="Beadboard")
         col.prop(op, 'finish_opening_flush', text="Finish Flush")
         if op.finish_opening_flush:
             col.prop(op, 'finish_opening_flush_depth', text="Flush Depth")

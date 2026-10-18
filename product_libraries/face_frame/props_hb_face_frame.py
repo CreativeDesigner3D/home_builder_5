@@ -64,6 +64,21 @@ INTERIOR_TEXTURE_ITEMS = [
     ('V_GROOVE', "V-Groove", "Liners carved with vertical v-groove cuts"),
 ]
 
+# Which of a textured finished interior's liners carry the texture.
+# BACK_SIDES is what a texture did before the choice existed, so it is
+# the default and a file saved before it reads the same.
+INTERIOR_TEXTURE_SCOPE_ITEMS = [
+    ('BACK_SIDES', "Back & Sides",
+     "The texture on the back and the side liners"),
+    ('BACK', "Back Only",
+     "The texture on the back only; the sides stay plain"),
+]
+# Bead spacing for a beadboard finished interior.
+INTERIOR_BEADBOARD_PATTERN_ITEMS = [
+    ('STANDARD', "Standard Pattern", "Beads about 1-5/8\" apart"),
+    ('WIDE', "Wide Pattern", "Beads about 3-1/4\" apart"),
+]
+
 RETURN_MEMBER_TYPE_ITEMS = [
     ('FINISHED', "Finished", "Flat 3/4 finished part"),
     ('PANELED', "Paneled", "Applied panel with rails / stiles and an inset panel"),
@@ -10087,6 +10102,18 @@ class Face_Frame_Bay_Props(PropertyGroup):
         items=INTERIOR_TEXTURE_ITEMS, default='NONE',
         update=_update_cabinet_dim,
     )  # type: ignore
+    finish_bay_texture_scope: EnumProperty(
+        name="Texture On",
+        description="Which of the finished interior's panels take the texture",
+        items=INTERIOR_TEXTURE_SCOPE_ITEMS, default='BACK_SIDES',
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    finish_bay_beadboard_pattern: EnumProperty(
+        name="Beadboard",
+        description="Bead spacing of a beadboard finished interior",
+        items=INTERIOR_BEADBOARD_PATTERN_ITEMS, default='STANDARD',
+        update=_update_cabinet_dim,
+    )  # type: ignore
     # Per-bay bottom-rail profile override. CABINET follows the cabinet-
     # level pick; NONE forces a plain rail on this bay; any profile id
     # cuts just this bay's rail segment -- so split rails can carry e.g.
@@ -11324,6 +11351,18 @@ class Face_Frame_Opening_Props(PropertyGroup):
         name="Interior Texture",
         description="Texture carved into the finished interior's panels",
         items=INTERIOR_TEXTURE_ITEMS, default='NONE',
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    finish_opening_texture_scope: EnumProperty(
+        name="Texture On",
+        description="Which of the finished interior's panels take the texture",
+        items=INTERIOR_TEXTURE_SCOPE_ITEMS, default='BACK_SIDES',
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    finish_opening_beadboard_pattern: EnumProperty(
+        name="Beadboard",
+        description="Bead spacing of a beadboard finished interior",
+        items=INTERIOR_BEADBOARD_PATTERN_ITEMS, default='STANDARD',
         update=_update_cabinet_dim,
     )  # type: ignore
 
