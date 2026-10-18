@@ -17607,6 +17607,53 @@ def _shelf_corner_kind(a, side_a, b, side_b):
     return None
 
 
+def _shelf_corner_fit(a, side_a, b, side_b):
+    """How shelf a's side_a end and shelf b's side_b end make a square
+    corner, as (kind, grow_a, grow_b), else None. kind is 'INSIDE' /
+    'OUTSIDE'; grow_* says the shelf has to reach one shelf depth
+    further on that end first.
+
+    Already-reaching pairs are _shelf_corner_kind's. Placement leaves the
+    other two: a shelf butted against the front of the one already in an
+    inside corner (it grows into the corner), or two shelves each stopped
+    at an outside wall corner, backs meeting there (both grow past it to
+    the outer corner)."""
+    kind = _shelf_corner_kind(a, side_a, b, side_b)
+    if kind is not None:
+        return kind, False, False
+    if (abs(a.face_frame_cabinet.depth - b.face_frame_cabinet.depth)
+            > SHELF_CORNER_TOLERANCE):
+        return None
+    pa, xa, za = _shelf_end_points(a)
+    pb, xb, zb = _shelf_end_points(b)
+    if abs(za - zb) > SHELF_CORNER_TOLERANCE or abs(xa.dot(xb)) > 0.05:
+        return None
+    back_a, front_a = pa[side_a]
+    back_b, front_b = pb[side_b]
+    tol = SHELF_CORNER_TOLERANCE
+    # b butted against a's front at a's corner end (or the other way).
+    if (back_b - front_a).length <= tol and _shelf_covers(a, front_b):
+        return 'INSIDE', False, True
+    if (back_a - front_b).length <= tol and _shelf_covers(b, front_a):
+        return 'INSIDE', True, False
+    # Backs meeting at an outside wall corner, the shelves running away
+    # from each other.
+    if ((back_a - back_b).length <= tol
+            and not _shelf_covers(b, front_a)
+            and not _shelf_covers(a, front_b)):
+        return 'OUTSIDE', True, True
+    return None
+
+
+def _grow_shelf_end(root, side, amount):
+    """Lengthen a shelf by amount at one end, the other end staying put."""
+    if side == 'LEFT':
+        axis = root.matrix_basis.to_3x3().col[0]
+        if axis.length > 0.0:
+            root.location -= axis.normalized() * amount
+    root.face_frame_cabinet.width += amount
+
+
 def _shelf_covers(root, point):
     """Whether a world XY point lies on root's plan footprint."""
     local = hb_utils.world_matrix(root).inverted() @ Vector(
@@ -17658,13 +17705,18 @@ def detect_floating_shelf_corners(root):
             for oside, okey in SHELF_CORNER_LINK.items():
                 if other.get(okey):
                     continue
-                kind = _shelf_corner_kind(root, side, other, oside)
-                if kind is not None:
-                    hit = (oside, okey, kind)
+                fit = _shelf_corner_fit(root, side, other, oside)
+                if fit is not None:
+                    hit = (oside, okey) + fit
                     break
             if hit is None:
                 continue
-            oside, okey, kind = hit
+            oside, okey, kind, grow_root, grow_other = hit
+            depth = root.face_frame_cabinet.depth
+            if grow_root:
+                _grow_shelf_end(root, side, depth)
+            if grow_other:
+                _grow_shelf_end(other, oside, depth)
             # Links first, then the corners: the partner's rebuild pushes
             # its settings onto the newcomer, which then has nothing to
             # push back.

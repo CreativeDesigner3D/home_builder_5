@@ -1652,6 +1652,10 @@ def _detect_blind_corner_neighbor(cab_obj, allow_configured=False):
           boundary on this wall (within 1"). This is the cabinet
           placed against the corner cabinet's body.
     """
+    # Floating shelves meet at a corner with a miter of their own
+    # (types_face_frame.detect_floating_shelf_corners), not a blind void.
+    if cab_obj.get('IS_FLOATING_SHELF'):
+        return None
     wall = cab_obj.parent
     if wall is None or 'IS_WALL_BP' not in wall:
         return None
@@ -1680,6 +1684,8 @@ def _detect_blind_corner_neighbor(cab_obj, allow_configured=False):
             continue
         neighbor, intrusion = result
         if 'IS_FACE_FRAME_CABINET_CAGE' not in neighbor:
+            continue
+        if neighbor.get('IS_FLOATING_SHELF'):
             continue
         # A true L-shaped corner cabinet (corner_type != 'NONE') already
         # resolves the corner geometrically - a cabinet placed next to it
