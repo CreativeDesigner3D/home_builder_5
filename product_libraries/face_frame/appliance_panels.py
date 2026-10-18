@@ -172,6 +172,16 @@ SECTION_BACKER_ITEMS = [
     ('B', "Type B", "1/4\" backer"),
     ('C', "Type C", ".35\" backer routed for the install flange"),
 ]
+# Which edge a door face hinges on. AUTO follows the appliance: a
+# dishwasher door tilts down, a fridge door swings (see pull_side).
+SECTION_HINGE_ITEMS = [
+    ('AUTO', "Auto", "Follow the appliance: a dishwasher door tilts down, "
+     "a lone fridge door hinges on the right, a pair on the outside", 0),
+    ('LEFT', "Left", "Hinged on the left; the pull sits on the right edge", 1),
+    ('RIGHT', "Right", "Hinged on the right; the pull sits on the left edge", 2),
+    ('BOTTOM', "Tilt Down", "Hinged along the bottom; a horizontal pull "
+     "across the top", 3),
+]
 INSTALL_TYPE_ITEMS = [
     ('OVERLAY', "Overlay", "Panels overlay the appliance frame"),
     ('FLUSH_INSET', "Flush Inset", "Panels flush with the surrounding cabinetry"),
@@ -233,6 +243,16 @@ class Appliance_Panel_Section(PropertyGroup):
     backer_height: FloatProperty(name="Backer H", unit='LENGTH', default=_I(24), min=_I(1),
                                  update=_on_change)  # type: ignore
     backer_height_hold: BoolProperty(name="Hold", default=False, update=_on_change)  # type: ignore
+    hinge: EnumProperty(name="Hinge", items=SECTION_HINGE_ITEMS, default='AUTO',
+                        description="Which edge this door hinges on, which "
+                                    "sets where its pull goes",
+                        update=_on_change)  # type: ignore
+    # A pull for this face alone, same meaning as a cabinet opening's
+    # override: empty follows the cabinetry's pulls, 'NONE' is no pull.
+    pull_override: StringProperty(name="Pull", default="",
+                                  update=_on_change)  # type: ignore
+    pull_override_category: StringProperty(name="Pull Category", default="",
+                                           update=_on_change)  # type: ignore
     spec_note: StringProperty(name="Note", default="")  # type: ignore
 
 
@@ -791,6 +811,7 @@ class _PreviewSection:
         self.backer = 'NONE'            # a preview needs faces, not backers
         self.backer_width = self.backer_height = _I(24)
         self.backer_width_hold = self.backer_height_hold = False
+        self.hinge = 'AUTO'
 
 
 class _PreviewColumn:
@@ -825,6 +846,9 @@ class _PreviewProps:
             setattr(self, name, getattr(like, name, default) if like is not None
                     else default)
         self.rail_top = self.rail_bottom = self.rail_between = False
+        owner = getattr(like, 'id_data', None)
+        self.appliance_type = (owner.get('APPLIANCE_TYPE')
+                               if owner is not None else None)
 
     def has_rails(self):
         return False
@@ -1200,19 +1224,40 @@ def _sync_model(appliance_obj):
         print('Home Builder: appliance model rebuild failed: %s' % ex)
 
 
-def pull_side(props, section):
-    """Which edge a door's pull sits on -- the opening edge, away from
-    its hinge. A pair of doors hinges on the outside so the pulls meet
-    in the middle; a lone door hinges on the right. The drawn elevation
-    and the built pull both ask this, so the picture and the model
-    cannot disagree about which way a door opens."""
-    if getattr(section, 'kind', '') != 'DOOR':
-        return 'R'
+def _appliance_type(props):
+    owner = getattr(props, 'id_data', None)
+    if owner is not None:
+        return owner.get('APPLIANCE_TYPE')
+    return getattr(props, 'appliance_type', None)
+
+
+def door_hinge(props, section):
+    """The edge a door face hinges on: 'LEFT', 'RIGHT' or 'BOTTOM'.
+    A face set to Auto follows the appliance: a dishwasher door tilts
+    down; a pair of doors hinges on the outside so the pulls meet in
+    the middle; a lone door hinges on the right."""
+    hinge = getattr(section, 'hinge', 'AUTO')
+    if hinge != 'AUTO':
+        return hinge
+    if _appliance_type(props) == 'DISHWASHER':
+        return 'BOTTOM'
     column = getattr(section, 'column', -1)
     ncol = len(props.columns)
     if column < 0 or ncol <= 1:
-        return 'L'
-    return 'L' if column == ncol - 1 else 'R'
+        return 'RIGHT'
+    return 'RIGHT' if column == ncol - 1 else 'LEFT'
+
+
+def pull_side(props, section):
+    """Which edge a door's pull sits on -- the opening edge, away from
+    its hinge: 'L' / 'R', or 'T' across the top of a tilt-down door.
+    The drawn elevation and the built pull both ask this, so the
+    picture and the model cannot disagree about which way a door
+    opens."""
+    if getattr(section, 'kind', '') != 'DOOR':
+        return 'R'
+    return {'LEFT': 'R', 'RIGHT': 'L', 'BOTTOM': 'T'}.get(
+        door_hinge(props, section), 'L')
 
 
 # An appliance's panels are cabinet fronts, so they wear the cabinetry's
@@ -1259,7 +1304,15 @@ def _build_pulls(appliance_obj, props, fronts, order, faces):
         if section.kind == 'PANEL':
             continue
         kind = 'drawer' if section.kind == 'DRAWER' else 'door'
-        pull_obj = resolve(scene_props, kind, cabinet_type)
+        override = getattr(section, 'pull_override', '')
+        if override == 'NONE':
+            continue
+        pull_obj = None
+        if override:
+            pull_obj = pull_lib.resolve_pull_override(
+                section.pull_override_category, override, scene_props)
+        if pull_obj is None:
+            pull_obj = resolve(scene_props, kind, cabinet_type)
         if pull_obj is None:
             continue
         box = faces.get(i)
@@ -1267,7 +1320,13 @@ def _build_pulls(appliance_obj, props, fronts, order, faces):
             continue
         width, length = box[1] - box[0], box[3] - box[2]
         half = pull_lib.pull_length(pull_obj) / 2.0
-        if kind == 'drawer':
+        side = pull_side(props, section) if kind == 'door' else None
+        if side == 'T':
+            # A tilt-down door: centred across the top, a horizontal
+            # bar, the way a cabinet's flip-down door takes its pull.
+            x = length - scene_props.pull_vertical_location_base
+            y = -width / 2.0
+        elif kind == 'drawer':
             x = (length / 2.0 if scene_props.center_pulls_on_drawer_front
                  else length - scene_props.pull_vertical_location_base - half)
             y = -width / 2.0
@@ -1284,7 +1343,7 @@ def _build_pulls(appliance_obj, props, fronts, order, faces):
                 x = length - scene_props.pull_vertical_location_base - half
             # 'L' is the pull on the face's left edge -- nearest the
             # part's origin -- and 'R' the far one.
-            near_origin = pull_side(props, section) == 'L'
+            near_origin = side == 'L'
             y = -h_offset if near_origin else -(width - h_offset)
         instance = bpy.data.objects.new("Pull - %s" % fronts[k].name,
                                         pull_obj.data)
@@ -1292,7 +1351,8 @@ def _build_pulls(appliance_obj, props, fronts, order, faces):
         instance.parent = fronts[k]
         instance.location = (x, y, section.face_thickness)
         instance.rotation_euler = (math.radians(-90.0), 0.0,
-                                   math.radians(90.0) if kind == 'drawer'
+                                   math.radians(90.0)
+                                   if kind == 'drawer' or side == 'T'
                                    else 0.0)
         instance['hb_part_role'] = 'PULL'
         instance['IS_CABINET_PULL'] = True
@@ -1311,6 +1371,7 @@ def _frameless_pull_settings():
         pull_vertical_location_tall=fl.pull_vertical_location_tall,
         pull_vertical_location_upper=fl.pull_vertical_location_upper,
         center_pulls_on_drawer_front=fl.center_pulls_on_drawer_front,
+        pull_finish=getattr(fl, 'pull_finish', ''),
         door_pull=fl.current_door_pull_object,
         drawer_pull=fl.current_drawer_front_pull_object)
 
@@ -1454,6 +1515,40 @@ def panel_appliance_for(obj):
             return None
         cur = cur.parent
     return None
+
+
+def front_sections(objs):
+    """{(appliance name, section index): appliance} for the panel faces
+    among ``objs`` -- the faces a per-front pull choice lands on, the
+    way a cabinet front's lands on its opening."""
+    out = {}
+    for obj in objs:
+        if obj is None or not obj.get(TAG_FRONT):
+            continue
+        appliance_obj = panel_appliance_for(obj)
+        index = obj.get('AP_SECTION_INDEX', -1)
+        if appliance_obj is None:
+            continue
+        if 0 <= index < len(appliance_obj.appliance_panels.sections):
+            out[(appliance_obj.name, index)] = appliance_obj
+    return out
+
+
+def set_front_pull(objs, override, category):
+    """Give the panel faces among ``objs`` their own pull ('' follows
+    the cabinetry, 'NONE' takes it off). Returns how many faces took
+    it; each run is rebuilt once."""
+    targets = front_sections(objs)
+    runs = {}
+    with suspended():
+        for (_name, index), appliance_obj in targets.items():
+            sec = appliance_obj.appliance_panels.sections[index]
+            sec.pull_override_category = '' if override == 'NONE' else category
+            sec.pull_override = override
+            runs[appliance_obj.name] = appliance_obj
+    for appliance_obj in runs.values():
+        rebuild(appliance_obj)
+    return len(targets)
 
 
 def rebuild(appliance_obj):

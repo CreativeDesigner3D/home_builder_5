@@ -267,6 +267,8 @@ def _blocks(context, bp):
     out.append(('field', (('sec', index, 'label'), "Name", 'TEXT')))
     out.append(('field', (('sec', index, 'height'), "Height", 'SIZE')))
     out.append(('field', (('sec', index, 'backer'), "Backer", 'MENU')))
+    if sec.kind == 'DOOR':
+        out.append(('field', (('sec', index, 'hinge'), "Hinge", 'MENU')))
     out.append(('face_cmds', index))
 
     if sec.column >= 0 and len(props.columns) > 1:
@@ -886,12 +888,16 @@ def _paint_face(shader, font_id, entry, mx, my, s, bp, selected_i):
 
 def _paint_face_mark(shader, rect, kind, s, side='R'):
     """The mark that says door, drawer or fixed panel at a glance: a
-    pull on the door's opening edge, a pull across the middle, or a
-    cross."""
+    pull on the door's opening edge (across the top of a tilt-down
+    door), a pull across the middle, or a cross."""
     x, y, w, h = rect
     if w < 14 * s or h < 14 * s:
         return
-    if kind == 'DOOR':
+    if kind == 'DOOR' and side == 'T':
+        half = min(w * 0.22, 18 * s)
+        cx, cy = x + w / 2.0, y + h - 7 * s
+        draw_lines(shader, [(cx - half, cy), (cx + half, cy)], FACE_MARK)
+    elif kind == 'DOOR':
         px = (x + 7 * s) if side == 'L' else (x + w - 7 * s)
         half = min(h * 0.18, 14 * s)
         cy = y + h / 2.0
