@@ -1175,6 +1175,23 @@ def _draw_locked_rail_row(layout, bp, attr, unlock_attr, text):
     _locked_field(layout, bp, attr, unlock_attr, text)
 
 
+def _draw_interior_texture_settings(col, part_obj, texture):
+    """Shiplap width / direction or v-groove spacing for a textured
+    finished interior. They are the cabinet's own settings, shared with
+    any shiplap or v-groove finished end on it."""
+    if texture not in ('SHIPLAP', 'V_GROOVE'):
+        return
+    root = types_face_frame.find_cabinet_root(part_obj)
+    if root is None:
+        return
+    cab = root.face_frame_cabinet
+    if texture == 'V_GROOVE':
+        col.prop(cab, 'v_groove_spacing', text="V-Groove Spacing (Cabinet)")
+        return
+    col.prop(cab, 'shiplap_board_width', text="Shiplap Width (Cabinet)")
+    col.prop(cab, 'shiplap_direction', text="Shiplap Direction (Cabinet)")
+
+
 def draw_bay_finish_options(layout, bay_obj):
     """The finish controls for one bay: whether the exterior finish reads
     inside it, in which material, and whether it lines the cavity or sits
@@ -1193,6 +1210,7 @@ def draw_bay_finish_options(layout, bay_obj):
             col.prop(bp, 'finish_bay_texture_scope', text="Texture On")
         if bp.finish_bay_texture == 'BEADBOARD':
             col.prop(bp, 'finish_bay_beadboard_pattern', text="Beadboard")
+        _draw_interior_texture_settings(col, bay_obj, bp.finish_bay_texture)
         col.prop(bp, 'finish_bay_flush', text="Finish Flush")
         if bp.finish_bay_flush:
             col.prop(bp, 'finish_bay_flush_depth', text="Flush Depth")
@@ -1343,6 +1361,8 @@ def draw_opening_finish_options(layout, opening_obj):
             col.prop(op, 'finish_opening_texture_scope', text="Texture On")
         if op.finish_opening_texture == 'BEADBOARD':
             col.prop(op, 'finish_opening_beadboard_pattern', text="Beadboard")
+        _draw_interior_texture_settings(col, opening_obj,
+                                        op.finish_opening_texture)
         col.prop(op, 'finish_opening_flush', text="Finish Flush")
         if op.finish_opening_flush:
             col.prop(op, 'finish_opening_flush_depth', text="Flush Depth")
