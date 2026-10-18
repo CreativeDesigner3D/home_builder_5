@@ -5457,6 +5457,48 @@ def _retracting_door_leaves(layout, rect, cab_props, opening_props, role,
     return leaves
 
 
+# A top-mount retracting door slides back until its back edge is this far
+# short of the cabinet's depth -- the spec's projection rule: door
+# projection = (door height - cabinet depth) + 5-1/2".
+RETRACT_TOP_BACK_ALLOWANCE = inch(5.5)
+
+
+def _top_retracting_door_leaf(layout, rect, cab_props, opening_props, role,
+                              base_name):
+    """The leaf for a top-mount retracting door. The first half of
+    swing_percent flips it up square on its top hinge; the second half
+    drops it under the member above the opening and slides it back into
+    the cabinet, into the clearance the mechanism keeps at the top of
+    the opening. A door taller than the cabinet is deep stays partly
+    out, by the spec's projection rule."""
+    swing = opening_props.swing_percent
+    swing_part = min(2.0 * swing, 1.0)
+    slide_part = max(2.0 * swing - 1.0, 0.0)
+    proxy = _SwingProxy(opening_props, swing_part)
+    width, height = _door_panel_size(rect, cab_props, opening_props)
+    leaf = _single_door_leaf_pivot(layout, rect, cab_props, proxy)
+    leaf['role'] = role
+    leaf['name'] = base_name
+    leaf['part_dims'] = (height, width, cab_props.door_thickness)
+    leaf['hinge'] = 'TOP'
+    if slide_part <= 0.0:
+        return [leaf]
+    px, py, pz = leaf['pivot_position']
+    # Flipped square, the door hangs forward of its pivot by its height
+    # with its top at the pivot. It drops until that top clears the
+    # opening's top edge, then slides back: far enough for its front
+    # edge to clear the frame, never past the projection limit.
+    clear_top = rect['cage_dim_z'] - rect['reveal_top']
+    drop = max(0.0, pz - clear_top) + RETRACT_SLIDE_SIDE_CLEAR
+    back_y = _ff_back_y_bay_local(layout)
+    slide = height + (back_y - py) + RETRACT_SLIDE_SIDE_CLEAR
+    limit = rect['cage_dim_y'] - RETRACT_TOP_BACK_ALLOWANCE - py
+    slide = max(0.0, min(slide, limit))
+    leaf['pivot_position'] = (px, py + slide * slide_part,
+                              pz - drop * slide_part)
+    return [leaf]
+
+
 class _ZeroSwingProxy:
     """Wraps an opening_props instance and reports swing_percent as 0.
     Used for FALSE_FRONT so the leaf builder can be reused without
@@ -5613,6 +5655,11 @@ def front_leaves(layout, rect, cab_props, opening_props):
             and any(retracting_pocket_sides(opening_props))):
         return _retracting_door_leaves(layout, rect, cab_props,
                                        opening_props, role, base_name)
+    if (opening_props.hinge_side == 'TOP'
+            and getattr(opening_props, 'door_mechanism', 'NONE')
+            == 'RETRACTING_TOP'):
+        return _top_retracting_door_leaf(layout, rect, cab_props,
+                                         opening_props, role, base_name)
     if cab_props.id_data.get('HB_TRIVIEW_DOORS'):
         # Tri-view medicine cabinet: three mirror doors in one opening.
         return _triple_door_leaves(
