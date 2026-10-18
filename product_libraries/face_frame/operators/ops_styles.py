@@ -2183,7 +2183,11 @@ class hb_face_frame_OT_paint_part_material(bpy.types.Operator):
                     host = self._style_for(ff, obj)
                     if host is not None:
                         host._apply_materials_to_cabinet(root)
-            # Non-cabinet objects have no automatic material; leave as-is.
+            # Non-cabinet objects have no automatic material; leave as-is,
+            # but drop the paint stamp so a regenerated object stops
+            # re-applying it.
+            elif 'hb_paint_material' in obj:
+                del obj['hb_paint_material']
         else:
             if self.brush == 'FINISH':
                 mat, edge = style.get_finish_material()
@@ -2246,6 +2250,10 @@ class hb_face_frame_OT_paint_part_material(bpy.types.Operator):
                     style._set_part_surfaces(obj, mat, edge)
             else:
                 self._assign_object_material(obj, mat)
+                # Record the paint so a tool that regenerates this object
+                # (e.g. a molding sweep refit) can re-apply it.
+                if mat is not None:
+                    obj['hb_paint_material'] = mat.name
 
         if context.area is not None:
             context.area.tag_redraw()
