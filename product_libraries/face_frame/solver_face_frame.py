@@ -2941,16 +2941,20 @@ def mid_stile_dims(layout, gap_index):
     return (length, ms['width'], layout.fft)
 
 
+# Stile width kept beside a lone bay at a full-overlay height step.
+STEP_NOTCH_KEEP = inch(1.25)
+
+
 def mid_stile_notches(layout, gap_index):
     """Step notches for a mid stile whose adjacent bays differ in
     vertical extent (the full-overlay height-change case).
 
     The stile spans the UNION of both bays; where only ONE bay runs
-    beside it, the stile keeps just that bay's HALF of its width --
-    the absent bay's half is notched away from the stile's end up (or
-    down) to the absent bay's edge, so e.g. a 2-1/4" shared stile
-    reads 1-1/8" beside the single full-height door below a shortened
-    middle bay.
+    beside it, the absent bay's side is notched away from the stile's
+    end up (or down) to the absent bay's edge, leaving STEP_NOTCH_KEEP
+    of the stile -- e.g. a 2-1/4" shared stile reads 1-1/4" beside the
+    single full-height door below a shortened middle bay. A stile too
+    narrow for that keeps half its width.
 
     Returns a list of notch dicts: end ('BOTTOM' / 'TOP'), side
     ('LEFT' / 'RIGHT' -- which adjacent bay's half is removed), span
@@ -2983,7 +2987,10 @@ def mid_stile_notches(layout, gap_index):
         top_z -= layout.bays[gap_index]['top_rail_width']
     top_z += ms['extend_up_amount']
 
-    half = ms['width'] / 2.0
+    keep = ms['width'] / 2.0
+    if ms['width'] > STEP_NOTCH_KEEP:
+        keep = max(keep, STEP_NOTCH_KEEP)
+    removed = ms['width'] - keep
     eps = inch(1.0 / 32.0)
     out = []
     hi_bot = max(a_bot, b_bot)      # the shallower-reaching bay's bottom
@@ -2992,7 +2999,7 @@ def mid_stile_notches(layout, gap_index):
             'end': 'BOTTOM',
             'side': 'LEFT' if a_bot > b_bot else 'RIGHT',
             'span': hi_bot - bottom_z,
-            'width': half,
+            'width': removed,
         })
     lo_top = min(a_top, b_top)      # the shorter bay's top
     if top_z - lo_top > eps:
@@ -3000,7 +3007,7 @@ def mid_stile_notches(layout, gap_index):
             'end': 'TOP',
             'side': 'LEFT' if a_top < b_top else 'RIGHT',
             'span': top_z - lo_top,
-            'width': half,
+            'width': removed,
         })
     return out
 
@@ -3176,15 +3183,20 @@ def _mid_div_offset(layout, gap_index):
     """
     ms = layout.mid_stiles[gap_index]
     # Bay-height STEP (full overlay): the whole division setup shifts
-    # so its void-side face lands on the stile's notch plane (the
-    # stile centerline) -- and every face-keyed consumer (carcass
-    # bottom / back segments, kick, skins) follows through the shared
-    # _mid_div_* helpers instead of poking through the moved panel.
+    # so its void-side face lands on the stile's notch plane -- and
+    # every face-keyed consumer (carcass bottom / back segments, kick,
+    # skins) follows through the shared _mid_div_* helpers instead of
+    # poking through the moved panel.
     step = mid_stile_notches(layout, gap_index)
     if step and _epsilon_eq(layout.bays[gap_index]['depth'],
                             layout.bays[gap_index + 1]['depth']):
         dt = layout.division_thickness
-        return (-dt / 2.0 if step[0]['side'] == 'RIGHT' else dt / 2.0)
+        # Notch plane's distance from the stile centerline, toward the
+        # notched (absent bay's) side.
+        plane = ms['width'] / 2.0 - step[0]['width']
+        if step[0]['side'] == 'RIGHT':
+            return plane - dt / 2.0
+        return dt / 2.0 - plane
     loc = ms.get('division_location', 'CENTERED')
     if loc == 'CENTERED':
         return 0.0
