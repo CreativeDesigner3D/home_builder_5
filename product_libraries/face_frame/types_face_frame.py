@@ -17484,6 +17484,199 @@ _FLOATING_SHELF_SIZE_PROPS = ('width', 'depth', 'height')
 _shelf_group_syncing = False
 
 
+# ---- Corner shelf pairs ----------------------------------------------------
+# Two shelves meeting at an inside or outside corner build as one L: each
+# end at the corner carries corner_left / corner_right and names the shelf
+# it meets ("<name>:<LEFT|RIGHT>"), and the pair keeps its depth,
+# thickness, height on the wall, options and finish in step.
+SHELF_CORNER_LINK = {'LEFT': 'hb_shelf_corner_left',
+                     'RIGHT': 'hb_shelf_corner_right'}
+FLOATING_SHELF_CORNER_SYNC_PROPS = tuple(
+    p for p in FLOATING_SHELF_SYNC_PROPS
+    if p not in ('finish_left', 'finish_right'))
+_FLOATING_SHELF_CORNER_SIZE_PROPS = ('depth', 'height')
+# How close two shelf corners have to be to read as meeting.
+SHELF_CORNER_TOLERANCE = inch(0.25)
+_shelf_corner_syncing = False
+
+
+def _shelf_corner_prop(side):
+    return 'corner_left' if side == 'LEFT' else 'corner_right'
+
+
+def floating_shelf_corner_partners(root):
+    """[(side, partner shelf, partner side)] for root's linked corners."""
+    out = []
+    for side, key in SHELF_CORNER_LINK.items():
+        link = root.get(key) if root is not None else None
+        if not link or ':' not in link:
+            continue
+        name, pside = link.rsplit(':', 1)
+        partner = bpy.data.objects.get(name)
+        if (partner is not None and partner.get(FLOATING_SHELF_TAG)
+                and partner.users_collection and pside in SHELF_CORNER_LINK):
+            out.append((side, partner, pside))
+    return out
+
+
+def sync_floating_shelf_corners(src):
+    """Carry src's shared settings to the shelves it meets at a corner:
+    depth, thickness, the floating_shelf options (not the finished
+    ends), the cabinet style and the height on the wall."""
+    global _shelf_corner_syncing
+    if _shelf_corner_syncing:
+        return
+    partners = floating_shelf_corner_partners(src)
+    if not partners:
+        return
+    src_cab = src.face_frame_cabinet
+    src_shelf = src.floating_shelf
+    style_name = src.get('STYLE_NAME')
+    src_z = hb_utils.world_matrix(src).translation.z
+    _shelf_corner_syncing = True
+    try:
+        with suspend_recalc():
+            for _side, m, _pside in partners:
+                for attr in _FLOATING_SHELF_CORNER_SIZE_PROPS:
+                    v = getattr(src_cab, attr)
+                    if abs(getattr(m.face_frame_cabinet, attr) - v) > 1e-7:
+                        setattr(m.face_frame_cabinet, attr, v)
+                for attr in FLOATING_SHELF_CORNER_SYNC_PROPS:
+                    if not hasattr(src_shelf, attr):
+                        continue
+                    v = getattr(src_shelf, attr)
+                    cur = getattr(m.floating_shelf, attr)
+                    same = (abs(cur - v) <= 1e-7
+                            if isinstance(v, float) else cur == v)
+                    if not same:
+                        setattr(m.floating_shelf, attr, v)
+                dz = src_z - hb_utils.world_matrix(m).translation.z
+                if abs(dz) > 1e-6:
+                    m.location.z += dz
+                if style_name and m.get('STYLE_NAME') != style_name:
+                    from .props_hb_face_frame import get_style_props
+                    ff = get_style_props()
+                    style = next((s for s in ff.cabinet_styles
+                                  if s.name == style_name), None)
+                    if style is not None:
+                        style.assign_style_to_cabinet(m)
+    finally:
+        _shelf_corner_syncing = False
+
+
+def _shelf_end_points(root):
+    """({side: (back corner, front corner)} in world XY, the shelf's
+    world X direction in plan, its world height)."""
+    mw = hb_utils.world_matrix(root)
+    cab = root.face_frame_cabinet
+    w, d = cab.width, cab.depth
+    pts = {}
+    for side, x in (('LEFT', 0.0), ('RIGHT', w)):
+        back = mw @ Vector((x, 0.0, 0.0))
+        front = mw @ Vector((x, -d, 0.0))
+        pts[side] = (back.to_2d(), front.to_2d())
+    xdir = (mw.to_3x3() @ Vector((1.0, 0.0, 0.0))).to_2d()
+    if xdir.length > 0.0:
+        xdir.normalize()
+    return pts, xdir, mw.translation.z
+
+
+def _shelf_corner_kind(a, side_a, b, side_b):
+    """'INSIDE' / 'OUTSIDE' when shelf a's side_a end meets shelf b's
+    side_b end at a square corner, else None. Both shelves must be the
+    same depth and height on the wall, at right angles: an inside corner
+    shares the corner at the wall, an outside one the front corner."""
+    if (abs(a.face_frame_cabinet.depth - b.face_frame_cabinet.depth)
+            > SHELF_CORNER_TOLERANCE):
+        return None
+    pa, xa, za = _shelf_end_points(a)
+    pb, xb, zb = _shelf_end_points(b)
+    if abs(za - zb) > SHELF_CORNER_TOLERANCE or abs(xa.dot(xb)) > 0.05:
+        return None
+    back_a, front_a = pa[side_a]
+    back_b, front_b = pb[side_b]
+    # Sharing a corner point is not enough -- two shelves on opposite
+    # sides of a wall end share one too. The legs of an L overlap in the
+    # corner square, so each end's other corner sits on the other shelf.
+    if ((back_a - back_b).length <= SHELF_CORNER_TOLERANCE
+            and _shelf_covers(b, front_a) and _shelf_covers(a, front_b)):
+        return 'INSIDE'
+    if ((front_a - front_b).length <= SHELF_CORNER_TOLERANCE
+            and _shelf_covers(b, back_a) and _shelf_covers(a, back_b)):
+        return 'OUTSIDE'
+    return None
+
+
+def _shelf_covers(root, point):
+    """Whether a world XY point lies on root's plan footprint."""
+    local = hb_utils.world_matrix(root).inverted() @ Vector(
+        (point.x, point.y, hb_utils.world_matrix(root).translation.z))
+    cab = root.face_frame_cabinet
+    tol = SHELF_CORNER_TOLERANCE
+    return (-tol <= local.x <= cab.width + tol
+            and -cab.depth - tol <= local.y <= tol)
+
+
+def _clear_shelf_corner(root, side):
+    key = SHELF_CORNER_LINK[side]
+    if key in root:
+        del root[key]
+    prop = _shelf_corner_prop(side)
+    if getattr(root.floating_shelf, prop) != 'NONE':
+        setattr(root.floating_shelf, prop, 'NONE')
+
+
+def detect_floating_shelf_corners(root):
+    """Join root to any floating shelf it meets at a square corner, and
+    let go of a corner partner it no longer meets. Returns how many
+    corners were joined."""
+    if root is None or not root.get(FLOATING_SHELF_TAG):
+        return 0
+    # Let go of partners moved away (or deleted).
+    partners = {s: (p, ps) for s, p, ps in floating_shelf_corner_partners(root)}
+    for side, key in SHELF_CORNER_LINK.items():
+        if not root.get(key):
+            continue
+        hit = partners.get(side)
+        if hit is not None and _shelf_corner_kind(root, side, *hit):
+            continue
+        if hit is not None:
+            partner, pside = hit
+            if str(partner.get(SHELF_CORNER_LINK[pside], '')).startswith(
+                    root.name + ':'):
+                _clear_shelf_corner(partner, pside)
+        _clear_shelf_corner(root, side)
+    scene = root.users_scene[0] if root.users_scene else bpy.context.scene
+    others = [o for o in scene.objects
+              if o is not root and o.get(FLOATING_SHELF_TAG)]
+    joined = 0
+    for side, key in SHELF_CORNER_LINK.items():
+        if root.get(key):
+            continue
+        for other in others:
+            hit = None
+            for oside, okey in SHELF_CORNER_LINK.items():
+                if other.get(okey):
+                    continue
+                kind = _shelf_corner_kind(root, side, other, oside)
+                if kind is not None:
+                    hit = (oside, okey, kind)
+                    break
+            if hit is None:
+                continue
+            oside, okey, kind = hit
+            # Links first, then the corners: the partner's rebuild pushes
+            # its settings onto the newcomer, which then has nothing to
+            # push back.
+            root[key] = "%s:%s" % (other.name, oside)
+            other[okey] = "%s:%s" % (root.name, side)
+            setattr(other.floating_shelf, _shelf_corner_prop(oside), kind)
+            setattr(root.floating_shelf, _shelf_corner_prop(side), kind)
+            joined += 1
+            break
+    return joined
+
+
 def floating_shelf_group_members(root):
     """The other live shelves in root's group (empty when ungrouped)."""
     gid = root.get(SHELF_GROUP_TAG) if root is not None else None
@@ -17644,8 +17837,12 @@ class FloatingShelfFaceFrameCabinet(FaceFrameCabinet):
         # material_thickness sets only the top and bottom panels.
         ft = inch(0.75)
         mt = shelf.material_thickness
-        fl = shelf.finish_left
-        fr = shelf.finish_right
+        # A corner end has no end panel: it miters into the shelf on the
+        # other wall instead.
+        cl = getattr(shelf, 'corner_left', 'NONE')
+        cr = getattr(shelf, 'corner_right', 'NONE')
+        fl = shelf.finish_left and cl == 'NONE'
+        fr = shelf.finish_right and cr == 'NONE'
 
         parts = self._ensure_shelf_parts()
         FRONT = parts[PART_ROLE_SHELF_FRONT]
@@ -17715,6 +17912,10 @@ class FloatingShelfFaceFrameCabinet(FaceFrameCabinet):
                                   width, depth, ft, thickness)
         self._apply_box_end_miter('RIGHT', fr, FRONT, RP,
                                   width, depth, ft, thickness)
+        for side, corner in (('LEFT', cl), ('RIGHT', cr)):
+            self._apply_shelf_corner_miter(side, corner,
+                                           (FRONT, TOP, BOTTOM),
+                                           width, depth, thickness)
 
         # --- Light groove (Medium / Heavy Duty shelves only) ---
         # A routed LED channel on the top and/or bottom face. Panel-local
@@ -17757,8 +17958,70 @@ class FloatingShelfFaceFrameCabinet(FaceFrameCabinet):
         self._apply_shelf_edge_profile(FRONT, LP, RP, width, depth,
                                        thickness, fl, fr)
 
-        # A linked shelf's edit carries to the rest of its group.
+        # A linked shelf's edit carries to the rest of its group, and to
+        # the shelf it meets at a corner.
         sync_floating_shelf_group(self.obj)
+        sync_floating_shelf_corners(self.obj)
+
+    # ---- Corner miter ---------------------------------------------------
+    # Shelf-local plan: x across the width, y from the front face (-depth)
+    # to the wall (0). An inside corner's miter runs from the back corner
+    # at the wall to a point `depth` in along the front; an outside
+    # corner's from the front corner to a point `depth` in along the back.
+    # Both legs keep their full wall dimension and are cut on that 45,
+    # so the pair meets as one L-shaped shelf.
+    _SHELF_CORNER_MOD = 'Corner Miter {}'
+    _SHELF_CORNER_SIDE = 'CORNER_{}'
+
+    @staticmethod
+    def _shelf_corner_plan(side, corner, width, depth, m):
+        """The plan quad cut away beyond the corner's 45 (overshooting
+        by m so the boolean never grazes a face), or None."""
+        far = depth + 2.0 * m
+        if side == 'RIGHT' and corner == 'INSIDE':
+            return [(width - depth - m, -depth - m), (width + far, -depth - m),
+                    (width + far, m), (width + m, m)]
+        if side == 'RIGHT' and corner == 'OUTSIDE':
+            return [(width - depth - m, m), (width + m, -depth - m),
+                    (width + far, -depth - m), (width + far, m)]
+        if side == 'LEFT' and corner == 'INSIDE':
+            return [(-m, m), (-far, m), (-far, -depth - m),
+                    (depth + m, -depth - m)]
+        if side == 'LEFT' and corner == 'OUTSIDE':
+            return [(depth + m, m), (-far, m), (-far, -depth - m),
+                    (-m, -depth - m)]
+        return None
+
+    def _apply_shelf_corner_miter(self, side, corner, parts, width, depth,
+                                  thickness):
+        """Build / drop one end's corner miter: a prism cutter and a
+        boolean on the front board, top and bottom. Manual parts are
+        left alone."""
+        mod_name = self._SHELF_CORNER_MOD.format(side[0])
+        key = self._SHELF_CORNER_SIDE.format(side)
+        m = inch(2.0)
+        pts = self._shelf_corner_plan(side, corner, width, depth, m)
+        if pts is None:
+            for part in parts:
+                mod = part.modifiers.get(mod_name)
+                if mod is not None:
+                    part.modifiers.remove(mod)
+            for child in list(self.obj.children):
+                if (child.get('hb_part_role') == PART_ROLE_BOX_MITER_CUTTER
+                        and child.get('hb_miter_side') == key):
+                    bpy.data.objects.remove(child, do_unlink=True)
+            return
+        cutter = self._ensure_box_miter_cutter(key, 'SHELF')
+        self._wedge_prism_mesh(cutter, pts, -m, thickness + m)
+        for part in parts:
+            if part.get('IS_MANUAL_PART'):
+                continue
+            mod = part.modifiers.get(mod_name)
+            if mod is None:
+                mod = part.modifiers.new(name=mod_name, type='BOOLEAN')
+                mod.operation = 'DIFFERENCE'
+            if mod.object is not cutter:
+                mod.object = cutter
 
     # ---- Edge profile ---------------------------------------------------
     # Shelf-local frame: x across the width (0 -> width), y from the front

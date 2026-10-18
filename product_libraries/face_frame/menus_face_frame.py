@@ -1153,6 +1153,8 @@ class HOME_BUILDER_MT_face_frame_floating_shelf_commands(bpy.types.Menu):
         if root is not None and root.get(types_face_frame.SHELF_GROUP_TAG):
             layout.operator("hb_face_frame.unlink_floating_shelf",
                             text="Unlink From Group", icon='UNLINKED')
+        layout.operator("hb_face_frame.join_floating_shelf_corners",
+                        text="Join Corner Shelves", icon='MOD_BEVEL')
         layout.separator()
         layout.operator("hb_face_frame.delete_cabinet",
                         text="Delete Shelf", icon='X')

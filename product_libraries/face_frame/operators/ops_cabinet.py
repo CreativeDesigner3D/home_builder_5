@@ -6600,6 +6600,33 @@ class hb_face_frame_OT_link_floating_shelves(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class hb_face_frame_OT_join_floating_shelf_corners(bpy.types.Operator):
+    """Join the selected floating shelves to any shelf they meet at a
+    square inside or outside corner, so each pair builds as one L
+    mitered through the corner; a shelf moved away from its corner
+    partner goes back to a plain end."""
+    bl_idname = "hb_face_frame.join_floating_shelf_corners"
+    bl_label = "Join Corner Shelves"
+    bl_description = ("Miter the selected shelves into any shelf they meet "
+                      "at a square corner, so the pair reads as one L")
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return bool(hb_face_frame_OT_link_floating_shelves._shelves(context))
+
+    def execute(self, context):
+        joined = 0
+        for shelf in hb_face_frame_OT_link_floating_shelves._shelves(context):
+            joined += types_face_frame.detect_floating_shelf_corners(shelf)
+        if joined:
+            self.report({'INFO'}, f"Joined {joined} corner(s)")
+        else:
+            self.report({'INFO'}, "No shelf meets these at a square corner "
+                                  "(same depth and height, at right angles)")
+        return {'FINISHED'}
+
+
 # Add Appliance to Bay dialog session counter. invoke_props_popup popups
 # can LINGER: Esc doesn't dismiss them (it only cancels an in-progress
 # field edit) and opening the dialog again stacks a second popup over the
@@ -7634,6 +7661,7 @@ classes = (
     hb_face_frame_OT_duplicate_floating_shelf,
     hb_face_frame_OT_unlink_floating_shelf,
     hb_face_frame_OT_link_floating_shelves,
+    hb_face_frame_OT_join_floating_shelf_corners,
     hb_face_frame_OT_adjust_floating_shelves,
     hb_face_frame_OT_bay_prompts,
     hb_face_frame_OT_opening_prompts,

@@ -688,6 +688,10 @@ def draw_floating_shelf(layout, root):
     row = box.row(align=True)
     row.prop(shelf, 'finish_left', text="Left", toggle=True)
     row.prop(shelf, 'finish_right', text="Right", toggle=True)
+    # A corner end miters into the shelf on the other wall instead of
+    # taking an end panel.
+    box.prop(shelf, 'corner_left', text="Left Corner")
+    box.prop(shelf, 'corner_right', text="Right Corner")
 
     # Front edges, plus the finished ends' edges.
     layout.prop(shelf, 'edge_profile', text="Edge")

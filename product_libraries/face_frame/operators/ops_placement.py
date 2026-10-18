@@ -4557,6 +4557,9 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
             sp = selection_target.floating_shelf
             sp.finish_left = fl
             sp.finish_right = fr
+            # Placed into a corner against a shelf on the other wall:
+            # the pair miters into one L.
+            types_face_frame.detect_floating_shelf_corners(selection_target)
 
         # Auto-set a mantle's finished ends the same way: box end panel
         # + crown return when the end is exposed.

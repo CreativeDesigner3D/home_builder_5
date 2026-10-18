@@ -13519,6 +13519,32 @@ class Face_Frame_Floating_Shelf_Props(PropertyGroup):
         name="Finish Right", default=True, update=_update_cabinet_dim,
         description="Close the right end with a finished panel",
     )  # type: ignore
+    # A corner end meets the shelf on the other wall in a 45-degree miter
+    # through the shelf's full depth, so the pair builds as one L-shaped
+    # shelf. Each shelf keeps its full wall dimension: to the corner for
+    # an inside corner, to the outer corner for an outside one.
+    corner_left: EnumProperty(
+        name="Left Corner",
+        items=[('NONE', "None", "A plain end", 0),
+               ('INSIDE', "Inside Corner",
+                "Runs into an inside corner and miters into the shelf on "
+                "the other wall", 1),
+               ('OUTSIDE', "Outside Corner",
+                "Wraps an outside corner, mitered to the shelf on the "
+                "other wall", 2)],
+        default='NONE', update=_update_cabinet_dim,
+    )  # type: ignore
+    corner_right: EnumProperty(
+        name="Right Corner",
+        items=[('NONE', "None", "A plain end", 0),
+               ('INSIDE', "Inside Corner",
+                "Runs into an inside corner and miters into the shelf on "
+                "the other wall", 1),
+               ('OUTSIDE', "Outside Corner",
+                "Wraps an outside corner, mitered to the shelf on the "
+                "other wall", 2)],
+        default='NONE', update=_update_cabinet_dim,
+    )  # type: ignore
     material_thickness: FloatProperty(
         name="Material Thickness", default=units.inch(0.75),
         description="Thickness of the top and bottom panels. The front "
