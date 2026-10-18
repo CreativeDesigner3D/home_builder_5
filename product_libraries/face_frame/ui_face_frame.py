@@ -1448,6 +1448,19 @@ def draw_opening_properties(layout, opening_obj):
             fcol.prop(op, 'drawer_look_divisions', text="Drawer-Look")
             if single_door and op.drawer_look_divisions == 'NONE':
                 fcol.prop(op, 'door_look_divisions', text="Door-Look")
+        # A pair can only stack (each door built from doors battened
+        # together top to bottom).
+        if (op.front_type == 'DOOR' and op.hinge_side == 'DOUBLE'):
+            fcol.prop(op, 'door_look_divisions', text="Door-Look")
+        if (op.front_type == 'DOOR'
+                and op.hinge_side in ('LEFT', 'RIGHT', 'DOUBLE')
+                and op.door_look_divisions != 'NONE'
+                and op.drawer_look_divisions == 'NONE'):
+            if op.hinge_side != 'DOUBLE':
+                fcol.prop(op, 'door_look_direction', text="Layout")
+            if (op.hinge_side == 'DOUBLE'
+                    or op.door_look_direction == 'STACKED'):
+                fcol.prop(op, 'door_look_top_height', text="Top Door Height")
             if op.drawer_look_divisions != 'NONE':
                 heights_box = fcol.box()
                 heights_box.label(text="Drawer Opening Heights (top to bottom)")

@@ -497,6 +497,29 @@ PART_ROLE_DRAWER_LOOK_RAIL = 'DRAWER_LOOK_RAIL'
 # wearing N applied door panels side by side (battened pair look), with
 # the double-door center reveal between them. Styled from the door pool.
 PART_ROLE_DOOR_LOOK_FRONT = 'DOOR_LOOK_FRONT'
+# Reveal between door-look panels stacked top to bottom (the shop's
+# battened-door detail).
+DOOR_LOOK_STACKED_REVEAL = 0.25 * 0.0254
+
+
+def _door_look_hinge_ok(op_props):
+    """Door-look builds on a single swing door, and stacked on each door
+    of a pair as well."""
+    hinge = getattr(op_props, 'hinge_side', '')
+    if hinge in ('LEFT', 'RIGHT'):
+        return True
+    return (hinge == 'DOUBLE'
+            and getattr(op_props, 'door_look_direction', 'ACROSS') == 'STACKED')
+
+
+def _pull_half_length(pull_obj):
+    """Half a pull's length along its own X (the bar's long axis)."""
+    me = getattr(pull_obj, 'data', None)
+    verts = getattr(me, 'vertices', None)
+    if not verts:
+        return 0.0
+    xs = [v.co.x for v in verts]
+    return (max(xs) - min(xs)) / 2.0
 DRAWER_LOOK_REVEAL = inch(0.125)            # gap between applied fronts
 DRAWER_LOOK_TALLER_TOP_FACTOR = 1.5         # top front height vs each other
 
@@ -13571,7 +13594,7 @@ class FaceFrameCabinet(GeoNodeCage):
                 not drawer_look
                 and leaf['role'] == PART_ROLE_DOOR
                 and getattr(op_props, 'door_look_divisions', 'NONE') != 'NONE'
-                and op_props.hinge_side in ('LEFT', 'RIGHT')
+                and _door_look_hinge_ok(op_props)
             )
             # Tri-view mirror doors carry no pulls (touch-open per the
             # production spec) -- both the three-bay build and legacy
@@ -13837,10 +13860,14 @@ class FaceFrameCabinet(GeoNodeCage):
         divisions = getattr(op_props, 'door_look_divisions', 'NONE')
         if leaf['role'] != PART_ROLE_DOOR or divisions == 'NONE':
             return
-        if op_props.hinge_side not in ('LEFT', 'RIGHT'):
+        if not _door_look_hinge_ok(op_props):
             return
         n = int(divisions)
         length, width, thickness = leaf['part_dims']
+        if getattr(op_props, 'door_look_direction', 'ACROSS') == 'STACKED':
+            self._build_stacked_door_look(front, n, length, width,
+                                          thickness, op_props, pull)
+            return
         cab_props = self.obj.face_frame_cabinet
         reveal = (solver.INSET_DOUBLE_DOOR_REVEAL
                   if cab_props.default_door_inset_amount > 0
@@ -13870,6 +13897,64 @@ class FaceFrameCabinet(GeoNodeCage):
 
         if pull is not None:
             pull.location.z += thickness
+
+    def _build_stacked_door_look(self, front, n, length, width, thickness,
+                                 op_props, pull=None):
+        """Stack n door panels up one DOOR leaf -- doors battened
+        together top to bottom, swinging as one door, so a tall door (or
+        each door of a pair) reads as several openings. Same carrier as
+        the side-by-side look: the leaf is a flat slab one thickness
+        back, the panels proud of it with a reveal between them. The top
+        panel takes door_look_top_height when it is set and fits; the
+        rest share what is left. The leaf's pull is moved off a reveal
+        onto the panel below it."""
+        reveal = DOOR_LOOK_STACKED_REVEAL
+        clear = length - (n - 1) * reveal
+        if clear <= 0.0 or width <= 0.0:
+            return
+        top_h = getattr(op_props, 'door_look_top_height', 0.0)
+        if n > 1 and 0.0 < top_h < clear - (n - 1) * inch(4.0):
+            rest = (clear - top_h) / (n - 1)
+            heights = [rest] * (n - 1) + [top_h]
+        else:
+            heights = [clear / n] * n
+
+        carrier = front.obj
+        carrier['HB_DRAWER_LOOK_CARRIER'] = True
+        outward = carrier.rotation_euler.to_matrix() @ Vector((0.0, 0.0, 1.0))
+        carrier.location = carrier.location - outward * thickness
+
+        gaps = []
+        x = 0.0
+        for i, h in enumerate(heights):
+            panel = CabinetPart()
+            panel.create("Door-Look Panel " + str(i + 1))
+            panel.obj.parent = carrier
+            panel.obj['hb_part_role'] = PART_ROLE_DOOR_LOOK_FRONT
+            panel.obj['CABINET_PART'] = True
+            # Carrier-local frame: X = vertical (bottom up), -Y across.
+            panel.obj.rotation_euler = (0.0, 0.0, 0.0)
+            panel.set_input('Mirror Y', True)
+            panel.obj.location = (x, 0.0, thickness)
+            panel.set_input('Length', h)
+            panel.set_input('Width', width)
+            panel.set_input('Thickness', thickness)
+            x += h
+            if i < n - 1:
+                gaps.append((x, x + reveal))
+                x += reveal
+
+        if pull is None:
+            return
+        pull.location.z += thickness
+        # A pull straddling a reveal moves down onto the panel under it.
+        half = _pull_half_length(pull)
+        margin = inch(1.0)
+        px = pull.location.x
+        for g0, g1 in gaps:
+            if px + half > g0 - margin and px - half < g1 + margin:
+                pull.location.x = g0 - margin - half
+                break
 
     def _add_drawer_look_pull(self, panel_obj, length, width, thickness,
                               scene_props):

@@ -11136,6 +11136,27 @@ class Face_Frame_Opening_Props(PropertyGroup):
         default='NONE',
         update=_update_cabinet_dim,
     )  # type: ignore
+    # Which way the door-look panels lay out: side by side across a
+    # single door (the original look), or stacked top to bottom -- a
+    # tall door, or each door of a pair, built from doors battened
+    # together so it reads as several openings.
+    door_look_direction: EnumProperty(
+        name="Door-Look Layout",
+        items=[
+            ('ACROSS', "Side by Side", "Door panels side by side", 0),
+            ('STACKED', "Stacked", "Door panels stacked top to bottom, "
+             "battened together", 1),
+        ],
+        default='ACROSS',
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    door_look_top_height: FloatProperty(
+        name="Top Door Height", default=0.0, min=0.0, unit='LENGTH',
+        precision=4,
+        description="Height of the top door of a stacked door-look; "
+                    "0 splits the height evenly",
+        update=_update_cabinet_dim,
+    )  # type: ignore
 
     HINGE_SIDE_ITEMS = [
         ('LEFT', "Left", "Single door, hinged on the left edge"),

@@ -976,6 +976,8 @@ class HOME_BUILDER_MT_face_frame_change_opening(bpy.types.Menu):
         ('BIFOLD_LEFT_DOOR',  "Bi-fold Doors (Left)"),
         ('BIFOLD_RIGHT_DOOR', "Bi-fold Doors (Right)"),
         ('DOOR_LOOKS_2_DOOR', "Door - Looks like 2 Doors"),
+        ('DOUBLE_DOOR_2_HIGH', "Double Door - 2 Doors High"),
+        ('DOUBLE_DOOR_3_HIGH', "Double Door - 3 Doors High"),
         ('DOOR_LOOKS_2_DRAWER', "Door - Looks like 2 Drawers"),
         ('DOOR_LOOKS_3_DRAWER', "Door - Looks like 3 Drawers"),
         ('DOOR_LOOKS_4_DRAWER', "Door - Looks like 4 Drawers"),

@@ -4214,6 +4214,12 @@ _OPENING_PRESETS = {
     'DOOR_LOOKS_3_DRAWER': {'front_type': 'DOOR', 'hinge_side': 'LEFT', 'drawer_look': '3'},
     'DOOR_LOOKS_4_DRAWER': {'front_type': 'DOOR', 'hinge_side': 'LEFT', 'drawer_look': '4'},
     'DOOR_LOOKS_2_DOOR': {'front_type': 'DOOR', 'hinge_side': 'LEFT', 'door_look': '2'},
+    # Doors battened together top to bottom so one opening reads as
+    # several (a pair, each door built from stacked doors).
+    'DOUBLE_DOOR_2_HIGH': {'front_type': 'DOOR', 'hinge_side': 'DOUBLE',
+                           'door_look': '2', 'door_look_dir': 'STACKED'},
+    'DOUBLE_DOOR_3_HIGH': {'front_type': 'DOOR', 'hinge_side': 'DOUBLE',
+                           'door_look': '3', 'door_look_dir': 'STACKED'},
     'FLIP_UP_DOOR':      {'front_type': 'DOOR',         'hinge_side': 'TOP'},
     'FLIP_DOWN_DOOR':    {'front_type': 'DOOR',         'hinge_side': 'BOTTOM'},
     # Retracting mechanisms: regular door fronts plus the door_mechanism
@@ -4320,6 +4326,7 @@ def apply_opening_preset(opening_obj, config, **overrides):
     # re-applying another preset drops a previous drawer-look.
     op_props.drawer_look_divisions = preset.get('drawer_look', 'NONE')
     op_props.door_look_divisions = preset.get('door_look', 'NONE')
+    op_props.door_look_direction = preset.get('door_look_dir', 'ACROSS')
 
     # Post-front_type shelf strip (see docstring: the DOOR write above
     # re-seeds a shelf, so this must come after it).
@@ -4373,6 +4380,8 @@ class hb_face_frame_OT_change_opening(bpy.types.Operator):
             ('DOOR_LOOKS_3_DRAWER', "Door - Looks like 3 Drawers", "One door shown as three drawer fronts"),
             ('DOOR_LOOKS_4_DRAWER', "Door - Looks like 4 Drawers", "One door shown as four drawer fronts"),
             ('DOOR_LOOKS_2_DOOR', "Door - Looks like 2 Doors", "One door shown as two doors battened together"),
+            ('DOUBLE_DOOR_2_HIGH', "Double Door - 2 Doors High", "Pair of doors, each two doors battened together top to bottom"),
+            ('DOUBLE_DOOR_3_HIGH', "Double Door - 3 Doors High", "Pair of doors, each three doors battened together top to bottom"),
             ('FLIP_UP_DOOR',      "Flip Up Door",      "Door hinged on the top edge"),
             ('FLIP_DOWN_DOOR',    "Flip Down Door",    "Door hinged on the bottom edge"),
             ('RETRACTING_DOOR',   "Retracting Door",   "Single door that opens, then slides back into the cabinet"),
