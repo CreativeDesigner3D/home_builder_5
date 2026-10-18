@@ -4250,6 +4250,7 @@ class hb_face_frame_OT_set_pull_location(bpy.types.Operator):
 
     def execute(self, context):
         from . import ops_cabinet
+        from .. import appliance_panels
         openings = {}
         # Corner cabinets have no opening cages - their per-front
         # settings live on the matching corner_sections entry, keyed by
@@ -4266,10 +4267,14 @@ class hb_face_frame_OT_set_pull_location(bpy.types.Operator):
                 continue
             section = _find_owning_corner_section(obj)
             if section is None:
-                skipped += 1
+                if not obj.get(appliance_panels.TAG_FRONT):
+                    skipped += 1
                 continue
             sections[section[0].name, section[1]] = section
-        if not openings and not sections:
+        # Appliance panel doors keep theirs on the panel run's face.
+        panels = appliance_panels.set_front_pull_location(
+            context.selected_objects, self.location)
+        if not openings and not sections and not panels:
             self.report({'WARNING'}, "No doors selected")
             return {'CANCELLED'}
         with types_face_frame.suspend_recalc():
@@ -4282,6 +4287,9 @@ class hb_face_frame_OT_set_pull_location(bpy.types.Operator):
                      if i == self.location)
         count = len(openings) + len(sections)
         msg = f"{count} opening(s): pulls at {label.lower()}"
+        if panels:
+            msg = (f"{count} opening(s) and {panels} appliance panel(s): "
+                   f"pulls at {label.lower()}")
         if skipped:
             msg += f"; {skipped} front(s) skipped"
         self.report({'INFO'}, msg)

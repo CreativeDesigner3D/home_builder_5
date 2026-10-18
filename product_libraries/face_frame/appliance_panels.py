@@ -182,6 +182,15 @@ SECTION_HINGE_ITEMS = [
     ('BOTTOM', "Tilt Down", "Hinged along the bottom; a horizontal pull "
      "across the top", 3),
 ]
+# Where a swing door's pull sits up the face -- the same choices, and the
+# same rules, as Set Pull Location on a cabinet door.
+SECTION_PULL_LOCATION_ITEMS = [
+    ('AUTO', "Automatic", "The cabinet-type rule for the appliance"),
+    ('TOP', "Top of Door", "Measured down from the top of the door"),
+    ('MIDDLE', "Middle of Door", "Centered on the door height"),
+    ('BOTTOM', "Bottom of Door", "Measured up from the bottom of the door"),
+    ('TALL', "Tall Reach Height", "The tall vertical offset up from the door bottom"),
+]
 INSTALL_TYPE_ITEMS = [
     ('OVERLAY', "Overlay", "Panels overlay the appliance frame"),
     ('FLUSH_INSET', "Flush Inset", "Panels flush with the surrounding cabinetry"),
@@ -253,6 +262,10 @@ class Appliance_Panel_Section(PropertyGroup):
                                   update=_on_change)  # type: ignore
     pull_override_category: StringProperty(name="Pull Category", default="",
                                            update=_on_change)  # type: ignore
+    pull_location: EnumProperty(name="Pull Location",
+                                items=SECTION_PULL_LOCATION_ITEMS,
+                                default='AUTO',
+                                update=_on_change)  # type: ignore
     spec_note: StringProperty(name="Note", default="")  # type: ignore
 
 
@@ -1333,9 +1346,20 @@ def _build_pulls(appliance_obj, props, fronts, order, faces):
         else:
             # The same zones a cabinet door follows, measured from the
             # appliance's own base -- which is the floor for the
-            # appliances that take panels.
+            # appliances that take panels. A pinned location (Set Pull
+            # Location) wins, with the cabinet door's own formulas.
             tall = scene_props.pull_vertical_location_tall
-            if box[2] >= tall:
+            base = scene_props.pull_vertical_location_base
+            loc = getattr(section, 'pull_location', 'AUTO')
+            if loc == 'TOP':
+                x = length - base - half
+            elif loc == 'MIDDLE':
+                x = length / 2.0
+            elif loc == 'BOTTOM':
+                x = scene_props.pull_vertical_location_upper + half
+            elif loc == 'TALL':
+                x = min(tall + half, length - base - half)
+            elif box[2] >= tall:
                 x = scene_props.pull_vertical_location_upper + half
             elif length >= tall + 2.0 * half:
                 x = tall + half
@@ -1532,6 +1556,26 @@ def front_sections(objs):
         if 0 <= index < len(appliance_obj.appliance_panels.sections):
             out[(appliance_obj.name, index)] = appliance_obj
     return out
+
+
+def set_front_pull_location(objs, location):
+    """Pin where the pull sits up the panel doors among ``objs`` (drawer
+    faces keep theirs, as cabinet drawers do). Returns how many doors
+    took it; each run is rebuilt once."""
+    targets = front_sections(objs)
+    runs = {}
+    count = 0
+    with suspended():
+        for (_name, index), appliance_obj in targets.items():
+            sec = appliance_obj.appliance_panels.sections[index]
+            if sec.kind != 'DOOR':
+                continue
+            sec.pull_location = location
+            runs[appliance_obj.name] = appliance_obj
+            count += 1
+    for appliance_obj in runs.values():
+        rebuild(appliance_obj)
+    return count
 
 
 def set_front_pull(objs, override, category):
