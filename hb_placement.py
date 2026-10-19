@@ -1448,6 +1448,12 @@ def duplicate_object_hierarchy(context, source_obj):
     object copies carry - maps each copy back to its original so both
     sides get their exact hide flags restored afterwards.
 
+    The source may live in another room (pasting a copied cabinet). The
+    duplicate operator only sees the current view layer, so those
+    members are linked into a staging collection for the copy; the
+    copies then move to the current scene and the staging is dropped,
+    leaving the source room untouched.
+
     Returns the new root object, or None on failure. Restores the
     caller's selection and active object.
     """
@@ -1456,6 +1462,15 @@ def duplicate_object_hierarchy(context, source_obj):
     old_selected = [o.name for o in context.selected_objects]
     old_active = (context.view_layer.objects.active.name
                   if context.view_layer.objects.active else None)
+
+    scene = context.scene
+    staging = None
+    foreign = [o for o in all_objs if scene.objects.get(o.name) is None]
+    if foreign:
+        staging = bpy.data.collections.new('_HB_DUP_STAGING')
+        scene.collection.children.link(staging)
+        for obj in foreign:
+            staging.objects.link(obj)
 
     flags = {}
     for i, obj in enumerate(all_objs):
@@ -1487,6 +1502,19 @@ def duplicate_object_hierarchy(context, source_obj):
                 obj.hide_set(hg)
             if '_HB_DUP_TOKEN' in obj:
                 del obj['_HB_DUP_TOKEN']
+        if staging is not None:
+            # Copies of the staged members landed in the staging
+            # collection only; they belong to this room, like a newly
+            # built cabinet.
+            for obj in new_objs:
+                if obj.name in staging.objects:
+                    if scene.collection.objects.get(obj.name) is None:
+                        scene.collection.objects.link(obj)
+                    staging.objects.unlink(obj)
+            for obj in foreign:
+                if obj.name in staging.objects:
+                    staging.objects.unlink(obj)
+            bpy.data.collections.remove(staging)
 
     bpy.ops.object.select_all(action='DESELECT')
     for name in old_selected:

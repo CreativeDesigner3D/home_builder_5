@@ -191,6 +191,9 @@ class HOME_BUILDER_MT_face_frame_cabinet_commands(bpy.types.Menu):
                                  text="Duplicate Mirror", icon='MOD_MIRROR')
             op.source_cabinet_name = _dup_root.name
             op.mirror = True
+            # Copy: paste it later from the right-click menu in any room.
+            layout.operator("home_builder.copy_cabinet",
+                            text="Copy Cabinet", icon='COPYDOWN')
             # Place: the same modal on the cabinet itself. Nothing is
             # copied - it is picked up and dropped again, which is how
             # you move one onto another wall, into a gap, or let it

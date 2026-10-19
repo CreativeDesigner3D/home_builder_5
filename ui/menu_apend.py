@@ -43,6 +43,12 @@ def draw_object_mode_right_click_menu(self, context):
     if not menu_id and ops_general.draw_attach_items(layout, context):
         layout.separator()
 
+    # A copied cabinet can be pasted from wherever the user right-clicks,
+    # in any room.
+    from ..operators import cabinet_clipboard
+    if cabinet_clipboard.draw_paste_item(layout, context):
+        layout.separator()
+
 
 def register():
     bpy.types.VIEW3D_MT_object_context_menu.prepend(draw_object_mode_right_click_menu)  
