@@ -7722,6 +7722,15 @@ class FaceFrameCabinet(GeoNodeCage):
             if layout.r_fin_end in CORNER_TREATMENT_FLUSH_ENDS:
                 sides.add('RIGHT')
             bottom = layout.cabinet_type == 'UPPER'
+            # An end stile beside a bay with its bottom removed runs down
+            # onto whatever the cabinet sits on (a countertop), so its
+            # bottom stays square.
+            bays = layout.bays or []
+            square_bottom = set()
+            if bays and bays[0].get('remove_bottom'):
+                square_bottom.add(PART_ROLE_LEFT_STILE)
+            if bays and bays[-1].get('remove_bottom'):
+                square_bottom.add(PART_ROLE_RIGHT_STILE)
             for child in self.obj.children:
                 if child.hide_viewport:
                     continue
@@ -7740,7 +7749,8 @@ class FaceFrameCabinet(GeoNodeCage):
                 if bottom:
                     if role == PART_ROLE_BOTTOM_RAIL:
                         wanted.append((child, 'LENGTH', 0.0))
-                    elif role in (PART_ROLE_LEFT_STILE, PART_ROLE_RIGHT_STILE):
+                    elif (role in (PART_ROLE_LEFT_STILE, PART_ROLE_RIGHT_STILE)
+                            and role not in square_bottom):
                         wanted.append((child, 'WIDTH', 0.0))
         live_keys = set()
         for part_obj, axis, far_trim in wanted:
