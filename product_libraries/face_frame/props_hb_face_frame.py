@@ -1484,6 +1484,22 @@ def _style_tint_for_cabinet(cabinet_obj, styles):
     return None
 
 
+def _is_styled_bare_part(obj):
+    """True for a bare part (Misc Part, Wood Top) with a style stamped on
+    it and no cabinet above it. Those sit outside every cabinet's walk,
+    so the style colour pass has to reach them on their own."""
+    if not (obj.get('CABINET_PART') and obj.get('STYLE_NAME')):
+        return False
+    if obj.get('IS_WOOD_HOOD_PART'):
+        return False
+    cur = obj.parent
+    while cur is not None:
+        if cur.get('IS_FACE_FRAME_CABINET_CAGE'):
+            return False
+        cur = cur.parent
+    return True
+
+
 def _annotation_color(context):
     """The colour drawing text is meant to wear, from preferences.
 
@@ -1553,6 +1569,19 @@ def apply_style_colors(context):
                 for sub in child.children_recursive:
                     sub.color = part_colour
 
+    # A bare part (Misc Part, Wood Top) standing outside any cabinet
+    # carries its own style stamp; it wears that style like a cabinet.
+    for part in [o for o in bpy.data.objects if _is_styled_bare_part(o)]:
+        tint = _style_tint_for_cabinet(part, styles) if on else None
+        part_colour = (_NO_STYLE_TINT if tint is None
+                       else (tint[0], tint[1], tint[2], 1.0))
+        part.color = part_colour
+        for child in part.children_recursive:
+            if child.get('IS_2D_ANNOTATION'):
+                child.color = note_colour
+            else:
+                child.color = part_colour
+
     # The colour only shows in solid shading's OBJECT mode; remember what
     # the viewport had so turning this off gives it back.
     for area in getattr(context.screen, 'areas', ()):
@@ -1604,6 +1633,10 @@ def style_color_for_object(obj, context=None, highlight=None):
     root = obj
     while root is not None and not root.get('IS_FACE_FRAME_CABINET_CAGE'):
         root = root.parent
+    if root is None:
+        root = obj
+        while root is not None and not _is_styled_bare_part(root):
+            root = root.parent
     if root is None:
         return None
     tint = _style_tint_for_cabinet(root, props.cabinet_styles)
