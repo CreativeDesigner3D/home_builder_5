@@ -45,6 +45,7 @@ from .. import exposure
 from .. import upper_over_refrigerator
 from .. import upper_bay_layout
 from ...common import appliance_geo
+from ...common import corbels
 from . import ops_cabinet
 from .... import hb_placement, hb_types, units
 
@@ -161,6 +162,8 @@ def _appliance_dimensions(scene_props, appliance_name):
     cls = types_face_frame.APPLIANCE_NAME_DISPATCH.get(appliance_name)
     if cls is None:
         return (units.inch(24), units.inch(34), units.inch(24))
+    if appliance_name == "Corbel":
+        return cls.size_for(corbel_style_key())
     if appliance_name == "Dishwasher":
         return (scene_props.dishwasher_width, cls.height, cls.depth)
     if appliance_name == "Range":
@@ -189,7 +192,42 @@ def _appliance_z_location(scene_props, appliance_name):
     """
     if appliance_name == "Range Hood":
         return scene_props.default_wall_cabinet_location
+    if appliance_name == "Corbel":
+        # Top of the corbel under the countertop overhang: its top at
+        # the base cabinet height.
+        _w, h, _d = corbels.Corbel.size_for(corbel_style_key())
+        return max(scene_props.base_cabinet_height - h, 0.0)
     return None  # caller falls back to cursor / hit Z
+
+
+# The corbel style the next placement uses: picked from the library's
+# style list right before placing, remembered for the next one.
+CORBEL_STYLE_SCENE_KEY = 'hb_corbel_style'
+
+
+def corbel_style_key(context=None):
+    scene = (context or bpy.context).scene
+    return scene.get(CORBEL_STYLE_SCENE_KEY)
+
+
+# What a corbel can mount on: cabinets of either library, and hoods.
+_CORBEL_PRODUCT_TAGS = ('IS_FACE_FRAME_CABINET_CAGE',
+                        'IS_FRAMELESS_CABINET_CAGE')
+
+
+def _corbel_mount_product(hit_object, preview_obj):
+    """The cabinet or hood root under the cursor, or None. Another
+    corbel is never a mount."""
+    cur = hit_object
+    while cur is not None:
+        if cur is preview_obj or cur.get(corbels.CORBEL_TAG):
+            return None
+        if any(cur.get(t) for t in _CORBEL_PRODUCT_TAGS):
+            return cur
+        if cur.get('IS_APPLIANCE') and cur.get('APPLIANCE_TYPE') == 'HOOD':
+            return cur
+        cur = cur.parent
+    return None
 
 
 def _find_center_snap(hit_object, wall, kinds, cab_z_range):
@@ -1642,6 +1680,12 @@ def _detect_blind_corner_neighbor(cab_obj, allow_configured=False):
             continue
         neighbor, intrusion = result
         if 'IS_FACE_FRAME_CABINET_CAGE' not in neighbor:
+            continue
+        # Two floating shelves meet at a corner with a miter of their
+        # own (types_face_frame.detect_floating_shelf_corners), not a
+        # blind void. A shelf meeting a cabinet still asks.
+        if (neighbor.get('IS_FLOATING_SHELF')
+                and cab_obj.get('IS_FLOATING_SHELF')):
             continue
         # A true L-shaped corner cabinet (corner_type != 'NONE') already
         # resolves the corner geometrically - a cabinet placed next to it
@@ -4519,6 +4563,9 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
             sp = selection_target.floating_shelf
             sp.finish_left = fl
             sp.finish_right = fr
+            # Placed into a corner against a shelf on the other wall:
+            # the pair miters into one L.
+            types_face_frame.detect_floating_shelf_corners(selection_target)
 
         # Auto-set a mantle's finished ends the same way: box end panel
         # + crown return when the end is exposed.
@@ -4754,6 +4801,11 @@ class hb_face_frame_OT_place_cabinet(bpy.types.Operator,
         exposure.recalc_with_neighbors(cab_obj)
         _align_base_tall_toe_kick(cab_obj)
 
+        # A copied leg lands somewhere else, so its finished sides follow
+        # its new neighbours the way a freshly placed leg's do.
+        if cab_obj.get('IS_LEG_PRODUCT'):
+            cab_obj.leg_product.finish_type =                 exposure.auto_leg_finish_type(cab_obj)
+
         for o in context.selected_objects:
             o.select_set(False)
         cab_obj.select_set(True)
@@ -4900,7 +4952,16 @@ class hb_face_frame_OT_place_appliance(bpy.types.Operator,
         default="",
     )  # type: ignore
 
+    source_name: bpy.props.StringProperty(
+        name="Source",
+        description="Place a copy of this placed item (a corbel) rather "
+                    "than a new one: its size, height and settings",
+        default="",
+        options={'HIDDEN', 'SKIP_SAVE'},
+    )  # type: ignore
+
     _preview_cage = None
+    _source_obj = None              # duplicate mode: item being copied
     _appliance_width: float = 0.0
     _appliance_height: float = 0.0
     _appliance_depth: float = 0.0
@@ -4930,7 +4991,15 @@ class hb_face_frame_OT_place_appliance(bpy.types.Operator,
             return {'CANCELLED'}
 
         scene_props = context.scene.hb_face_frame
-        w, h, d = _appliance_dimensions(scene_props, self.appliance_name)
+        self._source_obj = (bpy.data.objects.get(self.source_name)
+                            if self.source_name else None)
+        if self._source_obj is not None:
+            src_cage = hb_types.GeoNodeCage(self._source_obj)
+            w, h, d = (src_cage.get_input('Dim X'),
+                       src_cage.get_input('Dim Z'),
+                       src_cage.get_input('Dim Y'))
+        else:
+            w, h, d = _appliance_dimensions(scene_props, self.appliance_name)
         self._appliance_width = w
         self._appliance_height = h
         self._appliance_depth = d
@@ -4953,7 +5022,7 @@ class hb_face_frame_OT_place_appliance(bpy.types.Operator,
         # (range hood at the upper-cabinet base). Other appliances
         # follow the cursor Z so the user can rough in shelves /
         # islands at any height.
-        z_override = _appliance_z_location(scene_props, self.appliance_name)
+        z_override = self._z_override(context)
         if z_override is not None:
             cage_obj.location.z = z_override
         # Floor reference for free placement (see place_cabinet): floor
@@ -5045,6 +5114,14 @@ class hb_face_frame_OT_place_appliance(bpy.types.Operator,
 
         return {'RUNNING_MODAL'}
 
+    def _z_override(self, context):
+        """The mounting Z: a copy keeps its source's height above the
+        floor; otherwise the appliance's own fixed height, or None."""
+        if self._source_obj is not None:
+            return self._source_obj.matrix_world.translation.z
+        return _appliance_z_location(context.scene.hb_face_frame,
+                                     self.appliance_name)
+
     # ---------------- preview cage ----------------
 
     def _create_preview_cage(self, context):
@@ -5088,6 +5165,18 @@ class hb_face_frame_OT_place_appliance(bpy.types.Operator,
                 f"  R:{units.unit_to_string(context.scene.unit_settings, self._right_offset)}"
             )
         width_key = "   W: width" if self._variable_width else ""
+        mount = getattr(self, '_corbel_mount', None)
+        if mount is not None:
+            snap = getattr(self, '_corbel_snap', None)
+            snap_text = {'START': "  (flush with end)",
+                         'END': "  (flush with end)",
+                         'CENTER': "  (centered)"}.get(snap, "")
+            hb_placement.draw_header_text(
+                context,
+                f"Corbel  -  {corbels.MOUNT_LABELS[mount]}{snap_text}  -  "
+                "move over an upper, hood or base back / end   "
+                "Click: place   Esc: cancel")
+            return
         hb_placement.draw_header_text(
             context,
             f"{self.appliance_name}  -  width: {width_in:.1f}\""
@@ -5289,11 +5378,67 @@ class hb_face_frame_OT_place_appliance(bpy.types.Operator,
     def _position_from_hit(self, context):
         if self.hit_location is None:
             return
+        if (self.appliance_name == "Corbel"
+                and self._position_on_product(context)):
+            return
+        self._corbel_mount = None
         wall = _detect_wall(self, context)
         if wall is not None:
             self._position_on_wall(context, wall)
         else:
             self._position_free(context)
+
+    def _position_on_product(self, context):
+        """Corbel over a cabinet or hood: mount it on that product (under
+        an upper / hood, or as a countertop support on a base's back or
+        end -- see corbels.pick_mount). False when the cursor is not
+        over one, so wall / free placement takes over."""
+        product = _corbel_mount_product(self.hit_object,
+                                        self._preview_cage.obj)
+        if product is None:
+            return False
+        try:
+            cage = hb_types.GeoNodeCage(product)
+            size = (cage.get_input('Dim X'), cage.get_input('Dim Y'),
+                    cage.get_input('Dim Z'))
+        except Exception:
+            return False
+        local_hit = product.matrix_world.inverted() @ self.hit_location
+        mount = corbels.pick_mount(
+            size, product.matrix_world.translation.z, local_hit)
+        if mount is None:
+            return False
+        matrix, snap = corbels.mount_matrix(
+            mount, size,
+            (self._appliance_width, self._appliance_depth,
+             self._appliance_height),
+            local_hit)
+        if matrix is None:
+            return False
+
+        cage_obj = self._preview_cage.obj
+        # On the product's wall when it has one, so the corbel reads as
+        # wall-mounted like the product does; never under the product
+        # itself (a cabinet's recalc owns its children).
+        parent = product.parent
+        if parent is not None and not parent.get('IS_WALL_BP'):
+            parent = None
+        if cage_obj.parent is not parent:
+            cage_obj.parent = parent
+            cage_obj.matrix_parent_inverse.identity()
+        cage_obj.matrix_world = product.matrix_world @ matrix
+
+        self._gap_wall = None
+        self._left_offset = None
+        self._right_offset = None
+        self._gap_snap = None
+        self._center_snap_state = None
+        if (mount, snap) != (getattr(self, '_corbel_mount', None),
+                             getattr(self, '_corbel_snap', None)):
+            self._corbel_mount = mount
+            self._corbel_snap = snap
+            self._update_header(context)
+        return True
 
     def _position_on_wall(self, context, wall):
         cage_obj = self._preview_cage.obj
@@ -5306,6 +5451,8 @@ class hb_face_frame_OT_place_appliance(bpy.types.Operator,
         if cage_obj.parent is not wall:
             cage_obj.parent = wall
             cage_obj.matrix_parent_inverse.identity()
+        # Back on the wall: a mount on a product may have turned it.
+        cage_obj.rotation_euler = (0.0, 0.0, 0.0)
 
         # Re-assert the mounting Z on every wall reposition: floor
         # appliances at wall-local 0, fixed-height ones (range hood) at
@@ -5313,8 +5460,7 @@ class hb_face_frame_OT_place_appliance(bpy.types.Operator,
         # placement (the cursor's screen height in a front elevation)
         # stuck to the cage when it came back onto the wall. Set before
         # gap detection so collision checks run at the mounted height.
-        z_override = _appliance_z_location(
-            context.scene.hb_face_frame, self.appliance_name)
+        z_override = self._z_override(context)
         cage_obj.location.z = 0.0 if z_override is None else z_override
 
         local_hit = wall.matrix_world.inverted() @ self.hit_location
@@ -5469,8 +5615,7 @@ class hb_face_frame_OT_place_appliance(bpy.types.Operator,
         # their configured Z when off-wall instead of dropping to the
         # cursor / snap-target Z; that anchor is what makes the hood
         # read as the bay above the range.
-        scene_props = context.scene.hb_face_frame
-        z_override = _appliance_z_location(scene_props, self.appliance_name)
+        z_override = self._z_override(context)
 
         if snap_result is not None:
             new_loc, new_rot = snap_result
@@ -5575,12 +5720,25 @@ class hb_face_frame_OT_place_appliance(bpy.types.Operator,
 
         self._delete_preview()
 
+        if self._source_obj is not None:
+            app_obj = hb_placement.duplicate_object_hierarchy(
+                context, self._source_obj)
+            if app_obj is None:
+                self.report({'ERROR'}, "Duplicate failed")
+                hb_placement.clear_header_text(context)
+                return {'CANCELLED'}
+            return self._finish_placed(
+                context, app_obj, captured_parent, captured_world,
+                captured_local_loc, captured_local_rot)
+
         cls = types_face_frame.APPLIANCE_NAME_DISPATCH.get(self.appliance_name)
         if cls is None:
             self.report({'ERROR'}, f"Unknown appliance: {self.appliance_name}")
             hb_placement.clear_header_text(context)
             return {'CANCELLED'}
         appliance = cls()
+        if self.appliance_name == "Corbel":
+            appliance.style_key = corbel_style_key(context)
         # Apply preview-resolved dims so the final appliance matches
         # the cage the user just placed.
         appliance.width = self._appliance_width
@@ -5593,7 +5751,14 @@ class hb_face_frame_OT_place_appliance(bpy.types.Operator,
             hb_placement.clear_header_text(context)
             return {'CANCELLED'}
 
-        app_obj = appliance.obj
+        return self._finish_placed(
+            context, appliance.obj, captured_parent, captured_world,
+            captured_local_loc, captured_local_rot)
+
+    def _finish_placed(self, context, app_obj, captured_parent,
+                       captured_world, captured_local_loc,
+                       captured_local_rot):
+        """Drop the new (or copied) item where the preview cage was."""
         if captured_parent is not None:
             app_obj.parent = captured_parent
             hb_utils.note_parent_change()
@@ -5603,11 +5768,18 @@ class hb_face_frame_OT_place_appliance(bpy.types.Operator,
         else:
             app_obj.matrix_world = captured_world
 
-        # Refresh exposure on any face-frame cabinet that now abuts the
-        # placed appliance. Dishwasher placement is the headline case -
-        # adjacent cabinet sides auto-flip to FLUSH_X.
-        exposure.recalc_after_appliance_placement(app_obj)
-        appliance_geo.seed_on_place(app_obj)
+        if app_obj.get(corbels.CORBEL_TAG):
+            # A corbel is applied to a finished surface, not set beside
+            # it, so it leaves neighbouring ends alone. A new one takes
+            # the project's finish; a copy keeps its source's.
+            if self._source_obj is None:
+                types_face_frame.apply_corbel_finish(app_obj)
+        else:
+            # Refresh exposure on any face-frame cabinet that now abuts
+            # the placed appliance. Dishwasher placement is the headline
+            # case - adjacent cabinet sides auto-flip to FLUSH_X.
+            exposure.recalc_after_appliance_placement(app_obj)
+            appliance_geo.seed_on_place(app_obj)
 
         for o in context.selected_objects:
             o.select_set(False)

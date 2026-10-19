@@ -630,6 +630,60 @@ class home_builder_layouts_OT_go_to_layout_view(bpy.types.Operator):
         return {'FINISHED'}
 
 
+def _is_detail_scene(scene):
+    return bool(scene and (scene.get('IS_DETAIL_VIEW')
+                           or scene.get('IS_CROWN_DETAIL')))
+
+
+class home_builder_layouts_OT_reset_detail_view(bpy.types.Operator):
+    bl_idname = "home_builder_layouts.reset_detail_view"
+    bl_label = "Reset Detail View"
+    bl_description = ("Return to the flat top-down view of the detail, "
+                      "framed on its drawing")
+
+    @classmethod
+    def poll(cls, context):
+        return _is_detail_scene(context.scene)
+
+    def execute(self, context):
+        # The viewport the command came from (key or button over it);
+        # otherwise the first one on the screen, as opening a detail does.
+        area = context.area if (context.area
+                                and context.area.type == 'VIEW_3D') else None
+        if area is None:
+            area = next((a for a in context.screen.areas
+                         if a.type == 'VIEW_3D'), None)
+        if area is None:
+            return {'CANCELLED'}
+        region = next((r for r in area.regions if r.type == 'WINDOW'), None)
+        rv3d = area.spaces.active.region_3d
+        rv3d.view_perspective = 'ORTHO'
+        rv3d.view_rotation = Euler((0, 0, 0)).to_quaternion()
+
+        selected = list(context.selected_objects)
+        active = context.view_layer.objects.active
+        drawn = [o for o in context.scene.objects
+                 if o.type in ('MESH', 'CURVE', 'FONT', 'EMPTY')
+                 and o.visible_get()]
+        for o in selected:
+            o.select_set(False)
+        for o in drawn:
+            o.select_set(True)
+        if drawn and region is not None:
+            with context.temp_override(area=area, region=region):
+                bpy.ops.view3d.view_selected()
+        for o in drawn:
+            o.select_set(False)
+        for o in selected:
+            if o.name in context.scene.objects:
+                o.select_set(True)
+        context.view_layer.objects.active = active
+        return {'FINISHED'}
+
+
+_addon_keymaps = []
+
+
 class home_builder_layouts_OT_fit_view_to_content(bpy.types.Operator):
     bl_idname = "home_builder_layouts.fit_view_to_content"
     bl_label = "Fit to Content"
@@ -4656,6 +4710,7 @@ classes = (
     home_builder_layouts_OT_update_elevation_view,
     home_builder_layouts_OT_delete_layout_view,
     home_builder_layouts_OT_go_to_layout_view,
+    home_builder_layouts_OT_reset_detail_view,
     home_builder_layouts_OT_fit_view_to_content,
     home_builder_layouts_OT_render_layout,
     home_builder_layouts_OT_export_all_to_pdf,
@@ -4743,6 +4798,18 @@ def register():
     for cls in classes:
         bpy.utils.register_class(cls)
 
+    # Home / Numpad 0 reset a detail to its top-down framing. The poll
+    # fails outside detail scenes, so the keys fall through to Blender's
+    # View All / camera view everywhere else.
+    kc = bpy.context.window_manager.keyconfigs.addon
+    if kc:
+        km = kc.keymaps.new(name='3D View', space_type='VIEW_3D')
+        for key in ('HOME', 'NUMPAD_0'):
+            kmi = km.keymap_items.new(
+                home_builder_layouts_OT_reset_detail_view.bl_idname,
+                key, 'PRESS')
+            _addon_keymaps.append((km, kmi))
+
     # Layout view scene properties with update callbacks
     bpy.types.Scene.hb_layout_scale = bpy.props.EnumProperty(
         name="Scale",
@@ -4808,6 +4875,12 @@ def register():
     )
 
 def unregister():
+    for km, kmi in _addon_keymaps:
+        try:
+            km.keymap_items.remove(kmi)
+        except Exception:
+            pass
+    _addon_keymaps.clear()
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
     

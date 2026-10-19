@@ -380,6 +380,11 @@ class FaceFrameLayout:
             'finish_bay':         bp.finish_bay,
             'finish_bay_flush':   bp.finish_bay_flush,
             'finish_bay_flush_depth': bp.finish_bay_flush_depth,
+            'finish_bay_texture': getattr(bp, 'finish_bay_texture', 'NONE'),
+            'finish_bay_texture_scope': getattr(
+                bp, 'finish_bay_texture_scope', 'BACK_SIDES'),
+            'finish_bay_beadboard_pattern': getattr(
+                bp, 'finish_bay_beadboard_pattern', 'STANDARD'),
             # The carcass panels behind this bay (back / bottom) are cut
             # from finish stock rather than being lined with an applied
             # 1/4 panel - see _bay_finish_carcass.
@@ -502,6 +507,9 @@ class FaceFrameLayout:
             'finish_bay':         False,
             'finish_bay_flush':   False,
             'finish_bay_flush_depth': 0.0,
+            'finish_bay_texture': 'NONE',
+            'finish_bay_texture_scope': 'BACK_SIDES',
+            'finish_bay_beadboard_pattern': 'STANDARD',
             'finish_carcass':     False,
             'back_condition':     'DEFAULT',
             'tree':               None,
@@ -1165,6 +1173,17 @@ def has_rear_kick_inset(layout):
     return getattr(layout, 'kick_inset_back', 0.0) > 1e-6
 
 
+def back_floats(layout):
+    """True when an applied back stops at the kick top because the
+    carcass hangs open above the floor: a FLOATING base or tall with
+    neither end stile run down to the floor. A loose base still covers
+    its ladder, and a leg on either end carries the back down with it."""
+    return (layout.has_toe_kick
+            and layout.toe_kick_type == 'FLOATING'
+            and not left_stile_to_floor(layout)
+            and not right_stile_to_floor(layout))
+
+
 def rear_kick_face_y(layout, bay_index):
     """Cabinet Y of the rear kick face under ``bay_index``: the bay's
     outermost back face (carcass back plus any applied back) less the
@@ -1455,7 +1474,7 @@ def _finish_kick_reaches_edge(layout, side):
     An unfinished end runs to the edge only when the kick line carries
     on past it (a wall or another floor-standing cabinet); beside an
     appliance, an open gap or a blind corner's face it stops flush
-    with the subfront behind it.
+    with the side's outer face.
     """
     if side == 'LEFT':
         fin, covered = layout.l_fin_end, layout.l_covered_thickness
@@ -1478,25 +1497,62 @@ def _finish_kick_reaches_edge(layout, side):
     return reach, True
 
 
-def _stamp_finish_kick_reach(layout, reach):
-    """Record on the cabinet which ends' finish kick reach was decided
-    by its neighbours, so a later neighbour change can tell whether the
-    cabinet needs rebuilding (exposure.finish_kick_reach_stale)."""
+def _finish_kick_corner(layout, side):
+    """Where the finish kick ends at one cabinet end ('LEFT' / 'RIGHT')
+    that meets a square-on run's kick at an inside corner, or None. See
+    exposure.finish_kick_corner. An island end the run behind covers
+    keeps its own treatment, and angled fronts are left out."""
+    if layout.is_angled:
+        return None
+    covered = (layout.l_covered_thickness if side == 'LEFT'
+               else layout.r_covered_thickness)
+    if covered is not None:
+        return None
+    cab_obj = getattr(layout, '_cabinet_obj', None)
+    if cab_obj is None:
+        return None
+    from . import exposure
+    try:
+        return exposure.finish_kick_corner(cab_obj, side.lower())
+    except Exception:
+        return None
+
+
+def _stamp_finish_kick_reach(layout, reach, corners=None):
+    """Record on the cabinet how each end's finish kick was decided by
+    its neighbours, so a later neighbour change can tell whether the
+    cabinet needs rebuilding (exposure.finish_kick_reach_stale).
+    corners maps a side to the finish_kick_corner result it was built
+    from."""
     cab_obj = getattr(layout, '_cabinet_obj', None)
     if cab_obj is None:
         return
     from . import exposure
-    key = exposure.FINISH_KICK_REACH_KEY
+    corners = corners or {}
     value = [reach.get('LEFT', -1), reach.get('RIGHT', -1)]
+    corner_value = []
+    partners = []
+    for side in ('LEFT', 'RIGHT'):
+        c = corners.get(side)
+        if c is None:
+            corner_value.extend((0.0, 0.0, 0.0))
+            partners.append('')
+        else:
+            corner_value.extend((float(c['back_x']), float(c['front_x']),
+                                 1.0 if c['miter'] else 0.0))
+            partners.append(c['partner'].name)
+    partners = '|'.join(partners)
     try:
-        current = cab_obj.get(key)
-        if current is not None and list(current) == value:
-            return
-        if value == [-1, -1]:
-            if current is not None:
-                del cab_obj[key]
-            return
-        cab_obj[key] = value
+        current = cab_obj.get(exposure.FINISH_KICK_REACH_KEY)
+        if current is None or list(current) != value:
+            cab_obj[exposure.FINISH_KICK_REACH_KEY] = value
+        current = cab_obj.get(exposure.FINISH_KICK_CORNER_KEY)
+        if (current is None or len(current) != 6
+                or any(abs(a - b) > 1e-9
+                       for a, b in zip(current, corner_value))):
+            cab_obj[exposure.FINISH_KICK_CORNER_KEY] = corner_value
+        if cab_obj.get(exposure.FINISH_KICK_CORNER_WITH_KEY) != partners:
+            cab_obj[exposure.FINISH_KICK_CORNER_WITH_KEY] = partners
     except Exception:
         pass
 
@@ -1512,7 +1568,14 @@ def finish_kick_segments(layout):
 
     An unfinished end with no kick beyond it (an appliance, an open
     gap, a blind corner's face) or a FLUSH_X end stops flush with the
-    subfront's end instead - see _finish_kick_reaches_edge.
+    outer face of the side instead, covering the subfront and the
+    side's edge beside it - see _finish_kick_reaches_edge.
+
+    An end meeting a square-on run's kick at an inside corner (a blind
+    or voided corner, or one run butted against the other's face) runs
+    on to the corner instead and mitres with that kick: the segment's
+    'miter_left' / 'miter_right' carry (front_x, back_x), the X where
+    the board's front and back faces end, for the mitre cutter.
 
     Stile-to-floor exception: that side's carcass panel has no notch
     and is solid through the kick Y range, so a full-width finish kick
@@ -1529,14 +1592,24 @@ def finish_kick_segments(layout):
     segments = []
     last_bay = layout.bay_count - 1
     finish_t = layout.finish_kick_thickness
-    # Ends whose reach the neighbours decided: 1 = edge, 0 = subfront.
+    # How each end was decided - see exposure.FINISH_KICK_REACH_KEY.
     neighbour_reach = {}
+    corner_ends = {}
 
     def end_reaches_edge(side):
         reach, by_neighbours = _finish_kick_reaches_edge(layout, side)
         if by_neighbours:
             neighbour_reach[side] = 1 if reach else 0
+        else:
+            neighbour_reach[side] = 3
         return reach
+
+    def end_corner(side):
+        corner = _finish_kick_corner(layout, side)
+        if corner is not None:
+            neighbour_reach[side] = 2
+            corner_ends[side] = corner
+        return corner
 
     for start, end in _compute_segments(layout, _kick_subfront_passthrough):
         first_bay = layout.bays[start]
@@ -1544,6 +1617,7 @@ def finish_kick_segments(layout):
             continue
         if first_bay.get('floating_bay'):
             continue
+        left_miter = right_miter = None
         if start == 0:
             if layout.kick_inset_left > 0:
                 # Inset with return: finish kick covers the return's
@@ -1551,10 +1625,17 @@ def finish_kick_segments(layout):
                 left_x = layout.kick_inset_left
             elif left_stile_to_floor(layout):
                 left_x = carcass_inner_left_x(layout)
+            elif (corner := end_corner('LEFT')) is not None:
+                left_x = corner['back_x']
+                if corner['miter']:
+                    left_miter = (corner['front_x'], corner['back_x'])
             elif end_reaches_edge('LEFT'):
                 left_x = 0.0
             else:
-                left_x = carcass_inner_left_x(layout)
+                # Flush with the side's outer face: the board covers the
+                # subfront and the side's notched edge beside it, but
+                # not the scribe gap past the side.
+                left_x = left_scribe_offset(layout)
         else:
             if _void_gap(layout, start - 1):
                 # The to-floor division finishing the void blocks the
@@ -1567,10 +1648,14 @@ def finish_kick_segments(layout):
                 right_x = layout.dim_x - layout.kick_inset_right
             elif right_stile_to_floor(layout):
                 right_x = carcass_inner_right_x(layout)
+            elif (corner := end_corner('RIGHT')) is not None:
+                right_x = corner['back_x']
+                if corner['miter']:
+                    right_miter = (corner['front_x'], corner['back_x'])
             elif end_reaches_edge('RIGHT'):
                 right_x = layout.dim_x
             else:
-                right_x = carcass_inner_right_x(layout)
+                right_x = layout.dim_x - right_scribe_offset(layout)
         else:
             if _void_gap(layout, end):
                 right_x = _mid_div_left_outer_x(layout, end)
@@ -1617,8 +1702,10 @@ def finish_kick_segments(layout):
             'length':     ff_world_x_span_to_length(layout, right_x - left_x),
             'width':      first_bay['kick_height'],
             'thickness':  finish_t,
+            'miter_left':  left_miter,
+            'miter_right': right_miter,
         })
-    _stamp_finish_kick_reach(layout, neighbour_reach)
+    _stamp_finish_kick_reach(layout, neighbour_reach, corner_ends)
     return segments
 
 
@@ -2862,16 +2949,20 @@ def mid_stile_dims(layout, gap_index):
     return (length, ms['width'], layout.fft)
 
 
+# Stile width kept beside a lone bay at a full-overlay height step.
+STEP_NOTCH_KEEP = inch(1.25)
+
+
 def mid_stile_notches(layout, gap_index):
     """Step notches for a mid stile whose adjacent bays differ in
     vertical extent (the full-overlay height-change case).
 
     The stile spans the UNION of both bays; where only ONE bay runs
-    beside it, the stile keeps just that bay's HALF of its width --
-    the absent bay's half is notched away from the stile's end up (or
-    down) to the absent bay's edge, so e.g. a 2-1/4" shared stile
-    reads 1-1/8" beside the single full-height door below a shortened
-    middle bay.
+    beside it, the absent bay's side is notched away from the stile's
+    end up (or down) to the absent bay's edge, leaving STEP_NOTCH_KEEP
+    of the stile -- e.g. a 2-1/4" shared stile reads 1-1/4" beside the
+    single full-height door below a shortened middle bay. A stile too
+    narrow for that keeps half its width.
 
     Returns a list of notch dicts: end ('BOTTOM' / 'TOP'), side
     ('LEFT' / 'RIGHT' -- which adjacent bay's half is removed), span
@@ -2904,7 +2995,10 @@ def mid_stile_notches(layout, gap_index):
         top_z -= layout.bays[gap_index]['top_rail_width']
     top_z += ms['extend_up_amount']
 
-    half = ms['width'] / 2.0
+    keep = ms['width'] / 2.0
+    if ms['width'] > STEP_NOTCH_KEEP:
+        keep = max(keep, STEP_NOTCH_KEEP)
+    removed = ms['width'] - keep
     eps = inch(1.0 / 32.0)
     out = []
     hi_bot = max(a_bot, b_bot)      # the shallower-reaching bay's bottom
@@ -2913,7 +3007,7 @@ def mid_stile_notches(layout, gap_index):
             'end': 'BOTTOM',
             'side': 'LEFT' if a_bot > b_bot else 'RIGHT',
             'span': hi_bot - bottom_z,
-            'width': half,
+            'width': removed,
         })
     lo_top = min(a_top, b_top)      # the shorter bay's top
     if top_z - lo_top > eps:
@@ -2921,7 +3015,7 @@ def mid_stile_notches(layout, gap_index):
             'end': 'TOP',
             'side': 'LEFT' if a_top < b_top else 'RIGHT',
             'span': top_z - lo_top,
-            'width': half,
+            'width': removed,
         })
     return out
 
@@ -3097,15 +3191,20 @@ def _mid_div_offset(layout, gap_index):
     """
     ms = layout.mid_stiles[gap_index]
     # Bay-height STEP (full overlay): the whole division setup shifts
-    # so its void-side face lands on the stile's notch plane (the
-    # stile centerline) -- and every face-keyed consumer (carcass
-    # bottom / back segments, kick, skins) follows through the shared
-    # _mid_div_* helpers instead of poking through the moved panel.
+    # so its void-side face lands on the stile's notch plane -- and
+    # every face-keyed consumer (carcass bottom / back segments, kick,
+    # skins) follows through the shared _mid_div_* helpers instead of
+    # poking through the moved panel.
     step = mid_stile_notches(layout, gap_index)
     if step and _epsilon_eq(layout.bays[gap_index]['depth'],
                             layout.bays[gap_index + 1]['depth']):
         dt = layout.division_thickness
-        return (-dt / 2.0 if step[0]['side'] == 'RIGHT' else dt / 2.0)
+        # Notch plane's distance from the stile centerline, toward the
+        # notched (absent bay's) side.
+        plane = ms['width'] / 2.0 - step[0]['width']
+        if step[0]['side'] == 'RIGHT':
+            return plane - dt / 2.0
+        return dt / 2.0 - plane
     loc = ms.get('division_location', 'CENTERED')
     if loc == 'CENTERED':
         return 0.0
@@ -3476,10 +3575,12 @@ def applied_back_segments(layout):
             'y':          -layout.dim_y + first_bay['depth'],
             # Floor to cabinet top, as the cabinet-wide applied back has
             # always run - it covers the toe-kick band at the bottom -
-            # unless a rear-inset kick recesses that band: then it stops
-            # at the top of the kick.
+            # unless a rear-inset kick recesses that band or the cabinet
+            # floats with nothing under it: then it stops at the top of
+            # the kick.
             'z':          (first_bay['kick_height']
-                           if has_rear_kick_inset(layout) else 0.0),
+                           if (has_rear_kick_inset(layout)
+                               or back_floats(layout)) else 0.0),
             'top_z':      layout.dim_z,
             'width':      right_x - left_x,
         })
@@ -5364,6 +5465,48 @@ def _retracting_door_leaves(layout, rect, cab_props, opening_props, role,
     return leaves
 
 
+# A top-mount retracting door slides back until its back edge is this far
+# short of the cabinet's depth -- the spec's projection rule: door
+# projection = (door height - cabinet depth) + 5-1/2".
+RETRACT_TOP_BACK_ALLOWANCE = inch(5.5)
+
+
+def _top_retracting_door_leaf(layout, rect, cab_props, opening_props, role,
+                              base_name):
+    """The leaf for a top-mount retracting door. The first half of
+    swing_percent flips it up square on its top hinge; the second half
+    drops it under the member above the opening and slides it back into
+    the cabinet, into the clearance the mechanism keeps at the top of
+    the opening. A door taller than the cabinet is deep stays partly
+    out, by the spec's projection rule."""
+    swing = opening_props.swing_percent
+    swing_part = min(2.0 * swing, 1.0)
+    slide_part = max(2.0 * swing - 1.0, 0.0)
+    proxy = _SwingProxy(opening_props, swing_part)
+    width, height = _door_panel_size(rect, cab_props, opening_props)
+    leaf = _single_door_leaf_pivot(layout, rect, cab_props, proxy)
+    leaf['role'] = role
+    leaf['name'] = base_name
+    leaf['part_dims'] = (height, width, cab_props.door_thickness)
+    leaf['hinge'] = 'TOP'
+    if slide_part <= 0.0:
+        return [leaf]
+    px, py, pz = leaf['pivot_position']
+    # Flipped square, the door hangs forward of its pivot by its height
+    # with its top at the pivot. It drops until that top clears the
+    # opening's top edge, then slides back: far enough for its front
+    # edge to clear the frame, never past the projection limit.
+    clear_top = rect['cage_dim_z'] - rect['reveal_top']
+    drop = max(0.0, pz - clear_top) + RETRACT_SLIDE_SIDE_CLEAR
+    back_y = _ff_back_y_bay_local(layout)
+    slide = height + (back_y - py) + RETRACT_SLIDE_SIDE_CLEAR
+    limit = rect['cage_dim_y'] - RETRACT_TOP_BACK_ALLOWANCE - py
+    slide = max(0.0, min(slide, limit))
+    leaf['pivot_position'] = (px, py + slide * slide_part,
+                              pz - drop * slide_part)
+    return [leaf]
+
+
 class _ZeroSwingProxy:
     """Wraps an opening_props instance and reports swing_percent as 0.
     Used for FALSE_FRONT so the leaf builder can be reused without
@@ -5520,6 +5663,11 @@ def front_leaves(layout, rect, cab_props, opening_props):
             and any(retracting_pocket_sides(opening_props))):
         return _retracting_door_leaves(layout, rect, cab_props,
                                        opening_props, role, base_name)
+    if (opening_props.hinge_side == 'TOP'
+            and getattr(opening_props, 'door_mechanism', 'NONE')
+            == 'RETRACTING_TOP'):
+        return _top_retracting_door_leaf(layout, rect, cab_props,
+                                         opening_props, role, base_name)
     if cab_props.id_data.get('HB_TRIVIEW_DOORS'):
         # Tri-view medicine cabinet: three mirror doors in one opening.
         return _triple_door_leaves(
@@ -6057,8 +6205,9 @@ def _rollout_descriptors(rect, cage_dim_y, item, item_index=-1):
 # Tray dividers
 # ---------------------------------------------------------------------------
 # Vertical thin dividers spaced evenly across the opening's X span. With
-# Remove Locked Shelf off (default), the dividers stop at the underside
-# of a horizontal locked shelf at tray_opening_height; with it on, the
+# Remove Locked Shelf off (default), tray_opening_height is the clear
+# height under a horizontal locked shelf: the shelf's bottom face sits
+# there and the dividers fill the space below it. With it on, the
 # dividers run the full opening height. The locked shelf carries its own
 # part role so the wipe set picks it up alongside the dividers.
 def _tray_dividers_descriptors(rect, cage_dim_y, item):
@@ -6078,8 +6227,8 @@ def _tray_dividers_descriptors(rect, cage_dim_y, item):
     if remove_shelf:
         div_length = max(0.0, cage_dim_z - z0)
     else:
-        # Dividers stop just below the locked shelf's bottom face.
-        div_length = max(0.0, opening_height - SHELF_THICKNESS)
+        # Dividers fill the clear opening up to the shelf's bottom face.
+        div_length = max(0.0, opening_height)
 
     div_width = max(0.0, cage_dim_y - setback - SHELF_BACK_SETBACK)
 
@@ -6108,7 +6257,7 @@ def _tray_dividers_descriptors(rect, cage_dim_y, item):
             'name':         'Tray Locked Shelf',
             'orientation':  'HORIZONTAL',
             'position':     (SHELF_X_CLEARANCE, setback,
-                             z0 + max(0.0, opening_height - SHELF_THICKNESS)),
+                             z0 + max(0.0, opening_height)),
             'dims':         (shelf_length, shelf_width, SHELF_THICKNESS),
         })
     return out

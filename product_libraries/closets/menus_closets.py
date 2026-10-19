@@ -101,6 +101,11 @@ class HOME_BUILDER_MT_closet_corner_opening_commands(bpy.types.Menu):
             op = layout.operator("hb_closets.corner_opening_config",
                                  text=label)
             op.interior = key
+        layout.separator()
+        # Placed as the library places a fixed shelf: hover a height,
+        # click to put it down.
+        layout.operator("hb_closets.add_part", text="Add Fixed L Shelf",
+                        icon='ADD').part_type = 'FIXED_SHELF'
         from . import accessories_closets as acc
         if acc.catalog_items(family=acc.FAMILY_PANEL):
             layout.separator()
@@ -544,6 +549,13 @@ class HOME_BUILDER_MT_closet_part_commands(bpy.types.Menu):
                 layout.operator("hb_closets.resize_drawer_for_tray",
                                 text="Resize Drawer to Fit Tray",
                                 icon='FULLSCREEN_ENTER')
+            layout.separator()
+        if obj is not None and obj.get(types_closets.PROP_L_DIVIDER):
+            layout.operator("hb_closets.l_divider_prompts",
+                            text="Fixed L Shelf Properties...",
+                            icon='WINDOW')
+            layout.operator("hb_closets.remove_l_divider",
+                            text="Remove Fixed L Shelf", icon='X')
             layout.separator()
         if (obj is not None and obj.get('hb_l_index') is not None
                 and not obj.get('hb_l_carcass')):

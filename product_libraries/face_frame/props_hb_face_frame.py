@@ -64,6 +64,21 @@ INTERIOR_TEXTURE_ITEMS = [
     ('V_GROOVE', "V-Groove", "Liners carved with vertical v-groove cuts"),
 ]
 
+# Which of a textured finished interior's liners carry the texture.
+# BACK_SIDES is what a texture did before the choice existed, so it is
+# the default and a file saved before it reads the same.
+INTERIOR_TEXTURE_SCOPE_ITEMS = [
+    ('BACK_SIDES', "Back & Sides",
+     "The texture on the back and the side liners"),
+    ('BACK', "Back Only",
+     "The texture on the back only; the sides stay plain"),
+]
+# Bead spacing for a beadboard finished interior.
+INTERIOR_BEADBOARD_PATTERN_ITEMS = [
+    ('STANDARD', "Standard Pattern", "Beads about 1-5/8\" apart"),
+    ('WIDE', "Wide Pattern", "Beads about 3-1/4\" apart"),
+]
+
 RETURN_MEMBER_TYPE_ITEMS = [
     ('FINISHED', "Finished", "Flat 3/4 finished part"),
     ('PANELED', "Paneled", "Applied panel with rails / stiles and an inset panel"),
@@ -878,7 +893,8 @@ def _restyle_fronts_in_room(self, scene):
     target_name = self.name
     roles = (Face_Frame_Door_Style._DRAWER_FRONT_ROLES
              if _front_is_drawer(self)
-             else Face_Frame_Door_Style._DOOR_FRONT_ROLES)
+             else Face_Frame_Door_Style._DOOR_FRONT_ROLES
+             | {'PANELED_TOP_RAIL'})
     # Snapshot before acting: restyling can add / remove scene objects,
     # and mutating scene membership under a live scene.objects iterator
     # is a hard crash (see _propagate_cabinet_style).
@@ -1239,11 +1255,15 @@ def update_door_style_name(self, context):
     old = self.rename_anchor
     if old and old != final and old not in existing:
         roles = (Face_Frame_Door_Style._DRAWER_FRONT_ROLES if in_drawer
-                 else Face_Frame_Door_Style._DOOR_FRONT_ROLES)
+                 else Face_Frame_Door_Style._DOOR_FRONT_ROLES
+                 | {'PANELED_TOP_RAIL'})
         for obj in bpy.data.objects:
             if (obj.get('DOOR_STYLE_NAME') == old
                     and obj.get('hb_part_role') in roles):
                 obj['DOOR_STYLE_NAME'] = final
+            if (not in_drawer and obj.get('hb_part_role') == 'PANELED_TOP_RAIL'
+                    and obj.get('hb_front_door_style') == old):
+                obj['hb_front_door_style'] = final
         rename_in_sections(main, 'DRAWER' if in_drawer else 'DOOR',
                            old, final)
     self.rename_anchor = final
@@ -1469,6 +1489,22 @@ def _style_tint_for_cabinet(cabinet_obj, styles):
     return None
 
 
+def _is_styled_bare_part(obj):
+    """True for a bare part (Misc Part, Wood Top) with a style stamped on
+    it and no cabinet above it. Those sit outside every cabinet's walk,
+    so the style colour pass has to reach them on their own."""
+    if not (obj.get('CABINET_PART') and obj.get('STYLE_NAME')):
+        return False
+    if obj.get('IS_WOOD_HOOD_PART'):
+        return False
+    cur = obj.parent
+    while cur is not None:
+        if cur.get('IS_FACE_FRAME_CABINET_CAGE'):
+            return False
+        cur = cur.parent
+    return True
+
+
 def _annotation_color(context):
     """The colour drawing text is meant to wear, from preferences.
 
@@ -1484,9 +1520,13 @@ def _annotation_color(context):
 
 
 def apply_style_colors(context):
-    """Paint (or unpaint) every cabinet in the scene with its style's
+    """Paint (or unpaint) every cabinet in the project with its style's
     drawing colour, and put the viewport in object-colour mode to show
-    it. Returns the number of cabinets tinted."""
+    it. Returns the number of cabinets tinted.
+
+    The style pool is shared by every room, so a change to it (reorder,
+    add, remove) moves the colours in all rooms, not just the open one.
+    """
     from . import types_face_frame
     scene = context.scene
     props = get_style_props(context)
@@ -1500,7 +1540,7 @@ def apply_style_colors(context):
     # repainted to their own colour on the way past instead, which also
     # puts right any that an earlier build had already tinted.
     note_colour = _annotation_color(context)
-    for cage in [o for o in scene.objects
+    for cage in [o for o in bpy.data.objects
                  if o.get(types_face_frame.TAG_CABINET_CAGE)]:
         tint = _style_tint_for_cabinet(cage, styles) if on else None
         part_colour = (_NO_STYLE_TINT if tint is None
@@ -1520,7 +1560,7 @@ def apply_style_colors(context):
     # housed one was reached through its cabinet above). Only the panel
     # run is tinted, not the appliance model behind it.
     from . import appliance_panels
-    for app in [o for o in scene.objects if _is_panel_appliance(o)]:
+    for app in [o for o in bpy.data.objects if _is_panel_appliance(o)]:
         if appliance_panels._is_housed(app):
             continue
         tint = _style_tint_for_cabinet(app, styles) if on else None
@@ -1533,6 +1573,19 @@ def apply_style_colors(context):
                 child.color = part_colour
                 for sub in child.children_recursive:
                     sub.color = part_colour
+
+    # A bare part (Misc Part, Wood Top) standing outside any cabinet
+    # carries its own style stamp; it wears that style like a cabinet.
+    for part in [o for o in bpy.data.objects if _is_styled_bare_part(o)]:
+        tint = _style_tint_for_cabinet(part, styles) if on else None
+        part_colour = (_NO_STYLE_TINT if tint is None
+                       else (tint[0], tint[1], tint[2], 1.0))
+        part.color = part_colour
+        for child in part.children_recursive:
+            if child.get('IS_2D_ANNOTATION'):
+                child.color = note_colour
+            else:
+                child.color = part_colour
 
     # The colour only shows in solid shading's OBJECT mode; remember what
     # the viewport had so turning this off gives it back.
@@ -1585,6 +1638,10 @@ def style_color_for_object(obj, context=None, highlight=None):
     root = obj
     while root is not None and not root.get('IS_FACE_FRAME_CABINET_CAGE'):
         root = root.parent
+    if root is None:
+        root = obj
+        while root is not None and not _is_styled_bare_part(root):
+            root = root.parent
     if root is None:
         return None
     tint = _style_tint_for_cabinet(root, props.cabinet_styles)
@@ -5829,6 +5886,9 @@ class Face_Frame_Door_Style(PropertyGroup):
         role = front_obj.get('hb_part_role')
         if role not in self._STYLEABLE_ROLES:
             return False
+        if role == 'PANELED_TOP_RAIL' and self.door_type != '5_PIECE':
+            # The rail's recalc only builds stiles-and-rails styles.
+            return "A paneled top rail needs a stiles and rails door style"
         # Set again below when this build matches the door rail.
         front_obj.pop('DOOR_RAIL_MATCHED', None)
 
@@ -5847,7 +5907,10 @@ class Face_Frame_Door_Style(PropertyGroup):
             _key = ('hb_front_drawer_style'
                     if role in self._DRAWER_FRONT_ROLES
                     else 'hb_front_door_style')
-            if _cage is not None:
+            if role == 'PANELED_TOP_RAIL':
+                # Not rebuilt each recalc: the part is its own store.
+                front_obj[_key] = self.name
+            elif _cage is not None:
                 _cage[_key] = self.name
             elif front_obj.get('IS_APPLIANCE_PANEL_FRONT'):
                 # An appliance panel has no opening: its section in the
@@ -10083,6 +10146,18 @@ class Face_Frame_Bay_Props(PropertyGroup):
         items=INTERIOR_TEXTURE_ITEMS, default='NONE',
         update=_update_cabinet_dim,
     )  # type: ignore
+    finish_bay_texture_scope: EnumProperty(
+        name="Texture On",
+        description="Which of the finished interior's panels take the texture",
+        items=INTERIOR_TEXTURE_SCOPE_ITEMS, default='BACK_SIDES',
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    finish_bay_beadboard_pattern: EnumProperty(
+        name="Beadboard",
+        description="Bead spacing of a beadboard finished interior",
+        items=INTERIOR_BEADBOARD_PATTERN_ITEMS, default='STANDARD',
+        update=_update_cabinet_dim,
+    )  # type: ignore
     # Per-bay bottom-rail profile override. CABINET follows the cabinet-
     # level pick; NONE forces a plain rail on this bay; any profile id
     # cuts just this bay's rail segment -- so split rails can carry e.g.
@@ -10524,7 +10599,8 @@ class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
 
     # TRAY_DIVIDERS
     # Vertical dividers; tray_remove_shelf=False adds a horizontal locked
-    # shelf at tray_opening_height that the dividers stop against.
+    # shelf whose underside sits tray_opening_height above the dividers'
+    # bottom, so the value is the clear height for trays.
     tray_qty: IntProperty(
         name="Tray Qty", default=3, min=1, max=10,
         update=_update_cabinet_dim,
@@ -10536,7 +10612,7 @@ class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
     )  # type: ignore
     tray_opening_height: FloatProperty(
         name="Tray Opening Height",
-        description="Z position of the locked shelf above the tray dividers (only when Remove Locked Shelf is off)",
+        description="Clear height under the locked shelf, from the bottom of the dividers to the underside of the shelf (only when Remove Locked Shelf is off)",
         default=units.inch(20.5), unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
     )  # type: ignore
@@ -10736,6 +10812,13 @@ class Face_Frame_Drawer_Look_Opening(PropertyGroup):
     unlock_size: BoolProperty(
         name="Unlock Opening Height",
         description="Hold this opening height; locked rows share the remainder equally",
+        default=False, update=_update_cabinet_dim,
+    )  # type: ignore
+    no_rail_above: BoolProperty(
+        name="Remove Rail",
+        description="No faux mid rail between this front and the one above: "
+                    "the two close up to the gap a removed mid rail leaves "
+                    "on a real drawer stack",
         default=False, update=_update_cabinet_dim,
     )  # type: ignore
 
@@ -11097,6 +11180,27 @@ class Face_Frame_Opening_Props(PropertyGroup):
         default='NONE',
         update=_update_cabinet_dim,
     )  # type: ignore
+    # Which way the door-look panels lay out: side by side across a
+    # single door (the original look), or stacked top to bottom -- a
+    # tall door, or each door of a pair, built from doors battened
+    # together so it reads as several openings.
+    door_look_direction: EnumProperty(
+        name="Door-Look Layout",
+        items=[
+            ('ACROSS', "Side by Side", "Door panels side by side", 0),
+            ('STACKED', "Stacked", "Door panels stacked top to bottom, "
+             "battened together", 1),
+        ],
+        default='ACROSS',
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    door_look_top_height: FloatProperty(
+        name="Top Door Height", default=0.0, min=0.0, unit='LENGTH',
+        precision=4,
+        description="Height of the top door of a stacked door-look; "
+                    "0 splits the height evenly",
+        update=_update_cabinet_dim,
+    )  # type: ignore
 
     HINGE_SIDE_ITEMS = [
         ('LEFT', "Left", "Single door, hinged on the left edge"),
@@ -11312,6 +11416,18 @@ class Face_Frame_Opening_Props(PropertyGroup):
         name="Interior Texture",
         description="Texture carved into the finished interior's panels",
         items=INTERIOR_TEXTURE_ITEMS, default='NONE',
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    finish_opening_texture_scope: EnumProperty(
+        name="Texture On",
+        description="Which of the finished interior's panels take the texture",
+        items=INTERIOR_TEXTURE_SCOPE_ITEMS, default='BACK_SIDES',
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    finish_opening_beadboard_pattern: EnumProperty(
+        name="Beadboard",
+        description="Bead spacing of a beadboard finished interior",
+        items=INTERIOR_BEADBOARD_PATTERN_ITEMS, default='STANDARD',
         update=_update_cabinet_dim,
     )  # type: ignore
 
@@ -13507,6 +13623,32 @@ class Face_Frame_Floating_Shelf_Props(PropertyGroup):
         name="Finish Right", default=True, update=_update_cabinet_dim,
         description="Close the right end with a finished panel",
     )  # type: ignore
+    # A corner end meets the shelf on the other wall in a 45-degree miter
+    # through the shelf's full depth, so the pair builds as one L-shaped
+    # shelf. Each shelf keeps its full wall dimension: to the corner for
+    # an inside corner, to the outer corner for an outside one.
+    corner_left: EnumProperty(
+        name="Left Corner",
+        items=[('NONE', "None", "A plain end", 0),
+               ('INSIDE', "Inside Corner",
+                "Runs into an inside corner and miters into the shelf on "
+                "the other wall", 1),
+               ('OUTSIDE', "Outside Corner",
+                "Wraps an outside corner, mitered to the shelf on the "
+                "other wall", 2)],
+        default='NONE', update=_update_cabinet_dim,
+    )  # type: ignore
+    corner_right: EnumProperty(
+        name="Right Corner",
+        items=[('NONE', "None", "A plain end", 0),
+               ('INSIDE', "Inside Corner",
+                "Runs into an inside corner and miters into the shelf on "
+                "the other wall", 1),
+               ('OUTSIDE', "Outside Corner",
+                "Wraps an outside corner, mitered to the shelf on the "
+                "other wall", 2)],
+        default='NONE', update=_update_cabinet_dim,
+    )  # type: ignore
     material_thickness: FloatProperty(
         name="Material Thickness", default=units.inch(0.75),
         description="Thickness of the top and bottom panels. The front "
@@ -13778,6 +13920,11 @@ def _update_wood_top(self, context):
     obj = self.id_data
     if obj is None or not obj.get(types_face_frame.WOOD_TOP_TAG):
         return
+    if not wood_top_edge.style_allowed(self.top_type, self.nosing_style):
+        # Switched to a solid top: drop a band-only profile. The write
+        # runs its own update, which rebuilds.
+        self.nosing_style = 'NONE'
+        return
     top = types_face_frame.WoodTopPart()
     top.obj = obj
     top.rebuild()
@@ -13799,6 +13946,10 @@ def _update_wood_top_nosing_style(self, context):
     meets the board top and bottom.
     """
     global _SEEDING_NOSING_HEIGHT
+    if not wood_top_edge.style_allowed(self.top_type, self.nosing_style):
+        # Not offered on a solid top; don't let it reset the thickness.
+        self.nosing_style = 'NONE'
+        return
     want = wood_top_edge.STYLE_THICKNESS.get(self.nosing_style)
     if want is not None and abs(self.thickness - want) > 0.0001:
         # Writing the thickness runs its own update, which rebuilds.

@@ -626,6 +626,11 @@ def attach_to_cabinet(objs, cabinet):
         obj.matrix_parent_inverse.identity()
         obj.matrix_world = mw
         obj[ATTACHED_TAG] = True
+        # A mesh converted from a drawing profile keeps the profile's
+        # annotation tag; as a cabinet part it is model geometry, so the
+        # layout views must draw it, not route it with the annotations.
+        if obj.type == 'MESH' and 'IS_2D_ANNOTATION' in obj:
+            del obj['IS_2D_ANNOTATION']
 
 
 def detach_from_cabinet(objs):

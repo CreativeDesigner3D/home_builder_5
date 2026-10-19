@@ -2293,11 +2293,12 @@ class hb_closets_OT_change_number_of_openings(bpy.types.Operator):
             n = len(_starter_bays(root))
             if not starter.delete_bay(n - 1):
                 break
-        # Evenly across the width the closet had.
+        # Evenly across the width the closet had: unlocked bays share it.
+        # Writing a bay's width here would read as an edit and lock the
+        # bay at that value again.
         with types_closets.suspend_recalc():
             for bay in _starter_bays(root):
                 bay.hb_closet_bay.unlock_width = False
-                bay.hb_closet_bay.width = 0.0
             sp.width = width
         types_closets.recalculate_closet_starter(root)
         _apply_finish(root)
@@ -2365,6 +2366,14 @@ class hb_closets_OT_add_part(bpy.types.Operator,
     def _make_preview(self, opening):
         if self.part_type == 'ROLLOUT':
             return self._make_rollout_preview(opening)
+        if opening.get(types_closets.TAG_CORNER_OPENING_CAGE):
+            # A fixed shelf in a corner is an L shelf, built like its
+            # top and bottom; it divides the corner when put down.
+            if self.part_type != 'FIXED_SHELF':
+                return None
+            root = types_closets.find_starter_root(opening)
+            return (types_closets.add_l_divider_preview(root)
+                    if root is not None else None)
         if self.part_type == 'ROD':
             obj = types_closets.add_rod(opening, const.ROD_TOP_OFFSET)
         else:
@@ -2501,8 +2510,9 @@ class hb_closets_OT_add_part(bpy.types.Operator,
             obj.color = color
 
     def _resolve_opening_under_cursor(self, context):
-        return _opening_under_cursor(context, self.region,
-                                     self.mouse_pos)
+        return _opening_under_cursor(
+            context, self.region, self.mouse_pos,
+            corners=self.part_type == 'FIXED_SHELF')
 
     def _update_preview(self, context):
         """Move the preview into the opening under the cursor at the
@@ -2541,7 +2551,18 @@ class hb_closets_OT_add_part(bpy.types.Operator,
         seg_bottom = opening.get('hb_seg_bottom', 0.0)
         z = const.snap_system_hole(seg_bottom + local_z) - seg_bottom
         z = max(0.0, min(z, interior_h))
-        if self.part_type == 'ROD':
+        corner = bool(opening.get(types_closets.TAG_CORNER_OPENING_CAGE))
+        if corner:
+            # An L shelf is not hung on system holes: it goes on the
+            # scene's grid, a shelf clear of the shelves above and below.
+            st = types_closets.run_sizes(opening).shelf_thickness
+            w0 = opening.matrix_world.translation.z
+            z = hb_snap.snap_value_to_grid(
+                w0 + local_z, context.scene.unit_settings) - w0
+            z = max(st, min(z, interior_h - 2.0 * st))
+            self._preview[types_closets.PROP_L_DIVIDER_Z] = float(
+                opening.location.z + z)
+        elif self.part_type == 'ROD':
             # As the reference dropped a rod: the cursor height on the scene's
             # 1" grid rather than the hole lattice (a rod hangs from
             # cups, not on a system hole), and within 5" of the top of
@@ -2584,6 +2605,9 @@ class hb_closets_OT_add_part(bpy.types.Operator,
         x_dim = units.inch(2.0)
         y_dim = -depth - units.inch(1.0)
         z_part = self._preview.location.z
+        if corner:
+            # The L shelf stands in the unit, not in the opening.
+            z_part -= opening.location.z
         unit_settings = context.scene.unit_settings
         specs = []
         if self.part_type == 'FIXED_SHELF':
@@ -2672,6 +2696,23 @@ class hb_closets_OT_add_part(bpy.types.Operator,
                 self._preview = types_closets.add_wall_rod(
                     rod.parent, preview=True)
                 self._preview.location = rod.location.copy()
+                return {'RUNNING_MODAL'}
+            if (self._preview is not None and self._opening is not None
+                    and self._preview.get(
+                        types_closets.PROP_L_DIVIDER_PREVIEW)):
+                # A corner's L shelf: put down where the preview stood,
+                # dividing the opening it was over. The openings are new
+                # after that, so the next move finds the cursor's again.
+                opening = self._opening
+                z = float(self._preview.get(
+                    types_closets.PROP_L_DIVIDER_Z, 0.0))
+                root = types_closets.find_starter_root(opening)
+                self._drop_preview()
+                if root is not None:
+                    types_closets.add_l_divider(root, opening, z)
+                    _apply_finish(root)
+                    _apply_selection_shading(context, root,
+                                             keep_active=False)
                 return {'RUNNING_MODAL'}
             if self._preview is not None and self._opening is not None:
                 # Commit: the preview IS the part. Clearing the preview
@@ -3269,6 +3310,10 @@ class hb_closets_OT_add_drawers(_ClosetInsertDialog, bpy.types.Operator):
         _pin_drawer_front_heights(opening, self._sizes())
 
         types_closets.recalculate_closet_starter(root)
+        if not self.fill and self._count() > 0:
+            # Not filling, the bank stops under a shelf that divides the
+            # opening: the space above becomes an opening of its own.
+            types_closets.split_above_drawer_bank(opening)
         _apply_finish(root)
         _apply_selection_shading(context, root)
         return {'FINISHED'}
@@ -5519,8 +5564,12 @@ def _accessory_target_opening(obj):
     root = types_closets.find_starter_root(obj)
     if root is None:
         return None
-    return next((c for c in root.children
-                 if c.get(types_closets.TAG_CORNER_OPENING_CAGE)), None)
+    current = obj
+    while current is not None and current is not root:
+        if current.get(types_closets.TAG_CORNER_OPENING_CAGE):
+            return current
+        current = current.parent
+    return next(iter(types_closets.corner_openings(root)), None)
 
 
 class hb_closets_OT_add_accessory(bpy.types.Operator):
@@ -7809,8 +7858,11 @@ class hb_closets_OT_lock_l_shelf(bpy.types.Operator):
         root = types_closets.find_starter_root(obj)
         if root is None:
             return {'CANCELLED'}
-        sp = root.hb_closet_starter
-        if sp.l_interior not in ('ADJ',):
+        seg = int(obj.get(types_closets.PROP_L_SEG, 0))
+        cages = types_closets.corner_openings(root)
+        cfg = types_closets.corner_opening_cfg(
+            root, cages[seg] if seg < len(cages) else None)
+        if cfg.l_interior not in ('ADJ',):
             self.report({'INFO'},
                         "These shelves are all locked already")
             return {'CANCELLED'}
@@ -8390,6 +8442,8 @@ class hb_closets_OT_delete_part(bpy.types.Operator):
             return False
         if types_closets.find_accessory_cage(obj) is not None:
             return True
+        if obj.get(types_closets.PROP_L_DIVIDER):
+            return False    # Remove Fixed L Shelf merges its openings
         role = obj.get('hb_part_role')
         if (role == types_closets.PART_ROLE_DRAWER_BOX
                 and obj.get('hb_rollout')):
@@ -8996,6 +9050,9 @@ class hb_closets_OT_corner_opening_prompts(bpy.types.Operator):
 
     target_name: bpy.props.StringProperty(
         options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+    # Which opening of a corner the fixed L shelves divide.
+    opening_name: bpy.props.StringProperty(
+        options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
     # A double hang's Top Opening Height, picked from the standard
     # opening heights as the reference's corner rod prompts did, with a typed
     # height for one off the ladder.
@@ -9015,25 +9072,31 @@ class hb_closets_OT_corner_opening_prompts(bpy.types.Operator):
     def invoke(self, context, event):
         root = _corner_root(context)
         self.target_name = root.name
-        h = float(root.hb_closet_starter.l_top_opening_height)
+        opening = _corner_opening_of(context)
+        self.opening_name = opening.name if opening is not None else ""
+        h = float(self._cfg(root).l_top_opening_height)
         self.top_opening_height = h
         self.top_opening_preset = (
             const.nearest_opening_height_key(h) or 'CUSTOM')
         return context.window_manager.invoke_props_dialog(
             self, width=340, confirm_text="Done")
 
+    def _cfg(self, root):
+        return types_closets.corner_opening_cfg(
+            root, bpy.data.objects.get(self.opening_name))
+
     def _apply(self):
         root = bpy.data.objects.get(self.target_name)
         if root is None:
             return
-        sp = root.hb_closet_starter
-        if sp.l_interior != 'DOUBLE':
+        cfg = self._cfg(root)
+        if cfg.l_interior != 'DOUBLE':
             return
         target = (self.top_opening_height
                   if self.top_opening_preset == 'CUSTOM'
                   else const.opening_height(self.top_opening_preset))
-        if abs(sp.l_top_opening_height - target) > 1e-6:
-            sp.l_top_opening_height = target
+        if abs(cfg.l_top_opening_height - target) > 1e-6:
+            cfg.l_top_opening_height = target
 
     def check(self, context):
         self._apply()
@@ -9043,22 +9106,23 @@ class hb_closets_OT_corner_opening_prompts(bpy.types.Operator):
         self._apply()
         return {'FINISHED'}
 
-    @staticmethod
-    def _bottom_opening_height(root):
+    def _bottom_opening_height(self, root):
         """The double hang's lower opening, read-only: the top of the
-        bottom shelf up to the underside of the shelf between the rods."""
-        shelves = sorted(
-            [c for c in root.children if c.get('hb_l_index') is not None
-             and c.get('hb_part_role') in (
-                 types_closets.PART_ROLE_FIXED_SHELF,
-                 types_closets.PART_ROLE_ADJ_SHELF)],
-            key=lambda o: o.get('hb_l_index', 0))
-        middle = [s for s in shelves if not s.get('hb_l_carcass')]
-        if not shelves or not middle:
+        shelf under it up to the underside of the shelf between the
+        rods."""
+        opening = bpy.data.objects.get(self.opening_name)
+        seg = int(opening.get(types_closets.PROP_L_SEG, 0)) if opening else 0
+        middle = [c for c in root.children
+                  if c.get('hb_l_index') is not None
+                  and not c.get('hb_l_carcass')
+                  and int(c.get(types_closets.PROP_L_SEG, 0)) == seg
+                  and c.get('hb_part_role') in (
+                      types_closets.PART_ROLE_FIXED_SHELF,
+                      types_closets.PART_ROLE_ADJ_SHELF)]
+        if opening is None or not middle:
             return None
-        st = types_closets.run_sizes(root).shelf_thickness
         return max(0.0, float(middle[0].location.z)
-                   - float(shelves[0].location.z) - st)
+                   - float(opening.location.z))
 
     def draw(self, context):
         root = bpy.data.objects.get(self.target_name)
@@ -9067,15 +9131,16 @@ class hb_closets_OT_corner_opening_prompts(bpy.types.Operator):
             layout.label(text="This corner is gone")
             return
         sp = root.hb_closet_starter
+        cfg = self._cfg(root)
         col = layout.column(align=True)
-        col.prop(sp, 'l_interior')
-        if sp.l_interior in ('ADJ', 'LOCK'):
-            col.prop(sp, 'l_shelf_qty')
-        elif sp.l_interior in ('ROD', 'DOUBLE'):
+        col.prop(cfg, 'l_interior')
+        if cfg.l_interior in ('ADJ', 'LOCK'):
+            col.prop(cfg, 'l_shelf_qty')
+        elif cfg.l_interior in ('ROD', 'DOUBLE'):
             # A rod runs along one wing rather than turning the corner,
             # so which wing is the question.
             col.prop(sp, 'l_rod_on_left')
-            if sp.l_interior == 'DOUBLE':
+            if cfg.l_interior == 'DOUBLE':
                 box = layout.box()
                 row = box.row()
                 row.label(text="Top Opening Height")
@@ -9126,8 +9191,110 @@ class hb_closets_OT_corner_opening_config(bpy.types.Operator):
 
     def execute(self, context):
         root = _corner_root(context)
-        root.hb_closet_starter.l_interior = self.interior
+        cfg = types_closets.corner_opening_cfg(
+            root, _corner_opening_of(context))
+        cfg.l_interior = self.interior
         _apply_finish(root)
+        _redraw_viewports(context)
+        return {'FINISHED'}
+
+
+def _corner_opening_of(context):
+    """The corner opening cage right-clicked (or the one an object in it
+    hangs from), else the corner's lowest."""
+    obj = context.active_object
+    while obj is not None:
+        if obj.get(types_closets.TAG_CORNER_OPENING_CAGE):
+            return obj
+        obj = obj.parent
+    root = _corner_root(context)
+    cages = types_closets.corner_openings(root) if root else []
+    return cages[0] if cages else None
+
+
+def _l_divider_world_offset(root, st):
+    """What turns a fixed L shelf's stored height (its underside above
+    the unit's bottom) into the height of its top off the floor - the
+    figure the elevations print for a fixed shelf."""
+    return float(root.matrix_world.translation.z) + st
+
+
+class hb_closets_OT_l_divider_prompts(bpy.types.Operator):
+    """Where a fixed L shelf stands in its corner"""
+    bl_idname = "hb_closets.l_divider_prompts"
+    bl_label = "Fixed L Shelf Properties"
+    bl_options = {'UNDO'}
+
+    target_name: bpy.props.StringProperty(
+        options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+    height: bpy.props.FloatProperty(
+        name="Height",
+        description="Height of the top of the shelf off the floor",
+        default=0.0, min=0.0, unit='LENGTH', precision=4,
+        options={'SKIP_SAVE'})  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj is not None and bool(obj.get(types_closets.PROP_L_DIVIDER))
+
+    def invoke(self, context, event):
+        shelf = context.active_object
+        root = types_closets.find_starter_root(shelf)
+        if root is None:
+            return {'CANCELLED'}
+        self.target_name = shelf.name
+        st = types_closets.run_sizes(root).shelf_thickness
+        self.height = (float(shelf.get(types_closets.PROP_L_DIVIDER_Z, 0.0))
+                       + _l_divider_world_offset(root, st))
+        return context.window_manager.invoke_props_dialog(
+            self, width=300, confirm_text="Done")
+
+    def _apply(self):
+        shelf = bpy.data.objects.get(self.target_name)
+        root = types_closets.find_starter_root(shelf) if shelf else None
+        if root is None:
+            return
+        st = types_closets.run_sizes(root).shelf_thickness
+        z = self.height - _l_divider_world_offset(root, st)
+        if abs(float(shelf.get(types_closets.PROP_L_DIVIDER_Z, 0.0)) - z) > 1e-6:
+            types_closets.set_l_divider_z(shelf, z)
+
+    def check(self, context):
+        self._apply()
+        return True
+
+    def draw(self, context):
+        self.layout.prop(self, 'height')
+
+    def execute(self, context):
+        self._apply()
+        shelf = bpy.data.objects.get(self.target_name)
+        root = types_closets.find_starter_root(shelf) if shelf else None
+        if root is not None:
+            _apply_finish(root)
+        _redraw_viewports(context)
+        return {'FINISHED'}
+
+
+class hb_closets_OT_remove_l_divider(bpy.types.Operator):
+    """Take this fixed L shelf out. The openings above and below it
+    become one, keeping what the lower one held"""
+    bl_idname = "hb_closets.remove_l_divider"
+    bl_label = "Remove Fixed L Shelf"
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj is not None and bool(obj.get(types_closets.PROP_L_DIVIDER))
+
+    def execute(self, context):
+        shelf = context.active_object
+        root = types_closets.find_starter_root(shelf)
+        types_closets.remove_l_divider(shelf)
+        if root is not None:
+            _apply_finish(root)
         _redraw_viewports(context)
         return {'FINISHED'}
 
@@ -12070,6 +12237,8 @@ classes = (
     hb_closets_OT_corner_bay_prompts,
     hb_closets_OT_corner_opening_prompts,
     hb_closets_OT_corner_opening_config,
+    hb_closets_OT_l_divider_prompts,
+    hb_closets_OT_remove_l_divider,
     hb_closets_OT_slab_countertop_prompts,
     hb_closets_OT_bay_countertop_prompts,
     hb_closets_OT_delete_bay_countertop,

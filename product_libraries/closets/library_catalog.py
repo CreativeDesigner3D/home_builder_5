@@ -214,7 +214,10 @@ OPTION_PAGES = {
         'fields': (
             ('enum', 'closet_front_style', "Front Style"),
             ('enum', 'closet_panel_type', "Door Panel"),
-            ('enum', 'closet_door_edgeband', "Edgebanding"),
+            # 1mm only; shown on a room still set to 3mm so it can be
+            # put back.
+            ('enum', 'closet_door_edgeband', "Edgebanding",
+             {'when': lambda p: p.closet_door_edgeband != '1MM'}),
             ('gap', None, None),
             ('bool', 'closet_seed_door_shelves', "Shelves Behind Doors"),
         ),

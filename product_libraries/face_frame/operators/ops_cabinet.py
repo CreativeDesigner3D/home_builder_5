@@ -46,6 +46,15 @@ class hb_face_frame_OT_draw_cabinet(bpy.types.Operator):
         if not self.cabinet_name:
             self.report({'WARNING'}, "No cabinet name supplied")
             return {'CANCELLED'}
+        # A corbel picks its style first; that operator then runs the
+        # appliance placement below.
+        if self.cabinet_name == "Corbel":
+            bpy.ops.hb_face_frame.place_corbel('INVOKE_DEFAULT')
+            return {'FINISHED'}
+        # A tambour is drawn by clicking its ends and its bow.
+        if self.cabinet_name == "Tambour":
+            bpy.ops.hb_face_frame.draw_tambour('INVOKE_DEFAULT')
+            return {'FINISHED'}
         # Appliance products: invoke the appliance placement modal
         # (cursor follow + wall snap, fixed width, single instance).
         if self.cabinet_name in types_face_frame.APPLIANCE_NAME_DISPATCH:
@@ -1074,7 +1083,20 @@ class hb_face_frame_OT_wood_top_prompts(bpy.types.Operator):
         nose_col = col.column(align=True)
         nose_col.use_property_split = True
         nose_col.enabled = wt.edge_type == 'NONE'
-        nose_col.prop(wt, 'nosing_style')
+        if wt.top_type == 'SOLID':
+            # A solid top offers only profiles cut into the slab.
+            row = nose_col.split(factor=0.4, align=True)
+            row.context_pointer_set('wood_top', wt)
+            lab = row.row()
+            lab.alignment = 'RIGHT'
+            lab.label(text="Edge Profile")
+            label = next((name for key, name, _d
+                          in types_face_frame.wood_top_edge.EDGE_STYLE_ITEMS
+                          if key == wt.nosing_style), "None")
+            row.menu("HOME_BUILDER_MT_face_frame_solid_top_profiles",
+                     text=label)
+        else:
+            nose_col.prop(wt, 'nosing_style')
         if wt.nosing_style != 'NONE':
             if wt.nosing_style in types_face_frame.shelf_nosing.EXTRA_HEIGHT_STYLES:
                 nose_col.prop(wt, 'nosing_height')
@@ -2396,6 +2418,7 @@ class hb_face_frame_OT_finish_opening_prompts(bpy.types.Operator):
 
     _FINISH_PROPS = (
         'finish_opening_material', 'finish_opening_texture',
+        'finish_opening_texture_scope', 'finish_opening_beadboard_pattern',
         'finish_opening_flush', 'finish_opening_flush_depth',
         'finish_opening',
     )
@@ -4191,6 +4214,12 @@ _OPENING_PRESETS = {
     'DOOR_LOOKS_3_DRAWER': {'front_type': 'DOOR', 'hinge_side': 'LEFT', 'drawer_look': '3'},
     'DOOR_LOOKS_4_DRAWER': {'front_type': 'DOOR', 'hinge_side': 'LEFT', 'drawer_look': '4'},
     'DOOR_LOOKS_2_DOOR': {'front_type': 'DOOR', 'hinge_side': 'LEFT', 'door_look': '2'},
+    # Doors battened together top to bottom so one opening reads as
+    # several (a pair, each door built from stacked doors).
+    'DOUBLE_DOOR_2_HIGH': {'front_type': 'DOOR', 'hinge_side': 'DOUBLE',
+                           'door_look': '2', 'door_look_dir': 'STACKED'},
+    'DOUBLE_DOOR_3_HIGH': {'front_type': 'DOOR', 'hinge_side': 'DOUBLE',
+                           'door_look': '3', 'door_look_dir': 'STACKED'},
     'FLIP_UP_DOOR':      {'front_type': 'DOOR',         'hinge_side': 'TOP'},
     'FLIP_DOWN_DOOR':    {'front_type': 'DOOR',         'hinge_side': 'BOTTOM'},
     # Retracting mechanisms: regular door fronts plus the door_mechanism
@@ -4297,6 +4326,7 @@ def apply_opening_preset(opening_obj, config, **overrides):
     # re-applying another preset drops a previous drawer-look.
     op_props.drawer_look_divisions = preset.get('drawer_look', 'NONE')
     op_props.door_look_divisions = preset.get('door_look', 'NONE')
+    op_props.door_look_direction = preset.get('door_look_dir', 'ACROSS')
 
     # Post-front_type shelf strip (see docstring: the DOOR write above
     # re-seeds a shelf, so this must come after it).
@@ -4350,6 +4380,8 @@ class hb_face_frame_OT_change_opening(bpy.types.Operator):
             ('DOOR_LOOKS_3_DRAWER', "Door - Looks like 3 Drawers", "One door shown as three drawer fronts"),
             ('DOOR_LOOKS_4_DRAWER', "Door - Looks like 4 Drawers", "One door shown as four drawer fronts"),
             ('DOOR_LOOKS_2_DOOR', "Door - Looks like 2 Doors", "One door shown as two doors battened together"),
+            ('DOUBLE_DOOR_2_HIGH', "Double Door - 2 Doors High", "Pair of doors, each two doors battened together top to bottom"),
+            ('DOUBLE_DOOR_3_HIGH', "Double Door - 3 Doors High", "Pair of doors, each three doors battened together top to bottom"),
             ('FLIP_UP_DOOR',      "Flip Up Door",      "Door hinged on the top edge"),
             ('FLIP_DOWN_DOOR',    "Flip Down Door",    "Door hinged on the bottom edge"),
             ('RETRACTING_DOOR',   "Retracting Door",   "Single door that opens, then slides back into the cabinet"),
@@ -6578,6 +6610,33 @@ class hb_face_frame_OT_link_floating_shelves(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class hb_face_frame_OT_join_floating_shelf_corners(bpy.types.Operator):
+    """Join the selected floating shelves to any shelf they meet at a
+    square inside or outside corner, so each pair builds as one L
+    mitered through the corner; a shelf moved away from its corner
+    partner goes back to a plain end."""
+    bl_idname = "hb_face_frame.join_floating_shelf_corners"
+    bl_label = "Join Corner Shelves"
+    bl_description = ("Miter the selected shelves into any shelf they meet "
+                      "at a square corner, so the pair reads as one L")
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return bool(hb_face_frame_OT_link_floating_shelves._shelves(context))
+
+    def execute(self, context):
+        joined = 0
+        for shelf in hb_face_frame_OT_link_floating_shelves._shelves(context):
+            joined += types_face_frame.detect_floating_shelf_corners(shelf)
+        if joined:
+            self.report({'INFO'}, f"Joined {joined} corner(s)")
+        else:
+            self.report({'INFO'}, "No shelf meets these at a square corner "
+                                  "(same depth and height, at right angles)")
+        return {'FINISHED'}
+
+
 # Add Appliance to Bay dialog session counter. invoke_props_popup popups
 # can LINGER: Esc doesn't dismiss them (it only cancels an in-progress
 # field edit) and opening the dialog again stacks a second popup over the
@@ -7612,6 +7671,7 @@ classes = (
     hb_face_frame_OT_duplicate_floating_shelf,
     hb_face_frame_OT_unlink_floating_shelf,
     hb_face_frame_OT_link_floating_shelves,
+    hb_face_frame_OT_join_floating_shelf_corners,
     hb_face_frame_OT_adjust_floating_shelves,
     hb_face_frame_OT_bay_prompts,
     hb_face_frame_OT_opening_prompts,

@@ -26,6 +26,7 @@ from .operators import viewport_hud
 from .operators import room_dim_overlay
 from .operators import wall_baseboard
 from .operators import ops_general
+from .operators import cabinet_clipboard
 from .operators import ops_surfaces
 from .operators import ops_room_dressing
 from .product_libraries import closets
@@ -53,7 +54,7 @@ from bpy.app.handlers import persistent
 bl_info = {
     "name": "Home Builder 5",
     "author": "Andrew Peel",
-    "version": (5, 2, 34),
+    "version": (5, 2, 42),
     "blender": (5, 1, 0),
     "location": "3D Viewport Sidebar",
     "description": "Library for Designing Interior Spaces",
@@ -427,6 +428,7 @@ def register():
     room_dim_overlay.register()
     wall_baseboard.register()
     ops_general.register()
+    cabinet_clipboard.register()
     ops_surfaces.register()
     ops.register()
     view3d_sidebar.register()
@@ -486,6 +488,7 @@ def unregister():
     wall_baseboard.unregister()
     ops_stairs.unregister()
     ops_surfaces.unregister()
+    cabinet_clipboard.unregister()
     ops_general.unregister()
     ops.unregister()
     view3d_sidebar.unregister()

@@ -172,6 +172,11 @@ class hb_face_frame_OT_assign_pull(bpy.types.Operator):
         if self.target == 'SELECTED':
             from . import ops_cabinet
             from . import ops_part_commands
+            from .. import appliance_panels
+            # Appliance panel faces keep their choice on the panel run.
+            panels = appliance_panels.set_front_pull(
+                context.selected_objects, selection,
+                '' if selection == 'NONE' else category)
             openings = {}
             skipped = 0
             for obj in context.selected_objects:
@@ -180,9 +185,14 @@ class hb_face_frame_OT_assign_pull(bpy.types.Operator):
                     continue
                 opening = ops_cabinet._find_owning_opening(obj)
                 if opening is None:
-                    skipped += 1
+                    if not obj.get(appliance_panels.TAG_FRONT):
+                        skipped += 1
                     continue
                 openings[opening.name] = opening
+            if not openings and panels:
+                self.report({'INFO'},
+                            f"{stem} assigned to {panels} appliance panel(s)")
+                return {'FINISHED'}
             if not openings:
                 self.report(
                     {'WARNING'},
@@ -199,6 +209,8 @@ class hb_face_frame_OT_assign_pull(bpy.types.Operator):
                     ops_part_commands._sync_false_front_pull(
                         op_props, selection)
             msg = f"{stem} assigned to {len(openings)} opening(s)"
+            if panels:
+                msg += f" and {panels} appliance panel(s)"
             if skipped:
                 msg += f"; {skipped} corner front(s) skipped"
             self.report({'INFO'}, msg)

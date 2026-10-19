@@ -238,8 +238,11 @@ def _iter_face_frame_parts(cabinet):
     """Face-frame members under a cabinet root -- the same hb_part_role
     rule Face Frame selection mode highlights (stiles, rails, bay
     splitters). Conditional parts the recalc has parked (hide_render)
-    are skipped, matching Parts mode."""
-    for child in cabinet.children_recursive:
+    are skipped, matching Parts mode. An applied end panel is a cabinet
+    of its own and labels its own members, so the walk stops at it --
+    otherwise its rails also read the host cabinet's widths."""
+    from ...molding.adapters import _own_parts
+    for child in _own_parts(cabinet):
         if child.hide_render:
             continue
         if child.get('hb_part_role') in types_face_frame.FACE_FRAME_PART_ROLES:
@@ -880,7 +883,10 @@ def compute_labels(context, region, rv3d, lines_out=None):
                           else _label_anchor_world(cage))
             if anchor is None:
                 continue
-            text = prefix + units.unit_to_string(unit_settings, value)
+            # Appliance panel sizes read to 1/32", as in the Panels tab.
+            step = 32 if str(kind).startswith('AP_') else 16
+            text = prefix + units.unit_to_string(unit_settings, value,
+                                                 step=step)
             if locked:
                 # Pinned (user-typed, held during redistribution). The
                 # marker doubles as the affordance for "this one can be

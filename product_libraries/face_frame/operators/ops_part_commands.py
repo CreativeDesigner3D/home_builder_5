@@ -4083,14 +4083,20 @@ class hb_face_frame_OT_set_front_pull(bpy.types.Operator):
         # Seed from the active front's current override so reopening
         # the dialog shows the standing choice.
         from . import ops_cabinet
+        from .. import appliance_panels
         opening = ops_cabinet._find_owning_opening(context.active_object)
-        if opening is not None:
-            current = opening.face_frame_opening.pull_override
+        source = opening.face_frame_opening if opening is not None else None
+        if source is None:
+            faces = appliance_panels.front_sections([context.active_object])
+            for (_name, index), appliance_obj in faces.items():
+                source = appliance_obj.appliance_panels.sections[index]
+        if source is not None:
+            current = source.pull_override
             if current == 'NONE':
                 self.category = 'NO_PULL'
             elif current:
                 from .. import pulls
-                cat = opening.face_frame_opening.pull_override_category
+                cat = source.pull_override_category
                 for cat_id, label, _d in pulls.get_pull_categories():
                     if label == cat:
                         self.category = cat_id
@@ -4132,9 +4138,15 @@ class hb_face_frame_OT_set_front_pull(bpy.types.Operator):
 
     def execute(self, context):
         from .. import pulls
+        from .. import appliance_panels
         room_wide = self.scope == 'ALL' and self.category != 'DEFAULT'
         openings, skipped = self._target_openings(context)
-        if not openings and not room_wide:
+        # Appliance panel faces have no opening; their choice is kept on
+        # the panel run's face instead.
+        panel_faces = appliance_panels.front_sections(
+            context.selected_objects)
+        skipped = max(0, skipped - len(panel_faces))
+        if not openings and not panel_faces and not room_wide:
             self.report({'WARNING'},
                         "No fronts with openings selected"
                         + (" (corner cabinet doors use the scene pull)"
@@ -4173,7 +4185,11 @@ class hb_face_frame_OT_set_front_pull(bpy.types.Operator):
                 op_props.pull_override_category = override_cat
                 op_props.pull_override = override
                 _sync_false_front_pull(op_props, override)
+        panels = appliance_panels.set_front_pull(
+            context.selected_objects, override, override_cat)
         msg = f"{len(openings)} opening(s) set to {stem}"
+        if panels:
+            msg += f"; {panels} appliance panel(s)"
         if skipped:
             msg += f"; {skipped} corner front(s) skipped"
         self.report({'INFO'}, msg)
@@ -4234,6 +4250,7 @@ class hb_face_frame_OT_set_pull_location(bpy.types.Operator):
 
     def execute(self, context):
         from . import ops_cabinet
+        from .. import appliance_panels
         openings = {}
         # Corner cabinets have no opening cages - their per-front
         # settings live on the matching corner_sections entry, keyed by
@@ -4250,10 +4267,14 @@ class hb_face_frame_OT_set_pull_location(bpy.types.Operator):
                 continue
             section = _find_owning_corner_section(obj)
             if section is None:
-                skipped += 1
+                if not obj.get(appliance_panels.TAG_FRONT):
+                    skipped += 1
                 continue
             sections[section[0].name, section[1]] = section
-        if not openings and not sections:
+        # Appliance panel doors keep theirs on the panel run's face.
+        panels = appliance_panels.set_front_pull_location(
+            context.selected_objects, self.location)
+        if not openings and not sections and not panels:
             self.report({'WARNING'}, "No doors selected")
             return {'CANCELLED'}
         with types_face_frame.suspend_recalc():
@@ -4266,6 +4287,9 @@ class hb_face_frame_OT_set_pull_location(bpy.types.Operator):
                      if i == self.location)
         count = len(openings) + len(sections)
         msg = f"{count} opening(s): pulls at {label.lower()}"
+        if panels:
+            msg = (f"{count} opening(s) and {panels} appliance panel(s): "
+                   f"pulls at {label.lower()}")
         if skipped:
             msg += f"; {skipped} front(s) skipped"
         self.report({'INFO'}, msg)

@@ -2450,13 +2450,22 @@ class hb_frameless_OT_duplicate_cabinet(bpy.types.Operator, PlaceCabinetBase):
     def poll(cls, context):
         obj = context.object
         bp = hb_utils.get_cabinet_bp(obj) if obj is not None else None
-        return bp is not None and bool(bp.get('IS_FRAMELESS_CABINET_CAGE'))
+        if bp is not None and bool(bp.get('IS_FRAMELESS_CABINET_CAGE')):
+            return True
+        # Paste Cabinet hands over a copied cabinet by name, possibly
+        # from another room, with nothing selected here.
+        from ....operators import cabinet_clipboard
+        return cabinet_clipboard.copied_cabinet()[1] == 'FRAMELESS'
 
     def _source(self):
         return bpy.data.objects.get(self.source_name)
 
     def invoke(self, context, event):
-        src = hb_utils.get_cabinet_bp(context.object)
+        src = self._source() if self.source_name else None
+        if src is None or not src.get('IS_FRAMELESS_CABINET_CAGE'):
+            src = hb_utils.get_cabinet_bp(context.object)
+        if src is None:
+            return {'CANCELLED'}
         self.source_name = src.name
         self.cabinet_type = src.get('CABINET_TYPE', 'BASE') \
             if src.get('CABINET_TYPE') in ('BASE', 'TALL', 'UPPER') else 'BASE'

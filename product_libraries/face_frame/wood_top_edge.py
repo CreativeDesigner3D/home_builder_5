@@ -60,6 +60,19 @@ EDGE_STYLE_ITEMS = shelf_nosing.NOSING_STYLE_ITEMS + _TOP_ONLY_ITEMS
 
 _TOP_ONLY_STYLES = frozenset(key for key, _l, _d in _TOP_ONLY_ITEMS)
 
+# Profiles built as a separate moulding or band. A solid top's edge is
+# cut into the slab itself, and a band glued across its grain works
+# loose as the wood moves, so a solid top offers only the rest.
+SOLID_TOP_EXCLUDED_STYLES = frozenset({
+    'CLOVER', 'KELLI', 'MINI_MANTLE', 'DELUXE', 'LARGE_BAR',
+    'BULLNOSE_HINGED', 'LIBRARY',
+})
+
+
+def style_allowed(top_type, style):
+    """Whether a top of ``top_type`` ('VENEER' / 'SOLID') offers ``style``."""
+    return top_type != 'SOLID' or style not in SOLID_TOP_EXCLUDED_STYLES
+
 # Applied-edge builds made for one stock thickness. Picking one sets the
 # top to it, so the band and the board it edges meet top and bottom.
 STYLE_THICKNESS = {

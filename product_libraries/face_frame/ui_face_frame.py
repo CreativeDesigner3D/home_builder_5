@@ -688,6 +688,10 @@ def draw_floating_shelf(layout, root):
     row = box.row(align=True)
     row.prop(shelf, 'finish_left', text="Left", toggle=True)
     row.prop(shelf, 'finish_right', text="Right", toggle=True)
+    # A corner end miters into the shelf on the other wall instead of
+    # taking an end panel.
+    box.prop(shelf, 'corner_left', text="Left Corner")
+    box.prop(shelf, 'corner_right', text="Right Corner")
 
     # Front edges, plus the finished ends' edges.
     layout.prop(shelf, 'edge_profile', text="Edge")
@@ -1171,6 +1175,23 @@ def _draw_locked_rail_row(layout, bp, attr, unlock_attr, text):
     _locked_field(layout, bp, attr, unlock_attr, text)
 
 
+def _draw_interior_texture_settings(col, part_obj, texture):
+    """Shiplap width / direction or v-groove spacing for a textured
+    finished interior. They are the cabinet's own settings, shared with
+    any shiplap or v-groove finished end on it."""
+    if texture not in ('SHIPLAP', 'V_GROOVE'):
+        return
+    root = types_face_frame.find_cabinet_root(part_obj)
+    if root is None:
+        return
+    cab = root.face_frame_cabinet
+    if texture == 'V_GROOVE':
+        col.prop(cab, 'v_groove_spacing', text="V-Groove Spacing (Cabinet)")
+        return
+    col.prop(cab, 'shiplap_board_width', text="Shiplap Width (Cabinet)")
+    col.prop(cab, 'shiplap_direction', text="Shiplap Direction (Cabinet)")
+
+
 def draw_bay_finish_options(layout, bay_obj):
     """The finish controls for one bay: whether the exterior finish reads
     inside it, in which material, and whether it lines the cavity or sits
@@ -1185,6 +1206,11 @@ def draw_bay_finish_options(layout, bay_obj):
     if bp.finish_bay:
         col.prop(bp, 'finish_bay_material', text="Finish Color")
         col.prop(bp, 'finish_bay_texture', text="Texture")
+        if bp.finish_bay_texture not in ('NONE', ''):
+            col.prop(bp, 'finish_bay_texture_scope', text="Texture On")
+        if bp.finish_bay_texture == 'BEADBOARD':
+            col.prop(bp, 'finish_bay_beadboard_pattern', text="Beadboard")
+        _draw_interior_texture_settings(col, bay_obj, bp.finish_bay_texture)
         col.prop(bp, 'finish_bay_flush', text="Finish Flush")
         if bp.finish_bay_flush:
             col.prop(bp, 'finish_bay_flush_depth', text="Flush Depth")
@@ -1331,6 +1357,12 @@ def draw_opening_finish_options(layout, opening_obj):
     if op.finish_opening:
         col.prop(op, 'finish_opening_material', text="Finish Color")
         col.prop(op, 'finish_opening_texture', text="Texture")
+        if op.finish_opening_texture not in ('NONE', ''):
+            col.prop(op, 'finish_opening_texture_scope', text="Texture On")
+        if op.finish_opening_texture == 'BEADBOARD':
+            col.prop(op, 'finish_opening_beadboard_pattern', text="Beadboard")
+        _draw_interior_texture_settings(col, opening_obj,
+                                        op.finish_opening_texture)
         col.prop(op, 'finish_opening_flush', text="Finish Flush")
         if op.finish_opening_flush:
             col.prop(op, 'finish_opening_flush_depth', text="Flush Depth")
@@ -1416,6 +1448,19 @@ def draw_opening_properties(layout, opening_obj):
             fcol.prop(op, 'drawer_look_divisions', text="Drawer-Look")
             if single_door and op.drawer_look_divisions == 'NONE':
                 fcol.prop(op, 'door_look_divisions', text="Door-Look")
+        # A pair can only stack (each door built from doors battened
+        # together top to bottom).
+        if (op.front_type == 'DOOR' and op.hinge_side == 'DOUBLE'):
+            fcol.prop(op, 'door_look_divisions', text="Door-Look")
+        if (op.front_type == 'DOOR'
+                and op.hinge_side in ('LEFT', 'RIGHT', 'DOUBLE')
+                and op.door_look_divisions != 'NONE'
+                and op.drawer_look_divisions == 'NONE'):
+            if op.hinge_side != 'DOUBLE':
+                fcol.prop(op, 'door_look_direction', text="Layout")
+            if (op.hinge_side == 'DOUBLE'
+                    or op.door_look_direction == 'STACKED'):
+                fcol.prop(op, 'door_look_top_height', text="Top Door Height")
             if op.drawer_look_divisions != 'NONE':
                 heights_box = fcol.box()
                 heights_box.label(text="Drawer Opening Heights (top to bottom)")
@@ -1427,6 +1472,12 @@ def draw_opening_properties(layout, opening_obj):
                     field.prop(item, 'size', text="Opening " + str(idx + 1))
                     hrow.prop(item, 'unlock_size', text="",
                               icon='UNLOCKED' if item.unlock_size else 'LOCKED')
+                    if idx > 0:
+                        # The faux rail between this front and the next
+                        # one down.
+                        below = op.drawer_look_openings[idx - 1]
+                        heights_box.prop(below, 'no_rail_above',
+                                         text="Remove Rail")
 
         # Tilt-out flag (false fronts only): label-only -- the 2D elevation
         # prints TILT-OUT instead of FALSE. No geometry change.

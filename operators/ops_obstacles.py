@@ -9,6 +9,12 @@ from .. import hb_utils, hb_snap, hb_placement, hb_types, units
 # OBSTACLE CREATION UTILITIES
 # =============================================================================
 
+# Set on an obstacle that products placed along its wall must not cover
+# (read by hb_placement's gap search). Off by default: most obstacles --
+# outlets, switches, vents -- are worked around by hand.
+OBSTACLE_BLOCKS_TAG = 'OBSTACLE_BLOCKS_PLACEMENT'
+
+
 def obstacle_z_size(height, depth, obstacle_type, surface):
     """How tall the obstacle's mesh stands. Floor and ceiling items lie
     flat - width by height across the floor, depth their thickness -
@@ -748,6 +754,10 @@ class home_builder_obstacles_OT_edit_obstacle(bpy.types.Operator):
     width: bpy.props.FloatProperty(name="Width", default=0.07, min=0.001, unit='LENGTH')  # type: ignore
     height: bpy.props.FloatProperty(name="Height", default=0.1143, min=0.001, unit='LENGTH')  # type: ignore
     depth: bpy.props.FloatProperty(name="Depth", default=0.05, min=0.001, unit='LENGTH')  # type: ignore
+    blocks_placement: bpy.props.BoolProperty(
+        name="Block Placement",
+        description="Products placed along the wall stop at this obstacle "
+                    "instead of being placed over it")  # type: ignore
     # Edits apply live once the dialog is open; the obstacle as it was
     # is kept so Cancel can restore it.
     live: bpy.props.BoolProperty(
@@ -804,6 +814,7 @@ class home_builder_obstacles_OT_edit_obstacle(bpy.types.Operator):
         self.obstacle_name = obj.name
         self.width, self.height, self.depth = _obstacle_size(obj)
         self.obstacle_type = obj.get('OBSTACLE_TYPE', 'CUSTOM_RECT')
+        self.blocks_placement = bool(obj.get(OBSTACLE_BLOCKS_TAG))
         ax = obj.get('OBSTACLE_ANCHOR_X', 'LEFT')
         az = obj.get('OBSTACLE_ANCHOR_Z', 'BOTTOM')
         # Set the previous anchors first so the update callbacks see no
@@ -893,6 +904,10 @@ class home_builder_obstacles_OT_edit_obstacle(bpy.types.Operator):
         obj['OBSTACLE_HEIGHT'] = self.height
         obj['OBSTACLE_DEPTH'] = self.depth
         obj['MENU_ID'] = 'HOME_BUILDER_MT_obstacle_commands'
+        if self.blocks_placement:
+            obj[OBSTACLE_BLOCKS_TAG] = True
+        else:
+            obj.pop(OBSTACLE_BLOCKS_TAG, None)
 
         if on_wall:
             wall_mw = wall.matrix_world
@@ -933,6 +948,7 @@ class home_builder_obstacles_OT_edit_obstacle(bpy.types.Operator):
         col.prop(self, "height")
         col.prop(self, "depth")
         if obj is not None and _obstacle_wall(obj) is not None:
+            layout.prop(self, "blocks_placement")
             from .. import hb_props_obstacles
             row = layout.row()
             hb_props_obstacles.draw_anchor_point(row, self, 'anchor_x',

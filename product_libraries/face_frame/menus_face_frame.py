@@ -191,6 +191,9 @@ class HOME_BUILDER_MT_face_frame_cabinet_commands(bpy.types.Menu):
                                  text="Duplicate Mirror", icon='MOD_MIRROR')
             op.source_cabinet_name = _dup_root.name
             op.mirror = True
+            # Copy: paste it later from the right-click menu in any room.
+            layout.operator("home_builder.copy_cabinet",
+                            text="Copy Cabinet", icon='COPYDOWN')
             # Place: the same modal on the cabinet itself. Nothing is
             # copied - it is picked up and dropped again, which is how
             # you move one onto another wall, into a gap, or let it
@@ -815,6 +818,23 @@ class HOME_BUILDER_MT_face_frame_drawer_box_construction(bpy.types.Menu):
                 op.opening_name = opening.name
 
 
+class HOME_BUILDER_MT_face_frame_solid_top_profiles(bpy.types.Menu):
+    """The edge profiles a solid wood top offers (the wood top dialog
+    shows this in place of the full list). Expects ``wood_top`` in the
+    context."""
+    bl_label = "Edge Profile"
+
+    def draw(self, context):
+        from . import wood_top_edge
+        wt = getattr(context, 'wood_top', None)
+        if wt is None:
+            return
+        flow = self.layout.column_flow(columns=2)
+        for key, _label, _desc in wood_top_edge.EDGE_STYLE_ITEMS:
+            if key not in wood_top_edge.SOLID_TOP_EXCLUDED_STYLES:
+                flow.prop_enum(wt, 'nosing_style', key)
+
+
 class HOME_BUILDER_MT_face_frame_drawer_slides(bpy.types.Menu):
     """Which slide hardware the clicked drawer's / rollout's boxes run
     on. Same shape as the construction submenu: options come from the
@@ -959,6 +979,8 @@ class HOME_BUILDER_MT_face_frame_change_opening(bpy.types.Menu):
         ('BIFOLD_LEFT_DOOR',  "Bi-fold Doors (Left)"),
         ('BIFOLD_RIGHT_DOOR', "Bi-fold Doors (Right)"),
         ('DOOR_LOOKS_2_DOOR', "Door - Looks like 2 Doors"),
+        ('DOUBLE_DOOR_2_HIGH', "Double Door - 2 Doors High"),
+        ('DOUBLE_DOOR_3_HIGH', "Double Door - 3 Doors High"),
         ('DOOR_LOOKS_2_DRAWER', "Door - Looks like 2 Drawers"),
         ('DOOR_LOOKS_3_DRAWER', "Door - Looks like 3 Drawers"),
         ('DOOR_LOOKS_4_DRAWER', "Door - Looks like 4 Drawers"),
@@ -1093,6 +1115,18 @@ class HOME_BUILDER_MT_face_frame_leg_product_commands(bpy.types.Menu):
         layout = self.layout
         layout.operator("hb_face_frame.leg_product_prompts",
                         text="Leg Properties...", icon='WINDOW')
+        # Duplicate / Place: the same copy-and-place modal cabinets use.
+        # The drop deep-copies the whole leg, parts and settings, which a
+        # plain object duplicate (it copies only the selected root) can't.
+        root = types_face_frame.find_cabinet_root(context.active_object)
+        if root is not None:
+            op = layout.operator("hb_face_frame.place_cabinet",
+                                 text="Duplicate", icon='DUPLICATE')
+            op.source_cabinet_name = root.name
+            op = layout.operator("hb_face_frame.place_cabinet",
+                                 text="Place Leg", icon='SNAP_ON')
+            op.source_cabinet_name = root.name
+            op.move_source = True
         layout.separator()
         layout.operator("hb_face_frame.delete_cabinet",
                         text="Delete Leg", icon='X')
@@ -1124,6 +1158,8 @@ class HOME_BUILDER_MT_face_frame_floating_shelf_commands(bpy.types.Menu):
         if root is not None and root.get(types_face_frame.SHELF_GROUP_TAG):
             layout.operator("hb_face_frame.unlink_floating_shelf",
                             text="Unlink From Group", icon='UNLINKED')
+        layout.operator("hb_face_frame.join_floating_shelf_corners",
+                        text="Join Corner Shelves", icon='MOD_BEVEL')
         layout.separator()
         layout.operator("hb_face_frame.delete_cabinet",
                         text="Delete Shelf", icon='X')
@@ -1348,6 +1384,7 @@ classes = (
     HOME_BUILDER_MT_face_frame_interior_part_commands,
     HOME_BUILDER_MT_face_frame_drawer_box_construction,
     HOME_BUILDER_MT_face_frame_drawer_slides,
+    HOME_BUILDER_MT_face_frame_solid_top_profiles,
     HOME_BUILDER_MT_face_frame_drawer_box_commands,
     HOME_BUILDER_MT_face_frame_opening_commands,
     HOME_BUILDER_MT_face_frame_change_opening,

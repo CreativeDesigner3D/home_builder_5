@@ -2,6 +2,7 @@ import bpy
 import blf
 import gpu
 import math
+import re
 from collections import namedtuple
 from mathutils import Vector, Matrix
 from enum import Enum, auto
@@ -37,6 +38,18 @@ def exclusion_set(exclude_obj):
         return frozenset(o for o in exclude_obj if o is not None)
     except TypeError:
         return frozenset((exclude_obj,))
+
+
+def _obstacle_wall_box(obstacle, wall_obj):
+    """Wall-local (x0, x1, y0, y1, z0, z1) of an obstacle mesh's bounds,
+    or None for an obstacle with no geometry."""
+    if obstacle.type != 'MESH' or not obstacle.data.vertices:
+        return None
+    to_wall = wall_obj.matrix_world.inverted() @ obstacle.matrix_world
+    pts = [to_wall @ Vector(c) for c in obstacle.bound_box]
+    return (min(p.x for p in pts), max(p.x for p in pts),
+            min(p.y for p in pts), max(p.y for p in pts),
+            min(p.z for p in pts), max(p.z for p in pts))
 
 
 def object_shown(obj, space=None):
@@ -112,6 +125,9 @@ class TypingTarget(Enum):
     DEPTH = auto()          # Object depth
 
 
+# Whole number, dash, fraction: "155-15/16" (a leading '-' is a sign).
+_COMPOUND_RE = re.compile(r'^-?(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?/\d+(?:\.\d+)?)$')
+
 # Keys that trigger number input
 NUMBER_KEYS = {
     'ZERO': '0', 'ONE': '1', 'TWO': '2', 'THREE': '3', 'FOUR': '4',
@@ -122,6 +138,9 @@ NUMBER_KEYS = {
     'PERIOD': '.', 'NUMPAD_PERIOD': '.',
     'MINUS': '-', 'NUMPAD_MINUS': '-',
     'SLASH': '/', 'NUMPAD_SLASH': '/',  # For fractions like 3/4
+    # Compound entry "155+15/16". The main-keyboard plus is Shift+EQUAL;
+    # the shift isn't checked, so a bare '=' types '+' as well.
+    'EQUAL': '+', 'PLUS': '+', 'NUMPAD_PLUS': '+',
 }
 
 
@@ -417,7 +436,23 @@ class PlacementMixin:
         s = s.strip()
         if not s:
             return None
-            
+
+        # Compound entry, CAD style: "155-15/16" = 155 + 15/16 (the dash
+        # joins the whole number and its fraction; sign follows the whole).
+        m = _COMPOUND_RE.match(s)
+        if m:
+            whole = float(m.group(1))
+            frac = self._extract_number(m.group(2))
+            return -(whole + frac) if s.startswith('-') else whole + frac
+
+        # Sum of terms: "155+15/16"
+        if '+' in s:
+            # Empty terms come from a trailing '+' mid-typing or a leading one.
+            terms = [t for t in s.split('+') if t.strip()]
+            if not terms:
+                return None
+            return sum(self._extract_number(t) for t in terms)
+
         # Check for fraction with whole number: "5 3/4"
         if ' ' in s and '/' in s:
             parts = s.split(' ')
@@ -1054,6 +1089,22 @@ class PlacementMixin:
                 continue  # handled separately as zero-width boundaries
             if not self.blocks_placement(child):
                 continue
+            if child.get('IS_OBSTACLE'):
+                # A plain mesh parented in world space: only one marked
+                # to block placement counts, by its real footprint.
+                if not child.get('OBSTACLE_BLOCKS_PLACEMENT'):
+                    continue
+                box = _obstacle_wall_box(child, wall_obj)
+                if box is None:
+                    continue
+                x0, x1, y0, y1, z0, z1 = box
+                if ((y0 + y1) / 2.0 < wall_thickness / 2.0) != place_on_front:
+                    continue
+                if check_vertical and not (object_z_start < z1
+                                           and z0 < object_z_end):
+                    continue
+                children.append((max(0.0, x0), min(wall_length, x1), child))
+                continue
 
             # Doors/windows cut through both sides - always an obstacle.
             is_opening = ('IS_ENTRY_DOOR_BP' in child or
@@ -1397,6 +1448,12 @@ def duplicate_object_hierarchy(context, source_obj):
     object copies carry - maps each copy back to its original so both
     sides get their exact hide flags restored afterwards.
 
+    The source may live in another room (pasting a copied cabinet). The
+    duplicate operator only sees the current view layer, so those
+    members are linked into a staging collection for the copy; the
+    copies then move to the current scene and the staging is dropped,
+    leaving the source room untouched.
+
     Returns the new root object, or None on failure. Restores the
     caller's selection and active object.
     """
@@ -1405,6 +1462,15 @@ def duplicate_object_hierarchy(context, source_obj):
     old_selected = [o.name for o in context.selected_objects]
     old_active = (context.view_layer.objects.active.name
                   if context.view_layer.objects.active else None)
+
+    scene = context.scene
+    staging = None
+    foreign = [o for o in all_objs if scene.objects.get(o.name) is None]
+    if foreign:
+        staging = bpy.data.collections.new('_HB_DUP_STAGING')
+        scene.collection.children.link(staging)
+        for obj in foreign:
+            staging.objects.link(obj)
 
     flags = {}
     for i, obj in enumerate(all_objs):
@@ -1436,6 +1502,19 @@ def duplicate_object_hierarchy(context, source_obj):
                 obj.hide_set(hg)
             if '_HB_DUP_TOKEN' in obj:
                 del obj['_HB_DUP_TOKEN']
+        if staging is not None:
+            # Copies of the staged members landed in the staging
+            # collection only; they belong to this room, like a newly
+            # built cabinet.
+            for obj in new_objs:
+                if obj.name in staging.objects:
+                    if scene.collection.objects.get(obj.name) is None:
+                        scene.collection.objects.link(obj)
+                    staging.objects.unlink(obj)
+            for obj in foreign:
+                if obj.name in staging.objects:
+                    staging.objects.unlink(obj)
+            bpy.data.collections.remove(staging)
 
     bpy.ops.object.select_all(action='DESELECT')
     for name in old_selected:

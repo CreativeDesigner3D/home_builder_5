@@ -47,7 +47,8 @@ def format_number(value):
     else:
         return f"{rounded:.4f}".rstrip('0').rstrip('.')
 
-def unit_to_string(unit_settings, value):
+def unit_to_string(unit_settings, value, step=16):
+    """``step``: inch values round to the nearest 1/step"."""
     if unit_settings.system == 'METRIC':
         if unit_settings.length_unit == 'METERS':
             return format_number(round(value, 3)) + "m"
@@ -59,7 +60,10 @@ def unit_to_string(unit_settings, value):
         else:
             # Round to nearest 1/16" for clean cabinet dimensions
             inches = meter_to_inch(value)
-            rounded_inches = round_to_sixteenth(inches)
+            if step == 16:
+                rounded_inches = round_to_sixteenth(inches)
+            else:
+                rounded_inches = round(inches * step) / step
             return format_number(rounded_inches) + '"'
     else:
         return format_number(round(value, 4))    

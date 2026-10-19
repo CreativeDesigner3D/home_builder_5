@@ -1,0 +1,452 @@
+"""Corbels: fixed-size decorative wood brackets placed as standalone items.
+
+A corbel is a stock part bought at a catalog size, so it is placed whole
+rather than sized: a cage the size of the style's bounding box (origin at
+the back-left-bottom corner, front toward -Y, like an appliance cage) and
+a static mesh child, ``Corbel Body``, carrying the style's geometry.
+
+Styles come from two places:
+
+* ``BUILTIN_STYLES`` -- generic brackets drawn as a side profile extruded
+  across the width, so the library has something to place on its own.
+* Providers registered with ``register_style_provider`` -- a zero-arg
+  callable returning style dicts. A provider can hand over a side
+  ``profile`` like the built-ins or a full ``mesh`` table, which is how
+  carved shapes that are not a straight extrusion get in.
+
+A style dict::
+
+    {'key':    unique id (stored on the placed corbel),
+     'label':  menu text,
+     'width', 'depth', 'height': inches,
+     'profile': [(d, z), ...]  side outline, inches; d = distance in front
+                               of the mounting face, z = up from the bottom.
+                               Extruded across the full width.
+     -- or --
+     'mesh':   (verts, faces)  verts as (x, y, z) in 1/1000 inch with x
+                               centered on the width, y = 0 at the
+                               mounting face and negative toward the
+                               front, z = up from the bottom; faces as
+                               vertex index lists.
+     'description': optional tooltip}
+
+Keys are stored on the placed object, so a style's key must never be
+reused for a different shape.
+"""
+
+import bpy
+import bmesh
+from mathutils import Vector
+
+from ...hb_types import GeoNodeCage
+from ...units import inch
+
+CORBEL_TAG = 'IS_CORBEL'
+STYLE_PROP = 'CORBEL_STYLE'
+LABEL_PROP = 'CORBEL_LABEL'
+BODY_TAG = 'IS_CORBEL_BODY'
+MENU_ID = 'HOME_BUILDER_MT_corbel_commands'
+
+# Built-in generic shapes: a stepped cap over a cove that sweeps down to
+# a narrow foot. (d, z) inches, counter-clockwise from the bottom of the
+# mounting face.
+BUILTIN_STYLES = (
+    {
+        'key': 'BRACKET_COVE',
+        'label': "Cove Bracket",
+        'description': "Generic cove bracket, 3-1/2\" x 7-1/2\" x 12\"",
+        'width': 3.5, 'depth': 7.5, 'height': 12.0,
+        'profile': None,     # filled below
+    },
+    {
+        'key': 'BRACKET_COVE_SMALL',
+        'label': "Small Cove Bracket",
+        'description': "Generic cove bracket, 2-1/2\" x 5\" x 8\"",
+        'width': 2.5, 'depth': 5.0, 'height': 8.0,
+        'profile': None,
+    },
+)
+
+
+def _cove_profile(depth, height, segments=16):
+    """Side outline for a cove bracket of the given size."""
+    import math
+    cap_h = height * 0.12          # flat cap the counter sits on
+    step = depth * 0.08            # small step under the cap
+    foot_d = depth * 0.30          # foot projection at the bottom
+    foot_h = height * 0.06
+    pts = [(0.0, 0.0), (foot_d, 0.0), (foot_d, foot_h)]
+    # Quarter-ellipse cove from the foot up to under the step, centred
+    # on the front-bottom corner so it hollows the underside.
+    top_z = height - cap_h - step
+    cove_d = depth - step - foot_d
+    cove_h = top_z - foot_h
+    for i in range(1, segments):
+        a = (math.pi / 2.0) * i / segments
+        pts.append((foot_d + cove_d * (1.0 - math.cos(a)),
+                    foot_h + cove_h * math.sin(a)))
+    pts += [(depth - step, top_z), (depth - step, height - cap_h),
+            (depth, height - cap_h), (depth, height), (0.0, height)]
+    return pts
+
+
+for _s in BUILTIN_STYLES:
+    _s['profile'] = _cove_profile(_s['depth'], _s['height'])
+
+
+# ---- Style registry ---------------------------------------------------------
+
+_providers = []
+
+
+def register_style_provider(fn):
+    """Add ``fn`` (zero-arg callable -> list of style dicts) as a source
+    of corbel styles. Provider styles list ahead of the built-ins."""
+    if fn not in _providers:
+        _providers.append(fn)
+
+
+def unregister_style_provider(fn):
+    if fn in _providers:
+        _providers.remove(fn)
+
+
+def styles():
+    """Every available style, provider styles first, unique by key."""
+    out, seen = [], set()
+    for fn in list(_providers):
+        try:
+            items = list(fn())
+        except Exception as e:  # pragma: no cover - defensive
+            print("HB5 corbels: style provider failed: %s" % e)
+            continue
+        for s in items:
+            if s.get('key') and s['key'] not in seen:
+                seen.add(s['key'])
+                out.append(s)
+    for s in BUILTIN_STYLES:
+        if s['key'] not in seen:
+            seen.add(s['key'])
+            out.append(s)
+    return out
+
+
+def find_style(key):
+    """The style for exactly ``key``, or None."""
+    for s in styles():
+        if s['key'] == key:
+            return s
+    return None
+
+
+def get_style(key=None):
+    """The style for ``key``, else the first available one."""
+    all_styles = styles()
+    for s in all_styles:
+        if s['key'] == key:
+            return s
+    return all_styles[0] if all_styles else None
+
+
+def style_size(style):
+    """(width, depth, height) in meters."""
+    return (inch(style['width']), inch(style['depth']), inch(style['height']))
+
+
+def _inch_text(v):
+    """Inches to the nearest 1/16 as shop text: 5-1/4", 13", 3/4"."""
+    sixteenths = int(round(v * 16))
+    whole, rest = divmod(sixteenths, 16)
+    if rest == 0:
+        return '%d"' % whole
+    num, den = rest, 16
+    while num % 2 == 0:
+        num //= 2
+        den //= 2
+    return ('%d-%d/%d"' % (whole, num, den)) if whole else ('%d/%d"' % (num, den))
+
+
+def size_text(style):
+    """W x D x H as shop text, e.g. 5-1/4" x 6-3/4" x 13-1/4"."""
+    return " x ".join(_inch_text(style[k])
+                      for k in ('width', 'depth', 'height'))
+
+
+def grouped_styles():
+    """[(group name, [styles])] in listing order: each provider's
+    ``vendor`` as its own group, the built-ins last as "Generic"."""
+    groups = []
+    for s in styles():
+        name = s.get('vendor') or "Generic"
+        for g in groups:
+            if g[0] == name:
+                g[1].append(s)
+                break
+        else:
+            groups.append((name, [s]))
+    return groups
+
+
+# EnumProperty item callbacks must keep their strings alive.
+_enum_cache = []
+
+
+def style_enum_items(_self=None, _context=None):
+    global _enum_cache
+    _enum_cache = [(s['key'], s['label'], s.get('description', s['label']))
+                   for s in styles()]
+    if not _enum_cache:
+        _enum_cache = [('NONE', "None", "No corbel styles available")]
+    return _enum_cache
+
+
+# ---- Geometry ---------------------------------------------------------------
+
+def _mesh_from_profile(bm, style):
+    """Extrude the side profile across the width (x = 0..width)."""
+    w = inch(style['width'])
+    ring0, ring1 = [], []
+    for d, z in style['profile']:
+        ring0.append(bm.verts.new((0.0, -inch(d), inch(z))))
+        ring1.append(bm.verts.new((w, -inch(d), inch(z))))
+    bm.faces.new(ring0)
+    bm.faces.new(list(reversed(ring1)))
+    n = len(ring0)
+    for i in range(n):
+        j = (i + 1) % n
+        bm.faces.new((ring0[i], ring0[j], ring1[j], ring1[i]))
+
+
+def _mesh_from_table(bm, style):
+    """Lay the vertex/face table into 0..width on x."""
+    verts, faces = style['mesh']
+    half_w = inch(style['width']) / 2.0
+    k = 0.0254 / 1000.0
+    bv = [bm.verts.new((x * k + half_w, y * k, z * k)) for x, y, z in verts]
+    for f in faces:
+        try:
+            bm.faces.new([bv[i] for i in f])
+        except ValueError:
+            # Duplicate face in the table; skip it.
+            pass
+
+
+def _box_uvs(bm):
+    """Box projection in meters, picked per face by its dominant normal,
+    with v running up the corbel on the sides and front so the grain
+    runs the long way."""
+    uv = bm.loops.layers.uv.verify()
+    for f in bm.faces:
+        n = f.normal
+        ax = max(range(3), key=lambda i: abs(n[i]))
+        for loop in f.loops:
+            co = loop.vert.co
+            if ax == 0:
+                loop[uv].uv = (co.y, co.z)
+            elif ax == 1:
+                loop[uv].uv = (co.x, co.z)
+            else:
+                loop[uv].uv = (co.x, co.y)
+
+
+def build_mesh(style, name="Corbel"):
+    """A new mesh datablock for ``style``, in cage space."""
+    bm = bmesh.new()
+    if style.get('mesh'):
+        _mesh_from_table(bm, style)
+    else:
+        _mesh_from_profile(bm, style)
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    _box_uvs(bm)
+    me = bpy.data.meshes.new(name)
+    bm.to_mesh(me)
+    bm.free()
+    for poly in me.polygons:
+        poly.use_smooth = False
+    return me
+
+
+# ---- Mounting on a product ---------------------------------------------------
+# Where a corbel goes on a cabinet or hood. Products share the cage frame:
+# origin at the back-left-bottom corner, x across the width, y from 0 at
+# the back to -depth at the front, z up. A mount is the corbel's frame in
+# that space, built from the face it stands against:
+#
+#   UNDER  under an upper / hood / shelf: back on the product's back plane
+#          (the wall), top against its underside, sliding along the width.
+#   BACK   countertop support on an island's back: standing against the
+#          back face, facing out, top at the product's top.
+#   LEFT / RIGHT   the same against an end panel.
+
+MOUNT_LABELS = {
+    'UNDER': "Under",
+    'BACK': "Countertop Support - Back",
+    'LEFT': "Countertop Support - Left End",
+    'RIGHT': "Countertop Support - Right End",
+}
+
+# Snap distances along the face: flush with an end, or centred.
+END_SNAP = inch(3.0)
+CENTER_SNAP = inch(2.0)
+
+# Products whose bottom sits at least this high take UNDER mounts; lower
+# ones take countertop supports, up to SUPPORT_MAX_HEIGHT tall (a tall
+# cabinet's top is no countertop).
+UNDER_MIN_Z = inch(20.0)
+SUPPORT_MAX_HEIGHT = inch(48.0)
+
+
+def pick_mount(product_size, product_bottom_z, local_hit):
+    """The face a corbel takes on a product, or None.
+
+    ``product_size`` is (width, depth, height); ``product_bottom_z`` the
+    product's bottom in world Z; ``local_hit`` the cursor hit in the
+    product's frame. Supports go on whichever of back / left / right is
+    nearest the cursor."""
+    w, d, h = product_size
+    if product_bottom_z >= UNDER_MIN_Z:
+        return 'UNDER'
+    if h > SUPPORT_MAX_HEIGHT:
+        return None
+    hx, hy = local_hit.x, local_hit.y
+    dist = {'BACK': abs(hy), 'LEFT': abs(hx), 'RIGHT': abs(hx - w)}
+    return min(dist, key=dist.get)
+
+
+def _snap_along(c, length, size):
+    """Corbel centre along a face of ``length``: clamped onto the face,
+    snapped flush to either end or to the middle when close.
+    Returns (centre, snap) with snap in START / END / CENTER / None."""
+    lo, hi = size / 2.0, length - size / 2.0
+    if hi < lo:
+        return length / 2.0, 'CENTER'
+    c = min(max(c, lo), hi)
+    if c - lo < END_SNAP:
+        return lo, 'START'
+    if hi - c < END_SNAP:
+        return hi, 'END'
+    if abs(c - length / 2.0) < CENTER_SNAP:
+        return length / 2.0, 'CENTER'
+    return c, None
+
+
+def mount_matrix(mount, product_size, corbel_size, local_hit):
+    """(Matrix, snap) placing a corbel cage on a product, in the
+    product's frame. ``corbel_size`` is (width, depth, height)."""
+    from mathutils import Matrix, Vector
+    pw, pd, ph = product_size
+    cw, _cd, chh = corbel_size
+    if mount == 'UNDER':
+        along, snap = _snap_along(local_hit.x, pw, cw)
+        centre = Vector((along, 0.0, -chh))
+        x_axis, y_axis = Vector((1, 0, 0)), Vector((0, 1, 0))
+    elif mount == 'BACK':
+        along, snap = _snap_along(local_hit.x, pw, cw)
+        centre = Vector((along, 0.0, ph - chh))
+        x_axis, y_axis = Vector((-1, 0, 0)), Vector((0, -1, 0))
+    elif mount in ('LEFT', 'RIGHT'):
+        # Measured from the back toward the front.
+        along, snap = _snap_along(-local_hit.y, pd, cw)
+        if mount == 'LEFT':
+            centre = Vector((0.0, -along, ph - chh))
+            x_axis, y_axis = Vector((0, -1, 0)), Vector((1, 0, 0))
+        else:
+            centre = Vector((pw, -along, ph - chh))
+            x_axis, y_axis = Vector((0, 1, 0)), Vector((-1, 0, 0))
+    else:
+        return None, None
+    # The corbel's front is its -Y, so y_axis points INTO the face it
+    # stands against and the body lands outside the product (inside its
+    # footprint for UNDER, which hangs below it).
+    z_axis = Vector((0, 0, 1))
+    origin = centre - x_axis * (cw / 2.0)
+    m = Matrix.Identity(4)
+    for i in range(3):
+        m[i][0], m[i][1], m[i][2], m[i][3] = (x_axis[i], y_axis[i],
+                                              z_axis[i], origin[i])
+    return m, snap
+
+
+# ---- Product ----------------------------------------------------------------
+
+class Corbel(GeoNodeCage):
+    """A placed corbel: wire cage at the style's size + static body."""
+
+    style_key = None
+    # Read by the appliance placement modal for the preview cage size.
+    width = inch(3.5)
+    depth = inch(7.5)
+    height = inch(12.0)
+    variable_width = False
+
+    @classmethod
+    def size_for(cls, key=None):
+        style = get_style(key)
+        if style is None:
+            return (cls.width, cls.height, cls.depth)
+        w, d, h = style_size(style)
+        return (w, h, d)
+
+    def create(self, name="Corbel"):
+        super().create(name)
+        obj = self.obj
+        obj[CORBEL_TAG] = True
+        obj['MENU_ID'] = MENU_ID
+        obj.display_type = 'WIRE'
+        obj.hide_render = True
+        self.set_input('Mirror Y', True)
+        apply_style(obj, self.style_key)
+
+
+def body_of(cage_obj):
+    for child in cage_obj.children:
+        if child.get(BODY_TAG):
+            return child
+    return None
+
+
+def apply_style(cage_obj, key=None):
+    """Size the cage to ``key``'s style and rebuild the body mesh.
+    Keeps the body's material."""
+    style = get_style(key)
+    if style is None:
+        return None
+    w, d, h = style_size(style)
+    cage = GeoNodeCage(cage_obj)
+    cage.set_input('Dim X', w)
+    cage.set_input('Dim Y', d)
+    cage.set_input('Dim Z', h)
+    cage_obj[STYLE_PROP] = style['key']
+    cage_obj[LABEL_PROP] = style['label']
+
+    body = body_of(cage_obj)
+    mat = None
+    if body is not None:
+        old = body.data
+        if old.materials:
+            mat = old.materials[0]
+        body.data = build_mesh(style, "Corbel Body")
+        if old.users == 0:
+            bpy.data.meshes.remove(old)
+    else:
+        body = bpy.data.objects.new("Corbel Body",
+                                    build_mesh(style, "Corbel Body"))
+        body[BODY_TAG] = True
+        body['CABINET_PART'] = True
+        for coll in cage_obj.users_collection:
+            coll.objects.link(body)
+        body.parent = cage_obj
+    if mat is not None:
+        set_material(cage_obj, mat)
+    return body
+
+
+def set_material(cage_obj, mat):
+    body = body_of(cage_obj)
+    if body is None or mat is None:
+        return
+    mats = body.data.materials
+    if len(mats) == 0:
+        mats.append(mat)
+    else:
+        mats[0] = mat

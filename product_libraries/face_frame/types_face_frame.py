@@ -30,6 +30,7 @@ from ...hb_types import (CabinetPartModifier, GeoNodeCage, GeoNodeCutpart,
 from ...units import inch
 from ...hb_details import apply_label_style
 from ..common import types_appliances
+from ..common import corbels
 from ..common import turned_leg
 from ..common import bun_foot
 from ..common import arch_cutout
@@ -275,6 +276,9 @@ TAG_MANTLE_PANEL = 'hb_mantle_panel_role'
 # Hidden prism cutters mitring a box product's front board into its
 # finished end panels (floating shelf / contemporary mantle).
 PART_ROLE_BOX_MITER_CUTTER = 'BOX_MITER_CUTTER'
+# Hidden prism cutters mitring a finish toe kick's end into the kick of
+# the run it meets at a square corner (solver.finish_kick_segments).
+PART_ROLE_FINISH_KICK_MITER_CUTTER = 'FINISH_KICK_MITER_CUTTER'
 
 VALANCE_TAG = 'IS_VALANCE_PRODUCT'
 PART_ROLE_VALANCE_BOARD = 'VALANCE_BOARD'
@@ -493,6 +497,29 @@ PART_ROLE_DRAWER_LOOK_RAIL = 'DRAWER_LOOK_RAIL'
 # wearing N applied door panels side by side (battened pair look), with
 # the double-door center reveal between them. Styled from the door pool.
 PART_ROLE_DOOR_LOOK_FRONT = 'DOOR_LOOK_FRONT'
+# Reveal between door-look panels stacked top to bottom (the shop's
+# battened-door detail).
+DOOR_LOOK_STACKED_REVEAL = 0.25 * 0.0254
+
+
+def _door_look_hinge_ok(op_props):
+    """Door-look builds on a single swing door, and stacked on each door
+    of a pair as well."""
+    hinge = getattr(op_props, 'hinge_side', '')
+    if hinge in ('LEFT', 'RIGHT'):
+        return True
+    return (hinge == 'DOUBLE'
+            and getattr(op_props, 'door_look_direction', 'ACROSS') == 'STACKED')
+
+
+def _pull_half_length(pull_obj):
+    """Half a pull's length along its own X (the bar's long axis)."""
+    me = getattr(pull_obj, 'data', None)
+    verts = getattr(me, 'vertices', None)
+    if not verts:
+        return 0.0
+    xs = [v.co.x for v in verts]
+    return (max(xs) - min(xs)) / 2.0
 DRAWER_LOOK_REVEAL = inch(0.125)            # gap between applied fronts
 DRAWER_LOOK_TALLER_TOP_FACTOR = 1.5         # top front height vs each other
 
@@ -605,6 +632,21 @@ TEXTURED_PANEL_ROLES = {
 # shiplap course pitch (matches the wood-hood default board width);
 # v-groove plank spacing (the usual 4" sheet-goods layout).
 TEXTURED_BEADBOARD_SPACING = 1.6 * 0.0254
+# A wide-pattern beadboard interior: twice the standard spacing.
+TEXTURED_BEADBOARD_WIDE_SPACING = 3.2 * 0.0254
+
+
+def _interior_beadboard_spacing(pattern):
+    return (TEXTURED_BEADBOARD_WIDE_SPACING if pattern == 'WIDE'
+            else TEXTURED_BEADBOARD_SPACING)
+
+
+def _liner_texture(texture, scope, face):
+    """The texture one finished-interior liner carries: all of them, or
+    on a Back Only interior just the back."""
+    if scope == 'BACK' and face != 'BACK':
+        return 'NONE'
+    return texture
 TEXTURED_SHIPLAP_PITCH = 6.0 * 0.0254
 TEXTURED_V_GROOVE_SPACING = 4.0 * 0.0254
 
@@ -3541,6 +3583,7 @@ class FaceFrameCabinet(GeoNodeCage):
                 part.set_input('Length', seg['length'])
                 part.set_input('Width', seg['width'])
                 part.set_input('Thickness', seg['thickness'])
+                self._apply_finish_kick_miters(child, seg)
 
             elif role == PART_ROLE_LEFT_CORNER_FINISH_KICK:
                 visible = solver.has_left_corner_finish_kick(layout)
@@ -6303,8 +6346,11 @@ class FaceFrameCabinet(GeoNodeCage):
                 item.kind = kind
                 opening_z = (inv @ cage.matrix_world.translation).z
                 if kind == 'TRAY_DIVIDERS':
+                    # Opening height is the clear space under the
+                    # locked shelf, so take the shelf off too.
                     item.tray_opening_height = max(
-                        sink_bottom - opening_z - inch(0.25), inch(6.0))
+                        sink_bottom - opening_z - inch(0.25)
+                        - solver.SHELF_THICKNESS, inch(6.0))
                 if kind == 'ROLLOUT':
                     item.hide_rollout_spacers = True
                     # The bowls are sized to clear the sink from the
@@ -7676,6 +7722,15 @@ class FaceFrameCabinet(GeoNodeCage):
             if layout.r_fin_end in CORNER_TREATMENT_FLUSH_ENDS:
                 sides.add('RIGHT')
             bottom = layout.cabinet_type == 'UPPER'
+            # An end stile beside a bay with its bottom removed runs down
+            # onto whatever the cabinet sits on (a countertop), so its
+            # bottom stays square.
+            bays = layout.bays or []
+            square_bottom = set()
+            if bays and bays[0].get('remove_bottom'):
+                square_bottom.add(PART_ROLE_LEFT_STILE)
+            if bays and bays[-1].get('remove_bottom'):
+                square_bottom.add(PART_ROLE_RIGHT_STILE)
             for child in self.obj.children:
                 if child.hide_viewport:
                     continue
@@ -7694,7 +7749,8 @@ class FaceFrameCabinet(GeoNodeCage):
                 if bottom:
                     if role == PART_ROLE_BOTTOM_RAIL:
                         wanted.append((child, 'LENGTH', 0.0))
-                    elif role in (PART_ROLE_LEFT_STILE, PART_ROLE_RIGHT_STILE):
+                    elif (role in (PART_ROLE_LEFT_STILE, PART_ROLE_RIGHT_STILE)
+                            and role not in square_bottom):
                         wanted.append((child, 'WIDTH', 0.0))
         live_keys = set()
         for part_obj, axis, far_trim in wanted:
@@ -8899,7 +8955,19 @@ class FaceFrameCabinet(GeoNodeCage):
         one it falls back to the plain 2-1/4" frame.
         """
         from . import applied_panel_sizing
-        style = applied_panel_sizing._resolve_door_style(self.obj)
+        from .props_hb_face_frame import get_style_props
+        # A door style assigned to this rail itself (paint / Assign Door
+        # Style) is kept on the part, which survives recalcs, and wins
+        # over the cabinet's own door style.
+        style = None
+        own = panel.get('hb_front_door_style')
+        if own:
+            style = next((ds for ds in get_style_props().door_styles
+                          if ds.name == own
+                          and getattr(ds, 'door_type', '') == '5_PIECE'),
+                         None)
+        if style is None:
+            style = applied_panel_sizing._resolve_door_style(self.obj)
         if style is not None and getattr(style, 'door_type', '') == '5_PIECE':
             panel['DOOR_STYLE_NAME'] = style.name
             style.assign_style_to_front(panel)
@@ -9828,10 +9896,11 @@ class FaceFrameCabinet(GeoNodeCage):
         # The panel lies on this segment's back face: y = that plane plus
         # its own thickness, since Mirror Y extrudes it back toward the
         # carcass.
-        # A rear-inset kick recesses the back of the kick zone, so the
-        # panel stops at the top of the kick instead of covering it.
+        # A rear-inset kick recesses the back of the kick zone, and a
+        # floating cabinet has nothing below it to cover, so the panel
+        # stops at the top of the kick.
         bottom_z = 0.0
-        if solver.has_rear_kick_inset(layout):
+        if solver.has_rear_kick_inset(layout) or solver.back_floats(layout):
             bottom_z = layout.bays[segment['start_bay']]['kick_height']
         # Sides run back past the box with no return closeout: the back
         # rides out with them, leaving a void behind the carcass. Only a
@@ -10645,10 +10714,16 @@ class FaceFrameCabinet(GeoNodeCage):
                         # A textured bay takes a BACK liner to carry the
                         # texture: the carcass back behind it is finish
                         # stock, and flat.
-                        want_back=texture not in ('NONE', ''))
+                        want_back=texture not in ('NONE', ''),
+                        flush_back=texture not in ('NONE', ''))
+                    scope = bay.get('finish_bay_texture_scope', 'BACK_SIDES')
+                    spacing = _interior_beadboard_spacing(
+                        bay.get('finish_bay_beadboard_pattern', 'STANDARD'))
                     for face, spec in specs:
-                        self._emit_bay_finish_panel(bi, -1, face, spec, t,
-                                                    existing, texture)
+                        self._emit_bay_finish_panel(
+                            bi, -1, face, spec, t, existing,
+                            _liner_texture(texture, scope, face),
+                            beadboard_spacing=spacing)
                         wanted.add((bi, -1, face))
                     continue
 
@@ -10694,10 +10769,16 @@ class FaceFrameCabinet(GeoNodeCage):
                         layout, region, bool(op.finish_opening_flush),
                         op.finish_opening_flush_depth, op_to_floor, t,
                         want_back=(not bay.get('finish_carcass')) or textured,
-                        want_top=False)
+                        want_top=False, flush_back=textured)
+                    spacing = _interior_beadboard_spacing(
+                        op.finish_opening_beadboard_pattern)
                     for face, spec in specs:
-                        self._emit_bay_finish_panel(bi, oi, face, spec, t,
-                                                    existing, texture)
+                        self._emit_bay_finish_panel(
+                            bi, oi, face, spec, t, existing,
+                            _liner_texture(texture,
+                                           op.finish_opening_texture_scope,
+                                           face),
+                            beadboard_spacing=spacing)
                         wanted.add((bi, oi, face))
                     # The floor gets no liner - the part the opening sits
                     # on is finished instead.
@@ -10793,7 +10874,8 @@ class FaceFrameCabinet(GeoNodeCage):
         return None
 
     def _finish_region_specs(self, layout, region, flush, raw_depth, to_floor,
-                             t, want_back=False, want_top=True):
+                             t, want_back=False, want_top=True,
+                             flush_back=False):
         """Build the (face, spec) list for one finished region.
 
         `want_top` covers the ceiling of a FULL finish. A finished
@@ -10801,6 +10883,11 @@ class FaceFrameCabinet(GeoNodeCage):
         so an applied 1/4 ceiling is a part the shop does not build.
         Only a FLUSH finish tops the region, and there the top is part
         of the band that wraps the FF opening.
+
+        `flush_back` gives a FLUSH finish a BACK panel behind the FF
+        opening. A plain flush band stays open behind (an appliance
+        slides in), but a textured one needs a back to carry the
+        texture the region is supposed to show.
 
         `region` is cabinet-local: left_x / right_x / bottom_z / top_z, the
         cavity depth cage_dim_y, and the four reveals (cage edge -> FF
@@ -10851,6 +10938,18 @@ class FaceFrameCabinet(GeoNodeCage):
                                     mirror_y=True, mirror_z=True,
                                     loc=(op_left_x, band_back_y, op_bottom_z),
                                     length=op_width, width=depth)))
+            # The band's thickness is outboard of the opening, so the
+            # face the opening sees is the cutpart's origin plane.
+            for _face, spec in specs:
+                spec['visible_at_origin'] = True
+            if flush_back:
+                # Behind the opening, between the band faces, against
+                # the carcass back.
+                specs.append(
+                    ('BACK', dict(rot=(math.radians(90), math.radians(-90), 0.0),
+                                  mirror_y=True, mirror_z=False,
+                                  loc=(op_left_x, cavity_back_y, op_bottom_z),
+                                  length=op_height, width=op_width)))
         else:
             # FULL finish lining the full cavity depth on the cavity
             # walls. The sides and the ceiling are applied 1/4 parts;
@@ -10939,7 +11038,8 @@ class FaceFrameCabinet(GeoNodeCage):
                 spec['notch'] = (kick, notch_depth)
 
     def _emit_bay_finish_panel(self, bay_index, opening_index, face, spec,
-                               thickness, existing, texture='NONE'):
+                               thickness, existing, texture='NONE',
+                               beadboard_spacing=TEXTURED_BEADBOARD_SPACING):
         """Create or reuse one (bay_index, opening_index, face) finish liner
         and write its transform + cutpart dims from `spec`. opening_index
         is -1 for a whole-bay liner. Reuse-by-key keeps object identity
@@ -10972,7 +11072,8 @@ class FaceFrameCabinet(GeoNodeCage):
         part.set_input('Width',     spec['width'])
         part.set_input('Thickness', thickness)
         self._drive_finish_liner_notch(strip, spec, thickness)
-        self._texture_finish_panel(strip, spec, thickness, texture)
+        self._texture_finish_panel(strip, spec, thickness, texture,
+                                   beadboard_spacing)
 
     @staticmethod
     def _drive_finish_liner_notch(strip, spec, thickness):
@@ -11012,7 +11113,8 @@ class FaceFrameCabinet(GeoNodeCage):
         mod.show_viewport = notch is not None
         mod.show_render = notch is not None
 
-    def _texture_finish_panel(self, strip, spec, thickness, texture):
+    def _texture_finish_panel(self, strip, spec, thickness, texture,
+                              beadboard_spacing=TEXTURED_BEADBOARD_SPACING):
         """Carve a finish liner, or hand it back to its cutpart.
 
         Same static-mesh treatment the textured ends use, with one turn
@@ -11043,16 +11145,22 @@ class FaceFrameCabinet(GeoNodeCage):
             pitch = float(self.obj.face_frame_cabinet.shiplap_board_width) * 0.0254
         except (ValueError, AttributeError):
             pitch = TEXTURED_SHIPLAP_PITCH
+        # A flush band's visible face IS the origin plane (thickness runs
+        # outboard), so it carves like a textured end: no flip, no slide.
+        at_origin = bool(spec.get('visible_at_origin'))
         self._textured_panel_mesh(strip, spec['length'], spec['width'],
                                   thickness, texture,
-                                  mirror_z=not spec['mirror_z'],
+                                  mirror_z=(spec['mirror_z'] if at_origin
+                                            else not spec['mirror_z']),
                                   shiplap_pitch=pitch,
                                   shiplap_vertical=_shiplap_vertical(
                                       self.obj.face_frame_cabinet),
                                   v_groove_spacing=_v_groove_spacing(
-                                      self.obj.face_frame_cabinet))
-        dz = -thickness if spec['mirror_z'] else thickness
-        strip.data.transform(Matrix.Translation((0.0, 0.0, dz)))
+                                      self.obj.face_frame_cabinet),
+                                  beadboard_spacing=beadboard_spacing)
+        if not at_origin:
+            dz = -thickness if spec['mirror_z'] else thickness
+            strip.data.transform(Matrix.Translation((0.0, 0.0, dz)))
         strip.data.update()
 
     # =====================================================================
@@ -11064,7 +11172,8 @@ class FaceFrameCabinet(GeoNodeCage):
                              condition, mirror_z,
                              shiplap_pitch=TEXTURED_SHIPLAP_PITCH,
                              shiplap_vertical=False,
-                             v_groove_spacing=TEXTURED_V_GROOVE_SPACING):
+                             v_groove_spacing=TEXTURED_V_GROOVE_SPACING,
+                             beadboard_spacing=TEXTURED_BEADBOARD_SPACING):
         """Write the carved static mesh for a textured panel into
         ``part_obj``'s mesh data and hide its GN cutpart display.
 
@@ -11103,7 +11212,7 @@ class FaceFrameCabinet(GeoNodeCage):
             span_u, run = width, length      # profile across Y, extrude X
             spacing = (v_groove_spacing
                        if condition == 'V_GROOVE'
-                       else TEXTURED_BEADBOARD_SPACING)
+                       else beadboard_spacing)
             margin = max(2.0 * hw, 0.004)
             k = 1 + int(span_u / spacing) if spacing > 0 else 0
             centers = [span_u / 2.0 + (i + 0.5) * spacing
@@ -11591,6 +11700,89 @@ class FaceFrameCabinet(GeoNodeCage):
             if seg['start_bay'] in existing_starts:
                 continue
             self._create_finish_kick_part(seg['start_bay'])
+
+        # Drop the corner mitre cutters no end needs any more.
+        for side, key in (('LEFT', 'miter_left'), ('RIGHT', 'miter_right')):
+            if any(seg.get(key) for seg in segments):
+                continue
+            mod_name = self._finish_kick_miter_mod_name(side)
+            for child in list(self.obj.children):
+                if child.get('hb_part_role') == PART_ROLE_FINISH_TOE_KICK:
+                    mod = child.modifiers.get(mod_name)
+                    if mod is not None:
+                        child.modifiers.remove(mod)
+                elif (child.get('hb_part_role')
+                        == PART_ROLE_FINISH_KICK_MITER_CUTTER
+                        and child.get('hb_miter_side') == side):
+                    bpy.data.objects.remove(child, do_unlink=True)
+
+    # ---- finish toe kick corner mitres ----
+    # Where the finish kick turns a square corner with another run's
+    # kick, the board runs to the other kick's back face and a hidden
+    # prism cutter trims its front corner on the diagonal from the
+    # other kick's front face, so the two boards meet in a mitre.
+    @staticmethod
+    def _finish_kick_miter_mod_name(side):
+        return f'Kick Miter {side[0]}'
+
+    def _ensure_finish_kick_miter_cutter(self, side):
+        for child in self.obj.children:
+            if (child.get('hb_part_role') == PART_ROLE_FINISH_KICK_MITER_CUTTER
+                    and child.get('hb_miter_side') == side):
+                return child
+        name = f'Finish Kick Miter Cutter {side.title()}'
+        mesh = bpy.data.meshes.new(name)
+        cutter = hb_utils.new_object(name, mesh)
+        cutter['hb_part_role'] = PART_ROLE_FINISH_KICK_MITER_CUTTER
+        cutter['hb_miter_side'] = side
+        cutter.parent = self.obj
+        cutter.display_type = 'WIRE'
+        cutter.hide_render = True
+        cutter.hide_viewport = True
+        for coll in self.obj.users_collection:
+            coll.objects.link(cutter)
+            break
+        return cutter
+
+    def _apply_finish_kick_miters(self, part_obj, seg):
+        """Build / drop the corner mitre on each end of one finish kick
+        segment from its 'miter_left' / 'miter_right' (front_x, back_x)."""
+        y_front = seg['y']
+        y_back = seg['y'] + seg['thickness']
+        m = inch(2.0)
+        for side, key in (('LEFT', 'miter_left'), ('RIGHT', 'miter_right')):
+            mod_name = self._finish_kick_miter_mod_name(side)
+            miter = seg.get(key)
+            if not miter:
+                mod = part_obj.modifiers.get(mod_name)
+                if mod is not None:
+                    part_obj.modifiers.remove(mod)
+                continue
+            front_x, back_x = miter
+            out = -1.0 if side == 'LEFT' else 1.0
+            # The diagonal from the front face's end to the back face's
+            # end, run on past both so the boolean never grazes a face;
+            # the third point closes the triangle out in front.
+            a = Vector((front_x, y_front))
+            b = Vector((back_x, y_back))
+            d = b - a
+            if d.length < 1e-9:
+                continue
+            d.normalize()
+            a_far = a - d * m
+            b_far = b + d * m
+            pts = ((a_far.x, a_far.y),
+                   (b_far.x, b_far.y),
+                   (back_x + out * 2.0 * m, y_front - 2.0 * m))
+            cutter = self._ensure_finish_kick_miter_cutter(side)
+            self._wedge_prism_mesh(cutter, pts, seg['z'] - m,
+                                   seg['z'] + seg['width'] + m)
+            mod = part_obj.modifiers.get(mod_name)
+            if mod is None:
+                mod = part_obj.modifiers.new(name=mod_name, type='BOOLEAN')
+                mod.operation = 'DIFFERENCE'
+            if mod.object is not cutter:
+                mod.object = cutter
 
     def _reconcile_rear_finish_kicks(self, segments):
         """Finish boards on a rear-inset kick's back face, one per rear
@@ -13424,7 +13616,7 @@ class FaceFrameCabinet(GeoNodeCage):
                 not drawer_look
                 and leaf['role'] == PART_ROLE_DOOR
                 and getattr(op_props, 'door_look_divisions', 'NONE') != 'NONE'
-                and op_props.hinge_side in ('LEFT', 'RIGHT')
+                and _door_look_hinge_ok(op_props)
             )
             # Tri-view mirror doors carry no pulls (touch-open per the
             # production spec) -- both the three-bay build and legacy
@@ -13571,8 +13763,9 @@ class FaceFrameCabinet(GeoNodeCage):
         n = int(divisions)
         length, width, thickness = leaf['part_dims']
         cab_props = self.obj.face_frame_cabinet
-        overlays = (solver.resolved_overlay(cab_props, op_props, 'top')
-                    + solver.resolved_overlay(cab_props, op_props, 'bottom'))
+        ov_top = solver.resolved_overlay(cab_props, op_props, 'top')
+        ov_bottom = solver.resolved_overlay(cab_props, op_props, 'bottom')
+        overlays = ov_top + ov_bottom
         # Reveal between fronts = mid-rail width less the two overlapping
         # front overlays, matching a real drawer stack.
         reveal = max(0.0, cab_props.bay_mid_rail_width - overlays)
@@ -13588,8 +13781,15 @@ class FaceFrameCabinet(GeoNodeCage):
         # spec is bottom -> top; the top opening defaults to the scene Top
         # Drawer Opening Height (seeded by _update_drawer_look_divisions).
         rail_w = cab_props.bay_mid_rail_width
-        available = length - overlays - (n - 1) * rail_w
         openings = getattr(op_props, 'drawer_look_openings', None)
+        # A gap whose faux rail is removed takes no rail width; the fronts
+        # either side stop half the removed-rail gap short of its centre,
+        # as on a real stack with the mid rail removed.
+        no_rail = [False] * (n - 1)
+        if openings is not None and len(openings) == n:
+            no_rail = [bool(openings[k].no_rail_above) for k in range(n - 1)]
+        half_gap = solver.MID_RAIL_REMOVED_GAP / 2.0
+        available = length - overlays - no_rail.count(False) * rail_w
         if openings is not None and len(openings) == n:
             spec = [(o.size, bool(o.unlock_size)) for o in openings]
         elif leaf['role'] == PART_ROLE_DRAWER_FRONT:
@@ -13608,7 +13808,13 @@ class FaceFrameCabinet(GeoNodeCage):
             for k, (s, held) in enumerate(spec):
                 if not held and abs(openings[k].size - share) > 1e-6:
                     openings[k].size = share
-        heights = [(s if held else share) + overlays for (s, held) in spec]
+        heights = []
+        for k, (s, held) in enumerate(spec):
+            top = -half_gap if k < n - 1 and no_rail[k] else ov_top
+            bottom = -half_gap if k > 0 and no_rail[k - 1] else ov_bottom
+            heights.append((s if held else share) + top + bottom)
+        gaps = [solver.MID_RAIL_REMOVED_GAP if removed else reveal
+                for removed in no_rail]
         if any(h <= 0.0 for h in heights):
             return
 
@@ -13640,7 +13846,7 @@ class FaceFrameCabinet(GeoNodeCage):
             panel.set_input('Thickness', thickness)
             self._add_drawer_look_pull(panel.obj, h, width, thickness,
                                        scene_props)
-            if inset and i < n - 1:
+            if inset and i < n - 1 and not no_rail[i]:
                 rail_h = cab_props.bay_mid_rail_width
                 rail = CabinetPart()
                 rail.create("Drawer-Look Rail " + str(i + 1))
@@ -13659,7 +13865,8 @@ class FaceFrameCabinet(GeoNodeCage):
                 rail.set_input('Length', rail_h)
                 rail.set_input('Width', width)
                 rail.set_input('Thickness', thickness)
-            z += h + reveal
+            if i < n - 1:
+                z += h + gaps[i]
 
     def _build_door_look_fronts(self, front, leaf, op_props, pull=None):
         """Lay N applied door panels side by side on one DOOR leaf so it
@@ -13675,10 +13882,14 @@ class FaceFrameCabinet(GeoNodeCage):
         divisions = getattr(op_props, 'door_look_divisions', 'NONE')
         if leaf['role'] != PART_ROLE_DOOR or divisions == 'NONE':
             return
-        if op_props.hinge_side not in ('LEFT', 'RIGHT'):
+        if not _door_look_hinge_ok(op_props):
             return
         n = int(divisions)
         length, width, thickness = leaf['part_dims']
+        if getattr(op_props, 'door_look_direction', 'ACROSS') == 'STACKED':
+            self._build_stacked_door_look(front, n, length, width,
+                                          thickness, op_props, pull)
+            return
         cab_props = self.obj.face_frame_cabinet
         reveal = (solver.INSET_DOUBLE_DOOR_REVEAL
                   if cab_props.default_door_inset_amount > 0
@@ -13708,6 +13919,64 @@ class FaceFrameCabinet(GeoNodeCage):
 
         if pull is not None:
             pull.location.z += thickness
+
+    def _build_stacked_door_look(self, front, n, length, width, thickness,
+                                 op_props, pull=None):
+        """Stack n door panels up one DOOR leaf -- doors battened
+        together top to bottom, swinging as one door, so a tall door (or
+        each door of a pair) reads as several openings. Same carrier as
+        the side-by-side look: the leaf is a flat slab one thickness
+        back, the panels proud of it with a reveal between them. The top
+        panel takes door_look_top_height when it is set and fits; the
+        rest share what is left. The leaf's pull is moved off a reveal
+        onto the panel below it."""
+        reveal = DOOR_LOOK_STACKED_REVEAL
+        clear = length - (n - 1) * reveal
+        if clear <= 0.0 or width <= 0.0:
+            return
+        top_h = getattr(op_props, 'door_look_top_height', 0.0)
+        if n > 1 and 0.0 < top_h < clear - (n - 1) * inch(4.0):
+            rest = (clear - top_h) / (n - 1)
+            heights = [rest] * (n - 1) + [top_h]
+        else:
+            heights = [clear / n] * n
+
+        carrier = front.obj
+        carrier['HB_DRAWER_LOOK_CARRIER'] = True
+        outward = carrier.rotation_euler.to_matrix() @ Vector((0.0, 0.0, 1.0))
+        carrier.location = carrier.location - outward * thickness
+
+        gaps = []
+        x = 0.0
+        for i, h in enumerate(heights):
+            panel = CabinetPart()
+            panel.create("Door-Look Panel " + str(i + 1))
+            panel.obj.parent = carrier
+            panel.obj['hb_part_role'] = PART_ROLE_DOOR_LOOK_FRONT
+            panel.obj['CABINET_PART'] = True
+            # Carrier-local frame: X = vertical (bottom up), -Y across.
+            panel.obj.rotation_euler = (0.0, 0.0, 0.0)
+            panel.set_input('Mirror Y', True)
+            panel.obj.location = (x, 0.0, thickness)
+            panel.set_input('Length', h)
+            panel.set_input('Width', width)
+            panel.set_input('Thickness', thickness)
+            x += h
+            if i < n - 1:
+                gaps.append((x, x + reveal))
+                x += reveal
+
+        if pull is None:
+            return
+        pull.location.z += thickness
+        # A pull straddling a reveal moves down onto the panel under it.
+        half = _pull_half_length(pull)
+        margin = inch(1.0)
+        px = pull.location.x
+        for g0, g1 in gaps:
+            if px + half > g0 - margin and px - half < g1 + margin:
+                pull.location.x = g0 - margin - half
+                break
 
     def _add_drawer_look_pull(self, panel_obj, length, width, thickness,
                               scene_props):
@@ -14327,7 +14596,8 @@ class FaceFrameCabinet(GeoNodeCage):
         A published configuration pins the layout through the hint:
         CORE = slot core width, COREX = the core's offset from the
         left side (omitted = centred), BAND = back compartment depth,
-        CROSS = cross compartment depth (0 = none), MIDSPLIT = a rail
+        FRONT = front section depth (overrides BAND; the back
+        compartment takes the rest), CROSS = cross compartment depth (0 = none), MIDSPLIT = a rail
         across the middle slot that far from the front. Without them
         the tray lays itself out from the drawer size.
 
@@ -14366,6 +14636,14 @@ class FaceFrameCabinet(GeoNodeCage):
             band = inch(params['BAND'])
         else:
             band = min(max((iy1 - iy0) * 0.25, inch(4.0)), inch(6.625))
+        # FRONT pins the front section instead (tray front to the back
+        # rail's front face): a set whose slot length is fixed gives up
+        # back compartment, not slot, when the drawer is shallower than
+        # nominal. Falls back to BAND when the drawer is too shallow to
+        # leave a back compartment behind it.
+        front_sec = inch(params.get('FRONT', 0.0))
+        if front_sec > th and iy1 - (iy0 + front_sec) > th + inch(1.0):
+            band = iy1 - (iy0 + front_sec)
         core_back = iy1
         if band > th and (iy1 - band) - iy0 >= inch(6.0):
             core_back = iy1 - band
@@ -17344,6 +17622,251 @@ _FLOATING_SHELF_SIZE_PROPS = ('width', 'depth', 'height')
 _shelf_group_syncing = False
 
 
+# ---- Corner shelf pairs ----------------------------------------------------
+# Two shelves meeting at an inside or outside corner build as one L: each
+# end at the corner carries corner_left / corner_right and names the shelf
+# it meets ("<name>:<LEFT|RIGHT>"), and the pair keeps its depth,
+# thickness, height on the wall, options and finish in step.
+SHELF_CORNER_LINK = {'LEFT': 'hb_shelf_corner_left',
+                     'RIGHT': 'hb_shelf_corner_right'}
+FLOATING_SHELF_CORNER_SYNC_PROPS = tuple(
+    p for p in FLOATING_SHELF_SYNC_PROPS
+    if p not in ('finish_left', 'finish_right'))
+_FLOATING_SHELF_CORNER_SIZE_PROPS = ('depth', 'height')
+# How close two shelf corners have to be to read as meeting.
+SHELF_CORNER_TOLERANCE = inch(0.25)
+_shelf_corner_syncing = False
+
+
+def _shelf_corner_prop(side):
+    return 'corner_left' if side == 'LEFT' else 'corner_right'
+
+
+def floating_shelf_corner_partners(root):
+    """[(side, partner shelf, partner side)] for root's linked corners."""
+    out = []
+    for side, key in SHELF_CORNER_LINK.items():
+        link = root.get(key) if root is not None else None
+        if not link or ':' not in link:
+            continue
+        name, pside = link.rsplit(':', 1)
+        partner = bpy.data.objects.get(name)
+        if (partner is not None and partner.get(FLOATING_SHELF_TAG)
+                and partner.users_collection and pside in SHELF_CORNER_LINK):
+            out.append((side, partner, pside))
+    return out
+
+
+def sync_floating_shelf_corners(src):
+    """Carry src's shared settings to the shelves it meets at a corner:
+    depth, thickness, the floating_shelf options (not the finished
+    ends), the cabinet style and the height on the wall."""
+    global _shelf_corner_syncing
+    if _shelf_corner_syncing:
+        return
+    partners = floating_shelf_corner_partners(src)
+    if not partners:
+        return
+    src_cab = src.face_frame_cabinet
+    src_shelf = src.floating_shelf
+    style_name = src.get('STYLE_NAME')
+    src_z = hb_utils.world_matrix(src).translation.z
+    _shelf_corner_syncing = True
+    try:
+        with suspend_recalc():
+            for _side, m, _pside in partners:
+                for attr in _FLOATING_SHELF_CORNER_SIZE_PROPS:
+                    v = getattr(src_cab, attr)
+                    if abs(getattr(m.face_frame_cabinet, attr) - v) > 1e-7:
+                        setattr(m.face_frame_cabinet, attr, v)
+                for attr in FLOATING_SHELF_CORNER_SYNC_PROPS:
+                    if not hasattr(src_shelf, attr):
+                        continue
+                    v = getattr(src_shelf, attr)
+                    cur = getattr(m.floating_shelf, attr)
+                    same = (abs(cur - v) <= 1e-7
+                            if isinstance(v, float) else cur == v)
+                    if not same:
+                        setattr(m.floating_shelf, attr, v)
+                dz = src_z - hb_utils.world_matrix(m).translation.z
+                if abs(dz) > 1e-6:
+                    m.location.z += dz
+                if style_name and m.get('STYLE_NAME') != style_name:
+                    from .props_hb_face_frame import get_style_props
+                    ff = get_style_props()
+                    style = next((s for s in ff.cabinet_styles
+                                  if s.name == style_name), None)
+                    if style is not None:
+                        style.assign_style_to_cabinet(m)
+    finally:
+        _shelf_corner_syncing = False
+
+
+def _shelf_end_points(root):
+    """({side: (back corner, front corner)} in world XY, the shelf's
+    world X direction in plan, its world height)."""
+    mw = hb_utils.world_matrix(root)
+    cab = root.face_frame_cabinet
+    w, d = cab.width, cab.depth
+    pts = {}
+    for side, x in (('LEFT', 0.0), ('RIGHT', w)):
+        back = mw @ Vector((x, 0.0, 0.0))
+        front = mw @ Vector((x, -d, 0.0))
+        pts[side] = (back.to_2d(), front.to_2d())
+    xdir = (mw.to_3x3() @ Vector((1.0, 0.0, 0.0))).to_2d()
+    if xdir.length > 0.0:
+        xdir.normalize()
+    return pts, xdir, mw.translation.z
+
+
+def _shelf_corner_kind(a, side_a, b, side_b):
+    """'INSIDE' / 'OUTSIDE' when shelf a's side_a end meets shelf b's
+    side_b end at a square corner, else None. Both shelves must be the
+    same depth and height on the wall, at right angles: an inside corner
+    shares the corner at the wall, an outside one the front corner."""
+    if (abs(a.face_frame_cabinet.depth - b.face_frame_cabinet.depth)
+            > SHELF_CORNER_TOLERANCE):
+        return None
+    pa, xa, za = _shelf_end_points(a)
+    pb, xb, zb = _shelf_end_points(b)
+    if abs(za - zb) > SHELF_CORNER_TOLERANCE or abs(xa.dot(xb)) > 0.05:
+        return None
+    back_a, front_a = pa[side_a]
+    back_b, front_b = pb[side_b]
+    # Sharing a corner point is not enough -- two shelves on opposite
+    # sides of a wall end share one too. The legs of an L overlap in the
+    # corner square, so each end's other corner sits on the other shelf.
+    if ((back_a - back_b).length <= SHELF_CORNER_TOLERANCE
+            and _shelf_covers(b, front_a) and _shelf_covers(a, front_b)):
+        return 'INSIDE'
+    if ((front_a - front_b).length <= SHELF_CORNER_TOLERANCE
+            and _shelf_covers(b, back_a) and _shelf_covers(a, back_b)):
+        return 'OUTSIDE'
+    return None
+
+
+def _shelf_corner_fit(a, side_a, b, side_b):
+    """How shelf a's side_a end and shelf b's side_b end make a square
+    corner, as (kind, grow_a, grow_b), else None. kind is 'INSIDE' /
+    'OUTSIDE'; grow_* says the shelf has to reach one shelf depth
+    further on that end first.
+
+    Already-reaching pairs are _shelf_corner_kind's. Placement leaves the
+    other two: a shelf butted against the front of the one already in an
+    inside corner (it grows into the corner), or two shelves each stopped
+    at an outside wall corner, backs meeting there (both grow past it to
+    the outer corner)."""
+    kind = _shelf_corner_kind(a, side_a, b, side_b)
+    if kind is not None:
+        return kind, False, False
+    if (abs(a.face_frame_cabinet.depth - b.face_frame_cabinet.depth)
+            > SHELF_CORNER_TOLERANCE):
+        return None
+    pa, xa, za = _shelf_end_points(a)
+    pb, xb, zb = _shelf_end_points(b)
+    if abs(za - zb) > SHELF_CORNER_TOLERANCE or abs(xa.dot(xb)) > 0.05:
+        return None
+    back_a, front_a = pa[side_a]
+    back_b, front_b = pb[side_b]
+    tol = SHELF_CORNER_TOLERANCE
+    # b butted against a's front at a's corner end (or the other way).
+    if (back_b - front_a).length <= tol and _shelf_covers(a, front_b):
+        return 'INSIDE', False, True
+    if (back_a - front_b).length <= tol and _shelf_covers(b, front_a):
+        return 'INSIDE', True, False
+    # Backs meeting at an outside wall corner, the shelves running away
+    # from each other.
+    if ((back_a - back_b).length <= tol
+            and not _shelf_covers(b, front_a)
+            and not _shelf_covers(a, front_b)):
+        return 'OUTSIDE', True, True
+    return None
+
+
+def _grow_shelf_end(root, side, amount):
+    """Lengthen a shelf by amount at one end, the other end staying put."""
+    if side == 'LEFT':
+        axis = root.matrix_basis.to_3x3().col[0]
+        if axis.length > 0.0:
+            root.location -= axis.normalized() * amount
+    root.face_frame_cabinet.width += amount
+
+
+def _shelf_covers(root, point):
+    """Whether a world XY point lies on root's plan footprint."""
+    local = hb_utils.world_matrix(root).inverted() @ Vector(
+        (point.x, point.y, hb_utils.world_matrix(root).translation.z))
+    cab = root.face_frame_cabinet
+    tol = SHELF_CORNER_TOLERANCE
+    return (-tol <= local.x <= cab.width + tol
+            and -cab.depth - tol <= local.y <= tol)
+
+
+def _clear_shelf_corner(root, side):
+    key = SHELF_CORNER_LINK[side]
+    if key in root:
+        del root[key]
+    prop = _shelf_corner_prop(side)
+    if getattr(root.floating_shelf, prop) != 'NONE':
+        setattr(root.floating_shelf, prop, 'NONE')
+
+
+def detect_floating_shelf_corners(root):
+    """Join root to any floating shelf it meets at a square corner, and
+    let go of a corner partner it no longer meets. Returns how many
+    corners were joined."""
+    if root is None or not root.get(FLOATING_SHELF_TAG):
+        return 0
+    # Let go of partners moved away (or deleted).
+    partners = {s: (p, ps) for s, p, ps in floating_shelf_corner_partners(root)}
+    for side, key in SHELF_CORNER_LINK.items():
+        if not root.get(key):
+            continue
+        hit = partners.get(side)
+        if hit is not None and _shelf_corner_kind(root, side, *hit):
+            continue
+        if hit is not None:
+            partner, pside = hit
+            if str(partner.get(SHELF_CORNER_LINK[pside], '')).startswith(
+                    root.name + ':'):
+                _clear_shelf_corner(partner, pside)
+        _clear_shelf_corner(root, side)
+    scene = root.users_scene[0] if root.users_scene else bpy.context.scene
+    others = [o for o in scene.objects
+              if o is not root and o.get(FLOATING_SHELF_TAG)]
+    joined = 0
+    for side, key in SHELF_CORNER_LINK.items():
+        if root.get(key):
+            continue
+        for other in others:
+            hit = None
+            for oside, okey in SHELF_CORNER_LINK.items():
+                if other.get(okey):
+                    continue
+                fit = _shelf_corner_fit(root, side, other, oside)
+                if fit is not None:
+                    hit = (oside, okey) + fit
+                    break
+            if hit is None:
+                continue
+            oside, okey, kind, grow_root, grow_other = hit
+            depth = root.face_frame_cabinet.depth
+            if grow_root:
+                _grow_shelf_end(root, side, depth)
+            if grow_other:
+                _grow_shelf_end(other, oside, depth)
+            # Links first, then the corners: the partner's rebuild pushes
+            # its settings onto the newcomer, which then has nothing to
+            # push back.
+            root[key] = "%s:%s" % (other.name, oside)
+            other[okey] = "%s:%s" % (root.name, side)
+            setattr(other.floating_shelf, _shelf_corner_prop(oside), kind)
+            setattr(root.floating_shelf, _shelf_corner_prop(side), kind)
+            joined += 1
+            break
+    return joined
+
+
 def floating_shelf_group_members(root):
     """The other live shelves in root's group (empty when ungrouped)."""
     gid = root.get(SHELF_GROUP_TAG) if root is not None else None
@@ -17504,8 +18027,12 @@ class FloatingShelfFaceFrameCabinet(FaceFrameCabinet):
         # material_thickness sets only the top and bottom panels.
         ft = inch(0.75)
         mt = shelf.material_thickness
-        fl = shelf.finish_left
-        fr = shelf.finish_right
+        # A corner end has no end panel: it miters into the shelf on the
+        # other wall instead.
+        cl = getattr(shelf, 'corner_left', 'NONE')
+        cr = getattr(shelf, 'corner_right', 'NONE')
+        fl = shelf.finish_left and cl == 'NONE'
+        fr = shelf.finish_right and cr == 'NONE'
 
         parts = self._ensure_shelf_parts()
         FRONT = parts[PART_ROLE_SHELF_FRONT]
@@ -17575,6 +18102,10 @@ class FloatingShelfFaceFrameCabinet(FaceFrameCabinet):
                                   width, depth, ft, thickness)
         self._apply_box_end_miter('RIGHT', fr, FRONT, RP,
                                   width, depth, ft, thickness)
+        for side, corner in (('LEFT', cl), ('RIGHT', cr)):
+            self._apply_shelf_corner_miter(side, corner,
+                                           (FRONT, TOP, BOTTOM),
+                                           width, depth, thickness)
 
         # --- Light groove (Medium / Heavy Duty shelves only) ---
         # A routed LED channel on the top and/or bottom face. Panel-local
@@ -17617,8 +18148,70 @@ class FloatingShelfFaceFrameCabinet(FaceFrameCabinet):
         self._apply_shelf_edge_profile(FRONT, LP, RP, width, depth,
                                        thickness, fl, fr)
 
-        # A linked shelf's edit carries to the rest of its group.
+        # A linked shelf's edit carries to the rest of its group, and to
+        # the shelf it meets at a corner.
         sync_floating_shelf_group(self.obj)
+        sync_floating_shelf_corners(self.obj)
+
+    # ---- Corner miter ---------------------------------------------------
+    # Shelf-local plan: x across the width, y from the front face (-depth)
+    # to the wall (0). An inside corner's miter runs from the back corner
+    # at the wall to a point `depth` in along the front; an outside
+    # corner's from the front corner to a point `depth` in along the back.
+    # Both legs keep their full wall dimension and are cut on that 45,
+    # so the pair meets as one L-shaped shelf.
+    _SHELF_CORNER_MOD = 'Corner Miter {}'
+    _SHELF_CORNER_SIDE = 'CORNER_{}'
+
+    @staticmethod
+    def _shelf_corner_plan(side, corner, width, depth, m):
+        """The plan quad cut away beyond the corner's 45 (overshooting
+        by m so the boolean never grazes a face), or None."""
+        far = depth + 2.0 * m
+        if side == 'RIGHT' and corner == 'INSIDE':
+            return [(width - depth - m, -depth - m), (width + far, -depth - m),
+                    (width + far, m), (width + m, m)]
+        if side == 'RIGHT' and corner == 'OUTSIDE':
+            return [(width - depth - m, m), (width + m, -depth - m),
+                    (width + far, -depth - m), (width + far, m)]
+        if side == 'LEFT' and corner == 'INSIDE':
+            return [(-m, m), (-far, m), (-far, -depth - m),
+                    (depth + m, -depth - m)]
+        if side == 'LEFT' and corner == 'OUTSIDE':
+            return [(depth + m, m), (-far, m), (-far, -depth - m),
+                    (-m, -depth - m)]
+        return None
+
+    def _apply_shelf_corner_miter(self, side, corner, parts, width, depth,
+                                  thickness):
+        """Build / drop one end's corner miter: a prism cutter and a
+        boolean on the front board, top and bottom. Manual parts are
+        left alone."""
+        mod_name = self._SHELF_CORNER_MOD.format(side[0])
+        key = self._SHELF_CORNER_SIDE.format(side)
+        m = inch(2.0)
+        pts = self._shelf_corner_plan(side, corner, width, depth, m)
+        if pts is None:
+            for part in parts:
+                mod = part.modifiers.get(mod_name)
+                if mod is not None:
+                    part.modifiers.remove(mod)
+            for child in list(self.obj.children):
+                if (child.get('hb_part_role') == PART_ROLE_BOX_MITER_CUTTER
+                        and child.get('hb_miter_side') == key):
+                    bpy.data.objects.remove(child, do_unlink=True)
+            return
+        cutter = self._ensure_box_miter_cutter(key, 'SHELF')
+        self._wedge_prism_mesh(cutter, pts, -m, thickness + m)
+        for part in parts:
+            if part.get('IS_MANUAL_PART'):
+                continue
+            mod = part.modifiers.get(mod_name)
+            if mod is None:
+                mod = part.modifiers.new(name=mod_name, type='BOOLEAN')
+                mod.operation = 'DIFFERENCE'
+            if mod.object is not cutter:
+                mod.object = cutter
 
     # ---- Edge profile ---------------------------------------------------
     # Shelf-local frame: x across the width (0 -> width), y from the front
@@ -18818,6 +19411,46 @@ def apply_active_door_style_to_part(door_obj):
         door_obj['STYLE_NAME'] = ff.cabinet_styles[ff.active_cabinet_style_index].name
 
 
+def _active_finish():
+    """(cabinet style, exterior finish material) of the ACTIVE cabinet
+    style, or (None, None)."""
+    from . import props_hb_face_frame as props
+    ff = props.get_style_props()
+    if ff is None:
+        return None, None
+    idx = ff.active_cabinet_style_index
+    if not (0 <= idx < len(ff.cabinet_styles)):
+        return None, None
+    cs = ff.cabinet_styles[idx]
+    finish_mat, _rotated = cs.get_finish_material()
+    return (cs, finish_mat) if finish_mat is not None else (None, None)
+
+
+def apply_corbel_finish(corbel_obj):
+    """Give a placed corbel the ACTIVE cabinet style's exterior finish
+    and record the style as STYLE_NAME. A corbel's body is a static mesh,
+    not a cutpart, so it carries the material in its own slot."""
+    cs, finish_mat = _active_finish()
+    if finish_mat is None:
+        return
+    corbels.set_material(corbel_obj, finish_mat)
+    corbel_obj['STYLE_NAME'] = cs.name
+
+
+def apply_tambour_finish(tambour_obj):
+    """The active style's exterior finish on a tambour's slats (a static
+    mesh, one material slot)."""
+    cs, finish_mat = _active_finish()
+    if finish_mat is None:
+        return
+    mats = tambour_obj.data.materials
+    if len(mats) == 0:
+        mats.append(finish_mat)
+    else:
+        mats[0] = finish_mat
+    tambour_obj['STYLE_NAME'] = cs.name
+
+
 def apply_active_finish_to_product(product_obj):
     """Assign the project's ACTIVE cabinet style's exterior FINISH material
     to every cutpart under a non-cabinet face-frame PRODUCT (e.g. a Half
@@ -19686,6 +20319,9 @@ APPLIANCE_NAME_DISPATCH = {
     "Washer": types_appliances.WashingMachine,
     "Dryer": types_appliances.Dryer,
     "Stacked Washer Dryer": types_appliances.StackedWasherDryer,
+    # Not an appliance: a fixed-size decorative bracket that borrows the
+    # appliance placement (cursor follow, wall snap, one instance).
+    "Corbel": corbels.Corbel,
 }
 
 

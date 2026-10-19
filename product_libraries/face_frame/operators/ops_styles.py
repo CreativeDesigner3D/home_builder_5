@@ -702,11 +702,14 @@ def _apply_style_finish_to_bare_part(style, part_obj):
     take it on the GN surface inputs; a static carved mesh (nosed wood
     top) renders its mesh slots instead, so those are painted too --
     both are written so the finish survives the part flipping between
-    the two display modes. Returns True when a material was applied."""
+    the two display modes. The style is stamped even when it has no
+    finish picked yet, so the part still wears the style's viewport
+    colour like a cabinet would. Returns True when the style was
+    assigned."""
+    part_obj['STYLE_NAME'] = style.name
     fin, fin_rot = style.get_finish_material()
     if fin is None:
-        return False
-    part_obj['STYLE_NAME'] = style.name
+        return True
     style._set_part_surfaces(part_obj, fin, fin_rot)
     if part_obj.get('HB_STATIC_TEXTURED') or part_obj.get('IS_MANUAL_PART'):
         hb_face_frame_OT_paint_part_material._paint_manual_part_slots(
@@ -948,6 +951,7 @@ class hb_face_frame_OT_paint_assign_cabinet_style(bpy.types.Operator):
             # Bare part (Wood Top / Misc Part) with no cabinet above it.
             if not _apply_style_finish_to_bare_part(style, root):
                 return
+            _refresh_style_colors(context)
         else:
             return
         if root.name not in self._painted:
@@ -1299,7 +1303,9 @@ class hb_face_frame_OT_paint_assign_front_style(_paint_front_brush, bpy.types.Op
     # The applied fronts on a drawer-/door-look leaf are what the user
     # sees and clicks; they read the drawer-front / door pool like real
     # fronts.
-    _DOOR_ROLES = _paint_front_brush._DOOR_ROLES | {'DOOR_LOOK_FRONT'}
+    # A paneled top rail builds like a door and takes the door brush.
+    _DOOR_ROLES = (_paint_front_brush._DOOR_ROLES
+                   | {'DOOR_LOOK_FRONT', 'PANELED_TOP_RAIL'})
     _DRAWER_ROLES = _paint_front_brush._DRAWER_ROLES | {'DRAWER_LOOK_FRONT'}
     _skip_look_carriers = True
 
@@ -2183,7 +2189,11 @@ class hb_face_frame_OT_paint_part_material(bpy.types.Operator):
                     host = self._style_for(ff, obj)
                     if host is not None:
                         host._apply_materials_to_cabinet(root)
-            # Non-cabinet objects have no automatic material; leave as-is.
+            # Non-cabinet objects have no automatic material; leave as-is,
+            # but drop the paint stamp so a regenerated object stops
+            # re-applying it.
+            elif 'hb_paint_material' in obj:
+                del obj['hb_paint_material']
         else:
             if self.brush == 'FINISH':
                 mat, edge = style.get_finish_material()
@@ -2246,6 +2256,10 @@ class hb_face_frame_OT_paint_part_material(bpy.types.Operator):
                     style._set_part_surfaces(obj, mat, edge)
             else:
                 self._assign_object_material(obj, mat)
+                # Record the paint so a tool that regenerates this object
+                # (e.g. a molding sweep refit) can re-apply it.
+                if mat is not None:
+                    obj['hb_paint_material'] = mat.name
 
         if context.area is not None:
             context.area.tag_redraw()

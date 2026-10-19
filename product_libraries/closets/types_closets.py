@@ -168,6 +168,19 @@ CUSTOM_ACCESSORY_HEIGHT = inch(14.0)
 # shelf rather than a part of its own, which is how the prior library
 # had it too.
 PROP_L_LOCKED = 'hb_l_locked'
+# A fixed L shelf set at a height of its own in a corner unit. It is
+# built like the top and bottom and divides the corner into openings,
+# the way a fixed shelf divides a run's opening. Its height is the
+# underside of the shelf above the unit's bottom.
+PROP_L_DIVIDER = 'hb_l_divider'
+PROP_L_DIVIDER_Z = 'hb_l_divider_z'
+# Which opening of a divided corner a shelf, rod or opening cage
+# belongs to, counted from the bottom.
+PROP_L_SEG = 'hb_l_seg'
+# The fixed L shelf following the cursor while one is being placed: laid
+# out at its height like a divider, but dividing nothing until it is
+# put down.
+PROP_L_DIVIDER_PREVIEW = 'hb_l_divider_preview'
 # A front told to be a style of its own rather than the room's. Unset
 # is the ordinary case: the front follows whatever the room is set to,
 # so changing the room still changes every front that has not been
@@ -311,6 +324,11 @@ PROP_OPEN_HEIGHT = 'hb_open_height'
 # shelf like any other, but it is placed by the bank rather than by
 # what it was given, because only the bank knows where it stops.
 PROP_DRAWER_CAP = 'hb_drawer_cap'
+# Marks the fixed shelf a drawer bank not filling its opening put over
+# itself to divide the opening, so the space above is an opening of its
+# own. Once it stands, the bank fills the opening under it and its cap
+# steps aside; resizing the bank moves this shelf with it.
+PROP_DRAWER_SPLIT = 'hb_drawer_split'
 # Marks a lock shelf that stands inside one opening rather than
 # splitting the bay: the shelf a cubby band or a mid-shelf double hang
 # puts in a column of a divided segment, cut to the column the way
@@ -6898,10 +6916,12 @@ class LShelfClosetStarter(GeoNodeCage):
         cpm.set_input('Y', max(D - RD, 0.0))
         cpm.set_input('Route Depth', h + 0.01)
 
-    def _layout_corner_cages(self, W, D, H, LD, RD, open_lo, open_hi):
+    def _layout_corner_cages(self, W, D, H, LD, RD, spans):
         """The cages the Bays and Openings selection modes show for a
-        corner: the whole unit, and the space between its bottom and
-        top shelf where its shelves and rods go."""
+        corner: the whole unit, and one for each opening its shelves and
+        rods go in - the space between its bottom and top shelf, or
+        each space the fixed L shelves divide that into. Returns the
+        opening cages, bottom to top."""
         bay = self._corner_cage(TAG_CORNER_BAY_CAGE, 'Corner Bay',
                                 'HOME_BUILDER_MT_closet_corner_bay_commands')
         bay.location = (0.0, 0.0, 0.0)
@@ -6910,15 +6930,41 @@ class LShelfClosetStarter(GeoNodeCage):
         g.set_input('Dim Y', D)
         g.set_input('Dim Z', H)
         self._notch_corner_cage(bay, W, D, LD, RD, H)
-        opening = self._corner_cage(
-            TAG_CORNER_OPENING_CAGE, 'Corner Opening',
-            'HOME_BUILDER_MT_closet_corner_opening_commands')
-        opening.location = (0.0, 0.0, open_lo)
-        g = GeoNodeCage(opening)
-        g.set_input('Dim X', W)
-        g.set_input('Dim Y', D)
-        g.set_input('Dim Z', max(open_hi - open_lo, 0.001))
-        self._notch_corner_cage(opening, W, D, LD, RD, open_hi - open_lo)
+        openings = [c for c in self.obj.children
+                    if c.get(TAG_CORNER_OPENING_CAGE)]
+        openings.sort(key=lambda o: int(o.get(PROP_L_SEG, 0)))
+        while len(openings) > len(spans):
+            # An opening merged away: what hung in it goes to the one
+            # below (removing a divider moves it first, keeping its
+            # height; this is the fallback).
+            gone = openings.pop()
+            keep = openings[-1]
+            for child in list(gone.children):
+                child.parent = keep
+            bpy.data.objects.remove(gone, do_unlink=True)
+        while len(openings) < len(spans):
+            openings.append(self._new_corner_opening_cage())
+        for k, (opening, (lo, hi, _cfg)) in enumerate(zip(openings, spans)):
+            opening[PROP_L_SEG] = k
+            opening.location = (0.0, 0.0, lo)
+            g = GeoNodeCage(opening)
+            g.set_input('Dim X', W)
+            g.set_input('Dim Y', D)
+            g.set_input('Dim Z', max(hi - lo, 0.001))
+            self._notch_corner_cage(opening, W, D, LD, RD, hi - lo)
+        return openings
+
+    def _new_corner_opening_cage(self):
+        cage = GeoNodeCage()
+        cage.create('Corner Opening')
+        cage.obj.parent = self.obj
+        cage.obj[TAG_CORNER_OPENING_CAGE] = True
+        cage.obj['MENU_ID'] = 'HOME_BUILDER_MT_closet_corner_opening_commands'
+        cage.set_input('Mirror Y', True)
+        # Shown by the selection mode that wants it, like a bay's cage.
+        cage.obj.display_type = 'WIRE'
+        cage.obj.hide_viewport = True
+        return cage.obj
 
     def _reconcile_l_rods(self, want):
         """The rods in a corner unit: none, one, or two.
@@ -6979,12 +7025,12 @@ class LShelfClosetStarter(GeoNodeCage):
             # (the reference's corner rod hung three hangers, Remove Hangers off).
             layout_wall_rod(rod, allow_hangers=not sp.l_remove_hangers)
 
-    def _warn_l_rod(self, W, D):
+    def _warn_l_rod(self, W, D, has_rod):
         """A rod needs the wing it does not run along to be deep
         enough for the clothes on it to clear - two feet, the way the
         prior library had it. Said rather than prevented."""
         sp = self.obj.hb_closet_starter
-        if sp.l_interior not in ('ROD', 'DOUBLE'):
+        if not has_rod:
             if PROP_ACCESSORY_WARNING in self.obj:
                 del self.obj[PROP_ACCESSORY_WARNING]
             return ''
@@ -7004,29 +7050,205 @@ class LShelfClosetStarter(GeoNodeCage):
             del self.obj[PROP_ACCESSORY_WARNING]
         return msg
 
-    def _reconcile_l_shelves(self):
-        want = self._l_shelf_wanted()
+    def _new_l_shelf(self, index):
+        shelf = CabinetPart()
+        shelf.create('L Shelf')
+        shelf.obj.parent = self.obj
+        shelf.obj['hb_part_role'] = PART_ROLE_FIXED_SHELF
+        shelf.obj['hb_l_index'] = index
+        shelf.obj['MENU_ID'] = 'HOME_BUILDER_MT_closet_part_commands'
+        shelf.set_input('Mirror Y', True)
+        shelf.add_part_modifier('CPM_CORNERNOTCH', 'L Notch')
+        # The rounded front corner is a second cut on the same
+        # corner rather than a setting on the first - only one of
+        # the pair is ever shown.
+        shelf.add_part_modifier('CPM_RADIUSNOTCH', 'L Radius')
+        shelf.add_part_modifier('CPM_CORNERNOTCH', 'Back Notch')
+        return shelf.obj
+
+    def _l_shelf_parts(self):
+        """The unit's L shelves other than the fixed ones set at a
+        height of their own: bottom first, top last."""
         shelves = [c for c in self.obj.children
                    if c.get('hb_part_role') in (PART_ROLE_FIXED_SHELF,
-                                                PART_ROLE_ADJ_SHELF)]
+                                                PART_ROLE_ADJ_SHELF)
+                   and not c.get(PROP_L_DIVIDER)
+                   and not c.get(PROP_L_DIVIDER_PREVIEW)]
         shelves.sort(key=lambda o: o.get('hb_l_index', 0))
+        return shelves
+
+    def _l_dividers(self):
+        """The fixed L shelves set at heights of their own, lowest
+        first."""
+        divs = [c for c in self.obj.children if c.get(PROP_L_DIVIDER)
+                and not c.get(PROP_L_DIVIDER_PREVIEW)]
+        divs.sort(key=lambda o: float(o.get(PROP_L_DIVIDER_Z, 0.0)))
+        return divs
+
+    def _l_segment_cfgs(self, n):
+        """What each of n openings holds, bottom to top: the unit's own
+        settings for an undivided corner, else one entry per opening
+        (padded empty, or trimmed, if a divider came or went without
+        saying where its openings went)."""
+        sp = self.obj.hb_closet_starter
+        if n <= 1:
+            return [sp]
+        segs = sp.l_segments
+        while len(segs) > n:
+            segs.remove(len(segs) - 1)
+        while len(segs) < n:
+            segs.add()
+        return list(segs)
+
+    @staticmethod
+    def _l_mid_count(cfg):
+        if cfg.l_interior in ('ADJ', 'LOCK'):
+            return max(0, int(cfg.l_shelf_qty))
+        if cfg.l_interior == 'DOUBLE':
+            return 1
+        return 0
+
+    @staticmethod
+    def _l_mid_z(cfg, i, n, lo, hi, st):
+        """Height of the i-th of n shelves (top and bottom counted) in
+        an opening whose lower shelf sits at lo and upper at hi."""
+        if cfg.l_interior == 'DOUBLE':
+            # The one shelf a double hang has is the one
+            # between its two rods, and where it sits is what
+            # divides the hanging into a long half and a short
+            # one - so it is set rather than spaced. The Top
+            # Opening Height is the clear opening over it, down
+            # from the underside of the top shelf (reference
+            # Closet_Rod_Corner_Insert: height - toh - mt), as a
+            # run's double hang measures it.
+            return min(max(hi - st - cfg.l_top_opening_height, lo + st),
+                       hi - st)
+        # Spaced as the reference's Adjustable_L_Shelves spaced them
+        # in the opening over the bottom shelf: n spacings
+        # plus n thicknesses up, which comes to a thickness
+        # above an even split of bottom to top.
+        return min(lo + st + (hi - lo) * i / (n - 1), hi - st)
+
+    @staticmethod
+    def _l_mid_locked(cfg, shelf):
+        # Top and bottom are the carcass and are always fixed.
+        # In between, a shelf is adjustable or locked - the
+        # same board either way, held on pins or on cams, so
+        # it is the same part carrying a flag.
+        # Only a shelf someone could have locked by hand
+        # remembers being locked. A unit set to lock all of
+        # them, or the shelf between two rods, is locked by
+        # what the unit is - written down it would still be
+        # locked after the unit was set back to adjustable,
+        # which is not what anyone asked for.
+        if cfg.l_interior in ('LOCK', 'DOUBLE'):
+            return True
+        return bool(shelf.get(PROP_L_LOCKED, False))
+
+    @staticmethod
+    def _l_rod_tops(cfg, hi, mids):
+        """Where the rods of one opening hang from: a single hang under
+        the shelf over the opening, a double hang a second under the
+        shelf between them."""
+        if cfg.l_interior == 'ROD':
+            return [hi]
+        if cfg.l_interior == 'DOUBLE':
+            return [hi, mids[0] if mids else hi]
+        return []
+
+    def _plan_l_shelves(self, z_bottom, z_top, st):
+        """An undivided corner: (shelf, z, carcass, locked, kind) for
+        each L shelf, the rod tops, and its one opening (lo, hi, cfg)."""
+        sp = self.obj.hb_closet_starter
+        shelves = self._reconcile_l_shelves()
+        n = len(shelves)
+        plan = []
+        mids = []
+        for i, shelf in enumerate(shelves):
+            shelf[PROP_L_SEG] = 0
+            if i == 0 or i == n - 1:
+                plan.append((shelf, z_bottom if i == 0 else z_top, True,
+                             True, 'BOTTOM' if i == 0 else 'TOP'))
+                continue
+            z = self._l_mid_z(sp, i, n, z_bottom, z_top, st)
+            mids.append(z)
+            plan.append((shelf, z, False, self._l_mid_locked(sp, shelf),
+                         'MID'))
+        if sp.l_interior == 'DOUBLE' and not mids:
+            mids = [(z_top + z_bottom) / 2.0]
+        tops = self._l_rod_tops(sp, z_top, mids)
+        return plan, tops, [(z_bottom + st, z_top, sp)]
+
+    def _plan_divided_l_shelves(self, dividers, z_bottom, z_top, st):
+        """A corner the fixed L shelves divide: the top and bottom, each
+        divider where it was set (held inside its neighbours), and in
+        each opening between them what that opening is set to hold."""
+        cfgs = self._l_segment_cfgs(len(dividers) + 1)
+        # Where each divider sits, kept a shelf clear of the shelves
+        # either side so no opening closes up.
+        bounds = [z_bottom]
+        for k, div in enumerate(dividers):
+            room_above = (len(dividers) - k) * 2.0 * st
+            z = float(div.get(PROP_L_DIVIDER_Z, 0.0))
+            z = max(bounds[-1] + 2.0 * st, min(z, z_top - room_above))
+            bounds.append(z)
+        bounds.append(z_top)
+
+        others = self._l_shelf_parts()
+        while len(others) < 2:
+            others.append(self._new_l_shelf(len(others)))
+        bottom, top = others[0], others[-1]
+        by_seg = {}
+        for shelf in others[1:-1]:
+            seg = int(shelf.get(PROP_L_SEG, 0))
+            by_seg.setdefault(seg, []).append(shelf)
+        plan = [(bottom, z_bottom, True, True, 'BOTTOM')]
+        tops = []
+        spans = []
+        ordered = [bottom]
+        for k, cfg in enumerate(cfgs):
+            lo, hi = bounds[k], bounds[k + 1]
+            want = self._l_mid_count(cfg)
+            have = by_seg.pop(k, [])
+            while len(have) > want:
+                _remove_part_tree(have.pop())
+            while len(have) < want:
+                have.append(self._new_l_shelf(0))
+            n = want + 2
+            mids = []
+            for i, shelf in enumerate(have, start=1):
+                shelf[PROP_L_SEG] = k
+                z = self._l_mid_z(cfg, i, n, lo, hi, st)
+                mids.append(z)
+                plan.append((shelf, z, False,
+                             self._l_mid_locked(cfg, shelf), 'MID'))
+                ordered.append(shelf)
+            tops.extend(self._l_rod_tops(cfg, hi, mids))
+            spans.append((lo + st, hi, cfg))
+            # The clear height the opening's shelf count is dealt by.
+            cfg['hb_clear'] = max(hi - lo - st, 0.0)
+        # Shelves left over from an opening that is gone.
+        for extra in by_seg.values():
+            for shelf in extra:
+                _remove_part_tree(shelf)
+        ordered.append(top)
+        plan.append((top, z_top, True, True, 'TOP'))
+        for div, z in zip(dividers, bounds[1:-1]):
+            plan.append((div, z, True, True, 'DIVIDER'))
+            ordered.append(div)
+        # Top stays the highest numbered of the shelves that are not
+        # dividers, the way an undivided corner reads its stack.
+        for i, shelf in enumerate(ordered):
+            shelf['hb_l_index'] = i
+        return plan, tops, spans
+
+    def _reconcile_l_shelves(self):
+        want = self._l_shelf_wanted()
+        shelves = self._l_shelf_parts()
         while len(shelves) > want:
             bpy.data.objects.remove(shelves.pop(), do_unlink=True)
         while len(shelves) < want:
-            shelf = CabinetPart()
-            shelf.create('L Shelf')
-            shelf.obj.parent = self.obj
-            shelf.obj['hb_part_role'] = PART_ROLE_FIXED_SHELF
-            shelf.obj['hb_l_index'] = len(shelves)
-            shelf.obj['MENU_ID'] = 'HOME_BUILDER_MT_closet_part_commands'
-            shelf.set_input('Mirror Y', True)
-            shelf.add_part_modifier('CPM_CORNERNOTCH', 'L Notch')
-            # The rounded front corner is a second cut on the same
-            # corner rather than a setting on the first - only one of
-            # the pair is ever shown.
-            shelf.add_part_modifier('CPM_RADIUSNOTCH', 'L Radius')
-            shelf.add_part_modifier('CPM_CORNERNOTCH', 'Back Notch')
-            shelves.append(shelf.obj)
+            shelves.append(self._new_l_shelf(len(shelves)))
         # Older files: shelves built before the Back Partition and the
         # rounded corner landed are missing those cuts - add them so
         # the shelves reconcile.
@@ -7388,54 +7610,26 @@ class LShelfClosetStarter(GeoNodeCage):
 
             # L shelves: bottom above the kick, top under the unit top,
             # the rest evenly between. Footprint W x D with the inner
-            # front corner notched away to leave the two wings.
-            shelves = self._reconcile_l_shelves()
-            interior_lo = kick + (st if floor else st)
+            # front corner notched away to leave the two wings. Fixed L
+            # shelves set at heights of their own divide the corner
+            # into openings, each holding what it is set to.
             z_bottom = kick
             z_top = H - st
-            n_mid = max(0, len(shelves) - 2)
-            n = len(shelves)
-            mode = sp.l_interior
-            for i, shelf in enumerate(shelves):
-                carcass = i == 0 or i == n - 1
-                if i == 0:
-                    z = z_bottom
-                elif i == n - 1:
-                    z = z_top
-                elif mode == 'DOUBLE':
-                    # The one shelf a double hang has is the one
-                    # between its two rods, and where it sits is what
-                    # divides the hanging into a long half and a short
-                    # one - so it is set rather than spaced. The Top
-                    # Opening Height is the clear opening over it, down
-                    # from the underside of the top shelf (reference
-                    # Closet_Rod_Corner_Insert: height - toh - mt), as a
-                    # run's double hang measures it.
-                    z = min(max(z_top - st - sp.l_top_opening_height,
-                                z_bottom + st), z_top - st)
-                else:
-                    # Spaced as the reference's Adjustable_L_Shelves spaced them
-                    # in the opening over the bottom shelf: n spacings
-                    # plus n thicknesses up, which comes to a thickness
-                    # above an even split of bottom to top.
-                    z = min(z_bottom + st
-                            + (z_top - z_bottom) * i / (n - 1),
-                            z_top - st)
-                # Top and bottom are the carcass and are always fixed.
-                # In between, a shelf is adjustable or locked - the
-                # same board either way, held on pins or on cams, so
-                # it is the same part carrying a flag.
-                # Only a shelf someone could have locked by hand
-                # remembers being locked. A unit set to lock all of
-                # them, or the shelf between two rods, is locked by
-                # what the unit is - written down it would still be
-                # locked after the unit was set back to adjustable,
-                # which is not what anyone asked for.
-                chosen = bool(shelf.get(PROP_L_LOCKED, False))
-                if carcass or mode in ('LOCK', 'DOUBLE'):
-                    locked = True
-                else:
-                    locked = chosen
+            dividers = self._l_dividers()
+            if dividers:
+                plan, rod_tops, spans = self._plan_divided_l_shelves(
+                    dividers, z_bottom, z_top, st)
+            else:
+                plan, rod_tops, spans = self._plan_l_shelves(
+                    z_bottom, z_top, st)
+            # A fixed L shelf being placed stands where the cursor has
+            # it, inside the opening it is over.
+            for preview in [c for c in self.obj.children
+                            if c.get(PROP_L_DIVIDER_PREVIEW)]:
+                z = float(preview.get(PROP_L_DIVIDER_Z, z_bottom))
+                z = max(z_bottom + st, min(z, z_top - st))
+                plan.append((preview, z, True, True, 'DIVIDER'))
+            for shelf, z, carcass, locked, kind in plan:
                 shelf['hb_part_role'] = (PART_ROLE_FIXED_SHELF if locked
                                          else PART_ROLE_ADJ_SHELF)
                 shelf['hb_l_carcass'] = 1 if carcass else 0
@@ -7456,9 +7650,9 @@ class LShelfClosetStarter(GeoNodeCage):
                 # the same extents; only the chosen one is shown. Wing
                 # depths are measured from the walls, so the wall
                 # offset cancels out of those extents.
-                if i == 0:
+                if kind == 'BOTTOM':
                     round_it = use_radius and bool(sp.l_radius_bottom)
-                elif i == len(shelves) - 1:
+                elif kind == 'TOP':
                     round_it = use_radius and bool(sp.l_radius_top)
                 else:
                     round_it = use_radius and bool(sp.l_radius_shelves)
@@ -7527,26 +7721,14 @@ class LShelfClosetStarter(GeoNodeCage):
             # gets a second under the shelf between them. Each hangs
             # the standard drop below whatever is over it, which is
             # how the prior library measured them.
-            if mode == 'ROD':
-                tops = [z_top]
-            elif mode == 'DOUBLE':
-                middle = [s for s in shelves
-                          if not s.get('hb_l_carcass')]
-                under = (middle[0].location.z if middle
-                         else (z_top + z_bottom) / 2.0)
-                tops = [z_top, under]
-            else:
-                tops = []
-            rods = self._reconcile_l_rods(len(tops))
-            self._layout_l_rods(rods, W, D, LD, RD, l_pt, r_pt, tops)
-            self._warn_l_rod(W, D)
-            self._layout_corner_cages(W, D, H, LD, RD, z_bottom + st, z_top)
-            opening = next((c for c in self.obj.children
-                            if c.get(TAG_CORNER_OPENING_CAGE)), None)
-            if opening is not None:
+            rods = self._reconcile_l_rods(len(rod_tops))
+            self._layout_l_rods(rods, W, D, LD, RD, l_pt, r_pt, rod_tops)
+            self._warn_l_rod(W, D, bool(rod_tops))
+            openings = self._layout_corner_cages(W, D, H, LD, RD, spans)
+            for opening, (lo, hi, _cfg) in zip(openings, spans):
                 self._corner_accessories(
                     opening, W, D, LD, RD, l_pt, r_pt, wo,
-                    max(z_top - (z_bottom + st), 0.001), scene_props)
+                    max(hi - lo, 0.001), scene_props)
 
             self.set_input('Dim X', W)
             self.set_input('Dim Y', D)
@@ -8119,15 +8301,282 @@ def default_adj_shelf_qty(opening):
                       int(interior_h / inch(12.0))))
 
 
-def default_l_shelf_qty(root):
+def default_l_shelf_qty(root, seg=None):
     """Shelves for a corner unit given shelves: one per 12" of the
     clear opening between its bottom and top, at least one - the reference's
-    L shelves insert, max(1, int(Dim Z / 12")), on drop."""
+    L shelves insert, max(1, int(Dim Z / 12")), on drop. With seg, the
+    opening is that one of a divided corner."""
+    if seg is not None and seg.get('hb_clear') is not None:
+        return max(1, min(12, int(float(seg['hb_clear']) / inch(12.0))))
     sp = root.hb_closet_starter
     st = run_sizes(root).shelf_thickness
     kick = sp.toe_kick_height if sp.closet_type != 'HANGING' else 0.0
     clear = float(sp.height) - kick - 2.0 * st
     return max(1, min(12, int(clear / inch(12.0))))
+
+
+def _copy_l_cfg(src, dst):
+    """What a corner opening holds, copied between the unit's own
+    settings and an opening's entry without firing their updates."""
+    from .props_closets import L_INTERIOR_ITEMS
+    ids = {key: num for key, _label, _desc, num in L_INTERIOR_ITEMS}
+    dst['l_interior'] = ids[src.l_interior]
+    dst['l_shelf_qty'] = int(src.l_shelf_qty)
+    dst['l_top_opening_height'] = float(src.l_top_opening_height)
+
+
+def corner_openings(root):
+    """A corner unit's opening cages, bottom to top."""
+    cages = [c for c in root.children if c.get(TAG_CORNER_OPENING_CAGE)]
+    cages.sort(key=lambda o: int(o.get(PROP_L_SEG, 0)))
+    return cages
+
+
+def corner_dividers(root):
+    """A corner unit's fixed L shelves set at heights of their own,
+    lowest first."""
+    divs = [c for c in root.children if c.get(PROP_L_DIVIDER)
+            and not c.get(PROP_L_DIVIDER_PREVIEW)]
+    divs.sort(key=lambda o: float(o.get(PROP_L_DIVIDER_Z, 0.0)))
+    return divs
+
+
+def add_l_divider_preview(root):
+    """The fixed L shelf that follows the cursor while one is placed in
+    a corner unit."""
+    shelf = _wrap_starter(root)._new_l_shelf(len(root.children))
+    shelf[PROP_L_DIVIDER] = 1
+    shelf[PROP_L_DIVIDER_PREVIEW] = 1
+    shelf['hb_preview'] = 1
+    shelf['hb_l_carcass'] = 1
+    return shelf
+
+
+def _set_l_cfg(dst, interior, qty=0, toh=None):
+    from .props_closets import L_INTERIOR_ITEMS
+    ids = {key: num for key, _label, _desc, num in L_INTERIOR_ITEMS}
+    if interior in ('ADJ', 'LOCK') and qty <= 0:
+        interior = 'NONE'
+    dst['l_interior'] = ids[interior]
+    dst['l_shelf_qty'] = int(qty)
+    if toh is not None:
+        dst['l_top_opening_height'] = float(toh)
+
+
+def corner_opening_cfg(root, opening=None):
+    """What one opening of a corner holds: the unit's own settings for
+    an undivided corner, else that opening's entry."""
+    sp = root.hb_closet_starter
+    seg = int(opening.get(PROP_L_SEG, 0)) if opening is not None else 0
+    if not corner_dividers(root) or seg >= len(sp.l_segments):
+        return sp
+    return sp.l_segments[seg]
+
+
+def _corner_accessories_in(cage):
+    return [c for c in cage.children
+            if c.get('hb_part_role') == PART_ROLE_ACCESSORY]
+
+
+def add_l_divider(root, opening, z):
+    """Set a fixed L shelf across a corner unit, its underside z above
+    the unit's bottom, in the given opening. The shelf divides that
+    opening in two, and what stood in it is shared out by height:
+    shelves and accessories above the cut go to the new opening over
+    it, the rest stay. Returns the shelf."""
+    starter = _wrap_starter(root)
+    sp = root.hb_closet_starter
+    cages = corner_openings(root)
+    k = int(opening.get(PROP_L_SEG, 0)) if opening is not None else 0
+    k = min(max(k, 0), max(len(cages) - 1, 0))
+    st = run_sizes(root).shelf_thickness
+    divided = bool(corner_dividers(root))
+    cfg = (sp.l_segments[k] if divided and k < len(sp.l_segments) else sp)
+    mode = cfg.l_interior
+    toh = float(cfg.l_top_opening_height)
+    mids = sorted([c for c in root.children
+                   if c.get('hb_l_index') is not None
+                   and not c.get('hb_l_carcass')
+                   and not c.get(PROP_L_DIVIDER)
+                   and not c.get('hb_preview')
+                   and int(c.get(PROP_L_SEG, 0)) == k
+                   and c.get('hb_part_role') in (PART_ROLE_FIXED_SHELF,
+                                                 PART_ROLE_ADJ_SHELF)],
+                  key=lambda o: o.location.z)
+    above = [m for m in mids if m.location.z > z]
+    # Split the way a fixed shelf splits a run's opening: shelves under
+    # the cut stay in the opening below and the ones over it go up with
+    # the new opening, keeping their locks. A rod hangs from the top of
+    # its opening, so it goes up; a double hang cut above its middle
+    # shelf leaves a rod in each, and cut below it goes up whole.
+    if mode in ('ADJ', 'LOCK'):
+        lower = (mode, len(mids) - len(above), None)
+        upper = (mode, len(above), None)
+    elif mode == 'ROD':
+        lower, upper = ('NONE', 0, None), ('ROD', 0, None)
+    elif mode == 'DOUBLE':
+        if mids and not above:
+            lower, upper = ('ROD', 0, None), ('ROD', 0, None)
+        else:
+            lower, upper = ('NONE', 0, None), ('DOUBLE', 0, toh)
+    else:
+        lower, upper = ('NONE', 0, None), ('NONE', 0, None)
+    if not divided:
+        sp.l_segments.clear()
+        _copy_l_cfg(sp, sp.l_segments.add())
+        sp.l_segments.add()
+    else:
+        sp.l_segments.add()
+        sp.l_segments.move(len(sp.l_segments) - 1, k + 1)
+    _set_l_cfg(sp.l_segments[k], *lower)
+    _set_l_cfg(sp.l_segments[k + 1], *upper)
+    # What sat in the openings above moves up one.
+    for c in list(root.children):
+        if c.get(PROP_L_SEG) is not None and int(c[PROP_L_SEG]) > k:
+            c[PROP_L_SEG] = int(c[PROP_L_SEG]) + 1
+    for m in above:
+        m[PROP_L_SEG] = k + 1
+    new_cage = starter._new_corner_opening_cage()
+    new_cage[PROP_L_SEG] = k + 1
+    # Accessories hung above the new shelf, by their height in the unit.
+    moving = []
+    if k < len(cages):
+        cage = cages[k]
+        for a in _corner_accessories_in(cage):
+            at = float(cage.location.z) + float(a.get(PROP_ACCESSORY_Z, 0.0))
+            if at >= z + st:
+                moving.append((a, at))
+    shelf = starter._new_l_shelf(0)
+    shelf[PROP_L_DIVIDER] = 1
+    shelf[PROP_L_DIVIDER_Z] = float(z)
+    shelf['hb_l_carcass'] = 1
+    recalculate_closet_starter(root)
+    if moving:
+        for a, at in moving:
+            a.parent = new_cage
+            a[PROP_ACCESSORY_Z] = max(at - float(new_cage.location.z), 0.0)
+        recalculate_closet_starter(root)
+    return shelf
+
+
+def remove_l_divider(shelf):
+    """Take a fixed L shelf out of a corner unit: the openings either
+    side merge and keep what the lower one held; accessories hung in
+    the upper one stay where they are in the merged one."""
+    root = find_starter_root(shelf)
+    if root is None:
+        return
+    divs = corner_dividers(root)
+    if shelf not in divs:
+        return
+    j = divs.index(shelf)
+    sp = root.hb_closet_starter
+    cages = corner_openings(root)
+    if j + 1 < len(cages):
+        below, above = cages[j], cages[j + 1]
+        lift = float(above.location.z) - float(below.location.z)
+        for a in _corner_accessories_in(above):
+            a.parent = below
+            a[PROP_ACCESSORY_Z] = float(a.get(PROP_ACCESSORY_Z, 0.0)) + lift
+        bpy.data.objects.remove(above, do_unlink=True)
+    for c in list(root.children):
+        seg = c.get(PROP_L_SEG)
+        if seg is None or c.get('hb_l_carcass'):
+            continue
+        seg = int(seg)
+        if seg == j + 1 and not c.get(TAG_CORNER_OPENING_CAGE):
+            # The upper opening's shelves go with what it held.
+            _remove_part_tree(c)
+        elif seg > j + 1:
+            c[PROP_L_SEG] = seg - 1
+    if j + 1 < len(sp.l_segments):
+        sp.l_segments.remove(j + 1)
+    _remove_part_tree(shelf)
+    if not corner_dividers(root):
+        if len(sp.l_segments):
+            _copy_l_cfg(sp.l_segments[0], sp)
+        sp.l_segments.clear()
+    recalculate_closet_starter(root)
+
+
+def set_l_divider_z(shelf, z):
+    """Move a fixed L shelf in a corner unit, held between the shelves
+    either side of it."""
+    root = find_starter_root(shelf)
+    if root is None:
+        return
+    st = run_sizes(root).shelf_thickness
+    divs = corner_dividers(root)
+    j = divs.index(shelf) if shelf in divs else -1
+    sp = root.hb_closet_starter
+    kick = sp.toe_kick_height if sp.closet_type != 'HANGING' else 0.0
+    lo = (float(divs[j - 1].get(PROP_L_DIVIDER_Z, 0.0)) if j > 0
+          else kick) + 2.0 * st
+    hi = (float(divs[j + 1].get(PROP_L_DIVIDER_Z, 0.0))
+          if 0 <= j < len(divs) - 1 else float(sp.height) - st) - 2.0 * st
+    shelf[PROP_L_DIVIDER_Z] = float(max(lo, min(z, hi)))
+    recalculate_closet_starter(root)
+
+
+def split_above_drawer_bank(opening):
+    """A drawer bank that does not fill its opening stops under a shelf.
+    Make that a shelf that divides the opening, the way a fixed shelf
+    dropped there would, so the space over the drawers is an opening of
+    its own to pick and fill. The bank then reaches the top of the
+    opening under it, where its cap steps aside for the shelf. Run
+    again after the bank is resized, it moves the shelf it put in.
+
+    An opening that is one column of a divided segment is left capped:
+    a shelf dividing it would run across the columns beside it too."""
+    bay = opening.parent
+    if bay is None or not bay.get(TAG_BAY_CAGE):
+        return False
+    side = opening.get(PROP_OPENING_SIDE, 'FRONT')
+    row = int(opening.get('hb_opening_index', 0))
+    for other in bay.children:
+        if (other is not opening and other.get(TAG_OPENING_CAGE)
+                and other.get(PROP_OPENING_SIDE, 'FRONT') == side
+                and int(other.get('hb_opening_index', 0)) == row):
+            return False
+    cap = next((c for c in opening.children if c.get(PROP_DRAWER_CAP)),
+               None)
+    if cap is None:
+        return False
+    st = run_sizes(opening).shelf_thickness
+    want = float(cap.location.z)
+    # Fronts sized past the opening are squeezed to fit it, so the cap
+    # stands where the squeezed stack stops. The stack grows one for
+    # one with its fronts: the shelf goes where the sizes asked for.
+    fronts = [c for c in opening.children
+              if c.get('hb_part_role') == PART_ROLE_DRAWER_FRONT]
+    asked = sum(float(f.get(PROP_FRONT_HEIGHT, 0.0)) for f in fronts
+                if f.get(PROP_UNLOCK_FRONT_HEIGHT))
+    if fronts and all(f.get(PROP_UNLOCK_FRONT_HEIGHT) for f in fronts):
+        span = drawer_front_span(opening, len(fronts))
+        if asked > span:
+            want += asked - span
+    seg_bottom = float(opening.get('hb_seg_bottom', 0.0))
+    try:
+        height = float(GeoNodeCage(opening).get_input('Dim Z'))
+    except Exception:
+        return False
+    top = seg_bottom + height
+    above = [s for s in bay.children
+             if s.get(PROP_DRAWER_SPLIT)
+             and s.get(PROP_OPENING_SIDE, 'FRONT') == side
+             and abs(float(s.get('hb_z_offset', 0.0)) - top) < inch(0.01)]
+    if above:
+        if abs(float(above[0]['hb_z_offset']) - (seg_bottom + want)) < 1e-6:
+            return False
+        above[0]['hb_z_offset'] = float(seg_bottom + want)
+    elif want + st < height - inch(0.01):
+        shelf = add_fixed_shelf(opening, want)
+        shelf[PROP_SHELF_LOCKED] = 1
+        shelf[PROP_DRAWER_SPLIT] = 1
+    else:
+        return False
+    recalculate_closet_starter(opening)
+    return True
 
 
 def default_drawer_qty(opening):

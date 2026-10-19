@@ -463,8 +463,10 @@ def kick_continues_past_end(cab_obj, side):
 
     False when nothing carrying a kick meets the end: an appliance, an
     open gap, or the face of a blind corner cabinet the end butts
-    against. The finish kick then stops flush with the kick subfront
-    behind it rather than hanging past it by the side's thickness.
+    against. The finish kick then stops flush with the side's outer
+    face rather than running on into the scribe gap. (An end butting
+    a square-on run's face is settled first by finish_kick_corner,
+    which turns the kick into that run's.)
     """
     if not _is_face_frame_carcass(cab_obj):
         return True
@@ -532,27 +534,239 @@ def kick_continues_past_end(cab_obj, side):
 def finish_kick_reach_stale(cab_obj):
     """True when a neighbour change since the cabinet last built moves
     where its finish kick should end. The solver records, per end it
-    had to decide, whether the kick ran to the cabinet's edge; this
-    re-asks the scene for those ends."""
+    had to decide, how the kick ended; this re-asks the scene for those
+    ends. A notched-kick cabinet with no full record was built before
+    the record existed and rebuilds once to pick it up."""
     recorded = cab_obj.get(FINISH_KICK_REACH_KEY)
-    if recorded is None:
-        return False
+    corners = cab_obj.get(FINISH_KICK_CORNER_KEY)
     try:
         recorded = list(recorded)
-    except TypeError:
-        return False
-    for side, value in zip(('left', 'right'), recorded):
-        if value not in (0, 1):
+        corners = [float(v) for v in corners]
+    except (TypeError, ValueError):
+        return _finish_kick_planes(cab_obj) is not None
+    if len(recorded) != 2 or len(corners) != 6:
+        return _finish_kick_planes(cab_obj) is not None
+    for i, (side, value) in enumerate(zip(('left', 'right'), recorded)):
+        if value not in (0, 1, 2, 3):
             continue
-        if bool(value) != kick_continues_past_end(cab_obj, side):
+        corner = finish_kick_corner(cab_obj, side)
+        if value == 2:
+            if corner is None:
+                return True
+            was = corners[i * 3:i * 3 + 3]
+            if (abs(corner['back_x'] - was[0]) > 1e-6
+                    or abs(corner['front_x'] - was[1]) > 1e-6
+                    or bool(corner['miter']) != bool(was[2])):
+                return True
+            continue
+        if corner is not None:
+            return True
+        if value in (0, 1) and bool(value) != kick_continues_past_end(
+                cab_obj, side):
             return True
     return False
 
 
+def finish_kick_corner_partners(cab_obj):
+    """Cabinets whose finish kick meets cab_obj's at a corner - the ones
+    it met when it last built and the ones it meets now - so a change
+    on either side of a corner refreshes the other."""
+    found = []
+    names = str(cab_obj.get(FINISH_KICK_CORNER_WITH_KEY, '')).split('|')
+    for name in names:
+        obj = bpy.data.objects.get(name) if name else None
+        if obj is not None and obj is not cab_obj and obj not in found:
+            found.append(obj)
+    for side in ('left', 'right'):
+        try:
+            corner = finish_kick_corner(cab_obj, side)
+        except Exception:
+            corner = None
+        if corner is not None and corner['partner'] not in found:
+            found.append(corner['partner'])
+    return found
+
+
+# ---------------------------------------------------------------------------
+# Finish kick corners
+# ---------------------------------------------------------------------------
+# Where two runs meet square at an inside corner with one run's end
+# butted against the other's front - a blind corner, a voided corner,
+# or a plain L where one run stops at the other's face - the two finish
+# kicks run on to the corner and mitre together there, the way they're
+# fitted on site. Each kick's back face ends on the other's back face
+# and its front face on the other's front face, so the two cut faces
+# meet on the diagonal. When the butted run's kick carries on past the
+# meeting (a run butting the middle of another's face) the butting
+# kick just runs to the other's front face instead.
+
+_KICK_CORNER_BUTT_TOL = units.inch(1.0)
+_KICK_CORNER_FLOOR_TOL = units.inch(0.5)
+
+
+def _finish_kick_planes(obj):
+    """(front_y, back_y) in obj's local space of its finish toe kick
+    board's front and back faces, or None when obj carries no notched
+    kick finish a corner could mitre against. Corner cabinets, corner
+    sinks and angled-front cabinets resolve their kicks their own way
+    and stay out."""
+    if not _is_face_frame_carcass(obj):
+        return None
+    if (_is_corner_cabinet(obj) or obj.get('HB_CORNER_SINK_45')
+            or obj.get('IS_LEG_PRODUCT')):
+        return None
+    cab = obj.face_frame_cabinet
+    if cab.cabinet_type not in ('BASE', 'TALL', 'LAP_DRAWER'):
+        return None
+    if getattr(cab, 'toe_kick_type', 'NOTCH') != 'NOTCH':
+        return None
+    if not getattr(cab, 'include_finish_toe_kick', False):
+        return None
+    if (getattr(cab, 'unlock_left_depth', False)
+            or getattr(cab, 'unlock_right_depth', False)):
+        return None
+    back = -cab.depth + cab.toe_kick_setback
+    return (back - cab.finish_toe_kick_thickness, back)
+
+
+def _plan_axis(mw, x, y):
+    w = mw.to_3x3() @ Vector((x, y, 0.0))
+    v = Vector((w.x, w.y))
+    if v.length < 1e-9:
+        return None
+    return v.normalized()
+
+
+def _end_butts_front(obj, side, other):
+    """True when obj's given end face sits against other's front face:
+    both end corners on other's front plane, the end facing into it,
+    and the two overlapping along other's width."""
+    cab = obj.face_frame_cabinet
+    ocab = other.face_frame_cabinet
+    mw = hb_utils.world_matrix(obj)
+    omw = hb_utils.world_matrix(other)
+    end_x = 0.0 if side == 'left' else cab.width
+    out = _plan_axis(mw, -1.0 if side == 'left' else 1.0, 0.0)
+    front_n = _plan_axis(omw, 0.0, -1.0)
+    if out is None or front_n is None or out.dot(front_n) > -0.99:
+        return False
+    oinv = omw.inverted_safe()
+    lo = hi = None
+    for y in (0.0, -cab.depth):
+        p = oinv @ (mw @ Vector((end_x, y, 0.0)))
+        if abs(p.y + ocab.depth) > _KICK_CORNER_BUTT_TOL:
+            return False
+        lo = p.x if lo is None else min(lo, p.x)
+        hi = p.x if hi is None else max(hi, p.x)
+    return (min(hi, ocab.width) - max(lo, 0.0)) > -_KICK_CORNER_BUTT_TOL
+
+
+def _kick_lines_local_x(cab_obj, other, planes):
+    """Local X in cab_obj's space of other's kick front and back faces
+    (other square to cab_obj, so each is a line x = constant)."""
+    inv = hb_utils.world_matrix(cab_obj).inverted_safe()
+    omw = hb_utils.world_matrix(other)
+    front = (inv @ (omw @ Vector((0.0, planes[0], 0.0)))).x
+    back = (inv @ (omw @ Vector((0.0, planes[1], 0.0)))).x
+    return front, back
+
+
+def _back_covers_end(coverer, obj, side):
+    """True when coverer's back plane lies at or past obj's given end
+    (in obj's local X): its body fills the corner beyond that end, so
+    obj's kick between the end and the corner is out of sight."""
+    inv = hb_utils.world_matrix(obj).inverted_safe()
+    back_x = (inv @ (hb_utils.world_matrix(coverer)
+                     @ Vector((0.0, 0.0, 0.0)))).x
+    if side == 'left':
+        return back_x <= _KICK_CORNER_BUTT_TOL
+    return back_x >= obj.face_frame_cabinet.width - _KICK_CORNER_BUTT_TOL
+
+
+def finish_kick_corner(cab_obj, side):
+    """How cab_obj's finish kick ends where it meets a square-on run's
+    kick at an inside corner, or None when that end meets no such kick.
+
+    Returns {'partner', 'back_x', 'front_x', 'miter'}: the local X where
+    the kick's back face and front face end. miter is True when both
+    kicks turn the corner and meet on the diagonal, False when this
+    kick butts the face of one that carries on past it (then back_x ==
+    front_x).
+    """
+    own = _finish_kick_planes(cab_obj)
+    if own is None:
+        return None
+    cab = cab_obj.face_frame_cabinet
+    mw = hb_utils.world_matrix(cab_obj)
+    x_axis = _plan_axis(mw, 1.0, 0.0)
+    if x_axis is None:
+        return None
+    z0 = mw.translation.z
+    edge = 0.0 if side == 'left' else cab.width
+    out = -1.0 if side == 'left' else 1.0
+    best = None
+    for obj in _scene_carcasses():
+        if obj is cab_obj:
+            continue
+        planes = _finish_kick_planes(obj)
+        if planes is None:
+            continue
+        omw = hb_utils.world_matrix(obj)
+        if abs(omw.translation.z - z0) > _KICK_CORNER_FLOOR_TOL:
+            continue
+        o_axis = _plan_axis(omw, 1.0, 0.0)
+        if o_axis is None or abs(o_axis.dot(x_axis)) > 0.02:
+            continue
+        front_x, back_x = _kick_lines_local_x(cab_obj, obj, planes)
+        # Inside corner: heading out past this end, the other kick's
+        # front face comes before its back face.
+        if out * (back_x - front_x) <= 0.0:
+            continue
+        ocab = obj.face_frame_cabinet
+        reach = out * (back_x - edge)
+        if reach > ocab.depth + _KICK_CORNER_BUTT_TOL:
+            continue
+        # A cabinet narrower than the corner it sits in keeps its kick.
+        if reach < -(cab.width - _KICK_CORNER_BUTT_TOL):
+            continue
+        result = None
+        if _end_butts_front(cab_obj, side, obj):
+            # Our end against their front: mitre when our body hides
+            # their kick from the meeting on to their nearer end, else
+            # butt their front face.
+            if any(_back_covers_end(cab_obj, obj, o_side)
+                   for o_side in ('left', 'right')):
+                result = (back_x, front_x, True)
+            else:
+                result = (front_x, front_x, False)
+        elif reach >= -(ocab.depth + _KICK_CORNER_BUTT_TOL):
+            # Their end against our front, their body over our end.
+            butts = any(_end_butts_front(obj, o_side, cab_obj)
+                        for o_side in ('left', 'right'))
+            if butts and _back_covers_end(obj, cab_obj, side):
+                result = (back_x, front_x, True)
+        if result is None:
+            continue
+        dist = abs(result[0] - edge)
+        if best is None or dist < best[0]:
+            best = (dist, obj, result)
+    if best is None:
+        return None
+    _dist, obj, (back_x, front_x, miter) = best
+    return {'partner': obj, 'back_x': back_x, 'front_x': front_x,
+            'miter': miter}
+
+
 # Object ID-prop the solver stamps with [left, right] finish kick
-# reach: 1 = ran to the cabinet edge, 0 = stopped at the subfront,
-# -1 = that end wasn't decided by neighbours.
+# reach: 1 = ran to the cabinet edge, 0 = stopped at the side, 2 = met
+# a square-on run's kick at a corner, 3 = a shown end running to the
+# edge, -1 = that end doesn't depend on its neighbours.
 FINISH_KICK_REACH_KEY = 'hb_finish_kick_reach'
+# [left back x, left front x, left mitred, right ...] of the ends
+# stamped 2 (zeros elsewhere), so a partner moving re-ends the kick.
+FINISH_KICK_CORNER_KEY = 'hb_finish_kick_corner'
+# 'left|right' names of the cabinets those corner ends met.
+FINISH_KICK_CORNER_WITH_KEY = 'hb_finish_kick_corner_with'
 
 
 def _side_exposure(cab_obj, side):
@@ -1017,6 +1231,9 @@ def recalc_with_neighbors(cab_obj):
                 cab_obj, side, corners_only=not _is_corner_cabinet(cab_obj))
             if neighbor is not None:
                 recalc_cabinet_exposure(neighbor)
+        # Finish kicks meeting at a square corner follow each other.
+        for partner in finish_kick_corner_partners(cab_obj):
+            recalc_cabinet_exposure(partner)
 
 
 def recalc_after_appliance_placement(app_obj):
