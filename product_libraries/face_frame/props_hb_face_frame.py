@@ -893,7 +893,8 @@ def _restyle_fronts_in_room(self, scene):
     target_name = self.name
     roles = (Face_Frame_Door_Style._DRAWER_FRONT_ROLES
              if _front_is_drawer(self)
-             else Face_Frame_Door_Style._DOOR_FRONT_ROLES)
+             else Face_Frame_Door_Style._DOOR_FRONT_ROLES
+             | {'PANELED_TOP_RAIL'})
     # Snapshot before acting: restyling can add / remove scene objects,
     # and mutating scene membership under a live scene.objects iterator
     # is a hard crash (see _propagate_cabinet_style).
@@ -1254,11 +1255,15 @@ def update_door_style_name(self, context):
     old = self.rename_anchor
     if old and old != final and old not in existing:
         roles = (Face_Frame_Door_Style._DRAWER_FRONT_ROLES if in_drawer
-                 else Face_Frame_Door_Style._DOOR_FRONT_ROLES)
+                 else Face_Frame_Door_Style._DOOR_FRONT_ROLES
+                 | {'PANELED_TOP_RAIL'})
         for obj in bpy.data.objects:
             if (obj.get('DOOR_STYLE_NAME') == old
                     and obj.get('hb_part_role') in roles):
                 obj['DOOR_STYLE_NAME'] = final
+            if (not in_drawer and obj.get('hb_part_role') == 'PANELED_TOP_RAIL'
+                    and obj.get('hb_front_door_style') == old):
+                obj['hb_front_door_style'] = final
         rename_in_sections(main, 'DRAWER' if in_drawer else 'DOOR',
                            old, final)
     self.rename_anchor = final
@@ -5881,6 +5886,9 @@ class Face_Frame_Door_Style(PropertyGroup):
         role = front_obj.get('hb_part_role')
         if role not in self._STYLEABLE_ROLES:
             return False
+        if role == 'PANELED_TOP_RAIL' and self.door_type != '5_PIECE':
+            # The rail's recalc only builds stiles-and-rails styles.
+            return "A paneled top rail needs a stiles and rails door style"
         # Set again below when this build matches the door rail.
         front_obj.pop('DOOR_RAIL_MATCHED', None)
 
@@ -5899,7 +5907,10 @@ class Face_Frame_Door_Style(PropertyGroup):
             _key = ('hb_front_drawer_style'
                     if role in self._DRAWER_FRONT_ROLES
                     else 'hb_front_door_style')
-            if _cage is not None:
+            if role == 'PANELED_TOP_RAIL':
+                # Not rebuilt each recalc: the part is its own store.
+                front_obj[_key] = self.name
+            elif _cage is not None:
                 _cage[_key] = self.name
             elif front_obj.get('IS_APPLIANCE_PANEL_FRONT'):
                 # An appliance panel has no opening: its section in the

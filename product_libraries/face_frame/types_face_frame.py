@@ -8955,7 +8955,19 @@ class FaceFrameCabinet(GeoNodeCage):
         one it falls back to the plain 2-1/4" frame.
         """
         from . import applied_panel_sizing
-        style = applied_panel_sizing._resolve_door_style(self.obj)
+        from .props_hb_face_frame import get_style_props
+        # A door style assigned to this rail itself (paint / Assign Door
+        # Style) is kept on the part, which survives recalcs, and wins
+        # over the cabinet's own door style.
+        style = None
+        own = panel.get('hb_front_door_style')
+        if own:
+            style = next((ds for ds in get_style_props().door_styles
+                          if ds.name == own
+                          and getattr(ds, 'door_type', '') == '5_PIECE'),
+                         None)
+        if style is None:
+            style = applied_panel_sizing._resolve_door_style(self.obj)
         if style is not None and getattr(style, 'door_type', '') == '5_PIECE':
             panel['DOOR_STYLE_NAME'] = style.name
             style.assign_style_to_front(panel)

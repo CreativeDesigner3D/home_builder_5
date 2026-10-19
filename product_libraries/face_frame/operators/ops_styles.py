@@ -1303,7 +1303,9 @@ class hb_face_frame_OT_paint_assign_front_style(_paint_front_brush, bpy.types.Op
     # The applied fronts on a drawer-/door-look leaf are what the user
     # sees and clicks; they read the drawer-front / door pool like real
     # fronts.
-    _DOOR_ROLES = _paint_front_brush._DOOR_ROLES | {'DOOR_LOOK_FRONT'}
+    # A paneled top rail builds like a door and takes the door brush.
+    _DOOR_ROLES = (_paint_front_brush._DOOR_ROLES
+                   | {'DOOR_LOOK_FRONT', 'PANELED_TOP_RAIL'})
     _DRAWER_ROLES = _paint_front_brush._DRAWER_ROLES | {'DRAWER_LOOK_FRONT'}
     _skip_look_carriers = True
 
