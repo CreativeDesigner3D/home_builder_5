@@ -8216,6 +8216,46 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         update=_update_cabinet_dim,
     )  # type: ignore
 
+    # Corner treatment start / stop on each end stile. Off = the automatic
+    # run (top of the bottom rail to the bottom of the top rail, with the
+    # base / neighbour stops); on = these heights, from the cabinet bottom.
+    ct_left_custom: BoolProperty(
+        name="Custom Left Edge Treatment",
+        description="Set where the left end stile's edge treatment starts "
+                    "and stops instead of the automatic run",
+        default=False, update=_update_cabinet_dim,
+    )  # type: ignore
+    ct_left_start: FloatProperty(
+        name="Left Start", description="Height above the cabinet bottom "
+        "where the left edge treatment starts",
+        default=0.0, min=0.0, unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    ct_left_stop: FloatProperty(
+        name="Left Stop", description="Height above the cabinet bottom "
+        "where the left edge treatment stops (0 = top of the stile)",
+        default=0.0, min=0.0, unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    ct_right_custom: BoolProperty(
+        name="Custom Right Edge Treatment",
+        description="Set where the right end stile's edge treatment starts "
+                    "and stops instead of the automatic run",
+        default=False, update=_update_cabinet_dim,
+    )  # type: ignore
+    ct_right_start: FloatProperty(
+        name="Right Start", description="Height above the cabinet bottom "
+        "where the right edge treatment starts",
+        default=0.0, min=0.0, unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    ct_right_stop: FloatProperty(
+        name="Right Stop", description="Height above the cabinet bottom "
+        "where the right edge treatment stops (0 = top of the stile)",
+        default=0.0, min=0.0, unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
     # Beadboard pattern and stock for this cabinet's beadboard (ends,
     # backs, returns, inset panels, and the bead material of finished
     # interiors). Solid wood beads at 1-5/8" / 3-1/4", MDF at 1-1/2" / 3".

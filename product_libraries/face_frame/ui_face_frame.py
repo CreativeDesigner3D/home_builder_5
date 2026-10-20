@@ -2321,6 +2321,18 @@ def draw_finished_ends(layout, cab_props):
                       cab_props.back_finished_end_condition):
         col.prop(cab_props, 'v_groove_spacing', text="V-Groove Spacing")
 
+    # Edge treatment start / stop on each end stile: automatic unless an
+    # end is set by hand.
+    ebox = layout.box()
+    ebox.label(text="Edge Treatment Start / Stop")
+    for key, label in (('left', "Left"), ('right', "Right")):
+        row = ebox.row(align=True)
+        row.prop(cab_props, f'ct_{key}_custom', text=f"{label}: Custom")
+        if getattr(cab_props, f'ct_{key}_custom'):
+            sub = ebox.row(align=True)
+            sub.prop(cab_props, f'ct_{key}_start', text="Start")
+            sub.prop(cab_props, f'ct_{key}_stop', text="Stop")
+
 
 def draw_all_bays_summary(layout, root):
     """Compact list of all bays with index and dims."""

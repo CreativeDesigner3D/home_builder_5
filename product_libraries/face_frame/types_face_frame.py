@@ -7698,7 +7698,7 @@ class FaceFrameCabinet(GeoNodeCage):
         return cutter
 
     def _position_corner_treatment_cutter(self, cutter, part_obj, run, axis,
-                                          far_trim=0.0):
+                                          far_trim=0.0, near_trim=0.0):
         """Rebuild the cutter as a prism of the removed-corner outline swept
         along one arris of a cutpart. Cutpart mesh-local convention: x is
         the Length axis, the front-outer arris lies on (y = 0, z = 0), the
@@ -7708,7 +7708,8 @@ class FaceFrameCabinet(GeoNodeCage):
         end (a stile's bottom) so the bottom detail wraps the corner.
         ``far_trim`` pulls the sweep back from the far (x = Length) end:
         an end stile's milled arris dies into the top rail instead of
-        running out at the top of the frame.
+        running out at the top of the frame. ``near_trim`` does the same
+        at the x = 0 end (the run starting above the bottom rail).
         Built in cabinet-local coords via matrix_to_root. Returns False
         (mesh cleared) when the part can't be read."""
         part = GeoNodeCutpart(part_obj)
@@ -7737,10 +7738,11 @@ class FaceFrameCabinet(GeoNodeCage):
             # that face is where the milled detail ends, not a boolean
             # face that needs clearing off the part.
             far = length - far_trim if far_trim > 0.0 else length + eps
-            if far <= 0.0:
+            near = near_trim if near_trim > 0.0 else -eps
+            if far <= near + eps:
                 cutter.data.clear_geometry()
                 return False
-            span = (-eps, far)
+            span = (near, far)
 
             def pt(u, v, s):
                 return Vector((s, ys * u, zs * v))
@@ -7806,6 +7808,113 @@ class FaceFrameCabinet(GeoNodeCage):
         if rail <= 0.0:
             return 0.0
         return rail + solver.front_drop(layout, bay_index)
+
+    # Edge treatment start / stop rules (heights above the floor).
+    _CT_BASE_STOP = inch(34.0)        # 2-1/2" below a 36-1/2" countertop
+    _CT_COUNTER_TOP = inch(36.5)
+    _CT_NEIGHBOUR_GAP = inch(0.5)     # below a valance / hanging neighbour
+    _CT_TOUCH = inch(1.0)
+
+    def _corner_treatment_name(self):
+        style_name = self.obj.get('STYLE_NAME')
+        if not style_name:
+            return None
+        try:
+            from .props_hb_face_frame import get_style_props
+            cs = next((c for c in get_style_props().cabinet_styles
+                       if c.name == style_name), None)
+            return cs.corner_treatment_name() if cs is not None else None
+        except Exception:
+            return None
+
+    def _ct_end_neighbours(self, side):
+        """Cabinets on the same wall whose end meets this cabinet's
+        `side` end: [(root, bottom_z, top_z, flush_front)] in this
+        cabinet's local Z. flush_front: its front plane is this
+        cabinet's (a leg or tall standing flush with the face frame)."""
+        parent = self.obj.parent
+        if parent is None or not parent.get('IS_WALL_BP'):
+            return []
+        cab = self.obj.face_frame_cabinet
+        x0 = self.obj.location.x
+        x1 = x0 + cab.width
+        z_base = self.obj.location.z
+        out = []
+        for other in parent.children:
+            if other is self.obj or not other.get(TAG_CABINET_CAGE):
+                continue
+            ocab = getattr(other, 'face_frame_cabinet', None)
+            if ocab is None:
+                continue
+            ox0 = other.location.x
+            ox1 = ox0 + ocab.width
+            if side == 'LEFT':
+                touching = abs(ox1 - x0) <= self._CT_TOUCH
+            else:
+                touching = abs(ox0 - x1) <= self._CT_TOUCH
+            if not touching:
+                continue
+            bottom = other.location.z - z_base
+            top = bottom + ocab.height
+            flush = abs(ocab.depth - cab.depth) <= inch(0.25)
+            out.append((other, bottom, top, flush))
+        return out
+
+    def _corner_treatment_span(self, layout, role, side, stile):
+        """(near_trim, far_trim) along an end stile for the corner
+        treatment, from the stile's bottom and top.
+
+        Automatic run: from the top of the end bay's bottom rail (so it
+        clears base molding) to the bottom of the top rail. A base stops
+        34" off the floor (2-1/2" under the countertop). A neighbour
+        standing flush with the face frame (a refrigerator leg) runs it
+        from the floor to countertop height instead, and a 1/8" radius
+        always runs to the floor. A valance / hanging cabinet meeting
+        the end stops it 1/2" below that neighbour's bottom. Uppers keep
+        the bottom (it wraps under the cabinet). A custom end (Custom
+        Edge Treatment) uses its own start / stop heights instead.
+        """
+        top_trim = self._corner_treatment_top_trim(layout, role)
+        if role not in (PART_ROLE_LEFT_STILE, PART_ROLE_RIGHT_STILE):
+            return 0.0, top_trim
+        try:
+            length = GeoNodeCutpart(stile).get_input('Length')
+        except Exception:
+            return 0.0, top_trim
+        cab = self.obj.face_frame_cabinet
+        z0 = stile.location.z
+        z1 = z0 + length
+        key = side.lower()
+        if getattr(cab, f'ct_{key}_custom', False):
+            start = getattr(cab, f'ct_{key}_start', 0.0)
+            stop = getattr(cab, f'ct_{key}_stop', 0.0) or z1
+            return (max(start - z0, 0.0), max(z1 - min(stop, z1), 0.0))
+
+        floor_z = self.obj.matrix_world.translation.z
+        neighbours = self._ct_end_neighbours(side)
+        flush_leg = any(n[3] and n[1] <= z0 + inch(1.0) and n[2] > z1
+                        for n in neighbours)
+        start = z0
+        end = z1 - top_trim
+        if layout.cabinet_type != 'UPPER':
+            bay_index = 0 if side == 'LEFT' else layout.bay_count - 1
+            rail = 0.0
+            if 0 <= bay_index < len(layout.bays):
+                rail = layout.bays[bay_index].get('bottom_rail_width', 0.0) or 0.0
+            name = (self._corner_treatment_name() or '').strip()
+            if not (flush_leg or name == '1/8" Radius'):
+                start = z0 + rail
+            if layout.cabinet_type == 'BASE':
+                # The base rule replaces the top rail stop: 34" off the
+                # floor, or countertop height beside a flush leg.
+                stop = (self._CT_COUNTER_TOP if flush_leg
+                        else self._CT_BASE_STOP) - floor_z
+                end = min(stop, z1)
+        for _other, bottom, top, _flush in neighbours:
+            # A valance / hanging cabinet beside the stile's run.
+            if z0 + inch(1.0) < bottom < z1:
+                end = min(end, bottom - self._CT_NEIGHBOUR_GAP)
+        return max(start - z0, 0.0), max(z1 - end, 0.0)
 
     def _island_corner_end(self, layout, side):
         """An unfinished end whose stile is still a corner of the island.
@@ -7874,8 +7983,9 @@ class FaceFrameCabinet(GeoNodeCage):
                 else:
                     continue
                 if side is not None and side in sides:
-                    wanted.append((child, 'LENGTH',
-                                   self._corner_treatment_top_trim(layout, role)))
+                    near, far = self._corner_treatment_span(
+                        layout, role, side, child)
+                    wanted.append((child, 'LENGTH', far, near))
                 if bottom:
                     if role == PART_ROLE_BOTTOM_RAIL:
                         wanted.append((child, 'LENGTH', 0.0))
@@ -7883,11 +7993,13 @@ class FaceFrameCabinet(GeoNodeCage):
                             and role not in square_bottom):
                         wanted.append((child, 'WIDTH', 0.0))
         live_keys = set()
-        for part_obj, axis, far_trim in wanted:
+        for entry in wanted:
+            part_obj, axis, far_trim = entry[:3]
+            near_trim = entry[3] if len(entry) > 3 else 0.0
             key = f"{part_obj.name}|{axis}"
             cutter = self._ensure_corner_treatment_cutter(key)
             if not self._position_corner_treatment_cutter(
-                    cutter, part_obj, run, axis, far_trim):
+                    cutter, part_obj, run, axis, far_trim, near_trim):
                 continue
             live_keys.add(key)
             mod_name = CORNER_TREATMENT_MOD_NAMES[axis]
