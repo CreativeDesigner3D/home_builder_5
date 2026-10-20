@@ -9,7 +9,7 @@ from . import dim_edit_overlay
 from . import quiet_cages
 from . import door_hardware_overlay
 from . import glass_door_overlay
-from . import cabinet_outline_overlay
+from . import cage_shape
 
 NAMESPACE = "hb_face_frame"
 MENU_NAME = "Face Frame"
@@ -25,13 +25,13 @@ def register():
     quiet_cages.register()
     door_hardware_overlay.register()
     glass_door_overlay.register()
-    cabinet_outline_overlay.register()
+    cage_shape.register()
 
 
 def unregister():
     from . import finish_swatches
     finish_swatches.unregister()
-    cabinet_outline_overlay.unregister()
+    cage_shape.unregister()
     glass_door_overlay.unregister()
     door_hardware_overlay.unregister()
     quiet_cages.unregister()

@@ -1,31 +1,35 @@
-"""Selection outline that follows a cabinet's actual shape.
+"""Cabinet cage shaped like the cabinet.
 
-A selected cabinet is outlined by its root cage, which is sized from
-the cabinet's Width / Depth / Height. A bay built deeper, taller or
-shorter than the cabinet (a deep section behind a shallow run, a
-stepped upper) doesn't match that box, so the outline cut through the
-cabinet or wrapped empty space.
+A face frame cabinet's root cage is the box its Width / Depth / Height
+describe - what selecting a cabinet outlines, washes and clicks. A bay
+built deeper, taller or shorter than the cabinet (a deep section behind
+a shallow run, a stepped upper) doesn't match that box, so the selected
+cabinet showed a box cutting through it or wrapping empty space.
 
-A POST_VIEW draw handler traces each selected cabinet's real outline in
-the selection colour, from its carcass, face frame and sub kick,
-stepping wherever the depth or height changes along the width. Fronts
-and hardware are left out so the outline doesn't jog at every door.
-Edges within 1/4" of the cabinet box land on it, and narrow strips (a
-stile over the scribe) fold into their neighbour, so a cabinet whose
-shape is its box draws nothing extra - the cage outline already is its
-outline.
-The cage itself, and everything that reads it (snapping, placement,
-dimensions, drawings), is unchanged.
+After each recalc the cage is reshaped to the cabinet's real outline,
+traced from its carcass, face frame and sub kick and stepping wherever
+the depth or height changes along the width (fronts and hardware stand
+proud of the face frame and are left out). The stepped mesh is written
+into the cage's own mesh with the cage modifier switched off - the same
+static-mesh swap shaped parts use - so the modifier's Dim inputs, which
+placement, snapping, dimensions, drawings and pricing read, keep the
+cabinet's nominal size. Edges within 1/4" of the box land on it and
+narrow strips (a stile over the scribe, a division between bays) fold
+into their neighbour; a cabinet whose shape is its box keeps the live
+modifier box.
+
+The reshape runs on a timer after the recalc, once the parts it reads
+have been evaluated, and over every cabinet when a file opens.
 """
 
+import bmesh
 import bpy
-import gpu
+from bpy.app.handlers import persistent
 from mathutils import Vector
 
 from ... import hb_utils
 from . import types_face_frame
 
-LINE_WIDTH = 2.0
 # Two boundaries closer than this are the same boundary.
 _EPS = 0.0008
 
@@ -34,6 +38,9 @@ _EPS = 0.0008
 _SNAP = 0.00635
 # Sections at most this wide fold into a neighbour that contains them.
 _SLIVER = 0.0254
+
+# Stamped on a root whose cage carries the stepped mesh.
+TAG_SHAPED_CAGE = 'HB_SHAPED_CAGE'
 
 # Parts that set the cabinet's real extent: carcass, face frame and the
 # sub kick. Fronts and hardware stand proud of the face frame and are
@@ -56,8 +63,7 @@ _STRUCTURE_ROLES = frozenset((
     types_face_frame.PART_ROLE_LOOSE_KICK_END_RIGHT,
 )) | types_face_frame.FACE_FRAME_PART_ROLES
 
-_draw_handle = None
-_shutdown = False
+_pending = set()
 
 
 # ---------------------------------------------------------------------------
@@ -176,56 +182,16 @@ def _absorb_slivers(sections):
     return sections
 
 
-def _subtract(span, cuts):
-    """Parts of the 1D span (a, b) not covered by any of cuts."""
-    pieces = [span]
-    for c0, c1 in cuts:
-        nxt = []
-        for a, b in pieces:
-            if c1 <= a + _EPS or c0 >= b - _EPS:
-                nxt.append((a, b))
-                continue
-            if c0 > a + _EPS:
-                nxt.append((a, c0))
-            if c1 < b - _EPS:
-                nxt.append((c1, b))
-        pieces = nxt
-    return pieces
-
-
-def _rect_edges(rect, other):
-    """Edges of one cross-section rectangle on a boundary plane, minus
-    the stretches the neighbouring section continues smoothly (its edge
-    on the same line and the same side). (y0, y1, z0, z1) each."""
-    y0, y1, z0, z1 = rect
-    edges = []
-    for z, is_top in ((z0, False), (z1, True)):        # along Y
-        cuts = []
-        if other is not None:
-            oz = other[3] if is_top else other[2]
-            if abs(oz - z) <= _EPS:
-                cuts.append((other[0], other[1]))
-        edges += [('Y', a, b, z) for a, b in _subtract((y0, y1), cuts)]
-    for y, is_back in ((y0, False), (y1, True)):       # along Z
-        cuts = []
-        if other is not None:
-            oy = other[1] if is_back else other[0]
-            if abs(oy - y) <= _EPS:
-                cuts.append((other[2], other[3]))
-        edges += [('Z', a, b, y) for a, b in _subtract((z0, z1), cuts)]
-    return edges
-
-
-def outline_segments(root):
-    """Root-local line segments [(p, q), ...] tracing the cabinet's
-    outline, or [] when its carcass stays inside the cabinet box."""
+def shape_sections(root):
+    """The cabinet's outline as X sections [(x0, x1, (y0, y1, z0, z1))]
+    in the root's local frame, or None when it is the cabinet box."""
     cab = getattr(root, 'face_frame_cabinet', None)
-    if cab is not None and cab.cabinet_type == 'PANEL':
-        return []
+    if cab is None or cab.cabinet_type == 'PANEL':
+        return None
     (cab_lo, cab_hi), parts = _boxes(root)
     raw = _absorb_slivers(_sections(parts))
     if not raw:
-        return []
+        return None
     # Snap near-box edges onto the box (the run's ends onto its sides),
     # then re-merge what snapping made equal.
     ys, zs = (cab_lo.y, cab_hi.y), (cab_lo.z, cab_hi.z)
@@ -245,114 +211,155 @@ def outline_segments(root):
     if (len(sections) == 1 and abs(sections[0][0] - cab_lo.x) <= _EPS
             and abs(sections[0][1] - cab_hi.x) <= _EPS
             and _same(sections[0][2], cab_rect)):
-        return []
-    segs = []
-    # Edges running along the width.
+        return None
+    return sections
+
+
+def _spans(lo, hi, values):
+    """(lo, hi) split at every value strictly inside it."""
+    pts = sorted({lo, hi} | {v for v in values if lo + _EPS < v < hi - _EPS})
+    return list(zip(pts, pts[1:]))
+
+
+def _plane_cells(a, b, ys, zs):
+    """Grid cells of the plane between section rects a and b (either may
+    be None) that exactly one side covers: the step faces."""
+    lo_y = min(r[0] for r in (a, b) if r)
+    hi_y = max(r[1] for r in (a, b) if r)
+    lo_z = min(r[2] for r in (a, b) if r)
+    hi_z = max(r[3] for r in (a, b) if r)
+
+    def inside(r, y, z):
+        return r is not None and r[0] < y < r[1] and r[2] < z < r[3]
+
+    cells = []
+    for y0, y1 in _spans(lo_y, hi_y, ys):
+        for z0, z1 in _spans(lo_z, hi_z, zs):
+            y, z = (y0 + y1) * 0.5, (z0 + z1) * 0.5
+            if inside(a, y, z) != inside(b, y, z):
+                cells.append((y0, y1, z0, z1))
+    return cells
+
+
+def build_mesh(sections, mesh):
+    """Write the closed solid of the sections into mesh."""
+    bm = bmesh.new()
+
+    def quad(pts):
+        bm.faces.new([bm.verts.new(p) for p in pts])
+
+    # Every face is split at every section edge running across it, so a
+    # step's corners always land on vertices (no T-junctions).
+    ys = {v for _x0, _x1, r in sections for v in r[:2]}
+    zs = {v for _x0, _x1, r in sections for v in r[2:]}
     for x0, x1, (y0, y1, z0, z1) in sections:
-        for y in (y0, y1):
-            for z in (z0, z1):
-                segs.append((Vector((x0, y, z)), Vector((x1, y, z))))
-    # Edges on each boundary plane, between a section and its neighbour
-    # (or open air at the ends and at a gap).
+        for za, zb in _spans(z0, z1, zs):
+            quad(((x0, y0, za), (x1, y0, za), (x1, y0, zb), (x0, y0, zb)))
+            quad(((x0, y1, za), (x0, y1, zb), (x1, y1, zb), (x1, y1, za)))
+        for ya, yb in _spans(y0, y1, ys):
+            quad(((x0, ya, z0), (x0, yb, z0), (x1, yb, z0), (x1, ya, z0)))
+            quad(((x0, ya, z1), (x1, ya, z1), (x1, yb, z1), (x0, yb, z1)))
+    planes = []
     for i, (x0, x1, rect) in enumerate(sections):
-        prev = sections[i - 1] if i > 0 else None
-        left = prev[2] if prev and abs(prev[1] - x0) <= _EPS else None
-        nxt = sections[i + 1] if i + 1 < len(sections) else None
-        right = nxt[2] if nxt and abs(nxt[0] - x1) <= _EPS else None
-        planes = [(x0, rect, left)]
-        if right is None:
-            planes.append((x1, rect, None))
-        if left is not None:
-            # The neighbour's half of this shared plane.
-            planes.append((x0, left, rect))
-        for x, r, other in planes:
-            for axis, a, b, c in _rect_edges(r, other):
-                if axis == 'Y':
-                    segs.append((Vector((x, a, c)), Vector((x, b, c))))
-                else:
-                    segs.append((Vector((x, c, a)), Vector((x, c, b))))
-    return segs
+        prev = sections[i - 1] if i else None
+        if prev is None or abs(prev[1] - x0) > _EPS:
+            planes.append((x0, None, rect))
+            if prev is not None:
+                planes.append((prev[1], prev[2], None))
+        else:
+            planes.append((x0, prev[2], rect))
+    planes.append((sections[-1][1], sections[-1][2], None))
+    for x, a, b in planes:
+        for y0, y1, z0, z1 in _plane_cells(a, b, ys, zs):
+            quad(((x, y0, z0), (x, y1, z0), (x, y1, z1), (x, y0, z1)))
+    bmesh.ops.remove_doubles(bm, verts=bm.verts[:], dist=_EPS * 0.5)
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+    bm.to_mesh(mesh)
+    bm.free()
+    mesh.update()
 
 
-# ---------------------------------------------------------------------------
-# Drawing
-# ---------------------------------------------------------------------------
-
-def _selected_roots(context):
-    seen = set()
-    for obj in context.selected_objects:
-        root = obj if obj.get(types_face_frame.TAG_CABINET_CAGE) else None
-        if root is None or root.name in seen:
-            continue
-        seen.add(root.name)
-        yield root
+def _cage_modifier(root):
+    mod_name = getattr(root.home_builder, 'mod_name', '')
+    mod = root.modifiers.get(mod_name) if mod_name else None
+    if mod is None:
+        mod = next((m for m in root.modifiers if m.type == 'NODES'), None)
+    return mod
 
 
-def _draw():
-    if _shutdown:
+def reshape(root):
+    """Give the root cage the cabinet's outline, or put it back on the
+    live box when the cabinet is its box."""
+    mod = _cage_modifier(root)
+    if mod is None:
         return
-    context = bpy.context
-    region = context.region
-    if region is None or region.type != 'WINDOW':
+    sections = shape_sections(root)
+    if sections is None:
+        if root.get(TAG_SHAPED_CAGE):
+            root.data.clear_geometry()
+            root.data.update()
+            mod.show_viewport = True
+            del root[TAG_SHAPED_CAGE]
         return
-    overlay = getattr(context.space_data, 'overlay', None)
-    if overlay is not None and not (overlay.show_overlays
-                                    and overlay.show_outline_selected):
-        return
+    if root.data.users > 1:
+        # A duplicate may share the mesh; never reshape the other copy.
+        root.data = root.data.copy()
+    build_mesh(sections, root.data)
+    if mod.show_viewport:
+        mod.show_viewport = False
+    root[TAG_SHAPED_CAGE] = True
+
+
+def flush():
+    """Reshape every cabinet a recalc queued. One-shot timer."""
+    names = list(_pending)
+    _pending.clear()
+    if not names:
+        return None
     try:
-        roots = list(_selected_roots(context))
-        active = context.active_object
-    except (AttributeError, RuntimeError):
-        return
-    # Same colours as Blender's own outline: active, then selected.
-    coords = {True: [], False: []}
-    for root in roots:
-        try:
-            segs = outline_segments(root)
-        except (ReferenceError, RuntimeError):
-            continue
-        mw = root.matrix_world
-        out = coords[root == active]
-        for p, q in segs:
-            out.append(mw @ p)
-            out.append(mw @ q)
-    if not (coords[True] or coords[False]):
-        return
-    theme = context.preferences.themes[0].view_3d
-    colors = {True: tuple(theme.object_active) + (1.0,),
-              False: tuple(theme.object_selected) + (1.0,)}
-    s = 1.0
-    try:
-        s = context.preferences.system.ui_scale
-    except AttributeError:
+        bpy.context.view_layer.update()
+    except Exception:
         pass
-    from gpu_extras.batch import batch_for_shader
-    shader = gpu.shader.from_builtin('POLYLINE_UNIFORM_COLOR')
-    gpu.state.blend_set('ALPHA')
-    shader.bind()
-    shader.uniform_float('viewportSize', (region.width, region.height))
-    shader.uniform_float('lineWidth', LINE_WIDTH * s)
-    for is_active, pts in coords.items():
-        if not pts:
+    for name in names:
+        root = bpy.data.objects.get(name)
+        if root is None or not root.get(types_face_frame.TAG_CABINET_CAGE):
             continue
-        shader.uniform_float('color', colors[is_active])
-        batch_for_shader(shader, 'LINES', {'pos': pts}).draw(shader)
-    gpu.state.blend_set('NONE')
+        try:
+            reshape(root)
+        except (ReferenceError, RuntimeError):
+            pass
+    return None
+
+
+def _queue(root):
+    if root is None:
+        return
+    _pending.add(root.name)
+    if not bpy.app.timers.is_registered(flush):
+        bpy.app.timers.register(flush, first_interval=0.0)
+
+
+@persistent
+def _on_load_post(_dummy):
+    for obj in bpy.data.objects:
+        if obj.get(types_face_frame.TAG_CABINET_CAGE):
+            _pending.add(obj.name)
+    if _pending and not bpy.app.timers.is_registered(flush):
+        bpy.app.timers.register(flush, first_interval=0.2)
 
 
 def register():
-    global _draw_handle, _shutdown
-    _shutdown = False
-    _draw_handle = bpy.types.SpaceView3D.draw_handler_add(
-        _draw, (), 'WINDOW', 'POST_VIEW')
+    if _queue not in types_face_frame.POST_RECALC_HOOKS:
+        types_face_frame.POST_RECALC_HOOKS.append(_queue)
+    if _on_load_post not in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.append(_on_load_post)
 
 
 def unregister():
-    global _draw_handle, _shutdown
-    _shutdown = True
-    if _draw_handle is not None:
-        try:
-            bpy.types.SpaceView3D.draw_handler_remove(_draw_handle, 'WINDOW')
-        except Exception:
-            pass
-        _draw_handle = None
+    if _queue in types_face_frame.POST_RECALC_HOOKS:
+        types_face_frame.POST_RECALC_HOOKS.remove(_queue)
+    if _on_load_post in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(_on_load_post)
+    if bpy.app.timers.is_registered(flush):
+        bpy.app.timers.unregister(flush)
+    _pending.clear()
