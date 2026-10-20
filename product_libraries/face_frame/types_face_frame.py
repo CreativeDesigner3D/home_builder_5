@@ -11802,9 +11802,13 @@ class FaceFrameCabinet(GeoNodeCage):
             d.normalize()
             a_far = a - d * m
             b_far = b + d * m
+            # The third point lies straight out past the diagonal, so
+            # the prism takes whichever corner sticks past it: the front
+            # one at an inside corner, the back one at an outside one.
+            mid = (a + b) * 0.5
             pts = ((a_far.x, a_far.y),
                    (b_far.x, b_far.y),
-                   (back_x + out * 2.0 * m, y_front - 2.0 * m))
+                   (mid.x + out * 4.0 * m, mid.y))
             cutter = self._ensure_finish_kick_miter_cutter(side)
             self._wedge_prism_mesh(cutter, pts, seg['z'] - m,
                                    seg['z'] + seg['width'] + m)

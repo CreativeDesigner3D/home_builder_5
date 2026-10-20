@@ -683,9 +683,60 @@ def _back_covers_end(coverer, obj, side):
     return back_x >= obj.face_frame_cabinet.width - _KICK_CORNER_BUTT_TOL
 
 
+def _angled_kick_corner(cab_obj, side, own, other, planes):
+    """(back_x, front_x, True) where cab_obj's finish kick meets other's
+    at an angled corner, or None.
+
+    Two runs turned at any angle (a 135 or a 136.5 corner off an angled
+    wall) whose fronts meet at the given end: each kick runs on to where
+    its front face crosses the other's front face, and its back face to
+    where the back faces cross, so the two boards meet in a mitre on the
+    corner's bisector - an inside corner and an outside one alike.
+    """
+    cab = cab_obj.face_frame_cabinet
+    ocab = other.face_frame_cabinet
+    mw = hb_utils.world_matrix(cab_obj)
+    omw = hb_utils.world_matrix(other)
+    edge = 0.0 if side == 'left' else cab.width
+    corner = mw @ Vector((edge, -cab.depth, 0.0))
+    meets = False
+    for o_edge in (0.0, ocab.width):
+        p = omw @ Vector((o_edge, -ocab.depth, 0.0))
+        if (Vector((p.x, p.y)) - Vector((corner.x, corner.y))).length \
+                <= _KICK_CORNER_BUTT_TOL:
+            meets = True
+            break
+    if not meets:
+        return None
+    inv = mw.inverted_safe()
+
+    def crossing(own_y, other_y):
+        # other's kick line (a face at other_y) in our space, crossed
+        # with our face line y = own_y.
+        a = inv @ (omw @ Vector((0.0, other_y, 0.0)))
+        b = inv @ (omw @ Vector((1.0, other_y, 0.0)))
+        dy = b.y - a.y
+        if abs(dy) < 1e-9:
+            return None
+        return a.x + (own_y - a.y) * (b.x - a.x) / dy
+
+    front_x = crossing(own[0], planes[0])
+    back_x = crossing(own[1], planes[1])
+    if front_x is None or back_x is None:
+        return None
+    # A crossing far from the end is two runs that only touch at a
+    # corner, not a kick turning it.
+    reach = max(abs(front_x - edge), abs(back_x - edge))
+    if reach > cab.depth:
+        return None
+    return (back_x, front_x, True)
+
+
 def finish_kick_corner(cab_obj, side):
     """How cab_obj's finish kick ends where it meets a square-on run's
-    kick at an inside corner, or None when that end meets no such kick.
+    kick at an inside corner, or a run turned at any other angle whose
+    front meets this end (see _angled_kick_corner), or None when that
+    end meets no such kick.
 
     Returns {'partner', 'back_x', 'front_x', 'miter'}: the local X where
     the kick's back face and front face end. miter is True when both
@@ -715,7 +766,16 @@ def finish_kick_corner(cab_obj, side):
         if abs(omw.translation.z - z0) > _KICK_CORNER_FLOOR_TOL:
             continue
         o_axis = _plan_axis(omw, 1.0, 0.0)
-        if o_axis is None or abs(o_axis.dot(x_axis)) > 0.02:
+        if o_axis is None:
+            continue
+        if 0.02 < abs(o_axis.dot(x_axis)) < 0.99:
+            result = _angled_kick_corner(cab_obj, side, own, obj, planes)
+            if result is not None:
+                dist = abs(result[0] - edge)
+                if best is None or dist < best[0]:
+                    best = (dist, obj, result)
+            continue
+        if abs(o_axis.dot(x_axis)) > 0.02:
             continue
         front_x, back_x = _kick_lines_local_x(cab_obj, obj, planes)
         # Inside corner: heading out past this end, the other kick's

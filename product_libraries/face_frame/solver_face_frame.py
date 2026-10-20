@@ -1626,7 +1626,9 @@ def finish_kick_segments(layout):
             elif left_stile_to_floor(layout):
                 left_x = carcass_inner_left_x(layout)
             elif (corner := end_corner('LEFT')) is not None:
-                left_x = corner['back_x']
+                # Out to whichever face reaches further: the back face
+                # at an inside corner, the front face at an outside one.
+                left_x = min(corner['back_x'], corner['front_x'])
                 if corner['miter']:
                     left_miter = (corner['front_x'], corner['back_x'])
             elif end_reaches_edge('LEFT'):
@@ -1649,7 +1651,7 @@ def finish_kick_segments(layout):
             elif right_stile_to_floor(layout):
                 right_x = carcass_inner_right_x(layout)
             elif (corner := end_corner('RIGHT')) is not None:
-                right_x = corner['back_x']
+                right_x = max(corner['back_x'], corner['front_x'])
                 if corner['miter']:
                     right_miter = (corner['front_x'], corner['back_x'])
             elif end_reaches_edge('RIGHT'):
