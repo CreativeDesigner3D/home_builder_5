@@ -134,6 +134,9 @@ class UnderCounterAppliance(Appliance):
     width = inch(24)
     height = inch(34)
     depth = inch(24)
+    # One product covers units of many widths (ice maker, compactor,
+    # wine fridge), so it takes a typed width while placing.
+    variable_width = True
 
     def create(self, name="Under Counter Appliance"):
         self.create_appliance(name, 'UNDER_COUNTER', label='BEV CENTER')
