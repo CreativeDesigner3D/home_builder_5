@@ -17454,7 +17454,14 @@ class LegProductFaceFrameCabinet(FaceFrameCabinet):
         # --- Toe-kick notch on the visible panels ---
         notch_on = ((not leg.is_column) and (not only_stile) and tkh > 0.0
                     and not flush_tk)
-        self._set_notch(L, notch_on and l_visible, tkh, tks - fft, mt)
+        # An intermediate leg's kick runs across its centre panel, so
+        # that panel is notched back past the kick stile and up past the
+        # filler on top of it; an end panel's notch stops at the kick's
+        # face.
+        if finish == 'INTERMEDIATE':
+            self._set_notch(L, notch_on and l_visible, tkh + fft, tks, mt)
+        else:
+            self._set_notch(L, notch_on and l_visible, tkh, tks - fft, mt)
         self._set_notch(R, notch_on and r_visible, tkh, tks - fft, mt)
 
         # --- Face-frame stile (full width across the front) ---
@@ -17465,14 +17472,19 @@ class LegProductFaceFrameCabinet(FaceFrameCabinet):
 
         # --- Toe-kick stile + filler (between the side panels; full
         # width when flush) ---
-        tk_full = only_stile or flush_tk
+        # An intermediate leg's one panel stands at its centre, notched
+        # like the others, so its kick runs the leg's full width in
+        # front of that notch.
+        tk_full = only_stile or flush_tk or finish == 'INTERMEDIATE'
         tk_width = width - (0.0 if tk_full else mt * 2.0)
         tk_x = 0.0 if tk_full else mt
-        # A recessed kick between the panels only shows when this leg
-        # owns both faces (or is a bare stile); a FLUSH kick sits in the
-        # face-frame plane, so it shows for every finish type.
+        # A recessed kick shows when this leg owns both faces, stands
+        # between two runs (intermediate) or is a bare stile; a FLUSH
+        # kick sits in the face-frame plane, so it shows for every
+        # finish type.
         tk_visible = ((not leg.is_column)
-                      and (only_stile or flush_tk or finish == 'FINISH_BOTH'))
+                      and (only_stile or flush_tk
+                           or finish in ('FINISH_BOTH', 'INTERMEDIATE')))
 
         place(TKS, tkh, tk_width, fft, (tk_x, -depth + tks, 0.0),
               (0.0, math.radians(-90), math.radians(90)),
