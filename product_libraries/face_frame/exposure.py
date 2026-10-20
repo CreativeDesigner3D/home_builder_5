@@ -683,6 +683,56 @@ def _back_covers_end(coverer, obj, side):
     return back_x >= obj.face_frame_cabinet.width - _KICK_CORNER_BUTT_TOL
 
 
+def angled_front_miter(cab_obj, side):
+    """(front_x, back_x) in cab_obj's local X where its end stile's
+    front and back faces meet the face frame of a run turned at an
+    angle (not square, not in line) whose front corner meets this end's
+    front corner, or None. The two stiles mitre on the line between
+    those points, like the finish kicks below them."""
+    if not _is_face_frame_carcass(cab_obj):
+        return None
+    cab = cab_obj.face_frame_cabinet
+    mw = hb_utils.world_matrix(cab_obj)
+    x_axis = _plan_axis(mw, 1.0, 0.0)
+    if x_axis is None:
+        return None
+    edge = 0.0 if side == 'left' else cab.width
+    corner = mw @ Vector((edge, -cab.depth, 0.0))
+    inv = mw.inverted_safe()
+    for obj in _scene_carcasses():
+        if obj is cab_obj or _is_corner_cabinet(obj):
+            continue
+        if not _zspans_overlap(cab_obj, obj):
+            continue
+        omw = hb_utils.world_matrix(obj)
+        o_axis = _plan_axis(omw, 1.0, 0.0)
+        if o_axis is None or not 0.02 < abs(o_axis.dot(x_axis)) < 0.99:
+            continue
+        ocab = obj.face_frame_cabinet
+        if not any((Vector(((omw @ Vector((ox, -ocab.depth, 0.0))).xy))
+                    - Vector(corner.xy)).length <= _KICK_CORNER_BUTT_TOL
+                   for ox in (0.0, ocab.width)):
+            continue
+
+        def crossing(own_y, other_y):
+            a = inv @ (omw @ Vector((0.0, other_y, 0.0)))
+            b = inv @ (omw @ Vector((1.0, other_y, 0.0)))
+            dy = b.y - a.y
+            if abs(dy) < 1e-9:
+                return None
+            return a.x + (own_y - a.y) * (b.x - a.x) / dy
+
+        front_x = crossing(-cab.depth, -ocab.depth)
+        back_x = crossing(-cab.depth + cab.face_frame_thickness,
+                          -ocab.depth + ocab.face_frame_thickness)
+        if front_x is None or back_x is None:
+            continue
+        if max(abs(front_x - edge), abs(back_x - edge)) > _KICK_CORNER_BUTT_TOL:
+            continue
+        return front_x, back_x
+    return None
+
+
 def _angled_kick_corner(cab_obj, side, own, other, planes):
     """(back_x, front_x, True) where cab_obj's finish kick meets other's
     at an angled corner, or None.
