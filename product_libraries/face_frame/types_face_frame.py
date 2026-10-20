@@ -6593,6 +6593,12 @@ class FaceFrameCabinet(GeoNodeCage):
         # last, so the cut plane used the wrong side's thickness.
         thick_l = solver.left_side_thickness(layout)
         thick_r = solver.right_side_thickness(layout)
+        # An end opened into the corner has no side: the panels run to
+        # the angled line itself and meet the next cabinet's on it.
+        if raw_l > 0.0 and not wing_l and getattr(cab, 'open_left_end', False):
+            thick_l = 0.0
+        if raw_r > 0.0 and not wing_r and getattr(cab, 'open_right_end', False):
+            thick_r = 0.0
         for child in self.obj.children:
             role = child.get('hb_part_role')
             if role == PART_ROLE_LEFT_SIDE:
@@ -6601,6 +6607,11 @@ class FaceFrameCabinet(GeoNodeCage):
                         child, 'LEFT', ext_l,
                         self._back_ext_canonical_depth(layout, 'LEFT'),
                         front_trim=(layout.l_fin_end != 'FINISHED'))
+                    # Open into the corner: no side between this
+                    # cabinet and the one mitred to it there.
+                    if ext_l > 0.0 and getattr(cab, 'open_left_end', False):
+                        child.hide_viewport = True
+                        child.hide_render = True
                 else:
                     child.rotation_euler.z = 0.0
             elif role == PART_ROLE_RIGHT_SIDE:
@@ -6609,6 +6620,9 @@ class FaceFrameCabinet(GeoNodeCage):
                         child, 'RIGHT', ext_r,
                         self._back_ext_canonical_depth(layout, 'RIGHT'),
                         front_trim=(layout.r_fin_end != 'FINISHED'))
+                    if ext_r > 0.0 and getattr(cab, 'open_right_end', False):
+                        child.hide_viewport = True
+                        child.hide_render = True
                 else:
                     child.rotation_euler.z = 0.0
             elif role in (PART_ROLE_BACK, PART_ROLE_FINISHED_BACK):
@@ -6658,6 +6672,11 @@ class FaceFrameCabinet(GeoNodeCage):
                     child, 'RIGHT', ext_r,
                     self._back_ext_canonical_depth(layout, 'RIGHT'))
 
+        # Shelves reaching an extended end run on out into it, so the
+        # trim below shapes them to the angled side like the top and
+        # bottom - the space the extension opens is usable.
+        self._widen_end_shelves(layout, max(ext_l, 0.0), max(ext_r, 0.0))
+
         # Trapezoid trim for the full-depth panels (top / bottom / shelves):
         # boolean-difference the front overhang along the angled side
         # line(s). Built only when an end is extended; removed otherwise.
@@ -6685,6 +6704,57 @@ class FaceFrameCabinet(GeoNodeCage):
         # line the raw extend defines. Off / 0 -> removed.
         self._apply_wing(layout, 'LEFT', raw_l if wing_l else 0.0)
         self._apply_wing(layout, 'RIGHT', raw_r if wing_r else 0.0)
+
+    _SHELF_GROW_KEY = 'hb_back_ext_shelf_grow'
+
+    def _widen_end_shelves(self, layout, ext_l, ext_r):
+        """Run every shelf that reaches an outward-extended end on out by
+        that end's extension (the back-extension trim then cuts it to the
+        angled side). Shelves sit under bay / opening cages and keep their
+        size between recalcs unless their layout changes, so the growth
+        applied is stamped on the shelf ([left, right, length, x]) and
+        taken back off first when the shelf still carries it."""
+        roles = (PART_ROLE_ADJUSTABLE_SHELF, PART_ROLE_BAY_SHELF,
+                 PART_ROLE_GLASS_SHELF)
+        lo_bound = solver.carcass_inner_left_x(layout)
+        hi_bound = solver.carcass_inner_right_x(layout)
+        tol = inch(0.5)
+        for part in self.obj.children_recursive:
+            if part.get('hb_part_role') not in roles:
+                continue
+            length = self._part_input(part, 'Length')
+            if length is None:
+                continue
+            stamp = part.get(self._SHELF_GROW_KEY)
+            if stamp is not None and len(stamp) == 4:
+                if (abs(length - stamp[2]) < 1e-6
+                        and abs(part.location.x - stamp[3]) < 1e-6):
+                    length -= stamp[0] + stamp[1]
+                    part.location.x += stamp[0]
+                del part[self._SHELF_GROW_KEY]
+            # Shelf X extent in cabinet space from the stored transforms
+            # up the cage chain (matrix_world can lag within a recalc).
+            m = part.matrix_parent_inverse @ part.matrix_basis
+            node = part.parent
+            while node is not None and node is not self.obj:
+                m = node.matrix_parent_inverse @ node.matrix_basis @ m
+                node = node.parent
+            if node is None:
+                continue
+            a = (m @ Vector((0.0, 0.0, 0.0))).x
+            b = (m @ Vector((length, 0.0, 0.0))).x
+            if b - a <= 1e-6:
+                continue        # mirrored / rotated shelf: leave it
+            grow_l = ext_l if (ext_l > 0.0 and a <= lo_bound + tol) else 0.0
+            grow_r = ext_r if (ext_r > 0.0 and b >= hi_bound - tol) else 0.0
+            if grow_l == 0.0 and grow_r == 0.0:
+                self._set_part_input(part, 'Length', length)
+                continue
+            new_len = length + grow_l + grow_r
+            self._set_part_input(part, 'Length', new_len)
+            part.location.x -= grow_l
+            part[self._SHELF_GROW_KEY] = [grow_l, grow_r, new_len,
+                                          part.location.x]
 
     SIDE_FRONT_TRIM_MOD_NAME = 'Side Front End Trim'
 

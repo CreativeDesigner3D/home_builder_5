@@ -389,6 +389,10 @@ def draw_construction(layout, cab_props):
         row = col.row()
         row.enabled = cab_props.extend_back_left != 0.0
         row.prop(cab_props, 'wing_attached_left', text="Attach as Wing")
+        row = col.row()
+        row.enabled = (cab_props.extend_back_left > 0.0
+                       and not cab_props.wing_attached_left)
+        row.prop(cab_props, 'open_left_end', text="Open into Corner")
         if cab_props.wing_attached_left and cab_props.extend_back_left != 0.0:
             # Manual run for the wing panel (0 = automatic, the full
             # extension line). Front edge stays anchored on the cabinet.
@@ -398,6 +402,10 @@ def draw_construction(layout, cab_props):
         row = col.row()
         row.enabled = cab_props.extend_back_right != 0.0
         row.prop(cab_props, 'wing_attached_right', text="Attach as Wing")
+        row = col.row()
+        row.enabled = (cab_props.extend_back_right > 0.0
+                       and not cab_props.wing_attached_right)
+        row.prop(cab_props, 'open_right_end', text="Open into Corner")
         if cab_props.wing_attached_right and cab_props.extend_back_right != 0.0:
             col.prop(cab_props, 'wing_width_right', text="Wing Width")
 

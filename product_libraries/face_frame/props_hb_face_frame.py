@@ -9552,6 +9552,27 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
                     "into an acute corner). 0 = square.",
         update=_update_cabinet_dim,
     )  # type: ignore
+    # ---- Open into Corner (access into corner) ----
+    # Per-end: on an end extended back into a corner, leave out the angled
+    # side panel so the cabinet opens into the cabinet meeting it there -
+    # two cabinets mitred into a corner share one open space, shelves
+    # running on into it. No effect unless that end extends outward.
+    open_left_end: BoolProperty(
+        name="Open Left into Corner",
+        default=False,
+        description="Leave out the left side panel so this cabinet opens "
+                    "into the cabinet meeting it in the corner. Only with "
+                    "Extend Back Left X above 0",
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    open_right_end: BoolProperty(
+        name="Open Right into Corner",
+        default=False,
+        description="Leave out the right side panel so this cabinet opens "
+                    "into the cabinet meeting it in the corner. Only with "
+                    "Extend Back Right X above 0",
+        update=_update_cabinet_dim,
+    )  # type: ignore
     # ---- Wing Attached (convert the back extension into a wing) ----
     # Per-cabinet, per-end modifier of extend_back_left / extend_back_right.
     # When ON (and that end's extend is non-zero): instead of splaying the

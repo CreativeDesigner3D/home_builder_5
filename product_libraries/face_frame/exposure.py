@@ -712,9 +712,9 @@ def _back_covers_end(coverer, obj, side):
 
 def angled_front_miter(cab_obj, side):
     """(front_x, back_x) in cab_obj's local X where its end stile's
-    front and back faces meet the face frame of a run turned at an
-    angle (not square, not in line) whose front corner meets this end's
-    front corner, or None. The two stiles mitre on the line between
+    front and back faces meet the face frame of a run turned at any
+    angle (not in line) whose front corner meets this end's front
+    corner, or None. The two stiles mitre on the line between
     those points, like the finish kicks below them."""
     if not _is_face_frame_carcass(cab_obj):
         return None
@@ -727,13 +727,16 @@ def angled_front_miter(cab_obj, side):
     corner = mw @ Vector((edge, -cab.depth, 0.0))
     inv = mw.inverted_safe()
     for obj in _scene_carcasses():
-        if obj is cab_obj or _is_corner_cabinet(obj):
+        if (obj is cab_obj or _is_corner_cabinet(obj)
+                or obj.get('IS_LEG_PRODUCT')):
             continue
         if not _zspans_overlap(cab_obj, obj):
             continue
         omw = hb_utils.world_matrix(obj)
         o_axis = _plan_axis(omw, 1.0, 0.0)
-        if o_axis is None or not 0.02 < abs(o_axis.dot(x_axis)) < 0.99:
+        # Any turn - a square corner too, where two runs mitre into an
+        # access-into-corner or a voided corner front to front.
+        if o_axis is None or abs(o_axis.dot(x_axis)) >= 0.99:
             continue
         ocab = obj.face_frame_cabinet
         if not any((Vector(((omw @ Vector((ox, -ocab.depth, 0.0))).xy))

@@ -7056,6 +7056,67 @@ class _BlindCornerDialogMixin:
         return {'FINISHED'}
 
 
+def _corner_end_toward(obj, point):
+    """'LEFT' / 'RIGHT': the end of obj whose back corner is nearer the
+    world point (the wall corner the two cabinets share)."""
+    width = obj.face_frame_cabinet.width
+    left = obj.matrix_world @ Vector((0.0, 0.0, 0.0))
+    right = obj.matrix_world @ Vector((width, 0.0, 0.0))
+    return ('LEFT' if (left.xy - point.xy).length
+            <= (right.xy - point.xy).length else 'RIGHT')
+
+
+def _apply_access_into_corner(neighbor, placed, neighbor_side):
+    """Set two cabinets meeting at a square wall corner up as an access
+    into corner: each cabinet's front stops at the other's front plane,
+    its back runs on into the wall corner (Extend Back by the other
+    cabinet's depth), so the two meet on the corner's diagonal, and the
+    angled side between them is left out (Open into Corner). The kicks
+    and face frames mitre on that diagonal in the cabinets' own recalc.
+    Returns False when a wall length can't be read."""
+    nb = neighbor.face_frame_cabinet
+    pl = placed.face_frame_cabinet
+    n_w = nb.width
+    corner = neighbor.matrix_world @ Vector(
+        (0.0 if neighbor_side == 'LEFT' else n_w, 0.0, 0.0))
+    placed_side = _corner_end_toward(placed, corner)
+    MIN_W = units.inch(1.0)
+
+    def to_corner(obj, props, side, void):
+        # Corner-side edge to (wall end - void) along its wall; the far
+        # edge stays where it is.
+        wall_len = _parent_wall_length(obj.parent)
+        if wall_len is None:
+            return False
+        x = obj.location.x
+        w = props.width
+        if side == 'RIGHT':
+            props.width = max((wall_len - void) - x, MIN_W)
+        else:
+            far_right = x + w
+            props.width = max(far_right - void, MIN_W)
+            obj.location.x = far_right - props.width
+        return True
+
+    with types_face_frame.suspend_recalc():
+        ok = (to_corner(placed, pl, placed_side, nb.depth)
+              and to_corner(neighbor, nb, neighbor_side, pl.depth))
+        if not ok:
+            return False
+        for props, side, ext in ((pl, placed_side, nb.depth),
+                                 (nb, neighbor_side, pl.depth)):
+            key = side.lower()
+            setattr(props, f'extend_back_{key}', ext)
+            setattr(props, f'wing_attached_{key}', False)
+            setattr(props, f'open_{key}_end', True)
+            setattr(props, f'{key}_finished_end_condition', 'UNFINISHED')
+            # No scribe: the carcass runs right into the corner.
+            setattr(props, f'{key}_scribe', 0.0)
+    types_face_frame.recalculate_face_frame_cabinet(placed)
+    types_face_frame.recalculate_face_frame_cabinet(neighbor)
+    return True
+
+
 def _blind_corner_current_settings(blind_obj, placed_obj, side):
     """Read a configured corner's mode / void / exposed stile widths
     back out of the pair, in the dialog's terms (exposed stile amounts,
@@ -7096,6 +7157,44 @@ class hb_face_frame_OT_set_blind_corner_void_amount(_BlindCornerDialogMixin,
         "cabinet at this wall corner"
     )
     bl_options = {'UNDO'}
+
+    corner_mode: bpy.props.EnumProperty(
+        name="Corner",
+        items=[
+            ('BLIND', "Blind / Void Corner",
+             "One cabinet runs into the corner blind; the other butts its "
+             "front"),
+            ('ACCESS', "Access into Corner",
+             "Both cabinets run into the corner and mitre on the diagonal, "
+             "open to each other, with the shelves running on into it"),
+        ],
+        default='BLIND',
+    )  # type: ignore
+
+    def draw(self, context):
+        row = self.layout.row(align=True)
+        row.label(text="Corner:")
+        row.prop(self, 'corner_mode', text="")
+        if self.corner_mode == 'ACCESS':
+            col = self.layout.box().column(align=True)
+            col.label(text="Each cabinet's back runs into the corner and")
+            col.label(text="the two mitre on the diagonal, open to each")
+            col.label(text="other. Shelves run on into the corner.")
+            return
+        super().draw(context)
+
+    def execute(self, context):
+        if self.corner_mode != 'ACCESS':
+            return super().execute(context)
+        neighbor = bpy.data.objects.get(self.blind_cabinet_name)
+        placed = bpy.data.objects.get(self.current_cabinet_name)
+        if neighbor is None or placed is None:
+            self.report({'WARNING'}, "Cabinet missing; aborting corner setup")
+            return {'CANCELLED'}
+        if not _apply_access_into_corner(neighbor, placed, self.blind_side):
+            self.report({'WARNING'}, "Could not set up access into corner")
+            return {'CANCELLED'}
+        return {'FINISHED'}
 
     def invoke(self, context, event):
         scene = context.scene
