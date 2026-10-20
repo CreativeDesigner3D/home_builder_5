@@ -1,16 +1,19 @@
 """Selection outline that follows a cabinet's actual shape.
 
 A selected cabinet is outlined by its root cage, which is sized from
-the cabinet's Width / Depth / Height. A bay built deeper or taller than
-the cabinet (a deep section behind a shallow run, a raised bay) runs
-outside that box, so the outline cut straight through the cabinet.
+the cabinet's Width / Depth / Height. A bay built deeper, taller or
+shorter than the cabinet (a deep section behind a shallow run, a
+stepped upper) doesn't match that box, so the outline cut through the
+cabinet or wrapped empty space.
 
 A POST_VIEW draw handler traces each selected cabinet's real outline in
-the selection colour: the cabinet box plus its carcass (sides, backs,
-bottoms, tops, divisions, stretchers), stepping wherever the depth or
-height changes along the width. Fronts and hardware are left out so the
-outline doesn't jog at every door. A cabinet whose carcass stays inside
-its box draws nothing extra - the cage outline already is its outline.
+the selection colour, from its carcass, face frame and sub kick,
+stepping wherever the depth or height changes along the width. Fronts
+and hardware are left out so the outline doesn't jog at every door.
+Edges within 1/4" of the cabinet box land on it, and narrow strips (a
+stile over the scribe) fold into their neighbour, so a cabinet whose
+shape is its box draws nothing extra - the cage outline already is its
+outline.
 The cage itself, and everything that reads it (snapping, placement,
 dimensions, drawings), is unchanged.
 """
@@ -26,7 +29,15 @@ LINE_WIDTH = 2.0
 # Two boundaries closer than this are the same boundary.
 _EPS = 0.0008
 
-# Carcass parts that set the cabinet's real extent.
+# A section edge this close to the cabinet box is taken as the box's
+# own edge: scribes, a 1/4 back and the kick setback stay inside it.
+_SNAP = 0.00635
+# Sections at most this wide fold into a neighbour that contains them.
+_SLIVER = 0.0254
+
+# Parts that set the cabinet's real extent: carcass, face frame and the
+# sub kick. Fronts and hardware stand proud of the face frame and are
+# left out.
 _STRUCTURE_ROLES = frozenset((
     types_face_frame.PART_ROLE_LEFT_SIDE,
     types_face_frame.PART_ROLE_RIGHT_SIDE,
@@ -34,9 +45,16 @@ _STRUCTURE_ROLES = frozenset((
     types_face_frame.PART_ROLE_BOTTOM,
     types_face_frame.PART_ROLE_TOP,
     types_face_frame.PART_ROLE_MID_DIVISION,
+    types_face_frame.PART_ROLE_PARTITION_SKIN,
     types_face_frame.PART_ROLE_FRONT_STRETCHER,
     types_face_frame.PART_ROLE_REAR_STRETCHER,
-))
+    types_face_frame.PART_ROLE_TOE_KICK_SUBFRONT,
+    types_face_frame.PART_ROLE_TOE_KICK_SUBREAR,
+    types_face_frame.PART_ROLE_LOOSE_KICK_FRONT,
+    types_face_frame.PART_ROLE_LOOSE_KICK_REAR,
+    types_face_frame.PART_ROLE_LOOSE_KICK_END_LEFT,
+    types_face_frame.PART_ROLE_LOOSE_KICK_END_RIGHT,
+)) | types_face_frame.FACE_FRAME_PART_ROLES
 
 _draw_handle = None
 _shutdown = False
@@ -82,16 +100,23 @@ def _cage_box(root, to_root):
 
 
 def _boxes(root):
-    """The cabinet box and its visible structural parts, root-local."""
+    """(cabinet box, [visible structural part boxes]), root-local."""
     to_root = root.matrix_world.inverted()
-    boxes = [_cage_box(root, to_root)]
+    parts = []
     for part in root.children_recursive:
         if part.type != 'MESH' or part.hide_viewport:
             continue
         if part.get('hb_part_role') not in _STRUCTURE_ROLES:
             continue
-        boxes.append(_local_box(part, to_root))
-    return boxes
+        parts.append(_local_box(part, to_root))
+    return _cage_box(root, to_root), parts
+
+
+def _snap(v, targets):
+    for t in targets:
+        if abs(v - t) <= _SNAP:
+            return t
+    return v
 
 
 def _same(a, b):
@@ -118,6 +143,37 @@ def _sections(boxes):
         else:
             out.append((x0, x1, rect))
     return out
+
+
+def _contains(outer, inner):
+    return (outer[0] <= inner[0] + _EPS and outer[1] >= inner[1] - _EPS
+            and outer[2] <= inner[2] + _EPS and outer[3] >= inner[3] - _EPS)
+
+
+def _absorb_slivers(sections):
+    """Fold narrow sections into a neighbour that contains them: a stile
+    overhanging the scribe at the run's end, a division between bays."""
+    sections = list(sections)
+    changed = True
+    while changed and len(sections) > 1:
+        changed = False
+        for i, (x0, x1, rect) in enumerate(sections):
+            if x1 - x0 > _SLIVER:
+                continue
+            for j in (i - 1, i + 1):
+                if not 0 <= j < len(sections):
+                    continue
+                nx0, nx1, nrect = sections[j]
+                touching = (abs(nx1 - x0) <= _EPS if j < i
+                            else abs(nx0 - x1) <= _EPS)
+                if touching and _contains(nrect, rect):
+                    sections[j] = (min(nx0, x0), max(nx1, x1), nrect)
+                    del sections[i]
+                    changed = True
+                    break
+            if changed:
+                break
+    return sections
 
 
 def _subtract(span, cuts):
@@ -163,11 +219,28 @@ def _rect_edges(rect, other):
 def outline_segments(root):
     """Root-local line segments [(p, q), ...] tracing the cabinet's
     outline, or [] when its carcass stays inside the cabinet box."""
-    boxes = _boxes(root)
-    sections = _sections(boxes)
-    if not sections:
+    cab = getattr(root, 'face_frame_cabinet', None)
+    if cab is not None and cab.cabinet_type == 'PANEL':
         return []
-    cab_lo, cab_hi = boxes[0]
+    (cab_lo, cab_hi), parts = _boxes(root)
+    raw = _absorb_slivers(_sections(parts))
+    if not raw:
+        return []
+    # Snap near-box edges onto the box (the run's ends onto its sides),
+    # then re-merge what snapping made equal.
+    ys, zs = (cab_lo.y, cab_hi.y), (cab_lo.z, cab_hi.z)
+    sections = []
+    for i, (x0, x1, (y0, y1, z0, z1)) in enumerate(raw):
+        if i == 0:
+            x0 = _snap(x0, (cab_lo.x,))
+        if i == len(raw) - 1:
+            x1 = _snap(x1, (cab_hi.x,))
+        rect = (_snap(y0, ys), _snap(y1, ys), _snap(z0, zs), _snap(z1, zs))
+        if (sections and abs(sections[-1][1] - x0) <= _EPS
+                and _same(sections[-1][2], rect)):
+            sections[-1] = (sections[-1][0], x1, rect)
+        else:
+            sections.append((x0, x1, rect))
     cab_rect = (cab_lo.y, cab_hi.y, cab_lo.z, cab_hi.z)
     if (len(sections) == 1 and abs(sections[0][0] - cab_lo.x) <= _EPS
             and abs(sections[0][1] - cab_hi.x) <= _EPS
