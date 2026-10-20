@@ -282,6 +282,19 @@ def draw_corner_sections(layout, cab_props):
                 ov_row.prop(section, unlock_prop, text="", icon=lock_icon)
 
 
+def _all_bays_flush_kick(root):
+    """True when every bay of the cabinet was set to a flush toe kick
+    from the bay menu (kick height locked at 0). That override builds
+    the cabinet flush whatever the cabinet's own toe kick type says. A
+    cabinet whose own kick height is 0 leaves its bays unlocked, so it
+    doesn't count."""
+    bays = [c for c in getattr(root, 'children', ())
+            if c.get(types_face_frame.TAG_BAY_CAGE)]
+    return bool(bays) and all(
+        b.face_frame_bay.unlock_kick_height
+        and b.face_frame_bay.kick_height <= 1e-6 for b in bays)
+
+
 def draw_construction(layout, cab_props):
     """Toe kick (if applicable). Panel roots have no carcass - the
     section collapses to just the finished-ends block (which itself
@@ -298,6 +311,9 @@ def draw_construction(layout, cab_props):
         if cab_props.show_toe_kick:
             col = box.column(align=True)
             col.prop(cab_props, 'toe_kick_type', text="Type")
+            if (cab_props.toe_kick_type != 'FLUSH'
+                    and _all_bays_flush_kick(cab_props.id_data)):
+                col.label(text="Flush (set on bays)", icon='INFO')
             if cab_props.toe_kick_type == 'BUN_FEET':
                 col.prop(cab_props, 'bun_foot_style', text="Foot")
                 if cab_props.corner_type == 'NONE':
