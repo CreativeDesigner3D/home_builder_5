@@ -520,6 +520,10 @@ class HOME_BUILDER_OT_show_dimension_properties(bpy.types.Operator):
     tick_length: bpy.props.FloatProperty(name="Tick Length", default=units.inch(1), subtype='DISTANCE')  # type: ignore
     tick_thickness: bpy.props.FloatProperty(name="Tick Thickness", default=units.inch(0.05), subtype='DISTANCE')  # type: ignore
     leader_length: bpy.props.FloatProperty(name="Leader Length", default=units.inch(5), subtype='DISTANCE')  # type: ignore
+    # Extra length on one arm only, so it can reach further than the
+    # other (e.g. to meet the next dimension's leader).
+    leader_extra_start: bpy.props.FloatProperty(name="Start Leader Extra", default=0.0, subtype='DISTANCE')  # type: ignore
+    leader_extra_end: bpy.props.FloatProperty(name="End Leader Extra", default=0.0, subtype='DISTANCE')  # type: ignore
     line_thickness: bpy.props.FloatProperty(name="Line Thickness", default=units.inch(0.05), subtype='DISTANCE')  # type: ignore
     extend_line_amount: bpy.props.FloatProperty(name="Extend Line Amount", default=units.inch(1), subtype='DISTANCE')  # type: ignore
     offset_text: bpy.props.BoolProperty(name="Offset Text from Line")  # type: ignore
@@ -595,6 +599,9 @@ class HOME_BUILDER_OT_show_dimension_properties(bpy.types.Operator):
         d.set_input('Line Thickness', self.line_thickness)
         d.set_input('Text Size', self.text_size)
         d.set_input('Leader Length', self.leader_length)
+        if d.has_input('Leader Extra Start'):
+            d.set_input('Leader Extra Start', self.leader_extra_start)
+            d.set_input('Leader Extra End', self.leader_extra_end)
         d.set_input('Extend Line', self.extend_line_amount)
         d.set_input('Align Text To Curve', self.align_text_to_curve)
         d.set_input('Offset Text From Line', self.offset_text)
@@ -613,8 +620,15 @@ class HOME_BUILDER_OT_show_dimension_properties(bpy.types.Operator):
         return True
 
     def invoke(self, context, event):
+        # Files from before the per-arm leader extras get them here, the
+        # one place they are set (no-op once present).
+        hb_types.ensure_dimension_leader_extras(
+            bpy.data.node_groups.get('GeoNodeDimension'))
         self.dimension = hb_types.GeoNodeDimension(context.object)
         d = self.dimension
+        if d.has_input("Leader Extra Start"):
+            self.leader_extra_start = d.get_input("Leader Extra Start") or 0.0
+            self.leader_extra_end = d.get_input("Leader Extra End") or 0.0
         self.tick_length = d.get_input("Tick Length")
         self.tick_thickness = d.get_input("Tick Thickness")
         self.line_thickness = d.get_input("Line Thickness")
@@ -658,6 +672,10 @@ class HOME_BUILDER_OT_show_dimension_properties(bpy.types.Operator):
         row = box.row()
         row.label(text="Leader Length")
         row.prop(self, 'leader_length', text="")
+        row = box.row(align=True)
+        row.label(text="Extra Length")
+        row.prop(self, 'leader_extra_start', text="Start")
+        row.prop(self, 'leader_extra_end', text="End")
         box.prop(self, 'update_selected_dimensions')
         row = box.row()
         row.label(text="Decimals")

@@ -941,6 +941,75 @@ def ensure_dimension_text_offset_basis(ng):
     ng.links.new(add.outputs['Vector'], sp4.inputs['Offset'])
 
 
+def ensure_dimension_leader_extras(ng):
+    """Give GeoNodeDimension a separate extra length for each leader arm.
+
+    Both arms are one quad ('Reroute.004') instanced on the start and the
+    end point, so 'Leader Length' could only set them together. Adds the
+    inputs 'Leader Extra Start' / 'Leader Extra End' (0 = unchanged) and,
+    per arm, a Set Position pushing the quad's two far-end corners
+    (indices 1 and 3) out by that extra along the arm, scaled by the same
+    factor 'Leader Length' goes through ('Math'), so the short extension
+    past the dimension line is untouched. Idempotent versioning fixup,
+    like ensure_dimension_text_offset_basis; leaves an unexpected
+    topology alone.
+    """
+    if ng is None or ng.nodes.get('Leader Extra Start Offset'):
+        return
+    quad = ng.nodes.get('Reroute.004')
+    factor = ng.nodes.get('Math')
+    far_a = ng.nodes.get('Math.015')
+    far_b = ng.nodes.get('Math.017')
+    arms = (('Instance on Points.004', 'Leader Extra Start'),
+            ('Instance on Points.005', 'Leader Extra End'))
+    if not all((quad, factor, far_a, far_b)) or not all(
+            ng.nodes.get(n) for n, _s in arms):
+        return
+    gi = next((n for n in ng.nodes if n.type == 'GROUP_INPUT'), None)
+    if gi is None:
+        return
+    names = {it.name for it in ng.interface.items_tree
+             if getattr(it, 'in_out', '') == 'INPUT'}
+    for _n, sock in arms:
+        if sock not in names:
+            s = ng.interface.new_socket(sock, in_out='INPUT',
+                                        socket_type='NodeSocketFloat')
+            s.default_value = 0.0
+            try:
+                s.subtype = 'DISTANCE'
+            except (AttributeError, TypeError):
+                pass
+    far = ng.nodes.new('ShaderNodeMath')
+    far.operation = 'ADD'
+    far.name = far.label = 'Leader Far Corners'
+    far.location = (quad.location.x, quad.location.y - 300)
+    ng.links.new(far_a.outputs[0], far.inputs[0])
+    ng.links.new(far_b.outputs[0], far.inputs[1])
+    for i, (inst_name, sock) in enumerate(arms):
+        inst = ng.nodes[inst_name]
+        x = quad.location.x + 200
+        y = quad.location.y - 400 - 220 * i
+        mul = ng.nodes.new('ShaderNodeMath')
+        mul.operation = 'MULTIPLY'
+        mul.location = (x - 200, y)
+        ng.links.new(gi.outputs[sock], mul.inputs[0])
+        ng.links.new(factor.outputs[0], mul.inputs[1])
+        comb = ng.nodes.new('ShaderNodeCombineXYZ')
+        comb.location = (x, y)
+        ng.links.new(mul.outputs[0], comb.inputs['Y'])
+        sp = ng.nodes.new('GeometryNodeSetPosition')
+        sp.name = sp.label = f"{sock} Offset"
+        sp.location = (x + 200, y)
+        ng.links.new(quad.outputs[0], sp.inputs['Geometry'])
+        ng.links.new(far.outputs[0], sp.inputs['Selection'])
+        ng.links.new(comb.outputs['Vector'], sp.inputs['Offset'])
+        for link in list(inst.inputs['Instance'].links):
+            ng.links.remove(link)
+        ng.links.new(sp.outputs['Geometry'], inst.inputs['Instance'])
+    # New inputs: drop the cached socket identifiers for this group.
+    _invalidate_input_cache(ng)
+
+
 class GeoNodeDimension(GeoNodeObject):
 
     @staticmethod
