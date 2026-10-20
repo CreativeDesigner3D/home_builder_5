@@ -1729,6 +1729,18 @@ def slab_target(hit_obj):
     return None
 
 
+def slab_wall(hit_obj):
+    """The wall under what a slab is dropped on, or None. The slab
+    hangs on it like the cabinets it covers, so it comes along into
+    that wall's elevation and moves with the wall."""
+    node = hit_obj
+    while node is not None:
+        if node.get('IS_WALL_BP'):
+            return node
+        node = node.parent
+    return None
+
+
 def set_slab_on(obj, target):
     """Size a slab to what it covers and stand it there, its left
     overhang reaching past the left end."""

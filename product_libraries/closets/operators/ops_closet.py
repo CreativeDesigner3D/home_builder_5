@@ -7258,6 +7258,11 @@ class hb_closets_OT_place_slab_countertop(bpy.types.Operator,
             self._slab = None
             if 'hb_preview' in obj:
                 del obj['hb_preview']
+            wall = types_closets.slab_wall(self.hit_object)
+            if wall is not None:
+                world = obj.matrix_world.copy()
+                obj.parent = wall
+                obj.matrix_world = world
             for other in context.selected_objects:
                 other.select_set(False)
             obj.select_set(True)
