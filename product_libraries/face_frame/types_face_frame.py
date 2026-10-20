@@ -17607,13 +17607,40 @@ class LegProductFaceFrameCabinet(FaceFrameCabinet):
         tkfin_visible = (tk_visible and not flush_tk
                          and cab.include_finish_toe_kick
                          and tkfin_t > 0.0)
-        place(TKFIN, tkh, tk_width, tkfin_t,
-              (tk_x, -depth + tks - tkfin_t, 0.0),
+        # Where another run's kick meets this one at a corner (a voided
+        # corner beside the leg, or any angle), the facing runs on to
+        # the corner and mitres with that kick - exposure's
+        # finish_kick_corner, the same meeting a cabinet's kick uses.
+        fin_lo, fin_hi = tk_x, tk_x + tk_width
+        fin_miters = {}
+        if tkfin_visible:
+            from . import exposure
+            for side in ('LEFT', 'RIGHT'):
+                try:
+                    corner = exposure.finish_kick_corner(self.obj,
+                                                         side.lower())
+                except Exception:
+                    corner = None
+                if corner is None or not corner['miter']:
+                    continue
+                ends = (corner['front_x'], corner['back_x'])
+                if side == 'LEFT':
+                    fin_lo = min(ends)
+                else:
+                    fin_hi = max(ends)
+                fin_miters[side] = ends
+        place(TKFIN, tkh, fin_hi - fin_lo, tkfin_t,
+              (fin_lo, -depth + tks - tkfin_t, 0.0),
               (0.0, math.radians(-90), math.radians(90)),
               {'Mirror Y': True, 'Mirror Z': True})
         TKFIN.hide_viewport = not tkfin_visible
         TKFIN.hide_render = not tkfin_visible
         TKFIN['IS_FINISHED'] = True
+        self._apply_finish_kick_miters(TKFIN, {
+            'y': -depth + tks - tkfin_t, 'thickness': tkfin_t,
+            'z': 0.0, 'width': tkh,
+            'miter_left': fin_miters.get('LEFT'),
+            'miter_right': fin_miters.get('RIGHT')})
 
         # --- Finished front bands (Finish-X) -------------------------
         # A finished band covering the front few inches on the side

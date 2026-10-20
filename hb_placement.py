@@ -802,13 +802,27 @@ class PlacementMixin:
         wall = hb_types.GeoNodeWall(wall_obj)
         adj_wall_node = wall.get_connected_wall(direction=side,
                                                 include_loop_seam=True)
-        if not adj_wall_node:
-            return 0.0
-        adj_wall_obj = adj_wall_node.obj
+        # A half wall whose end butts another wall's face has no chain
+        # neighbour there, but that wall's runs still meet it: a run
+        # ending in a voided corner beside the junction, a leg standing
+        # in it. Take the wall it tees into as the adjacent wall.
+        tee = False
+        if adj_wall_node:
+            adj_wall_obj = adj_wall_node.obj
+        else:
+            adj_wall_obj = self._tee_host_wall(wall_obj, side)
+            if adj_wall_obj is None:
+                return 0.0
+            tee = True
 
         wall_length = wall.get_input('Length')
         wall_thickness = wall.get_input('Thickness')
         wall_matrix_inv = wall_obj.matrix_world.inverted()
+
+        if tee and object_depth is None:
+            # The host wall runs on past the junction both ways, so only
+            # its cabinets standing in this wall's own band count.
+            object_depth = units.inch(24.0)
 
         check_vertical = (object_z_start is not None and
                           object_height is not None)
@@ -842,7 +856,9 @@ class PlacementMixin:
             adj_hgt = adj_geo.get_input('Height')
         except Exception:
             adj_len = None
-        if adj_len is not None:
+        # At a tee the host slab lies past this wall's end, not across
+        # its span.
+        if adj_len is not None and not tee:
             slab_z_ok = True
             if check_vertical:
                 a_z0 = adj_wall_obj.location.z
@@ -933,6 +949,51 @@ class PlacementMixin:
                                             wall_length - c.x)
 
         return max(0.0, max_intrusion)
+
+    def _tee_host_wall(self, wall_obj, side):
+        """The wall this wall's 'left' (start) or 'right' (end) tees
+        into - its end landing on the other wall's span, on or near the
+        slab, crossing it rather than running along it - or None. The
+        mirror of get_tee_wall_intrusions, seen from the half wall."""
+        from . import hb_types
+
+        END_MARGIN = 0.01
+        FACE_TOL = 0.02
+        wall = hb_types.GeoNodeWall(wall_obj)
+        try:
+            length = wall.get_input('Length')
+            thickness = wall.get_input('Thickness')
+        except Exception:
+            return None
+        m = wall_obj.matrix_world
+        x = 0.0 if side == 'left' else length
+        ends = (m @ Vector((x, 0.0, 0.0)), m @ Vector((x, thickness, 0.0)))
+        own_dir = (m.to_3x3() @ Vector((1.0, 0.0, 0.0)))
+        own_dir.z = 0.0
+        for other in bpy.context.scene.objects:
+            if 'IS_WALL_BP' not in other or other is wall_obj:
+                continue
+            other_geo = hb_types.GeoNodeWall(other)
+            if not other_geo.has_modifier():
+                continue
+            try:
+                o_len = other_geo.get_input('Length')
+                o_thk = other_geo.get_input('Thickness')
+            except Exception:
+                continue
+            o_dir = other.matrix_world.to_3x3() @ Vector((1.0, 0.0, 0.0))
+            o_dir.z = 0.0
+            if own_dir.length < 1e-9 or o_dir.length < 1e-9:
+                continue
+            if abs(own_dir.normalized().dot(o_dir.normalized())) > 0.99:
+                continue
+            inv = other.matrix_world.inverted()
+            for pt in ends:
+                lp = inv @ pt
+                if (END_MARGIN < lp.x < o_len - END_MARGIN
+                        and -FACE_TOL <= lp.y <= o_thk + FACE_TOL):
+                    return other
+        return None
 
     def get_tee_wall_intrusions(self, wall_obj, place_on_front=True,
                                 object_z_start=None, object_height=None):

@@ -612,8 +612,9 @@ def _finish_kick_planes(obj):
     and stay out."""
     if not _is_face_frame_carcass(obj):
         return None
-    if (_is_corner_cabinet(obj) or obj.get('HB_CORNER_SINK_45')
-            or obj.get('IS_LEG_PRODUCT')):
+    if obj.get('IS_LEG_PRODUCT'):
+        return _leg_kick_planes(obj)
+    if _is_corner_cabinet(obj) or obj.get('HB_CORNER_SINK_45'):
         return None
     cab = obj.face_frame_cabinet
     if cab.cabinet_type not in ('BASE', 'TALL', 'LAP_DRAWER'):
@@ -626,6 +627,32 @@ def _finish_kick_planes(obj):
             or getattr(cab, 'unlock_right_depth', False)):
         return None
     back = -cab.depth + cab.toe_kick_setback
+    return (back - cab.finish_toe_kick_thickness, back)
+
+
+def leg_has_finish_kick(obj):
+    """True when a leg product builds a recessed finish kick: one it
+    owns both faces of or stands between runs, with a kick and the
+    finish option on (LegProductFaceFrameCabinet's tkfin_visible)."""
+    leg = getattr(obj, 'leg_product', None)
+    cab = obj.face_frame_cabinet
+    if leg is None or leg.is_column or leg.toe_kick_height <= 0.0:
+        return False
+    if leg.toe_kick_setback < cab.face_frame_thickness:
+        return False        # flush kick: no facing
+    if not (leg.only_stile
+            or leg.finish_type in ('FINISH_BOTH', 'INTERMEDIATE')):
+        return False
+    return (cab.include_finish_toe_kick
+            and cab.finish_toe_kick_thickness > 0.0)
+
+
+def _leg_kick_planes(obj):
+    """(front_y, back_y) of a leg product's finish kick facing, or None."""
+    if not leg_has_finish_kick(obj):
+        return None
+    cab = obj.face_frame_cabinet
+    back = -cab.depth + obj.leg_product.toe_kick_setback
     return (back - cab.finish_toe_kick_thickness, back)
 
 
@@ -818,13 +845,15 @@ def finish_kick_corner(cab_obj, side):
         o_axis = _plan_axis(omw, 1.0, 0.0)
         if o_axis is None:
             continue
-        if 0.02 < abs(o_axis.dot(x_axis)) < 0.99:
+        if abs(o_axis.dot(x_axis)) < 0.99:
+            # Fronts meeting corner to corner - at any angle, a square
+            # voided corner included - mitre on the bisector.
             result = _angled_kick_corner(cab_obj, side, own, obj, planes)
             if result is not None:
                 dist = abs(result[0] - edge)
                 if best is None or dist < best[0]:
                     best = (dist, obj, result)
-            continue
+                continue
         if abs(o_axis.dot(x_axis)) > 0.02:
             continue
         front_x, back_x = _kick_lines_local_x(cab_obj, obj, planes)
