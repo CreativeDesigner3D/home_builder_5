@@ -1857,6 +1857,89 @@ class hb_face_frame_OT_panel_remove_stile(bpy.types.Operator):
         return {'FINISHED'}
 
 
+def _panel_local_z_span(root, obj):
+    """(z_min, z_max) of obj's bounding box in the panel root's space."""
+    to_root = root.matrix_world.inverted() @ obj.matrix_world
+    zs = [(to_root @ Vector(c)).z for c in obj.bound_box]
+    return min(zs), max(zs)
+
+
+class hb_face_frame_OT_panel_remove_rail(bpy.types.Operator):
+    """Merge the two panel rows a mid rail separates into one opening.
+    The rail drops and so does the seam between the two panels: the
+    panel switches to an explicit row count one lower, and the rows
+    that remain keep the heights they had."""
+    bl_idname = "hb_face_frame.panel_remove_rail"
+    bl_label = "Remove Rail (Merge Openings)"
+    bl_description = ("Remove this mid rail and merge the panels above "
+                      "and below it into one opening")
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (obj is not None
+                and obj.get('hb_part_role')
+                == types_face_frame.PART_ROLE_BAY_MID_RAIL
+                and _owning_panel_root(obj) is not None)
+
+    def execute(self, context):
+        clicked = context.active_object
+        root = _owning_panel_root(clicked)
+        if root is None:
+            return {'CANCELLED'}
+        cab = root.face_frame_cabinet
+        # Every rail currently built on this panel, bottom-up. Spans
+        # are read from the geometry so a rail-matched panel and one
+        # with a typed row count are handled the same way.
+        rails = sorted(
+            ((_panel_local_z_span(root, c), c.name)
+             for c in root.children_recursive
+             if c.get('hb_part_role')
+             == types_face_frame.PART_ROLE_BAY_MID_RAIL),
+            key=lambda r: r[0][0])
+        # A panel split into columns can carry one rail part per column
+        # at the same height; those count as one rail.
+        spans = []
+        merged = None
+        for span, name in rails:
+            if not spans or span[0] - spans[-1][0] > 1e-4:
+                spans.append(span)
+            if name == clicked.name:
+                merged = len(spans) - 1
+        if merged is None:
+            return {'CANCELLED'}
+        # Row openings between the frame rails and the mid rails,
+        # bottom-up; the clicked rail joins rows merged and merged + 1.
+        edges = ([cab.bottom_rail_width]
+                 + [z for s in spans for z in s]
+                 + [cab.height - cab.top_rail_width])
+        heights = [edges[i + 1] - edges[i] for i in range(0, len(edges), 2)]
+        widths = [s[1] - s[0] for s in spans]
+        heights[merged:merged + 2] = [
+            heights[merged] + widths[merged] + heights[merged + 1]]
+        del widths[merged]
+        rows = len(heights)
+        with types_face_frame.suspend_recalc():
+            cab.panel_horizontal_rows = rows
+            entries = cab.panel_row_heights
+            while len(entries) < rows:
+                entries.add()
+            # Hold every row but the top one at its built height (the
+            # top row takes up whatever is left), and every remaining
+            # rail at its built width.
+            for i, entry in enumerate(entries):
+                entry.override = i < rows - 1
+                if entry.override:
+                    entry.height = heights[i]
+                entry.rail_override = i < rows - 1
+                if entry.rail_override:
+                    entry.rail_width = widths[i]
+            if not cab.panel_split_auto:
+                cab.panel_split_auto = True
+        return {'FINISHED'}
+
+
 # Maximum count of openings the split dialog can produce in one shot.
 # Bounded by the FloatVectorProperty / BoolVectorProperty fixed sizes
 # below; raise both if more is needed.
@@ -7659,6 +7742,7 @@ classes = (
     hb_face_frame_OT_mantle_prompts,
     hb_face_frame_OT_panel_layout_prompts,
     hb_face_frame_OT_panel_remove_stile,
+    hb_face_frame_OT_panel_remove_rail,
     hb_face_frame_OT_toggle_front_open,
     AccessorySearchRow,
     HB_UL_face_frame_drawer_items,

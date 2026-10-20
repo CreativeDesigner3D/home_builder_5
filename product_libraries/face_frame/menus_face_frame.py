@@ -473,6 +473,10 @@ class HOME_BUILDER_MT_face_frame_part_commands(bpy.types.Menu):
             if role in ('MID_STILE', 'BAY_MID_STILE'):
                 layout.operator("hb_face_frame.panel_remove_stile",
                                 icon='X')
+            # Same for a rail: the two rows become one panel, no seam.
+            if role == types_face_frame.PART_ROLE_BAY_MID_RAIL:
+                layout.operator("hb_face_frame.panel_remove_rail",
+                                icon='X')
             layout.separator()
 
         # 5-piece door / drawer front: stile / rail / mid rail editor.
@@ -676,7 +680,12 @@ class HOME_BUILDER_MT_face_frame_part_commands(bpy.types.Menu):
         # stays; the FF member + its backing drop and the solver closes
         # the two fronts to a 3/32" reveal. No restore here - rebuild the
         # bay via Change Bay if needed.
-        if role == types_face_frame.PART_ROLE_BAY_MID_RAIL:
+        # On a panel the merge above replaces it: keeping the split there
+        # would leave two panels with a seam where the rail was.
+        if (role == types_face_frame.PART_ROLE_BAY_MID_RAIL
+                and not (panel_root is not None and (
+                    panel_root.get(types_face_frame.TAG_APPLIED_PANEL_SIDE)
+                    or types_face_frame._is_standalone_panel(panel_root)))):
             layout.operator("hb_face_frame.remove_mid_rail",
                             text="Remove Mid Rail", icon='X')
 
