@@ -1,6 +1,7 @@
 import bpy
 from mathutils import Vector
 
+from .. import hb_annotation_defaults
 from .. import hb_details
 from .. import hb_types
 from .. import units
@@ -573,6 +574,11 @@ class HOME_BUILDER_OT_show_dimension_properties(bpy.types.Operator):
             hb_props.annotation_dimension_additional_text_y = self.additional_text_offset_y_amount
             hb_props.annotation_dimension_additional_text_size = self.additional_text_size
             hb_props.annotation_dimension_additional_text_saved = True
+            # ...and for every other project that hasn't set its own.
+            hb_annotation_defaults.save(
+                additional_text_x=self.additional_text_offset_x_amount,
+                additional_text_y=self.additional_text_offset_y_amount,
+                additional_text_size=self.additional_text_size)
 
         if context.area:
             context.area.tag_redraw()
@@ -629,12 +635,20 @@ class HOME_BUILDER_OT_show_dimension_properties(bpy.types.Operator):
         self.text_x_offset_amount = d.get_input("Offset Text X Amount")
         # No additional text yet: start from the saved placement so a
         # suffix typed here matches the ones already on the drawings.
+        # This project's saved placement wins; a project that never set
+        # one takes the default saved from any project.
         hb_props = context.scene.home_builder
-        if (not self.additional_text
-                and hb_props.annotation_dimension_additional_text_saved):
-            self.additional_text_offset_x_amount = hb_props.annotation_dimension_additional_text_x
-            self.additional_text_offset_y_amount = hb_props.annotation_dimension_additional_text_y
-            self.additional_text_size = hb_props.annotation_dimension_additional_text_size
+        if not self.additional_text:
+            if hb_props.annotation_dimension_additional_text_saved:
+                self.additional_text_offset_x_amount = hb_props.annotation_dimension_additional_text_x
+                self.additional_text_offset_y_amount = hb_props.annotation_dimension_additional_text_y
+                self.additional_text_size = hb_props.annotation_dimension_additional_text_size
+            else:
+                saved = hb_annotation_defaults.additional_text_placement()
+                if saved is not None:
+                    (self.additional_text_offset_x_amount,
+                     self.additional_text_offset_y_amount,
+                     self.additional_text_size) = saved
         return context.window_manager.invoke_props_dialog(self, width=400)
 
     def draw(self, context):
@@ -697,6 +711,9 @@ class HOME_BUILDER_OT_show_dimension_properties(bpy.types.Operator):
         row = box.row()
         row.prop(self, 'update_all_dimensions', text="Apply Sizes to All")
         row.prop(self, 'set_defaults', text="Save Sizes & Text Offset as Default")
+        if self.set_defaults:
+            box.label(text="The text offset carries to your other projects too",
+                      icon='INFO')
 
 
 class HOME_BUILDER_MT_dimension_commands(bpy.types.Menu):
@@ -864,6 +881,10 @@ class HOME_BUILDER_OT_set_text_line_spacing(bpy.types.Operator):
         description="Distance between lines, as a multiple of the "
                     "normal spacing",
         update=_preview_line_spacing)
+    set_default: bpy.props.BoolProperty(
+        name="Use for New Text",
+        description="New text in every project starts with this line "
+                    "spacing")  # type: ignore
 
     @classmethod
     def poll(cls, context):
@@ -884,6 +905,8 @@ class HOME_BUILDER_OT_set_text_line_spacing(bpy.types.Operator):
         _line_spacing_before.clear()
         for obj in get_annotation_text_objects(context):
             obj.data.space_line = self.spacing
+        if self.set_default:
+            hb_annotation_defaults.save(text_line_spacing=self.spacing)
         return {'FINISHED'}
 
     def cancel(self, context):

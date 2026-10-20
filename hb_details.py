@@ -2,6 +2,7 @@ import bpy
 import math
 import os
 from mathutils import Vector, Matrix, Euler
+from . import hb_annotation_defaults
 from . import hb_types
 from . import units
 
@@ -447,6 +448,7 @@ class GeoNodeText(hb_types.GeoNodeObject):
         text_data.size = size
         text_data.align_x = 'LEFT'
         text_data.align_y = 'BOTTOM'
+        text_data.space_line = hb_annotation_defaults.text_line_spacing()
         
         # Create object
         self.obj = bpy.data.objects.new(name, text_data)

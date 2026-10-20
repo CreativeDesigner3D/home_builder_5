@@ -8,6 +8,7 @@ from gpu_extras.batch import batch_for_shader
 from mathutils import Vector, Matrix, Euler
 from bpy_extras.view3d_utils import location_3d_to_region_2d
 from bpy_extras.view3d_utils import region_2d_to_origin_3d, region_2d_to_vector_3d
+from .. import hb_annotation_defaults
 from .. import hb_layouts
 from .. import hb_types
 from .. import hb_placement
@@ -3851,6 +3852,7 @@ class home_builder_layouts_OT_add_text(bpy.types.Operator, hb_placement.Placemen
         text_data.size = hb_scene.annotation_text_size
         text_data.align_x = 'LEFT'
         text_data.align_y = 'BOTTOM'
+        text_data.space_line = hb_annotation_defaults.text_line_spacing()
         
         # Create object
         obj = bpy.data.objects.new("Text", text_data)
