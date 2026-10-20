@@ -1657,10 +1657,12 @@ CORNER_TREATMENT_MOD_NAMES = {
     'WIDTH': 'Corner Treatment Bottom',    # across a stile's bottom end
 }
 # Finished-end conditions whose outer face is flush with the end stile's
-# edge (the stile arris IS the cabinet corner). Applied 3/4 panels /
-# frames sit outboard of the stile and keep their own square corner.
+# edge (the stile arris IS the cabinet corner). A paneled end butts its
+# panel against the stile's back, the stile covering the panel edge.
+# Applied frames (false / working face frames) keep their own square
+# corner.
 CORNER_TREATMENT_FLUSH_ENDS = frozenset((
-    'FINISHED', 'FLUSH_X', 'BEADBOARD', 'SHIPLAP', 'V_GROOVE'))
+    'FINISHED', 'FLUSH_X', 'BEADBOARD', 'SHIPLAP', 'V_GROOVE', 'PANELED'))
 
 # ---------------------------------------------------------------------------
 # Inset frame profile: the style overlay's face-frame edge detail (Beaded /
@@ -7706,6 +7708,33 @@ class FaceFrameCabinet(GeoNodeCage):
             return 0.0
         return rail + solver.front_drop(layout, bay_index)
 
+    def _island_corner_end(self, layout, side):
+        """An unfinished end whose stile is still a corner of the island.
+
+        Back-to-back island runs finish each island end once: one run's
+        end panel runs across the other run's unfinished end, and that
+        run's scribed stile covers the panel edge, so its arris is the
+        island's corner. True for the covered half of a combined end,
+        and for a scribed end of a cabinet off the walls that nothing
+        stands against. An end against a wall or a neighboring cabinet
+        stays square.
+        """
+        fin = layout.l_fin_end if side == 'LEFT' else layout.r_fin_end
+        if fin != 'UNFINISHED':
+            return False
+        if island_pair.end_is_covered(self.obj, side):
+            return True
+        scribe = layout.l_scribe if side == 'LEFT' else layout.r_scribe
+        if scribe <= 1e-6:
+            return False
+        parent = self.obj.parent
+        while parent is not None:
+            if parent.get('IS_WALL_BP'):
+                return False
+            parent = parent.parent
+        from . import exposure
+        return exposure._side_exposure(self.obj, side)[0] == 'EXPOSED'
+
     def _apply_corner_treatment(self, layout):
         """Cut the style's corner treatment into the exposed face frame
         arrises: the end stile's outer front edge (plus the refrigerator
@@ -7717,9 +7746,11 @@ class FaceFrameCabinet(GeoNodeCage):
         wanted = []   # (part_obj, axis, far_trim)
         if run is not None:
             sides = set()
-            if layout.l_fin_end in CORNER_TREATMENT_FLUSH_ENDS:
+            if (layout.l_fin_end in CORNER_TREATMENT_FLUSH_ENDS
+                    or self._island_corner_end(layout, 'LEFT')):
                 sides.add('LEFT')
-            if layout.r_fin_end in CORNER_TREATMENT_FLUSH_ENDS:
+            if (layout.r_fin_end in CORNER_TREATMENT_FLUSH_ENDS
+                    or self._island_corner_end(layout, 'RIGHT')):
                 sides.add('RIGHT')
             bottom = layout.cabinet_type == 'UPPER'
             # An end stile beside a bay with its bottom removed runs down
