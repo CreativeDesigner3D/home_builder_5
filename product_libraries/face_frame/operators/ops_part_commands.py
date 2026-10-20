@@ -1230,6 +1230,20 @@ def _on_misc_panel_type_update(self, context):
     part.rebuild()
 
 
+def _on_misc_beadboard_update(self, context):
+    """Live-apply the beadboard pattern / stock: stamp them on the part
+    and re-carve (MiscPart.rebuild reads them for the bead spacing)."""
+    obj = _misc_part_for_dialog(self)
+    if obj is None:
+        return
+    obj['HB_MISC_BEADBOARD_PATTERN'] = self.beadboard_pattern
+    obj['HB_MISC_BEADBOARD_MATERIAL'] = self.beadboard_material
+    if obj.get('HB_MISC_PANEL_TYPE') == 'BEADBOARD':
+        part = types_face_frame.MiscPart()
+        part.obj = obj
+        part.rebuild()
+
+
 class hb_face_frame_OT_set_misc_part_dimensions(bpy.types.Operator):
     """Misc Part properties: size + panel type (plain / beadboard / shiplap).
 
@@ -1275,6 +1289,18 @@ class hb_face_frame_OT_set_misc_part_dimensions(bpy.types.Operator):
         ],
         default='PANEL',
         update=_on_misc_panel_type_update)  # type: ignore
+    beadboard_pattern: EnumProperty(
+        name="Pattern",
+        items=[('STANDARD', "Standard", "Standard bead spacing"),
+               ('WIDE', "Wide", "Wide bead spacing")],
+        default='STANDARD',
+        update=_on_misc_beadboard_update)  # type: ignore
+    beadboard_material: EnumProperty(
+        name="Material",
+        items=[('SOLID', "Solid Wood", "1-5/8\" standard, 3-1/4\" wide"),
+               ('MDF', "MDF", "1-1/2\" standard, 3\" wide")],
+        default='SOLID',
+        update=_on_misc_beadboard_update)  # type: ignore
 
     @classmethod
     def poll(cls, context):
@@ -1291,6 +1317,8 @@ class hb_face_frame_OT_set_misc_part_dimensions(bpy.types.Operator):
         self.part_depth = part.get_input('Width')
         self.part_thickness = part.get_input('Thickness')
         self.panel_type = obj.get('HB_MISC_PANEL_TYPE', 'PANEL')
+        self.beadboard_pattern = obj.get('HB_MISC_BEADBOARD_PATTERN', 'STANDARD')
+        self.beadboard_material = obj.get('HB_MISC_BEADBOARD_MATERIAL', 'SOLID')
         self.source_obj_name = obj.name
         return context.window_manager.invoke_props_dialog(self, width=260)
 
@@ -1301,6 +1329,9 @@ class hb_face_frame_OT_set_misc_part_dimensions(bpy.types.Operator):
         col.prop(self, 'part_thickness')
         col.separator()
         col.prop(self, 'panel_type')
+        if self.panel_type == 'BEADBOARD':
+            col.prop(self, 'beadboard_pattern')
+            col.prop(self, 'beadboard_material')
 
     def execute(self, context):
         # Live-bound via the prop update callbacks; execute is only hit on

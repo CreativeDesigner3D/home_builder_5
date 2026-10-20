@@ -1200,15 +1200,18 @@ def _draw_locked_rail_row(layout, bp, attr, unlock_attr, text):
 
 
 def _draw_interior_texture_settings(col, part_obj, texture):
-    """Shiplap width / direction or v-groove spacing for a textured
-    finished interior. They are the cabinet's own settings, shared with
-    any shiplap or v-groove finished end on it."""
-    if texture not in ('SHIPLAP', 'V_GROOVE'):
+    """Shiplap width / direction, v-groove spacing or beadboard material
+    for a textured finished interior. They are the cabinet's own
+    settings, shared with any matching finished end on it."""
+    if texture not in ('SHIPLAP', 'V_GROOVE', 'BEADBOARD'):
         return
     root = types_face_frame.find_cabinet_root(part_obj)
     if root is None:
         return
     cab = root.face_frame_cabinet
+    if texture == 'BEADBOARD':
+        col.prop(cab, 'beadboard_material', text="Beadboard Material (Cabinet)")
+        return
     if texture == 'V_GROOVE':
         col.prop(cab, 'v_groove_spacing', text="V-Groove Spacing (Cabinet)")
         return
@@ -1514,6 +1517,11 @@ def draw_opening_properties(layout, opening_obj):
         # Inset panel texture (plain / beadboard / shiplap).
         if op.front_type == 'INSET_PANEL':
             fcol.prop(op, 'inset_panel_type', text="Panel Type")
+            root = types_face_frame.find_cabinet_root(opening_obj)
+            if op.inset_panel_type == 'BEADBOARD' and root is not None:
+                cab = root.face_frame_cabinet
+                fcol.prop(cab, 'beadboard_pattern', text="Pattern (Cabinet)")
+                fcol.prop(cab, 'beadboard_material', text="Material (Cabinet)")
 
         # Appliance: filler stiles fitting an appliance. Two input modes
         # toggled by Set Appliance Width (see Face_Frame_Opening_Props).
@@ -2298,6 +2306,13 @@ def draw_finished_ends(layout, cab_props):
                      cab_props.back_finished_end_condition):
         col.prop(cab_props, 'shiplap_board_width', text="Shiplap Width")
         col.prop(cab_props, 'shiplap_direction', text="Shiplap Direction")
+
+    # Beadboard pattern and stock, cabinet-wide like the shiplap settings.
+    if 'BEADBOARD' in (cab_props.left_finished_end_condition,
+                       cab_props.right_finished_end_condition,
+                       cab_props.back_finished_end_condition):
+        col.prop(cab_props, 'beadboard_pattern', text="Beadboard Pattern")
+        col.prop(cab_props, 'beadboard_material', text="Beadboard Material")
 
     # V-groove spacing, for a shop cutting them at something other than
     # the standard sheet layout. Cabinet-wide like the shiplap settings.

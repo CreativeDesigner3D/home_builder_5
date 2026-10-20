@@ -631,17 +631,39 @@ TEXTURED_PANEL_ROLES = {
     'SHIPLAP':   PART_ROLE_SHIPLAP,
     'V_GROOVE':  PART_ROLE_V_GROOVE,
 }
-# Beadboard plank spacing (matches the 'MDF Beadboard' door-panel kind);
-# shiplap course pitch (matches the wood-hood default board width);
-# v-groove plank spacing (the usual 4" sheet-goods layout).
-TEXTURED_BEADBOARD_SPACING = 1.6 * 0.0254
-# A wide-pattern beadboard interior: twice the standard spacing.
-TEXTURED_BEADBOARD_WIDE_SPACING = 3.2 * 0.0254
+# Bead spacing by material and pattern: solid wood beadboard runs 1-5/8"
+# (standard) or 3-1/4" (wide), MDF 1-1/2" or 3".
+BEADBOARD_SPACINGS_IN = {
+    ('SOLID', 'STANDARD'): 1.625, ('SOLID', 'WIDE'): 3.25,
+    ('MDF', 'STANDARD'): 1.5, ('MDF', 'WIDE'): 3.0,
+}
 
 
-def _interior_beadboard_spacing(pattern):
-    return (TEXTURED_BEADBOARD_WIDE_SPACING if pattern == 'WIDE'
-            else TEXTURED_BEADBOARD_SPACING)
+def beadboard_spacing(material='SOLID', pattern='STANDARD'):
+    """Bead spacing in meters for a beadboard material / pattern; an
+    unknown pair (older files) reads as solid wood, standard."""
+    return BEADBOARD_SPACINGS_IN.get(
+        (material, pattern), BEADBOARD_SPACINGS_IN[('SOLID', 'STANDARD')]
+    ) * 0.0254
+
+
+# Default beadboard spacing (solid wood, standard); shiplap course pitch
+# (matches the wood-hood default board width); v-groove plank spacing
+# (the usual 4" sheet-goods layout).
+TEXTURED_BEADBOARD_SPACING = beadboard_spacing()
+TEXTURED_BEADBOARD_WIDE_SPACING = beadboard_spacing('SOLID', 'WIDE')
+
+
+def _cabinet_beadboard_spacing(cab_props):
+    """Bead spacing for a cabinet's beadboard (its ends, backs, returns
+    and inset panels share it)."""
+    return beadboard_spacing(
+        getattr(cab_props, 'beadboard_material', 'SOLID'),
+        getattr(cab_props, 'beadboard_pattern', 'STANDARD'))
+
+
+def _interior_beadboard_spacing(pattern, material='SOLID'):
+    return beadboard_spacing(material, pattern)
 
 
 def _liner_texture(texture, scope, face):
@@ -10292,7 +10314,9 @@ class FaceFrameCabinet(GeoNodeCage):
         self._textured_panel_mesh(
             existing, geo['length'], geo['width'], geo['thickness'],
             condition, geo['mirror_z'],
-            shiplap_vertical=_shiplap_vertical(self.obj.face_frame_cabinet))
+            shiplap_vertical=_shiplap_vertical(self.obj.face_frame_cabinet),
+            beadboard_spacing=_cabinet_beadboard_spacing(
+                self.obj.face_frame_cabinet))
 
     def _build_return_paneled(self, role, name, existing, geo):
         """PANELED applied panel (PanelFaceFrameCabinet) filling the member's
@@ -10826,7 +10850,9 @@ class FaceFrameCabinet(GeoNodeCage):
                         flush_back=texture not in ('NONE', ''))
                     scope = bay.get('finish_bay_texture_scope', 'BACK_SIDES')
                     spacing = _interior_beadboard_spacing(
-                        bay.get('finish_bay_beadboard_pattern', 'STANDARD'))
+                        bay.get('finish_bay_beadboard_pattern', 'STANDARD'),
+                        getattr(self.obj.face_frame_cabinet,
+                                'beadboard_material', 'SOLID'))
                     for face, spec in specs:
                         self._emit_bay_finish_panel(
                             bi, -1, face, spec, t, existing,
@@ -10879,7 +10905,9 @@ class FaceFrameCabinet(GeoNodeCage):
                         want_back=(not bay.get('finish_carcass')) or textured,
                         want_top=False, flush_back=textured)
                     spacing = _interior_beadboard_spacing(
-                        op.finish_opening_beadboard_pattern)
+                        op.finish_opening_beadboard_pattern,
+                        getattr(self.obj.face_frame_cabinet,
+                                'beadboard_material', 'SOLID'))
                     for face, spec in specs:
                         self._emit_bay_finish_panel(
                             bi, oi, face, spec, t, existing,
@@ -11556,7 +11584,8 @@ class FaceFrameCabinet(GeoNodeCage):
                                       condition, mirror_z,
                                       shiplap_pitch=pitch,
                                       shiplap_vertical=_shiplap_vertical(cab),
-                                      v_groove_spacing=_v_groove_spacing(cab))
+                                      v_groove_spacing=_v_groove_spacing(cab),
+                                      beadboard_spacing=_cabinet_beadboard_spacing(cab))
             # Toe-kick corner notch (the CPM runs on the static mesh
             # since the cutpart GN is hidden). BACK skins never notch.
             if side in ('LEFT', 'RIGHT'):
@@ -13775,7 +13804,9 @@ class FaceFrameCabinet(GeoNodeCage):
                     front.obj.location.y = (
                         leaf['part_position'][1] - thickness)
                     self._textured_panel_mesh(
-                        front.obj, length, width, thickness, tex, True)
+                        front.obj, length, width, thickness, tex, True,
+                        beadboard_spacing=_cabinet_beadboard_spacing(
+                            self.obj.face_frame_cabinet))
 
             # Per-leaf frame-width override (tri-view mirror doors zero the
             # interior stiles where mirrors meet). Stamped onto the door
@@ -17913,7 +17944,8 @@ class LegProductFaceFrameCabinet(FaceFrameCabinet):
                                       thickness, condition, mirror_z,
                                       shiplap_pitch=pitch,
                                       shiplap_vertical=_shiplap_vertical(cab),
-                                      v_groove_spacing=_v_groove_spacing(cab))
+                                      v_groove_spacing=_v_groove_spacing(cab),
+                                      beadboard_spacing=_cabinet_beadboard_spacing(cab))
             # The notch cuts the carved mesh - the cutpart's own display
             # is hidden by now, so the modifier has the static mesh to
             # work on, same as a cabinet's skin.
@@ -19636,7 +19668,10 @@ class MiscPart(CabinetPart):
         # the grooves on the top face. The builder hides the GN display
         # and stamps TAG_STATIC_TEXTURED itself.
         FaceFrameCabinet._textured_panel_mesh(
-            obj, length, width, t, ptype, mirror_z=True)
+            obj, length, width, t, ptype, mirror_z=True,
+            beadboard_spacing=beadboard_spacing(
+                obj.get('HB_MISC_BEADBOARD_MATERIAL', 'SOLID'),
+                obj.get('HB_MISC_BEADBOARD_PATTERN', 'STANDARD')))
         obj.data.transform(Matrix.Translation((0.0, 0.0, t)))
         obj.data.update()
         # The static mesh renders its own slots; seed them from the

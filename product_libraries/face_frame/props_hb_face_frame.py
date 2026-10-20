@@ -8216,6 +8216,27 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         update=_update_cabinet_dim,
     )  # type: ignore
 
+    # Beadboard pattern and stock for this cabinet's beadboard (ends,
+    # backs, returns, inset panels, and the bead material of finished
+    # interiors). Solid wood beads at 1-5/8" / 3-1/4", MDF at 1-1/2" / 3".
+    beadboard_pattern: EnumProperty(
+        name="Beadboard Pattern",
+        items=[('STANDARD', "Standard", "Standard bead spacing"),
+               ('WIDE', "Wide", "Wide bead spacing")],
+        default='STANDARD',
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    beadboard_material: EnumProperty(
+        name="Beadboard Material",
+        items=[('SOLID', "Solid Wood",
+                "Solid wood beadboard: 1-5/8\" standard, 3-1/4\" wide"),
+               ('MDF', "MDF",
+                "1/4\" MDF beadboard, solid colors only: 1-1/2\" standard, "
+                "3\" wide")],
+        default='SOLID',
+        update=_update_cabinet_dim,
+    )  # type: ignore
+
     # Spacing between v-grooves, where a shop cuts them at something
     # other than the usual 4" sheet layout. 0 keeps that default.
     v_groove_spacing: FloatProperty(
