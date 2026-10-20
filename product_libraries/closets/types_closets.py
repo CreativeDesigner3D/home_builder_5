@@ -1720,6 +1720,10 @@ def slab_target(hit_obj):
         dims = _cage_dims(root)
         if dims is None:
             return None
+        low = (_slab_on_drawers(root, hit_obj)
+               or _slab_low_bays(root, hit_obj, dims[2]))
+        if low is not None:
+            return low
         sp = root.hb_closet_starter
         top = dims[2]
         if getattr(sp, 'include_countertop', False):
@@ -1727,6 +1731,76 @@ def slab_target(hit_obj):
         frame = root.matrix_world @ Matrix.Translation((0.0, 0.0, top))
         return frame, dims[0], dims[1], root.name
     return None
+
+
+def _in_root(obj, root):
+    """obj's matrix in root's space, from the local transforms, so it
+    holds while the depsgraph has not caught up with a recalc."""
+    m = Matrix.Identity(4)
+    node = obj
+    while node is not None and node != root:
+        m = node.matrix_parent_inverse @ node.matrix_basis @ m
+        node = node.parent
+    return m if node == root else None
+
+
+def _slab_on_drawers(root, hit_obj):
+    """slab_target for a slab dropped on a floor bay with a drawer
+    stack below an opening: it sits on the shelf over the drawers,
+    across the bay between its partitions. None otherwise."""
+    bay_obj = find_bay_cage(hit_obj)
+    if bay_obj is None:
+        return None
+    openings = []
+    for child in bay_obj.children:
+        if child.get(TAG_OPENING_CAGE):
+            m = _in_root(child, root)
+            if m is not None:
+                openings.append((m.translation.z, child, m))
+    openings.sort(key=lambda t: t[0])
+    above = None
+    for k, (_z, opening, _m) in enumerate(openings[:-1]):
+        if any(c.get('hb_part_role') == PART_ROLE_DRAWER_FRONT
+               for c in opening.children):
+            above = openings[k + 1]
+    if above is None:
+        return None
+    bay_m = _in_root(bay_obj, root)
+    dims = _cage_dims(bay_obj)
+    if bay_m is None or dims is None:
+        return None
+    frame = root.matrix_world @ Matrix.Translation(
+        (bay_m.translation.x, bay_m.translation.y, above[0]))
+    return frame, dims[0], dims[1], root.name + " (on drawers)"
+
+
+def _slab_low_bays(root, hit_obj, run_top):
+    """slab_target for a slab dropped on a floor bay standing lower
+    than the run: it covers that bay and its same-height neighbours
+    on their own top, as a countertop over bays would. None when the
+    bay is as tall as the run, hangs, or was not hit."""
+    bay_obj = find_bay_cage(hit_obj)
+    if bay_obj is None:
+        return None
+    try:
+        bays = ClosetStarter(root)._sorted_bays()
+        if bay_obj not in bays:
+            return None
+        layout = solve_starter_layout(root)
+        rng = bay_countertop_bays(layout, bays.index(bay_obj))
+        if rng is None:
+            return None
+        span = bay_countertop_span(layout, rng[0], rng[1],
+                                   run_sizes(root).panel_thickness)
+    except Exception:
+        return None
+    if span['z'] > run_top - 1e-3:
+        return None
+    frame = root.matrix_world @ Matrix.Translation(
+        (span['x0'], 0.0, span['z']))
+    count = rng[1] - rng[0] + 1
+    label = root.name + (" (%d bays)" % count if count > 1 else " (bay)")
+    return frame, span['x1'] - span['x0'], span['depth'], label
 
 
 def slab_wall(hit_obj):
