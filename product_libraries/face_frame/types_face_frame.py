@@ -17147,6 +17147,41 @@ class LegProductFaceFrameCabinet(FaceFrameCabinet):
         mod.show_viewport = active
         mod.show_render = active
 
+    @staticmethod
+    def _set_back_rabbet(panel_obj, active, length, width, back_t, depth):
+        """Drive a side panel's 'Back Notch' cutout: the rabbet down its
+        back edge that a back lands in, one back thickness wide and
+        `depth` into the inside face. Same cutout and orientation as a
+        cabinet's finished end; added the first time it is wanted."""
+        mod = panel_obj.modifiers.get('Back Notch')
+        if mod is None:
+            if not active:
+                return
+            cpm = GeoNodeCutpart(panel_obj).add_part_modifier(
+                'CPM_CUTOUT', 'Back Notch')
+            cpm.set_input('Flip Z', panel_obj.get('hb_part_role')
+                          == PART_ROLE_LEG_PANEL_RIGHT)
+            mod = cpm.mod
+        if mod.node_group is None:
+            return
+        if not active:
+            length = width = back_t = depth = 0.0
+        ng = mod.node_group
+        # Y reads from the panel's front edge (Mirror Y), so the back
+        # edge is at Y = Width.
+        for input_name, value in (
+            ('X', 0.0),
+            ('End X', length),
+            ('Y', max(0.0, width - back_t)),
+            ('End Y', width),
+            ('Route Depth', depth),
+        ):
+            node_input = ng.interface.items_tree.get(input_name)
+            if node_input is not None:
+                hb_utils.set_gn_input(mod, node_input.identifier, value)
+        mod.show_viewport = active
+        mod.show_render = active
+
     def _build_curved_leg_panel(self, width, height, depth, leg):
         """(Re)build the curved support-leg panel mesh in place.
 
@@ -17313,6 +17348,19 @@ class LegProductFaceFrameCabinet(FaceFrameCabinet):
         # Back shifts the side panels forward by its thickness.
         back_off = bt if has_back else 0.0
 
+        # Where a back that runs off one side of the leg meets the leg's
+        # panel. Past an intermediate partition it runs on to the far
+        # face, flush with it. On a finished end it lands in a rabbet
+        # down the panel's back edge, half the panel deep, the same
+        # joint a cabinet's finished end takes - so that panel keeps its
+        # full depth and the rabbet makes the room. A back on both
+        # sides, or on the side away from a finished face, keeps the
+        # leg's centreline.
+        back_lands_left = (ibrn and not ibln and finish == 'FINISH_LEFT'
+                           and not only_stile and not left_paneled)
+        back_lands_right = (ibln and not ibrn and finish == 'FINISH_RIGHT'
+                            and not only_stile and not right_paneled)
+
         def place(obj, length, w, thickness, loc, rot, mirror):
             gn = GeoNodeCutpart(obj)
             gn.set_input('Length', length)
@@ -17333,7 +17381,8 @@ class LegProductFaceFrameCabinet(FaceFrameCabinet):
         # The back takes its thickness off the panel's back edge; the
         # front edge stays on the face frame's back face.
         panel_max = depth - fft - back_off
-        l_depth = min(olp, panel_max) if olp > 0.0 else panel_max
+        l_max = depth - fft if back_lands_left else panel_max
+        l_depth = min(olp, l_max) if olp > 0.0 else l_max
         l_y = -depth + fft + l_depth
         place(L, height, l_depth, mt, (l_x, l_y, 0.0),
               (0.0, math.radians(-90), 0.0),
@@ -17344,7 +17393,8 @@ class LegProductFaceFrameCabinet(FaceFrameCabinet):
         L['IS_FINISHED'] = (finish != 'INTERMEDIATE')
 
         # --- Right side panel ---
-        r_depth = min(orp, panel_max) if orp > 0.0 else panel_max
+        r_max = depth - fft if back_lands_right else panel_max
+        r_depth = min(orp, r_max) if orp > 0.0 else r_max
         r_y = -depth + fft + r_depth
         place(R, height, r_depth, mt, (width, r_y, 0.0),
               (0.0, math.radians(-90), 0.0),
@@ -17353,6 +17403,15 @@ class LegProductFaceFrameCabinet(FaceFrameCabinet):
         R.hide_viewport = not r_visible
         R.hide_render = not r_visible
         R['IS_FINISHED'] = True
+
+        # The rabbet the back lands in; it only cuts when the panel
+        # still reaches the back (a shortened panel has no back edge
+        # there to rabbet).
+        rab = mt / 2.0
+        self._set_back_rabbet(L, back_lands_left and l_depth >= l_max - 1e-6,
+                              height, l_depth, bt, rab)
+        self._set_back_rabbet(R, back_lands_right and r_depth >= r_max - 1e-6,
+                              height, r_depth, bt, rab)
 
         # Flush toe kick: a setback smaller than the face-frame thickness
         # puts the kick plane at (or within) the face-frame band, so the
@@ -17466,8 +17525,30 @@ class LegProductFaceFrameCabinet(FaceFrameCabinet):
         # Back spans only the included nailer side(s); it sits at y=0
         # (the very back) and the side panels were shifted forward to
         # clear it.
-        back_w = (b_width if ibln else 0.0) + (b_width if ibrn else 0.0)
-        back_x = width / 2.0 + (b_width if ibrn else 0.0)
+        # Each side's back runs b_width out from the leg's centreline;
+        # a back on one side only starts at the panel instead (see
+        # back_lands_left above), and the nailer butts the panel's
+        # inside face.
+        if ibrn and not ibln:
+            if back_lands_left:
+                back_lo, nail_lo = mt - rab, mt
+            elif finish == 'INTERMEDIATE':
+                back_lo, nail_lo = l_x, l_x + mt
+            else:
+                back_lo = nail_lo = width / 2.0
+        else:
+            back_lo = nail_lo = width / 2.0 - (b_width if ibln else 0.0)
+        if ibln and not ibrn:
+            if back_lands_right:
+                back_hi, nail_hi = width - mt + rab, width - mt
+            elif finish == 'INTERMEDIATE':
+                back_hi, nail_hi = l_x + mt, l_x
+            else:
+                back_hi = nail_hi = width / 2.0
+        else:
+            back_hi = nail_hi = width / 2.0 + (b_width if ibrn else 0.0)
+        back_w = back_hi - back_lo
+        back_x = back_hi
         place(BACK, height, back_w, bt, (back_x, 0.0, 0.0),
               (0.0, math.radians(-90), math.radians(-90)),
               {'Mirror Y': True, 'Mirror Z': True})
@@ -17475,13 +17556,17 @@ class LegProductFaceFrameCabinet(FaceFrameCabinet):
         BACK.hide_render = not has_back
 
         # Horizontal nailers at the top back, one per included side.
-        place(NL, b_width, nw, nt, (width / 2.0, 0.0, height),
+        nl_x = nail_hi if (ibln and not ibrn) else width / 2.0
+        place(NL, max(0.0, nl_x - (width / 2.0 - b_width)), nw, nt,
+              (nl_x, 0.0, height),
               (math.radians(90), 0.0, 0.0),
               {'Mirror X': True, 'Mirror Y': True})
         NL.hide_viewport = not ibln
         NL.hide_render = not ibln
 
-        place(NR, b_width, nw, nt, (width / 2.0, 0.0, height),
+        nr_x = nail_lo if (ibrn and not ibln) else width / 2.0
+        place(NR, max(0.0, width / 2.0 + b_width - nr_x), nw, nt,
+              (nr_x, 0.0, height),
               (math.radians(90), 0.0, 0.0),
               {'Mirror X': False, 'Mirror Y': True})
         NR.hide_viewport = not ibrn
