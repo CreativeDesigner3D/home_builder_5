@@ -6565,6 +6565,15 @@ def _update_cabinet_depth(self, context):
             from . import corner_neighbors
             corner_neighbors.follow_corner_resize(root, self.width, old)
     _update_cabinet_dim(self, context)
+    # A depth step against a neighbor exposes the front of the deeper
+    # side, so both ends and the neighbors' facing ends re-resolve.
+    # Bulk writers (placement, imports) run inside suspend_recalc and
+    # resolve exposure themselves once the cabinets are built.
+    from . import types_face_frame, exposure
+    root = types_face_frame.find_cabinet_root(self.id_data)
+    if (root is not None and types_face_frame._RECALC_SUSPEND_DEPTH == 0
+            and exposure._is_face_frame_carcass(root)):
+        exposure.recalc_with_neighbors(root)
 
 
 _BOTTOM_RAIL_PROFILE_ITEMS_CACHE = []

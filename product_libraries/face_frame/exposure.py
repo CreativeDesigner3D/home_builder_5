@@ -911,6 +911,22 @@ FINISH_KICK_CORNER_KEY = 'hb_finish_kick_corner'
 FINISH_KICK_CORNER_WITH_KEY = 'hb_finish_kick_corner_with'
 
 
+# How far a neighbor's front may sit behind this side's front before
+# the step reads as an exposed strip of the side.
+_DEPTH_TOL = units.inch(0.125)
+
+
+def _side_front_y(cab_obj, side):
+    """Front plane Y of one end of a face-frame carcass in its parent's
+    local space. An unlocked side depth (angled front) wins over the
+    cabinet depth at that end."""
+    cab = cab_obj.face_frame_cabinet
+    depth = cab.depth
+    if getattr(cab, f'unlock_{side}_depth', False):
+        depth = getattr(cab, f'{side}_depth', depth)
+    return cab_obj.location.y - depth
+
+
 def _side_exposure(cab_obj, side):
     """Returns (exposure_state, dishwasher_adjacent, wall_edge).
 
@@ -961,7 +977,13 @@ def _side_exposure(cab_obj, side):
         return ('UNEXPOSED', False, True)
 
     target_x = cab_x if side == 'left' else cab_x + cab_w
+    own_front = _side_front_y(cab_obj, side)
+    other_side = 'right' if side == 'left' else 'left'
     bands = []
+    # Bands from neighbors that reach at least as far forward as this
+    # side. A shallower cabinet beside a deeper one leaves the front of
+    # the deeper side showing, so it only counts toward PARTIAL.
+    full_depth_bands = []
     dishwasher_seen = False
     hood_seen = False
 
@@ -987,6 +1009,9 @@ def _side_exposure(cab_obj, side):
             hood_seen = True
             continue
         bands.append(zspan)
+        if (not _is_face_frame_carcass(sib) or sib.get('IS_LEG_PRODUCT')
+                or _side_front_y(sib, other_side) <= own_front + _DEPTH_TOL):
+            full_depth_bands.append(zspan)
         if _is_dishwasher(sib):
             dishwasher_seen = True
 
@@ -1006,9 +1031,10 @@ def _side_exposure(cab_obj, side):
             return ('UNEXPOSED', False, False)
         return ('EXPOSED', False, False)
 
-    coverage = _union_zcoverage(bands, cab_z, cab_z + cab_h)
-    if coverage >= cab_h - EPS:
+    full_coverage = _union_zcoverage(full_depth_bands, cab_z, cab_z + cab_h)
+    if full_coverage >= cab_h - EPS:
         return ('UNEXPOSED', dishwasher_seen, False)
+    coverage = _union_zcoverage(bands, cab_z, cab_z + cab_h)
     if coverage > EPS or hood_seen:
         return ('PARTIAL', dishwasher_seen, False)
     return ('EXPOSED', False, False)
