@@ -10159,10 +10159,86 @@ class FaceFrameCabinet(GeoNodeCage):
                 if at_left and at_right else 0.0)
         existing.location = (segment['x'] - ext_l + ret_l,
                              segment['y'] + thickness + void, bottom_z)
+        width = segment['width'] + ext_l + ext_r - ret_l - ret_r
         part.set_input('Length',    layout.dim_z - bottom_z)
-        part.set_input('Width',
-                       segment['width'] + ext_l + ext_r - ret_l - ret_r)
+        part.set_input('Width', width)
         part.set_input('Thickness', thickness)
+        blank = self._shape_arched_back(
+            existing, getattr(cab, 'back_finished_rise', 0.0), width,
+            layout.dim_z - bottom_z, thickness)
+        if blank is not None:
+            # The bent board is cut from a flat blank as long as its
+            # outer face; the cutpart carries that size for cut lists.
+            part.set_input('Width', blank)
+
+    @staticmethod
+    def _shape_arched_back(part_obj, rise, width, height, thickness):
+        """Bow a FINISHED back panel out behind the cabinet by ``rise``
+        at its middle: one bent board of ``thickness`` whose outer face
+        runs from the panel's left edge to its right edge, so the ends
+        stay within the cabinet's width. Written as a static mesh with the cutpart display hidden,
+        like the textured panels. Returns the outer face's length (the
+        flat blank) or None when the back stays flat, in which case a
+        previously bent panel goes back to the live cutpart."""
+        if rise <= 1e-6 or width <= 0.0 or height <= 0.0:
+            if part_obj.get(TAG_STATIC_TEXTURED):
+                if part_obj.data is not None:
+                    part_obj.data.clear_geometry()
+                mod_name = getattr(part_obj.home_builder, 'mod_name', '')
+                mod = part_obj.modifiers.get(mod_name) if mod_name else None
+                if mod is not None:
+                    mod.show_viewport = True
+                    mod.show_render = True
+                del part_obj[TAG_STATIC_TEXTURED]
+            return None
+        import bmesh
+        from ..common import tambour
+        rise = min(rise, width / 2.0)
+        centre, radius, a0, sweep = tambour._arc(width, rise)
+        steps = 48
+        # Cabinet-aligned offsets from the part origin: the flat panel
+        # fills y in [-thickness, 0], so the outer face's ends sit at 0
+        # and it bows toward +Y (behind the cabinet); the inner face is
+        # a thickness in toward the centre, ends cut square to the arc.
+        inv = part_obj.rotation_euler.to_matrix().inverted()
+        inner, outer = [], []
+        for i in range(steps + 1):
+            a = a0 + sweep * i / steps
+            radial = Vector((math.cos(a), math.sin(a)))
+            p_out = centre + radial * radius
+            p_in = centre + radial * max(radius - thickness, 0.0)
+            inner.append((p_in.x, p_in.y))
+            outer.append((p_out.x, p_out.y))
+        # Square-cut ends lift the inner face's ends off the outer chord:
+        # drop the board so they land on the carcass back.
+        drop = -thickness - min(y for _x, y in inner)
+        inner = [(x, y + drop) for x, y in inner]
+        outer = [(x, y + drop) for x, y in outer]
+        bm = bmesh.new()
+
+        def ring(points, z):
+            return [bm.verts.new(inv @ Vector((x, y, z))) for x, y in points]
+
+        in_lo, in_hi = ring(inner, 0.0), ring(inner, height)
+        out_lo, out_hi = ring(outer, 0.0), ring(outer, height)
+        for i in range(steps):
+            j = i + 1
+            bm.faces.new((in_lo[i], in_lo[j], in_hi[j], in_hi[i]))
+            bm.faces.new((out_lo[i], out_hi[i], out_hi[j], out_lo[j]))
+            bm.faces.new((in_lo[i], out_lo[i], out_lo[j], in_lo[j]))
+            bm.faces.new((in_hi[i], in_hi[j], out_hi[j], out_hi[i]))
+        for k in (0, steps):
+            bm.faces.new((in_lo[k], in_hi[k], out_hi[k], out_lo[k]))
+        bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+        bm.to_mesh(part_obj.data)
+        bm.free()
+        mod_name = getattr(part_obj.home_builder, 'mod_name', '')
+        mod = part_obj.modifiers.get(mod_name) if mod_name else None
+        if mod is not None:
+            mod.show_viewport = False
+            mod.show_render = False
+        part_obj[TAG_STATIC_TEXTURED] = True
+        return abs(sweep) * radius
 
     def _extend_finished_side_panels(self, layout):
         """Run a FINISHED carcass side panel past the cabinet back by the
@@ -20269,6 +20345,71 @@ def apply_active_finish_to_product(product_obj):
     product_obj['STYLE_NAME'] = cs.name
 
 
+# A loose drawer front's box is sized as if the front overlaid its
+# opening by the standard 1/2" all round, then takes the usual drawer
+# box clearances inside that opening.
+DOOR_PART_BOX_OVERLAY = inch(0.5)
+DOOR_PART_BOX_DEPTH = inch(21.0)
+# Door-local -> box-local: the box runs across the front (door -Y), back
+# from its back face (door -Z) and up (door +X).
+_DOOR_PART_BOX_ROTATION = Matrix(((0.0, 0.0, 1.0),
+                                  (-1.0, 0.0, 0.0),
+                                  (0.0, -1.0, 0.0))).to_euler()
+
+
+def position_door_part_box(door_obj):
+    """Create, resize or remove the drawer box behind a Door Part set to
+    a DRAWER front with DOOR_PART_DRAWER_BOX on. Depth is the part's
+    DOOR_PART_BOX_DEPTH; width and height follow the front (see
+    DOOR_PART_BOX_OVERLAY). Returns the box Object or None."""
+    existing = next((c for c in door_obj.children
+                     if c.get('hb_part_role') == PART_ROLE_DRAWER_BOX), None)
+    want = (door_obj.get('DOOR_PART_FRONT_KIND', 'DOOR') == 'DRAWER'
+            and door_obj.get('DOOR_PART_DRAWER_BOX', False))
+    scene_props = bpy.context.scene.hb_face_frame
+    dims = None
+    if want:
+        part = GeoNodeCutpart(door_obj)
+        length = part.get_input('Length')      # front height
+        width = part.get_input('Width')        # front width
+        side_clr, top_clr, bottom_clr, _rear = drawer_box_clearances(
+            scene_props)
+        ov = DOOR_PART_BOX_OVERLAY
+        open_w = width - 2.0 * ov
+        open_h = length - 2.0 * ov
+        box_dx = open_w - 2.0 * side_clr
+        box_dz = open_h - top_clr - bottom_clr
+        if (uses_blum_tandem_sizing(scene_props)
+                or scene_props.use_stock_drawer_box_heights):
+            stock = stock_drawer_box_height(open_h)
+            if stock is not None:
+                box_dz = min(stock, open_h - bottom_clr)
+        box_dy = door_obj.get('DOOR_PART_BOX_DEPTH', DOOR_PART_BOX_DEPTH)
+        if box_dx > 0.0 and box_dy > 0.0 and box_dz > 0.0:
+            dims = (box_dx, box_dy, box_dz, ov + bottom_clr, ov + side_clr)
+    if dims is None:
+        if existing is not None:
+            hb_utils.delete_obj_and_children(existing)
+        return None
+    box_dx, box_dy, box_dz, up, across = dims
+    if existing is not None:
+        box = GeoNodeDrawerBox(existing)
+    else:
+        box = GeoNodeDrawerBox()
+        box.create('Drawer Box')
+        box.obj.parent = door_obj
+        box.obj['hb_part_role'] = PART_ROLE_DRAWER_BOX
+        box.obj['CABINET_PART'] = True
+        box.obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_drawer_box_commands'
+    box.set_input('Dim X', box_dx)
+    box.set_input('Dim Y', box_dy)
+    box.set_input('Dim Z', box_dz)
+    # Front-left-bottom corner against the back face of the front.
+    box.obj.location = (up, -across, 0.0)
+    box.obj.rotation_euler = _DOOR_PART_BOX_ROTATION
+    return box.obj
+
+
 def position_door_part_pull(door_obj):
     """Create or reposition a scene-settings door pull on a Door Part.
 
@@ -20277,6 +20418,8 @@ def position_door_part_pull(door_obj):
     standalone. The pull is parented to the door in front-local space
     (X = Length up, -Y = Width across, +Z = front face). Reused on resize
     so the pull tracks the door. Returns the pull Object or None."""
+    # The drawer box follows the same resize / front-kind changes.
+    position_door_part_box(door_obj)
     scene_props = bpy.context.scene.hb_face_frame
     existing = next((c for c in door_obj.children if c.get('IS_CABINET_PULL')), None)
 

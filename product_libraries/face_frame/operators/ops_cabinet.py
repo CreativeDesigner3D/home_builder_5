@@ -5394,6 +5394,80 @@ def _bay_is_flush_kick(bay_obj):
     return bay_obj.face_frame_bay.kick_height <= _FLUSH_KICK_EPS
 
 
+def apply_flush_toe_kick(root, group, enable):
+    """Make the bays in ``group`` (all of ``root``) flush toe kick, or
+    revert them. Flush = bay kick height 0 (auto-locked so the kick
+    distribution leaves it alone) + a wide bottom rail + the stiles on
+    the OUTER flanks of the run dropped to the floor, so the wide rail
+    butts into full-height stiles. Mid stiles BETWEEN the bays are left
+    alone. Reverting unlocks the kick height back to the cabinet's toe
+    kick height, returns the bottom rail to the cabinet default and
+    lifts the flank stiles unless the neighboring bay still needs them.
+    The caller recalcs."""
+    cab = root.face_frame_cabinet
+    for bay_obj in group:
+        bp = bay_obj.face_frame_bay
+        if enable:
+            # Writing kick_height auto-locks unlock_kick_height via
+            # its update callback (same mechanism BAY_PROPS uses for
+            # the lap drawer lift).
+            bp.kick_height = 0.0
+            bp.unlock_bottom_rail = True
+            # The wide rail covers the kick zone plus the rail itself,
+            # so it tracks the cabinet's toe kick height + bottom rail
+            # width; the constant only backstops degenerate values.
+            rail = cab.toe_kick_height + cab.bottom_rail_width
+            bp.bottom_rail_width = (rail if rail > _FLUSH_KICK_EPS
+                                    else FLUSH_KICK_BOTTOM_RAIL)
+        else:
+            # Unlocking re-syncs the bay to the cabinet's
+            # toe_kick_height on the next recalc distribution.
+            if bp.unlock_kick_height:
+                bp.unlock_kick_height = False
+            bp.bottom_rail_width = cab.bottom_rail_width
+            bp.unlock_bottom_rail = False
+    # Flank stiles: only the OUTER flanks of the run in this cabinet -
+    # mid stiles between the bays stay put.
+    indices = sorted(b.get('hb_bay_index', 0) for b in group)
+    lo, hi = indices[0], indices[-1]
+    bays_by_idx = {b.get('hb_bay_index', 0): b for b in root.children
+                   if b.get(types_face_frame.TAG_BAY_CAGE)}
+    last = max(bays_by_idx) if bays_by_idx else 0
+
+    def _neighbor_needs(idx):
+        # A neighboring bay outside the run keeps a shared stile on
+        # the floor when it floats / lost its bottom (lap drawer,
+        # support frame) or is itself flush-kick.
+        b = bays_by_idx.get(idx)
+        if b is None:
+            return False
+        return _bay_wants_floor_stiles(b) or _bay_is_flush_kick(b)
+
+    def _set_mid(gap, neighbor_idx):
+        if not (0 <= gap < len(cab.mid_stile_widths)):
+            return
+        ms = cab.mid_stile_widths[gap]
+        if enable:
+            value = True
+        elif ms.to_floor and _neighbor_needs(neighbor_idx):
+            value = True
+        else:
+            value = False
+        if ms.to_floor != value:
+            ms.to_floor = value
+
+    if lo == 0:
+        if cab.extend_left_stile_to_floor != enable:
+            cab.extend_left_stile_to_floor = enable
+    else:
+        _set_mid(lo - 1, lo - 1)
+    if hi == last:
+        if cab.extend_right_stile_to_floor != enable:
+            cab.extend_right_stile_to_floor = enable
+    else:
+        _set_mid(hi, hi + 1)
+
+
 class hb_face_frame_OT_set_bay_back_type(bpy.types.Operator):
     """Set the back type on the selected bays.
 
@@ -5488,75 +5562,11 @@ class hb_face_frame_OT_toggle_flush_toe_kick(bpy.types.Operator):
                      for _root, group in by_root.values() for b in group)
         with types_face_frame.suspend_recalc():
             for root, group in by_root.values():
-                self._apply(root, group, enable)
+                apply_flush_toe_kick(root, group, enable)
                 types_face_frame.recalculate_face_frame_cabinet(root)
         self.report({'INFO'}, "Flush toe kick %s" %
                     ("set" if enable else "removed"))
         return {'FINISHED'}
-
-    def _apply(self, root, group, enable):
-        cab = root.face_frame_cabinet
-        for bay_obj in group:
-            bp = bay_obj.face_frame_bay
-            if enable:
-                # Writing kick_height auto-locks unlock_kick_height via
-                # its update callback (same mechanism BAY_PROPS uses for
-                # the lap drawer lift).
-                bp.kick_height = 0.0
-                bp.unlock_bottom_rail = True
-                # The wide rail covers the kick zone plus the rail itself,
-                # so it tracks the cabinet's toe kick height + bottom rail
-                # width; the constant only backstops degenerate values.
-                rail = cab.toe_kick_height + cab.bottom_rail_width
-                bp.bottom_rail_width = (rail if rail > _FLUSH_KICK_EPS
-                                        else FLUSH_KICK_BOTTOM_RAIL)
-            else:
-                # Unlocking re-syncs the bay to the cabinet's
-                # toe_kick_height on the next recalc distribution.
-                if bp.unlock_kick_height:
-                    bp.unlock_kick_height = False
-                bp.bottom_rail_width = cab.bottom_rail_width
-                bp.unlock_bottom_rail = False
-        # Flank stiles: only the OUTER flanks of the selected run in
-        # this cabinet - mid stiles between selected bays stay put.
-        indices = sorted(b.get('hb_bay_index', 0) for b in group)
-        lo, hi = indices[0], indices[-1]
-        bays_by_idx = {b.get('hb_bay_index', 0): b for b in root.children
-                       if b.get(types_face_frame.TAG_BAY_CAGE)}
-        last = max(bays_by_idx) if bays_by_idx else 0
-
-        def _neighbor_needs(idx):
-            # A neighboring bay outside the run keeps a shared stile on
-            # the floor when it floats / lost its bottom (lap drawer,
-            # support frame) or is itself flush-kick.
-            b = bays_by_idx.get(idx)
-            if b is None:
-                return False
-            return _bay_wants_floor_stiles(b) or _bay_is_flush_kick(b)
-
-        def _set_mid(gap, neighbor_idx):
-            if not (0 <= gap < len(cab.mid_stile_widths)):
-                return
-            ms = cab.mid_stile_widths[gap]
-            if enable:
-                value = True
-            elif ms.to_floor and _neighbor_needs(neighbor_idx):
-                value = True
-            else:
-                value = False
-            if ms.to_floor != value:
-                ms.to_floor = value
-
-        if lo == 0:
-            if cab.extend_left_stile_to_floor != enable:
-                cab.extend_left_stile_to_floor = enable
-        else:
-            _set_mid(lo - 1, lo - 1)
-        if hi == last:
-            if cab.extend_right_stile_to_floor != enable:
-                cab.extend_right_stile_to_floor = enable
-        else:
-            _set_mid(hi, hi + 1)
 
 
 # ---------------------------------------------------------------------------

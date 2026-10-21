@@ -1380,6 +1380,15 @@ def _rebuild_door_part(obj):
         ds.assign_style_to_front(obj)
 
 
+def _on_door_box_update(self, context):
+    """Live-apply the drawer box toggle / depth and rebuild the box."""
+    obj = _door_part_for_dialog(self)
+    if obj is not None:
+        obj['DOOR_PART_DRAWER_BOX'] = self.drawer_box
+        obj['DOOR_PART_BOX_DEPTH'] = self.box_depth
+        types_face_frame.position_door_part_box(obj)
+
+
 def _on_door_width_update(self, context):
     """Live-apply Width -> the door's 'Width' input, then re-track the pull."""
     obj = _door_part_for_dialog(self)
@@ -1430,6 +1439,11 @@ class hb_face_frame_OT_set_door_part_dimensions(bpy.types.Operator):
                                update=_on_door_height_update)  # type: ignore  # -> 'Length'
     part_thickness: FloatProperty(name="Thickness", unit='LENGTH', precision=4, min=0.0,
                                   update=_on_door_thickness_update)  # type: ignore
+    # Drawer front only: a drawer box behind it, sized from the front.
+    drawer_box: BoolProperty(name="Drawer Box",
+                             update=_on_door_box_update)  # type: ignore
+    box_depth: FloatProperty(name="Box Depth", unit='LENGTH', precision=4,
+                             min=0.0, update=_on_door_box_update)  # type: ignore
 
     @classmethod
     def poll(cls, context):
@@ -1444,6 +1458,9 @@ class hb_face_frame_OT_set_door_part_dimensions(bpy.types.Operator):
         self.part_width = part.get_input('Width')
         self.part_height = part.get_input('Length')
         self.part_thickness = part.get_input('Thickness')
+        self.drawer_box = bool(obj.get('DOOR_PART_DRAWER_BOX', False))
+        self.box_depth = obj.get('DOOR_PART_BOX_DEPTH',
+                                 types_face_frame.DOOR_PART_BOX_DEPTH)
         self.source_obj_name = obj.name
         return context.window_manager.invoke_props_dialog(self, width=260)
 
@@ -1452,6 +1469,13 @@ class hb_face_frame_OT_set_door_part_dimensions(bpy.types.Operator):
         col.prop(self, 'part_width')
         col.prop(self, 'part_height')
         col.prop(self, 'part_thickness')
+        obj = bpy.data.objects.get(self.source_obj_name)
+        if obj is not None and obj.get('DOOR_PART_FRONT_KIND') == 'DRAWER':
+            col.separator()
+            col.prop(self, 'drawer_box')
+            row = col.row(align=True)
+            row.enabled = self.drawer_box
+            row.prop(self, 'box_depth')
 
     def execute(self, context):
         # Live-bound via the prop update callbacks; nothing to do on OK.
@@ -3165,6 +3189,8 @@ class hb_face_frame_OT_set_finished_end_condition(bpy.types.Operator):
                 row = layout.row(align=True)
                 row.prop(cab, 'back_finished_extend_left', text="Extend L")
                 row.prop(cab, 'back_finished_extend_right', text="Extend R")
+            if fin_type == 'FINISHED':
+                layout.prop(cab, 'back_finished_rise', text="Arch Rise")
             return
         layout.prop(cab, f'{key}_finished_end_condition',
                     text=f"{self.side.title()} Finished End")

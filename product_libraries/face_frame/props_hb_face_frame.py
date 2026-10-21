@@ -3551,8 +3551,9 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                     me.materials[0] = slot_mat
                 continue
 
+            # An arched finished back is a bent mesh the same way.
             if ((role in ('BEADBOARD', 'SHIPLAP', 'V_GROOVE', 'WOOD_TOP',
-                          'WOOD_TOP_EDGE', 'INSET_PANEL')
+                          'WOOD_TOP_EDGE', 'INSET_PANEL', 'FINISHED_BACK')
                  or child.get('hb_return_member'))
                     and child.get('HB_STATIC_TEXTURED')):
                 slot_mat = ov_mat if ov_mat is not None else finish_mat
@@ -8414,6 +8415,16 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         name="Back Extend Right", default=0.0, unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
     )  # type: ignore
+    # A FINISHED back bowed out behind the cabinet (the round back of an
+    # island): how far its middle stands off the flat back. 0 = flat.
+    back_finished_rise: FloatProperty(
+        name="Back Arch Rise", default=0.0, min=0.0, unit='LENGTH',
+        precision=4,
+        description="Bow the finished back out behind the cabinet by "
+                    "this much at its middle (half the width makes a "
+                    "half-round back). 0 keeps it flat",
+        update=_update_cabinet_dim,
+    )  # type: ignore
     left_side_finished_extend_back: FloatProperty(
         name="Left Side Extend Back", default=0.0, unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
@@ -10032,6 +10043,44 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
     )  # type: ignore
 
 
+BAY_TOE_KICK_ITEMS = [
+    ('DEFAULT', "Cabinet Default", "Use the cabinet's toe kick"),
+    ('FLUSH', "Flush (Wide Bottom Rail)",
+     "No kick recess: the bottom rail runs to the floor between "
+     "full-height stiles"),
+    ('FLOATING', "Floating", "This bay is lifted off the floor"),
+]
+
+
+def _get_bay_toe_kick_type(self):
+    if self.floating_bay:
+        return 2
+    if self.unlock_kick_height and self.kick_height <= 1e-6:
+        return 1
+    return 0
+
+
+def _set_bay_toe_kick_type(self, value):
+    from . import types_face_frame
+    key = BAY_TOE_KICK_ITEMS[value][0]
+    bay = self.id_data
+    root = types_face_frame.find_cabinet_root(bay)
+    if root is None or root.face_frame_cabinet.cabinet_type == 'UPPER':
+        return
+    from .operators import ops_cabinet
+    flush = _get_bay_toe_kick_type(self) == 1
+    with types_face_frame.suspend_recalc():
+        if flush and key != 'FLUSH':
+            ops_cabinet.apply_flush_toe_kick(root, [bay], False)
+        if self.floating_bay and key != 'FLOATING':
+            self.floating_bay = False
+        if key == 'FLUSH' and not flush:
+            ops_cabinet.apply_flush_toe_kick(root, [bay], True)
+        if key == 'FLOATING':
+            self.floating_bay = True
+    types_face_frame.recalculate_face_frame_cabinet(root)
+
+
 class Face_Frame_Bay_Props(PropertyGroup):
     """Per-bay state for face frame cabinets. Attached to each bay's cage
     object as bpy.types.Object.face_frame_bay.
@@ -10159,6 +10208,18 @@ class Face_Frame_Bay_Props(PropertyGroup):
     panel_bay: BoolProperty(
         name="Panel Bay", default=False,
         update=_update_cabinet_dim,
+    )  # type: ignore
+    # Per-bay toe kick (Cabinet Default / Flush / Floating). Not stored:
+    # it reads and writes the per-bay mechanics below -- floating_bay, and
+    # the flush construction (locked zero kick + wide bottom rail +
+    # flank stiles to the floor, see ops_cabinet.apply_flush_toe_kick) --
+    # so it always agrees with Toggle Flush Toe Kick and the bay presets.
+    toe_kick_type: EnumProperty(
+        name="Toe Kick",
+        description="This bay's toe kick, or the cabinet's",
+        items=BAY_TOE_KICK_ITEMS,
+        get=_get_bay_toe_kick_type,
+        set=_set_bay_toe_kick_type,
     )  # type: ignore
     # Per-bay override: when True this bay behaves as FLOATING regardless
     # of the cabinet's toe_kick_type. Sides under an end bay anchor at the

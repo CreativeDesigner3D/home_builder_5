@@ -1368,7 +1368,7 @@ def draw_bay_properties(layout, bay_obj):
     col.prop(bp, 'remove_bottom', text="Remove Bottom")
     col.prop(bp, 'remove_carcass', text="Remove Carcass")
     if cab_type in ('BASE', 'TALL', 'LAP_DRAWER'):
-        col.prop(bp, 'floating_bay', text="Floating")
+        col.prop(bp, 'toe_kick_type', text="Toe Kick")
     if cab_type == 'BASE':
         col.prop(bp, 'bread_board', text="Bread Board")
     draw_bay_finish_options(col, bay_obj)
@@ -2300,6 +2300,8 @@ def draw_finished_ends(layout, cab_props):
             ext = col.row(align=True)
             ext.prop(cab_props, 'back_finished_extend_left', text="Extend L")
             ext.prop(cab_props, 'back_finished_extend_right', text="Extend R")
+        if side == 'back' and fin_type == 'FINISHED':
+            col.prop(cab_props, 'back_finished_rise', text="Arch Rise")
         # Applied finished / textured back stock: 3/4 finished, 1/4
         # textured while locked; unlock to build another thickness.
         if side == 'back' and fin_type in (
@@ -2476,7 +2478,7 @@ def draw_bay_in_prompts(layout, bay_obj):
     col.prop(bp, 'remove_bottom', text="Remove Bottom")
     col.prop(bp, 'remove_carcass', text="Remove Carcass")
     if cab_type in ('BASE', 'TALL', 'LAP_DRAWER'):
-        col.prop(bp, 'floating_bay', text="Floating")
+        col.prop(bp, 'toe_kick_type', text="Toe Kick")
     if cab_type == 'BASE':
         col.prop(bp, 'bread_board', text="Bread Board")
     draw_bay_finish_options(col, bay_obj)
