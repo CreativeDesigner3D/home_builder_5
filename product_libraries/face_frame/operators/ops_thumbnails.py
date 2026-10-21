@@ -85,6 +85,10 @@ RENDERABLE_CATALOG = (
     # FF & Doors: carcass-less panel whose opening defaults to a door
     # (no bay preset; default_bay_config returns None).
     "Face Frame and Doors",
+    # End shelves: open shelves, no bays.
+    "Base End Shelves",
+    "Wall End Shelves",
+    "Tall End Shelves",
     # Wraps. No bays either; create() builds the boards straight from
     # the propgroup defaults, and the beam comes up 3-sided.
     "Column",

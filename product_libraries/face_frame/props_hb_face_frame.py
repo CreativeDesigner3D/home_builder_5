@@ -12031,6 +12031,7 @@ class Face_Frame_Scene_Props(PropertyGroup):
     show_galley_library: BoolProperty(name="Show Galley Workstations", default=False)  # type: ignore
     show_vanity_library: BoolProperty(name="Show Vanities", default=False)  # type: ignore
     show_part_library: BoolProperty(name="Show Parts", default=False)  # type: ignore
+    show_end_shelves_library: BoolProperty(name="Show End Shelves", default=False)  # type: ignore
     show_specialty_bath_library: BoolProperty(name="Show Specialty Bath", default=False)  # type: ignore
     show_bedroom_bookcase_library: BoolProperty(name="Show Specialty Bedroom & Bookcases", default=False)  # type: ignore
     show_angled_library: BoolProperty(name="Show Angled", default=False)  # type: ignore
@@ -12938,6 +12939,9 @@ class Face_Frame_Scene_Props(PropertyGroup):
     def draw_part_library_ui(self, layout, context):
         self._draw_library_section(layout, 'parts')
 
+    def draw_end_shelves_library_ui(self, layout, context):
+        self._draw_library_section(layout, 'end_shelves')
+
     def draw_specialty_bath_library_ui(self, layout, context):
         self._draw_library_section(layout, 'bath')
 
@@ -13262,6 +13266,7 @@ class Face_Frame_Scene_Props(PropertyGroup):
                 ('show_corner_cabinet_library',   "Corner Cabinets",              self.draw_corner_cabinet_library_ui),
                 ('show_vanity_library',           "Vanities",                     self.draw_vanity_library_ui),
                 ('show_part_library',             "Parts",                        self.draw_part_library_ui),
+                ('show_end_shelves_library',      "End Shelves",                  self.draw_end_shelves_library_ui),
                 ('show_specialty_bath_library',   "Specialty Bath",               self.draw_specialty_bath_library_ui),
                 ('show_bedroom_bookcase_library', "Specialty Bedroom & Bookcases", self.draw_bedroom_bookcase_library_ui),
                 # Angled hidden for now -- re-add when Angled products exist:

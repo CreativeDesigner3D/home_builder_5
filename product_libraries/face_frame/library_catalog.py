@@ -134,10 +134,18 @@ SECTIONS = (
             ("", (("Wood Top", "Wood Top"), ("Mantle", "Mantle"),
                   ("Corbel", "Corbel"))),
             ("", (("Tambour", "Tambour"),)),
-            ("End Shelves", (("Base", "Base End Shelves"),
-                             ("Wall", "Wall End Shelves"),
-                             ("Tall", "Tall End Shelves"))),
             ("Wrap", (("Column", "Column"), ("Beam", "Beam"))),
+        ),
+    },
+    {
+        # Open shelves that finish the end of a run.
+        'key': 'end_shelves',
+        'label': "End Shelves",
+        'prop': 'show_end_shelves_library',
+        'rows': (
+            ("", (("Base", "Base End Shelves"),
+                  ("Wall", "Wall End Shelves"),
+                  ("Tall", "Tall End Shelves"))),
         ),
     },
     {
