@@ -3294,6 +3294,10 @@ class hb_face_frame_OT_set_combined_finished_end(bpy.types.Operator):
             return
         carrier, carrier_side, other, _other_side = picked
         layout.prop(self, 'condition')
+        # The panel is built on the carrier, so its texture settings
+        # are the ones that apply.
+        _draw_shiplap_options(layout, carrier.face_frame_cabinet,
+                              self.condition)
         # Say which run ends up carrying the panel and how deep it gets,
         # so the choice is visible before it is made.
         depth = (carrier.face_frame_cabinet.depth
