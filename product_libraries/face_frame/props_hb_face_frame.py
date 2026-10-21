@@ -11337,6 +11337,29 @@ class Face_Frame_Opening_Props(PropertyGroup):
         name="Door Mechanism", items=DOOR_MECHANISM_ITEMS, default='NONE',
         update=_update_cabinet_dim,
     )  # type: ignore
+    # A bi-fold retracting pair folds to one side and slides into the
+    # pocket there; the plain bi-folds carry their hand in the mechanism.
+    bifold_fold_side: EnumProperty(
+        name="Folds To",
+        items=[('LEFT', "Left", "The pair folds to the left and slides "
+                                "into a pocket on the left"),
+               ('RIGHT', "Right", "The pair folds to the right and slides "
+                                  "into a pocket on the right")],
+        default='LEFT',
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    # Which leaves of a bi-fold pair take a pull.
+    bifold_pull: EnumProperty(
+        name="Pull",
+        items=[('FREE_EDGE', "Free Edge",
+                "One pull on the leaf edge farthest from the hinge"),
+               ('FOLD', "At Fold",
+                "One pull on the hinge leaf, beside the fold"),
+               ('BOTH', "Both",
+                "A pull on each leaf, either side of the fold")],
+        default='FREE_EDGE',
+        update=_update_cabinet_dim,
+    )  # type: ignore
     # Removable partitions closing off the pockets a side-mount
     # retracting door slides into (see
     # solver_face_frame.retracting_partition_descriptors).
@@ -11347,11 +11370,11 @@ class Face_Frame_Opening_Props(PropertyGroup):
              "Partitions with a half-round notch at each hinge for "
              "hinge access"),
             ('HELD_SHORT', "Held Short",
-             "Partitions held back from the face frame so the hinges "
-             "clear without notches"),
+             "Partitions held 3\" back from the face frame so the "
+             "hinges clear without notches"),
             ('NONE', "None", "No pocket partitions"),
         ],
-        default='NOTCHED',
+        default='HELD_SHORT',
         update=_update_cabinet_dim,
     )  # type: ignore
     # What fills the opening between a side-mount retracting door's

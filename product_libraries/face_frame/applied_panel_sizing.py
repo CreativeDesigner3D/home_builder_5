@@ -922,7 +922,7 @@ _CONDITION_FRONT_TYPE = {
 # door with a pull on the next host recalc). front_type goes first.
 _PRESERVED_OPENING_PROPS = (
     'front_type', 'inset_panel_type', 'hinge_side', 'door_mechanism',
-    'door_look_divisions', 'door_look_direction', 'door_look_top_height',
+    'bifold_fold_side', 'bifold_pull', 'door_look_divisions', 'door_look_direction', 'door_look_top_height',
     'is_tilt_out', 'pull_override',
     'pull_override_category', 'false_front_pull', 'pull_location_override',
 )

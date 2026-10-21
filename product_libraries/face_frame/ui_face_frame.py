@@ -1469,6 +1469,11 @@ def draw_opening_properties(layout, opening_obj):
             fcol.prop(op, 'door_mechanism', text="Mechanism")
             if op.door_mechanism in ('LIFT_UP_DELUXE', 'LIFT_UP_BIFOLD'):
                 fcol.prop(op, 'lift_up_servo', text="Servo Drive")
+            if op.door_mechanism == 'RETRACTING_BIFOLD':
+                fcol.prop(op, 'bifold_fold_side', text="Folds To")
+            if op.door_mechanism in ('RETRACTING_BIFOLD', 'BIFOLD_LEFT',
+                                     'BIFOLD_RIGHT'):
+                fcol.prop(op, 'bifold_pull', text="Pull")
             if op.door_mechanism in ('RETRACTING', 'RETRACTING_BIFOLD'):
                 fcol.prop(op, 'retracting_interior', text="Interior")
                 if op.retracting_interior == 'PARTITIONS':

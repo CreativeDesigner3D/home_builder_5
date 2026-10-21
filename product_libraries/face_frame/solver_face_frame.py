@@ -5019,9 +5019,13 @@ def retracting_pocket_sides(opening_props):
     """(left, right) - which sides of the opening a side-mount
     retracting door pockets on, from its hinge side. Both False when
     the opening has no side-mount retracting mechanism."""
-    if getattr(opening_props, 'door_mechanism',
-               'NONE') not in SIDE_RETRACTING_MECHANISMS:
+    mech = getattr(opening_props, 'door_mechanism', 'NONE')
+    if mech not in SIDE_RETRACTING_MECHANISMS:
         return (False, False)
+    if mech == 'RETRACTING_BIFOLD':
+        # The pair folds together and pockets on the one side.
+        side = getattr(opening_props, 'bifold_fold_side', 'LEFT')
+        return (side == 'LEFT', side == 'RIGHT')
     hinge = getattr(opening_props, 'hinge_side', 'RIGHT')
     return (hinge in ('LEFT', 'DOUBLE'), hinge in ('RIGHT', 'DOUBLE'))
 
@@ -5268,16 +5272,23 @@ def _double_door_leaves(layout, rect, cab_props, opening_props, role):
 BIFOLD_MECHANISMS = ('BIFOLD_LEFT', 'BIFOLD_RIGHT')
 
 
-def _bifold_door_leaves(layout, rect, cab_props, opening_props, role):
-    """Two leaves for a plain (non-retracting) bi-fold pair: the stile
-    leaf hinges on the frame like a single door, the lead leaf hangs off
-    its free edge on a back-face hinge and folds back against it as the
-    pair opens (backs together at full swing). Only the lead leaf takes
-    a pull, on its free edge.
+def _bifold_door_leaves(layout, rect, cab_props, opening_props, role,
+                        fold_right=None):
+    """Two leaves for a bi-fold pair: the stile leaf hinges on the frame
+    like a single door, the lead leaf hangs off its free edge on a
+    back-face hinge and folds back against it as the pair opens (backs
+    together at full swing). bifold_pull picks the pulls: the lead
+    leaf's free edge, the stile leaf beside the fold, or both.
 
-    Leaf widths and the center reveal match a double door, so the closed
-    pair reads the same as one.
+    fold_right is the hand; None reads it from a plain bi-fold's
+    mechanism. Leaf widths and the center reveal match a double door,
+    so the closed pair reads the same as one.
     """
+    if fold_right is None:
+        fold_right = opening_props.door_mechanism == 'BIFOLD_RIGHT'
+    pull = getattr(opening_props, 'bifold_pull', 'FREE_EDGE')
+    stile_no_pull = pull == 'FREE_EDGE'
+    lead_no_pull = pull == 'FOLD'
     door_thickness = cab_props.door_thickness
     width, height = _door_panel_size(rect, cab_props, opening_props)
     reveal = (INSET_DOUBLE_DOOR_REVEAL
@@ -5298,14 +5309,14 @@ def _bifold_door_leaves(layout, rect, cab_props, opening_props, role):
     dims = (height, leaf_width, door_thickness)
     t = door_thickness
 
-    if opening_props.door_mechanism == 'BIFOLD_RIGHT':
+    if fold_right:
         stile = _hinge_barrel_pivot({
             'role': role, 'name': 'Door (Right)',
             'pivot_position': (base_x + width, base_y, base_z),
             'pivot_rotation': (0.0, 0.0, +angle),
             'part_position':  (-leaf_width, 0.0, 0.0),
             'part_dims':      dims,
-            'no_pull':        True,
+            'no_pull':        stile_no_pull,
         }, door_thickness)
         px, py, pz = stile['pivot_position']
         # Stile leaf's back face at its free (left) edge, rotated +angle.
@@ -5317,6 +5328,7 @@ def _bifold_door_leaves(layout, rect, cab_props, opening_props, role):
             'pivot_rotation': (0.0, 0.0, angle - fold),
             'part_position':  (-reveal - leaf_width, 0.0, 0.0),
             'part_dims':      dims,
+            'no_pull':        lead_no_pull,
         }
         return [lead, stile]
 
@@ -5326,7 +5338,7 @@ def _bifold_door_leaves(layout, rect, cab_props, opening_props, role):
         'pivot_rotation': (0.0, 0.0, -angle),
         'part_position':  (0.0, 0.0, 0.0),
         'part_dims':      dims,
-        'no_pull':        True,
+        'no_pull':        stile_no_pull,
     }, door_thickness)
     px, py, pz = stile['pivot_position']
     # Stile leaf's back face at its free (right) edge, rotated -angle.
@@ -5338,6 +5350,7 @@ def _bifold_door_leaves(layout, rect, cab_props, opening_props, role):
         'pivot_rotation': (0.0, 0.0, -angle + fold),
         'part_position':  (reveal, 0.0, 0.0),
         'part_dims':      dims,
+        'no_pull':        lead_no_pull,
     }
     return [stile, lead]
 
@@ -5417,9 +5430,11 @@ class _SwingProxy:
 
 
 # A retracting door in the open preview stops this far clear of the
-# frame on its way into the pocket, and this far short of the back.
+# frame on its way into the pocket, and this far short of the back:
+# the slide hardware fully run out always stops the door 5-1/2" off
+# the back, so a wide door on a shallow cabinet still stands proud.
 RETRACT_SLIDE_SIDE_CLEAR = inch(0.125)
-RETRACT_SLIDE_BACK_CLEAR = inch(0.25)
+RETRACT_SLIDE_BACK_CLEAR = inch(5.5)
 
 
 def _retracting_door_leaves(layout, rect, cab_props, opening_props, role,
@@ -5433,6 +5448,10 @@ def _retracting_door_leaves(layout, rect, cab_props, opening_props, role,
     swing_part = min(2.0 * swing, 1.0)
     slide_part = max(2.0 * swing - 1.0, 0.0)
     proxy = _SwingProxy(opening_props, swing_part)
+    if opening_props.door_mechanism == 'RETRACTING_BIFOLD':
+        return _retracting_bifold_leaves(layout, rect, cab_props,
+                                         opening_props, proxy, role,
+                                         slide_part)
     if opening_props.hinge_side == 'DOUBLE':
         leaves = _double_door_leaves(layout, rect, cab_props, proxy, role)
         hinges = ('LEFT', 'RIGHT')
@@ -5464,6 +5483,35 @@ def _retracting_door_leaves(layout, rect, cab_props, opening_props, role,
         slide = max(0.0, min(slide, room))
         leaf['pivot_position'] = (px + shift_x * slide_part,
                                   py + slide * slide_part, pz)
+    return leaves
+
+
+def _retracting_bifold_leaves(layout, rect, cab_props, opening_props,
+                              proxy, role, slide_part):
+    """A bi-fold retracting pair: the first half of swing_percent folds
+    the pair square to its fold side (backs together, standing out of
+    the opening), the second half slides the folded pack over and back
+    into the pocket on that side. Both leaves move as one pack."""
+    side = getattr(opening_props, 'bifold_fold_side', 'LEFT')
+    leaves = _bifold_door_leaves(layout, rect, cab_props, proxy, role,
+                                 fold_right=(side == 'RIGHT'))
+    if slide_part <= 0.0:
+        return leaves
+    stile = leaves[1] if side == 'RIGHT' else leaves[0]
+    px, py, _pz = stile['pivot_position']
+    leaf_w = stile['part_dims'][1]
+    overlay = front_overlay(rect, cab_props, opening_props, side.lower())
+    shift_x = max(overlay, 0.0) + RETRACT_SLIDE_SIDE_CLEAR
+    if side == 'RIGHT':
+        shift_x = -shift_x
+    back_y = _ff_back_y_bay_local(layout)
+    slide = leaf_w + (back_y - py) + RETRACT_SLIDE_SIDE_CLEAR
+    room = rect['cage_dim_y'] - RETRACT_SLIDE_BACK_CLEAR - py
+    slide = max(0.0, min(slide, room))
+    dx, dy = shift_x * slide_part, slide * slide_part
+    for leaf in leaves:
+        x, y, z = leaf['pivot_position']
+        leaf['pivot_position'] = (x + dx, y + dy, z)
     return leaves
 
 
@@ -6947,8 +6995,11 @@ def interior_descriptors_for_opening(opening_obj, layout, rect, cab_props):
                             layout, cab_props, out, op_props)
     if left_in:
         out = [_shifted_descriptor(d, (left_in, 0.0, 0.0)) for d in out]
-    out.extend(retracting_partition_descriptors(
-        layout, open_rect, cab_props, op_props))
+    # The pocket partitions only carry what is inside: an opening with
+    # nothing in it shows the back of the retracted door instead.
+    if out:
+        out.extend(retracting_partition_descriptors(
+            layout, open_rect, cab_props, op_props))
     out.extend(retracting_component_shelf_descriptors(open_rect, op_props))
     if insert_box is not None:
         out.extend(insert_box['parts'])
@@ -6966,7 +7017,7 @@ RETRACT_BIFOLD_POCKET_CLEAR = inch(3.25)
 # Hinge access: a half-round notch on the partition's front edge at
 # each hinge, or the whole partition held back from the face frame.
 RETRACT_PARTITION_NOTCH_DIA = inch(2.0)
-RETRACT_PARTITION_HELD_SHORT = inch(2.0)
+RETRACT_PARTITION_HELD_SHORT = inch(3.0)
 # Hinge layout on the door: one this far in from each end, the rest
 # spaced evenly between, and one more each time the door passes a step.
 RETRACT_HINGE_FROM_END = inch(3.0)
@@ -7123,7 +7174,7 @@ def retracting_partition_descriptors(layout, rect, cab_props, op_props):
     mechanism or its partitions are turned off."""
     if getattr(op_props, 'front_type', None) != 'DOOR':
         return []
-    style = getattr(op_props, 'retracting_partitions', 'NOTCHED')
+    style = getattr(op_props, 'retracting_partitions', 'HELD_SHORT')
     if (style == 'NONE' or getattr(op_props, 'retracting_interior',
                                    'PARTITIONS') != 'PARTITIONS'):
         return []
