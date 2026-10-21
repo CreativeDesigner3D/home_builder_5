@@ -1,7 +1,10 @@
 import bpy
+import functools
 import math
+from contextlib import contextmanager
 from mathutils import Vector, Matrix, Euler
 from . import hb_types
+from . import hb_utils
 from . import units
 
 # =============================================================================
@@ -1018,9 +1021,55 @@ def is_helper_object(obj) -> bool:
         return True
     if 'Overlay Prompt Obj' in obj.name:
         return True
-    if not obj.users_scene and not obj.get('IS_2D_ANNOTATION'):
+    if not _in_any_scene(obj) and not obj.get('IS_2D_ANNOTATION'):
         return True
     return False
+
+
+# Object.children, children_recursive and users_scene are written in
+# Python and scan every object in the file on each call, so a recursive
+# walk over a room's parts costs (parts x objects). Layout walks only link
+# objects into view collections -- nothing is re-parented or moved between
+# scenes while they run -- so they answer those questions from one parent
+# map (hb_utils.children_index) and one scene-membership snapshot instead.
+_scene_members = None
+
+
+def _in_any_scene(obj):
+    if _scene_members is not None:
+        return obj.as_pointer() in _scene_members
+    return bool(obj.users_scene)
+
+
+@contextmanager
+def layout_walk():
+    """Scope for a read-only walk of the model tree: children lookups and
+    is_helper_object's scene test come from snapshots taken on entry.
+    Nests. Do not re-parent objects or link them into scenes inside."""
+    global _scene_members
+    outer = _scene_members is None
+    if outer:
+        _scene_members = {o.as_pointer()
+                          for scene in bpy.data.scenes
+                          for o in scene.objects}
+    try:
+        with hb_utils.children_index():
+            yield
+    finally:
+        if outer:
+            _scene_members = None
+
+
+def _in_layout_walk(fn):
+    """Run a recursive collector inside layout_walk(); the recursion
+    reuses the outermost scope."""
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        if _scene_members is not None:
+            return fn(*args, **kwargs)
+        with layout_walk():
+            return fn(*args, **kwargs)
+    return wrapper
 
 
 # Product dropped on the FAR face of a wall is parented with a 180 degree Z
@@ -1896,7 +1945,8 @@ class ElevationView(LayoutView):
         self.content_collections.append(collection)
         return instance
     
-    def _collect_objects_split(self, obj: bpy.types.Object, solid_col: bpy.types.Collection, 
+    @_in_layout_walk
+    def _collect_objects_split(self, obj: bpy.types.Object, solid_col: bpy.types.Collection,
                                dashed_col: bpy.types.Collection):
         """Recursively sort an object tree into solid and dashed collections.
         
@@ -2121,6 +2171,7 @@ class PlanView(LayoutView):
         max_dimension = max(width, height)
         self.set_camera_ortho_scale(max_dimension)
 
+    @_in_layout_walk
     def _add_object_to_collection(self, obj: bpy.types.Object, collection: bpy.types.Collection):
         """Recursively add object and its children to collection.
         Skips cage objects (GeoNodeCage) as they are containers, not visible geometry."""
@@ -2307,6 +2358,7 @@ class View3D(LayoutView):
         max_dimension = max(width, height)
         self.set_camera_ortho_scale(max_dimension)
 
+    @_in_layout_walk
     def _add_object_to_collection(self, obj: bpy.types.Object, collection: bpy.types.Collection):
         """Recursively add object and its children to collection.
         Skips cage objects (GeoNodeCage) as they are containers, not visible geometry."""
@@ -3086,6 +3138,7 @@ class MultiView(LayoutView):
         
         return Vector((front_vis_left, front_vis_bottom, 0))
     
+    @_in_layout_walk
     def _add_object_to_collection(self, obj, collection):
         """Recursively add object and children to collection, skipping cages/helpers."""
         is_cage = is_cage_object(obj)
