@@ -10,6 +10,7 @@ from . import quiet_cages
 from . import door_hardware_overlay
 from . import glass_door_overlay
 from . import cage_shape
+from . import miter_joints
 
 NAMESPACE = "hb_face_frame"
 MENU_NAME = "Face Frame"
@@ -26,11 +27,13 @@ def register():
     door_hardware_overlay.register()
     glass_door_overlay.register()
     cage_shape.register()
+    miter_joints.register()
 
 
 def unregister():
     from . import finish_swatches
     finish_swatches.unregister()
+    miter_joints.unregister()
     cage_shape.unregister()
     glass_door_overlay.unregister()
     door_hardware_overlay.unregister()
