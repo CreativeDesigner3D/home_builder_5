@@ -883,10 +883,10 @@ def compute_labels(context, region, rv3d, lines_out=None):
                           else _label_anchor_world(cage))
             if anchor is None:
                 continue
-            # Appliance panel sizes read to 1/32", as in the Panels tab.
-            step = 32 if str(kind).startswith('AP_') else 16
+            # Sizes read to 1/32", so a width typed or split to a 1/32
+            # shows as it is rather than rounded to the next 1/16.
             text = prefix + units.unit_to_string(unit_settings, value,
-                                                 step=step)
+                                                 step=32)
             if locked:
                 # Pinned (user-typed, held during redistribution). The
                 # marker doubles as the affordance for "this one can be

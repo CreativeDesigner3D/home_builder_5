@@ -39,13 +39,14 @@ def round_to_sixteenth(value):
 
 def format_number(value):
     """Format a number, removing unnecessary trailing zeros."""
-    # Round to 4 decimal places to clean up floating point noise
-    rounded = round(value, 4)
+    # Round to 5 decimal places to clean up floating point noise (enough
+    # to keep a 1/32" value whole: 0.03125)
+    rounded = round(value, 5)
     # Format and strip trailing zeros
     if rounded == int(rounded):
         return str(int(rounded))
     else:
-        return f"{rounded:.4f}".rstrip('0').rstrip('.')
+        return f"{rounded:.5f}".rstrip('0').rstrip('.')
 
 def unit_to_string(unit_settings, value, step=16):
     """``step``: inch values round to the nearest 1/step"."""
