@@ -708,9 +708,12 @@ def update_base_top_default(self, context):
 
 def update_back_tongue_length(self, context):
     from . import solver_frameless
-    for obj in context.scene.objects:
-        if solver_frameless.is_solved_cabinet(obj):
-            solver_frameless.recalculate_cabinet(obj)
+    # Snapshot first: a recalc can add or remove parts, which must not
+    # happen under a live scene.objects iterator.
+    cabinets = [obj for obj in context.scene.objects
+                if solver_frameless.is_solved_cabinet(obj)]
+    for obj in cabinets:
+        solver_frameless.recalculate_cabinet(obj)
 
 
 def update_include_drawer_boxes(self,context):
