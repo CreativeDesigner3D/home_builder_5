@@ -626,9 +626,38 @@ def attach_to_cabinet(objs, cabinet):
         obj.matrix_parent_inverse.identity()
         obj.matrix_world = mw
         obj[ATTACHED_TAG] = True
+        if WALL_ATTACHED_TAG in obj:
+            del obj[WALL_ATTACHED_TAG]
         # A mesh converted from a drawing profile keeps the profile's
         # annotation tag; as a cabinet part it is model geometry, so the
         # layout views must draw it, not route it with the annotations.
+        if obj.type == 'MESH' and 'IS_2D_ANNOTATION' in obj:
+            del obj['IS_2D_ANNOTATION']
+
+
+WALL_ATTACHED_TAG = 'hb_attached_wall'
+
+
+def find_attach_wall(obj):
+    """The wall at or above ``obj``, or None."""
+    while obj is not None:
+        if obj.get('IS_WALL_BP'):
+            return obj
+        obj = obj.parent
+    return None
+
+
+def attach_to_wall(objs, wall):
+    """Parent ``objs`` to ``wall`` without moving them, so the wall's
+    elevation and plan views draw them."""
+    for obj in objs:
+        mw = obj.matrix_world.copy()
+        obj.parent = wall
+        obj.matrix_parent_inverse.identity()
+        obj.matrix_world = mw
+        obj[WALL_ATTACHED_TAG] = True
+        if ATTACHED_TAG in obj:
+            del obj[ATTACHED_TAG]
         if obj.type == 'MESH' and 'IS_2D_ANNOTATION' in obj:
             del obj['IS_2D_ANNOTATION']
 
@@ -641,6 +670,8 @@ def detach_from_cabinet(objs):
         obj.matrix_world = mw
         if ATTACHED_TAG in obj:
             del obj[ATTACHED_TAG]
+        if WALL_ATTACHED_TAG in obj:
+            del obj[WALL_ATTACHED_TAG]
 
 
 class HB_GENERAL_OT_attach_to_cabinet(bpy.types.Operator):
@@ -673,11 +704,21 @@ class HB_GENERAL_OT_attach_to_cabinet(bpy.types.Operator):
         n = len(self._names)
         what = f"{n} part{'s' if n != 1 else ''}"
         if self._cabinet is None:
-            text = f"Attach {what}: click a cabinet   Esc: cancel"
+            text = f"Attach {what}: click a {self._target_word}   Esc: cancel"
         else:
             text = (f"Attach {what} to {self._cabinet.name}   "
                     "Click: attach   Esc: cancel")
         context.area.header_text_set(text)
+
+    _target_word = "cabinet"
+
+    @staticmethod
+    def _find_target(obj):
+        return find_attach_cabinet(obj)
+
+    @staticmethod
+    def _attach(parts, target):
+        attach_to_cabinet(parts, target)
 
     def _cabinet_under_mouse(self, context, event):
         from bpy_extras import view3d_utils
@@ -698,7 +739,7 @@ class HB_GENERAL_OT_attach_to_cabinet(bpy.types.Operator):
             if not hit:
                 return None
             if obj.name not in skip:
-                cabinet = find_attach_cabinet(obj)
+                cabinet = self._find_target(obj)
                 if cabinet is not None:
                     return cabinet
             origin = loc + direction * 1e-4
@@ -725,12 +766,30 @@ class HB_GENERAL_OT_attach_to_cabinet(bpy.types.Operator):
             if cabinet is None:
                 return {'RUNNING_MODAL'}
             parts = self._parts()
-            attach_to_cabinet(parts, cabinet)
+            self._attach(parts, cabinet)
             self._finish(context)
             self.report({'INFO'}, "Attached %d part%s to %s" % (
                 len(parts), "" if len(parts) == 1 else "s", cabinet.name))
             return {'FINISHED'}
         return {'RUNNING_MODAL'}
+
+
+class HB_GENERAL_OT_attach_to_wall(HB_GENERAL_OT_attach_to_cabinet):
+    """Put the selected parts on a wall: click the wall and they show in
+    its elevation, even where cabinets stand in front of it"""
+    bl_idname = "hb_general.attach_to_wall"
+    bl_label = "Attach to Wall"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    _target_word = "wall"
+
+    @staticmethod
+    def _find_target(obj):
+        return find_attach_wall(obj)
+
+    @staticmethod
+    def _attach(parts, target):
+        attach_to_wall(parts, target)
 
 
 class HB_GENERAL_OT_detach_from_cabinet(bpy.types.Operator):
@@ -761,6 +820,7 @@ def draw_attach_items(layout, context):
         return False
     layout.operator_context = 'INVOKE_DEFAULT'
     layout.operator("hb_general.attach_to_cabinet", icon='LINKED')
+    layout.operator("hb_general.attach_to_wall", icon='LINKED')
     if any(o.get(ATTACHED_TAG) for o in parts):
         layout.operator("hb_general.detach_from_cabinet", icon='UNLINKED')
     return True
@@ -773,6 +833,7 @@ classes = (
     HB_GENERAL_OT_hide,
     HB_GENERAL_OT_show_all_hidden,
     HB_GENERAL_OT_attach_to_cabinet,
+    HB_GENERAL_OT_attach_to_wall,
     HB_GENERAL_OT_detach_from_cabinet,
 )
 

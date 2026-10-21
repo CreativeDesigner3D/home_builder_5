@@ -1521,11 +1521,12 @@ class hb_face_frame_OT_switch_door_part_pull_side(bpy.types.Operator):
 
 
 class hb_face_frame_OT_toggle_door_part_front_kind(bpy.types.Operator):
-    """Switch a Door Part between a DOOR front and a DRAWER front. Only the
-    pull changes - DOOR: vertical bar near the top on the pull-side edge;
-    DRAWER: horizontal bar centered (drawer-pull asset + the in-cabinet
-    drawer placement). The front geometry / door style is left as-is.
-    Stored as DOOR_PART_FRONT_KIND on the object."""
+    """Switch a Door Part between a DOOR front and a DRAWER front: the
+    front takes the active cabinet style's Door or Drawer Front style, and
+    the pull moves - DOOR: vertical bar near the top on the pull-side
+    edge; DRAWER: horizontal bar centered (drawer-pull asset + the
+    in-cabinet drawer placement). Stored as DOOR_PART_FRONT_KIND on the
+    object."""
     bl_idname = "hb_face_frame.toggle_door_part_front_kind"
     bl_label = "Toggle Front Kind"
     bl_description = "Switch between a door front and a drawer front (moves the pull)"
@@ -1540,7 +1541,60 @@ class hb_face_frame_OT_toggle_door_part_front_kind(bpy.types.Operator):
         obj = context.active_object
         kind = obj.get('DOOR_PART_FRONT_KIND', 'DOOR')
         obj['DOOR_PART_FRONT_KIND'] = 'DRAWER' if kind == 'DOOR' else 'DOOR'
+        types_face_frame.apply_active_door_style_to_part(obj)
         types_face_frame.position_door_part_pull(obj)
+        return {'FINISHED'}
+
+
+def _bare_part_root(obj):
+    """The Door Part or Misc Part ``obj`` belongs to (itself, or the
+    part above a picked pull), else None."""
+    while obj is not None:
+        if obj.get('IS_FACE_FRAME_DOOR_PART') or obj.get(
+                'IS_FACE_FRAME_MISC_PART'):
+            return obj
+        obj = obj.parent
+    return None
+
+
+class hb_face_frame_OT_duplicate_bare_part(bpy.types.Operator):
+    """Duplicate the selected door / drawer and misc parts, pulls and
+    all, and move the copies. Each copy is its own part: resizing or
+    restyling it leaves the original alone."""
+    bl_idname = "hb_face_frame.duplicate_bare_part"
+    bl_label = "Duplicate Part"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        # Only when everything selected is one of these parts, so Shift+D
+        # on anything else falls through to Blender's own duplicate.
+        if context.mode != 'OBJECT':
+            return False
+        sel = context.selected_objects
+        return bool(sel) and all(_bare_part_root(o) is not None
+                                 for o in sel)
+
+    def invoke(self, context, event):
+        from .... import hb_placement
+        roots = []
+        for o in context.selected_objects:
+            root = _bare_part_root(o)
+            if root is not None and root not in roots:
+                roots.append(root)
+        copies = []
+        for root in roots:
+            new = hb_placement.duplicate_object_hierarchy(context, root)
+            if new is not None:
+                copies.append(new)
+        if not copies:
+            return {'CANCELLED'}
+        bpy.ops.object.select_all(action='DESELECT')
+        for new in copies:
+            new.select_set(True)
+        context.view_layer.objects.active = copies[-1]
+        # The same grab Blender's Shift+D starts.
+        bpy.ops.transform.translate('INVOKE_DEFAULT')
         return {'FINISHED'}
 
 
@@ -2639,14 +2693,30 @@ def _can_make_front_editable(obj):
     return _front_opening_cage(obj) is not None
 
 
+def _bake_evaluated_mesh(context, obj):
+    """Replace ``obj``'s mesh with what its modifier stack shows, and drop
+    the modifiers (and with them any reference to a cabinet's cutters)."""
+    depsgraph = context.evaluated_depsgraph_get()
+    depsgraph.update()
+    new_mesh = bpy.data.meshes.new_from_object(
+        obj.evaluated_get(depsgraph), preserve_all_data_layers=True,
+        depsgraph=depsgraph)
+    old_mesh = obj.data
+    obj.modifiers.clear()
+    new_mesh.name = old_mesh.name
+    obj.data = new_mesh
+    if old_mesh.users == 0:
+        bpy.data.meshes.remove(old_mesh)
+
+
 class hb_face_frame_OT_make_part_editable(bpy.types.Operator):
     """Apply a part's GeoNode(s) so its mesh becomes real, editable geometry
     and flag it as manual, so the cabinet recalc leaves it alone (it keeps its
     position / dims / rotation and stops following width / depth / style
     changes). Two paths:
 
-    - STRUCTURAL cutpart (side / rail / stile / top / bottom / ...): apply the
-      cutpart modifier, flag IS_MANUAL_PART on the part. The recalc dispatch
+    - STRUCTURAL cutpart (side / rail / stile / top / bottom / ...): bake the
+      part as shown (all modifiers), flag IS_MANUAL_PART on the part. The recalc dispatch
       skips it (CONVENTIONS - manual parts).
     - DOOR / DRAWER FRONT: a front is torn down and rebuilt every recalc, so
       flag IS_MANUAL_FRONT on the OPENING cage (which survives the rebuild) and
@@ -2680,14 +2750,16 @@ class hb_face_frame_OT_make_part_editable(bpy.types.Operator):
             wood_hoods.snapshot_hood_part(obj)
         else:
             _stash_part_inputs(obj)
-        # Apply only the cutpart modifier; any downstream system modifier
-        # (e.g. a corner notch) stays live on top of the now-real mesh.
-        # Static wood-hood parts have no modifier -- already real mesh, they
-        # just take the manual flag.
+        # Bake the part as it shows -- every modifier, the frame bead and
+        # notch booleans included -- rather than applying the cutpart
+        # alone. A part whose shape is drawn into its base mesh (bun foot,
+        # turned leg, textured panel) only carries the cutpart for its
+        # sizes, and applying it turned the part into a plain block; a
+        # beaded member's bead is a boolean on a cabinet-owned cutter the
+        # next recalc took away. Static wood-hood parts have no modifier --
+        # already real mesh, they just take the manual flag.
         if mn and mn in obj.modifiers:
-            with context.temp_override(object=obj, active_object=obj,
-                                       selected_objects=[obj]):
-                bpy.ops.object.modifier_apply(modifier=mn)
+            _bake_evaluated_mesh(context, obj)
         obj['IS_MANUAL_PART'] = True
 
     @staticmethod
@@ -4622,6 +4694,7 @@ classes = (
     hb_face_frame_OT_toggle_door_part_pull,
     hb_face_frame_OT_switch_door_part_pull_side,
     hb_face_frame_OT_toggle_door_part_front_kind,
+    hb_face_frame_OT_duplicate_bare_part,
     hb_face_frame_OT_set_door_frame,
     hb_face_frame_OT_set_door_hardware,
     hb_face_frame_OT_set_door_shape,
@@ -4634,4 +4707,30 @@ classes = (
 )
 
 
-register, unregister = bpy.utils.register_classes_factory(classes)
+_register_classes, _unregister_classes = bpy.utils.register_classes_factory(
+    classes)
+
+# Shift+D on a door / drawer or misc part copies it with its pull. The
+# stock duplicate copies only what is selected and leaves the pull.
+_addon_keymaps = []
+
+
+def register():
+    _register_classes()
+    kc = bpy.context.window_manager.keyconfigs.addon
+    if kc:
+        km = kc.keymaps.new(name='Object Mode', space_type='EMPTY')
+        kmi = km.keymap_items.new(
+            hb_face_frame_OT_duplicate_bare_part.bl_idname,
+            'D', 'PRESS', shift=True)
+        _addon_keymaps.append((km, kmi))
+
+
+def unregister():
+    for km, kmi in _addon_keymaps:
+        try:
+            km.keymap_items.remove(kmi)
+        except Exception:
+            pass
+    _addon_keymaps.clear()
+    _unregister_classes()

@@ -20172,13 +20172,17 @@ def active_front_style_for_role(role, override=None, cabinet_style=None):
 
 
 def apply_active_door_style_to_part(door_obj):
-    """Apply the active cabinet style's door style to a Door Part front
-    (assign_style_to_front adds / strips the CPM_5PIECEDOOR 'Door Style'
-    modifier and stamps DOOR_STYLE_NAME). Also records the source cabinet
-    style as STYLE_NAME so a later style-update pass can find it. No-op if
-    nothing resolves."""
+    """Apply the active cabinet style's front style to a Door Part front:
+    its Door style, or its Drawer Front style once the part is switched to
+    a drawer front (assign_style_to_front adds / strips the CPM_5PIECEDOOR
+    'Door Style' modifier and stamps DOOR_STYLE_NAME). Also records the
+    source cabinet style as STYLE_NAME so a later style-update pass can
+    find it. No-op if nothing resolves."""
     from . import props_hb_face_frame as props
-    ds = _active_door_style()
+    if door_obj.get('DOOR_PART_FRONT_KIND', 'DOOR') == 'DRAWER':
+        ds = active_front_style_for_role(PART_ROLE_DRAWER_FRONT)
+    else:
+        ds = _active_door_style()
     if ds is None:
         return
     ds.assign_style_to_front(door_obj)

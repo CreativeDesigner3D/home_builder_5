@@ -1213,6 +1213,11 @@ class HOME_BUILDER_MT_face_frame_door_part_commands(bpy.types.Menu):
         row.operator("hb_face_frame.switch_door_part_pull_side",
                      text="Switch Pull Side", icon='ARROW_LEFTRIGHT')
         layout.separator()
+        layout.operator("hb_face_frame.duplicate_bare_part",
+                        text="Duplicate", icon='DUPLICATE')
+        from ...operators import ops_general
+        ops_general.draw_attach_items(layout, context)
+        layout.separator()
         layout.operator("hb_general.delete", text="Delete Part", icon='X')
 
 
@@ -1314,6 +1319,8 @@ class HOME_BUILDER_MT_face_frame_misc_part_commands(bpy.types.Menu):
 
         from ...operators import ops_general
         layout.separator()
+        layout.operator("hb_face_frame.duplicate_bare_part",
+                        text="Duplicate", icon='DUPLICATE')
         ops_general.draw_attach_items(layout, context)
 
         layout.separator()

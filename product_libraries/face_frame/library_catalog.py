@@ -127,7 +127,7 @@ SECTIONS = (
         'prop': 'show_part_library',
         'rows': (
             ("", (("Panel", "Panel"), ("Leg", "Leg Product"),
-                  ("Door", "Door"))),
+                  ("Door / Drawer", "Door"))),
             ("", (("Misc", "Misc Part"),
                   ("Floating Shelf", "Floating Shelves"),
                   ("Valance", "Valance"))),

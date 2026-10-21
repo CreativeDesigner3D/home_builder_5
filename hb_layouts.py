@@ -1872,11 +1872,13 @@ class ElevationView(LayoutView):
                     # Clean up empty collection
                     bpy.data.collections.remove(cab_dashed)
             else:
-                # Non-cabinet child (e.g. applied end panels, other geometry)
-                if not self._is_cage(child) and not self._is_helper(child):
-                    # Add to wall solid collection
-                    if child.name not in wall_solid.objects:
-                        wall_solid.objects.link(child)
+                # Non-cabinet child (e.g. applied end panels, other geometry).
+                # Its own children come along (a loose door part's pull).
+                for obj in [child] + list(child.children_recursive):
+                    if self._is_cage(obj) or self._is_helper(obj):
+                        continue
+                    if obj.name not in wall_solid.objects:
+                        wall_solid.objects.link(obj)
     
     def _create_collection_instance(self, collection: bpy.types.Collection, name: str, 
                                      freestyle_collection: bpy.types.Collection) -> bpy.types.Object:
