@@ -220,6 +220,18 @@ CATALOG = [
     _e('parts', 'Floating Shelves',
        'Wall-mounted floating shelf.',
        _ff('Floating Shelves'), tags=['shelf', 'floating']),
+    _e('parts', 'Base End Shelves',
+       'Open end shelves for the end of a base run, rounded outer '
+       'corner, kick following the radius.',
+       _ff('Base End Shelves'), tags=['shelf', 'end', 'radius']),
+    _e('parts', 'Wall End Shelves',
+       'Open end shelves for the end of a wall run, rounded outer '
+       'corner, square top shelf.',
+       _ff('Wall End Shelves'), tags=['shelf', 'end', 'radius']),
+    _e('parts', 'Tall End Shelves',
+       'Open end shelves for the end of a tall run, rounded outer '
+       'corner, square top shelf.',
+       _ff('Tall End Shelves'), tags=['shelf', 'end', 'radius']),
     _e('parts', 'Shelf - Non-Floating',
        'Non-floating shelf.',
        _todo('Non-Floating Shelf'), tags=['shelf']),

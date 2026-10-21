@@ -871,6 +871,36 @@ def _draw_panel_openings_preview(layout, root):
     return across, high
 
 
+def _is_end_shelves(obj):
+    """True when obj (or its cabinet root) is an end shelves product."""
+    root = types_face_frame.find_cabinet_root(obj)
+    return root is not None and bool(root.get('IS_END_SHELVES'))
+
+
+def draw_end_shelves(layout, root):
+    """End shelves prompts: size, which side opens and rounds, the
+    corner radius, shelf count, and the back / peninsula options."""
+    cab = root.face_frame_cabinet
+    es = root.end_shelves
+    col = layout.column(align=True)
+    col.prop(cab, 'width')
+    col.prop(cab, 'depth')
+    col.prop(cab, 'height')
+    if es.kind in ('BASE', 'TALL'):
+        col.prop(cab, 'toe_kick_height')
+        col.prop(cab, 'toe_kick_setback')
+    col = layout.column(align=True)
+    col.prop(es, 'rounded_side')
+    col.prop(es, 'corner_radius')
+    col.prop(es, 'shelf_quantity')
+    col = layout.column(align=True)
+    if es.kind == 'BASE':
+        col.prop(es, 'peninsula')
+    row = col.row()
+    row.enabled = not (es.kind == 'BASE' and es.peninsula)
+    row.prop(es, 'include_back')
+
+
 def _is_mantle(obj):
     """True when obj (or its cabinet root) is a mantle product."""
     root = types_face_frame.find_cabinet_root(obj)
@@ -2547,7 +2577,8 @@ class HB_FACE_FRAME_PT_dimensions(bpy.types.Panel):
     def poll(cls, context):
         root = types_face_frame.find_cabinet_root(context.active_object)
         return (root is not None and not root.get('IS_LEG_PRODUCT')
-                and not root.get('IS_FLOATING_SHELF'))
+                and not root.get('IS_FLOATING_SHELF')
+                and not root.get('IS_END_SHELVES'))
 
     def draw(self, context):
         root = types_face_frame.find_cabinet_root(context.active_object)
@@ -2569,7 +2600,8 @@ class HB_FACE_FRAME_PT_construction(bpy.types.Panel):
     def poll(cls, context):
         root = types_face_frame.find_cabinet_root(context.active_object)
         return (root is not None and not root.get('IS_LEG_PRODUCT')
-                and not root.get('IS_FLOATING_SHELF'))
+                and not root.get('IS_FLOATING_SHELF')
+                and not root.get('IS_END_SHELVES'))
 
     def draw(self, context):
         root = types_face_frame.find_cabinet_root(context.active_object)
@@ -2595,7 +2627,8 @@ class HB_FACE_FRAME_PT_face_frame_defaults(bpy.types.Panel):
     def poll(cls, context):
         root = types_face_frame.find_cabinet_root(context.active_object)
         return (root is not None and not root.get('IS_LEG_PRODUCT')
-                and not root.get('IS_FLOATING_SHELF'))
+                and not root.get('IS_FLOATING_SHELF')
+                and not root.get('IS_END_SHELVES'))
 
     def draw(self, context):
         root = types_face_frame.find_cabinet_root(context.active_object)
@@ -2650,7 +2683,8 @@ class HB_FACE_FRAME_PT_all_bays(bpy.types.Panel):
     def poll(cls, context):
         root = types_face_frame.find_cabinet_root(context.active_object)
         return (root is not None and not root.get('IS_LEG_PRODUCT')
-                and not root.get('IS_FLOATING_SHELF'))
+                and not root.get('IS_FLOATING_SHELF')
+                and not root.get('IS_END_SHELVES'))
 
     def draw(self, context):
         root = types_face_frame.find_cabinet_root(context.active_object)
@@ -2678,6 +2712,27 @@ class HB_FACE_FRAME_PT_floating_shelf(bpy.types.Panel):
         if root is None:
             return
         draw_floating_shelf(self.layout, root)
+
+
+class HB_FACE_FRAME_PT_end_shelves(bpy.types.Panel):
+    """End shelves options. Shown only when the active object is an end
+    shelves product; the bay/construction sub-panels are hidden for it."""
+    bl_label = "End Shelves"
+    bl_idname = "HB_FACE_FRAME_PT_end_shelves"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "Home Builder"
+    bl_parent_id = "HB_FACE_FRAME_PT_active_cabinet"
+
+    @classmethod
+    def poll(cls, context):
+        return _is_end_shelves(context.active_object)
+
+    def draw(self, context):
+        root = types_face_frame.find_cabinet_root(context.active_object)
+        if root is None:
+            return
+        draw_end_shelves(self.layout, root)
 
 
 class HB_FACE_FRAME_PT_mantle(bpy.types.Panel):
@@ -2727,6 +2782,7 @@ classes = (
     HB_FACE_FRAME_PT_active_cabinet,
     HB_FACE_FRAME_PT_leg_product,
     HB_FACE_FRAME_PT_floating_shelf,
+    HB_FACE_FRAME_PT_end_shelves,
     HB_FACE_FRAME_PT_mantle,
     HB_FACE_FRAME_PT_dimensions,
     HB_FACE_FRAME_PT_construction,

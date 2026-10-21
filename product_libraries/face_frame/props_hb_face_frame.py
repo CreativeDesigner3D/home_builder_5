@@ -3017,6 +3017,8 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         # Floating shelf boards - finished material
         'SHELF_FRONT', 'SHELF_TOP', 'SHELF_BOTTOM',
         'SHELF_PANEL_LEFT', 'SHELF_PANEL_RIGHT',
+        # End shelves product boards - finished material
+        'END_SHELF', 'END_SHELF_TOP', 'END_SHELF_BACK',
         # Mantle boards (shelf assembly + surround legs / header) -
         # finished material throughout; the crown / base moulding
         # sweeps are curves handled in _apply_materials_to_cabinet.
@@ -3470,6 +3472,9 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                                  # section, finished to match exterior.
                                  'BLIND_SECTION_TAMBOUR',
                                  'LEG_CURVED_PANEL',
+                                 # End shelves kick: a board bent
+                                 # round the shelves' radius.
+                                 'END_SHELF_KICK',
                                  # Decorative corner posts: milled stock
                                  # standing in the cabinet's own corner,
                                  # so always the exterior finish.
@@ -14417,12 +14422,60 @@ class Face_Frame_Valance_Props(PropertyGroup):
     )  # type: ignore
 
 
+class Face_Frame_End_Shelves_Props(PropertyGroup):
+    """Options for an End Shelves product (open shelves with a rounded
+    outer corner, set against the end of a run).
+
+    Lives on the product's cage object alongside face_frame_cabinet;
+    recalculate() reads these to build its parts. Width / depth / height
+    come from face_frame_cabinet. kind is set by the library item placed
+    (Base / Wall / Tall) and decides the top shelf and the toe kick.
+    """
+    kind: EnumProperty(
+        name="Type",
+        items=[
+            ('BASE', "Base", "Base end shelves on a toe kick"),
+            ('WALL', "Wall", "Wall end shelves with a square top shelf"),
+            ('TALL', "Tall", "Tall end shelves on a toe kick with a square top shelf"),
+        ],
+        default='BASE', update=_update_cabinet_dim,
+    )  # type: ignore
+    rounded_side: EnumProperty(
+        name="Open Side",
+        items=[
+            ('LEFT', "Left", "The shelves open and round off to the left"),
+            ('RIGHT', "Right", "The shelves open and round off to the right"),
+        ],
+        default='RIGHT', update=_update_cabinet_dim,
+    )  # type: ignore
+    peninsula: BoolProperty(
+        name="Peninsula", default=False, update=_update_cabinet_dim,
+        description="Open to the front and the back, with both outer "
+                    "corners rounded and no back panel",
+    )  # type: ignore
+    corner_radius: FloatProperty(
+        name="Corner Radius", default=units.inch(6.0), min=0.0,
+        unit='LENGTH', precision=4, update=_update_cabinet_dim,
+        description="Radius of the rounded shelf corners",
+    )  # type: ignore
+    shelf_quantity: IntProperty(
+        name="Shelves", default=3, min=2, max=12,
+        update=_update_cabinet_dim,
+        description="Number of shelves, bottom and top included, spaced evenly",
+    )  # type: ignore
+    include_back: BoolProperty(
+        name="Finished Back", default=True, update=_update_cabinet_dim,
+        description="Add a 3/4\" finished back against the wall",
+    )  # type: ignore
+
+
 classes = (
     Face_Frame_Leg_Props,
     Face_Frame_Floating_Shelf_Props,
     Face_Frame_Mantle_Props,
     Face_Frame_Wood_Top_Props,
     Face_Frame_Valance_Props,
+    Face_Frame_End_Shelves_Props,
     Face_Frame_Column_Beam_Props,
     Face_Frame_Millwork_Item,
     Face_Frame_Special_Effect,
@@ -14487,6 +14540,7 @@ def register():
     bpy.types.Object.mantle_product = PointerProperty(type=Face_Frame_Mantle_Props)
     bpy.types.Object.wood_top = PointerProperty(type=Face_Frame_Wood_Top_Props)
     bpy.types.Object.valance_product = PointerProperty(type=Face_Frame_Valance_Props)
+    bpy.types.Object.end_shelves = PointerProperty(type=Face_Frame_End_Shelves_Props)
     bpy.types.Object.column_beam_product = PointerProperty(type=Face_Frame_Column_Beam_Props)
     bpy.types.Object.face_frame_bay = PointerProperty(type=Face_Frame_Bay_Props)
     bpy.types.Object.face_frame_opening = PointerProperty(type=Face_Frame_Opening_Props)
@@ -14518,6 +14572,8 @@ def unregister():
         del bpy.types.Object.column_beam_product
     if hasattr(bpy.types.Object, 'valance_product'):
         del bpy.types.Object.valance_product
+    if hasattr(bpy.types.Object, 'end_shelves'):
+        del bpy.types.Object.end_shelves
     if hasattr(bpy.types.Object, 'wood_top'):
         del bpy.types.Object.wood_top
     if hasattr(bpy.types.Object, 'leg_product'):

@@ -249,6 +249,14 @@ PART_ROLE_SHELF_BOTTOM = 'SHELF_BOTTOM'
 PART_ROLE_SHELF_PANEL_LEFT = 'SHELF_PANEL_LEFT'
 PART_ROLE_SHELF_PANEL_RIGHT = 'SHELF_PANEL_RIGHT'
 
+# End shelves (open rounded-corner shelves at the end of a run). Same
+# non-bay pattern as the floating shelf; finished boards.
+END_SHELVES_TAG = 'IS_END_SHELVES'
+PART_ROLE_END_SHELF = 'END_SHELF'
+PART_ROLE_END_SHELF_TOP = 'END_SHELF_TOP'
+PART_ROLE_END_SHELF_BACK = 'END_SHELF_BACK'
+PART_ROLE_END_SHELF_KICK = 'END_SHELF_KICK'
+
 # Valance product (a decorative board spanning the gap between two
 # upper cabinets). Same non-bay pattern as the floating shelf.
 MANTLE_TAG = 'IS_MANTLE_PRODUCT'
@@ -18790,6 +18798,308 @@ class FloatingShelfFaceFrameCabinet(FaceFrameCabinet):
         cutter.rotation_euler = (0.0, 0.0, 0.0)
 
 
+class EndShelvesFaceFrameCabinet(FaceFrameCabinet):
+    """Open end shelves set against the end of a run, the outer corner
+    rounded to a typed radius.
+
+    NOT a bay/opening product: like the floating shelf it builds its
+    parts directly from the cage width / depth / height and the
+    ``end_shelves`` propgroup. 3/4" shelves spaced evenly from the kick
+    (or the bottom) to the top, a 3/4" finished back against the wall,
+    and on base / tall a 3/4" kick bent round the shelves' radius. Wall
+    and tall take a square top shelf. A peninsula opens both front and
+    back, rounding both outer corners, and has no back.
+
+    The Base / Wall / Tall library items are subclasses that only set
+    the kind and its default sizes; every root is stamped with this
+    class's name so a recalc rewraps it here.
+    """
+    single_placement = True
+    end_shelves_kind = 'BASE'
+    default_cabinet_type = 'BASE'
+    _DEFAULT_SHELVES = {'BASE': 3, 'WALL': 4, 'TALL': 6}
+    _ARC_SEGMENTS = 16
+
+    def __init__(self):
+        super().__init__()
+        scene = getattr(bpy.context, 'scene', None)
+        ff = getattr(scene, 'hb_face_frame', None) if scene else None
+        self.default_width = inch(12.0)
+        if ff is not None:
+            if self.end_shelves_kind == 'WALL':
+                self.default_height = ff.upper_cabinet_height
+                self.default_depth = ff.upper_cabinet_depth
+            elif self.end_shelves_kind == 'TALL':
+                self.default_height = ff.tall_cabinet_height
+                self.default_depth = ff.tall_cabinet_depth
+            else:
+                self.default_height = ff.base_cabinet_height
+                self.default_depth = ff.base_cabinet_depth
+
+    def _has_toe_kick(self):
+        return False
+
+    def _has_carcass(self):
+        return False
+
+    def create(self, name="End Shelves", bay_qty=1):
+        self.create_cabinet_root(name)
+        self.obj[END_SHELVES_TAG] = True
+        self.obj['CLASS_NAME'] = EndShelvesFaceFrameCabinet.__name__
+        es = self.obj.end_shelves
+        cabinet_id = id(self.obj)
+        _RECALCULATING.add(cabinet_id)
+        try:
+            es.kind = self.end_shelves_kind
+            es.shelf_quantity = self._DEFAULT_SHELVES[self.end_shelves_kind]
+        finally:
+            _RECALCULATING.discard(cabinet_id)
+        if self.end_shelves_kind == 'WALL':
+            scene = bpy.context.scene
+            if hasattr(scene, 'hb_face_frame'):
+                self.obj.location.z = (
+                    scene.hb_face_frame.default_wall_cabinet_location)
+        self.recalculate()
+
+    # ---- Parts ----------------------------------------------------------
+    def _new_part(self, role, name):
+        part = CabinetPart()
+        part.create(name)
+        part.obj.parent = self.obj
+        part.obj['hb_part_role'] = role
+        part.obj['CABINET_PART'] = True
+        part.obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_part_commands'
+        return part.obj
+
+    def _shelf_parts(self, qty):
+        """The qty shelves, bottom first; extras are removed."""
+        shelves = [c for c in self.obj.children
+                   if c.get('hb_part_role') in (PART_ROLE_END_SHELF,
+                                                PART_ROLE_END_SHELF_TOP)]
+        shelves.sort(key=lambda o: o.get('hb_shelf_index', 0))
+        while len(shelves) > qty:
+            bpy.data.objects.remove(shelves.pop(), do_unlink=True)
+        while len(shelves) < qty:
+            shelves.append(self._new_part(PART_ROLE_END_SHELF, 'End Shelf'))
+        for i, obj in enumerate(shelves):
+            obj['hb_shelf_index'] = i
+        return shelves
+
+    def _child(self, role):
+        for child in self.obj.children:
+            if child.get('hb_part_role') == role:
+                return child
+        return None
+
+    def _remove_child(self, role):
+        child = self._child(role)
+        if child is not None:
+            bpy.data.objects.remove(child, do_unlink=True)
+
+    @staticmethod
+    def _place(obj, length, width, thickness, loc, rot):
+        # A Make Editable part owns its mesh and transform.
+        if obj.get('IS_MANUAL_PART'):
+            return
+        gn = GeoNodeCutpart(obj)
+        gn.set_input('Length', length)
+        gn.set_input('Width', width)
+        gn.set_input('Thickness', thickness)
+        obj.location = loc
+        obj.rotation_euler = rot
+
+    @hb_utils.with_children_index
+    def recalculate(self):
+        cab = self.obj.face_frame_cabinet
+        es = self.obj.end_shelves
+        W, D, H = cab.width, cab.depth, cab.height
+        self.set_input('Dim X', W)
+        self.set_input('Dim Y', D)
+        self.set_input('Dim Z', H)
+
+        t = inch(0.75)
+        kind = es.kind
+        pen = es.peninsula and kind == 'BASE'
+        has_back = es.include_back and not pen
+        square_top = kind in ('WALL', 'TALL')
+        has_kick = kind in ('BASE', 'TALL')
+        right = es.rounded_side == 'RIGHT'
+        tkh = cab.toe_kick_height if has_kick else 0.0
+        y_rear = -t if has_back else 0.0
+        shelf_d = D + y_rear
+
+        # The radius stays inside the shelf: no wider than the shelf and,
+        # with both corners rounded, no deeper than half of it.
+        r_max = min(W, shelf_d / 2.0 if pen else shelf_d) - inch(1 / 16)
+        r = max(min(es.corner_radius, r_max), 0.0)
+
+        # --- Back ---
+        if has_back:
+            back = self._child(PART_ROLE_END_SHELF_BACK) or self._new_part(
+                PART_ROLE_END_SHELF_BACK, 'End Shelves Back')
+            back_h = H - t if square_top else H
+            self._place(back, W, back_h, t, (0.0, -t, 0.0),
+                        (math.radians(-90), 0.0, 0.0))
+            if not back.get('IS_MANUAL_PART'):
+                GeoNodeCutpart(back).set_input('Mirror Y', True)
+            back['IS_FINISHED'] = True
+        else:
+            self._remove_child(PART_ROLE_END_SHELF_BACK)
+
+        # --- Corner cutters ---
+        xo = W if right else 0.0
+        ax = -1.0 if right else 1.0
+        m = inch(2.0)
+        corners = []
+        if r > inch(1 / 32):
+            corners.append(('ES_FRONT', (xo, -D, ax, 1.0)))
+            if pen:
+                corners.append(('ES_BACK', (xo, 0.0, ax, -1.0)))
+        cutters = {}
+        for key, (cx, cy, cax, cby) in corners:
+            cutter = self._ensure_box_miter_cutter(key, 'END_SHELF')
+            pts = self._round_corner_waste(cx, cy, cax, cby, r, m,
+                                           self._ARC_SEGMENTS)
+            self._wedge_prism_mesh(cutter, pts, -m, H + m)
+            cutters[key] = cutter
+        for child in list(self.obj.children):
+            if (child.get('hb_part_role') == PART_ROLE_BOX_MITER_CUTTER
+                    and child.get('hb_miter_part') == 'END_SHELF'
+                    and child.get('hb_miter_side') not in cutters):
+                bpy.data.objects.remove(child, do_unlink=True)
+
+        # --- Shelves ---
+        n = es.shelf_quantity
+        shelves = self._shelf_parts(n)
+        z0, z1 = tkh, H - t
+        for i, obj in enumerate(shelves):
+            z = z0 + (z1 - z0) * i / (n - 1)
+            top = square_top and i == n - 1
+            obj['hb_part_role'] = (PART_ROLE_END_SHELF_TOP if top
+                                   else PART_ROLE_END_SHELF)
+            if top:
+                # Square top over the back, full depth.
+                self._place(obj, W, D, t, (0.0, -D, z), (0.0, 0.0, 0.0))
+            else:
+                self._place(obj, W, shelf_d, t, (0.0, -D, z),
+                            (0.0, 0.0, 0.0))
+            obj['IS_FINISHED'] = True
+            if obj.get('IS_MANUAL_PART'):
+                continue
+            for key in ('ES_FRONT', 'ES_BACK'):
+                mod_name = 'Round ' + key[3:].title()
+                mod = obj.modifiers.get(mod_name)
+                cutter = None if top else cutters.get(key)
+                if cutter is None:
+                    if mod is not None:
+                        obj.modifiers.remove(mod)
+                    continue
+                if mod is None:
+                    mod = obj.modifiers.new(name=mod_name, type='BOOLEAN')
+                    mod.operation = 'DIFFERENCE'
+                if mod.object is not cutter:
+                    mod.object = cutter
+
+        # --- Kick ---
+        if has_kick and tkh > 0.0:
+            self._build_kick(W, D, tkh, cab.toe_kick_setback, t, r, right,
+                             pen, y_rear)
+        else:
+            self._remove_child(PART_ROLE_END_SHELF_KICK)
+
+    # ---- Geometry -------------------------------------------------------
+    @staticmethod
+    def _round_corner_waste(cx, cy, ax, by, r, m, segs):
+        """Plan polygon cut off a square corner at (cx, cy) to round it
+        to radius r. (ax, 0) and (0, by) point into the shelf along its
+        two edges; the polygon overshoots outward by m."""
+        pts = [(cx - ax * m, cy - by * m), (cx + ax * r, cy - by * m)]
+        ox, oy = cx + ax * r, cy + by * r
+        for k in range(segs + 1):
+            th = (math.pi / 2.0) * k / segs
+            pts.append((ox - ax * r * math.sin(th),
+                        oy - by * r * math.cos(th)))
+        pts.append((cx - ax * m, cy + by * r))
+        return pts
+
+    def _kick_path(self, W, D, off, rho, right, pen, y_end):
+        """The kick's line set back `off` from the shelves' exposed
+        edges, bent round radius rho: along the front from the run, round
+        the outer corner, then back to the wall (or round the back corner
+        and along the back to the run, on a peninsula)."""
+        segs = self._ARC_SEGMENTS
+        pts = [(0.0, -D + off)]
+        cx, cy = W - off - rho, -D + off + rho
+        for k in range(segs + 1):
+            th = -math.pi / 2.0 + (math.pi / 2.0) * k / segs
+            pts.append((cx + rho * math.cos(th), cy + rho * math.sin(th)))
+        if pen:
+            cy = -off - rho
+            for k in range(segs + 1):
+                th = (math.pi / 2.0) * k / segs
+                pts.append((cx + rho * math.cos(th),
+                            cy + rho * math.sin(th)))
+            pts.append((0.0, -off))
+        else:
+            pts.append((W - off, y_end))
+        if not right:
+            pts = [(W - x, y) for (x, y) in pts]
+        return pts
+
+    def _build_kick(self, W, D, tkh, setback, t, r, right, pen, y_end):
+        """A 3/4" kick board following the shelves' outline, set back by
+        the toe kick setback and bent to the shelves' radius less it."""
+        span = (D - 2.0 * setback) / 2.0 if pen else D + y_end - setback
+        rho = min(max(r - setback, t + inch(0.25)),
+                  W - setback - inch(0.25), span - inch(0.25))
+        rho = max(rho, t + inch(0.0625))
+        outer = self._kick_path(W, D, setback, rho, right, pen, y_end)
+        inner = self._kick_path(W, D, setback + t, rho - t, right, pen,
+                                y_end)
+
+        kick = self._child(PART_ROLE_END_SHELF_KICK)
+        if kick is None:
+            mesh = bpy.data.meshes.new('End Shelves Kick')
+            kick = hb_utils.new_object('End Shelves Kick', mesh)
+            kick['hb_part_role'] = PART_ROLE_END_SHELF_KICK
+            kick.parent = self.obj
+            for coll in self.obj.users_collection:
+                coll.objects.link(kick)
+                break
+        bm = bmesh.new()
+        ob = [bm.verts.new((x, y, 0.0)) for (x, y) in outer]
+        ot = [bm.verts.new((x, y, tkh)) for (x, y) in outer]
+        ib = [bm.verts.new((x, y, 0.0)) for (x, y) in inner]
+        it = [bm.verts.new((x, y, tkh)) for (x, y) in inner]
+        for i in range(len(outer) - 1):
+            j = i + 1
+            bm.faces.new((ob[i], ob[j], ot[j], ot[i]))
+            bm.faces.new((ib[j], ib[i], it[i], it[j]))
+            bm.faces.new((ot[i], ot[j], it[j], it[i]))
+            bm.faces.new((ib[i], ib[j], ob[j], ob[i]))
+        bm.faces.new((ob[0], ot[0], it[0], ib[0]))
+        bm.faces.new((ib[-1], it[-1], ot[-1], ob[-1]))
+        bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+        bm.to_mesh(kick.data)
+        bm.free()
+        kick.location = (0.0, 0.0, 0.0)
+        kick.rotation_euler = (0.0, 0.0, 0.0)
+
+
+class BaseEndShelvesFaceFrameCabinet(EndShelvesFaceFrameCabinet):
+    end_shelves_kind = 'BASE'
+
+
+class WallEndShelvesFaceFrameCabinet(EndShelvesFaceFrameCabinet):
+    end_shelves_kind = 'WALL'
+    default_cabinet_type = 'UPPER'
+
+
+class TallEndShelvesFaceFrameCabinet(EndShelvesFaceFrameCabinet):
+    end_shelves_kind = 'TALL'
+    default_cabinet_type = 'TALL'
+
+
 # Per-style standard build for the Mantle product, inches:
 # (overall_height, crown_projection). Contemporary is a plain hollow box
 # (projection 0). The crown styles read like the catalog sections: a top
@@ -20761,6 +21071,9 @@ CABINET_NAME_DISPATCH = {
     "Bookcase Storage Unit": BookcaseStorageUnitFaceFrameCabinet,
     "Leg Product": LegProductFaceFrameCabinet,
     "Floating Shelves": FloatingShelfFaceFrameCabinet,
+    "Base End Shelves": BaseEndShelvesFaceFrameCabinet,
+    "Wall End Shelves": WallEndShelvesFaceFrameCabinet,
+    "Tall End Shelves": TallEndShelvesFaceFrameCabinet,
     "Mantle": MantleFaceFrameProduct,
     "Valance": ValanceFaceFrameProduct,
     "Wood Top": WoodTopPart,
@@ -20976,6 +21289,7 @@ WRAP_CLASS_REGISTRY.update({
     'FaceFrameAndDoorsCabinet': FaceFrameAndDoorsCabinet,
     'LegProductFaceFrameCabinet': LegProductFaceFrameCabinet,
     'FloatingShelfFaceFrameCabinet': FloatingShelfFaceFrameCabinet,
+    'EndShelvesFaceFrameCabinet': EndShelvesFaceFrameCabinet,
     'MantleFaceFrameProduct': MantleFaceFrameProduct,
     'ValanceFaceFrameProduct': ValanceFaceFrameProduct,
 })
