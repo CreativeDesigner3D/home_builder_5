@@ -387,6 +387,37 @@ def unregister_delete_operator(kind):
     _delete_ops[kind] = _DEFAULT_DELETE_OPS.get(kind)
 
 
+# Section clear buttons: an X on a section header that removes every
+# scene in it. None of the built-in sections has one -- clearing a whole
+# section needs an owner that knows how to take its scenes apart -- so a
+# header only grows the button once an add-on registers an operator for
+# it. The operator is invoked with no arguments and should confirm first.
+_section_clear_ops = {}    # section label -> operator idname
+
+
+def register_section_clear(label, op_idname):
+    """Give section ``label`` (e.g. 'LAYOUT VIEWS') a clear-all button."""
+    _section_clear_ops[label] = op_idname
+
+
+def unregister_section_clear(label):
+    _section_clear_ops.pop(label, None)
+
+
+def run_section_clear(label):
+    """Invoke the clear operator registered for section ``label``."""
+    op_idname = _section_clear_ops.get(label)
+    if not op_idname:
+        return False
+    mod, name = op_idname.split('.', 1)
+    try:
+        getattr(getattr(bpy.ops, mod), name)('INVOKE_DEFAULT')
+    except Exception as ex:
+        print('Home Builder: could not clear %s: %s' % (label, ex))
+        return False
+    return True
+
+
 def run_row_delete(scene):
     """Invoke the delete operator for this row. Shared by the modal and
     the hosted panel so the two can't disagree about what a click on the
@@ -532,7 +563,8 @@ def _build_layout(region, area, current_scene_name,
     (y is the bottom edge). entries is a list of tuples:
         ('panel_header', current_scene_name, rect)
         ('list', clip_rect, track_rect_or_None, thumb_rect_or_None)
-        ('header', label, color, rect, collapsed, count)
+        ('header', label, color, rect, collapsed, count,
+                   clear_rect_or_None)
         ('row', scene, parent, color, is_current, rect,
                 delete_rect_or_None)
         ('new_room', rect)
@@ -579,7 +611,8 @@ def _build_layout(region, area, current_scene_name,
             items.append(('gap', None, section_gap, 0.0))
         hdr_w = (SECTION_CHEVRON_W * s + _text_w(font_id, hdr_font, label)
                  + (_text_w(font_id, hdr_font, f"  {len(scenes)}")
-                    if collapsed else 0.0))
+                    if collapsed else 0.0)
+                 + (room_reserve if label in _section_clear_ops else 0.0))
         items.append(('header', (label, color, collapsed, len(scenes)),
                       section_hdr_h, hdr_w))
         if collapsed:
@@ -689,9 +722,14 @@ def _build_layout(region, area, current_scene_name,
             continue
         if kind == 'header':
             label, color, collapsed, count = payload
+            clear_rect = None
+            if label in _section_clear_ops:
+                by = item_bot + (h - btn) / 2.0
+                dx = content_x + row_w - btn_right_pad - btn
+                clear_rect = (dx, by, btn, btn)
             entries.append(('header', label, color,
                             (content_x, item_bot, row_w, h),
-                            collapsed, count))
+                            collapsed, count, clear_rect))
         else:
             sc, parent, color = payload
             row_rect = (content_x, item_bot, row_w, h)
@@ -752,6 +790,7 @@ def hit_test(mx, my, entries):
 
     Returns (kind, payload) or None:
         ('section', label)     section header (collapse / expand)
+        ('clear_section', label)  the header's clear-all button
         ('delete', scene) / ('row', scene)
         ('new_room', None)
     List entries scrolled partly out of the clip rect only hit on their
@@ -765,6 +804,8 @@ def hit_test(mx, my, entries):
         if kind == 'header':
             if clip and not _point_in_rect(mx, my, clip):
                 continue
+            if entry[6] and _point_in_rect(mx, my, entry[6]):
+                return ('clear_section', entry[1])
             if _point_in_rect(mx, my, entry[3]):
                 return ('section', entry[1])
         elif kind == 'row':
@@ -1104,7 +1145,7 @@ def paint_navigator(panel_rect, entries, mx, my):
     for entry in entries:
         kind = entry[0]
         if kind == 'header':
-            _, label, color, rect, collapsed, count = entry
+            _, label, color, rect, collapsed, count, clear_rect = entry
             rx, ry, rw, rh = rect
             hdr_font = HEADER_FONT_SIZE * s
             hovered = _point_in_rect(lmx, lmy, rect)
@@ -1121,6 +1162,13 @@ def paint_navigator(panel_rect, entries, mx, my):
                 lw = _text_w(font_id, hdr_font, label)
                 _draw_text(font_id, rx + chev + lw, baseline, hdr_font,
                            TEXT_DIM, f"  {count}")
+            if clear_rect is not None:
+                c_hover = _point_in_rect(lmx, lmy, clear_rect)
+                _draw_rect(shader, *clear_rect,
+                           ACTION_DELETE_HOVER_BG if c_hover else ACTION_BG)
+                _draw_delete_glyph(shader, clear_rect,
+                                   ACTION_GLYPH_HOVER if c_hover
+                                   else ACTION_GLYPH)
         elif kind == 'row':
             _draw_row(shader, font_id, entry, lmx, lmy)
 
@@ -1235,6 +1283,8 @@ def handle_navigator_click(context, mx, my, entries):
 
         elif kind == 'delete':
             run_row_delete(scene)
+        elif kind == 'clear_section':
+            run_section_clear(scene)
         elif kind == 'row':
             if scene.name != context.scene.name:
                 bpy.ops.home_builder_layouts.go_to_layout_view(
@@ -1431,9 +1481,14 @@ class home_builder_OT_scene_navigator(bpy.types.Operator):
                 my = event.mouse_y - self.region.y
                 hit = hit_test(mx, my, self.entries)
                 if (hit is not None and hit[0] == 'delete'
-                        and hit[1].name == pending):
+                        and pending == ('delete', hit[1].name)):
                     self._cleanup(context)
                     self._delete_row(context, hit[1])
+                    return {'FINISHED'}
+                if (hit is not None and hit[0] == 'clear_section'
+                        and pending == ('clear_section', hit[1])):
+                    self._cleanup(context)
+                    run_section_clear(hit[1])
                     return {'FINISHED'}
             return {'RUNNING_MODAL'}
 
@@ -1458,7 +1513,11 @@ class home_builder_OT_scene_navigator(bpy.types.Operator):
                 # operator opens a confirm popup under the cursor, and
                 # the release of this same click would land on it and
                 # confirm before the user could choose.
-                self._pending_delete = scene.name
+                self._pending_delete = ('delete', scene.name)
+                return {'RUNNING_MODAL'}
+            if kind == 'clear_section':
+                # Same reason as a row delete: act on the release.
+                self._pending_delete = ('clear_section', scene)
                 return {'RUNNING_MODAL'}
             if kind == 'row':
                 # This popup is transient by nature -- it is summoned for
