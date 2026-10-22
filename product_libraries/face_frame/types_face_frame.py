@@ -7830,6 +7830,7 @@ class FaceFrameCabinet(GeoNodeCage):
     _CT_COUNTER_TOP = inch(36.5)
     _CT_NEIGHBOUR_GAP = inch(0.5)     # below a valance / hanging neighbour
     _CT_TOUCH = inch(1.0)
+    _CT_SETBACK = inch(0.5)           # neighbour front this far back still counts
 
     def _corner_treatment_name(self):
         style_name = self.obj.get('STYLE_NAME')
@@ -7847,14 +7848,20 @@ class FaceFrameCabinet(GeoNodeCage):
         """Cabinets on the same wall whose end meets this cabinet's
         `side` end: [(root, bottom_z, top_z, flush_front)] in this
         cabinet's local Z. flush_front: its front plane is this
-        cabinet's (a leg or tall standing flush with the face frame)."""
+        cabinet's (a leg or tall standing flush with the face frame).
+        A neighbour set back from the face frame (a shallower shelf)
+        never reaches the stile's front edge and is left out."""
         parent = self.obj.parent
         if parent is None or not parent.get('IS_WALL_BP'):
             return []
+        from . import exposure
         cab = self.obj.face_frame_cabinet
         x0 = self.obj.location.x
         x1 = x0 + cab.width
         z_base = self.obj.location.z
+        key = side.lower()
+        other_key = 'right' if key == 'left' else 'left'
+        front = exposure._side_front_y(self.obj, key)
         out = []
         for other in parent.children:
             if other is self.obj or not other.get(TAG_CABINET_CAGE):
@@ -7869,6 +7876,10 @@ class FaceFrameCabinet(GeoNodeCage):
             else:
                 touching = abs(ox0 - x1) <= self._CT_TOUCH
             if not touching:
+                continue
+            # Front Y runs negative out from the wall: larger = set back.
+            if (exposure._side_front_y(other, other_key) - front
+                    > self._CT_SETBACK):
                 continue
             bottom = other.location.z - z_base
             top = bottom + ocab.height
