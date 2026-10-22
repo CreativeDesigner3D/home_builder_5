@@ -3259,8 +3259,9 @@ class hb_face_frame_OT_set_finished_end_condition(bpy.types.Operator):
                         text="Extend Back")
         if (fin_type in types_face_frame.RETURN_SIDE_CONDITIONS
                 and getattr(cab, f'{key}_side_finished_extend_back') != 0.0
-                and cab.back_finished_end_condition
-                in types_face_frame.RETURN_BACK_CONDITIONS):
+                and (cab.back_finished_end_condition
+                     in types_face_frame.RETURN_BACK_CONDITIONS
+                     or not types_face_frame.returns_need_back(root))):
             layout.prop(cab, f'{key}_side_return_width',
                         text="Return Width")
             if getattr(cab, f'{key}_side_return_width') != 0.0:

@@ -1154,6 +1154,20 @@ def draw_leg_product(layout, root):
                 'UNFINISHED', 'FLUSH_X'):
             erow.prop(cab, f'{side}_side_finished_extend_back',
                       text="Extend Back")
+        # An extended Finished / Paneled side can return, as on a
+        # cabinet end: a return panel set in by the width, capped at the
+        # rear by a stile that wide.
+        if (getattr(cab, f'{side}_finished_end_condition')
+                in types_face_frame.RETURN_SIDE_CONDITIONS
+                and getattr(cab, f'{side}_side_finished_extend_back') > 0.0):
+            rrow = ecol.row(align=True)
+            rrow.label(text="")
+            rrow.prop(cab, f'{side}_side_return_width', text="Return Width")
+            if getattr(cab, f'{side}_side_return_width') > 0.0:
+                trow = ecol.row(align=True)
+                trow.label(text="")
+                trow.prop(cab, f'{side}_side_return_panel_type', text="")
+                trow.prop(cab, f'{side}_side_return_stile_type', text="")
 
 
 def draw_face_frame_defaults(layout, cab_props):
@@ -2285,8 +2299,10 @@ def draw_finished_ends(layout, cab_props):
         if (side in ('left', 'right')
                 and fin_type in types_face_frame.RETURN_SIDE_CONDITIONS
                 and getattr(cab_props, f'{side}_side_finished_extend_back') != 0.0
-                and getattr(cab_props, 'back_finished_end_condition')
-                in types_face_frame.RETURN_BACK_CONDITIONS):
+                and (getattr(cab_props, 'back_finished_end_condition')
+                     in types_face_frame.RETURN_BACK_CONDITIONS
+                     or not types_face_frame.returns_need_back(
+                         cab_props.id_data))):
             col.prop(cab_props, f'{side}_side_return_width', text="Return Width")
             # Per-member Finished / Paneled construction, once a return exists.
             if getattr(cab_props, f'{side}_side_return_width') != 0.0:

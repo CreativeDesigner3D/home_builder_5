@@ -220,6 +220,13 @@ PART_ROLE_LOOSE_KICK_END_RIGHT = 'LOOSE_KICK_END_RIGHT'
 # product class that bypasses the bay/solver pipeline; all parts are
 # finished-material.
 LEG_PRODUCT_TAG = 'IS_LEG_PRODUCT'
+
+
+def returns_need_back(obj):
+    """True when a side return on `obj` needs a finished back to return
+    into. A cabinet's return dies into its finished back; a leg product
+    has no back, so its extended side returns on its own."""
+    return not (obj is not None and obj.get(LEG_PRODUCT_TAG))
 PART_ROLE_LEG_PANEL_LEFT = 'LEG_PANEL_LEFT'
 PART_ROLE_LEG_PANEL_RIGHT = 'LEG_PANEL_RIGHT'
 PART_ROLE_LEG_STILE = 'LEG_STILE'
@@ -10293,11 +10300,14 @@ class FaceFrameCabinet(GeoNodeCage):
         Single source of truth shared by the return-part builder and the
         back sizing (the finished/paneled/textured back field is
         shortened by this width so it butts the return post instead of
-        running behind it).
+        running behind it). A leg product builds no back, so its returns
+        skip the back test (see returns_need_back).
         """
         if layout.is_angled:
             return 0.0
-        if cab.back_finished_end_condition not in RETURN_BACK_CONDITIONS:
+        if (returns_need_back(self.obj)
+                and cab.back_finished_end_condition
+                not in RETURN_BACK_CONDITIONS):
             return 0.0
         if side == 'LEFT':
             condition = cab.left_finished_end_condition
@@ -18017,11 +18027,16 @@ class LegProductFaceFrameCabinet(FaceFrameCabinet):
             # leg half laid out.
             kick_inset_left=0.0,
             kick_inset_right=0.0,
+            # ...and nothing for the rear-kick notch to follow.
+            has_toe_kick=False,
             # Carcass stock thickness - a working face frame sizes its
             # rails off it.
             mt=mt,
         )
         self._reconcile_applied_panels(leg_layout)
+        # Return closeout on an extended side: the same return panel and
+        # rear stile a cabinet end gets, sized from the leg's own dims.
+        self._reconcile_finished_side_returns(leg_layout)
         self._reconcile_leg_textured_panels(
             cab, width, height, depth - fft,
             notch=(notch_on, tkh, tks - fft))
