@@ -17461,6 +17461,24 @@ class LegProductFaceFrameCabinet(FaceFrameCabinet):
     def _has_carcass(self):
         return False
 
+    def _finished_side_return_width(self, cab, layout, side):
+        """As a cabinet's, but only on a side that has an end to return:
+        an applied paneled end, or a leg panel finish_type finishes. An
+        intermediate leg's centre panel, or the unfinished side of an end
+        leg, carries no extend and so no return."""
+        width = super()._finished_side_return_width(cab, layout, side)
+        if width <= 0.0:
+            return 0.0
+        condition = (cab.left_finished_end_condition if side == 'LEFT'
+                     else cab.right_finished_end_condition)
+        if condition in APPLIED_PANEL_END_TYPES:
+            return width
+        leg = self.obj.leg_product
+        finished = ('FINISH_LEFT', 'FINISH_BOTH') if side == 'LEFT'             else ('FINISH_RIGHT', 'FINISH_BOTH')
+        if leg.only_stile or leg.finish_type not in finished:
+            return 0.0
+        return width
+
     def create(self, name="Leg", bay_qty=1):
         # create_cabinet_root writes width/height/depth, which fire the
         # update callback -> recalculate(); CLASS_NAME is already set by
@@ -17770,9 +17788,27 @@ class LegProductFaceFrameCabinet(FaceFrameCabinet):
         l_max = depth - fft if back_lands_left else panel_max
         l_depth = min(olp, l_max) if olp > 0.0 else l_max
         l_y = -depth + fft + l_depth
-        place(L, height, l_depth, mt, (l_x, l_y, 0.0),
-              (0.0, math.radians(-90), 0.0),
-              {'Mirror Y': True, 'Mirror Z': True})
+
+        def extend_back(side, finished_side):
+            # A flat finished end extended back, like a cabinet's: the
+            # panel keeps its front edge and runs back past the leg to
+            # the extend (a paneled end hands this to its applied panel).
+            condition = getattr(cab, f'{side}_finished_end_condition')
+            if (not finished_side or only_stile
+                    or condition in ('UNFINISHED', 'FLUSH_X')
+                    or condition in APPLIED_PANEL_END_TYPES):
+                return 0.0
+            return max(0.0, getattr(cab, f'{side}_side_finished_extend_back'))
+
+        ext_l = extend_back('left', finish in ('FINISH_LEFT', 'FINISH_BOTH'))
+        if ext_l > 0.0:
+            place(L, height, depth - fft + ext_l, mt, (l_x, ext_l, 0.0),
+                  (0.0, math.radians(-90), 0.0),
+                  {'Mirror Y': True, 'Mirror Z': True})
+        else:
+            place(L, height, l_depth, mt, (l_x, l_y, 0.0),
+                  (0.0, math.radians(-90), 0.0),
+                  {'Mirror Y': True, 'Mirror Z': True})
         l_visible = not (finish == 'FINISH_RIGHT' or only_stile) and not left_paneled
         L.hide_viewport = not l_visible
         L.hide_render = not l_visible
@@ -17782,9 +17818,15 @@ class LegProductFaceFrameCabinet(FaceFrameCabinet):
         r_max = depth - fft if back_lands_right else panel_max
         r_depth = min(orp, r_max) if orp > 0.0 else r_max
         r_y = -depth + fft + r_depth
-        place(R, height, r_depth, mt, (width, r_y, 0.0),
-              (0.0, math.radians(-90), 0.0),
-              {'Mirror Y': True, 'Mirror Z': False})
+        ext_r = extend_back('right', finish in ('FINISH_RIGHT', 'FINISH_BOTH'))
+        if ext_r > 0.0:
+            place(R, height, depth - fft + ext_r, mt, (width, ext_r, 0.0),
+                  (0.0, math.radians(-90), 0.0),
+                  {'Mirror Y': True, 'Mirror Z': False})
+        else:
+            place(R, height, r_depth, mt, (width, r_y, 0.0),
+                  (0.0, math.radians(-90), 0.0),
+                  {'Mirror Y': True, 'Mirror Z': False})
         r_visible = finish in ('FINISH_RIGHT', 'FINISH_BOTH') and not only_stile and not right_paneled
         R.hide_viewport = not r_visible
         R.hide_render = not r_visible
@@ -17792,12 +17834,15 @@ class LegProductFaceFrameCabinet(FaceFrameCabinet):
 
         # The rabbet the back lands in; it only cuts when the panel
         # still reaches the back (a shortened panel has no back edge
-        # there to rabbet).
+        # there to rabbet). On an extended panel the same cut, measured
+        # from the front edge, lands at the back plane as a dado.
         rab = mt / 2.0
-        self._set_back_rabbet(L, back_lands_left and l_depth >= l_max - 1e-6,
-                              height, l_depth, bt, rab)
-        self._set_back_rabbet(R, back_lands_right and r_depth >= r_max - 1e-6,
-                              height, r_depth, bt, rab)
+        self._set_back_rabbet(
+            L, back_lands_left and (ext_l > 0.0 or l_depth >= l_max - 1e-6),
+            height, l_max if ext_l > 0.0 else l_depth, bt, rab)
+        self._set_back_rabbet(
+            R, back_lands_right and (ext_r > 0.0 or r_depth >= r_max - 1e-6),
+            height, r_max if ext_r > 0.0 else r_depth, bt, rab)
 
         # Flush toe kick: a setback smaller than the face-frame thickness
         # puts the kick plane at (or within) the face-frame band, so the
