@@ -10316,18 +10316,16 @@ class FaceFrameCabinet(GeoNodeCage):
         carcass back (+Y) to ride with sides extended back past the box,
         leaving a void behind the cabinet. 0.0 keeps it tight.
 
-        The back follows the furthest extended side. Any active return
-        closeout keeps it tight: the return panel and post are built to
-        die into a back at Y=0. Sides carrying an island combined end are
-        ignored (their extend spans the partner run, not a void), as are
-        sides with no finished face, whose extend value is a leftover.
-        Angled cabinets reshape the sides and back separately, so skip.
+        The back follows the furthest extended side. A return closeout
+        rides out with it: the back (already shortened by the return
+        width) lands between the return posts, its rear face flush with
+        the rear stiles, and the return panels close the void at each
+        end. Sides carrying an island combined end are ignored (their
+        extend spans the partner run, not a void), as are sides with no
+        finished face, whose extend value is a leftover. Angled cabinets
+        reshape the sides and back separately, so skip.
         """
         if layout.is_angled:
-            return 0.0
-        if (self._finished_side_return_width(cab, layout, 'LEFT') > 0.0
-                or self._finished_side_return_width(cab, layout, 'RIGHT')
-                > 0.0):
             return 0.0
         carried = set(island_pair.carried_sides(self.obj))
         offset = 0.0
