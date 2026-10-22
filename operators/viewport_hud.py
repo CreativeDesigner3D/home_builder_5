@@ -1968,7 +1968,8 @@ class home_builder_OT_hud_click(bpy.types.Operator):
             if layout and point_in_rect(mx, my, layout[0]):
                 hit = scene_navigator.hit_test(mx, my, layout[1])
                 if hit is not None and hit[0] in ('row', 'delete',
-                                                  'clear_section'):
+                                                  'clear_section',
+                                                  'empty_action'):
                     # A row press holds the mouse: released in place it
                     # is the ordinary click (switch / rename), dragged
                     # past the threshold it picks the row up to reorder

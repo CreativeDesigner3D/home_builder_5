@@ -418,6 +418,35 @@ def run_section_clear(label):
     return True
 
 
+# Empty-section actions: a section normally disappears when it has no
+# scenes. One with an action registered stays listed while empty, with a
+# single button in place of its rows (e.g. a way to make the first one).
+_empty_actions = {}    # section label -> (button text, operator idname)
+
+
+def register_empty_section_action(label, text, op_idname):
+    """Keep section ``label`` listed when empty, showing a ``text`` button
+    that invokes ``op_idname`` (no arguments)."""
+    _empty_actions[label] = (text, op_idname)
+
+
+def unregister_empty_section_action(label):
+    _empty_actions.pop(label, None)
+
+
+def run_empty_action(label):
+    action = _empty_actions.get(label)
+    if not action:
+        return False
+    mod, name = action[1].split('.', 1)
+    try:
+        getattr(getattr(bpy.ops, mod), name)('INVOKE_DEFAULT')
+    except Exception as ex:
+        print('Home Builder: %s failed: %s' % (action[1], ex))
+        return False
+    return True
+
+
 def run_row_delete(scene):
     """Invoke the delete operator for this row. Shared by the modal and
     the hosted panel so the two can't disagree about what a click on the
@@ -545,7 +574,7 @@ def _collect_groups():
         ('LAYOUT VIEWS', COLOR_LAYOUTS, layouts, _parent_room_name),
         ('DETAILS',      COLOR_DETAILS, details, None),
     ]
-    return [g for g in raw if g[2]]
+    return [g for g in raw if g[2] or g[0] in _empty_actions]
 
 # ---- Layout computation -----------------------------------------------------
 
@@ -567,6 +596,7 @@ def _build_layout(region, area, current_scene_name,
                    clear_rect_or_None)
         ('row', scene, parent, color, is_current, rect,
                 delete_rect_or_None)
+        ('empty_action', label, text, rect)
         ('new_room', rect)
     Room and layout-view rows carry a delete sub-rect; detail rows
     carry None.
@@ -616,6 +646,12 @@ def _build_layout(region, area, current_scene_name,
         items.append(('header', (label, color, collapsed, len(scenes)),
                       section_hdr_h, hdr_w))
         if collapsed:
+            continue
+        if not scenes and label in _empty_actions:
+            text = _empty_actions[label][0]
+            items.append(('empty_action', (label, text), row_h,
+                          text_left + _text_w(font_id, row_font, text)
+                          + 30 * s + plain_reserve))
             continue
         for sc in scenes:
             parent = parent_fn(sc) if parent_fn else None
@@ -723,13 +759,19 @@ def _build_layout(region, area, current_scene_name,
         if kind == 'header':
             label, color, collapsed, count = payload
             clear_rect = None
-            if label in _section_clear_ops:
+            if count and label in _section_clear_ops:
                 by = item_bot + (h - btn) / 2.0
                 dx = content_x + row_w - btn_right_pad - btn
                 clear_rect = (dx, by, btn, btn)
             entries.append(('header', label, color,
                             (content_x, item_bot, row_w, h),
                             collapsed, count, clear_rect))
+        elif kind == 'empty_action':
+            label, text = payload
+            inset = 2 * s
+            entries.append(('empty_action', label, text,
+                            (content_x + inset, item_bot + inset,
+                             row_w - 2 * inset, h - 2 * inset)))
         else:
             sc, parent, color = payload
             row_rect = (content_x, item_bot, row_w, h)
@@ -791,6 +833,7 @@ def hit_test(mx, my, entries):
     Returns (kind, payload) or None:
         ('section', label)     section header (collapse / expand)
         ('clear_section', label)  the header's clear-all button
+        ('empty_action', label)   an empty section's button
         ('delete', scene) / ('row', scene)
         ('new_room', None)
     List entries scrolled partly out of the clip rect only hit on their
@@ -817,6 +860,11 @@ def hit_test(mx, my, entries):
                 return ('delete', scene)
             if _point_in_rect(mx, my, rect):
                 return ('row', scene)
+        elif kind == 'empty_action':
+            if clip and not _point_in_rect(mx, my, clip):
+                continue
+            if _point_in_rect(mx, my, entry[3]):
+                return ('empty_action', entry[1])
         elif kind == 'room_action':
             if _point_in_rect(mx, my, entry[5]):
                 return ('room_action', entry)
@@ -1091,13 +1139,12 @@ def _draw_row(shader, font_id, entry, mx, my):
         _draw_rect(shader, rx, ry, rw, rh, (*PANEL_BG[:3], 0.6))
 
 
-def _draw_new_room_button(shader, font_id, rect, mx, my):
+def _draw_new_room_button(shader, font_id, rect, mx, my, label="New Room"):
     rx, ry, rw, rh = rect
     hovered = _point_in_rect(mx, my, rect)
     _draw_rect(shader, rx, ry, rw, rh,
                NEW_ROOM_HOVER_BG if hovered else NEW_ROOM_BG)
     _draw_rect_outline(shader, rx, ry, rw, rh, PANEL_BORDER)
-    label = "New Room"
     s = _s()
     row_font = ROW_FONT_SIZE * s
     blf.size(font_id, row_font)
@@ -1171,6 +1218,9 @@ def paint_navigator(panel_rect, entries, mx, my):
                                    else ACTION_GLYPH)
         elif kind == 'row':
             _draw_row(shader, font_id, entry, lmx, lmy)
+        elif kind == 'empty_action':
+            _draw_new_room_button(shader, font_id, entry[3], lmx, lmy,
+                                  label=entry[2])
 
     # Insertion line for a live row drag, on top of the rows and inside
     # the same clip.
@@ -1285,6 +1335,8 @@ def handle_navigator_click(context, mx, my, entries):
             run_row_delete(scene)
         elif kind == 'clear_section':
             run_section_clear(scene)
+        elif kind == 'empty_action':
+            run_empty_action(scene)
         elif kind == 'row':
             if scene.name != context.scene.name:
                 bpy.ops.home_builder_layouts.go_to_layout_view(
@@ -1490,6 +1542,11 @@ class home_builder_OT_scene_navigator(bpy.types.Operator):
                     self._cleanup(context)
                     run_section_clear(hit[1])
                     return {'FINISHED'}
+                if (hit is not None and hit[0] == 'empty_action'
+                        and pending == ('empty_action', hit[1])):
+                    self._cleanup(context)
+                    run_empty_action(hit[1])
+                    return {'FINISHED'}
             return {'RUNNING_MODAL'}
 
         if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
@@ -1515,9 +1572,10 @@ class home_builder_OT_scene_navigator(bpy.types.Operator):
                 # confirm before the user could choose.
                 self._pending_delete = ('delete', scene.name)
                 return {'RUNNING_MODAL'}
-            if kind == 'clear_section':
-                # Same reason as a row delete: act on the release.
-                self._pending_delete = ('clear_section', scene)
+            if kind in ('clear_section', 'empty_action'):
+                # Same reason as a row delete: act on the release, as
+                # the operator may open a dialog under the cursor.
+                self._pending_delete = (kind, scene)
                 return {'RUNNING_MODAL'}
             if kind == 'row':
                 # This popup is transient by nature -- it is summoned for
