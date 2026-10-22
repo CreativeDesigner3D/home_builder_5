@@ -582,7 +582,8 @@ class HOME_BUILDER_OT_show_dimension_properties(bpy.types.Operator):
             hb_annotation_defaults.save(
                 additional_text_x=self.additional_text_offset_x_amount,
                 additional_text_y=self.additional_text_offset_y_amount,
-                additional_text_size=self.additional_text_size)
+                additional_text_size=self.additional_text_size,
+                additional_text_from=hb_annotation_defaults.project_label())
 
         if context.area:
             context.area.tag_redraw()
@@ -663,6 +664,20 @@ class HOME_BUILDER_OT_show_dimension_properties(bpy.types.Operator):
                     (self.additional_text_offset_x_amount,
                      self.additional_text_offset_y_amount,
                      self.additional_text_size) = saved
+        # Ticked when this dimension already matches the saved defaults,
+        # so the dialog shows that the defaults are in use.
+        self.set_defaults = (
+            hb_props.annotation_dimension_additional_text_saved
+            and all(abs(a - b) < 1e-5 for a, b in (
+                (self.text_size, hb_props.annotation_dimension_text_size),
+                (self.tick_length, hb_props.annotation_dimension_tick_length),
+                (self.tick_thickness, hb_props.annotation_dimension_tick_thickness),
+                (self.line_thickness, hb_props.annotation_dimension_line_thickness),
+                (self.extend_line_amount, hb_props.annotation_dimension_extend_line)))
+            and hb_annotation_defaults.is_additional_text_placement(
+                self.additional_text_offset_x_amount,
+                self.additional_text_offset_y_amount,
+                self.additional_text_size))
         return context.window_manager.invoke_props_dialog(self, width=400)
 
     def draw(self, context):
@@ -730,8 +745,9 @@ class HOME_BUILDER_OT_show_dimension_properties(bpy.types.Operator):
         row.prop(self, 'update_all_dimensions', text="Apply Sizes to All")
         row.prop(self, 'set_defaults', text="Save Sizes & Text Offset as Default")
         if self.set_defaults:
-            box.label(text="The text offset carries to your other projects too",
-                      icon='INFO')
+            _draw_default_note(layout, 'additional_text', (
+                "OK with this checked makes these sizes this project's",
+                "default and the text offset the default in all projects"))
 
 
 class HOME_BUILDER_MT_dimension_commands(bpy.types.Menu):
@@ -877,6 +893,17 @@ class HOME_BUILDER_OT_toggle_text_bold(bpy.types.Operator):
         return {'FINISHED'}
 
 
+def _draw_default_note(layout, key, lines):
+    """Note under a 'save as default' box: where the default was set and
+    that OK with the box ticked makes these values the new default."""
+    col = layout.box().column(align=True)
+    src = hb_annotation_defaults.saved_from(key)
+    if src:
+        col.label(text=f"Default set in {src}", icon='INFO')
+    for i, line in enumerate(lines):
+        col.label(text=line, icon='INFO' if i == 0 and not src else 'BLANK1')
+
+
 # Line spacing each text had when the dialog opened, by object name, so
 # Cancel can put back what the live preview changed.
 _line_spacing_before = {}
@@ -915,7 +942,11 @@ class HOME_BUILDER_OT_set_text_line_spacing(bpy.types.Operator):
             {o.name: o.data.space_line for o in objs})
         active = context.object if context.object in objs else objs[0]
         self.spacing = active.data.space_line
-        return context.window_manager.invoke_props_dialog(self)
+        # Ticked when the text already has the saved default, so the
+        # dialog shows that the default is in use.
+        self.set_default = hb_annotation_defaults.is_text_line_spacing(
+            self.spacing)
+        return context.window_manager.invoke_props_dialog(self, width=360)
 
     def execute(self, context):
         # The same Line Spacing as Blender's Paragraph panel, so the two
@@ -924,8 +955,19 @@ class HOME_BUILDER_OT_set_text_line_spacing(bpy.types.Operator):
         for obj in get_annotation_text_objects(context):
             obj.data.space_line = self.spacing
         if self.set_default:
-            hb_annotation_defaults.save(text_line_spacing=self.spacing)
+            hb_annotation_defaults.save(
+                text_line_spacing=self.spacing,
+                text_line_spacing_from=hb_annotation_defaults.project_label())
         return {'FINISHED'}
+
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, 'spacing')
+        layout.prop(self, 'set_default')
+        if self.set_default:
+            _draw_default_note(layout, 'text_line_spacing', (
+                "OK with this checked makes this spacing the",
+                "default for new text in all projects"))
 
     def cancel(self, context):
         # The text already shows the previewed spacing; undo that.

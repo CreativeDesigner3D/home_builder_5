@@ -51,6 +51,41 @@ def save(**values):
     return True
 
 
+def project_label():
+    """What names the open project in a 'set in ...' note: its project
+    number or name, else the file name ('' for an unsaved file)."""
+    for scene in bpy.data.scenes:
+        props = getattr(scene, 'hb_project', None)
+        if props is None:
+            continue
+        for attr in ('project_number', 'project_name'):
+            value = getattr(props, attr, '').strip()
+            if value:
+                return value
+    return os.path.splitext(os.path.basename(bpy.data.filepath))[0]
+
+
+def saved_from(key):
+    """The project label stored with a default when it was saved."""
+    return str(load().get(f'{key}_from', ''))
+
+
+def _close(a, b):
+    return abs(a - b) < 1e-5
+
+
+def is_text_line_spacing(value):
+    """True when value is the saved line spacing for new text."""
+    return 'text_line_spacing' in load() and _close(value, text_line_spacing())
+
+
+def is_additional_text_placement(x, y, size):
+    """True when (x, y, size) is the saved additional text placement."""
+    saved = additional_text_placement()
+    return saved is not None and all(
+        _close(a, b) for a, b in zip(saved, (x, y, size)))
+
+
 def text_line_spacing():
     """Line spacing new annotation text starts with (1.0 = normal)."""
     try:
