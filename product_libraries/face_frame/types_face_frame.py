@@ -18146,11 +18146,17 @@ class LegProductFaceFrameCabinet(FaceFrameCabinet):
                 part_obj = part.obj
             else:
                 part = GeoNodeCutpart(part_obj)
-            part_obj.location = (x, 0.0, 0.0)
+            # Extended back, the skin keeps its front edge and runs back
+            # to the extend, over the leg panel it covers.
+            extend = max(0.0, cab.left_side_finished_extend_back
+                         if side == 'LEFT'
+                         else cab.right_side_finished_extend_back)
+            skin_depth = panel_depth + extend
+            part_obj.location = (x, extend, 0.0)
             part.set_input('Length', height)
-            part.set_input('Width', panel_depth)
+            part.set_input('Width', skin_depth)
             part.set_input('Thickness', thickness)
-            self._textured_panel_mesh(part_obj, height, panel_depth,
+            self._textured_panel_mesh(part_obj, height, skin_depth,
                                       thickness, condition, mirror_z,
                                       shiplap_pitch=pitch,
                                       shiplap_vertical=_shiplap_vertical(cab),
