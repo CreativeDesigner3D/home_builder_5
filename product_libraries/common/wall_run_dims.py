@@ -42,6 +42,10 @@ MIN_SHOWN = inch(1.0 / 32.0)
 # A neighbor has to be the nearest thing over at least this much of the
 # cabinet's height to get its own gap.
 MIN_BAND = inch(1.0)
+# A farther neighbor seen past a nearer one has to show this much: a
+# range or tall appliance standing an inch or two above the base beside
+# it is behind that base, not a neighbor with open space in between.
+MIN_PEEK = inch(3.0)
 # Most neighbors one side can report (the label kinds are fixed).
 MAX_PER_SIDE = 4
 # Narrowest a width edit may leave a product.
@@ -125,8 +129,9 @@ def _visible(cands, z0, z1):
         lo, hi = max(lo, z0), min(hi, z1)
         if hi - lo < MIN_BAND:
             continue
+        need = MIN_PEEK if covered else MIN_BAND
         free = [p for p in _subtract(covered, lo, hi)
-                if p[1] - p[0] >= MIN_BAND]
+                if p[1] - p[0] >= need]
         covered.append((lo, hi))
         if not free:
             continue
