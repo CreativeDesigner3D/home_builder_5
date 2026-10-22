@@ -974,10 +974,14 @@ def _compute_labels(context, region, rv3d, lines_out=None):
                 # Still on top of a label already out: slide it along
                 # its own dimension line to a clear spot.
                 held = keep or _editing(cage, kind)
+                # A frame member's width line is too short to slide on,
+                # and two stiles butted at a run break put their labels
+                # on the same spot -- step it along the member instead
+                # of hiding it.
                 moved = _slide_clear(
                     region, rv3d,
                     own_line or _dim_line_world(cage, kind, value),
-                    rect, labels, side=held)
+                    rect, labels, side=held or kind == 'PART')
                 if moved is not None:
                     rect = moved
                 elif not held:
