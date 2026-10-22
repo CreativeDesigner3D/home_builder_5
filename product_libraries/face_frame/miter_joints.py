@@ -55,6 +55,8 @@ ALLOWED_ROLES = frozenset((
 
 _BIG = 2.0
 _MARGIN = units.inch(1.0 / 32.0)
+# Thinner stock leaves too little material for a clean miter.
+MIN_THICKNESS = units.inch(0.5)
 
 
 # ---------------------------------------------------------------------------
@@ -505,6 +507,11 @@ def _picked_pair(context):
     return active, others[0]
 
 
+def _too_thin(part):
+    t = GeoNodeCutpart(part).get_input('Thickness')
+    return t is not None and t < MIN_THICKNESS - units.inch(0.001)
+
+
 class hb_face_frame_OT_miter_parts(bpy.types.Operator):
     """Mitre the active part to the other selected part (two end stiles,
     two backs or two partitions meeting at a corner)"""
@@ -526,7 +533,13 @@ class hb_face_frame_OT_miter_parts(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return _picked_pair(context) is not None
+        pair = _picked_pair(context)
+        if pair is None:
+            return False
+        if any(_too_thin(p) for p in pair):
+            cls.poll_message_set("Parts under 1/2\" thick can't be mitered")
+            return False
+        return True
 
     def invoke(self, context, event):
         return context.window_manager.invoke_props_dialog(self)
@@ -535,6 +548,10 @@ class hb_face_frame_OT_miter_parts(bpy.types.Operator):
         pair = _picked_pair(context)
         if pair is None:
             self.report({'WARNING'}, "Select exactly two parts to miter")
+            return {'CANCELLED'}
+        if any(_too_thin(p) for p in pair):
+            self.report({'WARNING'},
+                        "Parts under 1/2\" thick can't be mitered")
             return {'CANCELLED'}
         if not add_joint(pair[0], pair[1], self.mode):
             return {'CANCELLED'}
