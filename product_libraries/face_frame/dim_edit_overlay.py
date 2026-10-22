@@ -49,6 +49,7 @@ from mathutils import Vector
 from bpy_extras import view3d_utils
 
 from ... import units
+from ... import hb_utils
 from ... import hb_placement
 from ...hb_gpu_draw import get_visible_window_bounds
 from ...hb_types import GeoNodeCage, GeoNodeCutpart
@@ -818,6 +819,10 @@ def _ap_section(part):
     return appliance, int(index)
 
 
+# Runs on every redraw and walks each cabinet's parts. Object.children
+# scans every object in the file per call, so the walk reads one parent
+# map instead (nothing is re-parented while labels are computed).
+@hb_utils.with_children_index
 def compute_labels(context, region, rv3d, lines_out=None):
     """[(obj_name, kind, editable, locked, rect, text)] for every label
     currently on screen. When ``lines_out`` is a list, the region-space

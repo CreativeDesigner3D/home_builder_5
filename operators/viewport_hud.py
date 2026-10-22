@@ -42,6 +42,7 @@ from ..hb_gpu_ui import (Theme, scale as _s, draw_arrow_head,
                          paint_outside)
 # Sibling module -- safe to import at load (scene_navigator imports viewport_hud
 # only lazily, inside its pin-toggle handler, so there's no import cycle).
+from .. import hb_utils
 from . import scene_navigator
 from . import layout_lock
 
@@ -1827,6 +1828,9 @@ def _draw_hover_chip(shader, font_id, rect, area, text):
     draw_text(font_id, cx + pad_x, cy + pad_y, size, TEXT_ACTIVE, text)
 
 
+# The navigator and room palette walk the model tree on every redraw;
+# answer their children lookups from one parent map per draw.
+@hb_utils.with_children_index
 def _draw_hud():
     """Permanent POST_PIXEL callback -- runs once per 3D viewport WINDOW
     region. Cheap no-op when the HUD preference is off."""
