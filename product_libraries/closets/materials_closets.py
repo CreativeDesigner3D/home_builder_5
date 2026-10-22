@@ -464,7 +464,9 @@ BAND_EDGES = {
     'CLOSET_TOP_SHELF': ('L2',),
     'CLOSET_FIXED_SHELF': ('L2',),
     'CLOSET_ADJ_SHELF': ('L2',),
-    'CLOSET_CLEAT': ('L2',),
+    # Both long edges: the top shows above the bay's bottom, the bottom
+    # wherever the cleat stands clear of what is under it.
+    'CLOSET_CLEAT': ('L1', 'L2'),
     'CLOSET_CUBBY_DIVISION': ('L2',),
     'CLOSET_CUBBY_SHELF': ('L2',),
     'CLOSET_BRIDGE_SHELF': ('L2',),
@@ -536,8 +538,8 @@ def _context_band_edges(obj, role):
       back as well as their front: + the back edge (L1);
     - a cleat in a bay with its bottom removed has nothing under it, so
       its bottom edge shows too: + L1 (reference 'ebl2 = remove_bottom');
-    - a support cleat under the bays that runs out past an end partition
-      shows that end: + W1 / W2 for each such end (set at layout)."""
+    - a cleat under the bays (the run-wide bottom cleat or a support
+      cleat) is seen all round: + W1 / W2, both ends."""
     if role in ('CLOSET_PANEL', 'CLOSET_TOP_SHELF', 'CLOSET_BOTTOM_SHELF'):
         cur = obj.parent
         while cur is not None:
@@ -550,10 +552,10 @@ def _context_band_edges(obj, role):
     if role == 'CLOSET_CLEAT' and obj.get('hb_part_role') == 'CLOSET_CLEAT':
         bay = obj.parent
         bp = getattr(bay, 'hb_closet_bay', None) if bay is not None else None
+        if obj.get('hb_bottom_cleat') or obj.get('hb_bay_cleat'):
+            return ('W1', 'W2')
         if bp is not None and bool(getattr(bp, 'remove_bottom', False)):
             return ('L1',)
-        return tuple(e for e in ('W1', 'W2')
-                     if obj.get('hb_cleat_exposed_' + e))
     return ()
 
 
