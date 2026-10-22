@@ -49,10 +49,10 @@ COUNTERTOP_ORDER = (
 # material selection instead of picking an explicit one.
 MATCH = 'MATCH'
 
-# Bought parts - the hang rail covers - wear this instead of the run's
-# finish. It is a negative material: it says the part never comes off a
-# sheet, so nothing that paints the closet touches it and whatever
-# processes hardware downstream counts it there instead. Kept in the
+# Bought parts - the hang rails and their covers - wear this instead of
+# the run's finish. It is a negative material: it says the part never
+# comes off a sheet, so nothing that paints the closet touches it and
+# whatever processes hardware downstream counts it there instead. Kept in the
 # file under a known name and marked with an idprop as well, so a
 # rename does not lose track of it.
 NEGATIVE_MATERIAL = 'Negative'
@@ -975,17 +975,17 @@ def apply_to_starter(root, carcass_name=None, front_name=None):
             if mat is None:
                 continue
             edge = mat
-        elif role == role_cover:
-            # A bought clip cover. Its material is what says so, and it
-            # is the same all the way round - there is no banding on a
-            # part that never sees a sheet.
+        elif role in (role_cover, types_closets.PART_ROLE_HANG_RAIL):
+            # A bought rail or the clip cover over its end - hardware,
+            # not a sheet part. Its material is what says so, and it is
+            # the same all the way round - there is no banding on a part
+            # that never sees a sheet.
             mat = load_negative_material()
             edge = mat
-        elif role in (types_closets.PART_ROLE_HANG_RAIL,
-                      types_closets.PART_ROLE_BATTEN):
+        elif role == types_closets.PART_ROLE_BATTEN:
             # Stock bought in the closet colour, the same all round
-            # rather than banded (reference Hang_Rail / Batten: the surface
-            # material on all four edges).
+            # rather than banded (reference Batten: the surface material
+            # on all four edges).
             mat, edge = carcass, rotated_variant(carcass)
         else:
             mat, edge = carcass, carcass_edge
