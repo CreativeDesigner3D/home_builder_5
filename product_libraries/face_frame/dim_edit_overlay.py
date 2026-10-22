@@ -95,6 +95,20 @@ _shutdown = False
 _edit = None
 _addon_keymaps = []
 
+# Labels are recomputed only when something they read can have changed.
+# Hovering a HUD panel redraws the viewport on every mouse move, and
+# walking every cabinet each time made the panel lag. Any depsgraph
+# update (an edit, a selection change, undo) bumps the generation; the
+# view, region, mode and the field being typed are part of the key.
+_label_gen = 0
+_label_cache = {}
+
+
+@bpy.app.handlers.persistent
+def _bump_label_gen(*_args):
+    global _label_gen
+    _label_gen += 1
+
 
 # ---- Typed-distance parsing (borrowed from PlacementMixin) --------------
 # parse_typed_distance and its helpers only touch self via each other,
@@ -819,11 +833,53 @@ def _ap_section(part):
     return appliance, int(index)
 
 
-# Runs on every redraw and walks each cabinet's parts. Object.children
-# scans every object in the file per call, so the walk reads one parent
-# map instead (nothing is re-parented while labels are computed).
-@hb_utils.with_children_index
+def _label_key(context, region, rv3d):
+    try:
+        scale = context.preferences.system.ui_scale
+    except AttributeError:
+        scale = 1.0
+    act = getattr(context, 'active_object', None)
+    return (_label_gen,
+            region.as_pointer(), region.width, region.height,
+            tuple(tuple(row) for row in rv3d.perspective_matrix),
+            context.scene.as_pointer() if context.scene else 0,
+            _active_mode(context), _sizes_scope(context),
+            act.name if act is not None else None,
+            frozenset(o.name for o in
+                      (getattr(context, 'selected_objects', ()) or ())),
+            None if _edit is None else (_edit['name'], _edit['kind']),
+            scale)
+
+
 def compute_labels(context, region, rv3d, lines_out=None):
+    """The labels on screen (see _compute_labels), reused until their
+    inputs change (see _label_cache). Each caller gets its own copy."""
+    if rv3d is None or region is None:
+        return _compute_labels(context, region, rv3d, lines_out)
+    try:
+        key = _label_key(context, region, rv3d)
+    except Exception:
+        return _compute_labels(context, region, rv3d, lines_out)
+    hit = _label_cache.get(region.as_pointer())
+    if hit is None or hit[0] != key:
+        lines = []
+        labels = _compute_labels(context, region, rv3d, lines)
+        # One entry per viewport region; old regions fall away with
+        # the generation they were computed under.
+        if len(_label_cache) > 8:
+            _label_cache.clear()
+        hit = (key, labels, lines)
+        _label_cache[region.as_pointer()] = hit
+    if lines_out is not None:
+        lines_out.extend(hit[2])
+    return list(hit[1])
+
+
+# Walks each cabinet's parts. Object.children scans every object in the
+# file per call, so the walk reads one parent map instead (nothing is
+# re-parented while labels are computed).
+@hb_utils.with_children_index
+def _compute_labels(context, region, rv3d, lines_out=None):
     """[(obj_name, kind, editable, locked, rect, text)] for every label
     currently on screen. When ``lines_out`` is a list, the region-space
     dimension line under each label is appended to it as
@@ -1155,6 +1211,34 @@ def _draw():
                 shader.uniform_float(
                     "color", DIM_LINE_COLOR if editable else DIM_LINE_COLOR_DIM)
                 batch_for_shader(shader, 'LINES', {"pos": pts}).draw(shader)
+        # Plain labels: every box and border in one batch per colour
+        # rather than two draw calls a label, then their text.
+        fills = {True: [], False: []}
+        borders = []
+        plain = []
+        for label in labels:
+            name, kind, editable, _locked, rect, text = label
+            if _edit is not None and _edit['name'] == name                     and _edit['kind'] == kind:
+                continue
+            x, y, w, h = rect
+            fills[editable].extend(((x, y), (x + w, y), (x + w, y + h),
+                                    (x, y), (x + w, y + h), (x, y + h)))
+            borders.extend(((x, y), (x + w, y), (x + w, y), (x + w, y + h),
+                            (x + w, y + h), (x, y + h), (x, y + h), (x, y)))
+            plain.append(label)
+        for editable, tris in fills.items():
+            if tris:
+                shader.uniform_float(
+                    "color", LABEL_BG if editable else LABEL_BG_DIM)
+                batch_for_shader(shader, 'TRIS', {"pos": tris}).draw(shader)
+        if borders:
+            shader.uniform_float("color", LABEL_BORDER)
+            batch_for_shader(shader, 'LINES', {"pos": borders}).draw(shader)
+        blf.size(0, font_sz)
+        for name, kind, editable, _locked, rect, text in plain:
+            blf.color(0, *(TEXT_COLOR if editable else TEXT_COLOR_DIM))
+            blf.position(0, rect[0] + PAD_X * s, rect[1] + PAD_Y * s, 0)
+            blf.draw(0, text)
         for name, kind, editable, _locked, rect, text in labels:
             editing = (_edit is not None and _edit['name'] == name
                        and _edit['kind'] == kind)
@@ -1175,13 +1259,6 @@ def _draw():
                     # Move / Width, beside the field only while it's typed.
                     gap_mode_chip.draw(shader, context.scene, region, rect,
                                        font_sz, s)
-            else:
-                _draw_label_rect(shader, rect,
-                                 LABEL_BG if editable else LABEL_BG_DIM)
-                blf.size(0, font_sz)
-                blf.color(0, *(TEXT_COLOR if editable else TEXT_COLOR_DIM))
-                blf.position(0, rect[0] + PAD_X * s, rect[1] + PAD_Y * s, 0)
-                blf.draw(0, text)
         gpu.state.blend_set('NONE')
 
     from ...operators import viewport_hud
@@ -1628,6 +1705,11 @@ def register():
         bpy.utils.register_class(cls)
     _draw_handle = bpy.types.SpaceView3D.draw_handler_add(
         _draw, (), 'WINDOW', 'POST_PIXEL')
+    for handlers in (bpy.app.handlers.depsgraph_update_post,
+                     bpy.app.handlers.undo_post, bpy.app.handlers.redo_post,
+                     bpy.app.handlers.load_post):
+        if _bump_label_gen not in handlers:
+            handlers.append(_bump_label_gen)
     _register_keymaps()
 
 
@@ -1635,6 +1717,12 @@ def unregister():
     global _draw_handle, _shutdown, _edit
     _shutdown = True
     _edit = None
+    for handlers in (bpy.app.handlers.depsgraph_update_post,
+                     bpy.app.handlers.undo_post, bpy.app.handlers.redo_post,
+                     bpy.app.handlers.load_post):
+        if _bump_label_gen in handlers:
+            handlers.remove(_bump_label_gen)
+    _label_cache.clear()
     _unregister_keymaps()
     if _draw_handle is not None:
         try:
