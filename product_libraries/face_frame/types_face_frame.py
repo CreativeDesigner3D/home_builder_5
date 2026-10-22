@@ -15479,6 +15479,10 @@ class FaceFrameCabinet(GeoNodeCage):
         # over to the rebuilt parts (restored after the spawn loop).
         kept_cutouts = _snapshot_interior_cutouts(opening_obj)
 
+        # Text typed straight into a label is kept on its item, since
+        # the wipe below rebuilds every label from the items.
+        solver.keep_edited_accessory_labels(opening_obj)
+
         # Wipe existing interior children. Match either by role tag or
         # by the explicit ACCESSORY marker we set on text objects, since
         # text-data objects can't carry the same custom prop conventions
@@ -15905,6 +15909,8 @@ class FaceFrameCabinet(GeoNodeCage):
         text_obj.location = desc['position']
         text_obj.rotation_euler = desc['rotation']
         text_obj['hb_part_role'] = desc['role']
+        text_obj[solver.LABEL_TEXT_KEY] = font_curve.body
+        text_obj[solver.LABEL_SOURCE_KEY] = desc.get('label') or ''
         # Annotation tag so the end-of-recalc cabinet-style pass
         # (toggle_cabinet_color) colors it as annotation text rather
         # than repainting it the default white.

@@ -22,6 +22,7 @@ Mid stiles are always one-per-gap and never destroyed. Their length and Z
 position adapt based on whether adjacent rails pass through the gap.
 """
 import math
+import re
 import bpy
 
 from ...units import inch
@@ -5831,6 +5832,24 @@ ACCESSORY_TEXT_SIZE = inch(1.5)
 ACCESSORY_Y_OFFSET = inch(1.0)         # nudge into the cavity so it reads
                                        # cleanly against the cabinet back
 
+# A refrigerator opening still carrying the preset's plain label reads as
+# free-standing or built-in from its height: a free-standing unit stands
+# in a shorter opening (about 72") than a built-in one (about 84").
+REFRIGERATOR_LABEL = 'REFRIGERATOR'
+FREE_STANDING_REFRIGERATOR_LABEL = 'F/S REFRIGERATOR'
+BUILT_IN_REFRIGERATOR_LABEL = 'BUILT-IN REFRIGERATOR'
+BUILT_IN_REFRIGERATOR_MIN_OPENING = inch(78.0)
+
+# Stamped on a built accessory label: the text the build wrote and the
+# item label it came from, so an in-place edit can be told apart and
+# kept (see keep_edited_accessory_labels).
+LABEL_TEXT_KEY = 'hb_label_text'
+LABEL_SOURCE_KEY = 'hb_label_source'
+# On the interior item: its label was typed by the user, so it is shown
+# as is rather than defaulted.
+LABEL_TYPED_KEY = 'hb_label_typed'
+ACCESSORY_LABEL_NAME_PREFIX = 'Accessory Label - '
+
 
 def auto_shelf_qty(opening_height, depth):
     """Catalog count of adjustable shelves for an interior opening, keyed on
@@ -6014,18 +6033,91 @@ def _glass_shelf_descriptors(rect, cage_dim_y, qty, setback, z0=0.0,
     )
 
 
-def _accessory_label_descriptor(rect, cage_dim_y, label):
+def _is_refrigerator_opening(opening_props):
+    obj = getattr(opening_props, 'id_data', None)
+    return obj is not None and obj.get('SIZE_ROLE') == 'REFRIGERATOR'
+
+
+def accessory_label_text(item, opening_props=None, opening_height=0.0):
+    """The text an ACCESSORY item shows. Its own label, except that a
+    refrigerator opening still on the preset's plain label names the
+    kind of unit from the opening height. A label the user typed is
+    always shown as is.
+    """
+    label = item.accessory_label
+    if (label == REFRIGERATOR_LABEL and opening_height > 0.0
+            and not item.get(LABEL_TYPED_KEY)
+            and _is_refrigerator_opening(opening_props)):
+        if opening_height >= BUILT_IN_REFRIGERATOR_MIN_OPENING:
+            return BUILT_IN_REFRIGERATOR_LABEL
+        return FREE_STANDING_REFRIGERATOR_LABEL
+    return label
+
+
+def _opening_accessory_items(opening_obj):
+    """Every ACCESSORY interior item in the opening, its own and those
+    of the interior regions it is split into."""
+    from . import types_face_frame
+    props = [opening_obj.face_frame_opening]
+    for c in opening_obj.children_recursive:
+        if c.get(types_face_frame.TAG_INTERIOR_REGION):
+            props.append(c.face_frame_interior_region)
+    return [item for p in props for item in p.interior_items
+            if item.kind == 'ACCESSORY']
+
+
+def keep_edited_accessory_labels(opening_obj):
+    """Write in-place edits of the opening's accessory labels back to
+    their items. Run before the recalc wipes the labels: they are
+    rebuilt from the items, so text typed straight into a label would
+    otherwise go back to the item's label on the next update.
+    """
+    edits = []
+    for child in opening_obj.children:
+        if (child.get('hb_part_role') != 'ACCESSORY_LABEL'
+                or child.type != 'FONT'):
+            continue
+        body = child.data.body.strip()
+        if LABEL_TEXT_KEY in child:
+            built = child[LABEL_TEXT_KEY]
+            source = child.get(LABEL_SOURCE_KEY, built)
+        else:
+            # Built before labels were stamped: the name carries the
+            # item label it was built from.
+            name = re.sub(r'\.\d{3}$', '', child.name)
+            if not name.startswith(ACCESSORY_LABEL_NAME_PREFIX):
+                continue
+            built = source = name[len(ACCESSORY_LABEL_NAME_PREFIX):]
+        if body and body != built:
+            edits.append((source, body))
+    if not edits:
+        return
+    items = _opening_accessory_items(opening_obj)
+    for source, body in edits:
+        for item in items:
+            if item.accessory_label == source:
+                item.accessory_label = body
+                item[LABEL_TYPED_KEY] = True
+                items.remove(item)
+                break
+
+
+def _accessory_label_descriptor(rect, cage_dim_y, label, text=None):
     """Build a single text-label descriptor centered in the opening,
     facing -Y (readable from the front of the cabinet). Position is the
     text origin; the recalc applies rotation and font size from the
-    descriptor.
+    descriptor. `label` is the item's label, `text` what is shown when
+    it differs (see accessory_label_text).
     """
     cage_dim_x = rect['cage_dim_x']
     cage_dim_z = rect['cage_dim_z']
+    if text is None:
+        text = label
     return {
         'kind':     'ACCESSORY',
         'role':     'ACCESSORY_LABEL',
-        'name':     f'Accessory Label - {label}' if label else 'Accessory Label',
+        'label':    label,
+        'name':     f'{ACCESSORY_LABEL_NAME_PREFIX}{label}' if label else 'Accessory Label',
         'position': (cage_dim_x / 2.0,
                      min(ACCESSORY_Y_OFFSET, max(0.0, cage_dim_y - inch(0.25))),
                      cage_dim_z / 2.0),
@@ -6034,7 +6126,7 @@ def _accessory_label_descriptor(rect, cage_dim_y, label):
         # cabinet front. Centering (align_x = CENTER, align_y = CENTER)
         # is applied in the recalc since it's font-data, not transform.
         'rotation': (math.radians(90.0), 0.0, 0.0),
-        'text':     label or 'Accessory',
+        'text':     text or 'Accessory',
         'size':     ACCESSORY_TEXT_SIZE,
     }
 
@@ -6622,7 +6714,11 @@ def interior_item_descriptors(layout, rect, cab_props, opening_props,
                 item_rect, cage_dim_y, item)))
         elif item.kind == 'ACCESSORY':
             out.extend(_between_pockets([_accessory_label_descriptor(
-                item_rect, cage_dim_y, item.accessory_label
+                item_rect, cage_dim_y, item.accessory_label,
+                accessory_label_text(
+                    item, opening_ff,
+                    item_rect['cage_dim_z'] - item_rect.get('reveal_top', 0.0)
+                    - item_rect.get('reveal_bottom', 0.0)),
             )]))
         elif item.kind == 'CLOSET_ROD':
             out.extend(_between_pockets([_closet_rod_descriptor(
