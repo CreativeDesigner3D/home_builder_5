@@ -63,8 +63,9 @@ TICK_PX         = 5
 HEIGHT_DIM_INSET = 0.0762
 
 # Characters accepted by the typed-distance grammar (parse_typed_distance):
-# digits, decimal point, fractions, feet/inch marks, embedded spaces.
-_INPUT_CHARS = set("0123456789./-'\" ")
+# digits, decimal point, fractions, feet/inch marks, embedded spaces,
+# '+' / '-' compounds (155+15/16, 155-15/16).
+_INPUT_CHARS = set("0123456789./-+'\" ")
 
 TAG_CABINET = 'IS_FRAMELESS_CABINET_CAGE'
 TAG_BAY     = 'IS_FRAMELESS_BAY_CAGE'
@@ -835,6 +836,9 @@ class hb_frameless_OT_edit_dim_label(bpy.types.Operator):
             return {'RUNNING_MODAL'}
 
         ch = event.unicode
+        if ch == '=':
+            # The unshifted +/= key, so a compound needs no Shift.
+            ch = '+'
         if ch and ch in _INPUT_CHARS:
             _edit['typed'] += ch
             context.area.tag_redraw()
