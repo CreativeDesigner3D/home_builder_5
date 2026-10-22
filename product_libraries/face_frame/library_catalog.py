@@ -821,7 +821,7 @@ def _front_use_count(kind):
         from .operators import ops_styles
         from .props_hb_face_frame import get_style_props
         styles, _fronts = ops_styles.front_style_usage(
-            get_style_props(context), kind, style.name)
+            get_style_props(context), kind, style.name, count_fronts=False)
         return len(styles)
     return count
 

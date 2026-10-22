@@ -337,17 +337,23 @@ def _front_roles(kind):
             else ds._DRAWER_FRONT_ROLES)
 
 
-def front_style_usage(ff, kind, name):
-    """(cabinet style names, count of fronts) using front style `name`."""
+def front_style_usage(ff, kind, name, count_fronts=True):
+    """(cabinet style names, count of fronts) using front style `name`.
+    The front count walks every object in the file; pass
+    count_fronts=False (count comes back 0) where only the cabinet styles
+    are wanted, such as a tile redrawn on every mouse move."""
     _pool, _idx, prop, extras, _ovr = _FRONT_POOLS[kind]
     styles = [cs.name for cs in ff.cabinet_styles
               if getattr(cs, prop, None) == name
               or any(e.style == name for e in getattr(cs, extras, ()))]
+    if not count_fronts:
+        return styles, 0
     roles = _front_roles(kind)
+    # users_scene scans every scene, so it goes last.
     fronts = sum(1 for obj in bpy.data.objects
-                 if obj.users_scene
-                 and obj.get('DOOR_STYLE_NAME') == name
-                 and obj.get('hb_part_role') in roles)
+                 if obj.get('DOOR_STYLE_NAME') == name
+                 and obj.get('hb_part_role') in roles
+                 and obj.users_scene)
     return styles, fronts
 
 
