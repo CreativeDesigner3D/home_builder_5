@@ -2294,6 +2294,7 @@ def draw_finished_ends(layout, cab_props):
                          text="Side Return")
                 col.prop(cab_props, f'{side}_side_return_stile_type',
                          text="Return Stile")
+                col.prop(cab_props, 'return_back_void', text="Back Void")
 
         # Back: extend past the L / R cabinet ends, on its own row.
         if side == 'back' and fin_type != 'UNFINISHED':

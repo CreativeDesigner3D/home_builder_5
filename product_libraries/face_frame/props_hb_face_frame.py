@@ -8480,6 +8480,18 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         name="Right Side Return Width", default=0.0, unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
     )  # type: ignore
+    # With a return closeout, how far the finished / paneled / textured
+    # back sits off the carcass, leaving a void between them. 0 keeps the
+    # back tight to the carcass; capped at the extend-back depth so the
+    # back never passes the rear stiles. Shared by both returns.
+    return_back_void: FloatProperty(
+        name="Return Back Void", default=0.0, min=0.0, unit='LENGTH',
+        precision=4,
+        description="Distance between the carcass back and the finished "
+                    "back when the sides return. 0 keeps the back tight "
+                    "to the carcass",
+        update=_update_cabinet_dim,
+    )  # type: ignore
 
     # Per-member construction of the return closeout: the return panel and
     # its rear stile can each be a flat FINISHED part (default) or a PANELED

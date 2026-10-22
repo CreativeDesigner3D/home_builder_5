@@ -3227,6 +3227,7 @@ class hb_face_frame_OT_set_finished_end_condition(bpy.types.Operator):
                             text="Side Return")
                 layout.prop(cab, f'{key}_side_return_stile_type',
                             text="Return Stile")
+                layout.prop(cab, 'return_back_void', text="Back Void")
         # Symmetric finished ends are common (both ends of an island /
         # run get the same extend-back + return build), so offer a
         # one-click copy to the opposite side. Runs immediately; the
