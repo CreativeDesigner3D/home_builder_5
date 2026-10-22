@@ -2319,6 +2319,47 @@ class hb_face_frame_OT_set_door_hardware(bpy.types.Operator):
 
 
 # ---------------------------------------------------------------------------
+# Diamond vent: a fixed four-diamond hole pattern cut through a door
+# (door_vents.py). Applies to every selected door.
+# ---------------------------------------------------------------------------
+
+def _selected_doors(context):
+    doors = [o for o in context.selected_objects
+             if o.get('hb_part_role') == 'DOOR']
+    obj = context.active_object
+    if (obj is not None and obj.get('hb_part_role') == 'DOOR'
+            and obj not in doors):
+        doors.append(obj)
+    return doors
+
+
+class hb_face_frame_OT_set_door_vent(bpy.types.Operator):
+    """Add or remove the diamond vent cutout on the selected doors"""
+    bl_idname = "hb_face_frame.set_door_vent"
+    bl_label = "Diamond Vent"
+    bl_description = ("Cut the four-diamond vent pattern through the "
+                      "selected doors, centred on the panel")
+    bl_options = {'UNDO'}
+
+    add: BoolProperty(name="Add", default=True)  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        return bool(_selected_doors(context))
+
+    def execute(self, context):
+        from .. import door_vents
+        doors = _selected_doors(context)
+        for door in doors:
+            door_vents.set_vent(door, self.add)
+        n = len(doors)
+        self.report({'INFO'}, "Diamond vent %s %d door%s" % (
+            "added to" if self.add else "removed from", n,
+            "" if n == 1 else "s"))
+        return {'FINISHED'}
+
+
+# ---------------------------------------------------------------------------
 # Set Size  (any cabinet cutpart: direct GeoNode Length / Width / Thickness).
 # Transient for solver-driven parts - overwritten on the next recalc. A
 # durable override path will come later.
@@ -4724,6 +4765,7 @@ classes = (
     hb_face_frame_OT_duplicate_bare_part,
     hb_face_frame_OT_set_door_frame,
     hb_face_frame_OT_set_door_hardware,
+    hb_face_frame_OT_set_door_vent,
     hb_face_frame_OT_set_door_shape,
     hb_face_frame_OT_set_cabinet_part_size,
     hb_face_frame_OT_make_part_editable,

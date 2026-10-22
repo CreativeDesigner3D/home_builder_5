@@ -5870,6 +5870,17 @@ class Face_Frame_Door_Style(PropertyGroup):
         return plan
 
     def assign_style_to_front(self, front_obj, record_override=False):
+        """Style the front (see _assign_style_to_front), then re-apply the
+        per-door extras the style build doesn't know about: the diamond
+        vent, which has to cut whatever door the style just built."""
+        result = self._assign_style_to_front(
+            front_obj, record_override=record_override)
+        if result is not False and front_obj.get('hb_part_role') == 'DOOR':
+            from . import door_vents
+            door_vents.sync(front_obj)
+        return result
+
+    def _assign_style_to_front(self, front_obj, record_override=False):
         """Apply this door style to a face frame front object.
 
         SLAB: strip any 5-piece geometry so the front renders as the

@@ -498,6 +498,17 @@ class HOME_BUILDER_MT_face_frame_part_commands(bpy.types.Menu):
         if role == 'DOOR':
             layout.operator("hb_face_frame.set_door_hardware",
                             text="Set Door Hardware...", icon='TOOL_SETTINGS')
+            # Diamond vent cutout, on every selected door.
+            from . import door_vents
+            if door_vents.has_vent(obj):
+                op = layout.operator("hb_face_frame.set_door_vent",
+                                     text="Remove Diamond Vent", icon='X')
+                op.add = False
+            else:
+                op = layout.operator("hb_face_frame.set_door_vent",
+                                     text="Add Diamond Vent",
+                                     icon='MESH_GRID')
+                op.add = True
 
         # Door / drawer / pullout / tilt-out fronts: per-opening pull
         # override (applies to every selected front).
@@ -1195,6 +1206,14 @@ class HOME_BUILDER_MT_face_frame_door_part_commands(bpy.types.Menu):
                             text="Set Door Frame...", icon='MOD_BEVEL')
         layout.operator("hb_face_frame.assign_active_door_style",
                         text="Assign Active Style", icon='MOD_BEVEL')
+        if obj is not None and obj.get('hb_part_role') == 'DOOR':
+            from . import door_vents
+            on = door_vents.has_vent(obj)
+            op = layout.operator(
+                "hb_face_frame.set_door_vent",
+                text="Remove Diamond Vent" if on else "Add Diamond Vent",
+                icon='X' if on else 'MESH_GRID')
+            op.add = not on
         layout.separator()
         # Front kind: door vs drawer front (only the pull placement /
         # asset differs). Label offers the OTHER kind.
