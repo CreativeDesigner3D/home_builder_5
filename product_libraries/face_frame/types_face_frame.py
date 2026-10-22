@@ -4019,9 +4019,10 @@ class FaceFrameCabinet(GeoNodeCage):
         # into the bottom rail(s). No-op + cleanup when off.
         self._apply_bottom_rail_profile(layout)
 
-        # Angled corners: an end stile meeting another run's face frame
-        # at an angle mitres into it. No-op + cleanup elsewhere.
-        self._apply_angled_stile_miters(layout)
+        # Angled corners: end stiles stay square; a mitre between two
+        # of them is the user's pick (Miter Joint). Clears the automatic
+        # one older files carry.
+        self._drop_angled_stile_miters()
 
         # Corner treatment: the style's edge detail on the exposed face
         # frame arrises. No-op + cleanup when Square / unset.
@@ -12075,88 +12076,28 @@ class FaceFrameCabinet(GeoNodeCage):
             break
         return cutter
 
-    def _apply_angled_stile_miters(self, layout):
-        """Mitre each end stile into the face frame of a run turned at an
-        angle whose front meets that end (exposure.angled_front_miter).
-        The stile grows out to whichever of its faces reaches the corner
-        further - its back face at an inside corner - and a hidden
-        prism trims it on the line from its front face's end to its back
-        face's end, so the two stiles close on the bisector with no V
-        between them. Square-front cabinets only; anything else is
-        cleaned up."""
-        from . import exposure
-        m = inch(2.0)
-        y_front = -layout.dim_y
-        y_back = y_front + layout.fft
+    def _drop_angled_stile_miters(self):
+        """Take off the automatic end stile mitre older files carry where
+        a run meets another at an angle. Stiles now stay square unless
+        the user mitres the two of them with Miter Joint (miter_joints),
+        which re-applies its own cut after this rebuild."""
         for side in ('LEFT', 'RIGHT'):
             role = (PART_ROLE_LEFT_STILE if side == 'LEFT'
                     else PART_ROLE_RIGHT_STILE)
             stile = next((c for c in self.obj.children
                           if c.get('hb_part_role') == role), None)
-            miter = None
-            if (stile is not None and not stile.hide_viewport
-                    and not layout.is_angled):
-                try:
-                    miter = exposure.angled_front_miter(self.obj, side.lower())
-                except Exception:
-                    miter = None
-            mod_name = f'Stile Miter {side[0]}'
+            if stile is not None:
+                mod = stile.modifiers.get(f'Stile Miter {side[0]}')
+                if mod is not None:
+                    stile.modifiers.remove(mod)
             cutter = next((c for c in self.obj.children
                            if c.get('hb_part_role') == PART_ROLE_STILE_MITER_CUTTER
                            and c.get('hb_miter_side') == side), None)
-            if miter is None:
-                if stile is not None:
-                    mod = stile.modifiers.get(mod_name)
-                    if mod is not None:
-                        stile.modifiers.remove(mod)
-                if cutter is not None:
-                    mesh = cutter.data
-                    bpy.data.objects.remove(cutter, do_unlink=True)
-                    if mesh is not None and mesh.users == 0:
-                        bpy.data.meshes.remove(mesh)
-                continue
-            front_x, back_x = miter
-            edge = 0.0 if side == 'LEFT' else layout.dim_x
-            out = -1.0 if side == 'LEFT' else 1.0
-            grow = max(out * (front_x - edge), out * (back_x - edge), 0.0)
-            if grow > 1e-6:
-                # The left stile grows out from its anchor, the right
-                # one back from it, so the right anchor moves out.
-                dims = (solver.left_end_stile_dims(layout) if side == 'LEFT'
-                        else solver.right_end_stile_dims(layout))
-                CabinetPart(stile).set_input('Width', dims[1] + grow)
-                stile.location.x += out * grow
-            if cutter is None:
-                name = f'Stile Miter Cutter {side.title()}'
-                cutter = hb_utils.new_object(name, bpy.data.meshes.new(name))
-                cutter['hb_part_role'] = PART_ROLE_STILE_MITER_CUTTER
-                cutter['hb_miter_side'] = side
-                cutter.parent = self.obj
-                cutter.display_type = 'WIRE'
-                cutter.hide_render = True
-                cutter.hide_viewport = True
-                for coll in self.obj.users_collection:
-                    coll.objects.link(cutter)
-                    break
-            a = Vector((front_x, y_front))
-            b = Vector((back_x, y_back))
-            d = b - a
-            if d.length < 1e-9:
-                continue
-            d.normalize()
-            a_far = a - d * m
-            b_far = b + d * m
-            mid = (a + b) * 0.5
-            self._wedge_prism_mesh(
-                cutter, ((a_far.x, a_far.y), (b_far.x, b_far.y),
-                         (mid.x + out * 4.0 * m, mid.y)),
-                -m, layout.dim_z + m)
-            mod = stile.modifiers.get(mod_name)
-            if mod is None:
-                mod = stile.modifiers.new(name=mod_name, type='BOOLEAN')
-                mod.operation = 'DIFFERENCE'
-            if mod.object is not cutter:
-                mod.object = cutter
+            if cutter is not None:
+                mesh = cutter.data
+                bpy.data.objects.remove(cutter, do_unlink=True)
+                if mesh is not None and mesh.users == 0:
+                    bpy.data.meshes.remove(mesh)
 
     def _apply_finish_kick_miters(self, part_obj, seg):
         """Build / drop the corner mitre on each end of one finish kick
