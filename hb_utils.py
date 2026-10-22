@@ -722,19 +722,84 @@ def set_camera_view():
     return False
 
 
-def frame_camera_view():
+def frame_camera_view(area=None, scene=None):
     """Fit the camera frame to the 3D viewport (what Home does in camera
     view). The camera view's zoom and pan belong to the viewport, not the
     scene, so without this a page opens at whatever framing the last one
-    was left at - off screen or tiny."""
-    for area in bpy.context.screen.areas:
-        if area.type == 'VIEW_3D':
-            for region in area.regions:
-                if region.type == 'WINDOW':
-                    with bpy.context.temp_override(area=area, region=region):
-                        bpy.ops.view3d.view_center_camera()
-                    return True
-    return False
+    was left at - off screen or tiny.
+
+    The HUD panel pinned down the left side covers part of the viewport,
+    so the frame is then shrunk and slid to sit centred in the part that
+    is left (see _clear_camera_of_hud). ``area``: the 3D view to frame
+    (default: the screen's first); ``scene``: whose render aspect the
+    camera frame has (default: the active scene)."""
+    if area is None:
+        area = next((a for a in bpy.context.screen.areas
+                     if a.type == 'VIEW_3D'), None)
+    if area is None:
+        return False
+    region = next((r for r in area.regions if r.type == 'WINDOW'), None)
+    if region is None:
+        return False
+    with bpy.context.temp_override(area=area, region=region):
+        bpy.ops.view3d.view_center_camera()
+    try:
+        _clear_camera_of_hud(area, region, scene or bpy.context.scene)
+    except Exception as ex:
+        print("Home Builder: camera fit ignored the HUD: %s" % ex)
+    return True
+
+
+def _cam_zoom_to_fac(zoom):
+    # Blender's BKE_screen_view3d_zoom_to_fac.
+    return ((math.sqrt(2.0) + zoom / 50.0) ** 2) / 4.0
+
+
+def _cam_fac_to_zoom(fac):
+    # Blender's BKE_screen_view3d_zoom_from_fac.
+    return (math.sqrt(4.0 * fac) - math.sqrt(2.0)) * 50.0
+
+
+def _clear_camera_of_hud(area, region, scene):
+    """After view_center_camera: shrink the camera frame and slide it so it
+    sits centred between the HUD's left inset and the right edge.
+
+    view_center_camera fits the frame to the whole region (4px margin on
+    the binding side) with the pan zeroed, so the frame's pixel size
+    follows from the render aspect. Zoom scales it about the region
+    centre; a pan of camdx moves the content 2 * winx * zoomfac * camdx
+    px to the LEFT (Blender's camera-view pan).
+    """
+    from .operators import viewport_hud
+    inset = viewport_hud.left_inset(bpy.context, area)
+    if inset <= 0.0:
+        return
+    space = area.spaces.active
+    r3d = space.region_3d
+    render = scene.render
+    aspect = ((render.resolution_x * render.pixel_aspect_x)
+              / max(render.resolution_y * render.pixel_aspect_y, 1e-6))
+    w, h = float(region.width), float(region.height)
+    if w <= 0 or h <= 0:
+        return
+    if w / h > aspect:
+        frame_h = h - 4.0
+        frame_w = frame_h * aspect
+    else:
+        frame_w = w - 4.0
+        frame_h = frame_w / aspect
+    pad = 12.0 * bpy.context.preferences.view.ui_scale
+    left = inset + pad
+    avail_w = w - left - pad
+    avail_h = h - 2.0 * pad
+    if avail_w < 0.25 * w or frame_w <= 0 or frame_h <= 0:
+        return
+    k = min(1.0, avail_w / frame_w, avail_h / frame_h)
+    fac = _cam_zoom_to_fac(r3d.view_camera_zoom) * k
+    r3d.view_camera_zoom = max(-30.0, min(600.0, _cam_fac_to_zoom(fac)))
+    fac = _cam_zoom_to_fac(r3d.view_camera_zoom)
+    shift = (left + avail_w / 2.0) - w / 2.0
+    r3d.view_camera_offset = (-shift / (2.0 * w * fac), 0.0)
 
 
 def set_top_down_view():

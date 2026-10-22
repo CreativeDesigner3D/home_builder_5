@@ -1763,6 +1763,41 @@ def pinned_panel_rect(context, area):
     return layout[0] if layout else None
 
 
+# Things beside the pinned panel that also cover the viewport's left
+# edge (a tool palette an add-on draws on its own scenes). Each is
+# fn(context, area) -> the right edge it reaches, in WINDOW-region px,
+# or None when it is not showing.
+_left_insets = []
+
+
+def register_left_inset(fn):
+    if fn not in _left_insets:
+        _left_insets.append(fn)
+
+
+def unregister_left_inset(fn):
+    if fn in _left_insets:
+        _left_insets.remove(fn)
+
+
+def left_inset(context, area):
+    """How far from the left the HUD covers the viewport, in WINDOW-region
+    px: the pinned panel and anything registered beside it (0 when
+    nothing is up). Used to fit a camera view into what is left over."""
+    edges = []
+    nav = pinned_panel_rect(context, area)
+    if nav is not None:
+        edges.append(nav[0] + nav[2])
+    for fn in list(_left_insets):
+        try:
+            edge = fn(context, area)
+        except Exception:
+            edge = None
+        if edge:
+            edges.append(edge)
+    return max(edges, default=0.0)
+
+
 def paint_clear_of_panel(context, area, paint):
     """Run an overlay's `paint()` everywhere but the pinned panel.
 
