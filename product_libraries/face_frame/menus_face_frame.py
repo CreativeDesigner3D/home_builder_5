@@ -498,6 +498,20 @@ class HOME_BUILDER_MT_face_frame_part_commands(bpy.types.Menu):
         if role == 'DOOR':
             layout.operator("hb_face_frame.set_door_hardware",
                             text="Set Door Hardware...", icon='TOOL_SETTINGS')
+            # Glass door: this door's panels as glass, keeping its style
+            # (5-piece doors only -- a slab has no panel to glaze).
+            if ops_part_commands.has_door_style_modifier(obj):
+                from . import props_hb_face_frame as _props
+                if _props.front_glass_door(obj):
+                    layout.operator("hb_face_frame.make_glass_door",
+                                    text="Glass Door Options...",
+                                    icon='MATSPHERE')
+                    layout.operator("hb_face_frame.remove_glass_door",
+                                    text="Remove Glass", icon='X')
+                else:
+                    layout.operator("hb_face_frame.make_glass_door",
+                                    text="Make Glass Door...",
+                                    icon='MATSPHERE')
             # Diamond vent cutout, on every selected door.
             from . import door_vents
             if door_vents.has_vent(obj):

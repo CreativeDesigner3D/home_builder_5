@@ -2319,6 +2319,177 @@ class hb_face_frame_OT_set_door_hardware(bpy.types.Operator):
 
 
 # ---------------------------------------------------------------------------
+# Glass doors: one door (or both of a pair) keeps the cabinet's door style
+# and builds its panels as glass lites; see props_hb_face_frame
+# GLASS_DOOR_KEY. Making a door glass finishes the opening behind it (you
+# can see in); taking the last glass off puts the opening's own finish
+# choice back.
+# ---------------------------------------------------------------------------
+
+def _glass_door_candidates(context):
+    """Selected 5-piece doors (the active one included)."""
+    return [d for d in _selected_doors(context) if has_door_style_modifier(d)]
+
+
+def _opening_door_fronts(store):
+    return [c for c in store.children_recursive
+            if c.get('hb_part_role') == 'DOOR']
+
+
+def _glass_targets(context, both):
+    """[(store, [door fronts])] the dialog applies to: each picked door,
+    or every leaf of its opening when `both`."""
+    out = {}
+    for door in _glass_door_candidates(context):
+        store = _frame_store(door)
+        fronts = out.setdefault(store.name, (store, []))[1]
+        for f in (_opening_door_fronts(store) if both else [door]):
+            if f not in fronts:
+                fronts.append(f)
+    return list(out.values())
+
+
+def _finish_opening_for_glass(store, on):
+    """Turn the opening's finish on for a glass door, remembering its own
+    choice; put that choice back once no glass door is left."""
+    from .. import props_hb_face_frame as _props
+    op = getattr(store, 'face_frame_opening', None)
+    if op is None:
+        return
+    key = _props.GLASS_DOOR_PREV_FINISH_KEY
+    if on:
+        if key not in store:
+            store[key] = bool(op.finish_opening)
+        if not op.finish_opening:
+            op.finish_opening = True
+    elif key in store and not _props.store_has_glass_door(store):
+        prev = bool(store[key])
+        del store[key]
+        if op.finish_opening != prev:
+            op.finish_opening = prev
+
+
+def _rebuild_glass_doors(stores):
+    """Re-run the style on the doors of these openings (a finish change
+    already recalculated the cabinet; fronts are looked up fresh)."""
+    for store in stores:
+        for f in _opening_door_fronts(store):
+            _reapply_front_style(f)
+
+
+class hb_face_frame_OT_make_glass_door(bpy.types.Operator):
+    """Make the door glass: it keeps the cabinet's door style and builds
+    its panels as glass. Works on every selected door"""
+    bl_idname = "hb_face_frame.make_glass_door"
+    bl_label = "Glass Door"
+    bl_description = ("Build this door's panels as glass, keeping its "
+                      "door style, and finish the opening behind it")
+    bl_options = {'REGISTER', 'UNDO'}
+
+    glass_type: EnumProperty(
+        name="Glass",
+        items=lambda self, context: _glass_type_items(),
+    )  # type: ignore
+    included: BoolProperty(
+        name="Glass Included",
+        description="The glass ships with the cabinets (otherwise the "
+                    "door is prepped for glass supplied by others)",
+        default=False)  # type: ignore
+    both: BoolProperty(
+        name="Both Doors",
+        description="Apply to every door in the opening, not just this one",
+        default=True)  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        return bool(_glass_door_candidates(context))
+
+    def invoke(self, context, event):
+        from .. import props_hb_face_frame as _props
+        door = context.active_object
+        if door not in _glass_door_candidates(context):
+            door = _glass_door_candidates(context)[0]
+        spec = _props.front_glass_door(door, _frame_store(door))
+        if spec:
+            self.glass_type = spec['type']
+            self.included = spec['included']
+            # Editing one glass leaf of a pair: only that leaf by
+            # default, so a single glass door stays single.
+            others = [f for f in _opening_door_fronts(_frame_store(door))
+                      if f is not door]
+            self.both = all(_props.front_glass_door(f) for f in others)
+        return context.window_manager.invoke_props_dialog(self, width=280)
+
+    def draw(self, context):
+        col = self.layout.column(align=True)
+        col.prop(self, 'glass_type')
+        col.prop(self, 'included')
+        stores = {_frame_store(d).name for d in _glass_door_candidates(context)}
+        pair = any(len(_opening_door_fronts(_frame_store(d))) > 1
+                   for d in _glass_door_candidates(context))
+        if pair:
+            col.prop(self, 'both')
+        if len(stores) > 1:
+            col.label(text="%d openings selected" % len(stores))
+
+    def execute(self, context):
+        from .. import props_hb_face_frame as _props
+        targets = _glass_targets(context, self.both)
+        if not targets:
+            return {'CANCELLED'}
+        spec = {'type': self.glass_type, 'included': self.included}
+        n = 0
+        with types_face_frame.suspend_recalc():
+            for store, fronts in targets:
+                for f in fronts:
+                    _props.set_front_glass_door(f, spec, store)
+                    n += 1
+                _finish_opening_for_glass(store, True)
+        _rebuild_glass_doors([s for s, _f in targets])
+        self.report({'INFO'}, "%d glass door%s: %s%s" % (
+            n, "" if n == 1 else "s",
+            _props.GLASS_TYPE_NAMES.get(self.glass_type, self.glass_type),
+            ", glass included" if self.included else ", prepped for glass"))
+        return {'FINISHED'}
+
+
+def _glass_type_items():
+    from .. import props_hb_face_frame as _props
+    return _props.GLASS_TYPE_ITEMS
+
+
+class hb_face_frame_OT_remove_glass_door(bpy.types.Operator):
+    """Take the glass off the selected doors: back to the door style's own
+    panels, and the opening's own finish choice once no glass is left"""
+    bl_idname = "hb_face_frame.remove_glass_door"
+    bl_label = "Remove Glass"
+    bl_description = "Build the selected doors with their style's panels again"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    both: BoolProperty(
+        name="Both Doors",
+        description="Take the glass off every door in the opening",
+        default=False)  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        from .. import props_hb_face_frame as _props
+        return any(_props.front_glass_door(d)
+                   for d in _glass_door_candidates(context))
+
+    def execute(self, context):
+        from .. import props_hb_face_frame as _props
+        targets = _glass_targets(context, self.both)
+        with types_face_frame.suspend_recalc():
+            for store, fronts in targets:
+                for f in fronts:
+                    _props.set_front_glass_door(f, None, store)
+                _finish_opening_for_glass(store, False)
+        _rebuild_glass_doors([s for s, _f in targets])
+        return {'FINISHED'}
+
+
+# ---------------------------------------------------------------------------
 # Diamond vent: a fixed four-diamond hole pattern cut through a door
 # (door_vents.py). Applies to every selected door.
 # ---------------------------------------------------------------------------
@@ -4767,6 +4938,8 @@ classes = (
     hb_face_frame_OT_set_door_frame,
     hb_face_frame_OT_set_door_hardware,
     hb_face_frame_OT_set_door_vent,
+    hb_face_frame_OT_make_glass_door,
+    hb_face_frame_OT_remove_glass_door,
     hb_face_frame_OT_set_door_shape,
     hb_face_frame_OT_set_cabinet_part_size,
     hb_face_frame_OT_make_part_editable,

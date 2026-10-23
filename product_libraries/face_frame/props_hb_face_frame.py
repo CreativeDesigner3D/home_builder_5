@@ -4777,6 +4777,66 @@ def set_front_door_hw(front_obj, values, store=None):
     store[set_key] = True
 
 
+# Glass doors. A door keeps the cabinet's door style and builds every
+# panel row as a glass lite (the same lites as Set Door Frame > Glass
+# Panels). Set on ONE door like the hardware -- a pair can have one
+# glass leaf -- so it is stamped per leaf on the opening store as a
+# small dict: glass type id and whether the glass is included.
+GLASS_DOOR_KEY = 'HB_GLASS_DOOR'
+# Stamp the build copies onto the front itself, so readers that walk
+# fronts (drawings, pricing) need no leaf / store lookup.
+GLASS_DOOR_FRONT_STAMP = 'HB_GLASS_DOOR'
+# The opening's own finish choice before a glass door turned it on, so
+# taking the glass off puts it back.
+GLASS_DOOR_PREV_FINISH_KEY = 'HB_GLASS_DOOR_PREV_FINISH'
+
+GLASS_TYPE_ITEMS = [
+    ('CLEAR_18', "Clear 1/8\"", "Clear glass, 1/8\" thick"),
+    ('CLEAR_14', "Clear 1/4\"", "Clear glass, 1/4\" thick"),
+    ('REEDED', "Reeded", "Reeded (fluted) glass"),
+    ('SEEDED', "Seeded", "Seeded glass"),
+    ('FROSTED', "Frosted", "Frosted / satin-etched glass"),
+]
+GLASS_TYPE_NAMES = dict((i[0], i[1]) for i in GLASS_TYPE_ITEMS)
+
+
+def front_glass_door_key(front_obj, store=None):
+    return '%s_%d' % (GLASS_DOOR_KEY, front_leaf_index(front_obj, store))
+
+
+def front_glass_door(front_obj, store=None):
+    """THIS leaf's glass spec {'type', 'included'}, or None."""
+    if store is None:
+        store = _front_frame_store(front_obj)
+    spec = store.get(front_glass_door_key(front_obj, store))
+    if not spec:
+        return None
+    try:
+        spec = spec.to_dict()
+    except AttributeError:
+        spec = dict(spec)
+    return {'type': str(spec.get('type', 'CLEAR_18')),
+            'included': bool(spec.get('included', False))}
+
+
+def set_front_glass_door(front_obj, spec, store=None):
+    """Stamp (spec dict) or clear (None) THIS leaf's glass door."""
+    if store is None:
+        store = _front_frame_store(front_obj)
+    key = front_glass_door_key(front_obj, store)
+    if spec is None:
+        if key in store:
+            del store[key]
+        return
+    store[key] = {'type': str(spec.get('type', 'CLEAR_18')),
+                  'included': bool(spec.get('included', False))}
+
+
+def store_has_glass_door(store):
+    return any(k.startswith(GLASS_DOOR_KEY + '_') and store.get(k)
+               for k in store.keys())
+
+
 def front_cabinet_style(front_obj):
     """The cabinet style governing a front -- its cabinet root's
     STYLE_NAME resolved against the scene's style list -- or None.
@@ -5570,7 +5630,7 @@ class Face_Frame_Door_Style(PropertyGroup):
 
     def front_build_plan(self, front_width, front_length, front_thickness,
                          frame_store=None, front_stamps=None, door_rail=None,
-                         round_top=None, edge_name=None):
+                         round_top=None, edge_name=None, glass_door=False):
         """How this 5-piece style builds a front of the given size: the
         effective frame values and the door_builder arguments. Shared by
         assign_style_to_front and the style tiles, so a tile shows the
@@ -5850,9 +5910,14 @@ class Face_Frame_Door_Style(PropertyGroup):
         # Per-row glass (Set Door Frame > Glass Panels): a split
         # door with a glass top and a wood bottom. Rows resolve
         # against THIS door's layout.
-        glass_rows = _front_glass_rows(
-            frame_store,
-            door_builder.panel_row_count(info, front_width, front_length))
+        n_panel_rows = door_builder.panel_row_count(
+            info, front_width, front_length)
+        glass_rows = _front_glass_rows(frame_store, n_panel_rows)
+        # A glass door (Make Glass Door) is every row glass, whatever
+        # panel the style carries; a style that is glass already needs
+        # nothing extra.
+        if glass_door and _pkind['kind'] != 'GLASS':
+            glass_rows = set(range(n_panel_rows))
         # A door too small for its arc builds square; the Change
         # Door Shape dialog is where the user hears why.
         if round_top is not None and door_builder.round_top_layout(
@@ -5951,8 +6016,15 @@ class Face_Frame_Door_Style(PropertyGroup):
         # Set on every style assignment so it tracks the current panel choice.
         # Covers every GLASS panel kind (Prep for Glass + the mullion
         # choices, which render as plain glass until the bars land).
+        glass_spec = (front_glass_door(front_obj)
+                      if role not in self._DRAWER_FRONT_ROLES else None)
         front_obj['IS_PREP_FOR_GLASS'] = (
-            style_options.panel_kind(self.front_panel)['kind'] == 'GLASS')
+            glass_spec is not None
+            or style_options.panel_kind(self.front_panel)['kind'] == 'GLASS')
+        if glass_spec is not None:
+            front_obj[GLASS_DOOR_FRONT_STAMP] = glass_spec
+        elif GLASS_DOOR_FRONT_STAMP in front_obj:
+            del front_obj[GLASS_DOOR_FRONT_STAMP]
 
         # Tri-view mirror doors carry a fixed look -- plain square wood
         # frame + flat mirror panel -- independent of this style's
@@ -5997,7 +6069,8 @@ class Face_Frame_Door_Style(PropertyGroup):
             door_rail=((lambda: _door_rail_for_front(self, front_obj))
                        if role in self._DRAWER_FRONT_ROLES else None),
             round_top=front_round_top(front_obj, frame_store),
-            edge_name=lambda: self._cabinet_edge_profile(front_obj))
+            edge_name=lambda: self._cabinet_edge_profile(front_obj),
+            glass_door=glass_spec is not None)
 
         # Too small for the frame -> the front renders as a slab, which
         # still carries the cabinet-level edge profile. The message
