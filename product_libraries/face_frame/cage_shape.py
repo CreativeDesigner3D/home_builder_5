@@ -43,8 +43,9 @@ _SLIVER = 0.0254
 TAG_SHAPED_CAGE = 'HB_SHAPED_CAGE'
 
 # Parts that set the cabinet's real extent: carcass, face frame and the
-# sub kick. Fronts and hardware stand proud of the face frame and are
-# left out.
+# sub kick, and a leg's panels, stile, kick, back and nailers (a leg's
+# panels and back can run deeper than its box). Fronts, hardware and
+# finish kicks stand proud of the face frame and are left out.
 _STRUCTURE_ROLES = frozenset((
     types_face_frame.PART_ROLE_LEFT_SIDE,
     types_face_frame.PART_ROLE_RIGHT_SIDE,
@@ -61,6 +62,17 @@ _STRUCTURE_ROLES = frozenset((
     types_face_frame.PART_ROLE_LOOSE_KICK_REAR,
     types_face_frame.PART_ROLE_LOOSE_KICK_END_LEFT,
     types_face_frame.PART_ROLE_LOOSE_KICK_END_RIGHT,
+    types_face_frame.PART_ROLE_LEG_PANEL_LEFT,
+    types_face_frame.PART_ROLE_LEG_PANEL_RIGHT,
+    types_face_frame.PART_ROLE_LEG_STILE,
+    types_face_frame.PART_ROLE_LEG_TK_STILE,
+    types_face_frame.PART_ROLE_LEG_TK_FILLER,
+    types_face_frame.PART_ROLE_LEG_FINISH_X_LEFT,
+    types_face_frame.PART_ROLE_LEG_FINISH_X_RIGHT,
+    types_face_frame.PART_ROLE_LEG_BACK,
+    types_face_frame.PART_ROLE_LEG_NAILER_LEFT,
+    types_face_frame.PART_ROLE_LEG_NAILER_RIGHT,
+    types_face_frame.PART_ROLE_LEG_CURVED_PANEL,
 )) | types_face_frame.FACE_FRAME_PART_ROLES
 
 _pending = set()
