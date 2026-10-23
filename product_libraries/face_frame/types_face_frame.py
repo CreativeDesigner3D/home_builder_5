@@ -17963,15 +17963,12 @@ class LegProductFaceFrameCabinet(FaceFrameCabinet):
         # finish_kick_corner, the same meeting a cabinet's kick uses.
         fin_lo, fin_hi = tk_x, tk_x + tk_width
         fin_miters = {}
+        corners_met = {}
+        from . import exposure
         if tkfin_visible:
-            from . import exposure
             for side in ('LEFT', 'RIGHT'):
-                try:
-                    corner = exposure.finish_kick_corner(self.obj,
-                                                         side.lower())
-                except Exception:
-                    corner = None
-                if corner is None or not corner['miter']:
+                corner = exposure.leg_kick_corner(self.obj, side.lower())
+                if corner is None:
                     continue
                 ends = (corner['front_x'], corner['back_x'])
                 if side == 'LEFT':
@@ -17979,6 +17976,10 @@ class LegProductFaceFrameCabinet(FaceFrameCabinet):
                 else:
                     fin_hi = max(ends)
                 fin_miters[side] = ends
+                corners_met[side] = corner
+        # Record the corners met so a partner changing later (exposure's
+        # leg_kick_corner_stale) rebuilds this leg too.
+        exposure.stamp_leg_kick_corners(self.obj, corners_met)
         place(TKFIN, tkh, fin_hi - fin_lo, tkfin_t,
               (fin_lo, -depth + tks - tkfin_t, 0.0),
               (0.0, math.radians(-90), math.radians(90)),

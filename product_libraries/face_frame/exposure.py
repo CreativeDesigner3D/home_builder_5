@@ -846,6 +846,68 @@ def finish_kick_corner(cab_obj, side):
             'miter': miter}
 
 
+def leg_kick_corner(leg_obj, side):
+    """finish_kick_corner for a leg product's kick facing when it mitres
+    there, else None (a leg's facing only ever mitres or stops)."""
+    try:
+        corner = finish_kick_corner(leg_obj, side)
+    except Exception:
+        return None
+    if corner is None or not corner['miter']:
+        return None
+    return corner
+
+
+def _leg_corner_value(corners):
+    value, partners = [], []
+    for side in ('LEFT', 'RIGHT'):
+        c = corners.get(side)
+        if c is None:
+            value.extend((0.0, 0.0, 0.0))
+            partners.append('')
+        else:
+            value.extend((float(c['back_x']), float(c['front_x']), 1.0))
+            partners.append(c['partner'].name)
+    return value, '|'.join(partners)
+
+
+def stamp_leg_kick_corners(leg_obj, corners):
+    """Record the corners a leg's kick facing mitred at when it built.
+    corners: {'LEFT'|'RIGHT': leg_kick_corner result}."""
+    value, partners = _leg_corner_value(corners)
+    try:
+        current = leg_obj.get(FINISH_KICK_CORNER_KEY)
+        if (current is None or len(current) != 6
+                or any(abs(a - b) > 1e-9 for a, b in zip(current, value))):
+            leg_obj[FINISH_KICK_CORNER_KEY] = value
+        if leg_obj.get(FINISH_KICK_CORNER_WITH_KEY) != partners:
+            leg_obj[FINISH_KICK_CORNER_WITH_KEY] = partners
+    except Exception:
+        pass
+
+
+def leg_kick_corner_stale(leg_obj):
+    """True when the corners a leg's finish kick meets now differ from
+    the ones it mitred at when it last built. A leg with a finish kick
+    and no record rebuilds once to pick it up."""
+    if not leg_has_finish_kick(leg_obj):
+        return False
+    recorded = leg_obj.get(FINISH_KICK_CORNER_KEY)
+    try:
+        recorded = [float(v) for v in recorded]
+    except (TypeError, ValueError):
+        return True
+    if len(recorded) != 6:
+        return True
+    corners = {}
+    for side in ('LEFT', 'RIGHT'):
+        corner = leg_kick_corner(leg_obj, side.lower())
+        if corner is not None:
+            corners[side] = corner
+    value, _partners = _leg_corner_value(corners)
+    return any(abs(a - b) > 1e-6 for a, b in zip(recorded, value))
+
+
 # Object ID-prop the solver stamps with [left, right] finish kick
 # reach: 1 = ran to the cabinet edge, 0 = stopped at the side, 2 = met
 # a square-on run's kick at a corner, 3 = a shown end running to the
@@ -1169,6 +1231,10 @@ def recalc_cabinet_exposure(cab_obj):
     # beside a dishwasher carrying a '4\" FLUSH FIN' note nothing
     # could clear. Skip the stamp; legs keep their neighbor role.
     if cab_obj.get('IS_LEG_PRODUCT'):
+        # Its finish kick still follows a kick it mitres with at a
+        # corner, which may have just moved or appeared.
+        if leg_kick_corner_stale(cab_obj):
+            types_face_frame.recalculate_face_frame_cabinet(cab_obj)
         return
     cab = cab_obj.face_frame_cabinet
     scene_props = bpy.context.scene.hb_face_frame
