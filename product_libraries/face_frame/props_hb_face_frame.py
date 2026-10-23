@@ -4833,8 +4833,12 @@ def set_front_glass_door(front_obj, spec, store=None):
 
 
 def store_has_glass_door(store):
-    return any(k.startswith(GLASS_DOOR_KEY + '_') and store.get(k)
-               for k in store.keys())
+    """Any leaf of this opening a glass door. Only the per-leaf keys
+    count (HB_GLASS_DOOR_<n>) -- GLASS_DOOR_PREV_FINISH_KEY shares the
+    prefix and is not a door."""
+    prefix = GLASS_DOOR_KEY + '_'
+    return any(k.startswith(prefix) and k[len(prefix):].isdigit()
+               and store.get(k) for k in store.keys())
 
 
 def front_cabinet_style(front_obj):
