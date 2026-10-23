@@ -402,6 +402,8 @@ _CUSTOM_DEFAULTS = {
     'fan_cutout_depth': inch(12.0),
     'fan_cutout_offset': 0.0,        # shift the opening front (+) / back (-)
     'floor_height': 0.0,             # raise the liner shelf off the bottom
+    'fan_unit': 'NONE',              # picked fan / liner unit (see provider)
+    'fan_unit_fit_by_shop': False,   # unit sent to the shop to fit
     'include_front_panel': False,   # paneled face frame replacing the front
     'panel_stile_width': inch(2.5),
     'panel_top_rail_width': inch(2.5),
@@ -635,6 +637,55 @@ def _static_hood_door(hood_obj, name, width, height, location, opts,
             mod.show_viewport = False
             mod.show_render = False
     return p
+
+
+# Optional fan / liner unit list. An asset pack can register a callable
+# returning the units a hood can be built for, as dicts with 'id',
+# 'name', 'description', 'cutout_width' and 'cutout_depth' (meters).
+# Picking one in the hood prompts sizes the fan cutout to it; with no
+# provider the list is just "By Others" and the cutout is typed in.
+_fan_unit_provider = None
+_FAN_UNIT_ITEMS_CACHE = []
+
+
+def register_fan_unit_provider(fn):
+    global _fan_unit_provider
+    _fan_unit_provider = fn
+
+
+def unregister_fan_unit_provider(fn=None):
+    global _fan_unit_provider
+    if fn is None or _fan_unit_provider is fn:
+        _fan_unit_provider = None
+
+
+def fan_units():
+    """The registered fan / liner units, or an empty list."""
+    if _fan_unit_provider is None:
+        return []
+    try:
+        return list(_fan_unit_provider() or [])
+    except Exception:
+        return []
+
+
+def _fan_unit_items(self, context):
+    # Module global so Blender does not GC the returned strings.
+    _FAN_UNIT_ITEMS_CACHE[:] = [
+        ('NONE', "By Others", "Fan / liner supplied by others; type the "
+                              "cutout size")]
+    for u in fan_units():
+        _FAN_UNIT_ITEMS_CACHE.append(
+            (u['id'], u['name'], u.get('description', u['name'])))
+    return _FAN_UNIT_ITEMS_CACHE
+
+
+def _update_fan_unit(self, context):
+    for u in fan_units():
+        if u['id'] == self.fan_unit:
+            self.fan_cutout_width = u['cutout_width']
+            self.fan_cutout_depth = u['cutout_depth']
+            break
 
 
 def _get_custom_opts(hood_obj):
@@ -2183,6 +2234,14 @@ class HOME_BUILDER_OT_wood_hood_prompts(bpy.types.Operator):
         default=_CUSTOM_DEFAULTS['floor_height'],
         description="Raise the hood's bottom liner shelf this far up "
                     "from the hood bottom")  # type: ignore
+    fan_unit: EnumProperty(
+        name="Fan Unit", items=_fan_unit_items, update=_update_fan_unit,
+        description="Fan / liner unit the hood is built for. Picking one "
+                    "sizes the fan cutout to it")  # type: ignore
+    fan_unit_fit_by_shop: BoolProperty(
+        name="Fit by Shop",
+        description="The fan / liner unit is sent to the shop to be "
+                    "fitted into the hood")  # type: ignore
     include_front_panel: BoolProperty(
         name="Include Front Panel",
         description="Paneled face frame that replaces the plain front "
@@ -2296,6 +2355,16 @@ class HOME_BUILDER_OT_wood_hood_prompts(bpy.types.Operator):
         self.fan_cutout_depth = opts['fan_cutout_depth']
         self.fan_cutout_offset = opts['fan_cutout_offset']
         self.floor_height = opts['floor_height']
+        # A stored unit the provider no longer lists falls back to By
+        # Others; the stored cutout size is kept either way.
+        cutout = (self.fan_cutout_width, self.fan_cutout_depth)
+        try:
+            self.fan_unit = str(opts.get('fan_unit', 'NONE') or 'NONE')
+        except TypeError:
+            self.fan_unit = 'NONE'
+        self.fan_cutout_width, self.fan_cutout_depth = cutout
+        self.fan_unit_fit_by_shop = bool(opts.get('fan_unit_fit_by_shop',
+                                                  False))
         self.include_front_panel = bool(opts['include_front_panel'])
         self.panel_stile_width = opts['panel_stile_width']
         self.panel_top_rail_width = opts['panel_top_rail_width']
@@ -2350,6 +2419,8 @@ class HOME_BUILDER_OT_wood_hood_prompts(bpy.types.Operator):
                 'fan_cutout_depth': self.fan_cutout_depth,
                 'fan_cutout_offset': self.fan_cutout_offset,
                 'floor_height': self.floor_height,
+                'fan_unit': self.fan_unit,
+                'fan_unit_fit_by_shop': self.fan_unit_fit_by_shop,
                 'include_front_panel': self.include_front_panel,
                 'panel_stile_width': self.panel_stile_width,
                 'panel_top_rail_width': self.panel_top_rail_width,
@@ -2546,6 +2617,14 @@ class HOME_BUILDER_OT_wood_hood_prompts(bpy.types.Operator):
         # end doors too.
 
     def _draw_liner(self, box):
+        col = box.column(align=True)
+        row = col.row(align=True)
+        row.label(text="Fan Unit:")
+        row.prop(self, 'fan_unit', text="")
+        row = col.row(align=True)
+        row.label(text="")
+        row.prop(self, 'fan_unit_fit_by_shop')
+
         col = box.column(align=True)
         row = col.row(align=True)
         row.label(text="Fan Cutout:")
