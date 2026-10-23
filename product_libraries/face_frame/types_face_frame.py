@@ -7831,6 +7831,29 @@ class FaceFrameCabinet(GeoNodeCage):
     _CT_NEIGHBOUR_GAP = inch(0.5)     # below a valance / hanging neighbour
     _CT_TOUCH = inch(1.0)
     _CT_SETBACK = inch(0.5)           # neighbour front this far back still counts
+    _CT_LEG_MOLDING_START = inch(4.5)  # leg stile start over base molding
+
+    def _base_molding_top(self):
+        """World Z of the top of a base molding sweep run along this
+        cabinet's foot, or None. A sweep names the cabinets it covers in
+        'hb_base_molding_members' (comma separated) and hangs from one of
+        the run's cabinets, so this cabinet's and its wall siblings'
+        children are searched."""
+        name = self.obj.name
+        owners = [self.obj]
+        parent = self.obj.parent
+        if parent is not None:
+            owners += [o for o in parent.children if o is not self.obj]
+        top = None
+        for owner in owners:
+            for child in owner.children:
+                members = child.get('hb_base_molding_members')
+                if not members or name not in str(members).split(','):
+                    continue
+                mw = child.matrix_world
+                z = max((mw @ Vector(c)).z for c in child.bound_box)
+                top = z if top is None else max(top, z)
+        return top
 
     def _corner_treatment_name(self):
         style_name = self.obj.get('STYLE_NAME')
@@ -7900,8 +7923,18 @@ class FaceFrameCabinet(GeoNodeCage):
         the end stops it 1/2" below that neighbour's bottom. Uppers keep
         the bottom (it wraps under the cabinet). A custom end (Custom
         Edge Treatment) uses its own start / stop heights instead.
+        A refrigerator stile-in-lieu-of-leg runs to the floor, or with
+        base molding along its foot starts 4-1/2" off the floor (or at
+        the molding top when that is higher).
         """
         top_trim = self._corner_treatment_top_trim(layout, role)
+        if role in (PART_ROLE_LEFT_REFRIG_STILE, PART_ROLE_RIGHT_REFRIG_STILE):
+            molding_top = self._base_molding_top()
+            if molding_top is None:
+                return 0.0, top_trim
+            floor_z = self.obj.matrix_world.translation.z
+            start = max(self._CT_LEG_MOLDING_START, molding_top) - floor_z
+            return max(start - stile.location.z, 0.0), top_trim
         if role not in (PART_ROLE_LEFT_STILE, PART_ROLE_RIGHT_STILE):
             return 0.0, top_trim
         try:
