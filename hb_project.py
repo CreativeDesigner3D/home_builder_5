@@ -18,6 +18,7 @@ Usage:
 import bpy
 from bpy.types import PropertyGroup
 from bpy.props import (
+    EnumProperty,
     StringProperty,
     PointerProperty,
 )
@@ -45,7 +46,16 @@ class Home_Builder_Project_Props(PropertyGroup):
         description="Project number or ID",
         default=""
     )  # type: ignore
-    
+
+    # Rooms: one scene per room (kitchen and bath jobs).
+    # House: one house scene with levels - see hb_house.
+    project_kind: EnumProperty(
+        name="Project Kind",
+        items=[('ROOMS', "Rooms", "Each room is its own scene"),
+               ('HOUSE', "House", "The whole house in one scene, on levels")],
+        default='ROOMS'
+    )  # type: ignore
+
     # Designer info
     designer_name: StringProperty(
         name="Designer",

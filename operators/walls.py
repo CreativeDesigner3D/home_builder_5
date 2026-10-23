@@ -10,159 +10,174 @@ from bpy_extras import view3d_utils
 from gpu_extras.batch import batch_for_shader
 from .. import hb_types, hb_snap, hb_placement, hb_utils, units
 from .. import cutters
+from .. import hb_house
+from .. import hb_wall_graph
 
-# Wall Miter Angle Calculation
-# How much a wall end may be sheared to close an outer corner, as a
-# multiple of that wall's own thickness. A square corner needs one
-# thickness; the sharpest corners worth building need a few. Beyond
-# this the corner is not really a corner - see _solve_miter_shear_angles.
-MAX_MITER_SHEAR_RATIO = 8.0
+# Wall Junctions
+# Every corner, T and multi-way junction is worked out by hb_wall_graph
+# from where the walls actually are, one level at a time, and written onto
+# the walls' end inputs. The functions below are the old entry points; they
+# all refresh the level the given wall is on.
+
+_END_INPUTS = {
+    hb_wall_graph.START: ('Left Extension', 'Left Angle'),
+    hb_wall_graph.END: ('Right Extension', 'Right Angle'),
+}
 
 
-def _solve_miter_shear_angles(a_rot, a_thickness, b_rot, b_thickness):
-    """
-    Given wall A ending where wall B starts (sharing the same inner corner
-    point), solve for the Right Angle (on A) and Left Angle (on B) such that
-    the OUTER (thickness-offset) corners of both walls land on the same
-    point.
+def _wall_scene(wall_obj):
+    scenes = wall_obj.users_scene
+    if bpy.context.scene in scenes:
+        return bpy.context.scene
+    return scenes[0] if scenes else None
 
-    The geometry-node wall shears its outer-face corner along its own travel
-    direction by tan(angle) * this_wall's_thickness. A simple symmetric
-    bisector (turn/2 each side) only lands both walls' outer corners on the
-    same point when both walls share the same thickness. When thickness
-    differs, that assumption breaks and the outer corner opens up into a
-    gap/overlap. This solves the real corner-intersection instead:
 
-        C + tA*nA + shearA*dirA == C + tB*nB + shearB*dirB
+def _update_scene(scene):
+    """Bring matrix_world up to date: callers set rotations, lengths and
+    locations directly, and constrained walls only move on evaluation."""
+    try:
+        if scene == bpy.context.scene:
+            bpy.context.view_layer.update()
+        elif scene.view_layers:
+            scene.view_layers[0].update()
+    except Exception:
+        pass
 
-    for shearA, shearB (a 2x2 linear solve), then converts each shear back
-    to an angle via atan(shear / own_thickness).
-    """
-    import math
-    from mathutils import Vector, Matrix
 
-    turn = b_rot - a_rot
-    while turn > math.pi: turn -= 2 * math.pi
-    while turn < -math.pi: turn += 2 * math.pi
+def wall_seg(wall_obj):
+    """The junction graph's view of a wall, or None if it can't be read."""
+    wall = hb_types.GeoNodeWall(wall_obj)
+    if not wall.has_modifier():
+        return None
+    try:
+        length = wall.get_input('Length')
+        thickness = wall.get_input('Thickness')
+    except (ValueError, KeyError, AttributeError):
+        return None
+    m = wall_obj.matrix_world
+    start = m.translation
+    rot = m.to_euler().z
+    end = (start.x + math.cos(rot) * length, start.y + math.sin(rot) * length)
+    return hb_wall_graph.Seg(wall_obj.name, (start.x, start.y), end, thickness,
+                             hb_house.level_of(wall_obj),
+                             wall_obj.get('WALL_TYPE', 'Exterior'))
 
-    if abs(turn) < 1e-6:
-        return 0.0, 0.0
 
-    dirA = Vector((math.cos(a_rot), math.sin(a_rot)))
-    dirB = Vector((math.cos(b_rot), math.sin(b_rot)))
-    nA = Vector((-dirA.y, dirA.x))
-    nB = Vector((-dirB.y, dirB.x))
+def level_wall_segs(scene, level=None):
+    """{name: obj} and Segs for the walls in `scene`, on one level (a level
+    uid, '' for untagged walls) or every level (None)."""
+    objs, segs = {}, []
+    for obj in scene.objects:
+        if 'IS_WALL_BP' not in obj:
+            continue
+        if level is not None and hb_house.level_of(obj) != level:
+            continue
+        seg = wall_seg(obj)
+        if seg is None:
+            continue
+        objs[obj.name] = obj
+        segs.append(seg)
+    return objs, segs
 
-    rhs = b_thickness * nB - a_thickness * nA
-    M = Matrix(((dirA.x, -dirB.x), (dirA.y, -dirB.y)))
 
-    det = M.determinant()
-    if abs(det) < 1e-9:
-        # Directions parallel/degenerate - fall back to the old symmetric split.
-        return -turn / 2, turn / 2
+def refresh_wall_junctions(scene=None, level=None):
+    """Recompute every wall end on a level (or all levels) of a scene.
+    Returns the names of the walls written."""
+    scene = scene or bpy.context.scene
+    if scene is None:
+        return set()
+    _update_scene(scene)
+    objs, segs = level_wall_segs(scene, level)
+    if not segs:
+        return set()
+    graph = hb_wall_graph.build_graph(segs)
+    cuts = hb_wall_graph.solve(graph)
+    for seg in segs:
+        obj = objs[seg.id]
+        wall = hb_types.GeoNodeWall(obj)
+        has_ext = wall.has_input('Left Extension')
+        for which, (ext_name, angle_name) in _END_INPUTS.items():
+            cut = cuts.get((seg.id, which), (0.0, 0.0))
+            ext, angle = hb_wall_graph.to_inputs(seg, which, cut, has_ext)
+            wall.set_input(angle_name, angle)
+            if has_ext:
+                wall.set_input(ext_name, ext)
+        # Direct modifier writes need an explicit depsgraph tag to show up
+        # without a view move - see update_wall_height.
+        obj.update_tag()
+    return set(objs)
 
-    shear_a, shear_b = M.inverted() @ rhs
 
-    # Two walls that only just turn away from each other really do meet
-    # their outer faces a long way off, and the solve says so: the shear
-    # runs away as the turn goes to zero. That answer is geometrically
-    # right and useless to build - it shears the wall end into a spike
-    # far longer than the wall. Past what a miter can sensibly carry
-    # (about 83 degrees of shear), take the symmetric split instead and
-    # leave the small step at the outer face, which is what a nearly
-    # straight run looked like before any of this.
-    max_shear = MAX_MITER_SHEAR_RATIO
-    if (abs(shear_a) > max_shear * a_thickness
-            or abs(shear_b) > max_shear * b_thickness):
-        return -turn / 2, turn / 2
+def _constrained_start(obj):
+    for con in obj.constraints:
+        if con.type == 'COPY_LOCATION' and con.target is not None:
+            return True
+    return False
 
-    right_angle_a = math.atan2(shear_a, a_thickness) if a_thickness else 0.0
-    left_angle_b = math.atan2(shear_b, b_thickness) if b_thickness else 0.0
-    return right_angle_a, left_angle_b
+
+def capture_tees(scene, level=None):
+    """Every wall end that lands partway along another wall (a T), as
+    (wall, end, host, face), so restore_tees can put it back on that face
+    after the host moves. Call before an edit."""
+    _update_scene(scene)
+    objs, segs = level_wall_segs(scene, level)
+    graph = hb_wall_graph.build_graph(segs)
+    records = []
+    for node in graph.tees():
+        seg_id, which = node.ends[0]
+        records.append((objs[seg_id], which, objs[node.host.seg_id],
+                        node.host.side))
+    return records
+
+
+def restore_tees(records, scene):
+    """Slide each captured T end back onto its host's face along the
+    wall's own line, keeping the wall's other end where it is. An end at
+    a wall's start moves the wall's origin, and what is parented to the
+    wall moves with it - the same as a chain neighbour of a dragged wall."""
+    for obj, which, host_obj, side in records:
+        if obj.name not in bpy.data.objects or host_obj.name not in bpy.data.objects:
+            continue
+        _update_scene(scene)
+        seg, host = wall_seg(obj), wall_seg(host_obj)
+        if seg is None or host is None:
+            continue
+        face = host.face_point(host.thickness if side == 'FAR' else 0.0)
+        p = hb_wall_graph.intersect(seg.start, seg.dir, face, host.dir)
+        if p is None:
+            continue
+        wall = hb_types.GeoNodeWall(obj)
+        if which == hb_wall_graph.END:
+            new_len = (p[0] - seg.start[0]) * seg.dir[0] + (p[1] - seg.start[1]) * seg.dir[1]
+            if new_len > 0.001:
+                wall.set_input('Length', new_len)
+        elif not _constrained_start(obj):
+            new_len = (seg.end[0] - p[0]) * seg.dir[0] + (seg.end[1] - p[1]) * seg.dir[1]
+            if new_len > 0.001:
+                obj.location.x, obj.location.y = p
+                wall.set_input('Length', new_len)
+        obj.update_tag()
 
 
 def calculate_wall_miter_angles(wall_obj):
-    """
-    Calculate and set the miter angles for a wall based on connected walls.
-    Uses the GeoNodeWall.get_connected_wall() method to find connections.
-
-    Accounts for the connected walls' thicknesses (not just the turn angle)
-    so the outer corner is properly closed even when the two walls have
-    different thickness - see _solve_miter_shear_angles.
-    """
-    wall = hb_types.GeoNodeWall(wall_obj)
-    this_rot = wall_obj.rotation_euler.z
-    this_thickness = wall.get_input('Thickness')
-
-    # Get connected wall on the left (at our START)
-    left_wall = wall.get_connected_wall('left')
-    if left_wall:
-        prev_rot = left_wall.obj.rotation_euler.z
-        prev_thickness = left_wall.get_input('Thickness')
-        _right_a, left_angle = _solve_miter_shear_angles(prev_rot, prev_thickness, this_rot, this_thickness)
-        wall.set_input('Left Angle', left_angle)
-    else:
-        wall.set_input('Left Angle', 0)
-
-    # Get connected wall on the right (at our END)
-    right_wall = wall.get_connected_wall('right')
-    if right_wall:
-        next_rot = right_wall.obj.rotation_euler.z
-        next_thickness = right_wall.get_input('Thickness')
-        right_angle, _left_b = _solve_miter_shear_angles(this_rot, this_thickness, next_rot, next_thickness)
-        wall.set_input('Right Angle', right_angle)
-    else:
-        wall.set_input('Right Angle', 0)
+    """Recompute the junctions on this wall's level (its corners, Ts and
+    multi-way joins, and every other wall end there)."""
+    scene = _wall_scene(wall_obj)
+    if scene is not None:
+        refresh_wall_junctions(scene, hb_house.level_of(wall_obj))
 
 
 def update_all_wall_miters():
-    """Recompute miter angles on every wall, chain by chain.
-
-    Walks the wall chains instead of each wall's COPY_LOCATION link so the
-    two corners the constraint walk cannot see come out right: a closed
-    room's closure seam (which keeps its miter) and an end whose neighbor
-    has been removed (which goes back to square).
-
-    Every scene is walked, not just the active one: each room is its own
-    scene, and the per-wall constraint pass would flatten the closure seam
-    of every room the user is not currently in.
-    """
-    handled = set()
+    """Recompute the junctions of every wall in every scene. Each room is
+    its own scene, so walking only the active one would leave the others
+    with corners worked out for walls that have since changed."""
     for scene in bpy.data.scenes:
-        for chain in find_wall_chains(scene):
-            handled |= _remiter_chain(chain)
-
-    for obj in bpy.data.objects:
-        if 'IS_WALL_BP' not in obj or obj.name in handled:
-            continue
-        # A wall the chain finder never saw (no scene of its own, or no
-        # geometry nodes on it yet) still gets the old per-wall pass, and
-        # a broken one is skipped rather than aborting the whole recompute.
-        try:
-            if not hb_types.GeoNodeWall(obj).has_modifier():
-                continue
-            calculate_wall_miter_angles(obj)
-            obj.update_tag()
-        except (ValueError, KeyError, AttributeError):
-            continue
+        refresh_wall_junctions(scene)
 
 
 def update_connected_wall_miters(wall_obj):
-    """Update miter angles for a wall and all walls connected to it."""
-    wall = hb_types.GeoNodeWall(wall_obj)
-
-    # Update this wall
+    """Update the junctions of a wall and everything it meets."""
     calculate_wall_miter_angles(wall_obj)
-
-    # Update connected wall on the left
-    left_wall = wall.get_connected_wall('left')
-    if left_wall:
-        calculate_wall_miter_angles(left_wall.obj)
-
-    # Update connected wall on the right
-    right_wall = wall.get_connected_wall('right')
-    if right_wall:
-        calculate_wall_miter_angles(right_wall.obj)
 
 # Room Lighting Helpers
 def point_in_polygon(point, polygon):
@@ -202,6 +217,48 @@ def get_wall_endpoints(wall_obj):
     
     return start.to_2d(), end.to_2d()
 
+def wall_face_extents(wall_obj):
+    """Where each face of the wall actually starts and ends, as built.
+
+    The drawn length runs between the reference endpoints, but a junction
+    trims or extends each end (Extension) and shears the far face's corner
+    (Angle), so the faces reach past - or stop short of - 0 and Length.
+    Returns {'back': (x0, x1), 'front': (x0, x1)} along the wall in its
+    own space (back is the reference face, front is offset by the
+    thickness), or None if the wall can't be read."""
+    wall = hb_types.GeoNodeWall(wall_obj)
+    if not wall.has_modifier():
+        return None
+    try:
+        length = wall.get_input('Length')
+        t = wall.get_input('Thickness')
+        left_angle = wall.get_input('Left Angle')
+        right_angle = wall.get_input('Right Angle')
+    except (ValueError, KeyError, AttributeError):
+        return None
+    left_ext = wall.get_input('Left Extension') if wall.has_input('Left Extension') else 0.0
+    right_ext = wall.get_input('Right Extension') if wall.has_input('Right Extension') else 0.0
+    back = (-left_ext, length + right_ext)
+    front = (back[0] + math.tan(left_angle) * t, back[1] + math.tan(right_angle) * t)
+    return {'back': back, 'front': front}
+
+
+def wall_plan_corners(wall_obj):
+    """The wall's four plan corners in world XY, as built: [(end, face,
+    point)] with end 'start'/'end' and face 'back'/'front'."""
+    ext = wall_face_extents(wall_obj)
+    if ext is None:
+        return []
+    m = wall_obj.matrix_world
+    t = hb_types.GeoNodeWall(wall_obj).get_input('Thickness')
+    out = []
+    for face, y in (('back', 0.0), ('front', t)):
+        x0, x1 = ext[face]
+        out.append(('start', face, (m @ Vector((x0, y, 0.0))).to_2d()))
+        out.append(('end', face, (m @ Vector((x1, y, 0.0))).to_2d()))
+    return out
+
+
 def find_wall_chains(scene=None):
     """Find connected chains of walls in a scene, returning list of ordered wall objects.
     
@@ -219,7 +276,8 @@ def find_wall_chains(scene=None):
     wall_data = {}
     for wall in walls:
         start, end = get_wall_endpoints(wall)
-        wall_data[wall.name] = {'obj': wall, 'start': start, 'end': end}
+        wall_data[wall.name] = {'obj': wall, 'start': start, 'end': end,
+                                'level': hb_house.level_of(wall)}
     
     tolerance = 0.01
     
@@ -228,6 +286,9 @@ def find_wall_chains(scene=None):
     for name1, data1 in wall_data.items():
         succs = []
         for name2, data2 in wall_data.items():
+            # Walls on different levels can sit exactly above each other
+            if data1['level'] != data2['level']:
+                continue
             if name1 != name2 and (data1['end'] - data2['start']).length < tolerance:
                 succs.append(name2)
         connections[name1] = succs
@@ -357,53 +418,22 @@ def get_wall_chain_info(wall_obj):
     return None, -1, False
 
 
-def _miter_between(a_obj, b_obj):
-    """Set the miter angles at the corner where a_obj.end meets b_obj.start.
-    Writes Right Angle on a_obj and Left Angle on b_obj, using
-    _solve_miter_shear_angles so the outer corner closes correctly even when
-    a_obj and b_obj have different thickness."""
-    wa = hb_types.GeoNodeWall(a_obj)
-    wb = hb_types.GeoNodeWall(b_obj)
-    right_angle, left_angle = _solve_miter_shear_angles(
-        a_obj.rotation_euler.z, wa.get_input('Thickness'),
-        b_obj.rotation_euler.z, wb.get_input('Thickness'),
-    )
-    wa.set_input('Right Angle', right_angle)
-    wb.set_input('Left Angle', left_angle)
-
-
 def _update_chain_miters(chain, is_closed):
-    """Recompute miter angles at every corner in a chain, including the
-    closure seam of a closed loop. Walks the chain directly rather than
-    following COPY_LOCATION constraints, which is what lets the closure
-    corner (normally invisible to get_connected_wall) get proper miters."""
-    n = len(chain)
-    if n == 0:
-        return
-    if not is_closed:
-        hb_types.GeoNodeWall(chain[0]).set_input('Left Angle', 0.0)
-        hb_types.GeoNodeWall(chain[-1]).set_input('Right Angle', 0.0)
-    corners = n if is_closed else n - 1
-    for i in range(corners):
-        _miter_between(chain[i], chain[(i + 1) % n])
+    """Recompute the junctions of the level a chain is on."""
+    if chain:
+        calculate_wall_miter_angles(chain[0])
 
 
 def _remiter_chain(chain):
-    """Re-miter one wall chain and tag its walls so the new angles show up
-    without a view move. Returns the names of the walls it touched."""
+    """Re-miter the level a wall chain is on. Returns the names of the
+    walls it touched."""
     walls = [obj for obj in chain if hb_types.GeoNodeWall(obj).has_modifier()]
     if not walls:
         return set()
-    # A chain that lost a wall to the filter is no longer a loop we can
-    # trust, so it is mitered as an open run.
-    is_closed = (len(walls) == len(chain)
-                 and is_closed_loop(get_room_boundary_points(walls)))
-    _update_chain_miters(walls, is_closed)
-    for obj in walls:
-        # Direct modifier writes need an explicit depsgraph tag to show up
-        # without a view move - see update_wall_height.
-        obj.update_tag()
-    return {obj.name for obj in walls}
+    scene = _wall_scene(walls[0])
+    if scene is None:
+        return set()
+    return refresh_wall_junctions(scene, hb_house.level_of(walls[0]))
 
 
 def offset_wall_perpendicular(wall_obj, offset, tolerance_deg=None):
@@ -435,6 +465,9 @@ def offset_wall_perpendicular(wall_obj, offset, tolerance_deg=None):
     chain, idx, is_closed = get_wall_chain_info(wall_obj)
     if chain is None:
         return False, "Selected wall is not part of a detected chain"
+
+    scene = _wall_scene(wall_obj)
+    tees = capture_tees(scene, hb_house.level_of(wall_obj)) if scene else []
 
     n = len(chain)
     this_rot = wall_obj.rotation_euler.z
@@ -515,8 +548,10 @@ def offset_wall_perpendicular(wall_obj, offset, tolerance_deg=None):
         wall_obj.location.x += delta.x
         wall_obj.location.y += delta.y
 
-    # Recompute miter angles at every corner in the chain (includes the
-    # closure seam for closed loops, which update_connected_wall_miters misses).
+    # Walls teeing into the moved walls follow them, then every junction
+    # on the level is worked out again.
+    if scene is not None:
+        restore_tees(tees, scene)
     _update_chain_miters(chain, is_closed)
 
     return True, f"Offset wall by {offset:.3f} m"
@@ -1382,6 +1417,8 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         for obj in context.view_layer.objects:
             if 'IS_WALL_BP' not in obj:
                 continue
+            if not hb_house.on_active_level(obj, context):
+                continue
             # Skip the current wall being drawn
             if self.current_wall and obj == self.current_wall.obj:
                 continue
@@ -1393,9 +1430,19 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
             start, end = get_wall_endpoints(obj)
             start_3d = Vector((start.x, start.y, 0))
             end_3d = Vector((end.x, end.y, 0))
-            
+
+            # A cursor nearer an end's outside corner than its reference
+            # point is reaching for that corner: leave the end to the face
+            # snap, which can land exactly on it.
+            corner_d = {}
+            for end_name, face, pt in wall_plan_corners(obj):
+                if face == 'front':
+                    corner_d[end_name] = (mouse_loc.to_2d() - pt).length
+
             # Check start point
             dist_start = (mouse_loc - start_3d).length
+            if dist_start >= corner_d.get('start', float('inf')):
+                dist_start = float('inf')
             if dist_start < best_distance:
                 best_distance = dist_start
                 best_wall = obj
@@ -1404,6 +1451,8 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
             
             # Check end point
             dist_end = (mouse_loc - end_3d).length
+            if dist_end >= corner_d.get('end', float('inf')):
+                dist_end = float('inf')
             if dist_end < best_distance:
                 best_distance = dist_end
                 best_wall = obj
@@ -1482,8 +1531,10 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
             self.region, self.region.data, self.mouse_pos)
         direction = view3d_utils.region_2d_to_vector_3d(
             self.region, self.region.data, self.mouse_pos)
+        level = hb_house.active_level(context)
+        plane_z = level.elevation if level is not None else 0.0
         co = intersect_line_plane(
-            origin, origin + direction, Vector((0, 0, 0)), Vector((0, 0, 1)))
+            origin, origin + direction, Vector((0, 0, plane_z)), Vector((0, 0, 1)))
         if co is None:
             return None, None, None
 
@@ -1497,6 +1548,8 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         for obj in context.view_layer.objects:
             if 'IS_WALL_BP' not in obj:
                 continue
+            if not hb_house.on_active_level(obj, context):
+                continue
             if self.current_wall and obj == self.current_wall.obj:
                 continue
             if self.previous_wall and obj == self.previous_wall.obj:
@@ -1509,6 +1562,8 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
                 continue
             wall_length = wall.get_input('Length')
             wall_thickness = wall.get_input('Thickness')
+            extents = wall_face_extents(obj) or {
+                'back': (0.0, wall_length), 'front': (0.0, wall_length)}
 
             world_matrix = obj.matrix_world
 
@@ -1523,7 +1578,9 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
             local_perp = to_mouse.dot(wall_perp)
 
             # Check if cursor is alongside the wall (with threshold margin)
-            if local_along < -threshold or local_along > wall_length + threshold:
+            span_lo = min(extents['back'][0], extents['front'][0])
+            span_hi = max(extents['back'][1], extents['front'][1])
+            if local_along < span_lo - threshold or local_along > span_hi + threshold:
                 continue
 
             # Determine perpendicular distance to each face
@@ -1570,8 +1627,11 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
                 # but we still want to snap
                 perp_dist = min(dist_to_back, dist_to_front)
 
-            # Snap point: clamp along-position to wall extent, project onto face
-            clamped_along = max(0, min(wall_length, local_along))
+            # Snap point: clamp along-position to the face as built - a
+            # mitered corner's outside face runs past the drawn length, and
+            # its end is the outside corner - then project onto the face
+            face_lo, face_hi = extents[face]
+            clamped_along = max(face_lo, min(face_hi, local_along))
             snap_world = wall_origin + wall_dir * clamped_along + wall_perp * face_offset
 
             if perp_dist < best_distance:
@@ -1616,7 +1676,7 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
                 break
             check_obj = check_obj.parent
         
-        if not wall_obj:
+        if not wall_obj or not hb_house.on_active_level(wall_obj, context):
             return None, None, None
         
         # Skip the current wall being drawn
@@ -1640,15 +1700,18 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         local_matrix = world_matrix.inverted()
         local_hit = local_matrix @ Vector((self.hit_location[0], self.hit_location[1], self.hit_location[2]))
         
-        # Clamp X position to wall length
-        snap_x = max(0, min(wall_length, local_hit.x))
-        
         # Determine which face based on local Y
         if local_hit.y >= 0:
             face = 'front'
         else:
             face = 'back'
-        
+
+        # Clamp X to that face as built (a mitered outside face runs past
+        # the drawn length)
+        extents = wall_face_extents(wall_obj)
+        face_lo, face_hi = extents[face] if extents else (0.0, wall_length)
+        snap_x = max(face_lo, min(face_hi, local_hit.x))
+
         # Keep the Y from the hit (it's on the surface), set Z to 0
         local_snap = Vector((snap_x, local_hit.y, 0))
         world_snap = world_matrix @ local_snap
@@ -1686,6 +1749,8 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
 
         for obj in context.view_layer.objects:
             if 'IS_WALL_BP' not in obj:
+                continue
+            if not hb_house.on_active_level(obj, context):
                 continue
             if obj == self.current_wall.obj:
                 continue
@@ -1912,6 +1977,10 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         else:  # Fake — thin decorative panel
             thickness = units.inch(0.75)
 
+        level = hb_house.active_level(context)
+        if level is not None:
+            height = hb_house.new_wall_height(level, wall_type, props)
+
         self.current_wall = hb_types.GeoNodeWall()
         self.current_wall.create("Wall")
         self.current_wall.set_input('Thickness', thickness)
@@ -1923,7 +1992,10 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
             self.current_wall.obj['IS_HALF_WALL'] = True
         elif wall_type == 'Fake':
             self.current_wall.obj['IS_FAKE_WALL'] = True
-        
+
+        if level is not None:
+            hb_house.assign_wall_to_level(self.current_wall.obj, level, context.scene)
+
         # Register for cleanup on cancel
         self.register_placement_object(self.current_wall.obj)
         for child in self.current_wall.obj.children:
@@ -1985,10 +2057,13 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         for obj in context.view_layer.objects:
             if 'IS_WALL_BP' not in obj:
                 continue
+            if not hb_house.on_active_level(obj, context):
+                continue
             if self.current_wall and obj == self.current_wall.obj:
                 continue
             start, end = get_wall_endpoints(obj)
-            for pt in (start, end):
+            points = [start, end] + [pt for _e, _f, pt in wall_plan_corners(obj)]
+            for pt in points:
                 pt_3d = Vector((pt.x, pt.y, 0))
                 d = (mouse_loc - pt_3d).length
                 if d < best_dist:
@@ -2206,6 +2281,7 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
                         self.current_wall.set_input('Length', hb_snap.snap_value_to_grid(abs(y), fine=self.fine_snap))
 
             self._place_tracked_start()
+            self._align_to_continued_wall(bpy.context)
 
             # Check for end snap to existing wall faces
             snap_len, snap_wall_obj, snap_face = self.find_end_wall_snap(bpy.context)
@@ -2225,6 +2301,98 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
                     self.clear_wall_highlight()
 
             self.update_dimension(bpy.context)
+
+    def _continued_wall(self, context, start, direction):
+        """The wall this one carries on from, or None.
+
+        A wall drawn out of another wall's end - from its reference
+        endpoint, an outside corner, or anywhere across its end - and in
+        line with it, away from it, is continuing it. Returns (wall_obj,
+        lateral) where lateral is how far `start` sits from that wall's
+        reference face, across the wall."""
+        best, best_key = None, None
+        for obj in context.view_layer.objects:
+            if 'IS_WALL_BP' not in obj or obj == self.current_wall.obj:
+                continue
+            if not hb_house.on_active_level(obj, context):
+                continue
+            seg = wall_seg(obj)
+            if seg is None or seg.length < 1e-6:
+                continue
+            w_dir = Vector(seg.dir)
+            w_n = Vector(seg.normal)
+            if abs(w_dir.x * direction.y - w_dir.y * direction.x) > 1e-3:
+                continue                    # not in line
+            rel = start - Vector(seg.start)
+            lateral = rel.dot(w_n)
+            if not (-0.01 <= lateral <= seg.thickness + 0.01):
+                continue                    # not across this wall
+            along = rel.dot(w_dir)
+            reach = max(seg.thickness * 3.0, 0.05)
+            if w_dir.dot(direction) > 0:
+                at_end = seg.length - 0.01 <= along <= seg.length + reach
+            else:
+                at_end = -reach <= along <= 0.01
+            if not at_end:
+                continue                    # not carrying on past its end
+            key = abs(lateral)
+            if best_key is None or key < best_key:
+                best, best_key = (obj, lateral), key
+        return best
+
+    def _align_to_continued_wall(self, context):
+        """Line a wall up with the wall it carries on from.
+
+        Walls always put their thickness to the LEFT of the drawing
+        direction, so a wall drawn out of a corner the opposite way to the
+        wall it continues would sit on the other side of the line - a
+        jog of one thickness. When the new wall is in line with a wall
+        whose end it starts from, slide its reference line across so its
+        faces line up with that wall's faces. A wall started on an
+        endpoint is held there by a constraint, muted while it is
+        slid."""
+        self._aligned_start = None
+        start = Vector((self.start_point[0], self.start_point[1]))
+        rot = self.current_wall.obj.rotation_euler.z
+        direction = Vector((math.cos(rot), math.sin(rot)))
+        found = self._continued_wall(context, start, direction)
+        shift = None
+        if found is not None:
+            wall_obj, lateral = found
+            seg = wall_seg(wall_obj)
+            w_n = Vector(seg.normal)
+            my_n = Vector((-direction.y, direction.x))
+            t = self.current_wall.get_input('Thickness')
+            # Same way round: share the reference face. The other way
+            # round: the reference line goes on the face one thickness
+            # across, so the body folds back over the continued wall's.
+            target = 0.0 if my_n.dot(w_n) > 0 else t
+            if abs(target - lateral) > 1e-6:
+                shift = w_n * (target - lateral)
+
+        constraints = [c for c in self.current_wall.obj.constraints
+                       if c.type == 'COPY_LOCATION']
+        for con in constraints:
+            con.mute = shift is not None
+        if shift is not None:
+            aligned = start + shift
+            self._aligned_start = Vector((aligned.x, aligned.y, 0.0))
+            self.current_wall.obj.location.x = aligned.x
+            self.current_wall.obj.location.y = aligned.y
+        elif not constraints:
+            self.current_wall.obj.location.x = start.x
+            self.current_wall.obj.location.y = start.y
+
+    def _release_alignment_constraint(self):
+        """A wall that was slid off the endpoint it snapped to is not
+        connected there: drop the muted constraint and the back-link."""
+        for con in list(self.current_wall.obj.constraints):
+            if con.type == 'COPY_LOCATION' and con.mute:
+                target = con.target
+                if (target is not None
+                        and target.home_builder.connected_object == self.current_wall.obj):
+                    target.home_builder.connected_object = None
+                self.current_wall.obj.constraints.remove(con)
 
     def _place_tracked_start(self):
         """Hold a typed tracking distance to the wall's FACE.
@@ -2271,19 +2439,9 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         
         context.view_layer.update()
         
-        # Update miter angles for previous wall and closing wall's left side
+        # Every corner of the room, the closing seam included
         calculate_wall_miter_angles(closing_wall.obj)
-        calculate_wall_miter_angles(self.previous_wall.obj)
-        
-        # Set miter angles between closing wall's end and first wall's start
-        closing_rot = closing_wall.obj.rotation_euler.z
-        first_rot = first_wall.obj.rotation_euler.z
-        turn = first_rot - closing_rot
-        while turn > math.pi: turn -= 2 * math.pi
-        while turn < -math.pi: turn += 2 * math.pi
-        closing_wall.set_input('Right Angle', -turn / 2)
-        first_wall.set_input('Left Angle', turn / 2)
-        
+
         # Remove closing wall from cancel list (it's confirmed)
         if closing_wall.obj in self.placement_objects:
             self.placement_objects.remove(closing_wall.obj)
@@ -2309,11 +2467,13 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
 
         angle = self.current_wall.obj.rotation_euler.z
         direction = Vector((math.cos(angle), math.sin(angle)))
-        p1 = self.start_point.to_2d()
+        p1 = (getattr(self, '_aligned_start', None) or self.start_point).to_2d()
         p2 = p1 + direction * wall_length
 
         for obj in bpy.context.scene.objects:
             if not obj.get('IS_WALL_BP') or obj is self.current_wall.obj:
+                continue
+            if not hb_house.same_level(obj, self.current_wall.obj):
                 continue
             start, end = get_wall_endpoints(obj)
             seg = end - start
@@ -2340,6 +2500,13 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
     def confirm_current_wall(self):
         """Finalize current wall and prepare for next."""
         self._track_first = None
+        # A wall slid into line with the wall it continues starts where it
+        # was slid to, not where it was snapped
+        if getattr(self, '_aligned_start', None) is not None:
+            self.start_point = self._aligned_start.copy()
+            self._release_alignment_constraint()
+        self._aligned_start = None
+
         # Capture the very first start point (before it gets updated)
         if self.first_start_point is None:
             self.first_start_point = self.start_point.copy()
@@ -2347,7 +2514,7 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         # Update start point to end of current wall
         wall_length = self.current_wall.get_input('Length')
         angle = self.current_wall.obj.rotation_euler.z
-        
+
         self.start_point = Vector((
             self.start_point.x + math.cos(angle) * wall_length,
             self.start_point.y + math.sin(angle) * wall_length,
@@ -2409,6 +2576,7 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         self.start_point = None
         self.has_start_point = False
         self._track_first = None
+        self._aligned_start = None
         self.first_start_point = None
         self.first_wall = None
         self.confirmed_wall_count = 0
@@ -2514,6 +2682,7 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         self.start_point = None
         self.has_start_point = False
         self._track_first = None
+        self._aligned_start = None
         self._wall_dim_handle = None
         self._wall_dim_visible = False
         self.free_rotation = False
@@ -2576,6 +2745,16 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         return {'RUNNING_MODAL'}
 
     def modal(self, context, event):
+        result = self._modal(context, event)
+        # Every positioning path writes a Z of its own (0, or the raycast
+        # hit). On a house level the run's first wall has to sit on the
+        # level's floor; the rest of the run follows it by constraint.
+        if 'RUNNING_MODAL' in result and self.current_wall is not None:
+            hb_house.apply_level_z(self.current_wall.obj,
+                                   hb_house.active_level(context))
+        return result
+
+    def _modal(self, context, event):
         context.window.cursor_set('CROSSHAIR')
 
         # Skip intermediate mouse moves
@@ -2593,6 +2772,7 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         for child in self.current_wall.obj.children:
             child.hide_set(True)
         self.update_snap(context, event)
+        hb_house.constrain_hit_to_level(self, context)
         # Only unhide after first point is placed
         if self.has_start_point:
             self.current_wall.obj.hide_set(False)
@@ -2770,19 +2950,16 @@ class home_builder_walls_OT_wall_prompts(bpy.types.Operator):
         return context.object and 'IS_WALL_BP' in context.object
 
     def check(self, context):
+        scene = _wall_scene(self.wall.obj) or context.scene
+        tees = capture_tees(scene, hb_house.level_of(self.wall.obj))
         self.wall.set_input('Length', self.wall_length)
         self.wall.set_input('Height', self.wall_height)
         if self.wall.has_input('End Height'):
             self.wall.set_input('End Height', self.wall_end_height)
         self.wall.set_input('Thickness', self.wall_thickness)
+        # A thicker wall moves its far face; walls teeing into it follow
+        restore_tees(tees, scene)
         calculate_wall_miter_angles(self.wall.obj)
-        left_wall = self.wall.get_connected_wall('left')
-        if left_wall:
-            calculate_wall_miter_angles(left_wall.obj)
-        
-        right_wall = self.wall.get_connected_wall('right')
-        if right_wall:
-            calculate_wall_miter_angles(right_wall.obj)        
         return True
 
     def invoke(self, context, event):
@@ -3249,6 +3426,8 @@ class home_builder_walls_OT_change_room_size(bpy.types.Operator):
         for obj in context.scene.objects:
             if 'IS_WALL_BP' not in obj:
                 continue
+            if not hb_house.on_active_level(obj, context):
+                continue
             start_2d, end_2d = get_wall_endpoints(obj)
             d = self._point_to_segment_distance_2d(p, start_2d, end_2d)
             if d < best_dist:
@@ -3297,6 +3476,8 @@ class home_builder_walls_OT_change_room_size(bpy.types.Operator):
         for obj in context.scene.objects:
             if 'IS_WALL_BP' not in obj:
                 continue
+            if not hb_house.on_active_level(obj, context):
+                continue
             start_2d, end_2d = get_wall_endpoints(obj)
             for which, pt in (('start', start_2d), ('end', end_2d)):
                 d = (p - pt).length
@@ -3322,6 +3503,8 @@ class home_builder_walls_OT_change_room_size(bpy.types.Operator):
         axis = self._drag_axis_dir
         for obj in bpy.context.scene.objects:
             if 'IS_WALL_BP' not in obj or obj is wall_obj:
+                continue
+            if not hb_house.same_level(obj, wall_obj):
                 continue
             gw = hb_types.GeoNodeWall(obj)
             if not gw.has_modifier():
@@ -3455,6 +3638,8 @@ class home_builder_walls_OT_change_room_size(bpy.types.Operator):
         pills = []
         for obj in context.scene.objects:
             if 'IS_WALL_BP' not in obj:
+                continue
+            if not hb_house.on_active_level(obj, context):
                 continue
             gw = hb_types.GeoNodeWall(obj)
             if not gw.has_modifier():
@@ -4824,6 +5009,8 @@ class home_builder_walls_OT_update_wall_height(bpy.types.Operator):
         for obj in context.scene.objects:
             if 'IS_WALL_BP' not in obj:
                 continue
+            if not hb_house.on_active_level(obj, context):
+                continue
 
             # Match walls by their stored type (fall back to Exterior for untagged walls)
             obj_type = obj.get('WALL_TYPE', 'Exterior')
@@ -4860,9 +5047,12 @@ class home_builder_walls_OT_update_wall_thickness(bpy.types.Operator):
         props = context.scene.home_builder
         wall_type = props.wall_type
         count = 0
+        tees = capture_tees(context.scene)
 
         for obj in context.scene.objects:
             if 'IS_WALL_BP' not in obj:
+                continue
+            if not hb_house.on_active_level(obj, context):
                 continue
 
             obj_type = obj.get('WALL_TYPE', 'Exterior')
@@ -4884,6 +5074,7 @@ class home_builder_walls_OT_update_wall_thickness(bpy.types.Operator):
             count += 1
 
         if count:
+            restore_tees(tees, context.scene)
             # A miter angle is worked out from BOTH walls' thickness, so
             # changing thickness on one type of wall leaves every corner
             # it makes with another type mitered for the old figure. The
@@ -5428,11 +5619,6 @@ class home_builder_walls_OT_delete_wall(bpy.types.Operator):
             self.report({'WARNING'}, "No wall selected")
             return {'CANCELLED'}
 
-        # Snapshot the names of walls slated for deletion so we can avoid
-        # recomputing miters on neighbors that are also being deleted.
-        deleting_names = {wbp.name for wbp in wall_bps}
-        neighbors_to_remiter = set()
-
         # Deselect all once before deleting so per-wall ops do not fight selection
         bpy.ops.object.select_all(action='DESELECT')
 
@@ -5442,31 +5628,14 @@ class home_builder_walls_OT_delete_wall(bpy.types.Operator):
             # wall BPs, but be defensive).
             if wall_bp.name not in bpy.data.objects:
                 continue
-            left_wall, right_wall = self._delete_single_wall(wall_bp)
+            self._delete_single_wall(wall_bp)
             deleted_count += 1
-            for nb in (left_wall, right_wall):
-                if nb is None:
-                    continue
-                if nb.obj.name in deleting_names:
-                    continue
-                if nb.obj.name in bpy.data.objects:
-                    neighbors_to_remiter.add(nb.obj.name)
 
-        # Update miter angles on surviving neighbors. The neighbor's whole
-        # chain is re-mitered rather than just the neighbor itself: taking a
-        # wall out of a closed room opens the loop, and the wall on the far
-        # side of the closure seam is not reachable through the
-        # COPY_LOCATION links the neighbor search follows, so it would
-        # otherwise keep a miter for a corner that no longer exists.
-        remitered = set()
-        for chain in find_wall_chains():
-            if any(obj.name in neighbors_to_remiter for obj in chain):
-                remitered |= _remiter_chain(chain)
-        for name in neighbors_to_remiter - remitered:
-            obj = bpy.data.objects.get(name)
-            if obj is not None:
-                calculate_wall_miter_angles(obj)
-                obj.update_tag()
+        # Re-work the junctions of every surviving wall: taking a wall out
+        # opens its neighbours' corners, the far side of a closed room's
+        # seam, and any T that landed on it.
+        if deleted_count:
+            refresh_wall_junctions(context.scene)
 
         if deleted_count == 1:
             self.report({'INFO'}, "Wall deleted")

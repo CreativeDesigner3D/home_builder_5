@@ -4,6 +4,7 @@ import math
 from typing import Optional, Any
 from . import units
 from . import hb_utils
+from . import hb_house
 
 geometry_nodes_path = os.path.join(os.path.dirname(__file__),'geometry_nodes')
 cabinet_part_modifiers_path = os.path.join(geometry_nodes_path,'CabinetPartModifiers')
@@ -428,6 +429,106 @@ class GeoNodeObject:
         return True
 
 
+WALL_EXTENSION_INPUTS = ('Left Extension', 'Right Extension')
+
+
+def ensure_wall_extensions(node_group):
+    """Give a GeoNodeWall node group its Left/Right Extension inputs.
+
+    An extension moves a wall end's vertices along the wall (the start
+    backwards, the end forwards) before the end angle shears the far
+    corner, so a junction can trim or extend a wall without moving its
+    origin - which would drag every door and cabinet parented to it.
+
+    Patched in at runtime rather than saved into GeoNodeWall.blend, so a
+    file made before the inputs existed gets them on load too. Returns
+    True when the group was changed."""
+    if node_group is None or 'Left Extension' in node_group.interface.items_tree:
+        return False
+    nodes, links = node_group.nodes, node_group.links
+    target = nodes.get('Set Position.001')
+    if target is None:
+        return False
+    feed = next((l for l in links
+                 if l.to_node == target and l.to_socket.name == 'Geometry'), None)
+    if feed is None:
+        return False
+
+    iface = node_group.interface
+    after = iface.items_tree.get('Right Angle')
+    for name in WALL_EXTENSION_INPUTS:
+        item = iface.new_socket(name=name, in_out='INPUT',
+                                socket_type='NodeSocketFloat')
+        if after is not None:
+            iface.move(item, after.position + 1)
+            after = item
+
+    x0 = target.location.x - 600
+    y0 = target.location.y - 400
+    gi = nodes.new('NodeGroupInput')
+    gi.location = (x0, y0)
+    pos = nodes.new('GeometryNodeInputPosition')
+    pos.location = (x0, y0 - 180)
+    sep = nodes.new('ShaderNodeSeparateXYZ')
+    sep.location = (x0 + 180, y0 - 180)
+    half = nodes.new('ShaderNodeMath')
+    half.operation = 'MULTIPLY'
+    half.inputs[1].default_value = 0.5
+    half.location = (x0 + 180, y0)
+    is_start = nodes.new('FunctionNodeCompare')
+    is_start.data_type = 'FLOAT'
+    is_start.operation = 'LESS_THAN'
+    is_start.location = (x0 + 360, y0)
+    back = nodes.new('ShaderNodeMath')
+    back.operation = 'MULTIPLY'
+    back.inputs[1].default_value = -1.0
+    back.location = (x0 + 180, y0 + 180)
+    left_vec = nodes.new('ShaderNodeCombineXYZ')
+    left_vec.location = (x0 + 360, y0 + 180)
+    right_vec = nodes.new('ShaderNodeCombineXYZ')
+    right_vec.location = (x0 + 360, y0 + 340)
+    not_start = nodes.new('FunctionNodeBooleanMath')
+    not_start.operation = 'NOT'
+    not_start.location = (x0 + 540, y0)
+    move_left = nodes.new('GeometryNodeSetPosition')
+    move_left.name = move_left.label = 'Left Extension'
+    move_left.location = (x0 + 540, y0 + 260)
+    move_right = nodes.new('GeometryNodeSetPosition')
+    move_right.name = move_right.label = 'Right Extension'
+    move_right.location = (x0 + 720, y0 + 260)
+
+    links.new(gi.outputs['Length'], half.inputs[0])
+    links.new(pos.outputs['Position'], sep.inputs[0])
+    links.new(sep.outputs['X'], is_start.inputs[0])
+    links.new(half.outputs[0], is_start.inputs[1])
+    links.new(gi.outputs['Left Extension'], back.inputs[0])
+    links.new(back.outputs[0], left_vec.inputs['X'])
+    links.new(gi.outputs['Right Extension'], right_vec.inputs['X'])
+    links.new(is_start.outputs['Result'], not_start.inputs[0])
+
+    # The extensions go in before the angle shears, while every vertex
+    # still sits exactly at x = 0 or x = Length.
+    src = feed.from_socket
+    links.remove(feed)
+    links.new(src, move_left.inputs['Geometry'])
+    links.new(is_start.outputs['Result'], move_left.inputs['Selection'])
+    links.new(left_vec.outputs[0], move_left.inputs['Offset'])
+    links.new(move_left.outputs['Geometry'], move_right.inputs['Geometry'])
+    links.new(not_start.outputs[0], move_right.inputs['Selection'])
+    links.new(right_vec.outputs[0], move_right.inputs['Offset'])
+    links.new(move_right.outputs['Geometry'], target.inputs['Geometry'])
+    return True
+
+
+def ensure_all_wall_extensions():
+    """Patch every wall node group in the file (called on load)."""
+    changed = False
+    for ng in bpy.data.node_groups:
+        if ng.name.startswith('GeoNodeWall') and ng.bl_idname == 'GeometryNodeTree':
+            changed |= ensure_wall_extensions(ng)
+    return changed
+
+
 class GeoNodeWall(GeoNodeObject):
 
     obj_x = None
@@ -443,6 +544,9 @@ class GeoNodeWall(GeoNodeObject):
 
     def create(self,name):
         super().create('GeoNodeWall',name)
+        mod = self.obj.modifiers.get(self.obj.home_builder.mod_name)
+        if mod is not None:
+            ensure_wall_extensions(mod.node_group)
         hb_props = bpy.context.window_manager.home_builder
         add_on_prefs = hb_props.get_user_preferences(bpy.context)        
         self.obj['IS_WALL_BP'] = True
@@ -542,6 +646,8 @@ class GeoNodeWall(GeoNodeObject):
             return None
         for obj in bpy.data.objects:
             if 'IS_WALL_BP' not in obj or obj == self.obj:
+                continue
+            if not hb_house.same_level(obj, self.obj):
                 continue
             other = GeoNodeWall(obj)
             if not other.has_modifier():

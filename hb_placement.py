@@ -8,7 +8,7 @@ from mathutils import Vector, Matrix
 from enum import Enum, auto
 from bpy_extras import view3d_utils
 from gpu_extras.batch import batch_for_shader
-from . import hb_snap, units
+from . import hb_snap, units, hb_house
 
 
 # Placement-dimension spec consumed by draw_placement_dimensions.
@@ -973,6 +973,8 @@ class PlacementMixin:
         for other in bpy.context.scene.objects:
             if 'IS_WALL_BP' not in other or other is wall_obj:
                 continue
+            if not hb_house.same_level(other, wall_obj):
+                continue
             other_geo = hb_types.GeoNodeWall(other)
             if not other_geo.has_modifier():
                 continue
@@ -1041,6 +1043,8 @@ class PlacementMixin:
         spans = []
         for other in bpy.context.scene.objects:
             if 'IS_WALL_BP' not in other or other is wall_obj:
+                continue
+            if not hb_house.same_level(other, wall_obj):
                 continue
             other_geo = hb_types.GeoNodeWall(other)
             if not other_geo.has_modifier():

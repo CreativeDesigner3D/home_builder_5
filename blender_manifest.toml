@@ -42,6 +42,8 @@ paths_exclude_pattern = [
     "__pycache__/",
     ".*",
     "*.zip",
+    # Local design notes, not part of a release
+    "docs/",
     # Python 3.11 wheels stay on disk but are not needed on Blender 5.1+
     "wheels/*-cp311-*.whl",
     # Closet material libraries are not shipped in this release

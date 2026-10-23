@@ -1,6 +1,7 @@
 import bpy
 from . import hb_props
 from . import hb_project
+from . import hb_house
 from . import hb_props_obstacles
 from . import ops
 from .ui import view3d_sidebar
@@ -40,6 +41,7 @@ from .product_libraries.common import cabinet_groups
 # library, and pulling that in earlier starts it mid-way through its own
 # import graph, which breaks the cabinet types.
 from .operators import appliance_panel_tab
+from .operators import house_panel_tab
 from . import molding
 # Catalog browser - intentionally disabled. The package lives at
 # home_builder_5/catalog/ for future revisit. Re-enable by uncommenting
@@ -78,6 +80,10 @@ def load_file_post(scene):
     
     # Ensure a main scene is tagged for project data
     main_scene = hb_project.ensure_main_scene()
+
+    # Wall node groups saved before the end extensions existed get them now
+    from . import hb_types
+    hb_types.ensure_all_wall_extensions()
 
     # Ensure a default frameless style is created
     main_scene.hb_frameless.ensure_default_style()
@@ -404,6 +410,7 @@ def register():
 
     hb_props.register()
     hb_project.register()
+    hb_house.register()
     hb_snap_engine.register()
     hb_props_obstacles.register()
     ops_obstacles.register()
@@ -423,6 +430,7 @@ def register():
     library_panel.register()
     options_panel.register()
     appliance_panel_tab.register()   # after the navigator: it adds a tab
+    house_panel_tab.register()       # after the navigator: it adds a tab
     thumb_picker.register()
     style_editor.register()
     room_dim_overlay.register()
@@ -463,6 +471,7 @@ def unregister():
     bpy.utils.unregister_class(Home_Builder_AddonPreferences)
 
     hb_props.unregister()
+    hb_house.unregister()
     hb_project.unregister()
     hb_snap_engine.unregister()
     hb_props_obstacles.unregister()
@@ -475,6 +484,7 @@ def unregister():
     export.unregister()
     style_editor.unregister()
     thumb_picker.unregister()
+    house_panel_tab.unregister()       # before the navigator: empties its tab
     appliance_panel_tab.unregister()   # before the navigator: empties its tab
     options_panel.unregister()
     library_panel.unregister()
