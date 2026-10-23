@@ -812,6 +812,19 @@ class Home_Builder_Scene_Props(PropertyGroup):
         items=_molding_light_rail_profile_items,
         update=update_molding_package,
     )  # type: ignore
+    molding_light_rail_height: FloatProperty(
+        name="Light Rail Height",
+        description="Bottom rail height for this room's hanging upper cabinets, making the bottom rail a light rail. Zero leaves each cabinet's own bottom rail",
+        default=0.0, min=0.0,
+        unit='LENGTH', precision=4,
+        update=update_molding_package,
+    )  # type: ignore
+    molding_light_rail_doors_cover: BoolProperty(
+        name="Doors to Cover",
+        description="Drop the bottom doors of those uppers to cover the light rail, keeping the same bottom reveal as an upper without one",
+        default=False,
+        update=update_molding_package,
+    )  # type: ignore
 
     # Molding library selection
     molding_category: EnumProperty(

@@ -494,6 +494,13 @@ def apply_scene_packages(scene):
         return 0
     if scene.get('IS_LAYOUT_VIEW') or scene.get('IS_DETAIL_VIEW'):
         return 0
+    # Light rail height first: the uppers rebuild with their new bottom
+    # rails before the sweeps below read the cabinets.
+    try:
+        from ..product_libraries.face_frame import light_rail
+        light_rail.apply_room_light_rail(scene)
+    except Exception as ex:  # pragma: no cover - defensive
+        print(f"Home Builder molding: light rail apply failed: {ex}")
     clear_scene_molding(scene)
 
     def _override(prop_name):

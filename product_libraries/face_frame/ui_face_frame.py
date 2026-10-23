@@ -1189,6 +1189,8 @@ def draw_face_frame_defaults(layout, cab_props):
                   'unlock_right_stile', "Right Stile")
     _draw_locked_rail_row(fcol, cab_props, 'bottom_rail_width',
                           'unlock_bottom_rail', "Bottom Rail")
+    if cab_props.cabinet_type == 'UPPER':
+        fcol.prop(cab_props, 'exclude_light_rail')
     # Mid stiles -- the dividers between bays. One width field per mid
     # stile on one row; index i is the stile between bay i and bay i + 1.
     if len(cab_props.mid_stile_widths) > 0:

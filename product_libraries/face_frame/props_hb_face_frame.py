@@ -6315,6 +6315,12 @@ def _update_finish_toe_kick_type(self, context):
         self.finish_toe_kick_thickness = thickness
 
 
+def _update_exclude_light_rail(self, context):
+    """Opting a cabinet in / out re-applies the room's light rail."""
+    from . import light_rail
+    light_rail.update_exclude_light_rail(self, context)
+
+
 def _update_cabinet_dim(self, context):
     """Triggered when a cabinet-level dimension changes. Walks back to the
     cabinet root (works even if the prop is on a descendant somehow) and
@@ -8989,6 +8995,12 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
                     "should read like a door. A rail too narrow for a "
                     "frame stays a plain rail",
         default=False, update=_update_cabinet_dim,
+    )  # type: ignore
+    exclude_light_rail: BoolProperty(
+        name="Exclude from Light Rail",
+        description="Keep this upper's own bottom rail and doors when the "
+                    "room sets a light rail height (Molding > Light Rail)",
+        default=False, update=_update_exclude_light_rail,
     )  # type: ignore
     ada_front_construction: EnumProperty(
         name="Front",
@@ -13547,6 +13559,10 @@ class Face_Frame_Scene_Props(PropertyGroup):
             sub = col.row()
             sub.enabled = hb_scene.molding_light_rail_package != 'NONE'
             sub.prop(hb_scene, "molding_light_rail_profile", text="Profile")
+        col.prop(hb_scene, "molding_light_rail_height", text="Rail Height")
+        sub = col.row()
+        sub.enabled = hb_scene.molding_light_rail_height > 0.0
+        sub.prop(hb_scene, "molding_light_rail_doors_cover")
 
         layout.operator("home_builder.refresh_room_molding",
                         text="Refresh Molding", icon='FILE_REFRESH')
