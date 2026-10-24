@@ -393,6 +393,96 @@ def _infill_prisms(frame, roof, cross):
     return out
 
 
+def _under_z(frame, u):
+    """Height of the roof's underside at u (within the walls' outline)."""
+    pts = frame['under']
+    for (a, za), (b, zb) in zip(pts, pts[1:]):
+        if min(a, b) - 1e-9 <= u <= max(a, b) + 1e-9 and abs(b - a) > 1e-9:
+            return za + (zb - za) * (u - a) / (b - a)
+    return frame['plate']
+
+
+def _clip_to_frame(frame, a, b):
+    """The part of plan segment a-b inside the walls' outline, as
+    parameters (t0, t1) along it, or None."""
+    (ua, va), (ub, vb) = _uv(frame, a), _uv(frame, b)
+    t0, t1 = 0.0, 1.0
+    for p0, d, lo, hi in ((ua, ub - ua, frame['u0'], frame['u1']),
+                          (va, vb - va, frame['v0'], frame['v1'])):
+        if abs(d) < 1e-12:
+            if not lo - 1e-6 <= p0 <= hi + 1e-6:
+                return None
+            continue
+        e0, e1 = sorted(((lo - p0) / d, (hi - p0) / d))
+        t0, t1 = max(t0, e0), min(t1, e1)
+    return (t0, t1) if t1 - t0 > 1e-6 else None
+
+
+def _under_piece(frame, cross, point):
+    """True when a plan point is under one of the roof's cross gables."""
+    u, v = _uv(frame, point)
+    for d in cross:
+        ov = d['overhang']
+        if not d['v0'] - ov <= v <= d['v1'] + ov:
+            continue
+        front = d['u_front'] + d['sign'] * ov
+        if min(front, frame['uc']) <= u <= max(front, frame['uc']):
+            return True
+    return False
+
+
+def _porch_infill_prisms(scene, level, frame, cross):
+    """Close the roof over its porches: above each porch edge, from the
+    top of the porch's beam up to the roof's underside, flush with the
+    edge. At the roof's gable end this carries the gable across the
+    porch; along an eave it fills the band between beam and roof. A
+    porch under a cross gable of its own is closed by that gable."""
+    from . import hb_porches, hb_rooms, hb_wall_graph
+    from .operators import walls
+    _objs, segs = walls.level_wall_segs(scene, level.uid)
+    areas = [a for a in hb_wall_graph.find_rooms(segs) if hb_porches.is_porch_area(a)]
+    out = []
+    for room in level.rooms:
+        if not room.is_porch or room.orphaned or room.marker is None:
+            continue
+        mark = (room.marker.location.x, room.marker.location.y)
+        area = next((a for a in areas if hb_wall_graph.point_in_polygon(mark, a.polygon)), None)
+        if area is None:
+            continue
+        z_beam = level.elevation + hb_rooms.room_height(room, level)
+        for a, b, n in hb_porches.porch_edges(area.polygon, segs):
+            span = _clip_to_frame(frame, a, b)
+            if span is None:
+                continue
+            d = (b[0] - a[0], b[1] - a[1])
+            p0 = (a[0] + d[0] * span[0], a[1] + d[1] * span[0])
+            p1 = (a[0] + d[0] * span[1], a[1] + d[1] * span[1])
+            mid = ((p0[0] + p1[0]) / 2.0, (p0[1] + p1[1]) / 2.0)
+            if _under_piece(frame, cross, mid):
+                continue
+            length = math.hypot(p1[0] - p0[0], p1[1] - p0[1])
+            ux, uy = (p1[0] - p0[0]) / length, (p1[1] - p0[1]) / length
+            # The underside's bends between the two ends, along the edge
+            u_start, u_end = _uv(frame, p0)[0], _uv(frame, p1)[0]
+            ts = {0.0, length}
+            if abs(u_end - u_start) > 1e-9:
+                for u, _z in frame['under']:
+                    t = (u - u_start) / (u_end - u_start) * length
+                    if 1e-6 < t < length - 1e-6:
+                        ts.add(t)
+            tops = []
+            for t in sorted(ts, reverse=True):
+                u = u_start + (u_end - u_start) * t / length
+                tops.append((t, max(_under_z(frame, u), z_beam)))
+            if max(z for _t, z in tops) - z_beam < 0.01:
+                continue
+            section = _dedupe([(0.0, z_beam), (length, z_beam)] + tops)
+            to_world = (lambda p0, ux, uy, n: lambda s, w, z: (
+                p0[0] + ux * s + n[0] * w, p0[1] + uy * s + n[1] * w, z))(p0, ux, uy, n)
+            out.append((section, 0.0, GABLE_INFILL, to_world))
+    return out
+
+
 def _shed_prisms(frame, roof, sheds):
     """Shed dormers: (roofs, walls). The roof slopes up from over the
     front wall into the main roof; the front wall and cheeks rise from
@@ -858,8 +948,9 @@ def rebuild_roof(scene, level):
 
     # Cross gables' filled-in ends, and shed dormers' walls cut back to the
     # roof they stand on - both finished like the house's walls
+    infill = _infill_prisms(frame, roof, cross) + _porch_infill_prisms(scene, level, frame, cross)
     gables = _visible_piece(scene, level, roof, 'gables_obj', f"Roof Gables - {level.name}",
-                            _mesh("Roof Gables", _infill_prisms(frame, roof, cross)) if cross else None)
+                            _mesh("Roof Gables", infill) if infill else None)
     dormer_walls = _visible_piece(scene, level, roof, 'dormer_walls_obj',
                                   f"Dormer Walls - {level.name}",
                                   _mesh("Dormer Walls", s_walls) if s_walls else None)

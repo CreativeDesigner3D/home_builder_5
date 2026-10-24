@@ -432,8 +432,12 @@ def rebuild_level(scene, level):
 
 def rebuild_room(room):
     """A room's own settings changed: rebuild its level (cheap, and the
-    only way to get its outline)."""
+    only way to get its outline). A porch's height also shapes the roof
+    over it (see hb_roofs: the gable carried across it)."""
     rebuild_level(room.id_data, level_of_room(room))
+    if room.is_porch:
+        from . import hb_roofs
+        hb_roofs.rebuild_roofs(room.id_data)
 
 
 def rebuild_after_walls(scene, level_uid=None):
