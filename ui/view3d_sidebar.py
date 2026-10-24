@@ -517,6 +517,10 @@ def draw_wall_settings(layout, context, include_type=True):
         row = col.row()
         row.prop(hb_scene, 'fake_wall_height', text="Wall Height")
         row.operator('home_builder_walls.update_wall_height', text="", icon='FILE_REFRESH', emboss=False)
+    elif hb_scene.wall_type == 'Divider':
+        col.label(text="Splits an open space into rooms.")
+        col.label(text="Draw it across the opening, wall to wall.")
+        col.label(text="Nothing is built or rendered.")
     elif hb_scene.wall_type == 'Railing':
         row = col.row()
         row.prop(hb_scene, 'railing_height', text="Railing Height")

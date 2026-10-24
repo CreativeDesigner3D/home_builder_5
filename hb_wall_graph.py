@@ -399,6 +399,14 @@ RoomArea = namedtuple('RoomArea', 'level polygon area floor wall_types')
 
 ROOM_MIN_AREA = 0.05            # m2; smaller faces are slivers between walls
 NOT_ROOM_WALLS = ('Half', 'Fake')
+# Walls that only close rooms: nothing is built, so they take no part in
+# the corners of real walls, and a room runs right up to their line.
+ROOM_ONLY_WALLS = ('Divider',)
+
+
+def built_walls(segs):
+    """The segs that are real walls - the ones whose ends are cut to meet."""
+    return [s for s in segs if s.wall_type not in ROOM_ONLY_WALLS]
 
 
 def polygon_area(poly):
@@ -474,8 +482,11 @@ def interior_point(poly):
 
 def find_rooms(segs, tol=JOIN_TOL):
     """Every room on every level: [RoomArea]. Half and fake walls don't
-    divide rooms."""
+    divide rooms; room dividers do, as lines with no thickness, so the
+    rooms either side meet on the line."""
     walls = [s for s in segs if s.length > 1e-9 and s.wall_type not in NOT_ROOM_WALLS]
+    walls = [Seg(s.id, s.start, s.end, 0.0, s.level, s.wall_type)
+             if s.wall_type in ROOM_ONLY_WALLS else s for s in walls]
     by_level = {}
     for s in walls:
         by_level.setdefault(s.level, []).append(s)

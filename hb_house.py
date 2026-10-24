@@ -517,7 +517,8 @@ def set_exterior_wall_heights(scene, level):
     upper_bands = []
     if upper is not None:
         for obj in scene.objects:
-            if obj.get('IS_WALL_BP') and obj.get(LEVEL_KEY) == upper.uid:
+            if (obj.get('IS_WALL_BP') and obj.get(LEVEL_KEY) == upper.uid
+                    and obj.get('WALL_TYPE') != 'Divider'):
                 band = _wall_band(obj)
                 if band is not None:
                     upper_bands.append(band)
@@ -590,6 +591,9 @@ def new_wall_height(level, wall_type, scene_props):
         return scene_props.half_wall_height
     if wall_type == 'Railing':
         return scene_props.railing_height
+    if wall_type == 'Divider':
+        from .operators import walls
+        return walls.DIVIDER_HEIGHT
     return scene_props.fake_wall_height
 
 

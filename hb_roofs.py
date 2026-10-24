@@ -48,6 +48,7 @@ VALLEY_CUT = "Valley"           # the one that stops the dormer roofs
 CUTTER_REACH = 2.0          # how far the trim volume runs past the house (m)
 CUTTER_HEIGHT = 50.0        # and up
 GABLE_MARGIN = 0.05         # gable walls run this far past the roof underside
+SET_BACK_MIN = 0.05         # an eave-side wall this far inside the outline is set back
 DORMER_MARGIN = 0.5         # dormer volumes reach this far past the front wall
 SHINGLE_MATERIAL = "HB Roof Shingles"
 SHINGLE_COLOR = (0.15, 0.19, 0.16, 1.0)
@@ -462,10 +463,12 @@ def _levels_under(scene, frame):
     it starts - the top of the walls it sits on, or the floor of the
     level it encloses - and the roof's own level whenever the roof comes
     down below the tops of its walls (a negative eave height), since
-    then that level lives inside it too."""
+    then that level lives inside it too - and when no level stands above
+    it under the roof: a one-storey house, whose own end walls make the
+    gables."""
     start = min(frame['plate'], frame['base'])
     out = [l for l in scene.hb_house.levels if l.elevation >= start - 0.01]
-    if frame['plate'] < frame['base'] - 0.01:
+    if frame['plate'] < frame['base'] - 0.01 or not out:
         own = next((l for l in scene.hb_house.levels
                     if l.uid == frame['level_uid']), None)
         if own is not None and own not in out:
@@ -482,6 +485,20 @@ def _roofs(scene):
             if frame is not None:
                 out.append((level, frame))
     return out
+
+
+def _set_back_from_eaves(frame, wall_obj, d):
+    """True when a wall running along the ridge stands inside the roof's
+    outline, clear of both eave lines, rather than forming one of them."""
+    from . import hb_types
+    wall = hb_types.GeoNodeWall(wall_obj)
+    t = wall.get_input('Thickness')
+    p = wall_obj.matrix_world.translation
+    normal = Vector((-d.y, d.x))            # thickness side
+    ref_u = p.y if frame['along_x'] else p.x
+    far_u = ref_u + t * (normal.y if frame['along_x'] else normal.x)
+    lo, hi = min(ref_u, far_u), max(ref_u, far_u)
+    return lo - frame['u0'] > SET_BACK_MIN and frame['u1'] - hi > SET_BACK_MIN
 
 
 def gable_wall_height(scene, wall_obj, height):
@@ -506,6 +523,15 @@ def gable_wall_height(scene, wall_obj, height):
             continue
         ridge_dir = Vector((1.0, 0.0)) if frame['along_x'] else Vector((0.0, 1.0))
         if abs(d.dot(ridge_dir)) > 0.01:
+            # Runs along the ridge. Set back from the eaves - behind a
+            # porch, say - the roof is above its top: raise it into the
+            # roof like a gable wall so it closes up to the roof's
+            # underside. Only where the roof sits on its own level's walls;
+            # under a barn or cape roof the walls stop at the sloped ceiling.
+            if (level_uid == frame['level_uid'] and level.roof.base == 'WALLS'
+                    and frame['plate'] >= frame['base'] - 0.01
+                    and _set_back_from_eaves(frame, wall_obj, d)):
+                height = max(height, frame['ridge_z'] - m.translation.z + GABLE_MARGIN)
             continue                    # not square to the ridge
         needed = frame['ridge_z'] - m.translation.z + GABLE_MARGIN
         height = max(height, needed)
