@@ -17,6 +17,7 @@ Usage:
     if hb_house.same_level(wall_a, wall_b): ...
 """
 
+import math
 import uuid
 
 import bpy
@@ -148,6 +149,21 @@ def on_active_level(obj, context=None):
     if level is None:
         return True
     return level_of(obj) == level.uid
+
+
+def level_above(house, level):
+    """The lowest level whose elevation is over `level`'s, or None."""
+    above = [l for l in house.levels if l.elevation > level.elevation + 1e-6]
+    return min(above, key=lambda l: l.elevation) if above else None
+
+
+def rise_to_level_above(level):
+    """From this level's floor to the next level's floor - or one
+    floor-to-floor height when nothing is above yet."""
+    upper = level_above(level.id_data.hb_house, level)
+    if upper is not None:
+        return upper.elevation - level.elevation
+    return level.floor_to_floor
 
 
 def level_below(house, level):
@@ -447,10 +463,126 @@ def constrain_hit_to_level(op, context):
     op.hit_face_index = None
 
 
+def exterior_wall_height(level):
+    """Exterior walls on a level with a level above run up to that level's
+    floor, through the floor between them, so the outside of the house is
+    one wall. On the top level they stop at the ceiling."""
+    if level_above(level.id_data.hb_house, level) is not None:
+        return rise_to_level_above(level)
+    return level.ceiling_height
+
+
+def _wall_band(obj):
+    """(start, direction, length, thickness) of a wall in plan, or None."""
+    from . import hb_types
+    wall = hb_types.GeoNodeWall(obj)
+    if not wall.has_modifier():
+        return None
+    m = obj.matrix_world
+    rot = m.to_euler().z
+    d = Vector((math.cos(rot), math.sin(rot)))
+    return (m.translation.xy.copy(), d, wall.get_input('Length'),
+            wall.get_input('Thickness'))
+
+
+def _carries(lower, upper_bands, min_overlap=0.05):
+    """True when any wall above sits on this wall: in line with it, over
+    its thickness, along some of its length."""
+    start, d, length, t = lower
+    n = Vector((-d.y, d.x))
+    for u_start, u_d, u_len, u_t in upper_bands:
+        if abs(d.x * u_d.y - d.y * u_d.x) > 1e-3:
+            continue                        # not parallel
+        # The upper wall's band across, against this wall's [0, t]
+        w0 = (u_start - start).dot(n)
+        w1 = w0 + u_t * (n.dot(Vector((-u_d.y, u_d.x))))
+        if max(w0, w1) < 0.01 or min(w0, w1) > t - 0.01:
+            continue                        # beside it, not on it
+        a0 = (u_start - start).dot(d)
+        a1 = a0 + u_len * u_d.dot(d)
+        if min(max(a0, a1), length) - max(min(a0, a1), 0.0) > min_overlap:
+            return True
+    return False
+
+
+def set_exterior_wall_heights(scene, level):
+    """Give the level's exterior walls their heights: up to the next
+    level's floor where a wall of that level stands on them, so the
+    outside of the house is one wall; to the ceiling everywhere else -
+    under a balcony, or where the level above is smaller - so nothing
+    pokes up past the floor above."""
+    from . import hb_types
+    house = level.id_data.hb_house
+    upper = level_above(house, level)
+    upper_bands = []
+    if upper is not None:
+        for obj in scene.objects:
+            if obj.get('IS_WALL_BP') and obj.get(LEVEL_KEY) == upper.uid:
+                band = _wall_band(obj)
+                if band is not None:
+                    upper_bands.append(band)
+    rise = rise_to_level_above(level) if upper is not None else None
+    for obj in scene.objects:
+        if not (obj.get('IS_WALL_BP') and obj.get(LEVEL_KEY) == level.uid
+                and obj.get('WALL_TYPE', 'Exterior') == 'Exterior'):
+            continue
+        wall = hb_types.GeoNodeWall(obj)
+        if not wall.has_modifier():
+            continue
+        band = _wall_band(obj)
+        height = level.ceiling_height
+        if rise is not None and band is not None and _carries(band, upper_bands):
+            height = rise
+        if abs(wall.get_input('Height') - height) > 1e-6:
+            wall.set_input('Height', height)
+            obj.update_tag()
+
+
+def copy_exterior_walls(scene, src, dst):
+    """Copy the exterior walls of level `src` onto level `dst`, joined the
+    way they were, so a new level starts from the outline below it."""
+    from . import hb_types
+    originals = [o for o in scene.objects
+                 if o.get('IS_WALL_BP') and o.get(LEVEL_KEY) == src.uid
+                 and o.get('WALL_TYPE', 'Exterior') == 'Exterior']
+    copies = {}
+    for old in originals:
+        o = hb_types.GeoNodeWall(old)
+        if not o.has_modifier():
+            continue
+        new = hb_types.GeoNodeWall()
+        new.create("Wall")
+        for name in ('Length', 'Thickness'):
+            new.set_input(name, o.get_input(name))
+        new.set_input('Height', exterior_wall_height(dst))
+        m = old.matrix_world
+        new.obj.location = (m.translation.x, m.translation.y, dst.elevation)
+        new.obj.rotation_euler.z = m.to_euler().z
+        new.obj['WALL_TYPE'] = 'Exterior'
+        copies[old] = new
+    # Join the copies the way the originals are joined
+    for old, new in copies.items():
+        for con in old.constraints:
+            if con.type == 'COPY_LOCATION' and con.target is not None:
+                prev = con.target.parent
+                if prev in copies:
+                    new.connect_to_wall(copies[prev])
+        o_x = hb_types.GeoNodeWall(old).obj_x
+        linked = o_x.home_builder.connected_object if o_x else None
+        if linked in copies and new.obj_x is not None:
+            new.obj_x.home_builder.connected_object = copies[linked].obj
+    for new in copies.values():
+        assign_wall_to_level(new.obj, dst, scene)
+    return len(copies)
+
+
 def new_wall_height(level, wall_type, scene_props):
-    """Height for a new wall on this level: full-height types take the
-    level's ceiling height, the others keep their scene defaults."""
-    if wall_type in {'Exterior', 'Interior'}:
+    """Height for a new wall on this level: interior walls take the
+    level's ceiling height, exterior walls exterior_wall_height, the
+    others keep their scene defaults."""
+    if wall_type == 'Exterior':
+        return exterior_wall_height(level)
+    if wall_type == 'Interior':
         return level.ceiling_height
     if wall_type == 'Half':
         return scene_props.half_wall_height
@@ -555,6 +687,10 @@ def _update_level_elevation(self, context):
         return
     _move_level_objects(self, dz)
     self['applied_elevation'] = self.elevation
+    # The level below's exterior walls reach this floor
+    below = level_below(self.id_data.hb_house, self)
+    if below is not None:
+        set_exterior_wall_heights(self.id_data, below)
 
 
 def _update_floor_to_floor(self, context):
@@ -568,6 +704,7 @@ def _update_floor_to_floor(self, context):
     for level in house.levels:
         if level.elevation > self.elevation + 1e-6:
             level.elevation = level.elevation + dz
+    set_exterior_wall_heights(self.id_data, self)
 
 
 def _update_ceiling_height(self, context):
@@ -846,16 +983,24 @@ class HB_House_Props(PropertyGroup):
 def add_level(scene, name=None):
     """Append a level on top of the stack, sized like the one below it."""
     house = scene.hb_house
+    # Read what's needed from the top level before adding: adding to a
+    # collection can move its items, and a reference held across the add
+    # can point at freed memory
     top = max(house.levels, key=lambda l: l.elevation) if house.levels else None
+    if top is not None:
+        top_vals = (top.elevation, top.floor_to_floor, top.floor_thickness,
+                    top.ceiling_height)
+    top = None
     level = house.levels.add()
     level.uid = _new_uid()
     level['name'] = name or f"Level {len(house.levels)}"
-    if top is not None:
-        elevation = top.elevation + top.floor_to_floor
-        level['floor_to_floor'] = top.floor_to_floor
-        level['applied_floor_to_floor'] = top.floor_to_floor
-        level['floor_thickness'] = top.floor_thickness
-        level['ceiling_height'] = top.ceiling_height
+    if house.levels and len(house.levels) > 1:
+        t_elev, t_ftf, t_thick, t_ceil = top_vals
+        elevation = t_elev + t_ftf
+        level['floor_to_floor'] = t_ftf
+        level['applied_floor_to_floor'] = t_ftf
+        level['floor_thickness'] = t_thick
+        level['ceiling_height'] = t_ceil
     else:
         elevation = 0.0
         level['ceiling_height'] = scene.home_builder.ceiling_height
@@ -928,12 +1073,35 @@ class HOME_BUILDER_OT_add_level(bpy.types.Operator):
     def poll(cls, context):
         return context.scene is not None and context.scene.get(HOUSE_SCENE_KEY)
 
+    copy_exterior: BoolProperty(
+        name="Copy Exterior Walls",
+        description="Start the new level with the exterior walls of the level below",
+        default=True)  # type: ignore
+
     def execute(self, context):
         scene = context.scene
         house = scene.hb_house
+        below_uid = (max(house.levels, key=lambda l: l.elevation).uid
+                     if house.levels else '')
         level = add_level(scene)
+        uid = level.uid
+        level = None                # held across nothing below, by uid
         house.active_level_index = len(house.levels) - 1
-        self.report({'INFO'}, f"Added {level.name}")
+        below = get_level(below_uid)
+        new = get_level(uid)
+        copied = 0
+        if below is not None:
+            # The level below's exterior walls now run up to the new floor
+            set_exterior_wall_heights(scene, below)
+            if self.copy_exterior:
+                copied = copy_exterior_walls(scene, below, new)
+        if copied:
+            from .operators import walls
+            walls.refresh_wall_junctions(scene, uid)
+        msg = f"Added {new.name}"
+        if copied:
+            msg += f" with {copied} exterior wall(s) from {below.name}"
+        self.report({'INFO'}, msg)
         return {'FINISHED'}
 
 
@@ -967,6 +1135,10 @@ class HOME_BUILDER_OT_remove_level(bpy.types.Operator):
             bpy.data.collections.remove(col)
         house.levels.remove(index)
         house.active_level_index = max(0, min(index, len(house.levels) - 1))
+        # A level that lost the one above stops its exterior walls at
+        # its ceiling again
+        for level in house.levels:
+            set_exterior_wall_heights(scene, level)
         self.report({'INFO'}, f"Removed {name}")
         return {'FINISHED'}
 

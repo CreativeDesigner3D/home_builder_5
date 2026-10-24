@@ -40,6 +40,7 @@ LEVEL_SPEC = {
     'index': 'active_level_index',
     'add_op': 'home_builder.add_level',
     'remove_op': 'home_builder.remove_level',
+    'actions': ((("Walk Through", "home_builder.walk_through"),),),
     'fields': (
         ('distance', 'elevation', "Elevation"),
         ('distance', 'floor_to_floor', "Floor to Floor"),

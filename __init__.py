@@ -3,6 +3,7 @@ from . import hb_props
 from . import hb_project
 from . import hb_house
 from . import hb_rooms
+from . import hb_walk
 from . import hb_props_obstacles
 from . import ops
 from .ui import view3d_sidebar
@@ -419,6 +420,7 @@ def register():
     hb_project.register()
     hb_house.register()
     hb_rooms.register()
+    hb_walk.register()
     hb_snap_engine.register()
     hb_props_obstacles.register()
     ops_obstacles.register()
@@ -479,6 +481,7 @@ def unregister():
     bpy.utils.unregister_class(Home_Builder_AddonPreferences)
 
     hb_props.unregister()
+    hb_walk.unregister()
     hb_rooms.unregister()
     hb_house.unregister()
     hb_project.unregister()

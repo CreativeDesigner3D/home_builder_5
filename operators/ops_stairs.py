@@ -3,6 +3,7 @@ import math
 import bmesh
 from mathutils import Vector, Matrix
 from .. import hb_snap, hb_utils, units
+from .. import hb_house
 
 
 # ---------------------------------------------------------------------------
@@ -394,6 +395,11 @@ class home_builder_stairs_OT_place_stairs(bpy.types.Operator):
     def create_preview(self, context):
         width           = units.inch(36)
         total_rise      = units.inch(96)
+        # On a house level the stairs climb to the level above
+        level = hb_house.active_level(context)
+        if level is not None:
+            from .. import hb_rooms
+            total_rise = hb_rooms.stair_rise(level)
         riser_height    = units.inch(7.5)
         tread_depth     = units.inch(10.5)
         tread_thickness = units.inch(1)
@@ -417,6 +423,8 @@ class home_builder_stairs_OT_place_stairs(bpy.types.Operator):
         self.preview_obj['STAIR_LANDING_DEPTH']   = width
         self.preview_obj['STAIR_LANDING_HEIGHT']  = total_rise / 2
         self.preview_obj['STAIR_GAP']             = 0
+        if level is not None:
+            self.preview_obj[hb_house.LEVEL_KEY] = level.uid
 
         mat = bpy.data.materials.new(name="Stair Material")
         mat.use_nodes = True
@@ -432,7 +440,8 @@ class home_builder_stairs_OT_place_stairs(bpy.types.Operator):
             loc = Vector(self.hit_location)
             loc.x = hb_snap.snap_value_to_grid(loc.x)
             loc.y = hb_snap.snap_value_to_grid(loc.y)
-            loc.z = 0
+            level = hb_house.active_level(context)
+            loc.z = level.elevation if level is not None else 0
             self.preview_obj.location = loc
             self.preview_obj.hide_set(False)
         else:
@@ -441,7 +450,9 @@ class home_builder_stairs_OT_place_stairs(bpy.types.Operator):
     def update_header(self, context):
         types = {'STRAIGHT': "Straight", 'L_SHAPE': "L-Shaped", 'U_SHAPE': "U-Shaped"}
         label = types.get(self.stair_type, "Straight")
-        num_steps = max(1, round(units.inch(96) / units.inch(7.5)))
+        rise = (self.preview_obj['STAIR_TOTAL_RISE'] if self.preview_obj
+                else units.inch(96))
+        num_steps = max(1, round(rise / units.inch(7.5)))
         text = (f"{label} Stairs: {num_steps} steps | "
                 "Click to place | R rotate | "
                 "T toggle type | D toggle direction | ESC cancel")
@@ -457,6 +468,9 @@ class home_builder_stairs_OT_place_stairs(bpy.types.Operator):
         bpy.ops.object.select_all(action='DESELECT')
         self.preview_obj.select_set(True)
         context.view_layer.objects.active = self.preview_obj
+        if self.preview_obj.get(hb_house.LEVEL_KEY):
+            from .. import hb_rooms
+            hb_rooms.apply_stairwells(context.scene)
         self.preview_obj = None
         return True
 
@@ -492,6 +506,7 @@ class home_builder_stairs_OT_place_stairs(bpy.types.Operator):
         if self.preview_obj:
             self.preview_obj.hide_set(True)
         hb_snap.main(self, event.ctrl, context)
+        hb_house.constrain_hit_to_level(self, context)
         self.update_preview(context)
         self.update_header(context)
 
@@ -630,6 +645,9 @@ class home_builder_stairs_OT_stair_prompts(bpy.types.Operator):
         self.stair_obj['STAIR_LANDING_HEIGHT']  = self.landing_height
         self.stair_obj['STAIR_GAP']             = self.gap
         rebuild_stair_mesh(self.stair_obj)
+        if self.stair_obj.get(hb_house.LEVEL_KEY):
+            from .. import hb_rooms
+            hb_rooms.update_stairwell_cutter(self.stair_obj)
         return True
 
     def invoke(self, context, event):
@@ -709,6 +727,10 @@ class home_builder_stairs_OT_delete_stairs(bpy.types.Operator):
     def execute(self, context):
         obj = context.active_object
         if obj and obj.get('IS_STAIR'):
+            from .. import cutters, hb_rooms
+            cutter = hb_rooms.stairwell_cutter(obj)
+            if cutter is not None:
+                cutters.remove(cutter)      # and the openings it cut
             bpy.data.objects.remove(obj, do_unlink=True)
             self.report({'INFO'}, "Staircase deleted")
         return {'FINISHED'}

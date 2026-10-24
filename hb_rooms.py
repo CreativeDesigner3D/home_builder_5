@@ -30,6 +30,7 @@ MARKER_KEY = 'IS_ROOM_MARKER'
 GENERATED_KEY = 'IS_ROOM_GENERATED'
 
 FLOOR_THICKNESS = 0.01          # thin slab, so floor cutters have volume to cut
+SLAB_CLEARANCE = 0.003          # between a floor's underside and the ceiling below
 LABEL_SIZE = inch(8)
 LABEL_LIFT = 0.02               # label just above the floor
 LABEL_COLOR = (0.03, 0.03, 0.03, 1.0)
@@ -132,7 +133,7 @@ def _build_floor(scene, level, room, polygon):
     # elevation, so moving the level (which moves free objects) and
     # rebuilding agree
     mesh = _slab_mesh(f"Floor - {room.name}", polygon, 0.0,
-                      thickness=FLOOR_THICKNESS)
+                      thickness=floor_slab_thickness(level))
     floor_mat = room_floor_material(room)
     if room.floor_obj is None:
         if floor_mat is not None:
@@ -356,6 +357,8 @@ def rebuild_level(scene, level):
             room.floor_obj = room.ceiling_obj = None
             room.area = 0.0
             update_room_label(room)
+    # New floors and ceilings need their stairwell openings
+    apply_stairwells(scene)
     return len(claimed)
 
 
@@ -373,9 +376,149 @@ def rebuild_after_walls(scene, level_uid=None):
         return
     if not hb_house.is_house_project():
         return
-    for level in scene.hb_house.levels:
+    house = scene.hb_house
+    for level in house.levels:
         if level_uid is None or level.uid == level_uid:
             rebuild_level(scene, level)
+            # Walls on this level decide how high the exterior walls of
+            # the level below run, and its own walls follow the level above
+            below = hb_house.level_below(house, level)
+            if below is not None:
+                hb_house.set_exterior_wall_heights(scene, below)
+            hb_house.set_exterior_wall_heights(scene, level)
+
+
+# =============================================================================
+# STAIRWELLS
+# =============================================================================
+# Stairs on a house level rise to the level above. Each one carries a
+# stairwell cutter - a box over its footprint, parented to it so it moves
+# with it - and a Boolean on every room floor of the level above and every
+# room ceiling of its own level cuts the opening it climbs through.
+
+STAIRWELL_KEY = 'IS_STAIRWELL_CUTTER'
+STAIRWELL_REACH = 0.05      # past the surfaces it cuts
+
+
+level_above = hb_house.level_above
+
+
+def stair_rise(level):
+    """How far stairs on `level` climb: to the next level's floor."""
+    return hb_house.rise_to_level_above(level)
+
+
+def floor_slab_thickness(level):
+    """A floor fills the space down to the ceiling of the level below it,
+    so from below or outside there is one solid floor between levels. On
+    the ground level it is a thin slab."""
+    house = level.id_data.hb_house
+    below = hb_house.level_below(house, level)
+    if below is None:
+        return FLOOR_THICKNESS
+    gap = level.elevation - (below.elevation + below.ceiling_height)
+    # Stop just short of the ceiling below: two faces at one height
+    # flicker against each other (z-fighting)
+    return max(gap - SLAB_CLEARANCE, FLOOR_THICKNESS)
+
+
+def stairwell_cutter(stair):
+    for child in stair.children:
+        if child.get(STAIRWELL_KEY):
+            return child
+    return None
+
+
+def update_stairwell_cutter(stair):
+    """Fit the stair's cutter to its footprint and to the floor it climbs
+    through, making it the first time."""
+    level = hb_house.get_level(stair.get(hb_house.LEVEL_KEY, ''))
+    if level is None or stair.data is None or not stair.data.vertices:
+        return None
+    xs = [v.co.x for v in stair.data.vertices]
+    ys = [v.co.y for v in stair.data.vertices]
+    rise = float(stair.get('STAIR_TOTAL_RISE', stair_rise(level)))
+    z0 = min(level.ceiling_height, rise) - STAIRWELL_REACH
+    z1 = rise + STAIRWELL_REACH
+    cutter = stairwell_cutter(stair)
+    if cutter is None:
+        cutter = hb_utils.new_object("Stairwell", bpy.data.meshes.new("Stairwell"))
+        for col in stair.users_collection:
+            col.objects.link(cutter)
+        cutter.parent = stair
+        cutter.matrix_parent_inverse.identity()
+        cutter[STAIRWELL_KEY] = True
+        cutter['IS_CUTTING_OBJ'] = True
+        cutter.display_type = 'WIRE'
+        cutter.hide_render = True
+    # Out of the viewport entirely: its Boolean still cuts, but walk
+    # mode's gravity and the snapping rays go straight through the
+    # opening instead of landing on an invisible box
+    cutter.hide_viewport = True
+    bm = bmesh.new()
+    bmesh.ops.create_cube(bm, size=1.0)
+    for v in bm.verts:
+        v.co.x = min(xs) if v.co.x < 0 else max(xs)
+        v.co.y = min(ys) if v.co.y < 0 else max(ys)
+        v.co.z = z0 if v.co.z < 0 else z1
+    bm.to_mesh(cutter.data)
+    bm.free()
+    cutter.data.update()
+    return cutter
+
+
+def _stairs_on(scene, level):
+    return [o for o in scene.objects
+            if o.get('IS_STAIR') and o.get(hb_house.LEVEL_KEY) == level.uid]
+
+
+def _set_boolean(host, cutter):
+    name = f"Stairwell - {cutter.parent.name}"
+    mod = host.modifiers.get(name)
+    if mod is None:
+        mod = host.modifiers.new(name=name, type='BOOLEAN')
+        mod.operation = 'DIFFERENCE'
+        mod.solver = 'EXACT'
+        # Ceilings are single sheets: tell the exact solver to expect holes
+        mod.use_hole_tolerant = True
+    mod.object = cutter
+
+
+def _drop_stale_stairwells(obj, keep):
+    for mod in list(obj.modifiers):
+        if (mod.type == 'BOOLEAN' and mod.name.startswith("Stairwell - ")
+                and (mod.object is None or mod.object not in keep)):
+            obj.modifiers.remove(mod)
+
+
+def apply_stairwells(scene):
+    """Cut every stair's opening: the room floors of the level above it
+    and the room ceilings of its own level."""
+    scene = hb_house.house_scene_of(scene)
+    if scene is None:
+        return
+    house = scene.hb_house
+    cuts = {}               # host object -> {cutters}
+    for level in house.levels:
+        for room in level.rooms:
+            for obj in (room.floor_obj, room.ceiling_obj):
+                if obj is not None:
+                    cuts.setdefault(obj, set())
+    for level in house.levels:
+        upper = level_above(house, level)
+        for stair in _stairs_on(scene, level):
+            cutter = update_stairwell_cutter(stair)
+            if cutter is None:
+                continue
+            hosts = [r.ceiling_obj for r in level.rooms if r.ceiling_obj]
+            if upper is not None:
+                hosts += [r.floor_obj for r in upper.rooms if r.floor_obj]
+            for host in hosts:
+                cuts.setdefault(host, set()).add(cutter)
+    for host, cutters in cuts.items():
+        _drop_stale_stairwells(host, cutters)
+        for cutter in cutters:
+            _set_boolean(host, cutter)
 
 
 # =============================================================================
