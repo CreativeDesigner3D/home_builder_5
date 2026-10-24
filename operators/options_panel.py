@@ -231,6 +231,10 @@ def parse_distance(text):
 
 # Field kinds a click types into; Tab walks from one to the next.
 TYPED_KINDS = ('distance', 'text', 'number')
+# Of those, the ones a press-and-drag adjusts, like Blender's own fields
+DRAG_KINDS = ('distance', 'number')
+DRAG_THRESHOLD = 4          # px of travel before a press becomes a drag
+DRAG_PIXELS_PER_STEP = 8    # px of drag per step, times the UI scale
 
 
 def _is_angle(owner, prop):
@@ -2059,6 +2063,14 @@ def hit(context, mx, my, entries):
             if fkind == 'native' and point_in_rect(mx, my, value_rect):
                 open_native(context, owner, prop, label, options.get('draw'))
                 return True
+            if (fkind in DRAG_KINDS
+                    and point_in_rect(mx, my, value_rect)):
+                # Drag to adjust, or let go without moving to type
+                global _pending_drag
+                _pending_drag = (fkind, owner, prop)
+                bpy.ops.home_builder.options_drag_value('INVOKE_DEFAULT')
+                _tag()
+                return True
             if (fkind in TYPED_KINDS
                     and point_in_rect(mx, my, value_rect)):
                 if not _begin_typing(fkind, owner, prop):
@@ -2488,6 +2500,155 @@ def commit_value(context):
     return True
 
 
+# ---- Dragging a value --------------------------------------------------------
+
+_pending_drag = None        # (kind, owner, prop) for options_drag_value
+
+
+def drag_steps(kind, owner, prop, imperial):
+    """(step, fine step, snap) for dragging a field: a step per few pixels
+    of drag, the fine step with Shift, and what Ctrl rounds to.
+
+    Distances: 1" (10 mm), 1/16" (1 mm) with Shift, whole inches (10 mm)
+    with Ctrl. Angles: 1 degree, 0.1 with Shift, whole degrees with Ctrl.
+    Other numbers: 1 a step - or a hundredth of a small fixed range, such
+    as 0 to 1 - and a tenth of that with Shift; Ctrl rounds to the step."""
+    import math
+    if kind == 'distance':
+        if imperial:
+            return 0.0254, 0.0254 / 16.0, 0.0254
+        return 0.01, 0.001, 0.01
+    if _is_angle(owner, prop):
+        one = math.radians(1.0)
+        return one, one / 10.0, one
+    try:
+        rna = owner.bl_rna.properties[prop]
+        span = rna.hard_max - rna.hard_min
+        is_int = rna.type == 'INT'
+    except Exception:
+        span, is_int = float('inf'), False
+    if is_int:
+        return 1, 1, 1
+    step = span / 100.0 if span <= 2.0 else 1.0
+    return step, step / 10.0, step
+
+
+def drag_value(start, pixels, steps, fine, snap, pixels_per_step):
+    """The value `pixels` of drag from `start`."""
+    step, fine_step, snap_step = steps
+    value = start + (pixels / pixels_per_step) * (fine_step if fine else step)
+    if snap:
+        value = round(value / snap_step) * snap_step
+    return value
+
+
+def _clamp(owner, prop, value):
+    try:
+        rna = owner.bl_rna.properties[prop]
+        value = max(rna.hard_min, min(rna.hard_max, value))
+        if rna.type == 'INT':
+            value = int(round(value))
+    except Exception:
+        pass
+    return value
+
+
+class home_builder_OT_options_drag_value(bpy.types.Operator):
+    """Press on a value and drag left or right to change it, as in
+    Blender's own fields: Shift for fine steps, Ctrl to snap, Esc or
+    right-click to put it back. Let go without moving to type instead.
+
+    The cursor is hidden while dragging and held in the viewport, so a
+    drag can run as far as it needs to. A modal only for the length of
+    the press - Blender skips autosave while a modal is live."""
+    bl_idname = "home_builder.options_drag_value"
+    bl_label = "Adjust Value"
+    bl_options = {'INTERNAL', 'UNDO'}
+
+    def invoke(self, context, event):
+        global _pending_drag
+        pending, _pending_drag = _pending_drag, None
+        if pending is None:
+            return {'CANCELLED'}
+        self.kind, owner, self.prop = pending
+        self.key = _owner_key(owner, self.prop)
+        if self.key is None:
+            return {'CANCELLED'}
+        self.start = getattr(owner, self.prop)
+        self.imperial = context.scene.unit_settings.system == 'IMPERIAL'
+        self.steps = drag_steps(self.kind, owner, self.prop, self.imperial)
+        self.press_x = event.mouse_x
+        self.last_x = event.mouse_x
+        self.travel = 0.0
+        self.dragging = False
+        self.window = context.window
+        region = context.region
+        self.bounds = ((region.x, region.x + region.width) if region is not None
+                       else (0, context.window.width))
+        context.window_manager.modal_handler_add(self)
+        return {'RUNNING_MODAL'}
+
+    def _owner(self):
+        return _resolve(self.key[0], self.key[1])
+
+    def _set(self, value):
+        owner = self._owner()
+        value = _clamp(owner, self.prop, value)
+        if getattr(owner, self.prop) != value:
+            setattr(owner, self.prop, value)
+        _tag()
+
+    def _end_drag(self):
+        if self.dragging:
+            self.window.cursor_modal_restore()
+
+    def modal(self, context, event):
+        if event.type in {'MOUSEMOVE', 'INBETWEEN_MOUSEMOVE'}:
+            if not self.dragging:
+                if abs(event.mouse_x - self.press_x) < DRAG_THRESHOLD * scale():
+                    return {'RUNNING_MODAL'}
+                self.dragging = True
+                self.window.cursor_modal_set('NONE')
+            self.travel += event.mouse_x - self.last_x
+            self.last_x = event.mouse_x
+            # Hold the hidden cursor in the viewport so the drag never
+            # runs out of room
+            lo, hi = self.bounds
+            if event.mouse_x < lo + 40 or event.mouse_x > hi - 40:
+                self.window.cursor_warp(self.press_x, event.mouse_y)
+                self.last_x = self.press_x
+            self._set(drag_value(self.start, self.travel, self.steps,
+                                 event.shift, event.ctrl,
+                                 DRAG_PIXELS_PER_STEP * scale()))
+            return {'RUNNING_MODAL'}
+
+        if event.type in {'LEFT_SHIFT', 'RIGHT_SHIFT', 'LEFT_CTRL', 'RIGHT_CTRL'}:
+            if self.dragging:
+                self._set(drag_value(self.start, self.travel, self.steps,
+                                     event.shift, event.ctrl,
+                                     DRAG_PIXELS_PER_STEP * scale()))
+            return {'RUNNING_MODAL'}
+
+        if event.type == 'LEFTMOUSE' and event.value == 'RELEASE':
+            if self.dragging:
+                self._end_drag()
+                return {'FINISHED'}         # one undo step for the drag
+            # A click: type into the field instead
+            owner = self._owner()
+            if _begin_typing(self.kind, owner, self.prop):
+                bpy.ops.home_builder.options_edit_value('INVOKE_DEFAULT')
+            _tag()
+            return {'CANCELLED'}
+
+        if event.type in {'ESC', 'RIGHTMOUSE'} and event.value == 'PRESS':
+            if self.dragging:
+                self._set(self.start)
+            self._end_drag()
+            return {'CANCELLED'}
+
+        return {'RUNNING_MODAL'}
+
+
 class home_builder_OT_options_edit_value(bpy.types.Operator):
     """Type a new value into the field.
 
@@ -2702,6 +2863,7 @@ classes = (home_builder_OT_style_options_popup,
            home_builder_OT_options_set_enum,
            home_builder_OT_options_pick_file,
            home_builder_OT_options_edit_value,
+           home_builder_OT_options_drag_value,
            home_builder_OT_options_run_action,)
 
 

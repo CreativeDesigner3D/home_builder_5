@@ -213,10 +213,12 @@ def update_room_label(room):
         room.label_obj = label
     label.data.body = "\n".join(lines)
     label.name = f"Room Label - {room.name}"
-    # Drawn in front of everything, so the ceiling over a closed room
-    # doesn't hide it in plan
-    label.show_in_front = True
-    marker.show_in_front = True
+    # Drawn in front while ceilings show, so the ceiling over a closed
+    # room doesn't hide it in plan; otherwise not, so labels don't draw
+    # over the roof
+    front = scene.hb_house.show_ceilings
+    label.show_in_front = front
+    marker.show_in_front = front
     label.color = LABEL_COLOR
     if not label.data.materials:
         label.data.materials.append(_label_material())
@@ -262,6 +264,10 @@ def apply_ceiling_visibility(scene):
         for room in level.rooms:
             if room.ceiling_obj is not None:
                 room.ceiling_obj.hide_viewport = hide
+            # Labels only need to draw through the ceilings when they show
+            for obj in (room.label_obj, room.marker):
+                if obj is not None:
+                    obj.show_in_front = not hide
 
 
 def apply_room_materials(room, rebuild_floor=False):
@@ -376,8 +382,11 @@ def rebuild_level(scene, level):
             room.floor_obj = room.ceiling_obj = None
             room.area = 0.0
             update_room_label(room)
-    # New floors and ceilings need their stairwell openings
+    # New floors and ceilings need their stairwell openings, and new
+    # ceilings under a roof its trim
     apply_stairwells(scene)
+    from . import hb_roofs
+    hb_roofs.apply_trims(scene)
     return len(claimed)
 
 
@@ -405,6 +414,9 @@ def rebuild_after_walls(scene, level_uid=None):
             if below is not None:
                 hb_house.set_exterior_wall_heights(scene, below)
             hb_house.set_exterior_wall_heights(scene, level)
+    # Roofs follow the walls they sit on and trim the walls under them
+    from . import hb_roofs
+    hb_roofs.rebuild_roofs(scene)
 
 
 # =============================================================================

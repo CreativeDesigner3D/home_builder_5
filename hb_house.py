@@ -533,6 +533,8 @@ def set_exterior_wall_heights(scene, level):
         height = level.ceiling_height
         if rise is not None and band is not None and _carries(band, upper_bands):
             height = rise
+        from . import hb_roofs
+        height = hb_roofs.gable_wall_height(scene, obj, height)
         if abs(wall.get_input('Height') - height) > 1e-6:
             wall.set_input('Height', height)
             obj.update_tag()
@@ -893,6 +895,118 @@ class HB_Room(PropertyGroup):
         description="The walls around this room's marker no longer close it in")  # type: ignore
 
 
+def _roof_changed(self, context):
+    from . import hb_roofs
+    hb_roofs.rebuild_roof_of(self)
+
+
+class HB_Roof(PropertyGroup):
+    """A level's roof: built over the outside of its exterior walls,
+    sitting on top of them or - for a barn or a cape - starting at the
+    level's floor so the level is inside it. See hb_roofs."""
+
+    enabled: BoolProperty(name="Roof", default=False,
+                          update=_roof_changed)  # type: ignore
+
+    style: EnumProperty(
+        name="Style",
+        items=[('GABLE', "Gable", "Two slopes meeting at a ridge, gable walls at the ends"),
+               ('GAMBREL', "Barn (Gambrel)",
+                "A steep lower slope and a shallow upper one on each side, like a barn")],
+        default='GABLE', update=_roof_changed)  # type: ignore
+
+    base: EnumProperty(
+        name="Sits On",
+        items=[('WALLS', "Top of Walls",
+                "The roof sits on top of this level's walls"),
+               ('FLOOR', "This Level's Floor",
+                "The roof starts at this level's floor, so the level is inside it "
+                "(a barn, or a cape with dormers)")],
+        default='WALLS', update=_roof_changed)  # type: ignore
+
+    eave_height: FloatProperty(
+        name="Eave Height",
+        description=("Where the underside of the roof meets the outside of the walls: "
+                     "above the top of the walls, or above the floor when the roof "
+                     "sits on the floor"),
+        default=0.0, subtype='DISTANCE', precision=4,
+        update=_roof_changed)  # type: ignore
+
+    pitch: FloatProperty(
+        name="Pitch",
+        description=("Rise in inches for every 12 inches across (12 is 45 degrees). "
+                     "On a barn roof, the upper slope"),
+        default=12.0, min=0.5, max=60.0, precision=2,
+        update=_roof_changed)  # type: ignore
+
+    lower_pitch: FloatProperty(
+        name="Lower Pitch",
+        description="A barn roof's steep lower slope: rise in 12 (36 is about 72 degrees)",
+        default=36.0, min=1.0, max=120.0, precision=2,
+        update=_roof_changed)  # type: ignore
+
+    break_height: FloatProperty(
+        name="Break Height",
+        description=("Where a barn roof's steep slope turns to the shallow one, measured "
+                     "like the eave height"),
+        default=inch(108), min=0.0, subtype='DISTANCE', precision=4,
+        update=_roof_changed)  # type: ignore
+
+    ridge: EnumProperty(
+        name="Ridge",
+        items=[('AUTO', "Long Way", "Along the longer side of the house"),
+               ('X', "Along X", "Ridge runs along X; gables face X"),
+               ('Y', "Along Y", "Ridge runs along Y; gables face Y")],
+        default='AUTO', update=_roof_changed)  # type: ignore
+
+    eave_overhang: FloatProperty(
+        name="Eave Overhang", description="How far the roof runs past the side walls",
+        default=inch(12), min=0.0, subtype='DISTANCE', precision=4,
+        update=_roof_changed)  # type: ignore
+
+    gable_overhang: FloatProperty(
+        name="Gable Overhang", description="How far the roof runs past the gable walls",
+        default=inch(12), min=0.0, subtype='DISTANCE', precision=4,
+        update=_roof_changed)  # type: ignore
+
+    thickness: FloatProperty(
+        name="Roof Thickness", description="From the ceiling side to the shingles",
+        default=inch(10), min=inch(1), subtype='DISTANCE', precision=4,
+        update=_roof_changed)  # type: ignore
+
+    material: PointerProperty(name="Roof Material", type=bpy.types.Material,
+                              update=_roof_changed)  # type: ignore
+
+    dormers: BoolProperty(
+        name="Dormers",
+        description="Build a dormer over each bump-out in the walls under the roof",
+        default=True, update=_roof_changed)  # type: ignore
+
+    dormer_pitch: FloatProperty(
+        name="Dormer Pitch", description="Rise in 12 of the dormer roofs",
+        default=12.0, min=1.0, max=24.0, precision=2,
+        update=_roof_changed)  # type: ignore
+
+    dormer_wall_height: FloatProperty(
+        name="Dormer Wall Height",
+        description="Height of the dormer side walls, from the floor to the dormer eave",
+        default=inch(96), min=inch(24), subtype='DISTANCE', precision=4,
+        update=_roof_changed)  # type: ignore
+
+    dormer_overhang: FloatProperty(
+        name="Dormer Overhang", description="How far the dormer roofs run past their walls",
+        default=inch(6), min=0.0, subtype='DISTANCE', precision=4,
+        update=_roof_changed)  # type: ignore
+
+    roof_obj: PointerProperty(type=bpy.types.Object)  # type: ignore
+    cutter_obj: PointerProperty(type=bpy.types.Object)  # type: ignore
+    # Dormer pieces: their roofs, and the hidden volumes the Booleans use
+    dormer_obj: PointerProperty(type=bpy.types.Object)  # type: ignore
+    dormer_tops_obj: PointerProperty(type=bpy.types.Object)  # type: ignore
+    dormer_inside_obj: PointerProperty(type=bpy.types.Object)  # type: ignore
+    roof_top_obj: PointerProperty(type=bpy.types.Object)  # type: ignore
+
+
 class HB_Level(PropertyGroup):
     uid: StringProperty(name="Level ID")  # type: ignore
 
@@ -933,6 +1047,8 @@ class HB_Level(PropertyGroup):
 
     rooms: CollectionProperty(type=HB_Room)  # type: ignore
 
+    roof: PointerProperty(type=HB_Roof)  # type: ignore
+
     active_room_index: IntProperty(name="Active Room")  # type: ignore
 
 
@@ -945,6 +1061,12 @@ def _update_active_level(self, context):
     if abs(props.ceiling_height - level.ceiling_height) > 1e-9:
         props.ceiling_height = level.ceiling_height
     apply_level_display(scene)
+
+
+def _roofs_shown_changed(house):
+    from . import hb_roofs
+    hb_roofs.apply_roof_visibility(house.id_data)
+    _tag_view3d_redraw()
 
 
 def _ceilings_shown_changed(house):
@@ -980,6 +1102,12 @@ class HB_House_Props(PropertyGroup):
 
     # Ceilings are in the way while designing (doors, openings, looking
     # into a room), so they start hidden; they still render.
+    show_roofs: BoolProperty(
+        name="Show Roofs",
+        description="Show the roofs in the viewport. Off to see down into the house",
+        default=True,
+        update=lambda self, context: _roofs_shown_changed(self))  # type: ignore
+
     show_ceilings: BoolProperty(
         name="Show Ceilings",
         description="Show the rooms' ceilings in the viewport. They render either way",
@@ -1331,6 +1459,7 @@ class HOME_BUILDER_OT_set_active_level(bpy.types.Operator):
 
 classes = (
     HB_Room,
+    HB_Roof,
     HB_Level,
     HB_House_Props,
     HOME_BUILDER_OT_start_house_project,

@@ -1,0 +1,672 @@
+"""
+Home Builder Roofs
+
+A roof over a level of a house: built over the outside faces of the
+level's exterior walls, with the ridge the long way (or the way you
+choose). It sits on top of the level's walls, or starts at the level's
+floor so the level is inside it. Styles: gable (two slopes meeting at a
+ridge) and barn / gambrel (a steep lower slope and a shallow upper one
+on each side). Every style is one profile - the roof's underside traced
+across the house - and the roof, its trim and the dormer valleys are
+all built from that.
+
+The roof also shapes the level above it, so the upper floor lives inside
+it:
+
+* A trim volume - everything above the roof's underside - cuts the upper
+  level's walls and room ceilings with a Boolean. Side walls become knee
+  walls, interior walls stop under the slope, and ceilings only remain
+  where there is headroom, so the rooms get sloped ceilings.
+* Exterior walls of the upper level that run square to the ridge are the
+  gable walls: they are raised to the ridge so the trim can cut them
+  into the gable's triangle.
+
+Dormers come from the walls: a bump-out under the roof - an outer wall
+along the ridge, joined at both ends by short walls back to the main
+side wall - gets a gable dormer. Its roof runs out from the main roof
+and stops where it meets it (a valley); the main roof is opened under
+it; and the trim leaves the dormer alone, so its side walls stop at the
+dormer eave and its front wall takes the dormer's gable.
+
+Settings live on the level (HB_Roof in hb_house); the roof is rebuilt
+when they change and whenever walls are edited.
+"""
+
+import math
+
+import bmesh
+import bpy
+from mathutils import Vector
+
+from . import hb_house, hb_utils
+
+ROOF_KEY = 'IS_ROOF'
+ROOF_CUTTER_KEY = 'IS_ROOF_CUTTER'
+TRIM_PREFIX = "Roof - "
+DORMER_CUT = "Dormers"          # the Boolean that opens the main roof / trim
+VALLEY_CUT = "Valley"           # the one that stops the dormer roofs
+CUTTER_REACH = 2.0          # how far the trim volume runs past the house (m)
+CUTTER_HEIGHT = 50.0        # and up
+GABLE_MARGIN = 0.05         # gable walls run this far past the roof underside
+DORMER_MARGIN = 0.5         # dormer volumes reach this far past the front wall
+SHINGLE_MATERIAL = "HB Roof Shingles"
+SHINGLE_COLOR = (0.15, 0.19, 0.16, 1.0)
+
+# Dormer front walls and the height they need, per roof level uid, from
+# the last rebuild: {level uid: {wall name: top z}}
+_dormer_fronts = {}
+
+
+# =============================================================================
+# LOOKUPS
+# =============================================================================
+
+def level_of_roof(roof):
+    """The HB_Level holding a roof ('hb_house.levels[i].roof')."""
+    path = roof.path_from_id()
+    return roof.id_data.path_resolve(path[:path.rindex('.roof')])
+
+
+def _exterior_walls(scene, level):
+    return [o for o in scene.objects
+            if o.get('IS_WALL_BP') and o.get(hb_house.LEVEL_KEY) == level.uid
+            and o.get('WALL_TYPE', 'Exterior') == 'Exterior']
+
+
+def roof_frame(scene, level):
+    """The geometry a level's roof is built from, or None without walls.
+
+    u runs across the roof (square to the ridge), v along it. The roof
+    meets the outside faces of the exterior walls at the plate: the top
+    of the walls, or the level's floor, plus the eave height. 'under' is
+    the underside traced across from one wall face to the other, through
+    the ridge (and a barn roof's breaks); 'p_out' the slope at the eaves,
+    which the overhangs carry on."""
+    from .operators import walls
+    roof = level.roof
+    outline_levels = [level]
+    if roof.base == 'FLOOR':
+        # A roof that starts at the floor covers the walls below too
+        below = hb_house.level_below(level.id_data.hb_house, level)
+        if below is not None:
+            outline_levels.append(below)
+    corners = []
+    for lv in outline_levels:
+        for obj in _exterior_walls(scene, lv):
+            corners.extend(pt for _e, _f, pt in walls.wall_plan_corners(obj))
+    if len(corners) < 3:
+        return None
+    x0, x1 = min(p.x for p in corners), max(p.x for p in corners)
+    y0, y1 = min(p.y for p in corners), max(p.y for p in corners)
+    along_x = (x1 - x0) >= (y1 - y0) if roof.ridge == 'AUTO' else roof.ridge == 'X'
+    if along_x:
+        u0, u1, v0, v1 = y0, y1, x0, x1
+    else:
+        u0, u1, v0, v1 = x0, x1, y0, y1
+    half = (u1 - u0) / 2.0
+    uc = (u0 + u1) / 2.0
+    if roof.base == 'FLOOR':
+        base = level.elevation
+    else:
+        # The level's own wall height, not the walls' current tops: the
+        # roof raises its gable walls, and reading those back would lift
+        # the roof on every rebuild
+        base = level.elevation + hb_house.exterior_wall_height(level)
+    plate = base + roof.eave_height
+    p = roof.pitch / 12.0
+
+    if roof.style == 'GAMBREL':
+        p_low = roof.lower_pitch / 12.0
+        z_break = base + roof.break_height
+        inset = (z_break - plate) / p_low if z_break > plate else 0.0
+        inset = min(max(inset, 0.0), half * 0.95)
+        z_break = plate + inset * p_low
+        ridge_z = z_break + (half - inset) * p
+        under = [(u0, plate), (u0 + inset, z_break), (uc, ridge_z),
+                 (u1 - inset, z_break), (u1, plate)]
+        p_out = p_low
+    else:
+        ridge_z = plate + half * p
+        under = [(u0, plate), (uc, ridge_z), (u1, plate)]
+        p_out = p
+    return {
+        'along_x': along_x, 'u0': u0, 'u1': u1, 'v0': v0, 'v1': v1,
+        'uc': uc, 'half': half, 'p': p, 'p_out': p_out,
+        'angle': math.atan(p), 'plate': plate, 'base': base,
+        'ridge_z': ridge_z,                 # underside at the ridge
+        'under': under,
+        'level_uid': level.uid,
+    }
+
+
+def _extended(frame, reach):
+    """The underside carried on past both wall faces by `reach`, down the
+    eave slope."""
+    under = frame['under']
+    drop = reach * frame['p_out']
+    return ([(under[0][0] - reach, under[0][1] - drop)] + list(under)
+            + [(under[-1][0] + reach, under[-1][1] - drop)])
+
+
+def _offset_up(points, t):
+    """A polyline moved up off itself by t, square to each segment, with
+    the corners mitred."""
+    normals = []
+    for (a0, z0), (a1, z1) in zip(points, points[1:]):
+        da, dz = a1 - a0, z1 - z0
+        length = math.hypot(da, dz) or 1.0
+        n = (-dz / length, da / length)
+        if n[1] < 0:
+            n = (-n[0], -n[1])
+        normals.append(n)
+    out = [(points[0][0] + normals[0][0] * t, points[0][1] + normals[0][1] * t)]
+    for i in range(1, len(points) - 1):
+        (pa, pz), n1, n2 = points[i], normals[i - 1], normals[i]
+        # Where the two offset lines cross: along the bisector, far enough
+        # that each line is t from the corner
+        bx, bz = n1[0] + n2[0], n1[1] + n2[1]
+        bl = math.hypot(bx, bz)
+        if bl < 1e-9:
+            out.append((pa + n1[0] * t, pz + n1[1] * t))
+            continue
+        bx, bz = bx / bl, bz / bl
+        k = t / max(bx * n1[0] + bz * n1[1], 1e-6)
+        out.append((pa + bx * k, pz + bz * k))
+    out.append((points[-1][0] + normals[-1][0] * t, points[-1][1] + normals[-1][1] * t))
+    return out
+
+
+def _dedupe(points):
+    out = []
+    for q in points:
+        if not out or math.hypot(q[0] - out[-1][0], q[1] - out[-1][1]) > 1e-6:
+            out.append(q)
+    return out
+
+
+def _uv(frame, point):
+    """(u, v) of a world XY point."""
+    return (point[1], point[0]) if frame['along_x'] else (point[0], point[1])
+
+
+def _world(frame, u, v, z):
+    return (v, u, z) if frame['along_x'] else (u, v, z)
+
+
+# =============================================================================
+# GEOMETRY
+# =============================================================================
+
+def _add_prism(bm, section, b0, b1, to_world):
+    """Add a closed prism to bm: the (a, z) section swept along b from b0
+    to b1, placed by to_world(a, b, z)."""
+    first = [bm.verts.new(to_world(a, b0, z)) for a, z in section]
+    last = [bm.verts.new(to_world(a, b1, z)) for a, z in section]
+    bm.faces.new(first)
+    bm.faces.new(list(reversed(last)))
+    n = len(section)
+    for i in range(n):
+        j = (i + 1) % n
+        bm.faces.new((first[i], first[j], last[j], last[i]))
+
+
+def _mesh(name, prisms):
+    """A mesh of prisms [(section, b0, b1, to_world)]."""
+    mesh = bpy.data.meshes.new(name)
+    bm = bmesh.new()
+    for section, b0, b1, to_world in prisms:
+        _add_prism(bm, section, b0, b1, to_world)
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+    uv = bm.loops.layers.uv.new("UVMap")
+    for f in bm.faces:
+        for loop in f.loops:
+            co = loop.vert.co
+            loop[uv].uv = (co.x + co.z, co.y + co.z)
+    bm.to_mesh(mesh)
+    bm.free()
+    return mesh
+
+
+def _along_ridge(frame):
+    """to_world for a section across the roof (a = u) swept along it (b = v)."""
+    return lambda a, b, z: _world(frame, a, b, z)
+
+
+def _across_ridge(frame):
+    """to_world for a section along the ridge (a = v) swept across it (b = u)."""
+    return lambda a, b, z: _world(frame, b, a, z)
+
+
+def roof_section(frame, roof):
+    """The roof slab across: the underside from eave to eave (past the
+    walls by the overhang), then back along the top, the thickness above
+    it measured square to each slope."""
+    under = _dedupe(_extended(frame, roof.eave_overhang))
+    top = _offset_up(under, roof.thickness)
+    return under + list(reversed(top))
+
+
+def trim_section(frame):
+    """Everything above the roof's underside, well past the house."""
+    under = _dedupe(_extended(frame, CUTTER_REACH))
+    top = frame['ridge_z'] + CUTTER_HEIGHT
+    return under + [(under[-1][0], top), (under[0][0], top)]
+
+
+def top_volume_section(frame, roof):
+    """Everything under the roof's top surface, well past the house - what
+    a dormer roof is cut back to, so it stops where it meets the roof."""
+    surface = _offset_up(_dedupe(_extended(frame, CUTTER_REACH)), roof.thickness)
+    bottom = frame['plate'] - CUTTER_HEIGHT
+    return [(surface[0][0], bottom), (surface[-1][0], bottom)] + list(reversed(surface))
+
+
+# =============================================================================
+# DORMERS
+# =============================================================================
+
+def _parallel(seg, ridge_dir, tol=1e-3):
+    return abs(seg.dir[0] * ridge_dir[1] - seg.dir[1] * ridge_dir[0]) < tol
+
+
+def find_dormers(scene, level, frame):
+    """The bump-outs under a roof that become dormers.
+
+    A dormer front is an exterior wall along the ridge whose ends both
+    join (in a corner) a wall square to the ridge - a cheek - whose other
+    end joins a wall along the ridge nearer the middle of the house: the
+    side wall the bump-out comes out of. Returns dicts with the front
+    wall's name, the dormer's span along the ridge (outside faces of the
+    cheeks), its front (outside face of the front wall), and which side
+    of the ridge it is on (+1 / -1 in u)."""
+    from .operators import walls
+    from . import hb_wall_graph
+    ridge_dir = (1.0, 0.0) if frame['along_x'] else (0.0, 1.0)
+    out = []
+    for upper in _levels_under(scene, frame):
+        objs, segs = walls.level_wall_segs(scene, upper.uid)
+        segs = [s for s in segs if s.wall_type == 'Exterior']
+        graph = hb_wall_graph.build_graph(segs)
+        by_id = graph.segs
+        uc = frame['uc']
+
+        def across(seg):
+            """Signed distance of the wall's middle from the ridge line."""
+            mid = ((seg.start[0] + seg.end[0]) / 2, (seg.start[1] + seg.end[1]) / 2)
+            return _uv(frame, mid)[0] - uc
+
+        def other_end(seg_id, which):
+            node = graph.node_of.get((seg_id, which))
+            if node is None or len(node.ends) != 2:
+                return None
+            return next(e for e in node.ends if e != (seg_id, which))
+
+        for front in by_id.values():
+            if not _parallel(front, ridge_dir):
+                continue
+            ok = True
+            for which in (hb_wall_graph.START, hb_wall_graph.END):
+                cheek_end = other_end(front.id, which)
+                if cheek_end is None or _parallel(by_id[cheek_end[0]], ridge_dir):
+                    ok = False
+                    break
+                cheek = by_id[cheek_end[0]]
+                # A dormer's cheeks are short: a bump-out, not a wing
+                if cheek.length > frame['half'] * 0.5:
+                    ok = False
+                    break
+                far = hb_wall_graph.END if cheek_end[1] == hb_wall_graph.START else hb_wall_graph.START
+                side_end = other_end(cheek.id, far)
+                if side_end is None:
+                    ok = False
+                    break
+                side = by_id[side_end[0]]
+                # The side wall it comes out of is on the same side of the
+                # ridge, nearer the middle
+                a_side, a_front = across(side), across(front)
+                if (not _parallel(side, ridge_dir) or a_side * a_front <= 0
+                        or abs(a_side) >= abs(a_front) - 0.01):
+                    ok = False
+                    break
+            if not ok:
+                continue
+            corners = walls.wall_plan_corners(objs[front.id])
+            us = [_uv(frame, pt)[0] for _e, _f, pt in corners]
+            vs = [_uv(frame, pt)[1] for _e, _f, pt in corners]
+            sign = 1.0 if (sum(us) / len(us)) > uc else -1.0
+            u_front = max(us) if sign > 0 else min(us)
+            out.append({'front': front.id, 'level': upper,
+                        'v0': min(vs), 'v1': max(vs),
+                        'u_front': u_front, 'sign': sign})
+    return out
+
+
+def dormer_dims(dormer, roof):
+    """Plate, ridge (underside) and the pieces of a dormer's gable."""
+    v0, v1 = dormer['v0'], dormer['v1']
+    vc, half = (v0 + v1) / 2.0, (v1 - v0) / 2.0
+    p = roof.dormer_pitch / 12.0
+    plate = dormer['level'].elevation + roof.dormer_wall_height
+    return vc, half, p, plate, plate + half * p
+
+
+def _dormer_prisms(frame, roof, dormers):
+    """The dormer roofs, the volumes under their tops (opened in the main
+    roof) and under their undersides (kept out of the trim)."""
+    to_world = _across_ridge(frame)
+    tilt = math.cos(math.atan(roof.dormer_pitch / 12.0))
+    tv = roof.thickness / tilt
+    ov = roof.dormer_overhang
+    roofs, tops, insides = [], [], []
+    for d in dormers:
+        vc, half, p, plate, ridge = dormer_dims(d, roof)
+        v0, v1, s = d['v0'], d['v1'], d['sign']
+        front = d['u_front'] + s * ov
+        back = frame['uc']
+        z_eave = plate - ov * p
+        roofs.append(([(v0 - ov, z_eave), (vc, ridge), (v1 + ov, z_eave),
+                       (v1 + ov, z_eave + tv), (vc, ridge + tv), (v0 - ov, z_eave + tv)],
+                      front, back, to_world))
+        low = d['level'].elevation - 1.0
+        # The main roof opens from the dormer front's outside face in: the
+        # roof in front of and below the dormer stays, so the front wall
+        # stands on it rather than in a hole down to the eave
+        tops.append(([(v0, low), (v1, low), (v1, plate + tv), (vc, ridge + tv), (v0, plate + tv)],
+                     d['u_front'], back, to_world))
+        # The trim stays off the whole dormer, its front wall included
+        reach = d['u_front'] + s * DORMER_MARGIN
+        insides.append(([(v0, low), (v1, low), (v1, plate), (vc, ridge), (v0, plate)],
+                        reach, back, to_world))
+    return roofs, tops, insides
+
+
+def _set_boolean(obj, name, operand, hole_tolerant=False):
+    mod = obj.modifiers.get(name)
+    if operand is None:
+        if mod is not None:
+            obj.modifiers.remove(mod)
+        return
+    if mod is None:
+        mod = obj.modifiers.new(name=name, type='BOOLEAN')
+        mod.operation = 'DIFFERENCE'
+        mod.solver = 'EXACT'
+    mod.use_hole_tolerant = hole_tolerant
+    mod.object = operand
+
+
+def _helper(scene, roof, attr, name, mesh, tag):
+    """A hidden volume the Booleans cut with, kept in the house's root
+    collection so hiding a level doesn't stop it cutting."""
+    obj = getattr(roof, attr)
+    if mesh is None:
+        if obj is not None:
+            _delete(obj)
+            setattr(roof, attr, None)
+        return None
+    if obj is None:
+        obj = _new_object(name, mesh, hb_house._house_root_collection(scene))
+        obj[tag] = True
+        obj['IS_CUTTING_OBJ'] = True
+        obj.display_type = 'WIRE'
+        obj.hide_render = True
+        setattr(roof, attr, obj)
+    else:
+        _set_mesh(obj, mesh)
+    obj.hide_viewport = True
+    return obj
+
+
+# =============================================================================
+# MATERIAL AND OBJECT HELPERS
+# =============================================================================
+
+def _shingles():
+    mat = bpy.data.materials.get(SHINGLE_MATERIAL)
+    if mat is None:
+        mat = bpy.data.materials.new(SHINGLE_MATERIAL)
+        mat.diffuse_color = SHINGLE_COLOR
+        mat.use_nodes = True
+        bsdf = mat.node_tree.nodes.get("Principled BSDF")
+        if bsdf is not None:
+            bsdf.inputs["Base Color"].default_value = SHINGLE_COLOR
+            bsdf.inputs["Roughness"].default_value = 0.9
+    return mat
+
+
+def _set_mesh(obj, mesh):
+    old = obj.data
+    obj.data = mesh
+    if old is not None and old.users == 0:
+        bpy.data.meshes.remove(old)
+
+
+def _new_object(name, mesh, collection):
+    obj = hb_utils.new_object(name, mesh)
+    collection.objects.link(obj)
+    return obj
+
+
+def _delete(obj):
+    mesh = obj.data
+    bpy.data.objects.remove(obj, do_unlink=True)
+    if mesh is not None and mesh.users == 0:
+        bpy.data.meshes.remove(mesh)
+
+
+# =============================================================================
+# WHAT THE ROOF SHAPES
+# =============================================================================
+
+def _levels_under(scene, frame):
+    """The levels inside the roof: those whose floor is at or above where
+    it starts - the top of the walls it sits on, or the floor of the
+    level it encloses - and the roof's own level whenever the roof comes
+    down below the tops of its walls (a negative eave height), since
+    then that level lives inside it too."""
+    start = min(frame['plate'], frame['base'])
+    out = [l for l in scene.hb_house.levels if l.elevation >= start - 0.01]
+    if frame['plate'] < frame['base'] - 0.01:
+        own = next((l for l in scene.hb_house.levels
+                    if l.uid == frame['level_uid']), None)
+        if own is not None and own not in out:
+            out.append(own)
+    return out
+
+
+def _roofs(scene):
+    """(level, frame) for every enabled roof in the house."""
+    out = []
+    for level in scene.hb_house.levels:
+        if level.roof.enabled:
+            frame = roof_frame(scene, level)
+            if frame is not None:
+                out.append((level, frame))
+    return out
+
+
+def gable_wall_height(scene, wall_obj, height):
+    """The height an exterior wall needs under the roofs: a wall inside a
+    roof that runs square to its ridge is a gable wall, raised to the
+    ridge so the trim cuts it into the gable; a dormer's front wall is
+    raised to the dormer's ridge. Others keep `height`."""
+    scene = hb_house.house_scene_of(scene)
+    if scene is None:
+        return height
+    level_uid = wall_obj.get(hb_house.LEVEL_KEY, '')
+    m = wall_obj.matrix_world
+    rot = m.to_euler().z
+    d = Vector((math.cos(rot), math.sin(rot)))
+    for level, frame in _roofs(scene):
+        top = _dormer_fronts.get(level.uid, {}).get(wall_obj.name)
+        if top is not None:
+            height = max(height, top - m.translation.z + GABLE_MARGIN)
+            continue
+        under = {l.uid for l in _levels_under(scene, frame)}
+        if level_uid not in under:
+            continue
+        ridge_dir = Vector((1.0, 0.0)) if frame['along_x'] else Vector((0.0, 1.0))
+        if abs(d.dot(ridge_dir)) > 0.01:
+            continue                    # not square to the ridge
+        needed = frame['ridge_z'] - m.translation.z + GABLE_MARGIN
+        height = max(height, needed)
+    return height
+
+
+def apply_trims(scene):
+    """Cut every level inside a roof with that roof's trim volume: walls
+    and room ceilings. Trims of roofs that are gone come off."""
+    scene = hb_house.house_scene_of(scene)
+    if scene is None:
+        return
+    wanted = {}                     # object -> {modifier name: (cutter, sheet)}
+    for level, frame in _roofs(scene):
+        cutter = level.roof.cutter_obj
+        if cutter is None:
+            continue
+        name = TRIM_PREFIX + level.name
+        for upper in _levels_under(scene, frame):
+            for obj in scene.objects:
+                if obj.get('IS_WALL_BP') and obj.get(hb_house.LEVEL_KEY) == upper.uid:
+                    wanted.setdefault(obj, {})[name] = (cutter, False)
+            for room in upper.rooms:
+                if room.ceiling_obj is not None:
+                    wanted.setdefault(room.ceiling_obj, {})[name] = (cutter, True)
+    for obj in scene.objects:
+        if obj.type != 'MESH':
+            continue
+        keep = wanted.get(obj, {})
+        for mod in list(obj.modifiers):
+            if (mod.type == 'BOOLEAN' and mod.name.startswith(TRIM_PREFIX)
+                    and mod.name not in keep):
+                obj.modifiers.remove(mod)
+        for name, (cutter, sheet) in keep.items():
+            _set_boolean(obj, name, cutter, sheet)
+
+
+def apply_roof_visibility(scene):
+    scene = hb_house.house_scene_of(scene)
+    if scene is None:
+        return
+    hide = not scene.hb_house.show_roofs
+    for level in scene.hb_house.levels:
+        for obj in (level.roof.roof_obj, level.roof.dormer_obj):
+            if obj is not None:
+                obj.hide_viewport = hide
+
+
+# =============================================================================
+# BUILDING
+# =============================================================================
+
+_PIECES = ('roof_obj', 'dormer_obj', 'cutter_obj', 'dormer_tops_obj',
+           'dormer_inside_obj', 'roof_top_obj')
+
+
+def _remove_roof(roof):
+    for attr in _PIECES:
+        obj = getattr(roof, attr)
+        if obj is not None:
+            _delete(obj)
+            setattr(roof, attr, None)
+
+
+def _update_gable_walls(scene):
+    for level in scene.hb_house.levels:
+        hb_house.set_exterior_wall_heights(scene, level)
+
+
+def _visible_piece(scene, level, roof, attr, name, mesh):
+    obj = getattr(roof, attr)
+    if mesh is None:
+        if obj is not None:
+            _delete(obj)
+            setattr(roof, attr, None)
+        return None
+    mesh.materials.append(roof.material or _shingles())
+    if obj is None:
+        obj = _new_object(name, mesh, hb_house.level_subcollection(level, 'Rooms'))
+        obj[ROOF_KEY] = True
+        obj[hb_house.LEVEL_KEY] = level.uid
+        setattr(roof, attr, obj)
+    else:
+        _set_mesh(obj, mesh)
+    # Solid shading coloured by object shows the object colour, not the
+    # material's: give the roof the material's colour
+    mat = roof.material or _shingles()
+    obj.color = tuple(mat.diffuse_color)
+    return obj
+
+
+def rebuild_roof(scene, level):
+    """Build (or remove) a level's roof and everything it shapes."""
+    scene = hb_house.house_scene_of(scene)
+    if scene is None or level is None:
+        return False
+    roof = level.roof
+    frame = roof_frame(scene, level) if roof.enabled else None
+    if frame is None:
+        _dormer_fronts.pop(level.uid, None)
+        _remove_roof(roof)
+        _update_gable_walls(scene)
+        apply_trims(scene)
+        return False
+
+    hb_house.ensure_level_collections(scene, level)
+    dormers = find_dormers(scene, level, frame) if roof.dormers else []
+    _dormer_fronts[level.uid] = {
+        d['front']: dormer_dims(d, roof)[4] for d in dormers}
+
+    # The main roof, opened under the dormers
+    main = _visible_piece(scene, level, roof, 'roof_obj', f"Roof - {level.name}",
+                          _mesh("Roof", [(roof_section(frame, roof),
+                                          frame['v0'] - roof.gable_overhang,
+                                          frame['v1'] + roof.gable_overhang,
+                                          _along_ridge(frame))]))
+    d_roofs, d_tops, d_insides = _dormer_prisms(frame, roof, dormers)
+    tops = _helper(scene, roof, 'dormer_tops_obj', f"Roof Dormer Tops - {level.name}",
+                   _mesh("Roof Dormer Tops", d_tops) if dormers else None,
+                   ROOF_CUTTER_KEY)
+    _set_boolean(main, DORMER_CUT, tops)
+
+    # The dormer roofs, stopped where they meet the main roof
+    dormer_roofs = _visible_piece(scene, level, roof, 'dormer_obj', f"Dormers - {level.name}",
+                                  _mesh("Dormers", d_roofs) if dormers else None)
+    top_volume = _helper(scene, roof, 'roof_top_obj', f"Roof Top Volume - {level.name}",
+                         _mesh("Roof Top Volume", [(top_volume_section(frame, roof),
+                                                    frame['v0'] - CUTTER_REACH,
+                                                    frame['v1'] + CUTTER_REACH,
+                                                    _along_ridge(frame))]) if dormers else None,
+                         ROOF_CUTTER_KEY)
+    if dormer_roofs is not None:
+        _set_boolean(dormer_roofs, VALLEY_CUT, top_volume)
+
+    # The trim: everything above the roof, less the inside of the dormers
+    cutter = _helper(scene, roof, 'cutter_obj', f"Roof Trim - {level.name}",
+                     _mesh("Roof Trim", [(trim_section(frame),
+                                          frame['v0'] - CUTTER_REACH,
+                                          frame['v1'] + CUTTER_REACH,
+                                          _along_ridge(frame))]),
+                     ROOF_CUTTER_KEY)
+    inside = _helper(scene, roof, 'dormer_inside_obj', f"Roof Dormer Insides - {level.name}",
+                     _mesh("Roof Dormer Insides", d_insides) if dormers else None,
+                     ROOF_CUTTER_KEY)
+    _set_boolean(cutter, DORMER_CUT, inside)
+
+    apply_roof_visibility(scene)
+    _update_gable_walls(scene)
+    apply_trims(scene)
+    return True
+
+
+def rebuild_roof_of(roof):
+    rebuild_roof(roof.id_data, level_of_roof(roof))
+
+
+def rebuild_roofs(scene):
+    """Rebuild every roof in the house (after walls changed)."""
+    scene = hb_house.house_scene_of(scene)
+    if scene is None:
+        return
+    for level in scene.hb_house.levels:
+        if level.roof.enabled or level.roof.roof_obj is not None:
+            rebuild_roof(scene, level)

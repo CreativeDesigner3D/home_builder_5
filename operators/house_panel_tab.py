@@ -52,6 +52,7 @@ LEVEL_SPEC = {
         ('bool', 'show_level_below', "Ghost Level Below",
          {'when': lambda house: house.level_display == 'ACTIVE'}),
         ('bool', 'show_ceilings', "Show Ceilings"),
+        ('bool', 'show_roofs', "Show Roofs"),
         ('pick', lambda context: _import_entries(context), "Import Room as Level"),
     ),
 }
@@ -123,6 +124,34 @@ ROOM_SPEC = {
 }
 
 
+ROOF_FIELDS = (
+    ('bool', 'enabled', "Roof on This Level"),
+    ('enum', 'style', "Style", {'when': lambda roof: roof.enabled}),
+    ('enum', 'base', "Sits On", {'when': lambda roof: roof.enabled}),
+    ('distance', 'eave_height', "Eave Height", {'when': lambda roof: roof.enabled}),
+    ('number', 'pitch', "Pitch (in 12)",
+     {'when': lambda roof: roof.enabled and roof.style == 'GABLE'}),
+    ('number', 'lower_pitch', "Lower Pitch (in 12)",
+     {'when': lambda roof: roof.enabled and roof.style == 'GAMBREL'}),
+    ('distance', 'break_height', "Break Height",
+     {'when': lambda roof: roof.enabled and roof.style == 'GAMBREL'}),
+    ('number', 'pitch', "Upper Pitch (in 12)",
+     {'when': lambda roof: roof.enabled and roof.style == 'GAMBREL'}),
+    ('enum', 'ridge', "Ridge", {'when': lambda roof: roof.enabled}),
+    ('distance', 'eave_overhang', "Eave Overhang", {'when': lambda roof: roof.enabled}),
+    ('distance', 'gable_overhang', "Gable Overhang", {'when': lambda roof: roof.enabled}),
+    ('distance', 'thickness', "Thickness", {'when': lambda roof: roof.enabled}),
+    ('native', 'material', "Material", {'when': lambda roof: roof.enabled}),
+    ('bool', 'dormers', "Dormers from Bump-outs", {'when': lambda roof: roof.enabled}),
+    ('number', 'dormer_pitch', "Dormer Pitch (in 12)",
+     {'when': lambda roof: roof.enabled and roof.dormers}),
+    ('distance', 'dormer_wall_height', "Dormer Wall Height",
+     {'when': lambda roof: roof.enabled and roof.dormers}),
+    ('distance', 'dormer_overhang', "Dormer Overhang",
+     {'when': lambda roof: roof.enabled and roof.dormers}),
+)
+
+
 def _import_entries(context):
     """The pick menu for Import Room as Level: each room scene with walls."""
     scenes = hb_house.importable_room_scenes(context.scene)
@@ -175,7 +204,11 @@ def _blocks(context):
 
     # Each pool heads itself ("Levels", "Rooms"), so the tab's own head goes.
     blocks = options_panel.pool_blocks(context, LEVEL_SPEC)
-    if hb_house.active_level(context) is not None:
+    level = hb_house.active_level(context)
+    if level is not None:
+        blocks.append(('gap', None))
+        blocks.append(('head', ("Roof", False, None)))
+        blocks.extend(options_panel.field_blocks(context, ROOF_FIELDS, level.roof))
         blocks.append(('gap', None))
         blocks.extend(options_panel.pool_blocks(context, ROOM_SPEC))
     return blocks
