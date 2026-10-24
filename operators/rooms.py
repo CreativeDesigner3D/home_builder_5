@@ -250,8 +250,12 @@ class home_builder_OT_duplicate_room(bpy.types.Operator):
     
     @classmethod
     def poll(cls, context):
+        # A house scene or a room view shares its objects with the house;
+        # a full copy would duplicate the house's walls and cabinets
+        if context.scene.get('IS_HOUSE_SCENE') or context.scene.get('IS_ROOM_VIEW'):
+            return False
         return not context.scene.get('IS_LAYOUT_VIEW')
-    
+
     def invoke(self, context, event):
         self.new_name = context.scene.name + " Copy"
         return context.window_manager.invoke_props_dialog(self)

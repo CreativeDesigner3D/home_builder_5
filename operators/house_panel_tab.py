@@ -136,6 +136,18 @@ def _blocks(context):
         return blocks
 
     scene = context.scene
+    if hb_house.is_room_view(scene):
+        # A room view: say which room, the way back, and the level's rooms
+        level = hb_house.active_level(context)
+        where = f" on {level.name}" if level is not None else ""
+        blocks.append(('note', f"Room view of {scene.name}{where}."))
+        blocks.append(('actions', (("Go to House", "home_builder.go_to_house",
+                                    None, None),)))
+        if level is not None:
+            blocks.append(('gap', None))
+            blocks.extend(options_panel.pool_blocks(context, ROOM_SPEC))
+        return blocks
+
     if not scene.get(hb_house.HOUSE_SCENE_KEY):
         house_scene = hb_house.get_house_scene()
         if house_scene is None:

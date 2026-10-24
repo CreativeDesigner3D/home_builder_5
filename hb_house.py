@@ -21,6 +21,7 @@ import uuid
 
 import bpy
 import gpu
+from bpy.app.handlers import persistent
 from bpy.props import (
     BoolProperty,
     CollectionProperty,
@@ -42,6 +43,11 @@ from .units import inch
 
 LEVEL_KEY = 'HB_LEVEL'
 HOUSE_SCENE_KEY = 'IS_HOUSE_SCENE'
+# A room view is a scene for working on one room: it links its level's
+# collections from the house scene, so its walls and cabinets ARE the
+# house's (see hb_rooms.open_room_view). Tagged with the level and room.
+ROOM_VIEW_KEY = 'IS_ROOM_VIEW'
+ROOM_KEY = 'HB_ROOM'
 
 # Sub-collections every level owns. The names mirror
 # rooms.organize_room_collections so code that looks for
@@ -72,16 +78,36 @@ def get_house_props():
     return scene.hb_house if scene else None
 
 
+def is_room_view(scene):
+    return scene is not None and bool(scene.get(ROOM_VIEW_KEY))
+
+
+def house_scene_of(scene):
+    """The house scene a scene belongs to: itself, or the house a room
+    view was opened from. None outside a house."""
+    if scene is None:
+        return None
+    if scene.get(HOUSE_SCENE_KEY):
+        return scene
+    if is_room_view(scene):
+        return get_house_scene()
+    return None
+
+
 def active_level(context=None):
-    """The level being drawn on, or None outside a house project or when
-    the current scene is not the house scene."""
+    """The level being drawn on, or None outside a house project. In the
+    house scene that is the active level; in a room view it is the level
+    of the room."""
     ctx = context or bpy.context
     scene = getattr(ctx, 'scene', None)
-    if scene is None or not scene.get(HOUSE_SCENE_KEY):
+    house_scene = house_scene_of(scene)
+    if house_scene is None:
         return None
     if not is_house_project(ctx):
         return None
-    house = scene.hb_house
+    if is_room_view(scene):
+        return get_level(scene.get(LEVEL_KEY, ''))
+    house = house_scene.hb_house
     if not house.levels:
         return None
     index = min(max(house.active_level_index, 0), len(house.levels) - 1)
@@ -150,7 +176,10 @@ def _house_root_collection(scene):
 
 
 def ensure_level_collections(scene, level):
-    """Create the level's collection and its sub-collections if missing."""
+    """Create the level's collection and its sub-collections if missing.
+    A level's collections always hang off the house scene, whatever scene
+    asks."""
+    scene = house_scene_of(scene) or scene
     if level.collection is None:
         col = bpy.data.collections.new(level.name)
         col[LEVEL_KEY] = level.uid
@@ -229,28 +258,112 @@ def assign_wall_to_level(wall_obj, level, scene):
             move_to_collection(child, walls_col)
 
 
-def sort_level_children(scene):
-    """Move objects hanging off level walls (doors, windows, cabinets on a
-    wall...) out of the scene's master collection into their level, so
-    hiding a level hides them too. Tools still create objects in the
-    master collection until they are taught about levels; this keeps the
-    house tidy in the meantime."""
-    house = scene.hb_house
+# Objects a scene keeps for itself: never moved onto a level
+LOCAL_OBJECT_KEY = 'HB_VIEW_LOCAL'
+
+
+def _adoptable(obj):
+    return obj.type != 'CAMERA' and not obj.get(LOCAL_OBJECT_KEY)
+
+
+def active_level_of_scene(scene):
+    """active_level for a scene that may not be the context's."""
+    if is_room_view(scene):
+        return get_level(scene.get(LEVEL_KEY, ''))
+    if scene is not None and scene.get(HOUSE_SCENE_KEY) and scene.hb_house.levels:
+        house = scene.hb_house
+        return house.levels[min(max(house.active_level_index, 0), len(house.levels) - 1)]
+    return None
+
+
+def adopt_loose_objects(scene):
+    """Move objects sitting in the scene's master collection onto their
+    level, so they belong to the house: hiding a level hides them, and a
+    cabinet placed in a room view appears in the house and in every other
+    view of that level.
+
+    Tools create objects in whatever scene is open, in its master
+    collection; this is the one place that sorts them. An object's level
+    is the level of the wall it hangs off (doors, cabinets on a wall),
+    else the scene's own level (a room view's, or the house's active
+    one) for a free-standing object like an island. Walls go to Walls,
+    lights to Lights, the rest to Products. Returns how many moved."""
+    house_scene = house_scene_of(scene)
+    if house_scene is None:
+        return 0
+    default = active_level_of_scene(scene)
+    moved = 0
     for obj in list(scene.collection.objects):
-        if obj.get(LEVEL_KEY) and obj.get('IS_WALL_BP'):
-            level = get_level(obj[LEVEL_KEY])
-            if level is not None:
-                assign_wall_to_level(obj, level, scene)
+        if not _adoptable(obj):
             continue
-        uid = level_of(obj.parent) if obj.parent else ''
-        if not uid:
-            continue
-        level = get_level(uid)
+        level = get_level(level_of(obj)) or default
         if level is None:
             continue
-        ensure_level_collections(scene, level)
-        move_to_collection(obj, level_subcollection(level, 'Products'))
-    return house
+        ensure_level_collections(house_scene, level)
+        if obj.get('IS_WALL_BP'):
+            assign_wall_to_level(obj, level, house_scene)
+        elif (obj.get('obj_x') and obj.parent is not None
+                and obj.parent.get('IS_WALL_BP')):
+            move_to_collection(obj, level_subcollection(level, 'Walls'))
+        elif obj.type == 'LIGHT':
+            move_to_collection(obj, level_subcollection(level, 'Lights'))
+        else:
+            move_to_collection(obj, level_subcollection(level, 'Products'))
+        moved += 1
+    return moved
+
+
+def sort_level_children(scene):
+    """The older name, kept for its callers."""
+    return adopt_loose_objects(scene)
+
+
+# Adoption runs after Blender reports a change, deferred to a timer so it
+# never edits data inside the depsgraph handler, and held back while any
+# tool is running modally - a placement tool still dragging a new cabinet
+# around is left alone until it is placed.
+_adopt_scheduled = False
+
+
+def _modal_running():
+    wm = bpy.context.window_manager
+    if wm is None:
+        return False
+    for window in wm.windows:
+        try:
+            if len(window.modal_operators):
+                return True
+        except AttributeError:
+            return False
+    return False
+
+
+def _adopt_timer():
+    global _adopt_scheduled
+    if _modal_running():
+        return 0.5
+    _adopt_scheduled = False
+    scene = bpy.context.scene
+    try:
+        if house_scene_of(scene) is not None and is_house_project():
+            adopt_loose_objects(scene)
+    except Exception as ex:
+        print('Home Builder: moving objects onto their level failed: %s' % ex)
+    return None
+
+
+@persistent
+def _on_depsgraph_update(scene, depsgraph=None):
+    global _adopt_scheduled
+    if _adopt_scheduled:
+        return
+    current = bpy.context.scene
+    if house_scene_of(current) is None:
+        return
+    if not any(_adoptable(o) for o in current.collection.objects):
+        return
+    _adopt_scheduled = True
+    bpy.app.timers.register(_adopt_timer, first_interval=0.0)
 
 
 def _find_layer_collection(layer_col, col):
@@ -563,6 +676,7 @@ class HB_Room(PropertyGroup):
     floor_obj: PointerProperty(type=bpy.types.Object)  # type: ignore
     ceiling_obj: PointerProperty(type=bpy.types.Object)  # type: ignore
     label_obj: PointerProperty(type=bpy.types.Object)  # type: ignore
+    view_scene: PointerProperty(type=bpy.types.Scene)  # type: ignore
 
     floor_finish: EnumProperty(
         name="Floor Finish", items=FLOOR_FINISH_ITEMS, default='NONE',
@@ -894,10 +1008,16 @@ def register():
     HB_House_Props.register()
     _ghost_handle = bpy.types.SpaceView3D.draw_handler_add(
         _draw_level_ghost, (), 'WINDOW', 'POST_VIEW')
+    if _on_depsgraph_update not in bpy.app.handlers.depsgraph_update_post:
+        bpy.app.handlers.depsgraph_update_post.append(_on_depsgraph_update)
 
 
 def unregister():
     global _ghost_handle
+    if _on_depsgraph_update in bpy.app.handlers.depsgraph_update_post:
+        bpy.app.handlers.depsgraph_update_post.remove(_on_depsgraph_update)
+    if bpy.app.timers.is_registered(_adopt_timer):
+        bpy.app.timers.unregister(_adopt_timer)
     if _ghost_handle is not None:
         bpy.types.SpaceView3D.draw_handler_remove(_ghost_handle, 'WINDOW')
         _ghost_handle = None

@@ -193,6 +193,8 @@ def update_room_label(room):
     scene = room.id_data
     level = level_of_room(room)
     marker.name = f"Room - {room.name}"
+    if room.view_scene is not None and room.view_scene.name != room.name:
+        room.view_scene.name = room.name
     lines = [room.name.upper()]
     lines.append("(not enclosed)" if room.orphaned else area_text(scene, room.area))
     label = room.label_obj
@@ -295,8 +297,10 @@ def _forget_room(level, index):
 
 def rebuild_level(scene, level):
     """Find the rooms on a level and remake their floors, ceilings and
-    labels. Returns the number of enclosed rooms."""
-    if scene is None or level is None or not scene.get(hb_house.HOUSE_SCENE_KEY):
+    labels. Returns the number of enclosed rooms. `scene` may be a room
+    view; the house scene is what gets rebuilt."""
+    scene = hb_house.house_scene_of(scene)
+    if scene is None or level is None:
         return 0
     from .operators import walls
     hb_house.ensure_level_collections(scene, level)
@@ -362,14 +366,114 @@ def rebuild_room(room):
 
 
 def rebuild_after_walls(scene, level_uid=None):
-    """Called after walls are edited. Only a house scene has rooms."""
-    if scene is None or not scene.get(hb_house.HOUSE_SCENE_KEY):
+    """Called after walls are edited. Only a house (or a room view of one)
+    has rooms."""
+    scene = hb_house.house_scene_of(scene)
+    if scene is None:
         return
     if not hb_house.is_house_project():
         return
     for level in scene.hb_house.levels:
         if level_uid is None or level.uid == level_uid:
             rebuild_level(scene, level)
+
+
+# =============================================================================
+# ROOM VIEWS
+# =============================================================================
+# A room view is a scene for working on one room with the usual tools. It
+# links its level's collections (walls, products, rooms, lights) straight
+# from the house scene - real links, not instances - so the walls and
+# cabinets in it ARE the house's: anything placed here shows in the house
+# and in every other view of the level, and every tool that looks at
+# scene.objects finds real walls. Objects tools create here land in the
+# view's master collection and hb_house.adopt_loose_objects moves them
+# onto the level.
+
+def _copy_view_settings(src, dst, room, level):
+    dst.unit_settings.system = src.unit_settings.system
+    dst.unit_settings.scale_length = src.unit_settings.scale_length
+    dst.unit_settings.length_unit = src.unit_settings.length_unit
+    dst.world = src.world
+    dst.home_builder.product_tab = src.home_builder.product_tab
+    dst.home_builder.ceiling_height = room_height(room, level)
+    try:
+        dst.hb_face_frame.top_drawer_opening_height = (
+            src.hb_face_frame.top_drawer_opening_height)
+    except Exception:
+        pass
+    if not src.home_builder.show_appliance_models:
+        dst.home_builder['show_appliance_models'] = False
+
+
+def _copy_tool_settings(src, dst):
+    a, b = src.tool_settings, dst.tool_settings
+    for prop in ('use_snap', 'snap_target', 'use_snap_grid_absolute',
+                 'use_snap_align_rotation', 'use_snap_backface_culling'):
+        try:
+            setattr(b, prop, getattr(a, prop))
+        except Exception:
+            pass
+    try:
+        b.snap_elements = set(a.snap_elements)
+    except Exception:
+        pass
+
+
+def _frame_room(context, room, level):
+    """Look straight down on the room, zoomed to fit it."""
+    from . import hb_utils
+    obj = room.floor_obj or room.marker
+    if obj is None:
+        return
+    pts = [obj.matrix_world @ Vector(c) for c in obj.bound_box]
+    xs = [p.x for p in pts]
+    ys = [p.y for p in pts]
+    size = max(max(xs) - min(xs), max(ys) - min(ys), 1.0)
+    hb_utils.set_plan_view()
+    for area in context.screen.areas:
+        if area.type != 'VIEW_3D':
+            continue
+        r3d = area.spaces.active.region_3d
+        r3d.view_location = Vector(((min(xs) + max(xs)) / 2.0,
+                                    (min(ys) + max(ys)) / 2.0,
+                                    level.elevation))
+        r3d.view_distance = size * 1.4
+
+
+def open_room_view(context, room):
+    """Switch to the room's view scene, making it the first time."""
+    from . import hb_utils
+    house_scene = room.id_data
+    level = level_of_room(room)
+    view = room.view_scene
+    if view is not None and view.name in bpy.data.scenes:
+        bpy.ops.home_builder_layouts.go_to_layout_view(scene_name=view.name)
+        return view
+
+    view = bpy.data.scenes.new(room.name)
+    view['IS_ROOM_SCENE'] = True
+    view[hb_house.ROOM_VIEW_KEY] = True
+    view[hb_house.LEVEL_KEY] = level.uid
+    view[hb_house.ROOM_KEY] = room.uid
+    hb_house.ensure_level_collections(house_scene, level)
+    for kind in hb_house.LEVEL_SUBCOLLECTIONS:
+        sub = hb_house.level_subcollection(level, kind)
+        if sub is not None and sub.name not in view.collection.children:
+            view.collection.children.link(sub)
+    _copy_view_settings(house_scene, view, room, level)
+    room.view_scene = view
+
+    if context.window is None:
+        return view             # no window to switch (background mode)
+    current = context.scene
+    if hb_utils.is_room_scene(current):
+        hb_utils.save_view_state(current)
+    context.window.scene = view
+    _copy_tool_settings(house_scene, view)
+    _frame_room(context, room, level)
+    hb_utils.save_view_state(view)
+    return view
 
 
 # =============================================================================
@@ -417,9 +521,49 @@ class HOME_BUILDER_OT_select_room(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class HOME_BUILDER_OT_open_room_view(bpy.types.Operator):
+    bl_idname = "home_builder.open_room_view"
+    bl_label = "Open Room View"
+    bl_description = ("Work on the active room in a view of its own, with the "
+                      "usual cabinet and layout tools. Its walls and cabinets "
+                      "are the house's: changes show in the house")
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        level = hb_house.active_level(context)
+        if level is None or not 0 <= level.active_room_index < len(level.rooms):
+            return False
+        return not level.rooms[level.active_room_index].orphaned
+
+    def execute(self, context):
+        level = hb_house.active_level(context)
+        room = level.rooms[level.active_room_index]
+        open_room_view(context, room)
+        return {'FINISHED'}
+
+
+class HOME_BUILDER_OT_go_to_house(bpy.types.Operator):
+    bl_idname = "home_builder.go_to_house"
+    bl_label = "Go to House"
+    bl_description = "Back to the house scene"
+
+    @classmethod
+    def poll(cls, context):
+        return (hb_house.is_room_view(context.scene)
+                and hb_house.get_house_scene() is not None)
+
+    def execute(self, context):
+        bpy.ops.home_builder_layouts.go_to_layout_view(
+            scene_name=hb_house.get_house_scene().name)
+        return {'FINISHED'}
+
+
 classes = (
     HOME_BUILDER_OT_rebuild_rooms,
     HOME_BUILDER_OT_select_room,
+    HOME_BUILDER_OT_open_room_view,
+    HOME_BUILDER_OT_go_to_house,
 )
 
 
