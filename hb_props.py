@@ -578,12 +578,15 @@ class Home_Builder_Scene_Props(PropertyGroup):
                           items=[('Exterior',"Exterior","Exterior Wall"),
                                  ('Interior',"Interior","Interior Wall"),
                                  ('Half',"Half","Half Wall"),
-                                 ('Fake',"Fake","Fake Wall")],
+                                 ('Fake',"Fake","Fake Wall"),
+                                 ('Railing',"Railing","Balcony or landing railing. Unlike a half wall it closes a room, so a deck becomes a room")],
                           default='Exterior')# type: ignore  
 
     ceiling_height: FloatProperty(name="Ceiling Height", default=inch(96),subtype='DISTANCE',precision=5,update=update_ceiling_height)
     half_wall_height: FloatProperty(name="Half Wall Height", default=inch(42),subtype='DISTANCE',precision=5)
     fake_wall_height: FloatProperty(name="Fake Wall Height", default=inch(34),subtype='DISTANCE',precision=5)
+    railing_height: FloatProperty(name="Railing Height", default=inch(42),subtype='DISTANCE',precision=5)# type: ignore
+    railing_thickness: FloatProperty(name="Railing Thickness", default=inch(2),subtype='DISTANCE',precision=5)# type: ignore
     wall_thickness: FloatProperty(name="Wall Thickness", default=inch(4.5),subtype='DISTANCE',precision=5)
     exterior_wall_thickness: FloatProperty(name="Exterior Wall Thickness", default=inch(6),subtype='DISTANCE',precision=5)# type: ignore
     interior_wall_thickness: FloatProperty(name="Interior Wall Thickness", default=inch(4.5),subtype='DISTANCE',precision=5)# type: ignore

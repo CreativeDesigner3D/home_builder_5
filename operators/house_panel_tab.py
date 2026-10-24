@@ -72,8 +72,12 @@ def _room_height_note(context, room):
 
 
 def _styled(room):
-    """A wood, tile or solid floor: the Floor tool's procedural finishes."""
-    return room.has_floor and room.floor_finish in ('WOOD', 'TILE', 'SOLID')
+    """A wood, tile, solid or deck floor: the procedural finishes."""
+    return room.has_floor and room.floor_finish in ('WOOD', 'TILE', 'SOLID', 'DECK')
+
+
+def _planked(room):
+    return _styled(room) and room.floor_finish in ('WOOD', 'DECK')
 
 
 def _room_row(room):
@@ -90,6 +94,7 @@ ROOM_SPEC = {
     'row_text': _room_row,
     'fields': (
         ('value', _room_area, "Area"),
+        ('bool', 'outdoor', "Outdoor"),
         ('distance', 'ceiling_height', "Ceiling Height"),
         ('notes', _room_height_note, "", {'owner': True}),
         ('bool', 'has_floor', "Floor"),
@@ -97,12 +102,10 @@ ROOM_SPEC = {
          {'when': lambda room: room.has_floor}),
         ('enum', 'floor_look', "Look", {'when': _styled}),
         ('native', 'floor_color', "Color", {'when': _styled}),
-        ('native', 'floor_accent', "Variation",
-         {'when': lambda room: _styled(room) and room.floor_finish == 'WOOD'}),
+        ('native', 'floor_accent', "Variation", {'when': _planked}),
         ('native', 'floor_accent', "Grout",
          {'when': lambda room: _styled(room) and room.floor_finish == 'TILE'}),
-        ('distance', 'floor_size', "Plank Width",
-         {'when': lambda room: _styled(room) and room.floor_finish == 'WOOD'}),
+        ('distance', 'floor_size', "Plank Width", {'when': _planked}),
         ('distance', 'floor_size', "Tile Size",
          {'when': lambda room: _styled(room) and room.floor_finish == 'TILE'}),
         ('bool', 'floor_running_bond', "Running Bond",

@@ -236,6 +236,7 @@ def room_floor_material(room, rebuild=False):
         return room.floor_material
     if finish == 'NONE':
         return None
+    builder = 'WOOD' if finish == 'DECK' else finish    # deck boards are planks
     mat = next((m for m in bpy.data.materials
                 if m.get('HB_ROOM_FLOOR') == room.uid), None)
     if mat is not None and not rebuild:
@@ -245,8 +246,8 @@ def room_floor_material(room, rebuild=False):
         mat['HB_ROOM_FLOOR'] = room.uid
     from .operators import ops_room_dressing as dressing
     dressing.build_floor_material(
-        finish, tuple(room.floor_color),
-        tuple(room.floor_accent) if finish != 'SOLID' else None,
+        builder, tuple(room.floor_color),
+        tuple(room.floor_accent) if builder != 'SOLID' else None,
         room.floor_size, room.floor_roughness, room.floor_running_bond,
         mat=mat)
     return mat
@@ -281,12 +282,27 @@ def apply_room_materials(room, rebuild_floor=False):
 # REBUILD
 # =============================================================================
 
-def _next_room_name(level):
+def _next_room_name(level, base="Room"):
     used = {room.name for room in level.rooms}
     n = 1
-    while f"Room {n}" in used:
+    while f"{base} {n}" in used:
         n += 1
-    return f"Room {n}"
+    return f"{base} {n}"
+
+
+def _make_outdoor(room):
+    """A new room a railing runs round: a balcony. No ceiling, deck boards,
+    set without the update callbacks - the rebuild that follows builds it."""
+    from .operators import ops_room_dressing as dressing
+    room['outdoor'] = True
+    room['has_ceiling'] = False
+    room['floor_finish'] = hb_house._FLOOR_FINISH_INDEX['DECK']
+    room['floor_size'] = dressing.DEFAULT_SIZE['DECK']
+    room['floor_roughness'] = dressing.DEFAULT_ROUGHNESS['DECK']
+    keys = [item[0] for item in hb_house._floor_look_items_cb(room, bpy.context)]
+    room['floor_look'] = keys.index(dressing.DEFAULT_LOOK['DECK'])
+    hb_house._apply_floor_look(room)
+    room_floor_material(room, rebuild=True)
 
 
 def _forget_room(level, index):
@@ -337,7 +353,10 @@ def rebuild_level(scene, level):
             continue
         room = level.rooms.add()
         room.uid = _new_uid()
-        room['name'] = _next_room_name(level)
+        balcony = 'Railing' in area.wall_types
+        room['name'] = _next_room_name(level, "Balcony" if balcony else "Room")
+        if balcony:
+            _make_outdoor(room)
         room.marker = _new_marker(scene, level, room,
                                   hb_wall_graph.interior_point(area.polygon))
         claimed[k] = len(level.rooms) - 1

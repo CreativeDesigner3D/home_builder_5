@@ -517,6 +517,13 @@ def draw_wall_settings(layout, context, include_type=True):
         row = col.row()
         row.prop(hb_scene, 'fake_wall_height', text="Wall Height")
         row.operator('home_builder_walls.update_wall_height', text="", icon='FILE_REFRESH', emboss=False)
+    elif hb_scene.wall_type == 'Railing':
+        row = col.row()
+        row.prop(hb_scene, 'railing_height', text="Railing Height")
+        row.operator('home_builder_walls.update_wall_height', text="", icon='FILE_REFRESH', emboss=False)
+        row = col.row()
+        row.prop(hb_scene, 'railing_thickness', text="Railing Thickness")
+        row.operator('home_builder_walls.update_wall_thickness', text="", icon='FILE_REFRESH', emboss=False)
     
     row = col.row()
     row.prop(hb_scene, 'wall_material', text="Wall Material")

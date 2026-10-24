@@ -586,6 +586,8 @@ def new_wall_height(level, wall_type, scene_props):
         return level.ceiling_height
     if wall_type == 'Half':
         return scene_props.half_wall_height
+    if wall_type == 'Railing':
+        return scene_props.railing_height
     return scene_props.fake_wall_height
 
 
@@ -743,6 +745,7 @@ FLOOR_FINISH_ITEMS = [
     ('TILE', "Tile", "Grid or running-bond tile with grout"),
     ('SOLID', "Solid Color", "Flat colored floor (concrete, carpet, paint)"),
     ('CUSTOM', "Custom Material", "Any Blender material"),
+    ('DECK', "Deck", "Outdoor deck boards"),
 ]
 _FLOOR_FINISH_INDEX = {item[0]: i for i, item in enumerate(FLOOR_FINISH_ITEMS)}
 _floor_look_items = {}      # finish -> items; Blender needs the strings kept
@@ -792,6 +795,15 @@ def _room_floor_look_changed(self, context):
 def _room_floor_style_changed(self, context):
     from . import hb_rooms
     hb_rooms.apply_room_materials(self, rebuild_floor=True)
+
+
+def _room_outdoor_changed(self, context):
+    """An outdoor room has no ceiling and, unless it has a finish already,
+    a deck floor; back indoors it gets its ceiling again."""
+    self['has_ceiling'] = not self.outdoor
+    if self.outdoor and self.floor_finish == 'NONE':
+        self.floor_finish = 'DECK'          # builds the deck material
+    _room_shape_changed(self, context)      # ceiling off (or back on)
 
 
 def _room_shape_changed(self, context):
@@ -868,6 +880,11 @@ class HB_Room(PropertyGroup):
 
     has_ceiling: BoolProperty(name="Ceiling", default=True,
                               update=_room_shape_changed)  # type: ignore
+
+    outdoor: BoolProperty(
+        name="Outdoor",
+        description="A balcony or deck: no ceiling, deck boards for a floor",
+        default=False, update=_room_outdoor_changed)  # type: ignore
 
     # Worked out by hb_rooms on each rebuild
     area: FloatProperty(name="Area", default=0.0)  # type: ignore

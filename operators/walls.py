@@ -1970,6 +1970,8 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
             height = props.ceiling_height
         elif wall_type == 'Half':
             height = props.half_wall_height
+        elif wall_type == 'Railing':
+            height = props.railing_height
         else:  # Fake
             height = props.fake_wall_height
 
@@ -1978,6 +1980,8 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
             thickness = props.exterior_wall_thickness
         elif wall_type in {'Interior', 'Half'}:
             thickness = props.interior_wall_thickness
+        elif wall_type == 'Railing':
+            thickness = props.railing_thickness
         else:  # Fake — thin decorative panel
             thickness = units.inch(0.75)
 
@@ -1996,6 +2000,8 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
             self.current_wall.obj['IS_HALF_WALL'] = True
         elif wall_type == 'Fake':
             self.current_wall.obj['IS_FAKE_WALL'] = True
+        elif wall_type == 'Railing':
+            self.current_wall.obj['IS_RAILING'] = True
 
         if level is not None:
             hb_house.assign_wall_to_level(self.current_wall.obj, level, context.scene)
@@ -5028,6 +5034,8 @@ class home_builder_walls_OT_update_wall_height(bpy.types.Operator):
                 wall.set_input('Height', props.ceiling_height)
             elif wall_type == 'Half':
                 wall.set_input('Height', props.half_wall_height)
+            elif wall_type == 'Railing':
+                wall.set_input('Height', props.railing_height)
             elif wall_type == 'Fake':
                 wall.set_input('Height', props.fake_wall_height)
             # set_input writes the modifier input value directly, which
@@ -5070,6 +5078,8 @@ class home_builder_walls_OT_update_wall_thickness(bpy.types.Operator):
                 wall.set_input('Thickness', props.exterior_wall_thickness)
             elif wall_type in {'Interior', 'Half'}:
                 wall.set_input('Thickness', props.interior_wall_thickness)
+            elif wall_type == 'Railing':
+                wall.set_input('Thickness', props.railing_thickness)
             elif wall_type == 'Fake':
                 wall.set_input('Thickness', units.inch(0.75))
             # See update_wall_height: direct modifier writes need an

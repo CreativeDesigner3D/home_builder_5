@@ -394,7 +394,8 @@ def to_inputs(seg, which, cut, has_extension=True):
 # polygon: the room's inside (its area, its ceiling). floor: the same room
 # carried to the middle of its walls, so the floors of two rooms meet
 # under the wall between them and an opening in it has floor beneath.
-RoomArea = namedtuple('RoomArea', 'level polygon area floor')
+# wall_types: the kinds of wall around the room ('Railing' marks a deck).
+RoomArea = namedtuple('RoomArea', 'level polygon area floor wall_types')
 
 ROOM_MIN_AREA = 0.05            # m2; smaller faces are slivers between walls
 NOT_ROOM_WALLS = ('Half', 'Fake')
@@ -480,8 +481,8 @@ def find_rooms(segs, tol=JOIN_TOL):
         by_level.setdefault(s.level, []).append(s)
     rooms = []
     for level, level_segs in by_level.items():
-        for poly, floor in _level_room_polygons(level_segs, tol):
-            rooms.append(RoomArea(level, poly, polygon_area(poly), floor))
+        for poly, floor, types in _level_room_polygons(level_segs, tol):
+            rooms.append(RoomArea(level, poly, polygon_area(poly), floor, types))
     return rooms
 
 
@@ -590,7 +591,9 @@ def _level_room_polygons(segs, tol):
         inside = _inside_polygon(face, edges, verts)
         if inside and polygon_area(inside) > ROOM_MIN_AREA:
             floor = _inside_polygon(face, edges, verts, mid_wall=True)
-            polys.append((inside, floor or inside))
+            types = frozenset(edges[i][2].wall_type for i, _a, _b in face
+                              if edges[i][2] is not None)
+            polys.append((inside, floor or inside, types))
     return polys
 
 

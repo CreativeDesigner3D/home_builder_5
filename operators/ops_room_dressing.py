@@ -61,10 +61,22 @@ SOLID_LOOKS = {
     'BLACK':      ("Black",       (0.08, 0.08, 0.08), None),
     'CUSTOM':     ("Custom", None, None),
 }
-LOOKS = {'WOOD': WOOD_LOOKS, 'TILE': TILE_LOOKS, 'SOLID': SOLID_LOOKS}
-DEFAULT_LOOK = {'WOOD': 'NATURAL', 'TILE': 'LIGHT_GRAY', 'SOLID': 'CONCRETE'}
-DEFAULT_SIZE = {'WOOD': 0.127, 'TILE': 0.3048, 'SOLID': 0.3048}   # 5" plank, 12" tile
-DEFAULT_ROUGHNESS = {'WOOD': 0.45, 'TILE': 0.2, 'SOLID': 0.7}
+# Deck boards for outdoor rooms (house balconies): built as wood planks,
+# in outdoor timbers. Not offered by the Floor tool itself.
+DECK_LOOKS = {
+    'CEDAR':      ("Cedar",          (0.62, 0.42, 0.27), (0.48, 0.31, 0.19)),
+    'WEATHERED':  ("Weathered Gray", (0.56, 0.54, 0.50), (0.43, 0.41, 0.38)),
+    'IPE':        ("Ipe",            (0.38, 0.23, 0.14), (0.27, 0.16, 0.10)),
+    'COMPOSITE':  ("Composite Brown",(0.40, 0.31, 0.24), (0.33, 0.25, 0.19)),
+    'CUSTOM':     ("Custom", None, None),
+}
+LOOKS = {'WOOD': WOOD_LOOKS, 'TILE': TILE_LOOKS, 'SOLID': SOLID_LOOKS,
+         'DECK': DECK_LOOKS}
+DEFAULT_LOOK = {'WOOD': 'NATURAL', 'TILE': 'LIGHT_GRAY', 'SOLID': 'CONCRETE',
+                'DECK': 'CEDAR'}
+DEFAULT_SIZE = {'WOOD': 0.127, 'TILE': 0.3048, 'SOLID': 0.3048,   # 5" plank, 12" tile
+                'DECK': 0.1397}                                    # 5.5" deck board
+DEFAULT_ROUGHNESS = {'WOOD': 0.45, 'TILE': 0.2, 'SOLID': 0.7, 'DECK': 0.65}
 
 
 def _floor_objects(scene):
