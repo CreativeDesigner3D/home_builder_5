@@ -12,6 +12,7 @@ from .. import hb_types, hb_snap, hb_placement, hb_utils, units
 from .. import cutters
 from .. import hb_house
 from .. import hb_wall_graph
+from .. import hb_rooms
 
 # Wall Junctions
 # Every corner, T and multi-way junction is worked out by hb_wall_graph
@@ -88,8 +89,6 @@ def refresh_wall_junctions(scene=None, level=None):
         return set()
     _update_scene(scene)
     objs, segs = level_wall_segs(scene, level)
-    if not segs:
-        return set()
     graph = hb_wall_graph.build_graph(segs)
     cuts = hb_wall_graph.solve(graph)
     for seg in segs:
@@ -105,6 +104,11 @@ def refresh_wall_junctions(scene=None, level=None):
         # Direct modifier writes need an explicit depsgraph tag to show up
         # without a view move - see update_wall_height.
         obj.update_tag()
+    # In a house, the rooms these walls enclose follow them
+    try:
+        hb_rooms.rebuild_after_walls(scene, level)
+    except Exception as ex:
+        print('Home Builder: rebuilding rooms failed: %s' % ex)
     return set(objs)
 
 

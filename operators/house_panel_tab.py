@@ -1,11 +1,14 @@
-"""HOUSE tab for the viewport panel -- house projects and their levels.
+"""HOUSE tab for the viewport panel -- house projects, levels and rooms.
 
 Drawn with the Options tab's widgets (options_panel.build_page): before
 a house project is started the tab offers to start one; in the house
 scene it is the level list as a pool -- pick a level to draw on it, a
 second click renames it, NEW adds a level on top and the delete chip
 removes the active one -- with the active level's heights below it and
-the level display settings under those. See hb_house for the data.
+the level display settings under those. Then the active level's rooms,
+another pool: pick a room to see its area, ceiling height and finishes;
+a second click renames it. Rooms are found from the walls, so the list
+has no NEW or delete. See hb_house and hb_rooms for the data.
 """
 
 import sys
@@ -13,6 +16,7 @@ import sys
 import bpy
 
 from .. import hb_house
+from .. import hb_rooms
 
 TAB_KEY = 'HOUSE'
 TAB_LABEL = "HOUSE"
@@ -46,7 +50,71 @@ LEVEL_SPEC = {
         ('enum', 'level_display', "Show"),
         ('bool', 'show_level_below', "Ghost Level Below",
          {'when': lambda house: house.level_display == 'ACTIVE'}),
+        ('bool', 'show_ceilings', "Show Ceilings"),
     ),
+}
+
+
+def _room_area(room):
+    if room.orphaned:
+        return "Not enclosed"
+    return hb_rooms.area_text(room.id_data, room.area)
+
+
+def _room_height_note(context, room):
+    if room.ceiling_height > 0:
+        return ()
+    level = hb_rooms.level_of_room(room)
+    from .. import units
+    height = units.unit_to_string(room.id_data.unit_settings, level.ceiling_height)
+    return (f"0 follows the level ({height})",)
+
+
+def _styled(room):
+    """A wood, tile or solid floor: the Floor tool's procedural finishes."""
+    return room.has_floor and room.floor_finish in ('WOOD', 'TILE', 'SOLID')
+
+
+def _room_row(room):
+    return room.name + ("  (not enclosed)" if room.orphaned else "")
+
+
+ROOM_SPEC = {
+    'kind': 'pool',
+    'title': "Rooms",
+    'list_label': "Rooms",
+    'props': hb_house.active_level,
+    'collection': 'rooms',
+    'index': 'active_room_index',
+    'row_text': _room_row,
+    'fields': (
+        ('value', _room_area, "Area"),
+        ('distance', 'ceiling_height', "Ceiling Height"),
+        ('notes', _room_height_note, "", {'owner': True}),
+        ('bool', 'has_floor', "Floor"),
+        ('enum', 'floor_finish', "Floor Finish",
+         {'when': lambda room: room.has_floor}),
+        ('enum', 'floor_look', "Look", {'when': _styled}),
+        ('native', 'floor_color', "Color", {'when': _styled}),
+        ('native', 'floor_accent', "Variation",
+         {'when': lambda room: _styled(room) and room.floor_finish == 'WOOD'}),
+        ('native', 'floor_accent', "Grout",
+         {'when': lambda room: _styled(room) and room.floor_finish == 'TILE'}),
+        ('distance', 'floor_size', "Plank Width",
+         {'when': lambda room: _styled(room) and room.floor_finish == 'WOOD'}),
+        ('distance', 'floor_size', "Tile Size",
+         {'when': lambda room: _styled(room) and room.floor_finish == 'TILE'}),
+        ('bool', 'floor_running_bond', "Running Bond",
+         {'when': lambda room: _styled(room) and room.floor_finish == 'TILE'}),
+        ('number', 'floor_roughness', "Roughness", {'when': _styled}),
+        ('native', 'floor_material', "Material",
+         {'when': lambda room: room.has_floor and room.floor_finish == 'CUSTOM'}),
+        ('bool', 'has_ceiling', "Ceiling"),
+        ('native', 'ceiling_material', "Ceiling Material",
+         {'when': lambda room: room.has_ceiling}),
+    ),
+    'actions': ((("Rebuild Rooms", "home_builder.rebuild_rooms"),
+                 ("Select Marker", "home_builder.select_room")),),
 }
 
 
@@ -79,8 +147,12 @@ def _blocks(context):
              {'scene_name': house_scene.name}, None),)))
         return blocks
 
-    # The pool heads itself ("Levels"), so the tab's own head goes.
-    return options_panel.pool_blocks(context, LEVEL_SPEC)
+    # Each pool heads itself ("Levels", "Rooms"), so the tab's own head goes.
+    blocks = options_panel.pool_blocks(context, LEVEL_SPEC)
+    if hb_house.active_level(context) is not None:
+        blocks.append(('gap', None))
+        blocks.extend(options_panel.pool_blocks(context, ROOM_SPEC))
+    return blocks
 
 
 def _scroll_list():

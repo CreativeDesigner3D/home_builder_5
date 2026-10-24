@@ -72,9 +72,11 @@ def _floor_objects(scene):
 
 
 def build_floor_material(style, base_srgb, accent_srgb, size, roughness,
-                         running_bond=False):
-    """Create or rebuild the shared floor material and return it."""
-    mat = bpy.data.materials.get(MATERIAL_NAME)
+                         running_bond=False, mat=None):
+    """Create or rebuild the shared floor material and return it. Pass
+    `mat` to build into that material instead (a house room's own)."""
+    if mat is None:
+        mat = bpy.data.materials.get(MATERIAL_NAME)
     if mat is None:
         mat = bpy.data.materials.new(MATERIAL_NAME)
     base = sm.srgb_to_linear(base_srgb)

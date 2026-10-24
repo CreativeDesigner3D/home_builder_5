@@ -87,12 +87,13 @@ Host = namedtuple('Host', 'seg_id t side')   # side: 'REF' or 'FAR'
 
 
 class Node:
-    __slots__ = ('point', 'ends', 'host', 'kind')
+    __slots__ = ('point', 'ends', 'host', 'corner', 'kind')
 
     def __init__(self, point, ends):
         self.point = point
         self.ends = ends          # [(seg_id, START|END), ...]
         self.host = None          # Host for a T node
+        self.corner = None        # Node whose corner a lone end sits in
         self.kind = FREE
 
 
@@ -154,7 +155,45 @@ def _level_nodes(segs, tol):
                                    point, segs, tol)
         node.kind = _kind(node, by_id)
         nodes.append(node)
+
+    # A lone end that lands in the corner of another junction - on its
+    # outside corner, or inside the square where two walls overlap - is
+    # joined to that junction, though it touches no wall's span. Its cut
+    # stays square; this only joins it up for finding rooms.
+    node_of = {end: node for node in nodes for end in node.ends}
+    for node in nodes:
+        if node.kind == FREE:
+            seg_id, which = node.ends[0]
+            node.corner = _find_corner(by_id[seg_id], node.point, segs,
+                                       node_of, tol)
     return nodes
+
+
+def _find_corner(seg, point, segs, node_of, tol):
+    best, best_d = None, None
+    for host in segs:
+        if host.id == seg.id:
+            continue
+        rel = _sub(point, host.start)
+        w = _dot(rel, host.normal)
+        if not (-tol <= w <= host.thickness + tol):
+            continue
+        t = _dot(rel, host.dir)
+        if t <= tol:
+            which = START
+        elif t >= host.length - tol:
+            which = END
+        else:
+            continue            # partway along: that would be a T
+        other = node_of.get((host.id, which))
+        if other is None or len(other.ends) < 2:
+            continue            # a junction's corner, not a free end's
+        d = _len(_sub(point, other.point))
+        if d > 1.5 * (host.thickness + seg.thickness):
+            continue
+        if best_d is None or d < best_d:
+            best, best_d = other, d
+    return best
 
 
 def _find_host(seg, which, point, segs, tol):
@@ -342,3 +381,264 @@ def to_inputs(seg, which, cut, has_extension=True):
     angle = math.atan2(b - a, t) if t else 0.0
     ext = -a if which == START else a
     return ext, angle
+
+
+# ---- Rooms ---------------------------------------------------------------------
+# A room is a closed area of walls on one level. The walls' reference lines
+# are joined into a planar graph - a wall that tees into another is carried
+# on to that wall's reference line, and the host is split there - and every
+# bounded face of that graph is a room. Its outline is then moved off the
+# reference lines onto the wall face that looks into the room, so a room's
+# polygon is its inside: what the floor, ceiling and area are made from.
+
+# polygon: the room's inside (its area, its ceiling). floor: the same room
+# carried to the middle of its walls, so the floors of two rooms meet
+# under the wall between them and an opening in it has floor beneath.
+RoomArea = namedtuple('RoomArea', 'level polygon area floor')
+
+ROOM_MIN_AREA = 0.05            # m2; smaller faces are slivers between walls
+NOT_ROOM_WALLS = ('Half', 'Fake')
+
+
+def polygon_area(poly):
+    """Signed area; positive when the points run counter-clockwise."""
+    a = 0.0
+    n = len(poly)
+    for i in range(n):
+        x1, y1 = poly[i]
+        x2, y2 = poly[(i + 1) % n]
+        a += x1 * y2 - x2 * y1
+    return a / 2.0
+
+
+def point_in_polygon(pt, poly):
+    x, y = pt
+    inside = False
+    n = len(poly)
+    j = n - 1
+    for i in range(n):
+        xi, yi = poly[i]
+        xj, yj = poly[j]
+        if (yi > y) != (yj > y) and x < (xj - xi) * (y - yi) / (yj - yi) + xi:
+            inside = not inside
+        j = i
+    return inside
+
+
+def _dist_to_edges(pt, poly):
+    best = None
+    n = len(poly)
+    for i in range(n):
+        a, b = poly[i], poly[(i + 1) % n]
+        ab = _sub(b, a)
+        L2 = _dot(ab, ab)
+        t = 0.0 if L2 < 1e-18 else max(0.0, min(1.0, _dot(_sub(pt, a), ab) / L2))
+        d = _len(_sub(pt, _add(a, _mul(ab, t))))
+        best = d if best is None else min(best, d)
+    return best or 0.0
+
+
+def interior_point(poly):
+    """A point well inside the polygon: its centroid when that is inside,
+    otherwise the sampled point farthest from every edge (an L-shaped
+    room's centroid can fall outside it)."""
+    area = polygon_area(poly)
+    if abs(area) > 1e-12:
+        cx = cy = 0.0
+        n = len(poly)
+        for i in range(n):
+            x1, y1 = poly[i]
+            x2, y2 = poly[(i + 1) % n]
+            f = x1 * y2 - x2 * y1
+            cx += (x1 + x2) * f
+            cy += (y1 + y2) * f
+        c = (cx / (6.0 * area), cy / (6.0 * area))
+        if point_in_polygon(c, poly) and _dist_to_edges(c, poly) > 0.15:
+            return c
+    xs = [p[0] for p in poly]
+    ys = [p[1] for p in poly]
+    best, best_d = None, -1.0
+    steps = 24
+    for i in range(1, steps):
+        for j in range(1, steps):
+            p = (min(xs) + (max(xs) - min(xs)) * i / steps,
+                 min(ys) + (max(ys) - min(ys)) * j / steps)
+            if not point_in_polygon(p, poly):
+                continue
+            d = _dist_to_edges(p, poly)
+            if d > best_d:
+                best, best_d = p, d
+    return best if best is not None else poly[0]
+
+
+def find_rooms(segs, tol=JOIN_TOL):
+    """Every room on every level: [RoomArea]. Half and fake walls don't
+    divide rooms."""
+    walls = [s for s in segs if s.length > 1e-9 and s.wall_type not in NOT_ROOM_WALLS]
+    by_level = {}
+    for s in walls:
+        by_level.setdefault(s.level, []).append(s)
+    rooms = []
+    for level, level_segs in by_level.items():
+        for poly, floor in _level_room_polygons(level_segs, tol):
+            rooms.append(RoomArea(level, poly, polygon_area(poly), floor))
+    return rooms
+
+
+def _level_room_polygons(segs, tol):
+    graph = build_graph(segs, tol)
+    by_id = graph.segs
+
+    # Vertices, merged within tol
+    verts = []
+
+    def vid(p):
+        for i, q in enumerate(verts):
+            if _len(_sub(p, q)) < tol:
+                return i
+        verts.append(p)
+        return len(verts) - 1
+
+    # Stations along each wall's reference line: its two ends, carried on
+    # to the host's reference line at a T, plus every T landing on it.
+    stations = {s.id: [] for s in by_id.values()}
+    node_vid = {}
+    for s in by_id.values():
+        for which in (START, END):
+            node = graph.node_of.get((s.id, which))
+            if node is None:
+                continue
+            p = node.point
+            if node.kind == TEE:
+                host = by_id[node.host.seg_id]
+                q = intersect(s.start, s.dir, host.start, host.dir)
+                if q is not None:
+                    p = q
+                    t = _dot(_sub(q, host.start), host.dir)
+                    stations[host.id].append((t, vid(q)))
+            node_vid[id(node)] = vid(p)
+            stations[s.id].append((_dot(_sub(p, s.start), s.dir), vid(p)))
+
+    edges = []                  # (u, v, seg)
+    seen = set()
+    for sid, sts in stations.items():
+        sts.sort()
+        for (t0, a), (t1, b) in zip(sts, sts[1:]):
+            if a == b or t1 - t0 < tol:
+                continue
+            key = (min(a, b), max(a, b))
+            if key in seen:
+                continue        # two walls on the same line: count once
+            seen.add(key)
+            edges.append((a, b, by_id[sid]))
+
+    # A lone end in another junction's corner is joined to it by a short
+    # link that carries no wall face of its own
+    for node in graph.nodes:
+        if node.corner is None:
+            continue
+        a, b = node_vid.get(id(node)), node_vid.get(id(node.corner))
+        if a is None or b is None or a == b:
+            continue
+        key = (min(a, b), max(a, b))
+        if key not in seen:
+            seen.add(key)
+            edges.append((a, b, None))
+
+    # Drop dead ends: a wall end touching nothing can't bound a room
+    while True:
+        degree = {}
+        for a, b, _s in edges:
+            degree[a] = degree.get(a, 0) + 1
+            degree[b] = degree.get(b, 0) + 1
+        kept = [e for e in edges if degree[e[0]] > 1 and degree[e[1]] > 1]
+        if len(kept) == len(edges):
+            break
+        edges = kept
+    if not edges:
+        return []
+
+    # Half-edges and the faces they bound (each face on its half-edges' left)
+    out = {}
+    for i, (a, b, _s) in enumerate(edges):
+        out.setdefault(a, []).append((i, a, b))
+        out.setdefault(b, []).append((i, b, a))
+    for v, hs in out.items():
+        hs.sort(key=lambda h: math.atan2(verts[h[2]][1] - verts[v][1],
+                                         verts[h[2]][0] - verts[v][0]))
+
+    def next_half(h):
+        i, a, b = h
+        around = out[b]
+        k = next(k for k, g in enumerate(around) if g[0] == i and g[2] == a)
+        return around[(k - 1) % len(around)]
+
+    used = set()
+    polys = []
+    for start in [h for hs in out.values() for h in hs]:
+        if start in used:
+            continue
+        face = []
+        h = start
+        while h not in used:
+            used.add(h)
+            face.append(h)
+            h = next_half(h)
+        pts = [verts[h[1]] for h in face]
+        if polygon_area(pts) <= ROOM_MIN_AREA:
+            continue            # the outside of the building, or a sliver
+        inside = _inside_polygon(face, edges, verts)
+        if inside and polygon_area(inside) > ROOM_MIN_AREA:
+            floor = _inside_polygon(face, edges, verts, mid_wall=True)
+            polys.append((inside, floor or inside))
+    return polys
+
+
+def _inside_polygon(face, edges, verts, mid_wall=False):
+    """The face moved off the reference lines onto the faces of the walls
+    that look into it - or, with mid_wall, onto the middle of each wall."""
+    lines = []
+    for i, a, b in face:
+        seg = edges[i][2]
+        if seg is None:
+            continue            # a corner link: the faces either side meet
+        into_room = _left(_sub(verts[b], verts[a]))
+        if mid_wall:
+            w = seg.thickness / 2.0
+        else:
+            w = seg.thickness if _dot(into_room, seg.normal) > 0 else 0.0
+        lines.append((seg.face_point(w), seg.dir, verts[a]))
+    pts = []
+    n = len(lines)
+    for k in range(n):
+        p1, d1, _v1 = lines[k - 1]
+        p2, d2, v2 = lines[k]
+        if abs(_cross(d1, d2)) < 1e-9:
+            # Parallel neighbours: the same line carries on (nothing to
+            # add), or a step where two walls of different thickness meet
+            if abs(_cross(d1, _sub(p2, p1))) < 1e-6:
+                continue
+            for p, d in ((p1, d1), (p2, d2)):
+                pts.append(_add(p, _mul(d, _dot(_sub(v2, p), d))))
+            continue
+        q = intersect(p1, d1, p2, d2)
+        if q is not None:
+            pts.append(q)
+    clean = []
+    for p in pts:
+        if not clean or _len(_sub(p, clean[-1])) > 1e-6:
+            clean.append(p)
+    if len(clean) > 1 and _len(_sub(clean[0], clean[-1])) < 1e-6:
+        clean.pop()
+    # Points partway along a straight edge (a T on the far side, a corner
+    # link) add nothing to the outline
+    changed = True
+    while changed and len(clean) > 3:
+        changed = False
+        for k in range(len(clean)):
+            a, p, b = clean[k - 1], clean[k], clean[(k + 1) % len(clean)]
+            if abs(_cross(_sub(p, a), _sub(b, p))) < 1e-9:
+                del clean[k]
+                changed = True
+                break
+    return clean if len(clean) >= 3 else None

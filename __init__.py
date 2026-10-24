@@ -2,6 +2,7 @@ import bpy
 from . import hb_props
 from . import hb_project
 from . import hb_house
+from . import hb_rooms
 from . import hb_props_obstacles
 from . import ops
 from .ui import view3d_sidebar
@@ -84,6 +85,12 @@ def load_file_post(scene):
     # Wall node groups saved before the end extensions existed get them now
     from . import hb_types
     hb_types.ensure_all_wall_extensions()
+
+    # House room ceilings follow the Show Ceilings switch (off unless set)
+    from . import hb_rooms
+    for scene in bpy.data.scenes:
+        if scene.get('IS_HOUSE_SCENE'):
+            hb_rooms.apply_ceiling_visibility(scene)
 
     # Ensure a default frameless style is created
     main_scene.hb_frameless.ensure_default_style()
@@ -411,6 +418,7 @@ def register():
     hb_props.register()
     hb_project.register()
     hb_house.register()
+    hb_rooms.register()
     hb_snap_engine.register()
     hb_props_obstacles.register()
     ops_obstacles.register()
@@ -471,6 +479,7 @@ def unregister():
     bpy.utils.unregister_class(Home_Builder_AddonPreferences)
 
     hb_props.unregister()
+    hb_rooms.unregister()
     hb_house.unregister()
     hb_project.unregister()
     hb_snap_engine.unregister()

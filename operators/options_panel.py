@@ -347,7 +347,9 @@ class PoolSpec:
     `actions_first` puts the commands straight under the list, for a
     pool whose item has more fields than fit on screen.
     `scope` 'scene' reads the group off the open scene instead of the
-    main one; `list_label` heads the list; `row_text` says what a row
+    main one; `props` may instead be a callable(context) returning the
+    owner itself, for a collection that isn't on a scene property group
+    (the active level's rooms); `list_label` heads the list; `row_text` says what a row
     shows (the item's name by default); `rename_prop` is what a second
     click on the active row types into, None for no rename; and
     `allow_empty` lets the last item be removed.
@@ -393,6 +395,8 @@ class PoolSpec:
         return (self.props, self.collection)
 
     def owner(self, context):
+        if callable(self.props):
+            return self.props(context)
         if self.scope == 'scene':
             return getattr(context.scene, self.props, None)
         return _main_group(self.props, context)
@@ -408,6 +412,8 @@ class PoolSpec:
 
     def scene_owner(self, context):
         """The room's own copy of the group, for scene_fields."""
+        if callable(self.props):
+            return None
         return getattr(context.scene, self.props, None)
 
     def items(self, context):

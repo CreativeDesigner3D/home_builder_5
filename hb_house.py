@@ -26,6 +26,7 @@ from bpy.props import (
     CollectionProperty,
     EnumProperty,
     FloatProperty,
+    FloatVectorProperty,
     IntProperty,
     PointerProperty,
     StringProperty,
@@ -462,6 +463,166 @@ def _update_ceiling_height(self, context):
         props = self.id_data.home_builder
         if abs(props.ceiling_height - self.ceiling_height) > 1e-9:
             props.ceiling_height = self.ceiling_height
+    # Rooms without a height of their own follow the level's
+    from . import hb_rooms
+    hb_rooms.rebuild_level(self.id_data, self)
+
+
+def _room_label_changed(self, context):
+    from . import hb_rooms
+    hb_rooms.update_room_label(self)
+
+
+def _room_materials_changed(self, context):
+    from . import hb_rooms
+    hb_rooms.apply_room_materials(self)
+
+
+def _room_custom_floor_picked(self, context):
+    # Picking a material is choosing the Custom finish
+    if self.floor_material is not None and self.floor_finish != 'CUSTOM':
+        self['floor_finish'] = _FLOOR_FINISH_INDEX['CUSTOM']
+    _room_materials_changed(self, context)
+
+
+# The same finishes as the Floor tool (ops_room_dressing), per room, plus a
+# Custom finish that takes any Blender material.
+FLOOR_FINISH_ITEMS = [
+    ('NONE', "None", "No finish: the floor keeps whatever material it has"),
+    ('WOOD', "Wood Planks", "Staggered hardwood planks with grain"),
+    ('TILE', "Tile", "Grid or running-bond tile with grout"),
+    ('SOLID', "Solid Color", "Flat colored floor (concrete, carpet, paint)"),
+    ('CUSTOM', "Custom Material", "Any Blender material"),
+]
+_FLOOR_FINISH_INDEX = {item[0]: i for i, item in enumerate(FLOOR_FINISH_ITEMS)}
+_floor_look_items = {}      # finish -> items; Blender needs the strings kept
+
+
+def _floor_look_items_cb(self, context):
+    from .operators import ops_room_dressing as dressing
+    looks = dressing.LOOKS.get(self.floor_finish)
+    if not looks:
+        return [('NONE', "-", "")]
+    if self.floor_finish not in _floor_look_items:
+        _floor_look_items[self.floor_finish] = [(k, v[0], "") for k, v in looks.items()]
+    return _floor_look_items[self.floor_finish]
+
+
+def _apply_floor_look(room):
+    """Copy the chosen look's colours onto the room, as the Floor tool's
+    dialog does. Custom keeps the colours that are there."""
+    from .operators import ops_room_dressing as dressing
+    look = dressing.LOOKS.get(room.floor_finish, {}).get(room.floor_look)
+    if not look or look[1] is None:
+        return
+    room['floor_color'] = look[1]
+    if look[2] is not None:
+        room['floor_accent'] = look[2]
+
+
+def _room_floor_finish_changed(self, context):
+    from .operators import ops_room_dressing as dressing
+    from . import hb_rooms
+    if self.floor_finish in dressing.LOOKS:
+        # The Floor tool's defaults for the style, stored without their
+        # update callbacks so the material is built once, below
+        self['floor_size'] = dressing.DEFAULT_SIZE[self.floor_finish]
+        self['floor_roughness'] = dressing.DEFAULT_ROUGHNESS[self.floor_finish]
+        keys = [item[0] for item in _floor_look_items_cb(self, context)]
+        self['floor_look'] = keys.index(dressing.DEFAULT_LOOK[self.floor_finish])
+        _apply_floor_look(self)
+    hb_rooms.apply_room_materials(self, rebuild_floor=True)
+
+
+def _room_floor_look_changed(self, context):
+    _apply_floor_look(self)
+    _room_floor_style_changed(self, context)
+
+
+def _room_floor_style_changed(self, context):
+    from . import hb_rooms
+    hb_rooms.apply_room_materials(self, rebuild_floor=True)
+
+
+def _room_shape_changed(self, context):
+    from . import hb_rooms
+    hb_rooms.rebuild_room(self)
+
+
+class HB_Room(PropertyGroup):
+    """A room on a level. Which area of walls it is comes from where its
+    marker sits (see hb_rooms); everything the user chooses for the room
+    lives here, so it survives the walls being moved."""
+
+    uid: StringProperty(name="Room ID")  # type: ignore
+
+    name: StringProperty(name="Name", default="Room",
+                         update=_room_label_changed)  # type: ignore
+
+    marker: PointerProperty(type=bpy.types.Object)  # type: ignore
+    floor_obj: PointerProperty(type=bpy.types.Object)  # type: ignore
+    ceiling_obj: PointerProperty(type=bpy.types.Object)  # type: ignore
+    label_obj: PointerProperty(type=bpy.types.Object)  # type: ignore
+
+    floor_finish: EnumProperty(
+        name="Floor Finish", items=FLOOR_FINISH_ITEMS, default='NONE',
+        update=_room_floor_finish_changed)  # type: ignore
+
+    floor_look: EnumProperty(
+        name="Look", items=_floor_look_items_cb,
+        update=_room_floor_look_changed)  # type: ignore
+
+    floor_color: FloatVectorProperty(
+        name="Color", subtype='COLOR_GAMMA', size=3, min=0.0, max=1.0,
+        default=(0.64, 0.45, 0.27), update=_room_floor_style_changed)  # type: ignore
+
+    floor_accent: FloatVectorProperty(
+        name="Accent", subtype='COLOR_GAMMA', size=3, min=0.0, max=1.0,
+        default=(0.48, 0.32, 0.18),
+        description="Darker plank tone for wood; grout color for tile",
+        update=_room_floor_style_changed)  # type: ignore
+
+    floor_size: FloatProperty(
+        name="Size", default=0.127, min=0.02, max=2.0, subtype='DISTANCE',
+        description="Plank width for wood; tile size for tile",
+        update=_room_floor_style_changed)  # type: ignore
+
+    floor_roughness: FloatProperty(
+        name="Roughness", default=0.45, min=0.0, max=1.0, subtype='FACTOR',
+        description="0 = glossy, 1 = matte",
+        update=_room_floor_style_changed)  # type: ignore
+
+    floor_running_bond: BoolProperty(
+        name="Running Bond", default=False,
+        description="Offset every other row of tile instead of a straight grid",
+        update=_room_floor_style_changed)  # type: ignore
+
+    floor_material: PointerProperty(
+        name="Floor Material", type=bpy.types.Material,
+        description="The material for the Custom floor finish",
+        update=_room_custom_floor_picked)  # type: ignore
+
+    ceiling_material: PointerProperty(
+        name="Ceiling Material", type=bpy.types.Material,
+        update=_room_materials_changed)  # type: ignore
+
+    ceiling_height: FloatProperty(
+        name="Ceiling Height",
+        description="This room's ceiling height. 0 follows the level's",
+        default=0.0, min=0.0, subtype='DISTANCE', precision=4,
+        update=_room_shape_changed)  # type: ignore
+
+    has_floor: BoolProperty(name="Floor", default=True,
+                            update=_room_shape_changed)  # type: ignore
+
+    has_ceiling: BoolProperty(name="Ceiling", default=True,
+                              update=_room_shape_changed)  # type: ignore
+
+    # Worked out by hb_rooms on each rebuild
+    area: FloatProperty(name="Area", default=0.0)  # type: ignore
+    orphaned: BoolProperty(
+        name="No Area",
+        description="The walls around this room's marker no longer close it in")  # type: ignore
 
 
 class HB_Level(PropertyGroup):
@@ -502,6 +663,10 @@ class HB_Level(PropertyGroup):
 
     collection: PointerProperty(type=bpy.types.Collection)  # type: ignore
 
+    rooms: CollectionProperty(type=HB_Room)  # type: ignore
+
+    active_room_index: IntProperty(name="Active Room")  # type: ignore
+
 
 def _update_active_level(self, context):
     scene = self.id_data
@@ -512,6 +677,12 @@ def _update_active_level(self, context):
     if abs(props.ceiling_height - level.ceiling_height) > 1e-9:
         props.ceiling_height = level.ceiling_height
     apply_level_display(scene)
+
+
+def _ceilings_shown_changed(house):
+    from . import hb_rooms
+    hb_rooms.apply_ceiling_visibility(house.id_data)
+    _tag_view3d_redraw()
 
 
 def _update_level_display(self, context):
@@ -538,6 +709,14 @@ class HB_House_Props(PropertyGroup):
         description="Outline the walls of the level below while only the active level is shown",
         default=True,
         update=lambda self, context: _tag_view3d_redraw())  # type: ignore
+
+    # Ceilings are in the way while designing (doors, openings, looking
+    # into a room), so they start hidden; they still render.
+    show_ceilings: BoolProperty(
+        name="Show Ceilings",
+        description="Show the rooms' ceilings in the viewport. They render either way",
+        default=False,
+        update=lambda self, context: _ceilings_shown_changed(self))  # type: ignore
 
     @classmethod
     def register(cls):
@@ -614,6 +793,9 @@ class HOME_BUILDER_OT_start_house_project(bpy.types.Operator):
                 moved += 1
         sort_level_children(scene)
         apply_level_display(scene)
+        if moved:
+            from . import hb_rooms
+            hb_rooms.rebuild_level(scene, level)
 
         msg = f"Started house project with {level.name}"
         if moved:
@@ -695,6 +877,7 @@ class HOME_BUILDER_OT_set_active_level(bpy.types.Operator):
 # =============================================================================
 
 classes = (
+    HB_Room,
     HB_Level,
     HB_House_Props,
     HOME_BUILDER_OT_start_house_project,

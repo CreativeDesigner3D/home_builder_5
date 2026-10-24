@@ -1,0 +1,433 @@
+"""
+Home Builder Rooms
+
+Rooms in a house project: every closed area of walls on a level, found
+by hb_wall_graph.find_rooms, with a floor, a ceiling and a label made
+for it. See docs/house_levels_and_wall_graph.md, section 6.
+
+A room's identity is its marker - an empty sitting inside the room.
+Whichever area contains the marker is that room, so a room keeps its
+name, finishes and ceiling height when the walls around it move. An
+area with no marker gets a new room; two markers in one area (a wall
+was taken out) keep the older room and leave the other without an area
+rather than deleting what the user set on it.
+
+Rooms are rebuilt after every wall edit on the level (walls.py calls
+rebuild_after_walls) and by the Rebuild Rooms command. The floor,
+ceiling and label are replaced on each rebuild, never edited; anything
+worth keeping lives on the room (HB_Room in hb_house).
+"""
+
+import bpy
+import bmesh
+from mathutils import Vector
+
+from . import hb_house, hb_utils, hb_wall_graph
+from .units import inch
+
+ROOM_KEY = 'HB_ROOM'
+MARKER_KEY = 'IS_ROOM_MARKER'
+GENERATED_KEY = 'IS_ROOM_GENERATED'
+
+FLOOR_THICKNESS = 0.01          # thin slab, so floor cutters have volume to cut
+LABEL_SIZE = inch(8)
+LABEL_LIFT = 0.02               # label just above the floor
+LABEL_COLOR = (0.03, 0.03, 0.03, 1.0)
+LABEL_MATERIAL = "HB Room Label"
+
+
+# =============================================================================
+# LOOKUPS
+# =============================================================================
+
+def level_of_room(room):
+    """The HB_Level holding a room ('hb_house.levels[i].rooms[j]')."""
+    path = room.path_from_id()
+    level_path = path[:path.rindex('.rooms[')]
+    return room.id_data.path_resolve(level_path)
+
+
+def room_height(room, level):
+    return room.ceiling_height if room.ceiling_height > 0 else level.ceiling_height
+
+
+def area_text(scene, area):
+    if scene.unit_settings.system == 'IMPERIAL':
+        return f"{area * 10.7639:.0f} sq ft"
+    return f"{area:.1f} m²"
+
+
+# =============================================================================
+# GEOMETRY
+# =============================================================================
+
+def _slab_mesh(name, polygon, z, thickness=0.0, facing_down=False):
+    """An n-gon over the room's outline at height z, extruded down by
+    `thickness` when given. Planar UVs in metres, like the wall floors."""
+    mesh = bpy.data.meshes.new(name)
+    bm = bmesh.new()
+    verts = [bm.verts.new((x, y, z)) for x, y in polygon]
+    face = bm.faces.new(verts)
+    bm.normal_update()
+    if (face.normal.z < 0) != facing_down:
+        face.normal_flip()
+    if thickness > 0:
+        res = bmesh.ops.extrude_face_region(bm, geom=[face])
+        moved = [g for g in res['geom'] if isinstance(g, bmesh.types.BMVert)]
+        bmesh.ops.translate(bm, verts=moved, vec=Vector((0, 0, -thickness)))
+        bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+    uv = bm.loops.layers.uv.new("UVMap")
+    for f in bm.faces:
+        for loop in f.loops:
+            loop[uv].uv = (loop.vert.co.x, loop.vert.co.y)
+    bm.to_mesh(mesh)
+    bm.free()
+    return mesh
+
+
+def _swap_mesh(obj, mesh, material):
+    """Give obj a new mesh, keeping the materials the old one had (a floor
+    finish picked with the Floor tool) unless the room names one."""
+    old = obj.data
+    if material is not None:
+        mesh.materials.append(material)
+    elif old is not None:
+        for mat in old.materials:
+            mesh.materials.append(mat)
+    obj.data = mesh
+    if old is not None and old.users == 0:
+        bpy.data.meshes.remove(old)
+
+
+def _generated(scene, level, room, name, data, tags):
+    col = hb_house.level_subcollection(level, 'Rooms')
+    obj = hb_utils.new_object(name, data)
+    col.objects.link(obj)
+    obj[hb_house.LEVEL_KEY] = level.uid
+    obj[ROOM_KEY] = room.uid
+    obj[GENERATED_KEY] = True
+    for tag in tags:
+        obj[tag] = True
+    return obj
+
+
+def _remove(obj):
+    if obj is None:
+        return
+    data = obj.data
+    bpy.data.objects.remove(obj, do_unlink=True)
+    if data is not None and data.users == 0:
+        if isinstance(data, bpy.types.Mesh):
+            bpy.data.meshes.remove(data)
+        elif isinstance(data, bpy.types.Curve):
+            bpy.data.curves.remove(data)
+
+
+def _build_floor(scene, level, room, polygon):
+    if not room.has_floor:
+        _remove(room.floor_obj)
+        room.floor_obj = None
+        return
+    # Meshes are built level-relative and the object carries the level's
+    # elevation, so moving the level (which moves free objects) and
+    # rebuilding agree
+    mesh = _slab_mesh(f"Floor - {room.name}", polygon, 0.0,
+                      thickness=FLOOR_THICKNESS)
+    floor_mat = room_floor_material(room)
+    if room.floor_obj is None:
+        if floor_mat is not None:
+            mesh.materials.append(floor_mat)
+        room.floor_obj = _generated(scene, level, room, f"Floor - {room.name}",
+                                    mesh, ('IS_FLOOR_BP',))
+    else:
+        _swap_mesh(room.floor_obj, mesh, floor_mat)
+        room.floor_obj.name = f"Floor - {room.name}"
+    room.floor_obj.location = (0.0, 0.0, level.elevation)
+
+
+def _build_ceiling(scene, level, room, polygon):
+    if not room.has_ceiling:
+        _remove(room.ceiling_obj)
+        room.ceiling_obj = None
+        return
+    mesh = _slab_mesh(f"Ceiling - {room.name}", polygon, room_height(room, level),
+                      facing_down=True)
+    if room.ceiling_obj is None:
+        if room.ceiling_material is not None:
+            mesh.materials.append(room.ceiling_material)
+        room.ceiling_obj = _generated(scene, level, room, f"Ceiling - {room.name}",
+                                      mesh, ('IS_CEILING_BP',))
+    else:
+        _swap_mesh(room.ceiling_obj, mesh, room.ceiling_material)
+        room.ceiling_obj.name = f"Ceiling - {room.name}"
+    room.ceiling_obj.location = (0.0, 0.0, level.elevation)
+    room.ceiling_obj.hide_viewport = not scene.hb_house.show_ceilings
+
+
+def _new_marker(scene, level, room, point):
+    marker = _generated(scene, level, room, f"Room - {room.name}", None,
+                        (MARKER_KEY,))
+    del marker[GENERATED_KEY]       # the marker is the room, not made from it
+    marker.empty_display_type = 'PLAIN_AXES'
+    marker.empty_display_size = 0.15
+    marker.hide_render = True
+    marker.location = (point[0], point[1], level.elevation)
+    return marker
+
+
+def _label_material():
+    """Dark, so a label reads against a white floor or ceiling in solid
+    shading (which colours by the material's viewport colour)."""
+    mat = bpy.data.materials.get(LABEL_MATERIAL)
+    if mat is None:
+        mat = bpy.data.materials.new(LABEL_MATERIAL)
+        mat.diffuse_color = LABEL_COLOR
+    return mat
+
+
+def update_room_label(room):
+    """Write the room's name and area onto its label (made if missing)."""
+    marker = room.marker
+    if marker is None:
+        return
+    scene = room.id_data
+    level = level_of_room(room)
+    marker.name = f"Room - {room.name}"
+    lines = [room.name.upper()]
+    lines.append("(not enclosed)" if room.orphaned else area_text(scene, room.area))
+    label = room.label_obj
+    if label is None:
+        curve = bpy.data.curves.new(f"Room Label - {room.name}", 'FONT')
+        curve.size = LABEL_SIZE
+        curve.align_x = 'CENTER'
+        curve.align_y = 'CENTER'
+        label = _generated(scene, level, room, f"Room Label - {room.name}",
+                           curve, ('IS_ROOM_LABEL_3D',))
+        label.hide_render = True
+        label.parent = marker
+        label.location = (0.0, 0.0, LABEL_LIFT)
+        label.hide_select = True
+        room.label_obj = label
+    label.data.body = "\n".join(lines)
+    label.name = f"Room Label - {room.name}"
+    # Drawn in front of everything, so the ceiling over a closed room
+    # doesn't hide it in plan
+    label.show_in_front = True
+    marker.show_in_front = True
+    label.color = LABEL_COLOR
+    if not label.data.materials:
+        label.data.materials.append(_label_material())
+
+
+def room_floor_material(room, rebuild=False):
+    """The material the room's floor finish calls for, or None for no
+    finish (the floor keeps what it has - a Floor tool material, say).
+
+    Wood, tile and solid finishes are built from shader nodes by the
+    Floor tool's builder into a material of the room's own, found again
+    by the room's id. Building is only redone when asked (a finish
+    setting changed) or when the material is missing, not on every wall
+    edit."""
+    finish = room.floor_finish
+    if finish == 'CUSTOM':
+        return room.floor_material
+    if finish == 'NONE':
+        return None
+    mat = next((m for m in bpy.data.materials
+                if m.get('HB_ROOM_FLOOR') == room.uid), None)
+    if mat is not None and not rebuild:
+        return mat
+    if mat is None:
+        mat = bpy.data.materials.new(f"{room.name} Floor")
+        mat['HB_ROOM_FLOOR'] = room.uid
+    from .operators import ops_room_dressing as dressing
+    dressing.build_floor_material(
+        finish, tuple(room.floor_color),
+        tuple(room.floor_accent) if finish != 'SOLID' else None,
+        room.floor_size, room.floor_roughness, room.floor_running_bond,
+        mat=mat)
+    return mat
+
+
+def apply_ceiling_visibility(scene):
+    """Show or hide every room ceiling in the viewport, per the house's
+    Show Ceilings switch. Hidden ceilings still render, and the viewport
+    can't pick or snap to them, so they stay out of the way of doors."""
+    hide = not scene.hb_house.show_ceilings
+    for level in scene.hb_house.levels:
+        for room in level.rooms:
+            if room.ceiling_obj is not None:
+                room.ceiling_obj.hide_viewport = hide
+
+
+def apply_room_materials(room, rebuild_floor=False):
+    """Put the room's floor finish and ceiling material on its floor and
+    ceiling."""
+    floor_mat = room_floor_material(room, rebuild=rebuild_floor)
+    for obj, mat in ((room.floor_obj, floor_mat),
+                     (room.ceiling_obj, room.ceiling_material)):
+        if obj is None or obj.data is None or mat is None:
+            continue
+        if obj.data.materials:
+            obj.data.materials[0] = mat
+        else:
+            obj.data.materials.append(mat)
+
+
+# =============================================================================
+# REBUILD
+# =============================================================================
+
+def _next_room_name(level):
+    used = {room.name for room in level.rooms}
+    n = 1
+    while f"Room {n}" in used:
+        n += 1
+    return f"Room {n}"
+
+
+def _forget_room(level, index):
+    room = level.rooms[index]
+    for obj in (room.label_obj, room.floor_obj, room.ceiling_obj):
+        _remove(obj)
+    level.rooms.remove(index)
+
+
+def rebuild_level(scene, level):
+    """Find the rooms on a level and remake their floors, ceilings and
+    labels. Returns the number of enclosed rooms."""
+    if scene is None or level is None or not scene.get(hb_house.HOUSE_SCENE_KEY):
+        return 0
+    from .operators import walls
+    hb_house.ensure_level_collections(scene, level)
+    walls._update_scene(scene)
+    _objs, segs = walls.level_wall_segs(scene, level.uid)
+    areas = hb_wall_graph.find_rooms(segs)
+
+    # A room whose marker was deleted is gone
+    for i in reversed(range(len(level.rooms))):
+        marker = level.rooms[i].marker
+        if marker is None or marker.name not in scene.objects:
+            _forget_room(level, i)
+
+    # Each marker claims the area it sits in, oldest room first. Rooms are
+    # held by index, never by reference: adding to a collection moves its
+    # items in memory, and writing through a reference taken before the
+    # add crashes Blender.
+    claimed = {}                # area index -> room index
+    for i, room in enumerate(level.rooms):
+        p = room.marker.location
+        hit = next((k for k, a in enumerate(areas)
+                    if hb_wall_graph.point_in_polygon((p.x, p.y), a.polygon)), None)
+        if hit is None or hit in claimed:
+            room.orphaned = True
+            continue
+        room.orphaned = False
+        claimed[hit] = i
+
+    # An area nobody claims is a new room
+    from .hb_house import _new_uid
+    for k, area in enumerate(areas):
+        if k in claimed:
+            continue
+        room = level.rooms.add()
+        room.uid = _new_uid()
+        room['name'] = _next_room_name(level)
+        room.marker = _new_marker(scene, level, room,
+                                  hb_wall_graph.interior_point(area.polygon))
+        claimed[k] = len(level.rooms) - 1
+
+    for k, i in claimed.items():
+        room = level.rooms[i]
+        area = areas[k]
+        room.area = area.area
+        room.marker.location.z = level.elevation
+        _build_floor(scene, level, room, area.floor)
+        _build_ceiling(scene, level, room, area.polygon)
+        update_room_label(room)
+    for room in level.rooms:
+        if room.orphaned:
+            _remove(room.floor_obj)
+            _remove(room.ceiling_obj)
+            room.floor_obj = room.ceiling_obj = None
+            room.area = 0.0
+            update_room_label(room)
+    return len(claimed)
+
+
+def rebuild_room(room):
+    """A room's own settings changed: rebuild its level (cheap, and the
+    only way to get its outline)."""
+    rebuild_level(room.id_data, level_of_room(room))
+
+
+def rebuild_after_walls(scene, level_uid=None):
+    """Called after walls are edited. Only a house scene has rooms."""
+    if scene is None or not scene.get(hb_house.HOUSE_SCENE_KEY):
+        return
+    if not hb_house.is_house_project():
+        return
+    for level in scene.hb_house.levels:
+        if level_uid is None or level.uid == level_uid:
+            rebuild_level(scene, level)
+
+
+# =============================================================================
+# OPERATORS
+# =============================================================================
+
+class HOME_BUILDER_OT_rebuild_rooms(bpy.types.Operator):
+    bl_idname = "home_builder.rebuild_rooms"
+    bl_label = "Rebuild Rooms"
+    bl_description = ("Find the rooms on the active level again and remake their "
+                      "floors, ceilings and labels. Use after moving a room marker")
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return hb_house.active_level(context) is not None
+
+    def execute(self, context):
+        level = hb_house.active_level(context)
+        count = rebuild_level(context.scene, level)
+        self.report({'INFO'}, f"{level.name}: {count} room(s)")
+        return {'FINISHED'}
+
+
+class HOME_BUILDER_OT_select_room(bpy.types.Operator):
+    bl_idname = "home_builder.select_room"
+    bl_label = "Select Room Marker"
+    bl_description = "Select the active room's marker, to move it into another area"
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        level = hb_house.active_level(context)
+        return level is not None and 0 <= level.active_room_index < len(level.rooms)
+
+    def execute(self, context):
+        level = hb_house.active_level(context)
+        marker = level.rooms[level.active_room_index].marker
+        if marker is None:
+            return {'CANCELLED'}
+        for obj in context.selected_objects:
+            obj.select_set(False)
+        marker.select_set(True)
+        context.view_layer.objects.active = marker
+        return {'FINISHED'}
+
+
+classes = (
+    HOME_BUILDER_OT_rebuild_rooms,
+    HOME_BUILDER_OT_select_room,
+)
+
+
+def register():
+    for cls in classes:
+        bpy.utils.register_class(cls)
+
+
+def unregister():
+    for cls in reversed(classes):
+        bpy.utils.unregister_class(cls)
