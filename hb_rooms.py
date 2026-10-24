@@ -585,6 +585,9 @@ def rebuild_after_walls(scene, level_uid=None):
     # Roofs follow the walls they sit on and trim the walls under them
     from . import hb_roofs
     hb_roofs.rebuild_roofs(scene)
+    # New walls take the house's siding, and the base follows the walls
+    from . import hb_exterior
+    hb_exterior.apply_exterior_finish(scene)
 
 
 # =============================================================================

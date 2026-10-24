@@ -1195,6 +1195,11 @@ def _update_level_display(self, context):
     apply_level_display(scene)
 
 
+def _exterior_changed(house):
+    from . import hb_exterior
+    hb_exterior.apply_exterior_finish(house.id_data)
+
+
 class HB_House_Props(PropertyGroup):
     levels: CollectionProperty(type=HB_Level)  # type: ignore
 
@@ -1216,6 +1221,32 @@ class HB_House_Props(PropertyGroup):
 
     # Ceilings are in the way while designing (doors, openings, looking
     # into a room), so they start hidden; they still render.
+    # Exterior finish (see hb_exterior)
+    siding_style: EnumProperty(
+        name="Siding",
+        items=[('NONE', "None", "Plain walls"),
+               ('BOARD_BATTEN', "Board and Batten", "Vertical boards with battens every 16\""),
+               ('LAP', "Lap", "Horizontal lap boards, 6\" to the weather")],
+        default='NONE', update=lambda self, context: _exterior_changed(self))  # type: ignore
+    siding_color: FloatVectorProperty(
+        name="Siding Color", subtype='COLOR', size=3, min=0.0, max=1.0,
+        default=(0.92, 0.92, 0.90),
+        update=lambda self, context: _exterior_changed(self))  # type: ignore
+    base_style: EnumProperty(
+        name="Base",
+        items=[('NONE', "None", "No masonry base"),
+               ('BRICK', "Brick", "A brick base along the bottom of the outside walls"),
+               ('STONE', "Stone", "A stone base along the bottom of the outside walls")],
+        default='NONE', update=lambda self, context: _exterior_changed(self))  # type: ignore
+    base_color: FloatVectorProperty(
+        name="Base Color", subtype='COLOR', size=3, min=0.0, max=1.0,
+        default=(0.47, 0.22, 0.16),
+        update=lambda self, context: _exterior_changed(self))  # type: ignore
+    base_height: FloatProperty(
+        name="Base Height", description="How high the masonry base comes up the walls",
+        default=inch(30), min=0.0, subtype='DISTANCE', precision=4,
+        update=lambda self, context: _exterior_changed(self))  # type: ignore
+
     show_roofs: BoolProperty(
         name="Show Roofs",
         description="Show the roofs in the viewport. Off to see down into the house",

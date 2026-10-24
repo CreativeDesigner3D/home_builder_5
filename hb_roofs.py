@@ -982,6 +982,9 @@ def rebuild_roof(scene, level):
     if any(r.ceiling_style == 'VAULTED' for r in level.rooms):
         from . import hb_rooms
         hb_rooms.rebuild_level(scene, level)
+    # Gable ends and dormer walls just made take the house's siding
+    from . import hb_exterior
+    hb_exterior.apply_exterior_finish(scene)
     return True
 
 

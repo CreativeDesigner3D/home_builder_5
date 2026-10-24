@@ -132,6 +132,15 @@ ROOM_SPEC = {
 }
 
 
+EXTERIOR_FIELDS = (
+    ('enum', 'siding_style', "Siding"),
+    ('native', 'siding_color', "Siding Color", {'when': lambda h: h.siding_style != 'NONE'}),
+    ('enum', 'base_style', "Base"),
+    ('distance', 'base_height', "Base Height", {'when': lambda h: h.base_style != 'NONE'}),
+    ('native', 'base_color', "Base Color", {'when': lambda h: h.base_style != 'NONE'}),
+)
+
+
 ROOF_FIELDS = (
     ('bool', 'enabled', "Roof on This Level"),
     ('enum', 'style', "Style", {'when': lambda roof: roof.enabled}),
@@ -238,6 +247,9 @@ def _blocks(context):
     # Each pool heads itself ("Levels", "Rooms"), so the tab's own head goes.
     blocks = options_panel.pool_blocks(context, LEVEL_SPEC)
     level = hb_house.active_level(context)
+    blocks.append(('gap', None))
+    blocks.append(('head', ("Exterior", False, None)))
+    blocks.extend(options_panel.field_blocks(context, EXTERIOR_FIELDS, scene.hb_house))
     if level is not None:
         blocks.append(('gap', None))
         blocks.append(('head', ("Roof", False, None)))
