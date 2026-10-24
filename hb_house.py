@@ -35,7 +35,7 @@ from bpy.props import (
 )
 from bpy.types import PropertyGroup
 from gpu_extras.batch import batch_for_shader
-from mathutils import Vector
+from mathutils import Matrix, Vector
 from mathutils.geometry import intersect_line_plane
 from bpy_extras import view3d_utils
 
@@ -1030,6 +1030,121 @@ def add_level(scene, name=None):
 
 
 # =============================================================================
+# IMPORTING A ROOM AS A LEVEL
+# =============================================================================
+# A house drawn the older way - each floor its own room scene, put
+# together with linked rooms - becomes levels of the house: the room's
+# walls, doors and everything on them move into a new level, placed
+# where its link put it, so the floors keep lining up exactly.
+
+def importable_room_scenes(house_scene):
+    """Room scenes that could become a level of this house."""
+    out = []
+    for scene in bpy.data.scenes:
+        if scene == house_scene or scene.get(HOUSE_SCENE_KEY) or is_room_view(scene):
+            continue
+        if scene.get('IS_LAYOUT_VIEW') or scene.get('IS_DETAIL_VIEW') or scene.get('IS_CROWN_DETAIL'):
+            continue
+        if any(o.get('IS_WALL_BP') for o in scene.objects):
+            out.append(scene)
+    return out
+
+
+def link_offset(house_scene, source_scene):
+    """Where the source room sits relative to the house, from the linked
+    rooms that put them together: the source's link transform in the
+    space of the house's link in the same scene (or the house itself
+    when the house isn't linked there). None when nothing links it."""
+    for scene in bpy.data.scenes:
+        links = [o for o in scene.objects if o.get('IS_LINKED_ROOM')]
+        src = [o for o in links if o.get('LINKED_ROOM_SOURCE') == source_scene.name]
+        if not src:
+            continue
+        house = [o for o in links if o.get('LINKED_ROOM_SOURCE') == house_scene.name]
+        base = house[0].matrix_world if house else Matrix.Identity(4)
+        return base.inverted() @ src[0].matrix_world
+    return None
+
+
+def _source_collections(scene):
+    return [scene.collection] + list(scene.collection.children_recursive)
+
+
+def import_room_as_level(house_scene, source_scene):
+    """Move a room scene's objects into a new level of the house. Returns
+    (level uid, walls moved). The source scene is left empty."""
+    from .operators import walls
+    house = house_scene.hb_house
+    offset = link_offset(house_scene, source_scene)
+
+    # The level stack, read before adding (never hold a level across add)
+    top = max(house.levels, key=lambda l: l.elevation) if house.levels else None
+    top_uid = top.uid if top is not None else ''
+    top_elev = top.elevation if top is not None else 0.0
+    top_ftf = top.floor_to_floor if top is not None else 0.0
+    top = None
+    if offset is None:
+        offset = Matrix.Translation((0.0, 0.0, top_elev + top_ftf if top_uid else 0.0))
+    elevation = offset.translation.z
+
+    # The level below reaches up to the new one
+    below = get_level(top_uid)
+    if below is not None and elevation > below.elevation + 1e-6:
+        below['floor_to_floor'] = elevation - below.elevation
+        below['applied_floor_to_floor'] = below.floor_to_floor
+    below = None
+
+    level = house.levels.add()
+    uid = _new_uid()
+    level.uid = uid
+    level['name'] = source_scene.name
+    level['ceiling_height'] = source_scene.home_builder.ceiling_height
+    level['floor_to_floor'] = level.ceiling_height + level.floor_thickness
+    level['applied_floor_to_floor'] = level.floor_to_floor
+    level['elevation'] = elevation
+    level['applied_elevation'] = elevation
+    ensure_level_collections(house_scene, level)
+    level = None
+
+    # Move the room into place. Roots move whole; a wall held to another
+    # wall's end by a constraint only turns - the constraint brings it.
+    turn = offset.to_euler().z
+    objects = list(source_scene.objects)
+    for obj in objects:
+        if obj.parent is not None:
+            continue
+        if _is_constrained_to_wall(obj):
+            obj.rotation_euler.z += turn
+        else:
+            # The object's own transform: a scene that hasn't been looked
+            # at this session has stale world matrices
+            obj.matrix_basis = offset @ obj.matrix_basis
+
+    # Out of the room's collections, into the house; adoption sorts each
+    # onto the new level (walls to Walls, lights to Lights, the rest to
+    # Products)
+    source_cols = _source_collections(source_scene)
+    for obj in objects:
+        if obj.type == 'CAMERA':
+            continue
+        for col in list(obj.users_collection):
+            if col in source_cols:
+                col.objects.unlink(obj)
+        if obj.name not in house_scene.collection.objects:
+            house_scene.collection.objects.link(obj)
+    index = next(i for i, l in enumerate(house.levels) if l.uid == uid)
+    house.active_level_index = index
+    for obj in objects:
+        if obj.get('IS_WALL_BP'):
+            obj[LEVEL_KEY] = uid
+    adopt_loose_objects(house_scene)
+    source_scene['HB_IMPORTED_TO_LEVEL'] = uid
+
+    walls.refresh_wall_junctions(house_scene, uid)
+    return uid, sum(1 for o in objects if o.get('IS_WALL_BP'))
+
+
+# =============================================================================
 # OPERATORS
 # =============================================================================
 
@@ -1160,6 +1275,41 @@ class HOME_BUILDER_OT_remove_level(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class HOME_BUILDER_OT_import_room_as_level(bpy.types.Operator):
+    bl_idname = "home_builder.import_room_as_level"
+    bl_label = "Import Room as Level"
+    bl_description = ("Make a room scene a level of this house: its walls, doors "
+                      "and everything on them move into a new level, placed where "
+                      "its linked room puts it")
+    bl_options = {'UNDO'}
+
+    scene_name: StringProperty(name="Room")  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        return (context.scene is not None and context.scene.get(HOUSE_SCENE_KEY)
+                and is_house_project(context))
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_confirm(
+            self, event,
+            title=f"Import '{self.scene_name}' as a level?",
+            message=("Its walls and everything on them move into this house. "
+                     f"The '{self.scene_name}' scene is left empty."),
+            confirm_text="Import")
+
+    def execute(self, context):
+        source = bpy.data.scenes.get(self.scene_name)
+        if source is None or source not in importable_room_scenes(context.scene):
+            self.report({'WARNING'}, f"'{self.scene_name}' can't be imported")
+            return {'CANCELLED'}
+        uid, count = import_room_as_level(context.scene, source)
+        level = get_level(uid)
+        self.report({'INFO'}, f"'{source.name}' is now {level.name} ({count} walls). "
+                              f"The empty '{source.name}' scene can be deleted")
+        return {'FINISHED'}
+
+
 class HOME_BUILDER_OT_set_active_level(bpy.types.Operator):
     bl_idname = "home_builder.set_active_level"
     bl_label = "Set Active Level"
@@ -1187,6 +1337,7 @@ classes = (
     HOME_BUILDER_OT_add_level,
     HOME_BUILDER_OT_remove_level,
     HOME_BUILDER_OT_set_active_level,
+    HOME_BUILDER_OT_import_room_as_level,
 )
 
 

@@ -52,6 +52,7 @@ LEVEL_SPEC = {
         ('bool', 'show_level_below', "Ghost Level Below",
          {'when': lambda house: house.level_display == 'ACTIVE'}),
         ('bool', 'show_ceilings', "Show Ceilings"),
+        ('pick', lambda context: _import_entries(context), "Import Room as Level"),
     ),
 }
 
@@ -120,6 +121,15 @@ ROOM_SPEC = {
     'actions': ((("Rebuild Rooms", "home_builder.rebuild_rooms"),
                  ("Select Marker", "home_builder.select_room")),),
 }
+
+
+def _import_entries(context):
+    """The pick menu for Import Room as Level: each room scene with walls."""
+    scenes = hb_house.importable_room_scenes(context.scene)
+    if not scenes:
+        return [("No room scenes with walls to import", None, {})]
+    return [(scene.name, "home_builder.import_room_as_level",
+             {'scene_name': scene.name, 'INVOKE': True}) for scene in scenes]
 
 
 def _start_notes(context):
