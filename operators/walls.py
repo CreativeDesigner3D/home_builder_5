@@ -73,6 +73,8 @@ def level_wall_segs(scene, level=None):
             continue
         if level is not None and hb_house.level_of(obj) != level:
             continue
+        if obj.get('WALL_TYPE') == 'Dormer':
+            continue                # a roof's dormer front: up on the roof
         seg = wall_seg(obj)
         if seg is None:
             continue

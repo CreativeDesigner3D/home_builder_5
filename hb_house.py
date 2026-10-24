@@ -518,7 +518,7 @@ def set_exterior_wall_heights(scene, level):
     if upper is not None:
         for obj in scene.objects:
             if (obj.get('IS_WALL_BP') and obj.get(LEVEL_KEY) == upper.uid
-                    and obj.get('WALL_TYPE') not in ('Divider', 'Porch')):
+                    and obj.get('WALL_TYPE') not in ('Divider', 'Porch', 'Dormer')):
                 band = _wall_band(obj)
                 if band is not None:
                     upper_bands.append(band)
@@ -988,6 +988,10 @@ class HB_RoofPiece(PropertyGroup):
         name="Overhang", description="How far the piece's roof runs past its walls",
         default=inch(12), min=0.0, subtype='DISTANCE', precision=4,
         update=_roof_piece_changed)  # type: ignore
+
+    # A shed dormer's front: a real wall, so windows go in it with the
+    # window tool. Kept (not remade) across rebuilds so its windows stay.
+    front_wall: PointerProperty(type=bpy.types.Object)  # type: ignore
 
 
 class HB_Roof(PropertyGroup):

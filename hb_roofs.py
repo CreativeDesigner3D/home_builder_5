@@ -363,7 +363,7 @@ def piece_dormers(frame, roof, level):
     """The roof's pieces as dormer descriptions: (cross gables, sheds).
     Each faces out from the ridge on its rectangle's far edge."""
     cross, sheds = [], []
-    for piece in roof.pieces:
+    for index, piece in enumerate(roof.pieces):
         if frame['along_x']:
             v0, v1, ua, ub = piece.x0, piece.x1, piece.y0, piece.y1
         else:
@@ -375,7 +375,7 @@ def piece_dormers(frame, roof, level):
         s, u_front = (-1, ua) if (ua + ub) / 2.0 < frame['uc'] else (1, ub)
         d = {'v0': v0, 'v1': v1, 'sign': s, 'u_front': u_front, 'level': level,
              'pitch': piece.pitch, 'plate': level.elevation + piece.eave_height,
-             'overhang': piece.overhang}
+             'overhang': piece.overhang, 'index': index}
         (sheds if piece.kind == 'SHED' else cross).append(d)
     return cross, sheds
 
@@ -408,12 +408,107 @@ def _shed_prisms(frame, roof, sheds):
         roofs.append(([(uf_o, z_o), (ub, plate + rise), (ub, plate + rise + tv), (uf_o, z_o + tv)],
                       d['v0'] - ov, d['v1'] + ov, along))
         low = d['level'].elevation
-        walls.append(([(d['v0'], low), (d['v1'], low), (d['v1'], plate), (d['v0'], plate)],
-                      uf - s * DORMER_WALL, uf, across))
+        # The front is a wall of its own (see _shed_front_wall); these are
+        # the cheeks either side, behind it
         cheek = [(uf, low), (uf, plate), (ub, plate + rise), (ub, low)]
         walls.append((cheek, d['v0'], d['v0'] + DORMER_WALL, along))
         walls.append((cheek, d['v1'] - DORMER_WALL, d['v1'], along))
     return roofs, walls
+
+
+DORMER_WALL_TYPE = 'Dormer'
+FRONT_SINK = 0.1            # a dormer front starts this far down in the roof
+
+
+def _delete_tree(obj):
+    """Delete an object and everything parented under it (a wall's
+    windows, their cutters and labels)."""
+    for child in list(obj.children):
+        _delete_tree(child)
+    data = obj.data
+    bpy.data.objects.remove(obj, do_unlink=True)
+    if data is not None and data.users == 0:
+        for pool in (bpy.data.meshes, bpy.data.curves):
+            if data.name in pool and pool[data.name] == data:
+                pool.remove(data)
+                break
+
+
+ROOF_HIDDEN_KEY = 'HB_HIDDEN_WITH_ROOF'
+
+
+def _set_tree_hidden(obj, hide):
+    """Hide or show a dormer front and what hangs off it (its windows).
+    Showing brings back only what hiding hid: a window's cutters stay
+    hidden as they always are."""
+    for o in [obj] + list(obj.children_recursive):
+        if hide:
+            if not o.hide_viewport:
+                o[ROOF_HIDDEN_KEY] = True
+                o.hide_viewport = True
+        elif o.get(ROOF_HIDDEN_KEY):
+            del o[ROOF_HIDDEN_KEY]
+            o.hide_viewport = False
+
+
+def _wall_inputs_like(scene, level, wall_obj):
+    """Give a roof-made wall the colour and surfaces of the level's walls."""
+    from . import hb_types
+    model = next((o for o in _exterior_walls(scene, level)), None)
+    if model is None:
+        return
+    src, dst = hb_types.GeoNodeWall(model), hb_types.GeoNodeWall(wall_obj)
+    for name in ('Top Surface', 'Bottom Surface', 'Inside Face', 'Outside Face',
+                 'Left Edge', 'Right Edge'):
+        try:
+            if src.has_input(name):
+                dst.set_input(name, src.get_input(name))
+        except Exception:
+            pass
+    wall_obj.color = model.color
+
+
+def _shed_front_wall(scene, level, frame, roof, piece, d):
+    """Make or move a shed dormer's front wall: a GeoNodeWall standing in
+    the roof at the dormer's front, its thickness inward, up to the
+    dormer's eaves. It is tagged as a dormer front, so rooms, corners and
+    the roof's trim leave it alone; windows placed in it stay with it."""
+    from . import hb_types
+    wall_obj = piece.front_wall
+    if wall_obj is None or wall_obj.name not in scene.objects:
+        wall = hb_types.GeoNodeWall()
+        wall.create("Dormer Front")
+        wall.obj['WALL_TYPE'] = DORMER_WALL_TYPE
+        wall.obj['IS_DORMER_FRONT'] = True
+        hb_house.assign_wall_to_level(wall.obj, level, scene)
+        piece.front_wall = wall.obj
+        wall_obj = wall.obj
+    wall = hb_types.GeoNodeWall(wall_obj)
+    s, uf = d['sign'], d['u_front']
+    inward = (0.0, -s) if frame['along_x'] else (-s, 0.0)
+    direction = (inward[1], -inward[0])      # thickness falls to its left
+    p0 = _world(frame, uf, d['v0'], 0.0)
+    p1 = _world(frame, uf, d['v1'], 0.0)
+    forward = (p1[0] - p0[0]) * direction[0] + (p1[1] - p0[1]) * direction[1] > 0
+    start = p0 if forward else p1
+    base = roof_top_z(frame, roof, uf) - FRONT_SINK
+    wall.set_input('Length', d['v1'] - d['v0'])
+    wall.set_input('Thickness', DORMER_WALL)
+    wall.set_input('Height', max(d['plate'] - base, 0.05))
+    wall_obj.location = (start[0], start[1], base)
+    wall_obj.rotation_euler = (0.0, 0.0, math.atan2(direction[1], direction[0]))
+    _set_tree_hidden(wall_obj, not scene.hb_house.show_roofs)
+    _wall_inputs_like(scene, level, wall_obj)
+    wall_obj.update_tag()
+
+
+def _clear_front_walls(roof, keep=()):
+    """Delete the front walls of pieces that aren't shed dormers any more."""
+    for i, piece in enumerate(roof.pieces):
+        if i in keep or piece.front_wall is None:
+            continue
+        _delete_tree(piece.front_wall)
+        piece.front_wall = None
 
 
 def roof_top_z(frame, roof, u):
@@ -631,7 +726,8 @@ def apply_trims(scene):
         name = TRIM_PREFIX + level.name
         for upper in _levels_under(scene, frame):
             for obj in scene.objects:
-                if obj.get('IS_WALL_BP') and obj.get(hb_house.LEVEL_KEY) == upper.uid:
+                if (obj.get('IS_WALL_BP') and obj.get(hb_house.LEVEL_KEY) == upper.uid
+                        and obj.get('WALL_TYPE') != DORMER_WALL_TYPE):
                     wanted.setdefault(obj, {})[name] = (cutter, False)
             for room in upper.rooms:
                 if room.ceiling_obj is not None:
@@ -658,6 +754,10 @@ def apply_roof_visibility(scene):
                     level.roof.gables_obj, level.roof.dormer_walls_obj):
             if obj is not None:
                 obj.hide_viewport = hide
+        if level.roof.enabled:
+            for piece in level.roof.pieces:
+                if piece.front_wall is not None:
+                    _set_tree_hidden(piece.front_wall, hide)
 
 
 # =============================================================================
@@ -713,6 +813,10 @@ def rebuild_roof(scene, level):
     if frame is None:
         _dormer_fronts.pop(level.uid, None)
         _remove_roof(roof)
+        # Dormer fronts keep their windows: hidden with the roof, not deleted
+        for piece in roof.pieces:
+            if piece.front_wall is not None:
+                _set_tree_hidden(piece.front_wall, True)
         _update_gable_walls(scene)
         apply_trims(scene)
         return False
@@ -764,6 +868,9 @@ def rebuild_roof(scene, level):
     for obj in (gables, dormer_walls):
         if obj is not None:
             _wall_finish(scene, level, obj)
+    for d in sheds:
+        _shed_front_wall(scene, level, frame, roof, roof.pieces[d['index']], d)
+    _clear_front_walls(roof, keep={d['index'] for d in sheds})
 
     # The trim: everything above the roof, less the inside of the dormers
     cutter = _helper(scene, roof, 'cutter_obj', f"Roof Trim - {level.name}",
@@ -925,6 +1032,9 @@ class HOME_BUILDER_OT_remove_roof_piece(bpy.types.Operator):
     def execute(self, context):
         level = hb_house.active_level(context)
         roof = level.roof
+        front = roof.pieces[roof.active_piece_index].front_wall
+        if front is not None:
+            _delete_tree(front)
         roof.pieces.remove(roof.active_piece_index)
         roof.active_piece_index = max(0, min(roof.active_piece_index, len(roof.pieces) - 1))
         rebuild_roof(context.scene, level)
