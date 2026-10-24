@@ -978,6 +978,10 @@ def rebuild_roof(scene, level):
     apply_roof_visibility(scene)
     _update_gable_walls(scene)
     apply_trims(scene)
+    # Vaulted ceilings follow the roof: remake them to its new shape
+    if any(r.ceiling_style == 'VAULTED' for r in level.rooms):
+        from . import hb_rooms
+        hb_rooms.rebuild_level(scene, level)
     return True
 
 

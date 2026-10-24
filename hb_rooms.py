@@ -147,13 +147,96 @@ def _build_floor(scene, level, room, polygon):
     room.floor_obj.location = (0.0, 0.0, level.elevation)
 
 
+VAULT_GAP = 0.01        # a vaulted ceiling sits this far under the roof
+
+
+def vault_frame(scene, level, room):
+    """The roof a vaulted room's ceiling follows (its level's own), or
+    None for a flat ceiling."""
+    if room.ceiling_style != 'VAULTED' or not level.roof.enabled:
+        return None
+    from . import hb_roofs
+    return hb_roofs.roof_frame(scene, level)
+
+
+def vault_z(frame, room, level, u):
+    """Height of a vaulted ceiling above the floor at u: under the roof,
+    no lower than the room's flat ceiling, no higher than its peak."""
+    from . import hb_roofs
+    z = hb_roofs._under_z(frame, u) - level.elevation - VAULT_GAP
+    if room.vault_peak > 0:
+        z = min(z, room.vault_peak)
+    return max(z, room_height(room, level))
+
+
+def _vault_mesh(name, polygon, room, level, frame):
+    """A ceiling following the roof's underside over the room's outline:
+    the outline cut where the roof (or the peak) changes slope and each
+    piece lifted to it, with a drop all round down to the room's flat
+    height - hidden in its walls, and closing the step where it meets a
+    flat ceiling across a room divider."""
+    from . import hb_roofs
+    along_x = frame['along_x']
+    flat = room_height(room, level)
+    base = level.elevation
+    breaks = [u for u, _z in frame['under']]
+    if room.vault_peak > 0:
+        target = base + VAULT_GAP + room.vault_peak
+        pts = frame['under']
+        for (a, za), (b, zb) in zip(pts, pts[1:]):
+            if (za - target) * (zb - target) < 0:
+                breaks.append(a + (b - a) * (target - za) / (zb - za))
+    bm = bmesh.new()
+    verts = [bm.verts.new((x, y, 0.0)) for x, y in polygon]
+    bm.faces.new(verts)
+    normal = (0.0, 1.0, 0.0) if along_x else (1.0, 0.0, 0.0)
+    for u in breaks:
+        co = (0.0, u, 0.0) if along_x else (u, 0.0, 0.0)
+        bmesh.ops.bisect_plane(bm, geom=bm.verts[:] + bm.edges[:] + bm.faces[:],
+                               plane_co=co, plane_no=normal)
+    for v in bm.verts:
+        u = hb_roofs._uv(frame, (v.co.x, v.co.y))[0]
+        v.co.z = vault_z(frame, room, level, u)
+    bm.normal_update()
+    for f in bm.faces:
+        if f.normal.z > 0:
+            f.normal_flip()
+    # The drop round the edge, down to the flat height
+    bottoms = {}
+    for e in [e for e in bm.edges if len(e.link_faces) == 1]:
+        a, b = e.verts
+        if a.co.z - flat < 1e-4 and b.co.z - flat < 1e-4:
+            continue
+        for v in (a, b):
+            if v not in bottoms:
+                bottoms[v] = bm.verts.new((v.co.x, v.co.y, flat))
+        if a.co.z - flat < 1e-4:
+            bm.faces.new((a, b, bottoms[b]))
+        elif b.co.z - flat < 1e-4:
+            bm.faces.new((a, b, bottoms[a]))
+        else:
+            bm.faces.new((a, b, bottoms[b], bottoms[a]))
+    uv = bm.loops.layers.uv.new("UVMap")
+    for f in bm.faces:
+        for loop in f.loops:
+            loop[uv].uv = (loop.vert.co.x, loop.vert.co.y + loop.vert.co.z)
+    mesh = bpy.data.meshes.new(name)
+    bm.to_mesh(mesh)
+    bm.free()
+    return mesh
+
+
 def _build_ceiling(scene, level, room, polygon):
     if not room.has_ceiling:
         _remove(room.ceiling_obj)
         room.ceiling_obj = None
         return
-    mesh = _slab_mesh(f"Ceiling - {room.name}", polygon, room_height(room, level),
-                      facing_down=True)
+    frame = vault_frame(scene, level, room)
+    if frame is not None:
+        mesh = _vault_mesh(f"Ceiling - {room.name}", polygon, room, level, frame)
+    else:
+        mesh = _slab_mesh(f"Ceiling - {room.name}", polygon, room_height(room, level),
+                          facing_down=True)
     if room.ceiling_obj is None:
         if room.ceiling_material is not None:
             mesh.materials.append(room.ceiling_material)
@@ -312,6 +395,46 @@ def _make_outdoor(room):
     room_floor_material(room, rebuild=True)
 
 
+VAULT_BASE_KEY = 'HB_VAULT_BASE'    # a raised wall's height before it was raised
+
+
+def _raise_vault_walls(scene, level, polygons):
+    """Interior walls round a vaulted room rise to its ceiling's peak, so
+    the vault meets them; the roof's trim cuts them to its underside.
+    Walls no longer round one go back to the height they had."""
+    from . import hb_types
+    from .operators import walls
+    _objs, segs = walls.level_wall_segs(scene, level.uid)
+    by_id = {s.id: s for s in segs}
+    want = {}
+    for i, polygon in polygons.items():
+        room = level.rooms[i]
+        frame = vault_frame(scene, level, room) if room.has_ceiling else None
+        if frame is None:
+            continue
+        top = room.vault_peak if room.vault_peak > 0 else frame['ridge_z'] - level.elevation
+        n = len(polygon)
+        for j in range(n):
+            a, b = polygon[j], polygon[(j + 1) % n]
+            mid = ((a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0)
+            for s in segs:
+                if (s.wall_type == 'Interior'
+                        and hb_porches._dist_to_band(mid, s) < hb_porches.ON_EDGE):
+                    want[s.id] = max(want.get(s.id, 0.0), top + 0.05)
+    for name, seg in by_id.items():
+        obj = scene.objects[name]
+        wall = hb_types.GeoNodeWall(obj)
+        if name in want:
+            if VAULT_BASE_KEY not in obj:
+                obj[VAULT_BASE_KEY] = wall.get_input('Height')
+            wall.set_input('Height', max(want[name], obj[VAULT_BASE_KEY]))
+            obj.update_tag()
+        elif VAULT_BASE_KEY in obj:
+            wall.set_input('Height', obj[VAULT_BASE_KEY])
+            del obj[VAULT_BASE_KEY]
+            obj.update_tag()
+
+
 PORCH_CEILING = inch(108)       # a new porch's ceiling, if the level's is higher
 
 
@@ -414,6 +537,7 @@ def rebuild_level(scene, level):
         elif room.porch_obj is not None:
             hb_porches.remove_porch(room)
         update_room_label(room)
+    _raise_vault_walls(scene, level, {i: areas[k].polygon for k, i in claimed.items()})
     for room in level.rooms:
         if room.orphaned:
             _remove(room.floor_obj)

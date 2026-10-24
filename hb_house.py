@@ -892,6 +892,20 @@ class HB_Room(PropertyGroup):
     has_ceiling: BoolProperty(name="Ceiling", default=True,
                               update=_room_shape_changed)  # type: ignore
 
+    ceiling_style: EnumProperty(
+        name="Ceiling Shape",
+        items=[('FLAT', "Flat", "A flat ceiling at the room's ceiling height"),
+               ('VAULTED', "Vaulted",
+                "Follows the roof's underside up from the walls - a sloped or "
+                "cathedral ceiling. Needs a roof on the level")],
+        default='FLAT', update=_room_shape_changed)  # type: ignore
+    vault_peak: FloatProperty(
+        name="Peak Height",
+        description=("Where a vaulted ceiling levels off, above the floor. "
+                     "0 runs it all the way up under the roof"),
+        default=0.0, min=0.0, subtype='DISTANCE', precision=4,
+        update=_room_shape_changed)  # type: ignore
+
     outdoor: BoolProperty(
         name="Outdoor",
         description="A balcony or deck: no ceiling, deck boards for a floor",
