@@ -16,6 +16,10 @@ can do what a house needs:
 * The cursor is captured. It is hidden and held at the middle of the
   viewport, so you can turn round and round without it leaving the
   window.
+* It keeps pace in any shading. Motion uses the real time between
+  ticks, and the view is moved once a tick rather than on every mouse
+  event, so Material Preview and Rendered - slower to draw than Solid -
+  walk at the same speed, just at a lower frame rate.
 
 For the walk the house is shown the way it would be lived in: every
 level visible and the ceilings on. When the walk ends those go back.
@@ -27,6 +31,7 @@ you started from.
 """
 
 import math
+import time
 
 import bpy
 import gpu
@@ -48,6 +53,7 @@ FALL_ACCEL = 9.8            # m/s2, when there is nothing just underfoot
 LOOK_SENSITIVITY = 0.0025   # radians per pixel, times Blender's mouse speed
 PITCH_LIMIT = math.radians(85.0)
 TICK = 1.0 / 60.0
+MAX_STEP = 0.1              # longest tick moved in one go (s), after a stall
 # Doors
 DOOR_REACH = 2.5            # how far away a door can be opened (m)
 OPEN_SWING = 90.0           # degrees a hinged door opens to
@@ -317,6 +323,7 @@ class HOME_BUILDER_OT_walk_through(bpy.types.Operator):
         window.cursor_modal_set('NONE')
         window.cursor_warp(*self.center)
         self.timer = context.window_manager.event_timer_add(TICK, window=window)
+        self.last_tick = time.perf_counter()
         self.aim_handle = bpy.types.SpaceView3D.draw_handler_add(
             self._draw_aim, (), 'WINDOW', 'POST_PIXEL')
         self._header(context)
@@ -392,7 +399,8 @@ class HOME_BUILDER_OT_walk_through(bpy.types.Operator):
                 self.pitch = max(-PITCH_LIMIT, min(PITCH_LIMIT,
                                                    self.pitch + dy * self.sensitivity))
                 self.window.cursor_warp(*self.center)
-                self._apply_view()
+                # The view follows on the next tick: redrawing for every
+                # mouse event queues up frames when drawing is slow
             return {'RUNNING_MODAL'}
 
         if event.type == 'TIMER':
@@ -434,7 +442,11 @@ class HOME_BUILDER_OT_walk_through(bpy.types.Operator):
         return {'RUNNING_MODAL'}
 
     def _tick(self):
-        dt = TICK
+        # The time since the last tick, not the timer's nominal step: a
+        # tick waits for the frame before it to draw
+        now = time.perf_counter()
+        dt = min(max(now - self.last_tick, 0.0), MAX_STEP)
+        self.last_tick = now
         x = sum(MOVE_KEYS[k][0] for k in self.keys)
         y = sum(MOVE_KEYS[k][1] for k in self.keys)
         if x or y:
