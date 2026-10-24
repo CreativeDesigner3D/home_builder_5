@@ -936,6 +936,60 @@ def _roof_changed(self, context):
     hb_roofs.rebuild_roof_of(self)
 
 
+def _roof_piece_changed(self, context):
+    """A roof piece's setting changed: rebuild the roof it belongs to."""
+    from . import hb_roofs
+    path = self.path_from_id()
+    roof = self.id_data.path_resolve(path.rsplit('.pieces[', 1)[0])
+    hb_roofs.rebuild_roof_of(roof)
+
+
+class HB_RoofPiece(PropertyGroup):
+    """A piece added to a level's roof (see hb_roofs): a cross gable - a
+    gable roof of its own over a wing or a porch, running back into the
+    main roof - or a shed dormer standing on the roof's slope. Its plan
+    rectangle says where: the gable or the dormer's front faces out from
+    the main ridge, on the rectangle's edge furthest from it."""
+
+    name: StringProperty(name="Name", default="Roof Piece")  # type: ignore
+
+    kind: EnumProperty(
+        name="Kind",
+        items=[('GABLE', "Cross Gable",
+                "A gable roof of its own, its ridge square to the main ridge, "
+                "running back into the main roof with valleys where they meet"),
+               ('SHED', "Shed Dormer",
+                "A dormer on the roof's slope: a front wall and a shallow "
+                "roof sloping back up into the main roof")],
+        default='GABLE', update=_roof_piece_changed)  # type: ignore
+
+    x0: FloatProperty(name="Left Edge", subtype='DISTANCE', precision=4,
+                      update=_roof_piece_changed)  # type: ignore
+    x1: FloatProperty(name="Right Edge", subtype='DISTANCE', precision=4,
+                      update=_roof_piece_changed)  # type: ignore
+    y0: FloatProperty(name="Front Edge", subtype='DISTANCE', precision=4,
+                      update=_roof_piece_changed)  # type: ignore
+    y1: FloatProperty(name="Back Edge", subtype='DISTANCE', precision=4,
+                      update=_roof_piece_changed)  # type: ignore
+
+    eave_height: FloatProperty(
+        name="Eave Height",
+        description=("Above the level's floor: where a cross gable's slopes meet its "
+                     "walls, or the top of a shed dormer's front wall"),
+        default=inch(120), subtype='DISTANCE', precision=4,
+        update=_roof_piece_changed)  # type: ignore
+
+    pitch: FloatProperty(
+        name="Pitch", description="Rise in 12",
+        default=8.0, min=0.5, max=24.0, precision=2,
+        update=_roof_piece_changed)  # type: ignore
+
+    overhang: FloatProperty(
+        name="Overhang", description="How far the piece's roof runs past its walls",
+        default=inch(12), min=0.0, subtype='DISTANCE', precision=4,
+        update=_roof_piece_changed)  # type: ignore
+
+
 class HB_Roof(PropertyGroup):
     """A level's roof: built over the outside of its exterior walls,
     sitting on top of them or - for a barn or a cape - starting at the
@@ -1041,6 +1095,12 @@ class HB_Roof(PropertyGroup):
     dormer_tops_obj: PointerProperty(type=bpy.types.Object)  # type: ignore
     dormer_inside_obj: PointerProperty(type=bpy.types.Object)  # type: ignore
     roof_top_obj: PointerProperty(type=bpy.types.Object)  # type: ignore
+
+    # Pieces added to the roof: cross gables and shed dormers
+    pieces: CollectionProperty(type=HB_RoofPiece)  # type: ignore
+    active_piece_index: IntProperty(name="Active Roof Piece")  # type: ignore
+    gables_obj: PointerProperty(type=bpy.types.Object)  # type: ignore
+    dormer_walls_obj: PointerProperty(type=bpy.types.Object)  # type: ignore
 
 
 class HB_Level(PropertyGroup):
@@ -1495,6 +1555,7 @@ class HOME_BUILDER_OT_set_active_level(bpy.types.Operator):
 
 classes = (
     HB_Room,
+    HB_RoofPiece,
     HB_Roof,
     HB_Level,
     HB_House_Props,

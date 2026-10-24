@@ -157,6 +157,31 @@ ROOF_FIELDS = (
 )
 
 
+PIECE_SPEC = {
+    'kind': 'pool',
+    'title': "Roof Pieces",
+    'list_label': "Roof Pieces",
+    'props': lambda context: hb_house.active_level(context).roof,
+    'collection': 'pieces',
+    'index': 'active_piece_index',
+    'remove_op': 'home_builder.remove_roof_piece',
+    'allow_empty': True,
+    'actions': ((("Add Cross Gable", "home_builder.add_roof_piece", {'kind': 'GABLE'}, None),
+                 ("Add Shed Dormer", "home_builder.add_roof_piece", {'kind': 'SHED'}, None)),),
+    'fields': (
+        ('enum', 'kind', "Kind"),
+        ('distance', 'x0', "Left Edge"),
+        ('distance', 'x1', "Right Edge"),
+        ('distance', 'y0', "Front Edge"),
+        ('distance', 'y1', "Back Edge"),
+        ('distance', 'eave_height', "Eave Height", {'when': lambda p: p.kind == 'GABLE'}),
+        ('distance', 'eave_height', "Front Wall Height", {'when': lambda p: p.kind == 'SHED'}),
+        ('number', 'pitch', "Pitch (in 12)"),
+        ('distance', 'overhang', "Overhang"),
+    ),
+}
+
+
 def _import_entries(context):
     """The pick menu for Import Room as Level: each room scene with walls."""
     scenes = hb_house.importable_room_scenes(context.scene)
@@ -214,6 +239,10 @@ def _blocks(context):
         blocks.append(('gap', None))
         blocks.append(('head', ("Roof", False, None)))
         blocks.extend(options_panel.field_blocks(context, ROOF_FIELDS, level.roof))
+        if level.roof.enabled:
+            blocks.append(('gap', None))
+            blocks.append(('note', "Select the walls or porch a piece goes over."))
+            blocks.extend(options_panel.pool_blocks(context, PIECE_SPEC))
         blocks.append(('gap', None))
         blocks.extend(options_panel.pool_blocks(context, ROOM_SPEC))
     return blocks
