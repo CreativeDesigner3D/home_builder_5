@@ -89,6 +89,9 @@ DOOR_TYPE_ITEMS = [
                          "side"),
     ('BARN', "Barn", "A slab on a track across the wall face; double is "
                      "a pair"),
+    ('OVERHEAD', "Overhead", "A sectional garage door: panelled sections "
+                             "with a row of windows on top, rolling up and "
+                             "back under the ceiling to open"),
 ]
 
 WINDOW_TYPE_ITEMS = [
@@ -1481,6 +1484,97 @@ def _build_pocket(cage_obj, opts, x0, x1, z0, h, y_center, st, is_double,
                      z0, st, Matrix.Translation((slide * f, 0.0, 0.0)))
 
 
+# Overhead (sectional garage) door
+OVERHEAD_SECTION_H = inch(21.0)     # about four sections in a 7' door
+OVERHEAD_PANEL_W = inch(24.0)       # raised panels about 2' wide
+OVERHEAD_PANEL_INSET = inch(3.0)    # panel and window margins in a section
+OVERHEAD_RELIEF = inch(0.5)         # how proud a raised panel stands
+
+
+def overhead_sections(h):
+    """How many sections a door of height h has, and each one's height."""
+    n = max(1, round(h / OVERHEAD_SECTION_H))
+    return n, h / n
+
+
+def overhead_place(along, depth, z_top, y_face, travel):
+    """Where a point of an overhead door goes when the door has run
+    `travel` up its track: `along` is its height in the closed door,
+    `depth` how far out from the door's room face. Up to the head of the
+    opening the track is vertical; past it the door lies flat, running
+    back into the room (towards -Y) under the head. Returns (y, z)."""
+    a = along + travel
+    if a <= z_top:
+        return y_face + depth, a
+    back = a - z_top
+    return y_face - back, z_top + depth
+
+
+def _overhead_box(verts, faces, slots, x0, x1, a0, a1, d0, d1, z_top, y_face,
+                  travel, slot):
+    """A box of the door, given in (x, along, depth), placed on its track.
+    A box straddling the head is kept whole on whichever side its middle
+    is, so a section turns the corner as one piece."""
+    mid = (a0 + a1) / 2.0 + travel
+    flat = mid > z_top
+    corners = []
+    for z_i, a in ((0, a0), (1, a1)):
+        for x, d in ((x0, d0), (x1, d0), (x1, d1), (x0, d1)):
+            if flat:
+                y, z = y_face - (a + travel - z_top), z_top + d
+            else:
+                y, z = y_face + d, a + travel
+            corners.append((x, y, z))
+    if x1 - x0 <= 1e-9 or abs(a1 - a0) <= 1e-9 or abs(d1 - d0) <= 1e-9:
+        return
+    b = len(verts)
+    verts.extend(corners)
+    if flat:
+        # (along, depth) -> (-y, z) turns the box over: wind it the other way
+        faces.extend([(b, b + 1, b + 2, b + 3), (b + 4, b + 7, b + 6, b + 5),
+                      (b, b + 4, b + 5, b + 1), (b + 1, b + 5, b + 6, b + 2),
+                      (b + 2, b + 6, b + 7, b + 3), (b + 3, b + 7, b + 4, b)])
+    else:
+        faces.extend([(b, b + 3, b + 2, b + 1), (b + 4, b + 5, b + 6, b + 7),
+                      (b, b + 1, b + 5, b + 4), (b + 1, b + 2, b + 6, b + 5),
+                      (b + 2, b + 3, b + 7, b + 6), (b + 3, b, b + 4, b + 7)])
+    slots.extend([slot] * 6)
+
+
+def _build_overhead(cage_obj, opts, x0, x1, z0, h, y_face, st):
+    """A sectional garage door filling the opening: sections stacked up
+    its height, each a slab with raised panels on the outside, the top
+    one with windows instead. Open, it has rolled up its track and lies
+    flat under the head of the opening, running back into the garage."""
+    f = _open_fraction(opts)
+    z_top = z0 + h
+    n, sh = overhead_sections(h)
+    w = x1 - x0
+    cols = max(1, round(w / OVERHEAD_PANEL_W))
+    cw = w / cols
+    m = min(OVERHEAD_PANEL_INSET, sh / 5.0, cw / 5.0)
+    travel = f * h
+    verts, faces, slots = [], [], []
+    for i in range(n):
+        a0 = z0 + i * sh
+        a1 = a0 + sh
+        top = i == n - 1
+        _overhead_box(verts, faces, slots, x0, x1, a0 + inch(0.125), a1 - inch(0.125),
+                      0.0, st, z_top, y_face, travel, 0)
+        for c in range(cols):
+            px0 = x0 + c * cw + m
+            px1 = x0 + (c + 1) * cw - m
+            if top:
+                # A window: glass a little in from the outside face
+                _overhead_box(verts, faces, slots, px0, px1, a0 + m, a1 - m,
+                              st * 0.4, st + inch(0.05), z_top, y_face, travel, 1)
+            else:
+                _overhead_box(verts, faces, slots, px0, px1, a0 + m, a1 - m,
+                              st, st + OVERHEAD_RELIEF, z_top, y_face, travel, 0)
+    door = _new_child(cage_obj, "Overhead Door")
+    _finish_mesh(door, verts, faces, slots, [_door_material(), _glass_material()])
+
+
 def _barn_layout(x0, x1, is_double, is_left):
     """(x, width, slide) per barn slab, closed over the opening with
     BARN_OVERLAP to spare each side, and the track's x extent."""
@@ -1599,6 +1693,14 @@ def _door_type_symbol(cage_obj, kind, opts, x0, x1, T, y_center, st, ct,
             lines.append(((x, y), (x + w, y)))
         ty = y + s * (st / 2.0 + inch(1.0))
         dashed.append(((tx0, ty), (tx1, ty)))
+    elif kind == 'OVERHEAD':
+        # The door across the opening, and dashed where it goes overhead
+        # when open: back into the room as deep as the door is tall
+        y = opts.get('_overhead_y', y_center)
+        lines.append(((x0, y), (x1, y)))
+        depth = opts.get('_overhead_depth', inch(84.0))
+        dashed += [((x0, y), (x0, y - depth)), ((x1, y), (x1, y - depth)),
+                   ((x0, y - depth), (x1, y - depth))]
     return _symbol_object(cage_obj, "Door Type Symbol", lines, dashed)
 
 
@@ -1918,6 +2020,13 @@ def build_door_geometry(cage_obj):
             _build_barn(cage_obj, opts, door_x0, door_x1, z_top, T, side,
                         casing_t, st, is_double, is_left, verts, faces,
                         slots)
+        elif kind == 'OVERHEAD':
+            # On the room side of the frame, so it can roll up and back
+            _build_overhead(cage_obj, opts, door_x0, door_x1, th_h, slab_h,
+                            fy0 - st, st)
+            # For its plan symbol: where it hangs and how far back it opens
+            opts['_overhead_y'] = fy0 - st / 2.0
+            opts['_overhead_depth'] = slab_h
         _door_type_symbol(cage_obj, kind, opts, door_x0, door_x1, T,
                           y_center, st, casing_t, is_double, is_left, side)
         frame = _new_child(cage_obj, "Door Frame")

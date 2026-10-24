@@ -623,7 +623,7 @@ class Home_Builder_Scene_Props(PropertyGroup):
                     "set above)",
         items=[('SWING', "Swing", ""), ('BIFOLD', "Bi-Fold", ""),
                ('SLIDING', "Sliding", ""), ('POCKET', "Pocket", ""),
-               ('BARN', "Barn", "")],
+               ('BARN', "Barn", ""), ('OVERHEAD', "Overhead", "")],
         default='SWING')  # type: ignore
     window_style: EnumProperty(
         name="Window Style",
