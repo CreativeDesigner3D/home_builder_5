@@ -580,7 +580,8 @@ class Home_Builder_Scene_Props(PropertyGroup):
                                  ('Half',"Half","Half Wall"),
                                  ('Fake',"Fake","Fake Wall"),
                                  ('Railing',"Railing","Balcony or landing railing. Unlike a half wall it closes a room, so a deck becomes a room"),
-                                 ('Divider',"Room Divider","An invisible line that splits an open space into rooms, such as a kitchen open to a living room. Nothing is built; it only closes rooms")],
+                                 ('Divider',"Room Divider","An invisible line that splits an open space into rooms, such as a kitchen open to a living room. Nothing is built; it only closes rooms"),
+                                 ('Porch',"Porch Edge","The open side of a porch. Draw it from the house round the porch's outer edge: it closes the porch into a room with a floor a step down, a ceiling, and posts and a beam along the edge")],
                           default='Exterior')# type: ignore  
 
     ceiling_height: FloatProperty(name="Ceiling Height", default=inch(96),subtype='DISTANCE',precision=5,update=update_ceiling_height)

@@ -518,7 +518,7 @@ def set_exterior_wall_heights(scene, level):
     if upper is not None:
         for obj in scene.objects:
             if (obj.get('IS_WALL_BP') and obj.get(LEVEL_KEY) == upper.uid
-                    and obj.get('WALL_TYPE') != 'Divider'):
+                    and obj.get('WALL_TYPE') not in ('Divider', 'Porch')):
                 band = _wall_band(obj)
                 if band is not None:
                     upper_bands.append(band)
@@ -591,7 +591,7 @@ def new_wall_height(level, wall_type, scene_props):
         return scene_props.half_wall_height
     if wall_type == 'Railing':
         return scene_props.railing_height
-    if wall_type == 'Divider':
+    if wall_type in ('Divider', 'Porch'):
         from .operators import walls
         return walls.DIVIDER_HEIGHT
     return scene_props.fake_wall_height
@@ -817,6 +817,11 @@ def _room_shape_changed(self, context):
     hb_rooms.rebuild_room(self)
 
 
+def _room_porch_changed(self, context):
+    if self.is_porch:
+        _room_shape_changed(self, context)
+
+
 class HB_Room(PropertyGroup):
     """A room on a level. Which area of walls it is comes from where its
     marker sits (see hb_rooms); everything the user chooses for the room
@@ -891,6 +896,33 @@ class HB_Room(PropertyGroup):
         name="Outdoor",
         description="A balcony or deck: no ceiling, deck boards for a floor",
         default=False, update=_room_outdoor_changed)  # type: ignore
+
+    # A porch: a room closed by porch edges (see hb_porches)
+    is_porch: BoolProperty(
+        name="Porch", description="Closed on its open sides by porch edges",
+        default=False)  # type: ignore
+    post_width: FloatProperty(
+        name="Post Width", description="Width of the square porch posts",
+        default=inch(6), min=inch(2), subtype='DISTANCE', precision=4,
+        update=_room_porch_changed)  # type: ignore
+    post_spacing: FloatProperty(
+        name="Post Spacing",
+        description="Most a porch edge goes between posts; they are spread evenly",
+        default=inch(96), min=inch(24), subtype='DISTANCE', precision=4,
+        update=_room_porch_changed)  # type: ignore
+    beam_depth: FloatProperty(
+        name="Beam Depth",
+        description="Depth of the beam along the porch edges, under the ceiling. 0 for none",
+        default=inch(10), min=0.0, subtype='DISTANCE', precision=4,
+        update=_room_porch_changed)  # type: ignore
+    floor_drop: FloatProperty(
+        name="Step Down", description="How far the porch floor sits below the house floor",
+        default=inch(4), min=0.0, subtype='DISTANCE', precision=4,
+        update=_room_porch_changed)  # type: ignore
+    post_material: PointerProperty(
+        name="Post Material", type=bpy.types.Material,
+        update=_room_porch_changed)  # type: ignore
+    porch_obj: PointerProperty(type=bpy.types.Object)  # type: ignore
 
     # Worked out by hb_rooms on each rebuild
     area: FloatProperty(name="Area", default=0.0)  # type: ignore

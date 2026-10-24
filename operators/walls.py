@@ -173,18 +173,23 @@ def calculate_wall_miter_angles(wall_obj):
         refresh_wall_junctions(scene, hb_house.level_of(wall_obj))
 
 
-# A room divider is drawn as a thin wire strip on the floor - enough to
-# see and pick in plan, never rendered
+# Room dividers and porch edges are drawn as a thin wire strip on the
+# floor - enough to see and pick in plan, never rendered
 DIVIDER_HEIGHT = units.inch(0.25)
 DIVIDER_THICKNESS = units.inch(0.5)
 
 
-def style_divider(obj):
-    """Make a wall a room divider: tagged, wire-drawn and not rendered."""
-    obj['WALL_TYPE'] = 'Divider'
-    obj['IS_ROOM_DIVIDER'] = True
+def style_room_only_wall(obj, wall_type):
+    """Make a wall one that only closes rooms (a room divider or a porch
+    edge): tagged, wire-drawn and not rendered."""
+    obj['WALL_TYPE'] = wall_type
+    obj['IS_ROOM_DIVIDER' if wall_type == 'Divider' else 'IS_PORCH_EDGE'] = True
     obj.display_type = 'WIRE'
     obj.hide_render = True
+
+
+def style_divider(obj):
+    style_room_only_wall(obj, 'Divider')
 
 
 def update_all_wall_miters():
@@ -1988,7 +1993,7 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
             height = props.half_wall_height
         elif wall_type == 'Railing':
             height = props.railing_height
-        elif wall_type == 'Divider':
+        elif wall_type in hb_wall_graph.ROOM_ONLY_WALLS:
             height = DIVIDER_HEIGHT
         else:  # Fake
             height = props.fake_wall_height
@@ -2000,7 +2005,7 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
             thickness = props.interior_wall_thickness
         elif wall_type == 'Railing':
             thickness = props.railing_thickness
-        elif wall_type == 'Divider':
+        elif wall_type in hb_wall_graph.ROOM_ONLY_WALLS:
             thickness = DIVIDER_THICKNESS
         else:  # Fake — thin decorative panel
             thickness = units.inch(0.75)
@@ -2022,8 +2027,8 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
             self.current_wall.obj['IS_FAKE_WALL'] = True
         elif wall_type == 'Railing':
             self.current_wall.obj['IS_RAILING'] = True
-        elif wall_type == 'Divider':
-            style_divider(self.current_wall.obj)
+        elif wall_type in hb_wall_graph.ROOM_ONLY_WALLS:
+            style_room_only_wall(self.current_wall.obj, wall_type)
 
         if level is not None:
             hb_house.assign_wall_to_level(self.current_wall.obj, level, context.scene)
@@ -5058,7 +5063,7 @@ class home_builder_walls_OT_update_wall_height(bpy.types.Operator):
                 wall.set_input('Height', props.half_wall_height)
             elif wall_type == 'Railing':
                 wall.set_input('Height', props.railing_height)
-            elif wall_type == 'Divider':
+            elif wall_type in hb_wall_graph.ROOM_ONLY_WALLS:
                 wall.set_input('Height', DIVIDER_HEIGHT)
             elif wall_type == 'Fake':
                 wall.set_input('Height', props.fake_wall_height)
@@ -5104,7 +5109,7 @@ class home_builder_walls_OT_update_wall_thickness(bpy.types.Operator):
                 wall.set_input('Thickness', props.interior_wall_thickness)
             elif wall_type == 'Railing':
                 wall.set_input('Thickness', props.railing_thickness)
-            elif wall_type == 'Divider':
+            elif wall_type in hb_wall_graph.ROOM_ONLY_WALLS:
                 wall.set_input('Thickness', DIVIDER_THICKNESS)
             elif wall_type == 'Fake':
                 wall.set_input('Thickness', units.inch(0.75))

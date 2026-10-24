@@ -517,6 +517,11 @@ def draw_wall_settings(layout, context, include_type=True):
         row = col.row()
         row.prop(hb_scene, 'fake_wall_height', text="Wall Height")
         row.operator('home_builder_walls.update_wall_height', text="", icon='FILE_REFRESH', emboss=False)
+    elif hb_scene.wall_type == 'Porch':
+        col.label(text="The open side of a porch.")
+        col.label(text="Draw from the house round its outer edge.")
+        col.label(text="Posts, floor and ceiling are set per porch")
+        col.label(text="in the HOUSE tab.")
     elif hb_scene.wall_type == 'Divider':
         col.label(text="Splits an open space into rooms.")
         col.label(text="Draw it across the opening, wall to wall.")

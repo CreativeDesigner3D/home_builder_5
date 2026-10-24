@@ -22,7 +22,7 @@ import bpy
 import bmesh
 from mathutils import Vector
 
-from . import hb_house, hb_utils, hb_wall_graph
+from . import hb_house, hb_utils, hb_wall_graph, hb_porches
 from .units import inch
 
 ROOM_KEY = 'HB_ROOM'
@@ -132,7 +132,8 @@ def _build_floor(scene, level, room, polygon):
     # Meshes are built level-relative and the object carries the level's
     # elevation, so moving the level (which moves free objects) and
     # rebuilding agree
-    mesh = _slab_mesh(f"Floor - {room.name}", polygon, 0.0,
+    top = -room.floor_drop if room.is_porch else 0.0     # a porch steps down
+    mesh = _slab_mesh(f"Floor - {room.name}", polygon, top,
                       thickness=floor_slab_thickness(level))
     floor_mat = room_floor_material(room)
     if room.floor_obj is None:
@@ -311,9 +312,30 @@ def _make_outdoor(room):
     room_floor_material(room, rebuild=True)
 
 
+PORCH_CEILING = inch(108)       # a new porch's ceiling, if the level's is higher
+
+
+def _make_porch(room, level):
+    """A room that porch edges close: outdoors, a concrete floor a step
+    down and a ceiling of its own - set without the update callbacks, the
+    rebuild that follows builds it."""
+    from .operators import ops_room_dressing as dressing
+    room['outdoor'] = True
+    room['has_ceiling'] = True
+    if level.ceiling_height > PORCH_CEILING:
+        room['ceiling_height'] = PORCH_CEILING
+    room['floor_finish'] = hb_house._FLOOR_FINISH_INDEX['SOLID']
+    room['floor_size'] = dressing.DEFAULT_SIZE['SOLID']
+    room['floor_roughness'] = dressing.DEFAULT_ROUGHNESS['SOLID']
+    keys = [item[0] for item in hb_house._floor_look_items_cb(room, bpy.context)]
+    room['floor_look'] = keys.index(dressing.DEFAULT_LOOK['SOLID'])
+    hb_house._apply_floor_look(room)
+    room_floor_material(room, rebuild=True)
+
+
 def _forget_room(level, index):
     room = level.rooms[index]
-    for obj in (room.label_obj, room.floor_obj, room.ceiling_obj):
+    for obj in (room.label_obj, room.floor_obj, room.ceiling_obj, room.porch_obj):
         _remove(obj)
     level.rooms.remove(index)
 
@@ -360,8 +382,13 @@ def rebuild_level(scene, level):
         room = level.rooms.add()
         room.uid = _new_uid()
         balcony = 'Railing' in area.wall_types
-        room['name'] = _next_room_name(level, "Balcony" if balcony else "Room")
-        if balcony:
+        porch = hb_porches.is_porch_area(area)
+        room['name'] = _next_room_name(
+            level, "Porch" if porch else "Balcony" if balcony else "Room")
+        if porch:
+            room['is_porch'] = True
+            _make_porch(room, level)
+        elif balcony:
             _make_outdoor(room)
         room.marker = _new_marker(scene, level, room,
                                   hb_wall_graph.interior_point(area.polygon))
@@ -372,13 +399,26 @@ def rebuild_level(scene, level):
         area = areas[k]
         room.area = area.area
         room.marker.location.z = level.elevation
+        # Porch edges drawn round an existing room make it a porch
+        porch = hb_porches.is_porch_area(area)
+        if porch and not room.is_porch:
+            room['is_porch'] = True
+            _make_porch(room, level)
+        elif not porch and room.is_porch:
+            room['is_porch'] = False
         _build_floor(scene, level, room, area.floor)
         _build_ceiling(scene, level, room, area.polygon)
+        if room.is_porch:
+            hb_porches.build_porch(scene, level, room, area.polygon, segs,
+                                   room_floor_material(room))
+        elif room.porch_obj is not None:
+            hb_porches.remove_porch(room)
         update_room_label(room)
     for room in level.rooms:
         if room.orphaned:
             _remove(room.floor_obj)
             _remove(room.ceiling_obj)
+            hb_porches.remove_porch(room)
             room.floor_obj = room.ceiling_obj = None
             room.area = 0.0
             update_room_label(room)

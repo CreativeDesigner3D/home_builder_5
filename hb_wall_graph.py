@@ -401,7 +401,7 @@ ROOM_MIN_AREA = 0.05            # m2; smaller faces are slivers between walls
 NOT_ROOM_WALLS = ('Half', 'Fake')
 # Walls that only close rooms: nothing is built, so they take no part in
 # the corners of real walls, and a room runs right up to their line.
-ROOM_ONLY_WALLS = ('Divider',)
+ROOM_ONLY_WALLS = ('Divider', 'Porch')
 
 
 def built_walls(segs):
