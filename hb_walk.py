@@ -8,7 +8,11 @@ can do what a house needs:
   it instead of dropping off each tread and snapping onto the next.
 * Walls stop you. Short rays ahead at knee and chest height find walls
   (and closed doors, cabinets, railings) and you slide along them; an
-  opening or a doorway lets you through.
+  opening or a doorway lets you through. The rays pass through what
+  isn't solid - door and window outlines, plan swing arcs, labels,
+  room dividers and porch edges.
+* Doors open. E opens or closes the door in the middle of the view,
+  swinging its leaf (or sliding a pocket, barn or bypass door) open.
 * The cursor is captured. It is hidden and held at the middle of the
   viewport, so you can turn round and round without it leaving the
   window.
@@ -17,13 +21,16 @@ For the walk the house is shown the way it would be lived in: every
 level visible and the ceilings on. When the walk ends those go back.
 
 Keys: mouse to look, W A S D (or the arrows) to move, Shift to run,
-wheel to change speed. Click or Enter to stop where you are; Esc or
-right-click to stop and go back to the view you started from.
+wheel to change speed, E to open or close a door. Click or Enter to
+stop where you are; Esc or right-click to stop and go back to the view
+you started from.
 """
 
 import math
 
 import bpy
+import gpu
+from gpu_extras.batch import batch_for_shader
 from mathutils import Euler, Vector
 
 from . import hb_house, hb_wall_graph
@@ -41,6 +48,10 @@ FALL_ACCEL = 9.8            # m/s2, when there is nothing just underfoot
 LOOK_SENSITIVITY = 0.0025   # radians per pixel, times Blender's mouse speed
 PITCH_LIMIT = math.radians(85.0)
 TICK = 1.0 / 60.0
+# Doors
+DOOR_REACH = 2.5            # how far away a door can be opened (m)
+OPEN_SWING = 90.0           # degrees a hinged door opens to
+OPEN_SLIDE = 100.0          # percent a pocket, barn or bypass door opens
 
 MOVE_KEYS = {
     'W': (0, 1), 'UP_ARROW': (0, 1),
@@ -88,6 +99,100 @@ def _heading(r3d):
     if Vector((forward.x, forward.y)).length < 1e-3:
         forward = r3d.view_rotation @ Vector((0.0, 1.0, 0.0))
     return math.atan2(forward.y, forward.x)
+
+
+# ---- What is solid ------------------------------------------------------------------
+
+def _door_geo():
+    from .product_libraries.common import door_window_geo
+    return door_window_geo
+
+
+def _is_opening(obj):
+    return obj is not None and bool(obj.get('IS_ENTRY_DOOR_BP') or obj.get('IS_WINDOW_BP'))
+
+
+def passes_through(obj):
+    """True for what the walk goes through: a door or window's outline
+    (its cage) and the plan drawing and cutters that hang off it, text
+    and empties, and walls that only close rooms. A door's modelled leaf
+    and frame, and a window's, are solid."""
+    if obj is None:
+        return False
+    if obj.type in {'FONT', 'CURVE', 'EMPTY'}:
+        return True
+    if _is_opening(obj):
+        return True
+    if obj.get('IS_CUTTING_OBJ') or 'reveal_cutter' in obj.name:
+        return True
+    if obj.get('WALL_TYPE') in ('Divider', 'Porch'):
+        return True
+    if _is_opening(obj.parent) and not obj.get(_door_geo().GEO_CHILD_FLAG):
+        return True             # swing annotation, label
+    return False
+
+
+def walk_cast(scene, origin, direction, distance, passed=None):
+    """The first solid thing along a ray: (hit, location, normal, object).
+    Things the walk passes through are stepped past, and listed in
+    `passed` when one is given."""
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+    d = direction.normalized()
+    o = origin.copy()
+    left = distance
+    for _ in range(32):
+        hit, loc, normal, _i, obj, _m = scene.ray_cast(depsgraph, o, d, distance=left)
+        if not hit:
+            break
+        if obj is not None and passes_through(obj.original):
+            if passed is not None:
+                passed.append(obj.original)
+            left -= (loc - o).length + 1e-4
+            if left <= 0.0:
+                break
+            o = loc + d * 1e-4
+            continue
+        return True, loc, normal, (obj.original if obj is not None else None)
+    return False, Vector(), Vector(), None
+
+
+# ---- Doors --------------------------------------------------------------------------
+
+def door_ahead(scene, eye, direction):
+    """The door (its cage) in front of the eye within reach: one whose
+    leaf or frame you are looking at, or else one whose opening you are
+    looking through - an open door's leaf is swung out of the way. None
+    for nothing, or an open doorway (it has nothing to open)."""
+    passed = []
+    hit, _loc, _n, obj = walk_cast(scene, eye, direction, DOOR_REACH, passed)
+    while hit and obj is not None:
+        if obj.get('IS_ENTRY_DOOR_BP'):
+            return obj if _door_geo().stored_opts(obj) is not None else None
+        obj = obj.parent
+    for obj in passed:
+        if obj.get('IS_ENTRY_DOOR_BP') and _door_geo().stored_opts(obj) is not None:
+            return obj
+    return None
+
+
+def is_open(cage):
+    opts = _door_geo().merged_opts(cage)
+    return opts is not None and float(opts.get('open_angle', 0.0)) > 1.0
+
+
+def toggle_door(cage):
+    """Open a closed door or close an open one. Returns True when it is
+    now open."""
+    geo = _door_geo()
+    opts = geo.stored_opts(cage)
+    if opts is None:
+        return False
+    full = OPEN_SWING if geo.door_type(geo.merged_opts(cage)) == 'SWING' else OPEN_SLIDE
+    now_open = not is_open(cage)
+    opts['open_angle'] = full if now_open else 0.0
+    geo.set_opts(cage, opts)
+    geo.build_geometry(cage)
+    return now_open
 
 
 # ---- Moving through the house ------------------------------------------------------
@@ -212,12 +317,15 @@ class HOME_BUILDER_OT_walk_through(bpy.types.Operator):
         window.cursor_modal_set('NONE')
         window.cursor_warp(*self.center)
         self.timer = context.window_manager.event_timer_add(TICK, window=window)
+        self.aim_handle = bpy.types.SpaceView3D.draw_handler_add(
+            self._draw_aim, (), 'WINDOW', 'POST_PIXEL')
         self._header(context)
         context.window_manager.modal_handler_add(self)
         return {'RUNNING_MODAL'}
 
     def _finish(self, context, go_back):
         context.window_manager.event_timer_remove(self.timer)
+        bpy.types.SpaceView3D.draw_handler_remove(self.aim_handle, 'WINDOW')
         self.window.cursor_modal_restore()
         self.area.header_text_set(None)
         house = self.scene.hb_house
@@ -237,17 +345,35 @@ class HOME_BUILDER_OT_walk_through(bpy.types.Operator):
     def _header(self, context):
         self.area.header_text_set(
             f"Walk Through: mouse look | WASD move | Shift run | wheel speed "
-            f"({self.speed:.1f} m/s) | click/Enter stop here | Esc go back")
+            f"({self.speed:.1f} m/s) | E open/close door | click/Enter stop here | "
+            f"Esc go back")
 
     # -- the world --
 
     def _cast(self, origin, direction, distance, with_normal=False):
-        depsgraph = bpy.context.evaluated_depsgraph_get()
-        hit, loc, normal, _i, _obj, _m = self.scene.ray_cast(
-            depsgraph, origin, direction, distance=distance)
+        hit, loc, normal, _obj = walk_cast(self.scene, origin, direction, distance)
         if with_normal:
             return hit, loc, normal
         return hit, loc
+
+    def _eye(self):
+        return Vector((self.feet.x, self.feet.y, self.feet.z + self.eye_height))
+
+    def _look(self):
+        return self.r3d.view_rotation @ Vector((0.0, 0.0, -1.0))
+
+    def _draw_aim(self):
+        """A small dot at the middle of the view, to aim at doors."""
+        cx, cy, r = self.region.width / 2.0, self.region.height / 2.0, 3.0
+        ring = [(cx + r * math.cos(a * math.pi / 6.0), cy + r * math.sin(a * math.pi / 6.0))
+                for a in range(13)]
+        shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+        batch = batch_for_shader(shader, 'TRI_FAN', {"pos": [(cx, cy)] + ring})
+        gpu.state.blend_set('ALPHA')
+        shader.bind()
+        shader.uniform_float("color", (1.0, 1.0, 1.0, 0.8))
+        batch.draw(shader)
+        gpu.state.blend_set('NONE')
 
     def _apply_view(self):
         self.r3d.view_rotation = Euler(
@@ -278,6 +404,13 @@ class HOME_BUILDER_OT_walk_through(bpy.types.Operator):
                 self.keys.add(event.type)
             elif event.value == 'RELEASE':
                 self.keys.discard(event.type)
+            return {'RUNNING_MODAL'}
+
+        if event.type == 'E' and event.value == 'PRESS':
+            cage = door_ahead(self.scene, self._eye(), self._look())
+            if cage is not None:
+                toggle_door(cage)
+                self.area.tag_redraw()
             return {'RUNNING_MODAL'}
 
         if event.type in {'LEFT_SHIFT', 'RIGHT_SHIFT'}:
