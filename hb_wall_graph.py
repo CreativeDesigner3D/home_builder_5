@@ -627,9 +627,12 @@ def _inside_polygon(face, edges, verts, mid_wall=False):
     for k in range(n):
         p1, d1, _v1 = lines[k - 1]
         p2, d2, v2 = lines[k]
-        if abs(_cross(d1, d2)) < 1e-9:
+        if abs(_cross(d1, d2)) < COLLINEAR_EPS:
             # Parallel neighbours: the same line carries on (nothing to
-            # add), or a step where two walls of different thickness meet
+            # add), or a step where two walls of different thickness meet.
+            # (Not exactly parallel: wall rotations are stored as 32-bit
+            # floats, so a wall square to the axes is off by ~1e-8, and
+            # meeting two such lines puts the corner miles away.)
             if abs(_cross(d1, _sub(p2, p1))) < 1e-6:
                 continue
             for p, d in ((p1, d1), (p2, d2)):
