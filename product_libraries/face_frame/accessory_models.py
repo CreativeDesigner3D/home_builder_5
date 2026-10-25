@@ -68,6 +68,7 @@ import bpy
 import bmesh
 
 from ... import hb_utils
+from . import accessory_materials
 from ...units import inch
 
 ROLE = 'ACCESSORY_MODEL'
@@ -999,8 +1000,24 @@ _BUILDERS = {
 }
 
 
+# Material spec name -> shared accessory material key.
+_MATERIAL_KEYS = {
+    'Accessory Maple': 'MAPLE',
+    'Accessory Plywood': 'PLYWOOD',
+    'Accessory Chrome': 'CHROME',
+    'Accessory Steel': 'STEEL',
+    'Accessory Clear Plastic': 'CLEAR_PLASTIC',
+    'Accessory Almond Polymer': 'POLYMER',
+}
+
+
 def _material(spec):
+    """The cabinet's own wood or a pull metal finish for this spec (see
+    accessory_materials), else a plain material in the spec's colour."""
     name, color, metallic, rough = spec
+    mat = accessory_materials.get(_MATERIAL_KEYS.get(name, ''))
+    if mat is not None:
+        return mat
     mat = bpy.data.materials.get(name)
     if mat is None:
         mat = bpy.data.materials.new(name)
