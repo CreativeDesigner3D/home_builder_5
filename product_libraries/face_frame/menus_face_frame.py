@@ -961,7 +961,7 @@ class HOME_BUILDER_MT_face_frame_opening_commands(bpy.types.Menu):
         # registered there is nothing to add, so the entry stays out.
         if accessory_registry.available():
             layout.operator("hb_face_frame.accessory_menu",
-                            text="Add Accessory...", icon='ADD')
+                            text="Accessories...", icon='ADD')
 
         layout.separator()
         layout.menu("HOME_BUILDER_MT_face_frame_change_opening",

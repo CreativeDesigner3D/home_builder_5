@@ -6830,20 +6830,23 @@ def interior_item_descriptors(layout, rect, cab_props, opening_props,
             out.extend(_between_pockets(_vanity_shelves_descriptors(
                 item_rect, cage_dim_y, item)))
         elif item.kind == 'ACCESSORY':
-            out.extend(_between_pockets([_accessory_label_descriptor(
-                item_rect, cage_dim_y, item.accessory_label,
-                accessory_label_text(
-                    item, opening_ff,
-                    item_rect['cage_dim_z'] - item_rect.get('reveal_top', 0.0)
-                    - item_rect.get('reveal_bottom', 0.0)),
-            )]))
-            # A product entry that names a model also builds the unit
-            # itself; the label above stays as the item's annotation.
+            # A product entry that names a model builds the unit itself
+            # and needs no label; any other accessory is shown by its
+            # label alone.
             model = accessory_models.descriptor(
                 item_rect, cage_dim_y, item,
                 BAR_STORAGE_FRONT_Y, SHELF_BACK_SETBACK)
             if model is not None:
                 out.extend(_between_pockets([model]))
+            else:
+                out.extend(_between_pockets([_accessory_label_descriptor(
+                    item_rect, cage_dim_y, item.accessory_label,
+                    accessory_label_text(
+                        item, opening_ff,
+                        item_rect['cage_dim_z']
+                        - item_rect.get('reveal_top', 0.0)
+                        - item_rect.get('reveal_bottom', 0.0)),
+                )]))
         elif item.kind == 'CLOSET_ROD':
             out.extend(_between_pockets([_closet_rod_descriptor(
                 item_rect, cage_dim_y, item)]))

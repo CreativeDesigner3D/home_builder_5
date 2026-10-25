@@ -4092,7 +4092,7 @@ class hb_face_frame_OT_show_interior_add_menu(bpy.types.Operator):
             if accessory_registry.available(*_ALL_ACCESSORY_HOSTS):
                 op = layout.operator(
                     "hb_face_frame.accessory_menu",
-                    text="Add Accessory...",
+                    text="Accessories...",
                 )
                 op.target_name = target_name
 
@@ -4909,8 +4909,9 @@ def _draw_accessory_notes(box, item, code, is_pullout, region_pullout, ow_in):
     point.
     """
     box.label(text="Accessory: %s" % item.get('name', code))
-    if not is_pullout and not types_face_frame.render_hint_kind(
-            (item.get('render') or '').upper()):
+    if not is_pullout and _geometry_kind(item) == 'MODEL':
+        box.label(text="Modeled in the cabinet", icon='MESH_GRID')
+    elif not is_pullout and not _geometry_kind(item):
         box.label(text="Called out on the drawings; not shown in 3D",
                   icon='INFO')
         box.label(text="To see it, add the matching interior item "
@@ -5022,8 +5023,7 @@ def _populate_accessory_search(operator, context):
         row.name = name
         row.section = sec
         row.group = grp
-        row.render_kind = types_face_frame.render_hint_kind(
-            (it.get('render') or '').upper())
+        row.render_kind = _geometry_kind(it)
         mw = it.get('min_opening_w')
         row.label = name if mw is None else "%s  (min %g\")" % (name, mw)
     operator.active_index = min(operator.active_index,
@@ -5060,13 +5060,96 @@ def _accessory_search_update(self, context):
     _populate_accessory_search(self, context)
 
 
+def _geometry_kind(entry):
+    """Non-empty when a catalog entry builds geometry in the cabinet - a
+    model of its own or a drawer insert render hint - so lists can flag
+    what will show up in 3D and what is listed only."""
+    from .. import accessory_models
+    if accessory_models.model_for(entry.get('code')) is not None:
+        return 'MODEL'
+    return types_face_frame.render_hint_kind(
+        (entry.get('render') or '').upper())
+
+
+class HB_UL_face_frame_opening_accessories(bpy.types.UIList):
+    """What is in the opening: each accessory, flagged by whether it is
+    modeled in the cabinet or listed only, with its quantity."""
+
+    def draw_item(self, context, layout, data, item, icon, active_data,
+                  active_propname):
+        entry = accessory_registry.find(item.accessory_code) or {}
+        modeled = bool(_geometry_kind(entry)) if entry else False
+        split = layout.split(factor=0.62)
+        split.label(text=item.accessory_label or item.accessory_code,
+                    icon='MESH_GRID' if modeled else 'DOT')
+        sub = split.split(factor=0.6)
+        sub.label(text=item.accessory_code)
+        qty = getattr(item, 'accessory_qty', 1)
+        sub.label(text=("x%d" % qty) if qty > 1 else "")
+
+    def filter_items(self, context, data, propname):
+        items = getattr(data, propname)
+        flt = [self.bitflag_filter_item if it.kind == 'ACCESSORY' else 0
+               for it in items]
+        return flt, []
+
+
+class hb_face_frame_OT_add_accessory_to_opening(bpy.types.Operator):
+    """Add the highlighted catalog accessory to the opening."""
+    bl_idname = "hb_face_frame.add_accessory_to_opening"
+    bl_label = "Add"
+    bl_description = "Add the highlighted accessory to this opening"
+    bl_options = {'UNDO', 'INTERNAL'}
+
+    target_name: bpy.props.StringProperty(default="", options={'HIDDEN'})  # type: ignore
+    code: bpy.props.StringProperty(default="", options={'HIDDEN'})  # type: ignore
+    opening_width: bpy.props.FloatProperty(default=0.0, options={'HIDDEN'})  # type: ignore
+
+    def execute(self, context):
+        target = bpy.data.objects.get(self.target_name)
+        item = accessory_registry.find(self.code) if self.code else None
+        if target is None or item is None:
+            return {'CANCELLED'}
+        return _apply_accessory_choice(self, context, target, self.code,
+                                       item, self.opening_width)
+
+
+class hb_face_frame_OT_remove_opening_accessory(bpy.types.Operator):
+    """Remove the selected accessory from the opening."""
+    bl_idname = "hb_face_frame.remove_opening_accessory"
+    bl_label = "Remove"
+    bl_description = "Remove the selected accessory from this opening"
+    bl_options = {'UNDO', 'INTERNAL'}
+
+    target_name: bpy.props.StringProperty(default="", options={'HIDDEN'})  # type: ignore
+
+    def execute(self, context):
+        target = bpy.data.objects.get(self.target_name)
+        props = _interior_items_target(target)
+        if props is None:
+            return {'CANCELLED'}
+        idx = props.interior_items_index
+        if not (0 <= idx < len(props.interior_items)):
+            return {'CANCELLED'}
+        if props.interior_items[idx].kind != 'ACCESSORY':
+            return {'CANCELLED'}
+        props.interior_items.remove(idx)
+        props.interior_items_index = min(idx, len(props.interior_items) - 1)
+        root = types_face_frame.find_cabinet_root(target)
+        if root is not None:
+            types_face_frame.recalculate_face_frame_cabinet(root)
+        return {'FINISHED'}
+
+
 class hb_face_frame_OT_accessory_menu(bpy.types.Operator):
-    """Browse and add a catalog accessory to the opening: one list of
-    everything that fits, narrowed by a search box and a section
-    dropdown."""
+    """Lay out the accessories in an opening: browse the catalog (one
+    list of everything that fits, narrowed by a search box and a
+    section dropdown) and add or remove items, the way Drawer Interior
+    does for a drawer."""
     bl_idname = "hb_face_frame.accessory_menu"
-    bl_label = "Add Accessory"
-    bl_description = "Browse and add a catalog accessory to the opening"
+    bl_label = "Accessories"
+    bl_description = ("See the accessories in this opening and add or "
+                      "remove them from the catalog")
     bl_options = {'UNDO'}
 
     target_name: bpy.props.StringProperty(default="", options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
@@ -5133,26 +5216,73 @@ class hb_face_frame_OT_accessory_menu(bpy.types.Operator):
 
     def draw(self, context):
         layout = self.layout
-        head = layout.row(align=True)
+        tgt = _resolve_interior_target(self, context)
+        pick = layout.box()
+        pick.label(text="Add an accessory", icon='ADD')
+        head = pick.row(align=True)
         head.prop(self, "filter_text", text="", icon='VIEWZOOM')
         head.prop(self, "section_filter", text="")
         if len(self.matches) == 0:
-            layout.label(
+            pick.label(
                 text=("No accessories fit this opening"
                       if not self.filter_text and self.section_filter == 'ALL'
                       else "Nothing matches that search"),
                 icon='INFO')
+            self._draw_contents(layout, tgt)
             return
-        layout.template_list(
+        row = pick.row()
+        row.template_list(
             "HB_UL_face_frame_accessory_search", "",
             self, "matches",
             self, "active_index",
-            rows=10,
+            rows=8,
         )
         code, item = self._selected()
-        if item is None:
+        side = row.column(align=True)
+        add = side.operator("hb_face_frame.add_accessory_to_opening",
+                            text="", icon='ADD')
+        add.target_name = tgt.name if tgt is not None else ""
+        add.code = code or ""
+        add.opening_width = self.opening_width
+        note = pick.row()
+        note.enabled = False
+        note.label(text="Marked accessories are modeled in the cabinet; "
+                        "the rest are listed only", icon='MESH_GRID')
+        if item is not None:
+            self._draw_choice(context, pick, tgt, code, item)
+        self._draw_contents(layout, tgt)
+
+    def _draw_contents(self, layout, tgt):
+        """What is already in the opening, with a remove button."""
+        layout.separator()
+        layout.label(text="In this opening")
+        if tgt is None:
+            layout.label(text="Select an opening first", icon='INFO')
             return
-        tgt = _resolve_interior_target(self, context)
+        ffo = getattr(tgt, 'face_frame_opening', None)
+        pullout = getattr(ffo, 'pullout_accessory_code', '') if ffo else ''
+        if pullout:
+            entry = accessory_registry.find(pullout) or {}
+            layout.label(text="Pull-out: %s (%s)" % (
+                entry.get('name', pullout), pullout), icon='MESH_GRID')
+        props = _interior_items_target(tgt)
+        if props is None:
+            layout.label(text="This opening is divided: pick a section to "
+                              "see its accessories", icon='INFO')
+            return
+        row = layout.row()
+        row.template_list(
+            "HB_UL_face_frame_opening_accessories", "",
+            props, "interior_items",
+            props, "interior_items_index",
+            rows=4,
+        )
+        side = row.column(align=True)
+        rem = side.operator("hb_face_frame.remove_opening_accessory",
+                            text="", icon='REMOVE')
+        rem.target_name = tgt.name
+
+    def _draw_choice(self, context, layout, tgt, code, item):
         is_pullout = item.get('host') == _ACCESSORY_PULLOUT_HOST
         # A pullout aimed at an interior REGION stays a data-only item
         # (no front conversion, no bay-width write) -- the width field
@@ -5168,17 +5298,9 @@ class hb_face_frame_OT_accessory_menu(bpy.types.Operator):
                               region_pullout, ow)
 
     def execute(self, context):
-        code, item = self._selected()
-        if item is None:
-            self.report({'WARNING'}, "No accessory selected")
-            return {'CANCELLED'}
-        target = _resolve_interior_target(self, context)
-        if target is None:
-            self.report({'WARNING'},
-                        "Select an opening or interior region first")
-            return {'CANCELLED'}
-        return _apply_accessory_choice(self, context, target, code, item,
-                                       self.opening_width)
+        # Adding and removing happen on the list buttons, as in Drawer
+        # Interior; OK just closes.
+        return {'FINISHED'}
 
 
 def _apply_bay_prop_overrides(bay_obj, config, reset):
@@ -7812,6 +7934,9 @@ classes = (
     hb_face_frame_OT_add_interior_accessory,
     hb_face_frame_OT_accessory_menu,
     HB_UL_face_frame_accessory_search,
+    HB_UL_face_frame_opening_accessories,
+    hb_face_frame_OT_add_accessory_to_opening,
+    hb_face_frame_OT_remove_opening_accessory,
     hb_face_frame_OT_add_appliance_to_bay,
     hb_face_frame_OT_set_under_cabinet_appliance,
     hb_face_frame_OT_remove_appliance_from_bay,
