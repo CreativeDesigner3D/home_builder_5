@@ -52,6 +52,7 @@ LEVEL_SPEC = {
         ('bool', 'show_level_below', "Ghost Level Below",
          {'when': lambda house: house.level_display == 'ACTIVE'}),
         ('bool', 'show_ceilings', "Show Ceilings"),
+        ('bool', 'show_room_labels', "Show Room Labels"),
         ('bool', 'show_roofs', "Show Roofs"),
         ('pick', lambda context: _import_entries(context), "Import Room as Level"),
     ),

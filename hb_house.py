@@ -1183,6 +1183,12 @@ def _roofs_shown_changed(house):
     _tag_view3d_redraw()
 
 
+def _labels_shown_changed(house):
+    from . import hb_rooms
+    hb_rooms.apply_label_visibility(house.id_data)
+    _tag_view3d_redraw()
+
+
 def _ceilings_shown_changed(house):
     from . import hb_rooms
     hb_rooms.apply_ceiling_visibility(house.id_data)
@@ -1252,6 +1258,12 @@ class HB_House_Props(PropertyGroup):
         description="Show the roofs in the viewport. Off to see down into the house",
         default=True,
         update=lambda self, context: _roofs_shown_changed(self))  # type: ignore
+
+    show_room_labels: BoolProperty(
+        name="Show Room Labels",
+        description="Show each room's name and area on its floor. Walk Through hides them while it runs",
+        default=True,
+        update=lambda self, context: _labels_shown_changed(self))  # type: ignore
 
     show_ceilings: BoolProperty(
         name="Show Ceilings",

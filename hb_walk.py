@@ -22,7 +22,8 @@ can do what a house needs:
   walk at the same speed, just at a lower frame rate.
 
 For the walk the house is shown the way it would be lived in: every
-level visible and the ceilings on. When the walk ends those go back.
+level visible, the ceilings on, and the room labels and markers out of
+the way. When the walk ends those go back.
 
 Keys: mouse to look, W A S D (or the arrows) to move, Shift to run,
 wheel to change speed, E to open or close a door. Click or Enter to
@@ -300,6 +301,8 @@ class HOME_BUILDER_OT_walk_through(bpy.types.Operator):
         self.saved_house = (house.show_ceilings, house.level_display)
         house.show_ceilings = True
         house.level_display = 'ALL'
+        from . import hb_rooms
+        self._labels_off(hb_rooms)
 
         spot = _start_point(level, r3d.view_location)
         self.yaw = _heading(r3d)
@@ -336,6 +339,8 @@ class HOME_BUILDER_OT_walk_through(bpy.types.Operator):
         self.window.cursor_modal_restore()
         self.area.header_text_set(None)
         house = self.scene.hb_house
+        from . import hb_rooms
+        hb_rooms.apply_label_visibility(self.scene)       # back as the house has them
         ceilings, display = self.saved_house
         if house.show_ceilings != ceilings:
             house.show_ceilings = ceilings
@@ -348,6 +353,15 @@ class HOME_BUILDER_OT_walk_through(bpy.types.Operator):
             self.r3d.view_distance = dist
             self.r3d.view_perspective = persp
         self.area.tag_redraw()
+
+    def _labels_off(self, hb_rooms):
+        """Room labels and markers hide for the walk (the house's own
+        Show Room Labels is left as it is)."""
+        for level in self.scene.hb_house.levels:
+            for room in level.rooms:
+                for obj in (room.label_obj, room.marker):
+                    if obj is not None:
+                        obj.hide_viewport = True
 
     def _header(self, context):
         self.area.header_text_set(

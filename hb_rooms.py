@@ -297,6 +297,7 @@ def update_room_label(room):
         room.label_obj = label
     label.data.body = "\n".join(lines)
     label.name = f"Room Label - {room.name}"
+    label.hide_viewport = not scene.hb_house.show_room_labels
     # Drawn in front while ceilings show, so the ceiling over a closed
     # room doesn't hide it in plan; otherwise not, so labels don't draw
     # over the roof
@@ -337,6 +338,18 @@ def room_floor_material(room, rebuild=False):
         room.floor_size, room.floor_roughness, room.floor_running_bond,
         mat=mat)
     return mat
+
+
+def apply_label_visibility(scene, hide_markers=False):
+    """Show or hide the rooms' labels per the house's Show Room Labels
+    switch; `hide_markers` hides the room markers too (Walk Through)."""
+    hide = not scene.hb_house.show_room_labels
+    for level in scene.hb_house.levels:
+        for room in level.rooms:
+            if room.label_obj is not None:
+                room.label_obj.hide_viewport = hide
+            if room.marker is not None:
+                room.marker.hide_viewport = hide_markers
 
 
 def apply_ceiling_visibility(scene):
