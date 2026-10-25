@@ -14077,7 +14077,12 @@ class FaceFrameCabinet(GeoNodeCage):
             if not drawer_look and not no_pulls and not leaf.get('no_pull'):
                 pull = self._create_pull_for_front(front, leaf['role'], leaf,
                                                    op_props)
-            self._create_drawer_box_for_front(pivot, leaf, rect, op_props)
+            # A pull-out whose product is modeled carries the unit
+            # itself on the slide, in place of a drawer box.
+            if (leaf['role'] != PART_ROLE_PULLOUT_FRONT
+                    or self._create_pullout_model(pivot, leaf, rect,
+                                                  op_props) is None):
+                self._create_drawer_box_for_front(pivot, leaf, rect, op_props)
             if drawer_look:
                 self._build_drawer_look_fronts(front, leaf, op_props)
             elif door_look:
@@ -16394,6 +16399,18 @@ class FaceFrameCabinet(GeoNodeCage):
         obj['IS_FACE_FRAME_INTERIOR_PART'] = True
         obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_interior_part_commands'
         return obj
+
+    def _create_pullout_model(self, pivot_obj, leaf, rect, op_props):
+        """The modeled unit behind a pull-out front, parented to the
+        front pivot like a drawer box so it slides with the front; None
+        when the opening's product has no pull-out model."""
+        anchor = leaf.get('pivot_anchor_position', leaf['pivot_position'])
+        desc = accessory_models.pullout_descriptor(
+            getattr(op_props, 'pullout_accessory_code', ''), rect, anchor,
+            self._drawer_box_depth_space(rect, anchor[1]))
+        if desc is None:
+            return None
+        return self._create_accessory_model(pivot_obj, desc)
 
     def _create_bar_storage_part(self, opening_obj, desc):
         """Bar storage insert (wine rack / cubby / stemware / plate

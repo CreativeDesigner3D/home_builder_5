@@ -20,6 +20,34 @@ readable 3D model of the unit, built here from generic model types:
                           (finger-notched shelf) and equal letter slots
                           out to each side.
 
+Pull-out units, a chassis on bottom-mount slides with full-height
+front and back panels (the door mounts to the front panel), open to
+each side:
+
+- can_storage_wood:       railed shelves (``shelves``; ``swivel`` adds a
+                          turntable hub under each).
+- can_storage_wire:       wire baskets on a light frame (``baskets``;
+                          ``deluxe`` gives each a wood floor).
+- utensil_pullout:        steel bins hanging through a top shelf plus
+                          railed shelves below (``bins``, ``shelves``).
+- knife_pullout:          bins and knife inserts under a top shelf.
+- towel_pullout:          a towel bay over a shelf, storage behind it.
+- canister_pullout:       canisters on the deck and on a shelf.
+- tray_divider_pullout:   upright tray dividers (``dividers``).
+- spice_pullout:          shallow rack, fixed shelves with wood rails or
+                          adjustable shelves with chrome rails.
+- wire_pantry:            steel frame with wire baskets (``baskets`` or
+                          ``basket_steps`` by unit height).
+
+A pull-out keeps its own product size and is centered in the opening,
+never stretched to fill it: ``unit_width`` or ``sizes`` ([unit width,
+minimum opening width] pairs, the largest that fits is used) or
+``fit_width`` ([clearance, min, max] for a made-to-fit unit);
+``unit_height`` or ``heights`` (pairs, as for widths) or
+``height_range`` ([low, high]: the unit telescopes to the opening) or
+``fill_height``; ``unit_depth``. Anything larger than the opening is
+clipped. On a pull-out front the unit rides the front's slide.
+
 The entry's optional ``model_params`` dict tunes a model (sizes in
 inches): unit_width / unit_height, peg_count / divider_count,
 lid_organizers / pot_organizers / dish_pegs, center_width, slot_min /
@@ -50,7 +78,11 @@ INTERIOR_HOST = 'opening_interior_accessory'
 
 ROLLOUT_MODELS = frozenset({'rollout_tray_pegs', 'rollout_two_tier'})
 ORGANIZER_MODELS = frozenset({'organizer_cubbies', 'organizer_letter_slots'})
-MODELS = ROLLOUT_MODELS | ORGANIZER_MODELS
+PULLOUT_MODELS = frozenset({
+    'can_storage_wood', 'can_storage_wire', 'utensil_pullout',
+    'knife_pullout', 'towel_pullout', 'canister_pullout',
+    'tray_divider_pullout', 'spice_pullout', 'wire_pantry'})
+MODELS = ROLLOUT_MODELS | ORGANIZER_MODELS | PULLOUT_MODELS
 
 # Roll-outs: the unit rides side-mounted slides, so it runs this much
 # narrower than the opening on each side, and stops short of the cavity
@@ -69,6 +101,17 @@ WIRE = inch(0.1875)         # square section standing in for chrome rod
 _MAT_MAPLE = ('Accessory Maple', (0.86, 0.72, 0.52, 1.0), 0.0, 0.5)
 _MAT_PLY = ('Accessory Plywood', (0.80, 0.66, 0.47, 1.0), 0.0, 0.6)
 _MAT_CHROME = ('Accessory Chrome', (0.72, 0.74, 0.77, 1.0), 0.9, 0.2)
+_MAT_STEEL = ('Accessory Steel', (0.45, 0.46, 0.48, 1.0), 0.3, 0.45)
+_MAT_PLASTIC = ('Accessory Clear Plastic', (0.82, 0.88, 0.92, 1.0), 0.0, 0.15)
+
+# Pull-out material slots (slot 0 wood and 1 chrome as above).
+MI_STEEL = 2      # slides, steel frames, knife inserts
+MI_PLASTIC = 3    # canisters
+
+PULLOUT_DEFAULT_DEPTH = 21.6     # inches: a 24" deep base cabinet's unit
+PULLOUT_DEFAULT_HEIGHT = 26.0
+PULLOUT_REAR_CLEARANCE = inch(0.25)
+RAIL = inch(0.15)                # chrome side rail rod
 
 
 # ---------------------------------------------------------------------------
@@ -101,19 +144,125 @@ def _p(params, key, default):
         return float(default)
 
 
+def _pick_size(options, avail_in):
+    """Catalog size for an opening: the largest [size, minimum opening]
+    pair whose minimum fits ``avail_in`` (inches), else the smallest."""
+    rows = []
+    for row in options or ():
+        try:
+            rows.append((float(row[0]), float(row[1])))
+        except (TypeError, ValueError, IndexError):
+            continue
+    if not rows:
+        return None
+    fit = [r for r in rows if r[1] <= avail_in + 1e-3]
+    return max(fit)[0] if fit else min(rows)[0]
+
+
+def pullout_size(params, open_w, open_h):
+    """(width, height) of a pull-out unit, in meters, for a face frame
+    opening hole of open_w x open_h: the product's own size from the
+    entry (see the module notes), clipped to the hole."""
+    ow, oh = open_w / inch(1.0), open_h / inch(1.0)
+    w = None
+    if 'unit_width' in params:
+        w = _p(params, 'unit_width', 0.0)
+    elif 'sizes' in params:
+        w = _pick_size(params.get('sizes'), ow)
+    elif 'fit_width' in params:
+        try:
+            clr, lo, hi = (float(v) for v in params.get('fit_width'))
+            w = min(max(ow - clr, lo), hi)
+        except (TypeError, ValueError):
+            w = None
+    if not w:
+        w = ow - 0.5
+    h = None
+    if 'unit_height' in params:
+        h = _p(params, 'unit_height', PULLOUT_DEFAULT_HEIGHT)
+    elif 'heights' in params:
+        h = _pick_size(params.get('heights'), oh)
+    elif 'height_range' in params:
+        try:
+            lo, hi = (float(v) for v in params.get('height_range'))
+            h = min(max(oh, lo), hi)
+        except (TypeError, ValueError):
+            h = None
+    elif params.get('fill_height'):
+        h = oh
+    if not h:
+        h = PULLOUT_DEFAULT_HEIGHT
+    return min(inch(w), open_w), min(inch(h), open_h)
+
+
+def _pullout_placement(params, rect, front_y, room_y):
+    """(position, dims) of a pull-out unit in opening-local space: its
+    own size, centered across the face frame opening hole, standing on
+    the hole's bottom edge with its front panel at front_y."""
+    rev_l = max(0.0, rect.get('reveal_left', 0.0))
+    rev_r = max(0.0, rect.get('reveal_right', 0.0))
+    rev_b = max(0.0, rect.get('reveal_bottom', 0.0))
+    rev_t = max(0.0, rect.get('reveal_top', 0.0))
+    open_w = rect['cage_dim_x'] - rev_l - rev_r
+    open_h = rect['cage_dim_z'] - rev_b - rev_t
+    if open_w <= 0.0 or open_h <= 0.0:
+        return None
+    w, h = pullout_size(params, open_w, open_h)
+    depth = min(inch(_p(params, 'unit_depth', PULLOUT_DEFAULT_DEPTH)), room_y)
+    if w <= inch(0.5) or h <= inch(0.5) or depth <= inch(0.5):
+        return None
+    return (rev_l + (open_w - w) / 2.0, front_y, rev_b), (w, depth, h)
+
+
+def pullout_descriptor(code, rect, anchor, depth_space):
+    """Descriptor for the unit behind a pull-out front, or None when the
+    code names no pull-out model. ``anchor`` is the front pivot's
+    closed position (opening-local): the unit's front panel sits against
+    the back of the front, and the returned position is relative to the
+    pivot so the unit rides the front's slide. ``depth_space`` is the
+    depth from the back of the front to the cavity back."""
+    spec = model_for(code)
+    if spec is None or spec[0] not in PULLOUT_MODELS:
+        return None
+    model, params = spec
+    ax, ay, az = anchor
+    placed = _pullout_placement(
+        params, rect, ay, depth_space - PULLOUT_REAR_CLEARANCE)
+    if placed is None:
+        return None
+    (x0, y0, z0), dims = placed
+    from ... import accessory_registry
+    entry = accessory_registry.find(code) or {}
+    return {
+        'kind':     'ACCESSORY_MODEL',
+        'role':     ROLE,
+        'name':     '%s Model' % (entry.get('name') or code),
+        'model':    model,
+        'params':   dict(params),
+        'position': (x0 - ax, y0 - ay, z0 - az),
+        'dims':     dims,
+    }
+
+
 def descriptor(rect, cage_dim_y, item, front_y, back_setback):
     """Geometry descriptor for the item's model in opening-local space,
     or None (no model, or no room at all). Roll-outs are centered in the
     face frame opening at their unit width, standing on the opening
     bottom at the front of the cavity; organizers span the opening at
-    their unit height. Anything larger than the opening is clipped."""
+    their unit height; pull-out units stand at their own size, centered.
+    Anything larger than the opening is clipped."""
     spec = model_for(getattr(item, 'accessory_code', ''))
     if spec is None:
         return None
     model, params = spec
     cage_x, cage_z = rect['cage_dim_x'], rect['cage_dim_z']
     room_y = cage_dim_y - front_y - back_setback
-    if model in ROLLOUT_MODELS:
+    if model in PULLOUT_MODELS:
+        placed = _pullout_placement(params, rect, front_y, room_y)
+        if placed is None:
+            return None
+        (x0, _y, z0), (w, depth, h) = placed
+    elif model in ROLLOUT_MODELS:
         rev_l = max(0.0, rect.get('reveal_left', 0.0))
         rev_r = max(0.0, rect.get('reveal_right', 0.0))
         rev_b = max(0.0, rect.get('reveal_bottom', 0.0))
@@ -440,7 +589,409 @@ def _build_organizer_letter_slots(bm, w, d, h, params):
     return True
 
 
+# ---------------------------------------------------------------------------
+# Pull-out units
+# ---------------------------------------------------------------------------
+
+PANEL_T = inch(0.5)
+SLIDE_TOP = inch(1.37)           # top of the bottom-mount slides
+TOP_RAIL_H = inch(1.45)          # wood rail along each open side at the top
+
+
+def _bar(bm, x0, x1, y0, y1, z0, z1, t=RAIL, mi=1):
+    """Square rod between two points that differ along one axis."""
+    h = t / 2.0
+    if abs(x1 - x0) > 1e-6:
+        _box(bm, min(x0, x1), max(x0, x1), y0 - h, y0 + h, z0 - h, z0 + h, mi)
+    elif abs(y1 - y0) > 1e-6:
+        _box(bm, x0 - h, x0 + h, min(y0, y1), max(y0, y1), z0 - h, z0 + h, mi)
+    else:
+        _box(bm, x0 - h, x0 + h, y0 - h, y0 + h, min(z0, z1), max(z0, z1), mi)
+
+
+def _chassis(bm, w, d, h, panel_t=PANEL_T, deck=True, top_rails=True,
+             panel_mi=0):
+    """Slides, deck and front / back panels of a pull-out. Returns the
+    open inside (x0, x1, y0, y1, floor_z, top_z) between the panels;
+    top_z is under the top rails."""
+    sw = min(inch(1.6), w * 0.3)
+    for x in (0.0, w - sw):
+        _box(bm, x, x + sw, inch(0.13), d, inch(0.3), SLIDE_TOP, MI_STEEL)
+    e = min(inch(0.08), w * 0.02)
+    back = d - inch(0.57) if d > inch(4.0) else d
+    floor = SLIDE_TOP
+    if deck:
+        _box(bm, e, w - e, 0.0, back, SLIDE_TOP, SLIDE_TOP + PANEL_T)
+        floor = SLIDE_TOP + PANEL_T
+    else:
+        # Low steel strips along each side tie the panels together.
+        bw = min(PANEL_T, w * 0.1)
+        for x in (e, w - e - bw):
+            _box(bm, x, x + bw, panel_t, back - panel_t,
+                 floor, floor + inch(0.82), panel_mi)
+    _box(bm, e, w - e, 0.0, panel_t, floor, h, panel_mi)
+    _box(bm, e, w - e, back - panel_t, back, floor, h, panel_mi)
+    top = h
+    if top_rails and h - floor > TOP_RAIL_H * 2:
+        rw = min(PANEL_T, w * 0.12)
+        top = h - TOP_RAIL_H
+        for x in (e, w - e - rw):
+            _box(bm, x, x + rw, panel_t, back - panel_t, top, h)
+    return e, w - e, panel_t, back - panel_t, floor, top
+
+
+def _side_rails(bm, x0, x1, y0, y1, z, height, mi=1):
+    """Chrome rail along each open side above a shelf: a top rod with an
+    upright at each end."""
+    if height <= RAIL:
+        return
+    y0, y1 = y0 + inch(0.3), y1 - inch(0.3)
+    for x in (x0 + inch(0.5), x1 - inch(0.5)):
+        _bar(bm, x, x, y0, y1, z + height, z + height, mi=mi)
+        for y in (y0, y1):
+            _bar(bm, x, x, y, y, z, z + height, mi=mi)
+
+
+def _lips(bm, x0, x1, y0, y1, z, height=TOP_RAIL_H):
+    """Wood lip along each open side of a shelf."""
+    lw = min(PANEL_T, (x1 - x0) * 0.12)
+    for x in (x0, x1 - lw):
+        _box(bm, x, x + lw, y0, y1, z, z + height)
+
+
+def _shelf_with_holes(bm, x0, x1, y0, y1, z, holes, t=PANEL_T):
+    """Shelf from x0..x1 / y0..y1 with rectangular cut-outs (x0, x1, y0,
+    y1) for bins and inserts, built as the grid cells around them."""
+    xs = sorted({x0, x1} | {v for hx0, hx1, _a, _b in holes
+                            for v in (hx0, hx1) if x0 < v < x1})
+    ys = sorted({y0, y1} | {v for _a, _b, hy0, hy1 in holes
+                            for v in (hy0, hy1) if y0 < v < y1})
+    for i in range(len(xs) - 1):
+        for j in range(len(ys) - 1):
+            cx = (xs[i] + xs[i + 1]) / 2.0
+            cy = (ys[j] + ys[j + 1]) / 2.0
+            if any(a < cx < b and c < cy < d for a, b, c, d in holes):
+                continue
+            _box(bm, xs[i], xs[i + 1], ys[j], ys[j + 1], z, z + t)
+
+
+def _bin(bm, x0, x1, y0, y1, z0, z1, mi=1):
+    """Open-top steel bin (floor and four walls)."""
+    t = inch(0.06)
+    if x1 - x0 <= 2 * t or y1 - y0 <= 2 * t or z1 - z0 <= t:
+        return
+    _box(bm, x0, x1, y0, y1, z0, z0 + t, mi)
+    _box(bm, x0, x1, y0, y0 + t, z0, z1, mi)
+    _box(bm, x0, x1, y1 - t, y1, z0, z1, mi)
+    _box(bm, x0, x0 + t, y0 + t, y1 - t, z0, z1, mi)
+    _box(bm, x1 - t, x1, y0 + t, y1 - t, z0, z1, mi)
+
+
+def _even_levels(lo, hi, n):
+    """n shelf heights spread evenly between lo and hi (exclusive)."""
+    if n <= 0 or hi <= lo:
+        return []
+    step = (hi - lo) / (n + 1)
+    return [lo + step * (i + 1) for i in range(n)]
+
+
+def _build_can_storage_wood(bm, w, d, h, params):
+    x0, x1, y0, y1, floor, top = _chassis(bm, w, d, h)
+    n = int(_p(params, 'shelves', 3))
+    swivel = bool(params.get('swivel'))
+    levels = [z for z in _even_levels(floor, top, n)
+              if z + PANEL_T < top - inch(1.0)]
+    rail_h = inch(2.7)
+    tops = [floor] + [z + PANEL_T for z in levels]
+    for z in levels:
+        _box(bm, x0, x1, y0, y1, z, z + PANEL_T)
+        if swivel:
+            # Turntable hub under a swivel shelf.
+            r = min(inch(1.0), (x1 - x0) / 4.0)
+            _peg(bm, (x0 + x1) / 2.0, (y0 + y1) / 2.0,
+                 z - inch(0.4), z, r, MI_STEEL)
+    for i, z in enumerate(tops):
+        nxt = levels[i] if i < len(levels) else top
+        _side_rails(bm, x0, x1, y0, y1, z, min(rail_h, nxt - z - inch(0.5)))
+    return True
+
+
+def _wire_basket(bm, x0, x1, y0, y1, z, height, pitch=inch(1.0),
+                 frames=3, floor_board=False):
+    """Chrome wire basket: rods along y for the floor, end / middle
+    frames across, and two rim rods down each side."""
+    if x1 - x0 < inch(1.0) or y1 - y0 < inch(2.0):
+        return
+    n = max(2, int(round((x1 - x0) / pitch)) + 1)
+    for i in range(n):
+        x = x0 + (x1 - x0) * i / (n - 1)
+        _bar(bm, x, x, y0 + inch(0.4), y1 - inch(0.4), z, z)
+    for k in range(frames):
+        y = y0 + inch(0.4) + (y1 - y0 - inch(0.8)) * k / max(1, frames - 1)
+        _bar(bm, x0, x1, y, y, z, z)
+        _bar(bm, x0, x1, y, y, z + height, z + height)
+        for x in (x0, x1):
+            _bar(bm, x, x, y, y, z, z + height)
+    for x in (x0, x1):
+        _bar(bm, x, x, y0, y1, z + height * 0.45, z + height * 0.45)
+        _bar(bm, x, x, y0, y1, z + height, z + height)
+    if floor_board:
+        _box(bm, x0 + RAIL, x1 - RAIL, y0 + inch(0.5), y1 - inch(0.5),
+             z + RAIL / 2, z + RAIL / 2 + inch(0.25))
+
+
+def _build_can_storage_wire(bm, w, d, h, params):
+    x0, x1, y0, y1, floor, top = _chassis(bm, w, d, h, deck=False)
+    n = max(1, int(_p(params, 'baskets', 2)))
+    bh = inch(2.15)
+    inset = min(inch(0.8), w * 0.12)
+    z_first = floor + inch(0.15)
+    z_last = max(z_first, top - bh - inch(7.75))
+    for k in range(n):
+        z = z_first + ((z_last - z_first) * k / (n - 1) if n > 1 else 0.0)
+        _wire_basket(bm, inset, w - inset, y0 + inch(0.25), y1 - inch(0.25),
+                     z, bh, floor_board=bool(params.get('deluxe')))
+    return True
+
+
+def _bin_holes(x0, x1, y0, y1, rows, cols, bin_d, gap=inch(0.6)):
+    """Bin footprints in a grid inside x0..x1 starting at the front."""
+    out = []
+    if rows <= 0 or cols <= 0:
+        return out
+    bw = (x1 - x0 - gap * (cols + 1)) / cols
+    if bw <= inch(0.5):
+        return out
+    for c in range(cols):
+        bx = x0 + gap + c * (bw + gap)
+        for r in range(rows):
+            by = y0 + gap + r * (bin_d + gap)
+            if by + bin_d > y1:
+                break
+            out.append((bx, bx + bw, by, by + bin_d))
+    return out
+
+
+def _build_utensil_pullout(bm, w, d, h, params):
+    x0, x1, y0, y1, floor, top = _chassis(bm, w, d, h)
+    shelf_z = max(floor + inch(6.0), top - inch(3.35))
+    cols = 2 if w >= inch(10.5) else 1
+    rows = int(_p(params, 'bins', 3))
+    bin_d = (y1 - y0 - inch(0.6) * (rows + 1)) / max(rows, 1)
+    holes = _bin_holes(x0, x1, y0, y1, rows, cols, min(bin_d, inch(5.4)))
+    _shelf_with_holes(bm, x0, x1, y0, y1, shelf_z, holes)
+    bin_h = min(inch(6.75), shelf_z - floor - inch(1.0))
+    for bx0, bx1, by0, by1 in holes:
+        _bin(bm, bx0 + inch(0.05), bx1 - inch(0.05), by0 + inch(0.05),
+             by1 - inch(0.05), shelf_z + PANEL_T - bin_h,
+             shelf_z + PANEL_T + inch(0.07))
+    n = int(_p(params, 'shelves', 1))
+    under = shelf_z - bin_h
+    levels = _even_levels(floor, under, n)
+    for z in levels:
+        _box(bm, x0, x1, y0, y1, z, z + PANEL_T)
+    for i, z in enumerate([floor] + [z + PANEL_T for z in levels]):
+        nxt = levels[i] if i < len(levels) else under
+        _side_rails(bm, x0, x1, y0, y1, z,
+                    min(inch(2.7), nxt - z - inch(0.5)))
+    return True
+
+
+def _build_knife_pullout(bm, w, d, h, params):
+    x0, x1, y0, y1, floor, top = _chassis(bm, w, d, h)
+    shelf_z = max(floor + inch(8.0), top - inch(3.6))
+    cols = int(_p(params, 'bin_columns', 1))
+    rows = int(_p(params, 'bins', 1))
+    bin_d = inch(4.3) if cols > 1 else inch(5.35)
+    holes = _bin_holes(x0, x1, y0, y0 + rows * (bin_d + inch(0.6))
+                       + inch(0.6), rows, cols, bin_d)
+    front_end = max([b[3] for b in holes] or [y0]) + inch(0.4)
+    # Knife inserts fill the rest of the shelf behind the bins.
+    kd = min(inch(13.0), y1 - front_end - inch(0.15))
+    knives = []
+    if kd > inch(2.0):
+        n = int(_p(params, 'knife_inserts', 1))
+        gap = inch(0.2)
+        kw = (x1 - x0 - inch(0.3) - gap * (n - 1)) / max(n, 1)
+        for i in range(n):
+            kx = x0 + inch(0.15) + i * (kw + gap)
+            knives.append((kx, kx + kw, y1 - kd, y1 - inch(0.15)))
+    _shelf_with_holes(bm, x0, x1, y0, y1, shelf_z, holes + knives)
+    bin_h = min(inch(6.75), shelf_z - floor - inch(1.0))
+    for bx0, bx1, by0, by1 in holes:
+        _bin(bm, bx0 + inch(0.05), bx1 - inch(0.05), by0 + inch(0.05),
+             by1 - inch(0.05), shelf_z + PANEL_T - bin_h,
+             shelf_z + PANEL_T + inch(0.07))
+    kh = min(inch(10.0), shelf_z - floor - inch(0.5))
+    for kx0, kx1, ky0, ky1 in knives:
+        _box(bm, kx0, kx1, ky0, ky1, shelf_z + PANEL_T - kh,
+             shelf_z + PANEL_T, MI_STEEL)
+        # Knife slots across the insert's top.
+        for y in _spread(ky0 + inch(0.5), ky1 - inch(0.5),
+                         max(2, int((ky1 - ky0) / inch(1.25)))):
+            _box(bm, kx0 + inch(0.3), kx1 - inch(0.3), y - inch(0.06),
+                 y + inch(0.06), shelf_z + PANEL_T,
+                 shelf_z + PANEL_T + inch(0.04), 1)
+    _side_rails(bm, x0, x1, y0, y1, floor, inch(2.7))
+    _side_rails(bm, x0, x1, y0, y1, shelf_z + PANEL_T,
+                min(inch(1.5), top - shelf_z - PANEL_T - inch(0.3)))
+    return True
+
+
+def _build_towel_pullout(bm, w, d, h, params):
+    x0, x1, y0, y1, floor, top = _chassis(bm, w, d, h, top_rails=False)
+    shelf_z = floor + (h - floor) * 0.49
+    _box(bm, x0, x1, y0, y1, shelf_z, shelf_z + PANEL_T)
+    st = shelf_z + PANEL_T
+    _lips(bm, x0, x1, y0, y1, st)
+    # Towel bay at the front, storage compartment behind a divider.
+    div_y = y0 + (y1 - y0) * 0.5
+    _box(bm, x0, x1, div_y, div_y + PANEL_T, st, h)
+    rw = min(PANEL_T, w * 0.12)
+    for x in (x0, x1 - rw):
+        _box(bm, x, x + rw, div_y + PANEL_T, y1, h - TOP_RAIL_H, h)
+        _box(bm, x, x + rw, div_y + PANEL_T, div_y + PANEL_T + TOP_RAIL_H,
+             st + TOP_RAIL_H, h - TOP_RAIL_H)
+    # Roll holder: a bar from the front panel to the divider.
+    zb = min(st + inch(6.6), h - inch(2.0))
+    cx = (x0 + x1) / 2.0
+    _box(bm, cx - inch(0.25), cx + inch(0.25), y0, div_y, zb,
+         zb + inch(1.45))
+    _side_rails(bm, x0, x1, y0, y1, floor,
+                min(inch(2.7), shelf_z - floor - inch(0.5)))
+    return True
+
+
+def _canister(bm, x0, x1, y0, y1, z0, z1):
+    lid = min(inch(1.0), (z1 - z0) * 0.2)
+    if z1 - z0 <= lid + inch(0.5):
+        return
+    _box(bm, x0 + inch(0.25), x1 - inch(0.25), y0 + inch(0.25),
+         y1 - inch(0.25), z0, z1 - lid, MI_PLASTIC)
+    _box(bm, x0, x1, y0, y1, z1 - lid, z1, MI_STEEL)
+
+
+def _build_canister_pullout(bm, w, d, h, params):
+    x0, x1, y0, y1, floor, top = _chassis(bm, w, d, h, top_rails=False)
+    shelf_z = floor + (h - floor) * 0.67
+    _box(bm, x0, x1, y0, y1, shelf_z, shelf_z + PANEL_T)
+    st = shelf_z + PANEL_T
+    _lips(bm, x0, x1, y0, y1, floor)
+    _lips(bm, x0, x1, y0, y1, st)
+    cx0, cx1 = x0 + inch(0.4), x1 - inch(0.4)
+    for count, zb, zt in ((int(_p(params, 'lower', 3)), floor,
+                           min(shelf_z - inch(0.25), floor + inch(12.6))),
+                          (int(_p(params, 'upper', 4)), st,
+                           min(h - inch(0.25), st + inch(6.0)))):
+        if count <= 0:
+            continue
+        pitch = (y1 - y0 - inch(0.3)) / count
+        for i in range(count):
+            cy = y0 + inch(0.15) + pitch * i
+            _canister(bm, cx0, cx1, cy + inch(0.1), cy + pitch - inch(0.1),
+                      zb, zt)
+    return True
+
+
+def _build_tray_divider_pullout(bm, w, d, h, params):
+    x0, x1, y0, y1, floor, top = _chassis(bm, w, d, h)
+    n = int(_p(params, 'dividers', 1 if w < inch(7.75) else 2))
+    dh = min(inch(10.0), top - floor - inch(2.0))
+    dt = inch(0.25)
+    for i in range(max(n, 0)):
+        xd = x0 + (x1 - x0) * (i + 1) / (n + 1)
+        _box(bm, xd - dt / 2, xd + dt / 2, y0, y1, floor, floor + dh)
+        # T-bar riding the divider's top edge.
+        _bar(bm, xd, xd, y0 + inch(0.5), y1 - inch(0.5), floor + dh,
+             floor + dh, t=inch(0.25))
+    # Side rails at two heights, carried on chrome uprights.
+    lw = min(PANEL_T, (x1 - x0) * 0.12)
+    rails = [floor + (top - floor) * 0.18, floor + (top - floor) * 0.62]
+    for z in rails:
+        for x in (x0, x1 - lw):
+            _box(bm, x, x + lw, y0, y1, z, z + TOP_RAIL_H)
+    for x in (x0 + lw / 2, x1 - lw / 2):
+        for y in (y0 + (y1 - y0) * 0.33, y0 + (y1 - y0) * 0.72):
+            _bar(bm, x, x, y, y, floor, rails[-1] + TOP_RAIL_H)
+    return True
+
+
+def _build_spice_pullout(bm, w, d, h, params):
+    t = inch(0.27)
+    x0, x1, y0, y1, floor, top = _chassis(bm, w, d, h, panel_t=t,
+                                          top_rails=False)
+    cap = PANEL_T
+    _box(bm, x0, x1, 0.0, y1 + t, h - cap, h)
+    top = h - cap
+    if params.get('adjustable'):
+        levels = _even_levels(floor, top, int(_p(params, 'shelves', 3)))
+        for z in levels:
+            _box(bm, x0, x1, y0, y1, z, z + PANEL_T)
+        for i, z in enumerate([floor] + [z + PANEL_T for z in levels]):
+            nxt = levels[i] if i < len(levels) else top
+            _side_rails(bm, x0, x1, y0, y1, z,
+                        min(inch(1.4), nxt - z - inch(0.5)))
+        return True
+    # Fixed shelves 5-1/2" apart with a 3/8" wood rail along each side.
+    pitch = inch(_p(params, 'shelf_spacing', 5.5)) + PANEL_T
+    z = floor
+    rail = inch(0.375)
+    while True:
+        rz = z + inch(1.3)
+        if rz + rail > top:
+            break
+        for x in (x0 + rail, x1 - rail):
+            _bar(bm, x, x, y0, y1, rz, rz, t=rail, mi=0)
+        z += pitch
+        if z + PANEL_T > top - inch(2.0):
+            break
+        _box(bm, x0, x1, y0, y1, z - PANEL_T, z)
+    return True
+
+
+def _build_wire_pantry(bm, w, d, h, params):
+    x0, x1, y0, y1, floor, top = _chassis(
+        bm, w, d, h, deck=False, top_rails=False, panel_mi=MI_STEEL)
+    n = int(_p(params, 'baskets', 0))
+    if n <= 0:
+        n = 4
+        steps = params.get('basket_steps') or ()
+        for row in steps:
+            try:
+                if h / inch(1.0) + 1e-3 >= float(row[0]):
+                    n = int(row[1])
+            except (TypeError, ValueError, IndexError):
+                continue
+    # Center posts front and back, joined by a bar over the top.
+    cx = (x0 + x1) / 2.0
+    pw = min(inch(0.74), w * 0.2)
+    post_top = h - inch(1.17)
+    for py0, py1 in ((y0, y0 + PANEL_T), (y1 - PANEL_T, y1)):
+        _box(bm, cx - pw / 2, cx + pw / 2, py0, py1, floor, post_top,
+             MI_STEEL)
+    _box(bm, cx - pw / 2, cx + pw / 2, y0, y1, post_top,
+         post_top + PANEL_T, MI_STEEL)
+    bh = inch(3.0)
+    inset = min(inch(0.8), w * 0.12)
+    z_first = floor + inch(0.05)
+    z_last = max(z_first, post_top - bh - inch(9.0))
+    for k in range(max(1, n)):
+        z = z_first + ((z_last - z_first) * k / (n - 1) if n > 1 else 0.0)
+        _wire_basket(bm, inset, w - inset, y0 + inch(0.1), y1 - inch(0.1),
+                     z, bh, pitch=inch(0.75), frames=2)
+    return True
+
+
 _BUILDERS = {
+    'can_storage_wood':       _build_can_storage_wood,
+    'can_storage_wire':       _build_can_storage_wire,
+    'utensil_pullout':        _build_utensil_pullout,
+    'knife_pullout':          _build_knife_pullout,
+    'towel_pullout':          _build_towel_pullout,
+    'canister_pullout':       _build_canister_pullout,
+    'tray_divider_pullout':   _build_tray_divider_pullout,
+    'spice_pullout':          _build_spice_pullout,
+    'wire_pantry':            _build_wire_pantry,
     'rollout_tray_pegs':      _build_rollout_tray_pegs,
     'rollout_two_tier':       _build_rollout_two_tier,
     'organizer_cubbies':      _build_organizer_cubbies,
@@ -477,6 +1028,9 @@ def build_object(model, name, w, depth, h, params=None):
     organizer = model in ORGANIZER_MODELS
     mesh.materials.append(_material(_MAT_PLY if organizer else _MAT_MAPLE))
     mesh.materials.append(_material(_MAT_CHROME))
+    if model in PULLOUT_MODELS:
+        mesh.materials.append(_material(_MAT_STEEL))
+        mesh.materials.append(_material(_MAT_PLASTIC))
     obj = hb_utils.new_object(name, mesh)
     if organizer:
         obj[FINISH_MATCH_KEY] = True

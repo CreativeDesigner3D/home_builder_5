@@ -4909,9 +4909,10 @@ def _draw_accessory_notes(box, item, code, is_pullout, region_pullout, ow_in):
     point.
     """
     box.label(text="Accessory: %s" % item.get('name', code))
-    if not is_pullout and _geometry_kind(item) == 'MODEL':
+    kind = _geometry_kind(item)
+    if kind == 'MODEL':
         box.label(text="Modeled in the cabinet", icon='MESH_GRID')
-    elif not is_pullout and not _geometry_kind(item):
+    elif not is_pullout and not kind:
         box.label(text="Called out on the drawings; not shown in 3D",
                   icon='INFO')
         box.label(text="To see it, add the matching interior item "
@@ -5265,8 +5266,10 @@ class hb_face_frame_OT_accessory_menu(bpy.types.Operator):
         pullout = getattr(ffo, 'pullout_accessory_code', '') if ffo else ''
         if pullout:
             entry = accessory_registry.find(pullout) or {}
+            modeled = _geometry_kind(entry) == 'MODEL' if entry else False
             layout.label(text="Pull-out: %s (%s)" % (
-                entry.get('name', pullout), pullout), icon='MESH_GRID')
+                entry.get('name', pullout), pullout),
+                icon='MESH_GRID' if modeled else 'DOT')
         props = _interior_items_target(tgt)
         if props is None:
             layout.label(text="This opening is divided: pick a section to "
