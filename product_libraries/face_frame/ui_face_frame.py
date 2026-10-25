@@ -753,6 +753,14 @@ def draw_floating_shelf(layout, root):
         gsub.separator()
         gsub.prop(shelf, 'groove_width', text="Width")
         gsub.prop(shelf, 'groove_depth', text="Depth")
+        # The bottom groove cuts at the same size unless given its own.
+        gsub.separator()
+        gsub.prop(shelf, 'groove_bottom_own_size',
+                  text="Bottom Groove Own Size")
+        ssub = gsub.column(align=True)
+        ssub.enabled = shelf.groove_bottom_own_size
+        ssub.prop(shelf, 'groove_bottom_width', text="Bottom Width")
+        ssub.prop(shelf, 'groove_bottom_depth', text="Bottom Depth")
 
 
 def draw_panel_layout(layout, root):

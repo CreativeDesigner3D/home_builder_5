@@ -14063,6 +14063,22 @@ class Face_Frame_Floating_Shelf_Props(PropertyGroup):
         name="Groove Depth", default=units.inch(0.25),
         unit='LENGTH', precision=4, update=_update_cabinet_dim,
     )  # type: ignore
+    # The bottom groove cuts at the top groove's size unless it is
+    # given its own width and depth.
+    groove_bottom_own_size: BoolProperty(
+        name="Bottom Groove Own Size", default=False,
+        description="Give the bottom groove its own width and depth. "
+                    "Off cuts it the same size as the top groove",
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    groove_bottom_width: FloatProperty(
+        name="Bottom Groove Width", default=units.inch(0.5), min=0.0,
+        unit='LENGTH', precision=4, update=_update_cabinet_dim,
+    )  # type: ignore
+    groove_bottom_depth: FloatProperty(
+        name="Bottom Groove Depth", default=units.inch(0.25), min=0.0,
+        unit='LENGTH', precision=4, update=_update_cabinet_dim,
+    )  # type: ignore
 
 
 _mantle_crown_items_cache = []

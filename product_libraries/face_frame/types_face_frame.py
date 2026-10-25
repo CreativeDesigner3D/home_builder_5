@@ -18294,6 +18294,7 @@ FLOATING_SHELF_SYNC_PROPS = (
     'groove_distance_from_rear', 'groove_top_from_front',
     'groove_bottom_separate', 'groove_bottom_distance',
     'groove_bottom_from_front', 'groove_width', 'groove_depth',
+    'groove_bottom_own_size', 'groove_bottom_width', 'groove_bottom_depth',
 )
 _FLOATING_SHELF_SIZE_PROPS = ('width', 'depth', 'height')
 # Set while one shelf pushes its settings to its group, so the members'
@@ -18795,23 +18796,32 @@ class FloatingShelfFaceFrameCabinet(FaceFrameCabinet):
         hd = shelf.shelf_type in ('MEDIUM_DUTY', 'HEAVY_DUTY')
         g_w = shelf.groove_width
         g_depth = shelf.groove_depth
+        # The bottom groove cuts at the top's size unless given its own.
+        if shelf.groove_bottom_own_size:
+            b_w = shelf.groove_bottom_width
+            b_depth = shelf.groove_bottom_depth
+        else:
+            b_w, b_depth = g_w, g_depth
 
-        def groove_span(dist, from_front):
-            """Panel-local (near, far) Y for a groove that distance in."""
+        def groove_span(dist, from_front, w):
+            """Panel-local (near, far) Y for a groove w wide that
+            distance in."""
             if from_front:
                 near = dist - ft
             else:
-                near = inner_depth - dist - g_w
-            near = min(max(near, 0.0), max(inner_depth - g_w, 0.0))
-            return near, near + g_w
+                near = inner_depth - dist - w
+            near = min(max(near, 0.0), max(inner_depth - w, 0.0))
+            return near, near + w
 
         y_near, y_far = groove_span(shelf.groove_distance_from_rear,
-                                    shelf.groove_top_from_front)
+                                    shelf.groove_top_from_front, g_w)
         if shelf.groove_bottom_separate:
             b_near, b_far = groove_span(shelf.groove_bottom_distance,
-                                        shelf.groove_bottom_from_front)
+                                        shelf.groove_bottom_from_front, b_w)
         else:
-            b_near, b_far = y_near, y_far
+            # In line with the top groove, at the bottom's own width.
+            b_near, b_far = groove_span(shelf.groove_distance_from_rear,
+                                        shelf.groove_top_from_front, b_w)
         gx0, gx1 = -0.005, inner_len + 0.005                   # span full length
         # Flip Z picks the cut face; top cuts its top face, bottom its
         # bottom. Verify against the render and flip if reversed.
@@ -18822,7 +18832,7 @@ class FloatingShelfFaceFrameCabinet(FaceFrameCabinet):
                              gx0, y_near, gx1, y_far, g_depth, True)
         if not BOTTOM.get('IS_MANUAL_PART'):
             self._set_groove(BOTTOM, hd and shelf.include_groove_bottom,
-                             gx0, b_near, gx1, b_far, g_depth, False)
+                             gx0, b_near, gx1, b_far, b_depth, False)
 
         self._apply_shelf_edge_profile(FRONT, LP, RP, width, depth,
                                        thickness, fl, fr)
