@@ -4564,6 +4564,10 @@ def _sync_rail_size_annotation(front_obj, part, top_rail_width,
     text_obj.location.z = units.inch(0.76)
 
 
+# Default width and depth of a Set Door Frame center kerf (1/8").
+CENTER_KERF_DEFAULT = units.inch(0.125)
+
+
 def _front_glass_rows(frame_store, n_rows):
     """Panel rows (0 = TOP) the user marked as glass in the Set Door
     Frame dialog: Top / Bottom toggles plus an explicit 1-based
@@ -5890,6 +5894,16 @@ class Face_Frame_Door_Style(PropertyGroup):
                 and not info.get('mid_stile_count'):
             info['mid_stile_count'] = 1
             info['mid_stile_width'] = _msw
+        # Center kerf (Set Door Frame > Center Kerf): a groove down the
+        # mid stile and through the rails so one door reads as a pair.
+        # A panel choice like glass rows, so not behind the frame lock.
+        # Mitered doors build their frame from swept members and skip it.
+        if (member_sec is None
+                and frame_store.get('HB_FRAME_OVR_KERF', False)):
+            info['center_kerf_width'] = float(frame_store.get(
+                'HB_FRAME_OVR_KERF_WIDTH', CENTER_KERF_DEFAULT) or 0.0)
+            info['center_kerf_depth'] = float(frame_store.get(
+                'HB_FRAME_OVR_KERF_DEPTH', CENTER_KERF_DEFAULT) or 0.0)
         # Profile sweeps / panel construction / mullions resolved
         # from the style via resolve_mesh_sections (shared with the
         # wood hood door builder). The cabinet-level "Door and
@@ -6145,6 +6159,10 @@ class Face_Frame_Door_Style(PropertyGroup):
                 'mid_loc': mid_loc,
                 'mid_rail_width': eff_mid_rail,
                 'mid_stile_width': eff_mid_stile,
+                'mid_stile_count': int(info.get('mid_stile_count', 0) or 0),
+                'center_kerf_width': (
+                    float(info.get('center_kerf_width', 0.0) or 0.0)
+                    if info.get('mid_stile_count') else 0.0),
             }
         else:
             # GN fallback: find or add the 'Door Style' CPM_5PIECEDOOR

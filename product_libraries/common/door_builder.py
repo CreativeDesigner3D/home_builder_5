@@ -305,8 +305,53 @@ def evaluate_layout(info, width, height):
 _PART_MAT_SLOT = {
     'slab': 0, 'left_stile': 0, 'right_stile': 0, 'mid_stile': 0,
     'top_rail': 1, 'bottom_rail': 1, 'mid_rail': 1, 'panel': 2,
-    'glass': 3,
+    'glass': 3, 'kerf_stile': 0, 'kerf_rail': 1,
 }
+
+
+def center_kerf_x(parts, width, eps=1e-6):
+    """Door-local x of the center kerf line: the centerline of the mid
+    stile nearest the middle of the door, or None when the door has no
+    mid stile (the kerf runs down a mid stile)."""
+    centers = [(p['x0'] + p['x1']) / 2.0 for p in parts
+               if p['key'] == 'mid_stile' and p['x1'] - p['x0'] > eps]
+    if not centers:
+        return None
+    return min(centers, key=lambda c: abs(c - width / 2.0))
+
+
+def _apply_center_kerf(parts, width, thickness, kerf_w, kerf_d,
+                       eps=1e-6):
+    """Cut a center kerf (a square groove kerf_w wide, kerf_d deep in
+    the front face) down the mid stile and through the rails it lines
+    up with, so a single door reads as a pair. Each member the kerf
+    crosses becomes two halves plus a thinner back piece under the
+    groove. Returns the parts unchanged when there is no mid stile or
+    the groove doesn't fit."""
+    xc = center_kerf_x(parts, width, eps)
+    if xc is None or kerf_w <= eps or kerf_d <= eps:
+        return parts
+    kerf_d = min(kerf_d, thickness - inch(0.125))
+    if kerf_d <= eps:
+        return parts
+    k0, k1 = xc - kerf_w / 2.0, xc + kerf_w / 2.0
+    kerf_keys = {'mid_stile': 'kerf_stile', 'top_rail': 'kerf_rail',
+                 'bottom_rail': 'kerf_rail', 'mid_rail': 'kerf_rail'}
+    out = []
+    for p in parts:
+        key = p['key']
+        if (key not in kerf_keys or p.get('round_poly') is not None
+                or p['thickness'] is not None or p['y_inset']
+                or p['x0'] > k0 - eps or p['x1'] < k1 + eps
+                or p['z1'] - p['z0'] <= eps):
+            out.append(p)
+            continue
+        out.append(dict(p, x1=k0))
+        out.append(dict(p, x0=k1))
+        out.append(dict(p, key=kerf_keys[key], name=p['name'] + " Kerf",
+                        x0=k0, x1=k1, thickness=thickness - kerf_d,
+                        y_inset=kerf_d))
+    return out
 
 # Per-row glass in an otherwise wood-panelled door (a split door with a
 # glass top and a wood bottom): the glass lite is 1/4" stock set at the
@@ -2074,6 +2119,13 @@ def build_door_geometry(info, width, height, thickness,
                     shaped_bottom[id(p)] = pts
                     bottom_rail_segs.append(pts)
     shaped_top.update(round_pts)
+    # Center kerf (faux pair of doors): a groove down the mid stile
+    # and through the rails, split out of the member boxes.
+    if (not mitered and info.get('door_type') != 'SLAB'
+            and (info.get('center_kerf_width') or 0.0) > 0.0):
+        parts = _apply_center_kerf(parts, width, thickness,
+                                   info['center_kerf_width'],
+                                   info.get('center_kerf_depth') or 0.0)
     # A LATTICE mullion spec builds the panel itself (_emit_lattice)
     # instead of bars over it.
     lattice = (mullion is not None and info.get('door_type') != 'SLAB'
