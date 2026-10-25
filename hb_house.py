@@ -1170,8 +1170,62 @@ class HB_Roof(PropertyGroup):
     rise_obj: PointerProperty(type=bpy.types.Object)  # type: ignore
 
 
+# The finishes the outside walls can take (see hb_exterior). New ones go
+# on the end: a saved choice is its place in the list.
+SIDING_FINISHES = [
+    ('NONE', "None", "Plain walls"),
+    ('BOARD_BATTEN', "Board and Batten", "Vertical boards with battens every 16\""),
+    ('LAP', "Lap", "Horizontal lap boards, 6\" to the weather"),
+    ('SHINGLE', "Shingles", "Cedar shingles in rows, 7\" to the weather"),
+    ('STUCCO', "Stucco", "A lightly textured plaster finish"),
+    ('BRICK', "Brick", "Brick in running bond"),
+    ('STONE', "Stone", "Rough stone"),
+]
+
+
+def _siding_override(same_as):
+    return [('INHERIT', f"Same as {same_as}", f"The {same_as.lower()}'s siding")] + SIDING_FINISHES
+
+
+def _level_siding_changed(self, context):
+    _exterior_changed(self.id_data.hb_house)
+
+
+def _wall_siding_changed(self, context):
+    """A wall's own siding: the same goes on every selected outside wall,
+    then the house is refinished."""
+    obj = self.id_data
+    style = [i[0] for i in _siding_override("Level")].index(self.style)
+    for other in (context.selected_objects if context else ()):
+        if (other is not obj and other.get('IS_WALL_BP')
+                and other.get('WALL_TYPE', 'Exterior') == 'Exterior'):
+            other.hb_siding['style'] = style
+            other.hb_siding['color'] = tuple(self.color)
+    scene = house_scene_of(context.scene if context else bpy.context.scene)
+    if scene is not None:
+        _exterior_changed(scene.hb_house)
+
+
+class HB_WallSiding(PropertyGroup):
+    """An outside wall's own siding, over its level's and the house's."""
+    style: EnumProperty(
+        name="Siding", items=_siding_override("Level"), default='INHERIT',
+        update=_wall_siding_changed)  # type: ignore
+    color: FloatVectorProperty(
+        name="Siding Color", subtype='COLOR', size=3, min=0.0, max=1.0,
+        default=(0.92, 0.92, 0.90), update=_wall_siding_changed)  # type: ignore
+
+
 class HB_Level(PropertyGroup):
     uid: StringProperty(name="Level ID")  # type: ignore
+
+    # This level's outside walls' siding, over the house's
+    siding_style: EnumProperty(
+        name="Siding", items=_siding_override("House"), default='INHERIT',
+        update=_level_siding_changed)  # type: ignore
+    siding_color: FloatVectorProperty(
+        name="Siding Color", subtype='COLOR', size=3, min=0.0, max=1.0,
+        default=(0.92, 0.92, 0.90), update=_level_siding_changed)  # type: ignore
 
     name: StringProperty(name="Name", default="Level",
                          update=_update_level_name)  # type: ignore
@@ -1278,15 +1332,26 @@ class HB_House_Props(PropertyGroup):
     # into a room), so they start hidden; they still render.
     # Exterior finish (see hb_exterior)
     siding_style: EnumProperty(
-        name="Siding",
-        items=[('NONE', "None", "Plain walls"),
-               ('BOARD_BATTEN', "Board and Batten", "Vertical boards with battens every 16\""),
-               ('LAP', "Lap", "Horizontal lap boards, 6\" to the weather")],
+        name="Siding", items=SIDING_FINISHES,
         default='NONE', update=lambda self, context: _exterior_changed(self))  # type: ignore
     siding_color: FloatVectorProperty(
         name="Siding Color", subtype='COLOR', size=3, min=0.0, max=1.0,
         default=(0.92, 0.92, 0.90),
         update=lambda self, context: _exterior_changed(self))  # type: ignore
+    # The gable ends (and the walls the roof pieces make), over the walls'
+    gable_siding_style: EnumProperty(
+        name="Gable Siding", items=_siding_override("Walls"), default='INHERIT',
+        update=lambda self, context: _exterior_changed(self))  # type: ignore
+    gable_siding_color: FloatVectorProperty(
+        name="Gable Siding Color", subtype='COLOR', size=3, min=0.0, max=1.0,
+        default=(0.92, 0.92, 0.90),
+        update=lambda self, context: _exterior_changed(self))  # type: ignore
+    siding_geometry: BoolProperty(
+        name="Real Geometry",
+        description=("Build the battens, lap boards and shingle rows as real geometry "
+                     "on the walls, not only in the material. Slower to update"),
+        default=False, update=lambda self, context: _exterior_changed(self))  # type: ignore
+
     base_style: EnumProperty(
         name="Base",
         items=[('NONE', "None", "No masonry base"),
@@ -1664,6 +1729,7 @@ class HOME_BUILDER_OT_set_active_level(bpy.types.Operator):
 # =============================================================================
 
 classes = (
+    HB_WallSiding,
     HB_Room,
     HB_RoofPiece,
     HB_Roof,
@@ -1682,6 +1748,7 @@ def register():
     for cls in classes:
         bpy.utils.register_class(cls)
     HB_House_Props.register()
+    bpy.types.Object.hb_siding = PointerProperty(type=HB_WallSiding)
     _ghost_handle = bpy.types.SpaceView3D.draw_handler_add(
         _draw_level_ghost, (), 'WINDOW', 'POST_VIEW')
     if _on_depsgraph_update not in bpy.app.handlers.depsgraph_update_post:
@@ -1698,5 +1765,7 @@ def unregister():
         bpy.types.SpaceView3D.draw_handler_remove(_ghost_handle, 'WINDOW')
         _ghost_handle = None
     HB_House_Props.unregister()
+    if hasattr(bpy.types.Object, 'hb_siding'):
+        del bpy.types.Object.hb_siding
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)

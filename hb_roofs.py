@@ -1386,8 +1386,9 @@ def build_porch_roof(scene, level, room, polygon, segs):
         try:
             from . import hb_exterior
             house = scene.hb_house
-            if house.siding_style != 'NONE':
-                wall_mat = hb_exterior.siding_material(house.siding_style, house.siding_color)
+            style, color = hb_exterior.level_finish(scene, level)
+            if style != 'NONE':
+                wall_mat = hb_exterior.siding_material(style, color)
         except Exception:
             wall_mat = None
         if wall_mat is None:

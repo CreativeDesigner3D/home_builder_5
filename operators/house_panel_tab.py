@@ -8,7 +8,8 @@ the panel stays short:
 * Levels -- the level list as a pool (pick a level to draw on it, a
   second click renames it, NEW adds one on top, the delete chip removes
   the active one), its heights, and what the viewport shows.
-* Outside -- the siding and base on the outside walls.
+* Outside -- the siding on the outside walls (the house's, and the
+  gables', the active level's or the selected walls' own) and the base.
 * Roof -- the active level's roof and its pieces.
 * Rooms -- the active level's rooms, another pool: pick a room to see
   its area and set its floor, ceiling and porch. Rooms are found from
@@ -106,16 +107,59 @@ VIEW_FIELDS = (
 
 # ---- Outside ----------------------------------------------------------------
 
+def _gable_summary(house):
+    return _label(house, 'gable_siding_style')
+
+
+def _overriding(owner):
+    return owner.siding_style not in ('INHERIT', 'NONE')
+
+
 EXTERIOR_FIELDS = (
-    ('label', None, "Walls"),
+    ('label', None, "Siding"),
     ('enum', 'siding_style', "Siding"),
     ('native', 'siding_color', "Siding Color", {'when': lambda h: h.siding_style != 'NONE'}),
-    ('gap', None, ""),
+    ('bool', 'siding_geometry', "Real Geometry"),
+    ('group', 'outside_gables', "Gables", {'summary': _gable_summary, 'fields': (
+        ('enum', 'gable_siding_style', "Gable Siding"),
+        ('native', 'gable_siding_color', "Gable Color",
+         {'when': lambda h: h.gable_siding_style not in ('INHERIT', 'NONE')}),
+    )}),
+)
+
+BASE_FIELDS = (
     ('label', None, "Base"),
     ('enum', 'base_style', "Base"),
     ('distance', 'base_height', "Base Height", {'when': lambda h: h.base_style != 'NONE'}),
     ('native', 'base_color', "Base Color", {'when': lambda h: h.base_style != 'NONE'}),
 )
+
+
+def _level_siding_fields(level):
+    return (
+        ('group', 'outside_level', f"{level.name} Walls",
+         {'summary': lambda lv: _label(lv, 'siding_style'), 'fields': (
+             ('enum', 'siding_style', "Siding"),
+             ('native', 'siding_color', "Siding Color", {'when': _overriding}),
+         )}),
+    )
+
+
+def _selected_walls(context):
+    return [o for o in context.selected_objects
+            if o.get('IS_WALL_BP') and o.get('WALL_TYPE', 'Exterior') == 'Exterior']
+
+
+def _wall_siding_fields(count):
+    word = "Wall" if count == 1 else f"{count} Walls"
+    return (
+        ('group', 'outside_walls', f"Selected {word}",
+         {'summary': lambda ws: _label(ws, 'style'), 'fields': (
+             ('enum', 'style', "Siding"),
+             ('native', 'color', "Siding Color",
+              {'when': lambda ws: ws.style not in ('INHERIT', 'NONE')}),
+         )}),
+    )
 
 
 # ---- Roof -------------------------------------------------------------------
@@ -478,6 +522,17 @@ def _blocks(context):
     elif _page == 'OUTSIDE':
         blocks = [('head', ("Outside", False, None))]
         blocks.extend(options_panel.field_blocks(context, EXTERIOR_FIELDS, scene.hb_house))
+        if level is not None:
+            blocks.extend(options_panel.field_blocks(context, _level_siding_fields(level), level))
+        walls = _selected_walls(context)
+        if walls:
+            owner = context.active_object if context.active_object in walls else walls[0]
+            blocks.extend(options_panel.field_blocks(context, _wall_siding_fields(len(walls)),
+                                                     owner.hb_siding))
+        else:
+            blocks.append(('note', "Select outside walls to give them their own siding."))
+        blocks.append(('gap', None))
+        blocks.extend(options_panel.field_blocks(context, BASE_FIELDS, scene.hb_house))
     elif _page == 'ROOF':
         blocks = [('head', ("Roof" + where, False, None))]
         if level is not None:
