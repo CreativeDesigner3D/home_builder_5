@@ -3509,6 +3509,11 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                                    # exterior finish the other cutters take.
                                    'DRAWER_BOX_CUTTER'):
                     slot_mat = interior_mat or finish_mat
+                if (slot_role == 'ACCESSORY_MODEL'
+                        and child.get('hb_accessory_finish_match')):
+                    # Organizer inserts are veneer plywood finished
+                    # with the cabinet; roll-outs keep their own wood.
+                    slot_mat = finish_mat
                 if slot_role == 'SHELF_NOSING':
                     # A painted shelf region carries its nosing along:
                     # the stamp on the opening / bay cage wins over the

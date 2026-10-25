@@ -30,6 +30,7 @@ from . import island_pair
 from . import shelf_nosing
 from ..common import bun_foot
 from . import bar_storage
+from . import accessory_models
 
 
 # ---------------------------------------------------------------------------
@@ -6836,6 +6837,13 @@ def interior_item_descriptors(layout, rect, cab_props, opening_props,
                     item_rect['cage_dim_z'] - item_rect.get('reveal_top', 0.0)
                     - item_rect.get('reveal_bottom', 0.0)),
             )]))
+            # A product entry that names a model also builds the unit
+            # itself; the label above stays as the item's annotation.
+            model = accessory_models.descriptor(
+                item_rect, cage_dim_y, item,
+                BAR_STORAGE_FRONT_Y, SHELF_BACK_SETBACK)
+            if model is not None:
+                out.extend(_between_pockets([model]))
         elif item.kind == 'CLOSET_ROD':
             out.extend(_between_pockets([_closet_rod_descriptor(
                 item_rect, cage_dim_y, item)]))

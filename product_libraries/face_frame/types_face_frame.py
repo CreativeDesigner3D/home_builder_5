@@ -46,6 +46,7 @@ from ..common import countertop_common
 from . import decorative_corner
 from . import cabinet_column
 from . import bar_storage
+from . import accessory_models
 from . import pulls
 
 
@@ -1241,6 +1242,9 @@ def rollout_above_layout(opening_bottom, opening_top, rollout_heights,
 # each insert is a single derived mesh built in bar_storage.py; the
 # specific product is read from the interior item's kind.
 PART_ROLE_BAR_STORAGE = 'BAR_STORAGE'
+# Accessory product shown as a 3D unit (roll-out tray, organizer): one
+# derived mesh per item, built in accessory_models.py beside its label.
+PART_ROLE_ACCESSORY_MODEL = accessory_models.ROLE
 # Hang rod across an opening (same role string the closets library uses,
 # so downstream consumers treat both the same way).
 PART_ROLE_CLOSET_ROD = 'CLOSET_ROD'
@@ -1287,6 +1291,7 @@ INTERIOR_PART_ROLES = frozenset({
     PART_ROLE_COMPONENT_SHELF,
     PART_ROLE_COMPONENT_HANGER,
     PART_ROLE_ACCESSORY_LABEL,
+    PART_ROLE_ACCESSORY_MODEL,
     PART_ROLE_BAR_STORAGE,
     PART_ROLE_CLOSET_ROD,
     PART_ROLE_SHELF_STANDARD,
@@ -15670,6 +15675,9 @@ class FaceFrameCabinet(GeoNodeCage):
                 # item data alone.
                 if op_props.front_type not in DRAWER_BOX_FRONT_TYPES:
                     self._create_accessory_label(opening_obj, desc)
+            elif kind == 'ACCESSORY_MODEL':
+                if op_props.front_type not in DRAWER_BOX_FRONT_TYPES:
+                    self._create_accessory_model(opening_obj, desc)
             elif kind == 'ROLLOUT_BOX':
                 self._create_rollout_box(opening_obj, desc)
             elif kind == 'GALLEY_ROLLOUT_TOP':
@@ -16364,6 +16372,23 @@ class FaceFrameCabinet(GeoNodeCage):
         part.set_input('Width', width)
         part.set_input('Thickness', thickness)
         return part
+
+    def _create_accessory_model(self, opening_obj, desc):
+        """3D unit for an accessory product whose entry names a
+        model (accessory_models.py). Like bar storage it is one derived
+        mesh, not a CABINET_PART, so cut lists and machining skip it."""
+        w, depth, h = desc['dims']
+        obj = accessory_models.build_object(
+            desc['model'], desc['name'], w, depth, h, desc.get('params'))
+        if obj is None:
+            return None
+        bpy.context.scene.collection.objects.link(obj)
+        obj.parent = opening_obj
+        obj.location = desc['position']
+        obj['hb_part_role'] = desc['role']
+        obj['IS_FACE_FRAME_INTERIOR_PART'] = True
+        obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_interior_part_commands'
+        return obj
 
     def _create_bar_storage_part(self, opening_obj, desc):
         """Bar storage insert (wine rack / cubby / stemware / plate
