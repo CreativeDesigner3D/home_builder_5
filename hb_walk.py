@@ -12,7 +12,9 @@ can do what a house needs:
   isn't solid - door and window outlines, plan swing arcs, labels,
   room dividers and porch edges.
 * Doors open. E opens or closes the door in the middle of the view,
-  swinging its leaf (or sliding a pocket, barn or bypass door) open.
+  swinging its leaf (or sliding a pocket, barn or bypass door, rolling
+  a garage door) over DOOR_SWING_TIME. E again mid-swing turns it back
+  from where it is.
 * The cursor is captured. It is hidden and held at the middle of the
   viewport, so you can turn round and round without it leaving the
   window.
@@ -59,6 +61,7 @@ MAX_STEP = 0.1              # longest tick moved in one go (s), after a stall
 DOOR_REACH = 2.5            # how far away a door can be opened (m)
 OPEN_SWING = 90.0           # degrees a hinged door opens to
 OPEN_SLIDE = 100.0          # percent a pocket, barn or bypass door opens
+DOOR_SWING_TIME = 0.6       # s for a door to open or close
 
 MOVE_KEYS = {
     'W': (0, 1), 'UP_ARROW': (0, 1),
@@ -187,19 +190,92 @@ def is_open(cage):
     return opts is not None and float(opts.get('open_angle', 0.0)) > 1.0
 
 
-def toggle_door(cage):
-    """Open a closed door or close an open one. Returns True when it is
-    now open."""
+def full_open(cage):
+    """How far the door opens: degrees for a hinged door, percent for the rest."""
+    geo = _door_geo()
+    return OPEN_SWING if geo.door_type(geo.merged_opts(cage)) == 'SWING' else OPEN_SLIDE
+
+
+def door_open_amount(cage):
+    opts = _door_geo().merged_opts(cage)
+    return float(opts.get('open_angle', 0.0)) if opts else 0.0
+
+
+def set_door_open(cage, amount):
+    """Set how far a door is open and remake its leaf. Only the door's
+    own geometry: the hole in the wall doesn't change, so the wall isn't
+    re-cut every frame of a swing."""
     geo = _door_geo()
     opts = geo.stored_opts(cage)
     if opts is None:
-        return False
-    full = OPEN_SWING if geo.door_type(geo.merged_opts(cage)) == 'SWING' else OPEN_SLIDE
-    now_open = not is_open(cage)
-    opts['open_angle'] = full if now_open else 0.0
+        return
+    opts['open_angle'] = amount
     geo.set_opts(cage, opts)
-    geo.build_geometry(cage)
+    geo.build_door_geometry(cage)
+
+
+def toggle_door(cage):
+    """Open a closed door or close an open one, at once. Returns True when
+    it is now open."""
+    if _door_geo().stored_opts(cage) is None:
+        return False
+    now_open = not is_open(cage)
+    set_door_open(cage, full_open(cage) if now_open else 0.0)
     return now_open
+
+
+def ease(f):
+    """Smooth in and out over 0..1."""
+    f = min(max(f, 0.0), 1.0)
+    return f * f * (3.0 - 2.0 * f)
+
+
+class DoorSwings:
+    """Doors in the middle of opening or closing: each eases from where
+    it was to fully open or shut over DOOR_SWING_TIME."""
+
+    def __init__(self):
+        self.moving = {}            # cage name -> (from, to, start time)
+
+    def _now_amount(self, name, cage, now):
+        if name in self.moving:
+            a, b, t0 = self.moving[name]
+            return a + (b - a) * ease((now - t0) / DOOR_SWING_TIME)
+        return door_open_amount(cage)
+
+    def toggle(self, cage, now):
+        """Start a door towards open, or shut if it is open or opening.
+        Returns True when it is heading open."""
+        name = cage.name
+        here = self._now_amount(name, cage, now)
+        heading_open = (self.moving[name][1] > 0.0) if name in self.moving else here > 1.0
+        target = 0.0 if heading_open else full_open(cage)
+        self.moving[name] = (here, target, now)
+        return target > 0.0
+
+    def step(self, now):
+        """Move every swinging door on; returns True while any moved."""
+        done = []
+        for name, (a, b, t0) in self.moving.items():
+            cage = bpy.data.objects.get(name)
+            if cage is None:
+                done.append(name)
+                continue
+            f = (now - t0) / DOOR_SWING_TIME
+            set_door_open(cage, a + (b - a) * ease(f))
+            if f >= 1.0:
+                done.append(name)
+        for name in done:
+            self.moving.pop(name, None)
+        return bool(self.moving) or bool(done)
+
+    def finish(self):
+        """Put every swinging door where it was going."""
+        for name, (_a, b, _t0) in self.moving.items():
+            cage = bpy.data.objects.get(name)
+            if cage is not None:
+                set_door_open(cage, b)
+        self.moving.clear()
 
 
 # ---- Moving through the house ------------------------------------------------------
@@ -327,6 +403,7 @@ class HOME_BUILDER_OT_walk_through(bpy.types.Operator):
         window.cursor_warp(*self.center)
         self.timer = context.window_manager.event_timer_add(TICK, window=window)
         self.last_tick = time.perf_counter()
+        self.doors = DoorSwings()
         self.aim_handle = bpy.types.SpaceView3D.draw_handler_add(
             self._draw_aim, (), 'WINDOW', 'POST_PIXEL')
         self._header(context)
@@ -335,6 +412,7 @@ class HOME_BUILDER_OT_walk_through(bpy.types.Operator):
 
     def _finish(self, context, go_back):
         context.window_manager.event_timer_remove(self.timer)
+        self.doors.finish()
         bpy.types.SpaceView3D.draw_handler_remove(self.aim_handle, 'WINDOW')
         self.window.cursor_modal_restore()
         self.area.header_text_set(None)
@@ -431,8 +509,7 @@ class HOME_BUILDER_OT_walk_through(bpy.types.Operator):
         if event.type == 'E' and event.value == 'PRESS':
             cage = door_ahead(self.scene, self._eye(), self._look())
             if cage is not None:
-                toggle_door(cage)
-                self.area.tag_redraw()
+                self.doors.toggle(cage, time.perf_counter())
             return {'RUNNING_MODAL'}
 
         if event.type in {'LEFT_SHIFT', 'RIGHT_SHIFT'}:
@@ -461,6 +538,9 @@ class HOME_BUILDER_OT_walk_through(bpy.types.Operator):
         now = time.perf_counter()
         dt = min(max(now - self.last_tick, 0.0), MAX_STEP)
         self.last_tick = now
+        doors = getattr(self, 'doors', None)
+        if doors is not None and doors.moving:
+            doors.step(now)
         x = sum(MOVE_KEYS[k][0] for k in self.keys)
         y = sum(MOVE_KEYS[k][1] for k in self.keys)
         if x or y:
