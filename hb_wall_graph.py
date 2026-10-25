@@ -234,6 +234,47 @@ def _kind(node, by_id):
     return MULTI
 
 
+# ---- Inside corners at T junctions -------------------------------------------
+
+# abut_id / abut_end: the wall that ends on another wall, and which end.
+# abut_side / host_side: the face ('REF' or 'FAR') of each wall that makes
+# the corner. host_t: the corner's station along the host's reference line.
+# host_run: +1 when the run along the host's face that meets this corner
+# lies towards the host's end (larger stations), -1 towards its start.
+# point: the corner itself, where the two faces cross.
+TeeCorner = namedtuple('TeeCorner', 'abut_id abut_end abut_side host_id '
+                                    'host_side host_t host_run point')
+
+
+def tee_inside_corners(graph):
+    """The two inside corners at every T junction in the graph.
+
+    A wall ending on another wall's face makes an inside corner on BOTH of
+    its faces: a run along either face of the ending wall meets a run
+    along the host's face there, one on each side of the ending wall."""
+    out = []
+    for node in graph.tees():
+        seg_id, which = node.ends[0]
+        seg = graph.segs[seg_id]
+        host = graph.segs[node.host.seg_id]
+        # The host face the wall lands on is the one on the wall's side
+        u = seg.away(which)
+        host_w = host.thickness if _dot(u, host.normal) > 0 else 0.0
+        q = host.face_point(host_w)
+        for w, side, outward in ((0.0, 'REF', _mul(seg.normal, -1.0)),
+                                 (seg.thickness, 'FAR', seg.normal)):
+            p = intersect(seg.face_point(w), seg.dir, q, host.dir)
+            if p is None:
+                continue
+            out.append(TeeCorner(
+                seg_id, which, side, host.id,
+                'FAR' if host_w else 'REF',
+                _dot(_sub(p, host.start), host.dir),
+                1 if _dot(outward, host.dir) > 0 else -1,
+                p))
+    return out
+
+
 # ---- Solving the cuts ---------------------------------------------------------
 
 def solve(graph):

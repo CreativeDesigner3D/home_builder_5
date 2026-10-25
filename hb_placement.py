@@ -94,6 +94,62 @@ def pending_world_matrix(obj):
                 @ obj.matrix_basis)
     return obj.matrix_basis
 
+
+# An inside corner made where one wall ends on another wall's face (a T),
+# seen from one of the two walls. point: the corner in world space (at
+# the wall's base). other: the other wall object. role: 'ABUT' when this
+# wall is the one ending there, 'HOST' when the other wall ends on this
+# one. end: 'left' / 'right' - the end of this wall at the corner (ABUT
+# only, else None). front: True when the corner is on this wall's front
+# face (local -Y), False for its back face. x: the corner's station along
+# this wall's local X. run: +1 when this wall's run that meets the corner
+# lies at larger X than the corner, -1 when it lies at smaller X.
+TeeWallCorner = namedtuple('TeeWallCorner',
+                           'point other role end front x run')
+
+
+def wall_tee_corners(wall_obj):
+    """Inside corners at T junctions that ``wall_obj`` takes part in,
+    either as the wall ending on another wall's face or as the wall
+    being ended on. Both sides of a T are inside corners. Worked out
+    from wall positions with the wall junction graph, so nothing is
+    stored and the answer follows the walls as they move. Plain wall
+    end-to-end corners are not included."""
+    from . import hb_wall_graph
+    from .operators import walls as hb_walls
+    if wall_obj is None or 'IS_WALL_BP' not in wall_obj:
+        return []
+    scene = bpy.context.scene
+    if scene is None:
+        return []
+    try:
+        objs, segs = hb_walls.level_wall_segs(scene, hb_house.level_of(wall_obj))
+    except Exception:
+        return []
+    if wall_obj.name not in objs:
+        return []
+    graph = hb_wall_graph.build_graph(hb_wall_graph.built_walls(segs))
+    seg = graph.segs.get(wall_obj.name)
+    if seg is None:
+        return []
+    z = wall_obj.matrix_world.translation.z
+    out = []
+    for c in hb_wall_graph.tee_inside_corners(graph):
+        point = Vector((c.point[0], c.point[1], z))
+        if c.abut_id == wall_obj.name:
+            other = objs.get(c.host_id)
+            at_start = c.abut_end == hb_wall_graph.START
+            out.append(TeeWallCorner(
+                point, other, 'ABUT', 'left' if at_start else 'right',
+                c.abut_side == 'REF', 0.0 if at_start else seg.length,
+                1 if at_start else -1))
+        elif c.host_id == wall_obj.name:
+            out.append(TeeWallCorner(
+                point, objs.get(c.abut_id), 'HOST', None,
+                c.host_side == 'REF', c.host_t, c.host_run))
+    return [c for c in out if c.other is not None]
+
+
 # Free-standing cabinet roots (islands / peninsulas) that can block wall
 # placement even though they aren't wall children. Tag strings rather
 # than library imports - the product libraries import this module, not
@@ -1386,7 +1442,9 @@ class PlacementMixin:
         from . import hb_types
         adj = wall_geo.get_connected_wall(side, include_loop_seam=True)
         if adj is None:
-            return False
+            # An end landing on another wall's face (a T) is an inside
+            # corner on both faces of this wall.
+            return self._tee_host_wall(wall_geo.obj, side) is not None
         wall_obj = wall_geo.obj
         try:
             length = wall_geo.get_input('Length')
