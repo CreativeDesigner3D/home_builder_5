@@ -28,9 +28,12 @@ Architecture mirrors face_frame/dim_edit_overlay.py (which itself
 mirrors viewport_hud): a permanent draw handler plus an addon-keymap
 click operator that PASS_THROUGHs anything that isn't a label hit, so
 selection and other tools are untouched and no persistent modal blocks
-autosave. The label list is recomputed on click rather than cached, so
-draw and hit-test can never drift apart. Selection is the only gate --
-no labels draw unless a wall / opening is part of the selection.
+autosave. A click hit-tests the labels exactly as the draw handler last
+painted them, so draw and hit-test can never drift apart -- and so a
+press the active tool has already turned into a select (it runs ahead
+of the add-on keymap) still lands on the label the user saw. Selection
+is the only gate -- no labels draw unless a wall / opening is part of
+the selection.
 """
 
 import bpy
@@ -67,7 +70,10 @@ _LEFT_OF_ANCHOR_KINDS = {'WALL_H'}
 # Window centerline dims: drawn with an orange dimension line.
 _CL_KINDS = {'CAGE_CL_L', 'CAGE_CL_R'}
 
-_INPUT_CHARS = set("0123456789./-'\" ")
+# Characters accepted by the typed-distance grammar (parse_typed_distance):
+# digits, decimal point, fractions, feet/inch marks, embedded spaces,
+# '+' / '-' compounds (155+15/16, 155-15/16).
+_INPUT_CHARS = set("0123456789./-+'\" ")
 
 # Label kinds that run a command on click instead of opening for typing.
 _ACTION_KINDS = {'DOOR_OPEN'}
@@ -82,6 +88,15 @@ _shutdown = False
 # draw handler so the edited label renders as an input field.
 _edit = None
 _addon_keymaps = []
+# What each viewport last painted, keyed by region pointer: the labels,
+# the view they were projected in and the selection they were drawn
+# for. The active tool selects on press, ahead of the add-on keymap, so
+# by the time the click operator runs a press on a label that sits over
+# the wall (a window's gap, sill and centerline labels) has already
+# swapped the window for the wall and the labels computed from the live
+# selection are the wall's. Hit-testing what was on screen, then putting
+# the selection back, keeps those labels clickable.
+_drawn = {}
 
 
 class _DistanceParser:
@@ -479,6 +494,83 @@ def compute_labels(context, region, rv3d):
     return labels
 
 
+# ---- What was on screen --------------------------------------------------
+
+def _view_key(context, region, rv3d):
+    """Everything a label's screen rect depends on besides the scene
+    data itself: the viewport, its size, the view and the scene."""
+    scene = context.scene
+    return (region.width, region.height,
+            tuple(tuple(row) for row in rv3d.perspective_matrix),
+            scene.as_pointer() if scene is not None else 0)
+
+
+def _remember_drawn(context, region, rv3d, labels):
+    """Record what the draw handler just painted in ``region`` (see
+    _drawn). An empty list is recorded too, so a cleared selection
+    leaves nothing to hit."""
+    if region is None or rv3d is None:
+        return
+    try:
+        key = _view_key(context, region, rv3d)
+    except Exception:
+        return
+    if not labels:
+        _drawn.pop(region.as_pointer(), None)
+        return
+    act = getattr(context, 'active_object', None)
+    if len(_drawn) > 8:
+        _drawn.clear()
+    _drawn[region.as_pointer()] = {
+        'key': key,
+        'labels': list(labels),
+        'selected': [o.name for o in
+                     (getattr(context, 'selected_objects', ()) or ())],
+        'active': act.name if act is not None else None,
+    }
+
+
+def _drawn_snapshot(context):
+    """The last paint of the clicked viewport, or None when it was
+    painted from a different view (or nothing was painted)."""
+    region, rv3d = context.region, context.region_data
+    if region is None or rv3d is None:
+        return None
+    snap = _drawn.get(region.as_pointer())
+    if snap is None:
+        return None
+    try:
+        if snap['key'] != _view_key(context, region, rv3d):
+            return None
+    except Exception:
+        return None
+    return snap
+
+
+def _restore_selection(context, snap):
+    """Put back the selection the labels were drawn for, undoing the
+    press-select that ran ahead of the click operator."""
+    keep = set(snap['selected'])
+    view_layer = context.view_layer
+    for obj in list(getattr(context, 'selected_objects', ()) or ()):
+        if obj.name not in keep:
+            try:
+                obj.select_set(False)
+            except Exception:
+                pass
+    for name in keep:
+        obj = bpy.data.objects.get(name)
+        if obj is None or view_layer.objects.get(name) is None:
+            continue
+        try:
+            obj.select_set(True)
+        except Exception:
+            pass
+    act = bpy.data.objects.get(snap['active'] or "")
+    if act is not None and view_layer.objects.get(act.name) is not None:
+        view_layer.objects.active = act
+
+
 # ---- Draw handler --------------------------------------------------------
 
 def _draw_label_rect(shader, rect, bg, border=LABEL_BORDER):
@@ -503,6 +595,7 @@ def _draw():
     if region is None or region.type != 'WINDOW':
         return
     labels = compute_labels(context, region, context.region_data)
+    _remember_drawn(context, region, context.region_data, labels)
     if not labels:
         return
     s = 1.0
@@ -756,6 +849,9 @@ class home_builder_OT_edit_room_dim_label(bpy.types.Operator):
             return {'RUNNING_MODAL'}
 
         ch = event.unicode
+        if ch == '=':
+            # The unshifted +/= key, so a compound needs no Shift.
+            ch = '+'
         if ch and ch in _INPUT_CHARS:
             _edit['typed'] += ch
             context.area.tag_redraw()
@@ -781,7 +877,10 @@ class home_builder_OT_room_dim_label_click(bpy.types.Operator):
                 and context.area.type == 'VIEW_3D'
                 and context.region is not None
                 and context.region.type == 'WINDOW'
-                and bool(_selected_targets(context)))
+                # A press on empty space has already deselected
+                # everything by now; what was painted still counts.
+                and (bool(_selected_targets(context))
+                     or _drawn_snapshot(context) is not None))
 
     def invoke(self, context, event):
         if _edit is not None:
@@ -796,11 +895,21 @@ class home_builder_OT_room_dim_label_click(bpy.types.Operator):
         except Exception:
             pass
         mx, my = event.mouse_region_x, event.mouse_region_y
-        for name, kind, rect, _text in compute_labels(
-                context, context.region, context.region_data):
+        # Hit-test the labels as they were painted: the tool's own
+        # press-select has already run and may have traded the window
+        # for whatever lies under the label (see _drawn).
+        snap = _drawn_snapshot(context)
+        labels = (snap['labels'] if snap is not None
+                  else compute_labels(context, context.region,
+                                      context.region_data))
+        for name, kind, rect, _text in labels:
             x, y, w, h = rect
             if not (x <= mx <= x + w and y <= my <= y + h):
                 continue
+            if bpy.data.objects.get(name) is None:
+                return {'PASS_THROUGH'}
+            if snap is not None:
+                _restore_selection(context, snap)
             if kind == 'DOOR_OPEN':
                 bpy.ops.home_builder.toggle_entry_door(target_name=name)
                 return {'FINISHED'}
@@ -853,6 +962,7 @@ def unregister():
     global _draw_handle, _shutdown, _edit
     _shutdown = True
     _edit = None
+    _drawn.clear()
     _unregister_keymaps()
     if _draw_handle is not None:
         try:
