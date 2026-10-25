@@ -257,6 +257,9 @@ def descriptor(rect, cage_dim_y, item, front_y, back_setback):
     if spec is None:
         return None
     model, params = spec
+    if model in _misc.MODELS:
+        return _misc.descriptor(rect, cage_dim_y, item, front_y,
+                                back_setback, model, params)
     cage_x, cage_z = rect['cage_dim_x'], rect['cage_dim_z']
     room_y = cage_dim_y - front_y - back_setback
     if model in PULLOUT_MODELS:
@@ -1032,6 +1035,8 @@ def _material(spec):
 def build_object(model, name, w, depth, h, params=None):
     """Mesh object for a model, or None (unknown model / no room). The
     object is NOT linked; the caller links, parents and tags it."""
+    if model in _misc.MODELS:
+        return _misc.build_object(model, name, w, depth, h, params)
     builder = _BUILDERS.get(model)
     if builder is None or w <= 0.0 or h <= 0.0 or depth <= 0.0:
         return None
@@ -1075,3 +1080,8 @@ PULLOUT_MODELS = PULLOUT_MODELS | _units.MODELS
 MODELS = MODELS | _units.MODELS
 _BUILDERS.update(_units.BUILDERS)
 EXTRA_MATERIALS = {m: _units.EXTRA_MATERIALS for m in _units.MODELS}
+
+# Board, door-mounted and roll-out units live in their own module; their
+# model names join this module's so lookups and descriptors cover them.
+from . import misc_accessory_models as _misc  # noqa: E402
+MODELS = MODELS | _misc.MODELS

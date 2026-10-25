@@ -30,6 +30,12 @@ Two families:
     blind_lemans     obround shelves pivoting on a post at the open end
                      of the opening, reaching into the blind area.
                      ``model_params``: shelf_width, shelf_length, tiers.
+    magic_corner     a pair of front baskets centered in the opening and
+                     a pair of rear baskets beside them in the blind
+                     area, joined by the steel linkage on a post at the
+                     open side. Baskets have wood floors and chrome
+                     rails. ``model_params``: front_basket and
+                     rear_basket ([width, depth] in inches), tiers.
 
 Every model is ONE derived mesh with role ACCESSORY_MODEL: a purchased
 unit, not a CABINET_PART, so cut lists and machining skip it. The susan
@@ -51,7 +57,8 @@ ROLE = 'ACCESSORY_MODEL'
 # Marks the susan built by the corner recalc (so only it is replaced).
 CORNER_KEY = 'hb_corner_accessory'
 OPENING_KIND = 'CORNER_ACCESSORY_MODEL'
-OPENING_MODELS = frozenset({'blind_swingout', 'blind_lemans'})
+OPENING_MODELS = frozenset({'blind_swingout', 'blind_lemans',
+                            'magic_corner'})
 
 _MAT_POLYMER = ('Accessory Almond Polymer', (0.90, 0.86, 0.76, 1.0), 0.0, 0.45)
 _MAT_MAPLE = ('Accessory Maple', (0.86, 0.72, 0.52, 1.0), 0.0, 0.5)
@@ -568,6 +575,9 @@ def descriptor(rect, cage_dim_y, item, front_y, back_setback):
     if open_w <= inch(1.0) or open_h <= inch(4.0) or room_y <= inch(4.0):
         return None
     blind_left = rev_l >= rev_r
+    if model == 'magic_corner':
+        return _magic_corner_descriptor(rect, item, params, front_y, room_y,
+                                        open_w, open_h, blind_left)
     if model == 'blind_swingout':
         sizes = params.get('sizes') or [[12.0, 14.0, 33.0]]
         try:
@@ -613,7 +623,103 @@ def descriptor(rect, cage_dim_y, item, front_y, back_setback):
     }
 
 
+def _magic_corner_descriptor(rect, item, params, front_y, room_y, open_w,
+                             open_h, blind_left):
+    """Front baskets centered in the opening hole, rear baskets beside
+    them toward the blind side; each at its catalog size, clipped to the
+    cavity."""
+    cage_x = rect['cage_dim_x']
+    rev_l = max(0.0, rect.get('reveal_left', 0.0))
+    rev_b = max(0.0, rect.get('reveal_bottom', 0.0))
+
+    def size(key, default):
+        try:
+            w, d = (float(v) for v in params.get(key, default))
+        except (TypeError, ValueError):
+            w, d = default
+        return inch(w), inch(d)
+    fw, fd = size('front_basket', (18.5, 15.375))
+    rw, rd = size('rear_basket', (15.75, 15.375))
+    fw = min(fw, open_w - inch(1.0))
+    gap = inch(0.75)
+    fx0 = rev_l + (open_w - fw) / 2.0
+    if blind_left:
+        rx0 = max(inch(0.5), fx0 - gap - rw)
+        rw = min(rw, fx0 - gap - rx0)
+        x0, x1 = rx0, fx0 + fw
+    else:
+        rx0 = fx0 + fw + gap
+        rw = min(rw, cage_x - inch(0.5) - rx0)
+        x0, x1 = fx0, rx0 + max(rw, 0.0)
+    depth = min(max(fd, rd), room_y - inch(1.0))
+    if fw <= inch(4.0) or depth <= inch(4.0) or open_h <= inch(6.0):
+        return None
+    label = getattr(item, 'accessory_label', '') or item.accessory_code
+    return {
+        'kind':     OPENING_KIND,
+        'role':     ROLE,
+        'name':     '%s Model' % label,
+        'model':    'magic_corner',
+        'finish':   'WOOD',
+        'tiers':    int(_f(params, 'tiers', 2)),
+        'blind_left': blind_left,
+        'post_u':   None,
+        # Basket spans along x, local to the unit: (u0, u1, depth).
+        'front':    (fx0 - x0, fx0 - x0 + fw, min(fd, depth)),
+        'rear':     ((rx0 - x0, rx0 - x0 + rw, min(rd, depth))
+                     if rw > inch(4.0) else None),
+        'position': (x0, front_y + inch(0.75), rev_b),
+        'dims':     (x1 - x0, depth, open_h),
+    }
+
+
+def _basket(bm, u0, u1, d, z, rail_h=inch(2.5)):
+    """Wood-floored basket with chrome rails round three sides and a
+    lower front rail."""
+    t = inch(0.5)
+    _box(bm, u0, u1, 0.0, d, z, z + t, 0)
+    r = inch(0.125)
+    zt = z + t + rail_h
+    corners = [(u0 + r, r), (u0 + r, d - r), (u1 - r, d - r), (u1 - r, r)]
+    _rail_along(bm, corners, zt)
+    _rail_along(bm, corners, z + t + rail_h * 0.5)
+    for cx, cy in corners:
+        _box(bm, cx - r, cx + r, cy - r, cy + r, z + t, zt + r)
+    _rail_along(bm, [(u0 + r, r), (u1 - r, r)], z + t + inch(1.0))
+
+
+def _build_magic_corner(bm, desc):
+    L, A, H = desc['dims']
+    tiers = max(1, min(3, desc['tiers']))
+    pitch = min(max((H - inch(4.0)) / tiers, inch(8.0)), inch(14.0))
+    levels = [inch(1.5) + pitch * i for i in range(tiers)
+              if inch(1.5) + pitch * i + inch(3.0) <= H]
+    fu0, fu1, fd = desc['front']
+    for z in levels:
+        _basket(bm, fu0, fu1, fd, z)
+        if desc['rear'] is not None:
+            ru0, ru1, rd = desc['rear']
+            _basket(bm, ru0, ru1, rd, z)
+    # Post at the open side of the front baskets with the linkage arms
+    # running across to the rear baskets.
+    post_u = fu1 + inch(0.75) if desc['blind_left'] else fu0 - inch(0.75)
+    post_u = min(max(post_u, inch(0.5)), L - inch(0.5))
+    top = (levels[-1] + inch(4.0)) if levels else H
+    _box(bm, post_u - inch(0.5), post_u + inch(0.5), inch(1.0), inch(2.0),
+         0.0, min(top, H))
+    if desc['rear'] is not None:
+        ru0, ru1, _rd = desc['rear']
+        for z in levels:
+            za = z - inch(0.5)
+            u_a, u_b = sorted((post_u, (ru0 + ru1) / 2.0))
+            _box(bm, u_a, u_b, A * 0.5 - inch(0.25), A * 0.5 + inch(0.25),
+                 za, za + inch(0.375))
+
+
 def _build_swingout(bm, desc):
+    if desc.get('model') == 'magic_corner':
+        _build_magic_corner(bm, desc)
+        return
     L, A, H = desc['dims']
     section = _POLY_TRAY if desc['finish'] == 'POLYMER' else _WOOD_TRAY
     if desc['model'] == 'blind_swingout':

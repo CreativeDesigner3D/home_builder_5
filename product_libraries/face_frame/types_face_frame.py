@@ -48,6 +48,7 @@ from . import cabinet_column
 from . import bar_storage
 from . import accessory_models
 from . import corner_accessory_models
+from . import misc_accessory_models
 from . import pulls
 
 
@@ -796,6 +797,7 @@ DRAWER_INSERT_BUILDERS = {
     'PIGEON_HOLE': ('_build_pigeon_hole_insert', 6.0, True),
     'TRAY': ('_build_tray_insert', 2.0, True),
 }
+DRAWER_INSERT_BUILDERS.update(misc_accessory_models.DRAWER_INSERT_KINDS)
 
 
 def parse_render_hint(hint):
@@ -13995,10 +13997,12 @@ class FaceFrameCabinet(GeoNodeCage):
         if front_type == 'NONE':
             return
 
+        built_leaves = []
         for leaf_index, leaf in enumerate(solver.front_leaves(
             layout, rect, cab_props, op_props
         )):
             pivot = self._create_front_pivot(opening_obj)
+            built_leaves.append((pivot, leaf))
             pivot.location = leaf['pivot_position']
             pivot.rotation_euler = leaf['pivot_rotation']
 
@@ -14087,6 +14091,10 @@ class FaceFrameCabinet(GeoNodeCage):
                 self._build_drawer_look_fronts(front, leaf, op_props)
             elif door_look:
                 self._build_door_look_fronts(front, leaf, op_props, pull)
+        # Racks and trays mounted on the back of the fronts swing with
+        # them.
+        misc_accessory_models.attach_front_models(
+            opening_obj, op_props, rect, built_leaves)
 
         # Sink apron: a 1/2" panel across the top of a DOOR opening
         # (apron / farmhouse sink), set 1/8" behind the face frame. The
@@ -14838,7 +14846,8 @@ class FaceFrameCabinet(GeoNodeCage):
             spec = DRAWER_INSERT_BUILDERS.get(kind)
             if spec is None:
                 continue
-            builder = getattr(self, spec[0])
+            builder = (misc_accessory_models.drawer_builder(self, spec[0])
+                       or getattr(self, spec[0]))
             if not spec[2]:
                 # Spans the box rather than taking a slice of it, but it
                 # is still handed the cursor: a front-to-back divider
