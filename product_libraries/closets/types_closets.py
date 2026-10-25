@@ -298,6 +298,11 @@ PROP_DRAWER_BOX_OVERRIDE = 'hb_drawer_box_override'
 # stamped back on the front as hb_jewelry_tray_name for reporting.
 PROP_JEWELRY_TRAY = 'hb_jewelry_tray'
 PROP_JEWELRY_TRAY_NAME = 'hb_jewelry_tray_name'
+# What the layout last sized the drawer to, for picking a tray kit in
+# the dialog: the bay's clear width and the drawer box length (meters,
+# 0 = no box).
+PROP_TRAY_BAY_W = 'hb_tray_bay_w'
+PROP_TRAY_BOX_D = 'hb_tray_box_d'
 # Per-front drawer-box overrides (on each drawer FRONT), matching the
 # prior Drawer Options: a box-system override ('' / 'DEFAULT' defers to
 # the opening/scene setting) and explicit box depth/height overrides
@@ -1168,26 +1173,40 @@ def drawer_inside_width(front_width, box_type):
     return 0.0
 
 
-def jewelry_tray_name(color, inside_width, depth):
-    """Resolved tray name for a color and drawer size (inside_width and
-    depth in meters), or '' when the drawer is out of range for that
-    tray. Bands match the prior library exactly."""
+def contour_tray_size(bay_width, box_depth):
+    """('24 x 16' style size, '') for a contour tray kit, or ('', why)
+    when no kit fits. The kit width follows the bay: 24" kits for bays
+    24" wide or narrower, 36" kits for wider bays. The kit depth
+    follows the drawer box length: 16" kits for 270mm and 350mm boxes,
+    20" kits for 400mm and 450mm boxes, and nothing for a shorter or
+    longer box (or no box at all)."""
+    depth_mm = round(box_depth / millimeter(1)) if box_depth > 0.0 else 0
+    if depth_mm <= 0:
+        return '', "Contour jewelry tray needs a drawer box"
+    if depth_mm < 270:
+        return '', ("No contour jewelry tray fits a %dmm drawer box"
+                    % depth_mm)
+    if depth_mm <= 350:
+        kit_d = '16'
+    elif depth_mm <= 450:
+        kit_d = '20'
+    else:
+        return '', ("No contour jewelry tray fits a %dmm drawer box "
+                    "(450mm deepest)" % depth_mm)
+    kit_w = '24' if bay_width <= inch(24.0) + inch(0.001) else '36'
+    return "%s x %s" % (kit_w, kit_d), ''
+
+
+def jewelry_tray_name(color, inside_width, depth, bay_width=0.0,
+                      box_depth=0.0):
+    """Resolved tray name for a color and drawer size (meters), or ''
+    when the drawer is out of range for that tray. Fabric trays are
+    banded by the drawer's inside width; contour tray kits by the bay
+    width and the drawer box length (contour_tray_size)."""
     if not color or color == 'NONE':
         return ''
     if color in JEWELRY_TRAY_CONTOUR:
-        w_mid = inch(6.1875) < inside_width < inch(36.0)
-        w_wide = inside_width >= inch(36.0)
-        d_std = inch(10.0) < depth < inch(20.0)
-        d_deep = depth > inch(20.0)
-        size = ''
-        if w_mid and d_std:
-            size = '24 x 16'
-        elif w_mid and d_deep:
-            size = '24 x 20'
-        elif w_wide and d_std:
-            size = '36 x 16'
-        elif w_wide and d_deep:
-            size = '36 x 20'
+        size, _why = contour_tray_size(bay_width, box_depth)
         return "%s Contour Jewelry Tray %s" % (size, color) if size else ''
     if color in JEWELRY_TRAY_FABRIC:
         size = ''
@@ -1206,15 +1225,13 @@ def jewelry_tray_name(color, inside_width, depth):
 def target_inside_width_for_tray(color, inside_width, depth):
     """The inside width (meters) the drawer should have so the chosen
     tray fits, or the current width when it already fits. Fabric trays
-    need 12"-36.875"; contour trays need > 6.1875"."""
+    need 12"-36.875". A contour kit fits any bay width (its depth is
+    what can rule it out), so a width change never helps one."""
     if color in JEWELRY_TRAY_FABRIC:
         if inside_width < inch(12.0):
             return inch(14.0)
         if inside_width > inch(36.875):
             return inch(33.0)
-    elif color in JEWELRY_TRAY_CONTOUR:
-        if inside_width <= inch(6.1875):
-            return inch(8.0)
     return inside_width
 
 
@@ -3826,20 +3843,9 @@ class ClosetStarter(GeoNodeCage):
                 child['hb_open_depth'] = depth
                 child[PROP_OPEN_HEIGHT] = avail_h
                 child[PROP_BOX_TYPE_RESOLVED] = box_type
+                # The bay width a contour tray kit is chosen by.
+                child[PROP_TRAY_BAY_W] = width
                 _tray = child.get(PROP_JEWELRY_TRAY, '')
-                tray_warn = ''
-                if _tray and _tray != 'NONE':
-                    _tray_name = jewelry_tray_name(_tray, _inside,
-                                                   depth)
-                    child[PROP_JEWELRY_TRAY_NAME] = _tray_name
-                    if not _tray_name:
-                        # No size band covers this drawer, so no tray
-                        # goes on the order. Said in the prior
-                        # library's words rather than silently dropped.
-                        tray_warn = ("Invalid jewelry tray selection: "
-                                     + _tray)
-                elif PROP_JEWELRY_TRAY_NAME in child:
-                    del child[PROP_JEWELRY_TRAY_NAME]
                 _apply_front_style(child, is_drawer=True)
                 self._position_front_pull(child, 'drawer', side,
                                           opening)
@@ -3868,11 +3874,31 @@ class ClosetStarter(GeoNodeCage):
                 warn = dbx.box_warning(box_type, size_h, size_d,
                                        _dov if (_dov > 0.0 and is_wood)
                                        else wood_d)
-                _stamp_warning(child, "; ".join(
-                    m for m in (warn, tray_warn) if m))
                 box_d = spec[1] if spec is not None else wood_d
                 if _dov > 0.0 and is_wood:
                     box_d = _dov
+                # The jewelry tray, named from the box it goes in so
+                # it tracks any resize. A contour kit is picked by the
+                # bay width and the box length.
+                tray_warn = ''
+                child[PROP_TRAY_BOX_D] = box_d if spec is not None else 0.0
+                if _tray and _tray != 'NONE':
+                    _tray_box_d = box_d if spec is not None else 0.0
+                    _tray_name = jewelry_tray_name(
+                        _tray, _inside, depth, width, _tray_box_d)
+                    child[PROP_JEWELRY_TRAY_NAME] = _tray_name
+                    if not _tray_name:
+                        # No size covers this drawer, so no tray goes
+                        # on the order; say why rather than drop it.
+                        why = ''
+                        if _tray in JEWELRY_TRAY_CONTOUR:
+                            why = contour_tray_size(width, _tray_box_d)[1]
+                        tray_warn = why or ("Invalid jewelry tray "
+                                            "selection: " + _tray)
+                elif PROP_JEWELRY_TRAY_NAME in child:
+                    del child[PROP_JEWELRY_TRAY_NAME]
+                _stamp_warning(child, "; ".join(
+                    m for m in (warn, tray_warn) if m))
                 child[PROP_BOX_SIZE_TAG] = (spec[2] if spec else 'NONE')
                 if box is not None:
                     box['hb_drawer_box_type'] = box_type

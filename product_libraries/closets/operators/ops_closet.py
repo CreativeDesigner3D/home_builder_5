@@ -3474,10 +3474,18 @@ class hb_closets_OT_drawer_accessory(bpy.types.Operator):
         if front is not None and self.jewelry_tray != 'NONE':
             inside = float(front.get('hb_inside_w', 0.0))
             depth = float(front.get('hb_open_depth', 0.0))
+            bay_w = float(front.get(types_closets.PROP_TRAY_BAY_W, 0.0))
+            box_d = float(front.get(types_closets.PROP_TRAY_BOX_D, 0.0))
             name = types_closets.jewelry_tray_name(
-                self.jewelry_tray, inside, depth)
+                self.jewelry_tray, inside, depth, bay_w, box_d)
             if name:
                 box.label(text="Tray: " + name)
+            elif self.jewelry_tray in types_closets.JEWELRY_TRAY_CONTOUR:
+                # A contour kit is ruled out by the box length, which a
+                # width change cannot fix.
+                why = types_closets.contour_tray_size(bay_w, box_d)[1]
+                box.label(text=why or "No contour tray fits this drawer.",
+                          icon='ERROR')
             else:
                 box.label(text="Drawer size not valid for this tray.",
                           icon='ERROR')
