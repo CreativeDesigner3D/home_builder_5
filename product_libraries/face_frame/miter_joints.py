@@ -14,11 +14,10 @@ Modes:
 - EVEN: both boards are cut on the line through the outside corner (where
   the outer faces meet) and the inside corner (where the inner faces
   meet).
-- LONG_SELF / LONG_OTHER: an offset miter. The long board shows the full
-  miter face: it is cut from the outside corner to where its inner face
-  crosses the middle of the short board's thickness. The short board takes
-  the same cut over its outer half and is notched square against the long
-  board's inner face over its inner half.
+- LONG_SELF / LONG_OTHER: a one-sided (butt) joint. The long board runs
+  past the corner to where its inner face meets the short board's outer
+  face, and ends square there. The short board is cut at the angle along
+  the long board's inner face, so it sits flat against it.
 
 Boards are vertical cutparts (Length along local X, Width along local Y,
 Thickness along local Z with the Mirror Y / Mirror Z flags), seen in plan.
@@ -244,17 +243,14 @@ def _cross(p1, d1, p2, d2):
 
 
 def _joint_points(a, b):
-    """(O, I, X_a, X_b): outside corner, inside corner, and for an offset
-    miter with a (or b) long, where that board's inner face crosses the
-    middle of the other's thickness."""
+    """(O, I): outside corner (where the outer faces meet) and inside
+    corner (where the inner faces meet)."""
     ca, cb = a.centre(), b.centre()
     a_out, a_in = a.faces(cb)
     b_out, b_in = b.faces(ca)
     O = _cross(*a.line(a_out), *b.line(b_out))
     I = _cross(*a.line(a_in), *b.line(b_in))
-    xa = _cross(*a.line(a_in), *b.line((b_out + b_in) / 2.0))
-    xb = _cross(*b.line(b_in), *a.line((a_out + a_in) / 2.0))
-    return O, I, xa, xb
+    return O, I
 
 
 def _half_plane(p, q, toward):
@@ -268,32 +264,11 @@ def _half_plane(p, q, toward):
             c - u * _BIG + n * _BIG]
 
 
-def _outer_miter(b_short, a_long, o_pt, x_pt):
-    """Plan cone at x_pt: the short board's outer half beyond the miter
-    line x_pt-o_pt (its inner half is the notch's)."""
-    r1 = (o_pt - x_pt).normalized()
-    n_line = Vector((-r1.y, r1.x))
-    if (a_long.centre() - x_pt).dot(n_line) < 0:
-        n_line = -n_line
-    r2 = b_short.u if b_short.u.dot(n_line) > 0 else -b_short.u
-    return [x_pt, x_pt + r1 * _BIG, x_pt + (r1 + r2) * _BIG,
-            x_pt + r2 * _BIG]
-
-
-def _notch(b_short, a_long, x_pt):
-    """Plan cone at x_pt covering the short board's inner half beyond the
-    long board's inner face (the square notch of an offset miter)."""
-    ca = a_long.centre()
-    cb = b_short.centre()
-    a_out, a_in = a_long.faces(cb)
-    b_out, b_in = b_short.faces(ca)
-    # Side of the long board's inner face its outer face lies on, and
-    # side of the short board's mid-plane its inner face lies on.
-    n_a = a_long.n if a_out > a_in else -a_long.n
-    n_b = b_short.n if b_in > b_out else -b_short.n
-    v1 = a_long.u if a_long.u.dot(n_b) > 0 else -a_long.u
-    v2 = b_short.u if b_short.u.dot(n_a) > 0 else -b_short.u
-    return [x_pt, x_pt + v1 * _BIG, x_pt + (v1 + v2) * _BIG, x_pt + v2 * _BIG]
+def _toward_end(board, p):
+    """A point past p along board's length, on the side away from its
+    middle: the end of the board p lies at."""
+    u = board.u if (p - board.centre()).dot(board.u) > 0 else -board.u
+    return p + u
 
 
 # ---------------------------------------------------------------------------
@@ -439,7 +414,7 @@ def _apply_pair(me, other, mode):
     _undo_growth(me)
     a = _Board(me)
     b = _Board(other)
-    O, I, x_me, x_other = _joint_points(a, b)
+    O, I = _joint_points(a, b)
     if O is None or I is None:
         return
     z_lo = min(a.mw.translation.z, b.mw.translation.z) - units.inch(2.0)
@@ -448,19 +423,28 @@ def _apply_pair(me, other, mode):
         _grow_to(a, [O, I])
         a = _Board(me)
         quads = [_half_plane(O, I, b.centre())]
-    elif mode == 'LONG_SELF':
-        if x_me is None:
-            return
-        _grow_to(a, [O, x_me])
-        a = _Board(me)
-        quads = [_half_plane(O, x_me, b.centre())]
-    else:   # LONG_OTHER: me is the short board
-        if x_other is None:
-            return
-        _grow_to(a, [O, x_other])
-        a = _Board(me)
-        quads = [_outer_miter(a, b, O, x_other),
-                 _notch(a, b, x_other)]
+    else:
+        a_out, a_in = a.faces(b.centre())
+        b_out, b_in = b.faces(a.centre())
+        if mode == 'LONG_SELF':
+            # Run past the corner to where my inner face meets the other
+            # board's outer face, and end square there.
+            p = _cross(*a.line(a_in), *b.line(b_out))
+            if p is None:
+                return
+            q = p + a.n * (a_out - a_in)
+            _grow_to(a, [p, q])
+            a = _Board(me)
+            quads = [_half_plane(p, q, _toward_end(a, p))]
+        else:   # LONG_OTHER: me is the short board
+            # Cut at the angle along the long board's inner face.
+            p = _cross(*a.line(a_out), *b.line(b_in))
+            q = _cross(*a.line(a_in), *b.line(b_in))
+            if p is None or q is None:
+                return
+            _grow_to(a, [p, q])
+            a = _Board(me)
+            quads = [_half_plane(p, q, b.centre())]
     _set_cuts(me, quads, z_lo, z_hi)
 
 
@@ -525,10 +509,11 @@ class hb_face_frame_OT_miter_parts(bpy.types.Operator):
         name="Miter",
         items=[('EVEN', "Even", "Both parts cut on the corner's bisector"),
                ('LONG_A', "Active Part Long",
-                "Offset miter: the active part shows the full miter face, "
-                "the other is mitred over half its thickness and notched"),
+                "One-sided: the active part runs past the corner with a "
+                "square end, the other is cut to sit flat against it"),
                ('LONG_B', "Other Part Long",
-                "Offset miter: the other part shows the full miter face")],
+                "One-sided: the other part runs past the corner with a "
+                "square end, the active part is cut to sit flat against it")],
         default='EVEN')  # type: ignore
 
     @classmethod
@@ -536,7 +521,7 @@ class hb_face_frame_OT_miter_parts(bpy.types.Operator):
         pair = _picked_pair(context)
         if pair is None:
             return False
-        if any(_too_thin(p) for p in pair):
+        if all(_too_thin(p) for p in pair):
             cls.poll_message_set("Parts under 1/2\" thick can't be mitered")
             return False
         return True
@@ -549,9 +534,13 @@ class hb_face_frame_OT_miter_parts(bpy.types.Operator):
         if pair is None:
             self.report({'WARNING'}, "Select exactly two parts to miter")
             return {'CANCELLED'}
-        if any(_too_thin(p) for p in pair):
+        # Only a part that gets an angled cut needs 1/2" of material; a
+        # thinner part can be the straight, long part of a one-sided joint.
+        cut = {'EVEN': pair, 'LONG_A': pair[1:], 'LONG_B': pair[:1]}[self.mode]
+        if any(_too_thin(p) for p in cut):
             self.report({'WARNING'},
-                        "Parts under 1/2\" thick can't be mitered")
+                        "A part under 1/2\" thick can't take the angled cut. "
+                        "Make it the long part, or use thicker stock")
             return {'CANCELLED'}
         if not add_joint(pair[0], pair[1], self.mode):
             return {'CANCELLED'}
