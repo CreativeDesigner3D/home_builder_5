@@ -31,6 +31,7 @@ from . import shelf_nosing
 from ..common import bun_foot
 from . import bar_storage
 from . import accessory_models
+from . import corner_accessory_models
 
 
 # ---------------------------------------------------------------------------
@@ -6836,6 +6837,10 @@ def interior_item_descriptors(layout, rect, cab_props, opening_props,
             model = accessory_models.descriptor(
                 item_rect, cage_dim_y, item,
                 BAR_STORAGE_FRONT_Y, SHELF_BACK_SETBACK)
+            if model is None:
+                model = corner_accessory_models.descriptor(
+                    item_rect, cage_dim_y, item,
+                    BAR_STORAGE_FRONT_Y, SHELF_BACK_SETBACK)
             if model is not None:
                 out.extend(_between_pockets([model]))
             else:

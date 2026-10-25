@@ -5064,8 +5064,10 @@ def _geometry_kind(entry):
     """Non-empty when a catalog entry builds geometry in the cabinet - a
     model of its own or a drawer insert render hint - so lists can flag
     what will show up in 3D and what is listed only."""
-    from .. import accessory_models
-    if accessory_models.model_for(entry.get('code')) is not None:
+    from .. import accessory_models, corner_accessory_models
+    if (accessory_models.model_for(entry.get('code')) is not None
+            or corner_accessory_models.model_for(entry.get('code'))
+            is not None):
         return 'MODEL'
     return types_face_frame.render_hint_kind(
         (entry.get('render') or '').upper())

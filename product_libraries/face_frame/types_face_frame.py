@@ -47,6 +47,7 @@ from . import decorative_corner
 from . import cabinet_column
 from . import bar_storage
 from . import accessory_models
+from . import corner_accessory_models
 from . import pulls
 
 
@@ -15678,6 +15679,10 @@ class FaceFrameCabinet(GeoNodeCage):
             elif kind == 'ACCESSORY_MODEL':
                 if op_props.front_type not in DRAWER_BOX_FRONT_TYPES:
                     self._create_accessory_model(opening_obj, desc)
+            elif kind == corner_accessory_models.OPENING_KIND:
+                if op_props.front_type not in DRAWER_BOX_FRONT_TYPES:
+                    corner_accessory_models.attach_opening_model(
+                        opening_obj, desc)
             elif kind == 'ROLLOUT_BOX':
                 self._create_rollout_box(opening_obj, desc)
             elif kind == 'GALLEY_ROLLOUT_TOP':
