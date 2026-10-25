@@ -1288,9 +1288,18 @@ def porch_roof_prisms(scene, level, room, polygon, segs):
     roof = level.roof
     z_low = level.elevation + hb_rooms.room_height(room, level)
     p = room.porch_roof_pitch / 12.0
-    house_roof = roof.enabled and roof_frame(scene, level) is not None
+    frame = roof_frame(scene, level) if roof.enabled else None
+    house_roof = frame is not None
     if house_roof:
         back = depth + PORCH_ROOF_REACH
+        # No further than the main ridge: past it the roof comes down
+        # again and the shed would come out through its far slope
+        nu = n_in[1] if frame['along_x'] else n_in[0]
+        if abs(nu) > 0.5:
+            au = a[1] if frame['along_x'] else a[0]
+            to_ridge = (frame['uc'] - au) / nu
+            if to_ridge > depth:
+                back = min(back, to_ridge)
     else:
         back = depth
         top = level.elevation + hb_house.exterior_wall_height(level)
