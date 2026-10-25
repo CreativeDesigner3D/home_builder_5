@@ -1116,10 +1116,12 @@ class HB_Roof(PropertyGroup):
     material: PointerProperty(name="Roof Material", type=bpy.types.Material,
                               update=_roof_changed)  # type: ignore
 
+    # Off unless asked for: a bump-out is as often just the house's shape,
+    # and a dormer can be drawn as a roof piece
     dormers: BoolProperty(
         name="Dormers",
         description="Build a dormer over each bump-out in the walls under the roof",
-        default=True, update=_roof_changed)  # type: ignore
+        default=False, update=_roof_changed)  # type: ignore
 
     dormer_pitch: FloatProperty(
         name="Dormer Pitch", description="Rise in 12 of the dormer roofs",
