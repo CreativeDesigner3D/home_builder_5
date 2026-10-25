@@ -1,4 +1,5 @@
 import bpy
+import traceback
 from . import hb_props
 from . import hb_project
 from . import hb_house
@@ -84,15 +85,21 @@ def load_file_post(scene):
     # Ensure a main scene is tagged for project data
     main_scene = hb_project.ensure_main_scene()
 
-    # Wall node groups saved before the end extensions existed get them now
-    from . import hb_types
-    hb_types.ensure_all_wall_extensions()
-
-    # House room ceilings follow the Show Ceilings switch (off unless set)
-    from . import hb_rooms
-    for scene in bpy.data.scenes:
-        if scene.get('IS_HOUSE_SCENE'):
-            hb_rooms.apply_ceiling_visibility(scene)
+    # Wall node groups saved before the end extensions existed get them now,
+    # and house ceilings follow the Show Ceilings switch (off unless set).
+    # Neither may stop the rest of the load below.
+    try:
+        from . import hb_types
+        hb_types.ensure_all_wall_extensions()
+    except Exception:
+        traceback.print_exc()
+    try:
+        from . import hb_rooms
+        for scene in bpy.data.scenes:
+            if scene.get('IS_HOUSE_SCENE'):
+                hb_rooms.apply_ceiling_visibility(scene)
+    except Exception:
+        traceback.print_exc()
 
     # Ensure a default frameless style is created
     main_scene.hb_frameless.ensure_default_style()

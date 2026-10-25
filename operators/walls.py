@@ -178,6 +178,10 @@ def calculate_wall_miter_angles(wall_obj):
 # Room dividers and porch edges are drawn as a thin wire strip on the
 # floor - enough to see and pick in plan, never rendered
 DIVIDER_HEIGHT = units.inch(0.25)
+
+# How close the cursor must be to a wall end's outside corner to pick the
+# corner instead of connecting to the end
+CORNER_PICK_RADIUS = units.inch(1)
 DIVIDER_THICKNESS = units.inch(0.5)
 
 
@@ -1458,13 +1462,16 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
             start_3d = Vector((start.x, start.y, 0))
             end_3d = Vector((end.x, end.y, 0))
 
-            # A cursor nearer an end's outside corner than its reference
-            # point is reaching for that corner: leave the end to the face
-            # snap, which can land exactly on it.
+            # A cursor right on an end's outside corner is reaching for
+            # that corner: leave the end to the face snap, which can land
+            # exactly on it. Anywhere else near the end it connects, so a
+            # wall started at an end stays joined to it.
             corner_d = {}
             for end_name, face, pt in wall_plan_corners(obj):
                 if face == 'front':
-                    corner_d[end_name] = (mouse_loc.to_2d() - pt).length
+                    d = (mouse_loc.to_2d() - pt).length
+                    if d < CORNER_PICK_RADIUS:
+                        corner_d[end_name] = d
 
             # Check start point
             dist_start = (mouse_loc - start_3d).length
@@ -2990,7 +2997,10 @@ class home_builder_walls_OT_wall_prompts(bpy.types.Operator):
 
     def check(self, context):
         scene = _wall_scene(self.wall.obj) or context.scene
-        tees = capture_tees(scene, hb_house.level_of(self.wall.obj))
+        # This wall's own T ends are left out: the Length typed here is
+        # meant to move its end off the face it tees into
+        tees = [t for t in capture_tees(scene, hb_house.level_of(self.wall.obj))
+                if t[0] != self.wall.obj]
         self.wall.set_input('Length', self.wall_length)
         self.wall.set_input('Height', self.wall_height)
         if self.wall.has_input('End Height'):
