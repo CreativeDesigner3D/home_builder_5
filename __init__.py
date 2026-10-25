@@ -227,6 +227,16 @@ class Home_Builder_AddonPreferences(bpy.types.AddonPreferences):
         update=_update_use_viewport_hud,
     ) # type: ignore
 
+    show_house_tab: bpy.props.BoolProperty(
+        name="House Tab",
+        description="Show the HOUSE tab in the viewport panel, for whole "
+                    "house projects with levels, rooms and roofs. Still in "
+                    "development. A file that already has a house project "
+                    "shows the tab either way",
+        default=False,
+        update=_update_use_viewport_hud,
+    ) # type: ignore
+
     # Not drawn: remembers the library panel's Show Model switch, which
     # sets it, so a new drawing starts the way the user last left it.
     show_appliance_models: bpy.props.BoolProperty(
@@ -384,6 +394,7 @@ class Home_Builder_AddonPreferences(bpy.types.AddonPreferences):
         sub = col.column(align=True)
         sub.enabled = self.use_room_palette
         sub.prop(self, "palette_expanded")
+        col.prop(self, "show_house_tab")
 
         # Layout view defaults
         box = layout.box()

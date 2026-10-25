@@ -27,7 +27,16 @@ _list = None            # this tab's ScrollList, made on first build
 
 
 def available(scene):
-    return not (scene.get('IS_LAYOUT_VIEW') or scene.get('IS_DETAIL_VIEW'))
+    if scene.get('IS_LAYOUT_VIEW') or scene.get('IS_DETAIL_VIEW'):
+        return False
+    return _tab_enabled() or bool(scene.get('IS_HOUSE_SCENE'))
+
+
+def _tab_enabled():
+    """The House Tab preference (off by default while houses are in
+    development)."""
+    addon = bpy.context.preferences.addons.get(hb_house.__package__)
+    return bool(addon and getattr(addon.preferences, 'show_house_tab', False))
 
 
 LEVEL_SPEC = {
