@@ -16,14 +16,19 @@ from types import SimpleNamespace
 
 import bpy
 
+# Clear-coated natural wood: there is no "natural" stain in the finish
+# tables (an unknown stain name falls back to White), so the grain colour
+# pair is given here, in the same colour space as the stain table.
+NATURAL_WOOD = ((0.72, 0.52, 0.30, 1.0), (0.60, 0.41, 0.23, 1.0))
+
 # Accessory material key -> how to build it.
-#   ('WOOD', species, stain)   procedural wood shader
+#   ('WOOD', species, colours)  procedural wood shader, grain colour pair
 #   ('METAL', finish name)     a pull finish from the finishes library
 #   ('PLAIN', color, metallic, roughness, transmission)
 SPECS = {
-    'MAPLE':   ('WOOD', 'MAPLE', 'Natural'),
-    'PLYWOOD': ('WOOD', 'BIRCH', 'Natural'),
-    'BIRCH':   ('WOOD', 'BIRCH', 'Natural'),
+    'MAPLE':   ('WOOD', 'MAPLE', NATURAL_WOOD),
+    'PLYWOOD': ('WOOD', 'BIRCH', NATURAL_WOOD),
+    'BIRCH':   ('WOOD', 'BIRCH', NATURAL_WOOD),
     'CHROME':  ('METAL', 'Polished Chrome'),
     'STEEL':   ('METAL', 'Matte Aluminum'),
     'POLYMER': ('PLAIN', (0.90, 0.86, 0.76, 1.0), 0.0, 0.45, 0.0),
@@ -33,9 +38,9 @@ SPECS = {
 # Solid-view colours: metal finishes read almost black in Solid shading
 # at their real colour, so accessory copies get a lighter display colour.
 _DISPLAY = {
-    'MAPLE':   (0.86, 0.72, 0.52, 1.0),
-    'PLYWOOD': (0.80, 0.66, 0.47, 1.0),
-    'BIRCH':   (0.84, 0.74, 0.58, 1.0),
+    'MAPLE':   (0.84, 0.66, 0.44, 1.0),
+    'PLYWOOD': (0.80, 0.62, 0.42, 1.0),
+    'BIRCH':   (0.84, 0.66, 0.44, 1.0),
     'CHROME':  (0.72, 0.74, 0.77, 1.0),
     'STEEL':   (0.60, 0.61, 0.63, 1.0),
 }
@@ -56,8 +61,9 @@ def _wood_blend_path():
                         'materials', 'cabinet_material.blend')
 
 
-def _wood(name, species, stain):
-    """The cabinet wood shader set to one species and stain."""
+def _wood(name, species, colors):
+    """The cabinet wood shader set to one species, with its grain
+    colours set to ``colors`` (a colour pair)."""
     from . import wood_materials
     try:
         with bpy.data.libraries.load(_wood_blend_path()) as (src, dst):
@@ -75,12 +81,19 @@ def _wood(name, species, stain):
     # fields it uses. The rotated copy only exists to satisfy it.
     style = SimpleNamespace(
         material=mat, material_rotated=rotated, wood_species=species,
-        stain_color=stain, paint_color='', finish_color='',
+        stain_color='', paint_color='', finish_color='',
         custom_finish_color=(1.0, 1.0, 1.0, 1.0))
     try:
         wood_materials.update_finish_material(style)
     finally:
         bpy.data.materials.remove(rotated)
+    for node in mat.node_tree.nodes:
+        if node.label == 'Wood' or node.type == 'GROUP':
+            for inp in node.inputs:
+                if inp.name == 'Wood Color 1':
+                    inp.default_value = colors[0]
+                elif inp.name == 'Wood Color 2':
+                    inp.default_value = colors[1]
     return mat
 
 
