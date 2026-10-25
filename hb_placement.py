@@ -1145,6 +1145,55 @@ class PlacementMixin:
                               min(wall_length, max(xa, xb))))
         return spans
 
+    def _tee_walls(self, wall_obj, place_on_front=True):
+        """Walls that butt into this wall mid-run and stand out on the
+        given side of it - the walls get_tee_wall_intrusions blocks for,
+        returned as objects so what stands on them can be checked too."""
+        from . import hb_types
+
+        wall = hb_types.GeoNodeWall(wall_obj)
+        if not wall.has_modifier():
+            return []
+        wall_length = wall.get_input('Length')
+        wall_thickness = wall.get_input('Thickness')
+        wall_matrix_inv = wall_obj.matrix_world.inverted()
+        wall_rot_inv = wall_matrix_inv.to_3x3()
+
+        END_MARGIN = 0.01
+        FACE_TOL = 0.02
+
+        found = []
+        for other in bpy.context.scene.objects:
+            if 'IS_WALL_BP' not in other or other is wall_obj:
+                continue
+            if not hb_house.same_level(other, wall_obj):
+                continue
+            other_geo = hb_types.GeoNodeWall(other)
+            if not other_geo.has_modifier():
+                continue
+            try:
+                o_len = other_geo.get_input('Length')
+            except Exception:
+                continue
+            om = other.matrix_world
+            o_dir = Vector((om[0][0], om[1][0], 0)).normalized()
+            o_start = Vector((om[0][3], om[1][3], 0))
+            o_end = o_start + o_dir * o_len
+            for pt, away_sign in ((o_start, 1.0), (o_end, -1.0)):
+                lp = wall_matrix_inv @ pt
+                if not (END_MARGIN < lp.x < wall_length - END_MARGIN):
+                    continue
+                if not (-FACE_TOL <= lp.y <= wall_thickness + FACE_TOL):
+                    continue
+                away_local_y = (wall_rot_inv @ (o_dir * away_sign)).y
+                if abs(away_local_y) < 0.001:
+                    continue
+                if (away_local_y < 0.0) != place_on_front:
+                    continue
+                found.append(other)
+                break
+        return found
+
     def blocks_placement(self, obj) -> bool:
         """Whether ``obj`` takes up room along the wall as far as the
         thing being placed is concerned. A base assembly never does:
@@ -1313,13 +1362,22 @@ class PlacementMixin:
         else:
             band_y0, band_y1 = wall_thickness, wall_thickness + band
         wall_inv = wall_obj.matrix_world.inverted()
-        for obj in bpy.context.scene.objects:
-            if obj.parent is not None:
-                continue
+        # Cabinets on a wall that butts into this one stand in the
+        # same band near the junction, the way a chain neighbour's do at
+        # a corner, so they block placement here too.
+        tee_cabinets = [c for tee_wall in self._tee_walls(wall_obj,
+                                                          place_on_front)
+                        for c in tee_wall.children
+                        if any(m in c for m in CABINET_MARKERS)]
+        tee_set = set(tee_cabinets)
+        for obj in list(bpy.context.scene.objects) + tee_cabinets:
             if obj in excluded:
                 continue
-            if not any(obj.get(t) for t in FREE_CABINET_TAGS):
-                continue
+            if obj not in tee_set:
+                if obj.parent is not None:
+                    continue
+                if not any(obj.get(t) for t in FREE_CABINET_TAGS):
+                    continue
             if not self.blocks_placement(obj):
                 continue
             try:
