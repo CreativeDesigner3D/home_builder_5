@@ -233,7 +233,11 @@ def outlines(scene, level):
                 top = w(front, pvc, ridge)
                 out['ridges'] = [(top, w(back, pvc, ridge)),
                                  (w(front, d['v0'], pplate), top), (w(front, d['v1'], pplate), top)]
-                out['grips'] += [('pitch', None, top), ('eave', None, w(front, d['v0'], pplate))]
+                # The pitch grip sits back along the ridge: at its front end
+                # it would hide the front edge's grip, seen from above
+                along = front + (back - front) * 0.3
+                out['grips'] += [('pitch', None, w(along, pvc, ridge)),
+                                 ('eave', None, w(front, d['v0'], pplate))]
             else:
                 out['grips'].append(('eave', None, w(front, d['v0'], d['plate'])))
         pieces.append(out)
