@@ -1007,6 +1007,9 @@ class HB_RoofPiece(PropertyGroup):
     # window tool. Kept (not remade) across rebuilds so its windows stay.
     front_wall: PointerProperty(type=bpy.types.Object)  # type: ignore
 
+    # Made by Fit Roof to Outline, which replaces its own pieces
+    auto: BoolProperty(default=False)  # type: ignore
+
 
 class HB_Roof(PropertyGroup):
     """A level's roof: built over the outside of its exterior walls,
@@ -1113,6 +1116,21 @@ class HB_Roof(PropertyGroup):
     dormer_tops_obj: PointerProperty(type=bpy.types.Object)  # type: ignore
     dormer_inside_obj: PointerProperty(type=bpy.types.Object)  # type: ignore
     roof_top_obj: PointerProperty(type=bpy.types.Object)  # type: ignore
+
+    # The main roof over part of the house only - the core of an L- or
+    # T-shaped house, its wings under cross gables (see Fit Roof to Outline)
+    use_extents: BoolProperty(
+        name="Custom Footprint",
+        description="Build the main roof over a rectangle you set rather than the whole house",
+        default=False, update=_roof_changed)  # type: ignore
+    ext_x0: FloatProperty(name="Left", subtype='DISTANCE', precision=4,
+                          update=_roof_changed)  # type: ignore
+    ext_x1: FloatProperty(name="Right", subtype='DISTANCE', precision=4,
+                          update=_roof_changed)  # type: ignore
+    ext_y0: FloatProperty(name="Front", subtype='DISTANCE', precision=4,
+                          update=_roof_changed)  # type: ignore
+    ext_y1: FloatProperty(name="Back", subtype='DISTANCE', precision=4,
+                          update=_roof_changed)  # type: ignore
 
     # Pieces added to the roof: cross gables and shed dormers
     pieces: CollectionProperty(type=HB_RoofPiece)  # type: ignore

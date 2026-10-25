@@ -105,6 +105,8 @@ def roof_frame(scene, level):
         return None
     x0, x1 = min(p.x for p in corners), max(p.x for p in corners)
     y0, y1 = min(p.y for p in corners), max(p.y for p in corners)
+    if roof.use_extents and roof.ext_x1 - roof.ext_x0 > 0.3 and roof.ext_y1 - roof.ext_y0 > 0.3:
+        x0, x1, y0, y1 = roof.ext_x0, roof.ext_x1, roof.ext_y0, roof.ext_y1
     along_x = (x1 - x0) >= (y1 - y0) if roof.ridge == 'AUTO' else roof.ridge == 'X'
     if along_x:
         u0, u1, v0, v1 = y0, y1, x0, x1
@@ -143,6 +145,7 @@ def roof_frame(scene, level):
         'ridge_z': ridge_z,                 # underside at the ridge
         'under': under,
         'level_uid': level.uid,
+        'custom': bool(roof.use_extents),
     }
 
 
@@ -253,9 +256,20 @@ def roof_section(frame, roof):
     return under + list(reversed(top))
 
 
+WING_REACH = 100.0          # m: a part-house roof's trim runs out this far
+                            # over the wings, at its eaves' height
+
+
 def trim_section(frame):
-    """Everything above the roof's underside, well past the house."""
-    under = _dedupe(_extended(frame, CUTTER_REACH))
+    """Everything above the roof's underside, well past the house. A
+    roof over only part of the house (a custom footprint) trims the rest
+    level with its eaves rather than down its slope: the wings' walls
+    stop at the eaves, and their own cross gables keep their insides."""
+    if frame.get('custom'):
+        under = _dedupe([(frame['u0'] - WING_REACH, frame['plate'])] + list(frame['under'])
+                        + [(frame['u1'] + WING_REACH, frame['plate'])])
+    else:
+        under = _dedupe(_extended(frame, CUTTER_REACH))
     top = frame['ridge_z'] + CUTTER_HEIGHT
     return under + [(under[-1][0], top), (under[0][0], top)]
 
@@ -751,6 +765,19 @@ def _roofs(scene):
     return out
 
 
+def _within_roof(frame, wall_obj, d):
+    """True when some of a wall's length lies inside the roof's footprint."""
+    from . import hb_types
+    wall = hb_types.GeoNodeWall(wall_obj)
+    p = wall_obj.matrix_world.translation
+    length = wall.get_input('Length')
+    a = _uv(frame, (p.x, p.y))
+    b = _uv(frame, (p.x + d.x * length, p.y + d.y * length))
+    tol = 0.05
+    return (min(a[0], b[0]) < frame['u1'] - tol and max(a[0], b[0]) > frame['u0'] + tol
+            and min(a[1], b[1]) < frame['v1'] + tol and max(a[1], b[1]) > frame['v0'] - tol)
+
+
 def _set_back_from_eaves(frame, wall_obj, d):
     """True when a wall running along the ridge stands inside the roof's
     outline, clear of both eave lines, rather than forming one of them."""
@@ -785,6 +812,8 @@ def gable_wall_height(scene, wall_obj, height):
         under = {l.uid for l in _levels_under(scene, frame)}
         if level_uid not in under:
             continue
+        if not _within_roof(frame, wall_obj, d):
+            continue                    # a wing's wall, beyond this roof
         ridge_dir = Vector((1.0, 0.0)) if frame['along_x'] else Vector((0.0, 1.0))
         if abs(d.dot(ridge_dir)) > 0.01:
             # Runs along the ridge. Set back from the eaves - behind a
@@ -1045,6 +1074,181 @@ def _selected_porch_height(context, level):
     return None
 
 
+# ---- Fitting a roof to the house's outline ---------------------------------------
+
+FIT_CELL = 0.15             # m: the footprint is sampled on this grid
+CORE_COVER = 0.8            # a row this full of house is part of the core
+WING_STEP = 0.9             # m: a wing's depth changing more than this starts another
+WING_MIN_WIDTH = 1.2        # m
+WING_MIN_DEPTH = 0.45       # m
+
+
+def footprint_cells(scene, level):
+    """The level's footprint sampled on a grid: (x0, y0, nx, ny, filled)
+    with filled[j][i] for the cell centred at (x0 + (i + .5) * FIT_CELL,
+    y0 + (j + .5) * FIT_CELL). Rooms (porches left out) and the exterior
+    walls round them, so it reaches the walls' outside faces."""
+    from . import hb_porches
+    from . import hb_wall_graph as G
+    from .operators import walls
+    _objs, segs = walls.level_wall_segs(scene, level.uid)
+    rooms = [a.polygon for a in G.find_rooms(segs) if not hb_porches.is_porch_area(a)]
+    # Every built wall: rooms stop at walls' faces, so the walls between
+    # them are footprint too
+    bands = [s for s in segs if s.wall_type not in G.ROOM_ONLY_WALLS
+             and s.wall_type not in G.NOT_ROOM_WALLS]
+    if not rooms or not bands:
+        return None
+    pts = [p for poly in rooms for p in poly]
+    for s in bands:
+        pts += [s.start, s.end, s.face_point(s.thickness),
+                (s.end[0] + s.normal[0] * s.thickness, s.end[1] + s.normal[1] * s.thickness)]
+    x0, x1 = min(p[0] for p in pts), max(p[0] for p in pts)
+    y0, y1 = min(p[1] for p in pts), max(p[1] for p in pts)
+    nx = max(1, int(math.ceil((x1 - x0) / FIT_CELL)))
+    ny = max(1, int(math.ceil((y1 - y0) / FIT_CELL)))
+    boxes = [(min(p[0] for p in poly), max(p[0] for p in poly),
+              min(p[1] for p in poly), max(p[1] for p in poly), poly) for poly in rooms]
+    filled = []
+    for j in range(ny):
+        y = y0 + (j + 0.5) * FIT_CELL
+        row = []
+        for i in range(nx):
+            x = x0 + (i + 0.5) * FIT_CELL
+            inside = any(bx0 <= x <= bx1 and by0 <= y <= by1 and G.point_in_polygon((x, y), poly)
+                         for bx0, bx1, by0, by1, poly in boxes)
+            if not inside:
+                inside = any(hb_porches._dist_to_band((x, y), s) < 1e-6 for s in bands)
+            row.append(inside)
+        filled.append(row)
+    return x0, y0, nx, ny, filled
+
+
+def plan_roof(scene, level, along_x=None):
+    """Work out a roof that follows the level's outline: the core - the
+    longest band of rows that run (nearly) the house's whole length along
+    the ridge - under the main roof, and each wing out the front or back
+    of it under a cross gable. Returns {'along_x', 'core': (x0, y0, x1,
+    y1), 'wings': [(x0, y0, x1, y1)]}, or None."""
+    grid = footprint_cells(scene, level)
+    if grid is None:
+        return None
+    gx0, gy0, nx, ny, filled = grid
+    if along_x is None:
+        along_x = nx >= ny
+    # Work in (u across the ridge, v along it)
+    nu, nv = (ny, nx) if along_x else (nx, ny)
+    if along_x:
+        cell = lambda u, v: filled[u][v]
+    else:
+        cell = lambda u, v: filled[v][u]
+    cover = [sum(1 for v in range(nv) if cell(u, v)) / nv for u in range(nu)]
+    best, run = None, None
+    for u in range(nu + 1):
+        if u < nu and cover[u] >= CORE_COVER:
+            run = (run[0], u) if run else (u, u)
+        elif run:
+            if best is None or run[1] - run[0] > best[1] - best[0]:
+                best = run
+            run = None
+    if best is None:
+        return None
+    cu0, cu1 = best
+    core_v = [v for u in range(cu0, cu1 + 1) for v in range(nv) if cell(u, v)]
+    cv0, cv1 = min(core_v), max(core_v)
+    ou, ov = (gy0, gx0) if along_x else (gx0, gy0)
+
+    def rect(u_lo, u_hi, v_lo, v_hi):
+        """Cell ranges (inclusive) to a plan rectangle (x0, y0, x1, y1)."""
+        a0, a1 = ou + u_lo * FIT_CELL, ou + (u_hi + 1) * FIT_CELL
+        b0, b1 = ov + v_lo * FIT_CELL, ov + (v_hi + 1) * FIT_CELL
+        return (b0, a0, b1, a1) if along_x else (a0, b0, a1, b1)
+
+    wings = []
+    for step, edge in ((-1, cu0), (1, cu1)):
+        depths = []
+        for v in range(nv):
+            d, u = 0, edge + step
+            while 0 <= u < nu and cell(u, v):
+                d += 1
+                u += step
+            depths.append(d)
+        runs, cur = [], None
+        for v, d in enumerate(depths + [0]):
+            if d > 0 and cur and abs(d - cur['ref']) * FIT_CELL <= WING_STEP:
+                cur['v1'] = v
+                cur['depth'] = max(cur['depth'], d)
+            else:
+                if cur:
+                    runs.append(cur)
+                cur = {'v0': v, 'v1': v, 'ref': d, 'depth': d} if d > 0 else None
+        for r in runs:
+            width = (r['v1'] - r['v0'] + 1) * FIT_CELL
+            if width < WING_MIN_WIDTH or r['depth'] * FIT_CELL < WING_MIN_DEPTH:
+                continue
+            if step < 0:
+                wings.append(rect(edge - r['depth'], edge - 1, r['v0'], r['v1']))
+            else:
+                wings.append(rect(edge + 1, edge + r['depth'], r['v0'], r['v1']))
+    return {'along_x': along_x, 'core': rect(cu0, cu1, cv0, cv1), 'wings': wings}
+
+
+def fit_roof_to_outline(scene, level):
+    """Set the level's roof to follow its outline: the main roof over the
+    core, a cross gable over each wing. Pieces made by an earlier fit are
+    replaced; ones you added stay. Returns the plan, or None."""
+    roof = level.roof
+    along = None if roof.ridge == 'AUTO' else roof.ridge == 'X'
+    plan = plan_roof(scene, level, along)
+    if plan is None:
+        return None
+    for i in reversed(range(len(roof.pieces))):
+        if roof.pieces[i].auto:
+            if roof.pieces[i].front_wall is not None:
+                _delete_tree(roof.pieces[i].front_wall)
+            roof.pieces.remove(i)
+    x0, y0, x1, y1 = plan['core']
+    roof['ridge'] = 1 if plan['along_x'] else 2
+    roof['use_extents'] = True
+    roof['ext_x0'], roof['ext_y0'], roof['ext_x1'], roof['ext_y1'] = x0, y0, x1, y1
+    eave = hb_house.exterior_wall_height(level)
+    pitch = roof.pitch if roof.style == 'GABLE' else 12.0
+    for n, (wx0, wy0, wx1, wy1) in enumerate(plan['wings']):
+        index = len(roof.pieces)
+        piece = roof.pieces.add()
+        piece['name'] = "Wing Gable %d" % (n + 1)
+        piece['kind'] = 0
+        piece['x0'], piece['y0'], piece['x1'], piece['y1'] = wx0, wy0, wx1, wy1
+        piece['eave_height'] = eave
+        piece['pitch'] = pitch
+        piece['overhang'] = roof.eave_overhang
+        roof.pieces[index]['auto'] = True
+    roof['enabled'] = True
+    rebuild_roof(scene, level)
+    return plan
+
+
+class HOME_BUILDER_OT_fit_roof_to_outline(bpy.types.Operator):
+    bl_idname = "home_builder.fit_roof_to_outline"
+    bl_label = "Fit Roof to Outline"
+    bl_description = ("Fit the active level's roof to the house's outline: the main roof "
+                      "over the core, a cross gable over each wing out the front or back")
+    bl_options = {'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return hb_house.active_level(context) is not None
+
+    def execute(self, context):
+        level = hb_house.active_level(context)
+        plan = fit_roof_to_outline(context.scene, level)
+        if plan is None:
+            self.report({'WARNING'}, "No closed rooms to fit a roof to")
+            return {'CANCELLED'}
+        self.report({'INFO'}, "Main roof over the core, %d wing gable(s)" % len(plan['wings']))
+        return {'FINISHED'}
+
+
 class HOME_BUILDER_OT_add_roof_piece(bpy.types.Operator):
     bl_idname = "home_builder.add_roof_piece"
     bl_label = "Add Roof Piece"
@@ -1140,6 +1344,7 @@ class HOME_BUILDER_OT_remove_roof_piece(bpy.types.Operator):
 
 
 classes = (
+    HOME_BUILDER_OT_fit_roof_to_outline,
     HOME_BUILDER_OT_add_roof_piece,
     HOME_BUILDER_OT_remove_roof_piece,
 )

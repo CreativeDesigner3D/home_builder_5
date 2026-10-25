@@ -143,6 +143,7 @@ EXTERIOR_FIELDS = (
 
 
 ROOF_FIELDS = (
+    ('actions', (("Fit Roof to Outline", "home_builder.fit_roof_to_outline"),), ""),
     ('bool', 'enabled', "Roof on This Level"),
     ('enum', 'style', "Style", {'when': lambda roof: roof.enabled}),
     ('enum', 'base', "Sits On", {'when': lambda roof: roof.enabled}),
@@ -156,6 +157,11 @@ ROOF_FIELDS = (
     ('number', 'pitch', "Upper Pitch (in 12)",
      {'when': lambda roof: roof.enabled and roof.style == 'GAMBREL'}),
     ('enum', 'ridge', "Ridge", {'when': lambda roof: roof.enabled}),
+    ('bool', 'use_extents', "Custom Footprint", {'when': lambda roof: roof.enabled}),
+    ('distance', 'ext_x0', "Footprint Left", {'when': lambda roof: roof.enabled and roof.use_extents}),
+    ('distance', 'ext_x1', "Footprint Right", {'when': lambda roof: roof.enabled and roof.use_extents}),
+    ('distance', 'ext_y0', "Footprint Front", {'when': lambda roof: roof.enabled and roof.use_extents}),
+    ('distance', 'ext_y1', "Footprint Back", {'when': lambda roof: roof.enabled and roof.use_extents}),
     ('distance', 'eave_overhang', "Eave Overhang", {'when': lambda roof: roof.enabled}),
     ('distance', 'gable_overhang', "Gable Overhang", {'when': lambda roof: roof.enabled}),
     ('distance', 'thickness', "Thickness", {'when': lambda roof: roof.enabled}),
