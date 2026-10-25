@@ -13,8 +13,10 @@ hb_roofs) are drawn as outlines on the plan, with grips to drag:
 * Eave grips set where a piece's slopes meet its walls - or a shed
   dormer's front wall height - and how far the main roof's eaves sit
   above its walls.
-* G or D, then drag a rectangle on the plan, draws a new cross gable or
-  shed dormer.
+* G or D draws a new cross gable or shed dormer: click two opposite
+  corners on the plan, or drag from one to the other. Two clicks along
+  one wall make the piece's front that wide, running back to the main
+  ridge.
 
 While a grip is dragged only the outlines move; the roof is rebuilt once
 on release, as its own undo step. EditSession holds all of it in plan
@@ -51,6 +53,10 @@ LABEL_BG = (0.08, 0.08, 0.08, 0.85)
 HINT = ("Edit Roof: drag grips or pieces   G: draw cross gable   D: draw shed dormer   "
         "R: turn ridge   X: remove piece   Ctrl: no snapping   Shift: fine   "
         "Enter / Esc: done")
+
+# Viewport navigation passes through even mid-drawing
+NAVIGATION = {'MIDDLEMOUSE', 'WHEELUPMOUSE', 'WHEELDOWNMOUSE', 'WHEELINMOUSE',
+              'WHEELOUTMOUSE', 'TRACKPADPAN', 'TRACKPADZOOM', 'MOUSEROTATE', 'NDOF_MOTION'}
 
 SIDES = ('x0', 'y0', 'x1', 'y1')
 
@@ -274,6 +280,9 @@ class EditSession:
         self.drag = None
         self.draw_kind = None       # 'GABLE' / 'SHED' while drawing a piece
         self.drawing = None         # (start, end) plan points of the rectangle drawn
+        self.corner = None          # where the first corner would go, before the click
+        self.second_click = False   # the drawing's end was clicked (not dragged to)
+        self.warning = ""           # why the last drawing made nothing
         self.message = ""           # what the last drag shows: a size, a pitch...
         self.label_at = None
 
@@ -345,7 +354,14 @@ class EditSession:
             if p is None:
                 return False
             p = self._snap_point(view, p, out, ctrl=False)
-            self.drawing = (p, p)
+            if self.drawing is None:
+                self.drawing = (p, p)
+                self.second_click = False
+                self.warning = ""
+            else:
+                # The opposite corner's click: finished on its release
+                self.drawing = (self.drawing[0], p)
+                self.second_click = True
             return True
         hit = self.pick(view, mx, my)
         if hit is None:
@@ -362,7 +378,29 @@ class EditSession:
                      'start': self._snapshot(target), 'moved': False}
         return True
 
+    def piece_word(self):
+        return "shed dormer" if self.draw_kind == 'SHED' else "cross gable"
+
+    def prompt(self):
+        """The status bar's line: what a click does now."""
+        if self.draw_kind is None:
+            return HINT
+        if self.drawing is None:
+            lead = f"{self.warning}   " if self.warning else ""
+            return (f"{lead}New {self.piece_word()}: click its first corner (or drag from it to "
+                    f"the opposite corner)   Ctrl: no snapping   Esc: stop")
+        return f"New {self.piece_word()}: click the opposite corner   Ctrl: no snapping   Esc: stop"
+
     def move(self, view, mx, my, ctrl=False, shift=False):
+        if self.draw_kind is not None and self.drawing is None:
+            # Waiting for the first corner: show where it would snap
+            out = self.outlines()
+            p = view.on_plane(mx, my, out['main']['z']) if out else None
+            if p is not None:
+                self.corner = self._snap_point(view, p, out, ctrl)
+                self.message = self.warning or f"New {self.piece_word()}: click the first corner"
+                self.label_at = self.corner
+            return
         if self.drawing is not None:
             out = self.outlines()
             p = view.on_plane(mx, my, out['main']['z']) if out else None
@@ -531,12 +569,27 @@ class EditSession:
         level = self.level()
         if self.drawing is not None:
             a, b = self.drawing
-            kind, self.drawing = self.draw_kind, None
-            self.draw_kind = None
+            wide, deep = abs(b.x - a.x) >= MIN_SIZE, abs(b.y - a.y) >= MIN_SIZE
+            if not (wide and deep) and not self.second_click:
+                return None             # a click, not a drag: wait for the opposite corner
+            kind = self.draw_kind
+            self.drawing = None
+            self.second_click = False
             self.message = ""
-            if abs(b.x - a.x) < MIN_SIZE or abs(b.y - a.y) < MIN_SIZE:
+            if wide and deep:
+                rect = (a.x, a.y, b.x, b.y)
+            elif wide or deep:
+                rect = self.front_line_rect(a, b)
+                if rect is None:
+                    self.warning = (f"A {self.piece_word()} faces out from the ridge: click along "
+                                    f"a wall that runs the same way as the ridge.")
+                    return None
+            else:
+                self.warning = "Those clicks were in one spot."
                 return None
-            hb_roofs.add_piece(self.scene, level, kind, (a.x, a.y, b.x, b.y), fit_shed=False)
+            self.draw_kind = self.corner = None
+            self.warning = ""
+            hb_roofs.add_piece(self.scene, level, kind, rect, fit_shed=False)
             return "Draw Shed Dormer" if kind == 'SHED' else "Draw Cross Gable"
         dr, self.drag = self.drag, None
         self.message = ""
@@ -546,12 +599,31 @@ class EditSession:
         return {'edge': "Move Roof Edge", 'move': "Move Roof Piece",
                 'pitch': "Change Roof Pitch", 'eave': "Change Eave Height"}[dr['kind']]
 
+    def front_line_rect(self, a, b):
+        """Two clicks along one wall: a piece that wide, its front on that
+        line and running back to the main ridge - or None when the line
+        runs across the ridge (a piece faces out from it)."""
+        frame = hb_roofs.roof_frame(self.scene, self.level())
+        if frame is None:
+            return None
+        if frame['along_x']:
+            (v0, v1), u = (a.x, b.x), (a.y + b.y) / 2.0
+        else:
+            (v0, v1), u = (a.y, b.y), (a.x + b.x) / 2.0
+        if abs(v1 - v0) < MIN_SIZE or abs(u - frame['uc']) < MIN_SIZE:
+            return None
+        back = frame['uc']
+        if frame['along_x']:
+            return (v0, u, v1, back)
+        return (u, v0, back, v1)
+
     def cancel(self):
         """Esc mid-drag: put it back as it was. True when something was
         under way."""
         if self.drawing is not None or self.draw_kind is not None:
-            self.drawing = self.draw_kind = None
-            self.message = ""
+            self.drawing = self.draw_kind = self.corner = None
+            self.second_click = False
+            self.message = self.warning = ""
             return True
         if self.drag is None:
             return False
@@ -664,12 +736,24 @@ def draw(session, region, rv3d):
         _segments(shader, flat(o['ridges']), RIDGE_COLOR, 1.5)
         _segments(shader, flat(o['lines']), ACTIVE_COLOR if i == active else PIECE_COLOR,
                   3.0 if i == active else 2.0)
+    marks = []
     if session.drawing is not None:
         a, b = session.drawing
-        _segments(shader, flat([(p, q) for p, q in zip(_ring((a.x, a.y, b.x, b.y), a.z),
-                                                      _ring((a.x, a.y, b.x, b.y), a.z)[1:]
-                                                      + _ring((a.x, a.y, b.x, b.y), a.z)[:1])]),
-                  DRAW_COLOR, 2.5)
+        ring = _ring((a.x, a.y, b.x, b.y), a.z)
+        _segments(shader, flat([(ring[i], ring[(i + 1) % 4]) for i in range(4)]), DRAW_COLOR, 2.5)
+        marks = [a, b]
+    elif session.draw_kind is not None and session.corner is not None:
+        marks = [session.corner]
+    gpu.state.line_width_set(1.0)
+    # The corners being drawn: a cross where each one snaps
+    for m in marks:
+        q = view.to_2d(m)
+        if q is None:
+            continue
+        r = GRIP_PX * s * 2.2
+        _segments(shader, [(q.x - r, q.y), (q.x + r, q.y), (q.x, q.y - r), (q.x, q.y + r)],
+                  DRAW_COLOR, 2.0)
+        _diamond(shader, q, GRIP_PX * s * 0.8, DRAW_COLOR)
     gpu.state.line_width_set(1.0)
 
     # Grips: squares for edges, diamonds for heights
@@ -705,6 +789,9 @@ def draw(session, region, rv3d):
 # THE OPERATOR
 # =============================================================================
 
+_running = None             # the Edit Roof running, if one is
+
+
 class HOME_BUILDER_OT_edit_roof(bpy.types.Operator):
     bl_idname = "home_builder.edit_roof"
     bl_label = "Edit Roof"
@@ -717,6 +804,11 @@ class HOME_BUILDER_OT_edit_roof(bpy.types.Operator):
                 and hb_house.active_level(context) is not None)
 
     def invoke(self, context, event):
+        global _running
+        if _running is not None:
+            # Already on: the button turns it off
+            _running.stop = True
+            return {'CANCELLED'}
         level = hb_house.active_level(context)
         if not level.roof.enabled:
             level.roof.enabled = True
@@ -724,9 +816,14 @@ class HOME_BUILDER_OT_edit_roof(bpy.types.Operator):
         self.session = EditSession(context.scene)
         self.area = context.area
         self.region = next((r for r in context.area.regions if r.type == 'WINDOW'), None)
+        self.window = context.window
+        self.stop = False
+        _running = self
+        self.crosshair = False
+        self.status = None
         self.handle = bpy.types.SpaceView3D.draw_handler_add(
             self._draw, (), 'WINDOW', 'POST_PIXEL')
-        context.workspace.status_text_set(HINT)
+        self._sync(context)
         context.window_manager.modal_handler_add(self)
         self.area.tag_redraw()
         return {'RUNNING_MODAL'}
@@ -740,8 +837,28 @@ class HOME_BUILDER_OT_edit_roof(bpy.types.Operator):
         except ReferenceError:
             pass
 
+    def _sync(self, context):
+        """The cursor and status bar follow what a click does: a crosshair
+        and drawing prompts while drawing a piece."""
+        drawing = self.session.draw_kind is not None
+        if drawing != self.crosshair and self.window is not None:
+            if drawing:
+                self.window.cursor_modal_set('CROSSHAIR')
+            else:
+                self.window.cursor_modal_restore()
+            self.crosshair = drawing
+        text = self.session.prompt()
+        if text != self.status:
+            context.workspace.status_text_set(text)
+            self.status = text
+
     def _finish(self, context):
+        global _running
+        if _running is self:
+            _running = None
         bpy.types.SpaceView3D.draw_handler_remove(self.handle, 'WINDOW')
+        if self.crosshair and self.window is not None:
+            self.window.cursor_modal_restore()
         context.workspace.status_text_set(None)
         self.area.tag_redraw()
 
@@ -762,6 +879,16 @@ class HOME_BUILDER_OT_edit_roof(bpy.types.Operator):
             pass
 
     def modal(self, context, event):
+        if self.stop:
+            self.session.cancel()
+            self._finish(context)
+            return {'FINISHED'}
+        result = self._handle(context, event)
+        if 'FINISHED' not in result:
+            self._sync(context)
+        return result
+
+    def _handle(self, context, event):
         session = self.session
         inside, mx, my = self._in_region(event)
         self.area.tag_redraw()
@@ -800,7 +927,7 @@ class HOME_BUILDER_OT_edit_roof(bpy.types.Operator):
             self._finish(context)
             return {'FINISHED'}
         if busy:
-            return {'RUNNING_MODAL'}
+            return {'PASS_THROUGH'} if event.type in NAVIGATION else {'RUNNING_MODAL'}
         if event.type == 'G':
             session.start_drawing('GABLE')
             return {'RUNNING_MODAL'}
