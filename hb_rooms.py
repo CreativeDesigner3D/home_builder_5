@@ -151,12 +151,20 @@ VAULT_GAP = 0.01        # a vaulted ceiling sits this far under the roof
 
 
 def vault_frame(scene, level, room):
-    """The roof a vaulted room's ceiling follows (its level's own), or
-    None for a flat ceiling."""
-    if room.ceiling_style != 'VAULTED' or not level.roof.enabled:
+    """The roof a vaulted or sloped-sides ceiling follows - its level's
+    own, or a roof below that the level is inside (a bonus room in the
+    roof) - or None for a flat ceiling."""
+    if room.ceiling_style not in ('VAULTED', 'ATTIC'):
         return None
     from . import hb_roofs
-    return hb_roofs.roof_frame(scene, level)
+    if level.roof.enabled:
+        return hb_roofs.roof_frame(scene, level)
+    for other in scene.hb_house.levels:
+        if other.roof.enabled and other.uid != level.uid:
+            frame = hb_roofs.roof_frame(scene, other)
+            if frame is not None and level.uid in {l.uid for l in hb_roofs._levels_under(scene, frame)}:
+                return frame
+    return None
 
 
 def vault_z(frame, room, level, u):
@@ -164,6 +172,9 @@ def vault_z(frame, room, level, u):
     no lower than the room's flat ceiling, no higher than its peak."""
     from . import hb_roofs
     z = hb_roofs._under_z(frame, u) - level.elevation - VAULT_GAP
+    if room.ceiling_style == 'ATTIC':
+        # Flat, but down with the roof where the roof is lower
+        return max(min(z, room_height(room, level)), 0.05)
     if room.vault_peak > 0:
         z = min(z, room.vault_peak)
     return max(z, room_height(room, level))
@@ -180,8 +191,9 @@ def _vault_mesh(name, polygon, room, level, frame):
     flat = room_height(room, level)
     base = level.elevation
     breaks = [u for u, _z in frame['under']]
-    if room.vault_peak > 0:
-        target = base + VAULT_GAP + room.vault_peak
+    level_off = room.vault_peak if room.ceiling_style == 'VAULTED' else room_height(room, level)
+    if level_off > 0:
+        target = base + VAULT_GAP + level_off
         pts = frame['under']
         for (a, za), (b, zb) in zip(pts, pts[1:]):
             if (za - target) * (zb - target) < 0:
@@ -201,9 +213,11 @@ def _vault_mesh(name, polygon, room, level, frame):
     for f in bm.faces:
         if f.normal.z > 0:
             f.normal_flip()
-    # The drop round the edge, down to the flat height
+    # The drop round the edge, down to the flat height (a vault rises
+    # above it; sloped sides come down to their walls instead)
     bottoms = {}
-    for e in [e for e in bm.edges if len(e.link_faces) == 1]:
+    edges = [e for e in bm.edges if len(e.link_faces) == 1] if room.ceiling_style == 'VAULTED' else []
+    for e in edges:
         a, b = e.verts
         if a.co.z - flat < 1e-4 and b.co.z - flat < 1e-4:
             continue
@@ -422,7 +436,9 @@ def _raise_vault_walls(scene, level, polygons):
     want = {}
     for i, polygon in polygons.items():
         room = level.rooms[i]
-        frame = vault_frame(scene, level, room) if room.has_ceiling else None
+        # Only a vault rises above the walls; sloped sides come down to them
+        frame = (vault_frame(scene, level, room)
+                 if room.has_ceiling and room.ceiling_style == 'VAULTED' else None)
         if frame is None:
             continue
         top = room.vault_peak if room.vault_peak > 0 else frame['ridge_z'] - level.elevation

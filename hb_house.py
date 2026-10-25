@@ -898,7 +898,10 @@ class HB_Room(PropertyGroup):
         items=[('FLAT', "Flat", "A flat ceiling at the room's ceiling height"),
                ('VAULTED', "Vaulted",
                 "Follows the roof's underside up from the walls - a sloped or "
-                "cathedral ceiling. Needs a roof on the level")],
+                "cathedral ceiling. Needs a roof on the level"),
+               ('ATTIC', "Sloped Sides",
+                "Flat at the ceiling height, coming down with the roof where it is lower - "
+                "an attic or bonus room in the roof, its sides sloping to knee walls")],
         default='FLAT', update=_room_shape_changed)  # type: ignore
     vault_peak: FloatProperty(
         name="Peak Height",

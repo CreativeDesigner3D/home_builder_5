@@ -751,7 +751,34 @@ def _levels_under(scene, frame):
                 if l.uid == frame['level_uid']), None)
     if own is not None and own not in out:
         out.append(own)
+    # A roof starting at its level's floor covers the walls below too (its
+    # outline does): their end walls make its gables
+    if own is not None and own.roof.base == 'FLOOR':
+        below = hb_house.level_below(own.id_data.hb_house, own)
+        if below is not None and below not in out:
+            out.append(below)
     return out
+
+
+def _wall_in_footprint(frame, obj, wall, strict):
+    """True when a wall's middle lies under a roof's footprint. Strict -
+    for walls of a level below the roof's own - keeps out walls along its
+    eaves, which belong to the roof beside it."""
+    m = obj.matrix_world
+    if not strict:
+        # Any of its length under the roof - the same test that raises a
+        # wall into a gable, so a raised wall is always cut back
+        rot = m.to_euler().z
+        return _within_roof(frame, obj, Vector((math.cos(rot), math.sin(rot))))
+    mid = m @ Vector((wall.get_input('Length') / 2.0, wall.get_input('Thickness') / 2.0, 0.0))
+    u, v = _uv(frame, (mid.x, mid.y))
+    return (frame['u0'] + 0.3 <= u <= frame['u1'] - 0.3
+            and frame['v0'] - 0.1 <= v <= frame['v1'] + 0.1)
+
+
+def _own_elevation(scene, frame):
+    lv = next((l for l in scene.hb_house.levels if l.uid == frame['level_uid']), None)
+    return lv.elevation if lv is not None else 0.0
 
 
 def _roofs(scene):
@@ -812,8 +839,13 @@ def gable_wall_height(scene, wall_obj, height, carried=False):
         under = {l.uid for l in _levels_under(scene, frame)}
         if level_uid not in under:
             continue
-        if carried and level_uid == frame['level_uid']:
+        if carried:
             continue                    # the wall standing on it makes the gable
+        lower = wall_obj.matrix_world.translation.z < _own_elevation(scene, frame) - 0.01
+        if lower:
+            from . import hb_types
+            if not _wall_in_footprint(frame, wall_obj, hb_types.GeoNodeWall(wall_obj), True):
+                continue                # below, but not under this roof
         if not _within_roof(frame, wall_obj, d):
             continue                    # a wing's wall, beyond this roof
         ridge_dir = Vector((1.0, 0.0)) if frame['along_x'] else Vector((0.0, 1.0))
@@ -846,26 +878,40 @@ def apply_trims(scene):
             continue
         name = TRIM_PREFIX + level.name
         from . import hb_types, hb_rooms
+        own_elev = _own_elevation(scene, frame)
         for upper in _levels_under(scene, frame):
-            # On the roof's own level most walls and ceilings stop below the
-            # eaves: only what rises above them needs cutting (each cut is an
+            # On levels starting below the eaves most walls and ceilings stop
+            # under them: only what rises above needs cutting (each cut is an
             # exact Boolean)
-            below = upper.uid == frame['level_uid'] and upper.elevation < frame['plate'] - 0.01
+            below = upper.elevation < frame['plate'] - 0.01
+            # A roof over part of the house, or a level below the roof's own,
+            # trims only what stands under the roof
+            lower = upper.elevation < own_elev - 0.01
+            check = frame.get('custom') or lower
             for obj in scene.objects:
                 if not (obj.get('IS_WALL_BP') and obj.get(hb_house.LEVEL_KEY) == upper.uid
                         and obj.get('WALL_TYPE') != DORMER_WALL_TYPE):
                     continue
-                if below:
-                    wall = hb_types.GeoNodeWall(obj)
-                    if (wall.has_modifier() and obj.matrix_world.translation.z
-                            + wall.get_input('Height') <= frame['plate'] + 0.01):
-                        continue
+                wall = hb_types.GeoNodeWall(obj)
+                if not wall.has_modifier():
+                    continue
+                if check and not _wall_in_footprint(frame, obj, wall, lower):
+                    continue
+                if below and (obj.matrix_world.translation.z + wall.get_input('Height')
+                              <= frame['plate'] + 0.01):
+                    continue
                 wanted.setdefault(obj, {})[name] = (cutter, False)
             for room in upper.rooms:
                 if room.ceiling_obj is None:
                     continue
-                if below and upper.elevation + hb_rooms.room_height(room, upper) <= frame['plate'] + 0.01                         and room.ceiling_style != 'VAULTED':
+                flat_below = (upper.elevation + hb_rooms.room_height(room, upper)
+                              <= frame['plate'] + 0.01 and room.ceiling_style == 'FLAT')
+                if below and flat_below:
                     continue
+                if check and room.marker is not None:
+                    u, v = _uv(frame, (room.marker.location.x, room.marker.location.y))
+                    if not (frame['u0'] <= u <= frame['u1'] and frame['v0'] <= v <= frame['v1']):
+                        continue
                 wanted.setdefault(room.ceiling_obj, {})[name] = (cutter, True)
     for obj in scene.objects:
         if obj.type != 'MESH':
