@@ -1017,7 +1017,7 @@ def _material(spec):
     """The cabinet's own wood or a pull metal finish for this spec (see
     accessory_materials), else a plain material in the spec's colour."""
     name, color, metallic, rough = spec
-    mat = accessory_materials.get(_MATERIAL_KEYS.get(name, ''))
+    mat = accessory_materials.get(_MATERIAL_KEYS.get(name, name))
     if mat is not None:
         return mat
     mat = bpy.data.materials.get(name)
@@ -1057,7 +1057,21 @@ def build_object(model, name, w, depth, h, params=None):
     if model in PULLOUT_MODELS:
         mesh.materials.append(_material(_MAT_STEEL))
         mesh.materials.append(_material(_MAT_PLASTIC))
+    for key in EXTRA_MATERIALS.get(model, ()):
+        mesh.materials.append(_material((key, (0.8, 0.8, 0.8, 1.0), 0.0, 0.5)))
     obj = hb_utils.new_object(name, mesh)
     if organizer:
         obj[FINISH_MATCH_KEY] = True
     return obj
+
+
+# More pull-out and in-cabinet unit types (trash, hampers, vanity and
+# under-sink units, ...) live in pullout_unit_models; they size, place
+# and slide like the pull-outs above. Their extra material slots follow
+# the pull-out ones, by accessory material key.
+from . import pullout_unit_models as _units  # noqa: E402
+
+PULLOUT_MODELS = PULLOUT_MODELS | _units.MODELS
+MODELS = MODELS | _units.MODELS
+_BUILDERS.update(_units.BUILDERS)
+EXTRA_MATERIALS = {m: _units.EXTRA_MATERIALS for m in _units.MODELS}

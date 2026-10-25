@@ -1,5 +1,5 @@
 """Materials for purchased accessory models (pull-outs, roll-outs,
-organizers, corner units).
+organizers, corner units, waste bins and hampers).
 
 The models share the materials the rest of the cabinet uses rather than
 flat colours of their own: solid wood parts take the procedural wood
@@ -33,6 +33,10 @@ SPECS = {
     'STEEL':   ('METAL', 'Matte Aluminum'),
     'POLYMER': ('PLAIN', (0.90, 0.86, 0.76, 1.0), 0.0, 0.45, 0.0),
     'CLEAR_PLASTIC': ('PLAIN', (0.82, 0.88, 0.92, 1.0), 0.0, 0.1, 0.9),
+    'GRAY_PLASTIC': ('PLAIN', (0.42, 0.43, 0.44, 1.0), 0.0, 0.5, 0.0),
+    'WHITE_PLASTIC': ('PLAIN', (0.90, 0.90, 0.88, 1.0), 0.0, 0.45, 0.0),
+    'BLACK_PLASTIC': ('PLAIN', (0.03, 0.03, 0.03, 1.0), 0.0, 0.6, 0.0),
+    'HARDBOARD': ('PLAIN', (0.45, 0.30, 0.18, 1.0), 0.0, 0.7, 0.0),
 }
 
 # Solid-view colours: metal finishes read almost black in Solid shading
@@ -53,6 +57,10 @@ _NAMES = {
     'STEEL': "Accessory Satin Steel",
     'POLYMER': "Accessory Almond Polymer",
     'CLEAR_PLASTIC': "Accessory Clear Plastic",
+    'GRAY_PLASTIC': "Accessory Gray Polymer",
+    'WHITE_PLASTIC': "Accessory White Polymer",
+    'BLACK_PLASTIC': "Accessory Black Plastic",
+    'HARDBOARD': "Accessory Hardboard",
 }
 
 
