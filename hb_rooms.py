@@ -157,13 +157,25 @@ def vault_frame(scene, level, room):
     if room.ceiling_style not in ('VAULTED', 'ATTIC'):
         return None
     from . import hb_roofs
+    frames = []
     if level.roof.enabled:
-        return hb_roofs.roof_frame(scene, level)
+        frames.append(hb_roofs.roof_frame(scene, level))
     for other in scene.hb_house.levels:
         if other.roof.enabled and other.uid != level.uid:
             frame = hb_roofs.roof_frame(scene, other)
             if frame is not None and level.uid in {l.uid for l in hb_roofs._levels_under(scene, frame)}:
-                return frame
+                frames.append(frame)
+    # The roof actually over the room: a roof over part of the house, or
+    # a wing's roof on the level above, may not be its level's own
+    m = room.marker.location if room.marker is not None else None
+    for frame in frames:
+        if frame is None:
+            continue
+        if m is None:
+            return frame
+        u, v = hb_roofs._uv(frame, (m.x, m.y))
+        if frame['u0'] <= u <= frame['u1'] and frame['v0'] <= v <= frame['v1']:
+            return frame
     return None
 
 
