@@ -1629,10 +1629,14 @@ class hb_face_frame_OT_duplicate_bare_part(bpy.types.Operator):
 # the front's own style is re-applied so the change shows immediately.
 # ---------------------------------------------------------------------------
 
+# Fronts whose style resolves in the drawer front pool. A pullout front
+# is a door on a slide and takes the DOOR style (see the door style's
+# _DOOR_FRONT_ROLES); looking it up in the drawer pool found nothing,
+# so Set Door Frame edits on a pullout never re-applied.
 _DRAWER_FRONT_ROLES = frozenset({
     types_face_frame.PART_ROLE_DRAWER_FRONT,
-    types_face_frame.PART_ROLE_PULLOUT_FRONT,
     types_face_frame.PART_ROLE_FALSE_FRONT,
+    types_face_frame.PART_ROLE_TILT_OUT,
 })
 
 
