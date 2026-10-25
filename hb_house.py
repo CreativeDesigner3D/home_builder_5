@@ -943,10 +943,12 @@ class HB_Room(PropertyGroup):
     porch_obj: PointerProperty(type=bpy.types.Object)  # type: ignore
     porch_roof: EnumProperty(
         name="Porch Roof",
+        # A porch isn't always covered - a patio or an open deck - so it
+        # gets a roof of its own only when asked for
         items=[('AUTO', "Auto", "A shed roof unless the house's roof or a cross gable already covers the porch"),
                ('SHED', "Shed", "A shed roof from the porch's beam up to the house"),
-               ('NONE', "None", "No roof of its own")],
-        default='AUTO', update=_room_porch_changed)  # type: ignore
+               ('NONE', "None", "No roof of its own: open, or covered by the house's roof or a cross gable")],
+        default='NONE', update=_room_porch_changed)  # type: ignore
     porch_roof_pitch: FloatProperty(
         name="Porch Roof Pitch", description="Rise in 12 of the porch's shed roof",
         default=3.0, min=0.5, max=12.0, precision=2,
