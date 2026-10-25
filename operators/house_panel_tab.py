@@ -146,7 +146,8 @@ EXTERIOR_FIELDS = (
 
 
 ROOF_FIELDS = (
-    ('actions', (("Fit Roof to Outline", "home_builder.fit_roof_to_outline"),), ""),
+    ('actions', (("Fit Roof to Outline", "home_builder.fit_roof_to_outline"),
+                 ("Edit Roof", "home_builder.edit_roof")), ""),
     ('bool', 'enabled', "Roof on This Level"),
     ('enum', 'style', "Style", {'when': lambda roof: roof.enabled}),
     ('enum', 'base', "Sits On", {'when': lambda roof: roof.enabled}),

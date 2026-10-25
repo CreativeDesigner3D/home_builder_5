@@ -1603,6 +1603,61 @@ class HOME_BUILDER_OT_fit_roof_to_outline(bpy.types.Operator):
         return {'FINISHED'}
 
 
+def add_piece(scene, level, kind, bounds, porch_height=None, fit_shed=True):
+    """Add a cross gable ('GABLE') or shed dormer ('SHED') over the plan
+    rectangle bounds (x0, y0, x1, y1), make it the active piece and
+    rebuild the roof. A shed is fitted onto the roof's slope - its front
+    set back from the eaves, its back at the ridge - unless fit_shed is
+    False (drawn by hand: it keeps the rectangle drawn). Returns its index."""
+    roof = level.roof
+    frame = roof_frame(scene, level)
+    x0, y0, x1, y1 = bounds
+    x0, x1 = sorted((x0, x1))
+    y0, y1 = sorted((y0, y1))
+    # Work in the roof's own terms - v along the ridge, u across it -
+    # and store the plan rectangle
+    if frame['along_x']:
+        v0, v1, ua, ub = x0, x1, y0, y1
+    else:
+        v0, v1, ua, ub = y0, y1, x0, x1
+    front_low = (ua + ub) / 2.0 < frame['uc']
+    if kind == 'SHED':
+        if fit_shed:
+            vc = (v0 + v1) / 2.0
+            half = min((v1 - v0) / 2.0, SHED_WIDTH / 2.0)
+            v0, v1 = vc - half, vc + half
+            if front_low:
+                ua, ub = frame['u0'] + SHED_SET_BACK, frame['uc']
+            else:
+                ua, ub = frame['uc'], frame['u1'] - SHED_SET_BACK
+        u_front = ua if front_low else ub
+        eave = roof_top_z(frame, roof, u_front) + SHED_FRONT_RISE - level.elevation
+        pitch, overhang, name = 3.0, inch(6), "Shed Dormer"
+    else:
+        eave = porch_height if porch_height is not None else hb_house.exterior_wall_height(level)
+        pitch = roof.pitch if roof.style in ('GABLE', 'HIP') else 12.0
+        overhang = roof.eave_overhang
+        name = "Porch Gable" if porch_height is not None else "Cross Gable"
+    if frame['along_x']:
+        rect = (v0, ua, v1, ub)
+    else:
+        rect = (ua, v0, ub, v1)
+
+    index = len(roof.pieces)
+    piece = roof.pieces.add()
+    # Set quietly; one rebuild once it is complete
+    piece['name'] = name
+    piece['kind'] = 0 if kind == 'GABLE' else 1
+    for key, value in zip(('x0', 'y0', 'x1', 'y1'), rect):
+        piece[key] = value
+    piece['eave_height'] = eave
+    piece['pitch'] = pitch
+    piece['overhang'] = overhang
+    roof.active_piece_index = index
+    rebuild_roof(scene, level)
+    return index
+
+
 class HOME_BUILDER_OT_add_roof_piece(bpy.types.Operator):
     bl_idname = "home_builder.add_roof_piece"
     bl_label = "Add Roof Piece"
@@ -1622,55 +1677,11 @@ class HOME_BUILDER_OT_add_roof_piece(bpy.types.Operator):
     def execute(self, context):
         scene = context.scene
         level = hb_house.active_level(context)
-        roof = level.roof
-        frame = roof_frame(scene, level)
         bounds = _selection_bounds(context)
-        if frame is None or bounds is None:
+        if roof_frame(scene, level) is None or bounds is None:
             self.report({'WARNING'}, "Select the walls or porch the roof piece goes over")
             return {'CANCELLED'}
-        x0, y0, x1, y1 = bounds
-        # Work in the roof's own terms - v along the ridge, u across it -
-        # and store the plan rectangle
-        if frame['along_x']:
-            v0, v1, ua, ub = x0, x1, y0, y1
-        else:
-            v0, v1, ua, ub = y0, y1, x0, x1
-        front_low = (ua + ub) / 2.0 < frame['uc']
-        if self.kind == 'SHED':
-            vc = (v0 + v1) / 2.0
-            half = min((v1 - v0) / 2.0, SHED_WIDTH / 2.0)
-            v0, v1 = vc - half, vc + half
-            if front_low:
-                ua, ub = frame['u0'] + SHED_SET_BACK, frame['uc']
-                u_front = ua
-            else:
-                ua, ub = frame['uc'], frame['u1'] - SHED_SET_BACK
-                u_front = ub
-            eave = roof_top_z(frame, roof, u_front) + SHED_FRONT_RISE - level.elevation
-            pitch, overhang, name = 3.0, inch(6), "Shed Dormer"
-        else:
-            porch = _selected_porch_height(context, level)
-            eave = porch if porch is not None else hb_house.exterior_wall_height(level)
-            pitch = roof.pitch if roof.style in ('GABLE', 'HIP') else 12.0
-            overhang = roof.eave_overhang
-            name = "Porch Gable" if porch is not None else "Cross Gable"
-        if frame['along_x']:
-            rect = (v0, ua, v1, ub)
-        else:
-            rect = (ua, v0, ub, v1)
-
-        index = len(roof.pieces)
-        piece = roof.pieces.add()
-        # Set quietly; one rebuild once it is complete
-        piece['name'] = name
-        piece['kind'] = 0 if self.kind == 'GABLE' else 1
-        for key, value in zip(('x0', 'y0', 'x1', 'y1'), rect):
-            piece[key] = value
-        piece['eave_height'] = eave
-        piece['pitch'] = pitch
-        piece['overhang'] = overhang
-        roof.active_piece_index = index
-        rebuild_roof(scene, level)
+        add_piece(scene, level, self.kind, bounds, porch_height=_selected_porch_height(context, level))
         return {'FINISHED'}
 
 
