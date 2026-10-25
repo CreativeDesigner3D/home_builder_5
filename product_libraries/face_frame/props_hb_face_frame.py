@@ -6823,9 +6823,13 @@ STACK_FLOOR_BOTTOM_GAP = units.inch(0.625)
 
 def _update_hide_rollout_spacers(self, context):
     """Ladders on / off: a bottom gap still at the default for the
-    other mounting moves to this one's default. A typed gap is kept."""
+    other mounting moves to this one's default. A typed gap is kept.
+    The bottom box is floor mounted with the ladders hidden or with
+    Bottom Box Fixed at Floor (rollouts only)."""
+    floor = (self.hide_rollout_spacers
+             or (self.kind == 'ROLLOUT' and self.rollout_bottom_fixed))
     want, other = ((STACK_FLOOR_BOTTOM_GAP, STACK_BOTTOM_GAP)
-                   if self.hide_rollout_spacers
+                   if floor
                    else (STACK_BOTTOM_GAP, STACK_FLOOR_BOTTOM_GAP))
     if abs(self.bottom_gap - other) < 1e-6:
         self.bottom_gap = want   # its own update runs the recalc
@@ -10303,6 +10307,15 @@ class Face_Frame_Bay_Props(PropertyGroup):
                     "opening. Off prepares the opening only",
         default=False,
     )  # type: ignore
+    # Sink bays: build the floor as a loose 3/4 panel resting on
+    # cleats so it lifts out (plumbing access, replacing a water-damaged
+    # floor). Read only while the bay holds a sink.
+    sink_removable_floor: BoolProperty(
+        name="Removable Floor",
+        description="Build the floor under the sink as a loose 3/4\" "
+                    "panel resting on cleats, so it can be lifted out",
+        default=False, update=_update_cabinet_dim,
+    )  # type: ignore
 
     top_rail_width: FloatProperty(
         name="Top Rail Width", default=units.inch(1.5), unit='LENGTH', precision=4,
@@ -10839,6 +10852,17 @@ class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
         description="Don't build the side spacer ladders the slides "
                     "mount to - e.g. a single rollout or shelf fixed at "
                     "the floor that needs no spacer assembly. The bottom "
+                    "gap moves to 5/8\" unless it was typed",
+        default=False, update=_update_hide_rollout_spacers,
+    )  # type: ignore
+    # ROLLOUT only: the bottom box mounts to the cabinet floor and the
+    # boxes above it stay on the ladders. The ladders then start on top
+    # of the fixed box, and drop out entirely when it is the only box.
+    rollout_bottom_fixed: BoolProperty(
+        name="Bottom Box Fixed at Floor",
+        description="Mount the bottom rollout box to the cabinet floor "
+                    "instead of the spacer ladders. The ladders start "
+                    "above it (none when it is the only box). The bottom "
                     "gap moves to 5/8\" unless it was typed",
         default=False, update=_update_hide_rollout_spacers,
     )  # type: ignore

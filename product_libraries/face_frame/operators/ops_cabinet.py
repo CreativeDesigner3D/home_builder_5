@@ -7099,6 +7099,12 @@ class hb_face_frame_OT_add_appliance_to_bay(bpy.types.Operator):
         description="The sink is sent to the shop and hand-fitted into the "
                     "opening. Off prepares the opening only",
     )  # type: ignore
+    # Sinks only; written through to the bay's sink_removable_floor.
+    removable_floor: bpy.props.BoolProperty(
+        name="Removable Floor", default=False,
+        description="Build the floor under the sink as a loose 3/4\" "
+                    "panel resting on cleats, so it can be lifted out",
+    )  # type: ignore
     config: bpy.props.EnumProperty(
         name="Configuration",
         items=[
@@ -7228,6 +7234,9 @@ class hb_face_frame_OT_add_appliance_to_bay(bpy.types.Operator):
         self.custom_fit = (bp.farm_sink_custom_fit
                            if bay.get('APPLIANCE_BAY_KIND') == 'FARM_SINK'
                            else False)
+        self.removable_floor = (bp.sink_removable_floor
+                                if bay.get('APPLIANCE_BAY') == 'SINK'
+                                else False)
         # Snapshot everything the live preview may touch so Cancel can
         # put it back. (The front-layout preset is NOT previewed -- it
         # only applies on OK -- so the snapshot stays scalar.)
@@ -7243,6 +7252,7 @@ class hb_face_frame_OT_add_appliance_to_bay(bpy.types.Operator):
             'left_filler': bp.front_drop_left_filler,
             'right_filler': bp.front_drop_right_filler,
             'custom_fit': bp.farm_sink_custom_fit,
+            'removable_floor': bp.sink_removable_floor,
             'model_width': self.model_width,
         }
         # A true dialog (OK / Cancel), NOT invoke_props_popup: the popup
@@ -7290,6 +7300,7 @@ class hb_face_frame_OT_add_appliance_to_bay(bpy.types.Operator):
             bp.front_drop_left_filler = snap['left_filler']
             bp.front_drop_right_filler = snap['right_filler']
             bp.farm_sink_custom_fit = snap['custom_fit']
+            bp.sink_removable_floor = snap.get('removable_floor', False)
             from ...common import appliance_geo
             appliance_geo.set_housed_width(
                 appliance_geo.opening_appliance(bay), snap['model_width'])
@@ -7345,6 +7356,8 @@ class hb_face_frame_OT_add_appliance_to_bay(bpy.types.Operator):
             # Only a farm sink bay can carry the custom fit.
             bp.farm_sink_custom_fit = (self.appliance_kind == 'FARM_SINK'
                                        and self.custom_fit)
+            bp.sink_removable_floor = (self.appliance_kind != 'COOKTOP'
+                                       and self.removable_floor)
             types_face_frame.recalculate_face_frame_cabinet(root)
             # The sink itself: the recalc above creates it on a fresh bay,
             # so its width is set after, and one more recalc centres it.
@@ -7389,6 +7402,8 @@ class hb_face_frame_OT_add_appliance_to_bay(bpy.types.Operator):
                     row.prop(self, 'right_filler_amount', text="")
         if self.appliance_kind == 'FARM_SINK':
             box.prop(self, 'custom_fit')
+        if self.appliance_kind != 'COOKTOP':
+            box.prop(self, 'removable_floor')
         box.label(text="Configuration:")
         box.prop(self, 'config', expand=True)
         box.label(text="Interior:")

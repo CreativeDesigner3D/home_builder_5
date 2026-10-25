@@ -1626,6 +1626,9 @@ def draw_interior_items(layout, interior_obj):
             sub.prop(item, 'item_setback', text="Front Setback")
             sub.prop(item, 'rollout_depth', text="Depth (0 = Auto)")
             sub.prop(item, 'hide_rollout_spacers', text="Hide Spacer Ladders")
+            fx = sub.row()
+            fx.enabled = not item.hide_rollout_spacers
+            fx.prop(item, 'rollout_bottom_fixed', text="Bottom Box Fixed at Floor")
             lh = sub.row()
             lh.enabled = not item.hide_rollout_spacers
             lh.prop(item, 'rollout_spacer_height', text="Ladder Height (0 = Full)")

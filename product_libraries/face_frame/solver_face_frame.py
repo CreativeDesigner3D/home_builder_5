@@ -377,6 +377,7 @@ class FaceFrameLayout:
             'bottom_rail_width':  bp.bottom_rail_width,
             'remove_bottom':      bp.remove_bottom,
             'remove_carcass':     bp.remove_carcass,
+            'removable_floor':    bay_has_removable_floor(bay_obj),
             'floating_bay':       bp.floating_bay,
             'finish_bay':         bp.finish_bay,
             'finish_bay_flush':   bp.finish_bay_flush,
@@ -1237,7 +1238,10 @@ def kick_beam_width(layout, bay_index):
     over a gap the width of the bottom rail.
     """
     bay = layout.bays[bay_index]
-    width = bay['kick_height'] + bay['bottom_rail_width'] - layout.mt
+    # A removable floor is a 3/4 panel whatever the carcass stock.
+    floor_t = (REMOVABLE_FLOOR_THICKNESS if bay.get('removable_floor')
+               else layout.mt)
+    width = bay['kick_height'] + bay['bottom_rail_width'] - floor_t
     return max(width, 0.0)
 
 
@@ -1363,6 +1367,10 @@ def _kick_subfront_passthrough(layout, gap_index):
             or bay_a.get('remove_carcass') or bay_b.get('remove_carcass')):
         return False
     if bay_a.get('floating_bay') or bay_b.get('floating_bay'):
+        return False
+    # A removable floor can be a different thickness from the carcass
+    # bottom, which moves the beams' top edge under it.
+    if bool(bay_a.get('removable_floor')) != bool(bay_b.get('removable_floor')):
         return False
     return True
 
@@ -3161,6 +3169,9 @@ def _carcass_bottom_passthrough(layout, gap_index):
     if bay_finish_bottom(layout, gap_index) != bay_finish_bottom(layout,
                                                                  gap_index + 1):
         return False
+    # A removable floor is its own loose panel, cut to its bay.
+    if bool(bay_a.get('removable_floor')) != bool(bay_b.get('removable_floor')):
+        return False
     return True
 
 
@@ -3377,6 +3388,11 @@ def carcass_bottom_segments(layout):
             left_x -= left_side_thickness(layout)
         if end == layout.bay_count - 1 and _upper_side_captured(layout, 'RIGHT', end):
             right_x += right_side_thickness(layout)
+        # The top face stays at the bottom rail top either way; a
+        # removable floor is a 3/4 loose panel hung below that line.
+        removable = bool(first_bay.get('removable_floor'))
+        thickness = (REMOVABLE_FLOOR_THICKNESS if removable
+                     else bottom_thickness(layout))
         segments.append({
             'start_bay':  start,
             'end_bay':    end,
@@ -3384,15 +3400,88 @@ def carcass_bottom_segments(layout):
             'y':          -layout.dim_y + first_bay['depth'] - back_thickness(layout),
             'z':          (bay_bottom_z(layout, start)
                            + first_bay['bottom_rail_width']
-                           - bottom_thickness(layout)),
+                           - thickness),
             'length':     right_x - left_x,
             'panel_dim_y': first_bay['depth'] - back_thickness(layout) - layout.fft,
-            'thickness':  bottom_thickness(layout),
+            'thickness':  thickness,
             # Segments break at finish boundaries, so the start bay
             # speaks for the whole panel.
             'finished':   bay_finish_bottom(layout, start),
+            'removable':  removable,
         })
     return segments
+
+
+# ---------------------------------------------------------------------------
+# Removable floor
+# ---------------------------------------------------------------------------
+# A floor the shop leaves loose so it lifts out (under a sink, to get at
+# the plumbing or replace a damaged floor): a 3/4 panel dropped onto
+# cleats fastened to the walls either side of it. The panel keeps the
+# fixed floor's top face; the cleats sit directly under its ends.
+REMOVABLE_FLOOR_THICKNESS = inch(0.75)
+REMOVABLE_FLOOR_CLEAT_WIDTH = inch(0.75)     # across, against the wall
+REMOVABLE_FLOOR_CLEAT_HEIGHT = inch(0.75)    # tall, under the panel
+
+
+def bay_has_removable_floor(bay_obj):
+    """True when this bay's floor is built as a removable floor: the
+    option is on and the bay still holds a sink."""
+    bp = getattr(bay_obj, 'face_frame_bay', None)
+    if bp is None or not getattr(bp, 'sink_removable_floor', False):
+        return False
+    return bay_obj.get('APPLIANCE_BAY') == 'SINK'
+
+
+def removable_floor_cleats(left_x, right_x, back_y, front_y, floor_bottom_z,
+                           cleat_width=REMOVABLE_FLOOR_CLEAT_WIDTH,
+                           cleat_height=REMOVABLE_FLOOR_CLEAT_HEIGHT):
+    """The two cleats a removable floor rests on, as part descriptors in
+    the same frame as the floor: one against each wall at ``left_x`` /
+    ``right_x``, running from ``back_y`` forward to ``front_y`` (back_y
+    > front_y, the cabinet front is -Y), tops at ``floor_bottom_z``.
+
+    Each dict: key ('LEFT' / 'RIGHT'), name, location (x, back y,
+    bottom z), length (across X), width (front to back) and thickness
+    (vertical) - the shape a flat cutpart with Mirror Y takes. Empty
+    when there is no room for them."""
+    span = back_y - front_y
+    z = floor_bottom_z - cleat_height
+    if span <= 0.0 or z < -1e-6 or right_x - left_x < 2.0 * cleat_width:
+        return []
+    return [
+        {'key': 'LEFT', 'name': 'Floor Cleat Left',
+         'location': (left_x, back_y, z),
+         'length': cleat_width, 'width': span, 'thickness': cleat_height},
+        {'key': 'RIGHT', 'name': 'Floor Cleat Right',
+         'location': (right_x - cleat_width, back_y, z),
+         'length': cleat_width, 'width': span, 'thickness': cleat_height},
+    ]
+
+
+def removable_floor_cleat_descriptors(layout):
+    """Cleats for every removable carcass floor segment. They run the
+    floor's depth, held clear of the toe kick sub-base beams the floor's
+    front and back edges already rest on."""
+    out = []
+    rears = {s['start_bay']: s for s in kick_subrear_segments(layout)}
+    has_front = has_kick_subfront(layout)
+    for seg in carcass_bottom_segments(layout):
+        if not seg.get('removable'):
+            continue
+        back_y = seg['y']
+        front_y = seg['y'] - seg['panel_dim_y']
+        if has_front:
+            front_y = max(front_y, -layout.dim_y + layout.tks + layout.tkt)
+        rear = rears.get(seg['start_bay'])
+        if rear is not None:
+            back_y = min(back_y, rear['y'])
+        for cleat in removable_floor_cleats(
+                seg['x'], seg['x'] + seg['length'], back_y, front_y,
+                seg['z']):
+            cleat['key'] = '%d_%s' % (seg['start_bay'], cleat['key'])
+            out.append(cleat)
+    return out
 
 
 def _carcass_back_passthrough(layout, gap_index):
@@ -6175,26 +6264,29 @@ def _assembly_side_geometry(rect, cage_dim_x):
     return item_x, item_dx, spacer_l, spacer_r
 
 
-def _spacer_length(rect, item):
+def _spacer_length(rect, item, z0=0.0):
     """How tall the spacer ladders run. 0 (the default) is the full
     opening height; a typed height stops them short so whatever sits
-    above them clears them instead of being notched around them."""
+    above them clears them instead of being notched around them. The
+    typed height is measured from the opening bottom, so ladders that
+    start at ``z0`` lose that much length."""
     cage_dim_z = rect['cage_dim_z']
     typed = getattr(item, 'rollout_spacer_height', 0.0) or 0.0
-    if typed <= 0.0:
-        return cage_dim_z
-    return min(typed, cage_dim_z)
+    top = cage_dim_z if typed <= 0.0 else min(typed, cage_dim_z)
+    return max(0.0, top - z0)
 
 
 def _assembly_spacers(rect, spacer_height, kind, role, name_prefix,
-                      left_thickness, right_thickness, length=None):
+                      left_thickness, right_thickness, length=None,
+                      z0=0.0):
     """Four vertical spacer parts for a pullout/rollout assembly. Origin
     convention for VERTICAL parts: position.y is the back face of the
     spacer's Y extent (mirror_y at materialize time fans the width
     forward in -Y), position.z is the bottom (mirror_z fans length up
     in +Z). Per-side thicknesses fill from the carcass side to the
     slide gap off the item edge (reveal-dependent, so each side can
-    differ).
+    differ). ``z0`` lifts their bottom off the opening floor (a fixed
+    bottom rollout box sits under them).
     """
     cage_dim_x = rect['cage_dim_x']
     cage_dim_y = rect['cage_dim_y']
@@ -6224,7 +6316,7 @@ def _assembly_spacers(rect, spacer_height, kind, role, name_prefix,
             'role':         role,
             'name':         f'{name_prefix} {side_name}',
             'orientation':  'VERTICAL',
-            'position':     (x, y, 0.0),
+            'position':     (x, y, z0),
             'dims':         (cage_dim_z if length is None else length,
                              spacer_height, thickness),
         })
@@ -6302,6 +6394,10 @@ def _rollout_descriptors(rect, cage_dim_y, item, item_index=-1):
 
     out = []
     z = bottom_gap
+    # Bottom box fixed at the floor: it rides floor-mounted slides, so
+    # the ladders only serve the boxes above it and start on its top.
+    bottom_fixed = bool(getattr(item, 'rollout_bottom_fixed', False))
+    ladder_z0 = 0.0
     for k in reversed(range(len(heights))):
         item_height = heights[k]
         out.append({
@@ -6332,15 +6428,35 @@ def _rollout_descriptors(rect, cage_dim_y, item, item_index=-1):
                 'galley_top':   top,
             })
             z += GALLEY_TOP_T
+        if bottom_fixed and k == len(heights) - 1:
+            ladder_z0 = z + item_height
         z += item_height + distance_between
-    if not getattr(item, 'hide_rollout_spacers', False):
-        out.extend(_assembly_spacers(
-            rect, ASSEMBLY_SPACER_WIDTH, 'ROLLOUT_SPACER', 'ROLLOUT_SPACER',
-            'Rollout Spacer',
-            left_thickness=spacer_l, right_thickness=spacer_r,
-            length=_spacer_length(rect, item),
-        ))
+    if rollout_has_ladders(item, len(heights)):
+        length = _spacer_length(rect, item, ladder_z0)
+        if length > 0.0:
+            out.extend(_assembly_spacers(
+                rect, ASSEMBLY_SPACER_WIDTH, 'ROLLOUT_SPACER',
+                'ROLLOUT_SPACER', 'Rollout Spacer',
+                left_thickness=spacer_l, right_thickness=spacer_r,
+                length=length, z0=ladder_z0,
+            ))
     return out
+
+
+def rollout_has_ladders(item, box_count=None):
+    """True when a ROLLOUT item builds spacer ladders: not hidden, and
+    not a lone bottom box fixed at the floor (nothing left on slides
+    that need them)."""
+    if getattr(item, 'hide_rollout_spacers', False):
+        return False
+    if box_count is None:
+        box_count = (len(item.rollout_boxes) if len(item.rollout_boxes)
+                     else item.qty)
+    if box_count <= 0:
+        return False
+    if getattr(item, 'rollout_bottom_fixed', False) and box_count <= 1:
+        return False
+    return True
 
 
 # ---------------------------------------------------------------------------

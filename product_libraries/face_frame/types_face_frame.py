@@ -177,6 +177,9 @@ PART_ROLE_REAR_STRETCHER = 'REAR_STRETCHER'
 PART_ROLE_GALLEY_APRON = 'GALLEY_APRON'
 PART_ROLE_GALLEY_PARTITION = 'GALLEY_PARTITION'
 PART_ROLE_GALLEY_CLEAT = 'GALLEY_CLEAT'
+PART_ROLE_FLOOR_CLEAT = 'FLOOR_CLEAT'
+# Stamped on a carcass floor built loose (lifts out of the cabinet).
+TAG_LOOSE_PART = 'hb_loose_part'
 PART_ROLE_BOTTOM = 'BOTTOM'
 PART_ROLE_BACK = 'BACK'
 # Finished bottom (uppers): an applied finish panel under the carcass
@@ -3454,6 +3457,7 @@ class FaceFrameCabinet(GeoNodeCage):
                 part.set_input('Width', seg['panel_dim_y'])
                 part.set_input('Thickness', seg['thickness'])
                 child[TAG_SEGMENT_FINISHED] = seg['finished']
+                _sync_removable_floor_name(child, seg)
 
             elif role == PART_ROLE_FRONT_STRETCHER:
                 seg = front_str_by_start.get(child.get('hb_segment_start_bay'))
@@ -3993,6 +3997,10 @@ class FaceFrameCabinet(GeoNodeCage):
         # Galley workstation construction: aprons, partitions, cleats
         # and the sink. Unconditional so another cabinet sheds them.
         self._apply_galley_parts(layout)
+
+        # Removable floor cleats. Unconditional so turning the option
+        # off (or removing the sink) takes them away again.
+        self._apply_removable_floor_cleats(layout)
 
         # Appliance bay annotation (square + SINK / COOKTOP word) on top
         # of stamped bays and the dedicated sink cabinet's basin bay.
@@ -6232,6 +6240,17 @@ class FaceFrameCabinet(GeoNodeCage):
             if mat is not None:
                 return mat
         return cls._stainless_material()
+
+    # ---- Removable floor cleats ------------------------------------
+    FLOOR_CLEAT_KEY = 'hb_floor_cleat_key'
+
+    def _apply_removable_floor_cleats(self, layout):
+        """Place the cleats every removable floor rests on and remove
+        any left over from a floor that is fixed again."""
+        want = []
+        if self._has_carcass() and layout.cabinet_type != 'UPPER':
+            want = solver.removable_floor_cleat_descriptors(layout)
+        sync_floor_cleats(self.obj, want, self.FLOOR_CLEAT_KEY)
 
     # ---- Galley workstation parts ----------------------------------
     GALLEY_KEY = 'hb_galley_key'
@@ -16654,6 +16673,54 @@ class WindowSeatFaceFrameCabinet(FurnitureFaceFrameCabinet):
         # Flush kick is forced by the FurnitureFaceFrameCabinet create;
         # no furniture_top write here keeps the top open (no veneer slab).
         super().create(name, bay_qty=bay_qty)
+
+
+def _sync_removable_floor_name(bottom_obj, seg):
+    """Name and tag a carcass floor for what it is: 'Removable Floor N'
+    and loose when its segment is built removable, 'Bottom N' when not,
+    so the part reads right in the parts list."""
+    n = seg['start_bay'] + 1
+    removable = bool(seg.get('removable'))
+    want = ('Removable Floor %d' if removable else 'Bottom %d') % n
+    if bottom_obj.name != want and not bottom_obj.name.startswith(want + '.'):
+        bottom_obj.name = want
+    if removable:
+        bottom_obj[TAG_LOOSE_PART] = True
+    elif TAG_LOOSE_PART in bottom_obj:
+        del bottom_obj[TAG_LOOSE_PART]
+
+
+def sync_floor_cleats(root_obj, descriptors, key_tag):
+    """Make ``root_obj``'s cleat children match ``descriptors`` (see
+    solver.removable_floor_cleats): reuse a cleat by its key, create
+    the missing ones, delete the rest. ``key_tag`` is the custom
+    property the cleats are keyed by, so another product can keep its
+    own set of cleats apart."""
+    existing = {c.get(key_tag): c for c in root_obj.children
+                if c.get(key_tag)}
+    live = set()
+    for desc in descriptors:
+        key = desc['key']
+        obj = existing.get(key)
+        if obj is None:
+            part = CabinetPart()
+            part.create(desc['name'])
+            obj = part.obj
+            obj.parent = root_obj
+            obj[key_tag] = key
+            obj['hb_part_role'] = PART_ROLE_FLOOR_CLEAT
+            obj['CABINET_PART'] = True
+            obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_part_commands'
+            part.set_input('Mirror Y', True)
+        obj.location = desc['location']
+        part = GeoNodeCutpart(obj)
+        part.set_input('Length', desc['length'])
+        part.set_input('Width', desc['width'])
+        part.set_input('Thickness', desc['thickness'])
+        live.add(key)
+    for key, obj in existing.items():
+        if key not in live:
+            bpy.data.objects.remove(obj, do_unlink=True)
 
 
 class SinkFaceFrameCabinet(BaseFaceFrameCabinet):
