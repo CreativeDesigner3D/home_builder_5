@@ -247,6 +247,164 @@ def _across_ridge(frame):
     return lambda a, b, z: _world(frame, b, a, z)
 
 
+# =============================================================================
+# HIP ROOFS
+# =============================================================================
+# A hip roof's underside rises equally from all four sides of its
+# rectangle: z = plate + pitch * (distance to the nearest side). Its long
+# sides meet at a ridge half the short span in from each end (a point on
+# a square). Built as solids rather than swept profiles.
+
+def _hip_points(frame, out, z_at_edge):
+    """The hip surface over the frame's rectangle grown by `out`, its edge
+    at height z_at_edge: (corners, ridge ends) in world coordinates."""
+    p = frame['p']
+    u0, u1 = frame['u0'] - out, frame['u1'] + out
+    v0, v1 = frame['v0'] - out, frame['v1'] + out
+    h = (u1 - u0) / 2.0
+    uc = (u0 + u1) / 2.0
+    zr = z_at_edge + h * p
+    if v1 - v0 >= 2.0 * h:
+        ra, rb = v0 + h, v1 - h
+    else:
+        ra = rb = (v0 + v1) / 2.0       # shorter than wide along the ridge: a point
+        zr = z_at_edge + (v1 - v0) / 2.0 * p
+    w = lambda u, v, z: _world(frame, u, v, z)
+    corners = [w(u0, v0, z_at_edge), w(u1, v0, z_at_edge), w(u1, v1, z_at_edge), w(u0, v1, z_at_edge)]
+    return corners, [w(uc, ra, zr), w(uc, rb, zr)]
+
+
+def _hip_surface_faces(c, r):
+    """The four faces of a hip surface: its long sides, then its ends."""
+    e00, e10, e11, e01 = c
+    r0, r1 = r
+    return [(e00, e01, r1, r0), (e10, r0, r1, e11), (e00, r0, e10), (e01, e11, r1)]
+
+
+def _solid(name, faces):
+    """A mesh from faces given as tuples of points (shared points merged)."""
+    mesh = bpy.data.meshes.new(name)
+    bm = bmesh.new()
+    index = {}
+
+    def vert(p):
+        key = tuple(round(c, 6) for c in p)
+        if key not in index:
+            index[key] = bm.verts.new(p)
+        return index[key]
+    for f in faces:
+        vs = []
+        for p in f:
+            v = vert(p)
+            if v not in vs:
+                vs.append(v)
+        if len(vs) >= 3:
+            try:
+                bm.faces.new(vs)
+            except ValueError:
+                pass
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+    uv = bm.loops.layers.uv.new("UVMap")
+    for f in bm.faces:
+        for loop in f.loops:
+            co = loop.vert.co
+            loop[uv].uv = (co.x + co.z, co.y + co.z)
+    bm.to_mesh(mesh)
+    bm.free()
+    return mesh
+
+
+def _hip_slab(frame, out, z_edge, thickness):
+    """Faces of a hip slab: underside, top lifted by the slope's thickness,
+    and its rim."""
+    tv = thickness / math.cos(math.atan(frame['p']))
+    c, r = _hip_points(frame, out, z_edge)
+    ct, rt = _hip_points(frame, out, z_edge + tv)
+    faces = [tuple(reversed(f)) for f in _hip_surface_faces(c, r)] + _hip_surface_faces(ct, rt)
+    for i in range(4):
+        j = (i + 1) % 4
+        faces.append((c[i], c[j], ct[j], ct[i]))
+    return faces
+
+
+def _hip_box(frame, out, under_edge, top_z, surface_on_top):
+    """A solid bounded by a hip surface (grown by `out`, its edge at
+    under_edge) and a flat cap at top_z: above the surface when
+    surface_on_top is False (a trim), below it when True (a top volume)."""
+    c, r = _hip_points(frame, out, under_edge)
+    cap = [(x, y, top_z) for x, y, _z in c]
+    faces = list(_hip_surface_faces(c, r)) + [tuple(cap)]
+    for i in range(4):
+        j = (i + 1) % 4
+        faces.append((c[i], c[j], cap[j], cap[i]))
+    return faces
+
+
+def main_roof_mesh(frame, roof):
+    if roof.style == 'HIP':
+        ov = roof.eave_overhang
+        return _solid("Roof", _hip_slab(frame, ov, frame['plate'] - ov * frame['p'], roof.thickness))
+    return _mesh("Roof", [(roof_section(frame, roof),
+                           frame['v0'] - roof.gable_overhang,
+                           frame['v1'] + roof.gable_overhang,
+                           _along_ridge(frame))])
+
+
+def trim_mesh(frame, roof):
+    if roof.style == 'HIP':
+        r = CUTTER_REACH
+        return _solid("Roof Trim", _hip_box(frame, r, frame['plate'] - r * frame['p'],
+                                            frame['ridge_z'] + CUTTER_HEIGHT, False))
+    return _mesh("Roof Trim", [(trim_section(frame),
+                                frame['v0'] - CUTTER_REACH,
+                                frame['v1'] + CUTTER_REACH,
+                                _along_ridge(frame))])
+
+
+def top_volume_mesh(frame, roof):
+    if roof.style == 'HIP':
+        r = CUTTER_REACH
+        tv = roof.thickness / math.cos(math.atan(frame['p']))
+        return _solid("Roof Top Volume", _hip_box(frame, r, frame['plate'] - r * frame['p'] + tv,
+                                                  frame['plate'] - CUTTER_HEIGHT, True))
+    return _mesh("Roof Top Volume", [(top_volume_section(frame, roof),
+                                      frame['v0'] - CUTTER_REACH,
+                                      frame['v1'] + CUTTER_REACH,
+                                      _along_ridge(frame))])
+
+
+# ---- An upper floor rising through the roof ----------------------------------
+
+RISE_CUT = "Rise Through"
+
+
+def rise_through_box(scene, level, frame):
+    """A box over the plan of the level above, from below the eaves to
+    well above the ridge - what the roof is opened by, and kept off -
+    when that level stands up through this roof. None otherwise."""
+    if not level.roof.rise_through:
+        return None
+    from .operators import walls
+    upper = hb_house.level_above(level.id_data.hb_house, level)
+    if upper is None:
+        return None
+    corners = [pt for obj in _exterior_walls(scene, upper)
+               for _e, _f, pt in walls.wall_plan_corners(obj)]
+    if len(corners) < 3:
+        return None
+    x0, x1 = min(p.x for p in corners), max(p.x for p in corners)
+    y0, y1 = min(p.y for p in corners), max(p.y for p in corners)
+    z0, z1 = frame['plate'] - 1.0, frame['ridge_z'] + CUTTER_HEIGHT
+    mesh = bpy.data.meshes.new("Rise Through")
+    bm = bmesh.new()
+    vs = [bm.verts.new((x, y, z)) for z in (z0, z1) for x, y in ((x0, y0), (x1, y0), (x1, y1), (x0, y1))]
+    for f in ((0, 3, 2, 1), (4, 5, 6, 7), (0, 1, 5, 4), (1, 2, 6, 5), (2, 3, 7, 6), (3, 0, 4, 7)):
+        bm.faces.new([vs[i] for i in f])
+    bm.to_mesh(mesh)
+    bm.free()
+    return mesh
+
+
 def roof_section(frame, roof):
     """The roof slab across: the underside from eave to eave (past the
     walls by the overhang), then back along the top, the thickness above
@@ -751,6 +909,9 @@ def _levels_under(scene, frame):
                 if l.uid == frame['level_uid']), None)
     if own is not None and own not in out:
         out.append(own)
+    # A level standing up through the roof isn't under it
+    if own is not None and own.roof.rise_through:
+        out = [l for l in out if l.elevation <= own.elevation + 0.01]
     # A roof starting at its level's floor covers the walls below too (its
     # outline does): their end walls make its gables
     if own is not None and own.roof.base == 'FLOOR':
@@ -860,6 +1021,8 @@ def gable_wall_height(scene, wall_obj, height, carried=False):
                     and _set_back_from_eaves(frame, wall_obj, d)):
                 height = max(height, frame['ridge_z'] - m.translation.z + GABLE_MARGIN)
             continue                    # not square to the ridge
+        if level.roof.style == 'HIP':
+            continue                    # a hip slopes down to its ends: no gable
         needed = frame['ridge_z'] - m.translation.z + GABLE_MARGIN
         height = max(height, needed)
     return height
@@ -949,7 +1112,7 @@ def apply_roof_visibility(scene):
 # =============================================================================
 
 _PIECES = ('roof_obj', 'dormer_obj', 'cutter_obj', 'dormer_tops_obj',
-           'dormer_inside_obj', 'roof_top_obj', 'gables_obj', 'dormer_walls_obj')
+           'dormer_inside_obj', 'roof_top_obj', 'gables_obj', 'dormer_walls_obj', 'rise_obj')
 
 
 def _remove_roof(roof):
@@ -1016,10 +1179,7 @@ def rebuild_roof(scene, level):
 
     # The main roof, opened under the dormers
     main = _visible_piece(scene, level, roof, 'roof_obj', f"Roof - {level.name}",
-                          _mesh("Roof", [(roof_section(frame, roof),
-                                          frame['v0'] - roof.gable_overhang,
-                                          frame['v1'] + roof.gable_overhang,
-                                          _along_ridge(frame))]))
+                          main_roof_mesh(frame, roof))
     d_roofs, d_tops, d_insides = _dormer_prisms(frame, roof, gabled)
     s_roofs, s_walls = _shed_prisms(frame, roof, sheds)
     d_roofs += s_roofs
@@ -1033,11 +1193,7 @@ def rebuild_roof(scene, level):
                                   _mesh("Dormers", d_roofs) if d_roofs else None)
     porch_roofs = [r.porch_roof_obj for r in level.rooms if r.porch_roof_obj is not None]
     top_volume = _helper(scene, roof, 'roof_top_obj', f"Roof Top Volume - {level.name}",
-                         _mesh("Roof Top Volume", [(top_volume_section(frame, roof),
-                                                    frame['v0'] - CUTTER_REACH,
-                                                    frame['v1'] + CUTTER_REACH,
-                                                    _along_ridge(frame))])
-                         if d_roofs or porch_roofs else None,
+                         top_volume_mesh(frame, roof) if d_roofs or porch_roofs else None,
                          ROOF_CUTTER_KEY)
     # Porch sheds stop where they run up under the roof
     for obj in porch_roofs:
@@ -1064,11 +1220,13 @@ def rebuild_roof(scene, level):
 
     # The trim: everything above the roof, less the inside of the dormers
     cutter = _helper(scene, roof, 'cutter_obj', f"Roof Trim - {level.name}",
-                     _mesh("Roof Trim", [(trim_section(frame),
-                                          frame['v0'] - CUTTER_REACH,
-                                          frame['v1'] + CUTTER_REACH,
-                                          _along_ridge(frame))]),
-                     ROOF_CUTTER_KEY)
+                     trim_mesh(frame, roof), ROOF_CUTTER_KEY)
+    # An upper floor standing up through the roof: the roof stops at its
+    # walls, and the trim keeps off them
+    rise = _helper(scene, roof, 'rise_obj', f"Roof Rise Through - {level.name}",
+                   rise_through_box(scene, level, frame), ROOF_CUTTER_KEY)
+    _set_boolean(main, RISE_CUT, rise)
+    _set_boolean(cutter, RISE_CUT, rise)
     inside = _helper(scene, roof, 'dormer_inside_obj', f"Roof Dormer Insides - {level.name}",
                      _mesh("Roof Dormer Insides", d_insides) if gabled else None,
                      ROOF_CUTTER_KEY)
@@ -1408,7 +1566,7 @@ def fit_roof_to_outline(scene, level):
     roof['use_extents'] = True
     roof['ext_x0'], roof['ext_y0'], roof['ext_x1'], roof['ext_y1'] = x0, y0, x1, y1
     eave = hb_house.exterior_wall_height(level)
-    pitch = roof.pitch if roof.style == 'GABLE' else 12.0
+    pitch = roof.pitch if roof.style in ('GABLE', 'HIP') else 12.0
     for n, (wx0, wy0, wx1, wy1) in enumerate(plan['wings']):
         index = len(roof.pieces)
         piece = roof.pieces.add()
@@ -1493,7 +1651,7 @@ class HOME_BUILDER_OT_add_roof_piece(bpy.types.Operator):
         else:
             porch = _selected_porch_height(context, level)
             eave = porch if porch is not None else hb_house.exterior_wall_height(level)
-            pitch = roof.pitch if roof.style == 'GABLE' else 12.0
+            pitch = roof.pitch if roof.style in ('GABLE', 'HIP') else 12.0
             overhang = roof.eave_overhang
             name = "Porch Gable" if porch is not None else "Cross Gable"
         if frame['along_x']:

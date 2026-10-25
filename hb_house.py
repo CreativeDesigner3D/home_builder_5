@@ -1038,8 +1038,16 @@ class HB_Roof(PropertyGroup):
         name="Style",
         items=[('GABLE', "Gable", "Two slopes meeting at a ridge, gable walls at the ends"),
                ('GAMBREL', "Barn (Gambrel)",
-                "A steep lower slope and a shallow upper one on each side, like a barn")],
+                "A steep lower slope and a shallow upper one on each side, like a barn"),
+               ('HIP', "Hip",
+                "Slopes on all four sides, meeting at a ridge - or a point on a square house")],
         default='GABLE', update=_roof_changed)  # type: ignore
+
+    rise_through: BoolProperty(
+        name="Upper Floor Rises Through",
+        description=("The level above stands up through this roof - a smaller upper floor on "
+                     "a wider one: the roof stops at its walls and doesn't cut them"),
+        default=False, update=_roof_changed)  # type: ignore
 
     base: EnumProperty(
         name="Sits On",
@@ -1152,6 +1160,7 @@ class HB_Roof(PropertyGroup):
     active_piece_index: IntProperty(name="Active Roof Piece")  # type: ignore
     gables_obj: PointerProperty(type=bpy.types.Object)  # type: ignore
     dormer_walls_obj: PointerProperty(type=bpy.types.Object)  # type: ignore
+    rise_obj: PointerProperty(type=bpy.types.Object)  # type: ignore
 
 
 class HB_Level(PropertyGroup):
