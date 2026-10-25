@@ -1156,6 +1156,9 @@ def rebuild_roof(scene, level):
     if scene is None or level is None:
         return False
     roof = level.roof
+    # The porches' sheds depend on this roof - covered by it, or running
+    # up under it - so they follow it, on or off
+    refresh_porch_roofs(scene, level)
     frame = roof_frame(scene, level) if roof.enabled else None
     if frame is None:
         _dormer_fronts.pop(level.uid, None)
@@ -1361,6 +1364,24 @@ def build_porch_roof(scene, level, room, polygon, segs):
         for i, poly in enumerate(obj.data.polygons):
             poly.material_index = 0 if i < n_roof else 1
     obj.hide_viewport = not scene.hb_house.show_roofs
+
+
+def refresh_porch_roofs(scene, level):
+    """Remake the shed roofs of a level's porches: whether a porch gets
+    one, and how far it runs back, follow the level's roof."""
+    from . import hb_porches, hb_wall_graph
+    from .operators import walls
+    porches = [r for r in level.rooms
+               if r.is_porch and not r.orphaned and r.marker is not None]
+    if not porches:
+        return
+    _objs, segs = walls.level_wall_segs(scene, level.uid)
+    areas = [a for a in hb_wall_graph.find_rooms(segs) if hb_porches.is_porch_area(a)]
+    for room in porches:
+        mark = (room.marker.location.x, room.marker.location.y)
+        area = next((a for a in areas if hb_wall_graph.point_in_polygon(mark, a.polygon)), None)
+        if area is not None:
+            build_porch_roof(scene, level, room, area.polygon, segs)
 
 
 def remove_porch_roof(room):
