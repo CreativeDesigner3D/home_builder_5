@@ -1023,6 +1023,15 @@ def _stamp_warning(obj, message):
         del obj[PROP_BOX_WARNING]
 
 
+def split_warnings(text):
+    """The separate warnings in a stamp. Several verdicts on one part
+    are joined with "; ", but a single verdict can carry "; " itself
+    ("... needs 39" of height; this opening is 38.3""), so only a "; "
+    that starts a new sentence (a capital or a digit) separates two."""
+    import re
+    return [t for t in re.split(r'; (?=[A-Z0-9])', str(text or '')) if t]
+
+
 def _door_size_warning(width, height, hinge, opening_w=0.0):
     """Why this door is past the size limits, or '' when it is
     not. A swing door runs up to 24 5/8" wide by 84" tall; a lift-up

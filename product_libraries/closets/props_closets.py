@@ -2743,7 +2743,8 @@ class Closets_Scene_Props(PropertyGroup):
         for obj in context.scene.objects:
             seen = set()
             for key in keys:
-                for message in str(obj.get(key, '') or '').split('; '):
+                for message in types_closets.split_warnings(
+                        obj.get(key, '')):
                     if message and message not in seen:
                         seen.add(message)
                         found.append((obj.name, message))
