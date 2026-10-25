@@ -13,7 +13,8 @@ hb_roofs) are drawn as outlines on the plan, with grips to drag:
 * Eave grips set where a piece's slopes meet its walls - or a shed
   dormer's front wall height - and how far the main roof's eaves sit
   above its walls.
-* G or D draws a new cross gable or shed dormer: click two opposite
+* G, D or A draws a new cross gable, shed dormer or gable dormer (a
+  dormer is drawn on the roof's slope): click two opposite
   corners on the plan, or drag from one to the other. Two clicks along
   one wall make the piece's front that wide, running back to the main
   ridge.
@@ -51,8 +52,11 @@ HOVER_COLOR = (1.0, 0.95, 0.2, 1.0)
 LABEL_BG = (0.08, 0.08, 0.08, 0.85)
 
 HINT = ("Edit Roof: drag grips or pieces   G: draw cross gable   D: draw shed dormer   "
-        "R: turn ridge   X: remove piece   Ctrl: no snapping   Shift: fine   "
-        "Enter / Esc: done")
+        "A: draw gable dormer   R: turn ridge   X: remove piece   Ctrl: no snapping   "
+        "Shift: fine   Enter / Esc: done")
+
+PIECE_WORDS = {'GABLE': "cross gable", 'SHED': "shed dormer", 'DORMER': "gable dormer"}
+DRAWN = {'GABLE': "Draw Cross Gable", 'SHED': "Draw Shed Dormer", 'DORMER': "Draw Gable Dormer"}
 
 # Viewport navigation passes through even mid-drawing
 NAVIGATION = {'MIDDLEMOUSE', 'WHEELUPMOUSE', 'WHEELDOWNMOUSE', 'WHEELINMOUSE',
@@ -224,7 +228,7 @@ def outlines(scene, level):
         if d is not None:
             front, back = d['u_front'], (min if d['sign'] > 0 else max)(
                 (piece.y0, piece.y1) if frame['along_x'] else (piece.x0, piece.x1))
-            if piece.kind == 'GABLE':
+            if piece.kind in ('GABLE', 'DORMER'):
                 pvc, _half, _p, pplate, ridge = hb_roofs.dormer_dims(d, roof)
                 top = w(front, pvc, ridge)
                 out['ridges'] = [(top, w(back, pvc, ridge)),
@@ -278,7 +282,7 @@ class EditSession:
         self.scene = hb_house.house_scene_of(scene) or scene
         self.hover = None           # (target, kind, side) - target -1 is the main roof
         self.drag = None
-        self.draw_kind = None       # 'GABLE' / 'SHED' while drawing a piece
+        self.draw_kind = None       # 'GABLE' / 'SHED' / 'DORMER' while drawing a piece
         self.drawing = None         # (start, end) plan points of the rectangle drawn
         self.corner = None          # where the first corner would go, before the click
         self.second_click = False   # the drawing's end was clicked (not dragged to)
@@ -350,7 +354,7 @@ class EditSession:
             out = self.outlines()
             if out is None:
                 return False
-            p = view.on_plane(mx, my, out['main']['z'])
+            p = self._draw_point(view, mx, my, out)
             if p is None:
                 return False
             p = self._snap_point(view, p, out, ctrl=False)
@@ -379,7 +383,68 @@ class EditSession:
         return True
 
     def piece_word(self):
-        return "shed dormer" if self.draw_kind == 'SHED' else "cross gable"
+        return PIECE_WORDS.get(self.draw_kind, "cross gable")
+
+    def _draw_point(self, view, mx, my, out):
+        """Where the cursor is on the plan while drawing: on the main
+        roof's slope for a dormer (it stands on the roof), else on the
+        level of the walls' tops."""
+        if self.draw_kind in ('SHED', 'DORMER'):
+            p = self._on_roof(view, mx, my, out)
+            if p is not None:
+                return p
+        return view.on_plane(mx, my, out['main']['z'])
+
+    def _surface_z(self, out, x, y):
+        frame = out['frame']
+        u = y if frame['along_x'] else x
+        return hb_roofs.roof_top_z(frame, self.level().roof, u)
+
+    def _on_roof(self, view, mx, my, out):
+        """Where the ray under the cursor meets the main roof's top, or
+        None off it."""
+        frame = out['frame']
+        rect = out['main']['rect']
+        o, d = view.ray(mx, my)
+        if abs(d.z) < 1e-6:
+            return None
+        hi, lo = frame['ridge_z'] + 3.0, frame['plate'] - 3.0
+        t0, t1 = (hi - o.z) / d.z, (lo - o.z) / d.z
+        if t1 < t0:
+            t0, t1 = t1, t0
+        t0 = max(t0, 0.0)
+        above = lambda t: (o + d * t).z - self._surface_z(out, (o + d * t).x, (o + d * t).y)
+        steps = 64
+        prev_t, prev = t0, above(t0)
+        for i in range(1, steps + 1):
+            t = t0 + (t1 - t0) * i / steps
+            cur = above(t)
+            if (prev > 0) != (cur > 0):
+                a, b = prev_t, t
+                for _ in range(30):
+                    m = (a + b) / 2.0
+                    if (above(m) > 0) == (prev > 0):
+                        a = m
+                    else:
+                        b = m
+                p = o + d * ((a + b) / 2.0)
+                x0, y0, x1, y1 = rect
+                if min(x0, x1) - 0.5 <= p.x <= max(x0, x1) + 0.5 and min(y0, y1) - 0.5 <= p.y <= max(y0, y1) + 0.5:
+                    return p
+                return None
+            prev_t, prev = t, cur
+        return None
+
+    def drawing_ring(self):
+        """The rectangle being drawn, its corners on the roof's slope for a
+        dormer."""
+        a, b = self.drawing
+        ring = _ring((a.x, a.y, b.x, b.y), a.z)
+        if self.draw_kind in ('SHED', 'DORMER'):
+            out = self.outlines()
+            if out is not None:
+                ring = [Vector((x, y, self._surface_z(out, x, y))) for x, y, _z in ring]
+        return ring
 
     def prompt(self):
         """The status bar's line: what a click does now."""
@@ -395,7 +460,7 @@ class EditSession:
         if self.draw_kind is not None and self.drawing is None:
             # Waiting for the first corner: show where it would snap
             out = self.outlines()
-            p = view.on_plane(mx, my, out['main']['z']) if out else None
+            p = self._draw_point(view, mx, my, out) if out else None
             if p is not None:
                 self.corner = self._snap_point(view, p, out, ctrl)
                 self.message = self.warning or f"New {self.piece_word()}: click the first corner"
@@ -403,7 +468,7 @@ class EditSession:
             return
         if self.drawing is not None:
             out = self.outlines()
-            p = view.on_plane(mx, my, out['main']['z']) if out else None
+            p = self._draw_point(view, mx, my, out) if out else None
             if p is not None:
                 p = self._snap_point(view, p, out, ctrl)
                 self.drawing = (self.drawing[0], p)
@@ -558,7 +623,7 @@ class EditSession:
                 value = wall            # onto the tops of the walls
             value = max(value, MIN_SIZE)
             piece['eave_height'] = value
-            what = "Front wall" if piece.kind == 'SHED' else "Eaves"
+            what = "Front wall" if piece.kind in ('SHED', 'DORMER') else "Eaves"
             self.message = f"{what} {format_length(self.scene, value)}"
         p = Vector(dr['point'])
         self.label_at = Vector((p.x, p.y, z))
@@ -590,7 +655,7 @@ class EditSession:
             self.draw_kind = self.corner = None
             self.warning = ""
             hb_roofs.add_piece(self.scene, level, kind, rect, fit_shed=False)
-            return "Draw Shed Dormer" if kind == 'SHED' else "Draw Cross Gable"
+            return DRAWN[kind]
         dr, self.drag = self.drag, None
         self.message = ""
         if dr is None or not dr['moved']:
@@ -739,7 +804,7 @@ def draw(session, region, rv3d):
     marks = []
     if session.drawing is not None:
         a, b = session.drawing
-        ring = _ring((a.x, a.y, b.x, b.y), a.z)
+        ring = session.drawing_ring()
         _segments(shader, flat([(ring[i], ring[(i + 1) % 4]) for i in range(4)]), DRAW_COLOR, 2.5)
         marks = [a, b]
     elif session.draw_kind is not None and session.corner is not None:
@@ -933,6 +998,9 @@ class HOME_BUILDER_OT_edit_roof(bpy.types.Operator):
             return {'RUNNING_MODAL'}
         if event.type == 'D':
             session.start_drawing('SHED')
+            return {'RUNNING_MODAL'}
+        if event.type == 'A':
+            session.start_drawing('DORMER')
             return {'RUNNING_MODAL'}
         if event.type == 'R':
             if session.turn_ridge():

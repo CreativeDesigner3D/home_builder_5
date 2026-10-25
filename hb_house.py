@@ -989,7 +989,10 @@ class HB_RoofPiece(PropertyGroup):
                 "running back into the main roof with valleys where they meet"),
                ('SHED', "Shed Dormer",
                 "A dormer on the roof's slope: a front wall and a shallow "
-                "roof sloping back up into the main roof")],
+                "roof sloping back up into the main roof"),
+               ('DORMER', "Gable Dormer",
+                "A dormer on the roof's slope with a gable roof of its own: a "
+                "front wall for a window, and side walls down to the main roof")],
         default='GABLE', update=_roof_piece_changed)  # type: ignore
 
     x0: FloatProperty(name="Left Edge", subtype='DISTANCE', precision=4,
@@ -1004,7 +1007,7 @@ class HB_RoofPiece(PropertyGroup):
     eave_height: FloatProperty(
         name="Eave Height",
         description=("Above the level's floor: where a cross gable's slopes meet its "
-                     "walls, or the top of a shed dormer's front wall"),
+                     "walls, or the top of a dormer's front wall"),
         default=inch(120), subtype='DISTANCE', precision=4,
         update=_roof_piece_changed)  # type: ignore
 
@@ -1018,8 +1021,8 @@ class HB_RoofPiece(PropertyGroup):
         default=inch(12), min=0.0, subtype='DISTANCE', precision=4,
         update=_roof_piece_changed)  # type: ignore
 
-    # A shed dormer's front: a real wall, so windows go in it with the
-    # window tool. Kept (not remade) across rebuilds so its windows stay.
+    # A dormer's front: a real wall, so windows go in it with the window
+    # tool. Kept (not remade) across rebuilds so its windows stay.
     front_wall: PointerProperty(type=bpy.types.Object)  # type: ignore
 
     # Made by Fit Roof to Outline, which replaces its own pieces
