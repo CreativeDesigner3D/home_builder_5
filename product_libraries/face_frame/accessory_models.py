@@ -101,6 +101,7 @@ WIRE = inch(0.1875)         # square section standing in for chrome rod
 
 _MAT_MAPLE = ('Accessory Maple', (0.86, 0.72, 0.52, 1.0), 0.0, 0.5)
 _MAT_PLY = ('Accessory Plywood', (0.80, 0.66, 0.47, 1.0), 0.0, 0.6)
+_MAT_BIRCH = ('Accessory Birch', (0.84, 0.74, 0.58, 1.0), 0.0, 0.5)
 _MAT_CHROME = ('Accessory Chrome', (0.72, 0.74, 0.77, 1.0), 0.9, 0.2)
 _MAT_STEEL = ('Accessory Steel', (0.45, 0.46, 0.48, 1.0), 0.3, 0.45)
 _MAT_PLASTIC = ('Accessory Clear Plastic', (0.82, 0.88, 0.92, 1.0), 0.0, 0.15)
@@ -1004,6 +1005,7 @@ _BUILDERS = {
 _MATERIAL_KEYS = {
     'Accessory Maple': 'MAPLE',
     'Accessory Plywood': 'PLYWOOD',
+    'Accessory Birch': 'BIRCH',
     'Accessory Chrome': 'CHROME',
     'Accessory Steel': 'STEEL',
     'Accessory Clear Plastic': 'CLEAR_PLASTIC',
@@ -1043,7 +1045,14 @@ def build_object(model, name, w, depth, h, params=None):
     bm.to_mesh(mesh)
     bm.free()
     organizer = model in ORGANIZER_MODELS
-    mesh.materials.append(_material(_MAT_PLY if organizer else _MAT_MAPLE))
+    # Pull-out units are birch; roll-out trays are maple.
+    if organizer:
+        wood = _MAT_PLY
+    elif model in PULLOUT_MODELS:
+        wood = _MAT_BIRCH
+    else:
+        wood = _MAT_MAPLE
+    mesh.materials.append(_material(wood))
     mesh.materials.append(_material(_MAT_CHROME))
     if model in PULLOUT_MODELS:
         mesh.materials.append(_material(_MAT_STEEL))

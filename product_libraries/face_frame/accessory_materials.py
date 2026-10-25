@@ -23,6 +23,7 @@ import bpy
 SPECS = {
     'MAPLE':   ('WOOD', 'MAPLE', 'Natural'),
     'PLYWOOD': ('WOOD', 'BIRCH', 'Natural'),
+    'BIRCH':   ('WOOD', 'BIRCH', 'Natural'),
     'CHROME':  ('METAL', 'Polished Chrome'),
     'STEEL':   ('METAL', 'Matte Aluminum'),
     'POLYMER': ('PLAIN', (0.90, 0.86, 0.76, 1.0), 0.0, 0.45, 0.0),
@@ -34,6 +35,7 @@ SPECS = {
 _DISPLAY = {
     'MAPLE':   (0.86, 0.72, 0.52, 1.0),
     'PLYWOOD': (0.80, 0.66, 0.47, 1.0),
+    'BIRCH':   (0.84, 0.74, 0.58, 1.0),
     'CHROME':  (0.72, 0.74, 0.77, 1.0),
     'STEEL':   (0.60, 0.61, 0.63, 1.0),
 }
@@ -41,6 +43,7 @@ _DISPLAY = {
 _NAMES = {
     'MAPLE': "Accessory Maple Wood",
     'PLYWOOD': "Accessory Plywood Wood",
+    'BIRCH': "Accessory Birch Wood",
     'CHROME': "Accessory Polished Chrome",
     'STEEL': "Accessory Satin Steel",
     'POLYMER': "Accessory Almond Polymer",
