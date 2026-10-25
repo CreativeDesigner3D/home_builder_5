@@ -739,18 +739,18 @@ def _delete(obj):
 def _levels_under(scene, frame):
     """The levels inside the roof: those whose floor is at or above where
     it starts - the top of the walls it sits on, or the floor of the
-    level it encloses - and the roof's own level whenever the roof comes
-    down below the tops of its walls (a negative eave height), since
-    then that level lives inside it too - and when no level stands above
-    it under the roof: a one-storey house, whose own end walls make the
-    gables."""
+    level it encloses - and the roof's own level. Its end walls make the
+    gables (one storey, or where the level above covers only part of it,
+    like a bonus room over a garage), and when the roof comes down below
+    the tops of its walls (a negative eave height) the level lives inside
+    it. Walls a wall of the level above stands on aren't raised into
+    gables (see gable_wall_height): that wall makes the gable."""
     start = min(frame['plate'], frame['base'])
     out = [l for l in scene.hb_house.levels if l.elevation >= start - 0.01]
-    if frame['plate'] < frame['base'] - 0.01 or not out:
-        own = next((l for l in scene.hb_house.levels
-                    if l.uid == frame['level_uid']), None)
-        if own is not None and own not in out:
-            out.append(own)
+    own = next((l for l in scene.hb_house.levels
+                if l.uid == frame['level_uid']), None)
+    if own is not None and own not in out:
+        out.append(own)
     return out
 
 
@@ -792,7 +792,7 @@ def _set_back_from_eaves(frame, wall_obj, d):
     return lo - frame['u0'] > SET_BACK_MIN and frame['u1'] - hi > SET_BACK_MIN
 
 
-def gable_wall_height(scene, wall_obj, height):
+def gable_wall_height(scene, wall_obj, height, carried=False):
     """The height an exterior wall needs under the roofs: a wall inside a
     roof that runs square to its ridge is a gable wall, raised to the
     ridge so the trim cuts it into the gable; a dormer's front wall is
@@ -812,6 +812,8 @@ def gable_wall_height(scene, wall_obj, height):
         under = {l.uid for l in _levels_under(scene, frame)}
         if level_uid not in under:
             continue
+        if carried and level_uid == frame['level_uid']:
+            continue                    # the wall standing on it makes the gable
         if not _within_roof(frame, wall_obj, d):
             continue                    # a wing's wall, beyond this roof
         ridge_dir = Vector((1.0, 0.0)) if frame['along_x'] else Vector((0.0, 1.0))
@@ -843,14 +845,28 @@ def apply_trims(scene):
         if cutter is None:
             continue
         name = TRIM_PREFIX + level.name
+        from . import hb_types, hb_rooms
         for upper in _levels_under(scene, frame):
+            # On the roof's own level most walls and ceilings stop below the
+            # eaves: only what rises above them needs cutting (each cut is an
+            # exact Boolean)
+            below = upper.uid == frame['level_uid'] and upper.elevation < frame['plate'] - 0.01
             for obj in scene.objects:
-                if (obj.get('IS_WALL_BP') and obj.get(hb_house.LEVEL_KEY) == upper.uid
+                if not (obj.get('IS_WALL_BP') and obj.get(hb_house.LEVEL_KEY) == upper.uid
                         and obj.get('WALL_TYPE') != DORMER_WALL_TYPE):
-                    wanted.setdefault(obj, {})[name] = (cutter, False)
+                    continue
+                if below:
+                    wall = hb_types.GeoNodeWall(obj)
+                    if (wall.has_modifier() and obj.matrix_world.translation.z
+                            + wall.get_input('Height') <= frame['plate'] + 0.01):
+                        continue
+                wanted.setdefault(obj, {})[name] = (cutter, False)
             for room in upper.rooms:
-                if room.ceiling_obj is not None:
-                    wanted.setdefault(room.ceiling_obj, {})[name] = (cutter, True)
+                if room.ceiling_obj is None:
+                    continue
+                if below and upper.elevation + hb_rooms.room_height(room, upper) <= frame['plate'] + 0.01                         and room.ceiling_style != 'VAULTED':
+                    continue
+                wanted.setdefault(room.ceiling_obj, {})[name] = (cutter, True)
     for obj in scene.objects:
         if obj.type != 'MESH':
             continue
@@ -873,6 +889,9 @@ def apply_roof_visibility(scene):
                     level.roof.gables_obj, level.roof.dormer_walls_obj):
             if obj is not None:
                 obj.hide_viewport = hide
+        for room in level.rooms:
+            if room.porch_roof_obj is not None:
+                room.porch_roof_obj.hide_viewport = hide
         if level.roof.enabled:
             for piece in level.roof.pieces:
                 if piece.front_wall is not None:
@@ -966,12 +985,17 @@ def rebuild_roof(scene, level):
     # The dormer and piece roofs, stopped where they meet the main roof
     dormer_roofs = _visible_piece(scene, level, roof, 'dormer_obj', f"Dormers - {level.name}",
                                   _mesh("Dormers", d_roofs) if d_roofs else None)
+    porch_roofs = [r.porch_roof_obj for r in level.rooms if r.porch_roof_obj is not None]
     top_volume = _helper(scene, roof, 'roof_top_obj', f"Roof Top Volume - {level.name}",
                          _mesh("Roof Top Volume", [(top_volume_section(frame, roof),
                                                     frame['v0'] - CUTTER_REACH,
                                                     frame['v1'] + CUTTER_REACH,
-                                                    _along_ridge(frame))]) if d_roofs else None,
+                                                    _along_ridge(frame))])
+                         if d_roofs or porch_roofs else None,
                          ROOF_CUTTER_KEY)
+    # Porch sheds stop where they run up under the roof
+    for obj in porch_roofs:
+        _set_boolean(obj, VALLEY_CUT, top_volume)
     if dormer_roofs is not None:
         _set_boolean(dormer_roofs, VALLEY_CUT, top_volume)
 
@@ -1015,6 +1039,132 @@ def rebuild_roof(scene, level):
     from . import hb_exterior
     hb_exterior.apply_exterior_finish(scene)
     return True
+
+
+PORCH_ROOF_REACH = 8.0      # m: a porch's shed runs on this far to meet the house's roof
+
+
+def porch_covered(scene, level, polygon):
+    """True when the house's roof, or one of its cross gables, already
+    covers a porch: the middle of the porch is inside the main roof's
+    footprint or a cross gable's rectangle."""
+    if not level.roof.enabled:
+        return False
+    frame = roof_frame(scene, level)
+    if frame is None:
+        return False
+    cx = sum(p[0] for p in polygon) / len(polygon)
+    cy = sum(p[1] for p in polygon) / len(polygon)
+    u, v = _uv(frame, (cx, cy))
+    if frame['u0'] <= u <= frame['u1'] and frame['v0'] <= v <= frame['v1']:
+        return True
+    for piece in level.roof.pieces:
+        if piece.kind != 'GABLE':
+            continue
+        if (min(piece.x0, piece.x1) <= cx <= max(piece.x0, piece.x1)
+                and min(piece.y0, piece.y1) <= cy <= max(piece.y0, piece.y1)):
+            return True
+    return False
+
+
+def porch_roof_prisms(scene, level, room, polygon, segs):
+    """(roof prisms, end infill prisms) for a porch's shed roof, in world
+    coordinates. It sits on the beam along the porch's open low side and
+    rises towards the house at the porch's pitch. With a roof on the
+    level it runs on under that roof, which cuts it off where they meet;
+    without one it stops at the house walls, no higher than their tops."""
+    from . import hb_porches, hb_rooms, hb_wall_graph
+    plan = hb_porches.shed_plan(polygon, segs)
+    if plan is None:
+        return [], []
+    a, e, n_in, s0, s1, depth = plan
+    roof = level.roof
+    z_low = level.elevation + hb_rooms.room_height(room, level)
+    p = room.porch_roof_pitch / 12.0
+    house_roof = roof.enabled and roof_frame(scene, level) is not None
+    if house_roof:
+        back = depth + PORCH_ROOF_REACH
+    else:
+        back = depth
+        top = level.elevation + hb_house.exterior_wall_height(level)
+        if depth > 1e-6 and z_low + depth * p > top:
+            p = max(top - z_low, 0.0) / depth
+    ov = roof.eave_overhang
+    tv = roof.thickness / math.cos(math.atan(p))
+
+    def to_world(dd, s, z):
+        return (a[0] + n_in[0] * dd + e[0] * s, a[1] + n_in[1] * dd + e[1] * s, z)
+
+    z_out = z_low - ov * p
+    section = [(-ov, z_out), (back, z_low + back * p), (back, z_low + back * p + tv), (-ov, z_out + tv)]
+    roofs = [(section, s0 - ov, s1 + ov, to_world)]
+    # The open ends of the shed: from the beam up under the roof, along
+    # each open edge that runs up the slope
+    infill = []
+    for ea, eb, en in hb_porches.porch_edges(polygon, segs):
+        da = hb_wall_graph._dot(hb_wall_graph._sub(ea, a), n_in)
+        db = hb_wall_graph._dot(hb_wall_graph._sub(eb, a), n_in)
+        if abs(db - da) < 0.3:
+            continue                        # runs along the low side
+        sa = hb_wall_graph._dot(hb_wall_graph._sub(ea, a), e)
+        lo, hi = sorted((da, db))
+        sect = [(lo, z_low), (hi, z_low), (hi, z_low + hi * p), (lo, z_low + lo * p)]
+        inward = 1.0 if hb_wall_graph._dot(en, e) > 0 else -1.0
+
+        def side(dd, w, z, sa=sa, inward=inward):
+            return to_world(dd, sa + inward * w, z)
+        infill.append((sect, 0.0, GABLE_INFILL, side))
+    return roofs, infill
+
+
+def build_porch_roof(scene, level, room, polygon, segs):
+    """Make (or remove) a porch's shed roof and its end infill."""
+    want = room.porch_roof == 'SHED' or (
+        room.porch_roof == 'AUTO' and not porch_covered(scene, level, polygon))
+    roofs, infill = porch_roof_prisms(scene, level, room, polygon, segs) if want else ([], [])
+    if not roofs:
+        remove_porch_roof(room)
+        return
+    from . import hb_rooms
+    prisms = roofs + infill
+    mesh = _mesh(f"Porch Roof - {room.name}", prisms)
+    mesh.materials.append(level.roof.material or _shingles())
+    obj = room.porch_roof_obj
+    if obj is None or obj.name not in scene.objects:
+        obj = hb_rooms._generated(scene, level, room, f"Porch Roof - {room.name}", mesh,
+                                  ('IS_PORCH_ROOF', ROOF_KEY))
+        room.porch_roof_obj = obj
+    else:
+        _set_mesh(obj, mesh)
+    obj.color = tuple((level.roof.material or _shingles()).diffuse_color)
+    # The end infill takes the walls' finish: the roof faces come first
+    n_roof = sum(len(sec) + 2 for sec, *_r in roofs)
+    if infill:
+        wall_mat = None
+        model = next((o for o in _exterior_walls(scene, level)), None)
+        try:
+            from . import hb_exterior
+            house = scene.hb_house
+            if house.siding_style != 'NONE':
+                wall_mat = hb_exterior.siding_material(house.siding_style, house.siding_color)
+        except Exception:
+            wall_mat = None
+        if wall_mat is None:
+            wall_mat = bpy.data.materials.get("HB Porch End") or bpy.data.materials.new("HB Porch End")
+            if model is not None:
+                wall_mat.diffuse_color = model.color
+        obj.data.materials.append(wall_mat)
+        for i, poly in enumerate(obj.data.polygons):
+            poly.material_index = 0 if i < n_roof else 1
+    obj.hide_viewport = not scene.hb_house.show_roofs
+
+
+def remove_porch_roof(room):
+    obj = room.porch_roof_obj
+    if obj is not None:
+        if obj.name in bpy.data.objects:
+            _delete(obj)
+        room.porch_roof_obj = None
 
 
 def _wall_finish(scene, level, obj):

@@ -213,9 +213,31 @@ def build_porch(scene, level, room, polygon, segs, floor_material):
         if old is not None and old.users == 0:
             bpy.data.meshes.remove(old)
     room.porch_obj.location = (0.0, 0.0, level.elevation)
+    from . import hb_roofs
+    hb_roofs.build_porch_roof(scene, level, room, polygon, segs)
 
 
 def remove_porch(room):
-    from . import hb_rooms
+    from . import hb_rooms, hb_roofs
     hb_rooms._remove(room.porch_obj)
     room.porch_obj = None
+    hb_roofs.remove_porch_roof(room)
+
+
+# ---- The porch's own roof -------------------------------------------------------
+
+def shed_plan(polygon, segs):
+    """How a shed roof lies over a porch: (origin, along, up_slope, s0,
+    s1, depth) - the porch's longest open edge is the low side, `along`
+    runs down it from `origin`, `up_slope` points in towards the house,
+    s0..s1 is the porch's extent along it and `depth` how far it reaches
+    back. None for a porch with no open edge."""
+    edges = porch_edges(polygon, segs)
+    if not edges:
+        return None
+    a, b, n_in = max(edges, key=lambda e: math.dist(e[0], e[1]))
+    d = hb_wall_graph._sub(b, a)
+    e = hb_wall_graph._mul(d, 1.0 / hb_wall_graph._len(d))
+    ss = [hb_wall_graph._dot(hb_wall_graph._sub(p, a), e) for p in polygon]
+    ds = [hb_wall_graph._dot(hb_wall_graph._sub(p, a), n_in) for p in polygon]
+    return a, e, n_in, min(ss), max(ss), max(ds)

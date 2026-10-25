@@ -471,7 +471,8 @@ def _make_porch(room, level):
 
 def _forget_room(level, index):
     room = level.rooms[index]
-    for obj in (room.label_obj, room.floor_obj, room.ceiling_obj, room.porch_obj):
+    for obj in (room.label_obj, room.floor_obj, room.ceiling_obj, room.porch_obj,
+                room.porch_roof_obj):
         _remove(obj)
     level.rooms.remove(index)
 

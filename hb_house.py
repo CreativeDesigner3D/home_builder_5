@@ -532,10 +532,11 @@ def set_exterior_wall_heights(scene, level):
             continue
         band = _wall_band(obj)
         height = level.ceiling_height
-        if rise is not None and band is not None and _carries(band, upper_bands):
+        carried = rise is not None and band is not None and _carries(band, upper_bands)
+        if carried:
             height = rise
         from . import hb_roofs
-        height = hb_roofs.gable_wall_height(scene, obj, height)
+        height = hb_roofs.gable_wall_height(scene, obj, height, carried)
         if abs(wall.get_input('Height') - height) > 1e-6:
             wall.set_input('Height', height)
             obj.update_tag()
@@ -937,6 +938,17 @@ class HB_Room(PropertyGroup):
         name="Post Material", type=bpy.types.Material,
         update=_room_porch_changed)  # type: ignore
     porch_obj: PointerProperty(type=bpy.types.Object)  # type: ignore
+    porch_roof: EnumProperty(
+        name="Porch Roof",
+        items=[('AUTO', "Auto", "A shed roof unless the house's roof or a cross gable already covers the porch"),
+               ('SHED', "Shed", "A shed roof from the porch's beam up to the house"),
+               ('NONE', "None", "No roof of its own")],
+        default='AUTO', update=_room_porch_changed)  # type: ignore
+    porch_roof_pitch: FloatProperty(
+        name="Porch Roof Pitch", description="Rise in 12 of the porch's shed roof",
+        default=3.0, min=0.5, max=12.0, precision=2,
+        update=_room_porch_changed)  # type: ignore
+    porch_roof_obj: PointerProperty(type=bpy.types.Object)  # type: ignore
 
     # Worked out by hb_rooms on each rebuild
     area: FloatProperty(name="Area", default=0.0)  # type: ignore
