@@ -736,6 +736,8 @@ def _draw():
     # Snapshot once: the list is rebuilt from the registry on every
     # call, and the indices in `layout` refer to this ordering.
     TOOLS_NOW = tools()
+    from . import tool_session
+    running_tool = tool_session.active_tool()
     is_expanded = expanded()
     inset = GLYPH_INSET * s
     btn = BTN * s
@@ -767,9 +769,11 @@ def _draw():
 
         index = payload
         hovered = index == hover
+        # The tool running now stays lit until it ends.
+        running = TOOLS_NOW[index][0] == running_tool
         # Brighter edge: this strip floats on the viewport, not
         # inside a panel, so it should announce itself.
-        paint_button(shader, rect, hovered=hovered,
+        paint_button(shader, rect, hovered=hovered, active=running,
                      border=Theme.BTN_BORDER)
         # The glyph keeps its square regardless of how wide the button
         # grew, so both modes show the same marks in the same place.
@@ -870,9 +874,11 @@ class home_builder_OT_room_palette_click(bpy.types.Operator):
         index = _hit(mx, my, layout)
         if index is None:
             return {'PASS_THROUGH'}
-        mod, name = tools()[index][0].split(".", 1)
         try:
-            getattr(getattr(bpy.ops, mod), name)('INVOKE_DEFAULT')
+            # Through the tool session: the tool running now, if any,
+            # stops first, and picking it again leaves it running.
+            from . import tool_session
+            tool_session.launch(context, tools()[index][0])
         except Exception as ex:
             self.report({'WARNING'}, str(ex))
         return {'FINISHED'}

@@ -13,6 +13,7 @@ from .. import cutters
 from .. import hb_house
 from .. import hb_wall_graph
 from .. import hb_rooms
+from . import tool_session
 
 # Wall Junctions
 # Every corner, T and multi-way junction is worked out by hb_wall_graph
@@ -2764,7 +2765,8 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         self._wall_dim_visible = False
         self.free_rotation = False
         self.walls_committed = 0
-        self.continuous = context.scene.home_builder.continuous_wall_drawing
+        self.continuous = (context.scene.home_builder.continuous_wall_drawing
+                           or tool_session.stays_on(context))
         self.first_start_point = None
         self.first_wall = None
         self.confirmed_wall_count = 0
@@ -2818,9 +2820,18 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         self._track_timer = context.window_manager.event_timer_add(
             0.05, window=context.window)
 
+        tool_session.begin(self, context)
         context.window_manager.modal_handler_add(self)
         return {'RUNNING_MODAL'}
 
+    def stop_tool(self, context):
+        """Asked to stop (another tool picked, Done, another tab): what
+        Esc does once there is no run left to end."""
+        self._end_tool(context)
+        self.cancel_placement(context)
+        return {'FINISHED'} if self.walls_committed else {'CANCELLED'}
+
+    @tool_session.session_modal
     def modal(self, context, event):
         result = self._modal(context, event)
         # Every positioning path writes a Z of its own (0, or the raycast

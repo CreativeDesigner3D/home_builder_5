@@ -1446,6 +1446,12 @@ def _exterior_changed(house):
 class HB_House_Props(PropertyGroup):
     levels: CollectionProperty(type=HB_Level)  # type: ignore
 
+    tools_stay_on: BoolProperty(
+        name="Tools Stay On",
+        description="Keep a placement tool running after each wall, door, "
+                    "window or obstacle is placed, until Esc or right-click",
+        default=True)  # type: ignore
+
     active_level_index: IntProperty(
         name="Active Level", update=_update_active_level)  # type: ignore
 

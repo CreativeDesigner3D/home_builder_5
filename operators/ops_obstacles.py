@@ -3,6 +3,7 @@ import math
 import bmesh
 from mathutils import Vector, Matrix
 from .. import hb_utils, hb_snap, hb_placement, hb_types, units
+from . import tool_session
 
 
 # =============================================================================
@@ -108,6 +109,9 @@ class home_builder_obstacles_OT_place_obstacle(bpy.types.Operator, hb_placement.
     bl_label = "Place Obstacle"
     bl_description = "Place an obstacle on a wall, floor, or ceiling"
     bl_options = {'UNDO'}
+
+    # In a house the tool starts again after each one (tool_session)
+    RELAUNCH = True
     
     # Obstacle object being placed
     obstacle_obj = None
@@ -476,9 +480,18 @@ class home_builder_obstacles_OT_place_obstacle(bpy.types.Operator, hb_placement.
             self.report({'ERROR'}, "Failed to create obstacle")
             return {'CANCELLED'}
         
+        tool_session.begin(self, context)
         context.window_manager.modal_handler_add(self)
         return {'RUNNING_MODAL'}
-    
+
+    def stop_tool(self, context):
+        """Asked to stop (another tool picked, Done, another tab): what
+        Esc does."""
+        self.cancel_placement(context)
+        hb_placement.clear_header_text(context)
+        return {'CANCELLED'}
+
+    @tool_session.session_modal
     def modal(self, context, event):
         context.area.tag_redraw()
         
