@@ -1839,8 +1839,8 @@ class HOME_BUILDER_OT_add_level(bpy.types.Operator):
         if copied:
             from .operators import walls
             walls.refresh_wall_junctions(scene, uid)
-        if start == 'EMPTY' and below is not None:
-            # Draw it over the outline of the level below
+        if self.start == 'EMPTY' and below is not None:
+            # Chosen from the menu: draw it over the outline of the level below
             house.level_display = 'ACTIVE'
             house.show_level_below = True
         msg = f"Added {new.name}"
