@@ -2023,7 +2023,9 @@ def hit(context, mx, my, entries):
             if point_in_rect(mx, my, entry[3]):
                 pool = entry[4]
                 if pool is not None and pool.add_op:
-                    _run(pool.add_op)
+                    # On the release: an add that asks first (a menu)
+                    # stays open instead of closing as the click lets go
+                    _run_on_release(pool.add_op, {})
                 _tag()
                 return True
         if kind == 'field_row':

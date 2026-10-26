@@ -542,13 +542,15 @@ def set_exterior_wall_heights(scene, level):
             obj.update_tag()
 
 
-def copy_exterior_walls(scene, src, dst):
+def copy_exterior_walls(scene, src, dst, only=None):
     """Copy the exterior walls of level `src` onto level `dst`, joined the
-    way they were, so a new level starts from the outline below it."""
+    way they were, so a new level starts from the outline below it - or
+    from part of it: `only` names the walls to copy."""
     from . import hb_types
     originals = [o for o in scene.objects
                  if o.get('IS_WALL_BP') and o.get(LEVEL_KEY) == src.uid
-                 and o.get('WALL_TYPE', 'Exterior') == 'Exterior']
+                 and o.get('WALL_TYPE', 'Exterior') == 'Exterior'
+                 and (only is None or o.name in only)]
     copies = {}
     for old in originals:
         o = hb_types.GeoNodeWall(old)
@@ -1749,16 +1751,63 @@ class HOME_BUILDER_OT_add_level(bpy.types.Operator):
     def poll(cls, context):
         return context.scene is not None and context.scene.get(HOUSE_SCENE_KEY)
 
+    start: EnumProperty(
+        name="Start With",
+        items=[('FULL', "Full Floor", "The whole outline of the level below, copied up"),
+               ('SELECTED', "Over Selected Walls",
+                "Only the selected outside walls of the level below, copied up: a "
+                "partial floor, like a bonus room over a garage"),
+               ('EMPTY', "Empty Level",
+                "No walls: draw the level over the outline of the level below")],
+        # Not remembered from the last time, or + NEW would stop asking
+        default='FULL', options={'SKIP_SAVE'})  # type: ignore
+
+    # Kept for scripts from before Start With: off is an empty level
     copy_exterior: BoolProperty(
         name="Copy Exterior Walls",
         description="Start the new level with the exterior walls of the level below",
-        default=True)  # type: ignore
+        default=True, options={'SKIP_SAVE'})  # type: ignore
+
+    @staticmethod
+    def _top(house):
+        return max(house.levels, key=lambda l: l.elevation) if house.levels else None
+
+    @staticmethod
+    def _selected_walls(context, level):
+        return [o.name for o in context.selected_objects
+                if level is not None and o.get('IS_WALL_BP') and o.get(LEVEL_KEY) == level.uid
+                and o.get('WALL_TYPE', 'Exterior') == 'Exterior']
+
+    def invoke(self, context, event):
+        """From the + NEW button: ask how the new level starts."""
+        if self.properties.is_property_set('start') or not context.scene.hb_house.levels:
+            return self.execute(context)
+        top = self._top(context.scene.hb_house)
+        picked = len(self._selected_walls(context, top))
+
+        def draw(menu, _context):
+            layout = menu.layout
+            layout.operator_context = 'EXEC_DEFAULT'
+            layout.operator(self.bl_idname, text="Full Floor", icon='MOD_BUILD').start = 'FULL'
+            row = layout.row()
+            row.enabled = picked > 0
+            label = (f"Over Selected Walls ({picked})" if picked
+                     else "Over Selected Walls (select outside walls first)")
+            row.operator(self.bl_idname, text=label, icon='RESTRICT_SELECT_OFF').start = 'SELECTED'
+            layout.operator(self.bl_idname, text="Empty Level", icon='SELECT_SET').start = 'EMPTY'
+        context.window_manager.popup_menu(draw, title=f"New Level on {top.name}" if top else "New Level")
+        return {'CANCELLED'}
 
     def execute(self, context):
         scene = context.scene
         house = scene.hb_house
-        below_uid = (max(house.levels, key=lambda l: l.elevation).uid
-                     if house.levels else '')
+        top = self._top(house)
+        start = self.start if self.copy_exterior else 'EMPTY'
+        only = self._selected_walls(context, top) if start == 'SELECTED' else None
+        if start == 'SELECTED' and not only:
+            self.report({'WARNING'}, "Select the outside walls the new level stands on")
+            return {'CANCELLED'}
+        below_uid = top.uid if top is not None else ''
         level = add_level(scene)
         uid = level.uid
         level = None                # held across nothing below, by uid
@@ -1768,15 +1817,23 @@ class HOME_BUILDER_OT_add_level(bpy.types.Operator):
         copied = 0
         if below is not None:
             # The level below's exterior walls now run up to the new floor
+            if start != 'EMPTY':
+                copied = copy_exterior_walls(scene, below, new, only=only)
+            # The level below's exterior walls run up to the new floor
+            # where the new level's walls stand on them
             set_exterior_wall_heights(scene, below)
-            if self.copy_exterior:
-                copied = copy_exterior_walls(scene, below, new)
         if copied:
             from .operators import walls
             walls.refresh_wall_junctions(scene, uid)
+        if start == 'EMPTY' and below is not None:
+            # Draw it over the outline of the level below
+            house.level_display = 'ACTIVE'
+            house.show_level_below = True
         msg = f"Added {new.name}"
         if copied:
             msg += f" with {copied} exterior wall(s) from {below.name}"
+        elif start == 'EMPTY':
+            msg += ": draw its walls over the outline of the level below"
         self.report({'INFO'}, msg)
         return {'FINISHED'}
 
