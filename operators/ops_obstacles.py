@@ -453,9 +453,15 @@ class home_builder_obstacles_OT_place_obstacle(bpy.types.Operator, hb_placement.
     def invoke(self, context, event):
         # With no obstacle picked yet (the list opens on a heading), ask
         # which one first; the picker starts the placement once it has.
+        # In a house the TOOL page is the library: start with the first
+        # one and pick from the page instead of a dialog.
         if context.scene.hb_obstacles.obstacle_type.startswith('HEADER_'):
-            bpy.ops.home_builder_obstacles.pick_obstacle('INVOKE_DEFAULT')
-            return {'CANCELLED'}
+            if tool_session.is_house(context.scene):
+                from .. import hb_props_obstacles
+                context.scene.hb_obstacles.obstacle_type = hb_props_obstacles.first_obstacle_type()
+            else:
+                bpy.ops.home_builder_obstacles.pick_obstacle('INVOKE_DEFAULT')
+                return {'CANCELLED'}
         return self.execute(context)
 
     def execute(self, context):

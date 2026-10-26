@@ -40,6 +40,7 @@ _tool = None            # bl_idname of the tool the session is running
 _owner = None           # the operator instance running it
 _prev = None            # (panel was open, tab) before the session began
 _relaunch = None        # (bl_idname, window, area, region) to start again
+_restart = False        # the stop asked for is to start the tool again
 _list = None            # the TOOL page's ScrollList
 
 MOUSE_EVENTS = {'MOUSEMOVE', 'LEFTMOUSE', 'RIGHTMOUSE', 'WHEELUPMOUSE',
@@ -112,9 +113,19 @@ def stop(context):
     return viewport_hud.request_exit_active_modal(context)
 
 
+def restart(context):
+    """Stop the running tool and start it again at once, the page staying
+    up - for a setting it reads only when it starts (which obstacle)."""
+    global _restart
+    if _owner is None:
+        return False
+    _restart = True
+    return stop(context)
+
+
 def _after(op, context, result, stopped):
     """A session tool's modal has returned its last result."""
-    global _owner, _relaunch
+    global _owner, _relaunch, _restart
     from . import viewport_hud
     timer = getattr(op, '_exit_timer', None)
     if timer is not None:
@@ -126,6 +137,13 @@ def _after(op, context, result, stopped):
     viewport_hud.unregister_active_modal(op)
     if _owner is not op:
         return                      # another tool has already taken over
+    if stopped and _restart:
+        _restart = False
+        _owner = None
+        _relaunch = (type(op).bl_idname, context.window, context.area,
+                     context.region)
+        bpy.app.timers.register(_relaunch_tick, first_interval=0.01)
+        return
     if (not stopped and 'FINISHED' in result
             and getattr(op, 'RELAUNCH', False) and stays_on(context)):
         # Start the same tool again once this one has gone; the page
@@ -254,7 +272,7 @@ def _is(*types):
 
 
 WALL_FIELDS = (
-    ('enum', 'wall_type', "Wall Type"),
+    ('choices', 'wall_type', "Wall Type", {'cols': 3}),
     ('distance', 'exterior_wall_thickness', "Thickness", {'when': _is('Exterior')}),
     ('distance', 'interior_wall_thickness', "Thickness", {'when': _is('Interior', 'Half')}),
     ('distance', 'half_wall_height', "Height", {'when': _is('Half')}),
@@ -267,15 +285,15 @@ WALL_FIELDS = (
 DOOR_FIELDS = (
     ('distance', 'door_single_width', "Width"),
     ('distance', 'door_height', "Height"),
-    ('enum', 'entry_door_style', "Style"),
-    ('enum', 'entry_door_type', "Door Type"),
+    ('choices', 'entry_door_type', "Door Type", {'cols': 3}),
+    ('choices', 'entry_door_style', "Style", {'cols': 2}),
 )
 
 DOUBLE_DOOR_FIELDS = (
     ('distance', 'door_double_width', "Width"),
     ('distance', 'door_height', "Height"),
-    ('enum', 'entry_door_style', "Style"),
-    ('enum', 'entry_door_type', "Door Type"),
+    ('choices', 'entry_door_type', "Door Type", {'cols': 3}),
+    ('choices', 'entry_door_style', "Style", {'cols': 2}),
 )
 
 OPENING_FIELDS = (
@@ -287,7 +305,18 @@ WINDOW_FIELDS = (
     ('distance', 'window_width', "Width"),
     ('distance', 'window_height', "Height"),
     ('distance', 'window_height_from_floor', "From Floor"),
-    ('enum', 'window_style', "Style"),
+    ('choices', 'window_style', "Style", {'cols': 2}),
+)
+
+# On scene.hb_obstacles: the whole library, grouped as it is listed, then
+# the size of the one picked. Picking another restarts the tool with it.
+OBSTACLE_FIELDS = (
+    ('choices', 'obstacle_type', "", {'cols': 2}),
+    ('gap', None, ""),
+    ('distance', 'obstacle_width', "Width"),
+    ('distance', 'obstacle_height', "Height"),
+    ('distance', 'obstacle_depth', "Depth"),
+    ('distance', 'obstacle_height_from_floor', "From Floor"),
 )
 
 # bl_idname: (title, fields on scene.home_builder)
@@ -303,7 +332,7 @@ PAGES = {
 
 HINTS = {
     "home_builder_walls.draw_walls": "C closes the room · T tracks a point",
-    "home_builder_obstacles.place_obstacle": "Click a wall, floor or ceiling",
+    "home_builder_obstacles.place_obstacle": "Pick one above, then click a wall, floor or ceiling",
     "home_builder_stairs.place_stairs": "R turns · T changes type · D flips",
 }
 
@@ -318,13 +347,8 @@ def _blocks(context):
     hb = context.scene.home_builder
     blocks = [('head', (title, False, None))]
     if _tool == "home_builder_obstacles.place_obstacle":
-        name = getattr(context.scene.hb_obstacles, 'obstacle_type', '')
-        try:
-            from ..hb_gpu_ui import enum_label
-            name = enum_label(context.scene.hb_obstacles, 'obstacle_type')
-        except Exception:
-            pass
-        blocks.append(('value', ("Placing", name)))
+        blocks.extend(options_panel.field_blocks(
+            context, OBSTACLE_FIELDS, context.scene.hb_obstacles))
     blocks.extend(options_panel.field_blocks(context, fields, hb))
     if fields:
         blocks.append(('note', "Changes take effect on the next one placed."))

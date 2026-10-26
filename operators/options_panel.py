@@ -36,7 +36,10 @@ folds it, so the page keeps its own fold state.
 Field kinds: ``enum`` (a dropdown), ``bool`` (a checkbox), ``distance``
 (a value you click into and type, in the placement typing grammar),
 ``number`` (a plain number typed the same way -- a scale, a count, an
-angle in degrees), ``value`` (a labelled value to read, from a callable
+angle in degrees), ``choices`` (an enum shown as a grid of buttons, one
+per choice, the current one lit: a click picks it -- for a short list
+picked often, like a wall's type; items whose identifier starts
+``HEADER_`` caption the buttons after them), ``value`` (a labelled value to read, from a callable
 given the owner), ``thumb`` (an enum picked from a grid of pictures -- see thumb_picker),
 ``text`` (a string you click into and type), ``choice`` (a dropdown
 with a chip that turns it into typed text, for a value outside the
@@ -609,12 +612,38 @@ def _field_blocks(context, fields, owner):
             blocks.extend(_item_blocks(context, field, owner))
         elif field[0] == 'group':
             blocks.extend(_group_blocks(context, field, owner))
+        elif field[0] == 'choices':
+            blocks.append(('choices', (field, owner)))
         elif field[0] == 'tiles':
             blocks.append(('picture_tiles',
                            (_field_parts(field)[3].get('cells'), owner)))
         else:
             blocks.append(('field', (field, owner)))
     return blocks
+
+
+def _choice_rows(field, owner):
+    """A 'choices' field laid out as rows: ('caption', text) for its label
+    and for each HEADER_ item, ('buttons', [(identifier, label)], cols)
+    for the buttons, `cols` to a row (2 unless the field says)."""
+    _kind, prop, label, options = _field_parts(field)
+    cols = max(1, int(options.get('cols', 2)))
+    rows = [('caption', label)] if label else []
+    run = []
+
+    def flush():
+        for i in range(0, len(run), cols):
+            rows.append(('buttons', run[i:i + cols], cols))
+        run.clear()
+
+    for ident, item_label in enum_items(owner, prop):
+        if ident.startswith('HEADER_'):
+            flush()
+            rows.append(('caption', item_label.strip('─ ').strip()))
+        else:
+            run.append((ident, item_label))
+    flush()
+    return rows
 
 
 def _group_blocks(context, field, owner):
@@ -838,6 +867,8 @@ def _block_h(block, s):
         return (TILE_H + ROW_GAP) * s
     if kind == 'card':
         return (CARD_H + ROW_GAP) * s
+    if kind == 'choices':
+        return len(_choice_rows(*block[1])) * (ROW_H + ROW_GAP) * s
     if kind == 'gap':
         return GROUP_GAP * s
     return (ROW_H + ROW_GAP) * s
@@ -1047,6 +1078,22 @@ def build_page(rect, context, blocks_fn, lst):
             field, owner = payload
             entries.extend(_field_entries(context, field, owner, x,
                                           block_top, row_w, row_h, s))
+        elif kind == 'choices':
+            field, owner = payload
+            prop = _field_parts(field)[1]
+            current = getattr(owner, prop, None)
+            y = block_top
+            for row in _choice_rows(field, owner):
+                if row[0] == 'caption':
+                    entries.append(('choice_caption', row[1], (x, y - row_h, row_w, row_h)))
+                else:
+                    cols = row[2]
+                    cw = (row_w - gap * (cols - 1)) / cols
+                    for j, (ident, label) in enumerate(row[1]):
+                        entries.append(('choice_btn', owner, prop, ident, label,
+                                        (x + j * (cw + gap), y - row_h, cw, row_h),
+                                        ident == current))
+                y -= (ROW_H + ROW_GAP) * s
         elif kind == 'pick':
             label, fn = payload
             entries.append(('pick_btn', label, fn,
@@ -1624,6 +1671,17 @@ def paint(entries, mx, my):
                                caption=cell.get('label'))
             elif kind == 'card':
                 _paint_card(shader, font_id, s, entry)
+            elif kind == 'choice_caption':
+                rx, ry, rw, rh = entry[2]
+                draw_text(font_id, rx + 2 * s, ry + rh * 0.28, FONT * s,
+                          Theme.TEXT_HEADER, fit_text(font_id, FONT * s, entry[1], rw))
+            elif kind == 'choice_btn':
+                rect, active = entry[5], entry[6]
+                hovered = point_in_rect(mx, my, rect)
+                paint_button(shader, rect, hovered=hovered, active=active)
+                draw_centered_text(font_id, rect, FONT * s,
+                                   Theme.TEXT_PRIMARY if (active or hovered) else Theme.TEXT_NORMAL,
+                                   fit_text(font_id, FONT * s, entry[4], rect[2] - 6 * s))
     finally:
         if clipped:
             end_clip(prev)
@@ -2118,6 +2176,12 @@ def hit(context, mx, my, entries):
         if kind == 'check_row' and point_in_rect(mx, my, entry[2]):
             _label, _checked, op, kwargs = entry[1]
             _run_on_release(op, dict(kwargs or {}))
+            _tag()
+            return True
+        if kind == 'choice_btn' and point_in_rect(mx, my, entry[5]):
+            owner, prop, ident = entry[1], entry[2], entry[3]
+            if getattr(owner, prop, None) != ident:
+                setattr(owner, prop, ident)
             _tag()
             return True
         if kind == 'back_row' and point_in_rect(mx, my, entry[2]):

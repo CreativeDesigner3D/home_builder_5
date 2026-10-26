@@ -145,6 +145,10 @@ def update_obstacle_type(self, context):
         self.obstacle_height = obs_data[5]
         self.obstacle_depth = obs_data[6]
         self.obstacle_height_from_floor = obs_data[7]
+        # Picked from the library while placing: place the new one
+        from .operators import tool_session
+        if tool_session.active_tool() == "home_builder_obstacles.place_obstacle":
+            tool_session.restart(context)
 
 
 def first_obstacle_type():
