@@ -18,6 +18,7 @@ Usage:
 """
 
 import math
+import re
 import uuid
 
 import bpy
@@ -752,6 +753,60 @@ def _room_label_changed(self, context):
         apply_floor_default(self)
 
 
+# ---- Room types --------------------------------------------------------------
+# What a room is for. It picks the room's floor default (a bath gets tile,
+# a garage concrete) and names a room that still has the name it was found
+# with. Rooms without one fall back on the words in their name.
+
+ROOM_TYPES = (
+    ('NONE', "Unspecified", "No type: the floor follows the room's name"),
+    ('BEDROOM', "Bedroom", ""), ('BATH', "Bath", ""), ('KITCHEN', "Kitchen", ""),
+    ('LIVING', "Living", ""), ('DINING', "Dining", ""), ('FAMILY', "Family", ""),
+    ('GREAT', "Great Room", ""), ('GARAGE', "Garage", ""), ('LAUNDRY', "Laundry", ""),
+    ('CLOSET', "Closet", ""), ('PANTRY', "Pantry", ""), ('HALL', "Hall", ""),
+    ('ENTRY', "Entry", ""), ('OFFICE', "Office", ""), ('MECHANICAL', "Mechanical", ""),
+    ('STORAGE', "Storage", ""), ('PORCH', "Porch", ""), ('PATIO', "Patio", ""),
+    ('DECK', "Deck", ""), ('BALCONY', "Balcony", ""),
+)
+TYPE_LABELS = {key: label for key, label, _d in ROOM_TYPES}
+TYPE_KIND = {'BATH': 'wet', 'LAUNDRY': 'wet', 'GARAGE': 'garage',
+             'PORCH': 'porch', 'PATIO': 'porch', 'DECK': 'outdoor', 'BALCONY': 'outdoor'}
+
+
+def _given_name(name):
+    """Whether a room's name is one it was given (Room 3, Bedroom 2) and
+    not one typed for it, so a new type may rename it."""
+    labels = "|".join(re.escape(label) for key, label, _d in ROOM_TYPES if key != 'NONE')
+    return re.fullmatch(rf"(Room|Porch|Balcony|{labels})( \d+)?", name) is not None
+
+
+def type_name(level, room, label):
+    """The name a room of this type gets: the label, numbered from 2 when
+    another room on the level already has it."""
+    used = {r.name for r in level.rooms if r is not room and r.uid != room.uid}
+    if label not in used:
+        return label
+    n = 2
+    while f"{label} {n}" in used:
+        n += 1
+    return f"{label} {n}"
+
+
+def _room_type_changed(self, context):
+    from . import hb_rooms
+    if _given_name(self.name):
+        level = hb_rooms.level_of_room(self)
+        if self.room_type == 'NONE':
+            new = hb_rooms._next_room_name(level) if not self.name.startswith("Room") else self.name
+        else:
+            new = type_name(level, self, TYPE_LABELS[self.room_type])
+        if new != self.name:
+            self.name = new         # its update relabels and refloors
+            return
+    if self.floor_auto:
+        apply_floor_default(self)
+
+
 # ---- Floor defaults -------------------------------------------------------------
 # A room's floor comes from the house's defaults for its kind, worked out
 # from its name, until the user picks one for it by hand.
@@ -765,13 +820,20 @@ _applying_floor_default = False
 
 
 def floor_kind(room):
-    """Which of the house's floor defaults a room takes, from its name
-    (and whether it is a porch or outdoors): 'room', 'wet', 'garage',
-    'porch' or 'outdoor' (a deck or balcony)."""
-    name = room.name.lower()
-    if room.is_porch or any(w in name for w in PORCH_WORDS):
+    """Which of the house's floor defaults a room takes, from its type -
+    or, with none set, its name (and whether it is a porch or outdoors):
+    'room', 'wet', 'garage', 'porch' or 'outdoor' (a deck or balcony)."""
+    if room.is_porch:
         return 'porch'
-    if room.outdoor or any(w in name for w in OUTDOOR_WORDS):
+    if room.outdoor:
+        return 'outdoor'
+    room_type = getattr(room, 'room_type', 'NONE')
+    if room_type != 'NONE':
+        return TYPE_KIND.get(room_type, 'room')
+    name = room.name.lower()
+    if any(w in name for w in PORCH_WORDS):
+        return 'porch'
+    if any(w in name for w in OUTDOOR_WORDS):
         return 'outdoor'
     if any(w in name for w in GARAGE_WORDS):
         return 'garage'
@@ -961,6 +1023,12 @@ class HB_Room(PropertyGroup):
 
     name: StringProperty(name="Name", default="Room",
                          update=_room_label_changed)  # type: ignore
+
+    room_type: EnumProperty(
+        name="Room Type", items=ROOM_TYPES, default='NONE',
+        description="What the room is for: it sets the room's floor default, "
+                    "and names a room that still has the name it was found with",
+        update=_room_type_changed)  # type: ignore
 
     marker: PointerProperty(type=bpy.types.Object)  # type: ignore
     floor_obj: PointerProperty(type=bpy.types.Object)  # type: ignore

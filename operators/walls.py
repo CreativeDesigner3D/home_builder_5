@@ -6101,6 +6101,10 @@ class home_builder_walls_OT_draw_floor_cutter(bpy.types.Operator, hb_placement.P
         items=[('FLOOR', "Floor", "Cut the floor"),
                ('CEILING', "Ceiling", "Cut the ceiling")])  # type: ignore
 
+    # The floor or ceiling to cut, by name: a house room's right-click menu
+    # says which, since clicking a room leaves its floor unselected.
+    target: bpy.props.StringProperty(options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+
     # State
     confirmed_points: list = None   # 3D points already clicked
     cursor_point: Vector = None     # Live 3D cursor position
@@ -6130,6 +6134,9 @@ class home_builder_walls_OT_draw_floor_cutter(bpy.types.Operator, hb_placement.P
     def find_target_floor(self, context):
         """Find the floor (or ceiling) to cut. Prefer selected, else first found."""
         tag = 'IS_CEILING_BP' if self.surface == 'CEILING' else 'IS_FLOOR_BP'
+        named = context.scene.objects.get(self.target) if self.target else None
+        if named is not None and named.get(tag):
+            return named
         # Check active/selected first
         if context.object and context.object.get(tag):
             return context.object

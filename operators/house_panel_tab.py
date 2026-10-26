@@ -369,6 +369,7 @@ ROOM_SPEC = {
     'row_text': _room_row,
     'fields': (
         ('value', _room_area, "Area"),
+        ('enum', 'room_type', "Room Type"),
         ('bool', 'outdoor', "Outdoor"),
         ('group', 'room_floor', "Floor", {'summary': _floor_summary, 'fields': (
             ('bool', 'floor_auto', "Use House Default"),

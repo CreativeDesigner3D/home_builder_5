@@ -6,6 +6,14 @@ from .. import cutters
 def draw_object_mode_right_click_menu(self, context):
     layout = self.layout
     layout.operator_context = 'INVOKE_AREA'
+
+    # A house room just clicked (its floor is left unselected) or its
+    # marker: the room's own commands come first, instead of the rest.
+    from .. import hb_room_pick
+    if hb_room_pick.draw_room_items(layout, context):
+        layout.separator()
+        return
+
     obj = context.object
     menu_id = ""
     if obj and "MENU_ID" in obj and obj["MENU_ID"] != "":
