@@ -1104,13 +1104,11 @@ START_CHIPS = {
 JOIN_EPS = 0.001        # metres: ends this close are the same corner
 
 
-def wall_end_joined(wall_obj, which):
-    """Whether another wall on the same level has an end at this wall's
-    'start' or 'end' - a corner, not a free end."""
-    start, end = get_wall_endpoints(wall_obj)
-    point = start if which == 'start' else end
+def walls_meeting_at(wall_obj, point, ignore=()):
+    """The other walls on wall_obj's level with an end at `point`."""
+    out = []
     for obj in wall_obj.users_scene[0].objects if wall_obj.users_scene else ():
-        if obj is wall_obj or 'IS_WALL_BP' not in obj:
+        if obj is wall_obj or obj in ignore or 'IS_WALL_BP' not in obj:
             continue
         if obj.get('WALL_TYPE') == 'Dormer' or not hb_house.same_level(obj, wall_obj):
             continue
@@ -1119,8 +1117,24 @@ def wall_end_joined(wall_obj, which):
         except Exception:
             continue
         if (a - point).length < JOIN_EPS or (b - point).length < JOIN_EPS:
-            return True
-    return False
+            out.append(obj)
+    return out
+
+
+def wall_end_joined(wall_obj, which, ignore=()):
+    """Whether another wall on the same level has an end at this wall's
+    'start' or 'end' - a corner, not a free end. `ignore` leaves out the
+    wall Draw Walls is drawing, which waits hidden at the cursor and so
+    sits on whatever end the cursor is on."""
+    start, end = get_wall_endpoints(wall_obj)
+    point = start if which == 'start' else end
+    return bool(walls_meeting_at(wall_obj, point, ignore))
+
+
+def _drawn(op):
+    """The wall Draw Walls is drawing, as a tuple to ignore."""
+    current = getattr(op, 'current_wall', None)
+    return (current.obj,) if current is not None else ()
 
 
 def start_chip_text(op):
@@ -1128,7 +1142,7 @@ def start_chip_text(op):
     if op.has_start_point or not op.snap_wall:
         return None
     if op.snap_endpoint:
-        if wall_end_joined(op.snap_wall, op.snap_endpoint):
+        if wall_end_joined(op.snap_wall, op.snap_endpoint, _drawn(op)):
             return START_CHIPS['corner']
         return START_CHIPS.get(op.snap_endpoint)
     if op.snap_surface:
@@ -1859,6 +1873,8 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
                 continue
             if self.previous_wall and obj == self.previous_wall.obj:
                 continue
+            if obj in getattr(self, '_start_walls', ()):
+                continue
 
             ew = hb_types.GeoNodeWall(obj)
             if not ew.has_modifier():
@@ -1967,7 +1983,8 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         # An end another wall already meets is a corner: the new wall
         # starts there on its own (an interior wall off an inside corner)
         # rather than taking the corner's link to the wall round it.
-        if endpoint == 'end' and not wall_end_joined(wall_obj, 'end'):
+        self._start_walls = ()
+        if endpoint == 'end' and not wall_end_joined(wall_obj, 'end', _drawn(self)):
             # Connect to end of existing wall - our wall starts there
             connect_location = Vector((end.x, end.y, 0))
             # Set previous_wall so our wall connects properly
@@ -1985,10 +2002,15 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
                 fl = first_wall_geonode.obj.location
                 self.first_start_point = Vector((fl.x, fl.y, 0))
         else:
-            # A wall's start, or a corner: begin at that point, unjoined
+            # A wall's start, or a corner: begin at that point, unjoined.
+            # The walls meeting there are what it starts from, so its far
+            # end does not snap back onto them (a continued wall skips the
+            # wall it continues the same way).
             point = end if endpoint == 'end' else start
             connect_location = Vector((point.x, point.y, 0))
             self.current_wall.obj.location = connect_location
+            self._start_walls = tuple([wall_obj] + walls_meeting_at(
+                wall_obj, point, _drawn(self)))
         
         self.start_point = connect_location
         self.has_start_point = True
@@ -2664,6 +2686,7 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         if self.confirmed_wall_count == 1:
             self.first_wall = self.current_wall
         self.previous_wall = self.current_wall
+        self._start_walls = ()          # the next wall starts from this one
 
         # Auto-clear track points after each wall is confirmed
         self.clear_track_points()
@@ -2700,6 +2723,7 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         self._discard_current_wall()
 
         self.previous_wall = None
+        self._start_walls = ()
         self.start_point = None
         self.has_start_point = False
         self._track_first = None
