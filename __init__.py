@@ -7,6 +7,7 @@ from . import hb_rooms
 from . import hb_roofs
 from . import hb_walk
 from . import hb_roof_edit
+from . import hb_room_pick
 from . import hb_props_obstacles
 from . import ops
 from .ui import view3d_sidebar
@@ -114,6 +115,7 @@ def load_file_post(scene):
     quiet_cages.ensure_subscriptions()
     from .product_libraries.frameless import quiet_cages as frameless_quiet_cages
     frameless_quiet_cages.ensure_subscriptions()
+    hb_room_pick.ensure_subscriptions()
 
     # Door/window boolean cutters saved while still visible in the
     # viewport would cover their own opening in rendered shading.
@@ -443,6 +445,7 @@ def register():
     hb_roofs.register()
     hb_walk.register()
     hb_roof_edit.register()
+    hb_room_pick.register()
     hb_snap_engine.register()
     hb_props_obstacles.register()
     ops_obstacles.register()
@@ -505,6 +508,7 @@ def unregister():
     hb_props.unregister()
     hb_walk.unregister()
     hb_roof_edit.unregister()
+    hb_room_pick.unregister()
     hb_roofs.unregister()
     hb_rooms.unregister()
     hb_house.unregister()
