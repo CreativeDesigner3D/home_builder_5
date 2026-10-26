@@ -724,9 +724,23 @@ def _update_ceiling_height(self, context):
         props = self.id_data.home_builder
         if abs(props.ceiling_height - self.ceiling_height) > 1e-9:
             props.ceiling_height = self.ceiling_height
+    # The level's walls follow: full-height inside walls to the new
+    # ceiling, outside walls to it - or on up to the level above, where
+    # it stands on them - and the roofs that sit on them
+    from . import hb_types, hb_roofs
+    scene = self.id_data
+    for obj in scene.objects:
+        if (obj.get('IS_WALL_BP') and obj.get(LEVEL_KEY) == self.uid
+                and obj.get('WALL_TYPE') == 'Interior'):
+            wall = hb_types.GeoNodeWall(obj)
+            if wall.has_modifier():
+                wall.set_input('Height', self.ceiling_height)
+                obj.update_tag()
+    set_exterior_wall_heights(scene, self)
+    hb_roofs.rebuild_roofs(scene)
     # Rooms without a height of their own follow the level's
     from . import hb_rooms
-    hb_rooms.rebuild_level(self.id_data, self)
+    hb_rooms.rebuild_level(scene, self)
 
 
 def _room_label_changed(self, context):
