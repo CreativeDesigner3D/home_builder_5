@@ -46,6 +46,10 @@ SHINGLE_PROUD = 0.013       # and a shingle row's
 ROW_TOP = 0.003             # the top of a lap board or shingle row
 GEO_KEY = 'IS_SIDING_GEOMETRY'
 BUILT = ('BOARD_BATTEN', 'LAP', 'SHINGLE')     # finishes Real Geometry builds
+CORNER_WIDTH = 0.089        # a corner board's face, 3 1/2"
+CORNER_THICK = 0.025        # and its thickness, 1": proud of the siding
+TRIM_MATERIAL = "HB Exterior Trim"
+TRIM_COLOR = (0.93, 0.93, 0.91)
 
 
 # ---- Materials ------------------------------------------------------------------
@@ -556,6 +560,73 @@ def _build_plane(bm, style, n, offset, polys):
                        lambda z, top=top: ROW_TOP + (proud - ROW_TOP) * (top - z) / exposure)
 
 
+def _plane_edges(n, offset, polys):
+    """The upright edges of the outline of a wall's outside in one plane:
+    (point in plan, z from, z to, the way along the plane the face lies)."""
+    from mathutils import Vector
+    a = Vector((-n.y, n.x, 0.0))
+    out = []
+    for poly in _merge(polys):
+        ss = [p[0] for p in poly]
+        lo, hi = min(ss), max(ss)
+        for i in range(len(poly)):
+            p, q = poly[i], poly[(i + 1) % len(poly)]
+            if abs(p[0] - q[0]) > 1e-4 or abs(p[1] - q[1]) < 0.05:
+                continue
+            s = p[0]
+            if hi - lo < 1e-6:
+                continue
+            side = 1.0 if s - lo < hi - s else -1.0
+            point = n * offset + a * s
+            out.append((point.to_2d(), min(p[1], q[1]), max(p[1], q[1]), a * side, s, side))
+    return out
+
+
+def _corner_boards(bm, planes):
+    """Corner boards where two walls' outsides meet at an outside corner:
+    an L of two boards standing over the siding's ends, up the corner."""
+    keys = list(planes)
+    edges = {k: _plane_edges(*planes[k]) for k in keys}
+    made = 0
+    for i, ka in enumerate(keys):
+        na = planes[ka][0]
+        for kb in keys[i + 1:]:
+            nb = planes[kb][0]
+            if abs(na.dot(nb)) > 0.9:
+                continue                    # in line, or facing each other
+            for pa, za0, za1, exa, sa, sida in edges[ka]:
+                for pb, zb0, zb1, exb, sb, sidb in edges[kb]:
+                    if (pa - pb).length > 0.03:
+                        continue
+                    z0, z1 = max(za0, zb0), min(za1, zb1)
+                    if z1 - z0 < 0.1:
+                        continue
+                    # Outside: each face runs away from the other's front
+                    if nb.dot(exa) > -0.3 or na.dot(exb) > -0.3:
+                        continue
+                    # One board runs on past the corner by the other's thickness
+                    a_lo, a_hi = sorted((sa - sida * CORNER_THICK, sa + sida * CORNER_WIDTH))
+                    b_lo, b_hi = sorted((sb, sb + sidb * CORNER_WIDTH))
+                    for (n, off), lo, hi in (((na, planes[ka][1]), a_lo, a_hi),
+                                             ((nb, planes[kb][1]), b_lo, b_hi)):
+                        _add_prism(bm, n, off, [(lo, z0), (hi, z0), (hi, z1), (lo, z1)],
+                                   lambda z: CORNER_THICK)
+                    made += 1
+    return made
+
+
+def trim_material():
+    mat = bpy.data.materials.get(TRIM_MATERIAL) or bpy.data.materials.new(TRIM_MATERIAL)
+    mat.diffuse_color = TRIM_COLOR + (1.0,)
+    if not mat.use_nodes:
+        mat.use_nodes = True
+    bsdf = next((nd for nd in mat.node_tree.nodes if nd.type == 'BSDF_PRINCIPLED'), None)
+    if bsdf is not None:
+        bsdf.inputs['Base Color'].default_value = TRIM_COLOR + (1.0,)
+        bsdf.inputs['Roughness'].default_value = 0.5
+    return mat
+
+
 def _geometry_object(scene, level):
     return next((o for o in scene.objects
                  if o.get(GEO_KEY) and o.get(hb_house.LEVEL_KEY) == level.uid), None)
@@ -566,6 +637,7 @@ def build_siding_geometry(scene, walls_done, roof_done, rooms):
     walls, one object per level - or none, with Real Geometry off."""
     house = scene.hb_house
     wanted = {}
+    corners = {}                # level uid -> {plane: (normal, offset, polygons)}
     if house.siding_geometry:
         jobs = ([(o, f, g, z, False) for o, f, g, z in walls_done]
                 + [(o, f, g, z, True) for o, f, g, z in roof_done])
@@ -599,6 +671,9 @@ def build_siding_geometry(scene, walls_done, roof_done, rooms):
                     # wall's faces (and on along walls in line with it)
                     key = (part_finish, round(n.x, 4), round(n.y, 4), round(offset, 4))
                     planes.setdefault(key, (n, offset, []))[2].append(part)
+                    # And by plane alone, for finding the outside corners
+                    whole = corners.setdefault(level.uid, {})
+                    whole.setdefault(key[1:], (n, offset, []))[2].append(part)
     for level in house.levels:
         obj = _geometry_object(scene, level)
         if level.uid not in wanted:
@@ -616,12 +691,20 @@ def build_siding_geometry(scene, walls_done, roof_done, rooms):
             bm.faces.ensure_lookup_table()
             for f in bm.faces[start:]:
                 f.material_index = index
+        # Corner boards over the siding's ends
+        start = len(bm.faces)
+        if _corner_boards(bm, corners.get(level.uid, {})):
+            index = mats.setdefault(('TRIM', TRIM_COLOR), len(mats))
+            bm.faces.ensure_lookup_table()
+            for f in bm.faces[start:]:
+                f.material_index = index
         bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
         mesh = bpy.data.meshes.new(f"Siding - {level.name}")
         bm.to_mesh(mesh)
         bm.free()
         for finish, _i in sorted(mats.items(), key=lambda kv: kv[1]):
-            mesh.materials.append(siding_material(finish[0], finish[1], True))
+            mesh.materials.append(trim_material() if finish[0] == 'TRIM'
+                                  else siding_material(finish[0], finish[1], True))
         if obj is None:
             obj = bpy.data.objects.new(f"Siding - {level.name}", mesh)
             obj[GEO_KEY] = True
