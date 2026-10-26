@@ -8,6 +8,7 @@ import math
 from mathutils import Vector
 from ..hb_details import GeoNodeText
 from ..product_libraries.common import door_window_geo
+from . import tool_session
 
 
 def _resolve_door_window_bp(obj, flag=None):
@@ -965,15 +966,26 @@ class _PlaceWallObjectBase(bpy.types.Operator, WallObjectPlacementMixin):
         self.offset_from_right = False
         self.position_locked = False
         self.placed_count = 0
-        self.continuous = context.scene.home_builder.continuous_door_window_drawing
+        self.continuous = (context.scene.home_builder.continuous_door_window_drawing
+                           or tool_session.stays_on(context))
 
         self.init_two_point_state()
 
         self.create_placed_object(context)
 
+        tool_session.begin(self, context)
         context.window_manager.modal_handler_add(self)
         return {'RUNNING_MODAL'}
 
+    def stop_tool(self, context):
+        """Asked to stop (another tool picked, Done, another tab): what
+        Esc does."""
+        self.delete_placement_dimensions()
+        self.cancel_placement(context)
+        hb_placement.clear_header_text(context)
+        return {'FINISHED'} if self.placed_count else {'CANCELLED'}
+
+    @tool_session.session_modal
     def modal(self, context, event):
         context.window.cursor_set('CROSSHAIR')
 

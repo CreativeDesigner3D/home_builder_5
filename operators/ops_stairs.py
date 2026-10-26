@@ -4,6 +4,7 @@ import bmesh
 from mathutils import Vector, Matrix
 from .. import hb_snap, hb_utils, units
 from .. import hb_house
+from . import tool_session
 
 
 # ---------------------------------------------------------------------------
@@ -493,6 +494,13 @@ class home_builder_stairs_OT_place_stairs(bpy.types.Operator):
         if rot:
             self.preview_obj.rotation_euler = rot
 
+    def stop_tool(self, context):
+        """Asked to stop (another tool picked, Done, another tab): what
+        Esc does."""
+        self.cleanup(context)
+        return {'CANCELLED'}
+
+    @tool_session.session_modal
     def modal(self, context, event):
         context.area.tag_redraw()
 
@@ -553,6 +561,7 @@ class home_builder_stairs_OT_place_stairs(bpy.types.Operator):
         self.preview_obj = None
         self.create_preview(context)
         context.area.header_text_set("Click to place | R rotate | T type | D direction | ESC cancel")
+        tool_session.begin(self, context)
         context.window_manager.modal_handler_add(self)
         return {'RUNNING_MODAL'}
 

@@ -27,17 +27,26 @@ For the walk the house is shown the way it would be lived in: every
 level visible, the ceilings on, and the room labels and markers out of
 the way. When the walk ends those go back.
 
+It starts where you choose. The view stays as it is and a marker on the
+floor follows the mouse: click where to stand, or click and drag to face
+a way (Enter starts in the room under the middle of the view, as
+before). The view then glides down to eye height there, and a card of
+the keys shows for a few seconds (H brings it back). Esc glides back
+out to the view you started from.
+
 Keys: mouse to look, W A S D (or the arrows) to move, Shift to run,
-wheel to change speed, E to open or close a door. Click or Enter to
-stop where you are; Esc or right-click to stop and go back to the view
-you started from.
+wheel to change speed, E to open or close a door, H for the keys. Click
+or Enter to stop where you are; Esc or right-click to stop and go back
+to the view you started from.
 """
 
 import math
 import time
 
+import blf
 import bpy
 import gpu
+from bpy_extras import view3d_utils
 from gpu_extras.batch import batch_for_shader
 from mathutils import Euler, Vector
 
@@ -62,6 +71,26 @@ DOOR_REACH = 2.5            # how far away a door can be opened (m)
 OPEN_SWING = 90.0           # degrees a hinged door opens to
 OPEN_SLIDE = 100.0          # percent a pocket, barn or bypass door opens
 DOOR_SWING_TIME = 0.6       # s for a door to open or close
+# Starting and ending
+GLIDE_TIME = 0.7            # s for the view to glide in or out
+DRAG_TO_FACE = 0.3          # m of drag from the spot before it sets the facing
+MARKER_RADIUS = 0.3         # m, the spot marker on the floor
+CARD_TIME = 4.0             # s the keys card shows at the start
+CARD_FADE = 1.0             # s it takes to fade
+CARD_LINES = (
+    ("Mouse", "Look around"),
+    ("W A S D", "Walk"),
+    ("Shift", "Run    Wheel: speed"),
+    ("E", "Open or close a door"),
+    ("Click", "Stop here"),
+    ("Esc", "Go back"),
+    ("H", "Show these keys"),
+)
+NAVIGATION = {'MIDDLEMOUSE', 'WHEELUPMOUSE', 'WHEELDOWNMOUSE', 'WHEELINMOUSE',
+              'WHEELOUTMOUSE', 'TRACKPADPAN', 'TRACKPADZOOM', 'MOUSEROTATE',
+              'NDOF_MOTION', 'NUMPAD_1', 'NUMPAD_2', 'NUMPAD_3', 'NUMPAD_4',
+              'NUMPAD_5', 'NUMPAD_6', 'NUMPAD_7', 'NUMPAD_8', 'NUMPAD_9',
+              'NUMPAD_0', 'NUMPAD_PERIOD', 'HOME'}
 
 MOVE_KEYS = {
     'W': (0, 1), 'UP_ARROW': (0, 1),
@@ -329,6 +358,52 @@ def slide(cast, feet, move):
     return move
 
 
+def floor_point(origin, direction, z):
+    """Where a ray from the eye meets the floor at height z, or None."""
+    if abs(direction.z) < 1e-6:
+        return None
+    t = (z - origin.z) / direction.z
+    return origin + direction * t if t > 0 else None
+
+
+def facing_from_drag(spot, to, default):
+    """The way to face from a spot dragged towards a point: along the
+    drag, once it is long enough; else `default`."""
+    if to is None:
+        return default
+    d = Vector((to.x - spot.x, to.y - spot.y))
+    if d.length < DRAG_TO_FACE:
+        return default
+    return math.atan2(d.y, d.x)
+
+
+def view_eye(location, rotation, distance):
+    """Where a viewport's eye is: its view centre, backed off along
+    its view by its distance."""
+    return location + rotation @ Vector((0.0, 0.0, distance))
+
+
+
+
+def glide(f, eye0, rot0, eye1, rot1):
+    """The view part of the way (0..1, eased) from one eye and
+    rotation to another."""
+    e = ease(f)
+    return eye0.lerp(eye1, e), rot0.slerp(rot1, e)
+
+
+def walk_rotation(pitch, yaw):
+    """The view's rotation for a pitch (up from level) and heading."""
+    return Euler((pitch + math.pi / 2.0, 0.0, yaw - math.pi / 2.0)).to_quaternion()
+
+
+def card_alpha(elapsed):
+    """How much of the keys card shows, `elapsed` s after it came up."""
+    if elapsed < CARD_TIME:
+        return 1.0
+    return max(0.0, 1.0 - (elapsed - CARD_TIME) / CARD_FADE)
+
+
 def step_feet(feet_z, target_z, fall_speed, dt):
     """Ease the feet to the floor under them: up smoothly (stairs), down
     smoothly a step at a time, and fall when the floor is far below (off
@@ -348,8 +423,9 @@ class HOME_BUILDER_OT_walk_through(bpy.types.Operator):
     bl_idname = "home_builder.walk_through"
     bl_label = "Walk Through"
     bl_description = ("Walk around the house at eye height, starting on the "
-                      "active level. Mouse to look, WASD to move, Shift to run, "
-                      "click to stop, Esc to go back")
+                      "active level: click where to stand (drag to face a way). "
+                      "Mouse to look, WASD to move, Shift to run, click to stop, "
+                      "Esc to go back")
 
     @classmethod
     def poll(cls, context):
@@ -358,9 +434,14 @@ class HOME_BUILDER_OT_walk_through(bpy.types.Operator):
                 and area is not None and area.type == 'VIEW_3D')
 
     # -- setup / teardown --
+    #
+    # The walk goes through phases: PICK (choose where to stand), GLIDE_IN
+    # (the view eases down to the eye), WALK, and GLIDE_OUT (back to the
+    # view it started from, on Esc).
 
     def invoke(self, context, event):
         level = hb_house.active_level(context)
+        self.level_uid = level.uid
         self.scene = hb_house.house_scene_of(context.scene)
         self.area = context.area
         self.region = next((r for r in self.area.regions if r.type == 'WINDOW'), context.region)
@@ -375,40 +456,83 @@ class HOME_BUILDER_OT_walk_through(bpy.types.Operator):
                            r3d.view_distance, r3d.view_perspective)
         house = self.scene.hb_house
         self.saved_house = (house.show_ceilings, house.level_display)
-        house.show_ceilings = True
-        house.level_display = 'ALL'
-        from . import hb_rooms
-        self._labels_off(hb_rooms)
+        self.house_changed = False
 
-        spot = _start_point(level, r3d.view_location)
+        self.phase = 'PICK'
+        self.hover = None           # the floor point under the cursor
+        self.spot = None            # where the click went down
         self.yaw = _heading(r3d)
+        self.default_yaw = self.yaw
         self.pitch = 0.0
-        self.feet = Vector((spot.x, spot.y, level.elevation))
+        self.feet = Vector((0.0, 0.0, level.elevation))
         self.fall = 0.0
         self.keys = set()
         self.run = False
-        context.view_layer.update()
-        ground = ground_under(self._cast, self.feet.xy, self.feet.z)
-        if ground is not None:
-            self.feet.z = ground
-        r3d.view_perspective = 'PERSP'
-        r3d.view_distance = 0.01
-        self._apply_view()
+        self.glide_from = self.glide_to = None
+        self.glide_start = 0.0
+        self.card_start = None
 
         window = context.window
         self.window = window
         self.center = (self.region.x + self.region.width // 2,
                        self.region.y + self.region.height // 2)
-        window.cursor_modal_set('NONE')
-        window.cursor_warp(*self.center)
+        window.cursor_modal_set('CROSSHAIR')
         self.timer = context.window_manager.event_timer_add(TICK, window=window)
         self.last_tick = time.perf_counter()
         self.doors = DoorSwings()
         self.aim_handle = bpy.types.SpaceView3D.draw_handler_add(
-            self._draw_aim, (), 'WINDOW', 'POST_PIXEL')
+            self._draw, (), 'WINDOW', 'POST_PIXEL')
         self._header(context)
         context.window_manager.modal_handler_add(self)
         return {'RUNNING_MODAL'}
+
+    def _level(self):
+        return next((l for l in self.scene.hb_house.levels if l.uid == self.level_uid), None)
+
+    def _start_walk(self, context, spot, yaw):
+        """Stand at a spot facing a way: the house is shown as lived in, and
+        the view starts gliding down to the eye."""
+        level = self._level()
+        house = self.scene.hb_house
+        house.show_ceilings = True
+        house.level_display = 'ALL'
+        self.house_changed = True
+        from . import hb_rooms
+        self._labels_off(hb_rooms)
+        self.yaw, self.pitch = yaw, 0.0
+        self.feet = Vector((spot.x, spot.y, level.elevation if level else spot.z))
+        context.view_layer.update()
+        ground = ground_under(self._cast, self.feet.xy, self.feet.z)
+        if ground is not None:
+            self.feet.z = ground
+        r3d = self.r3d
+        eye0 = view_eye(r3d.view_location, r3d.view_rotation, r3d.view_distance)
+        rot0 = r3d.view_rotation.copy()
+        r3d.view_perspective = 'PERSP'
+        r3d.view_distance = 0.01
+        self.glide_from = (eye0, rot0)
+        self.glide_to = (self._eye(), self._walk_rotation())
+        self.glide_start = time.perf_counter()
+        self.phase = 'GLIDE_IN'
+        self.window.cursor_modal_set('NONE')
+        self._header(context)
+
+    def _begin_walking(self):
+        self.phase = 'WALK'
+        self._apply_view()
+        self.window.cursor_warp(*self.center)
+        self.last_tick = time.perf_counter()
+        self.card_start = self.last_tick
+
+    def _go_back(self, context):
+        """Esc: glide back out to the view the walk started from."""
+        loc, rot, dist, _persp = self.saved_view
+        self.glide_from = (self._eye(), self.r3d.view_rotation.copy())
+        self.glide_to = (view_eye(loc, rot, dist), rot.copy())
+        self.glide_start = time.perf_counter()
+        self.phase = 'GLIDE_OUT'
+        self.doors.finish()
+        self._header(context)
 
     def _finish(self, context, go_back):
         context.window_manager.event_timer_remove(self.timer)
@@ -417,13 +541,14 @@ class HOME_BUILDER_OT_walk_through(bpy.types.Operator):
         self.window.cursor_modal_restore()
         self.area.header_text_set(None)
         house = self.scene.hb_house
-        from . import hb_rooms
-        hb_rooms.apply_label_visibility(self.scene)       # back as the house has them
-        ceilings, display = self.saved_house
-        if house.show_ceilings != ceilings:
-            house.show_ceilings = ceilings
-        if house.level_display != display:
-            house.level_display = display
+        if self.house_changed:
+            from . import hb_rooms
+            hb_rooms.apply_label_visibility(self.scene)       # back as the house has them
+            ceilings, display = self.saved_house
+            if house.show_ceilings != ceilings:
+                house.show_ceilings = ceilings
+            if house.level_display != display:
+                house.level_display = display
         if go_back:
             loc, rot, dist, persp = self.saved_view
             self.r3d.view_location = loc
@@ -442,10 +567,16 @@ class HOME_BUILDER_OT_walk_through(bpy.types.Operator):
                         obj.hide_viewport = True
 
     def _header(self, context):
-        self.area.header_text_set(
-            f"Walk Through: mouse look | WASD move | Shift run | wheel speed "
-            f"({self.speed:.1f} m/s) | E open/close door | click/Enter stop here | "
-            f"Esc go back")
+        if self.phase == 'PICK':
+            text = ("Walk Through: click where to stand (drag to face a way) | "
+                    "Enter: start in the room in view | Esc: cancel")
+        elif self.phase == 'WALK':
+            text = (f"Walk Through: mouse look | WASD move | Shift run | wheel speed "
+                    f"({self.speed:.1f} m/s) | E open/close door | H keys | "
+                    f"click/Enter stop here | Esc go back")
+        else:
+            text = "Walk Through"
+        self.area.header_text_set(text)
 
     # -- the world --
 
@@ -461,6 +592,67 @@ class HOME_BUILDER_OT_walk_through(bpy.types.Operator):
     def _look(self):
         return self.r3d.view_rotation @ Vector((0.0, 0.0, -1.0))
 
+    def _walk_rotation(self):
+        return walk_rotation(self.pitch, self.yaw)
+
+    def _apply_view(self):
+        self.r3d.view_rotation = walk_rotation(self.pitch, self.yaw)
+        self.r3d.view_location = Vector((self.feet.x, self.feet.y,
+                                         self.feet.z + self.eye_height))
+
+    def _floor_under_cursor(self, event):
+        """The point on the level's floor under the mouse, or None."""
+        level = self._level()
+        if level is None:
+            return None
+        coord = (event.mouse_x - self.region.x, event.mouse_y - self.region.y)
+        if not (0 <= coord[0] < self.region.width and 0 <= coord[1] < self.region.height):
+            return None
+        rv3d = self.r3d
+        origin = view3d_utils.region_2d_to_origin_3d(self.region, rv3d, coord)
+        direction = view3d_utils.region_2d_to_vector_3d(self.region, rv3d, coord)
+        return floor_point(origin, direction, level.elevation)
+
+    # -- drawing --
+
+    def _draw(self):
+        if bpy.context.area != self.area:
+            return
+        if self.phase == 'PICK':
+            self._draw_spot()
+        elif self.phase == 'WALK':
+            self._draw_aim()
+            self._draw_card()
+
+    def _draw_spot(self):
+        """Where you'd stand, and which way you'd face: a ring on the floor
+        with an arrow."""
+        spot = self.spot or self.hover
+        if spot is None:
+            return
+        rv3d = self.r3d
+        to2 = lambda p: view3d_utils.location_3d_to_region_2d(self.region, rv3d, p)
+        yaw = facing_from_drag(self.spot, self.hover, self.default_yaw) if self.spot else self.default_yaw
+        ring = [to2(spot + Vector((math.cos(a) * MARKER_RADIUS, math.sin(a) * MARKER_RADIUS, 0.0)))
+                for a in [i * math.pi / 16.0 for i in range(33)]]
+        tip = spot + Vector((math.cos(yaw), math.sin(yaw), 0.0)) * MARKER_RADIUS * 2.2
+        side = Vector((-math.sin(yaw), math.cos(yaw), 0.0)) * MARKER_RADIUS * 0.6
+        base = spot + Vector((math.cos(yaw), math.sin(yaw), 0.0)) * MARKER_RADIUS * 1.2
+        arrow = [to2(base + side), to2(tip), to2(base - side)]
+        if None in ring or None in arrow:
+            return
+        shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+        gpu.state.blend_set('ALPHA')
+        gpu.state.line_width_set(2.0)
+        shader.bind()
+        shader.uniform_float("color", (0.45, 0.85, 1.0, 0.35))
+        batch_for_shader(shader, 'TRI_FAN', {"pos": [to2(spot)] + ring}).draw(shader)
+        shader.uniform_float("color", (0.45, 0.85, 1.0, 1.0))
+        batch_for_shader(shader, 'LINE_STRIP', {"pos": ring}).draw(shader)
+        batch_for_shader(shader, 'TRIS', {"pos": arrow}).draw(shader)
+        gpu.state.line_width_set(1.0)
+        gpu.state.blend_set('NONE')
+
     def _draw_aim(self):
         """A small dot at the middle of the view, to aim at doors."""
         cx, cy, r = self.region.width / 2.0, self.region.height / 2.0, 3.0
@@ -474,15 +666,109 @@ class HOME_BUILDER_OT_walk_through(bpy.types.Operator):
         batch.draw(shader)
         gpu.state.blend_set('NONE')
 
-    def _apply_view(self):
-        self.r3d.view_rotation = Euler(
-            (self.pitch + math.pi / 2.0, 0.0, self.yaw - math.pi / 2.0)).to_quaternion()
-        self.r3d.view_location = Vector((self.feet.x, self.feet.y,
-                                         self.feet.z + self.eye_height))
+    def _draw_card(self):
+        """The keys, low in the middle of the view, fading after a while."""
+        if self.card_start is None:
+            return
+        alpha = card_alpha(time.perf_counter() - self.card_start)
+        if alpha <= 0.0:
+            return
+        try:
+            s = bpy.context.preferences.system.ui_scale
+        except AttributeError:
+            s = 1.0
+        size, row, pad, gap = 13 * s, 20 * s, 12 * s, 16 * s
+        blf.size(0, size)
+        key_w = max(blf.dimensions(0, k)[0] for k, _t in CARD_LINES)
+        text_w = max(blf.dimensions(0, t)[0] for _k, t in CARD_LINES)
+        w = pad * 2 + key_w + gap + text_w
+        h = pad * 2 + row * len(CARD_LINES) - (row - size)
+        x = (self.region.width - w) / 2.0
+        y = 60 * s
+        shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+        gpu.state.blend_set('ALPHA')
+        shader.bind()
+        shader.uniform_float("color", (0.06, 0.06, 0.07, 0.82 * alpha))
+        batch_for_shader(shader, 'TRI_FAN', {"pos": [(x, y), (x + w, y), (x + w, y + h), (x, y + h)]}).draw(shader)
+        for i, (key, text) in enumerate(CARD_LINES):
+            ty = y + h - pad - size - i * row
+            blf.color(0, 0.55, 0.85, 1.0, alpha)
+            blf.position(0, x + pad + key_w - blf.dimensions(0, key)[0], ty, 0)
+            blf.draw(0, key)
+            blf.color(0, 0.92, 0.92, 0.92, alpha)
+            blf.position(0, x + pad + key_w + gap, ty, 0)
+            blf.draw(0, text)
+        gpu.state.blend_set('NONE')
 
     # -- events --
 
     def modal(self, context, event):
+        if self.phase == 'PICK':
+            return self._pick(context, event)
+        if self.phase in ('GLIDE_IN', 'GLIDE_OUT'):
+            return self._gliding(context, event)
+        return self._walk(context, event)
+
+    def _pick(self, context, event):
+        if event.type in NAVIGATION:
+            return {'PASS_THROUGH'}         # orbit and zoom to find the spot
+        if event.type == 'MOUSEMOVE':
+            self.hover = self._floor_under_cursor(event)
+            self.area.tag_redraw()
+            return {'PASS_THROUGH'}
+        if event.type == 'LEFTMOUSE':
+            if event.value == 'PRESS':
+                try:
+                    from .operators import viewport_hud
+                    if viewport_hud.click_hits_widget(context, self.area,
+                                                      event.mouse_x - self.region.x,
+                                                      event.mouse_y - self.region.y):
+                        return {'PASS_THROUGH'}
+                except Exception:
+                    pass
+                self.hover = self._floor_under_cursor(event)
+                self.spot = self.hover
+                return {'RUNNING_MODAL'}
+            if event.value == 'RELEASE' and self.spot is not None:
+                self.hover = self._floor_under_cursor(event)
+                yaw = facing_from_drag(self.spot, self.hover, self.default_yaw)
+                self._start_walk(context, self.spot, yaw)
+                return {'RUNNING_MODAL'}
+            return {'RUNNING_MODAL'}
+        if event.value == 'PRESS' and event.type in {'RET', 'NUMPAD_ENTER', 'SPACE'}:
+            level = self._level()
+            spot = _start_point(level, self.r3d.view_location)
+            self._start_walk(context, Vector((spot.x, spot.y, level.elevation)), self.default_yaw)
+            return {'RUNNING_MODAL'}
+        if event.value == 'PRESS' and event.type in {'ESC', 'RIGHTMOUSE'}:
+            self._finish(context, go_back=False)
+            return {'CANCELLED'}
+        if event.type == 'TIMER':
+            return {'PASS_THROUGH'}
+        return {'RUNNING_MODAL'}
+
+    def _gliding(self, context, event):
+        if event.type == 'TIMER':
+            f = (time.perf_counter() - self.glide_start) / GLIDE_TIME
+            (eye0, rot0), (eye1, rot1) = self.glide_from, self.glide_to
+            eye, rot = glide(f, eye0, rot0, eye1, rot1)
+            self.r3d.view_rotation = rot
+            self.r3d.view_location = eye
+            if f >= 1.0:
+                if self.phase == 'GLIDE_IN':
+                    self._begin_walking()
+                    self._header(context)
+                else:
+                    self._finish(context, go_back=True)
+                    return {'CANCELLED'}
+            return {'RUNNING_MODAL'}
+        if event.value == 'PRESS' and event.type in {'ESC', 'RIGHTMOUSE'}:
+            # Esc again: don't wait for the glide
+            self._finish(context, go_back=True)
+            return {'CANCELLED'}
+        return {'RUNNING_MODAL'}
+
+    def _walk(self, context, event):
         if event.type == 'MOUSEMOVE':
             dx = event.mouse_x - self.center[0]
             dy = event.mouse_y - self.center[1]
@@ -512,6 +798,11 @@ class HOME_BUILDER_OT_walk_through(bpy.types.Operator):
                 self.doors.toggle(cage, time.perf_counter())
             return {'RUNNING_MODAL'}
 
+        if event.type == 'H' and event.value == 'PRESS':
+            shown = self.card_start is not None and card_alpha(time.perf_counter() - self.card_start) > 0
+            self.card_start = None if shown else time.perf_counter()
+            return {'RUNNING_MODAL'}
+
         if event.type in {'LEFT_SHIFT', 'RIGHT_SHIFT'}:
             self.run = event.value == 'PRESS'
             return {'RUNNING_MODAL'}
@@ -527,8 +818,8 @@ class HOME_BUILDER_OT_walk_through(bpy.types.Operator):
             return {'FINISHED'}
 
         if event.value == 'PRESS' and event.type in {'ESC', 'RIGHTMOUSE'}:
-            self._finish(context, go_back=True)
-            return {'CANCELLED'}
+            self._go_back(context)
+            return {'RUNNING_MODAL'}
 
         return {'RUNNING_MODAL'}
 
@@ -558,6 +849,11 @@ class HOME_BUILDER_OT_walk_through(bpy.types.Operator):
         target = ground_under(self._cast, self.feet.xy, self.feet.z)
         self.feet.z, self.fall = step_feet(self.feet.z, target, self.fall, dt)
         self._apply_view()
+        # The keys card fades on its own: keep drawing while it shows
+        card = getattr(self, 'card_start', None)
+        if card is not None and card_alpha(now - card) > 0:
+            self.area.tag_redraw()
+
 
 
 classes = (

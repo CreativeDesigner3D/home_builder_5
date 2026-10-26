@@ -35,6 +35,9 @@ LABEL_SIZE = inch(8)
 LABEL_LIFT = 0.02               # label just above the floor
 LABEL_COLOR = (0.03, 0.03, 0.03, 1.0)
 LABEL_MATERIAL = "HB Room Label"
+# A marker a wall has been drawn over is this close to the rooms beside it
+# (half a wall plus some room): it takes the nearest free one.
+ADOPT_DISTANCE = 0.5
 
 
 # =============================================================================
@@ -324,6 +327,7 @@ def update_room_label(room):
     label.data.body = "\n".join(lines)
     label.name = f"Room Label - {room.name}"
     label.hide_viewport = not scene.hb_house.show_room_labels
+    marker.hide_viewport = not scene.hb_house.show_room_labels      # the marker goes with it
     # Drawn in front while ceilings show, so the ceiling over a closed
     # room doesn't hide it in plan; otherwise not, so labels don't draw
     # over the roof
@@ -367,15 +371,16 @@ def room_floor_material(room, rebuild=False):
 
 
 def apply_label_visibility(scene, hide_markers=False):
-    """Show or hide the rooms' labels per the house's Show Room Labels
-    switch; `hide_markers` hides the room markers too (Walk Through)."""
+    """Show or hide the rooms' labels and their markers per the house's
+    Show Room Labels switch; `hide_markers` hides the markers whatever it
+    says (Walk Through)."""
     hide = not scene.hb_house.show_room_labels
     for level in scene.hb_house.levels:
         for room in level.rooms:
             if room.label_obj is not None:
                 room.label_obj.hide_viewport = hide
             if room.marker is not None:
-                room.marker.hide_viewport = hide_markers
+                room.marker.hide_viewport = hide_markers or hide
 
 
 def apply_ceiling_visibility(scene):
@@ -539,8 +544,34 @@ def rebuild_level(scene, level):
         room.orphaned = False
         claimed[hit] = i
 
+    # A wall drawn across a room can land right on its marker, which then
+    # sits in no area though the room has only been split. Such a room
+    # takes the nearest free area beside its marker (the larger, on a tie)
+    # and its marker moves into it, so the room keeps its name and finishes
+    # for one part and the rest become new rooms. A marker far from any
+    # free area stays not enclosed: its walls are open, not split.
+    for i, room in enumerate(level.rooms):
+        if not room.orphaned:
+            continue
+        p = (room.marker.location.x, room.marker.location.y)
+        best = None
+        for k, a in enumerate(areas):
+            if k in claimed:
+                continue
+            d = hb_wall_graph._dist_to_edges(p, a.polygon)
+            if d <= ADOPT_DISTANCE and (best is None or (d, -a.area) < best[0]):
+                best = ((d, -a.area), k)
+        if best is None:
+            continue
+        k = best[1]
+        room.orphaned = False
+        claimed[k] = i
+        x, y = hb_wall_graph.interior_point(areas[k].polygon)
+        room.marker.location.x, room.marker.location.y = x, y
+
     # An area nobody claims is a new room
     from .hb_house import _new_uid
+    new_rooms = []
     for k, area in enumerate(areas):
         if k in claimed:
             continue
@@ -558,6 +589,7 @@ def rebuild_level(scene, level):
         room.marker = _new_marker(scene, level, room,
                                   hb_wall_graph.interior_point(area.polygon))
         claimed[k] = len(level.rooms) - 1
+        new_rooms.append(claimed[k])
 
     for k, i in claimed.items():
         room = level.rooms[i]
@@ -579,6 +611,9 @@ def rebuild_level(scene, level):
         elif room.porch_obj is not None:
             hb_porches.remove_porch(room)
         update_room_label(room)
+    # New rooms take the house's floor for their kind
+    for i in new_rooms:
+        hb_house.apply_floor_default(level.rooms[i])
     _raise_vault_walls(scene, level, {i: areas[k].polygon for k, i in claimed.items()})
     for room in level.rooms:
         if room.orphaned:
@@ -903,6 +938,7 @@ class HOME_BUILDER_OT_select_room(bpy.types.Operator):
             return {'CANCELLED'}
         for obj in context.selected_objects:
             obj.select_set(False)
+        marker.hide_viewport = False        # shown to move, with the labels off too
         marker.select_set(True)
         context.view_layer.objects.active = marker
         return {'FINISHED'}

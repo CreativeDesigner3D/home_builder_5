@@ -18,6 +18,7 @@ Usage:
 """
 
 import math
+import re
 import uuid
 
 import bpy
@@ -40,6 +41,7 @@ from mathutils.geometry import intersect_line_plane
 from bpy_extras import view3d_utils
 
 from . import hb_project
+from . import hb_plan_views
 from .units import inch
 
 LEVEL_KEY = 'HB_LEVEL'
@@ -542,13 +544,15 @@ def set_exterior_wall_heights(scene, level):
             obj.update_tag()
 
 
-def copy_exterior_walls(scene, src, dst):
+def copy_exterior_walls(scene, src, dst, only=None):
     """Copy the exterior walls of level `src` onto level `dst`, joined the
-    way they were, so a new level starts from the outline below it."""
+    way they were, so a new level starts from the outline below it - or
+    from part of it: `only` names the walls to copy."""
     from . import hb_types
     originals = [o for o in scene.objects
                  if o.get('IS_WALL_BP') and o.get(LEVEL_KEY) == src.uid
-                 and o.get('WALL_TYPE', 'Exterior') == 'Exterior']
+                 and o.get('WALL_TYPE', 'Exterior') == 'Exterior'
+                 and (only is None or o.name in only)]
     copies = {}
     for old in originals:
         o = hb_types.GeoNodeWall(old)
@@ -722,14 +726,195 @@ def _update_ceiling_height(self, context):
         props = self.id_data.home_builder
         if abs(props.ceiling_height - self.ceiling_height) > 1e-9:
             props.ceiling_height = self.ceiling_height
+    # The level's walls follow: full-height inside walls to the new
+    # ceiling, outside walls to it - or on up to the level above, where
+    # it stands on them - and the roofs that sit on them
+    from . import hb_types, hb_roofs
+    scene = self.id_data
+    for obj in scene.objects:
+        if (obj.get('IS_WALL_BP') and obj.get(LEVEL_KEY) == self.uid
+                and obj.get('WALL_TYPE') == 'Interior'):
+            wall = hb_types.GeoNodeWall(obj)
+            if wall.has_modifier():
+                wall.set_input('Height', self.ceiling_height)
+                obj.update_tag()
+    set_exterior_wall_heights(scene, self)
+    hb_roofs.rebuild_roofs(scene)
     # Rooms without a height of their own follow the level's
     from . import hb_rooms
-    hb_rooms.rebuild_level(self.id_data, self)
+    hb_rooms.rebuild_level(scene, self)
 
 
 def _room_label_changed(self, context):
     from . import hb_rooms
     hb_rooms.update_room_label(self)
+    # Renamed a garage, or a bath: its floor follows, unless chosen by hand
+    if self.floor_auto:
+        apply_floor_default(self)
+
+
+# ---- Room types --------------------------------------------------------------
+# What a room is for. It picks the room's floor default (a bath gets tile,
+# a garage concrete) and names a room that still has the name it was found
+# with. Rooms without one fall back on the words in their name.
+
+ROOM_TYPES = (
+    ('NONE', "Unspecified", "No type: the floor follows the room's name"),
+    ('BEDROOM', "Bedroom", ""), ('BATH', "Bath", ""), ('KITCHEN', "Kitchen", ""),
+    ('LIVING', "Living", ""), ('DINING', "Dining", ""), ('FAMILY', "Family", ""),
+    ('GREAT', "Great Room", ""), ('GARAGE', "Garage", ""), ('LAUNDRY', "Laundry", ""),
+    ('CLOSET', "Closet", ""), ('PANTRY', "Pantry", ""), ('HALL', "Hall", ""),
+    ('ENTRY', "Entry", ""), ('OFFICE', "Office", ""), ('MECHANICAL', "Mechanical", ""),
+    ('STORAGE', "Storage", ""), ('PORCH', "Porch", ""), ('PATIO', "Patio", ""),
+    ('DECK', "Deck", ""), ('BALCONY', "Balcony", ""),
+)
+TYPE_LABELS = {key: label for key, label, _d in ROOM_TYPES}
+TYPE_KIND = {'BATH': 'wet', 'LAUNDRY': 'wet', 'GARAGE': 'garage',
+             'PORCH': 'porch', 'PATIO': 'porch', 'DECK': 'outdoor', 'BALCONY': 'outdoor'}
+
+
+def _given_name(name):
+    """Whether a room's name is one it was given (Room 3, Bedroom 2) and
+    not one typed for it, so a new type may rename it."""
+    labels = "|".join(re.escape(label) for key, label, _d in ROOM_TYPES if key != 'NONE')
+    return re.fullmatch(rf"(Room|Porch|Balcony|{labels})( \d+)?", name) is not None
+
+
+def type_name(level, room, label):
+    """The name a room of this type gets: the label, numbered from 2 when
+    another room on the level already has it."""
+    used = {r.name for r in level.rooms if r is not room and r.uid != room.uid}
+    if label not in used:
+        return label
+    n = 2
+    while f"{label} {n}" in used:
+        n += 1
+    return f"{label} {n}"
+
+
+def _room_type_changed(self, context):
+    from . import hb_rooms
+    if _given_name(self.name):
+        level = hb_rooms.level_of_room(self)
+        if self.room_type == 'NONE':
+            new = hb_rooms._next_room_name(level) if not self.name.startswith("Room") else self.name
+        else:
+            new = type_name(level, self, TYPE_LABELS[self.room_type])
+        if new != self.name:
+            self.name = new         # its update relabels and refloors
+            return
+    if self.floor_auto:
+        apply_floor_default(self)
+
+
+# ---- Floor defaults -------------------------------------------------------------
+# A room's floor comes from the house's defaults for its kind, worked out
+# from its name, until the user picks one for it by hand.
+
+FLOOR_KINDS = ('room', 'wet', 'garage', 'porch', 'outdoor')
+WET_WORDS = ('bath', 'powder', 'laundry', 'mud', 'shower', 'toilet', 'wc', 'lav', 'utility')
+GARAGE_WORDS = ('garage', 'carport', 'workshop', 'shop')
+PORCH_WORDS = ('porch', 'patio', 'stoop', 'lanai')
+OUTDOOR_WORDS = ('deck', 'balcony')
+_applying_floor_default = False
+
+
+def floor_kind(room):
+    """Which of the house's floor defaults a room takes, from its type -
+    or, with none set, its name (and whether it is a porch or outdoors):
+    'room', 'wet', 'garage', 'porch' or 'outdoor' (a deck or balcony)."""
+    if room.is_porch:
+        return 'porch'
+    if room.outdoor:
+        return 'outdoor'
+    room_type = getattr(room, 'room_type', 'NONE')
+    if room_type != 'NONE':
+        return TYPE_KIND.get(room_type, 'room')
+    name = room.name.lower()
+    if any(w in name for w in PORCH_WORDS):
+        return 'porch'
+    if any(w in name for w in OUTDOOR_WORDS):
+        return 'outdoor'
+    if any(w in name for w in GARAGE_WORDS):
+        return 'garage'
+    if any(w in name for w in WET_WORDS):
+        return 'wet'
+    return 'room'
+
+
+def floor_default(house, kind):
+    """(finish, look) of the house's floor default for a kind of room."""
+    from .operators import ops_room_dressing as dressing
+    finish = getattr(house, f'floor_{kind}_finish')
+    key = f'floor_{kind}_look'
+    look = getattr(house, key) if key in house.keys() else dressing.DEFAULT_LOOK.get(finish)
+    return finish, look
+
+
+def apply_floor_default(room):
+    """Give a room the house's floor for its kind; from now on it
+    follows the defaults (until its floor is chosen by hand)."""
+    global _applying_floor_default
+    scene = room.id_data
+    finish, look = floor_default(scene.hb_house, floor_kind(room))
+    _applying_floor_default = True
+    try:
+        room['floor_auto'] = True
+        if room.floor_finish != finish:
+            room.floor_finish = finish
+        if look and room.floor_look != look and look in [i[0] for i in _floor_look_items_cb(room, None)]:
+            room.floor_look = look
+    finally:
+        _applying_floor_default = False
+
+
+def apply_floor_defaults(scene, every_room=False):
+    """Refloor the rooms that follow the defaults - or every room, which
+    then all follow them."""
+    for level in scene.hb_house.levels:
+        for i in range(len(level.rooms)):
+            room = level.rooms[i]
+            if room.orphaned:
+                continue
+            if every_room or room.floor_auto:
+                apply_floor_default(room)
+
+
+def _floor_chosen(room):
+    """A floor setting changed: by hand, the room keeps its own floor."""
+    if not _applying_floor_default:
+        room['floor_auto'] = False
+
+
+def _room_floor_auto_changed(self, context):
+    if self.floor_auto:
+        apply_floor_default(self)
+
+
+def _floor_defaults_changed(self, context):
+    apply_floor_defaults(self.id_data)
+
+
+def _floor_default_finish_changed(kind):
+    def changed(self, context):
+        key = f'floor_{kind}_look'
+        if key in self.keys():
+            del self[key]           # the new finish's own default look
+        apply_floor_defaults(self.id_data)
+    return changed
+
+
+def _floor_default_looks(kind):
+    def items(self, context):
+        from .operators import ops_room_dressing as dressing
+        finish = getattr(self, f'floor_{kind}_finish')
+        looks = dressing.LOOKS.get(finish)
+        if not looks:
+            return [('NONE', "-", "")]
+        if finish not in _floor_look_items:
+            _floor_look_items[finish] = [(k, v[0], "") for k, v in looks.items()]
+        return _floor_look_items[finish]
+    return items
 
 
 def _room_materials_changed(self, context):
@@ -738,6 +923,7 @@ def _room_materials_changed(self, context):
 
 
 def _room_custom_floor_picked(self, context):
+    _floor_chosen(self)
     # Picking a material is choosing the Custom finish
     if self.floor_material is not None and self.floor_finish != 'CUSTOM':
         self['floor_finish'] = _FLOOR_FINISH_INDEX['CUSTOM']
@@ -783,6 +969,7 @@ def _apply_floor_look(room):
 def _room_floor_finish_changed(self, context):
     from .operators import ops_room_dressing as dressing
     from . import hb_rooms
+    _floor_chosen(self)
     if self.floor_finish in dressing.LOOKS:
         # The Floor tool's defaults for the style, stored without their
         # update callbacks so the material is built once, below
@@ -795,12 +982,14 @@ def _room_floor_finish_changed(self, context):
 
 
 def _room_floor_look_changed(self, context):
+    _floor_chosen(self)
     _apply_floor_look(self)
     _room_floor_style_changed(self, context)
 
 
 def _room_floor_style_changed(self, context):
     from . import hb_rooms
+    _floor_chosen(self)
     hb_rooms.apply_room_materials(self, rebuild_floor=True)
 
 
@@ -808,7 +997,9 @@ def _room_outdoor_changed(self, context):
     """An outdoor room has no ceiling and, unless it has a finish already,
     a deck floor; back indoors it gets its ceiling again."""
     self['has_ceiling'] = not self.outdoor
-    if self.outdoor and self.floor_finish == 'NONE':
+    if self.floor_auto:
+        apply_floor_default(self)           # outdoors: the deck default
+    elif self.outdoor and self.floor_finish == 'NONE':
         self.floor_finish = 'DECK'          # builds the deck material
     _room_shape_changed(self, context)      # ceiling off (or back on)
 
@@ -832,6 +1023,12 @@ class HB_Room(PropertyGroup):
 
     name: StringProperty(name="Name", default="Room",
                          update=_room_label_changed)  # type: ignore
+
+    room_type: EnumProperty(
+        name="Room Type", items=ROOM_TYPES, default='NONE',
+        description="What the room is for: it sets the room's floor default, "
+                    "and names a room that still has the name it was found with",
+        update=_room_type_changed)  # type: ignore
 
     marker: PointerProperty(type=bpy.types.Object)  # type: ignore
     floor_obj: PointerProperty(type=bpy.types.Object)  # type: ignore
@@ -915,6 +1112,12 @@ class HB_Room(PropertyGroup):
         description="A balcony or deck: no ceiling, deck boards for a floor",
         default=False, update=_room_outdoor_changed)  # type: ignore
 
+    floor_auto: BoolProperty(
+        name="Use House Default",
+        description=("The floor comes from the house's Floor Defaults for this kind of "
+                     "room (from its name). Choosing a floor by hand turns this off"),
+        default=False, update=_room_floor_auto_changed)  # type: ignore
+
     # A porch: a room closed by porch edges (see hb_porches)
     is_porch: BoolProperty(
         name="Porch", description="Closed on its open sides by porch edges",
@@ -943,10 +1146,12 @@ class HB_Room(PropertyGroup):
     porch_obj: PointerProperty(type=bpy.types.Object)  # type: ignore
     porch_roof: EnumProperty(
         name="Porch Roof",
+        # A porch isn't always covered - a patio or an open deck - so it
+        # gets a roof of its own only when asked for
         items=[('AUTO', "Auto", "A shed roof unless the house's roof or a cross gable already covers the porch"),
                ('SHED', "Shed", "A shed roof from the porch's beam up to the house"),
-               ('NONE', "None", "No roof of its own")],
-        default='AUTO', update=_room_porch_changed)  # type: ignore
+               ('NONE', "None", "No roof of its own: open, or covered by the house's roof or a cross gable")],
+        default='NONE', update=_room_porch_changed)  # type: ignore
     porch_roof_pitch: FloatProperty(
         name="Porch Roof Pitch", description="Rise in 12 of the porch's shed roof",
         default=3.0, min=0.5, max=12.0, precision=2,
@@ -989,7 +1194,10 @@ class HB_RoofPiece(PropertyGroup):
                 "running back into the main roof with valleys where they meet"),
                ('SHED', "Shed Dormer",
                 "A dormer on the roof's slope: a front wall and a shallow "
-                "roof sloping back up into the main roof")],
+                "roof sloping back up into the main roof"),
+               ('DORMER', "Gable Dormer",
+                "A dormer on the roof's slope with a gable roof of its own: a "
+                "front wall for a window, and side walls down to the main roof")],
         default='GABLE', update=_roof_piece_changed)  # type: ignore
 
     x0: FloatProperty(name="Left Edge", subtype='DISTANCE', precision=4,
@@ -1004,7 +1212,7 @@ class HB_RoofPiece(PropertyGroup):
     eave_height: FloatProperty(
         name="Eave Height",
         description=("Above the level's floor: where a cross gable's slopes meet its "
-                     "walls, or the top of a shed dormer's front wall"),
+                     "walls, or the top of a dormer's front wall"),
         default=inch(120), subtype='DISTANCE', precision=4,
         update=_roof_piece_changed)  # type: ignore
 
@@ -1018,8 +1226,8 @@ class HB_RoofPiece(PropertyGroup):
         default=inch(12), min=0.0, subtype='DISTANCE', precision=4,
         update=_roof_piece_changed)  # type: ignore
 
-    # A shed dormer's front: a real wall, so windows go in it with the
-    # window tool. Kept (not remade) across rebuilds so its windows stay.
+    # A dormer's front: a real wall, so windows go in it with the window
+    # tool. Kept (not remade) across rebuilds so its windows stay.
     front_wall: PointerProperty(type=bpy.types.Object)  # type: ignore
 
     # Made by Fit Roof to Outline, which replaces its own pieces
@@ -1111,10 +1319,12 @@ class HB_Roof(PropertyGroup):
     material: PointerProperty(name="Roof Material", type=bpy.types.Material,
                               update=_roof_changed)  # type: ignore
 
+    # Off unless asked for: a bump-out is as often just the house's shape,
+    # and a dormer can be drawn as a roof piece
     dormers: BoolProperty(
         name="Dormers",
         description="Build a dormer over each bump-out in the walls under the roof",
-        default=True, update=_roof_changed)  # type: ignore
+        default=False, update=_roof_changed)  # type: ignore
 
     dormer_pitch: FloatProperty(
         name="Dormer Pitch", description="Rise in 12 of the dormer roofs",
@@ -1163,8 +1373,62 @@ class HB_Roof(PropertyGroup):
     rise_obj: PointerProperty(type=bpy.types.Object)  # type: ignore
 
 
+# The finishes the outside walls can take (see hb_exterior). New ones go
+# on the end: a saved choice is its place in the list.
+SIDING_FINISHES = [
+    ('NONE', "None", "Plain walls"),
+    ('BOARD_BATTEN', "Board and Batten", "Vertical boards with battens every 16\""),
+    ('LAP', "Lap", "Horizontal lap boards, 6\" to the weather"),
+    ('SHINGLE', "Shingles", "Cedar shingles in rows, 7\" to the weather"),
+    ('STUCCO', "Stucco", "A lightly textured plaster finish"),
+    ('BRICK', "Brick", "Brick in running bond"),
+    ('STONE', "Stone", "Rough stone"),
+]
+
+
+def _siding_override(same_as):
+    return [('INHERIT', f"Same as {same_as}", f"The {same_as.lower()}'s siding")] + SIDING_FINISHES
+
+
+def _level_siding_changed(self, context):
+    _exterior_changed(self.id_data.hb_house)
+
+
+def _wall_siding_changed(self, context):
+    """A wall's own siding: the same goes on every selected outside wall,
+    then the house is refinished."""
+    obj = self.id_data
+    style = [i[0] for i in _siding_override("Level")].index(self.style)
+    for other in (context.selected_objects if context else ()):
+        if (other is not obj and other.get('IS_WALL_BP')
+                and other.get('WALL_TYPE', 'Exterior') == 'Exterior'):
+            other.hb_siding['style'] = style
+            other.hb_siding['color'] = tuple(self.color)
+    scene = house_scene_of(context.scene if context else bpy.context.scene)
+    if scene is not None:
+        _exterior_changed(scene.hb_house)
+
+
+class HB_WallSiding(PropertyGroup):
+    """An outside wall's own siding, over its level's and the house's."""
+    style: EnumProperty(
+        name="Siding", items=_siding_override("Level"), default='INHERIT',
+        update=_wall_siding_changed)  # type: ignore
+    color: FloatVectorProperty(
+        name="Siding Color", subtype='COLOR', size=3, min=0.0, max=1.0,
+        default=(0.92, 0.92, 0.90), update=_wall_siding_changed)  # type: ignore
+
+
 class HB_Level(PropertyGroup):
     uid: StringProperty(name="Level ID")  # type: ignore
+
+    # This level's outside walls' siding, over the house's
+    siding_style: EnumProperty(
+        name="Siding", items=_siding_override("House"), default='INHERIT',
+        update=_level_siding_changed)  # type: ignore
+    siding_color: FloatVectorProperty(
+        name="Siding Color", subtype='COLOR', size=3, min=0.0, max=1.0,
+        default=(0.92, 0.92, 0.90), update=_level_siding_changed)  # type: ignore
 
     name: StringProperty(name="Name", default="Level",
                          update=_update_level_name)  # type: ignore
@@ -1251,8 +1515,24 @@ def _exterior_changed(house):
 class HB_House_Props(PropertyGroup):
     levels: CollectionProperty(type=HB_Level)  # type: ignore
 
+    tools_stay_on: BoolProperty(
+        name="Tools Stay On",
+        description="Keep a placement tool running after each wall, door, "
+                    "window or obstacle is placed, until Esc or right-click",
+        default=True)  # type: ignore
+
     active_level_index: IntProperty(
         name="Active Level", update=_update_active_level)  # type: ignore
+
+    # Which plan view the switches below match, and a way to set them all
+    # at once (see hb_plan_views): read from the switches, never stored.
+    plan_view: EnumProperty(
+        name="View",
+        description="Show the house for what you are doing: each view sets the "
+                    "levels, roofs, labels, shading and camera at once",
+        items=hb_plan_views.ITEMS,
+        get=hb_plan_views.get_plan_view,
+        set=hb_plan_views.set_plan_view)  # type: ignore
 
     level_display: EnumProperty(
         name="Show",
@@ -1271,15 +1551,26 @@ class HB_House_Props(PropertyGroup):
     # into a room), so they start hidden; they still render.
     # Exterior finish (see hb_exterior)
     siding_style: EnumProperty(
-        name="Siding",
-        items=[('NONE', "None", "Plain walls"),
-               ('BOARD_BATTEN', "Board and Batten", "Vertical boards with battens every 16\""),
-               ('LAP', "Lap", "Horizontal lap boards, 6\" to the weather")],
+        name="Siding", items=SIDING_FINISHES,
         default='NONE', update=lambda self, context: _exterior_changed(self))  # type: ignore
     siding_color: FloatVectorProperty(
         name="Siding Color", subtype='COLOR', size=3, min=0.0, max=1.0,
         default=(0.92, 0.92, 0.90),
         update=lambda self, context: _exterior_changed(self))  # type: ignore
+    # The gable ends (and the walls the roof pieces make), over the walls'
+    gable_siding_style: EnumProperty(
+        name="Gable Siding", items=_siding_override("Walls"), default='INHERIT',
+        update=lambda self, context: _exterior_changed(self))  # type: ignore
+    gable_siding_color: FloatVectorProperty(
+        name="Gable Siding Color", subtype='COLOR', size=3, min=0.0, max=1.0,
+        default=(0.92, 0.92, 0.90),
+        update=lambda self, context: _exterior_changed(self))  # type: ignore
+    siding_geometry: BoolProperty(
+        name="Real Geometry",
+        description=("Build the battens, lap boards and shingle rows as real geometry "
+                     "on the walls, not only in the material. Slower to update"),
+        default=False, update=lambda self, context: _exterior_changed(self))  # type: ignore
+
     base_style: EnumProperty(
         name="Base",
         items=[('NONE', "None", "No masonry base"),
@@ -1300,6 +1591,33 @@ class HB_House_Props(PropertyGroup):
         description="Show the roofs in the viewport. Off to see down into the house",
         default=True,
         update=lambda self, context: _roofs_shown_changed(self))  # type: ignore
+
+    # Floor defaults: what a room's floor is until one is chosen for it
+    floor_room_finish: EnumProperty(
+        name="Rooms", items=[i for i in FLOOR_FINISH_ITEMS if i[0] != 'CUSTOM'], default='WOOD',
+        update=_floor_default_finish_changed('room'))  # type: ignore
+    floor_room_look: EnumProperty(
+        name="Look", items=_floor_default_looks('room'), update=_floor_defaults_changed)  # type: ignore
+    floor_wet_finish: EnumProperty(
+        name="Baths & Laundry", items=[i for i in FLOOR_FINISH_ITEMS if i[0] != 'CUSTOM'],
+        default='TILE', update=_floor_default_finish_changed('wet'))  # type: ignore
+    floor_wet_look: EnumProperty(
+        name="Look", items=_floor_default_looks('wet'), update=_floor_defaults_changed)  # type: ignore
+    floor_garage_finish: EnumProperty(
+        name="Garages", items=[i for i in FLOOR_FINISH_ITEMS if i[0] != 'CUSTOM'],
+        default='SOLID', update=_floor_default_finish_changed('garage'))  # type: ignore
+    floor_garage_look: EnumProperty(
+        name="Look", items=_floor_default_looks('garage'), update=_floor_defaults_changed)  # type: ignore
+    floor_porch_finish: EnumProperty(
+        name="Porches & Patios", items=[i for i in FLOOR_FINISH_ITEMS if i[0] != 'CUSTOM'],
+        default='SOLID', update=_floor_default_finish_changed('porch'))  # type: ignore
+    floor_porch_look: EnumProperty(
+        name="Look", items=_floor_default_looks('porch'), update=_floor_defaults_changed)  # type: ignore
+    floor_outdoor_finish: EnumProperty(
+        name="Decks & Balconies", items=[i for i in FLOOR_FINISH_ITEMS if i[0] != 'CUSTOM'],
+        default='DECK', update=_floor_default_finish_changed('outdoor'))  # type: ignore
+    floor_outdoor_look: EnumProperty(
+        name="Look", items=_floor_default_looks('outdoor'), update=_floor_defaults_changed)  # type: ignore
 
     show_room_labels: BoolProperty(
         name="Show Room Labels",
@@ -1532,16 +1850,63 @@ class HOME_BUILDER_OT_add_level(bpy.types.Operator):
     def poll(cls, context):
         return context.scene is not None and context.scene.get(HOUSE_SCENE_KEY)
 
+    start: EnumProperty(
+        name="Start With",
+        items=[('FULL', "Full Floor", "The whole outline of the level below, copied up"),
+               ('SELECTED', "Over Selected Walls",
+                "Only the selected outside walls of the level below, copied up: a "
+                "partial floor, like a bonus room over a garage"),
+               ('EMPTY', "Empty Level",
+                "No walls: draw the level over the outline of the level below")],
+        # Not remembered from the last time, or + NEW would stop asking
+        default='FULL', options={'SKIP_SAVE'})  # type: ignore
+
+    # Kept for scripts from before Start With: off is an empty level
     copy_exterior: BoolProperty(
         name="Copy Exterior Walls",
         description="Start the new level with the exterior walls of the level below",
-        default=True)  # type: ignore
+        default=True, options={'SKIP_SAVE'})  # type: ignore
+
+    @staticmethod
+    def _top(house):
+        return max(house.levels, key=lambda l: l.elevation) if house.levels else None
+
+    @staticmethod
+    def _selected_walls(context, level):
+        return [o.name for o in context.selected_objects
+                if level is not None and o.get('IS_WALL_BP') and o.get(LEVEL_KEY) == level.uid
+                and o.get('WALL_TYPE', 'Exterior') == 'Exterior']
+
+    def invoke(self, context, event):
+        """From the + NEW button: ask how the new level starts."""
+        if self.properties.is_property_set('start') or not context.scene.hb_house.levels:
+            return self.execute(context)
+        top = self._top(context.scene.hb_house)
+        picked = len(self._selected_walls(context, top))
+
+        def draw(menu, _context):
+            layout = menu.layout
+            layout.operator_context = 'EXEC_DEFAULT'
+            layout.operator(self.bl_idname, text="Full Floor", icon='MOD_BUILD').start = 'FULL'
+            row = layout.row()
+            row.enabled = picked > 0
+            label = (f"Over Selected Walls ({picked})" if picked
+                     else "Over Selected Walls (select outside walls first)")
+            row.operator(self.bl_idname, text=label, icon='RESTRICT_SELECT_OFF').start = 'SELECTED'
+            layout.operator(self.bl_idname, text="Empty Level", icon='SELECT_SET').start = 'EMPTY'
+        context.window_manager.popup_menu(draw, title=f"New Level on {top.name}" if top else "New Level")
+        return {'CANCELLED'}
 
     def execute(self, context):
         scene = context.scene
         house = scene.hb_house
-        below_uid = (max(house.levels, key=lambda l: l.elevation).uid
-                     if house.levels else '')
+        top = self._top(house)
+        start = self.start if self.copy_exterior else 'EMPTY'
+        only = self._selected_walls(context, top) if start == 'SELECTED' else None
+        if start == 'SELECTED' and not only:
+            self.report({'WARNING'}, "Select the outside walls the new level stands on")
+            return {'CANCELLED'}
+        below_uid = top.uid if top is not None else ''
         level = add_level(scene)
         uid = level.uid
         level = None                # held across nothing below, by uid
@@ -1551,15 +1916,23 @@ class HOME_BUILDER_OT_add_level(bpy.types.Operator):
         copied = 0
         if below is not None:
             # The level below's exterior walls now run up to the new floor
+            if start != 'EMPTY':
+                copied = copy_exterior_walls(scene, below, new, only=only)
+            # The level below's exterior walls run up to the new floor
+            # where the new level's walls stand on them
             set_exterior_wall_heights(scene, below)
-            if self.copy_exterior:
-                copied = copy_exterior_walls(scene, below, new)
         if copied:
             from .operators import walls
             walls.refresh_wall_junctions(scene, uid)
+        if self.start == 'EMPTY' and below is not None:
+            # Chosen from the menu: draw it over the outline of the level below
+            house.level_display = 'ACTIVE'
+            house.show_level_below = True
         msg = f"Added {new.name}"
         if copied:
             msg += f" with {copied} exterior wall(s) from {below.name}"
+        elif start == 'EMPTY':
+            msg += ": draw its walls over the outline of the level below"
         self.report({'INFO'}, msg)
         return {'FINISHED'}
 
@@ -1567,7 +1940,8 @@ class HOME_BUILDER_OT_add_level(bpy.types.Operator):
 class HOME_BUILDER_OT_remove_level(bpy.types.Operator):
     bl_idname = "home_builder.remove_level"
     bl_label = "Remove Level"
-    bl_description = "Remove the active level. Only an empty level can be removed"
+    bl_description = ("Remove the active level and everything on it - its walls, rooms, "
+                      "roof and what is placed on them. Ctrl+Z brings it back")
     bl_options = {'UNDO'}
 
     @classmethod
@@ -1582,12 +1956,24 @@ class HOME_BUILDER_OT_remove_level(bpy.types.Operator):
         index = house.active_level_index
         level = house.levels[index]
         col = level.collection
-        if col is not None and len(col.all_objects) > 0:
-            self.report({'WARNING'},
-                        f"{level.name} still has {len(col.all_objects)} object(s). "
-                        "Delete them first")
-            return {'CANCELLED'}
-        name = level.name
+        name, uid = level.name, level.uid
+        walls = sum(1 for o in scene.objects
+                    if o.get('IS_WALL_BP') and o.get(LEVEL_KEY) == uid)
+        # Its roof and the roof's helpers live outside the level's collection
+        from . import hb_roofs
+        for piece in level.roof.pieces:
+            if piece.front_wall is not None:
+                hb_roofs._delete_tree(piece.front_wall)
+                piece.front_wall = None
+        hb_roofs._remove_roof(level.roof)
+        doomed = {o.name for o in scene.objects if o.get(LEVEL_KEY) == uid}
+        if col is not None:
+            doomed |= {o.name for o in col.all_objects}
+        for obj_name in doomed:
+            obj = bpy.data.objects.get(obj_name)
+            if obj is not None:
+                bpy.data.objects.remove(obj, do_unlink=True)
+        level = house.levels[index]
         if col is not None:
             for sub in list(col.children):
                 bpy.data.collections.remove(sub)
@@ -1598,7 +1984,10 @@ class HOME_BUILDER_OT_remove_level(bpy.types.Operator):
         # its ceiling again
         for level in house.levels:
             set_exterior_wall_heights(scene, level)
-        self.report({'INFO'}, f"Removed {name}")
+        # The roofs below lose what stood on them: their gables and trims follow
+        hb_roofs.rebuild_roofs(scene)
+        what = f" and its {walls} wall(s)" if walls else ""
+        self.report({'INFO'}, f"Removed {name}{what} (Ctrl+Z to bring it back)")
         return {'FINISHED'}
 
 
@@ -1637,6 +2026,21 @@ class HOME_BUILDER_OT_import_room_as_level(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class HOME_BUILDER_OT_apply_floor_defaults(bpy.types.Operator):
+    bl_idname = "home_builder.apply_floor_defaults"
+    bl_label = "Apply Floor Defaults"
+    bl_description = ("Give every room the house's default floor for its kind - wood, tile "
+                      "in baths, concrete in garages - including rooms floored by hand")
+    bl_options = {'UNDO'}
+
+    def execute(self, context):
+        scene = house_scene_of(context.scene)
+        if scene is None:
+            return {'CANCELLED'}
+        apply_floor_defaults(scene, every_room=True)
+        return {'FINISHED'}
+
+
 class HOME_BUILDER_OT_set_active_level(bpy.types.Operator):
     bl_idname = "home_builder.set_active_level"
     bl_label = "Set Active Level"
@@ -1657,6 +2061,7 @@ class HOME_BUILDER_OT_set_active_level(bpy.types.Operator):
 # =============================================================================
 
 classes = (
+    HB_WallSiding,
     HB_Room,
     HB_RoofPiece,
     HB_Roof,
@@ -1666,6 +2071,7 @@ classes = (
     HOME_BUILDER_OT_add_level,
     HOME_BUILDER_OT_remove_level,
     HOME_BUILDER_OT_set_active_level,
+    HOME_BUILDER_OT_apply_floor_defaults,
     HOME_BUILDER_OT_import_room_as_level,
 )
 
@@ -1675,6 +2081,7 @@ def register():
     for cls in classes:
         bpy.utils.register_class(cls)
     HB_House_Props.register()
+    bpy.types.Object.hb_siding = PointerProperty(type=HB_WallSiding)
     _ghost_handle = bpy.types.SpaceView3D.draw_handler_add(
         _draw_level_ghost, (), 'WINDOW', 'POST_VIEW')
     if _on_depsgraph_update not in bpy.app.handlers.depsgraph_update_post:
@@ -1691,5 +2098,7 @@ def unregister():
         bpy.types.SpaceView3D.draw_handler_remove(_ghost_handle, 'WINDOW')
         _ghost_handle = None
     HB_House_Props.unregister()
+    if hasattr(bpy.types.Object, 'hb_siding'):
+        del bpy.types.Object.hb_siding
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)

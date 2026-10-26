@@ -6,12 +6,16 @@ from . import hb_house
 from . import hb_rooms
 from . import hb_roofs
 from . import hb_walk
+from . import hb_roof_edit
+from . import hb_room_pick
 from . import hb_props_obstacles
 from . import ops
 from .ui import view3d_sidebar
 from .ui import menu_apend
 from .ui import menus
 from .operators import walls
+from .operators import wall_handles
+from .operators import tool_session
 from .operators import doors_windows
 from .operators import layouts
 from .operators import rooms
@@ -113,6 +117,7 @@ def load_file_post(scene):
     quiet_cages.ensure_subscriptions()
     from .product_libraries.frameless import quiet_cages as frameless_quiet_cages
     frameless_quiet_cages.ensure_subscriptions()
+    hb_room_pick.ensure_subscriptions()
 
     # Door/window boolean cutters saved while still visible in the
     # viewport would cover their own opening in rendered shading.
@@ -441,10 +446,13 @@ def register():
     hb_rooms.register()
     hb_roofs.register()
     hb_walk.register()
+    hb_roof_edit.register()
+    hb_room_pick.register()
     hb_snap_engine.register()
     hb_props_obstacles.register()
     ops_obstacles.register()
     walls.register()
+    wall_handles.register()
     layouts.register()
     rooms.register()
     details.register()
@@ -461,6 +469,7 @@ def register():
     options_panel.register()
     appliance_panel_tab.register()   # after the navigator: it adds a tab
     house_panel_tab.register()       # after the navigator: it adds a tab
+    tool_session.register()          # same
     thumb_picker.register()
     style_editor.register()
     room_dim_overlay.register()
@@ -502,6 +511,8 @@ def unregister():
 
     hb_props.unregister()
     hb_walk.unregister()
+    hb_roof_edit.unregister()
+    hb_room_pick.unregister()
     hb_roofs.unregister()
     hb_rooms.unregister()
     hb_house.unregister()
@@ -509,6 +520,8 @@ def unregister():
     hb_snap_engine.unregister()
     hb_props_obstacles.unregister()
     ops_obstacles.unregister()
+    tool_session.unregister()
+    wall_handles.unregister()
     walls.unregister()
     layouts.unregister()
     rooms.unregister()

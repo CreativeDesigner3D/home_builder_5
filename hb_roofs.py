@@ -56,6 +56,8 @@ DORMER_WALL = 0.12          # thickness of a shed dormer's front and cheeks
 SHED_SET_BACK = 0.9         # a new shed dormer's front, in from the wall line
 SHED_FRONT_RISE = 1.07      # and how far its front wall stands above the roof
 SHED_WIDTH = 3.05           # its width, at most
+GABLE_DORMER_WIDTH = 1.5    # a new gable dormer's width, at most
+GABLE_DORMER_RISE = 1.4     # and how far its front wall stands above the roof
 SHINGLE_MATERIAL = "HB Roof Shingles"
 SHINGLE_COLOR = (0.15, 0.19, 0.16, 1.0)
 
@@ -533,7 +535,9 @@ def dormer_dims(dormer, roof):
 
 def piece_dormers(frame, roof, level):
     """The roof's pieces as dormer descriptions: (cross gables, sheds).
-    Each faces out from the ridge on its rectangle's far edge."""
+    Each faces out from the ridge on its rectangle's far edge. Gable
+    dormers are cross gables standing on the slope ('on_slope'): a front
+    wall and cheeks of their own under the gable."""
     cross, sheds = [], []
     for index, piece in enumerate(roof.pieces):
         if frame['along_x']:
@@ -547,7 +551,8 @@ def piece_dormers(frame, roof, level):
         s, u_front = (-1, ua) if (ua + ub) / 2.0 < frame['uc'] else (1, ub)
         d = {'v0': v0, 'v1': v1, 'sign': s, 'u_front': u_front, 'level': level,
              'pitch': piece.pitch, 'plate': level.elevation + piece.eave_height,
-             'overhang': piece.overhang, 'index': index}
+             'overhang': piece.overhang, 'index': index,
+             'on_slope': piece.kind == 'DORMER'}
         (sheds if piece.kind == 'SHED' else cross).append(d)
     return cross, sheds
 
@@ -655,6 +660,53 @@ def _porch_infill_prisms(scene, level, frame, cross):
     return out
 
 
+def _end_infill_prisms(scene, level, frame):
+    """A roof that starts at its level's floor - a barn or a cape over the
+    floor below - closes its own gable ends: where the level's end walls
+    stop short of the roof's full width (set back from the eaves below,
+    like knee walls), the gable is filled from the floor up under the
+    roof, flush with the end."""
+    from .operators import walls
+    roof = level.roof
+    if roof.base != 'FLOOR' or roof.style == 'HIP':
+        return []
+    u0, u1 = frame['u0'], frame['u1']
+    covered = {0: [], 1: []}        # at v0, at v1: (u from, u to) of the level's end walls
+    for obj in _exterior_walls(scene, level):
+        pts = [_uv(frame, p) for _e, _f, p in walls.wall_plan_corners(obj)]
+        if len(pts) < 4:
+            continue
+        vs = [v for _u, v in pts]
+        us = [u for u, _v in pts]
+        if max(vs) - min(vs) > 0.5:
+            continue                # not square to the ridge
+        for end, v_edge in ((0, frame['v0']), (1, frame['v1'])):
+            if min(abs(v - v_edge) for v in vs) < 0.05:
+                covered[end].append((min(us), max(us)))
+    out = []
+    for end, (va, vb) in ((0, (frame['v0'], frame['v0'] + GABLE_INFILL)),
+                          (1, (frame['v1'] - GABLE_INFILL, frame['v1']))):
+        spans = sorted(covered[end])
+        if not spans:
+            continue                # no wall of its own there: the walls below make the gable
+        gaps, at = [], u0
+        for a, b in spans:
+            if a - at > 0.05:
+                gaps.append((at, a))
+            at = max(at, b)
+        if u1 - at > 0.05:
+            gaps.append((at, u1))
+        for a, b in gaps:
+            # Up the underside from a to b, then back along the floor
+            tops = [(a, _under_z(frame, a))]
+            tops += [(u, z) for u, z in frame['under'] if a < u < b]
+            tops.append((b, _under_z(frame, b)))
+            section = _dedupe([(b, frame['plate']), (a, frame['plate'])] + tops)
+            if len(section) >= 3:
+                out.append((section, va, vb, _along_ridge(frame)))
+    return out
+
+
 def _shed_prisms(frame, roof, sheds):
     """Shed dormers: (roofs, walls). The roof slopes up from over the
     front wall into the main roof; the front wall and cheeks rise from
@@ -676,6 +728,21 @@ def _shed_prisms(frame, roof, sheds):
         walls.append((cheek, d['v0'], d['v0'] + DORMER_WALL, along))
         walls.append((cheek, d['v1'] - DORMER_WALL, d['v1'], along))
     return roofs, walls
+
+
+def _gable_dormer_cheeks(frame, dormers):
+    """A gable dormer's side walls: from below the main roof up to its
+    eaves, from its front back to the ridge - cut back to the main roof
+    like a shed dormer's cheeks. Its front is a wall of its own."""
+    along = _along_ridge(frame)
+    walls = []
+    for d in dormers:
+        uf, plate, ub = d['u_front'], d['plate'], frame['uc']
+        low = d['level'].elevation
+        cheek = [(uf, low), (uf, plate), (ub, plate), (ub, low)]
+        walls.append((cheek, d['v0'], d['v0'] + DORMER_WALL, along))
+        walls.append((cheek, d['v1'] - DORMER_WALL, d['v1'], along))
+    return walls
 
 
 DORMER_WALL_TYPE = 'Dormer'
@@ -731,7 +798,7 @@ def _wall_inputs_like(scene, level, wall_obj):
 
 
 def _shed_front_wall(scene, level, frame, roof, piece, d):
-    """Make or move a shed dormer's front wall: a GeoNodeWall standing in
+    """Make or move a dormer's front wall: a GeoNodeWall standing in
     the roof at the dormer's front, its thickness inward, up to the
     dormer's eaves. It is tagged as a dormer front, so rooms, corners and
     the roof's trim leave it alone; windows placed in it stay with it."""
@@ -765,7 +832,7 @@ def _shed_front_wall(scene, level, frame, roof, piece, d):
 
 
 def _clear_front_walls(roof, keep=()):
-    """Delete the front walls of pieces that aren't shed dormers any more."""
+    """Delete the front walls of pieces that aren't dormers any more."""
     for i, piece in enumerate(roof.pieces):
         if i in keep or piece.front_wall is None:
             continue
@@ -804,7 +871,9 @@ def _dormer_prisms(frame, roof, dormers):
         # stands on it rather than in a hole down to the eave
         # A roof piece's gable comes down to the main roof's eaves, so the
         # main roof opens all the way out under it
-        start = d['u_front'] + s * CUTTER_REACH if 'pitch' in d else d['u_front']
+        # (a gable dormer stands on the slope, like one from a bump-out)
+        start = (d['u_front'] + s * CUTTER_REACH if 'pitch' in d and not d.get('on_slope')
+                 else d['u_front'])
         tops.append(([(v0, low), (v1, low), (v1, plate + tv), (vc, ridge + tv), (v0, plate + tv)],
                      start, back, to_world))
         # The trim stays off the whole dormer, its front wall included
@@ -1156,6 +1225,9 @@ def rebuild_roof(scene, level):
     if scene is None or level is None:
         return False
     roof = level.roof
+    # The porches' sheds depend on this roof - covered by it, or running
+    # up under it - so they follow it, on or off
+    refresh_porch_roofs(scene, level)
     frame = roof_frame(scene, level) if roof.enabled else None
     if frame is None:
         _dormer_fronts.pop(level.uid, None)
@@ -1183,6 +1255,8 @@ def rebuild_roof(scene, level):
     d_roofs, d_tops, d_insides = _dormer_prisms(frame, roof, gabled)
     s_roofs, s_walls = _shed_prisms(frame, roof, sheds)
     d_roofs += s_roofs
+    on_slope = [d for d in cross if d.get('on_slope')]
+    s_walls += _gable_dormer_cheeks(frame, on_slope)
     tops = _helper(scene, roof, 'dormer_tops_obj', f"Roof Dormer Tops - {level.name}",
                    _mesh("Roof Dormer Tops", d_tops) if gabled else None,
                    ROOF_CUTTER_KEY)
@@ -1203,7 +1277,8 @@ def rebuild_roof(scene, level):
 
     # Cross gables' filled-in ends, and shed dormers' walls cut back to the
     # roof they stand on - both finished like the house's walls
-    infill = _infill_prisms(frame, roof, cross) + _porch_infill_prisms(scene, level, frame, cross)
+    infill = (_infill_prisms(frame, roof, cross) + _porch_infill_prisms(scene, level, frame, cross)
+              + _end_infill_prisms(scene, level, frame))
     gables = _visible_piece(scene, level, roof, 'gables_obj', f"Roof Gables - {level.name}",
                             _mesh("Roof Gables", infill) if infill else None)
     dormer_walls = _visible_piece(scene, level, roof, 'dormer_walls_obj',
@@ -1214,9 +1289,10 @@ def rebuild_roof(scene, level):
     for obj in (gables, dormer_walls):
         if obj is not None:
             _wall_finish(scene, level, obj)
-    for d in sheds:
+    fronted = sheds + on_slope
+    for d in fronted:
         _shed_front_wall(scene, level, frame, roof, roof.pieces[d['index']], d)
-    _clear_front_walls(roof, keep={d['index'] for d in sheds})
+    _clear_front_walls(roof, keep={d['index'] for d in fronted})
 
     # The trim: everything above the roof, less the inside of the dormers
     cutter = _helper(scene, roof, 'cutter_obj', f"Roof Trim - {level.name}",
@@ -1285,9 +1361,18 @@ def porch_roof_prisms(scene, level, room, polygon, segs):
     roof = level.roof
     z_low = level.elevation + hb_rooms.room_height(room, level)
     p = room.porch_roof_pitch / 12.0
-    house_roof = roof.enabled and roof_frame(scene, level) is not None
+    frame = roof_frame(scene, level) if roof.enabled else None
+    house_roof = frame is not None
     if house_roof:
         back = depth + PORCH_ROOF_REACH
+        # No further than the main ridge: past it the roof comes down
+        # again and the shed would come out through its far slope
+        nu = n_in[1] if frame['along_x'] else n_in[0]
+        if abs(nu) > 0.5:
+            au = a[1] if frame['along_x'] else a[0]
+            to_ridge = (frame['uc'] - au) / nu
+            if to_ridge > depth:
+                back = min(back, to_ridge)
     else:
         back = depth
         top = level.elevation + hb_house.exterior_wall_height(level)
@@ -1349,8 +1434,9 @@ def build_porch_roof(scene, level, room, polygon, segs):
         try:
             from . import hb_exterior
             house = scene.hb_house
-            if house.siding_style != 'NONE':
-                wall_mat = hb_exterior.siding_material(house.siding_style, house.siding_color)
+            style, color = hb_exterior.level_finish(scene, level)
+            if style != 'NONE':
+                wall_mat = hb_exterior.siding_material(style, color)
         except Exception:
             wall_mat = None
         if wall_mat is None:
@@ -1361,6 +1447,24 @@ def build_porch_roof(scene, level, room, polygon, segs):
         for i, poly in enumerate(obj.data.polygons):
             poly.material_index = 0 if i < n_roof else 1
     obj.hide_viewport = not scene.hb_house.show_roofs
+
+
+def refresh_porch_roofs(scene, level):
+    """Remake the shed roofs of a level's porches: whether a porch gets
+    one, and how far it runs back, follow the level's roof."""
+    from . import hb_porches, hb_wall_graph
+    from .operators import walls
+    porches = [r for r in level.rooms
+               if r.is_porch and not r.orphaned and r.marker is not None]
+    if not porches:
+        return
+    _objs, segs = walls.level_wall_segs(scene, level.uid)
+    areas = [a for a in hb_wall_graph.find_rooms(segs) if hb_porches.is_porch_area(a)]
+    for room in porches:
+        mark = (room.marker.location.x, room.marker.location.y)
+        area = next((a for a in areas if hb_wall_graph.point_in_polygon(mark, a.polygon)), None)
+        if area is not None:
+            build_porch_roof(scene, level, room, area.polygon, segs)
 
 
 def remove_porch_roof(room):
@@ -1603,15 +1707,77 @@ class HOME_BUILDER_OT_fit_roof_to_outline(bpy.types.Operator):
         return {'FINISHED'}
 
 
+def add_piece(scene, level, kind, bounds, porch_height=None, fit_shed=True):
+    """Add a cross gable ('GABLE'), shed dormer ('SHED') or gable dormer
+    ('DORMER') over the plan rectangle bounds (x0, y0, x1, y1), make it
+    the active piece and rebuild the roof. A dormer is fitted onto the
+    roof's slope - its front set back from the eaves, its back at the
+    ridge - unless fit_shed is False (drawn by hand: it keeps the
+    rectangle drawn). Returns its index."""
+    roof = level.roof
+    frame = roof_frame(scene, level)
+    x0, y0, x1, y1 = bounds
+    x0, x1 = sorted((x0, x1))
+    y0, y1 = sorted((y0, y1))
+    # Work in the roof's own terms - v along the ridge, u across it -
+    # and store the plan rectangle
+    if frame['along_x']:
+        v0, v1, ua, ub = x0, x1, y0, y1
+    else:
+        v0, v1, ua, ub = y0, y1, x0, x1
+    front_low = (ua + ub) / 2.0 < frame['uc']
+    if kind in ('SHED', 'DORMER'):
+        if fit_shed:
+            vc = (v0 + v1) / 2.0
+            widest = SHED_WIDTH if kind == 'SHED' else GABLE_DORMER_WIDTH
+            half = min((v1 - v0) / 2.0, widest / 2.0)
+            v0, v1 = vc - half, vc + half
+            if front_low:
+                ua, ub = frame['u0'] + SHED_SET_BACK, frame['uc']
+            else:
+                ua, ub = frame['uc'], frame['u1'] - SHED_SET_BACK
+        u_front = ua if front_low else ub
+        if kind == 'SHED':
+            eave = roof_top_z(frame, roof, u_front) + SHED_FRONT_RISE - level.elevation
+            pitch, overhang, name = 3.0, inch(6), "Shed Dormer"
+        else:
+            eave = roof_top_z(frame, roof, u_front) + GABLE_DORMER_RISE - level.elevation
+            pitch, overhang, name = 12.0, inch(6), "Gable Dormer"
+    else:
+        eave = porch_height if porch_height is not None else hb_house.exterior_wall_height(level)
+        pitch = roof.pitch if roof.style in ('GABLE', 'HIP') else 12.0
+        overhang = roof.eave_overhang
+        name = "Porch Gable" if porch_height is not None else "Cross Gable"
+    if frame['along_x']:
+        rect = (v0, ua, v1, ub)
+    else:
+        rect = (ua, v0, ub, v1)
+
+    index = len(roof.pieces)
+    piece = roof.pieces.add()
+    # Set quietly; one rebuild once it is complete
+    piece['name'] = name
+    piece['kind'] = ('GABLE', 'SHED', 'DORMER').index(kind)
+    for key, value in zip(('x0', 'y0', 'x1', 'y1'), rect):
+        piece[key] = value
+    piece['eave_height'] = eave
+    piece['pitch'] = pitch
+    piece['overhang'] = overhang
+    roof.active_piece_index = index
+    rebuild_roof(scene, level)
+    return index
+
+
 class HOME_BUILDER_OT_add_roof_piece(bpy.types.Operator):
     bl_idname = "home_builder.add_roof_piece"
     bl_label = "Add Roof Piece"
     bl_description = ("Add a piece to the active level's roof over the selected walls "
-                      "or porch: a cross gable, or a shed dormer on the roof's slope")
+                      "or porch: a cross gable, or a shed or gable dormer on the roof's slope")
     bl_options = {'UNDO'}
 
     kind: bpy.props.EnumProperty(
-        items=[('GABLE', "Cross Gable", ""), ('SHED', "Shed Dormer", "")],
+        items=[('GABLE', "Cross Gable", ""), ('SHED', "Shed Dormer", ""),
+               ('DORMER', "Gable Dormer", "")],
         default='GABLE')  # type: ignore
 
     @classmethod
@@ -1622,55 +1788,11 @@ class HOME_BUILDER_OT_add_roof_piece(bpy.types.Operator):
     def execute(self, context):
         scene = context.scene
         level = hb_house.active_level(context)
-        roof = level.roof
-        frame = roof_frame(scene, level)
         bounds = _selection_bounds(context)
-        if frame is None or bounds is None:
+        if roof_frame(scene, level) is None or bounds is None:
             self.report({'WARNING'}, "Select the walls or porch the roof piece goes over")
             return {'CANCELLED'}
-        x0, y0, x1, y1 = bounds
-        # Work in the roof's own terms - v along the ridge, u across it -
-        # and store the plan rectangle
-        if frame['along_x']:
-            v0, v1, ua, ub = x0, x1, y0, y1
-        else:
-            v0, v1, ua, ub = y0, y1, x0, x1
-        front_low = (ua + ub) / 2.0 < frame['uc']
-        if self.kind == 'SHED':
-            vc = (v0 + v1) / 2.0
-            half = min((v1 - v0) / 2.0, SHED_WIDTH / 2.0)
-            v0, v1 = vc - half, vc + half
-            if front_low:
-                ua, ub = frame['u0'] + SHED_SET_BACK, frame['uc']
-                u_front = ua
-            else:
-                ua, ub = frame['uc'], frame['u1'] - SHED_SET_BACK
-                u_front = ub
-            eave = roof_top_z(frame, roof, u_front) + SHED_FRONT_RISE - level.elevation
-            pitch, overhang, name = 3.0, inch(6), "Shed Dormer"
-        else:
-            porch = _selected_porch_height(context, level)
-            eave = porch if porch is not None else hb_house.exterior_wall_height(level)
-            pitch = roof.pitch if roof.style in ('GABLE', 'HIP') else 12.0
-            overhang = roof.eave_overhang
-            name = "Porch Gable" if porch is not None else "Cross Gable"
-        if frame['along_x']:
-            rect = (v0, ua, v1, ub)
-        else:
-            rect = (ua, v0, ub, v1)
-
-        index = len(roof.pieces)
-        piece = roof.pieces.add()
-        # Set quietly; one rebuild once it is complete
-        piece['name'] = name
-        piece['kind'] = 0 if self.kind == 'GABLE' else 1
-        for key, value in zip(('x0', 'y0', 'x1', 'y1'), rect):
-            piece[key] = value
-        piece['eave_height'] = eave
-        piece['pitch'] = pitch
-        piece['overhang'] = overhang
-        roof.active_piece_index = index
-        rebuild_roof(scene, level)
+        add_piece(scene, level, self.kind, bounds, porch_height=_selected_porch_height(context, level))
         return {'FINISHED'}
 
 

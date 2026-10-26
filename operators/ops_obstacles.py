@@ -3,6 +3,7 @@ import math
 import bmesh
 from mathutils import Vector, Matrix
 from .. import hb_utils, hb_snap, hb_placement, hb_types, units
+from . import tool_session
 
 
 # =============================================================================
@@ -108,6 +109,9 @@ class home_builder_obstacles_OT_place_obstacle(bpy.types.Operator, hb_placement.
     bl_label = "Place Obstacle"
     bl_description = "Place an obstacle on a wall, floor, or ceiling"
     bl_options = {'UNDO'}
+
+    # In a house the tool starts again after each one (tool_session)
+    RELAUNCH = True
     
     # Obstacle object being placed
     obstacle_obj = None
@@ -449,9 +453,15 @@ class home_builder_obstacles_OT_place_obstacle(bpy.types.Operator, hb_placement.
     def invoke(self, context, event):
         # With no obstacle picked yet (the list opens on a heading), ask
         # which one first; the picker starts the placement once it has.
+        # In a house the TOOL page is the library: start with the first
+        # one and pick from the page instead of a dialog.
         if context.scene.hb_obstacles.obstacle_type.startswith('HEADER_'):
-            bpy.ops.home_builder_obstacles.pick_obstacle('INVOKE_DEFAULT')
-            return {'CANCELLED'}
+            if tool_session.is_house(context.scene):
+                from .. import hb_props_obstacles
+                context.scene.hb_obstacles.obstacle_type = hb_props_obstacles.first_obstacle_type()
+            else:
+                bpy.ops.home_builder_obstacles.pick_obstacle('INVOKE_DEFAULT')
+                return {'CANCELLED'}
         return self.execute(context)
 
     def execute(self, context):
@@ -476,9 +486,18 @@ class home_builder_obstacles_OT_place_obstacle(bpy.types.Operator, hb_placement.
             self.report({'ERROR'}, "Failed to create obstacle")
             return {'CANCELLED'}
         
+        tool_session.begin(self, context)
         context.window_manager.modal_handler_add(self)
         return {'RUNNING_MODAL'}
-    
+
+    def stop_tool(self, context):
+        """Asked to stop (another tool picked, Done, another tab): what
+        Esc does."""
+        self.cancel_placement(context)
+        hb_placement.clear_header_text(context)
+        return {'CANCELLED'}
+
+    @tool_session.session_modal
     def modal(self, context, event):
         context.area.tag_redraw()
         

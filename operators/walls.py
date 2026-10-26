@@ -13,6 +13,7 @@ from .. import cutters
 from .. import hb_house
 from .. import hb_wall_graph
 from .. import hb_rooms
+from . import tool_session
 
 # Wall Junctions
 # Every corner, T and multi-way junction is worked out by hb_wall_graph
@@ -83,6 +84,22 @@ def level_wall_segs(scene, level=None):
     return objs, segs
 
 
+_rooms_held = 0     # > 0 while a drag holds room rebuilds back (see rooms_held)
+
+
+class rooms_held:
+    """While inside, refresh_wall_junctions leaves the rooms alone - a
+    drag rebuilds them once when it ends rather than on every move."""
+
+    def __enter__(self):
+        global _rooms_held
+        _rooms_held += 1
+
+    def __exit__(self, *exc):
+        global _rooms_held
+        _rooms_held -= 1
+
+
 def refresh_wall_junctions(scene=None, level=None):
     """Recompute every wall end on a level (or all levels) of a scene.
     Returns the names of the walls written."""
@@ -109,6 +126,8 @@ def refresh_wall_junctions(scene=None, level=None):
         # without a view move - see update_wall_height.
         obj.update_tag()
     # In a house, the rooms these walls enclose follow them
+    if _rooms_held:
+        return set(objs)
     try:
         hb_rooms.rebuild_after_walls(scene, level)
     except Exception as ex:
@@ -138,15 +157,25 @@ def capture_tees(scene, level=None):
     return records
 
 
+# A T end closer than this to its host's face has not moved (lengths are
+# stored in single precision, so a resting end is a few tenths of a micron off)
+TEE_MOVED = 1e-5
+
+
 def restore_tees(records, scene):
     """Slide each captured T end back onto its host's face along the
     wall's own line, keeping the wall's other end where it is. An end at
     a wall's start moves the wall's origin, and what is parented to the
-    wall moves with it - the same as a chain neighbour of a dragged wall."""
+    wall moves with it - the same as a chain neighbour of a dragged wall.
+    The scene is brought up to date only after an end really moved: most
+    T ends stay put, and each update re-evaluates every wall."""
+    stale = True
     for obj, which, host_obj, side in records:
         if obj.name not in bpy.data.objects or host_obj.name not in bpy.data.objects:
             continue
-        _update_scene(scene)
+        if stale:
+            _update_scene(scene)
+            stale = False
         seg, host = wall_seg(obj), wall_seg(host_obj)
         if seg is None or host is None:
             continue
@@ -155,15 +184,18 @@ def restore_tees(records, scene):
         if p is None:
             continue
         wall = hb_types.GeoNodeWall(obj)
+        old_len = wall.get_input('Length')
         if which == hb_wall_graph.END:
             new_len = (p[0] - seg.start[0]) * seg.dir[0] + (p[1] - seg.start[1]) * seg.dir[1]
-            if new_len > 0.001:
+            if new_len > 0.001 and abs(new_len - old_len) > TEE_MOVED:
                 wall.set_input('Length', new_len)
+                stale = True
         elif not _constrained_start(obj):
             new_len = (seg.end[0] - p[0]) * seg.dir[0] + (seg.end[1] - p[1]) * seg.dir[1]
-            if new_len > 0.001:
+            if new_len > 0.001 and abs(new_len - old_len) > TEE_MOVED:
                 obj.location.x, obj.location.y = p
                 wall.set_input('Length', new_len)
+                stale = True
         obj.update_tag()
 
 
@@ -1055,11 +1087,75 @@ def _draw_close_target(op, region, context):
 
 def _draw_close_chip(context, x, y):
     """A "Close Room" chip to the right of the snap indicator."""
+    _draw_chip(context, x, y, "Close Room", CLOSE_COLOR)
+
+
+# What a first click on a snapped wall will do, said beside the indicator
+# so it is plain before clicking: a free end carries the run on, a corner
+# (an end another wall already meets), a start or a face starts a new
+# wall there.
+START_CHIPS = {
+    'end': "Continue Drawing",
+    'corner': "Start at Corner",
+    'start': "Start at Wall End",
+    'surface': "Start on Wall",
+}
+
+JOIN_EPS = 0.001        # metres: ends this close are the same corner
+
+
+def walls_meeting_at(wall_obj, point, ignore=()):
+    """The other walls on wall_obj's level with an end at `point`."""
+    out = []
+    for obj in wall_obj.users_scene[0].objects if wall_obj.users_scene else ():
+        if obj is wall_obj or obj in ignore or 'IS_WALL_BP' not in obj:
+            continue
+        if obj.get('WALL_TYPE') == 'Dormer' or not hb_house.same_level(obj, wall_obj):
+            continue
+        try:
+            a, b = get_wall_endpoints(obj)
+        except Exception:
+            continue
+        if (a - point).length < JOIN_EPS or (b - point).length < JOIN_EPS:
+            out.append(obj)
+    return out
+
+
+def wall_end_joined(wall_obj, which, ignore=()):
+    """Whether another wall on the same level has an end at this wall's
+    'start' or 'end' - a corner, not a free end. `ignore` leaves out the
+    wall Draw Walls is drawing, which waits hidden at the cursor and so
+    sits on whatever end the cursor is on."""
+    start, end = get_wall_endpoints(wall_obj)
+    point = start if which == 'start' else end
+    return bool(walls_meeting_at(wall_obj, point, ignore))
+
+
+def _drawn(op):
+    """The wall Draw Walls is drawing, as a tuple to ignore."""
+    current = getattr(op, 'current_wall', None)
+    return (current.obj,) if current is not None else ()
+
+
+def start_chip_text(op):
+    """The chip for a first click, or None when it is not on a wall."""
+    if op.has_start_point or not op.snap_wall:
+        return None
+    if op.snap_endpoint:
+        if wall_end_joined(op.snap_wall, op.snap_endpoint, _drawn(op)):
+            return START_CHIPS['corner']
+        return START_CHIPS.get(op.snap_endpoint)
+    if op.snap_surface:
+        return START_CHIPS['surface']
+    return None
+
+
+def _draw_chip(context, x, y, text, edge):
+    """A labelled chip to the right of the snap indicator."""
     try:
         s = context.preferences.system.ui_scale
     except AttributeError:
         s = 1.0
-    text = "Close Room"
     blf.size(0, 12 * s)
     tw, th = blf.dimensions(0, text)
     pad_x, pad_y = 6 * s, 4 * s
@@ -1072,7 +1168,7 @@ def _draw_close_chip(context, x, y):
     shader.uniform_float("color", CHIP_BG)
     batch_for_shader(shader, 'TRI_FAN', {"pos": verts}).draw(shader)
     gpu.state.line_width_set(1.5)
-    shader.uniform_float("color", CLOSE_COLOR)
+    shader.uniform_float("color", edge)
     batch_for_shader(shader, 'LINE_LOOP', {"pos": verts}).draw(shader)
     gpu.state.line_width_set(1.0)
     blf.color(0, *CHIP_TEXT)
@@ -1081,8 +1177,7 @@ def _draw_close_chip(context, x, y):
 
 
 def _draw_track_indicators(op, region, context):
-    """Draw acquired track points, hover candidate, and active track lines."""
-    import time
+    """Draw pinned track points and the active track lines."""
     rv3d = region.data
     shader = gpu.shader.from_builtin('UNIFORM_COLOR')
 
@@ -1115,38 +1210,19 @@ def _draw_track_indicators(op, region, context):
         batch = batch_for_shader(shader, 'LINE_STRIP', {"pos": sq})
         batch.draw(shader)
 
-    # Draw hover candidate with dwell-progress arc
-    if op._hover_candidate is not None and op._hover_start_time > 0.0:
-        scr = view3d_utils.location_3d_to_region_2d(region, rv3d, op._hover_candidate)
-        if scr is not None:
-            elapsed = time.time() - op._hover_start_time
-            progress = max(0.0, min(1.0, elapsed / op._hover_dwell))
-            # Full ring (faint)
-            segs = 24
-            ring = []
-            for i in range(segs + 1):
-                a = 2 * math.pi * i / segs
-                ring.append((scr.x + 10 * math.cos(a), scr.y + 10 * math.sin(a)))
-            gpu.state.line_width_set(1.5)
-            shader.bind()
-            shader.uniform_float("color", (1.0, 0.55, 0.0, 0.3))
-            batch = batch_for_shader(shader, 'LINE_STRIP', {"pos": ring})
-            batch.draw(shader)
-            # Progress arc (bright, from top, clockwise)
-            arc_segs = max(2, int(segs * progress))
-            arc = []
-            for i in range(arc_segs + 1):
-                a = -math.pi / 2 + 2 * math.pi * (i / segs)
-                arc.append((scr.x + 10 * math.cos(a), scr.y + 10 * math.sin(a)))
-            gpu.state.line_width_set(2.5)
-            shader.uniform_float("color", hover_color)
-            batch = batch_for_shader(shader, 'LINE_STRIP', {"pos": arc})
-            batch.draw(shader)
-
     # Draw dashed lines for active track axes (axis-aligned, fixed in world space)
     if op._active_track_lines:
         gpu.state.line_width_set(1.5)
         for tp, axis in op._active_track_lines:
+            # A small ring on the corner the line runs from: with every
+            # corner tracked, it says which one the cursor lined up with.
+            scr = view3d_utils.location_3d_to_region_2d(region, rv3d, tp)
+            if scr is not None:
+                ring = [(scr.x + 5 * math.cos(a), scr.y + 5 * math.sin(a))
+                        for a in (2 * math.pi * i / 16 for i in range(17))]
+                shader.bind()
+                shader.uniform_float("color", tp_color)
+                batch_for_shader(shader, 'LINE_STRIP', {"pos": ring}).draw(shader)
             # Build two world points far apart along the relevant world axis
             # axis 'x' = vertical line of constant world X (varies in Y)
             # axis 'y' = horizontal line of constant world Y (varies in X)
@@ -1214,6 +1290,9 @@ def draw_wall_snap_indicator(op, context):
             color = (0.0, 1.0, 0.4, 0.9)
             _draw_snap_point(loc_2d.x, loc_2d.y, color, 12, 8,
                              diamond=bool(op.snap_surface))
+            chip = start_chip_text(op)
+            if chip:
+                _draw_chip(context, loc_2d.x, loc_2d.y, chip, color)
             # Draw left/right dimensions along the target wall face
             if op.snap_surface and op.snap_location:
                 # Gap = drawing wall thickness
@@ -1361,15 +1440,19 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         # covers non-axis-aligned walls, which the X/Y line logic never
         # handled.
         if (self.snap_wall is not None and self.snap_surface
-                and self.snap_location is not None and self.track_points):
+                and self.snap_location is not None):
             hit = Vector(self.hit_location)
             hit.z = 0.0
             rot_z = self.snap_wall.matrix_world.to_euler().z
             wall_dir = Vector((math.cos(rot_z), math.sin(rot_z), 0.0))
             snap_loc = Vector(self.snap_location)
             snap_loc.z = 0.0
+            # A pinned point if there is one, else the snapped wall's
+            # own ends: tracking is automatic, so nothing need be pinned.
+            anchors = self.track_points or [
+                Vector((p.x, p.y, 0.0)) for p in get_wall_endpoints(self.snap_wall)]
             tp2 = min(
-                self.track_points,
+                anchors,
                 key=lambda t: (Vector((t.x, t.y, 0.0)) - hit).length)
             tp3 = Vector((tp2.x, tp2.y, 0.0))
             anchor = snap_loc + wall_dir * wall_dir.dot(tp3 - snap_loc)
@@ -1790,6 +1873,8 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
                 continue
             if self.previous_wall and obj == self.previous_wall.obj:
                 continue
+            if obj in getattr(self, '_start_walls', ()):
+                continue
 
             ew = hb_types.GeoNodeWall(obj)
             if not ew.has_modifier():
@@ -1895,7 +1980,11 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         # Get the endpoint location
         start, end = get_wall_endpoints(wall_obj)
         
-        if endpoint == 'end':
+        # An end another wall already meets is a corner: the new wall
+        # starts there on its own (an interior wall off an inside corner)
+        # rather than taking the corner's link to the wall round it.
+        self._start_walls = ()
+        if endpoint == 'end' and not wall_end_joined(wall_obj, 'end', _drawn(self)):
             # Connect to end of existing wall - our wall starts there
             connect_location = Vector((end.x, end.y, 0))
             # Set previous_wall so our wall connects properly
@@ -1913,10 +2002,15 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
                 fl = first_wall_geonode.obj.location
                 self.first_start_point = Vector((fl.x, fl.y, 0))
         else:
-            # Connect to start of existing wall
-            connect_location = Vector((start.x, start.y, 0))
-            # Position our wall at the start point
+            # A wall's start, or a corner: begin at that point, unjoined.
+            # The walls meeting there are what it starts from, so its far
+            # end does not snap back onto them (a continued wall skips the
+            # wall it continues the same way).
+            point = end if endpoint == 'end' else start
+            connect_location = Vector((point.x, point.y, 0))
             self.current_wall.obj.location = connect_location
+            self._start_walls = tuple([wall_obj] + walls_meeting_at(
+                wall_obj, point, _drawn(self)))
         
         self.start_point = connect_location
         self.has_start_point = True
@@ -1990,10 +2084,9 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
                 self.confirm_current_wall()
         self.stop_typing()
 
-    def create_wall(self, context):
-        """Create a new wall segment based on wall_type setting."""
+    def wall_type_size(self, context, wall_type):
+        """(height, thickness) a new wall of this type is drawn at."""
         props = context.scene.home_builder
-        wall_type = props.wall_type
 
         # Determine height based on wall type
         if wall_type in {'Exterior', 'Interior'}:
@@ -2022,22 +2115,58 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         level = hb_house.active_level(context)
         if level is not None:
             height = hb_house.new_wall_height(level, wall_type, props)
+        return height, thickness
+
+    def apply_wall_type(self, context, wall, wall_type):
+        """Give a wall the type's size and tags, clearing another type's."""
+        height, thickness = self.wall_type_size(context, wall_type)
+        wall.set_input('Thickness', thickness)
+        wall.set_input('Height', height)
+        obj = wall.obj
+        for key in ('IS_HALF_WALL', 'IS_FAKE_WALL', 'IS_RAILING',
+                    'IS_ROOM_DIVIDER', 'IS_PORCH_EDGE'):
+            if key in obj:
+                del obj[key]
+        obj.display_type = 'TEXTURED'
+        obj.hide_render = False
+
+        # Tag with wall type for identification
+        obj['WALL_TYPE'] = wall_type
+        if wall_type == 'Half':
+            obj['IS_HALF_WALL'] = True
+        elif wall_type == 'Fake':
+            obj['IS_FAKE_WALL'] = True
+        elif wall_type == 'Railing':
+            obj['IS_RAILING'] = True
+        elif wall_type in hb_wall_graph.ROOM_ONLY_WALLS:
+            style_room_only_wall(obj, wall_type)
+        obj.update_tag()
+
+    def sync_wall_type(self, context):
+        """The wall in hand follows the type and thickness picked while
+        the tool runs (on the TOOL page): it was made when the tool
+        started, or when the last wall was placed, with what was picked
+        then. True if it changed."""
+        wall = self.current_wall
+        if wall is None or wall.obj is None:
+            return False
+        wall_type = context.scene.home_builder.wall_type
+        _height, thickness = self.wall_type_size(context, wall_type)
+        if (wall.obj.get('WALL_TYPE') == wall_type
+                and abs(wall.get_input('Thickness') - thickness) < 1e-6):
+            return False
+        self.apply_wall_type(context, wall, wall_type)
+        return True
+
+    def create_wall(self, context):
+        """Create a new wall segment based on wall_type setting."""
+        props = context.scene.home_builder
+        wall_type = props.wall_type
+        level = hb_house.active_level(context)
 
         self.current_wall = hb_types.GeoNodeWall()
         self.current_wall.create("Wall")
-        self.current_wall.set_input('Thickness', thickness)
-        self.current_wall.set_input('Height', height)
-
-        # Tag with wall type for identification
-        self.current_wall.obj['WALL_TYPE'] = wall_type
-        if wall_type == 'Half':
-            self.current_wall.obj['IS_HALF_WALL'] = True
-        elif wall_type == 'Fake':
-            self.current_wall.obj['IS_FAKE_WALL'] = True
-        elif wall_type == 'Railing':
-            self.current_wall.obj['IS_RAILING'] = True
-        elif wall_type in hb_wall_graph.ROOM_ONLY_WALLS:
-            style_room_only_wall(self.current_wall.obj, wall_type)
+        self.apply_wall_type(context, self.current_wall, wall_type)
 
         if level is not None:
             hb_house.assign_wall_to_level(self.current_wall.obj, level, context.scene)
@@ -2126,34 +2255,40 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
                 return tp
         return None
     
-    def update_track_hover(self, context):
-        """Detect dwell-based track point acquisition.
-        
-        Called every modal event. If the cursor stays on an endpoint that
-        is not already a track point for self._hover_dwell seconds, that
-        endpoint is promoted to a track point.
-        """
-        import time
-        now = time.time()
-        candidate = self.find_nearby_endpoint_for_tracking(context)
-        if candidate is None:
-            self._hover_candidate = None
-            self._hover_start_time = 0.0
-            return
-        if self.find_existing_track_point_at(candidate) is not None:
-            # Already acquired - clear hover so we don't try to re-add
-            self._hover_candidate = None
-            self._hover_start_time = 0.0
-            return
-        if self._hover_candidate is None or (self._hover_candidate - candidate).length > 0.001:
-            self._hover_candidate = candidate.copy()
-            self._hover_start_time = now
-            return
-        if now - self._hover_start_time >= self._hover_dwell:
-            self.track_points.append(candidate.copy())
-            self._hover_candidate = None
-            self._hover_start_time = 0.0
-    
+    def auto_track_points(self, context):
+        """Every corner of the walls on the active level, as tracking
+        points: lines run from them as the cursor comes into line, with
+        nothing to pick up first. The wall being drawn is left out (its
+        corners move with the cursor). Cached until a wall is placed or
+        a new one started."""
+        current = self.current_wall.obj if self.current_wall else None
+        key = (self.walls_committed, self.confirmed_wall_count,
+               current.name if current else None)
+        if getattr(self, '_auto_track_key', None) == key:
+            return self._auto_track
+        seen = set()
+        points = []
+        for obj in context.view_layer.objects:
+            if 'IS_WALL_BP' not in obj or obj is current:
+                continue
+            if obj.get('WALL_TYPE') == 'Dormer':
+                continue
+            if not hb_house.on_active_level(obj, context):
+                continue
+            try:
+                start, end = get_wall_endpoints(obj)
+                corners = [start, end] + [pt for _e, _f, pt in wall_plan_corners(obj)]
+            except Exception:
+                continue
+            for pt in corners:
+                k = (round(pt.x, 4), round(pt.y, 4))
+                if k not in seen:
+                    seen.add(k)
+                    points.append(Vector((pt.x, pt.y, 0.0)))
+        self._auto_track_key = key
+        self._auto_track = points
+        return points
+
     def acquire_or_remove_track_point_at_cursor(self, context):
         """T key handler: acquire endpoint at cursor, or remove if already a track point."""
         candidate = self.find_nearby_endpoint_for_tracking(context)
@@ -2164,8 +2299,6 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
             self.track_points.remove(existing)
         else:
             self.track_points.append(candidate.copy())
-        self._hover_candidate = None
-        self._hover_start_time = 0.0
         return True
     
     def apply_track_snap_to_position(self, context, world_pos):
@@ -2174,7 +2307,10 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         Returns (new_pos, snapped_axes) where snapped_axes is a list of
         (track_point, 'x'|'y') tuples describing what was snapped.
         """
-        if not self.track_points or self.region is None or self.mouse_pos is None:
+        if self.region is None or self.mouse_pos is None:
+            return Vector(world_pos), []
+        points = list(self.track_points) + self.auto_track_points(context)
+        if not points:
             return Vector(world_pos), []
         region = self.region
         rv3d = region.data
@@ -2183,20 +2319,24 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         
         best_x = None
         best_y = None
-        for tp in self.track_points:
+        here = Vector((world_pos[0], world_pos[1], 0.0))
+        for tp in points:
+            # Corners on one line tie on pixels; the nearest one is the
+            # line's origin (it is the one marked).
+            near = (Vector((tp.x, tp.y, 0.0)) - here).length
             # Vertical line through tp.x: closest point at (tp.x, world_pos.y, 0)
             cp = Vector((tp.x, world_pos.y, 0))
             scr = view3d_utils.location_3d_to_region_2d(region, rv3d, cp)
             if scr is not None:
-                d = (mouse2d - scr).length
-                if d < threshold and (best_x is None or d < best_x[0]):
+                d = (round((mouse2d - scr).length, 1), near)
+                if d[0] < threshold and (best_x is None or d < best_x[0]):
                     best_x = (d, tp)
             # Horizontal line through tp.y
             cp = Vector((world_pos.x, tp.y, 0))
             scr = view3d_utils.location_3d_to_region_2d(region, rv3d, cp)
             if scr is not None:
-                d = (mouse2d - scr).length
-                if d < threshold and (best_y is None or d < best_y[0]):
+                d = (round((mouse2d - scr).length, 1), near)
+                if d[0] < threshold and (best_y is None or d < best_y[0]):
                     best_y = (d, tp)
         
         new_pos = Vector(world_pos)
@@ -2212,8 +2352,6 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
     def clear_track_points(self):
         """Clear all acquired track points and hover state."""
         self.track_points = []
-        self._hover_candidate = None
-        self._hover_start_time = 0.0
         self._active_track_lines = []
     
     def _remove_track_timer(self, context):
@@ -2583,6 +2721,7 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         if self.confirmed_wall_count == 1:
             self.first_wall = self.current_wall
         self.previous_wall = self.current_wall
+        self._start_walls = ()          # the next wall starts from this one
 
         # Auto-clear track points after each wall is confirmed
         self.clear_track_points()
@@ -2619,6 +2758,7 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         self._discard_current_wall()
 
         self.previous_wall = None
+        self._start_walls = ()
         self.start_point = None
         self.has_start_point = False
         self._track_first = None
@@ -2707,7 +2847,7 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
             elif self.snap_wall and self.snap_surface:
                 text = f"Click to start on wall ({self.snap_surface} face){track_hint} | T: track | Esc to cancel"
             else:
-                text = f"Click to place first point{track_hint} | T: track point (hover 0.5s or press T) | Esc to cancel"
+                text = f"Click to place first point{track_hint} | Lines track wall corners | T: pin a point | Esc to cancel"
 
         if (self.continuous
                 and self.placement_state != hb_placement.PlacementState.TYPING):
@@ -2733,7 +2873,8 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         self._wall_dim_visible = False
         self.free_rotation = False
         self.walls_committed = 0
-        self.continuous = context.scene.home_builder.continuous_wall_drawing
+        self.continuous = (context.scene.home_builder.continuous_wall_drawing
+                           or tool_session.stays_on(context))
         self.first_start_point = None
         self.first_wall = None
         self.confirmed_wall_count = 0
@@ -2778,18 +2919,24 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
 
         # Wall tracking state (object snap tracking)
         self.track_points = []
-        self._hover_candidate = None
-        self._hover_start_time = 0.0
-        self._hover_dwell = 0.5
         self._track_pixel_threshold = 8
         self._active_track_lines = []
-        # Timer for dwell detection (fires even when mouse is still)
-        self._track_timer = context.window_manager.event_timer_add(
-            0.05, window=context.window)
+        self._track_timer = None        # tracking is automatic: no dwell timer
+        self._auto_track_key = None
+        self._auto_track = []
 
+        tool_session.begin(self, context)
         context.window_manager.modal_handler_add(self)
         return {'RUNNING_MODAL'}
 
+    def stop_tool(self, context):
+        """Asked to stop (another tool picked, Done, another tab): what
+        Esc does once there is no run left to end."""
+        self._end_tool(context)
+        self.cancel_placement(context)
+        return {'FINISHED'} if self.walls_committed else {'CANCELLED'}
+
+    @tool_session.session_modal
     def modal(self, context, event):
         result = self._modal(context, event)
         # Every positioning path writes a Z of its own (0, or the raycast
@@ -2806,6 +2953,11 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         # Skip intermediate mouse moves
         if event.type == "INBETWEEN_MOUSEMOVE":
             return {'RUNNING_MODAL'}
+
+        # A type or thickness picked on the TOOL page applies to the wall
+        # in hand, not only the next one
+        if self.sync_wall_type(context) and self.has_start_point:
+            self.update_dimension(context)
 
         # Let mixin handle typing events first
         if self.handle_typing_event(event):
@@ -2870,8 +3022,8 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         # Track shift state for fine snap
         self.fine_snap = event.shift
 
-        # Update wall tracking hover/dwell detection
-        self.update_track_hover(context)
+        # Tracking is automatic (auto_track_points): nothing to pick up by
+        # hovering, so no dwell detection here.
 
         # Update position if not typing
         if self.placement_state != hb_placement.PlacementState.TYPING:
@@ -5989,6 +6141,10 @@ class home_builder_walls_OT_draw_floor_cutter(bpy.types.Operator, hb_placement.P
         items=[('FLOOR', "Floor", "Cut the floor"),
                ('CEILING', "Ceiling", "Cut the ceiling")])  # type: ignore
 
+    # The floor or ceiling to cut, by name: a house room's right-click menu
+    # says which, since clicking a room leaves its floor unselected.
+    target: bpy.props.StringProperty(options={'HIDDEN', 'SKIP_SAVE'})  # type: ignore
+
     # State
     confirmed_points: list = None   # 3D points already clicked
     cursor_point: Vector = None     # Live 3D cursor position
@@ -6018,6 +6174,9 @@ class home_builder_walls_OT_draw_floor_cutter(bpy.types.Operator, hb_placement.P
     def find_target_floor(self, context):
         """Find the floor (or ceiling) to cut. Prefer selected, else first found."""
         tag = 'IS_CEILING_BP' if self.surface == 'CEILING' else 'IS_FLOOR_BP'
+        named = context.scene.objects.get(self.target) if self.target else None
+        if named is not None and named.get(tag):
+            return named
         # Check active/selected first
         if context.object and context.object.get(tag):
             return context.object
