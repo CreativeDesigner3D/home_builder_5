@@ -409,15 +409,33 @@ def _strip(poly, axis, lo, hi):
     return _clip(_clip(poly, axis, lo, True), axis, hi, False)
 
 
+def _area(poly):
+    """A polygon's area (shoelace), unsigned."""
+    n = len(poly)
+    return abs(sum(poly[i][0] * poly[(i + 1) % n][1] - poly[(i + 1) % n][0] * poly[i][1]
+                   for i in range(n))) / 2.0
+
+
+MIN_FACE_AREA = 0.01        # m2: a wall face smaller is a sliver the boolean left
+MIN_PIECE_AREA = 1e-5       # m2: a batten or row piece smaller is a line
+
+
 def _outdoor_faces(obj, mesh, rooms, both_sides):
-    """The upright faces of an evaluated wall that look outdoors, each as
-    (normal, plane offset, [(s, z)]): s along the face, z up. A face
+    """The upright faces of an evaluated wall that look outdoors, as
+    triangles (normal, plane offset, [(s, z)] x 3): s along the face, z
+    up. Triangles, because a cut leaves a face round an opening as one
+    polygon that reaches round the hole along a slit - clipped whole it
+    would fill the opening back in; its triangles never cover it. A face
     looks outdoors when a step out from it isn't in one of the level's
     rooms; the roof-made walls have no rooms beside them, so `both_sides`
     takes both of their faces."""
     from mathutils import Vector
     m = obj.matrix_world
     rot = m.to_3x3()
+    mesh.calc_loop_triangles()
+    tris = {}
+    for tri in mesh.loop_triangles:
+        tris.setdefault(tri.polygon_index, []).append(tri.vertices)
     out = []
     for f in mesh.polygons:
         n = rot @ f.normal
@@ -429,8 +447,9 @@ def _outdoor_faces(obj, mesh, rooms, both_sides):
         poly = [(p.dot(a), p.z) for p in pts]
         ss = [p[0] for p in poly]
         zs = [p[1] for p in poly]
-        if max(ss) - min(ss) < 0.25 or max(zs) - min(zs) < 0.05:
-            continue                # a wall's end, or a sliver
+        if (max(ss) - min(ss) < 0.25 or max(zs) - min(zs) < 0.05
+                or _area(poly) < MIN_FACE_AREA):
+            continue                # a wall's end, or a sliver (a cut can leave them across an opening)
         if not both_sides:
             # Which way a face looks can't be read from its normal (a wall
             # drawn the other way round has its faces turned): a face just
@@ -444,15 +463,17 @@ def _outdoor_faces(obj, mesh, rooms, both_sides):
             if in_room(0.25) and not in_room(-0.25):
                 n = -n
                 a = Vector((-n.y, n.x, 0.0))
-                poly = [(p.dot(a), p.z) for p in pts]
-        out.append((n, pts[0].dot(n), poly))
+        offset = pts[0].dot(n)
+        for tri in tris.get(f.index, ()):
+            corners = [m @ mesh.vertices[i].co for i in tri]
+            out.append((n, offset, [(p.dot(a), p.z) for p in corners]))
     return out
 
 
 def _add_prism(bm, n, offset, poly, depth_at):
     """A solid from a face polygon out to depth_at(z) off the face."""
     from mathutils import Vector
-    if len(poly) < 3:
+    if len(poly) < 3 or _area(poly) < MIN_PIECE_AREA:
         return
     a = Vector((-n.y, n.x, 0.0))
     up = Vector((0.0, 0.0, 1.0))
