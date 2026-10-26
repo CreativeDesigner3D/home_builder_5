@@ -7864,23 +7864,34 @@ class FaceFrameCabinet(GeoNodeCage):
         """World Z of the top of a base molding sweep run along this
         cabinet's foot, or None. A sweep names the cabinets it covers in
         'hb_base_molding_members' (comma separated) and hangs from one of
-        the run's cabinets, so this cabinet's and its wall siblings'
-        children are searched."""
+        the run's cabinets, which may stand on another wall (a run that
+        wraps a corner), so the cabinet's whole scene is searched."""
         name = self.obj.name
-        owners = [self.obj]
-        parent = self.obj.parent
-        if parent is not None:
-            owners += [o for o in parent.children if o is not self.obj]
+        seen = set()
         top = None
-        for owner in owners:
-            for child in owner.children:
+        for scene in self.obj.users_scene:
+            for child in scene.objects:
                 members = child.get('hb_base_molding_members')
-                if not members or name not in str(members).split(','):
+                if not members or child.name in seen:
+                    continue
+                seen.add(child.name)
+                if name not in str(members).split(','):
                     continue
                 mw = child.matrix_world
                 z = max((mw @ Vector(c)).z for c in child.bound_box)
                 top = z if top is None else max(top, z)
         return top
+
+    def _leg_molding_start(self, stile_z):
+        """How far up a floor-standing leg stile (bottom at cabinet-local
+        Z stile_z) its edge treatment starts: 0 (the floor) with no base
+        molding along the foot, else 4-1/2" off the floor or the molding
+        top when that is higher."""
+        molding_top = self._base_molding_top()
+        if molding_top is None:
+            return 0.0
+        bottom = self.obj.matrix_world.translation.z + stile_z
+        return max(self._CT_LEG_MOLDING_START, molding_top - bottom)
 
     def _corner_treatment_name(self):
         style_name = self.obj.get('STYLE_NAME')
@@ -7950,18 +7961,14 @@ class FaceFrameCabinet(GeoNodeCage):
         the end stops it 1/2" below that neighbour's bottom. Uppers keep
         the bottom (it wraps under the cabinet). A custom end (Custom
         Edge Treatment) uses its own start / stop heights instead.
-        A refrigerator stile-in-lieu-of-leg runs to the floor, or with
-        base molding along its foot starts 4-1/2" off the floor (or at
-        the molding top when that is higher).
+        A refrigerator stile-in-lieu-of-leg, or a tall end stile beside a
+        bay open to the floor, runs to the floor, or with base molding
+        along its foot starts 4-1/2" off the floor (or at the molding top
+        when that is higher).
         """
         top_trim = self._corner_treatment_top_trim(layout, role)
         if role in (PART_ROLE_LEFT_REFRIG_STILE, PART_ROLE_RIGHT_REFRIG_STILE):
-            molding_top = self._base_molding_top()
-            if molding_top is None:
-                return 0.0, top_trim
-            floor_z = self.obj.matrix_world.translation.z
-            start = max(self._CT_LEG_MOLDING_START, molding_top) - floor_z
-            return max(start - stile.location.z, 0.0), top_trim
+            return self._leg_molding_start(stile.location.z), top_trim
         if role not in (PART_ROLE_LEFT_STILE, PART_ROLE_RIGHT_STILE):
             return 0.0, top_trim
         try:
@@ -7986,10 +7993,16 @@ class FaceFrameCabinet(GeoNodeCage):
         if layout.cabinet_type != 'UPPER':
             bay_index = 0 if side == 'LEFT' else layout.bay_count - 1
             rail = 0.0
+            open_bottom = False
             if 0 <= bay_index < len(layout.bays):
-                rail = layout.bays[bay_index].get('bottom_rail_width', 0.0) or 0.0
+                rail = solver.effective_bottom_rail_width(layout, bay_index)
+                open_bottom = bool(layout.bays[bay_index].get('remove_bottom'))
             name = (self._corner_treatment_name() or '').strip()
-            if not (flush_leg or name == '1/8" Radius'):
+            if open_bottom and layout.cabinet_type == 'TALL':
+                # Open to the floor (a refrigerator zone): the end stile
+                # stands in for a leg, so it follows the leg rule.
+                start = z0 + self._leg_molding_start(z0)
+            elif not (flush_leg or name == '1/8" Radius'):
                 start = z0 + rail
             if layout.cabinet_type == 'BASE':
                 # The base rule replaces the top rail stop: 34" off the
