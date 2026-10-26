@@ -336,16 +336,33 @@ def base_mesh(scene, level, height):
     from . import hb_types
     from .operators import walls
     porches = _porch_polygons(scene, level)
+    rooms = _indoor_polygons(scene).get(level.uid, [])
     bm = bmesh.new()
     _objs, segs = walls.level_wall_segs(scene, level.uid)
+
+    def indoors(p):
+        return any(hb_wall_graph.point_in_polygon(p, poly) for poly in rooms)
+
     for seg in segs:
         if seg.wall_type != 'Exterior':
             continue
         obj = scene.objects[seg.id]
         n, d, t = seg.normal, seg.dir, seg.thickness
-        # Facing a porch: its floor is there instead
+        # The base goes on the side with no room: a wall's thickness falls
+        # outward or inward depending on how it was drawn (as the siding
+        # finds). A wall with rooms both sides is inside the house,
+        # whatever it is marked, and has none.
         mid = hb_wall_graph._mul(hb_wall_graph._add(seg.start, seg.end), 0.5)
-        probe = (mid[0] + n[0] * (t + 0.3), mid[1] + n[1] * (t + 0.3))
+        thick_probe = (mid[0] + n[0] * (t + 0.3), mid[1] + n[1] * (t + 0.3))
+        ref_probe = (mid[0] - n[0] * 0.3, mid[1] - n[1] * 0.3)
+        thick_in, ref_in = indoors(thick_probe), indoors(ref_probe)
+        if thick_in and ref_in:
+            continue
+        if thick_in:
+            face, sign, probe = 0.0, -1.0, ref_probe
+        else:
+            face, sign, probe = t, 1.0, thick_probe
+        # Facing a porch: its floor is there instead
         if any(hb_wall_graph.point_in_polygon(probe, poly) for poly in porches):
             continue
         # Each end runs on past the corner, round the wall it meets
@@ -368,7 +385,7 @@ def base_mesh(scene, level, height):
                 continue
             corners = []
             for along in (a, b):
-                for out in (t, t + BASE_PROUD):
+                for out in (face, face + sign * BASE_PROUD):
                     corners.append((seg.start[0] + d[0] * along + n[0] * out,
                                     seg.start[1] + d[1] * along + n[1] * out))
             p = [corners[0], corners[2], corners[3], corners[1]]

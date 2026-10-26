@@ -2084,10 +2084,9 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
                 self.confirm_current_wall()
         self.stop_typing()
 
-    def create_wall(self, context):
-        """Create a new wall segment based on wall_type setting."""
+    def wall_type_size(self, context, wall_type):
+        """(height, thickness) a new wall of this type is drawn at."""
         props = context.scene.home_builder
-        wall_type = props.wall_type
 
         # Determine height based on wall type
         if wall_type in {'Exterior', 'Interior'}:
@@ -2116,22 +2115,58 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         level = hb_house.active_level(context)
         if level is not None:
             height = hb_house.new_wall_height(level, wall_type, props)
+        return height, thickness
+
+    def apply_wall_type(self, context, wall, wall_type):
+        """Give a wall the type's size and tags, clearing another type's."""
+        height, thickness = self.wall_type_size(context, wall_type)
+        wall.set_input('Thickness', thickness)
+        wall.set_input('Height', height)
+        obj = wall.obj
+        for key in ('IS_HALF_WALL', 'IS_FAKE_WALL', 'IS_RAILING',
+                    'IS_ROOM_DIVIDER', 'IS_PORCH_EDGE'):
+            if key in obj:
+                del obj[key]
+        obj.display_type = 'TEXTURED'
+        obj.hide_render = False
+
+        # Tag with wall type for identification
+        obj['WALL_TYPE'] = wall_type
+        if wall_type == 'Half':
+            obj['IS_HALF_WALL'] = True
+        elif wall_type == 'Fake':
+            obj['IS_FAKE_WALL'] = True
+        elif wall_type == 'Railing':
+            obj['IS_RAILING'] = True
+        elif wall_type in hb_wall_graph.ROOM_ONLY_WALLS:
+            style_room_only_wall(obj, wall_type)
+        obj.update_tag()
+
+    def sync_wall_type(self, context):
+        """The wall in hand follows the type and thickness picked while
+        the tool runs (on the TOOL page): it was made when the tool
+        started, or when the last wall was placed, with what was picked
+        then. True if it changed."""
+        wall = self.current_wall
+        if wall is None or wall.obj is None:
+            return False
+        wall_type = context.scene.home_builder.wall_type
+        _height, thickness = self.wall_type_size(context, wall_type)
+        if (wall.obj.get('WALL_TYPE') == wall_type
+                and abs(wall.get_input('Thickness') - thickness) < 1e-6):
+            return False
+        self.apply_wall_type(context, wall, wall_type)
+        return True
+
+    def create_wall(self, context):
+        """Create a new wall segment based on wall_type setting."""
+        props = context.scene.home_builder
+        wall_type = props.wall_type
+        level = hb_house.active_level(context)
 
         self.current_wall = hb_types.GeoNodeWall()
         self.current_wall.create("Wall")
-        self.current_wall.set_input('Thickness', thickness)
-        self.current_wall.set_input('Height', height)
-
-        # Tag with wall type for identification
-        self.current_wall.obj['WALL_TYPE'] = wall_type
-        if wall_type == 'Half':
-            self.current_wall.obj['IS_HALF_WALL'] = True
-        elif wall_type == 'Fake':
-            self.current_wall.obj['IS_FAKE_WALL'] = True
-        elif wall_type == 'Railing':
-            self.current_wall.obj['IS_RAILING'] = True
-        elif wall_type in hb_wall_graph.ROOM_ONLY_WALLS:
-            style_room_only_wall(self.current_wall.obj, wall_type)
+        self.apply_wall_type(context, self.current_wall, wall_type)
 
         if level is not None:
             hb_house.assign_wall_to_level(self.current_wall.obj, level, context.scene)
@@ -2918,6 +2953,11 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         # Skip intermediate mouse moves
         if event.type == "INBETWEEN_MOUSEMOVE":
             return {'RUNNING_MODAL'}
+
+        # A type or thickness picked on the TOOL page applies to the wall
+        # in hand, not only the next one
+        if self.sync_wall_type(context) and self.has_start_point:
+            self.update_dimension(context)
 
         # Let mixin handle typing events first
         if self.handle_typing_event(event):

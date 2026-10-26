@@ -350,7 +350,9 @@ def _blocks(context):
         blocks.extend(options_panel.field_blocks(
             context, OBSTACLE_FIELDS, context.scene.hb_obstacles))
     blocks.extend(options_panel.field_blocks(context, fields, hb))
-    if fields:
+    if _tool == "home_builder_walls.draw_walls":
+        blocks.append(('note', "Changes apply to the wall you are drawing."))
+    elif fields:
         blocks.append(('note', "Changes take effect on the next one placed."))
     hint = HINTS.get(_tool)
     if hint:
