@@ -1087,11 +1087,61 @@ def _draw_close_target(op, region, context):
 
 def _draw_close_chip(context, x, y):
     """A "Close Room" chip to the right of the snap indicator."""
+    _draw_chip(context, x, y, "Close Room", CLOSE_COLOR)
+
+
+# What a first click on a snapped wall will do, said beside the indicator
+# so it is plain before clicking: a free end carries the run on, a corner
+# (an end another wall already meets), a start or a face starts a new
+# wall there.
+START_CHIPS = {
+    'end': "Continue Drawing",
+    'corner': "Start at Corner",
+    'start': "Start at Wall End",
+    'surface': "Start on Wall",
+}
+
+JOIN_EPS = 0.001        # metres: ends this close are the same corner
+
+
+def wall_end_joined(wall_obj, which):
+    """Whether another wall on the same level has an end at this wall's
+    'start' or 'end' - a corner, not a free end."""
+    start, end = get_wall_endpoints(wall_obj)
+    point = start if which == 'start' else end
+    for obj in wall_obj.users_scene[0].objects if wall_obj.users_scene else ():
+        if obj is wall_obj or 'IS_WALL_BP' not in obj:
+            continue
+        if obj.get('WALL_TYPE') == 'Dormer' or not hb_house.same_level(obj, wall_obj):
+            continue
+        try:
+            a, b = get_wall_endpoints(obj)
+        except Exception:
+            continue
+        if (a - point).length < JOIN_EPS or (b - point).length < JOIN_EPS:
+            return True
+    return False
+
+
+def start_chip_text(op):
+    """The chip for a first click, or None when it is not on a wall."""
+    if op.has_start_point or not op.snap_wall:
+        return None
+    if op.snap_endpoint:
+        if wall_end_joined(op.snap_wall, op.snap_endpoint):
+            return START_CHIPS['corner']
+        return START_CHIPS.get(op.snap_endpoint)
+    if op.snap_surface:
+        return START_CHIPS['surface']
+    return None
+
+
+def _draw_chip(context, x, y, text, edge):
+    """A labelled chip to the right of the snap indicator."""
     try:
         s = context.preferences.system.ui_scale
     except AttributeError:
         s = 1.0
-    text = "Close Room"
     blf.size(0, 12 * s)
     tw, th = blf.dimensions(0, text)
     pad_x, pad_y = 6 * s, 4 * s
@@ -1104,7 +1154,7 @@ def _draw_close_chip(context, x, y):
     shader.uniform_float("color", CHIP_BG)
     batch_for_shader(shader, 'TRI_FAN', {"pos": verts}).draw(shader)
     gpu.state.line_width_set(1.5)
-    shader.uniform_float("color", CLOSE_COLOR)
+    shader.uniform_float("color", edge)
     batch_for_shader(shader, 'LINE_LOOP', {"pos": verts}).draw(shader)
     gpu.state.line_width_set(1.0)
     blf.color(0, *CHIP_TEXT)
@@ -1226,6 +1276,9 @@ def draw_wall_snap_indicator(op, context):
             color = (0.0, 1.0, 0.4, 0.9)
             _draw_snap_point(loc_2d.x, loc_2d.y, color, 12, 8,
                              diamond=bool(op.snap_surface))
+            chip = start_chip_text(op)
+            if chip:
+                _draw_chip(context, loc_2d.x, loc_2d.y, chip, color)
             # Draw left/right dimensions along the target wall face
             if op.snap_surface and op.snap_location:
                 # Gap = drawing wall thickness
@@ -1911,7 +1964,10 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         # Get the endpoint location
         start, end = get_wall_endpoints(wall_obj)
         
-        if endpoint == 'end':
+        # An end another wall already meets is a corner: the new wall
+        # starts there on its own (an interior wall off an inside corner)
+        # rather than taking the corner's link to the wall round it.
+        if endpoint == 'end' and not wall_end_joined(wall_obj, 'end'):
             # Connect to end of existing wall - our wall starts there
             connect_location = Vector((end.x, end.y, 0))
             # Set previous_wall so our wall connects properly
@@ -1929,9 +1985,9 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
                 fl = first_wall_geonode.obj.location
                 self.first_start_point = Vector((fl.x, fl.y, 0))
         else:
-            # Connect to start of existing wall
-            connect_location = Vector((start.x, start.y, 0))
-            # Position our wall at the start point
+            # A wall's start, or a corner: begin at that point, unjoined
+            point = end if endpoint == 'end' else start
+            connect_location = Vector((point.x, point.y, 0))
             self.current_wall.obj.location = connect_location
         
         self.start_point = connect_location
