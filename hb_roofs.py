@@ -660,6 +660,53 @@ def _porch_infill_prisms(scene, level, frame, cross):
     return out
 
 
+def _end_infill_prisms(scene, level, frame):
+    """A roof that starts at its level's floor - a barn or a cape over the
+    floor below - closes its own gable ends: where the level's end walls
+    stop short of the roof's full width (set back from the eaves below,
+    like knee walls), the gable is filled from the floor up under the
+    roof, flush with the end."""
+    from .operators import walls
+    roof = level.roof
+    if roof.base != 'FLOOR' or roof.style == 'HIP':
+        return []
+    u0, u1 = frame['u0'], frame['u1']
+    covered = {0: [], 1: []}        # at v0, at v1: (u from, u to) of the level's end walls
+    for obj in _exterior_walls(scene, level):
+        pts = [_uv(frame, p) for _e, _f, p in walls.wall_plan_corners(obj)]
+        if len(pts) < 4:
+            continue
+        vs = [v for _u, v in pts]
+        us = [u for u, _v in pts]
+        if max(vs) - min(vs) > 0.5:
+            continue                # not square to the ridge
+        for end, v_edge in ((0, frame['v0']), (1, frame['v1'])):
+            if min(abs(v - v_edge) for v in vs) < 0.05:
+                covered[end].append((min(us), max(us)))
+    out = []
+    for end, (va, vb) in ((0, (frame['v0'], frame['v0'] + GABLE_INFILL)),
+                          (1, (frame['v1'] - GABLE_INFILL, frame['v1']))):
+        spans = sorted(covered[end])
+        if not spans:
+            continue                # no wall of its own there: the walls below make the gable
+        gaps, at = [], u0
+        for a, b in spans:
+            if a - at > 0.05:
+                gaps.append((at, a))
+            at = max(at, b)
+        if u1 - at > 0.05:
+            gaps.append((at, u1))
+        for a, b in gaps:
+            # Up the underside from a to b, then back along the floor
+            tops = [(a, _under_z(frame, a))]
+            tops += [(u, z) for u, z in frame['under'] if a < u < b]
+            tops.append((b, _under_z(frame, b)))
+            section = _dedupe([(b, frame['plate']), (a, frame['plate'])] + tops)
+            if len(section) >= 3:
+                out.append((section, va, vb, _along_ridge(frame)))
+    return out
+
+
 def _shed_prisms(frame, roof, sheds):
     """Shed dormers: (roofs, walls). The roof slopes up from over the
     front wall into the main roof; the front wall and cheeks rise from
@@ -1230,7 +1277,8 @@ def rebuild_roof(scene, level):
 
     # Cross gables' filled-in ends, and shed dormers' walls cut back to the
     # roof they stand on - both finished like the house's walls
-    infill = _infill_prisms(frame, roof, cross) + _porch_infill_prisms(scene, level, frame, cross)
+    infill = (_infill_prisms(frame, roof, cross) + _porch_infill_prisms(scene, level, frame, cross)
+              + _end_infill_prisms(scene, level, frame))
     gables = _visible_piece(scene, level, roof, 'gables_obj', f"Roof Gables - {level.name}",
                             _mesh("Roof Gables", infill) if infill else None)
     dormer_walls = _visible_piece(scene, level, roof, 'dormer_walls_obj',
