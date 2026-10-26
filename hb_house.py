@@ -1841,7 +1841,8 @@ class HOME_BUILDER_OT_add_level(bpy.types.Operator):
 class HOME_BUILDER_OT_remove_level(bpy.types.Operator):
     bl_idname = "home_builder.remove_level"
     bl_label = "Remove Level"
-    bl_description = "Remove the active level. Only an empty level can be removed"
+    bl_description = ("Remove the active level and everything on it - its walls, rooms, "
+                      "roof and what is placed on them. Ctrl+Z brings it back")
     bl_options = {'UNDO'}
 
     @classmethod
@@ -1856,12 +1857,24 @@ class HOME_BUILDER_OT_remove_level(bpy.types.Operator):
         index = house.active_level_index
         level = house.levels[index]
         col = level.collection
-        if col is not None and len(col.all_objects) > 0:
-            self.report({'WARNING'},
-                        f"{level.name} still has {len(col.all_objects)} object(s). "
-                        "Delete them first")
-            return {'CANCELLED'}
-        name = level.name
+        name, uid = level.name, level.uid
+        walls = sum(1 for o in scene.objects
+                    if o.get('IS_WALL_BP') and o.get(LEVEL_KEY) == uid)
+        # Its roof and the roof's helpers live outside the level's collection
+        from . import hb_roofs
+        for piece in level.roof.pieces:
+            if piece.front_wall is not None:
+                hb_roofs._delete_tree(piece.front_wall)
+                piece.front_wall = None
+        hb_roofs._remove_roof(level.roof)
+        doomed = {o.name for o in scene.objects if o.get(LEVEL_KEY) == uid}
+        if col is not None:
+            doomed |= {o.name for o in col.all_objects}
+        for obj_name in doomed:
+            obj = bpy.data.objects.get(obj_name)
+            if obj is not None:
+                bpy.data.objects.remove(obj, do_unlink=True)
+        level = house.levels[index]
         if col is not None:
             for sub in list(col.children):
                 bpy.data.collections.remove(sub)
@@ -1872,7 +1885,10 @@ class HOME_BUILDER_OT_remove_level(bpy.types.Operator):
         # its ceiling again
         for level in house.levels:
             set_exterior_wall_heights(scene, level)
-        self.report({'INFO'}, f"Removed {name}")
+        # The roofs below lose what stood on them: their gables and trims follow
+        hb_roofs.rebuild_roofs(scene)
+        what = f" and its {walls} wall(s)" if walls else ""
+        self.report({'INFO'}, f"Removed {name}{what} (Ctrl+Z to bring it back)")
         return {'FINISHED'}
 
 
