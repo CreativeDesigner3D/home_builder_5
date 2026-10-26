@@ -35,6 +35,8 @@ BASE_MATERIAL = "HB Masonry Base"
 BASE_OBJECT = "Exterior Base"
 BASE_KEY = 'IS_EXTERIOR_BASE'
 BASE_PROUD = 0.03           # how far the base stands out from the wall (m)
+BASE_STEP = 0.005           # how finely a base end is pulled back off a room
+BASE_BACK = 0.6             # the furthest it is pulled back past its wall's end
 BASE_BELOW = 0.15           # and how far it runs down past the floor
 BATTEN_SPACING = 0.4064     # 16"
 BATTEN_WIDTH = 0.038        # 1 1/2"
@@ -365,9 +367,24 @@ def base_mesh(scene, level, height):
         # Facing a porch: its floor is there instead
         if any(hb_wall_graph.point_in_polygon(probe, poly) for poly in porches):
             continue
-        # Each end runs on past the corner, round the wall it meets
+        # Each end runs on past an outside corner, round the wall it meets.
+        # At an inside corner that would run through the other wall into
+        # the room beyond: there it stops short of the room instead.
         reach = t + BASE_PROUD
-        spans = [(-reach, seg.length + reach)]
+
+        def end_reach(at_end):
+            for k in range(int((reach + BASE_BACK) / BASE_STEP) + 1):
+                e = reach - k * BASE_STEP
+                along = seg.length + e if at_end else -e
+                tips = [(seg.start[0] + d[0] * along + n[0] * out,
+                         seg.start[1] + d[1] * along + n[1] * out)
+                        for out in (face + sign * 0.005, face + sign * (BASE_PROUD - 0.005))]
+                if not any(indoors(p) or any(hb_wall_graph.point_in_polygon(p, poly)
+                                             for poly in porches) for p in tips):
+                    return e
+            return -BASE_BACK
+
+        spans = [(-end_reach(False), seg.length + end_reach(True))]
         for g0, g1 in _gaps(obj, height):
             cut = []
             for a, b in spans:
