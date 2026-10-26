@@ -35,6 +35,9 @@ LABEL_SIZE = inch(8)
 LABEL_LIFT = 0.02               # label just above the floor
 LABEL_COLOR = (0.03, 0.03, 0.03, 1.0)
 LABEL_MATERIAL = "HB Room Label"
+# A marker a wall has been drawn over is this close to the rooms beside it
+# (half a wall plus some room): it takes the nearest free one.
+ADOPT_DISTANCE = 0.5
 
 
 # =============================================================================
@@ -540,6 +543,31 @@ def rebuild_level(scene, level):
             continue
         room.orphaned = False
         claimed[hit] = i
+
+    # A wall drawn across a room can land right on its marker, which then
+    # sits in no area though the room has only been split. Such a room
+    # takes the nearest free area beside its marker (the larger, on a tie)
+    # and its marker moves into it, so the room keeps its name and finishes
+    # for one part and the rest become new rooms. A marker far from any
+    # free area stays not enclosed: its walls are open, not split.
+    for i, room in enumerate(level.rooms):
+        if not room.orphaned:
+            continue
+        p = (room.marker.location.x, room.marker.location.y)
+        best = None
+        for k, a in enumerate(areas):
+            if k in claimed:
+                continue
+            d = hb_wall_graph._dist_to_edges(p, a.polygon)
+            if d <= ADOPT_DISTANCE and (best is None or (d, -a.area) < best[0]):
+                best = ((d, -a.area), k)
+        if best is None:
+            continue
+        k = best[1]
+        room.orphaned = False
+        claimed[k] = i
+        x, y = hb_wall_graph.interior_point(areas[k].polygon)
+        room.marker.location.x, room.marker.location.y = x, y
 
     # An area nobody claims is a new room
     from .hb_house import _new_uid
