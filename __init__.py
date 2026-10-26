@@ -1,4 +1,5 @@
 import bpy
+import traceback
 from . import hb_props
 from . import hb_project
 from . import hb_house
@@ -60,7 +61,7 @@ from bpy.app.handlers import persistent
 bl_info = {
     "name": "Home Builder 5",
     "author": "Andrew Peel",
-    "version": (5, 2, 48),
+    "version": (5, 2, 49),
     "blender": (5, 1, 0),
     "location": "3D Viewport Sidebar",
     "description": "Library for Designing Interior Spaces",
@@ -85,15 +86,21 @@ def load_file_post(scene):
     # Ensure a main scene is tagged for project data
     main_scene = hb_project.ensure_main_scene()
 
-    # Wall node groups saved before the end extensions existed get them now
-    from . import hb_types
-    hb_types.ensure_all_wall_extensions()
-
-    # House room ceilings follow the Show Ceilings switch (off unless set)
-    from . import hb_rooms
-    for scene in bpy.data.scenes:
-        if scene.get('IS_HOUSE_SCENE'):
-            hb_rooms.apply_ceiling_visibility(scene)
+    # Wall node groups saved before the end extensions existed get them now,
+    # and house ceilings follow the Show Ceilings switch (off unless set).
+    # Neither may stop the rest of the load below.
+    try:
+        from . import hb_types
+        hb_types.ensure_all_wall_extensions()
+    except Exception:
+        traceback.print_exc()
+    try:
+        from . import hb_rooms
+        for scene in bpy.data.scenes:
+            if scene.get('IS_HOUSE_SCENE'):
+                hb_rooms.apply_ceiling_visibility(scene)
+    except Exception:
+        traceback.print_exc()
 
     # Ensure a default frameless style is created
     main_scene.hb_frameless.ensure_default_style()
@@ -217,6 +224,16 @@ class Home_Builder_AddonPreferences(bpy.types.AddonPreferences):
                     "give a tool's settings a row of their own instead of "
                     "a small corner. Costs viewport width, and is worth it "
                     "while the marks are still unfamiliar",
+        default=False,
+        update=_update_use_viewport_hud,
+    ) # type: ignore
+
+    show_house_tab: bpy.props.BoolProperty(
+        name="House Tab",
+        description="Show the HOUSE tab in the viewport panel, for whole "
+                    "house projects with levels, rooms and roofs. Still in "
+                    "development. A file that already has a house project "
+                    "shows the tab either way",
         default=False,
         update=_update_use_viewport_hud,
     ) # type: ignore
@@ -378,6 +395,7 @@ class Home_Builder_AddonPreferences(bpy.types.AddonPreferences):
         sub = col.column(align=True)
         sub.enabled = self.use_room_palette
         sub.prop(self, "palette_expanded")
+        col.prop(self, "show_house_tab")
 
         # Layout view defaults
         box = layout.box()

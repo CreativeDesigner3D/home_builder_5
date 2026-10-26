@@ -1735,9 +1735,126 @@ def _detect_blind_corner_neighbor(cab_obj, allow_configured=False):
         return (neighbor, blind_side, corner_kind, interior_deg,
                 placed_corner_end)
 
+    # A wall ending on another wall's face (a T) makes an inside corner
+    # on each side of it, the same as a wall corner.
+    tee = _detect_tee_blind_corner_neighbor(cab_obj, wall, allow_configured)
+    if tee is not None:
+        return tee
+
     # No wall-corner match: a free-standing peninsula run anchored to
     # this wall can create the same blind condition mid-wall.
     return _detect_peninsula_blind_neighbor(cab_obj, wall, allow_configured)
+
+
+def _tee_corner_frame(wall, corner):
+    """For a T inside corner on the cabinet's wall: (along, out) world
+    unit vectors at the corner - ``along`` runs along this wall's face
+    from the corner into the run that meets it, ``out`` points off this
+    wall's face into the room on the corner's side - or None."""
+    rot = wall.matrix_world.to_3x3()
+    along = rot @ Vector((float(corner.run), 0.0, 0.0))
+    out = rot @ Vector((0.0, -1.0 if corner.front else 1.0, 0.0))
+    along.z = out.z = 0.0
+    if along.length < 1e-8 or out.length < 1e-8:
+        return None
+    return along.normalized(), out.normalized()
+
+
+def _detect_tee_blind_corner_neighbor(cab_obj, wall, allow_configured=False):
+    """The blind-corner match at a T junction: one wall ending on the
+    face of another makes an inside corner on each side of the ending
+    wall. The placed cabinet stands on either wall with its end at that
+    corner (or at the corner neighbour's body, as at a wall corner), and
+    the neighbour is a cabinet on the other wall in the same corner.
+
+    Everything is measured from the corner point along the two walls'
+    faces, so it works for a cabinet on the wall that ends there and on
+    the wall it ends on, on either face. Square corners only; an angled
+    T is left alone. Returns the same tuple as
+    _detect_blind_corner_neighbor, or None."""
+    EDGE_TOL = units.inch(1.0)
+    ANGLE_TOL_DEG = 5.0
+    # As at a wall corner: holds the corner cabinet, never the next one
+    # down the other wall.
+    CORNER_NEAR_TOL = units.inch(8.0)
+
+    try:
+        corners = hb_placement.wall_tee_corners(wall)
+    except Exception:
+        return None
+    if not corners:
+        return None
+
+    cab_props = cab_obj.face_frame_cabinet
+    cab_range = _cabinet_world_z_range(cab_obj)
+    cab_ends = {
+        'LEFT': cab_obj.matrix_world @ Vector((0.0, 0.0, 0.0)),
+        'RIGHT': cab_obj.matrix_world @ Vector((cab_props.width, 0.0, 0.0)),
+    }
+
+    for corner in corners:
+        frame = _tee_corner_frame(wall, corner)
+        if frame is None:
+            continue
+        along, out = frame
+        axis_deg = _wall_corner_angle_deg(wall, corner.other)
+        if abs(axis_deg - 90.0) > ANGLE_TOL_DEG:
+            continue
+        p = corner.point
+
+        def coords(pt):
+            d = pt - p
+            d.z = 0.0
+            return d.dot(along), d.dot(out)
+
+        # The placed cabinet's end at the corner: its back on this wall's
+        # face through the corner, its body running away from it.
+        end_name = min(cab_ends, key=lambda k: (cab_ends[k].xy - p.xy).length)
+        far_name = 'RIGHT' if end_name == 'LEFT' else 'LEFT'
+        s, off = coords(cab_ends[end_name])
+        s_far, _off_far = coords(cab_ends[far_name])
+        if abs(off) > EDGE_TOL or s_far <= s:
+            continue
+
+        # The neighbour: a cabinet on the other wall standing in this
+        # corner, reaching along this wall's face into the run.
+        best, best_intrusion = None, 0.0
+        for child in corner.other.children:
+            if child is cab_obj or 'IS_FACE_FRAME_CABINET_CAGE' not in child:
+                continue
+            if _is_corner_cabinet(child):
+                continue
+            if child.get('IS_FLOATING_SHELF') and cab_obj.get('IS_FLOATING_SHELF'):
+                continue
+            if not _z_ranges_overlap(cab_range, _cabinet_world_z_range(child),
+                                     units.inch(0.25)):
+                continue
+            props = child.face_frame_cabinet
+            pts = [coords(child.matrix_world @ Vector(v)) for v in (
+                (0.0, 0.0, 0.0), (props.width, 0.0, 0.0),
+                (0.0, -props.depth, 0.0), (props.width, -props.depth, 0.0))]
+            if min(math.hypot(a, b) for a, b in pts) > CORNER_NEAR_TOL:
+                continue
+            # On the corner's side of the ending wall, not across it
+            if max(b for _a, b in pts) <= 1e-4:
+                continue
+            intrusion = max((a for a, _b in pts if a > 0.0), default=0.0)
+            if intrusion > best_intrusion:
+                best, best_intrusion = child, intrusion
+        if best is None:
+            continue
+
+        # (a) the cabinet's end at the corner, or (b) at the neighbour's
+        # body, the same two cases as a wall corner.
+        if abs(s) > EDGE_TOL and abs(s - best_intrusion) > EDGE_TOL:
+            continue
+
+        blind_side = _neighbor_blind_side(best, p)
+        if (not allow_configured
+                and _blind_side_already_configured(best, blind_side)):
+            continue
+        return (best, blind_side, 'BLIND', 180.0 - axis_deg, end_name)
+    return None
 
 
 def _align_base_tall_toe_kick(cab_obj):
@@ -7056,6 +7173,33 @@ class _BlindCornerDialogMixin:
         return {'FINISHED'}
 
 
+def _corner_station(obj, side):
+    """Wall-local X of the inside corner that obj's 'LEFT' / 'RIGHT' end
+    meets: that end of its wall, or a T corner partway along the wall
+    (another wall ending on this wall's front face) when one lies nearer
+    that end of the cabinet. None if the wall length can't be read."""
+    wall = obj.parent
+    wall_len = _parent_wall_length(wall)
+    if wall_len is None:
+        return None
+    x_end = obj.location.x
+    if side == 'RIGHT':
+        x_end += obj.face_frame_cabinet.width
+    station = 0.0 if side == 'LEFT' else wall_len
+    # The run meeting a LEFT-end corner lies at larger X than it
+    want_run = 1 if side == 'LEFT' else -1
+    try:
+        corners = hb_placement.wall_tee_corners(wall)
+    except Exception:
+        corners = []
+    for c in corners:
+        if c.role != 'HOST' or not c.front or c.run != want_run:
+            continue
+        if abs(c.x - x_end) < abs(station - x_end):
+            station = c.x
+    return station
+
+
 def _corner_end_toward(obj, point):
     """'LEFT' / 'RIGHT': the end of obj whose back corner is nearer the
     world point (the wall corner the two cabinets share)."""
@@ -7083,18 +7227,18 @@ def _apply_access_into_corner(neighbor, placed, neighbor_side):
     MIN_W = units.inch(1.0)
 
     def to_corner(obj, props, side, void):
-        # Corner-side edge to (wall end - void) along its wall; the far
+        # Corner-side edge to (corner - void) along its wall; the far
         # edge stays where it is.
-        wall_len = _parent_wall_length(obj.parent)
-        if wall_len is None:
+        station = _corner_station(obj, side)
+        if station is None:
             return False
         x = obj.location.x
         w = props.width
         if side == 'RIGHT':
-            props.width = max((wall_len - void) - x, MIN_W)
+            props.width = max((station - void) - x, MIN_W)
         else:
             far_right = x + w
-            props.width = max(far_right - void, MIN_W)
+            props.width = max(far_right - (station + void), MIN_W)
             obj.location.x = far_right - props.width
         return True
 

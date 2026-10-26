@@ -101,6 +101,15 @@ class home_builder_OT_create_room(bpy.types.Operator):
         # Mark original scene as room if not already marked and not a layout
         if not original_scene.get('IS_LAYOUT_VIEW') and not original_scene.get('IS_ROOM_SCENE'):
             original_scene['IS_ROOM_SCENE'] = True
+        # Created from a 2D page, the first room is not the scene that
+        # was open, but it still has to be marked or anything that walks
+        # the marked rooms leaves it out. The first room is the main
+        # scene.
+        for scene in bpy.data.scenes:
+            if (scene.get('IS_MAIN_SCENE') and scene is not new_scene
+                    and not scene.get('IS_ROOM_SCENE')
+                    and hb_utils.is_room_scene(scene)):
+                scene['IS_ROOM_SCENE'] = True
         
         self.report({'INFO'}, f"Created room: {self.room_name}")
         return {'FINISHED'}

@@ -22,6 +22,7 @@ from ..frameless.types_frameless import CabinetPart
 from . import types_face_frame as ff
 from . import solver_face_frame as solver
 from . import props_hb_face_frame as props_hb
+from . import corner_accessory_models
 
 
 # ---------------------------------------------------------------------------
@@ -1261,6 +1262,15 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
             self._recalculate_diagonal()
         elif cab_props.corner_type == 'PIE_CUT_DRAWER':
             self._recalculate_pie_cut_drawer()
+
+        # Rotating susan model for the interior option (pie cut and
+        # diagonal); replaced on every recalc.
+        corner_accessory_models.reconcile_corner_susan(
+            self.obj, cab_props, cab_props.corner_type,
+            self.obj.get('CABINET_TYPE') or self.default_cabinet_type,
+            self._has_toe_kick(),
+            self._corner_panel_reserve(cab_props, 'LEFT'),
+            self._corner_panel_reserve(cab_props, 'RIGHT'))
 
         # Applied finished-end panels on the arm ends (Paneled /
         # False FF / Working FF). Runs after the shape recalc so the

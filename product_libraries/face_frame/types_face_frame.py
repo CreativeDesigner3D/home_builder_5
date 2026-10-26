@@ -46,6 +46,9 @@ from ..common import countertop_common
 from . import decorative_corner
 from . import cabinet_column
 from . import bar_storage
+from . import accessory_models
+from . import corner_accessory_models
+from . import misc_accessory_models
 from . import pulls
 
 
@@ -177,6 +180,9 @@ PART_ROLE_REAR_STRETCHER = 'REAR_STRETCHER'
 PART_ROLE_GALLEY_APRON = 'GALLEY_APRON'
 PART_ROLE_GALLEY_PARTITION = 'GALLEY_PARTITION'
 PART_ROLE_GALLEY_CLEAT = 'GALLEY_CLEAT'
+PART_ROLE_FLOOR_CLEAT = 'FLOOR_CLEAT'
+# Stamped on a carcass floor built loose (lifts out of the cabinet).
+TAG_LOOSE_PART = 'hb_loose_part'
 PART_ROLE_BOTTOM = 'BOTTOM'
 PART_ROLE_BACK = 'BACK'
 # Finished bottom (uppers): an applied finish panel under the carcass
@@ -791,6 +797,7 @@ DRAWER_INSERT_BUILDERS = {
     'PIGEON_HOLE': ('_build_pigeon_hole_insert', 6.0, True),
     'TRAY': ('_build_tray_insert', 2.0, True),
 }
+DRAWER_INSERT_BUILDERS.update(misc_accessory_models.DRAWER_INSERT_KINDS)
 
 
 def parse_render_hint(hint):
@@ -1238,6 +1245,9 @@ def rollout_above_layout(opening_bottom, opening_top, rollout_heights,
 # each insert is a single derived mesh built in bar_storage.py; the
 # specific product is read from the interior item's kind.
 PART_ROLE_BAR_STORAGE = 'BAR_STORAGE'
+# Accessory product shown as a 3D unit (roll-out tray, organizer): one
+# derived mesh per item, built in accessory_models.py beside its label.
+PART_ROLE_ACCESSORY_MODEL = accessory_models.ROLE
 # Hang rod across an opening (same role string the closets library uses,
 # so downstream consumers treat both the same way).
 PART_ROLE_CLOSET_ROD = 'CLOSET_ROD'
@@ -1284,6 +1294,7 @@ INTERIOR_PART_ROLES = frozenset({
     PART_ROLE_COMPONENT_SHELF,
     PART_ROLE_COMPONENT_HANGER,
     PART_ROLE_ACCESSORY_LABEL,
+    PART_ROLE_ACCESSORY_MODEL,
     PART_ROLE_BAR_STORAGE,
     PART_ROLE_CLOSET_ROD,
     PART_ROLE_SHELF_STANDARD,
@@ -3454,6 +3465,7 @@ class FaceFrameCabinet(GeoNodeCage):
                 part.set_input('Width', seg['panel_dim_y'])
                 part.set_input('Thickness', seg['thickness'])
                 child[TAG_SEGMENT_FINISHED] = seg['finished']
+                _sync_removable_floor_name(child, seg)
 
             elif role == PART_ROLE_FRONT_STRETCHER:
                 seg = front_str_by_start.get(child.get('hb_segment_start_bay'))
@@ -3993,6 +4005,10 @@ class FaceFrameCabinet(GeoNodeCage):
         # Galley workstation construction: aprons, partitions, cleats
         # and the sink. Unconditional so another cabinet sheds them.
         self._apply_galley_parts(layout)
+
+        # Removable floor cleats. Unconditional so turning the option
+        # off (or removing the sink) takes them away again.
+        self._apply_removable_floor_cleats(layout)
 
         # Appliance bay annotation (square + SINK / COOKTOP word) on top
         # of stamped bays and the dedicated sink cabinet's basin bay.
@@ -6232,6 +6248,17 @@ class FaceFrameCabinet(GeoNodeCage):
             if mat is not None:
                 return mat
         return cls._stainless_material()
+
+    # ---- Removable floor cleats ------------------------------------
+    FLOOR_CLEAT_KEY = 'hb_floor_cleat_key'
+
+    def _apply_removable_floor_cleats(self, layout):
+        """Place the cleats every removable floor rests on and remove
+        any left over from a floor that is fixed again."""
+        want = []
+        if self._has_carcass() and layout.cabinet_type != 'UPPER':
+            want = solver.removable_floor_cleat_descriptors(layout)
+        sync_floor_cleats(self.obj, want, self.FLOOR_CLEAT_KEY)
 
     # ---- Galley workstation parts ----------------------------------
     GALLEY_KEY = 'hb_galley_key'
@@ -13970,10 +13997,12 @@ class FaceFrameCabinet(GeoNodeCage):
         if front_type == 'NONE':
             return
 
+        built_leaves = []
         for leaf_index, leaf in enumerate(solver.front_leaves(
             layout, rect, cab_props, op_props
         )):
             pivot = self._create_front_pivot(opening_obj)
+            built_leaves.append((pivot, leaf))
             pivot.location = leaf['pivot_position']
             pivot.rotation_euler = leaf['pivot_rotation']
 
@@ -14052,11 +14081,20 @@ class FaceFrameCabinet(GeoNodeCage):
             if not drawer_look and not no_pulls and not leaf.get('no_pull'):
                 pull = self._create_pull_for_front(front, leaf['role'], leaf,
                                                    op_props)
-            self._create_drawer_box_for_front(pivot, leaf, rect, op_props)
+            # A pull-out whose product is modeled carries the unit
+            # itself on the slide, in place of a drawer box.
+            if (leaf['role'] != PART_ROLE_PULLOUT_FRONT
+                    or self._create_pullout_model(pivot, leaf, rect,
+                                                  op_props) is None):
+                self._create_drawer_box_for_front(pivot, leaf, rect, op_props)
             if drawer_look:
                 self._build_drawer_look_fronts(front, leaf, op_props)
             elif door_look:
                 self._build_door_look_fronts(front, leaf, op_props, pull)
+        # Racks and trays mounted on the back of the fronts swing with
+        # them.
+        misc_accessory_models.attach_front_models(
+            opening_obj, op_props, rect, built_leaves)
 
         # Sink apron: a 1/2" panel across the top of a DOOR opening
         # (apron / farmhouse sink), set 1/8" behind the face frame. The
@@ -14808,7 +14846,8 @@ class FaceFrameCabinet(GeoNodeCage):
             spec = DRAWER_INSERT_BUILDERS.get(kind)
             if spec is None:
                 continue
-            builder = getattr(self, spec[0])
+            builder = (misc_accessory_models.drawer_builder(self, spec[0])
+                       or getattr(self, spec[0]))
             if not spec[2]:
                 # Spans the box rather than taking a slice of it, but it
                 # is still handed the cursor: a front-to-back divider
@@ -15651,6 +15690,13 @@ class FaceFrameCabinet(GeoNodeCage):
                 # item data alone.
                 if op_props.front_type not in DRAWER_BOX_FRONT_TYPES:
                     self._create_accessory_label(opening_obj, desc)
+            elif kind == 'ACCESSORY_MODEL':
+                if op_props.front_type not in DRAWER_BOX_FRONT_TYPES:
+                    self._create_accessory_model(opening_obj, desc)
+            elif kind == corner_accessory_models.OPENING_KIND:
+                if op_props.front_type not in DRAWER_BOX_FRONT_TYPES:
+                    corner_accessory_models.attach_opening_model(
+                        opening_obj, desc)
             elif kind == 'ROLLOUT_BOX':
                 self._create_rollout_box(opening_obj, desc)
             elif kind == 'GALLEY_ROLLOUT_TOP':
@@ -16346,6 +16392,35 @@ class FaceFrameCabinet(GeoNodeCage):
         part.set_input('Thickness', thickness)
         return part
 
+    def _create_accessory_model(self, opening_obj, desc):
+        """3D unit for an accessory product whose entry names a
+        model (accessory_models.py). Like bar storage it is one derived
+        mesh, not a CABINET_PART, so cut lists and machining skip it."""
+        w, depth, h = desc['dims']
+        obj = accessory_models.build_object(
+            desc['model'], desc['name'], w, depth, h, desc.get('params'))
+        if obj is None:
+            return None
+        bpy.context.scene.collection.objects.link(obj)
+        obj.parent = opening_obj
+        obj.location = desc['position']
+        obj['hb_part_role'] = desc['role']
+        obj['IS_FACE_FRAME_INTERIOR_PART'] = True
+        obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_interior_part_commands'
+        return obj
+
+    def _create_pullout_model(self, pivot_obj, leaf, rect, op_props):
+        """The modeled unit behind a pull-out front, parented to the
+        front pivot like a drawer box so it slides with the front; None
+        when the opening's product has no pull-out model."""
+        anchor = leaf.get('pivot_anchor_position', leaf['pivot_position'])
+        desc = accessory_models.pullout_descriptor(
+            getattr(op_props, 'pullout_accessory_code', ''), rect, anchor,
+            self._drawer_box_depth_space(rect, anchor[1]))
+        if desc is None:
+            return None
+        return self._create_accessory_model(pivot_obj, desc)
+
     def _create_bar_storage_part(self, opening_obj, desc):
         """Bar storage insert (wine rack / cubby / stemware / plate
         rack family). One derived mesh per insert, built in
@@ -16654,6 +16729,54 @@ class WindowSeatFaceFrameCabinet(FurnitureFaceFrameCabinet):
         # Flush kick is forced by the FurnitureFaceFrameCabinet create;
         # no furniture_top write here keeps the top open (no veneer slab).
         super().create(name, bay_qty=bay_qty)
+
+
+def _sync_removable_floor_name(bottom_obj, seg):
+    """Name and tag a carcass floor for what it is: 'Removable Floor N'
+    and loose when its segment is built removable, 'Bottom N' when not,
+    so the part reads right in the parts list."""
+    n = seg['start_bay'] + 1
+    removable = bool(seg.get('removable'))
+    want = ('Removable Floor %d' if removable else 'Bottom %d') % n
+    if bottom_obj.name != want and not bottom_obj.name.startswith(want + '.'):
+        bottom_obj.name = want
+    if removable:
+        bottom_obj[TAG_LOOSE_PART] = True
+    elif TAG_LOOSE_PART in bottom_obj:
+        del bottom_obj[TAG_LOOSE_PART]
+
+
+def sync_floor_cleats(root_obj, descriptors, key_tag):
+    """Make ``root_obj``'s cleat children match ``descriptors`` (see
+    solver.removable_floor_cleats): reuse a cleat by its key, create
+    the missing ones, delete the rest. ``key_tag`` is the custom
+    property the cleats are keyed by, so another product can keep its
+    own set of cleats apart."""
+    existing = {c.get(key_tag): c for c in root_obj.children
+                if c.get(key_tag)}
+    live = set()
+    for desc in descriptors:
+        key = desc['key']
+        obj = existing.get(key)
+        if obj is None:
+            part = CabinetPart()
+            part.create(desc['name'])
+            obj = part.obj
+            obj.parent = root_obj
+            obj[key_tag] = key
+            obj['hb_part_role'] = PART_ROLE_FLOOR_CLEAT
+            obj['CABINET_PART'] = True
+            obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_part_commands'
+            part.set_input('Mirror Y', True)
+        obj.location = desc['location']
+        part = GeoNodeCutpart(obj)
+        part.set_input('Length', desc['length'])
+        part.set_input('Width', desc['width'])
+        part.set_input('Thickness', desc['thickness'])
+        live.add(key)
+    for key, obj in existing.items():
+        if key not in live:
+            bpy.data.objects.remove(obj, do_unlink=True)
 
 
 class SinkFaceFrameCabinet(BaseFaceFrameCabinet):
@@ -18227,6 +18350,7 @@ FLOATING_SHELF_SYNC_PROPS = (
     'groove_distance_from_rear', 'groove_top_from_front',
     'groove_bottom_separate', 'groove_bottom_distance',
     'groove_bottom_from_front', 'groove_width', 'groove_depth',
+    'groove_bottom_own_size', 'groove_bottom_width', 'groove_bottom_depth',
 )
 _FLOATING_SHELF_SIZE_PROPS = ('width', 'depth', 'height')
 # Set while one shelf pushes its settings to its group, so the members'
@@ -18728,23 +18852,32 @@ class FloatingShelfFaceFrameCabinet(FaceFrameCabinet):
         hd = shelf.shelf_type in ('MEDIUM_DUTY', 'HEAVY_DUTY')
         g_w = shelf.groove_width
         g_depth = shelf.groove_depth
+        # The bottom groove cuts at the top's size unless given its own.
+        if shelf.groove_bottom_own_size:
+            b_w = shelf.groove_bottom_width
+            b_depth = shelf.groove_bottom_depth
+        else:
+            b_w, b_depth = g_w, g_depth
 
-        def groove_span(dist, from_front):
-            """Panel-local (near, far) Y for a groove that distance in."""
+        def groove_span(dist, from_front, w):
+            """Panel-local (near, far) Y for a groove w wide that
+            distance in."""
             if from_front:
                 near = dist - ft
             else:
-                near = inner_depth - dist - g_w
-            near = min(max(near, 0.0), max(inner_depth - g_w, 0.0))
-            return near, near + g_w
+                near = inner_depth - dist - w
+            near = min(max(near, 0.0), max(inner_depth - w, 0.0))
+            return near, near + w
 
         y_near, y_far = groove_span(shelf.groove_distance_from_rear,
-                                    shelf.groove_top_from_front)
+                                    shelf.groove_top_from_front, g_w)
         if shelf.groove_bottom_separate:
             b_near, b_far = groove_span(shelf.groove_bottom_distance,
-                                        shelf.groove_bottom_from_front)
+                                        shelf.groove_bottom_from_front, b_w)
         else:
-            b_near, b_far = y_near, y_far
+            # In line with the top groove, at the bottom's own width.
+            b_near, b_far = groove_span(shelf.groove_distance_from_rear,
+                                        shelf.groove_top_from_front, b_w)
         gx0, gx1 = -0.005, inner_len + 0.005                   # span full length
         # Flip Z picks the cut face; top cuts its top face, bottom its
         # bottom. Verify against the render and flip if reversed.
@@ -18755,7 +18888,7 @@ class FloatingShelfFaceFrameCabinet(FaceFrameCabinet):
                              gx0, y_near, gx1, y_far, g_depth, True)
         if not BOTTOM.get('IS_MANUAL_PART'):
             self._set_groove(BOTTOM, hd and shelf.include_groove_bottom,
-                             gx0, b_near, gx1, b_far, g_depth, False)
+                             gx0, b_near, gx1, b_far, b_depth, False)
 
         self._apply_shelf_edge_profile(FRONT, LP, RP, width, depth,
                                        thickness, fl, fr)

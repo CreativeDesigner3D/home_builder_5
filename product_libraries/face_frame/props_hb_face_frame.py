@@ -3509,6 +3509,11 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                                    # exterior finish the other cutters take.
                                    'DRAWER_BOX_CUTTER'):
                     slot_mat = interior_mat or finish_mat
+                if (slot_role == 'ACCESSORY_MODEL'
+                        and child.get('hb_accessory_finish_match')):
+                    # Organizer inserts are veneer plywood finished
+                    # with the cabinet; roll-outs keep their own wood.
+                    slot_mat = finish_mat
                 if slot_role == 'SHELF_NOSING':
                     # A painted shelf region carries its nosing along:
                     # the stamp on the opening / bay cage wins over the
@@ -4562,6 +4567,10 @@ def _sync_rail_size_annotation(front_obj, part, top_rail_width,
     y = front_width - right_stile_width - units.inch(1.0)
     text_obj.location.y = -y if mirror_y else y
     text_obj.location.z = units.inch(0.76)
+
+
+# Default width and depth of a Set Door Frame center kerf (1/8").
+CENTER_KERF_DEFAULT = units.inch(0.125)
 
 
 def _front_glass_rows(frame_store, n_rows):
@@ -5890,6 +5899,16 @@ class Face_Frame_Door_Style(PropertyGroup):
                 and not info.get('mid_stile_count'):
             info['mid_stile_count'] = 1
             info['mid_stile_width'] = _msw
+        # Center kerf (Set Door Frame > Center Kerf): a groove down the
+        # mid stile and through the rails so one door reads as a pair.
+        # A panel choice like glass rows, so not behind the frame lock.
+        # Mitered doors build their frame from swept members and skip it.
+        if (member_sec is None
+                and frame_store.get('HB_FRAME_OVR_KERF', False)):
+            info['center_kerf_width'] = float(frame_store.get(
+                'HB_FRAME_OVR_KERF_WIDTH', CENTER_KERF_DEFAULT) or 0.0)
+            info['center_kerf_depth'] = float(frame_store.get(
+                'HB_FRAME_OVR_KERF_DEPTH', CENTER_KERF_DEFAULT) or 0.0)
         # Profile sweeps / panel construction / mullions resolved
         # from the style via resolve_mesh_sections (shared with the
         # wood hood door builder). The cabinet-level "Door and
@@ -6145,6 +6164,10 @@ class Face_Frame_Door_Style(PropertyGroup):
                 'mid_loc': mid_loc,
                 'mid_rail_width': eff_mid_rail,
                 'mid_stile_width': eff_mid_stile,
+                'mid_stile_count': int(info.get('mid_stile_count', 0) or 0),
+                'center_kerf_width': (
+                    float(info.get('center_kerf_width', 0.0) or 0.0)
+                    if info.get('mid_stile_count') else 0.0),
             }
         else:
             # GN fallback: find or add the 'Door Style' CPM_5PIECEDOOR
@@ -6823,9 +6846,13 @@ STACK_FLOOR_BOTTOM_GAP = units.inch(0.625)
 
 def _update_hide_rollout_spacers(self, context):
     """Ladders on / off: a bottom gap still at the default for the
-    other mounting moves to this one's default. A typed gap is kept."""
+    other mounting moves to this one's default. A typed gap is kept.
+    The bottom box is floor mounted with the ladders hidden or with
+    Bottom Box Fixed at Floor (rollouts only)."""
+    floor = (self.hide_rollout_spacers
+             or (self.kind == 'ROLLOUT' and self.rollout_bottom_fixed))
     want, other = ((STACK_FLOOR_BOTTOM_GAP, STACK_BOTTOM_GAP)
-                   if self.hide_rollout_spacers
+                   if floor
                    else (STACK_BOTTOM_GAP, STACK_FLOOR_BOTTOM_GAP))
     if abs(self.bottom_gap - other) < 1e-6:
         self.bottom_gap = want   # its own update runs the recalc
@@ -10303,6 +10330,15 @@ class Face_Frame_Bay_Props(PropertyGroup):
                     "opening. Off prepares the opening only",
         default=False,
     )  # type: ignore
+    # Sink bays: build the floor as a loose 3/4 panel resting on
+    # cleats so it lifts out (plumbing access, replacing a water-damaged
+    # floor). Read only while the bay holds a sink.
+    sink_removable_floor: BoolProperty(
+        name="Removable Floor",
+        description="Build the floor under the sink as a loose 3/4\" "
+                    "panel resting on cleats, so it can be lifted out",
+        default=False, update=_update_cabinet_dim,
+    )  # type: ignore
 
     top_rail_width: FloatProperty(
         name="Top Rail Width", default=units.inch(1.5), unit='LENGTH', precision=4,
@@ -10839,6 +10875,17 @@ class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
         description="Don't build the side spacer ladders the slides "
                     "mount to - e.g. a single rollout or shelf fixed at "
                     "the floor that needs no spacer assembly. The bottom "
+                    "gap moves to 5/8\" unless it was typed",
+        default=False, update=_update_hide_rollout_spacers,
+    )  # type: ignore
+    # ROLLOUT only: the bottom box mounts to the cabinet floor and the
+    # boxes above it stay on the ladders. The ladders then start on top
+    # of the fixed box, and drop out entirely when it is the only box.
+    rollout_bottom_fixed: BoolProperty(
+        name="Bottom Box Fixed at Floor",
+        description="Mount the bottom rollout box to the cabinet floor "
+                    "instead of the spacer ladders. The ladders start "
+                    "above it (none when it is the only box). The bottom "
                     "gap moves to 5/8\" unless it was typed",
         default=False, update=_update_hide_rollout_spacers,
     )  # type: ignore
@@ -14037,6 +14084,22 @@ class Face_Frame_Floating_Shelf_Props(PropertyGroup):
     )  # type: ignore
     groove_depth: FloatProperty(
         name="Groove Depth", default=units.inch(0.25),
+        unit='LENGTH', precision=4, update=_update_cabinet_dim,
+    )  # type: ignore
+    # The bottom groove cuts at the top groove's size unless it is
+    # given its own width and depth.
+    groove_bottom_own_size: BoolProperty(
+        name="Bottom Groove Own Size", default=False,
+        description="Give the bottom groove its own width and depth. "
+                    "Off cuts it the same size as the top groove",
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    groove_bottom_width: FloatProperty(
+        name="Bottom Groove Width", default=units.inch(0.5), min=0.0,
+        unit='LENGTH', precision=4, update=_update_cabinet_dim,
+    )  # type: ignore
+    groove_bottom_depth: FloatProperty(
+        name="Bottom Groove Depth", default=units.inch(0.25), min=0.0,
         unit='LENGTH', precision=4, update=_update_cabinet_dim,
     )  # type: ignore
 

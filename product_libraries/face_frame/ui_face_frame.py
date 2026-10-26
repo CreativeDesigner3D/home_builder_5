@@ -753,6 +753,14 @@ def draw_floating_shelf(layout, root):
         gsub.separator()
         gsub.prop(shelf, 'groove_width', text="Width")
         gsub.prop(shelf, 'groove_depth', text="Depth")
+        # The bottom groove cuts at the same size unless given its own.
+        gsub.separator()
+        gsub.prop(shelf, 'groove_bottom_own_size',
+                  text="Bottom Groove Own Size")
+        ssub = gsub.column(align=True)
+        ssub.enabled = shelf.groove_bottom_own_size
+        ssub.prop(shelf, 'groove_bottom_width', text="Bottom Width")
+        ssub.prop(shelf, 'groove_bottom_depth', text="Bottom Depth")
 
 
 def draw_panel_layout(layout, root):
@@ -1383,6 +1391,7 @@ def draw_bay_properties(layout, bay_obj):
     col.separator()
     col.prop(bp, 'remove_bottom', text="Remove Bottom")
     col.prop(bp, 'remove_carcass', text="Remove Carcass")
+    _draw_removable_floor_row(col, bay_obj, cab_type)
     if cab_type in ('BASE', 'TALL', 'LAP_DRAWER'):
         col.prop(bp, 'toe_kick_type', text="Toe Kick")
     if cab_type == 'BASE':
@@ -1390,6 +1399,16 @@ def draw_bay_properties(layout, bay_obj):
     draw_bay_finish_options(col, bay_obj)
     if cab_type in ('BASE', 'UPPER'):
         col.prop(bp, 'bottom_rail_profile', text="Bottom Rail Profile")
+
+
+def _draw_removable_floor_row(col, bay_obj, cab_type):
+    """Removable Floor toggle, on a base bay that holds a sink."""
+    if cab_type != 'BASE' or bay_obj.get('APPLIANCE_BAY') != 'SINK':
+        return
+    bp = bay_obj.face_frame_bay
+    row = col.row()
+    row.enabled = not (bp.remove_bottom or bp.remove_carcass)
+    row.prop(bp, 'sink_removable_floor', text="Removable Floor")
 
 
 def _root_opening_size(opening_obj):
@@ -1847,6 +1866,12 @@ def _draw_interior_items_section(layout, target_props, target_name=""):
             sub.prop(item, 'rollout_depth', text="Depth (0 = Auto)")
             sub.prop(item, 'hide_rollout_spacers',
                      text="Hide Spacer Ladders")
+            # The bottom box on floor-mounted slides, the rest on the
+            # ladders (moot when the ladders are hidden altogether).
+            fx = sub.row()
+            fx.enabled = not item.hide_rollout_spacers
+            fx.prop(item, 'rollout_bottom_fixed',
+                    text="Bottom Box Fixed at Floor")
             lh = sub.row()
             lh.enabled = not item.hide_rollout_spacers
             lh.prop(item, 'rollout_spacer_height',
@@ -2496,6 +2521,7 @@ def draw_bay_in_prompts(layout, bay_obj):
     col.separator()
     col.prop(bp, 'remove_bottom', text="Remove Bottom")
     col.prop(bp, 'remove_carcass', text="Remove Carcass")
+    _draw_removable_floor_row(col, bay_obj, cab_type)
     if cab_type in ('BASE', 'TALL', 'LAP_DRAWER'):
         col.prop(bp, 'toe_kick_type', text="Toe Kick")
     if cab_type == 'BASE':

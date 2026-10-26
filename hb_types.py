@@ -443,9 +443,21 @@ def ensure_wall_extensions(node_group):
     Patched in at runtime rather than saved into GeoNodeWall.blend, so a
     file made before the inputs existed gets them on load too. Returns
     True when the group was changed."""
-    if node_group is None or 'Left Extension' in node_group.interface.items_tree:
+    if node_group is None or node_group.library is not None:
         return False
     nodes, links = node_group.nodes, node_group.links
+    iface = node_group.interface
+    if 'Left Extension' in iface.items_tree:
+        if 'Left Extension' in nodes and 'Right Extension' in nodes:
+            return False
+        # Sockets without their nodes: an earlier patch stopped part way.
+        # Take the sockets off and patch again.
+        for name in WALL_EXTENSION_INPUTS:
+            item = iface.items_tree.get(name)
+            if item is not None:
+                iface.remove(item)
+    if 'Length' not in iface.items_tree:
+        return False
     target = nodes.get('Set Position.001')
     if target is None:
         return False
@@ -454,7 +466,6 @@ def ensure_wall_extensions(node_group):
     if feed is None:
         return False
 
-    iface = node_group.interface
     after = iface.items_tree.get('Right Angle')
     for name in WALL_EXTENSION_INPUTS:
         item = iface.new_socket(name=name, in_out='INPUT',
@@ -525,7 +536,12 @@ def ensure_all_wall_extensions():
     changed = False
     for ng in bpy.data.node_groups:
         if ng.name.startswith('GeoNodeWall') and ng.bl_idname == 'GeometryNodeTree':
-            changed |= ensure_wall_extensions(ng)
+            try:
+                changed |= ensure_wall_extensions(ng)
+            except Exception:
+                # One odd group must not stop the file loading
+                import traceback
+                traceback.print_exc()
     return changed
 
 

@@ -1325,7 +1325,9 @@ class PlaceCabinetBase(WallObjectPlacementMixin):
             wall = hb_types.GeoNodeWall(wall_obj)
             adj = wall.get_connected_wall(direction=side, include_loop_seam=True)
             if not adj:
-                return False
+                # An end landing on another wall's face (a T) is an
+                # inside corner on both faces of this wall.
+                return self._tee_host_wall(wall_obj, side) is not None
             adj_obj = adj.obj
             adj_len = adj.get_input('Length')
         except Exception:

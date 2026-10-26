@@ -1629,10 +1629,14 @@ class hb_face_frame_OT_duplicate_bare_part(bpy.types.Operator):
 # the front's own style is re-applied so the change shows immediately.
 # ---------------------------------------------------------------------------
 
+# Fronts whose style resolves in the drawer front pool. A pullout front
+# is a door on a slide and takes the DOOR style (see the door style's
+# _DOOR_FRONT_ROLES); looking it up in the drawer pool found nothing,
+# so Set Door Frame edits on a pullout never re-applied.
 _DRAWER_FRONT_ROLES = frozenset({
     types_face_frame.PART_ROLE_DRAWER_FRONT,
-    types_face_frame.PART_ROLE_PULLOUT_FRONT,
     types_face_frame.PART_ROLE_FALSE_FRONT,
+    types_face_frame.PART_ROLE_TILT_OUT,
 })
 
 
@@ -1943,6 +1947,24 @@ def _on_df_glass(self, context):
         _reapply_frame_store(store, front)
 
 
+# Default center kerf width / depth (1/8"); matches
+# props_hb_face_frame.CENTER_KERF_DEFAULT.
+_KERF_DEFAULT = units.inch(0.125)
+
+
+def _on_df_kerf(self, context):
+    """Center Kerf: a groove down the mid stile so one door reads as a
+    pair. Like Glass Panels it is a per-front choice, not frame
+    geometry, so it is written straight to the store (no lock)."""
+    front = _door_frame_for_dialog(self)
+    if front is not None:
+        store = _frame_store(front)
+        store['HB_FRAME_OVR_KERF'] = self.center_kerf
+        store['HB_FRAME_OVR_KERF_WIDTH'] = self.kerf_width
+        store['HB_FRAME_OVR_KERF_DEPTH'] = self.kerf_depth
+        _reapply_frame_store(store, front)
+
+
 def _on_df_lock(self, context):
     """Lock pins the whole interface: snapshot the shown values onto the
     OPENING-cage store and flag it locked so the solver honors them on every
@@ -2085,6 +2107,25 @@ class hb_face_frame_OT_set_door_frame(bpy.types.Operator):
                     "Top / Bottom toggles)",
         update=_on_df_glass)  # type: ignore
 
+    # Center kerf (faux pair of doors): a square groove down the mid
+    # stile, through the rails it lines up with.
+    center_kerf: bpy.props.BoolProperty(
+        name="Center Kerf", default=False,
+        description="Cut a groove down the mid stile (and through the "
+                    "rails) so this door reads as a pair of doors. "
+                    "Needs a mid stile (Grid: Stiles = 1)",
+        update=_on_df_kerf)  # type: ignore
+    kerf_width: FloatProperty(
+        name="Kerf Width", unit='LENGTH', precision=4, min=0.0,
+        default=_KERF_DEFAULT,
+        description="Width of the center kerf",
+        update=_on_df_kerf)  # type: ignore
+    kerf_depth: FloatProperty(
+        name="Kerf Depth", unit='LENGTH', precision=4, min=0.0,
+        default=_KERF_DEFAULT,
+        description="Depth of the center kerf into the door face",
+        update=_on_df_kerf)  # type: ignore
+
     @classmethod
     def poll(cls, context):
         return has_door_style_modifier(context.active_object)
@@ -2142,6 +2183,13 @@ class hb_face_frame_OT_set_door_frame(bpy.types.Operator):
         self.glass_top = bool(store.get('HB_FRAME_OVR_GLASS_TOP', False))
         self.glass_bottom = bool(store.get('HB_FRAME_OVR_GLASS_BOTTOM', False))
         self.glass_rows = str(store.get('HB_FRAME_OVR_GLASS_ROWS', '') or '')
+        self.center_kerf = bool(store.get('HB_FRAME_OVR_KERF', False))
+        self.kerf_width = float(store.get(
+            'HB_FRAME_OVR_KERF_WIDTH',
+            _KERF_DEFAULT))
+        self.kerf_depth = float(store.get(
+            'HB_FRAME_OVR_KERF_DEPTH',
+            _KERF_DEFAULT))
         self.lock_frame = locked
         self.source_obj_name = obj.name
         return context.window_manager.invoke_props_dialog(self, width=260)
@@ -2209,6 +2257,19 @@ class hb_face_frame_OT_set_door_frame(bpy.types.Operator):
 
         us = context.scene.unit_settings
         front = _door_frame_for_dialog(self)
+
+        # Center kerf -- always enabled like Glass Panels. It runs down
+        # a mid stile, so say so when the door has none.
+        kbox = col.box()
+        kbox.prop(self, 'center_kerf')
+        ksub = kbox.column(align=True)
+        ksub.enabled = self.center_kerf
+        ksub.prop(self, 'kerf_width', text="Width")
+        ksub.prop(self, 'kerf_depth', text="Depth")
+        stamp = front.get('HB_DOOR_FRAME') if front is not None else None
+        if (self.center_kerf and stamp is not None
+                and not stamp.get('mid_stile_count', 0)):
+            kbox.label(text="Add a mid stile (Grid: Stiles 1)", icon='INFO')
 
         # Read-only readout of the finished front's overall size, in the
         # always-enabled column so it shows whether or not the frame is
