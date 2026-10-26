@@ -493,26 +493,64 @@ def _add_prism(bm, n, offset, poly, depth_at):
         pass
 
 
-def _build_face(bm, style, n, offset, poly):
-    ss = [p[0] for p in poly]
-    zs = [p[1] for p in poly]
+def _simplify(poly, tol=1e-5):
+    """A polygon without its in-line points (left where pieces met)."""
+    out = list(poly)
+    changed = True
+    while changed and len(out) > 3:
+        changed = False
+        for i in range(len(out)):
+            a, b, c = out[i - 1], out[i], out[(i + 1) % len(out)]
+            cross = (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0])
+            if abs(cross) < tol * max(1e-9, math.dist(a, c)):
+                del out[i]
+                changed = True
+                break
+    return out
+
+
+def _merge(pieces):
+    """Pieces of one board (from the triangles of a wall's faces) joined
+    into whole outlines: the edges between them dissolved, the points
+    left in line dropped."""
+    bm = bmesh.new()
+    for p in pieces:
+        if len(p) < 3 or _area(p) < MIN_PIECE_AREA:
+            continue
+        try:
+            bm.faces.new([bm.verts.new((x, z, 0.0)) for x, z in p])
+        except ValueError:
+            pass
+    bmesh.ops.remove_doubles(bm, verts=bm.verts[:], dist=1e-4)
+    inner = [e for e in bm.edges if len(e.link_faces) == 2]
+    if inner:
+        bmesh.ops.dissolve_edges(bm, edges=inner, use_verts=False)
+    out = []
+    for f in bm.faces:
+        poly = _simplify([(v.co.x, v.co.y) for v in f.verts])
+        if len(poly) >= 3 and _area(poly) >= MIN_PIECE_AREA:
+            out.append(poly)
+    bm.free()
+    return out
+
+
+def _build_plane(bm, style, n, offset, polys):
+    """The battens, or the lap or shingle rows, over the parts of a wall's
+    outside in one plane: each board one solid, whatever triangles the
+    wall's faces came in."""
+    ss = [p[0] for poly in polys for p in poly]
+    zs = [p[1] for poly in polys for p in poly]
     if style == 'BOARD_BATTEN':
         half = BATTEN_WIDTH / 2.0
-        k0 = math.floor(min(ss) / BATTEN_SPACING)
-        k1 = math.ceil(max(ss) / BATTEN_SPACING)
-        for k in range(k0, k1 + 1):
+        for k in range(math.floor(min(ss) / BATTEN_SPACING), math.ceil(max(ss) / BATTEN_SPACING) + 1):
             c = k * BATTEN_SPACING
-            piece = _strip(poly, 0, c - half, c + half)
-            if len(piece) >= 3:
+            for piece in _merge([_strip(poly, 0, c - half, c + half) for poly in polys]):
                 _add_prism(bm, n, offset, piece, lambda z: BATTEN_PROUD)
         return
     exposure, proud = (LAP_EXPOSURE, LAP_PROUD) if style == 'LAP' else (SHINGLE_EXPOSURE, SHINGLE_PROUD)
-    k0 = math.floor(min(zs) / exposure)
-    k1 = math.ceil(max(zs) / exposure)
-    for k in range(k0, k1):
+    for k in range(math.floor(min(zs) / exposure), math.ceil(max(zs) / exposure)):
         bottom, top = k * exposure, (k + 1) * exposure
-        piece = _strip(poly, 1, bottom, top)
-        if len(piece) >= 3:
+        for piece in _merge([_strip(poly, 1, bottom, top) for poly in polys]):
             # Thicker at the bottom edge, like a board lapped over the one below
             _add_prism(bm, n, offset, piece,
                        lambda z, top=top: ROW_TOP + (proud - ROW_TOP) * (top - z) / exposure)
@@ -548,7 +586,7 @@ def build_siding_geometry(scene, walls_done, roof_done, rooms):
             ev.to_mesh_clear()
             if not faces:
                 continue
-            bm, mats = wanted.setdefault(level.uid, (bmesh.new(), {}))
+            planes = wanted.setdefault(level.uid, {})
             for n, offset, poly in faces:
                 if gable is None:
                     parts = [(finish, poly)]
@@ -557,12 +595,10 @@ def build_siding_geometry(scene, walls_done, roof_done, rooms):
                 for part_finish, part in parts:
                     if part_finish[0] not in BUILT or len(part) < 3:
                         continue
-                    index = mats.setdefault(part_finish, len(mats))
-                    start = len(bm.faces)
-                    _build_face(bm, part_finish[0], n, offset, part)
-                    bm.faces.ensure_lookup_table()
-                    for f in bm.faces[start:]:
-                        f.material_index = index
+                    # Gathered by plane, so a board runs whole across the
+                    # wall's faces (and on along walls in line with it)
+                    key = (part_finish, round(n.x, 4), round(n.y, 4), round(offset, 4))
+                    planes.setdefault(key, (n, offset, []))[2].append(part)
     for level in house.levels:
         obj = _geometry_object(scene, level)
         if level.uid not in wanted:
@@ -572,7 +608,14 @@ def build_siding_geometry(scene, walls_done, roof_done, rooms):
                 if mesh is not None and mesh.users == 0:
                     bpy.data.meshes.remove(mesh)
             continue
-        bm, mats = wanted[level.uid]
+        bm, mats = bmesh.new(), {}
+        for (part_finish, *_key), (n, offset, polys) in wanted[level.uid].items():
+            index = mats.setdefault(part_finish, len(mats))
+            start = len(bm.faces)
+            _build_plane(bm, part_finish[0], n, offset, polys)
+            bm.faces.ensure_lookup_table()
+            for f in bm.faces[start:]:
+                f.material_index = index
         bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
         mesh = bpy.data.meshes.new(f"Siding - {level.name}")
         bm.to_mesh(mesh)
