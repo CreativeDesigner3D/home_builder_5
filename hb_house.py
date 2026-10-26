@@ -730,6 +730,112 @@ def _update_ceiling_height(self, context):
 def _room_label_changed(self, context):
     from . import hb_rooms
     hb_rooms.update_room_label(self)
+    # Renamed a garage, or a bath: its floor follows, unless chosen by hand
+    if self.floor_auto:
+        apply_floor_default(self)
+
+
+# ---- Floor defaults -------------------------------------------------------------
+# A room's floor comes from the house's defaults for its kind, worked out
+# from its name, until the user picks one for it by hand.
+
+FLOOR_KINDS = ('room', 'wet', 'garage', 'porch', 'outdoor')
+WET_WORDS = ('bath', 'powder', 'laundry', 'mud', 'shower', 'toilet', 'wc', 'lav', 'utility')
+GARAGE_WORDS = ('garage', 'carport', 'workshop', 'shop')
+PORCH_WORDS = ('porch', 'patio', 'stoop', 'lanai')
+OUTDOOR_WORDS = ('deck', 'balcony')
+_applying_floor_default = False
+
+
+def floor_kind(room):
+    """Which of the house's floor defaults a room takes, from its name
+    (and whether it is a porch or outdoors): 'room', 'wet', 'garage',
+    'porch' or 'outdoor' (a deck or balcony)."""
+    name = room.name.lower()
+    if room.is_porch or any(w in name for w in PORCH_WORDS):
+        return 'porch'
+    if room.outdoor or any(w in name for w in OUTDOOR_WORDS):
+        return 'outdoor'
+    if any(w in name for w in GARAGE_WORDS):
+        return 'garage'
+    if any(w in name for w in WET_WORDS):
+        return 'wet'
+    return 'room'
+
+
+def floor_default(house, kind):
+    """(finish, look) of the house's floor default for a kind of room."""
+    from .operators import ops_room_dressing as dressing
+    finish = getattr(house, f'floor_{kind}_finish')
+    key = f'floor_{kind}_look'
+    look = getattr(house, key) if key in house.keys() else dressing.DEFAULT_LOOK.get(finish)
+    return finish, look
+
+
+def apply_floor_default(room):
+    """Give a room the house's floor for its kind; from now on it
+    follows the defaults (until its floor is chosen by hand)."""
+    global _applying_floor_default
+    scene = room.id_data
+    finish, look = floor_default(scene.hb_house, floor_kind(room))
+    _applying_floor_default = True
+    try:
+        room['floor_auto'] = True
+        if room.floor_finish != finish:
+            room.floor_finish = finish
+        if look and room.floor_look != look and look in [i[0] for i in _floor_look_items_cb(room, None)]:
+            room.floor_look = look
+    finally:
+        _applying_floor_default = False
+
+
+def apply_floor_defaults(scene, every_room=False):
+    """Refloor the rooms that follow the defaults - or every room, which
+    then all follow them."""
+    for level in scene.hb_house.levels:
+        for i in range(len(level.rooms)):
+            room = level.rooms[i]
+            if room.orphaned:
+                continue
+            if every_room or room.floor_auto:
+                apply_floor_default(room)
+
+
+def _floor_chosen(room):
+    """A floor setting changed: by hand, the room keeps its own floor."""
+    if not _applying_floor_default:
+        room['floor_auto'] = False
+
+
+def _room_floor_auto_changed(self, context):
+    if self.floor_auto:
+        apply_floor_default(self)
+
+
+def _floor_defaults_changed(self, context):
+    apply_floor_defaults(self.id_data)
+
+
+def _floor_default_finish_changed(kind):
+    def changed(self, context):
+        key = f'floor_{kind}_look'
+        if key in self.keys():
+            del self[key]           # the new finish's own default look
+        apply_floor_defaults(self.id_data)
+    return changed
+
+
+def _floor_default_looks(kind):
+    def items(self, context):
+        from .operators import ops_room_dressing as dressing
+        finish = getattr(self, f'floor_{kind}_finish')
+        looks = dressing.LOOKS.get(finish)
+        if not looks:
+            return [('NONE', "-", "")]
+        if finish not in _floor_look_items:
+            _floor_look_items[finish] = [(k, v[0], "") for k, v in looks.items()]
+        return _floor_look_items[finish]
+    return items
 
 
 def _room_materials_changed(self, context):
@@ -738,6 +844,7 @@ def _room_materials_changed(self, context):
 
 
 def _room_custom_floor_picked(self, context):
+    _floor_chosen(self)
     # Picking a material is choosing the Custom finish
     if self.floor_material is not None and self.floor_finish != 'CUSTOM':
         self['floor_finish'] = _FLOOR_FINISH_INDEX['CUSTOM']
@@ -783,6 +890,7 @@ def _apply_floor_look(room):
 def _room_floor_finish_changed(self, context):
     from .operators import ops_room_dressing as dressing
     from . import hb_rooms
+    _floor_chosen(self)
     if self.floor_finish in dressing.LOOKS:
         # The Floor tool's defaults for the style, stored without their
         # update callbacks so the material is built once, below
@@ -795,12 +903,14 @@ def _room_floor_finish_changed(self, context):
 
 
 def _room_floor_look_changed(self, context):
+    _floor_chosen(self)
     _apply_floor_look(self)
     _room_floor_style_changed(self, context)
 
 
 def _room_floor_style_changed(self, context):
     from . import hb_rooms
+    _floor_chosen(self)
     hb_rooms.apply_room_materials(self, rebuild_floor=True)
 
 
@@ -808,7 +918,9 @@ def _room_outdoor_changed(self, context):
     """An outdoor room has no ceiling and, unless it has a finish already,
     a deck floor; back indoors it gets its ceiling again."""
     self['has_ceiling'] = not self.outdoor
-    if self.outdoor and self.floor_finish == 'NONE':
+    if self.floor_auto:
+        apply_floor_default(self)           # outdoors: the deck default
+    elif self.outdoor and self.floor_finish == 'NONE':
         self.floor_finish = 'DECK'          # builds the deck material
     _room_shape_changed(self, context)      # ceiling off (or back on)
 
@@ -914,6 +1026,12 @@ class HB_Room(PropertyGroup):
         name="Outdoor",
         description="A balcony or deck: no ceiling, deck boards for a floor",
         default=False, update=_room_outdoor_changed)  # type: ignore
+
+    floor_auto: BoolProperty(
+        name="Use House Default",
+        description=("The floor comes from the house's Floor Defaults for this kind of "
+                     "room (from its name). Choosing a floor by hand turns this off"),
+        default=False, update=_room_floor_auto_changed)  # type: ignore
 
     # A porch: a room closed by porch edges (see hb_porches)
     is_porch: BoolProperty(
@@ -1373,6 +1491,33 @@ class HB_House_Props(PropertyGroup):
         default=True,
         update=lambda self, context: _roofs_shown_changed(self))  # type: ignore
 
+    # Floor defaults: what a room's floor is until one is chosen for it
+    floor_room_finish: EnumProperty(
+        name="Rooms", items=[i for i in FLOOR_FINISH_ITEMS if i[0] != 'CUSTOM'], default='WOOD',
+        update=_floor_default_finish_changed('room'))  # type: ignore
+    floor_room_look: EnumProperty(
+        name="Look", items=_floor_default_looks('room'), update=_floor_defaults_changed)  # type: ignore
+    floor_wet_finish: EnumProperty(
+        name="Baths & Laundry", items=[i for i in FLOOR_FINISH_ITEMS if i[0] != 'CUSTOM'],
+        default='TILE', update=_floor_default_finish_changed('wet'))  # type: ignore
+    floor_wet_look: EnumProperty(
+        name="Look", items=_floor_default_looks('wet'), update=_floor_defaults_changed)  # type: ignore
+    floor_garage_finish: EnumProperty(
+        name="Garages", items=[i for i in FLOOR_FINISH_ITEMS if i[0] != 'CUSTOM'],
+        default='SOLID', update=_floor_default_finish_changed('garage'))  # type: ignore
+    floor_garage_look: EnumProperty(
+        name="Look", items=_floor_default_looks('garage'), update=_floor_defaults_changed)  # type: ignore
+    floor_porch_finish: EnumProperty(
+        name="Porches & Patios", items=[i for i in FLOOR_FINISH_ITEMS if i[0] != 'CUSTOM'],
+        default='SOLID', update=_floor_default_finish_changed('porch'))  # type: ignore
+    floor_porch_look: EnumProperty(
+        name="Look", items=_floor_default_looks('porch'), update=_floor_defaults_changed)  # type: ignore
+    floor_outdoor_finish: EnumProperty(
+        name="Decks & Balconies", items=[i for i in FLOOR_FINISH_ITEMS if i[0] != 'CUSTOM'],
+        default='DECK', update=_floor_default_finish_changed('outdoor'))  # type: ignore
+    floor_outdoor_look: EnumProperty(
+        name="Look", items=_floor_default_looks('outdoor'), update=_floor_defaults_changed)  # type: ignore
+
     show_room_labels: BoolProperty(
         name="Show Room Labels",
         description="Show each room's name and area on its floor. Walk Through hides them while it runs",
@@ -1709,6 +1854,21 @@ class HOME_BUILDER_OT_import_room_as_level(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class HOME_BUILDER_OT_apply_floor_defaults(bpy.types.Operator):
+    bl_idname = "home_builder.apply_floor_defaults"
+    bl_label = "Apply Floor Defaults"
+    bl_description = ("Give every room the house's default floor for its kind - wood, tile "
+                      "in baths, concrete in garages - including rooms floored by hand")
+    bl_options = {'UNDO'}
+
+    def execute(self, context):
+        scene = house_scene_of(context.scene)
+        if scene is None:
+            return {'CANCELLED'}
+        apply_floor_defaults(scene, every_room=True)
+        return {'FINISHED'}
+
+
 class HOME_BUILDER_OT_set_active_level(bpy.types.Operator):
     bl_idname = "home_builder.set_active_level"
     bl_label = "Set Active Level"
@@ -1739,6 +1899,7 @@ classes = (
     HOME_BUILDER_OT_add_level,
     HOME_BUILDER_OT_remove_level,
     HOME_BUILDER_OT_set_active_level,
+    HOME_BUILDER_OT_apply_floor_defaults,
     HOME_BUILDER_OT_import_room_as_level,
 )
 

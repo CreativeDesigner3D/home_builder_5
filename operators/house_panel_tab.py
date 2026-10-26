@@ -295,7 +295,39 @@ def _floor_summary(room):
     out = _label(room, 'floor_finish')
     if _styled(room):
         out += " · " + _label(room, 'floor_look')
+    if room.floor_auto:
+        out += " (default)"
     return out
+
+
+def _has_looks(finish):
+    return finish in ('WOOD', 'TILE', 'SOLID', 'DECK')
+
+
+def _defaults_summary(house):
+    parts = []
+    for kind in hb_house.FLOOR_KINDS[:3]:
+        parts.append(_label(house, f'floor_{kind}_finish').split()[0])
+    return " · ".join(parts)
+
+
+FLOOR_DEFAULT_FIELDS = (
+    ('group', 'floor_defaults', "Floor Defaults", {'summary': _defaults_summary, 'fields': (
+        ('enum', 'floor_room_finish', "Rooms"),
+        ('enum', 'floor_room_look', "Look", {'when': lambda h: _has_looks(h.floor_room_finish)}),
+        ('enum', 'floor_wet_finish', "Baths & Laundry"),
+        ('enum', 'floor_wet_look', "Look", {'when': lambda h: _has_looks(h.floor_wet_finish)}),
+        ('enum', 'floor_garage_finish', "Garages"),
+        ('enum', 'floor_garage_look', "Look", {'when': lambda h: _has_looks(h.floor_garage_finish)}),
+        ('enum', 'floor_porch_finish', "Porches & Patios"),
+        ('enum', 'floor_porch_look', "Look", {'when': lambda h: _has_looks(h.floor_porch_finish)}),
+        ('enum', 'floor_outdoor_finish', "Decks & Balconies"),
+        ('enum', 'floor_outdoor_look', "Look", {'when': lambda h: _has_looks(h.floor_outdoor_finish)}),
+        ('notes', lambda context: ("Rooms take these from their names; a floor",
+                                   "chosen by hand stays."), ""),
+        ('actions', (("Apply to All Rooms", "home_builder.apply_floor_defaults"),), ""),
+    )}),
+)
 
 
 def _ceiling_summary(room):
@@ -324,6 +356,7 @@ ROOM_SPEC = {
         ('value', _room_area, "Area"),
         ('bool', 'outdoor', "Outdoor"),
         ('group', 'room_floor', "Floor", {'summary': _floor_summary, 'fields': (
+            ('bool', 'floor_auto', "Use House Default"),
             ('bool', 'has_floor', "Floor"),
             ('enum', 'floor_finish', "Floor Finish", {'when': lambda room: room.has_floor}),
             ('enum', 'floor_look', "Look", {'when': _styled}),
@@ -543,8 +576,10 @@ def _blocks(context):
                 blocks.append(('note', "Draw pieces in Edit Roof (G, D, A),"))
                 blocks.append(('note', "or select walls and use an Add button."))
     else:
+        blocks = options_panel.field_blocks(context, FLOOR_DEFAULT_FIELDS, scene.hb_house)
+        blocks.append(('gap', None))
         if level is not None:
-            blocks = options_panel.pool_blocks(context, ROOM_SPEC)
+            blocks.extend(options_panel.pool_blocks(context, ROOM_SPEC))
     return blocks
 
 

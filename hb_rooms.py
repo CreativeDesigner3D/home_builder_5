@@ -543,6 +543,7 @@ def rebuild_level(scene, level):
 
     # An area nobody claims is a new room
     from .hb_house import _new_uid
+    new_rooms = []
     for k, area in enumerate(areas):
         if k in claimed:
             continue
@@ -560,6 +561,7 @@ def rebuild_level(scene, level):
         room.marker = _new_marker(scene, level, room,
                                   hb_wall_graph.interior_point(area.polygon))
         claimed[k] = len(level.rooms) - 1
+        new_rooms.append(claimed[k])
 
     for k, i in claimed.items():
         room = level.rooms[i]
@@ -581,6 +583,9 @@ def rebuild_level(scene, level):
         elif room.porch_obj is not None:
             hb_porches.remove_porch(room)
         update_room_label(room)
+    # New rooms take the house's floor for their kind
+    for i in new_rooms:
+        hb_house.apply_floor_default(level.rooms[i])
     _raise_vault_walls(scene, level, {i: areas[k].polygon for k, i in claimed.items()})
     for room in level.rooms:
         if room.orphaned:
