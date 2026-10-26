@@ -101,6 +101,12 @@ LEVEL_SPEC = {
     ),
 }
 
+# The plan view first: it sets most of what the Show group holds.
+PLAN_VIEW_FIELDS = (
+    ('enum', 'plan_view', "View"),
+    ('gap', None, ""),
+)
+
 VIEW_FIELDS = (
     ('group', 'house_view', "Show", {'summary': _view_summary, 'fields': (
         ('enum', 'level_display', "Levels"),
@@ -558,7 +564,8 @@ def _blocks(context):
     level = hb_house.active_level(context)
     where = f" · {level.name}" if level is not None else ""
     if _page == 'LEVELS':
-        blocks = options_panel.pool_blocks(context, LEVEL_SPEC)
+        blocks = options_panel.field_blocks(context, PLAN_VIEW_FIELDS, scene.hb_house)
+        blocks.extend(options_panel.pool_blocks(context, LEVEL_SPEC))
         blocks.append(('gap', None))
         blocks.extend(options_panel.field_blocks(context, VIEW_FIELDS, scene.hb_house))
     elif _page == 'OUTSIDE':

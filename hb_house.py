@@ -40,6 +40,7 @@ from mathutils.geometry import intersect_line_plane
 from bpy_extras import view3d_utils
 
 from . import hb_project
+from . import hb_plan_views
 from .units import inch
 
 LEVEL_KEY = 'HB_LEVEL'
@@ -1454,6 +1455,16 @@ class HB_House_Props(PropertyGroup):
 
     active_level_index: IntProperty(
         name="Active Level", update=_update_active_level)  # type: ignore
+
+    # Which plan view the switches below match, and a way to set them all
+    # at once (see hb_plan_views): read from the switches, never stored.
+    plan_view: EnumProperty(
+        name="View",
+        description="Show the house for what you are doing: each view sets the "
+                    "levels, roofs, labels, shading and camera at once",
+        items=hb_plan_views.ITEMS,
+        get=hb_plan_views.get_plan_view,
+        set=hb_plan_views.set_plan_view)  # type: ignore
 
     level_display: EnumProperty(
         name="Show",
