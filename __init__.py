@@ -14,6 +14,7 @@ from .ui import view3d_sidebar
 from .ui import menu_apend
 from .ui import menus
 from .operators import walls
+from .operators import wall_handles
 from .operators import doors_windows
 from .operators import layouts
 from .operators import rooms
@@ -450,6 +451,7 @@ def register():
     hb_props_obstacles.register()
     ops_obstacles.register()
     walls.register()
+    wall_handles.register()
     layouts.register()
     rooms.register()
     details.register()
@@ -516,6 +518,7 @@ def unregister():
     hb_snap_engine.unregister()
     hb_props_obstacles.unregister()
     ops_obstacles.unregister()
+    wall_handles.unregister()
     walls.unregister()
     layouts.unregister()
     rooms.unregister()

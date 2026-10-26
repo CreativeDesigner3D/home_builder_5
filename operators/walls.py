@@ -83,6 +83,22 @@ def level_wall_segs(scene, level=None):
     return objs, segs
 
 
+_rooms_held = 0     # > 0 while a drag holds room rebuilds back (see rooms_held)
+
+
+class rooms_held:
+    """While inside, refresh_wall_junctions leaves the rooms alone - a
+    drag rebuilds them once when it ends rather than on every move."""
+
+    def __enter__(self):
+        global _rooms_held
+        _rooms_held += 1
+
+    def __exit__(self, *exc):
+        global _rooms_held
+        _rooms_held -= 1
+
+
 def refresh_wall_junctions(scene=None, level=None):
     """Recompute every wall end on a level (or all levels) of a scene.
     Returns the names of the walls written."""
@@ -109,6 +125,8 @@ def refresh_wall_junctions(scene=None, level=None):
         # without a view move - see update_wall_height.
         obj.update_tag()
     # In a house, the rooms these walls enclose follow them
+    if _rooms_held:
+        return set(objs)
     try:
         hb_rooms.rebuild_after_walls(scene, level)
     except Exception as ex:
@@ -138,15 +156,25 @@ def capture_tees(scene, level=None):
     return records
 
 
+# A T end closer than this to its host's face has not moved (lengths are
+# stored in single precision, so a resting end is a few tenths of a micron off)
+TEE_MOVED = 1e-5
+
+
 def restore_tees(records, scene):
     """Slide each captured T end back onto its host's face along the
     wall's own line, keeping the wall's other end where it is. An end at
     a wall's start moves the wall's origin, and what is parented to the
-    wall moves with it - the same as a chain neighbour of a dragged wall."""
+    wall moves with it - the same as a chain neighbour of a dragged wall.
+    The scene is brought up to date only after an end really moved: most
+    T ends stay put, and each update re-evaluates every wall."""
+    stale = True
     for obj, which, host_obj, side in records:
         if obj.name not in bpy.data.objects or host_obj.name not in bpy.data.objects:
             continue
-        _update_scene(scene)
+        if stale:
+            _update_scene(scene)
+            stale = False
         seg, host = wall_seg(obj), wall_seg(host_obj)
         if seg is None or host is None:
             continue
@@ -155,15 +183,18 @@ def restore_tees(records, scene):
         if p is None:
             continue
         wall = hb_types.GeoNodeWall(obj)
+        old_len = wall.get_input('Length')
         if which == hb_wall_graph.END:
             new_len = (p[0] - seg.start[0]) * seg.dir[0] + (p[1] - seg.start[1]) * seg.dir[1]
-            if new_len > 0.001:
+            if new_len > 0.001 and abs(new_len - old_len) > TEE_MOVED:
                 wall.set_input('Length', new_len)
+                stale = True
         elif not _constrained_start(obj):
             new_len = (seg.end[0] - p[0]) * seg.dir[0] + (seg.end[1] - p[1]) * seg.dir[1]
-            if new_len > 0.001:
+            if new_len > 0.001 and abs(new_len - old_len) > TEE_MOVED:
                 obj.location.x, obj.location.y = p
                 wall.set_input('Length', new_len)
+                stale = True
         obj.update_tag()
 
 
