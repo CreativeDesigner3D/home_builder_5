@@ -319,6 +319,36 @@ OBSTACLE_FIELDS = (
     ('distance', 'obstacle_height_from_floor', "From Floor"),
 )
 
+def _mat(*kinds):
+    return lambda house: house.member_material in kinds
+
+
+# On scene.hb_house: what the next beam or post placed is
+BEAM_FIELDS = (
+    ('choices', 'member_material', "Material", {'cols': 4}),
+    ('choices', 'member_lumber', "Size", {'cols': 4, 'when': _mat('LUMBER')}),
+    ('number', 'member_plies', "Plies", {'when': _mat('LUMBER', 'LVL')}),
+    ('distance', 'member_depth', "Depth", {'when': _mat('LVL', 'GLULAM', 'STEEL')}),
+    ('distance', 'member_width', "Width", {'when': _mat('GLULAM', 'STEEL')}),
+    ('choices', 'beam_position', "Position", {'cols': 2}),
+    ('bool', 'beam_end_posts', "Posts at Ends"),
+    ('choices', 'post_size', "Post", {'cols': 4,
+                                      'when': lambda house: house.beam_end_posts
+                                      and house.member_material != 'STEEL'}),
+)
+
+POST_FIELDS = (
+    ('choices', 'member_material', "Material", {'cols': 4}),
+    ('choices', 'post_size', "Size", {'cols': 4, 'when': lambda house: house.member_material != 'STEEL'}),
+    ('distance', 'member_width', "Width", {'when': _mat('STEEL')}),
+)
+
+# Tools whose fields are on scene.hb_house rather than scene.home_builder
+HOUSE_PAGES = {
+    "home_builder.place_beam": ("Beam", BEAM_FIELDS),
+    "home_builder.place_post": ("Post", POST_FIELDS),
+}
+
 # bl_idname: (title, fields on scene.home_builder)
 PAGES = {
     "home_builder_walls.draw_walls": ("Draw Walls", WALL_FIELDS),
@@ -334,6 +364,8 @@ HINTS = {
     "home_builder_walls.draw_walls": "C closes the room · T tracks a point",
     "home_builder_obstacles.place_obstacle": "Pick one above, then click a wall, floor or ceiling",
     "home_builder_stairs.place_stairs": "R turns · T changes type · D flips",
+    "home_builder.place_beam": "Snaps to wall corners and faces, posts and beam ends",
+    "home_builder.place_post": "Runs up to the beam over it, or to the ceiling",
 }
 
 
@@ -345,6 +377,9 @@ def _blocks(context):
     from . import options_panel
     title, fields = PAGES.get(_tool, ("Tool", ()))
     hb = context.scene.home_builder
+    if _tool in HOUSE_PAGES:
+        title, fields = HOUSE_PAGES[_tool]
+        hb = context.scene.hb_house
     blocks = [('head', (title, False, None))]
     if _tool == "home_builder_obstacles.place_obstacle":
         blocks.extend(options_panel.field_blocks(

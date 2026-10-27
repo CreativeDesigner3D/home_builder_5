@@ -1560,6 +1560,42 @@ def _exterior_changed(house):
 class HB_House_Props(PropertyGroup):
     levels: CollectionProperty(type=HB_Level)  # type: ignore
 
+    # Beams and posts: what the next one placed is (see hb_members)
+    member_material: EnumProperty(
+        name="Material",
+        items=[('LUMBER', "Lumber", "Sawn boards, nailed up in plies"),
+               ('LVL', "LVL", "Laminated veneer lumber, 1-3/4\" plies"),
+               ('GLULAM', "Glulam", "Glued laminated timber"),
+               ('STEEL', "Steel", "A steel beam or column, drawn as its box")],
+        default='LUMBER')  # type: ignore
+    member_lumber: EnumProperty(
+        name="Size",
+        items=[('2X6', "2x6", ""), ('2X8', "2x8", ""), ('2X10', "2x10", ""),
+               ('2X12', "2x12", "")],
+        default='2X10')  # type: ignore
+    member_plies: IntProperty(
+        name="Plies", default=3, min=1, max=5,
+        description="Boards nailed side by side")  # type: ignore
+    member_depth: FloatProperty(
+        name="Depth", default=inch(11.875), min=inch(3.5), max=inch(36),
+        subtype='DISTANCE', precision=4)  # type: ignore
+    member_width: FloatProperty(
+        name="Width", default=inch(5.125), min=inch(1.5), max=inch(16),
+        subtype='DISTANCE', precision=4)  # type: ignore
+    beam_position: EnumProperty(
+        name="Position",
+        items=[('DROPPED', "Dropped", "Hanging below the ceiling"),
+               ('FLUSH', "Flush", "Up in the ceiling framing, its bottom at the ceiling")],
+        default='DROPPED')  # type: ignore
+    beam_end_posts: BoolProperty(
+        name="Posts at Ends", default=True,
+        description="A post under each end of a beam that doesn't land on a wall")  # type: ignore
+    post_size: EnumProperty(
+        name="Post",
+        items=[('4X4', "4x4", ""), ('4X6', "4x6", ""), ('6X6', "6x6", ""),
+               ('8X8', "8x8", "")],
+        default='6X6')  # type: ignore
+
     tools_stay_on: BoolProperty(
         name="Tools Stay On",
         description="Keep a placement tool running after each wall, door, "

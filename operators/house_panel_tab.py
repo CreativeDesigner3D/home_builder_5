@@ -154,7 +154,20 @@ BACKDROP_FIELDS = (
 # What the house is built of: its framing now, its foundation and wall
 # layers as they come.
 
+def _members_summary(house):
+    from .. import hb_members
+    scene = house.id_data
+    beams = len(hb_members.members_of(scene, kind='BEAM'))
+    posts = len(hb_members.members_of(scene, kind='POST'))
+    return f"{beams} beam{'s' if beams != 1 else ''} · {posts} post{'s' if posts != 1 else ''}"
+
+
 STRUCTURE_FIELDS = (
+    ('group', 'house_members', "Beams and Posts", {'summary': _members_summary, 'fields': (
+        ('actions', (("Place Beam", "home_builder.place_beam"),
+                     ("Place Post", "home_builder.place_post")), ""),
+        ('notes', lambda context: ("Right-click one to change its size.",), ""),
+    )}),
     ('group', 'house_framing', "Framing", {'summary': _framing_summary, 'fields': (
         ('bool', 'show_framing', "Show Framing"),
         ('choices', 'framing_spacing', "Spacing", {'cols': 2}),

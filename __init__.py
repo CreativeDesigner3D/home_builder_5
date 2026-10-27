@@ -25,6 +25,7 @@ from .operators import details
 from .operators import ops_obstacles
 from .operators import export
 from .operators import ops_stairs
+from .operators import ops_members
 from .operators import scene_navigator
 from .operators import room_palette
 from .operators import measure_tool
@@ -464,6 +465,7 @@ def register():
     doors_windows.register()
     export.register()
     ops_stairs.register()
+    ops_members.register()
     layout_lock.register()
     scene_navigator.register()
     viewport_hud.register()
@@ -549,6 +551,7 @@ def unregister():
     layout_lock.unregister()
     room_dim_overlay.unregister()
     wall_baseboard.unregister()
+    ops_members.unregister()
     ops_stairs.unregister()
     ops_surfaces.unregister()
     cabinet_clipboard.unregister()
