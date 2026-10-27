@@ -179,11 +179,11 @@ def vault_frame(scene, level, room):
     return None
 
 
-def vault_z(frame, room, level, u):
-    """Height of a vaulted ceiling above the floor at u: under the roof,
-    no lower than the room's flat ceiling, no higher than its peak."""
+def vault_z(frame, room, level, u, v):
+    """Height of a vaulted ceiling above the floor at (u, v): under the
+    roof, no lower than the room's flat ceiling, no higher than its peak."""
     from . import hb_roofs
-    z = hb_roofs._under_z(frame, u) - level.elevation - VAULT_GAP
+    z = hb_roofs.under_z_at(frame, u, v) - level.elevation - VAULT_GAP
     if room.ceiling_style == 'ATTIC':
         # Flat, but down with the roof where the roof is lower
         return max(min(z, room_height(room, level)), 0.05)
@@ -213,14 +213,25 @@ def _vault_mesh(name, polygon, room, level, frame):
     bm = bmesh.new()
     verts = [bm.verts.new((x, y, 0.0)) for x, y in polygon]
     bm.faces.new(verts)
-    normal = (0.0, 1.0, 0.0) if along_x else (1.0, 0.0, 0.0)
-    for u in breaks:
-        co = (0.0, u, 0.0) if along_x else (u, 0.0, 0.0)
+    # Cut where the slope changes: across the ridge, and under a hip also
+    # along its hip lines and at the same heights on its ends
+    cuts = [((u, 0.0), (1.0, 0.0)) for u in breaks]
+    if frame.get('style') == 'HIP':
+        u0, u1, v0, v1 = frame['u0'], frame['u1'], frame['v0'], frame['v1']
+        for u in breaks:
+            d = min(u - u0, u1 - u)
+            if d > 1e-6:
+                cuts += [((0.0, v0 + d), (0.0, 1.0)), ((0.0, v1 - d), (0.0, 1.0))]
+        cuts += [((u0, v0), (1.0, -1.0)), ((u1, v0), (1.0, 1.0)),
+                 ((u0, v1), (1.0, 1.0)), ((u1, v1), (1.0, -1.0))]
+    for (cu, cv), (nu, nv) in cuts:
+        co = hb_roofs._world(frame, cu, cv, 0.0)
+        no = hb_roofs._world(frame, nu, nv, 0.0)
         bmesh.ops.bisect_plane(bm, geom=bm.verts[:] + bm.edges[:] + bm.faces[:],
-                               plane_co=co, plane_no=normal)
+                               plane_co=co, plane_no=no)
     for v in bm.verts:
-        u = hb_roofs._uv(frame, (v.co.x, v.co.y))[0]
-        v.co.z = vault_z(frame, room, level, u)
+        u, w = hb_roofs._uv(frame, (v.co.x, v.co.y))
+        v.co.z = vault_z(frame, room, level, u, w)
     bm.normal_update()
     for f in bm.faces:
         if f.normal.z > 0:

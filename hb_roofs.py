@@ -147,6 +147,7 @@ def roof_frame(scene, level):
         'ridge_z': ridge_z,                 # underside at the ridge
         'under': under,
         'level_uid': level.uid,
+        'style': roof.style,
         'custom': bool(roof.use_extents),
     }
 
@@ -579,6 +580,22 @@ def _under_z(frame, u):
     return frame['plate']
 
 
+def _hip_end_z(frame, v, z_edge):
+    """Under a hip, how high its end slopes have climbed at v from an
+    edge at z_edge; None for a roof with gable ends."""
+    if frame.get('style') != 'HIP':
+        return None
+    return z_edge + frame['p'] * min(v - frame['v0'], frame['v1'] - v)
+
+
+def under_z_at(frame, u, v):
+    """Height of the roof's underside at (u, v): the profile across the
+    ridge, and under a hip its end slopes too."""
+    z = _under_z(frame, u)
+    end = _hip_end_z(frame, v, frame['plate'])
+    return z if end is None else min(z, end)
+
+
 def _clip_to_frame(frame, a, b):
     """The part of plan segment a-b inside the walls' outline, as
     parameters (t0, t1) along it, or None."""
@@ -847,6 +864,15 @@ def roof_top_z(frame, roof, u):
         if min(a, b) - 1e-9 <= u <= max(a, b) + 1e-9 and abs(b - a) > 1e-9:
             return za + (zb - za) * (u - a) / (b - a)
     return frame['plate']
+
+
+def roof_top_z_at(frame, roof, u, v):
+    """Height of the main roof's top surface at (u, v), a hip's ends
+    included."""
+    z = roof_top_z(frame, roof, u)
+    tv = roof.thickness / math.cos(math.atan(frame['p']))
+    end = _hip_end_z(frame, v, frame['plate'] + tv)
+    return z if end is None else min(z, end)
 
 
 def _dormer_prisms(frame, roof, dormers):

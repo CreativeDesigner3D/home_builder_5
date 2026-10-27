@@ -401,8 +401,8 @@ class EditSession:
 
     def _surface_z(self, out, x, y):
         frame = out['frame']
-        u = y if frame['along_x'] else x
-        return hb_roofs.roof_top_z(frame, self.level().roof, u)
+        u, v = hb_roofs._uv(frame, (x, y))
+        return hb_roofs.roof_top_z_at(frame, self.level().roof, u, v)
 
     def _on_roof(self, view, mx, my, out):
         """Where the ray under the cursor meets the main roof's top, or
