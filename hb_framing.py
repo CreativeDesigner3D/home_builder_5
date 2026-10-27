@@ -211,20 +211,8 @@ def _roof_tree(scene, depsgraph, level):
     run up under them (gable ends, dormer fronts). Only its own: a lower
     level's roof can slope up against an upper level's walls, as a porch
     roof does against the house, and neither may cut them."""
-    verts, polys = [], []
-    for obj in (level.roof.roof_obj, level.roof.dormer_obj):
-        if obj is None or obj.type != 'MESH' or obj.name not in scene.objects:
-            continue
-        ev = obj.evaluated_get(depsgraph)
-        mesh = ev.to_mesh()
-        m = obj.matrix_world
-        base = len(verts)
-        verts.extend(m @ v.co for v in mesh.vertices)
-        polys.extend([base + i for i in p.vertices] for p in mesh.polygons)
-        ev.to_mesh_clear()
-    if not polys:
-        return None
-    return BVHTree.FromPolygons(verts, polys)
+    from . import hb_roofs
+    return hb_roofs.roof_bvh(scene, depsgraph, [level], porches=False)
 
 
 def _roof_above(tree, m, x, y, z0, top):

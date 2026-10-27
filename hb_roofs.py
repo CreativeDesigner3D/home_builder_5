@@ -82,6 +82,37 @@ def _exterior_walls(scene, level):
             and o.get('WALL_TYPE', 'Exterior') == 'Exterior']
 
 
+def roof_bvh(scene, depsgraph=None, levels=None, porches=True):
+    """One BVH over the roofs as built: each level's roof and its dormer
+    and cross-gable roofs, and with `porches` the porch roofs too. Only
+    `levels` when given (a level's walls must not be cut by a lower
+    level's roof sloping up against them). None when there are none.
+
+    Build it once for a pass of queries, not per query."""
+    from mathutils.bvhtree import BVHTree
+    depsgraph = depsgraph or bpy.context.evaluated_depsgraph_get()
+    levels = list(levels) if levels is not None else list(scene.hb_house.levels)
+    objs = []
+    for level in levels:
+        objs += [level.roof.roof_obj, level.roof.dormer_obj]
+        if porches:
+            objs += [room.porch_roof_obj for room in level.rooms]
+    verts, polys = [], []
+    for obj in objs:
+        if obj is None or obj.type != 'MESH' or obj.name not in scene.objects:
+            continue
+        ev = obj.evaluated_get(depsgraph)
+        mesh = ev.to_mesh()
+        m = obj.matrix_world
+        base = len(verts)
+        verts.extend(m @ v.co for v in mesh.vertices)
+        polys.extend([base + i for i in p.vertices] for p in mesh.polygons)
+        ev.to_mesh_clear()
+    if not polys:
+        return None
+    return BVHTree.FromPolygons(verts, polys)
+
+
 def roof_frame(scene, level):
     """The geometry a level's roof is built from, or None without walls.
 
