@@ -168,6 +168,18 @@ def rise_to_level_above(level):
     return level.floor_to_floor
 
 
+def floor_levels(house):
+    """The levels people live on: every level but a foundation."""
+    return [l for l in house.levels if l.kind != 'FOUNDATION']
+
+
+def ground_level(house):
+    """The lowest level people live on - the one a foundation sits
+    under, and the masonry base wraps. None with no levels."""
+    levels = floor_levels(house)
+    return min(levels, key=lambda l: l.elevation) if levels else None
+
+
 def level_below(house, level):
     """The highest level whose elevation is under `level`'s, or None."""
     below = [l for l in house.levels if l.elevation < level.elevation - 1e-6]
@@ -1434,8 +1446,20 @@ def _backdrop_settings_changed(self, context):
     hb_backdrop._level_settings_changed(self, context)
 
 
+def _foundation_changed(self, context):
+    from . import hb_foundation
+    hb_foundation._settings_changed(self, context)
+
+
 class HB_Level(PropertyGroup):
     uid: StringProperty(name="Level ID")  # type: ignore
+
+    # A Foundation level is made by the house's foundation (hb_foundation)
+    kind: EnumProperty(
+        name="Kind",
+        items=[('FLOOR', "Floor", "A level people live on"),
+               ('FOUNDATION', "Foundation", "The crawlspace or basement under the house")],
+        default='FLOOR')  # type: ignore
 
     # The plan traced on this level (see hb_backdrop)
     backdrop_shown: BoolProperty(
@@ -1559,6 +1583,35 @@ def _exterior_changed(house):
 
 class HB_House_Props(PropertyGroup):
     levels: CollectionProperty(type=HB_Level)  # type: ignore
+
+    # The foundation (see hb_foundation)
+    foundation_type: EnumProperty(
+        name="Foundation",
+        items=[('NONE', "None", "No foundation drawn"),
+               ('SLAB', "Slab", "A concrete slab under the floor, its edge thickened into a footing"),
+               ('CRAWL', "Crawlspace", "Stem walls on footings, the floor framed over a crawlspace"),
+               ('BASEMENT', "Basement", "Full-height walls on footings: a level of its own to fit out")],
+        default='NONE', update=_foundation_changed)  # type: ignore
+    foundation_wall_thickness: FloatProperty(
+        name="Wall Thickness", default=inch(8), min=inch(4), max=inch(16),
+        subtype='DISTANCE', precision=4, update=_foundation_changed)  # type: ignore
+    crawl_height: FloatProperty(
+        name="Stem Wall Height", default=inch(32), min=inch(12), max=inch(72),
+        description="From the top of the footing to the sill",
+        subtype='DISTANCE', precision=4, update=_foundation_changed)  # type: ignore
+    basement_height: FloatProperty(
+        name="Basement Wall Height", default=inch(96), min=inch(72), max=inch(144),
+        description="From the top of the footing to the sill",
+        subtype='DISTANCE', precision=4, update=_foundation_changed)  # type: ignore
+    footing_width: FloatProperty(
+        name="Footing Width", default=inch(16), min=inch(8), max=inch(48),
+        subtype='DISTANCE', precision=4, update=_foundation_changed)  # type: ignore
+    footing_depth: FloatProperty(
+        name="Footing Depth", default=inch(8), min=inch(6), max=inch(24),
+        subtype='DISTANCE', precision=4, update=_foundation_changed)  # type: ignore
+    slab_thickness: FloatProperty(
+        name="Slab Thickness", default=inch(4), min=inch(3), max=inch(12),
+        subtype='DISTANCE', precision=4, update=_foundation_changed)  # type: ignore
 
     # Beams and posts: what the next one placed is (see hb_members)
     member_material: EnumProperty(

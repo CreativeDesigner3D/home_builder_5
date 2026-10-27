@@ -699,6 +699,9 @@ def rebuild_level(scene, level):
     walls._update_scene(scene)
     _objs, segs = walls.level_wall_segs(scene, level.uid)
     areas = hb_wall_graph.find_rooms(segs)
+    # A crawlspace is no room: only a basement's foundation level has them
+    if level.kind == 'FOUNDATION' and level.id_data.hb_house.foundation_type != 'BASEMENT':
+        areas = []
 
     # A room whose marker was deleted is gone
     for i in reversed(range(len(level.rooms))):
@@ -849,6 +852,12 @@ def rebuild_after_walls(scene, level_uid=None):
         # New walls take the house's siding, and the base follows the walls
         from . import hb_exterior
         hb_exterior.apply_exterior_finish(scene)
+        # The foundation follows the ground level's walls
+        ground = hb_house.ground_level(house)
+        if (house.foundation_type != 'NONE' and ground is not None
+                and (level_uid is None or level_uid == ground.uid)):
+            from . import hb_foundation
+            hb_foundation.rebuild(scene)
     # The framing follows all of it
     _refresh_framing(scene)
 
@@ -878,6 +887,8 @@ def floor_slab_thickness(level):
     so from below or outside there is one solid floor between levels. On
     the ground level it is a thin slab."""
     house = level.id_data.hb_house
+    if level.kind == 'FOUNDATION':
+        return house.slab_thickness        # a basement's floor is its slab
     below = hb_house.level_below(house, level)
     if below is None:
         return FLOOR_THICKNESS

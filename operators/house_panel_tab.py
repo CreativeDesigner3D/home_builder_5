@@ -110,7 +110,8 @@ PLAN_VIEW_FIELDS = (
 def _framing_summary(house):
     if not house.show_framing:
         return "Off"
-    return f"{house.framing_spacing}\" o.c. · " + ("crawlspace" if house.ground_floor == 'CRAWL' else "slab")
+    from .. import hb_framing
+    return f"{house.framing_spacing}\" o.c. · " + ("floor framed" if hb_framing.ground_framed(house) else "slab")
 
 
 VIEW_FIELDS = (
@@ -162,7 +163,33 @@ def _members_summary(house):
     return f"{beams} beam{'s' if beams != 1 else ''} · {posts} post{'s' if posts != 1 else ''}"
 
 
-STRUCTURE_FIELDS = (
+def _foundation_summary(house):
+    return _label(house, 'foundation_type')
+
+
+def _found(*kinds):
+    return lambda house: house.foundation_type in kinds
+
+
+FOUNDATION_FIELDS = (
+    ('group', 'house_foundation', "Foundation", {'summary': _foundation_summary, 'fields': (
+        ('choices', 'foundation_type', "Type", {'cols': 2}),
+        ('distance', 'foundation_wall_thickness', "Wall Thickness", {'when': _found('CRAWL', 'BASEMENT')}),
+        ('distance', 'crawl_height', "Stem Wall Height", {'when': _found('CRAWL')}),
+        ('distance', 'basement_height', "Wall Height", {'when': _found('BASEMENT')}),
+        ('distance', 'footing_width', "Footing Width", {'when': _found('SLAB', 'CRAWL', 'BASEMENT')}),
+        ('distance', 'footing_depth', "Footing Depth", {'when': _found('SLAB', 'CRAWL', 'BASEMENT')}),
+        ('distance', 'slab_thickness', "Slab Thickness", {'when': _found('SLAB', 'BASEMENT')}),
+        ('notes', lambda context: ("Built round the ground level's walls, and",
+                                   "rebuilt as they change. A basement is a",
+                                   "level: draw its walls and stairs on it."), ""),
+        ('actions', (("Rebuild Foundation", "home_builder.rebuild_foundation"),), "",
+         {'when': _found('SLAB', 'CRAWL', 'BASEMENT')}),
+    )}),
+)
+
+
+STRUCTURE_FIELDS = FOUNDATION_FIELDS + (
     ('group', 'house_members', "Beams and Posts", {'summary': _members_summary, 'fields': (
         ('actions', (("Place Beam", "home_builder.place_beam"),
                      ("Place Post", "home_builder.place_post")), ""),
@@ -171,7 +198,8 @@ STRUCTURE_FIELDS = (
     ('group', 'house_framing', "Framing", {'summary': _framing_summary, 'fields': (
         ('bool', 'show_framing', "Show Framing"),
         ('choices', 'framing_spacing', "Spacing", {'cols': 2}),
-        ('choices', 'ground_floor', "Ground Floor", {'cols': 2}),
+        ('choices', 'ground_floor', "Ground Floor", {'cols': 2,
+                                                   'when': lambda house: house.foundation_type == 'NONE'}),
         ('bool', 'framing_walls', "Walls"),
         ('bool', 'framing_floors', "Floors"),
         ('bool', 'framing_ceilings', "Ceilings"),

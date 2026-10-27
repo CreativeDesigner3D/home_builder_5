@@ -524,11 +524,24 @@ def frame_floor(boards, polygon, z_top, depth, step, tree=None, openings=()):
         _ceiling_run(boards, tree, p + inward, q + inward, z_top, depth)
 
 
+def ground_framed(house):
+    """Whether the ground level's floor is framed: over a crawlspace or a
+    basement, and not on a slab; with no foundation drawn, as the house's
+    Ground Floor setting says."""
+    if house.foundation_type in ('CRAWL', 'BASEMENT'):
+        return True
+    if house.foundation_type == 'SLAB':
+        return False
+    return house.ground_floor == 'CRAWL'
+
+
 def frame_level_floor(boards, scene, level, step):
     house = scene.hb_house
+    if level.kind == 'FOUNDATION':
+        return                      # a slab or bare ground
     below = hb_house.level_below(house, level)
-    if below is None:
-        if house.ground_floor != 'CRAWL':
+    if below is None or below.kind == 'FOUNDATION':
+        if not ground_framed(house):
             return
         depth = GROUND_JOIST
     else:

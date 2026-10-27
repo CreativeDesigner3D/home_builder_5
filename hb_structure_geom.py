@@ -156,3 +156,48 @@ def _inside(pt, poly):
             inside = not inside
         j = i
     return inside
+
+
+# ---- Offsets -----------------------------------------------------------------
+
+def offset_polygon(poly, d):
+    """A polygon's edges moved out by `d` (in by a negative `d`), corners
+    where the moved edges meet. Counter-clockwise in, counter-clockwise
+    out, one point per point; for the footings and slab round a house's
+    outline, whose corners are walls' corners, never needle-thin."""
+    n = len(poly)
+    area = sum(poly[i][0] * poly[(i + 1) % n][1] - poly[(i + 1) % n][0] * poly[i][1]
+               for i in range(n)) / 2.0
+    sign = 1.0 if area > 0 else -1.0
+    lines = []
+    for i in range(n):
+        (ax, ay), (bx, by) = poly[i], poly[(i + 1) % n]
+        dx, dy = bx - ax, by - ay
+        length = (dx * dx + dy * dy) ** 0.5
+        if length < EPS:
+            lines.append(None)
+            continue
+        # The outward normal of a counter-clockwise edge is on its right
+        nx, ny = dy / length * sign, -dx / length * sign
+        lines.append(((ax + nx * d, ay + ny * d), (dx / length, dy / length)))
+    out = []
+    for i in range(n):
+        l0, l1 = lines[i - 1], lines[i]
+        if l0 is None or l1 is None:
+            p = l1[0] if l1 else (l0[0] if l0 else poly[i])
+            out.append(p)
+            continue
+        (p0, d0), (p1, d1) = l0, l1
+        den = d0[0] * d1[1] - d0[1] * d1[0]
+        if abs(den) < 1e-9:
+            out.append(p1)          # straight on: the moved point itself
+            continue
+        t = ((p1[0] - p0[0]) * d1[1] - (p1[1] - p0[1]) * d1[0]) / den
+        out.append((p0[0] + d0[0] * t, p0[1] + d0[1] * t))
+    return out
+
+
+def polygon_area(poly):
+    n = len(poly)
+    return sum(poly[i][0] * poly[(i + 1) % n][1] - poly[(i + 1) % n][0] * poly[i][1]
+               for i in range(n)) / 2.0

@@ -917,7 +917,7 @@ def apply_exterior_finish(scene):
     build_siding_geometry(scene, walls_done, roof_done, rooms)
 
     old = _base_object(scene)
-    ground = min(house.levels, key=lambda l: l.elevation) if len(house.levels) else None
+    ground = hb_house.ground_level(house)
     if house.base_style == 'NONE' or ground is None or house.base_height <= 0:
         if old is not None:
             mesh = old.data
