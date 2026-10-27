@@ -166,6 +166,8 @@ def passes_through(obj):
         return True
     if obj.get('WALL_TYPE') in ('Divider', 'Porch'):
         return True
+    if obj.get('IS_FRAMING'):
+        return True             # framing inside the walls and floors
     if _is_opening(obj.parent) and not obj.get(_door_geo().GEO_CHILD_FLAG):
         return True             # swing annotation, label
     return False

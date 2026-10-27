@@ -8,6 +8,7 @@ from . import hb_roofs
 from . import hb_walk
 from . import hb_roof_edit
 from . import hb_room_pick
+from . import hb_framing
 from . import hb_props_obstacles
 from . import ops
 from .ui import view3d_sidebar
@@ -448,6 +449,7 @@ def register():
     hb_walk.register()
     hb_roof_edit.register()
     hb_room_pick.register()
+    hb_framing.register()
     hb_snap_engine.register()
     hb_props_obstacles.register()
     ops_obstacles.register()
@@ -512,6 +514,7 @@ def unregister():
     hb_props.unregister()
     hb_walk.unregister()
     hb_roof_edit.unregister()
+    hb_framing.unregister()
     hb_room_pick.unregister()
     hb_roofs.unregister()
     hb_rooms.unregister()

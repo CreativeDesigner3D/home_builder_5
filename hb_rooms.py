@@ -641,6 +641,11 @@ def rebuild_room(room):
         hb_roofs.rebuild_roofs(room.id_data)
 
 
+def _refresh_framing(scene):
+    from . import hb_framing
+    hb_framing.refresh(scene)
+
+
 def rebuild_after_walls(scene, level_uid=None):
     """Called after walls are edited. Only a house (or a room view of one)
     has rooms."""
@@ -649,22 +654,26 @@ def rebuild_after_walls(scene, level_uid=None):
         return
     if not hb_house.is_house_project():
         return
+    from . import hb_framing
     house = scene.hb_house
-    for level in house.levels:
-        if level_uid is None or level.uid == level_uid:
-            rebuild_level(scene, level)
-            # Walls on this level decide how high the exterior walls of
-            # the level below run, and its own walls follow the level above
-            below = hb_house.level_below(house, level)
-            if below is not None:
-                hb_house.set_exterior_wall_heights(scene, below)
-            hb_house.set_exterior_wall_heights(scene, level)
-    # Roofs follow the walls they sit on and trim the walls under them
-    from . import hb_roofs
-    hb_roofs.rebuild_roofs(scene)
-    # New walls take the house's siding, and the base follows the walls
-    from . import hb_exterior
-    hb_exterior.apply_exterior_finish(scene)
+    with hb_framing.held():
+        for level in house.levels:
+            if level_uid is None or level.uid == level_uid:
+                rebuild_level(scene, level)
+                # Walls on this level decide how high the exterior walls of
+                # the level below run, and its own walls follow the level above
+                below = hb_house.level_below(house, level)
+                if below is not None:
+                    hb_house.set_exterior_wall_heights(scene, below)
+                hb_house.set_exterior_wall_heights(scene, level)
+        # Roofs follow the walls they sit on and trim the walls under them
+        from . import hb_roofs
+        hb_roofs.rebuild_roofs(scene)
+        # New walls take the house's siding, and the base follows the walls
+        from . import hb_exterior
+        hb_exterior.apply_exterior_finish(scene)
+    # The framing follows all of it
+    _refresh_framing(scene)
 
 
 # =============================================================================

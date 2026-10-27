@@ -1220,6 +1220,15 @@ def _visible_piece(scene, level, roof, attr, name, mesh):
 
 
 def rebuild_roof(scene, level):
+    """Build (or remove) a level's roof and everything it shapes, and the
+    framing under it when that shows."""
+    result = _rebuild_roof(scene, level)
+    from . import hb_framing
+    hb_framing.refresh(scene)
+    return result
+
+
+def _rebuild_roof(scene, level):
     """Build (or remove) a level's roof and everything it shapes."""
     scene = hb_house.house_scene_of(scene)
     if scene is None or level is None:
@@ -1496,9 +1505,12 @@ def rebuild_roofs(scene):
     scene = hb_house.house_scene_of(scene)
     if scene is None:
         return
-    for level in scene.hb_house.levels:
-        if level.roof.enabled or level.roof.roof_obj is not None:
-            rebuild_roof(scene, level)
+    from . import hb_framing
+    with hb_framing.held():
+        for level in scene.hb_house.levels:
+            if level.roof.enabled or level.roof.roof_obj is not None:
+                rebuild_roof(scene, level)
+    hb_framing.refresh(scene)
 
 
 # =============================================================================

@@ -49,13 +49,21 @@ VIEWS = {
         'level_display': 'ALL', 'show_roofs': True, 'show_ceilings': False,
         'show_room_labels': False, 'show_door_swings': False,
         'shading': 'MATERIAL', 'camera': 'MODEL'}),
+    'FRAMING': ("Framing", "The whole house in 3D with its framing showing, the solids as outlines", {
+        'level_display': 'ALL', 'show_roofs': True, 'show_ceilings': False,
+        'show_room_labels': False, 'show_door_swings': False, 'show_framing': True,
+        'shading': 'SOLID', 'camera': 'MODEL'}),
 }
+
+# A view that does not mention framing turns it off
+for _key, (_l, _d, _s) in VIEWS.items():
+    _s.setdefault('show_framing', False)
 
 ITEMS = [(key, label, desc) for key, (label, desc, _s) in VIEWS.items()]
 ITEMS.append(('CUSTOM', "Custom", "The switches have been set by hand"))
 
 HOUSE_KEYS = ('level_display', 'show_level_below', 'show_roofs', 'show_ceilings',
-              'show_room_labels')
+              'show_room_labels', 'show_framing')
 
 MODEL_ROTATION = Euler((math.radians(62.0), 0.0, math.radians(32.0))).to_quaternion()
 
