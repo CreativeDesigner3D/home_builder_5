@@ -2268,10 +2268,58 @@ def build_window_geometry(cage_obj):
 # Dispatch
 # ---------------------------------------------------------------------------
 
+# A window builds its exterior casing and sill on the wall's y = thickness
+# face. In a house that face is indoors on a wall drawn the other way, so
+# the built window is turned round to the outdoor side.
+OUTDOORS_FLIPPED_KEY = 'HB_OUTDOORS_FLIPPED'
+
+
+def _flip_children(cage_obj):
+    """Mirror the window's built parts and its wall cutter through the
+    middle of the wall (a mirror twice is no change)."""
+    cage = hb_types.GeoNodeCage(cage_obj)
+    if not cage.has_modifier():
+        return
+    T = cage.get_input('Dim Y')
+    mirror = Matrix.Translation((0.0, T, 0.0)) @ Matrix.Diagonal((1.0, -1.0, 1.0, 1.0))
+    for child in cage_obj.children:
+        if child.get(GEO_CHILD_FLAG) or child.get(REVEAL_CUTTER_FLAG):
+            # The basis, not matrix_local: a part just built has not been
+            # evaluated yet, and its matrix_local is still stale
+            child.matrix_basis = mirror @ child.matrix_basis
+
+
+def outdoors_is_ref_face(cage_obj):
+    """True when a window's wall has its outdoor face at y = 0: an
+    exterior wall of a house drawn with its thickness to the rooms, or a
+    dormer front. False outside house projects."""
+    from ... import hb_house, hb_exterior
+    wall = cage_obj.parent
+    if wall is None or not wall.get('IS_WALL_BP'):
+        return False
+    if wall.get('WALL_TYPE', 'Exterior') not in ('Exterior', 'Dormer'):
+        return False
+    scene = hb_house.house_scene_of(bpy.context.scene)
+    if scene is None:
+        return False
+    rooms = hb_exterior._indoor_polygons(scene).get(wall.get(hb_house.LEVEL_KEY, ''), [])
+    side = hb_exterior._outside_input(wall, hb_types.GeoNodeWall(wall), rooms)
+    return side == hb_exterior.REF_SIDE
+
+
+def face_outdoors(cage_obj, ref_face):
+    """Turn a window's exterior parts to the wall's y = 0 face, or back."""
+    if bool(cage_obj.get(OUTDOORS_FLIPPED_KEY)) != bool(ref_face):
+        _flip_children(cage_obj)
+        cage_obj[OUTDOORS_FLIPPED_KEY] = bool(ref_face)
+
+
 def build_geometry(cage_obj):
     """Rebuild the cage's generated geometry from its stored options.
     No stored options -> any stale children are removed and nothing is
     built (cage-only display)."""
+    # Built facing the y = thickness face; turned outdoors after
+    face_outdoors(cage_obj, False)
     # Cage-only display goes back to cutting with the cage, so a plain
     # opening keeps resizing its hole live the way it always did.
     if stored_opts(cage_obj) is None:
@@ -2280,6 +2328,7 @@ def build_geometry(cage_obj):
         update_reveal_cutter(cage_obj)
     if cage_obj.get('IS_WINDOW_BP'):
         build_window_geometry(cage_obj)
+        face_outdoors(cage_obj, outdoors_is_ref_face(cage_obj))
     elif cage_obj.get('IS_ENTRY_DOOR_BP'):
         build_door_geometry(cage_obj)
 

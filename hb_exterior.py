@@ -872,6 +872,11 @@ def apply_exterior_finish(scene):
                 gable = gable_finish(scene, level)
                 siding = split_material(finish, gable, split, built)
         outside = _outside_input(obj, wall, rooms.get(obj.get(hb_house.LEVEL_KEY, ''), []))
+        # Its windows' exterior casing and sill go on that face too
+        from .product_libraries.common import door_window_geo
+        for child in obj.children:
+            if child.get('IS_WINDOW_BP') and door_window_geo.stored_opts(child) is not None:
+                door_window_geo.face_outdoors(child, outside == REF_SIDE)
         for name in (THICK_SIDE, REF_SIDE, 'Inside Face', 'Outside Face'):
             if not wall.has_input(name):
                 continue
