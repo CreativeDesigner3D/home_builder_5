@@ -32,9 +32,6 @@ GENERATED_KEY = 'IS_ROOM_GENERATED'
 FLOOR_THICKNESS = 0.01          # thin slab, so floor cutters have volume to cut
 SLAB_CLEARANCE = 0.003          # between a floor's underside and the ceiling below
 LABEL_SIZE = inch(8)
-LABEL_LIFT = 0.02               # label just above the floor
-LABEL_COLOR = (0.03, 0.03, 0.03, 1.0)
-LABEL_MATERIAL = "HB Room Label"
 # A marker a wall has been drawn over is this close to the rooms beside it
 # (half a wall plus some room): it takes the nearest free one.
 ADOPT_DISTANCE = 0.5
@@ -289,54 +286,203 @@ def _new_marker(scene, level, room, point):
     return marker
 
 
-def _label_material():
-    """Dark, so a label reads against a white floor or ceiling in solid
-    shading (which colours by the material's viewport colour)."""
-    mat = bpy.data.materials.get(LABEL_MATERIAL)
-    if mat is None:
-        mat = bpy.data.materials.new(LABEL_MATERIAL)
-        mat.diffuse_color = LABEL_COLOR
-    return mat
+def label_point(poly):
+    """Where a room's label goes: the middle of the room's outline - its
+    centroid, unless that sits off in one wing of an L, when the point
+    deepest inside it."""
+    pole = None
+    best = -1.0
+    xs = [p[0] for p in poly]
+    ys = [p[1] for p in poly]
+    steps = 32
+    for i in range(1, steps):
+        for j in range(1, steps):
+            p = (min(xs) + (max(xs) - min(xs)) * i / steps,
+                 min(ys) + (max(ys) - min(ys)) * j / steps)
+            if not hb_wall_graph.point_in_polygon(p, poly):
+                continue
+            d = hb_wall_graph._dist_to_edges(p, poly)
+            if d > best:
+                pole, best = p, d
+    c = hb_wall_graph.interior_point(poly)
+    if pole is None:
+        return c
+    if (hb_wall_graph.point_in_polygon(c, poly)
+            and hb_wall_graph._dist_to_edges(c, poly) >= 0.7 * best):
+        return c
+    return pole
 
 
-def update_room_label(room):
-    """Write the room's name and area onto its label (made if missing)."""
+def update_room_label(room, poly=None):
+    """The room's name and area for its label, and (given its outline)
+    where the label goes. The label is drawn over the viewport (see
+    draw_room_labels); a text object from an older file is removed."""
     marker = room.marker
     if marker is None:
         return
-    scene = room.id_data
-    level = level_of_room(room)
     marker.name = f"Room - {room.name}"
     if room.view_scene is not None and room.view_scene.name != room.name:
         room.view_scene.name = room.name
-    lines = [room.name.upper()]
-    lines.append("(not enclosed)" if room.orphaned else area_text(scene, room.area))
-    label = room.label_obj
-    if label is None:
-        curve = bpy.data.curves.new(f"Room Label - {room.name}", 'FONT')
-        curve.size = LABEL_SIZE
-        curve.align_x = 'CENTER'
-        curve.align_y = 'CENTER'
-        label = _generated(scene, level, room, f"Room Label - {room.name}",
-                           curve, ('IS_ROOM_LABEL_3D',))
-        label.hide_render = True
-        label.parent = marker
-        label.location = (0.0, 0.0, LABEL_LIFT)
-        label.hide_select = True
-        room.label_obj = label
-    label.data.body = "\n".join(lines)
-    label.name = f"Room Label - {room.name}"
-    label.hide_viewport = not scene.hb_house.show_room_labels
+    if room.label_obj is not None:
+        _remove(room.label_obj)
+        room.label_obj = None
+    if poly:
+        room['label_xy'] = label_point(poly)
+    scene = room.id_data
     marker.hide_viewport = not scene.hb_house.show_room_labels      # the marker goes with it
-    # Drawn in front while ceilings show, so the ceiling over a closed
-    # room doesn't hide it in plan; otherwise not, so labels don't draw
-    # over the roof
-    front = scene.hb_house.show_ceilings
-    label.show_in_front = front
-    marker.show_in_front = front
-    label.color = LABEL_COLOR
-    if not label.data.materials:
-        label.data.materials.append(_label_material())
+    marker.show_in_front = scene.hb_house.show_ceilings
+    _tag_redraw()
+
+
+def refresh_labels(scene):
+    """Place the labels of a file's rooms that have no place yet, and
+    remove the text objects older files drew them with."""
+    from .operators import walls
+    for level in scene.hb_house.levels:
+        rooms = [r for r in level.rooms
+                 if r.marker is not None and (r.label_obj is not None or 'label_xy' not in r)]
+        if not rooms:
+            continue
+        _objs, segs = walls.level_wall_segs(scene, level.uid)
+        areas = hb_wall_graph.find_rooms(segs)
+        for room in rooms:
+            p = room.marker.location
+            poly = next((a.polygon for a in areas
+                         if hb_wall_graph.point_in_polygon((p.x, p.y), a.polygon)), None)
+            update_room_label(room, poly)
+
+
+def _tag_redraw():
+    wm = bpy.context.window_manager
+    for window in getattr(wm, 'windows', ()):
+        for area in window.screen.areas:
+            if area.type == 'VIEW_3D':
+                area.tag_redraw()
+
+
+# =============================================================================
+# ROOM LABELS
+# =============================================================================
+# Drawn over the viewport in the annotation font (Calibri where there is
+# one), like the dimension labels, rather than as text objects: crisp at
+# any zoom. Sized as LABEL_SIZE on the floor, within readable limits, and
+# shown while looking down on the plan.
+
+LABEL_PX_MIN = 10
+LABEL_PX_MAX = 26
+LABEL_TEXT = (0.08, 0.08, 0.08, 1.0)
+LABEL_HALO = (1.0, 1.0, 1.0, 0.85)
+LOOKING_DOWN = 0.7          # how steeply the view must look down for labels
+
+_label_fonts = None         # (regular, bold) blf font ids
+_label_handle = None
+
+
+def _fonts():
+    global _label_fonts
+    if _label_fonts is None:
+        import blf
+        from . import hb_details
+        regular = bold = 0
+        try:
+            path = hb_details._find_calibri()
+            if path:
+                regular = bold = blf.load(path)
+                b = hb_details._find_bold_sibling(path)
+                if b:
+                    bold = blf.load(b)
+        except Exception:
+            regular = bold = 0
+        _label_fonts = (regular, bold)
+    return _label_fonts
+
+
+def _labels_to_draw(context):
+    """(room, level) for the labels to show: rooms whose markers are shown,
+    on the highest level showing, unless its roof covers it."""
+    scene = hb_house.house_scene_of(context.scene) or context.scene
+    house = getattr(scene, 'hb_house', None)
+    if house is None or not house.show_room_labels:
+        return []
+    layer = context.view_layer
+    shown = []
+    for level in house.levels:
+        rooms = []
+        for room in level.rooms:
+            m = room.marker
+            if m is None:
+                continue
+            try:
+                if not m.visible_get(view_layer=layer):
+                    continue
+            except (RuntimeError, ReferenceError):
+                continue
+            rooms.append(room)
+        if rooms:
+            shown.append((level, rooms))
+    if not shown:
+        return []
+    level, rooms = max(shown, key=lambda lr: lr[0].elevation)
+    roof = level.roof.roof_obj if level.roof.enabled else None
+    if roof is not None:
+        try:
+            if roof.visible_get(view_layer=layer) and roof.display_type != 'WIRE':
+                return []
+        except (RuntimeError, ReferenceError):
+            pass
+    return [(room, level) for room in rooms]
+
+
+def draw_room_labels():
+    import blf
+    from bpy_extras import view3d_utils
+    context = bpy.context
+    region, r3d = context.region, context.region_data
+    if region is None or r3d is None:
+        return
+    look = r3d.view_rotation @ Vector((0.0, 0.0, -1.0))
+    if look.z > -LOOKING_DOWN:
+        return
+    try:
+        labels = _labels_to_draw(context)
+    except Exception:
+        return
+    if not labels:
+        return
+    regular, bold = _fonts()
+    right = r3d.view_rotation @ Vector((1.0, 0.0, 0.0))
+    for room, level in labels:
+        if room.orphaned or 'label_xy' not in room:
+            x, y = room.marker.location.x, room.marker.location.y
+        else:
+            x, y = room['label_xy']
+        p = Vector((x, y, level.elevation))
+        a = view3d_utils.location_3d_to_region_2d(region, r3d, p)
+        b = view3d_utils.location_3d_to_region_2d(region, r3d, p + right)
+        if a is None or b is None:
+            continue
+        size = max(LABEL_PX_MIN, min(LABEL_PX_MAX, LABEL_SIZE * (b - a).length))
+        lines = [(bold, size, room.name.upper()),
+                 (regular, size * 0.8, "(not enclosed)" if room.orphaned
+                  else area_text(room.id_data, room.area))]
+        heights = []
+        for font, sz, _text in lines:
+            blf.size(font, sz)
+            heights.append(blf.dimensions(font, "Hg")[1])
+        gap = size * 0.25
+        top = a.y + (sum(heights) + gap) / 2.0
+        for (font, sz, text), h in zip(lines, heights):
+            blf.size(font, sz)
+            w = blf.dimensions(font, text)[0]
+            top -= h
+            blf.position(font, a.x - w / 2.0, top, 0)
+            blf.color(font, *LABEL_TEXT)
+            blf.enable(font, blf.SHADOW)
+            blf.shadow(font, 5, *LABEL_HALO)
+            blf.shadow_offset(font, 0, 0)
+            blf.draw(font, text)
+            blf.disable(font, blf.SHADOW)
+            top -= gap
 
 
 def room_floor_material(room, rebuild=False):
@@ -610,7 +756,7 @@ def rebuild_level(scene, level):
                                    room_floor_material(room))
         elif room.porch_obj is not None:
             hb_porches.remove_porch(room)
-        update_room_label(room)
+        update_room_label(room, area.polygon)
     # New rooms take the house's floor for their kind
     for i in new_rooms:
         hb_house.apply_floor_default(level.rooms[i])
@@ -872,6 +1018,70 @@ def _frame_room(context, room, level):
         r3d.view_distance = size * 1.4
 
 
+def room_polygon(scene, level, room):
+    """The outline of the area a room's marker sits in, or None."""
+    from .operators import walls
+    if room.marker is None:
+        return None
+    _objs, segs = walls.level_wall_segs(scene, level.uid)
+    p = room.marker.location
+    return next((a.polygon for a in hb_wall_graph.find_rooms(segs)
+                 if hb_wall_graph.point_in_polygon((p.x, p.y), a.polygon)), None)
+
+
+ISOLATE_MARGIN = 0.15       # how far past a room's outline its things may reach
+
+
+def _keeps(obj, room, poly):
+    """Does a room's own view show this object (a top-level one)?"""
+    if obj.get(ROOM_KEY) is not None:
+        return obj.get(ROOM_KEY) == room.uid         # its floor, not the next room's
+    m = obj.matrix_world
+    if obj.get('IS_WALL_BP'):
+        from . import hb_types
+        wall = hb_types.GeoNodeWall(obj)
+        length = wall.get_input('Length') or 0.0
+        thick = wall.get_input('Thickness') or 0.0
+        if length <= 0.0:
+            return False
+        # A wall round the room runs along its outline for some way
+        near = 0
+        for k in range(1, 10):
+            q = m @ Vector((length * k / 10.0, thick / 2.0, 0.0))
+            if hb_wall_graph._dist_to_edges((q.x, q.y), poly) <= thick + 0.05:
+                near += 1
+        return near >= 2
+    pts = [m @ Vector(c) for c in obj.bound_box]
+    c = sum(pts, Vector()) / 8.0
+    return (hb_wall_graph.point_in_polygon((c.x, c.y), poly)
+            or hb_wall_graph._dist_to_edges((c.x, c.y), poly) <= ISOLATE_MARGIN)
+
+
+def isolate_room(view, room):
+    """In a room's own view, hide what isn't in the room: the other rooms'
+    floors and labels, the walls that don't bound it and the cabinets and
+    lights beyond them. Hidden in the view's own view layer only, so the
+    house scene shows everything as before; things added in the view
+    show as usual."""
+    scene = room.id_data
+    level = level_of_room(room)
+    poly = room_polygon(scene, level, room)
+    if poly is None or not view.view_layers:
+        return
+    layer = view.view_layers[0]
+    roots = {}
+    for obj in view.objects:
+        root = obj
+        while root.parent is not None:
+            root = root.parent
+        if root.name not in roots:
+            roots[root.name] = _keeps(root, room, poly)
+        try:
+            obj.hide_set(not roots[root.name], view_layer=layer)
+        except RuntimeError:
+            pass                # not in that view layer
+
+
 def open_room_view(context, room):
     """Switch to the room's view scene, making it the first time."""
     from . import hb_utils
@@ -879,6 +1089,7 @@ def open_room_view(context, room):
     level = level_of_room(room)
     view = room.view_scene
     if view is not None and view.name in bpy.data.scenes:
+        isolate_room(view, room)        # the walls may have changed since
         bpy.ops.home_builder_layouts.go_to_layout_view(scene_name=view.name)
         return view
 
@@ -894,6 +1105,7 @@ def open_room_view(context, room):
             view.collection.children.link(sub)
     _copy_view_settings(house_scene, view, room, level)
     room.view_scene = view
+    isolate_room(view, room)
 
     if context.window is None:
         return view             # no window to switch (background mode)
@@ -956,9 +1168,10 @@ class HOME_BUILDER_OT_select_room(bpy.types.Operator):
 class HOME_BUILDER_OT_open_room_view(bpy.types.Operator):
     bl_idname = "home_builder.open_room_view"
     bl_label = "Open Room View"
-    bl_description = ("Work on the active room in a view of its own, with the "
-                      "usual cabinet and layout tools. Its walls and cabinets "
-                      "are the house's: changes show in the house")
+    bl_description = ("Work on the active room on its own: a view of just "
+                      "the room, its walls and what's in it, with the usual "
+                      "cabinet and layout tools. Its walls and cabinets are "
+                      "the house's: changes show in the house")
     bl_options = {'UNDO'}
 
     @classmethod
@@ -1000,10 +1213,18 @@ classes = (
 
 
 def register():
+    global _label_handle
     for cls in classes:
         bpy.utils.register_class(cls)
+    _label_handle = bpy.types.SpaceView3D.draw_handler_add(
+        draw_room_labels, (), 'WINDOW', 'POST_PIXEL')
 
 
 def unregister():
+    global _label_handle, _label_fonts
+    if _label_handle is not None:
+        bpy.types.SpaceView3D.draw_handler_remove(_label_handle, 'WINDOW')
+        _label_handle = None
+    _label_fonts = None
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)

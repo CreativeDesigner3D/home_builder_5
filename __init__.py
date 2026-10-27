@@ -103,6 +103,7 @@ def load_file_post(scene):
         for scene in bpy.data.scenes:
             if scene.get('IS_HOUSE_SCENE'):
                 hb_rooms.apply_ceiling_visibility(scene)
+                hb_rooms.refresh_labels(scene)
     except Exception:
         traceback.print_exc()
 
