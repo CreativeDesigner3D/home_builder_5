@@ -480,8 +480,13 @@ class PlacementMixin:
         feet_val = self._extract_number(parts[0].strip()) or 0
         
         inches_val = 0
-        if len(parts) > 1 and parts[1].strip():
-            inches_val = self._extract_number(parts[1].strip()) or 0
+        # CAD style puts a dash between feet and inches (5'-4 1/2"); it
+        # separates the two, it does not make the inches negative.
+        inches_str = parts[1].strip() if len(parts) > 1 else ''
+        if inches_str.startswith('-'):
+            inches_str = inches_str[1:].strip()
+        if inches_str:
+            inches_val = self._extract_number(inches_str) or 0
             
         return units.feet(feet_val) + units.inch(inches_val)
     
