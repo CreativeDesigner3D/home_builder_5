@@ -790,6 +790,26 @@ def _outside_input(obj, wall, rooms):
         return REF_SIDE
     return THICK_SIDE
 
+def outdoor_side(wall_obj, rooms=None):
+    """Which face of a house's exterior wall is outdoors: 'REF' (its
+    local y = 0 face) or 'FAR' (its thickness face); None for a wall
+    that isn't an exterior or dormer wall of a house. Pass `rooms` from
+    _indoor_polygons when asking for many walls."""
+    from . import hb_types
+    if wall_obj is None or not wall_obj.get('IS_WALL_BP'):
+        return None
+    if wall_obj.get('WALL_TYPE', 'Exterior') not in ('Exterior', 'Dormer'):
+        return None
+    scene = hb_house.house_scene_of(bpy.context.scene)
+    if scene is None:
+        return None
+    if rooms is None:
+        rooms = _indoor_polygons(scene)
+    level_rooms = rooms.get(wall_obj.get(hb_house.LEVEL_KEY, ''), [])
+    side = _outside_input(wall_obj, hb_types.GeoNodeWall(wall_obj), level_rooms)
+    return 'REF' if side == REF_SIDE else 'FAR'
+
+
 def _roof_walls(scene):
     """(level, object) for the walls the roofs make: filled-in gable ends
     and dormer walls."""

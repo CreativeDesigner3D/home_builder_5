@@ -1049,15 +1049,32 @@ def _frame_room(context, room, level):
         r3d.view_distance = size * 1.4
 
 
-def room_polygon(scene, level, room):
-    """The outline of the area a room's marker sits in, or None."""
+def room_area(scene, level, room):
+    """The hb_wall_graph.RoomArea a room's marker sits in, or None."""
     from .operators import walls
     if room.marker is None:
         return None
     _objs, segs = walls.level_wall_segs(scene, level.uid)
     p = room.marker.location
-    return next((a.polygon for a in hb_wall_graph.find_rooms(segs)
+    return next((a for a in hb_wall_graph.find_rooms(segs)
                  if hb_wall_graph.point_in_polygon((p.x, p.y), a.polygon)), None)
+
+
+def room_polygon(scene, level, room):
+    """The outline of the area a room's marker sits in, or None."""
+    area = room_area(scene, level, room)
+    return area.polygon if area is not None else None
+
+
+def room_faces(scene, level, room):
+    """The wall faces that look into a room: [(wall object, side, t0,
+    t1)], side 'REF' (the wall's local y = 0 face) or 'FAR' (its
+    thickness face), t0..t1 the stretch along the wall the room sees."""
+    area = room_area(scene, level, room)
+    if area is None:
+        return []
+    return [(scene.objects[name], side, t0, t1)
+            for name, side, t0, t1 in area.faces if name in scene.objects]
 
 
 ISOLATE_MARGIN = 0.15       # how far past a room's outline its things may reach

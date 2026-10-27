@@ -284,6 +284,15 @@ def _adoptable(obj):
     return obj.type != 'CAMERA' and not obj.get(LOCAL_OBJECT_KEY)
 
 
+def level_outlines(scene, level):
+    """The outlines of a level's buildings: [polygon] round the outside
+    faces of each connected group of real walls, counter-clockwise."""
+    from .operators import walls
+    from . import hb_wall_graph
+    _objs, segs = walls.level_wall_segs(scene, level.uid)
+    return [o.polygon for o in hb_wall_graph.level_outlines(segs)]
+
+
 def active_level_of_scene(scene):
     """active_level for a scene that may not be the context's."""
     if is_room_view(scene):

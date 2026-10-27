@@ -2293,18 +2293,8 @@ def outdoors_is_ref_face(cage_obj):
     """True when a window's wall has its outdoor face at y = 0: an
     exterior wall of a house drawn with its thickness to the rooms, or a
     dormer front. False outside house projects."""
-    from ... import hb_house, hb_exterior
-    wall = cage_obj.parent
-    if wall is None or not wall.get('IS_WALL_BP'):
-        return False
-    if wall.get('WALL_TYPE', 'Exterior') not in ('Exterior', 'Dormer'):
-        return False
-    scene = hb_house.house_scene_of(bpy.context.scene)
-    if scene is None:
-        return False
-    rooms = hb_exterior._indoor_polygons(scene).get(wall.get(hb_house.LEVEL_KEY, ''), [])
-    side = hb_exterior._outside_input(wall, hb_types.GeoNodeWall(wall), rooms)
-    return side == hb_exterior.REF_SIDE
+    from ... import hb_exterior
+    return hb_exterior.outdoor_side(cage_obj.parent) == 'REF'
 
 
 def face_outdoors(cage_obj, ref_face):

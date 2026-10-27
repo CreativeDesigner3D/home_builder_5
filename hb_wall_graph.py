@@ -436,13 +436,25 @@ def to_inputs(seg, which, cut, has_extension=True):
 # carried to the middle of its walls, so the floors of two rooms meet
 # under the wall between them and an opening in it has floor beneath.
 # wall_types: the kinds of wall around the room ('Railing' marks a deck).
-RoomArea = namedtuple('RoomArea', 'level polygon area floor wall_types')
+# faces: the wall faces that look into the room, (seg id, side, t0, t1) -
+# side 'REF' (the drawn line) or 'FAR' (the thickness side), t0..t1 the
+# stretch along the wall's reference line the room sees, from one
+# adjoining wall's face to the next.
+RoomArea = namedtuple('RoomArea', 'level polygon area floor wall_types faces',
+                      defaults=((),))
+
+# A level's outline: the outside faces of a connected group of walls,
+# counter-clockwise, and its area.
+Outline = namedtuple('Outline', 'level polygon area')
 
 ROOM_MIN_AREA = 0.05            # m2; smaller faces are slivers between walls
 NOT_ROOM_WALLS = ('Half', 'Fake')
 # Walls that only close rooms: nothing is built, so they take no part in
 # the corners of real walls, and a room runs right up to their line.
 ROOM_ONLY_WALLS = ('Divider', 'Porch')
+# Walls that don't make a house's outline: as above, and the railings
+# round a balcony or deck.
+NOT_OUTLINE_WALLS = NOT_ROOM_WALLS + ROOM_ONLY_WALLS + ('Railing',)
 
 
 def built_walls(segs):
@@ -533,12 +545,64 @@ def find_rooms(segs, tol=JOIN_TOL):
         by_level.setdefault(s.level, []).append(s)
     rooms = []
     for level, level_segs in by_level.items():
-        for poly, floor, types in _level_room_polygons(level_segs, tol):
-            rooms.append(RoomArea(level, poly, polygon_area(poly), floor, types))
+        for poly, floor, types, faces in _level_room_polygons(level_segs, tol):
+            rooms.append(RoomArea(level, poly, polygon_area(poly), floor, types, faces))
     return rooms
 
 
+def level_outlines(segs, tol=JOIN_TOL):
+    """The outline of each level: for every connected group of real walls
+    (no half, fake, divider, porch or railing walls), the polygon round
+    their outside faces. [Outline], counter-clockwise."""
+    walls = [s for s in segs if s.length > 1e-9 and s.wall_type not in NOT_OUTLINE_WALLS]
+    by_level = {}
+    for s in walls:
+        by_level.setdefault(s.level, []).append(s)
+    out = []
+    for level, level_segs in by_level.items():
+        found = _faces(level_segs, tol)
+        if found is None:
+            continue
+        edges, verts, faces = found
+        for face in faces:
+            pts = [verts[h[1]] for h in face]
+            if polygon_area(pts) >= -ROOM_MIN_AREA:
+                continue        # a room, or a sliver: not the outside
+            # Traced round the outside, the face's left is outdoors, so
+            # its edges move onto the walls' outside faces
+            outline = _inside_polygon(face, edges, verts)
+            if not outline:
+                continue
+            if polygon_area(outline) < 0:
+                outline = list(reversed(outline))
+            out.append(Outline(level, outline, polygon_area(outline)))
+    return out
+
+
 def _level_room_polygons(segs, tol):
+    found = _faces(segs, tol)
+    if found is None:
+        return []
+    edges, verts, faces = found
+    polys = []
+    for face in faces:
+        pts = [verts[h[1]] for h in face]
+        if polygon_area(pts) <= ROOM_MIN_AREA:
+            continue            # the outside of the building, or a sliver
+        inside = _inside_polygon(face, edges, verts)
+        if inside and polygon_area(inside) > ROOM_MIN_AREA:
+            floor = _inside_polygon(face, edges, verts, mid_wall=True)
+            types = frozenset(edges[i][2].wall_type for i, _a, _b in face
+                              if edges[i][2] is not None)
+            polys.append((inside, floor or inside, types,
+                          _face_spans(face, edges, verts, inside)))
+    return polys
+
+
+def _faces(segs, tol):
+    """The faces the walls' reference lines bound, as (edges, verts,
+    faces): each face a list of half-edges (edge index, from, to) with
+    the face on their left; None when no edges close anything."""
     graph = build_graph(segs, tol)
     by_id = graph.segs
 
@@ -609,7 +673,7 @@ def _level_room_polygons(segs, tol):
             break
         edges = kept
     if not edges:
-        return []
+        return None
 
     # Half-edges and the faces they bound (each face on its half-edges' left)
     out = {}
@@ -627,7 +691,7 @@ def _level_room_polygons(segs, tol):
         return around[(k - 1) % len(around)]
 
     used = set()
-    polys = []
+    faces = []
     for start in [h for hs in out.values() for h in hs]:
         if start in used:
             continue
@@ -637,16 +701,50 @@ def _level_room_polygons(segs, tol):
             used.add(h)
             face.append(h)
             h = next_half(h)
-        pts = [verts[h[1]] for h in face]
-        if polygon_area(pts) <= ROOM_MIN_AREA:
-            continue            # the outside of the building, or a sliver
-        inside = _inside_polygon(face, edges, verts)
-        if inside and polygon_area(inside) > ROOM_MIN_AREA:
-            floor = _inside_polygon(face, edges, verts, mid_wall=True)
-            types = frozenset(edges[i][2].wall_type for i, _a, _b in face
-                              if edges[i][2] is not None)
-            polys.append((inside, floor or inside, types))
-    return polys
+        faces.append(face)
+    return edges, verts, faces
+
+
+def _face_spans(face, edges, verts, inside):
+    """The wall faces along a room's inside outline: (seg id, side, t0,
+    t1) for each stretch of the outline lying on a wall's face, merged
+    per wall and side. Room-only walls build no face, so give none."""
+    lines = []
+    for i, a, b in face:
+        seg = edges[i][2]
+        if seg is None or seg.wall_type in ROOM_ONLY_WALLS:
+            continue
+        into_room = _left(_sub(verts[b], verts[a]))
+        far = _dot(into_room, seg.normal) > 0
+        lines.append((seg, 'FAR' if far else 'REF',
+                      seg.face_point(seg.thickness if far else 0.0)))
+    spans = {}
+    n = len(inside)
+    for k in range(n):
+        p, q = inside[k], inside[(k + 1) % n]
+        pq = _sub(q, p)
+        if _len(pq) < 1e-6:
+            continue
+        for seg, side, origin in lines:
+            if (abs(_cross(seg.dir, pq)) > 1e-6 * _len(pq)
+                    or abs(_cross(seg.dir, _sub(p, origin))) > 1e-5):
+                continue        # not on this wall's face
+            t0, t1 = sorted((_dot(_sub(p, seg.start), seg.dir),
+                             _dot(_sub(q, seg.start), seg.dir)))
+            t0, t1 = max(t0, 0.0), min(t1, seg.length)
+            if t1 - t0 > 1e-3:
+                spans.setdefault((seg.id, side), []).append([t0, t1])
+    faces = []
+    for (sid, side), runs in spans.items():
+        runs.sort()
+        merged = [runs[0]]
+        for r in runs[1:]:
+            if r[0] <= merged[-1][1] + 1e-6:
+                merged[-1][1] = max(merged[-1][1], r[1])
+            else:
+                merged.append(r)
+        faces.extend((sid, side, t0, t1) for t0, t1 in merged)
+    return tuple(faces)
 
 
 def _inside_polygon(face, edges, verts, mid_wall=False):
