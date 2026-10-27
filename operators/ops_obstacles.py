@@ -2,7 +2,7 @@ import bpy
 import math
 import bmesh
 from mathutils import Vector, Matrix
-from .. import hb_utils, hb_snap, hb_placement, hb_types, units
+from .. import hb_utils, hb_snap, hb_placement, hb_types, units, hb_house
 from . import tool_session
 
 
@@ -396,12 +396,18 @@ class home_builder_obstacles_OT_place_obstacle(bpy.types.Operator, hb_placement.
                 pos += perp_dir * (-self.obs_depth / 2)
                 self.obstacle_obj.rotation_euler.z = wall_angle + math.pi  # Face outward
             
-            pos.z = self.center_z()
+            pos.z = wall_start.z + self.center_z()     # from the wall's floor
             self.obstacle_obj.location = pos
             
         elif self.target_type == 'CEILING':
             if self.hit_location:
-                ceiling_height = context.scene.home_builder.ceiling_height
+                level = hb_house.active_level(context)
+                if level is not None:
+                    from .. import hb_rooms
+                    ceiling_height = hb_rooms.ceiling_z_at(
+                        level, self.hit_location.x, self.hit_location.y)
+                else:
+                    ceiling_height = context.scene.home_builder.ceiling_height
                 self.obstacle_obj.location = Vector((
                     self.hit_location.x,
                     self.hit_location.y,
@@ -415,10 +421,12 @@ class home_builder_obstacles_OT_place_obstacle(bpy.types.Operator, hb_placement.
                     self.obs_height, self.obs_depth,
                     self.obstacle_obj.get('OBSTACLE_TYPE', ''),
                     self.obs_surface_type)
+                level = hb_house.active_level(context)
+                floor = level.elevation if level is not None else 0.0
                 self.obstacle_obj.location = Vector((
                     self.hit_location.x,
                     self.hit_location.y,
-                    z_size / 2
+                    floor + z_size / 2
                 ))
             self.obstacle_obj.rotation_euler.z = 0
     

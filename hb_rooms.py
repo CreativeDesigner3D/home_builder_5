@@ -275,6 +275,26 @@ def _build_ceiling(scene, level, room, polygon):
     room.ceiling_obj.hide_viewport = not scene.hb_house.show_ceilings
 
 
+def ceiling_z_at(level, x, y):
+    """The height of the ceiling over (x, y) on a level: the underside of
+    the ceiling of the room there, flat or vaulted, or the level's ceiling
+    height where there is no room."""
+    up = Vector((0.0, 0.0, 1.0))
+    best = None
+    for room in level.rooms:
+        obj = room.ceiling_obj
+        if obj is None or obj.type != 'MESH' or room.orphaned:
+            continue
+        inv = obj.matrix_world.inverted()
+        start = inv @ Vector((x, y, level.elevation + 0.05))
+        hit, loc, _n, _i = obj.ray_cast(start, inv.to_3x3() @ up, distance=100.0)
+        if hit:
+            z = (obj.matrix_world @ loc).z
+            if best is None or z < best:
+                best = z
+    return best if best is not None else level.elevation + level.ceiling_height
+
+
 def _new_marker(scene, level, room, point):
     marker = _generated(scene, level, room, f"Room - {room.name}", None,
                         (MARKER_KEY,))
