@@ -231,6 +231,9 @@ STRUCTURE_FIELDS = FOUNDATION_FIELDS + (
         ('bool', 'framing_floors', "Floors"),
         ('bool', 'framing_ceilings', "Ceilings"),
         ('bool', 'framing_roofs', "Roofs"),
+        ('bool', 'framing_corners', "Corner Studs"),
+        ('bool', 'framing_blocking', "Blocking"),
+        ('bool', 'framing_collar_ties', "Collar Ties"),
         ('actions', (("Rebuild Framing", "home_builder.rebuild_framing"),), ""),
     )}),
 )

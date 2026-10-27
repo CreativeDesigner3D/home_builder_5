@@ -201,3 +201,54 @@ def polygon_area(poly):
     n = len(poly)
     return sum(poly[i][0] * poly[(i + 1) % n][1] - poly[(i + 1) % n][0] * poly[i][1]
                for i in range(n)) / 2.0
+
+
+# ---- Joists over bearing lines ---------------------------------------------------
+
+def crossings(a, b, bearings, square_within=0.5):
+    """Where a joist from a to b crosses bearing lines: parameters t along
+    it (0..1), for bearings (p, q) running within about 60 degrees of
+    square to it (|cos| of the angle under `square_within`)."""
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    jl = (dx * dx + dy * dy) ** 0.5
+    if jl < EPS:
+        return []
+    out = []
+    for p, q in bearings:
+        ex, ey = q[0] - p[0], q[1] - p[1]
+        el = (ex * ex + ey * ey) ** 0.5
+        if el < EPS or abs((dx * ex + dy * ey) / (jl * el)) > square_within:
+            continue
+        den = dx * ey - dy * ex
+        if abs(den) < 1e-12:
+            continue
+        t = ((p[0] - a[0]) * ey - (p[1] - a[1]) * ex) / den
+        u = ((p[0] - a[0]) * dy - (p[1] - a[1]) * dx) / den
+        if 0.0 < t < 1.0 and -0.01 <= u <= 1.01:
+            out.append(t)
+    return sorted(out)
+
+
+def joist_pieces(a, b, bearings, lap):
+    """A joist line from a to b split over the bearing lines it crosses,
+    each piece running on `lap` past the bearing it ends on (two joists
+    lap over a wall or beam): [(t0, t1)]."""
+    length = ((b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2) ** 0.5
+    if length < EPS:
+        return []
+    cuts = [t for t in crossings(a, b, bearings) if 0.02 < t * length < length - 0.02]
+    lt = lap / length
+    pts = [0.0] + cuts + [1.0]
+    out = []
+    for i in range(len(pts) - 1):
+        t0 = pts[i] - (lt if i > 0 else 0.0)
+        t1 = pts[i + 1] + (lt if i < len(pts) - 2 else 0.0)
+        out.append((max(t0, 0.0), min(t1, 1.0)))
+    return out
+
+
+def longest_span(a, b, bearings):
+    """The longest clear stretch of a joist line between bearings."""
+    length = ((b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2) ** 0.5
+    pts = [0.0] + crossings(a, b, bearings) + [1.0]
+    return max((t1 - t0) * length for t0, t1 in zip(pts, pts[1:]))

@@ -259,8 +259,63 @@ def _gable_above(gables, m, x, y, z):
     return (m.inverted() @ hit).z
 
 
-def frame_wall(boards, wall_obj, step, tree=None, gables=None):
-    """Plates, studs and opening framing for one wall."""
+FIRE_BLOCK_OVER = 3.048     # walls taller than 10' get a row of fire blocks
+BRIDGING_OVER = 2.44        # joist spans longer than 8' get bridging
+JOIST_LAP = inch(3)         # joists lap this far past a bearing
+COLLAR_DEPTH = inch(5.5)    # 2x6 collar ties
+
+
+def junction_studs(scene, level, walls):
+    """Extra studs where walls meet: on each wall, one just outside each
+    face of a wall ending against it (both sides of a T, the inside of an
+    L), so the drywall has backing in the corner. {wall name: [x]} with x
+    a stud's start along the wall."""
+    from .operators import walls as hb_walls
+    segs = {}
+    for obj in walls:
+        seg = hb_walls.wall_seg(obj)
+        if seg is not None:
+            segs[obj.name] = (obj, seg)
+    out = {}
+    for name, (obj, seg) in segs.items():
+        ext = hb_walls.wall_face_extents(obj)
+        x0, x1 = (0.0, seg.length) if ext is None else (
+            (ext['back'][0] + ext['front'][0]) / 2.0, (ext['back'][1] + ext['front'][1]) / 2.0)
+        c = Vector(seg.face_point(seg.thickness / 2.0))
+        d = Vector(seg.dir)
+        xs = []
+        for other, (oobj, oseg) in segs.items():
+            if other == name:
+                continue
+            od = Vector(oseg.dir)
+            if abs(d.dot(od)) > 0.5:
+                continue                # parallel-ish: no corner on this wall
+            on = Vector(oseg.normal)
+            for w in (0.0, oseg.thickness):
+                p = Vector(oseg.face_point(w))
+                den = d.x * od.y - d.y * od.x
+                if abs(den) < 1e-9:
+                    continue
+                rel = p - c
+                s = (rel.x * od.y - rel.y * od.x) / den       # along this wall
+                t = (rel.x * d.y - rel.y * d.x) / den         # along the other
+                reach = seg.thickness + 0.05
+                if not (-reach <= t <= reach or oseg.length - reach <= t <= oseg.length + reach):
+                    continue            # the other wall doesn't end here
+                if not (x0 + T < s < x1 - T):
+                    continue            # at this wall's own end: its end stud
+                # Just outside the other wall's body
+                outward = on * (-1.0 if w == 0.0 else 1.0)
+                xs.append(s if d.dot(outward) > 0 else s - T)
+        if xs:
+            out[name] = xs
+    return out
+
+
+def frame_wall(boards, wall_obj, step, tree=None, gables=None, extra=(), blocking=False):
+    """Plates, studs and opening framing for one wall; `extra` stud
+    positions (corners), and with `blocking` a row of fire blocks in a
+    wall over 10' tall."""
     from .operators import walls as hb_walls
     wall = hb_types.GeoNodeWall(wall_obj)
     if not wall.has_modifier():
@@ -348,9 +403,13 @@ def frame_wall(boards, wall_obj, step, tree=None, gables=None):
             boards.local_box(m, ox0, ox1, y0, y1, oz0 - T, oz0)
         taken.append((ox0 - 2 * T, ox1 + 2 * T, ox0, ox1, oz0, head_top, door))
 
-    # Studs on centres from the start, the end stud, and cripples
+    # Studs on centres from the start, the end stud, corner studs, and cripples
     xs = [x0] + [x0 + k * step - T / 2.0 for k in range(1, int((x1 - x0) / step) + 1)]
     xs = [x for x in xs if x + T <= x1 - T] + [x1 - T]
+    for xe in extra:
+        if x0 + T <= xe <= x1 - 2 * T and all(abs(xe - x) > T * 0.9 for x in xs):
+            xs.append(xe)
+    xs.sort()
     for xa in xs:
         hit = next((o for o in taken if o[0] - 1e-4 < xa + T and xa < o[1] + 1e-4), None)
         if hit is None:
@@ -364,6 +423,17 @@ def frame_wall(boards, wall_obj, step, tree=None, gables=None):
             stud(xa, head_top, z_hi)
         if not door and oz0 - T - T > 0.02:
             stud(xa, T, oz0 - T)
+
+    # Fire blocking: a row between the studs halfway up a tall wall
+    if blocking and height > FIRE_BLOCK_OVER:
+        zb = height / 2.0
+        for xa, xb in zip(xs, xs[1:]):
+            if xb - (xa + T) < 0.02:
+                continue
+            if any(o[0] - 1e-4 < xb and xa + T < o[1] + 1e-4 and o[4] - T < zb + T and zb < o[5]
+                   for o in taken):
+                continue
+            boards.local_box(m, xa + T, xb, y0, y1, zb, zb + T)
 
     # Gable studs on the plates, up to a filled-in gable's slope
     if gables is not None:
@@ -535,6 +605,117 @@ def ground_framed(house):
     return house.ground_floor == 'CRAWL'
 
 
+BEARING_WALLS = ('Exterior', 'Interior', 'Foundation')
+
+
+def bearing_lines(scene, below, joist_bottom):
+    """What a level's floor joists bear on, as plan lines: the walls of
+    the level below (their middles) and its beams and girders whose tops
+    come up to the joists."""
+    from . import hb_members
+    from .operators import walls as hb_walls
+    out = []
+    if below is None:
+        return out
+    _objs, segs = hb_walls.level_wall_segs(scene, below.uid)
+    for seg in segs:
+        if seg.wall_type not in BEARING_WALLS or seg.length < 0.1:
+            continue
+        p = seg.face_point(seg.thickness / 2.0)
+        out.append((p, (p[0] + seg.dir[0] * seg.length, p[1] + seg.dir[1] * seg.length)))
+    for m in hb_members.members_of(scene, below):
+        if m.get('MEMBER_KIND') not in ('BEAM', 'GIRDER'):
+            continue
+        if m.location.z < joist_bottom - 0.06:
+            continue                    # dropped too low to carry them
+        # From its location and turn, not matrix_world: a member just
+        # made has not been evaluated yet
+        rz = m.rotation_euler.z
+        length = float(m['MEMBER_LENGTH'])
+        a = (m.location.x, m.location.y)
+        out.append((a, (a[0] + math.cos(rz) * length, a[1] + math.sin(rz) * length)))
+    return out
+
+
+def joist_axis(level, polys, bearings):
+    """The axis joists are spaced along (they run square to it): as the
+    level says, or the way whose longest span between bearings is the
+    shortest."""
+    from . import hb_structure_geom as geom
+    if level.joist_direction == 'X':
+        return (0.0, 1.0)
+    if level.joist_direction == 'Y':
+        return (1.0, 0.0)
+    best = None
+    for axis in ((1.0, 0.0), (0.0, 1.0)):
+        worst = 0.0
+        for poly in polys:
+            for a, b in scan(poly, axis, 0.6, margin=T):
+                worst = max(worst, geom.longest_span(tuple(a), tuple(b), bearings))
+        if best is None or worst < best[0] - 0.05:
+            best = (worst, axis)
+    return best[1] if best else (1.0, 0.0)
+
+
+def frame_deck(boards, poly, z_top, depth, step, axis, bearings, openings=(), bridging=False):
+    """A level's floor over one building's outline: a rim round it, and
+    joists across it the way `axis` says, broken and lapped over the
+    bearing lines, headed off round openings, bridged at mid-span."""
+    from . import hb_structure_geom as geom
+    n = len(poly)
+    ccw = geom.polygon_area(poly) > 0
+    for i in range(n):
+        p, q = Vector(poly[i]), Vector(poly[(i + 1) % n])
+        d = q - p
+        if d.length < T:
+            continue
+        inward = Vector((-d.y, d.x)).normalized() * (T / 2.0)
+        if not ccw:
+            inward = -inward
+        boards.run(p + inward, q + inward, z_top, T, depth)
+    deck = geom.offset_polygon(poly, -T)
+    holes = [_grown(cell, 2 * T) for cells, _edges in openings for cell in cells]
+    ax = Vector(axis)
+    lines = {}
+    joist_dir = None
+    for a, b in scan(deck, axis, step, margin=T):
+        a, b = Vector(a), Vector(b)
+        if joist_dir is None:
+            joist_dir = b - a
+        pos = round(a.dot(ax), 4)
+        pieces = []
+        for t0, t1 in geom.joist_pieces(tuple(a), tuple(b), bearings, JOIST_LAP):
+            pa, pb = a + (b - a) * t0, a + (b - a) * t1
+            spans = [(0.0, 1.0)]
+            for hole in holes:
+                cut = geom.segment_in_polygon_spans(tuple(pa), tuple(pb), hole)
+                spans = [s for sp in spans for s in geom.subtract_intervals(sp, cut)]
+            for s0, s1 in spans:
+                p, q = pa + (pb - pa) * s0, pa + (pb - pa) * s1
+                if (q - p).length > 2.5 * T:
+                    boards.run(p, q, z_top, T, depth)
+                    pieces.append((p, q))
+        lines.setdefault(pos, []).extend(pieces)
+    if joist_dir is not None:
+        for cells, edges in openings:
+            if any(geom._inside(tuple((Vector(c[0]) + Vector(c[2])) / 2.0), poly) for c in cells):
+                _frame_opening(boards, poly, z_top, depth, edges, joist_dir)
+    if not bridging:
+        return
+    # Solid blocks between neighbouring joists at the middle of long spans
+    positions = sorted(lines)
+    for k in range(len(positions) - 1):
+        for p, q in lines[positions[k]]:
+            if (q - p).length < BRIDGING_OVER:
+                continue
+            mid = (p + q) / 2.0
+            gap = positions[k + 1] - positions[k]
+            other = mid + ax * gap
+            if any(min(r.dot(q - p), s.dot(q - p)) - 1e-4 <= other.dot(q - p) <= max(r.dot(q - p), s.dot(q - p)) + 1e-4
+                   for r, s in lines[positions[k + 1]]):
+                boards.run(mid + ax * (T / 2.0), other - ax * (T / 2.0), z_top, T, depth)
+
+
 def frame_level_floor(boards, scene, level, step):
     house = scene.hb_house
     if level.kind == 'FOUNDATION':
@@ -549,8 +730,16 @@ def frame_level_floor(boards, scene, level, step):
     z_top = level.elevation - SUBFLOOR
     from . import hb_rooms
     openings = hb_rooms.stairwell_openings(scene, level)
-    for area in _room_areas(scene, level):
-        frame_floor(boards, area.polygon, z_top, depth, step, openings=openings)
+    polys = hb_house.level_outlines(scene, level)
+    if not polys:
+        for area in _room_areas(scene, level):
+            frame_floor(boards, area.polygon, z_top, depth, step, openings=openings)
+        return
+    bearings = bearing_lines(scene, below, z_top - depth)
+    axis = joist_axis(level, polys, bearings)
+    for poly in polys:
+        frame_deck(boards, poly, z_top, depth, step, axis, bearings, openings,
+                   bridging=house.framing_blocking)
 
 
 def _covered(scene, level, point):
@@ -771,6 +960,46 @@ def _sloped_board(boards, a, b, depth):
 # THE FRAMING OBJECTS
 # =============================================================================
 
+def frame_collar_ties(boards, scene, level, step):
+    """Collar ties in a gable or gambrel rafter roof: across every other
+    rafter pair, a third of the way down from the ridge, beside the
+    rafter; none over a vaulted room."""
+    from . import hb_roofs, hb_rooms
+    roof = level.roof
+    if not roof.enabled or roof.style not in ('GABLE', 'GAMBREL'):
+        return
+    frame = hb_roofs.roof_frame(scene, level)
+    if frame is None:
+        return
+    z_tie = frame['ridge_z'] - (frame['ridge_z'] - frame['plate']) / 3.0
+    under = frame['under']
+    us = []
+    for (a, za), (b, zb) in zip(under, under[1:]):
+        if (za - z_tie) * (zb - z_tie) < 0 and abs(zb - za) > 1e-9:
+            us.append(a + (b - a) * (z_tie - za) / (zb - za))
+    if len(us) < 2:
+        return
+    ua, ub = min(us), max(us)
+    vaulted = []
+    for room in level.rooms:
+        if not room.orphaned and room.ceiling_style in ('VAULTED', 'ATTIC'):
+            poly = hb_rooms.room_polygon(scene, level, room)
+            if poly:
+                vaulted.append(poly)
+    k = math.ceil(frame['v0'] / step)
+    while k * step < frame['v1']:
+        v = k * step
+        k += 1
+        if (k - 1) % 2 or v - frame['v0'] < step / 2.0 or frame['v1'] - v < step / 2.0:
+            continue
+        mid = hb_roofs._world(frame, (ua + ub) / 2.0, v + T, 0.0)
+        if any(hb_wall_graph.point_in_polygon((mid[0], mid[1]), poly) for poly in vaulted):
+            continue
+        a = hb_roofs._world(frame, ua, v + T, 0.0)
+        b = hb_roofs._world(frame, ub, v + T, 0.0)
+        boards.run((a[0], a[1]), (b[0], b[1]), z_tie, T, COLLAR_DEPTH)
+
+
 def lumber_material():
     mat = bpy.data.materials.get(MATERIAL)
     if mat is None:
@@ -806,16 +1035,19 @@ def level_framing(scene, level, depsgraph, tree):
     boards = Boards()
     gables = _gable_tree(scene, depsgraph, level) if level.roof.enabled else None
     if house.framing_walls:
-        for obj in scene.objects:
-            if not obj.get('IS_WALL_BP') or obj.get(hb_house.LEVEL_KEY) != level.uid:
-                continue
-            if obj.get('WALL_TYPE', 'Exterior') not in FRAMED_WALLS:
-                continue
-            frame_wall(boards, obj, step, tree, gables)
+        walls = [obj for obj in scene.objects if obj.get('IS_WALL_BP')
+                 and obj.get(hb_house.LEVEL_KEY) == level.uid
+                 and obj.get('WALL_TYPE', 'Exterior') in FRAMED_WALLS]
+        extras = junction_studs(scene, level, walls) if house.framing_corners else {}
+        for obj in walls:
+            frame_wall(boards, obj, step, tree, gables, extras.get(obj.name, ()),
+                       house.framing_blocking)
     if house.framing_floors:
         frame_level_floor(boards, scene, level, step)
     if house.framing_ceilings:
         frame_level_ceilings(boards, scene, level, step, tree)
+    if house.framing_roofs and house.framing_collar_ties:
+        frame_collar_ties(boards, scene, level, inch(24) if house.framing_spacing == '24' else step)
     if house.framing_roofs and level.roof.enabled:
         for obj, sits_on in ((level.roof.roof_obj, False), (level.roof.dormer_obj, True)):
             if obj is not None and obj.type == 'MESH' and obj.name in scene.objects:

@@ -42,6 +42,7 @@ POST_SIZES = {'4X4': (inch(3.5), inch(3.5)), '4X6': (inch(3.5), inch(5.5)),
 SPAN_GUIDE = 18.0
 
 MATERIAL_COLORS = {
+    'CONCRETE': ((0.62, 0.62, 0.60), 0.9, 0.0),
     'LUMBER': ((0.78, 0.62, 0.42), 0.85, 0.0),
     'LVL': ((0.83, 0.68, 0.47), 0.6, 0.0),
     'GLULAM': ((0.86, 0.72, 0.52), 0.5, 0.0),
@@ -115,7 +116,7 @@ def rebuild(obj):
     w, d = float(obj['MEMBER_W']), float(obj['MEMBER_D'])
     plies = max(1, int(obj.get('MEMBER_PLIES', 1)))
     bm = bmesh.new()
-    if kind == 'POST':
+    if kind in ('POST', 'PIER'):
         h = float(obj['MEMBER_LENGTH'])
         _box(bm, -w / 2.0, w / 2.0, -d / 2.0, d / 2.0, 0.0, h)
     else:

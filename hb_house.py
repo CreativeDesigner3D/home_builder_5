@@ -1459,6 +1459,14 @@ def _eaves_changed(self, context):
 class HB_Level(PropertyGroup):
     uid: StringProperty(name="Level ID")  # type: ignore
 
+    # Which way the floor joists of this level run
+    joist_direction: EnumProperty(
+        name="Joists Run",
+        items=[('AUTO', "Auto", "The way with the shortest spans between walls and beams below"),
+               ('X', "Along X", ""), ('Y', "Along Y", "")],
+        default='AUTO',
+        update=lambda self, context: _framing_changed(self.id_data.hb_house))  # type: ignore
+
     # A Foundation level is made by the house's foundation (hb_foundation)
     kind: EnumProperty(
         name="Kind",
@@ -1841,6 +1849,18 @@ class HB_House_Props(PropertyGroup):
         update=lambda self, context: _framing_changed(self))  # type: ignore
     framing_roofs: BoolProperty(
         name="Roofs", default=True,
+        update=lambda self, context: _framing_changed(self))  # type: ignore
+    framing_corners: BoolProperty(
+        name="Corner Studs", default=True,
+        description="A stud at each inside corner where walls meet, for the drywall",
+        update=lambda self, context: _framing_changed(self))  # type: ignore
+    framing_blocking: BoolProperty(
+        name="Blocking", default=True,
+        description="Fire blocking in walls over 10' tall, bridging in long joist spans",
+        update=lambda self, context: _framing_changed(self))  # type: ignore
+    framing_collar_ties: BoolProperty(
+        name="Collar Ties", default=True,
+        description="Ties across every other rafter pair, a third of the way down from the ridge",
         update=lambda self, context: _framing_changed(self))  # type: ignore
 
     @classmethod

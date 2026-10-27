@@ -31,6 +31,10 @@ PART = 'Structure'
 MATERIAL = "HB Concrete"
 CONCRETE = (0.62, 0.62, 0.60, 1.0)
 
+MAX_JOIST_SPAN = inch(14 * 12)          # 2x10s at 16": wider gets a girder
+GIRDER = (inch(4.5), inch(9.25), 3)     # (3) 2x10: width, depth, plies
+PIER = inch(12)                         # a concrete pier, square
+PIER_SPACING = inch(72)                 # at most, along a girder
 SILL = inch(1.5)                        # the sill plate on the stem wall
 SUBFLOOR = inch(0.75)
 GROUND_JOIST = inch(9.25)               # 2x10s over a crawlspace or basement
@@ -80,6 +84,12 @@ def parts(scene):
 
 
 def auto_walls(scene, level=None):
+    """The generated walls (on a level)."""
+    return [o for o in auto_objects(scene, level) if o.get('IS_WALL_BP')]
+
+
+def auto_objects(scene, level=None):
+    """Everything generated on the foundation level: walls, girders, piers."""
     return [o for o in scene.objects if o.get(AUTO_KEY)
             and (level is None or o.get(hb_house.LEVEL_KEY) == level.uid)]
 
@@ -202,7 +212,7 @@ def _remove_level(scene, uid):
     house = scene.hb_house
     hand = [o for o in scene.objects if o.get('IS_WALL_BP')
             and o.get(hb_house.LEVEL_KEY) == uid and not o.get(AUTO_KEY)]
-    for obj in auto_walls(scene, hb_house.get_level(uid)):
+    for obj in auto_objects(scene, hb_house.get_level(uid)):
         _remove_wall(obj)
     if hand:
         return False
@@ -280,7 +290,7 @@ def _rebuild(scene, house, ground_uid):
     uid = _ensure_level(scene, ground.elevation)
     fl = hb_house.get_level(uid)
     h = wall_height(house)
-    for obj in auto_walls(scene, fl):
+    for obj in auto_objects(scene, fl):
         _remove_wall(obj)
     for poly in outlines:
         made = walls.build_wall_run(scene, poly, WALL_TYPE, level=hb_house.get_level(uid),
@@ -295,6 +305,62 @@ def _rebuild(scene, house, ground_uid):
                           geom.offset_polygon(poly, -(t + out)),
                           fl.elevation - fd, fl.elevation)
         _add_part(scene, fl, "Footing", mesh)
+    if kind == 'CRAWL':
+        _girders(scene, uid, hb_house.get_level(ground_uid), outlines, t)
+
+
+def _girders(scene, uid, ground, outlines, t):
+    """Girders on piers across a crawlspace too wide for the joists to
+    span from wall to wall, square to them, splitting the span evenly;
+    generated like the walls (AUTO_KEY), so a rebuild replaces them."""
+    import math
+    from mathutils import Vector
+    from . import hb_framing, hb_members
+    fl = hb_house.get_level(uid)
+    # The stem walls' middles are what the joists bear on without girders
+    bearings = []
+    for poly in outlines:
+        mid = geom.offset_polygon(poly, -t / 2.0)
+        bearings += [(mid[i], mid[(i + 1) % len(mid)]) for i in range(len(mid))]
+    axis = hb_framing.joist_axis(ground, outlines, bearings)
+    ax = Vector(axis)
+    run = Vector((-ax.y, ax.x))             # the way the joists run
+    top = ground.elevation - SUBFLOOR - GROUND_JOIST
+    w, d, plies = GIRDER
+    for poly in outlines:
+        inner = geom.offset_polygon(poly, -t)
+        vals = [Vector(p).dot(run) for p in inner]
+        lo, hi = min(vals), max(vals)
+        n = math.ceil((hi - lo) / MAX_JOIST_SPAN)
+        if n < 2:
+            continue
+        span = max(Vector(p).dot(ax) for p in inner) - min(Vector(p).dot(ax) for p in inner)
+        for k in range(1, n):
+            c = lo + (hi - lo) * k / n
+            a = run * c + ax * (min(Vector(p).dot(ax) for p in inner) - 1.0)
+            b = a + ax * (span + 2.0)
+            for t0, t1 in geom.segment_in_polygon_spans(tuple(a), tuple(b), inner):
+                p, q = a + (b - a) * t0, a + (b - a) * t1
+                # Into the stem walls a little at each end, to bear on them
+                p, q = p - ax * (t / 2.0), q + ax * (t / 2.0)
+                length = (q - p).length
+                if length < 0.5:
+                    continue
+                girder = hb_members._new(scene, fl, "Girder", 'GIRDER', 'LUMBER', w, d, plies, length)
+                girder[AUTO_KEY] = True
+                girder['MEMBER_POSITION'] = 'FLUSH'
+                girder.location = (p.x, p.y, top)
+                girder.rotation_euler = (0.0, 0.0, math.atan2(q.y - p.y, q.x - p.x))
+                hb_members.rebuild(girder)
+                inside = length - t
+                count = max(1, math.ceil(inside / PIER_SPACING) - 1)
+                for j in range(1, count + 1):
+                    pt = p + (q - p) * ((t / 2.0 + inside * j / (count + 1)) / length)
+                    pier = hb_members._new(scene, fl, "Pier", 'PIER', 'CONCRETE', PIER, PIER, 1,
+                                           top - d - fl.elevation)
+                    pier[AUTO_KEY] = True
+                    pier.location = (pt.x, pt.y, fl.elevation)
+                    hb_members.rebuild(pier)
 
 
 def _concrete(obj):
