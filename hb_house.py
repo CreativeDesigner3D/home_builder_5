@@ -936,9 +936,10 @@ FLOOR_FINISH_ITEMS = [
     ('NONE', "None", "No finish: the floor keeps whatever material it has"),
     ('WOOD', "Wood Planks", "Staggered hardwood planks with grain"),
     ('TILE', "Tile", "Grid or running-bond tile with grout"),
-    ('SOLID', "Solid Color", "Flat colored floor (concrete, carpet, paint)"),
+    ('SOLID', "Solid Color", "Flat colored floor (concrete, paint)"),
     ('CUSTOM', "Custom Material", "Any Blender material"),
     ('DECK', "Deck", "Outdoor deck boards"),
+    ('CARPET', "Carpet", "Wall-to-wall cut-pile carpet"),
 ]
 _FLOOR_FINISH_INDEX = {item[0]: i for i, item in enumerate(FLOOR_FINISH_ITEMS)}
 _floor_look_items = {}      # finish -> items; Blender needs the strings kept
@@ -1495,6 +1496,22 @@ def _labels_shown_changed(house):
     _tag_view3d_redraw()
 
 
+def _framing_shown_changed(house):
+    from . import hb_framing
+    scene = house.id_data
+    if house.show_framing:
+        hb_framing.build(scene)
+    else:
+        hb_framing.clear(scene)
+    _tag_view3d_redraw()
+
+
+def _framing_changed(house):
+    from . import hb_framing
+    hb_framing.refresh(house.id_data)
+    _tag_view3d_redraw()
+
+
 def _ceilings_shown_changed(house):
     from . import hb_rooms
     hb_rooms.apply_ceiling_visibility(house.id_data)
@@ -1630,6 +1647,41 @@ class HB_House_Props(PropertyGroup):
         description="Show the rooms' ceilings in the viewport. They render either way",
         default=False,
         update=lambda self, context: _ceilings_shown_changed(self))  # type: ignore
+
+    # Framing (see hb_framing): built only while it shows
+    show_framing: BoolProperty(
+        name="Show Framing",
+        description="Build the studs, joists and rafters inside the walls, floors, "
+                    "ceilings and roofs, and show the solids as outlines",
+        default=False,
+        update=lambda self, context: _framing_shown_changed(self))  # type: ignore
+
+    framing_spacing: EnumProperty(
+        name="Spacing",
+        items=[('16', "16\" on Centre", "Studs and joists 16\" apart"),
+               ('24', "24\" on Centre", "Studs and joists 24\" apart")],
+        default='16',
+        update=lambda self, context: _framing_changed(self))  # type: ignore
+
+    ground_floor: EnumProperty(
+        name="Ground Floor",
+        items=[('SLAB', "Slab", "The ground level sits on a concrete slab: no floor framing"),
+               ('CRAWL', "Crawlspace", "The ground level is framed with joists over a crawlspace")],
+        default='SLAB',
+        update=lambda self, context: _framing_changed(self))  # type: ignore
+
+    framing_walls: BoolProperty(
+        name="Walls", default=True,
+        update=lambda self, context: _framing_changed(self))  # type: ignore
+    framing_floors: BoolProperty(
+        name="Floors", default=True,
+        update=lambda self, context: _framing_changed(self))  # type: ignore
+    framing_ceilings: BoolProperty(
+        name="Ceilings", default=True,
+        update=lambda self, context: _framing_changed(self))  # type: ignore
+    framing_roofs: BoolProperty(
+        name="Roofs", default=True,
+        update=lambda self, context: _framing_changed(self))  # type: ignore
 
     @classmethod
     def register(cls):

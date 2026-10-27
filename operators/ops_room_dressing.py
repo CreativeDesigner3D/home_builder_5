@@ -33,6 +33,7 @@ STYLE_ITEMS = [
     ('WOOD', "Wood Planks", "Staggered hardwood planks with grain", 'MOD_WAVE', 0),
     ('TILE', "Tile", "Grid or running-bond tile with grout", 'MESH_GRID', 1),
     ('SOLID', "Solid Color", "Flat colored floor (concrete, carpet, paint)", 'MATERIAL', 2),
+    ('CARPET', "Carpet", "Wall-to-wall cut-pile carpet", 'TEXTURE', 3),
 ]
 
 # Named looks: (label, base color, accent color) in sRGB 0-1. Accent is
@@ -61,6 +62,14 @@ SOLID_LOOKS = {
     'BLACK':      ("Black",       (0.08, 0.08, 0.08), None),
     'CUSTOM':     ("Custom", None, None),
 }
+CARPET_LOOKS = {
+    'BEIGE':      ("Beige",          (0.76, 0.70, 0.60), None),
+    'GREIGE':     ("Greige",         (0.66, 0.63, 0.58), None),
+    'LIGHT_GRAY': ("Light Gray",     (0.68, 0.68, 0.67), None),
+    'CHARCOAL':   ("Charcoal",       (0.27, 0.27, 0.28), None),
+    'NAVY':       ("Navy",           (0.17, 0.21, 0.32), None),
+    'CUSTOM':     ("Custom", None, None),
+}
 # Deck boards for outdoor rooms (house balconies): built as wood planks,
 # in outdoor timbers. Not offered by the Floor tool itself.
 DECK_LOOKS = {
@@ -71,12 +80,14 @@ DECK_LOOKS = {
     'CUSTOM':     ("Custom", None, None),
 }
 LOOKS = {'WOOD': WOOD_LOOKS, 'TILE': TILE_LOOKS, 'SOLID': SOLID_LOOKS,
-         'DECK': DECK_LOOKS}
+         'DECK': DECK_LOOKS, 'CARPET': CARPET_LOOKS}
 DEFAULT_LOOK = {'WOOD': 'NATURAL', 'TILE': 'LIGHT_GRAY', 'SOLID': 'CONCRETE',
-                'DECK': 'CEDAR'}
+                'DECK': 'CEDAR', 'CARPET': 'BEIGE'}
 DEFAULT_SIZE = {'WOOD': 0.127, 'TILE': 0.3048, 'SOLID': 0.3048,   # 5" plank, 12" tile
-                'DECK': 0.1397}                                    # 5.5" deck board
-DEFAULT_ROUGHNESS = {'WOOD': 0.45, 'TILE': 0.2, 'SOLID': 0.7, 'DECK': 0.65}
+                'DECK': 0.1397,                                    # 5.5" deck board
+                'CARPET': 0.15}                                    # its colour's mottle
+DEFAULT_ROUGHNESS = {'WOOD': 0.45, 'TILE': 0.2, 'SOLID': 0.7, 'DECK': 0.65,
+                     'CARPET': 0.95}
 
 
 def _floor_objects(scene):
@@ -102,6 +113,8 @@ def build_floor_material(style, base_srgb, accent_srgb, size, roughness,
         # has always looked.
         sm.build_tile_nodes(mat, base, accent, size, size, roughness,
                             running_bond, grout_size=0.008)
+    elif style == 'CARPET':
+        sm.build_carpet_nodes(mat, base, roughness, size)
     else:
         sm.build_solid_nodes(mat, base, roughness)
     mat["HB_FLOOR_STYLE"] = style

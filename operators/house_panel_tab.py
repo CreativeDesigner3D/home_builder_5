@@ -107,6 +107,12 @@ PLAN_VIEW_FIELDS = (
     ('gap', None, ""),
 )
 
+def _framing_summary(house):
+    if not house.show_framing:
+        return "Off"
+    return f"{house.framing_spacing}\" o.c. · " + ("crawlspace" if house.ground_floor == 'CRAWL' else "slab")
+
+
 VIEW_FIELDS = (
     ('group', 'house_view', "Show", {'summary': _view_summary, 'fields': (
         ('enum', 'level_display', "Levels"),
@@ -115,6 +121,17 @@ VIEW_FIELDS = (
         ('bool', 'show_roofs', "Roofs"),
         ('bool', 'show_ceilings', "Ceilings"),
         ('bool', 'show_room_labels', "Room Labels"),
+        ('bool', 'show_framing', "Framing"),
+    )}),
+    ('group', 'house_framing', "Framing", {'summary': _framing_summary, 'fields': (
+        ('bool', 'show_framing', "Show Framing"),
+        ('choices', 'framing_spacing', "Spacing", {'cols': 2}),
+        ('choices', 'ground_floor', "Ground Floor", {'cols': 2}),
+        ('bool', 'framing_walls', "Walls"),
+        ('bool', 'framing_floors', "Floors"),
+        ('bool', 'framing_ceilings', "Ceilings"),
+        ('bool', 'framing_roofs', "Roofs"),
+        ('actions', (("Rebuild Framing", "home_builder.rebuild_framing"),), ""),
     )}),
     ('pick', lambda context: _import_entries(context), "Import Room as Level"),
 )
@@ -292,8 +309,8 @@ def _room_height_note(context, room):
 
 
 def _styled(room):
-    """A wood, tile, solid or deck floor: the procedural finishes."""
-    return room.has_floor and room.floor_finish in ('WOOD', 'TILE', 'SOLID', 'DECK')
+    """A wood, tile, solid, deck or carpet floor: the procedural finishes."""
+    return room.has_floor and room.floor_finish in ('WOOD', 'TILE', 'SOLID', 'DECK', 'CARPET')
 
 
 def _planked(room):
@@ -316,7 +333,7 @@ def _floor_summary(room):
 
 
 def _has_looks(finish):
-    return finish in ('WOOD', 'TILE', 'SOLID', 'DECK')
+    return finish in ('WOOD', 'TILE', 'SOLID', 'DECK', 'CARPET')
 
 
 def _defaults_summary(house):

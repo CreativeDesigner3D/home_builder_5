@@ -109,6 +109,8 @@ SECTIONS = (
                          ("Stacked", "Stacked Washer Dryer",
                           "Stacked Washer Dryer"),
                          ("Laundry Tall", "Tall Laundry", "Tall Laundry"))),
+            ("Bath", (("Toilet", "Toilet", "Toilet"),
+                      ("Pedestal Sink", "Pedestal Sink", "Pedestal Sink"))),
         ),
     },
     {

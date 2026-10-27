@@ -748,6 +748,30 @@ class _PlaceWallObjectBase(bpy.types.Operator, WallObjectPlacementMixin):
         for input_name, value in inputs.items():
             self.swing_obj.set_input(input_name, value)
 
+    def door_type(self, context):
+        """How the door being placed opens (the entry door type set for new
+        doors); only swing doors have a swing to pick."""
+        if not self.HAS_SWING:
+            return None
+        return getattr(context.scene.home_builder, 'entry_door_type', 'SWING')
+
+    def update_type_symbol(self, context):
+        """Show the plan symbol of the door type being placed (an overhead
+        door's dashed outline overhead, say) in place of the swing arc,
+        redrawn when the door's size changes."""
+        kind = self.door_type(context)
+        if kind is None or kind == 'SWING' or not self.placed_obj:
+            return
+        key = (kind, round(self.get_placed_object_width(), 4),
+               round(self.get_placed_object_height(), 4),
+               round(self.placed_obj.get_input('Dim Y'), 4))
+        if key == getattr(self, '_symbol_key', None):
+            return
+        self._symbol_key = key
+        door_window_geo.placement_symbol(
+            self.placed_obj.obj, kind, key[1], key[2], key[3],
+            is_double=self.SWING_LIST is DOUBLE_DOOR_SWINGS)
+
     def cycle_door_swing(self, direction: int):
         if not self.HAS_SWING:
             return
@@ -818,6 +842,8 @@ class _PlaceWallObjectBase(bpy.types.Operator, WallObjectPlacementMixin):
 
         self.register_placement_object(self.placed_obj.obj)
         self.create_placement_dimensions()
+        self._symbol_key = None
+        self.update_type_symbol(context)
 
     def start_next_object(self, context):
         """Continuous placement: build the next object so the run can carry
@@ -918,10 +944,11 @@ class _PlaceWallObjectBase(bpy.types.Operator, WallObjectPlacementMixin):
     def update_header(self, context):
         mode_tag = " [2-Point]" if self.define_width_mode else ""
         swing_label = ""
-        if self.HAS_SWING and self.SWING_LIST:
+        swings = self.door_type(context) == 'SWING'
+        if swings and self.SWING_LIST:
             swing_label = self.SWING_LIST[self.door_swing_index][0]
         swing_text = f" | Swing: {swing_label}" if swing_label else ""
-        swing_keys = " | \u2191/\u2193 swing" if self.HAS_SWING else ""
+        swing_keys = " | \u2191/\u2193 swing" if swings else ""
         label = self.OBJECT_LABEL
 
         if self.placement_state == hb_placement.PlacementState.TYPING:
@@ -1062,6 +1089,7 @@ class _PlaceWallObjectBase(bpy.types.Operator, WallObjectPlacementMixin):
                 self.set_position_free()
                 self.position_locked = False
 
+        self.update_type_symbol(context)
         self.update_header(context)
 
         # Left click - place (or capture start point in two-point phase 1)

@@ -21456,6 +21456,8 @@ APPLIANCE_NAME_DISPATCH = {
     "Washer": types_appliances.WashingMachine,
     "Dryer": types_appliances.Dryer,
     "Stacked Washer Dryer": types_appliances.StackedWasherDryer,
+    "Toilet": types_appliances.Toilet,
+    "Pedestal Sink": types_appliances.PedestalSink,
     # Not an appliance: a fixed-size decorative bracket that borrows the
     # appliance placement (cursor follow, wall snap, one instance).
     "Corbel": corbels.Corbel,

@@ -1704,6 +1704,27 @@ def _door_type_symbol(cage_obj, kind, opts, x0, x1, T, y_center, st, ct,
     return _symbol_object(cage_obj, "Door Type Symbol", lines, dashed)
 
 
+def placement_symbol(cage_obj, kind, width, height, thickness, is_double=False):
+    """While a door is being placed: the plan symbol of the door type it
+    will be built as, in place of the swing arc, so an overhead door
+    shows where it goes overhead before it is dropped. Built as generated
+    geometry, so the build on drop replaces it."""
+    for child in list(cage_obj.children):
+        if child.get(DOOR_SYMBOL_FLAG):
+            me = child.data
+            bpy.data.objects.remove(child, do_unlink=True)
+            if me is not None and me.users == 0:
+                bpy.data.meshes.remove(me)
+    _show_swing_arc(cage_obj, kind == 'SWING')
+    if kind == 'SWING':
+        return None
+    st = inch(1.75)
+    T = thickness
+    opts = {'_overhead_y': -st / 2.0, '_overhead_depth': height}
+    return _door_type_symbol(cage_obj, kind, opts, 0.0, width, T, T / 2.0,
+                             st, 0.0, is_double, False, -1.0)
+
+
 SWING_SYMBOL_ANGLE = 90.0       # degrees the plan leaf is drawn open at
 SWING_ARC_STEPS = 24
 
