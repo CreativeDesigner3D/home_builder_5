@@ -1231,6 +1231,8 @@ def apply_roof_visibility(scene):
             for piece in level.roof.pieces:
                 if piece.front_wall is not None:
                     _set_tree_hidden(piece.front_wall, hide)
+    from . import hb_eaves
+    hb_eaves.apply_visibility(scene)
 
 
 # =============================================================================
@@ -1280,8 +1282,9 @@ def rebuild_roof(scene, level):
     """Build (or remove) a level's roof and everything it shapes, and the
     framing under it when that shows."""
     result = _rebuild_roof(scene, level)
-    from . import hb_framing
+    from . import hb_framing, hb_eaves
     hb_framing.refresh(scene)
+    hb_eaves.refresh(scene)
     return result
 
 
@@ -1562,12 +1565,13 @@ def rebuild_roofs(scene):
     scene = hb_house.house_scene_of(scene)
     if scene is None:
         return
-    from . import hb_framing
-    with hb_framing.held():
+    from . import hb_framing, hb_eaves
+    with hb_framing.held(), hb_eaves.held():
         for level in scene.hb_house.levels:
             if level.roof.enabled or level.roof.roof_obj is not None:
                 rebuild_roof(scene, level)
     hb_framing.refresh(scene)
+    hb_eaves.refresh(scene)
 
 
 # =============================================================================

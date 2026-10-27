@@ -128,6 +128,33 @@ VIEW_FIELDS = (
 )
 
 
+# ---- Eaves -------------------------------------------------------------------
+
+def _eaves_summary(house):
+    if not house.eave_trim:
+        return "Off"
+    parts = [_label(house, 'soffit_style')]
+    if house.gutters:
+        parts.append(f"{house.gutter_size}\" {_label(house, 'gutter_style')} gutters")
+    return " · ".join(parts)
+
+
+EAVE_FIELDS = (
+    ('group', 'house_eaves', "Eaves & Gutters", {'summary': _eaves_summary, 'fields': (
+        ('bool', 'eave_trim', "Eave Trim"),
+        ('distance', 'fascia_height', "Fascia Height", {'when': lambda h: h.eave_trim}),
+        ('distance', 'fascia_thickness', "Fascia Thickness", {'when': lambda h: h.eave_trim}),
+        ('bool', 'rake_boards', "Rake Boards", {'when': lambda h: h.eave_trim}),
+        ('choices', 'soffit_style', "Soffit", {'cols': 2, 'when': lambda h: h.eave_trim}),
+        ('bool', 'gutters', "Gutters", {'when': lambda h: h.eave_trim}),
+        ('choices', 'gutter_style', "Style", {'cols': 2, 'when': lambda h: h.eave_trim and h.gutters}),
+        ('choices', 'gutter_size', "Size", {'cols': 2, 'when': lambda h: h.eave_trim and h.gutters}),
+        ('bool', 'gutters_on_dormers', "On Dormers", {'when': lambda h: h.eave_trim and h.gutters}),
+        ('bool', 'downspouts', "Downspouts", {'when': lambda h: h.eave_trim and h.gutters}),
+    )}),
+)
+
+
 # ---- Backdrop -----------------------------------------------------------------
 # A plan to trace on the active level (hb_backdrop)
 
@@ -693,6 +720,8 @@ def _blocks(context):
                 blocks.extend(options_panel.pool_blocks(context, PIECE_SPEC))
                 blocks.append(('note', "Draw pieces in Edit Roof (G, D, A),"))
                 blocks.append(('note', "or select walls and use an Add button."))
+        blocks.append(('gap', None))
+        blocks.extend(options_panel.field_blocks(context, EAVE_FIELDS, scene.hb_house))
     elif _page == 'STRUCTURE':
         blocks = [('head', ("Structure", False, None))]
         blocks.extend(options_panel.field_blocks(context, STRUCTURE_FIELDS, scene.hb_house))

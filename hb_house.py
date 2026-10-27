@@ -1451,6 +1451,11 @@ def _foundation_changed(self, context):
     hb_foundation._settings_changed(self, context)
 
 
+def _eaves_changed(self, context):
+    from . import hb_eaves
+    hb_eaves._settings_changed(self, context)
+
+
 class HB_Level(PropertyGroup):
     uid: StringProperty(name="Level ID")  # type: ignore
 
@@ -1583,6 +1588,44 @@ def _exterior_changed(house):
 
 class HB_House_Props(PropertyGroup):
     levels: CollectionProperty(type=HB_Level)  # type: ignore
+
+    # Eave trim and gutters (see hb_eaves)
+    eave_trim: BoolProperty(
+        name="Eave Trim", default=False,
+        description="Fascia, soffits and rake boards round the roofs, and gutters",
+        update=_eaves_changed)  # type: ignore
+    fascia_height: FloatProperty(
+        name="Fascia Height", default=inch(7.25), min=inch(3.5), max=inch(16),
+        subtype='DISTANCE', precision=4, update=_eaves_changed)  # type: ignore
+    fascia_thickness: FloatProperty(
+        name="Fascia Thickness", default=inch(1.0), min=inch(0.5), max=inch(2.5),
+        subtype='DISTANCE', precision=4, update=_eaves_changed)  # type: ignore
+    rake_boards: BoolProperty(
+        name="Rake Boards", default=True,
+        description="A board up each gable's edge",
+        update=_eaves_changed)  # type: ignore
+    soffit_style: EnumProperty(
+        name="Soffit",
+        items=[('BOXED', "Boxed", "A level board under the overhang, back to the wall"),
+               ('NONE', "Open", "No soffit: the roof's underside shows")],
+        default='BOXED', update=_eaves_changed)  # type: ignore
+    gutters: BoolProperty(
+        name="Gutters", default=True, update=_eaves_changed)  # type: ignore
+    gutter_style: EnumProperty(
+        name="Gutter Style",
+        items=[('K', "K-Style", "The ogee profile most houses have"),
+               ('HALF_ROUND', "Half Round", "A half-round trough")],
+        default='K', update=_eaves_changed)  # type: ignore
+    gutter_size: EnumProperty(
+        name="Gutter Size",
+        items=[('5', '5"', ""), ('6', '6"', "")],
+        default='5', update=_eaves_changed)  # type: ignore
+    gutters_on_dormers: BoolProperty(
+        name="Gutters on Dormers", default=False,
+        description="Gutters on the eaves of cross gables and dormers too",
+        update=_eaves_changed)  # type: ignore
+    downspouts: BoolProperty(
+        name="Downspouts", default=True, update=_eaves_changed)  # type: ignore
 
     # The foundation (see hb_foundation)
     foundation_type: EnumProperty(
