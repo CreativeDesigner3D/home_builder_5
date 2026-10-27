@@ -199,6 +199,108 @@ def restore_tees(records, scene):
         obj.update_tag()
 
 
+def wall_type_size(props, wall_type, level=None):
+    """(height, thickness) a new wall of this type is drawn at, from the
+    scene's home_builder settings, and on a house's level its height."""
+    if wall_type in {'Exterior', 'Interior'}:
+        height = props.ceiling_height
+    elif wall_type == 'Half':
+        height = props.half_wall_height
+    elif wall_type == 'Railing':
+        height = props.railing_height
+    elif wall_type in hb_wall_graph.ROOM_ONLY_WALLS:
+        height = DIVIDER_HEIGHT
+    else:  # Fake
+        height = props.fake_wall_height
+    if wall_type == 'Exterior':
+        thickness = props.exterior_wall_thickness
+    elif wall_type in {'Interior', 'Half'}:
+        thickness = props.interior_wall_thickness
+    elif wall_type == 'Railing':
+        thickness = props.railing_thickness
+    elif wall_type in hb_wall_graph.ROOM_ONLY_WALLS:
+        thickness = DIVIDER_THICKNESS
+    else:  # Fake — thin decorative panel
+        thickness = units.inch(0.75)
+    if level is not None:
+        height = hb_house.new_wall_height(level, wall_type, props)
+    return height, thickness
+
+
+def apply_wall_type(wall, wall_type, height, thickness):
+    """Give a wall (a GeoNodeWall) a type's size and tags, clearing
+    another type's."""
+    wall.set_input('Thickness', thickness)
+    wall.set_input('Height', height)
+    obj = wall.obj
+    for key in ('IS_HALF_WALL', 'IS_FAKE_WALL', 'IS_RAILING',
+                'IS_ROOM_DIVIDER', 'IS_PORCH_EDGE'):
+        if key in obj:
+            del obj[key]
+    obj.display_type = 'TEXTURED'
+    obj.hide_render = False
+
+    # Tag with wall type for identification
+    obj['WALL_TYPE'] = wall_type
+    if wall_type == 'Half':
+        obj['IS_HALF_WALL'] = True
+    elif wall_type == 'Fake':
+        obj['IS_FAKE_WALL'] = True
+    elif wall_type == 'Railing':
+        obj['IS_RAILING'] = True
+    elif wall_type in hb_wall_graph.ROOM_ONLY_WALLS:
+        style_room_only_wall(obj, wall_type)
+    obj.update_tag()
+
+
+def build_wall_run(scene, points, wall_type='Exterior', level=None,
+                   thickness=None, height=None, closed=False):
+    """Walls along a run of plan points, joined end to end as Draw Walls
+    joins them - and closed back to the first point with `closed` - with
+    the type's size unless a thickness or height is given. In a house, on
+    `level` (the active level when None). The scene must be the context's
+    (new objects go into it). Returns the wall objects.
+
+    Wall wrappers are kept here, not collection items, so nothing is held
+    across an add()."""
+    from mathutils import Vector
+    pts = [Vector((p[0], p[1], 0.0)) for p in points]
+    if closed and len(pts) > 2 and (pts[0] - pts[-1]).length < 1e-6:
+        pts.pop()
+    count = len(pts) if closed else len(pts) - 1
+    if count < 1:
+        return []
+    if level is None:
+        level = hb_house.active_level_of_scene(scene)
+    h, t = wall_type_size(scene.home_builder, wall_type, level)
+    h = h if height is None else height
+    t = t if thickness is None else thickness
+    walls = []
+    with rooms_held():
+        for i in range(count):
+            a, b = pts[i], pts[(i + 1) % len(pts)]
+            d = b - a
+            if d.length < 0.01:
+                continue
+            wall = hb_types.GeoNodeWall()
+            wall.create("Wall")
+            apply_wall_type(wall, wall_type, h, t)
+            wall.obj.location = a
+            wall.obj.rotation_euler.z = math.atan2(d.y, d.x)
+            wall.set_input('Length', d.length)
+            if level is not None:
+                hb_house.assign_wall_to_level(wall.obj, level, scene)
+            if walls:
+                wall.connect_to_wall(walls[-1])
+            walls.append(wall)
+        if closed and len(walls) > 2:
+            walls[-1].obj_x.home_builder.connected_object = walls[0].obj
+    bpy.context.view_layer.update()
+    if walls:
+        refresh_wall_junctions(scene, level.uid if level is not None else None)
+    return [w.obj for w in walls]
+
+
 def calculate_wall_miter_angles(wall_obj):
     """Recompute the junctions on this wall's level (its corners, Ts and
     multi-way joins, and every other wall end there)."""
@@ -2086,61 +2188,13 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
 
     def wall_type_size(self, context, wall_type):
         """(height, thickness) a new wall of this type is drawn at."""
-        props = context.scene.home_builder
-
-        # Determine height based on wall type
-        if wall_type in {'Exterior', 'Interior'}:
-            height = props.ceiling_height
-        elif wall_type == 'Half':
-            height = props.half_wall_height
-        elif wall_type == 'Railing':
-            height = props.railing_height
-        elif wall_type in hb_wall_graph.ROOM_ONLY_WALLS:
-            height = DIVIDER_HEIGHT
-        else:  # Fake
-            height = props.fake_wall_height
-
-        # Determine thickness based on wall type
-        if wall_type == 'Exterior':
-            thickness = props.exterior_wall_thickness
-        elif wall_type in {'Interior', 'Half'}:
-            thickness = props.interior_wall_thickness
-        elif wall_type == 'Railing':
-            thickness = props.railing_thickness
-        elif wall_type in hb_wall_graph.ROOM_ONLY_WALLS:
-            thickness = DIVIDER_THICKNESS
-        else:  # Fake — thin decorative panel
-            thickness = units.inch(0.75)
-
-        level = hb_house.active_level(context)
-        if level is not None:
-            height = hb_house.new_wall_height(level, wall_type, props)
-        return height, thickness
+        return wall_type_size(context.scene.home_builder, wall_type,
+                              hb_house.active_level(context))
 
     def apply_wall_type(self, context, wall, wall_type):
         """Give a wall the type's size and tags, clearing another type's."""
         height, thickness = self.wall_type_size(context, wall_type)
-        wall.set_input('Thickness', thickness)
-        wall.set_input('Height', height)
-        obj = wall.obj
-        for key in ('IS_HALF_WALL', 'IS_FAKE_WALL', 'IS_RAILING',
-                    'IS_ROOM_DIVIDER', 'IS_PORCH_EDGE'):
-            if key in obj:
-                del obj[key]
-        obj.display_type = 'TEXTURED'
-        obj.hide_render = False
-
-        # Tag with wall type for identification
-        obj['WALL_TYPE'] = wall_type
-        if wall_type == 'Half':
-            obj['IS_HALF_WALL'] = True
-        elif wall_type == 'Fake':
-            obj['IS_FAKE_WALL'] = True
-        elif wall_type == 'Railing':
-            obj['IS_RAILING'] = True
-        elif wall_type in hb_wall_graph.ROOM_ONLY_WALLS:
-            style_room_only_wall(obj, wall_type)
-        obj.update_tag()
+        apply_wall_type(wall, wall_type, height, thickness)
 
     def sync_wall_type(self, context):
         """The wall in hand follows the type and thickness picked while
