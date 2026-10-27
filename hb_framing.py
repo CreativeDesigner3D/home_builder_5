@@ -765,6 +765,8 @@ def frame_level_ceilings(boards, scene, level, step, tree=None):
         area = next((a for a in areas if hb_wall_graph.point_in_polygon(p, a.polygon)), None)
         if area is None or _covered(scene, level, p):
             continue
+        if _under_trusses(scene, level, p):
+            continue                    # the trusses' bottom chords are its ceiling
         _axis, span = short_axis(area.polygon)
         depth = joist_depth(span)
         z_bottom = level.elevation + hb_rooms.room_height(room, level)
@@ -1000,6 +1002,60 @@ def frame_collar_ties(boards, scene, level, step):
         boards.run((a[0], a[1]), (b[0], b[1]), z_tie, T, COLLAR_DEPTH)
 
 
+TRUSS_CHORD = inch(3.5)     # 2x4 chords and webs
+
+
+def _plane_member(boards, frame, v, a, b, depth):
+    """A truss member in the plane at v: centreline a-b in (u, z), `depth`
+    deep in the plane, a board's thickness across it."""
+    from . import hb_roofs
+    du, dz = b[0] - a[0], b[1] - a[1]
+    length = (du * du + dz * dz) ** 0.5
+    if length < 1e-4:
+        return
+    nu, nz = -dz / length * depth / 2.0, du / length * depth / 2.0
+    ring = [(a[0] - nu, a[1] - nz), (b[0] - nu, b[1] - nz), (b[0] + nu, b[1] + nz), (a[0] + nu, a[1] + nz)]
+    w = lambda u, vv, z: Vector(hb_roofs._world(frame, u, vv, z))
+    boards.box([w(u, v - T / 2.0, z) for u, z in ring] + [w(u, v + T / 2.0, z) for u, z in ring])
+
+
+def frame_trusses(boards, scene, level):
+    """Trusses along a gable roof in place of its rafters and ceiling
+    joists, every truss spacing between the gable walls, each bearing on
+    the side walls' outside faces. True if it framed any."""
+    from . import hb_roofs, hb_structure_geom as geom
+    roof = level.roof
+    kind = hb_roofs.trusses_of(roof)
+    if not roof.enabled or kind is None:
+        return False
+    frame = hb_roofs.roof_frame(scene, level)
+    if frame is None:
+        return False
+    members = geom.truss(frame['u0'], frame['u1'], frame['base'], frame['plate'],
+                         frame['p'], roof.eave_overhang, kind, TRUSS_CHORD)
+    # Just inside the gable walls, and every spacing between
+    inset = inch(6)
+    v0, v1 = frame['v0'] + inset, frame['v1'] - inset
+    n = max(1, math.ceil((v1 - v0) / roof.truss_spacing))
+    for k in range(n + 1):
+        v = v0 + (v1 - v0) * k / n
+        for a, b in members:
+            _plane_member(boards, frame, v, a, b, TRUSS_CHORD)
+    return True
+
+
+def _under_trusses(scene, level, point):
+    """Whether a plan point is under a level's trussed roof."""
+    from . import hb_roofs
+    if hb_roofs.trusses_of(level.roof) is None or not level.roof.enabled:
+        return False
+    frame = hb_roofs.roof_frame(scene, level)
+    if frame is None:
+        return False
+    u, v = hb_roofs._uv(frame, point)
+    return frame['u0'] <= u <= frame['u1'] and frame['v0'] <= v <= frame['v1']
+
+
 def lumber_material():
     mat = bpy.data.materials.get(MATERIAL)
     if mat is None:
@@ -1046,10 +1102,13 @@ def level_framing(scene, level, depsgraph, tree):
         frame_level_floor(boards, scene, level, step)
     if house.framing_ceilings:
         frame_level_ceilings(boards, scene, level, step, tree)
-    if house.framing_roofs and house.framing_collar_ties:
+    trussed = house.framing_roofs and frame_trusses(boards, scene, level)
+    if house.framing_roofs and house.framing_collar_ties and not trussed:
         frame_collar_ties(boards, scene, level, inch(24) if house.framing_spacing == '24' else step)
     if house.framing_roofs and level.roof.enabled:
         for obj, sits_on in ((level.roof.roof_obj, False), (level.roof.dormer_obj, True)):
+            if trussed and obj == level.roof.roof_obj:
+                continue                # trusses, not rafters
             if obj is not None and obj.type == 'MESH' and obj.name in scene.objects:
                 frame_roof(boards, obj, depsgraph, inch(24) if house.framing_spacing == '24' else step,
                            sits_on=sits_on)

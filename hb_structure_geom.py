@@ -252,3 +252,58 @@ def longest_span(a, b, bearings):
     length = ((b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2) ** 0.5
     pts = [0.0] + crossings(a, b, bearings) + [1.0]
     return max((t1 - t0) * length for t0, t1 in zip(pts, pts[1:]))
+
+
+# ---- Trusses -------------------------------------------------------------------------
+
+KING_POST_SPAN = 6.0        # shorter spans take a king post, longer a Fink (W)
+
+
+def truss(u0, u1, base, plate, pitch, overhang, kind, chord):
+    """A gable truss in its own plane, (u across, z up): members as
+    (start, end) centrelines, each `chord` deep. u0 and u1 are the outside
+    faces of the walls it bears on, `base` their top, `plate` the roof's
+    underside there; the top chords follow that underside up to the ridge
+    and run on past the walls by `overhang`. `kind` 'COMMON' has a level
+    bottom chord; 'SCISSOR' two rising at half the pitch."""
+    uc = (u0 + u1) / 2.0
+    half = (u1 - u0) / 2.0
+    h = chord / 2.0
+    k = (1.0 + pitch * pitch) ** 0.5
+    # The top chords' centrelines: the underside dropped square to the
+    # slope by half a chord's depth
+    drop = h * k
+
+    def top(u):
+        return plate + (half - abs(u - uc)) * pitch - drop
+
+    members = [((u0 - overhang, top(u0) - overhang * pitch), (uc, top(uc))),
+               ((uc, top(uc)), (u1 + overhang, top(u1) - overhang * pitch))]
+    if kind == 'SCISSOR':
+        lift = half * pitch / 2.0
+
+        def bottom(u):
+            return base + h + (half - abs(u - uc)) * pitch / 2.0
+
+        members += [((u0, base + h), (uc, base + h + lift)),
+                    ((uc, base + h + lift), (u1, base + h))]
+        # A post at the peak and a web from each bottom chord's middle up
+        # to its top chord
+        members.append(((uc, bottom(uc)), (uc, top(uc))))
+        for s in (-1.0, 1.0):
+            ub = uc + s * half / 2.0
+            ut = uc + s * half * 0.25
+            members.append(((ub, bottom(ub)), (ut, top(ut))))
+        return members
+    members.append(((u0, base + h), (u1, base + h)))
+    if 2 * half <= KING_POST_SPAN:
+        members.append(((uc, base + h), (uc, top(uc))))
+        return members
+    # Fink: from the bottom chord's thirds to the top chords' middles and
+    # the peak
+    for s in (-1.0, 1.0):
+        ub = uc + s * half / 3.0
+        ut = uc + s * half / 2.0
+        members.append(((ub, base + h), (ut, top(ut))))
+        members.append(((ub, base + h), (uc, top(uc))))
+    return members

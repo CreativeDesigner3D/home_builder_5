@@ -337,6 +337,12 @@ ROOF_FIELDS = (
     ('number', 'pitch', "Upper Pitch (in 12)",
      {'when': lambda roof: roof.enabled and roof.style == 'GAMBREL'}),
     ('enum', 'ridge', "Ridge", {'when': _on}),
+    ('choices', 'framing', "Framing", {'cols': 3,
+                                        'when': lambda roof: roof.enabled and roof.style == 'GABLE'
+                                        and roof.base != 'FLOOR'}),
+    ('distance', 'truss_spacing', "Truss Spacing",
+     {'when': lambda roof: roof.enabled and roof.style == 'GABLE' and roof.base != 'FLOOR'
+      and roof.framing != 'RAFTERS'}),
     ('bool', 'rise_through', "Upper Floor Rises Through", {'when': _on}),
     ('group', 'roof_footprint', "Footprint", {'when': _on, 'summary': _footprint_summary, 'fields': (
         ('bool', 'use_extents', "Custom Footprint"),

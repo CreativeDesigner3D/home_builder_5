@@ -113,6 +113,14 @@ def roof_bvh(scene, depsgraph=None, levels=None, porches=True):
     return BVHTree.FromPolygons(verts, polys)
 
 
+def trusses_of(roof):
+    """'COMMON' or 'SCISSOR' when a roof is framed with trusses, else None:
+    only a gable roof on its walls takes them."""
+    if roof.style == 'GABLE' and roof.base != 'FLOOR' and roof.framing in ('COMMON', 'SCISSOR'):
+        return roof.framing
+    return None
+
+
 def roof_frame(scene, level):
     """The geometry a level's roof is built from, or None without walls.
 
@@ -179,6 +187,7 @@ def roof_frame(scene, level):
         'under': under,
         'level_uid': level.uid,
         'style': roof.style,
+        'trusses': trusses_of(roof),
         'custom': bool(roof.use_extents),
     }
 

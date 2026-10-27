@@ -1192,6 +1192,13 @@ def _roof_changed(self, context):
     hb_roofs.rebuild_roof_of(self)
 
 
+def _truss_changed(self, context):
+    """Trusses or rafters: the framing changes, and a vaulted ceiling under
+    scissor trusses follows their bottom chords."""
+    from . import hb_rooms
+    hb_rooms.rebuild_after_walls(self.id_data)
+
+
 def _roof_piece_changed(self, context):
     """A roof piece's setting changed: rebuild the roof it belongs to."""
     from . import hb_roofs
@@ -1322,6 +1329,16 @@ class HB_Roof(PropertyGroup):
                ('X', "Along X", "Ridge runs along X; gables face X"),
                ('Y', "Along Y", "Ridge runs along Y; gables face Y")],
         default='AUTO', update=_roof_changed)  # type: ignore
+
+    framing: EnumProperty(
+        name="Framing",
+        items=[('RAFTERS', "Rafters", "Rafters to a ridge board, and ceiling joists"),
+               ('COMMON', "Common Trusses", "Trusses with a level bottom chord: the ceiling under them is flat"),
+               ('SCISSOR', "Scissor Trusses", "Trusses whose bottom chords rise at half the pitch: a vaulted ceiling follows them")],
+        default='RAFTERS', update=_truss_changed)  # type: ignore
+    truss_spacing: FloatProperty(
+        name="Truss Spacing", default=inch(24), min=inch(12), max=inch(48),
+        subtype='DISTANCE', precision=4, update=_truss_changed)  # type: ignore
 
     eave_overhang: FloatProperty(
         name="Eave Overhang", description="How far the roof runs past the side walls",

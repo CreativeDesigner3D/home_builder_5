@@ -184,6 +184,11 @@ def vault_z(frame, room, level, u, v):
     roof, no lower than the room's flat ceiling, no higher than its peak."""
     from . import hb_roofs
     z = hb_roofs.under_z_at(frame, u, v) - level.elevation - VAULT_GAP
+    if frame.get('trusses') == 'SCISSOR':
+        # Under scissor trusses: up their bottom chords, at half the pitch
+        half = (frame['u1'] - frame['u0']) / 2.0
+        chord = frame['base'] + (half - abs(u - frame['uc'])) * frame['p'] / 2.0
+        z = min(z, chord - level.elevation - VAULT_GAP)
     if room.ceiling_style == 'ATTIC':
         # Flat, but down with the roof where the roof is lower
         return max(min(z, room_height(room, level)), 0.05)
