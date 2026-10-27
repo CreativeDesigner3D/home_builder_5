@@ -73,6 +73,10 @@ OPEN_SLIDE = 100.0          # percent a pocket, barn or bypass door opens
 DOOR_SWING_TIME = 0.6       # s for a door to open or close
 # Starting and ending
 GLIDE_TIME = 0.7            # s for the view to glide in or out
+# The viewport lens while walking: 50 mm (Blender's default) frames a
+# room too tight from inside it. 30 mm shows about 100 degrees across, a
+# person's useful field of view, so rooms read at their real size.
+WALK_LENS = 30.0
 DRAG_TO_FACE = 0.3          # m of drag from the spot before it sets the facing
 MARKER_RADIUS = 0.3         # m, the spot marker on the floor
 CARD_TIME = 4.0             # s the keys card shows at the start
@@ -456,6 +460,8 @@ class HOME_BUILDER_OT_walk_through(bpy.types.Operator):
         r3d = self.r3d
         self.saved_view = (r3d.view_location.copy(), r3d.view_rotation.copy(),
                            r3d.view_distance, r3d.view_perspective)
+        self.space = self.area.spaces.active
+        self.saved_lens = self.space.lens
         house = self.scene.hb_house
         self.saved_house = (house.show_ceilings, house.level_display)
         self.house_changed = False
@@ -551,6 +557,7 @@ class HOME_BUILDER_OT_walk_through(bpy.types.Operator):
                 house.show_ceilings = ceilings
             if house.level_display != display:
                 house.level_display = display
+        self.space.lens = self.saved_lens
         if go_back:
             loc, rot, dist, persp = self.saved_view
             self.r3d.view_location = loc
@@ -756,6 +763,11 @@ class HOME_BUILDER_OT_walk_through(bpy.types.Operator):
             eye, rot = glide(f, eye0, rot0, eye1, rot1)
             self.r3d.view_rotation = rot
             self.r3d.view_location = eye
+            # The lens widens on the way in and narrows on the way out
+            k = min(max(f, 0.0), 1.0)
+            if self.phase == 'GLIDE_OUT':
+                k = 1.0 - k
+            self.space.lens = self.saved_lens + (WALK_LENS - self.saved_lens) * k
             if f >= 1.0:
                 if self.phase == 'GLIDE_IN':
                     self._begin_walking()
