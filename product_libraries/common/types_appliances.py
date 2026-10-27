@@ -242,6 +242,32 @@ class Sink(Appliance):
         self.add_property('Undermount', 'CHECKBOX', True)
 
 
+class Toilet(Appliance):
+    """A close-coupled toilet, its tank against the wall."""
+
+    width = inch(20)
+    height = inch(30)
+    depth = inch(29)
+
+    APPLIANCE_TYPE = 'TOILET'
+
+    def create(self, name="Toilet"):
+        self.create_appliance(name, 'TOILET', label='WC')
+
+
+class PedestalSink(Appliance):
+    """A basin on a pedestal, standing free of any cabinet."""
+
+    width = inch(24)
+    height = inch(34)
+    depth = inch(19)
+
+    APPLIANCE_TYPE = 'PEDESTAL_SINK'
+
+    def create(self, name="Pedestal Sink"):
+        self.create_appliance(name, 'PEDESTAL_SINK', label='LAV')
+
+
 class WashingMachine(Appliance):
     """Clothes washing machine."""
 

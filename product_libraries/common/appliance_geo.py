@@ -70,7 +70,10 @@ MODEL_PANEL_READY_FLAG = "APPLIANCE_MODEL_PANEL_READY"
 SUPPORTED_TYPES = {'REFRIGERATOR', 'RANGE', 'DISHWASHER', 'UNDER_COUNTER',
                    'HOOD', 'SINK', 'WALL_OVEN', 'MICROWAVE', 'COOKTOP',
                    'WASHING_MACHINE', 'DRYER', 'STACKED_LAUNDRY',
-                   'UNDER_CABINET_HOOD'}
+                   'UNDER_CABINET_HOOD', 'TOILET', 'PEDESTAL_SINK'}
+
+# Bath fixtures: china, cut to the cage when built.
+FIXTURE_TYPES = {'TOILET', 'PEDESTAL_SINK'}
 
 # Laundry: the washer, the dryer and the two stacked as one unit.
 LAUNDRY_TYPES = {'WASHING_MACHINE', 'DRYER', 'STACKED_LAUNDRY'}
@@ -364,6 +367,8 @@ _DEFAULTS_BY_TYPE = {
     'RANGE': _RANGE_DEFAULTS,
     'DISHWASHER': _DISHWASHER_DEFAULTS,
     'UNDER_COUNTER': _UNDER_COUNTER_DEFAULTS,
+    'TOILET': dict(_COMMON_DEFAULTS, finish='WHITE'),
+    'PEDESTAL_SINK': dict(_COMMON_DEFAULTS, finish='WHITE'),
 }
 
 
@@ -2885,6 +2890,172 @@ def _build_laundry(cage_obj, opts):
 
 
 # ---------------------------------------------------------------------------
+# Bath fixtures
+#
+# A toilet and a pedestal sink: china shapes, so plain meshes cut to the
+# cage at build time (the prompts rebuild them on a size change), the
+# toilet's tank against the wall and its bowl out front, the sink's basin
+# on a column. Built in the cage's space: x across, the wall at y = 0 and
+# the front at y = -dim_y, the floor at z = 0.
+# ---------------------------------------------------------------------------
+
+def _china_material():
+    return _material('Fixture China', (0.93, 0.93, 0.91), 0.0, 0.08)
+
+
+def _bm_child(cg, name, bm, mat, smooth=True):
+    """A fixed-shape part from a bmesh, standing in the cage's space."""
+    mesh = bpy.data.meshes.new(name)
+    bm.normal_update()
+    bm.to_mesh(mesh)
+    bm.free()
+    if mat is not None:
+        mesh.materials.append(mat)
+    for poly in mesh.polygons:
+        poly.use_smooth = smooth
+    mesh.update()
+    obj = hb_utils.new_object(name, mesh)
+    obj.parent = cg.obj
+    obj[GEO_CHILD_FLAG] = True
+    if cg.obj.get('MENU_ID'):
+        obj['MENU_ID'] = cg.obj['MENU_ID']
+    for coll in list(cg.obj.users_collection) or [bpy.context.scene.collection]:
+        coll.objects.link(obj)
+    return obj
+
+
+def _soft_box(x0, x1, y0, y1, z0, z1, round_by):
+    """A box with its edges rounded over."""
+    bm = bmesh.new()
+    bmesh.ops.create_cube(bm, size=1.0)
+    for v in bm.verts:
+        v.co.x = x0 + (v.co.x + 0.5) * (x1 - x0)
+        v.co.y = y0 + (v.co.y + 0.5) * (y1 - y0)
+        v.co.z = z0 + (v.co.z + 0.5) * (z1 - z0)
+    r = min(round_by, (x1 - x0) * 0.45, (y1 - y0) * 0.45, (z1 - z0) * 0.45)
+    if r > 1e-4:
+        bmesh.ops.bevel(bm, geom=list(bm.edges), offset=r, segments=4,
+                        affect='EDGES', profile=0.5)
+    return bm
+
+
+def _oval_solid(profile, cx, cy, sx, sy, segments=40):
+    """A surface of revolution from (r, z) points, squashed to an oval
+    (``sx`` across, ``sy`` front to back) and centred at (cx, cy)."""
+    verts, faces = [], []
+    _revolve(verts, faces, profile, segments=segments)
+    bm = bmesh.new()
+    vs = [bm.verts.new((cx + x * sx, cy + y * sy, z)) for x, y, z in verts]
+    for f in faces:
+        try:
+            bm.faces.new([vs[i] for i in f])
+        except ValueError:
+            pass
+    bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=1e-6)
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    return bm
+
+
+TOILET_RIM_H = inch(15.0)
+TOILET_TANK_D = inch(8.0)
+TOILET_TANK_H = inch(15.0)
+
+
+def _build_toilet(cage_obj, opts):
+    cg = _Cage(cage_obj)
+    w, d, h = _cage_dims(cg)
+    china = _china_material()
+    metal = _metal_material()
+    cx = w / 2.0
+    rim = min(TOILET_RIM_H, h * 0.55)
+    tank_w = w * 0.92
+    tank_d = min(TOILET_TANK_D, d * 0.32)
+    back = -inch(1.0)                       # off the wall for the supply
+    # The tank, its lid, and the flush lever on the front
+    _bm_child(cg, "Toilet Tank", _soft_box(
+        cx - tank_w / 2.0, cx + tank_w / 2.0, back - tank_d, back,
+        rim + inch(0.5), h - inch(1.0), inch(1.0)), china)
+    _bm_child(cg, "Toilet Tank Lid", _soft_box(
+        cx - tank_w / 2.0 - inch(0.25), cx + tank_w / 2.0 + inch(0.25),
+        back - tank_d - inch(0.25), back + inch(0.1), h - inch(1.0), h,
+        inch(0.4)), china)
+    lever_x = cx - tank_w / 2.0 + inch(2.5)
+    _bm_child(cg, "Flush Lever", _soft_box(
+        lever_x - inch(1.75), lever_x + inch(0.5), back - tank_d - inch(0.6),
+        back - tank_d, h - inch(3.0), h - inch(2.4), inch(0.15)), metal)
+    # The bowl: an elongated oval out front of the tank, on a trapway
+    # that runs back under it to the wall
+    front = -d
+    bowl_back = back - tank_d + inch(1.0)
+    half_len = (bowl_back - front) / 2.0
+    half_w = min(w * 0.36, inch(7.25))
+    by = (bowl_back + front) / 2.0
+    sy = half_len / half_w
+    profile = [(half_w * 0.52, 0.0), (half_w * 0.56, rim * 0.10),
+               (half_w * 0.62, rim * 0.45), (half_w * 0.80, rim * 0.75),
+               (half_w * 0.97, rim * 0.95), (half_w, rim)]
+    _bm_child(cg, "Toilet Bowl", _oval_solid(profile, cx, by, 1.0, sy), china)
+    # The body under the tank, up to it (the seat covers its top)
+    _bm_child(cg, "Toilet Base", _soft_box(
+        cx - half_w * 0.55, cx + half_w * 0.55, bowl_back - inch(3.0),
+        back - inch(0.5), 0.0, rim + inch(0.5), inch(1.5)), china)
+    # The seat and the lid, closed
+    seat = [(half_w * 0.62, rim), (half_w * 1.02, rim),
+            (half_w * 1.02, rim + inch(0.75)), (half_w * 0.62, rim + inch(0.75))]
+    _bm_child(cg, "Toilet Seat", _oval_solid(seat, cx, by, 1.0, sy), china)
+    lid = [(half_w * 1.0, rim + inch(0.8)), (half_w * 0.97, rim + inch(1.6)),
+           (0.001, rim + inch(1.75))]
+    _bm_child(cg, "Toilet Lid", _oval_solid(lid, cx, by - inch(0.3), 1.0, sy), china)
+
+
+PEDESTAL_BASIN_T = inch(6.0)        # the basin's height, rim to underside
+PEDESTAL_DECK = inch(3.5)           # flat at the back, where the faucet stands
+
+
+def _build_pedestal_sink(cage_obj, opts):
+    cg = _Cage(cage_obj)
+    w, d, h = _cage_dims(cg)
+    china = _china_material()
+    metal = _metal_material()
+    cx = w / 2.0
+    top = h
+    under = top - min(PEDESTAL_BASIN_T, h * 0.3)
+    # The basin: a slab rounded over at the front, a bowl sunk into it
+    bm = _soft_box(0.0, w, -d, 0.0, under, top, min(w, d) * 0.22)
+    _bm_child(cg, "Sink Basin", bm, china)
+    bowl_w = w * 0.62
+    bowl_d = (d - PEDESTAL_DECK - inch(1.5))
+    by = -PEDESTAL_DECK - bowl_d / 2.0
+    hw = bowl_w / 2.0
+    sy = (bowl_d / 2.0) / hw
+    dip = min(inch(5.0), (top - under) - inch(1.0))
+    bowl = [(hw, top + inch(0.02)), (hw * 0.92, top - dip * 0.45),
+            (hw * 0.6, top - dip * 0.9), (0.001, top - dip)]
+    _bm_child(cg, "Sink Bowl", _oval_solid(bowl, cx, by, 1.0, sy),
+              _material('Fixture Bowl', (0.80, 0.80, 0.79), 0.0, 0.08))
+    _bm_child(cg, "Sink Drain", _oval_solid(
+        [(inch(0.8), top - dip + inch(0.01)), (inch(0.8), top - dip + inch(0.05)),
+         (0.001, top - dip + inch(0.05))], cx, by, 1.0, 1.0, 24), metal)
+    # The column it stands on, flaring at the foot and under the basin
+    ped = [(inch(4.0), 0.0), (inch(3.6), inch(1.0)), (inch(3.0), inch(5.0)),
+           (inch(2.9), under * 0.7), (inch(3.6), under - inch(1.0)),
+           (inch(4.5), under + inch(0.5))]
+    _bm_child(cg, "Sink Pedestal", _oval_solid(ped, cx, -d * 0.45, 1.0, 0.8),
+              china)
+    # A single-lever faucet on the deck
+    fy = -PEDESTAL_DECK * 0.55
+    _bm_child(cg, "Faucet Base", _oval_solid(
+        [(inch(1.0), top), (inch(0.9), top + inch(1.0)), (inch(0.7), top + inch(5.0)),
+         (0.001, top + inch(5.2))], cx, fy, 1.0, 1.0, 24), metal)
+    _bm_child(cg, "Faucet Spout", _soft_box(
+        cx - inch(0.45), cx + inch(0.45), fy - inch(5.0), fy, top + inch(4.0),
+        top + inch(4.9), inch(0.3)), metal)
+    _bm_child(cg, "Faucet Lever", _soft_box(
+        cx - inch(0.25), cx + inch(0.25), fy, fy + inch(2.5), top + inch(5.2),
+        top + inch(5.6), inch(0.1)), metal)
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -2902,6 +3073,8 @@ _BUILDERS = {
     'WASHING_MACHINE': _build_laundry,
     'DRYER': _build_laundry,
     'STACKED_LAUNDRY': _build_laundry,
+    'TOILET': _build_toilet,
+    'PEDESTAL_SINK': _build_pedestal_sink,
 }
 
 
@@ -3188,9 +3361,10 @@ class HOME_BUILDER_OT_appliance_prompts(bpy.types.Operator):
         # rebuild when the options actually changed.
         opts = self._opts_dict()
         key = repr(sorted(opts.items())) + '|' + self.front_style
-        if appliance_type(self.appliance) in ('HOOD', 'UNDER_CABINET_HOOD'):
-            # The canopy and filter are cut to the cage at build time,
-            # so a size change is a rebuild too.
+        if appliance_type(self.appliance) in ({'HOOD', 'UNDER_CABINET_HOOD'}
+                                              | FIXTURE_TYPES):
+            # The canopy and filter, and the fixtures, are cut to the
+            # cage at build time, so a size change is a rebuild too.
             key += '|%.5f,%.5f,%.5f' % (self.appliance_width,
                                         self.appliance_height,
                                         self.appliance_depth)
@@ -3232,6 +3406,8 @@ class HOME_BUILDER_OT_appliance_prompts(bpy.types.Operator):
         if self.model_style == 'NONE':
             col.label(text="The appliance stays a wireframe box.",
                       icon='INFO')
+            return
+        if appl in FIXTURE_TYPES:
             return
         col.prop(self, 'finish')
         if appl not in ('HOOD', 'SINK', 'COOKTOP') and not (

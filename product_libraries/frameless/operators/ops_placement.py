@@ -348,6 +348,8 @@ APPLIANCE_CLASSES = {
     'WASHING_MACHINE': types_appliances.WashingMachine,
     'DRYER': types_appliances.Dryer,
     'STACKED_LAUNDRY': types_appliances.StackedWasherDryer,
+    'TOILET': types_appliances.Toilet,
+    'PEDESTAL_SINK': types_appliances.PedestalSink,
 }
 
 # Catalog names that place an appliance rather than a cabinet, and the
@@ -361,6 +363,8 @@ APPLIANCE_NAMES = {
     'Washer': 'WASHING_MACHINE',
     'Dryer': 'DRYER',
     'Stacked Washer Dryer': 'STACKED_LAUNDRY',
+    'Toilet': 'TOILET',
+    'Pedestal Sink': 'PEDESTAL_SINK',
 }
 
 
