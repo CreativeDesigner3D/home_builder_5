@@ -127,6 +127,29 @@ VIEW_FIELDS = (
 )
 
 
+# ---- Backdrop -----------------------------------------------------------------
+# A plan to trace on the active level (hb_backdrop)
+
+def _backdrop_summary(level):
+    from .. import hb_backdrop
+    return hb_backdrop.backdrop_summary(level)
+
+
+BACKDROP_FIELDS = (
+    ('group', 'house_backdrop', "Backdrop", {'summary': _backdrop_summary, 'fields': (
+        ('actions', (("Add PDF / Image", "home_builder.add_backdrop"),
+                     ("Set Scale", "home_builder.scale_backdrop")), ""),
+        ('bool', 'backdrop_shown', "Show"),
+        ('bool', 'backdrop_locked', "Lock"),
+        ('number', 'backdrop_opacity', "Opacity"),
+        ('actions', (("Remove", "home_builder.remove_backdrop"),), ""),
+        ('notes', lambda context: ("Or drop a PDF on the view. Set Scale:",
+                                   "click both ends of a printed dimension",
+                                   "and type its length."), ""),
+    )}),
+)
+
+
 # ---- Structure ----------------------------------------------------------------
 # What the house is built of: its framing now, its foundation and wall
 # layers as they come.
@@ -602,6 +625,8 @@ def _blocks(context):
     if _page == 'LEVELS':
         blocks = options_panel.field_blocks(context, PLAN_VIEW_FIELDS, scene.hb_house)
         blocks.extend(options_panel.pool_blocks(context, LEVEL_SPEC))
+        if level is not None:
+            blocks.extend(options_panel.field_blocks(context, BACKDROP_FIELDS, level))
         blocks.append(('gap', None))
         blocks.extend(options_panel.field_blocks(context, VIEW_FIELDS, scene.hb_house))
     elif _page == 'OUTSIDE':

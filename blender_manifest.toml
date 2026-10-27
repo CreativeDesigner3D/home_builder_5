@@ -23,7 +23,8 @@ copyright = [
 
 platforms = ["windows-x64", "windows-arm64", "macos-arm64", "macos-x64", "linux-x64"]
 
-# Bundled Python wheels (Pillow for PDF export)
+# Bundled Python wheels (Pillow for PDF export, pypdfium2 for PDF backdrops
+# - the same pypdfium2 Spaces ships, as both install into one folder)
 wheels = [
     # Python 3.13 (Blender 5.1 and newer)
     "./wheels/pillow-12.1.1-cp313-cp313-win_amd64.whl",
@@ -32,6 +33,10 @@ wheels = [
     "./wheels/pillow-12.1.1-cp313-cp313-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl",
     "./wheels/pillow-12.1.1-cp313-cp313-macosx_11_0_arm64.whl",
     "./wheels/pillow-12.1.1-cp313-cp313-macosx_10_13_x86_64.whl",
+    "./wheels/pypdfium2-5.13.0-py3-none-win_amd64.whl",
+    "./wheels/pypdfium2-5.13.0-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+    "./wheels/pypdfium2-5.13.0-py3-none-macosx_13_0_arm64.whl",
+    "./wheels/pypdfium2-5.13.0-py3-none-macosx_13_0_x86_64.whl",
 ]
 
 [permissions]

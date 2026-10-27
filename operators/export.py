@@ -2,6 +2,7 @@ import bpy
 
 # Custom properties that mark objects we should DELETE during export prep
 DELETE_FLAGS = {
+    'IS_HOUSE_BACKDROP',
     'IS_DIMENSION',
     'IS_DETAIL_LINE',
     'IS_DETAIL_POLYLINE',

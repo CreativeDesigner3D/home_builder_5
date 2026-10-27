@@ -1429,8 +1429,27 @@ class HB_WallSiding(PropertyGroup):
         default=(0.92, 0.92, 0.90), update=_wall_siding_changed)  # type: ignore
 
 
+def _backdrop_settings_changed(self, context):
+    from . import hb_backdrop
+    hb_backdrop._level_settings_changed(self, context)
+
+
 class HB_Level(PropertyGroup):
     uid: StringProperty(name="Level ID")  # type: ignore
+
+    # The plan traced on this level (see hb_backdrop)
+    backdrop_shown: BoolProperty(
+        name="Show Backdrop", default=True,
+        description="Show the plan traced on this level",
+        update=_backdrop_settings_changed)  # type: ignore
+    backdrop_locked: BoolProperty(
+        name="Lock Backdrop", default=True,
+        description="Keep the backdrop from being picked or moved by accident",
+        update=_backdrop_settings_changed)  # type: ignore
+    backdrop_opacity: FloatProperty(
+        name="Backdrop Opacity", default=0.6, min=0.05, max=1.0,
+        description="How strongly the backdrop shows",
+        update=_backdrop_settings_changed)  # type: ignore
 
     # This level's outside walls' siding, over the house's
     siding_style: EnumProperty(
