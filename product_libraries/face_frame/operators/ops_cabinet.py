@@ -7715,8 +7715,14 @@ class hb_face_frame_OT_refresh_top_drawer_openings(bpy.types.Operator):
         val = context.scene.hb_face_frame.top_drawer_opening_height
         count = 0
         done = set()
-        for obj in context.scene.objects:
-            if obj.get('SIZE_ROLE') != 'TOP_DRAWER':
+        # Snapshot names first: each size write recalcs the cabinet, which
+        # deletes and rebuilds parts, so a live scene.objects walk would step
+        # onto freed objects and crash Blender.
+        names = [o.name for o in context.scene.objects
+                 if o.get('SIZE_ROLE') == 'TOP_DRAWER']
+        for name in names:
+            obj = bpy.data.objects.get(name)
+            if obj is None or obj.get('SIZE_ROLE') != 'TOP_DRAWER':
                 continue
             node = self._row_node(obj)
             # Side-by-side siblings can resolve to the same row; write once.
