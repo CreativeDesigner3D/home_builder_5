@@ -512,6 +512,57 @@ def build_solid_nodes(mat, base, roughness):
     bsdf.inputs['Roughness'].default_value = roughness
 
 
+def build_carpet_nodes(mat, base, roughness, scale):
+    """Cut-pile carpet: a fine bump for the pile, a soft mottle in the
+    colour about `scale` across, and sheen where the light grazes it."""
+    nt, bsdf, uv = clear_nodes(mat)
+    n = nt.nodes
+    L = nt.links
+    pile = n.new('ShaderNodeTexNoise')
+    pile.location = (-800, -300)
+    pile.inputs['Scale'].default_value = 900.0
+    pile.inputs['Detail'].default_value = 2.0
+    L.new(uv.outputs['UV'], pile.inputs['Vector'])
+    bump = n.new('ShaderNodeBump')
+    bump.location = (-300, -300)
+    bump.inputs['Strength'].default_value = 0.35
+    bump.inputs['Distance'].default_value = 0.002
+    L.new(pile.outputs['Fac'], bump.inputs['Height'])
+    L.new(bump.outputs['Normal'], bsdf.inputs['Normal'])
+    mottle = n.new('ShaderNodeTexNoise')
+    mottle.location = (-800, 0)
+    mottle.inputs['Scale'].default_value = 1.0 / max(scale, 0.01)
+    mottle.inputs['Detail'].default_value = 6.0
+    L.new(uv.outputs['UV'], mottle.inputs['Vector'])
+    fleck = n.new('ShaderNodeMath')
+    fleck.location = (-550, 100)
+    fleck.operation = 'MULTIPLY_ADD'
+    fleck.inputs[1].default_value = 0.5
+    L.new(pile.outputs['Fac'], fleck.inputs[0])
+    L.new(mottle.outputs['Fac'], fleck.inputs[2])
+    nmap = n.new('ShaderNodeMapRange')
+    nmap.location = (-400, 0)
+    nmap.inputs['From Min'].default_value = 0.5
+    nmap.inputs['From Max'].default_value = 1.2
+    nmap.inputs['To Min'].default_value = 0.88
+    nmap.inputs['To Max'].default_value = 1.06
+    L.new(fleck.outputs['Value'], nmap.inputs['Value'])
+    tone = n.new('ShaderNodeMix')
+    tone.location = (-250, 0)
+    tone.data_type = 'RGBA'
+    tone.blend_type = 'MULTIPLY'
+    tone.inputs['Factor'].default_value = 1.0
+    tone.inputs[6].default_value = (*base, 1.0)
+    L.new(nmap.outputs['Result'], tone.inputs[7])
+    L.new(tone.outputs[2], bsdf.inputs['Base Color'])
+    bsdf.inputs['Roughness'].default_value = roughness
+    _set_if_present(bsdf, 'Sheen Weight', 0.6)
+    _set_if_present(bsdf, 'Sheen Roughness', 0.4)
+    _set_if_present(bsdf, 'Specular IOR Level', 0.2)
+    # Solid shading colours by the viewport colour
+    mat.diffuse_color = (*base, 1.0)
+
+
 def _set_if_present(node, name, value):
     """Principled input names move between Blender versions -- Coat was
     Clearcoat before 4.0 -- so a missing socket is a skip, not a crash."""

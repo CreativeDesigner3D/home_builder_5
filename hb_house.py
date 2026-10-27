@@ -936,9 +936,10 @@ FLOOR_FINISH_ITEMS = [
     ('NONE', "None", "No finish: the floor keeps whatever material it has"),
     ('WOOD', "Wood Planks", "Staggered hardwood planks with grain"),
     ('TILE', "Tile", "Grid or running-bond tile with grout"),
-    ('SOLID', "Solid Color", "Flat colored floor (concrete, carpet, paint)"),
+    ('SOLID', "Solid Color", "Flat colored floor (concrete, paint)"),
     ('CUSTOM', "Custom Material", "Any Blender material"),
     ('DECK', "Deck", "Outdoor deck boards"),
+    ('CARPET', "Carpet", "Wall-to-wall cut-pile carpet"),
 ]
 _FLOOR_FINISH_INDEX = {item[0]: i for i, item in enumerate(FLOOR_FINISH_ITEMS)}
 _floor_look_items = {}      # finish -> items; Blender needs the strings kept

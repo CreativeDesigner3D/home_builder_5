@@ -309,8 +309,8 @@ def _room_height_note(context, room):
 
 
 def _styled(room):
-    """A wood, tile, solid or deck floor: the procedural finishes."""
-    return room.has_floor and room.floor_finish in ('WOOD', 'TILE', 'SOLID', 'DECK')
+    """A wood, tile, solid, deck or carpet floor: the procedural finishes."""
+    return room.has_floor and room.floor_finish in ('WOOD', 'TILE', 'SOLID', 'DECK', 'CARPET')
 
 
 def _planked(room):
@@ -333,7 +333,7 @@ def _floor_summary(room):
 
 
 def _has_looks(finish):
-    return finish in ('WOOD', 'TILE', 'SOLID', 'DECK')
+    return finish in ('WOOD', 'TILE', 'SOLID', 'DECK', 'CARPET')
 
 
 def _defaults_summary(house):
