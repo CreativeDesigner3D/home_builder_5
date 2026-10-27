@@ -639,6 +639,23 @@ class home_builder_stairs_OT_stair_prompts(bpy.types.Operator):
         description="Space between the two parallel flights",
     )  # type: ignore
 
+    headroom: bpy.props.FloatProperty(
+        name="Headroom", subtype='DISTANCE', unit='LENGTH',
+        default=2.032, min=1.5, precision=5,
+        description="Clear height over the nosings: the floor above is "
+                    "opened wherever it would come lower",
+    )  # type: ignore
+
+    guard: bpy.props.BoolProperty(
+        name="Guard Rail", default=True,
+        description="A rail round the opening in the floor above",
+    )  # type: ignore
+
+    guard_height: bpy.props.FloatProperty(
+        name="Guard Height", subtype='DISTANCE', unit='LENGTH',
+        default=0.9144, min=0.5, precision=5,
+    )  # type: ignore
+
     stair_obj = None
 
     @classmethod
@@ -658,6 +675,9 @@ class home_builder_stairs_OT_stair_prompts(bpy.types.Operator):
         self.stair_obj['STAIR_LANDING_DEPTH']   = self.landing_depth
         self.stair_obj['STAIR_LANDING_HEIGHT']  = self.landing_height
         self.stair_obj['STAIR_GAP']             = self.gap
+        self.stair_obj['STAIR_HEADROOM']        = self.headroom
+        self.stair_obj['STAIR_GUARD']           = self.guard
+        self.stair_obj['STAIR_GUARD_HEIGHT']    = self.guard_height
         rebuild_stair_mesh(self.stair_obj)
         if self.stair_obj.get(hb_house.LEVEL_KEY):
             from .. import hb_rooms
@@ -679,6 +699,9 @@ class home_builder_stairs_OT_stair_prompts(bpy.types.Operator):
         self.landing_depth   = self.stair_obj.get('STAIR_LANDING_DEPTH',   self.stair_width)
         self.landing_height  = self.stair_obj.get('STAIR_LANDING_HEIGHT',  self.total_rise / 2)
         self.gap             = self.stair_obj.get('STAIR_GAP',             0)
+        self.headroom        = self.stair_obj.get('STAIR_HEADROOM',        units.inch(80))
+        self.guard           = bool(self.stair_obj.get('STAIR_GUARD',      True))
+        self.guard_height    = self.stair_obj.get('STAIR_GUARD_HEIGHT',    units.inch(36))
         return context.window_manager.invoke_props_dialog(self, width=300)
 
     def execute(self, context):
@@ -723,6 +746,13 @@ class home_builder_stairs_OT_stair_prompts(bpy.types.Operator):
         box.prop(self, 'riser_height')
         box.prop(self, 'tread_depth')
         box.prop(self, 'tread_thickness')
+
+        # The opening in the floor above
+        box = layout.box()
+        box.prop(self, 'headroom')
+        box.prop(self, 'guard')
+        if self.guard:
+            box.prop(self, 'guard_height')
 
 
 class home_builder_stairs_OT_delete_stairs(bpy.types.Operator):

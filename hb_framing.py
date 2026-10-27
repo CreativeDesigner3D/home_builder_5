@@ -444,15 +444,74 @@ def _emit(boards, piece, side, z0):
                + [Vector((q.x, q.y, z)) for q, z in zip(quad, z_tops)])
 
 
-def frame_floor(boards, polygon, z_top, depth, step, tree=None):
+def _grown(cell, by):
+    """A 4-point cell polygon grown by `by` on every side."""
+    p0, p1, _p2, p3 = (Vector(p) for p in cell)
+    u = (p1 - p0).normalized()
+    v = (p3 - p0).normalized()
+    w, h = (p1 - p0).length, (p3 - p0).length
+    o = p0 - (u + v) * by
+    return [tuple(o), tuple(o + u * (w + 2 * by)),
+            tuple(o + u * (w + 2 * by) + v * (h + 2 * by)), tuple(o + v * (h + 2 * by))]
+
+
+def _frame_opening(boards, polygon, z_top, depth, edges, joist_dir):
+    """Double trimmers along an opening's sides that run with the joists,
+    from rim to rim, and double headers across its ends between them."""
+    from . import hb_structure_geom as geom
+    jd = Vector(joist_dir).normalized()
+    for a, b, n in edges:
+        a, b, n = Vector(a), Vector(b), Vector(n).normalized()
+        d = b - a
+        if d.length < T:
+            continue
+        u = d.normalized()
+        for k in (0.5, 1.5):
+            off = n * (T * k)
+            if abs(u.dot(jd)) > 0.7:
+                # A trimmer: the whole joist line beside the opening
+                p, q = a + off - u * 100.0, b + off + u * 100.0
+                mid = (a + b) / 2.0 + off
+                for t0, t1 in geom.segment_in_polygon_spans(tuple(p), tuple(q), polygon):
+                    s, e = p + (q - p) * t0, p + (q - p) * t1
+                    if (mid - s).dot(u) >= 0 and (e - mid).dot(u) >= 0 and (e - s).length > 2.5 * T:
+                        _ceiling_run(boards, None, s + u * T, e - u * T, z_top, depth)
+            else:
+                # A header: across the end, out to the outer trimmers
+                _ceiling_run(boards, None, a + off - u * 2 * T, b + off + u * 2 * T,
+                             z_top, depth)
+
+
+def frame_floor(boards, polygon, z_top, depth, step, tree=None, openings=()):
     """Joists across a room the short way, between a rim round it - cut
-    down under `tree` (a roof) where it comes low (see _ceiling_run)."""
+    down under `tree` (a roof) where it comes low (see _ceiling_run), and
+    headed off round `openings` (stairwells: [(cells, edges)] in world XY,
+    see hb_rooms.stairwell_openings)."""
+    from . import hb_structure_geom as geom
     axis, _span = short_axis(polygon)
+    # Joists stop at an opening's headers and give way to its trimmers
+    holes = [_grown(cell, 2 * T) for cells, _edges in openings for cell in cells]
+    joist_dir = None
     for a, b in scan(polygon, axis, step, margin=1.5 * T):
         a, b = Vector(a), Vector(b)
         d = (b - a).normalized() * T
-        if (b - a).length > 2.5 * T:
-            _ceiling_run(boards, tree, a + d, b - d, z_top, depth)
+        if joist_dir is None:
+            joist_dir = b - a
+        if (b - a).length <= 2.5 * T:
+            continue
+        a, b = a + d, b - d
+        spans = [(0.0, 1.0)]
+        for hole in holes:
+            cut = geom.segment_in_polygon_spans(tuple(a), tuple(b), hole)
+            spans = [piece for s in spans for piece in geom.subtract_intervals(s, cut)]
+        for t0, t1 in spans:
+            p, q = a + (b - a) * t0, a + (b - a) * t1
+            if (q - p).length > 2.5 * T:
+                _ceiling_run(boards, tree, p, q, z_top, depth)
+    if joist_dir is not None:
+        for cells, edges in openings:
+            if any(geom._inside(tuple((Vector(c[0]) + Vector(c[2])) / 2.0), polygon) for c in cells):
+                _frame_opening(boards, polygon, z_top, depth, edges, joist_dir)
     n = len(polygon)
     for i in range(n):
         p, q = Vector(polygon[i]), Vector(polygon[(i + 1) % n])
@@ -475,8 +534,10 @@ def frame_level_floor(boards, scene, level, step):
     else:
         depth = min(max(level.floor_thickness - SUBFLOOR, inch(5.5)), inch(11.25))
     z_top = level.elevation - SUBFLOOR
+    from . import hb_rooms
+    openings = hb_rooms.stairwell_openings(scene, level)
     for area in _room_areas(scene, level):
-        frame_floor(boards, area.polygon, z_top, depth, step)
+        frame_floor(boards, area.polygon, z_top, depth, step, openings=openings)
 
 
 def _covered(scene, level, point):

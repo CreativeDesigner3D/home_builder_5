@@ -894,17 +894,107 @@ def stairwell_cutter(stair):
     return None
 
 
+HEADROOM = inch(80)             # clear height over the stair's nosings
+GUARD_HEIGHT = inch(36)
+GUARD_POST = inch(3.5)
+GUARD_POST_SPACING = inch(72)   # at most, between posts along a side
+GUARD_RAIL_W = inch(2.5)
+GUARD_RAIL_T = inch(1.5)
+GUARD_BOTTOM_RAIL = inch(3.0)   # its bottom, above the floor
+GUARD_BALUSTER = inch(0.75)
+GUARD_BALUSTER_GAP = inch(3.75) # under the 4" sphere a guard must stop
+STAIR_GUARD_KEY = 'IS_STAIR_GUARD'
+
+
+def stair_guard(stair):
+    for child in stair.children:
+        if child.get(STAIR_GUARD_KEY):
+            return child
+    return None
+
+
+def _upper_floor_underside(stair, level):
+    """Height of the underside of the floor the stair climbs through, in
+    the stair's own space; None with no level above."""
+    upper = level_above(level.id_data.hb_house, level)
+    if upper is None:
+        return None
+    rise = float(stair.get('STAIR_TOTAL_RISE', stair_rise(level)))
+    return rise - floor_slab_thickness(upper)
+
+
+def stair_opening_rects(stair, level):
+    """The treads and landings that need the floor above opened for
+    headroom: their plan rectangles (x0, y0, x1, y1) in the stair's own
+    space - those whose top comes within the headroom of the underside of
+    the floor above. Empty with no level above."""
+    under = _upper_floor_underside(stair, level)
+    if under is None or stair.data is None:
+        return []
+    headroom = float(stair.get('STAIR_HEADROOM', HEADROOM))
+    mesh = stair.data
+    rects = []
+    for poly in mesh.polygons:
+        if poly.normal.z < 0.9:
+            continue                # treads' and landings' tops only
+        co = [mesh.vertices[i].co for i in poly.vertices]
+        z = max(c.z for c in co)
+        if z + headroom <= under:
+            continue                # headroom to spare under the floor
+        rects.append((min(c.x for c in co), min(c.y for c in co),
+                      max(c.x for c in co), max(c.y for c in co)))
+    return rects
+
+
+def stair_opening(stair, level):
+    """(cells, edges) of the stair's opening in its own space: the union of
+    the treads that need headroom as cells, and its outline as edges
+    (start, end, outward normal). Empty with no level above."""
+    from . import hb_structure_geom as geom
+    rects = stair_opening_rects(stair, level)
+    return geom.rect_union_cells(rects), geom.rect_union_edges(rects)
+
+
+def stairwell_openings(scene, level):
+    """The stair openings through a level's floor, from the stairs on the
+    level below: [(cells, edges)] in world XY - cells as 4-point polygons,
+    edges as (start, end, outward normal)."""
+    house = scene.hb_house
+    below = hb_house.level_below(house, level)
+    if below is None:
+        return []
+    out = []
+    for stair in _stairs_on(scene, below):
+        cells, edges = stair_opening(stair, below)
+        if not cells:
+            continue
+        m = stair.matrix_world
+        rot = m.to_3x3()
+        w = lambda x, y: (m @ Vector((x, y, 0.0))).to_2d()
+        out.append((
+            [[tuple(w(x0, y0)), tuple(w(x1, y0)), tuple(w(x1, y1)), tuple(w(x0, y1))]
+             for x0, y0, x1, y1 in cells],
+            [(tuple(w(*a)), tuple(w(*b)), tuple((rot @ Vector((n[0], n[1], 0.0))).to_2d()))
+             for a, b, n in edges]))
+    return out
+
+
 def update_stairwell_cutter(stair):
-    """Fit the stair's cutter to its footprint and to the floor it climbs
-    through, making it the first time."""
+    """Fit the stair's cutter to the opening it needs, and its guard round
+    that opening on the floor above, making them the first time. The
+    opening is the treads that need headroom under the floor above; with
+    no level above, the stair's whole footprint."""
     level = hb_house.get_level(stair.get(hb_house.LEVEL_KEY, ''))
     if level is None or stair.data is None or not stair.data.vertices:
         return None
-    xs = [v.co.x for v in stair.data.vertices]
-    ys = [v.co.y for v in stair.data.vertices]
     rise = float(stair.get('STAIR_TOTAL_RISE', stair_rise(level)))
     z0 = min(level.ceiling_height, rise) - STAIRWELL_REACH
     z1 = rise + STAIRWELL_REACH
+    cells, edges = stair_opening(stair, level)
+    if not cells:
+        xs = [v.co.x for v in stair.data.vertices]
+        ys = [v.co.y for v in stair.data.vertices]
+        cells = [(min(xs), min(ys), max(xs), max(ys))]
     cutter = stairwell_cutter(stair)
     if cutter is None:
         cutter = hb_utils.new_object("Stairwell", bpy.data.meshes.new("Stairwell"))
@@ -920,16 +1010,161 @@ def update_stairwell_cutter(stair):
     # mode's gravity and the snapping rays go straight through the
     # opening instead of landing on an invisible box
     cutter.hide_viewport = True
+    # One closed solid over the cells: they share whole edges, so welding
+    # them, with a side wall per cell side on the outline, leaves no faces
+    # inside and no gaps
     bm = bmesh.new()
-    bmesh.ops.create_cube(bm, size=1.0)
-    for v in bm.verts:
-        v.co.x = min(xs) if v.co.x < 0 else max(xs)
-        v.co.y = min(ys) if v.co.y < 0 else max(ys)
-        v.co.z = z0 if v.co.z < 0 else z1
+    for x0, y0, x1, y1 in cells:
+        for z, flip in ((z0, True), (z1, False)):
+            vs = [bm.verts.new((x0, y0, z)), bm.verts.new((x1, y0, z)),
+                  bm.verts.new((x1, y1, z)), bm.verts.new((x0, y1, z))]
+            bm.faces.new(list(reversed(vs)) if flip else vs)
+    from . import hb_structure_geom as geom
+    for (ax, ay), (bx, by), n in geom.rect_union_edges(cells, merge=False):
+        # Wound to face outward
+        if (bx - ax) * n[1] - (by - ay) * n[0] > 0:
+            ax, ay, bx, by = bx, by, ax, ay
+        bm.faces.new((bm.verts.new((ax, ay, z0)), bm.verts.new((bx, by, z0)),
+                      bm.verts.new((bx, by, z1)), bm.verts.new((ax, ay, z1))))
+    bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=1e-5)
     bm.to_mesh(cutter.data)
     bm.free()
     cutter.data.update()
+    update_stair_guard(stair, level, edges)
     return cutter
+
+
+def _guard_material():
+    mat = bpy.data.materials.get("Stair Guard")
+    if mat is None:
+        mat = bpy.data.materials.new("Stair Guard")
+        mat.use_nodes = True
+        bsdf = next((n for n in mat.node_tree.nodes if n.type == 'BSDF_PRINCIPLED'), None)
+        if bsdf is not None:
+            bsdf.inputs['Base Color'].default_value = (0.86, 0.85, 0.82, 1.0)
+            bsdf.inputs['Roughness'].default_value = 0.4
+        mat.diffuse_color = (0.86, 0.85, 0.82, 1.0)
+    return mat
+
+
+def _guard_edges(stair, level, edges):
+    """The opening's edges a guard goes along: not the one the top flight
+    arrives over, nor one running along a wall of the floor above."""
+    mesh = stair.data
+    tops = sorted(((max(mesh.vertices[i].co.z for i in p.vertices), p)
+                   for p in mesh.polygons if p.normal.z > 0.9), key=lambda t: t[0])
+    arrive = None
+    if len(tops) >= 2:
+        top, below = tops[-1][1], tops[-2][1]
+        c1, c0 = top.center, below.center
+        d = (c1 - c0).to_2d()
+        co = [mesh.vertices[i].co for i in top.vertices]
+        if abs(d.x) >= abs(d.y):
+            arrive = ((1, 0) if d.x > 0 else (-1, 0),
+                      max(c.x for c in co) if d.x > 0 else min(c.x for c in co))
+        else:
+            arrive = ((0, 1) if d.y > 0 else (0, -1),
+                      max(c.y for c in co) if d.y > 0 else min(c.y for c in co))
+    from .operators import walls
+    upper = level_above(level.id_data.hb_house, level)
+    scene = hb_house.house_scene_of(stair.users_scene[0]) if stair.users_scene else None
+    segs = walls.level_wall_segs(scene, upper.uid)[1] if (scene and upper) else []
+    m = stair.matrix_world
+    kept = []
+    for a, b, n in edges:
+        if arrive is not None and n == arrive[0]:
+            c = a[0] if n[0] != 0 else a[1]
+            if abs(c - arrive[1]) < 1e-4:
+                continue            # where the top flight comes up
+        mid = (m @ Vector(((a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0, 0.0))).to_2d()
+        against_wall = False
+        for seg in segs:
+            if seg.thickness <= 0.0:
+                continue
+            rel = (mid.x - seg.start[0], mid.y - seg.start[1])
+            along = rel[0] * seg.dir[0] + rel[1] * seg.dir[1]
+            off = rel[0] * seg.normal[0] + rel[1] * seg.normal[1]
+            if -0.05 <= along <= seg.length + 0.05 and -0.05 <= off <= seg.thickness + 0.05:
+                against_wall = True
+                break
+        if not against_wall:
+            kept.append((a, b, n))
+    return kept
+
+
+def update_stair_guard(stair, level, edges=None):
+    """Posts, rails and balusters round the stair's opening on the floor
+    above, along the edges a person could step off - rebuilt from the
+    stair, removed when it has none or its Guard is off."""
+    guard = stair_guard(stair)
+    if edges is None:
+        edges = stair_opening(stair, level)[1]
+    rise = float(stair.get('STAIR_TOTAL_RISE', stair_rise(level)))
+    kept = _guard_edges(stair, level, edges) if edges and stair.get('STAIR_GUARD', True) else []
+    if not kept:
+        _remove(guard)
+        return None
+    height = float(stair.get('STAIR_GUARD_HEIGHT', GUARD_HEIGHT))
+    bm = bmesh.new()
+
+    def box(cx, cy, z0, z1, along, w, t):
+        """A box centred on (cx, cy), `w` long along unit `along`, `t`
+        across, from z0 to z1."""
+        ax = Vector((along[0], along[1], 0.0)) * (w / 2.0)
+        ac = Vector((-along[1], along[0], 0.0)) * (t / 2.0)
+        c = Vector((cx, cy, 0.0))
+        ring = [c - ax - ac, c + ax - ac, c + ax + ac, c - ax + ac]
+        bottom = [bm.verts.new((p.x, p.y, z0)) for p in ring]
+        top = [bm.verts.new((p.x, p.y, z1)) for p in ring]
+        bm.faces.new(list(reversed(bottom)))
+        bm.faces.new(top)
+        for i in range(4):
+            j = (i + 1) % 4
+            bm.faces.new((bottom[i], bottom[j], top[j], top[i]))
+
+    posts = set()
+    rail_top = rise + height
+    for a, b, n in kept:
+        # Stand just off the opening, on the floor
+        off = (n[0] * GUARD_POST / 2.0, n[1] * GUARD_POST / 2.0)
+        ax, ay = a[0] + off[0], a[1] + off[1]
+        bx, by = b[0] + off[0], b[1] + off[1]
+        length = ((bx - ax) ** 2 + (by - ay) ** 2) ** 0.5
+        if length < 1e-4:
+            continue
+        u = ((bx - ax) / length, (by - ay) / length)
+        count = max(1, int(-(-length // GUARD_POST_SPACING)))
+        for k in range(count + 1):
+            t = length * k / count
+            posts.add((round(ax + u[0] * t, 5), round(ay + u[1] * t, 5)))
+        mx, my = (ax + bx) / 2.0, (ay + by) / 2.0
+        box(mx, my, rail_top - GUARD_RAIL_T, rail_top, u, length, GUARD_RAIL_W)
+        box(mx, my, rise + GUARD_BOTTOM_RAIL, rise + GUARD_BOTTOM_RAIL + GUARD_RAIL_T,
+            u, length, GUARD_RAIL_T)
+        pitch = GUARD_BALUSTER + GUARD_BALUSTER_GAP
+        n_bal = int((length - GUARD_POST) // pitch)
+        if n_bal > 0:
+            start = (length - (n_bal - 1) * pitch) / 2.0
+            for k in range(n_bal):
+                t = start + k * pitch
+                box(ax + u[0] * t, ay + u[1] * t, rise + GUARD_BOTTOM_RAIL + GUARD_RAIL_T,
+                    rail_top - GUARD_RAIL_T, u, GUARD_BALUSTER, GUARD_BALUSTER)
+    for x, y in posts:
+        box(x, y, rise, rail_top + inch(2.0), (1.0, 0.0), GUARD_POST, GUARD_POST)
+
+    if guard is None:
+        guard = hb_utils.new_object("Stair Guard", bpy.data.meshes.new("Stair Guard"))
+        for col in stair.users_collection:
+            col.objects.link(guard)
+        guard.parent = stair
+        guard.matrix_parent_inverse.identity()
+        guard[STAIR_GUARD_KEY] = True
+    bm.to_mesh(guard.data)
+    bm.free()
+    guard.data.materials.clear()
+    guard.data.materials.append(_guard_material())
+    guard.data.update()
+    return guard
 
 
 def _stairs_on(scene, level):
