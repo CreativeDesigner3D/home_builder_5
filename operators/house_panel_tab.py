@@ -123,6 +123,15 @@ VIEW_FIELDS = (
         ('bool', 'show_room_labels', "Room Labels"),
         ('bool', 'show_framing', "Framing"),
     )}),
+    ('pick', lambda context: _import_entries(context), "Import Room as Level"),
+)
+
+
+# ---- Structure ----------------------------------------------------------------
+# What the house is built of: its framing now, its foundation and wall
+# layers as they come.
+
+STRUCTURE_FIELDS = (
     ('group', 'house_framing', "Framing", {'summary': _framing_summary, 'fields': (
         ('bool', 'show_framing', "Show Framing"),
         ('choices', 'framing_spacing', "Spacing", {'cols': 2}),
@@ -133,7 +142,6 @@ VIEW_FIELDS = (
         ('bool', 'framing_roofs', "Roofs"),
         ('actions', (("Rebuild Framing", "home_builder.rebuild_framing"),), ""),
     )}),
-    ('pick', lambda context: _import_entries(context), "Import Room as Level"),
 )
 
 
@@ -486,11 +494,21 @@ def _icon_rooms(shader, cx, cy, g, color):
     draw_polyline(shader, [(cx - h * 0.1, cy + h * 0.05), (cx + h, cy + h * 0.05)], color)
 
 
+def _icon_structure(shader, cx, cy, g, color):
+    """A framed wall: studs between plates."""
+    h = g * 0.45
+    draw_polyline(shader, [(cx - h, cy - h), (cx + h, cy - h)], color)
+    draw_polyline(shader, [(cx - h, cy + h), (cx + h, cy + h)], color)
+    for k in (-1.0, -0.33, 0.33, 1.0):
+        draw_polyline(shader, [(cx + h * k, cy - h), (cx + h * k, cy + h)], color)
+
+
 PAGES = (
     ('LEVELS', "Levels", _icon_levels),
     ('OUTSIDE', "Outside", _icon_outside),
     ('ROOF', "Roof", _icon_roof),
     ('ROOMS', "Rooms", _icon_rooms),
+    ('STRUCTURE', "Structure", _icon_structure),
 )
 
 
@@ -609,6 +627,9 @@ def _blocks(context):
                 blocks.extend(options_panel.pool_blocks(context, PIECE_SPEC))
                 blocks.append(('note', "Draw pieces in Edit Roof (G, D, A),"))
                 blocks.append(('note', "or select walls and use an Add button."))
+    elif _page == 'STRUCTURE':
+        blocks = [('head', ("Structure", False, None))]
+        blocks.extend(options_panel.field_blocks(context, STRUCTURE_FIELDS, scene.hb_house))
     else:
         blocks = options_panel.field_blocks(context, FLOOR_DEFAULT_FIELDS, scene.hb_house)
         blocks.append(('gap', None))
