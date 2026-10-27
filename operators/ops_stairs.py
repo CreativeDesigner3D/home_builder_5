@@ -167,6 +167,17 @@ def create_stair_mesh(stair_width, total_rise, riser_height, tread_depth, tread_
                                        tread_depth, tread_thickness)
 
 
+def split_flights(total_rise, riser_height, landing_height):
+    """(steps in flight 1, steps in flight 2, riser) for a stair with a
+    landing: every riser the same, the whole rise divided as a straight
+    stair would divide it, the landing on the riser nearest the height
+    asked for."""
+    steps = max(2, round(total_rise / riser_height))
+    riser = total_rise / steps
+    first = min(max(round(landing_height / riser), 1), steps - 1)
+    return first, steps - first, riser
+
+
 def _create_straight_stair_mesh(stair_width, total_rise, riser_height, tread_depth, tread_thickness):
     num_steps = max(1, round(total_rise / riser_height))
     actual_riser = total_rise / num_steps
@@ -194,13 +205,10 @@ def _create_l_stair_mesh(stair_width, total_rise, riser_height, tread_depth, tre
     LEFT  turn -> flight 2 goes in -X direction.
     RIGHT turn -> flight 2 goes in +X direction.
     """
-    flight1_rise = max(riser_height, min(landing_height, total_rise - riser_height))
-    flight2_rise = total_rise - flight1_rise
-
-    steps_flight1 = max(1, round(flight1_rise / riser_height))
-    steps_flight2 = max(1, round(flight2_rise / riser_height))
-    actual_riser1 = flight1_rise / steps_flight1
-    actual_riser2 = flight2_rise / steps_flight2
+    steps_flight1, steps_flight2, actual_riser1 = split_flights(
+        total_rise, riser_height, landing_height)
+    actual_riser2 = actual_riser1
+    flight1_rise = steps_flight1 * actual_riser1
 
     flight1_run = steps_flight1 * tread_depth
 
@@ -269,13 +277,10 @@ def _create_u_stair_mesh(stair_width, total_rise, riser_height, tread_depth, tre
     LEFT  turn -> flight 2 is to the left  (-X side).
     RIGHT turn -> flight 2 is to the right (+X side).
     """
-    flight1_rise = max(riser_height, min(landing_height, total_rise - riser_height))
-    flight2_rise = total_rise - flight1_rise
-
-    steps_flight1 = max(1, round(flight1_rise / riser_height))
-    steps_flight2 = max(1, round(flight2_rise / riser_height))
-    actual_riser1 = flight1_rise / steps_flight1
-    actual_riser2 = flight2_rise / steps_flight2
+    steps_flight1, steps_flight2, actual_riser1 = split_flights(
+        total_rise, riser_height, landing_height)
+    actual_riser2 = actual_riser1
+    flight1_rise = steps_flight1 * actual_riser1
 
     flight1_run = steps_flight1 * tread_depth
 
@@ -696,11 +701,8 @@ class home_builder_stairs_OT_stair_prompts(bpy.types.Operator):
         # Info box
         box = layout.box()
         if self.stair_type in ('L_SHAPE', 'U_SHAPE'):
-            landing_h = max(self.riser_height,
-                            min(self.landing_height, self.total_rise - self.riser_height))
-            flight2_rise = self.total_rise - landing_h
-            steps1 = max(1, round(landing_h / self.riser_height))
-            steps2 = max(1, round(flight2_rise / self.riser_height))
+            steps1, steps2, _riser = split_flights(
+                self.total_rise, self.riser_height, self.landing_height)
             box.label(text=f"Flight 1: {steps1} steps", icon='MOD_ARRAY')
             box.label(text=f"Flight 2: {steps2} steps")
             row = box.row()
