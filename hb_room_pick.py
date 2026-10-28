@@ -27,6 +27,7 @@ from .hb_gpu_ui import Theme
 _msgbus_owner = object()
 _busy = False
 _draw_handle = None
+_label_handle = None       # the porch's side names, over the view
 _picked = None          # (level uid, room uid) of the room last clicked
 
 OUTLINE_WIDTH = 3.0
@@ -213,6 +214,53 @@ def _draw_outline():
     shader.uniform_float("color", color + (1.0,))
     batch.draw(shader)
     gpu.state.blend_set('NONE')
+
+
+def _draw_porch_sides():
+    """A porch's side names (Front, Left...) at its open edges, while the
+    Rooms page shows it - what its Steps On buttons mean - with "steps"
+    on the sides that have them."""
+    import json
+    import blf
+    from bpy_extras.view3d_utils import location_3d_to_region_2d
+    context = bpy.context
+    try:
+        room = shown_room(context)
+    except Exception:
+        return
+    if room is None or not room.is_porch or room.porch_obj is None:
+        return
+    try:
+        sides = json.loads(room.porch_obj.get('HB_PORCH_SIDES', '[]'))
+    except ValueError:
+        return
+    region, r3d = context.region, context.region_data
+    if region is None or r3d is None:
+        return
+    from .hb_gpu_ui import scale
+    s = scale()
+    font = 0
+    for side, x, y, z, stepped in sides:
+        p = location_3d_to_region_2d(region, r3d, Vector((x, y, z)))
+        if p is None:
+            continue
+        text = {'FRONT': "Front", 'LEFT': "Left", 'RIGHT': "Right", 'BACK': "Back"}.get(side, side)
+        if stepped:
+            text += " - steps"
+        blf.size(font, 13 * s)
+        w, h = blf.dimensions(font, text)
+        pad = 4 * s
+        gpu.state.blend_set('ALPHA')
+        shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+        x0, y0 = p.x - w / 2 - pad, p.y - h / 2 - pad
+        x1, y1 = p.x + w / 2 + pad, p.y + h / 2 + pad
+        shader.uniform_float("color", (0.10, 0.10, 0.12, 0.78) if not stepped else
+                             Theme.BTN_ACTIVE_BG[:3] + (0.9,))
+        batch_for_shader(shader, 'TRIS', {"pos": [(x0, y0), (x1, y0), (x1, y1), (x0, y0), (x1, y1), (x0, y1)]}).draw(shader)
+        blf.color(font, 1.0, 1.0, 1.0, 1.0)
+        blf.position(font, p.x - w / 2, p.y - h / 2 + 1, 0)
+        blf.draw(font, text)
+        gpu.state.blend_set('NONE')
 
 
 def _tag_redraw():
@@ -417,6 +465,9 @@ def register():
         bpy.utils.register_class(cls)
     _draw_handle = bpy.types.SpaceView3D.draw_handler_add(
         _draw_outline, (), 'WINDOW', 'POST_VIEW')
+    global _label_handle
+    _label_handle = bpy.types.SpaceView3D.draw_handler_add(
+        _draw_porch_sides, (), 'WINDOW', 'POST_PIXEL')
     # Startup registration runs under a restricted context; subscribe once
     # the main loop is up.
     bpy.app.timers.register(_deferred_setup, first_interval=0.5)
@@ -430,5 +481,9 @@ def unregister():
     if _draw_handle is not None:
         bpy.types.SpaceView3D.draw_handler_remove(_draw_handle, 'WINDOW')
         _draw_handle = None
+    global _label_handle
+    if _label_handle is not None:
+        bpy.types.SpaceView3D.draw_handler_remove(_label_handle, 'WINDOW')
+        _label_handle = None
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)

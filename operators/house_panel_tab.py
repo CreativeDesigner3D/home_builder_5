@@ -916,6 +916,11 @@ def _ceiling_summary(room):
     return f"{_label(room, 'ceiling_style')} · {_length(room, height)}"
 
 
+def _has_steps(room):
+    from .. import hb_porches
+    return hb_porches.has_steps(room)
+
+
 def _upper_porch(room):
     """Whether the porch is on a level above the ground level."""
     house = room.id_data.hb_house
@@ -1020,13 +1025,14 @@ ROOM_SPEC = {
             ('enum', 'porch_railing', "Railing"),
             ('distance', 'porch_rail_height', "Rail Height", {'when': lambda room: room.porch_railing != 'NONE'}),
             ('enum', 'porch_base', "Base"),
-            ('number', 'porch_steps', "Steps (0 none, 1 longest edge)"),
-            ('enum', 'porch_steps_span', "Steps Span", {'when': lambda room: room.porch_steps > 0}),
-            ('enum', 'porch_steps_style', "Steps Style", {'when': lambda room: room.porch_steps > 0}),
+            ('choices', 'porch_steps_on', "Steps On", {'cols': 4}),
+            ('enum', 'porch_steps_span', "Steps Span", {'when': _has_steps}),
+            ('enum', 'porch_steps_style', "Steps Style", {'when': _has_steps}),
             ('distance', 'porch_steps_width', "Steps Width",
-             {'when': lambda room: room.porch_steps > 0 and room.porch_steps_span == 'WIDTH'}),
+             {'when': lambda room: _has_steps(room) and room.porch_steps_span == 'WIDTH'}),
             ('distance', 'porch_steps_offset', "Steps Offset",
-             {'when': lambda room: room.porch_steps > 0 and room.porch_steps_span == 'WIDTH'}),
+             {'when': lambda room: _has_steps(room) and room.porch_steps_span == 'WIDTH'}),
+            ('distance', 'porch_step_riser', "Max Step Riser", {'when': _has_steps}),
             ('bool', 'porch_supports', "Posts to Ground", {'when': _upper_porch}),
             ('notes', lambda context, room: _porch_notes(context, room), "", {'owner': True}),
             ('native', 'post_material', "Post Material"),

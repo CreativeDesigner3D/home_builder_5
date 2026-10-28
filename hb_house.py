@@ -1359,11 +1359,25 @@ class HB_Room(PropertyGroup):
                ('SKIRT', "Skirt", "Boards round the open edges, from the floor down to the ground"),
                ('NONE', "None", "Nothing under the floor")],
         default='SOLID', update=_room_porch_changed)  # type: ignore
+    porch_steps_on: EnumProperty(
+        name="Steps On",
+        description="The porch's open sides with steps down to the ground. Front faces away from "
+                    "the house; Left and Right as you face the porch from the front",
+        items=[('FRONT', "Front", "The side facing away from the house"),
+               ('LEFT', "Left", "The left side, facing the porch"),
+               ('RIGHT', "Right", "The right side, facing the porch"),
+               ('BACK', "Back", "The side facing the house (a porch standing apart)")],
+        options={'ENUM_FLAG'}, default=set(), update=_room_porch_changed)  # type: ignore
+    porch_step_riser: FloatProperty(
+        name="Max Step Riser",
+        description="The tallest a porch step may rise: lower it for more steps, raise it for fewer",
+        default=inch(7.75), min=inch(4), max=inch(9), subtype='DISTANCE', precision=4,
+        update=_room_porch_changed)  # type: ignore
     porch_steps_span: EnumProperty(
         name="Steps Span",
-        items=[('WIDTH', "Width", "Steps as wide as Steps Width, on the chosen edge"),
-               ('EDGE', "Whole Edge", "Steps the length of the chosen edge"),
-               ('WRAP', "Wrap Around", "Steps round every open edge, mitred at the corners")],
+        items=[('WIDTH', "Set Width", "Steps as wide as Steps Width, in the middle of each side chosen"),
+               ('EDGE', "Whole Side", "Steps the length of each side chosen, joined round the corners"),
+               ('WRAP', "Wrap Around", "Steps round every open side, mitred at the corners")],
         default='WIDTH', update=_room_porch_changed)  # type: ignore
     porch_steps_style: EnumProperty(
         name="Steps Style",

@@ -1092,7 +1092,7 @@ def build_page(rect, context, blocks_fn, lst):
                     for j, (ident, label) in enumerate(row[1]):
                         entries.append(('choice_btn', owner, prop, ident, label,
                                         (x + j * (cw + gap), y - row_h, cw, row_h),
-                                        ident == current))
+                                        ident in current if isinstance(current, set) else ident == current))
                 y -= (ROW_H + ROW_GAP) * s
         elif kind == 'pick':
             label, fn = payload
@@ -2180,7 +2180,10 @@ def hit(context, mx, my, entries):
             return True
         if kind == 'choice_btn' and point_in_rect(mx, my, entry[5]):
             owner, prop, ident = entry[1], entry[2], entry[3]
-            if getattr(owner, prop, None) != ident:
+            current = getattr(owner, prop, None)
+            if isinstance(current, set):
+                setattr(owner, prop, current ^ {ident})      # a set: one on or off
+            elif current != ident:
                 setattr(owner, prop, ident)
             _tag()
             return True

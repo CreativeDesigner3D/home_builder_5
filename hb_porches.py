@@ -190,26 +190,84 @@ def ground_z(level):
     return base - house.ground_below_floor - level.elevation
 
 
-def step_chains(polygon, segs, room):
-    """The lines a porch's steps come off: [(points, outward normals per
-    span, (s0, s1) or None)] - a set width on one edge, a whole edge, or
-    each run of open edges round the porch, corner to corner."""
-    if room.porch_steps <= 0:
-        return []
+SIDES = ('FRONT', 'LEFT', 'RIGHT', 'BACK')
+SIDE_LABELS = {'FRONT': "Front", 'LEFT': "Left", 'RIGHT': "Right", 'BACK': "Back"}
+
+
+def named_edges(polygon, segs):
+    """The porch's open edges with the side each is: [(side, a, b, inward
+    normal)]. Front faces away from the house (the porch's longest open
+    edge when it stands apart); Left and Right as you face the porch from
+    the front; Back towards the house."""
     edges = porch_edges(polygon, segs)
     if not edges:
         return []
+    n_pts = len(polygon)
+    cx = sum(p[0] for p in polygon) / n_pts
+    cy = sum(p[1] for p in polygon) / n_pts
+    # Towards the house: the middles of the porch's outline not on its open edges
+    house = []
+    for i in range(n_pts):
+        a, b = polygon[i], polygon[(i + 1) % n_pts]
+        mid = ((a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0)
+        if all(hb_wall_graph._dist_to_edges(mid, [e[0], e[1]]) > ON_EDGE * 5 for e in edges):
+            house.append(mid)
+    if house:
+        hx = sum(p[0] for p in house) / len(house) - cx
+        hy = sum(p[1] for p in house) / len(house) - cy
+        L = math.hypot(hx, hy) or 1.0
+        front = (-hx / L, -hy / L)
+    else:
+        a, b, n_in = max(edges, key=lambda e: math.dist(e[0], e[1]))
+        front = (-n_in[0], -n_in[1])
+    right = (-front[1], front[0])           # facing the porch from the front, your right
+    out = []
+    for a, b, n_in in edges:
+        n = (-n_in[0], -n_in[1])
+        f = n[0] * front[0] + n[1] * front[1]
+        if f > 0.7:
+            side = 'FRONT'
+        elif f < -0.7:
+            side = 'BACK'
+        else:
+            side = 'RIGHT' if n[0] * right[0] + n[1] * right[1] > 0 else 'LEFT'
+        out.append((side, a, b, n_in))
+    return out
+
+
+def has_steps(room):
+    return bool(room.porch_steps_on) or room.porch_steps > 0      # sides chosen, or an edge counted before
+
+
+def step_chains(polygon, segs, room):
+    """The lines a porch's steps come off: [(points, outward normals per
+    span, (s0, s1) or None, (a, b) the edge)] - a set width in the middle
+    of each side chosen, the sides chosen whole (joined round their
+    corners), or every open side."""
+    named = named_edges(polygon, segs)
+    if not named:
+        return []
     out_of = lambda n: (-n[0], -n[1])
-    if room.porch_steps_span == 'WRAP':
-        return [(pts, normals, None) for pts, normals in _chains(edges)]
-    a, b, n_in = sorted(edges, key=lambda e: -math.dist(e[0], e[1]))[min(room.porch_steps, len(edges)) - 1]
-    if room.porch_steps_span == 'EDGE':
-        return [([a, b], [out_of(n_in)], None)]
-    length = math.dist(a, b)
-    w = min(room.porch_steps_width, length)
-    mid = min(max(length / 2.0 + room.porch_steps_offset, w / 2.0), length - w / 2.0)
-    s0, s1 = mid - w / 2.0, mid + w / 2.0
-    return [([_along(a, b, s0), _along(a, b, s1)], [out_of(n_in)], (s0, s1))]
+    if room.porch_steps_span == 'WRAP' and (room.porch_steps_on or room.porch_steps > 0):
+        return [(pts, normals, None, None) for pts, normals in _chains([(a, b, n) for _s, a, b, n in named])]
+    chosen = [(a, b, n) for s, a, b, n in named if s in room.porch_steps_on]
+    if not chosen and room.porch_steps > 0:
+        # Before the sides were named: the edge counted by length
+        a, b, n = sorted([(a, b, n) for _s, a, b, n in named], key=lambda e: -math.dist(e[0], e[1]))[
+            min(room.porch_steps, len(named)) - 1]
+        chosen = [(a, b, n)]
+    if not chosen:
+        return []
+    if room.porch_steps_span in ('EDGE', 'WRAP'):
+        return [(pts, normals, None, None) for pts, normals in _chains(chosen)]
+    out = []
+    for a, b, n_in in chosen:
+        length = math.dist(a, b)
+        w = min(room.porch_steps_width, length)
+        mid = min(max(length / 2.0 + room.porch_steps_offset, w / 2.0), length - w / 2.0)
+        s0, s1 = mid - w / 2.0, mid + w / 2.0
+        out.append(([_along(a, b, s0), _along(a, b, s1)], [out_of(n_in)], (s0, s1), (a, b)))
+    return out
 
 
 def _chains(edges):
@@ -283,23 +341,24 @@ def _band(bm, pts, normals, d0, d1, z0, z1, mat):
         f.material_index = mat
 
 
-def step_count(drop):
+def step_count(drop, max_riser=RISER_MAX):
     """(risers, riser) for steps down `drop`: as few as keep each under
-    7 3/4"; (0, 0) when there's nothing to step down."""
+    `max_riser`; (0, 0) when there's nothing to step down."""
     if drop < 0.02:
         return 0, 0.0
-    n = max(1, math.ceil(drop / RISER_MAX - 1e-6))
+    n = max(1, math.ceil(drop / max(max_riser, 0.05) - 1e-6))
     return n, drop / n
 
 
 def notes(room):
     """What the porch's steps come to, for its HUD group."""
-    if room.porch_steps <= 0 or room.porch_obj is None:
-        return []
+    if not has_steps(room) or room.porch_obj is None:
+        return ["Steps: pick a side above (its name shows on", "the porch in the viewport)"]
     n = room.porch_obj.get('HB_PORCH_STEPS', 0)
     if not n:
         return ["No steps: the porch floor is on the ground"]
-    return [f"Steps: {n} risers of {room.porch_obj.get('HB_PORCH_RISER', 0.0) / 0.0254:.2f}\""]
+    return [f"Steps: {n} risers of {room.porch_obj.get('HB_PORCH_RISER', 0.0) / 0.0254:.2f}\"",
+            "Lower Max Step Riser for more steps"]
 
 
 def _along(a, b, s):
@@ -313,13 +372,13 @@ def _steps(B, room, chains, floor_z, gz, mats):
     over risers with boards at the ends. Returns (risers, riser)."""
     from .hb_stair_build import _railing_along
     bm = B.bm
-    n, r = step_count(floor_z - gz)
+    n, r = step_count(floor_z - gz, room.porch_step_riser)
     if n == 0:
         return 0, 0.0
     T = STEP_TREAD
     top = lambda i: floor_z - (i + 1) * r          # step i's top, i = 0 the highest
     wood = room.porch_steps_style == 'WOOD'
-    for pts, normals, _span in chains:
+    for pts, normals, _span, _edge in chains:
         if not wood:
             for i in range(n - 1):
                 _band(bm, pts, normals, i * T, (i + 1) * T, gz, top(i), 1)
@@ -365,7 +424,7 @@ def _steps(B, room, chains, floor_z, gz, mats):
         from mathutils import Vector
         c = {'baluster': room.porch_railing if room.porch_railing != 'SOLID' else 'SQUARE',
              'rail_height': room.porch_rail_height}
-        for pts, normals, span in chains:
+        for pts, normals, span, _edge in chains:
             if span is None:
                 continue
             pa, pb = Vector(pts[0]), Vector(pts[-1])
@@ -393,11 +452,9 @@ def porch_mesh(name, polygon, segs, room, ceiling, level=None):
     chains = step_chains(polygon, segs, room)
     # Gaps in the railing where steps come off an edge: [(a, b, s0, s1)]
     gaps = []
-    for pts, normals, span in chains:
+    for pts, normals, span, edge in chains:
         if span is not None:
-            a, b, n_in = sorted(porch_edges(polygon, segs), key=lambda e: -math.dist(e[0], e[1]))[
-                min(room.porch_steps, len(porch_edges(polygon, segs))) - 1]
-            gaps.append((a, b, span[0], span[1]))
+            gaps.append((edge[0], edge[1], span[0], span[1]))
         else:
             for p, q in zip(pts, pts[1:]):
                 gaps.append((p, q, 0.0, math.dist(p, q)))
@@ -548,6 +605,16 @@ def build_porch(scene, level, room, polygon, segs, floor_material):
     room.porch_obj.location = (0.0, 0.0, level.elevation)
     room.porch_obj['HB_PORCH_STEPS'] = n_steps
     room.porch_obj['HB_PORCH_RISER'] = riser
+    # Where each side's name shows in the viewport (hb_room_pick)
+    import json
+    chains = step_chains(polygon, segs, room)
+    stepped = lambda a, b: any(
+        (e is not None and {e[0], e[1]} == {a, b}) or (e is None and any(
+            {p, q} == {a, b} for p, q in zip(pts, pts[1:]))) for pts, _n, _s, e in chains)
+    room.porch_obj['HB_PORCH_SIDES'] = json.dumps([
+        [side, (a[0] + b[0]) / 2.0 - n_in[0] * 0.35, (a[1] + b[1]) / 2.0 - n_in[1] * 0.35,
+         level.elevation - room.floor_drop, bool(stepped(a, b))]
+        for side, a, b, n_in in named_edges(polygon, segs)])
     from . import hb_roofs
     hb_roofs.build_porch_roof(scene, level, room, polygon, segs)
 
