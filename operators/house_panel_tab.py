@@ -353,6 +353,43 @@ def _wall_siding_fields(count):
     )
 
 
+def _selected_windows(context):
+    """The selected windows that are built with options (cage-only
+    openings have no trim to change)."""
+    from ..product_libraries.common import door_window_geo
+    out = []
+    for obj in context.selected_objects:
+        cage = hb_house.window_cage(obj)
+        if cage is not None and cage not in out and door_window_geo.stored_opts(cage) is not None:
+            out.append(cage)
+    return out
+
+
+def _shutters_on(we):
+    return we.shutter_style != 'NONE'
+
+
+def _window_summary(we):
+    out = _label(we, 'ext_trim_style')
+    if we.shutter_style != 'NONE':
+        out += " · " + _label(we, 'shutter_style') + " shutters"
+    return out
+
+
+def _window_fields(count):
+    word = "Window" if count == 1 else f"{count} Windows"
+    return (
+        ('group', 'outside_windows', f"Selected {word}",
+         {'summary': _window_summary, 'fields': (
+             ('enum', 'shutter_style', "Shutters"),
+             ('distance', 'shutter_width', "Shutter Width", {'when': _shutters_on}),
+             ('native', 'shutter_color', "Shutter Color", {'when': _shutters_on}),
+             ('enum', 'ext_trim_style', "Exterior Trim"),
+             ('distance', 'ext_casing_width', "Exterior Casing Width"),
+         )}),
+    )
+
+
 # ---- Roof -------------------------------------------------------------------
 
 def _on(roof):
@@ -775,6 +812,14 @@ def _blocks(context):
                                                      owner.hb_siding))
         else:
             blocks.append(('note', "Select outside walls to give them their own siding."))
+        windows = _selected_windows(context)
+        if windows:
+            active = hb_house.window_cage(context.active_object)
+            owner = active if active in windows else windows[0]
+            blocks.extend(options_panel.field_blocks(context, _window_fields(len(windows)),
+                                                     owner.hb_window_ext))
+        else:
+            blocks.append(('note', "Select windows for their shutters and trim."))
         blocks.append(('gap', None))
         blocks.extend(options_panel.field_blocks(context, BASE_FIELDS, scene.hb_house))
     elif _page == 'ROOF':

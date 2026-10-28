@@ -308,6 +308,12 @@ WINDOW_FIELDS = (
     ('choices', 'window_style', "Style", {'cols': 2}),
 )
 
+# On scene.hb_house: what goes on a window outdoors
+WINDOW_OUTDOOR_FIELDS = (
+    ('choices', 'window_shutters', "Shutters", {'cols': 2}),
+    ('choices', 'window_ext_trim', "Exterior Trim", {'cols': 2}),
+)
+
 # On scene.hb_obstacles: the whole library, grouped as it is listed, then
 # the size of the one picked. Picking another restarts the tool with it.
 OBSTACLE_FIELDS = (
@@ -385,6 +391,9 @@ def _blocks(context):
         blocks.extend(options_panel.field_blocks(
             context, OBSTACLE_FIELDS, context.scene.hb_obstacles))
     blocks.extend(options_panel.field_blocks(context, fields, hb))
+    if _tool == "home_builder_doors_windows.place_window":
+        blocks.extend(options_panel.field_blocks(
+            context, WINDOW_OUTDOOR_FIELDS, context.scene.hb_house))
     if _tool == "home_builder_walls.draw_walls":
         blocks.append(('note', "Changes apply to the wall you are drawing."))
     elif fields:

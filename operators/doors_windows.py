@@ -3,7 +3,7 @@ import gpu
 import blf
 from gpu_extras.batch import batch_for_shader
 from bpy_extras import view3d_utils
-from .. import hb_types, hb_snap, hb_placement, units
+from .. import hb_house, hb_types, hb_snap, hb_placement, units
 import math
 from mathutils import Vector
 from ..hb_details import GeoNodeText
@@ -1707,6 +1707,18 @@ class home_builder_doors_windows_OT_window_prompts(bpy.types.Operator):
     casing_width: bpy.props.FloatProperty(name="Casing Width", unit='LENGTH', precision=5)  # type: ignore
     include_sill: bpy.props.BoolProperty(name="Exterior Sill")  # type: ignore
     include_stool: bpy.props.BoolProperty(name="Interior Stool")  # type: ignore
+    shutter_style: bpy.props.EnumProperty(
+        name="Shutters", items=hb_house.SHUTTER_STYLE_ITEMS)  # type: ignore
+    shutter_width: bpy.props.FloatProperty(
+        name="Shutter Width", unit='LENGTH', precision=5, min=0,
+        description="Each shutter's width; 0 is half the window's opening")  # type: ignore
+    shutter_color: bpy.props.FloatVectorProperty(
+        name="Shutter Color", subtype='COLOR', size=3, min=0.0, max=1.0)  # type: ignore
+    ext_trim_style: bpy.props.EnumProperty(
+        name="Exterior Trim", items=hb_house.EXT_TRIM_ITEMS)  # type: ignore
+    ext_casing_width: bpy.props.FloatProperty(
+        name="Exterior Casing Width", unit='LENGTH', precision=5, min=0,
+        description="The exterior casing's width; 0 is the casing width")  # type: ignore
     reveal_ext_on: bpy.props.BoolProperty(
         name="Exterior Reveal",
         description="Carve a reveal in from this wall's y=0 face "
@@ -1777,9 +1789,9 @@ class home_builder_doors_windows_OT_window_prompts(bpy.types.Operator):
             door_window_geo.remove_reveal_cutter(self.window.obj)
         else:
             _apply_preset_if_changed(self, door_window_geo.WINDOW_CATEGORY)
-            door_window_geo.set_opts(
-                self.window.obj, _collect_operator_opts(
-                    self, door_window_geo.WINDOW_DEFAULTS))
+            opts = _collect_operator_opts(self, door_window_geo.WINDOW_DEFAULTS)
+            opts['shutter_color'] = door_window_geo.color_hex(tuple(self.shutter_color))
+            door_window_geo.set_opts(self.window.obj, opts)
             door_window_geo.build_geometry(self.window.obj)
         return True
 
@@ -1792,6 +1804,8 @@ class home_builder_doors_windows_OT_window_prompts(bpy.types.Operator):
         self.style = _seed_operator_from_opts(
             self, bp, door_window_geo.WINDOW_DEFAULTS,
             _window_style_preset_items, context)
+        opts = door_window_geo.merged_opts(bp) or door_window_geo.WINDOW_DEFAULTS
+        self.shutter_color = door_window_geo._hex_color(opts['shutter_color'])
         self._applied_style = self.style
         wm = context.window_manager
         return wm.invoke_props_dialog(self, width=380)
@@ -1856,6 +1870,15 @@ class home_builder_doors_windows_OT_window_prompts(bpy.types.Operator):
         row = box.row(align=True)
         row.prop(self, 'include_sill')
         row.prop(self, 'include_stool')
+
+        box.separator()
+        box.label(text="Outdoors")
+        _labelled_row(box, self, 'ext_trim_style', "Exterior Trim:")
+        _labelled_row(box, self, 'ext_casing_width', "Exterior Casing:")
+        _labelled_row(box, self, 'shutter_style', "Shutters:")
+        if self.shutter_style != 'NONE':
+            _labelled_row(box, self, 'shutter_width', "Shutter Width:")
+            _labelled_row(box, self, 'shutter_color', "Shutter Color:")
 
     def _draw_reveals(self, box):
         _draw_reveals_tab(box, self)

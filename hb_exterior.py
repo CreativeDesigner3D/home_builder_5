@@ -819,6 +819,56 @@ def outdoor_side(wall_obj, rooms=None):
     return 'REF' if side == REF_SIDE else 'FAR'
 
 
+BOARD_PROUD = {'LAP': LAP_PROUD, 'SHINGLE': SHINGLE_PROUD, 'BOARD_BATTEN': BATTEN_PROUD}
+NO_OUTSIDE = "0.0000|"          # a window's outdoor trim on a plain wall
+
+
+def window_outside(cage_obj, rooms=None):
+    """What a window in a house's outside wall builds its outdoor trim
+    and shutters against, or None for one that isn't in one:
+    proud   how far the siding's real boards stand off the wall's face
+    masonry the wall's brick or stone material, or None
+    x       where the window starts along its wall
+    room    (lo, hi) along the wall its shutters may take: the outdoor
+            face less a corner board at each end, and half the way to
+            the openings either side
+    sig     a summary of what the siding sets, to see when it changes."""
+    from . import hb_assemblies, hb_types
+    from .operators import walls
+    wall_obj = cage_obj.parent
+    side = outdoor_side(wall_obj, rooms)
+    if side is None:
+        return None
+    scene = hb_house.house_scene_of(bpy.context.scene)
+    style, color = wall_finish(scene, wall_obj)
+    built = scene.hb_house.siding_geometry and style in BUILT
+    proud = 0.0
+    if built:
+        proud = max(BOARD_PROUD[style] - hb_assemblies.siding_inset(wall_obj), 0.0)
+    masonry = siding_material(style, color, False) if style in ('BRICK', 'STONE') else None
+    ext = walls.wall_face_extents(wall_obj)
+    lo, hi = ext['back' if side == 'REF' else 'front'] if ext else (-1e9, 1e9)
+    margin = 0.025 + (CORNER_WIDTH + CORNER_THICK if built else 0.0)
+    lo, hi = lo + margin, hi - margin
+    cage = hb_types.GeoNodeCage(cage_obj)
+    x0 = cage_obj.location.x
+    x1 = x0 + cage.get_input('Dim X')
+    for other in wall_obj.children:
+        if other is cage_obj or not ('IS_WINDOW_BP' in other or 'IS_ENTRY_DOOR_BP' in other):
+            continue
+        o = hb_types.GeoNodeCage(other)
+        if not o.has_modifier():
+            continue
+        o0 = other.location.x
+        o1 = o0 + o.get_input('Dim X')
+        if o1 <= x0 + 1e-6:
+            lo = max(lo, (o1 + x0) / 2.0)
+        elif o0 >= x1 - 1e-6:
+            hi = min(hi, (x1 + o0) / 2.0)
+    sig = "%.4f|%s" % (proud, masonry.name if masonry is not None else "")
+    return {'proud': proud, 'masonry': masonry, 'x': x0, 'room': (lo, hi), 'sig': sig}
+
+
 def _roof_walls(scene):
     """(level, object) for the walls the roofs make: filled-in gable ends
     and dormer walls."""
@@ -901,11 +951,16 @@ def apply_exterior_finish(scene):
                 gable = gable_finish(scene, level)
                 siding = split_material(finish, gable, split, built)
         outside = _outside_input(obj, wall, rooms.get(obj.get(hb_house.LEVEL_KEY, ''), []))
-        # Its windows' exterior casing and sill go on that face too
+        # Its windows' exterior casing and sill go on that face too, and
+        # are built again when the siding they stand proud of changes
         from .product_libraries.common import door_window_geo
         for child in obj.children:
             if child.get('IS_WINDOW_BP') and door_window_geo.stored_opts(child) is not None:
-                door_window_geo.face_outdoors(child, outside == REF_SIDE)
+                info = window_outside(child, rooms)
+                if info is not None and child.get(door_window_geo.OUTSIDE_SIG_KEY, NO_OUTSIDE) != info['sig']:
+                    door_window_geo.build_geometry(child)
+                else:
+                    door_window_geo.face_outdoors(child, outside == REF_SIDE)
         for name in (THICK_SIDE, REF_SIDE, 'Inside Face', 'Outside Face'):
             if not wall.has_input(name):
                 continue

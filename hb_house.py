@@ -1458,6 +1458,121 @@ class HB_WallSiding(PropertyGroup):
         default=(0.92, 0.92, 0.90), update=_wall_siding_changed)  # type: ignore
 
 
+# ---- Windows outdoors: shutters and exterior trim --------------------------
+# Items are only ever appended: a saved choice is its place in the list.
+
+SHUTTER_STYLE_ITEMS = [
+    ('NONE', "None", "No shutters"),
+    ('LOUVERED', "Louvered", "Louvered shutters"),
+    ('RAISED_PANEL', "Raised Panel", "Shutters with two raised panels"),
+    ('BOARD_BATTEN', "Board and Batten", "Boards held by battens and a Z brace"),
+]
+
+EXT_TRIM_ITEMS = [
+    ('CASING', "Casing", "Flat casing round the window"),
+    ('HEAD_CAP', "Head with Cap", "A taller head casing under a drip cap"),
+    ('CRAFTSMAN', "Craftsman", "A deep head running past the side casings, with a cap"),
+    ('BRICK_MOLD', "Brick Mold",
+     "Narrow brick mold, a rowlock sill and a soldier course: for brick and stone walls"),
+]
+
+
+def window_cage(obj):
+    """The window an object is, or is part of; None for anything else."""
+    if obj is None:
+        return None
+    if obj.get('IS_WINDOW_BP'):
+        return obj
+    if obj.parent is not None and obj.parent.get('IS_WINDOW_BP'):
+        return obj.parent
+    return None
+
+
+def _window_opts(obj):
+    from .product_libraries.common import door_window_geo
+    return door_window_geo.merged_opts(obj) or dict(door_window_geo.WINDOW_DEFAULTS)
+
+
+def _set_window_opt(self, key, value):
+    """A window's outdoor option: the same goes on every selected window
+    built with options, and each is built again."""
+    from .product_libraries.common import door_window_geo
+    obj = self.id_data
+    targets = [obj]
+    if obj.select_get():
+        for other in bpy.context.selected_objects:
+            cage = window_cage(other)
+            if cage is not None and cage not in targets:
+                targets.append(cage)
+    for cage in targets:
+        stored = door_window_geo.stored_opts(cage)
+        if stored is None:
+            continue
+        stored[key] = value
+        door_window_geo.set_opts(cage, stored)
+        door_window_geo.build_geometry(cage)
+    _tag_view3d_redraw()
+
+
+def _window_enum(key, items):
+    ids = [i[0] for i in items]
+
+    def get(self):
+        value = _window_opts(self.id_data)[key]
+        return ids.index(value) if value in ids else 0
+
+    def set(self, index):
+        _set_window_opt(self, key, ids[index])
+    return get, set
+
+
+def _window_float(key):
+    def get(self):
+        return float(_window_opts(self.id_data)[key])
+
+    def set(self, value):
+        _set_window_opt(self, key, float(value))
+    return get, set
+
+
+def _get_shutter_color(self):
+    from .product_libraries.common import door_window_geo
+    return door_window_geo._hex_color(_window_opts(self.id_data)['shutter_color'])
+
+
+def _set_shutter_color(self, value):
+    from .product_libraries.common import door_window_geo
+    _set_window_opt(self, 'shutter_color', door_window_geo.color_hex(tuple(value)))
+
+
+_shutters = _window_enum('shutter_style', SHUTTER_STYLE_ITEMS)
+_ext_trim = _window_enum('ext_trim_style', EXT_TRIM_ITEMS)
+_shutter_width = _window_float('shutter_width')
+_ext_casing_width = _window_float('ext_casing_width')
+
+
+class HB_WindowExterior(PropertyGroup):
+    """A window's shutters and exterior trim, for the HUD: read from and
+    written to the window's options, which stay the one place they live."""
+    shutter_style: EnumProperty(
+        name="Shutters", items=SHUTTER_STYLE_ITEMS,
+        get=_shutters[0], set=_shutters[1])  # type: ignore
+    shutter_width: FloatProperty(
+        name="Shutter Width", min=0.0, max=1.5, subtype='DISTANCE', precision=4,
+        description="Each shutter's width; 0 is half the window's opening",
+        get=_shutter_width[0], set=_shutter_width[1])  # type: ignore
+    shutter_color: FloatVectorProperty(
+        name="Shutter Color", subtype='COLOR', size=3, min=0.0, max=1.0,
+        get=_get_shutter_color, set=_set_shutter_color)  # type: ignore
+    ext_trim_style: EnumProperty(
+        name="Exterior Trim", items=EXT_TRIM_ITEMS,
+        get=_ext_trim[0], set=_ext_trim[1])  # type: ignore
+    ext_casing_width: FloatProperty(
+        name="Exterior Casing Width", min=0.0, max=0.3, subtype='DISTANCE', precision=4,
+        description="The exterior casing's width; 0 is the window's casing width",
+        get=_ext_casing_width[0], set=_ext_casing_width[1])  # type: ignore
+
+
 def _backdrop_settings_changed(self, context):
     from . import hb_backdrop
     hb_backdrop._level_settings_changed(self, context)
@@ -1765,6 +1880,12 @@ class HB_House_Props(PropertyGroup):
         items=[('4X4', "4x4", ""), ('4X6', "4x6", ""), ('6X6', "6x6", ""),
                ('8X8', "8x8", "")],
         default='6X6')  # type: ignore
+
+    # Windows: the shutters and exterior trim the next one placed gets
+    window_shutters: EnumProperty(
+        name="Shutters", items=SHUTTER_STYLE_ITEMS, default='NONE')  # type: ignore
+    window_ext_trim: EnumProperty(
+        name="Exterior Trim", items=EXT_TRIM_ITEMS, default='CASING')  # type: ignore
 
     tools_stay_on: BoolProperty(
         name="Tools Stay On",
@@ -2360,6 +2481,7 @@ class HOME_BUILDER_OT_set_active_level(bpy.types.Operator):
 
 classes = (
     HB_WallSiding,
+    HB_WindowExterior,
     HB_WallLayer,
     HB_WallAssembly,
     HB_Room,
@@ -2382,6 +2504,7 @@ def register():
         bpy.utils.register_class(cls)
     HB_House_Props.register()
     bpy.types.Object.hb_siding = PointerProperty(type=HB_WallSiding)
+    bpy.types.Object.hb_window_ext = PointerProperty(type=HB_WindowExterior)
     _ghost_handle = bpy.types.SpaceView3D.draw_handler_add(
         _draw_level_ghost, (), 'WINDOW', 'POST_VIEW')
     if _on_depsgraph_update not in bpy.app.handlers.depsgraph_update_post:
@@ -2400,5 +2523,7 @@ def unregister():
     HB_House_Props.unregister()
     if hasattr(bpy.types.Object, 'hb_siding'):
         del bpy.types.Object.hb_siding
+    if hasattr(bpy.types.Object, 'hb_window_ext'):
+        del bpy.types.Object.hb_window_ext
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)

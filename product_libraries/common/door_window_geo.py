@@ -39,7 +39,7 @@ import zipfile
 import bpy
 from mathutils import Euler, Matrix, Vector
 
-from ... import hb_types
+from ... import hb_house, hb_types
 from ...hb_details import GeoNodeText
 from ...units import inch
 from . import door_builder
@@ -101,6 +101,23 @@ WINDOW_TYPE_ITEMS = [
     ('AWNING', "Awning", "Top-hinged sash, wider than tall"),
     ('PICTURE', "Picture", "Fixed non-operating sash"),
 ]
+
+# Shutters beside a window, and its exterior trim (the lists are hb_house's)
+SHUTTER_COLOR = '#1f2b25'           # a dark green-black
+SHUTTER_THICK = inch(1.125)
+SHUTTER_MIN = 0.10                  # a leaf narrower than this is left off
+SHUTTER_STANDOFF = 0.003            # off the siding
+TRIM_PROUD = 0.006                  # how far trim stands proud of the siding
+CAP_PROUD = 0.025                   # a drip cap, past the casing face
+CAP_HEIGHT = inch(0.75)
+CRAFTSMAN_RUN = 0.025               # a craftsman head, past the side casings
+BRICK_MOLD_WIDTH = inch(2.0)
+ROWLOCK_HEIGHT = inch(3.5)
+ROWLOCK_PROUD = inch(1.5)
+SOLDIER_HEIGHT = inch(7.5)
+MASONRY_RUN = inch(4.0)             # a rowlock or soldier course past the trim
+MASONRY_PROUD = inch(0.375)
+
 
 GRILLE_PATTERN_ITEMS = [
     ('NONE', "None", "Plain glass"),
@@ -202,6 +219,13 @@ WINDOW_DEFAULTS = {
     'sill_projection': inch(1.0),
     'sill_horn': inch(1.0),
     'include_stool': True,
+    # Outdoors: shutters and the exterior trim's style. A casing width
+    # of 0 uses casing_width, as every window built before these had.
+    'shutter_style': 'NONE',
+    'shutter_width': 0.0,           # 0 = half the sash opening
+    'shutter_color': SHUTTER_COLOR,
+    'ext_trim_style': 'CASING',
+    'ext_casing_width': 0.0,
     # Splayed reveal: two INDEPENDENT reveals, one carved in from each
     # wall face (reveal_ext_* from the y=0 face, reveal_int_* from the
     # y=thickness face - "ext"/"int" just name the wall's own two faces,
@@ -542,6 +566,16 @@ def door_unit_extras(opts):
     return extra_w, extra_h
 
 
+def _outdoor_defaults(full, context):
+    """A window placed in a house gets the shutters and exterior trim
+    the house's window tool has set."""
+    scene = hb_house.house_scene_of(context.scene)
+    if scene is None or context.scene is not scene:
+        return
+    full['shutter_style'] = scene.hb_house.window_shutters
+    full['ext_trim_style'] = scene.hb_house.window_ext_trim
+
+
 def apply_scene_style_and_build(cage_obj, context):
     """Placement-drop hook: seed the cage's options from the scene's
     default style for its kind and build the geometry. A cage that
@@ -563,6 +597,8 @@ def apply_scene_style_and_build(cage_obj, context):
     full = dict(_defaults_for(category))
     full.update(opts)
     full['style'] = name
+    if category == WINDOW_CATEGORY:
+        _outdoor_defaults(full, context)
     if category == DOOR_CATEGORY:
         # New doors open the way the room's defaults say.
         full['door_type'] = getattr(props, 'entry_door_type',
@@ -2224,30 +2260,85 @@ def build_window_geometry(cage_obj):
     else:  # AWNING / PICTURE
         sash("Sash", ow, oh, ox0, y_center_front, oz0)
 
+    # Outdoors: what the wall's siding asks of the trim (nothing outside
+    # a house), and the trim's style
+    outside = _outside_context(cage_obj)
+    ext_style = opts['ext_trim_style']
+    masonry = outside['masonry'] if outside else None
+    if ext_style == 'BRICK_MOLD' and masonry is None:
+        ext_style = 'CASING'        # brick mold is for brick and stone walls
+    # Proud of the siding's boards, which stand off the wall's face
+    ct_ext = ct
+    if outside and outside['proud'] > 0.0:
+        ct_ext = max(ct, outside['proud'] + TRIM_PROUD)
+    # A wider exterior casing reaches out past the window onto the wall
+    ecw = opts['ext_casing_width']
+    if ext_style == 'BRICK_MOLD' and ecw <= 0.0:
+        ecw = BRICK_MOLD_WIDTH
+    ex0, ex1, ez1 = 0.0, W, H
+    if ecw > 0.0 and side_b > 0.0:
+        ex0, ex1 = side_b - ecw, W - side_b + ecw
+        ez1 = fz1 + ecw
+    ext_on = opts['include_exterior_casing'] and side_b > 0.0
+    wood_sill = sill_on and ext_style != 'BRICK_MOLD'
+
     # Exterior sill: a projecting board under the frame (rectangular
     # stand-in for the sloped sill), full unit width. Proud of fy1 (the
     # reveal-adjusted exterior casing face), not the wall's true
     # thickness T, or it stays behind when a reveal shifts the casing.
-    if sill_on:
+    if wood_sill:
         sp = max(opts['sill_projection'], 0.0)
-        _box(verts, faces, slots, 0.0, W, fy1, fy1 + ct + sp,
+        _box(verts, faces, slots, ex0, ex1, fy1, fy1 + ct_ext + sp,
              fz0 - sh, fz0)
 
     # Casing per face (sides + head + bottom leg, butt joints) within
     # the reserved bands; the exterior skips its bottom leg for the
     # sill, the interior for the stool.
-    for on, y0, y1, skip_bottom in (
-            (opts['include_exterior_casing'], fy1, fy1 + ct, sill_on),
-            (opts['include_interior_casing'], fy0 - ct, fy0, stool_on)):
+    styled_head = ext_style in ('HEAD_CAP', 'CRAFTSMAN')
+    for on, y0, y1, skip_bottom, x0, x1, z1, own_head in (
+            (opts['include_exterior_casing'], fy1, fy1 + ct_ext, sill_on, ex0, ex1, ez1, styled_head),
+            (opts['include_interior_casing'], fy0 - ct, fy0, stool_on, 0.0, W, H, False)):
         if not on or side_b <= 0.0:
             continue
         z_side0 = fz0 if skip_bottom else max(fz0 - side_b, 0.0)
-        _box(verts, faces, slots, 0.0, side_b, y0, y1, z_side0, fz1)
-        _box(verts, faces, slots, W - side_b, W, y0, y1, z_side0, fz1)
-        _box(verts, faces, slots, 0.0, W, y0, y1, fz1, H)
+        _box(verts, faces, slots, x0, side_b, y0, y1, z_side0, fz1)
+        _box(verts, faces, slots, W - side_b, x1, y0, y1, z_side0, fz1)
+        if not own_head:
+            _box(verts, faces, slots, x0, x1, y0, y1, fz1, z1)
         if not skip_bottom:
             _box(verts, faces, slots, side_b, W - side_b, y0, y1,
                  max(fz0 - side_b, 0.0), fz0)
+
+    # The exterior head's styles, over the casing's head band
+    if ext_on and styled_head:
+        band = ez1 - fz1
+        # A craftsman head is deeper, and runs on past the side casings
+        craftsman = ext_style == 'CRAFTSMAN'
+        run = CRAFTSMAN_RUN if craftsman else 0.0
+        head_top = fz1 + band * (1.5 if craftsman else 1.25)
+        _box(verts, faces, slots, ex0 - run, ex1 + run, fy1, fy1 + ct_ext, fz1, head_top)
+        _box(verts, faces, slots, ex0 - run - CAP_PROUD / 2.0, ex1 + run + CAP_PROUD / 2.0,
+             fy1, fy1 + ct_ext + CAP_PROUD, head_top, head_top + CAP_HEIGHT)
+
+    frame = _new_child(cage_obj, "Window Frame")
+    if outside:
+        cage_obj[OUTSIDE_SIG_KEY] = outside['sig']
+
+    # Brick and stone round the brick mold: a rowlock sill under the
+    # window and a soldier course over it, in the wall's own masonry
+    if ext_style == 'BRICK_MOLD' and ext_on:
+        mv, mf, ms = [], [], []
+        if sill_on:
+            _box(mv, mf, ms, ex0 - MASONRY_RUN, ex1 + MASONRY_RUN, fy1 - 0.001,
+                 fy1 + ROWLOCK_PROUD, fz0 - ROWLOCK_HEIGHT, fz0)
+        _box(mv, mf, ms, ex0 - MASONRY_RUN, ex1 + MASONRY_RUN, fy1 - 0.001,
+             fy1 + MASONRY_PROUD, ez1, ez1 + SOLDIER_HEIGHT)
+        brick = _new_child(cage_obj, "Window Masonry")
+        _finish_mesh(brick, mv, mf, ms, [masonry])
+
+    if opts['shutter_style'] != 'NONE' and ext_on:
+        z0 = fz0 - sh if sill_on else max(fz0 - side_b, 0.0)
+        _build_shutters(cage_obj, opts, outside, T, ex0, ex1, z0, ez1, fx1 - fx0 - 2 * fw)
 
     # Interior stool: top flush with the frame bottom, projecting into
     # the room, with an apron strip below. Proud of fy0 (the reveal-
@@ -2259,9 +2350,153 @@ def build_window_geometry(cage_obj):
         _box(verts, faces, slots, 0.0, W, fy0 - ct, fy0,
              max(fz0 - inch(0.75) - cw, 0.0), fz0 - inch(0.75))
 
-    frame = _new_child(cage_obj, "Window Frame")
     _finish_mesh(frame, verts, faces, slots, [trim_mat])
     _ensure_annotation_text(cage_obj, False)
+
+
+# ---------------------------------------------------------------------------
+# Outdoors: shutters and the trim on siding
+# ---------------------------------------------------------------------------
+
+# What a window's outdoor trim was last built for (see
+# hb_exterior.window_outside): a change to the wall's siding rebuilds it
+OUTSIDE_SIG_KEY = 'HB_WINDOW_OUTSIDE'
+
+
+def _outside_context(cage_obj):
+    """The siding round a window in a house wall, or None elsewhere."""
+    try:
+        from ... import hb_exterior
+    except ImportError:
+        return None
+    return hb_exterior.window_outside(cage_obj)
+
+
+def _hex_color(text):
+    text = str(text or '').lstrip('#')
+    try:
+        return tuple(int(text[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
+    except ValueError:
+        return _hex_color(SHUTTER_COLOR)
+
+
+def color_hex(rgb):
+    return '#' + ''.join('%02x' % max(0, min(255, round(c * 255.0))) for c in rgb[:3])
+
+
+def _shutter_material(opts):
+    text = color_hex(_hex_color(opts['shutter_color']))
+    return _material('Window Shutter ' + text, _hex_color(text), roughness=0.45)
+
+
+def shutter_leaves(cage_x, ex0, ex1, width, room):
+    """[(x0, x1)] in the window's own space: a leaf each side of the
+    exterior trim (ex0..ex1), `width` wide, each narrowed to the room
+    along the wall there is - room = (lo, hi) along the wall, cage_x
+    where the window starts - and left off below SHUTTER_MIN."""
+    lo, hi = room
+    out = []
+    left = min(width, cage_x + ex0 - lo)
+    if left >= SHUTTER_MIN:
+        out.append((ex0 - left, ex0))
+    right = min(width, hi - (cage_x + ex1))
+    if right >= SHUTTER_MIN:
+        out.append((ex1, ex1 + right))
+    return out
+
+
+def _shutter_info(style, width, height):
+    """(info, kwargs) for one louvered or raised-panel leaf."""
+    info = dict(door_builder.DOOR_STYLE_FALLBACK)
+    stile = min(inch(2.25), max(width * 0.2, inch(1.0)))
+    info.update(stile_width=stile, rail_width=inch(3.0),
+                top_rail_width=inch(3.0), bottom_rail_width=inch(4.0))
+    kwargs = {}
+    if style == 'LOUVERED':
+        field = height - inch(7.0)
+        count = max(int(field / LOUVER_PITCH) - 1, 1)
+        info.update(mid_rail_count=count, mid_rail_width=LOUVER_SLAT)
+        info['panel_thickness'] = inch(0.125)
+        info['panel_inset'] = (SHUTTER_THICK - inch(0.125)) / 2.0
+    else:
+        info.update(mid_rail_count=1, mid_rail_width=inch(3.0),
+                    mid_rail_fractions=[1.35, 1.0])
+        info['panel_thickness'] = inch(0.5)
+        info['panel_inset'] = (SHUTTER_THICK - inch(0.5)) / 2.0
+        kwargs['panel_section'] = _raise_section()
+    min_w, min_h = door_builder.layout_min_size(info)
+    if width <= min_w or height <= min_h:
+        info = dict(info, door_type='SLAB')
+        kwargs = {}
+    return info, kwargs
+
+
+def _prism_xz(verts, faces, slots, quad, y0, y1, slot=0):
+    """A solid from a quad in the window's face (x, z), counter-clockwise
+    seen from +y, between y0 and y1."""
+    b = len(verts)
+    for y in (y0, y1):
+        verts.extend((x, y, z) for x, z in quad)
+    faces.append((b, b + 1, b + 2, b + 3))
+    faces.append((b + 7, b + 6, b + 5, b + 4))
+    for i in range(4):
+        j = (i + 1) % 4
+        faces.append((b + i, b + 4 + i, b + 4 + j, b + j))
+    slots.extend([slot] * 6)
+
+
+def _board_batten(verts, faces, slots, x0, x1, z0, z1, y0):
+    """Three boards held by a batten top and bottom and a Z brace."""
+    board_t, batten_h = inch(0.75), inch(4.5)
+    gap = inch(0.125)
+    w = (x1 - x0 - 2 * gap) / 3.0
+    for i in range(3):
+        bx = x0 + i * (w + gap)
+        _box(verts, faces, slots, bx, bx + w, y0, y0 + board_t, z0, z1)
+    ya, yb = y0 + board_t, y0 + 2 * board_t
+    ix0, ix1 = x0 + inch(1.0), x1 - inch(1.0)
+    zb1 = z0 + inch(4.0) + batten_h
+    zt0 = z1 - inch(4.0) - batten_h
+    _box(verts, faces, slots, ix0, ix1, ya, yb, zb1 - batten_h, zb1)
+    _box(verts, faces, slots, ix0, ix1, ya, yb, zt0, zt0 + batten_h)
+    if zt0 - zb1 > batten_h * 2:
+        _prism_xz(verts, faces, slots,
+                  [(ix0, zb1), (ix1, zt0 - batten_h), (ix1, zt0), (ix0, zb1 + batten_h)],
+                  ya, yb)
+
+
+def _build_shutters(cage_obj, opts, outside, T, ex0, ex1, z0, z1, opening):
+    """A shutter each side of the exterior trim, standing off the siding,
+    narrowed where the wall runs out or another opening is near."""
+    width = opts['shutter_width'] if opts['shutter_width'] > 0.0 else opening / 2.0
+    if outside:
+        room = outside['room']
+        cage_x = outside['x']
+    else:
+        room, cage_x = (-1e9, 1e9), 0.0
+    leaves = shutter_leaves(cage_x, ex0, ex1, width, room)
+    if not leaves:
+        return
+    y0 = T + (outside['proud'] if outside else 0.0) + SHUTTER_STANDOFF
+    mat = _shutter_material(opts)
+    height = z1 - z0
+    style = opts['shutter_style']
+    if style == 'BOARD_BATTEN':
+        verts, faces, slots = [], [], []
+        for x0, x1 in leaves:
+            _board_batten(verts, faces, slots, x0, x1, z0, z1, y0)
+        obj = _new_child(cage_obj, "Shutters")
+        _finish_mesh(obj, verts, faces, slots, [mat])
+        return
+    for i, (x0, x1) in enumerate(leaves):
+        info, kwargs = _shutter_info(style, x1 - x0, height)
+        leaf = _door_mesh_child(cage_obj, "Shutter %d" % (i + 1), info, kwargs, x1 - x0, height,
+                                SHUTTER_THICK, (mat, mat, mat), x0, y0, z0)
+        # A door's front faces y_front, the wall here: turned round, so
+        # the panels and louvers face outdoors
+        mirror = (Matrix.Translation((0.0, 2.0 * y0 + SHUTTER_THICK, 0.0))
+                  @ Matrix.Diagonal((1.0, -1.0, 1.0, 1.0)))
+        leaf.matrix_basis = mirror @ leaf.matrix_basis
 
 
 # ---------------------------------------------------------------------------
