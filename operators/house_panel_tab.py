@@ -687,6 +687,43 @@ FLOOR_DEFAULT_FIELDS = (
 )
 
 
+def _lighting_notes(context, room):
+    from .. import hb_lighting
+    return (hb_lighting.room_summary(context, room),)
+
+
+def _selected_light(context):
+    from .. import hb_lighting
+    for obj in [context.active_object] + list(context.selected_objects):
+        cage = hb_lighting.fixture_of(obj)
+        if cage is not None:
+            return cage
+    return None
+
+
+LIGHT_FIELDS = (
+    ('group', 'selected_light', "Selected Light", {'summary': lambda l: f"{l.lumens:,.0f} lm · {l.kelvin:.0f} K",
+                                                   'fields': (
+        ('number', 'lumens', "Lumens"),
+        ('number', 'kelvin', "Color Temperature (K)"),
+        ('distance', 'width', "Width"),
+        ('distance', 'depth', "Depth"),
+        ('distance', 'height', "Height"),
+    )}),
+)
+
+LIGHTING_DEFAULT_FIELDS = (
+    ('group', 'lighting_defaults', "Lighting",
+     {'summary': lambda h: (f"In renders · {h.fixture_dimmer:.2g}x" if h.fixture_lights else "Off in renders"),
+      'fields': (
+          ('bool', 'fixture_lights', "Lights in Renders"),
+          ('number', 'fixture_dimmer', "Dimmer"),
+          ('notes', lambda context: ("Place fixtures with Furnish, or fill a",
+                                     "room from its Lighting group."), ""),
+      )}),
+)
+
+
 def _trim_on(h):
     return h.trim_by_room
 
@@ -801,6 +838,13 @@ ROOM_SPEC = {
             ('number', 'floor_roughness', "Roughness", {'when': _styled}),
             ('native', 'floor_material', "Material",
              {'when': lambda room: room.has_floor and room.floor_finish == 'CUSTOM'}),
+        )}),
+        ('group', 'room_lighting', "Lighting", {'summary': lambda room: _lighting_notes(bpy.context, room)[0],
+                                                'fields': (
+            ('notes', lambda context, room: _lighting_notes(context, room), "", {'owner': True}),
+            ('actions', (("Add Recessed Grid", "home_builder.add_recessed_grid"),
+                         ("Add Center Fixture", "home_builder.add_center_fixture")), ""),
+            ('actions', (("Remove Room Lights", "home_builder.remove_room_lights"),), ""),
         )}),
         ('group', 'room_trim', "Trim", {'when': lambda room: room.id_data.hb_house.trim_by_room,
                                         'summary': _trim_summary, 'fields': (
@@ -1074,6 +1118,10 @@ def _blocks(context):
         blocks = options_panel.field_blocks(context, FLOOR_DEFAULT_FIELDS, scene.hb_house)
         blocks.extend(options_panel.field_blocks(context, WALL_DEFAULT_FIELDS, scene.hb_house))
         blocks.extend(options_panel.field_blocks(context, TRIM_DEFAULT_FIELDS, scene.hb_house))
+        blocks.extend(options_panel.field_blocks(context, LIGHTING_DEFAULT_FIELDS, scene.hb_house))
+        light = _selected_light(context)
+        if light is not None:
+            blocks.extend(options_panel.field_blocks(context, LIGHT_FIELDS, light.hb_light))
         blocks.append(('gap', None))
         if level is not None:
             blocks.extend(options_panel.pool_blocks(context, ROOM_SPEC))

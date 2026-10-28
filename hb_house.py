@@ -1896,6 +1896,11 @@ def _update_level_display(self, context):
     apply_level_display(scene)
 
 
+def _fixtures_changed(self, context):
+    from . import hb_lighting
+    hb_lighting.house_switches_changed(self, context)
+
+
 def _furnish_changed(self, context):
     from .operators import ops_furnish
     ops_furnish._furnish_changed(self, context)
@@ -2111,6 +2116,14 @@ class HB_House_Props(PropertyGroup):
     ceiling_color: FloatVectorProperty(
         name="Ceilings", subtype='COLOR', size=3, min=0.0, max=1.0, default=(0.96, 0.96, 0.95),
         update=lambda self, context: _walls_changed(self, context))  # type: ignore
+
+    # Light fixtures (see hb_lighting): all of them at once
+    fixture_lights: BoolProperty(
+        name="Lights in Renders", description="The light fixtures' lights light renders",
+        default=True, update=lambda self, context: _fixtures_changed(self, context))  # type: ignore
+    fixture_dimmer: FloatProperty(
+        name="Dimmer", description="Every fixture's lights, brighter or dimmer",
+        default=1.0, min=0.0, max=4.0, update=lambda self, context: _fixtures_changed(self, context))  # type: ignore
 
     # The Furnish tool: what it places
     furnish_item: EnumProperty(
