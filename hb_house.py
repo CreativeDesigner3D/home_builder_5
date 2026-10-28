@@ -1353,6 +1353,23 @@ class HB_Room(PropertyGroup):
     porch_steps_offset: FloatProperty(
         name="Steps Offset", description="How far along the edge from its middle the steps are",
         default=0.0, subtype='DISTANCE', precision=4, update=_room_porch_changed)  # type: ignore
+    porch_base: EnumProperty(
+        name="Base",
+        items=[('SOLID', "Solid", "Concrete from the porch floor down to the ground"),
+               ('SKIRT', "Skirt", "Boards round the open edges, from the floor down to the ground"),
+               ('NONE', "None", "Nothing under the floor")],
+        default='SOLID', update=_room_porch_changed)  # type: ignore
+    porch_steps_span: EnumProperty(
+        name="Steps Span",
+        items=[('WIDTH', "Width", "Steps as wide as Steps Width, on the chosen edge"),
+               ('EDGE', "Whole Edge", "Steps the length of the chosen edge"),
+               ('WRAP', "Wrap Around", "Steps round every open edge, mitred at the corners")],
+        default='WIDTH', update=_room_porch_changed)  # type: ignore
+    porch_steps_style: EnumProperty(
+        name="Steps Style",
+        items=[('SOLID', "Solid", "Concrete or masonry steps, solid to the ground"),
+               ('WOOD', "Wood", "Wood treads with a nosing over riser boards, boards at the ends")],
+        default='SOLID', update=_room_porch_changed)  # type: ignore
     porch_supports: BoolProperty(
         name="Posts to Ground",
         description="A porch on an upper level: a beam under its floor, on posts down to the ground",
@@ -2112,6 +2129,11 @@ class HB_House_Props(PropertyGroup):
         name="Downspouts", default=True, update=_eaves_changed)  # type: ignore
 
     # The foundation (see hb_foundation)
+    ground_auto: BoolProperty(
+        name="Ground Auto",
+        description="The ground at the grid (Z 0) when the ground level stands above it, else "
+                    "Ground Below Floor under its floor",
+        default=True, update=lambda self, context: _ground_changed(self, context))  # type: ignore
     ground_below_floor: FloatProperty(
         name="Ground Below Floor",
         description="How far the ground is below the ground level's floor: porch steps and posts go down to it",
