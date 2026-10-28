@@ -350,6 +350,10 @@ APPLIANCE_CLASSES = {
     'STACKED_LAUNDRY': types_appliances.StackedWasherDryer,
     'TOILET': types_appliances.Toilet,
     'PEDESTAL_SINK': types_appliances.PedestalSink,
+    'ALCOVE_TUB': types_appliances.AlcoveTub,
+    'FREESTANDING_TUB': types_appliances.FreestandingTub,
+    'SHOWER': types_appliances.Shower,
+    'TUB_SHOWER': types_appliances.TubShower,
 }
 
 # Catalog names that place an appliance rather than a cabinet, and the
@@ -365,6 +369,10 @@ APPLIANCE_NAMES = {
     'Stacked Washer Dryer': 'STACKED_LAUNDRY',
     'Toilet': 'TOILET',
     'Pedestal Sink': 'PEDESTAL_SINK',
+    'Alcove Tub': 'ALCOVE_TUB',
+    'Freestanding Tub': 'FREESTANDING_TUB',
+    'Shower': 'SHOWER',
+    'Tub Shower': 'TUB_SHOWER',
 }
 
 

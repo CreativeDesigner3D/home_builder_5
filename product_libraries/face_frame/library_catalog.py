@@ -84,7 +84,11 @@ SECTIONS = (
                          ("Stacked", "Stacked Washer Dryer"),
                          ("Laundry Tall", "Laundry Cabinet"))),
             ("Bath", (("Toilet", "Toilet"),
-                      ("Pedestal Sink", "Pedestal Sink"))),
+                      ("Pedestal Sink", "Pedestal Sink"),
+                      ("Alcove Tub", "Alcove Tub"),
+                      ("Freestanding Tub", "Freestanding Tub"),
+                      ("Shower", "Shower"),
+                      ("Tub Shower", "Tub Shower"))),
         ),
     },
     {

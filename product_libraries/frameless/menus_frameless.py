@@ -511,6 +511,8 @@ class HOME_BUILDER_MT_appliance_commands(bpy.types.Menu):
         if obj is not None and obj.get('APPLIANCE_TYPE') in {'DISHWASHER', 'REFRIGERATOR',
                                                             'UNDER_COUNTER'}:
             layout.operator("hb_face_frame.add_appliance_panels", text="Appliance Panels", icon='MOD_SOLIDIFY')
+        if obj is not None and obj.get('APPLIANCE_TYPE') in appliance_geo.FIXTURE_TYPES:
+            layout.operator("home_builder.fit_fixture_between_walls", icon='ARROW_LEFTRIGHT')
         layout.operator("hb_frameless.set_appliance_label",
                         text="Set Label...", icon='FONT_DATA')
         layout.separator()
