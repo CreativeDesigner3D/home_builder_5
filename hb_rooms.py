@@ -818,8 +818,9 @@ def rebuild_level(scene, level):
     # New floors and ceilings need their stairwell openings, and new
     # ceilings under a roof its trim
     apply_stairwells(scene)
-    from . import hb_roofs
+    from . import hb_roofs, hb_skylights
     hb_roofs.apply_trims(scene)
+    hb_skylights.apply_ceiling_cuts(scene)
     return len(claimed)
 
 

@@ -1207,6 +1207,41 @@ def _roof_piece_changed(self, context):
     hb_roofs.rebuild_roof_of(roof)
 
 
+def _skylight_changed(self, context):
+    """A skylight's setting changed: set the skylights on its roof again."""
+    from . import hb_skylights
+    path = self.path_from_id()
+    roof = self.id_data.path_resolve(path.rsplit('.skylights[', 1)[0])
+    hb_skylights.rebuild_of(roof)
+
+
+class HB_Skylight(PropertyGroup):
+    """A skylight on a level's main roof (see hb_skylights): a plan centre
+    and a size; it lies on the slope wherever the roof is there."""
+    uid: StringProperty(name="Skylight ID")  # type: ignore
+    name: StringProperty(name="Name", default="Skylight")  # type: ignore
+    x: FloatProperty(name="X", subtype='DISTANCE', precision=4,
+                     update=_skylight_changed)  # type: ignore
+    y: FloatProperty(name="Y", subtype='DISTANCE', precision=4,
+                     update=_skylight_changed)  # type: ignore
+    width: FloatProperty(
+        name="Width", description="Across the slope",
+        default=inch(22.5), min=inch(12), max=inch(72), subtype='DISTANCE', precision=4,
+        update=_skylight_changed)  # type: ignore
+    length: FloatProperty(
+        name="Length", description="Up the slope",
+        default=inch(46.5), min=inch(12), max=inch(96), subtype='DISTANCE', precision=4,
+        update=_skylight_changed)  # type: ignore
+    curb: EnumProperty(name="Mounting", items=[('CURB', "Curb-mounted", "On a curb standing up off the roof"),
+               ('DECK', "Deck-mounted", "Low, on the roof deck itself")],
+                       default='CURB', update=_skylight_changed)  # type: ignore
+    shaft: EnumProperty(name="Light Shaft", items=[('AUTO', "Auto", "A light shaft down to a flat ceiling under it"),
+               ('NONE', "None", "No shaft: the ceiling isn't opened")],
+                        default='AUTO', update=_skylight_changed)  # type: ignore
+    unit_obj: PointerProperty(type=bpy.types.Object)  # type: ignore
+    shaft_obj: PointerProperty(type=bpy.types.Object)  # type: ignore
+
+
 class HB_RoofPiece(PropertyGroup):
     """A piece added to a level's roof (see hb_roofs): a cross gable - a
     gable roof of its own over a wing or a porch, running back into the
@@ -1456,6 +1491,12 @@ class HB_Roof(PropertyGroup):
     gables_obj: PointerProperty(type=bpy.types.Object)  # type: ignore
     dormer_walls_obj: PointerProperty(type=bpy.types.Object)  # type: ignore
     rise_obj: PointerProperty(type=bpy.types.Object)  # type: ignore
+
+    # Skylights (see hb_skylights), and the volumes they cut with
+    skylights: CollectionProperty(type=HB_Skylight)  # type: ignore
+    active_skylight_index: IntProperty(name="Active Skylight")  # type: ignore
+    openings_obj: PointerProperty(type=bpy.types.Object)  # type: ignore
+    skylight_cut_obj: PointerProperty(type=bpy.types.Object)  # type: ignore
 
 
 # The finishes the outside walls can take (see hb_exterior). New ones go
@@ -1926,6 +1967,20 @@ class HB_House_Props(PropertyGroup):
         items=[('4X4', "4x4", ""), ('4X6', "4x6", ""), ('6X6', "6x6", ""),
                ('8X8', "8x8", "")],
         default='6X6')  # type: ignore
+
+    # Skylights: what the next one placed is
+    skylight_width: FloatProperty(
+        name="Width", description="Across the slope",
+        default=inch(22.5), min=inch(12), max=inch(72), subtype='DISTANCE', precision=4)  # type: ignore
+    skylight_length: FloatProperty(
+        name="Length", description="Up the slope",
+        default=inch(46.5), min=inch(12), max=inch(96), subtype='DISTANCE', precision=4)  # type: ignore
+    skylight_curb: EnumProperty(name="Mounting", items=[('CURB', "Curb-mounted", "On a curb standing up off the roof"),
+               ('DECK', "Deck-mounted", "Low, on the roof deck itself")],
+                                default='CURB')  # type: ignore
+    skylight_shaft: EnumProperty(name="Light Shaft", items=[('AUTO', "Auto", "A light shaft down to a flat ceiling under it"),
+               ('NONE', "None", "No shaft: the ceiling isn't opened")],
+                                 default='AUTO')  # type: ignore
 
     # Windows: the shutters and exterior trim the next one placed gets
     window_shutters: EnumProperty(
@@ -2531,6 +2586,7 @@ classes = (
     HB_WallLayer,
     HB_WallAssembly,
     HB_Room,
+    HB_Skylight,
     HB_RoofPiece,
     HB_Roof,
     HB_Level,

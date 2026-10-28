@@ -1453,6 +1453,9 @@ def apply_roof_visibility(scene):
                     level.roof.gables_obj, level.roof.dormer_walls_obj):
             if obj is not None:
                 obj.hide_viewport = hide
+        for sk in level.roof.skylights:
+            if sk.unit_obj is not None:
+                sk.unit_obj.hide_viewport = hide
         for room in level.rooms:
             if room.porch_roof_obj is not None:
                 room.porch_roof_obj.hide_viewport = hide
@@ -1469,10 +1472,13 @@ def apply_roof_visibility(scene):
 # =============================================================================
 
 _PIECES = ('roof_obj', 'dormer_obj', 'cutter_obj', 'dormer_tops_obj',
-           'dormer_inside_obj', 'roof_top_obj', 'gables_obj', 'dormer_walls_obj', 'rise_obj')
+           'dormer_inside_obj', 'roof_top_obj', 'gables_obj', 'dormer_walls_obj', 'rise_obj',
+           'openings_obj', 'skylight_cut_obj')
 
 
 def _remove_roof(roof):
+    from . import hb_skylights
+    hb_skylights.clear(roof)
     for attr in _PIECES:
         obj = getattr(roof, attr)
         if obj is not None:
@@ -1605,6 +1611,10 @@ def _rebuild_roof(scene, level):
                      _mesh("Roof Dormer Insides", d_insides) if gabled else None,
                      ROOF_CUTTER_KEY)
     _set_boolean(cutter, DORMER_CUT, inside)
+
+    # Skylights on the slope, the roof opened under them
+    from . import hb_skylights
+    hb_skylights.rebuild(scene, level, frame)
 
     apply_roof_visibility(scene)
     _update_gable_walls(scene)

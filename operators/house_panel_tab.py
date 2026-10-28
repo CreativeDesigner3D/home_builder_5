@@ -512,6 +512,41 @@ PIECE_SPEC = {
 }
 
 
+def _skylight_row(sk):
+    from .. import hb_skylights
+    level = hb_house.active_level(bpy.context)
+    warn = hb_skylights.warning(bpy.context.scene, level, sk) if level is not None else ""
+    return f"{sk.name}  ·  {warn}" if warn else sk.name
+
+
+def _skylight_position(sk):
+    return f"{_length(sk, sk.x)}, {_length(sk, sk.y)}"
+
+
+SKYLIGHT_SPEC = {
+    'kind': 'pool',
+    'title': "Skylights",
+    'list_label': "Skylights",
+    'props': lambda context: hb_house.active_level(context).roof,
+    'collection': 'skylights',
+    'index': 'active_skylight_index',
+    'remove_op': 'home_builder.remove_skylight',
+    'allow_empty': True,
+    'row_text': _skylight_row,
+    'actions': ((("Add Skylight", "home_builder.place_skylight", None, None),),),
+    'fields': (
+        ('distance', 'width', "Width"),
+        ('distance', 'length', "Length"),
+        ('enum', 'curb', "Mounting"),
+        ('enum', 'shaft', "Light Shaft"),
+        ('group', 'skylight_position', "Position", {'summary': _skylight_position, 'fields': (
+            ('distance', 'x', "X"),
+            ('distance', 'y', "Y"),
+        )}),
+    ),
+}
+
+
 # ---- Rooms ------------------------------------------------------------------
 
 def _room_area(room):
@@ -849,6 +884,8 @@ def _blocks(context):
                 blocks.extend(options_panel.pool_blocks(context, PIECE_SPEC))
                 blocks.append(('note', "Draw pieces in Edit Roof (G, D, A),"))
                 blocks.append(('note', "or select walls and use an Add button."))
+                blocks.append(('gap', None))
+                blocks.extend(options_panel.pool_blocks(context, SKYLIGHT_SPEC))
         blocks.append(('gap', None))
         blocks.extend(options_panel.field_blocks(context, EAVE_FIELDS, scene.hb_house))
     elif _page == 'STRUCTURE':
