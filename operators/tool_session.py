@@ -1,4 +1,5 @@
-"""Sticky tools and the TOOL page, in house projects.
+"""Sticky tools and the TOOL page, in house projects (and anywhere for
+the tools whose settings are only on the page).
 
 A placement tool started in a house scene - Draw Walls, the door and
 window tools, Obstacle, Stairs - runs as a tool session:
@@ -55,10 +56,18 @@ def is_house(scene):
     return scene is not None and bool(scene.get(hb_house.HOUSE_SCENE_KEY))
 
 
+def joins(scene, idname):
+    """Whether a tool runs as a session in this scene: every tool in a
+    house; anywhere, the tools whose settings are only on the TOOL page
+    (Fireplace, Bay Window, Furnish...) - with no page they would run
+    blind."""
+    return scene is not None and (is_house(scene) or idname in HOUSE_PAGES)
+
+
 def stays_on(context):
     """Whether tools keep going after each placement here."""
     scene = context.scene
-    return is_house(scene) and scene.hb_house.tools_stay_on
+    return joins(scene, _tool) and scene.hb_house.tools_stay_on
 
 
 def active_tool():
@@ -70,7 +79,7 @@ def begin(op, context):
     """A tool is starting: make it the session's, and show its page.
     Call where the tool adds its modal handler."""
     global _tool, _owner, _prev
-    if not is_house(context.scene):
+    if not joins(context.scene, type(op).bl_idname):
         return
     from . import viewport_hud, scene_navigator as nav
     op._exit_requested = False
@@ -423,7 +432,7 @@ HINTS = {
 
 
 def available(scene):
-    return _tool is not None and is_house(scene)
+    return _tool is not None and joins(scene, _tool)
 
 
 def _blocks(context):
