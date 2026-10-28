@@ -17,6 +17,7 @@ from . import hb_fireplaces
 from . import hb_bays
 from . import hb_lighting
 from . import hb_furnishings
+from . import hb_cutaway
 from . import hb_props_obstacles
 from . import ops
 from .ui import view3d_sidebar
@@ -469,6 +470,7 @@ def register():
     hb_bays.register()
     hb_lighting.register()
     hb_furnishings.register()
+    hb_cutaway.register()
     hb_snap_engine.register()
     hb_props_obstacles.register()
     ops_obstacles.register()
@@ -535,6 +537,7 @@ def unregister():
     hb_props.unregister()
     hb_walk.unregister()
     hb_roof_edit.unregister()
+    hb_cutaway.unregister()
     hb_furnishings.unregister()
     hb_lighting.unregister()
     hb_bays.unregister()

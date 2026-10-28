@@ -254,6 +254,18 @@ def _g_furnish(shader, box, color):
                            (x + w * 0.86, top - h * 0.1), (x + w * 0.14, top - h * 0.1)], color, closed=True)
 
 
+def _g_cutaway(shader, box, color):
+    """A room in plan with its near wall dashed away: the walls
+    between you and the room drop out."""
+    x, y, w, h = box
+    lo, hi = y + h * 0.18, y + h * 0.82
+    draw_lines(shader, [(x, lo), (x, hi), (x, hi), (x + w, hi),
+                        (x + w, hi), (x + w, lo)], color)
+    step = w / 5.0
+    for i in (0, 2, 4):
+        draw_lines(shader, [(x + i * step, lo), (x + (i + 1) * step, lo)], color)
+
+
 def _g_measure(shader, box, color):
     """A dimension line: what the tool leaves on screen.
 
@@ -353,7 +365,16 @@ BUILTIN_TOOLS = (
     # one tool here that adds nothing to the room.
     ("home_builder.measure", "Measure", _g_measure, 4,
      'measure_options', "Measure Settings"),
+    # A switch, not a tool: it changes what the view shows, so it is lit
+    # while on and leaves a running tool running (see TOGGLES)
+    ("home_builder.toggle_cutaway", "Cutaway", _g_cutaway, 5, None, None),
 )
+
+# Strip buttons that switch something on and off: lit while on, and
+# pressed without stopping the tool that is running. operator -> is_on(scene)
+TOGGLES = {
+    "home_builder.toggle_cutaway": lambda scene: bool(getattr(scene, 'hb_cutaway', False)),
+}
 
 # Group captions, shown only in expanded mode. A group is just an int on
 # a tool -- it controls the gap in compact mode and needs a name to head
@@ -364,6 +385,7 @@ _group_labels = {
     1: "Doors & Windows",
     2: "Room",
     4: "Measure",
+    5: "View",
 }
 
 
@@ -804,6 +826,8 @@ def _draw():
         hovered = index == hover
         # The tool running now stays lit until it ends.
         running = TOOLS_NOW[index][0] == running_tool
+        if TOOLS_NOW[index][0] in TOGGLES:
+            running = TOGGLES[TOOLS_NOW[index][0]](context.scene)
         # Brighter edge: this strip floats on the viewport, not
         # inside a panel, so it should announce itself.
         paint_button(shader, rect, hovered=hovered, active=running,
@@ -907,6 +931,11 @@ class home_builder_OT_room_palette_click(bpy.types.Operator):
         index = _hit(mx, my, layout)
         if index is None:
             return {'PASS_THROUGH'}
+        if tools()[index][0] in TOGGLES:
+            module, name = tools()[index][0].split('.')
+            getattr(getattr(bpy.ops, module), name)()
+            context.area.tag_redraw()
+            return {'FINISHED'}
         try:
             # Through the tool session: the tool running now, if any,
             # stops first, and picking it again leaves it running.
