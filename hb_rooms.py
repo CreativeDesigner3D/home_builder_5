@@ -18,6 +18,8 @@ ceiling and label are replaced on each rebuild, never edited; anything
 worth keeping lives on the room (HB_Room in hb_house).
 """
 
+import math
+
 import bpy
 import bmesh
 from mathutils import Vector
@@ -229,6 +231,11 @@ def _vault_mesh(name, polygon, room, level, frame):
                 cuts += [((0.0, v0 + d), (0.0, 1.0)), ((0.0, v1 - d), (0.0, 1.0))]
         cuts += [((u0, v0), (1.0, -1.0)), ((u1, v0), (1.0, 1.0)),
                  ((u0, v1), (1.0, 1.0)), ((u1, v1), (1.0, -1.0))]
+    # Under a roof with other sloped ends, along every line it folds on
+    for a, b in hb_roofs.end_surface_edges(frame):
+        du, dv = b[0] - a[0], b[1] - a[1]
+        if math.hypot(du, dv) > 1e-6:
+            cuts.append(((a[0], a[1]), (-dv, du)))
     for (cu, cv), (nu, nv) in cuts:
         co = hb_roofs._world(frame, cu, cv, 0.0)
         no = hb_roofs._world(frame, nu, nv, 0.0)

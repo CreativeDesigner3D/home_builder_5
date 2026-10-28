@@ -402,9 +402,19 @@ def _footprint_summary(roof):
     return f"Custom, {_length(roof, roof.ext_x1 - roof.ext_x0)} x {_length(roof, roof.ext_y1 - roof.ext_y0)}"
 
 
+# Styles whose ends slope down, with eaves all round and no gable overhang
+_SLOPED_ENDS = ('HIP', 'MANSARD', 'CLIPPED_GABLE', 'DUTCH_GABLE')
+
+
+def _style_is(*styles):
+    return lambda roof: roof.enabled and roof.style in styles
+
+
 def _overhang_summary(roof):
+    if roof.style == 'FLAT' and roof.parapet_height > 0:
+        return "Inside the parapets"
     out = f"{_length(roof, roof.eave_overhang)} eaves"
-    if roof.style != 'HIP':
+    if roof.style not in _SLOPED_ENDS:
         out += f" · {_length(roof, roof.gable_overhang)} gables"
     return out
 
@@ -423,13 +433,21 @@ ROOF_FIELDS = (
     ('enum', 'base', "Sits On", {'when': _on}),
     ('distance', 'eave_height', "Eave Height", {'when': _on}),
     ('number', 'pitch', "Pitch (in 12)",
-     {'when': lambda roof: roof.enabled and roof.style in ('GABLE', 'HIP')}),
-    ('number', 'lower_pitch', "Lower Pitch (in 12)",
-     {'when': lambda roof: roof.enabled and roof.style == 'GAMBREL'}),
-    ('distance', 'break_height', "Break Height",
-     {'when': lambda roof: roof.enabled and roof.style == 'GAMBREL'}),
-    ('number', 'pitch', "Upper Pitch (in 12)",
-     {'when': lambda roof: roof.enabled and roof.style == 'GAMBREL'}),
+     {'when': _style_is('GABLE', 'HIP', 'SHED', 'CLIPPED_GABLE', 'DUTCH_GABLE')}),
+    ('number', 'pitch', "Front Pitch (in 12)", {'when': _style_is('SALTBOX')}),
+    ('number', 'ridge_position', "Ridge Position", {'when': _style_is('SALTBOX')}),
+    ('number', 'flat_slope', "Slope (in 12)", {'when': _style_is('FLAT')}),
+    ('enum', 'high_side', "High Side", {'when': _style_is('SHED', 'FLAT')}),
+    ('distance', 'parapet_height', "Parapet",
+     {'when': lambda roof: roof.enabled and roof.style == 'FLAT' and roof.base == 'WALLS'}),
+    ('number', 'lower_pitch', "Lower Pitch (in 12)", {'when': _style_is('GAMBREL', 'MANSARD')}),
+    ('distance', 'break_height', "Break Height", {'when': _style_is('GAMBREL', 'MANSARD')}),
+    ('number', 'pitch', "Upper Pitch (in 12)", {'when': _style_is('GAMBREL')}),
+    ('enum', 'mansard_top', "Top", {'when': _style_is('MANSARD')}),
+    ('number', 'pitch', "Top Pitch (in 12)",
+     {'when': lambda roof: roof.enabled and roof.style == 'MANSARD' and roof.mansard_top == 'HIP'}),
+    ('distance', 'clip_height', "Clip Height", {'when': _style_is('CLIPPED_GABLE')}),
+    ('distance', 'gable_height', "Gable Height", {'when': _style_is('DUTCH_GABLE')}),
     ('enum', 'ridge', "Ridge", {'when': _on}),
     ('choices', 'framing', "Framing", {'cols': 3,
                                         'when': lambda roof: roof.enabled and roof.style == 'GABLE'
@@ -448,7 +466,7 @@ ROOF_FIELDS = (
     ('group', 'roof_build', "Overhangs & Finish", {'when': _on, 'summary': _overhang_summary, 'fields': (
         ('distance', 'eave_overhang', "Eave Overhang"),
         ('distance', 'gable_overhang', "Gable Overhang",
-         {'when': lambda roof: roof.style != 'HIP'}),
+         {'when': lambda roof: roof.style not in _SLOPED_ENDS}),
         ('distance', 'thickness', "Thickness"),
         ('native', 'material', "Material"),
     )}),

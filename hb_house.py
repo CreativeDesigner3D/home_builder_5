@@ -1277,8 +1277,54 @@ class HB_Roof(PropertyGroup):
                ('GAMBREL', "Barn (Gambrel)",
                 "A steep lower slope and a shallow upper one on each side, like a barn"),
                ('HIP', "Hip",
-                "Slopes on all four sides, meeting at a ridge - or a point on a square house")],
+                "Slopes on all four sides, meeting at a ridge - or a point on a square house"),
+               # Appended: a saved style is its place in this list
+               ('SHED', "Shed", "One slope, from a low side up to a high one"),
+               ('SALTBOX', "Saltbox", "A gable with its ridge off centre: a short front slope, a long back one"),
+               ('MANSARD', "Mansard",
+                "A steep lower slope on all four sides under a flat or low hip top"),
+               ('CLIPPED_GABLE', "Clipped Gable",
+                "A gable whose ends turn to small hips near the ridge (a jerkinhead)"),
+               ('DUTCH_GABLE', "Dutch Gable", "A hip roof with a small gable on top of each end"),
+               ('FLAT', "Flat", "A low slope for drainage, with an optional parapet")],
         default='GABLE', update=_roof_changed)  # type: ignore
+
+    high_side: EnumProperty(
+        name="High Side",
+        items=[('BACK', "Back", "High along the back (or right) wall, low along the front"),
+               ('FRONT', "Front", "High along the front (or left) wall, low along the back")],
+        default='BACK', update=_roof_changed)  # type: ignore
+    ridge_position: FloatProperty(
+        name="Ridge Position",
+        description="Where a saltbox's ridge is across the house, from the front (0.5 is the middle)",
+        default=0.35, min=0.15, max=0.85, subtype='FACTOR', update=_roof_changed)  # type: ignore
+    mansard_top: EnumProperty(
+        name="Top",
+        items=[('FLAT', "Flat", "A flat top over the steep slopes"),
+               ('HIP', "Low Hip", "A shallow hip at the roof's pitch over the steep slopes")],
+        default='FLAT', update=_roof_changed)  # type: ignore
+    clip_height: FloatProperty(
+        name="Clip Height",
+        description=("Where a clipped gable's ends turn to small hips, measured like the "
+                     "eave height"),
+        default=inch(96), min=0.0, subtype='DISTANCE', precision=4,
+        update=_roof_changed)  # type: ignore
+    gable_height: FloatProperty(
+        name="Gable Height",
+        description=("Where a Dutch gable's hips stop and its small gables start, measured "
+                     "like the eave height"),
+        default=inch(60), min=0.0, subtype='DISTANCE', precision=4,
+        update=_roof_changed)  # type: ignore
+    flat_slope: FloatProperty(
+        name="Slope",
+        description="A flat roof's slope for drainage: rise in 12",
+        default=0.25, min=0.0625, max=2.0, precision=3, update=_roof_changed)  # type: ignore
+    parapet_height: FloatProperty(
+        name="Parapet",
+        description=("How far the walls stand up past a flat roof's top; 0 for none "
+                     "(the roof overhangs the walls)"),
+        default=0.0, min=0.0, max=2.0, subtype='DISTANCE', precision=4,
+        update=_roof_changed)  # type: ignore
 
     rise_through: BoolProperty(
         name="Upper Floor Rises Through",

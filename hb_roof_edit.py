@@ -202,6 +202,9 @@ def outlines(scene, level):
         for (cu, cv), r in (((u0, v0), r0), ((u1, v0), r0), ((u0, v1), r1), ((u1, v1), r1)):
             ridges.append((w(cu, cv, plate), r))
         grips.append(('pitch', None, (r0 + r1) / 2.0))
+    elif frame.get('ends'):
+        # A roof with sloped ends: the lines it folds along
+        ridges.extend((w(*a), w(*b)) for a, b in hb_roofs.end_surface_edges(frame))
     else:
         under = frame['under']
         ridges.append((w(uc, v0, frame['ridge_z']), w(uc, v1, frame['ridge_z'])))

@@ -58,6 +58,11 @@ SHED_FRONT_RISE = 1.07      # and how far its front wall stands above the roof
 SHED_WIDTH = 3.05           # its width, at most
 GABLE_DORMER_WIDTH = 1.5    # a new gable dormer's width, at most
 GABLE_DORMER_RISE = 1.4     # and how far its front wall stands above the roof
+PARAPET_INSET = 0.05        # a roof inside parapets stops this far into their walls
+# Styles without gable walls (their ends slope down), and those that rise
+# from one side to the other (their high wall goes up to meet them)
+NO_GABLE_STYLES = ('HIP', 'MANSARD', 'DUTCH_GABLE')
+ONE_SLOPE_STYLES = ('SHED', 'FLAT')
 SHINGLE_MATERIAL = "HB Roof Shingles"
 SHINGLE_COLOR = (0.15, 0.19, 0.16, 1.0)
 
@@ -170,6 +175,10 @@ def roof_frame(scene, level):
     plate = base + roof.eave_height
     p = roof.pitch / 12.0
 
+    # The end profile, for styles whose ends slope (see hb_roof_surface),
+    # where it stops counting, and each eave's own slope where they differ
+    ends, cut, p_ends = None, None, None
+    span, vm = u1 - u0, (v0 + v1) / 2.0
     if roof.style == 'GAMBREL':
         p_low = roof.lower_pitch / 12.0
         z_break = base + roof.break_height
@@ -180,10 +189,49 @@ def roof_frame(scene, level):
         under = [(u0, plate), (u0 + inset, z_break), (uc, ridge_z),
                  (u1 - inset, z_break), (u1, plate)]
         p_out = p_low
+    elif roof.style in ONE_SLOPE_STYLES:
+        slope = p if roof.style == 'SHED' else roof.flat_slope / 12.0
+        ridge_z = plate + span * slope
+        if roof.high_side == 'BACK':
+            under, uc, p_ends = [(u0, plate), (u1, ridge_z)], u1, (slope, -slope)
+        else:
+            under, uc, p_ends = [(u0, ridge_z), (u1, plate)], u0, (-slope, slope)
+        p_out = slope
+    elif roof.style == 'SALTBOX':
+        uc = u0 + span * roof.ridge_position
+        ridge_z = plate + (uc - u0) * p
+        under = [(u0, plate), (uc, ridge_z), (u1, plate)]
+        p_out = p
+        p_ends = (p, (ridge_z - plate) / max(u1 - uc, 1e-6))
+    elif roof.style == 'MANSARD':
+        p_low = roof.lower_pitch / 12.0
+        z_break = base + roof.break_height
+        inset = (z_break - plate) / p_low if z_break > plate else 0.0
+        inset = min(max(inset, 0.0), min(half, (v1 - v0) / 2.0) * 0.95)
+        z_break = plate + inset * p_low
+        top_p = p if roof.mansard_top == 'HIP' else 0.0
+
+        def section(lo, hi):
+            mid = (lo + hi) / 2.0
+            if top_p > 0.0:
+                return [(lo, plate), (lo + inset, z_break),
+                        (mid, z_break + (mid - lo - inset) * top_p), (hi - inset, z_break), (hi, plate)]
+            return [(lo, plate), (lo + inset, z_break), (hi - inset, z_break), (hi, plate)]
+        under, ends = section(u0, u1), section(v0, v1)
+        ridge_z = max(z for _u, z in under)
+        p_out = p_low
     else:
         ridge_z = plate + half * p
         under = [(u0, plate), (uc, ridge_z), (u1, plate)]
         p_out = p
+        if roof.style == 'CLIPPED_GABLE':
+            clip_z = max(base + roof.clip_height, plate + 0.05)
+            if clip_z < ridge_z - 0.05:
+                ends = [(v0, clip_z), (vm, clip_z + (vm - v0) * p), (v1, clip_z)]
+        elif roof.style == 'DUTCH_GABLE':
+            ends = [(v0, plate), (vm, plate + (vm - v0) * p), (v1, plate)]
+            cut = min(max(base + roof.gable_height, plate + 0.05), ridge_z - 0.05)
+    parapet = roof.parapet_height if roof.style == 'FLAT' and roof.base == 'WALLS' else 0.0
     return {
         'along_x': along_x, 'u0': u0, 'u1': u1, 'v0': v0, 'v1': v1,
         'uc': uc, 'half': half, 'p': p, 'p_out': p_out,
@@ -194,6 +242,8 @@ def roof_frame(scene, level):
         'style': roof.style,
         'trusses': trusses_of(roof),
         'custom': bool(roof.use_extents),
+        'ends': ends, 'cut': cut, 'p_ends': p_ends,
+        'parapet': parapet,
     }
 
 
@@ -201,9 +251,42 @@ def _extended(frame, reach):
     """The underside carried on past both wall faces by `reach`, down the
     eave slope."""
     under = frame['under']
-    drop = reach * frame['p_out']
-    return ([(under[0][0] - reach, under[0][1] - drop)] + list(under)
-            + [(under[-1][0] + reach, under[-1][1] - drop)])
+    p_a, p_b = frame.get('p_ends') or (frame['p_out'], frame['p_out'])
+    return ([(under[0][0] - reach, under[0][1] - reach * p_a)] + list(under)
+            + [(under[-1][0] + reach, under[-1][1] - reach * p_b)])
+
+
+def _carried(points, reach):
+    """A profile carried on past both ends by `reach`, each down its own
+    end slope."""
+    (a0, z0), (a1, z1) = points[0], points[1]
+    (b1, y1), (b0, y0) = points[-2], points[-1]
+    s_a = (z1 - z0) / (a1 - a0) if abs(a1 - a0) > 1e-9 else 0.0
+    s_b = (y1 - y0) / (b0 - b1) if abs(b0 - b1) > 1e-9 else 0.0
+    return [(a0 - reach, z0 - reach * s_a)] + list(points) + [(b0 + reach, y0 - reach * s_b)]
+
+
+def _overhangs(frame, roof):
+    """(eave, gable) overhangs: inside parapets the roof stops short of
+    the walls' outside, in them."""
+    if frame.get('parapet'):
+        return -PARAPET_INSET, -PARAPET_INSET
+    return roof.eave_overhang, roof.gable_overhang
+
+
+def _trimmed(points, a, b):
+    """A profile cut back to run from a to b."""
+    from . import hb_roof_surface
+    return _dedupe([(a, hb_roof_surface.at(points, a))] + [q for q in points if a < q[0] < b]
+                   + [(b, hb_roof_surface.at(points, b))])
+
+
+def _eave_profile(frame, reach):
+    """The underside across, carried past the walls by `reach` (or cut
+    back inside them, for a negative one)."""
+    if reach < 0.0:
+        return _trimmed(frame['under'], frame['u0'] - reach, frame['u1'] + reach)
+    return _dedupe(_extended(frame, reach))
 
 
 def _offset_up(points, t):
@@ -388,17 +471,80 @@ def _hip_box(frame, out, under_edge, top_z, surface_on_top):
     return faces
 
 
+# =============================================================================
+# ROOFS WITH SLOPED ENDS
+# =============================================================================
+# Mansards, clipped gables and Dutch gables: the lower of the profile
+# across and the profile along (see hb_roof_surface), eaves all round.
+
+def _end_surface(frame, reach, lift=0.0):
+    """The underside of a roof with sloped ends over its rectangle grown
+    by `reach`, or its top `lift` above it (measured square to the slopes)."""
+    from . import hb_roof_surface
+    f = _dedupe(_extended(frame, reach))
+    g = _dedupe(_carried(frame['ends'], reach))
+    cut = frame['cut']
+    if lift > 0.0:
+        f, g = _offset_up(f, lift), _offset_up(g, lift)
+        if cut is not None:
+            cut += lift / math.cos(math.atan(frame['p']))
+    return hb_roof_surface.Surface(f, g, frame['u0'] - reach, frame['u1'] + reach,
+                                   frame['v0'] - reach, frame['v1'] + reach, cut)
+
+
+def _world_faces(frame, faces):
+    return [[_world(frame, u, v, z) for u, v, z in f] for f in faces]
+
+
+def end_surface_edges(frame):
+    """The lines a roof with sloped ends folds along over its walls'
+    outline, as plan segments ((u, v), (u, v)): its ridges, hips and
+    breaks - or [] for any other roof."""
+    from . import hb_roof_surface
+    if not frame.get('ends'):
+        return []
+    s = hb_roof_surface.Surface(frame['under'], frame['ends'], frame['u0'], frame['u1'],
+                                frame['v0'], frame['v1'], frame['cut'])
+    seen = {}
+    for face in s.faces:
+        pts = [(round(u, 6), round(v, 6), round(z, 6)) for u, v, z in face]
+        for a, b in zip(pts, pts[1:] + pts[:1]):
+            if a != b:
+                key = tuple(sorted((a, b)))
+                seen[key] = seen.get(key, 0) + 1
+    out = []
+    for (a, b), n in seen.items():
+        on_edge = any(abs(a[i] - lim) < 1e-6 and abs(b[i] - lim) < 1e-6
+                      for i, lim in ((0, frame['u0']), (0, frame['u1']),
+                                     (1, frame['v0']), (1, frame['v1'])))
+        if n >= 2 and not on_edge and abs(a[2] - b[2]) + math.hypot(a[0] - b[0], a[1] - b[1]) > 1e-6:
+            out.append((a, b))
+    return out
+
+
 def main_roof_mesh(frame, roof):
+    if frame.get('ends'):
+        from . import hb_roof_surface
+        ov = roof.eave_overhang
+        faces = hb_roof_surface.slab_faces(_end_surface(frame, ov),
+                                           _end_surface(frame, ov, roof.thickness))
+        return _solid("Roof", _world_faces(frame, faces))
     if roof.style == 'HIP':
         ov = roof.eave_overhang
         return _solid("Roof", _hip_slab(frame, ov, frame['plate'] - ov * frame['p'], roof.thickness))
+    _eave, gable = _overhangs(frame, roof)
     return _mesh("Roof", [(roof_section(frame, roof),
-                           frame['v0'] - roof.gable_overhang,
-                           frame['v1'] + roof.gable_overhang,
+                           frame['v0'] - gable,
+                           frame['v1'] + gable,
                            _along_ridge(frame))])
 
 
 def trim_mesh(frame, roof):
+    if frame.get('ends'):
+        from . import hb_roof_surface
+        faces = hb_roof_surface.box_faces(_end_surface(frame, CUTTER_REACH),
+                                          frame['ridge_z'] + CUTTER_HEIGHT, True)
+        return _solid("Roof Trim", _world_faces(frame, faces))
     if roof.style == 'HIP':
         r = CUTTER_REACH
         return _solid("Roof Trim", _hip_box(frame, r, frame['plate'] - r * frame['p'],
@@ -410,6 +556,11 @@ def trim_mesh(frame, roof):
 
 
 def top_volume_mesh(frame, roof):
+    if frame.get('ends'):
+        from . import hb_roof_surface
+        faces = hb_roof_surface.box_faces(_end_surface(frame, CUTTER_REACH, roof.thickness),
+                                          frame['plate'] - CUTTER_HEIGHT, False)
+        return _solid("Roof Top Volume", _world_faces(frame, faces))
     if roof.style == 'HIP':
         r = CUTTER_REACH
         tv = roof.thickness / math.cos(math.atan(frame['p']))
@@ -457,7 +608,7 @@ def roof_section(frame, roof):
     """The roof slab across: the underside from eave to eave (past the
     walls by the overhang), then back along the top, the thickness above
     it measured square to each slope."""
-    under = _dedupe(_extended(frame, roof.eave_overhang))
+    under = _eave_profile(frame, _overhangs(frame, roof)[0])
     top = _offset_up(under, roof.thickness)
     return under + list(reversed(top))
 
@@ -626,11 +777,20 @@ def _under_z(frame, u):
 
 
 def _hip_end_z(frame, v, z_edge):
-    """Under a hip, how high its end slopes have climbed at v from an
-    edge at z_edge; None for a roof with gable ends."""
-    if frame.get('style') != 'HIP':
+    """Under a roof with sloped ends, how high they have climbed at v
+    from an edge at z_edge; None for a roof with gable ends (or where a
+    Dutch gable's ends have stopped)."""
+    if frame.get('style') == 'HIP':
+        return z_edge + frame['p'] * min(v - frame['v0'], frame['v1'] - v)
+    ends = frame.get('ends')
+    if not ends:
         return None
-    return z_edge + frame['p'] * min(v - frame['v0'], frame['v1'] - v)
+    from . import hb_roof_surface
+    z = hb_roof_surface.at(ends, v)
+    cut = frame.get('cut')
+    if cut is not None and z > cut + 1e-9:
+        return None
+    return z + (z_edge - frame['plate'])
 
 
 def under_z_at(frame, u, v):
@@ -730,7 +890,7 @@ def _end_infill_prisms(scene, level, frame):
     roof, flush with the end."""
     from .operators import walls
     roof = level.roof
-    if roof.base != 'FLOOR' or roof.style == 'HIP':
+    if roof.base != 'FLOOR' or roof.style in NO_GABLE_STYLES or frame.get('ends'):
         return []
     u0, u1 = frame['u0'], frame['u1']
     covered = {0: [], 1: []}        # at v0, at v1: (u from, u to) of the level's end walls
@@ -766,6 +926,29 @@ def _end_infill_prisms(scene, level, frame):
             section = _dedupe([(b, frame['plate']), (a, frame['plate'])] + tops)
             if len(section) >= 3:
                 out.append((section, va, vb, _along_ridge(frame)))
+    return out
+
+
+def _dutch_gable_prisms(frame):
+    """A Dutch gable's small upright gables, where its hips stop: from
+    the hips' tops up under the roof, a hair outside the roof's own step
+    so they show in front of it."""
+    from . import hb_roof_surface
+    cut, ends = frame.get('cut'), frame.get('ends')
+    if cut is None or not ends:
+        return []
+    us = hb_roof_surface.crossings(frame['under'], cut, frame['u0'], frame['u1'])
+    if len(us) != 2:
+        return []
+    a, b = us
+    section = _dedupe([(b, cut), (a, cut)] + [q for q in frame['under'] if a < q[0] < b])
+    vm = (frame['v0'] + frame['v1']) / 2.0
+    out = []
+    for vc in hb_roof_surface.crossings(ends, cut, frame['v0'], frame['v1']):
+        s = 1.0 if vc < vm else -1.0
+        face = vc - s * 0.003
+        va, vb = sorted((face, face + s * GABLE_INFILL))
+        out.append((section, va, vb, _along_ridge(frame)))
     return out
 
 
@@ -914,6 +1097,17 @@ def roof_top_z(frame, roof, u):
 def roof_top_z_at(frame, roof, u, v):
     """Height of the main roof's top surface at (u, v), a hip's ends
     included."""
+    if frame.get('ends'):
+        # Each slope's own thickness: a mansard's steep sides are thicker
+        # measured straight up than its top
+        from . import hb_roof_surface
+        t = roof.thickness
+        z = hb_roof_surface.at(_offset_up(_dedupe(_extended(frame, CUTTER_REACH)), t), u)
+        zg = hb_roof_surface.at(_offset_up(_dedupe(_carried(frame['ends'], CUTTER_REACH)), t), v)
+        cut = frame.get('cut')
+        if cut is None or zg <= cut + t / math.cos(math.atan(frame['p'])) + 1e-9:
+            z = min(z, zg)
+        return z
     z = roof_top_z(frame, roof, u)
     tv = roof.thickness / math.cos(math.atan(frame['p']))
     end = _hip_end_z(frame, v, frame['plate'] + tv)
@@ -1106,9 +1300,8 @@ def _within_roof(frame, wall_obj, d):
             and min(a[1], b[1]) < frame['v1'] + tol and max(a[1], b[1]) > frame['v0'] - tol)
 
 
-def _set_back_from_eaves(frame, wall_obj, d):
-    """True when a wall running along the ridge stands inside the roof's
-    outline, clear of both eave lines, rather than forming one of them."""
+def _wall_u_span(frame, wall_obj, d):
+    """(lo, hi): across the ridge, where a wall running along it stands."""
     from . import hb_types
     wall = hb_types.GeoNodeWall(wall_obj)
     t = wall.get_input('Thickness')
@@ -1116,7 +1309,13 @@ def _set_back_from_eaves(frame, wall_obj, d):
     normal = Vector((-d.y, d.x))            # thickness side
     ref_u = p.y if frame['along_x'] else p.x
     far_u = ref_u + t * (normal.y if frame['along_x'] else normal.x)
-    lo, hi = min(ref_u, far_u), max(ref_u, far_u)
+    return min(ref_u, far_u), max(ref_u, far_u)
+
+
+def _set_back_from_eaves(frame, wall_obj, d):
+    """True when a wall running along the ridge stands inside the roof's
+    outline, clear of both eave lines, rather than forming one of them."""
+    lo, hi = _wall_u_span(frame, wall_obj, d)
     return lo - frame['u0'] > SET_BACK_MIN and frame['u1'] - hi > SET_BACK_MIN
 
 
@@ -1149,8 +1348,21 @@ def gable_wall_height(scene, wall_obj, height, carried=False):
                 continue                # below, but not under this roof
         if not _within_roof(frame, wall_obj, d):
             continue                    # a wing's wall, beyond this roof
+        own = level_uid == frame['level_uid'] and level.roof.base == 'WALLS'
+        if frame.get('parapet') and own and wall_obj.get('WALL_TYPE', 'Exterior') == 'Exterior':
+            # Parapets: every outside wall stands up past the roof's top
+            tv = level.roof.thickness / math.cos(math.atan(frame['p_out']))
+            height = max(height, frame['ridge_z'] + tv + frame['parapet'] - m.translation.z)
+            continue
         ridge_dir = Vector((1.0, 0.0)) if frame['along_x'] else Vector((0.0, 1.0))
         if abs(d.dot(ridge_dir)) > 0.01:
+            if level.roof.style in ONE_SLOPE_STYLES and own:
+                # Under one slope, the walls along it go up to meet it: the
+                # trim cuts the high one's top to the slope
+                lo, hi = _wall_u_span(frame, wall_obj, d)
+                z = max(_under_z(frame, min(max(u, frame['u0']), frame['u1'])) for u in (lo, hi))
+                height = max(height, z - m.translation.z + GABLE_MARGIN)
+                continue
             # Runs along the ridge. Set back from the eaves - behind a
             # porch, say - the roof is above its top: raise it into the
             # roof like a gable wall so it closes up to the roof's
@@ -1161,8 +1373,8 @@ def gable_wall_height(scene, wall_obj, height, carried=False):
                     and _set_back_from_eaves(frame, wall_obj, d)):
                 height = max(height, frame['ridge_z'] - m.translation.z + GABLE_MARGIN)
             continue                    # not square to the ridge
-        if level.roof.style == 'HIP':
-            continue                    # a hip slopes down to its ends: no gable
+        if level.roof.style in NO_GABLE_STYLES:
+            continue                    # its ends slope down: no gable
         needed = frame['ridge_z'] - m.translation.z + GABLE_MARGIN
         height = max(height, needed)
     return height
@@ -1200,6 +1412,9 @@ def apply_trims(scene):
                     continue
                 if check and not _wall_in_footprint(frame, obj, wall, lower):
                     continue
+                if (frame.get('parapet') and upper.uid == frame['level_uid']
+                        and obj.get('WALL_TYPE', 'Exterior') == 'Exterior'):
+                    continue            # parapets stand up past the roof
                 if below and (obj.matrix_world.translation.z + wall.get_input('Height')
                               <= frame['plate'] + 0.01):
                     continue
@@ -1361,7 +1576,7 @@ def _rebuild_roof(scene, level):
     # Cross gables' filled-in ends, and shed dormers' walls cut back to the
     # roof they stand on - both finished like the house's walls
     infill = (_infill_prisms(frame, roof, cross) + _porch_infill_prisms(scene, level, frame, cross)
-              + _end_infill_prisms(scene, level, frame))
+              + _end_infill_prisms(scene, level, frame) + _dutch_gable_prisms(frame))
     gables = _visible_piece(scene, level, roof, 'gables_obj', f"Roof Gables - {level.name}",
                             _mesh("Roof Gables", infill) if infill else None)
     dormer_walls = _visible_piece(scene, level, roof, 'dormer_walls_obj',
