@@ -42,6 +42,8 @@ def room_of(obj):
     """(level index, room index) for an object made from a room, else None."""
     if obj is None:
         return None
+    if obj.get('IS_LIGHT_FIXTURE') or obj.get('IS_FURNISHING'):
+        return None     # in a room (the room's uid is on it), not made from one
     room_uid = obj.get(hb_house.ROOM_KEY)
     level_uid = obj.get(hb_house.LEVEL_KEY)
     if not room_uid or not level_uid:
