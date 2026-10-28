@@ -418,7 +418,7 @@ HINTS = {
     "home_builder.place_skylight": "Click on the roof: it lies on the slope there",
     "home_builder_doors_windows.place_fireplace": "Click a wall · arrow keys for offset, W for width",
     "home_builder_doors_windows.place_bay": "Click an outside wall · arrow keys for offset, W for width",
-    "home_builder.furnish": "Pick one above, then click the face of a wall · W for width",
+    "home_builder.furnish": "Pick one above · click a wall face, or furniture on the floor (R turns it)",
 }
 
 

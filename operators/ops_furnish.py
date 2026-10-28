@@ -188,6 +188,75 @@ class HOME_BUILDER_OT_furnish(doors_windows._PlaceWallObjectBase):
         self.register_placement_object(item.obj)
         self.create_placement_dimensions()
         self._symbol_key = None
+        if not hasattr(self, 'turn'):
+            self.turn = 0.0
+        self._preview_size = None
+        _preview(item.obj)
+
+    def _preview_follows(self):
+        """Furniture's preview model, rebuilt when its size is typed."""
+        obj = self.placed_obj.obj if self.placed_obj else None
+        if obj is None or not _is_furnishing(obj):
+            return
+        c = hb_types.GeoNodeCage(obj)
+        size = tuple(round(c.get_input(n), 5) for n in ('Dim X', 'Dim Y', 'Dim Z'))
+        if size != getattr(self, '_preview_size', None):
+            self._preview_size = size
+            _preview(obj)
+
+    def set_position_free(self):
+        """Away from the walls, furniture stands on the floor under the
+        cursor, turned as R has turned it."""
+        if not (self.placed_obj and self.hit_location and _is_furnishing(self.placed_obj.obj)):
+            return super().set_position_free()
+        level = hb_house.active_level(bpy.context)
+        p = Vector(self.hit_location)
+        stand_at(self.placed_obj.obj, level, p.x, p.y, self.turn)
+        self.hide_placement_dimensions()
+
+    def _drop_free(self, context):
+        """A click away from the walls: the piece stays on the floor there."""
+        obj = self.placed_obj.obj
+        if obj in self.placement_objects:
+            self.placement_objects.remove(obj)
+        self.delete_placement_dimensions()
+        finish(context, obj)
+        self.placed_count += 1
+        if self.continuous:
+            self.start_next_object(context)
+            self.update_header(context)
+            return {'RUNNING_MODAL'}
+        context.area.header_text_set(None)
+        context.window.cursor_set('DEFAULT')
+        return {'FINISHED'}
+
+    def _wall_modal(self, context, event):
+        """The window's wall placement - with, for furniture, the floor
+        away from the walls (R turns it there), and its model shown."""
+        obj = self.placed_obj.obj if self.placed_obj else None
+        free_ok = obj is not None and _is_furnishing(obj) and self.mode == 'WALL'
+        if event.type == 'R' and free_ok:
+            # Ours, not Blender's rotate; it turns the piece off the walls
+            if event.value == 'PRESS' and not self.selected_wall:
+                self.turn = (self.turn + math.pi / 2.0) % (2.0 * math.pi)
+                self.set_position_free()
+            return {'RUNNING_MODAL'}
+        if (free_ok and event.type == 'LEFTMOUSE' and event.value == 'PRESS'
+                and not self.selected_wall and obj.parent is None and self.hit_location):
+            return self._drop_free(context)
+        # Its model is out of the way of the cursor's ray while it is
+        # snapped, as the cage is
+        parts = [c.name for c in obj.children if c.visible_get()] if obj is not None else []
+        for name in parts:
+            bpy.data.objects[name].hide_set(True)
+        result = doors_windows._PlaceWallObjectBase.modal(self, context, event)
+        for name in parts:
+            part = bpy.data.objects.get(name)
+            if part is not None:
+                part.hide_set(False)
+        if {'RUNNING_MODAL', 'PASS_THROUGH'} & result:
+            self._preview_follows()
+        return result
 
     def get_two_point_z_offset(self, context):
         if _placement(context) == 'WALL_MOUNT':
@@ -239,6 +308,7 @@ class HOME_BUILDER_OT_furnish(doors_windows._PlaceWallObjectBase):
         item.create()
         self.free_obj = item.obj
         self.free_obj.hide_set(True)
+        self._shown = False
 
     def _floor_point(self, context, event):
         level = hb_house.get_level(self.level_uid) if self.level_uid else None
@@ -288,6 +358,10 @@ class HOME_BUILDER_OT_furnish(doors_windows._PlaceWallObjectBase):
         if p is not None and self.free_obj is not None:
             stand_at(self.free_obj, level, p.x, p.y, self.turn, hang=self.mode == 'CEILING')
             self.free_obj.hide_set(False)
+            if not getattr(self, '_shown', False):
+                # Its model once it is under the cursor: which way it faces
+                self._shown = True
+                _preview(self.free_obj)
         if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
             if p is None:
                 return {'RUNNING_MODAL'}
@@ -306,8 +380,16 @@ class HOME_BUILDER_OT_furnish(doors_windows._PlaceWallObjectBase):
 
     def modal(self, context, event):
         if getattr(self, 'mode', 'WALL') in ('WALL', 'WALL_MOUNT'):
-            return doors_windows._PlaceWallObjectBase.modal(self, context, event)
+            return self._wall_modal(context, event)
         return self._free_modal(context, event)
+
+
+def _preview(cage_obj):
+    """Build a piece of furniture's model on it while it is being placed,
+    so which way it faces shows before the click."""
+    if _is_furnishing(cage_obj):
+        from ..product_libraries.interiors import furniture_geo
+        furniture_geo.build(cage_obj)
 
 
 def _furnish_changed(self, context):
