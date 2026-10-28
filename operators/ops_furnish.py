@@ -123,6 +123,36 @@ def _centre_local(cage_obj):
     return Vector((w / 2.0, -d / 2.0 if mirrored else d / 2.0, 0.0))
 
 
+def _ceiling_z_here(x, y):
+    """The ceiling over (x, y) outside a house: the underside of a
+    ceiling there, else the top of the walls, else the room's Ceiling
+    Height."""
+    scene = bpy.context.scene
+    up = Vector((0.0, 0.0, 1.0))
+    best = None
+    for obj in scene.objects:
+        if not obj.get('IS_CEILING_BP') or obj.type != 'MESH':
+            continue
+        inv = obj.matrix_world.inverted()
+        hit, loc, _n, _i = obj.ray_cast(inv @ Vector((x, y, 0.05)), inv.to_3x3() @ up, distance=100.0)
+        if hit:
+            z = (obj.matrix_world @ loc).z
+            best = z if best is None else min(best, z)
+    if best is not None:
+        return best
+    tops = []
+    for obj in scene.objects:
+        if obj.get('IS_WALL_BP'):
+            w = hb_types.GeoNodeWall(obj)
+            try:
+                tops.append(obj.matrix_world.translation.z + w.get_input('Height'))
+            except Exception:
+                pass
+    if tops:
+        return max(tops)
+    return scene.home_builder.ceiling_height
+
+
 def stand_at(cage_obj, level, x, y, turn=0.0, hang=False):
     """Stand a free item with its footprint's middle at (x, y) on the
     level's floor - or hang it from the ceiling there - turned by `turn`."""
@@ -133,7 +163,8 @@ def stand_at(cage_obj, level, x, y, turn=0.0, hang=False):
     rot = Matrix.Rotation(turn, 3, 'Z')
     off = rot @ _centre_local(cage_obj)
     if hang:
-        z = hb_rooms.ceiling_z_at(level, x, y) - h
+        top = hb_rooms.ceiling_z_at(level, x, y) if level is not None else _ceiling_z_here(x, y)
+        z = top - h
     else:
         z = level.elevation if level is not None else 0.0
     cage_obj.location = (x - off.x, y - off.y, z)
