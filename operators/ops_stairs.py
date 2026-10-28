@@ -330,26 +330,10 @@ def _create_u_stair_mesh(stair_width, total_rise, riser_height, tread_depth, tre
 # ---------------------------------------------------------------------------
 
 def rebuild_stair_mesh(obj):
-    """Regenerate the stair mesh from the object's custom properties."""
-    width           = obj.get('STAIR_WIDTH',           units.inch(36))
-    total_rise      = obj.get('STAIR_TOTAL_RISE',      units.inch(96))
-    riser_height    = obj.get('STAIR_RISER_HEIGHT',    units.inch(7.5))
-    tread_depth     = obj.get('STAIR_TREAD_DEPTH',     units.inch(10.5))
-    tread_thickness = obj.get('STAIR_TREAD_THICKNESS', units.inch(1))
-    stair_type      = obj.get('STAIR_TYPE',            'STRAIGHT')
-    turn_direction  = obj.get('STAIR_TURN_DIRECTION',  'LEFT')
-    landing_depth   = obj.get('STAIR_LANDING_DEPTH',   width)
-    landing_height  = obj.get('STAIR_LANDING_HEIGHT',  total_rise / 2)
-    gap             = obj.get('STAIR_GAP',             0)
-
-    old_mesh = obj.data
-    new_mesh = create_stair_mesh(width, total_rise, riser_height, tread_depth, tread_thickness,
-                                 stair_type, turn_direction, landing_depth, landing_height, gap)
-    for mat in old_mesh.materials:
-        new_mesh.materials.append(mat)
-    obj.data = new_mesh
-    if old_mesh.users == 0:
-        bpy.data.meshes.remove(old_mesh)
+    """The stair's treads, risers and parts from its settings (see
+    hb_stair_build)."""
+    from .. import hb_stair_build
+    hb_stair_build.build(obj)
 
 
 # ---------------------------------------------------------------------------
@@ -379,7 +363,7 @@ class home_builder_stairs_OT_place_stairs(bpy.types.Operator):
     def _settings(self, context):
         h = context.scene.hb_house
         return (h.stair_type, h.stair_turn, round(h.stair_width, 5), round(h.stair_max_riser, 5),
-                round(h.stair_tread, 5), h.stair_from)
+                round(h.stair_tread, 5), h.stair_from, h.stair_risers, h.stair_stringer, h.stair_baluster)
 
     def _levels(self, context):
         """(the level the stair stands on, the one it climbs to, the level
@@ -417,17 +401,19 @@ class home_builder_stairs_OT_place_stairs(bpy.types.Operator):
         obj['STAIR_LANDING_HEIGHT'] = rise / 2
         obj['STAIR_GAP'] = 0.0
         obj['STAIR_AUTO_RISE'] = base is not None
+        obj['STAIR_RISERS'] = h.stair_risers
+        obj['STAIR_STRINGER'] = h.stair_stringer
+        obj['STAIR_BALUSTER'] = h.stair_baluster
+        obj['HB_STAIR_PREVIEW'] = True
         if base is not None:
             obj[hb_house.LEVEL_KEY] = base.uid
         obj.location.z = base.elevation if base is not None else 0.0
-        mat = bpy.data.materials.get("Stair Material")
-        if mat is None:
-            mat = bpy.data.materials.new(name="Stair Material")
-            mat.use_nodes = True
-            bsdf = mat.node_tree.nodes.get('Principled BSDF')
-            if bsdf:
-                bsdf.inputs['Base Color'].default_value = (0.6, 0.45, 0.3, 1.0)
-        obj.data.materials.append(mat)
+        from .. import hb_stair_build
+        old = obj.data
+        obj.data = hb_stair_build.stair_mesh(hb_stairs.values(obj), hb_stair_build.construction(obj))
+        bpy.data.meshes.remove(old)
+        for mat in hb_stair_build.materials(obj)[:2]:
+            obj.data.materials.append(mat)
         self._signature = self._settings(context)
         faces_on = [l.uid for l in (base, _upper) if l is not None]
         self.faces = hb_stairs.wall_faces(context.scene, faces_on) if faces_on else \
@@ -498,6 +484,7 @@ class home_builder_stairs_OT_place_stairs(bpy.types.Operator):
         bpy.ops.object.select_all(action='DESELECT')
         obj.select_set(True)
         context.view_layer.objects.active = obj
+        del obj['HB_STAIR_PREVIEW']
         level = hb_stairs.level_of(obj)
         if level is not None:
             hb_house.ensure_level_collections(context.scene, level)
@@ -506,6 +493,11 @@ class home_builder_stairs_OT_place_stairs(bpy.types.Operator):
                 for c in list(obj.users_collection):
                     c.objects.unlink(obj)
                 coll.objects.link(obj)
+        # Its railings and stringers, now its sides' walls are known
+        from .. import hb_stair_build
+        context.view_layer.update()
+        hb_stair_build.build(obj)
+        if level is not None:
             from .. import hb_rooms
             hb_rooms.apply_stairwells(context.scene)
         self.preview_obj = None

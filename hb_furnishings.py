@@ -167,8 +167,8 @@ _owner = object()
 def _active_changed():
     view_layer = bpy.context.view_layer
     obj = view_layer.objects.active if view_layer is not None else None
-    if obj is not None and obj.get('IS_STAIR_GUARD') and obj.parent is not None:
-        # A stair's guard rail: the stair
+    if obj is not None and (obj.get('IS_STAIR_GUARD') or obj.get('IS_STAIR_PART')) and obj.parent is not None:
+        # A stair's guard rail or its parts (stringers, railings): the stair
         stair = obj.parent
         if view_layer.objects.get(stair.name) is stair:
             obj.select_set(False)

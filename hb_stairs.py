@@ -154,6 +154,11 @@ def warnings(obj):
         out.append("Narrower than 36\"")
     if v['headroom'] < CODE_HEADROOM - 1e-4:
         out.append("Headroom under 6'8\"")
+    rail = float(obj.get('STAIR_RAIL_HEIGHT', inch(36)))
+    if obj.get('STAIR_RAILING', 'AUTO') != 'NONE' and not (inch(34) - 1e-4 <= rail <= inch(38) + 1e-4):
+        out.append("Rail not 34\" to 38\" high")
+    if obj.get('STAIR_RISERS', 'CLOSED') == 'OPEN' and riser - v['tread_t'] > inch(4) + 1e-4:
+        out.append("Open risers wider than 4\"")
     return out
 
 
@@ -355,6 +360,31 @@ _guard = _prop('STAIR_GUARD', True, bool)
 _guard_h = _prop('STAIR_GUARD_HEIGHT', inch(36))
 
 
+_risers = _enum('STAIR_RISERS', [('CLOSED', "Closed", "A riser under every tread"),
+                                 ('OPEN', "Open", "No risers: open between the treads")], 'CLOSED')
+_STRINGERS = [('CLOSED', "Closed", "Boards each side, the treads housed between them"),
+              ('OPEN', "Open", "Cut stringers under the treads, their ends showing"),
+              ('CENTER', "Center", "One stringer down the middle")]
+_RAILINGS = [('AUTO', "Open Sides", "A railing on each side not along a wall"), ('NONE', "None", "No railings")]
+_BALUSTERS = [('SQUARE', "Square", "Square balusters"), ('ROUND', "Round", "Turned (round) balusters"),
+              ('GLASS', "Glass", "Glass panels"), ('SOLID', "Half Wall", "A half wall capped with a rail")]
+_UNDERS = [('OPEN', "Open", "Nothing under the stair"),
+           ('WALLED', "Walled", "Walls and a soffit close the space under it"),
+           ('CLOSET', "Closet", "Walled, with a door into the space")]
+_stringer = _enum('STAIR_STRINGER', _STRINGERS, 'CLOSED')
+_railing = _enum('STAIR_RAILING', _RAILINGS, 'AUTO')
+_baluster = _enum('STAIR_BALUSTER', _BALUSTERS, 'SQUARE')
+_under = _enum('STAIR_UNDER', _UNDERS, 'OPEN')
+_nosing = _prop('STAIR_NOSING', inch(1))
+_skirt = _prop('STAIR_SKIRT', True, bool)
+_rail_h = _prop('STAIR_RAIL_HEIGHT', inch(36))
+_wall_rail = _prop('STAIR_WALL_RAIL', True, bool)
+
+
+def _material_changed(self, context):
+    _changed(self.id_data)
+
+
 class HB_Stair(bpy.types.PropertyGroup):
     """A stair's settings, read from and written to its object."""
     stair_type: bpy.props.EnumProperty(name="Type", items=TYPE_ITEMS, get=_type[0], set=_type[1])  # type: ignore
@@ -384,6 +414,34 @@ class HB_Stair(bpy.types.PropertyGroup):
                                   get=_guard[0], set=_guard[1])  # type: ignore
     guard_height: bpy.props.FloatProperty(name="Guard Height", min=inch(30), max=inch(48), subtype='DISTANCE',
                                           precision=4, get=_guard_h[0], set=_guard_h[1])  # type: ignore
+    # How it is built (hb_stair_build)
+    risers: bpy.props.EnumProperty(name="Risers", items=[('CLOSED', "Closed", "A riser under every tread"),
+                                                         ('OPEN', "Open", "No risers: open between the treads")],
+                                   get=_risers[0], set=_risers[1])  # type: ignore
+    stringer: bpy.props.EnumProperty(name="Stringers", items=_STRINGERS, get=_stringer[0], set=_stringer[1])  # type: ignore
+    nosing: bpy.props.FloatProperty(name="Nosing", description="How far a tread reaches past the riser under it",
+                                    min=0.0, max=inch(1.5), subtype='DISTANCE', precision=4,
+                                    get=_nosing[0], set=_nosing[1])  # type: ignore
+    skirt: bpy.props.BoolProperty(name="Skirt Boards", description="A board along each side that runs by a wall",
+                                  get=_skirt[0], set=_skirt[1])  # type: ignore
+    under: bpy.props.EnumProperty(name="Under the Stair", items=_UNDERS, get=_under[0], set=_under[1])  # type: ignore
+    railing: bpy.props.EnumProperty(name="Railings", items=_RAILINGS, get=_railing[0], set=_railing[1])  # type: ignore
+    baluster: bpy.props.EnumProperty(name="Style", items=_BALUSTERS, get=_baluster[0], set=_baluster[1])  # type: ignore
+    rail_height: bpy.props.FloatProperty(
+        name="Rail Height", description="The handrail's top over the nosings (34\" to 38\" by code)",
+        min=inch(30), max=inch(42), subtype='DISTANCE', precision=4, get=_rail_h[0], set=_rail_h[1])  # type: ignore
+    wall_rail: bpy.props.BoolProperty(name="Handrail on Walls", description="A handrail on a side that runs by a wall",
+                                      get=_wall_rail[0], set=_wall_rail[1])  # type: ignore
+    tread_material: bpy.props.PointerProperty(name="Treads", type=bpy.types.Material,
+                                              update=_material_changed)  # type: ignore
+    riser_material: bpy.props.PointerProperty(name="Risers", type=bpy.types.Material,
+                                              update=_material_changed)  # type: ignore
+    stringer_material: bpy.props.PointerProperty(name="Stringers", type=bpy.types.Material,
+                                                 update=_material_changed)  # type: ignore
+    rail_material: bpy.props.PointerProperty(name="Rails", type=bpy.types.Material,
+                                             update=_material_changed)  # type: ignore
+    baluster_material: bpy.props.PointerProperty(name="Balusters", type=bpy.types.Material,
+                                                 update=_material_changed)  # type: ignore
 
 
 def describe(obj, unit_settings):
@@ -395,12 +453,57 @@ def describe(obj, unit_settings):
     return f"{n} risers of {unit_to_string(unit_settings, riser)} · {unit_to_string(unit_settings, run)} run"
 
 
+# ---- Moved by hand ------------------------------------------------------------------
+# A stair's railings go on its sides that aren't by walls: moved, or
+# turned, it builds them again once it has come to rest.
+
+_moved = {}             # stair name -> its matrix when last seen moving
+
+
+@bpy.app.handlers.persistent
+def _depsgraph_post(scene, depsgraph):
+    for u in depsgraph.updates:
+        obj = u.id
+        if (isinstance(obj, bpy.types.Object) and u.is_updated_transform and obj.get(STAIR_KEY)
+                and not obj.get('HB_STAIR_PREVIEW')):
+            _moved[obj.name] = obj.matrix_world.copy()
+    if _moved and not bpy.app.timers.is_registered(_settled):
+        bpy.app.timers.register(_settled, first_interval=0.4)
+
+
+def _settled():
+    from . import hb_stair_build
+    for name, m in list(_moved.items()):
+        obj = bpy.data.objects.get(name)
+        if obj is None:
+            del _moved[name]
+            continue
+        if any(abs(a - b) > 1e-6 for ra, rb in zip(obj.matrix_world, m) for a, b in zip(ra, rb)):
+            _moved[name] = obj.matrix_world.copy()
+            continue            # still moving
+        del _moved[name]
+        try:
+            hb_stair_build.build(obj)
+            if obj.get(hb_house.LEVEL_KEY):
+                from . import hb_rooms
+                hb_rooms.apply_stairwells(bpy.context.scene)
+        except Exception as e:
+            print(f"stair rebuild: {e}")
+    return 0.4 if _moved else None
+
+
 def register():
     bpy.utils.register_class(HB_Stair)
     bpy.types.Object.hb_stair = bpy.props.PointerProperty(type=HB_Stair)
+    if _depsgraph_post not in bpy.app.handlers.depsgraph_update_post:
+        bpy.app.handlers.depsgraph_update_post.append(_depsgraph_post)
 
 
 def unregister():
+    if _depsgraph_post in bpy.app.handlers.depsgraph_update_post:
+        bpy.app.handlers.depsgraph_update_post.remove(_depsgraph_post)
+    if bpy.app.timers.is_registered(_settled):
+        bpy.app.timers.unregister(_settled)
     if hasattr(bpy.types.Object, 'hb_stair'):
         del bpy.types.Object.hb_stair
     bpy.utils.unregister_class(HB_Stair)

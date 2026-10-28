@@ -759,6 +759,31 @@ STAIR_FIELDS = (
         ('distance', 'guard_height', "Guard Height", {'when': lambda st: st.guard}),
         ('actions', (("Delete", "home_builder_stairs.delete_stairs"),), ""),
     )}),
+    ('group', 'stair_build', "Construction", {'summary': lambda st: f"{_label(st, 'risers')} risers · {_label(st, 'stringer')} stringers",
+                                             'fields': (
+        ('enum', 'risers', "Risers"),
+        ('enum', 'stringer', "Stringers"),
+        ('distance', 'nosing', "Nosing"),
+        ('bool', 'skirt', "Skirt Boards", {'when': lambda st: st.stringer != 'CLOSED'}),
+        ('enum', 'under', "Under the Stair"),
+    )}),
+    ('group', 'stair_railing', "Railing", {'summary': lambda st: ("None" if st.railing == 'NONE'
+                                                               else f"{_label(st, 'baluster')} · {_label(st, 'railing')}"),
+                                          'fields': (
+        ('enum', 'railing', "Railings"),
+        ('enum', 'baluster', "Style", {'when': lambda st: st.railing != 'NONE'}),
+        ('distance', 'rail_height', "Rail Height", {'when': lambda st: st.railing != 'NONE'}),
+        ('bool', 'wall_rail', "Handrail on Walls", {'when': lambda st: st.railing != 'NONE'}),
+    )}),
+    ('group', 'stair_materials', "Materials", {'summary': lambda st: (st.tread_material.name if st.tread_material
+                                                                     else "Oak treads, painted"),
+                                              'fields': (
+        ('native', 'tread_material', "Treads"),
+        ('native', 'riser_material', "Risers"),
+        ('native', 'stringer_material', "Stringers"),
+        ('native', 'rail_material', "Rails"),
+        ('native', 'baluster_material', "Balusters"),
+    )}),
 )
 
 

@@ -2189,6 +2189,18 @@ class HB_House_Props(PropertyGroup):
         default=inch(7.75), min=inch(4), max=inch(9), subtype='DISTANCE', precision=4)  # type: ignore
     stair_tread: FloatProperty(name="Tread Depth", default=inch(10.5), min=inch(8), max=inch(16),
                                subtype='DISTANCE', precision=4)  # type: ignore
+    stair_risers: EnumProperty(name="Risers", items=[
+        ('CLOSED', "Closed", "A riser under every tread"),
+        ('OPEN', "Open", "No risers: open between the treads")], default='CLOSED')  # type: ignore
+    stair_stringer: EnumProperty(name="Stringers", items=[
+        ('CLOSED', "Closed", "Boards each side, the treads housed between them"),
+        ('OPEN', "Open", "Cut stringers under the treads, their ends showing"),
+        ('CENTER', "Center", "One stringer down the middle")], default='CLOSED')  # type: ignore
+    stair_baluster: EnumProperty(name="Railing", items=[
+        ('SQUARE', "Square", "Square balusters"),
+        ('ROUND', "Round", "Turned (round) balusters"),
+        ('GLASS', "Glass", "Glass panels"),
+        ('SOLID', "Half Wall", "A half wall capped with a rail")], default='SQUARE')  # type: ignore
 
     # The Furnish tool: what it places
     furnish_item: EnumProperty(

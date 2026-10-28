@@ -397,6 +397,9 @@ STAIR_FIELDS = (
     ('distance', 'stair_width', "Width"),
     ('distance', 'stair_max_riser', "Max Riser"),
     ('distance', 'stair_tread', "Tread Depth"),
+    ('choices', 'stair_risers', "Risers", {'cols': 2}),
+    ('choices', 'stair_stringer', "Stringers", {'cols': 3}),
+    ('choices', 'stair_baluster', "Railing", {'cols': 2}),
 )
 
 SKYLIGHT_FIELDS = (
