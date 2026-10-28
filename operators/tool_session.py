@@ -436,8 +436,8 @@ PAGES = {
 HINTS = {
     "home_builder_walls.draw_walls": "C closes the room · T tracks a point",
     "home_builder_obstacles.place_obstacle": "Pick one above, then click a wall, floor or ceiling",
-    "home_builder_stairs.place_stairs": "Click and drag the way it climbs (From Top: the way down) · "
-                                        "sides snap to walls · R turns · T type · D turn side",
+    "home_builder_stairs.place_stairs": "R turns it, click to place · or press and drag the way it "
+                                        "climbs · sides snap to walls · T type · D turn side",
     "home_builder.place_beam": "Snaps to wall corners and faces, posts and beam ends",
     "home_builder.place_post": "Runs up to the beam over it, or to the ceiling",
     "home_builder.place_skylight": "Click on the roof: it lies on the slope there",

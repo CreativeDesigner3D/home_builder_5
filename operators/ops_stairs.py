@@ -340,14 +340,18 @@ def rebuild_stair_mesh(obj):
 # Operators
 # ---------------------------------------------------------------------------
 
+DRAG = 0.25         # m; a press moved this far is a drag that sets the direction
+
+
 class home_builder_stairs_OT_place_stairs(bpy.types.Operator):
-    """Draw a staircase: click where it starts and drag the way it climbs
-    (or, From Top, where it arrives and the way it goes down). Its risers
-    are counted from the rise between the levels and the Max Riser; its
-    sides go against walls they come near."""
+    """Place a staircase: it follows the mouse, R turns it, a click puts
+    it down where it starts (From Top: where it arrives). Pressing and
+    dragging sets the way it climbs instead (From Top: the way down). Its
+    risers are counted from the rise between the levels and the Max
+    Riser; its sides go against walls they come near."""
     bl_idname = "home_builder_stairs.place_stairs"
     bl_label = "Place Stairs"
-    bl_description = "Click where the stair starts and drag the way it climbs"
+    bl_description = "Click to place the stair (R turns it first); press and drag to set the way it climbs"
     bl_options = {'REGISTER', 'UNDO'}
 
     # Modal state
@@ -456,10 +460,12 @@ class home_builder_stairs_OT_place_stairs(bpy.types.Operator):
             up = self.dir if self.anchor == 'START' else -self.dir
             self._place(p, up)
         else:
-            if p is not None:
-                d = Vector((p.x - self.start.x, p.y - self.start.y))
-                if d.length > 0.05:
-                    self.dir = d.normalized()
+            if p is not None and self.press is not None:
+                # Dragged far enough to mean a direction, it follows the drag
+                if (Vector((p.x, p.y)) - self.press).length > DRAG:
+                    d = Vector((p.x - self.start.x, p.y - self.start.y))
+                    if d.length > 1e-6:
+                        self.dir = d.normalized()
             up = self.dir if self.anchor == 'START' else -self.dir
             self._place(self.start, up)
         self.preview_obj.hide_set(False)
@@ -470,9 +476,9 @@ class home_builder_stairs_OT_place_stairs(bpy.types.Operator):
         v = hb_stairs.values(self.preview_obj)
         n, riser, run1, run2 = hb_stairs.counts(v)
         us = context.scene.unit_settings
-        step = ("Click where it starts" if self.anchor == 'START' else "Click where it arrives") \
-            if self.start is None else ("Drag the way it climbs, click to place" if self.anchor == 'START'
-                                        else "Drag the way it goes down, click to place")
+        step = ("Click to place where it starts" if self.anchor == 'START' else "Click to place where it arrives") \
+            if self.start is None else ("Drag the way it climbs, let go to place" if self.anchor == 'START'
+                                        else "Drag the way it goes down, let go to place")
         wall = " | against a wall" if getattr(self, 'on_wall', False) else ""
         text = (f"Stairs: {n} risers of {units.unit_to_string(us, riser)}, "
                 f"{units.unit_to_string(us, run1 + run2)} run{wall} | {step} | "
@@ -568,20 +574,16 @@ class home_builder_stairs_OT_place_stairs(bpy.types.Operator):
         if event.type == 'LEFTMOUSE':
             p = self._mouse_point(context)
             if event.value == 'PRESS':
-                if self.start is None:
-                    if p is not None:
-                        self.start = self.point.to_3d()
-                        self.press = Vector((p.x, p.y))
-                    return {'RUNNING_MODAL'}
+                if self.start is None and p is not None:
+                    self.start = self.point.to_3d()
+                    self.press = Vector((p.x, p.y))
+                return {'RUNNING_MODAL'}
+            if event.value == 'RELEASE' and self.start is not None:
+                # Placed when the button comes up: as it was turned for a
+                # click, along the drag for a drag
                 if self.confirm_placement(context):
                     self.cleanup(context)
                     return {'FINISHED'}
-            elif event.value == 'RELEASE' and self.start is not None and p is not None:
-                # A drag: placed where the button comes up
-                if (Vector((p.x, p.y)) - self.press).length > 0.25:
-                    if self.confirm_placement(context):
-                        self.cleanup(context)
-                        return {'FINISHED'}
             return {'RUNNING_MODAL'}
 
         if event.type in {'RIGHTMOUSE', 'ESC'} and event.value == 'PRESS':
