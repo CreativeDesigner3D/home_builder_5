@@ -31,6 +31,7 @@ FIREPLACE_KEY = 'IS_FIREPLACE_BP'
 PART_KEY = 'IS_FIREPLACE_PART'
 CHIMNEY_KEY = 'IS_CHIMNEY'
 CHASE_KEY = 'IS_CHIMNEY_CHASE'
+BOX_KEY = 'IS_FIREPLACE_BOX'        # the wire box round the whole fireplace
 MENU_ID = "HOME_BUILDER_MT_fireplace_commands"
 CHASE_CUT = "Chimney - "            # + the fireplace's name, on floors and ceilings
 
@@ -392,7 +393,7 @@ def build(cage):
     from .product_libraries.common import door_window_geo
     room = P.mesh("Fireplace", [_masonry(cage), _material("HB Firebrick", FIREBRICK),
                                 door_window_geo._trim_material(), _material("HB Hearth", HEARTH)])
-    _child(cage, f"{cage.name} Parts", room, 'IS_FIREPLACE_ROOM')
+    room_obj = _child(cage, f"{cage.name} Parts", room, 'IS_FIREPLACE_ROOM')
 
     # The masonry: breast or outside mass, shoulder and stack
     scene = hb_house.house_scene_of(bpy.context.scene)
@@ -440,9 +441,43 @@ def build(cage):
     else:
         mats = [mat]
     chimney = _child(cage, f"Chimney - {cage.name}", C.mesh("Chimney", mats), CHIMNEY_KEY)
+    _box(cage, [room_obj, chimney], z_s)
     cage['HB_CHIMNEY_TOP'] = top_world if top_world is not None else 0.0
     _chase_cutter(cage, L, top_world)
     _wall_cut(cage, L['kind'] == 'OUTSIDE')
+
+
+def _box(cage, parts, z_top):
+    """A wire box round the whole fireplace below `z_top` (the stack
+    above left out): what a click on any of it selects, so its outline is
+    the fireplace's, where the cage is only the firebox's mouth."""
+    pts = [v.co for obj in parts if obj is not None and obj.type == 'MESH'
+           for v in obj.data.vertices if v.co.z <= z_top + 1e-4]
+    if not pts:
+        return None
+    x0, x1 = min(p.x for p in pts), max(p.x for p in pts)
+    y0, y1 = min(p.y for p in pts), max(p.y for p in pts)
+    z0, z1 = min(p.z for p in pts), max(p.z for p in pts)
+    corners = [(x, y, z) for z in (z0, z1) for y in (y0, y1) for x in (x0, x1)]
+    edges = [(0, 1), (2, 3), (4, 5), (6, 7), (0, 2), (1, 3), (4, 6), (5, 7),
+             (0, 4), (1, 5), (2, 6), (3, 7)]
+    mesh = bpy.data.meshes.new("Fireplace Box")
+    mesh.from_pydata(corners, edges, [])
+    obj = _child(cage, f"{cage.name} Box", mesh, BOX_KEY)
+    obj.display_type = 'WIRE'
+    obj.hide_render = True
+    obj.color = cage.color
+    # Moved by itself it would leave the fireplace behind
+    obj.lock_location = obj.lock_rotation = obj.lock_scale = (True, True, True)
+    return obj
+
+
+def box_of(obj):
+    """The wire box of the fireplace an object is part of, or None."""
+    cage = fireplace_of(obj)
+    if cage is None:
+        return None
+    return next((c for c in cage.children if c.get(BOX_KEY)), None)
 
 
 def _wall_cut(cage, on):

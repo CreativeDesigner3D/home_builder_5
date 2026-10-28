@@ -156,7 +156,8 @@ class HOME_BUILDER_MT_furnishing_commands(bpy.types.Menu):
 # ---- A click on a part picks the whole piece -------------------------------------
 # A piece of furniture or a light fixture is its cage and the parts under
 # it. Clicking one of its parts makes the cage the selection instead, so
-# it moves, turns and deletes whole.
+# it moves, turns and deletes whole. A fireplace's parts pick its wire box
+# (hb_fireplaces), whose outline is the whole fireplace's.
 
 _PART_KEYS = ('IS_FURNISHING_PART', 'IS_FIXTURE_PART', 'IS_FIXTURE_LIGHT')
 _WHOLE_KEYS = ('IS_FURNISHING', 'IS_LIGHT_FIXTURE')
@@ -166,6 +167,15 @@ _owner = object()
 def _active_changed():
     view_layer = bpy.context.view_layer
     obj = view_layer.objects.active if view_layer is not None else None
+    if obj is not None and obj.get('IS_FIREPLACE_PART') and not obj.get('IS_FIREPLACE_BOX'):
+        # A fireplace's part: its box, round the whole of it
+        from . import hb_fireplaces
+        box = hb_fireplaces.box_of(obj)
+        if box is not None and view_layer.objects.get(box.name) is box:
+            obj.select_set(False)
+            box.select_set(True)
+            view_layer.objects.active = box
+        return
     if obj is None or not any(obj.get(k) for k in _PART_KEYS):
         return
     whole = obj.parent
