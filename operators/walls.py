@@ -224,6 +224,11 @@ def wall_type_size(props, wall_type, level=None):
         thickness = units.inch(0.75)
     if level is not None:
         height = hb_house.new_wall_height(level, wall_type, props)
+        # A house's assembly for the type sets new walls' thickness
+        from .. import hb_assemblies
+        asm = hb_assemblies.default_for(level.id_data.hb_house, wall_type)
+        if asm is not None:
+            thickness = hb_assemblies.total(asm)
     return height, thickness
 
 
@@ -242,6 +247,13 @@ def apply_wall_type(wall, wall_type, height, thickness):
 
     # Tag with wall type for identification
     obj['WALL_TYPE'] = wall_type
+    # Made with the house's assembly for the type when it is that thick
+    from .. import hb_assemblies
+    asm = hb_assemblies.default_for(hb_assemblies.house_of(), wall_type)
+    if asm is not None and abs(hb_assemblies.total(asm) - thickness) < hb_assemblies.TOLERANCE:
+        obj[hb_assemblies.ASSEMBLY_KEY] = asm.uid
+    elif hb_assemblies.ASSEMBLY_KEY in obj:
+        del obj[hb_assemblies.ASSEMBLY_KEY]
     if wall_type == 'Half':
         obj['IS_HALF_WALL'] = True
     elif wall_type == 'Fake':

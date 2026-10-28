@@ -138,14 +138,19 @@ def roof_frame(scene, level):
         below = hb_house.level_below(level.id_data.hb_house, level)
         if below is not None:
             outline_levels.append(below)
+    from . import hb_assemblies
     corners = []
+    siding = 0.0
     for lv in outline_levels:
         for obj in _exterior_walls(scene, lv):
             corners.extend(pt for _e, _f, pt in walls.wall_plan_corners(obj))
+            siding = max(siding, hb_assemblies.siding_inset(obj))
     if len(corners) < 3:
         return None
-    x0, x1 = min(p.x for p in corners), max(p.x for p in corners)
-    y0, y1 = min(p.y for p in corners), max(p.y for p in corners)
+    # On the outside of the sheathing: the siding is inside a wall's
+    # thickness when its assembly has it
+    x0, x1 = min(p.x for p in corners) + siding, max(p.x for p in corners) - siding
+    y0, y1 = min(p.y for p in corners) + siding, max(p.y for p in corners) - siding
     if roof.use_extents and roof.ext_x1 - roof.ext_x0 > 0.3 and roof.ext_y1 - roof.ext_y0 > 0.3:
         x0, x1, y0, y1 = roof.ext_x0, roof.ext_x1, roof.ext_y0, roof.ext_y1
     along_x = (x1 - x0) >= (y1 - y0) if roof.ridge == 'AUTO' else roof.ridge == 'X'

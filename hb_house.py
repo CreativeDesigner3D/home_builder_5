@@ -1611,8 +1611,57 @@ def _exterior_changed(house):
     hb_exterior.apply_exterior_finish(house.id_data)
 
 
+# ---- Wall assemblies (see hb_assemblies) ----------------------------------
+
+LAYER_KINDS = [
+    ('SIDING', "Siding", "The outside finish"),
+    ('SHEATHING', "Sheathing", "Structural panels over the studs"),
+    ('FRAMING', "Framing", "The studs"),
+    ('INSULATION', "Insulation", "Rigid or batt insulation"),
+    ('DRYWALL', "Drywall", "The inside finish"),
+    ('MASONRY', "Masonry", "Brick or block"),
+    ('CONCRETE', "Concrete", "Poured concrete"),
+    ('AIR', "Air Gap", "A drainage or air space"),
+    ('OTHER', "Other", ""),
+]
+
+
+def _assembly_changed(self, context):
+    _tag_view3d_redraw()
+
+
+class HB_WallLayer(PropertyGroup):
+    """One layer of a wall assembly, listed from the outside in."""
+    name: StringProperty(name="Name", default="Layer")  # type: ignore
+    kind: EnumProperty(name="Kind", items=LAYER_KINDS, default='FRAMING',
+                       update=_assembly_changed)  # type: ignore
+    thickness: FloatProperty(name="Thickness", default=inch(3.5), min=inch(0.0625),
+                             max=inch(24), subtype='DISTANCE', precision=4,
+                             update=_assembly_changed)  # type: ignore
+    material: PointerProperty(name="Material", type=bpy.types.Material)  # type: ignore
+
+
+class HB_WallAssembly(PropertyGroup):
+    """A wall's make-up: its layers, outside first. A wall it is applied
+    to is as thick as its layers add up to."""
+    uid: StringProperty(name="Assembly ID")  # type: ignore
+    name: StringProperty(name="Name", default="Wall Assembly")  # type: ignore
+    wall_type: EnumProperty(
+        name="For",
+        items=[('Exterior', "Exterior Walls", ""), ('Interior', "Interior Walls", "")],
+        default='Exterior')  # type: ignore
+    for_new_walls: BoolProperty(
+        name="New Walls", default=True,
+        description="Walls drawn of this type are made with this assembly")  # type: ignore
+    layers: CollectionProperty(type=HB_WallLayer)  # type: ignore
+    active_layer_index: IntProperty(name="Active Layer")  # type: ignore
+
+
 class HB_House_Props(PropertyGroup):
     levels: CollectionProperty(type=HB_Level)  # type: ignore
+
+    assemblies: CollectionProperty(type=HB_WallAssembly)  # type: ignore
+    active_assembly_index: IntProperty(name="Active Assembly")  # type: ignore
 
     # Eave trim and gutters (see hb_eaves)
     eave_trim: BoolProperty(
@@ -2311,6 +2360,8 @@ class HOME_BUILDER_OT_set_active_level(bpy.types.Operator):
 
 classes = (
     HB_WallSiding,
+    HB_WallLayer,
+    HB_WallAssembly,
     HB_Room,
     HB_RoofPiece,
     HB_Roof,

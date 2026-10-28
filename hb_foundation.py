@@ -272,6 +272,12 @@ def _rebuild(scene, house, ground_uid):
     if kind == 'NONE' or ground is None:
         return
     outlines = hb_house.level_outlines(scene, ground)
+    # Under the outside of the sheathing, not the siding
+    from . import hb_assemblies
+    siding = max((hb_assemblies.siding_inset(o) for o in scene.objects
+                  if o.get('IS_WALL_BP') and o.get(hb_house.LEVEL_KEY) == ground.uid), default=0.0)
+    if siding > 0.0:
+        outlines = [geom.offset_polygon(o, -siding) for o in outlines]
     if not outlines:
         return
     t = house.foundation_wall_thickness

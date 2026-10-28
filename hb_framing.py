@@ -312,7 +312,8 @@ def junction_studs(scene, level, walls):
     return out
 
 
-def frame_wall(boards, wall_obj, step, tree=None, gables=None, extra=(), blocking=False):
+def frame_wall(boards, wall_obj, step, tree=None, gables=None, extra=(), blocking=False,
+               rooms=None):
     """Plates, studs and opening framing for one wall; `extra` stud
     positions (corners), and with `blocking` a row of fire blocks in a
     wall over 10' tall."""
@@ -332,9 +333,9 @@ def frame_wall(boards, wall_obj, step, tree=None, gables=None, extra=(), blockin
         x1 = (ext['back'][1] + ext['front'][1]) / 2.0
     else:
         x0, x1 = 0.0, length
-    d = stud_depth(t)
-    y0 = (t - d) / 2.0
-    y1 = y0 + d
+    # The studs sit in the wall's framing layer (centred, without an assembly)
+    from . import hb_assemblies
+    y0, y1 = hb_assemblies.framing_band(wall_obj, rooms)
     ymid = t / 2.0
     m = wall_obj.matrix_world
 
@@ -1095,9 +1096,12 @@ def level_framing(scene, level, depsgraph, tree):
                  and obj.get(hb_house.LEVEL_KEY) == level.uid
                  and obj.get('WALL_TYPE', 'Exterior') in FRAMED_WALLS]
         extras = junction_studs(scene, level, walls) if house.framing_corners else {}
+        from . import hb_exterior
+        rooms = hb_exterior._indoor_polygons(scene) if any(
+            o.get('HB_ASSEMBLY') for o in walls) else None
         for obj in walls:
             frame_wall(boards, obj, step, tree, gables, extras.get(obj.name, ()),
-                       house.framing_blocking)
+                       house.framing_blocking, rooms)
     if house.framing_floors:
         frame_level_floor(boards, scene, level, step)
     if house.framing_ceilings:

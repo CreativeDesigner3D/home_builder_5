@@ -468,6 +468,15 @@ def _outdoor_faces(obj, mesh, rooms, both_sides):
     rooms; the roof-made walls have no rooms beside them, so `both_sides`
     takes both of their faces."""
     from mathutils import Vector
+    from . import hb_assemblies
+    # Over a siding layer, the boards are built in from the face by its
+    # depth: the wall's thickness already holds them. A filled-in gable
+    # end takes its level's walls' depth, so its boards line up with theirs
+    if obj.get('IS_WALL_BP'):
+        inset = hb_assemblies.siding_inset(obj)
+    else:
+        inset = hb_assemblies.level_siding_inset(hb_house.house_scene_of(bpy.context.scene) or bpy.context.scene,
+                                                 obj.get(hb_house.LEVEL_KEY, ''))
     m = obj.matrix_world
     rot = m.to_3x3()
     mesh.calc_loop_triangles()
@@ -501,7 +510,7 @@ def _outdoor_faces(obj, mesh, rooms, both_sides):
             if in_room(0.25) and not in_room(-0.25):
                 n = -n
                 a = Vector((-n.y, n.x, 0.0))
-        offset = pts[0].dot(n)
+        offset = pts[0].dot(n) - inset
         for tri in tris.get(f.index, ()):
             corners = [m @ mesh.vertices[i].co for i in tri]
             out.append((n, offset, [(p.dot(a), p.z) for p in corners]))

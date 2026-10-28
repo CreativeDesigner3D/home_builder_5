@@ -216,6 +216,63 @@ FOUNDATION_FIELDS = (
 )
 
 
+def _layer_row(layer):
+    return f"{layer.name}  {units.unit_to_string(bpy.context.scene.unit_settings, layer.thickness)}"
+
+
+def _assembly_total(context, asm=None):
+    from .. import hb_assemblies
+    asm = asm or hb_assemblies.active_assembly(context)
+    if asm is None:
+        return ()
+    t = units.unit_to_string(context.scene.unit_settings, hb_assemblies.total(asm))
+    return (f"Total {t}, outside first.",)
+
+
+ASSEMBLY_SPEC = {
+    'kind': 'pool',
+    'title': "Wall Assemblies",
+    'list_label': "Wall Assemblies",
+    'scope': 'scene',
+    'props': 'hb_house',
+    'collection': 'assemblies',
+    'index': 'active_assembly_index',
+    'add_op': 'home_builder.add_assembly',
+    'remove_op': 'home_builder.remove_assembly',
+    'allow_empty': True,
+    'fields': (
+        ('enum', 'wall_type', "For"),
+        ('bool', 'for_new_walls', "New Walls Use It"),
+        ('notes', lambda context: _assembly_total(context), ""),
+    ),
+    'actions': ((("Apply to Selected", "home_builder.apply_assembly", {'target': 'SELECTED'}, None),
+                 ("Apply to Level", "home_builder.apply_assembly", {'target': 'LEVEL'}, None)),),
+}
+
+
+def _active_assembly(context):
+    from .. import hb_assemblies
+    return hb_assemblies.active_assembly(context)
+
+
+LAYER_SPEC = {
+    'kind': 'pool',
+    'title': "Layers",
+    'list_label': "Layers, outside first",
+    'props': _active_assembly,
+    'collection': 'layers',
+    'index': 'active_layer_index',
+    'add_op': 'home_builder.add_wall_layer',
+    'remove_op': 'home_builder.remove_wall_layer',
+    'row_text': _layer_row,
+    'fields': (
+        ('enum', 'kind', "Kind"),
+        ('distance', 'thickness', "Thickness"),
+        ('native', 'material', "Material"),
+    ),
+}
+
+
 STRUCTURE_FIELDS = FOUNDATION_FIELDS + (
     ('group', 'house_members', "Beams and Posts", {'summary': _members_summary, 'fields': (
         ('actions', (("Place Beam", "home_builder.place_beam"),
@@ -734,6 +791,14 @@ def _blocks(context):
     elif _page == 'STRUCTURE':
         blocks = [('head', ("Structure", False, None))]
         blocks.extend(options_panel.field_blocks(context, STRUCTURE_FIELDS, scene.hb_house))
+        blocks.append(('gap', None))
+        if len(scene.hb_house.assemblies):
+            blocks.extend(options_panel.pool_blocks(context, ASSEMBLY_SPEC))
+            blocks.extend(options_panel.pool_blocks(context, LAYER_SPEC))
+        else:
+            blocks.append(('note', "Wall assemblies: what walls are made of."))
+            blocks.append(('actions', (("Add Standard Assemblies",
+                                        "home_builder.add_standard_assemblies", None, None),)))
     else:
         blocks = options_panel.field_blocks(context, FLOOR_DEFAULT_FIELDS, scene.hb_house)
         blocks.append(('gap', None))
