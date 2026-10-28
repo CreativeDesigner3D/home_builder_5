@@ -13,6 +13,7 @@ from . import hb_house, hb_types
 
 GRID_SPACING = 1.83         # 6' between cans
 GRID_EDGE = 0.6             # 2' in from the walls
+GRID_KEY = 'HB_LIGHT_GRID'  # on a can a room's grid laid: the room's uid
 
 
 def _lg():
@@ -92,13 +93,79 @@ def _place(context, key, x, y):
     return ops_furnish.place_item(context, key, point=(x, y))
 
 
-def add_recessed_grid(context, level, room, spacing=GRID_SPACING, edge=GRID_EDGE):
+def grid_fixtures(scene, level, room):
+    """The cans of a room's grid: those its grid laid, or, in a room
+    whose grid came before they were marked, its recessed cans."""
+    fixtures = room_fixtures(scene, level, room)
+    mine = [f for f in fixtures if f.get(GRID_KEY) == room.uid]
+    if mine:
+        return mine
+    return [f for f in fixtures if f.get(_lg().KIND_KEY) == 'RECESSED' and not f.get(GRID_KEY)]
+
+
+def add_recessed_grid(context, level, room, spacing=None, edge=None):
+    """Lay a room's grid of cans at its Spacing and From Walls, in place
+    of the grid it had (whose cans' brightness and colour the new ones
+    keep)."""
     from . import hb_rooms
     scene = hb_house.house_scene_of(context.scene)
     poly = hb_rooms.room_polygon(scene, level, room)
     if not poly:
         return []
-    return [_place(context, 'RECESSED', x, y) for x, y in grid_points(poly, spacing, edge)]
+    spacing = room.light_spacing if spacing is None else spacing
+    edge = room.light_from_walls if edge is None else edge
+    keep = {}
+    for old in grid_fixtures(scene, level, room):
+        for key in (_lg().LUMENS_KEY, _lg().KELVIN_KEY):
+            if key in old:
+                keep.setdefault(key, old[key])
+        delete_fixture(old)
+    made = []
+    for x, y in grid_points(poly, spacing, edge):
+        cage = _place(context, 'RECESSED', x, y)
+        if cage is None:
+            continue
+        cage[GRID_KEY] = room.uid
+        if keep:
+            for key, value in keep.items():
+                cage[key] = value
+            _lg().build(cage)
+        made.append(cage)
+    return made
+
+
+def level_of(scene, room):
+    return next((l for l in scene.hb_house.levels if room in list(l.rooms)), None) if scene else None
+
+
+def grid_changed(room, context):
+    """A room's Spacing or From Walls changed: its grid, if it has one,
+    laid again."""
+    scene = hb_house.house_scene_of(context.scene)
+    level = level_of(scene, room)
+    if level is not None and grid_fixtures(scene, level, room):
+        add_recessed_grid(context, level, room)
+
+
+# ---- Blender's light objects in the viewport --------------------------------------
+
+def _views():
+    wm = bpy.context.window_manager
+    for window in wm.windows if wm else ():
+        for area in window.screen.areas:
+            if area.type == 'VIEW_3D':
+                yield area.spaces.active
+
+
+def light_objects_shown(_self=None):
+    """Whether the viewport draws Blender's light objects (its Extras
+    overlay: lights, cameras and empties)."""
+    return next((v.overlay.show_extras for v in _views()), True)
+
+
+def show_light_objects(_self, value):
+    for v in _views():
+        v.overlay.show_extras = bool(value)
 
 
 def add_centre_fixture(context, level, room):
@@ -202,11 +269,9 @@ def _active_room(context):
 class HOME_BUILDER_OT_add_recessed_grid(bpy.types.Operator):
     bl_idname = "home_builder.add_recessed_grid"
     bl_label = "Add Recessed Grid"
-    bl_description = "Recessed cans over the active room, 6' apart and 2' in from its walls"
+    bl_description = ("Recessed cans over the active room at its Spacing and From Walls, "
+                      "in place of the grid it has")
     bl_options = {'UNDO'}
-
-    spacing: bpy.props.FloatProperty(name="Spacing", default=GRID_SPACING, min=0.6, subtype='DISTANCE')  # type: ignore
-    edge: bpy.props.FloatProperty(name="From Walls", default=GRID_EDGE, min=0.15, subtype='DISTANCE')  # type: ignore
 
     @classmethod
     def poll(cls, context):
@@ -214,7 +279,7 @@ class HOME_BUILDER_OT_add_recessed_grid(bpy.types.Operator):
 
     def execute(self, context):
         level, room = _active_room(context)
-        made = add_recessed_grid(context, level, room, self.spacing, self.edge)
+        made = add_recessed_grid(context, level, room)
         self.report({'INFO'}, f"{len(made)} recessed cans in {room.name}")
         return {'FINISHED'}
 

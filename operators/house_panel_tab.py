@@ -747,6 +747,7 @@ LIGHTING_DEFAULT_FIELDS = (
       'fields': (
           ('bool', 'fixture_lights', "Lights in Renders"),
           ('number', 'fixture_dimmer', "Dimmer"),
+          ('bool', 'show_light_objects', "Show Light Objects"),
           ('notes', lambda context: ("Place fixtures with Furnish, or fill a",
                                      "room from its Lighting group."), ""),
       )}),
@@ -871,6 +872,9 @@ ROOM_SPEC = {
         ('group', 'room_lighting', "Lighting", {'summary': lambda room: _lighting_notes(bpy.context, room)[0],
                                                 'fields': (
             ('notes', lambda context, room: _lighting_notes(context, room), "", {'owner': True}),
+            ('distance', 'light_spacing', "Grid Spacing"),
+            ('distance', 'light_from_walls', "From Walls"),
+            ('bool', 'show_light_objects', "Show Light Objects"),
             ('actions', (("Add Recessed Grid", "home_builder.add_recessed_grid"),
                          ("Add Center Fixture", "home_builder.add_center_fixture")), ""),
             ('actions', (("Remove Room Lights", "home_builder.remove_room_lights"),), ""),

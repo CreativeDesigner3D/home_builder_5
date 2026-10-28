@@ -1061,6 +1061,21 @@ def _trim_changed(self, context):
     hb_trim.changed(self, context)
 
 
+def _light_grid_changed(self, context):
+    from . import hb_lighting
+    hb_lighting.grid_changed(self, context)
+
+
+def _get_light_objects(self):
+    from . import hb_lighting
+    return hb_lighting.light_objects_shown()
+
+
+def _set_light_objects(self, value):
+    from . import hb_lighting
+    hb_lighting.show_light_objects(self, value)
+
+
 class HB_Room(PropertyGroup):
     """A room on a level. Which area of walls it is comes from where its
     marker sits (see hb_rooms); everything the user chooses for the room
@@ -1161,6 +1176,21 @@ class HB_Room(PropertyGroup):
 
     # Its trim (see hb_trim)
     trim_obj: PointerProperty(type=bpy.types.Object)  # type: ignore
+    # Its grid of recessed cans (hb_lighting): changed, the grid is laid again
+    light_spacing: FloatProperty(
+        name="Spacing", description="The most a grid's cans are apart",
+        default=1.83, min=0.6, max=6.0, subtype='DISTANCE', precision=4,
+        update=_light_grid_changed)  # type: ignore
+    light_from_walls: FloatProperty(
+        name="From Walls", description="How far in from the walls the grid's outer cans are",
+        default=0.6, min=0.15, max=3.0, subtype='DISTANCE', precision=4,
+        update=_light_grid_changed)  # type: ignore
+    show_light_objects: BoolProperty(
+        name="Show Light Objects",
+        description="Draw Blender's light objects in the viewport (its Extras overlay, "
+                    "which also draws cameras and empties)",
+        get=_get_light_objects, set=_set_light_objects)  # type: ignore
+
     trim_auto: BoolProperty(
         name="Use House Default",
         description="Trim as the house's Trim defaults say for this kind of room",
@@ -2124,6 +2154,11 @@ class HB_House_Props(PropertyGroup):
     fixture_dimmer: FloatProperty(
         name="Dimmer", description="Every fixture's lights, brighter or dimmer",
         default=1.0, min=0.0, max=4.0, update=lambda self, context: _fixtures_changed(self, context))  # type: ignore
+    show_light_objects: BoolProperty(
+        name="Show Light Objects",
+        description="Draw Blender's light objects in the viewport (its Extras overlay, "
+                    "which also draws cameras and empties)",
+        get=_get_light_objects, set=_set_light_objects)  # type: ignore
 
     # The Furnish tool: what it places
     furnish_item: EnumProperty(
