@@ -217,7 +217,44 @@ def door_ahead(scene, eye, direction):
     for obj in passed:
         if obj.get('IS_ENTRY_DOOR_BP') and _door_geo().stored_opts(obj) is not None:
             return obj
-    return None
+    # A cage hidden for the walk is no longer hit: look through its box
+    return _door_through(scene, eye, direction)
+
+
+def _door_through(scene, eye, direction):
+    """The nearest door (its cage) whose box the eye looks through within
+    reach, or None."""
+    from . import hb_types
+    best = None
+    for obj in scene.objects:
+        if not obj.get('IS_ENTRY_DOOR_BP') or _door_geo().stored_opts(obj) is None:
+            continue
+        m = obj.matrix_world
+        if (m.translation - eye).length > DOOR_REACH + 3.0:
+            continue
+        c = hb_types.GeoNodeCage(obj)
+        try:
+            w, t, h = c.get_input('Dim X'), c.get_input('Dim Y'), c.get_input('Dim Z')
+        except Exception:
+            continue
+        inv = m.inverted()
+        o = inv @ eye
+        d = inv.to_3x3() @ direction
+        mirrored = c.has_input('Mirror Y') and c.get_input('Mirror Y')
+        lo = Vector((0.0, -t if mirrored else 0.0, 0.0))
+        hi = Vector((w, 0.0 if mirrored else t, h))
+        t0, t1 = 0.0, DOOR_REACH
+        for i in range(3):
+            if abs(d[i]) < 1e-9:
+                if o[i] < lo[i] or o[i] > hi[i]:
+                    t0, t1 = 1.0, 0.0
+                    break
+                continue
+            a, b = (lo[i] - o[i]) / d[i], (hi[i] - o[i]) / d[i]
+            t0, t1 = max(t0, min(a, b)), min(t1, max(a, b))
+        if t0 <= t1 and (best is None or t0 < best[0]):
+            best = (t0, obj)
+    return best[1] if best else None
 
 
 def is_open(cage):
@@ -507,6 +544,7 @@ class HOME_BUILDER_OT_walk_through(bpy.types.Operator):
         self.house_changed = True
         from . import hb_rooms
         self._labels_off(hb_rooms)
+        self._present(context)
         self.yaw, self.pitch = yaw, 0.0
         self.feet = Vector((spot.x, spot.y, level.elevation if level else spot.z))
         context.view_layer.update()
@@ -549,6 +587,7 @@ class HOME_BUILDER_OT_walk_through(bpy.types.Operator):
         self.window.cursor_modal_restore()
         self.area.header_text_set(None)
         house = self.scene.hb_house
+        self._unpresent()
         if self.house_changed:
             from . import hb_rooms
             hb_rooms.apply_label_visibility(self.scene)       # back as the house has them
@@ -565,6 +604,53 @@ class HOME_BUILDER_OT_walk_through(bpy.types.Operator):
             self.r3d.view_distance = dist
             self.r3d.view_perspective = persp
         self.area.tag_redraw()
+
+    # What renders is what shows: the viewport's working aids go for the
+    # walk and come back after it
+    OVERLAYS = ('show_floor', 'show_axis_x', 'show_axis_y', 'show_axis_z', 'show_cursor',
+                'show_extras', 'show_object_origins', 'show_relationship_lines',
+                'show_outline_selected', 'show_bones')
+    CAGE_KEYS = ('IS_WINDOW_BP', 'IS_ENTRY_DOOR_BP', 'IS_BAY_BP', 'IS_FIREPLACE_BP')
+
+    def _present(self, context):
+        """The house as it renders: door, window, bay and fireplace cages,
+        their swings and labels, and everything else kept out of renders
+        (plan symbols, a fireplace's box) hidden; the grid, axes, cursor,
+        origins, extras and selection outline off; the HUD put away."""
+        if getattr(self, 'presented', None) is not None:
+            return
+        hidden = []
+        for obj in self.scene.objects:
+            if obj.type in {'LIGHT', 'CAMERA'} or obj.hide_viewport or not obj.visible_get():
+                continue
+            if obj.hide_render or any(obj.get(k) for k in self.CAGE_KEYS):
+                obj.hide_viewport = True
+                hidden.append(obj.name)
+        ov = self.space.overlay
+        overlays = {}
+        for name in self.OVERLAYS:
+            if hasattr(ov, name):
+                overlays[name] = getattr(ov, name)
+                setattr(ov, name, False)
+        from .operators import viewport_hud
+        viewport_hud.suspend(True)
+        self.presented = (hidden, overlays)
+
+    def _unpresent(self):
+        presented = getattr(self, 'presented', None)
+        if presented is None:
+            return
+        hidden, overlays = presented
+        for name in hidden:
+            obj = bpy.data.objects.get(name)
+            if obj is not None:
+                obj.hide_viewport = False
+        ov = self.space.overlay
+        for name, value in overlays.items():
+            setattr(ov, name, value)
+        from .operators import viewport_hud
+        viewport_hud.suspend(False)
+        self.presented = None
 
     def _labels_off(self, hb_rooms):
         """Room labels and markers hide for the walk (the house's own

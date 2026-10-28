@@ -535,6 +535,9 @@ def _get_prefs():
 
 
 def palette_enabled():
+    from . import viewport_hud
+    if viewport_hud._suspended:
+        return False
     p = _get_prefs()
     return bool(p and getattr(p, "use_room_palette", False))
 

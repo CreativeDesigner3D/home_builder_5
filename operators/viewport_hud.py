@@ -95,7 +95,19 @@ def _get_prefs():
         return None
 
 
+_suspended = False          # a presentation (walk mode) has the viewport
+
+
+def suspend(on):
+    """Hide the whole HUD - panel, widgets and tool strip - while
+    something has the viewport to itself (walk mode), or bring it back."""
+    global _suspended
+    _suspended = bool(on)
+
+
 def _hud_enabled():
+    if _suspended:
+        return False
     p = _get_prefs()
     return bool(p and getattr(p, "use_viewport_hud", False))
 
