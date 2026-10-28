@@ -803,6 +803,8 @@ def rebuild_level(scene, level):
         elif room.porch_obj is not None:
             hb_porches.remove_porch(room)
         update_room_label(room, area.polygon)
+        from . import hb_trim
+        hb_trim.build(scene, level, room, area)
     # New rooms take the house's floor for their kind
     for i in new_rooms:
         hb_house.apply_floor_default(level.rooms[i])
@@ -811,8 +813,9 @@ def rebuild_level(scene, level):
         if room.orphaned:
             _remove(room.floor_obj)
             _remove(room.ceiling_obj)
+            _remove(room.trim_obj)
             hb_porches.remove_porch(room)
-            room.floor_obj = room.ceiling_obj = None
+            room.floor_obj = room.ceiling_obj = room.trim_obj = None
             room.area = 0.0
             update_room_label(room)
     # New floors and ceilings need their stairwell openings, and new

@@ -687,6 +687,43 @@ FLOOR_DEFAULT_FIELDS = (
 )
 
 
+def _trim_on(h):
+    return h.trim_by_room
+
+
+TRIM_DEFAULT_FIELDS = (
+    ('group', 'trim_defaults', "Trim",
+     {'summary': lambda h: "Round the rooms" if h.trim_by_room else "Off", 'fields': (
+         ('bool', 'trim_by_room', "Interior Trim"),
+         ('bool', 'trim_base', "Baseboard", {'when': _trim_on}),
+         ('distance', 'trim_base_height', "Base Height", {'when': lambda h: h.trim_by_room and h.trim_base}),
+         ('bool', 'trim_shoe', "Shoe", {'when': lambda h: h.trim_by_room and h.trim_base}),
+         ('distance', 'trim_chair_height', "Chair Rail", {'when': _trim_on}),
+         ('bool', 'trim_crown', "Crown", {'when': _trim_on}),
+         ('native', 'trim_color', "Trim Color", {'when': _trim_on}),
+         ('notes', lambda context: ("Baths, laundry and garages get no crown",
+                                    "or chair rail."), "", {'when': _trim_on}),
+     )}),
+)
+
+
+def _trim_summary(room):
+    if room.trim_auto:
+        return "House default"
+    parts = []
+    if room.trim_base:
+        parts.append("base")
+    if room.trim_chair_height > 0:
+        parts.append("chair rail")
+    if room.trim_crown:
+        parts.append("crown")
+    return ", ".join(parts).capitalize() or "None"
+
+
+def _own_trim(room):
+    return not room.trim_auto
+
+
 def _walls_on(h):
     return h.walls_by_room
 
@@ -764,6 +801,17 @@ ROOM_SPEC = {
             ('number', 'floor_roughness', "Roughness", {'when': _styled}),
             ('native', 'floor_material', "Material",
              {'when': lambda room: room.has_floor and room.floor_finish == 'CUSTOM'}),
+        )}),
+        ('group', 'room_trim', "Trim", {'when': lambda room: room.id_data.hb_house.trim_by_room,
+                                        'summary': _trim_summary, 'fields': (
+            ('bool', 'trim_auto', "Use House Default"),
+            ('bool', 'trim_base', "Baseboard", {'when': _own_trim}),
+            ('distance', 'trim_base_height', "Base Height",
+             {'when': lambda room: _own_trim(room) and room.trim_base}),
+            ('bool', 'trim_shoe', "Shoe", {'when': lambda room: _own_trim(room) and room.trim_base}),
+            ('distance', 'trim_chair_height', "Chair Rail", {'when': _own_trim}),
+            ('bool', 'trim_crown', "Crown", {'when': _own_trim}),
+            ('native', 'trim_color', "Trim Color", {'when': _own_trim}),
         )}),
         ('group', 'room_walls', "Walls", {'when': lambda room: room.id_data.hb_house.walls_by_room,
                                           'summary': _walls_summary, 'fields': (
@@ -1025,6 +1073,7 @@ def _blocks(context):
     else:
         blocks = options_panel.field_blocks(context, FLOOR_DEFAULT_FIELDS, scene.hb_house)
         blocks.extend(options_panel.field_blocks(context, WALL_DEFAULT_FIELDS, scene.hb_house))
+        blocks.extend(options_panel.field_blocks(context, TRIM_DEFAULT_FIELDS, scene.hb_house))
         blocks.append(('gap', None))
         if level is not None:
             blocks.extend(options_panel.pool_blocks(context, ROOM_SPEC))

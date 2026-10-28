@@ -1055,6 +1055,11 @@ def _walls_changed(self, context):
     hb_wall_finish.changed(self, context)
 
 
+def _trim_changed(self, context):
+    from . import hb_trim
+    hb_trim.changed(self, context)
+
+
 class HB_Room(PropertyGroup):
     """A room on a level. Which area of walls it is comes from where its
     marker sits (see hb_rooms); everything the user chooses for the room
@@ -1152,6 +1157,28 @@ class HB_Room(PropertyGroup):
         name="Outdoor",
         description="A balcony or deck: no ceiling, deck boards for a floor",
         default=False, update=_room_outdoor_changed)  # type: ignore
+
+    # Its trim (see hb_trim)
+    trim_obj: PointerProperty(type=bpy.types.Object)  # type: ignore
+    trim_auto: BoolProperty(
+        name="Use House Default",
+        description="Trim as the house's Trim defaults say for this kind of room",
+        default=True, update=_trim_changed)  # type: ignore
+    trim_base: BoolProperty(name="Baseboard", default=True, update=_trim_changed)  # type: ignore
+    trim_base_height: FloatProperty(
+        name="Base Height", default=inch(5.25), min=inch(2), max=inch(12),
+        subtype='DISTANCE', precision=4, update=_trim_changed)  # type: ignore
+    trim_shoe: BoolProperty(name="Shoe", description="A quarter round at the foot of the base",
+                            default=False, update=_trim_changed)  # type: ignore
+    trim_chair_height: FloatProperty(
+        name="Chair Rail", description="Its top above the floor; 0 for none",
+        default=0.0, min=0.0, max=inch(60), subtype='DISTANCE', precision=4,
+        update=_trim_changed)  # type: ignore
+    trim_crown: BoolProperty(name="Crown", description="Crown molding where the ceiling is flat",
+                             default=False, update=_trim_changed)  # type: ignore
+    trim_color: FloatVectorProperty(
+        name="Trim Color", subtype='COLOR', size=3, min=0.0, max=1.0,
+        default=(0.95, 0.95, 0.93), update=_trim_changed)  # type: ignore
 
     # Its walls and ceiling (see hb_wall_finish)
     walls_auto: BoolProperty(
@@ -2027,6 +2054,29 @@ class HB_House_Props(PropertyGroup):
         items=[('4X4', "4x4", ""), ('4X6', "4x6", ""), ('6X6', "6x6", ""),
                ('8X8', "8x8", "")],
         default='6X6')  # type: ignore
+
+    # Interior trim (see hb_trim): the defaults by kind of room
+    trim_by_room: BoolProperty(
+        name="Interior Trim",
+        description="Baseboard, chair rail and crown round the rooms",
+        default=False, update=lambda self, context: _trim_changed(self, context))  # type: ignore
+    trim_base: BoolProperty(name="Baseboard", default=True,
+                            update=lambda self, context: _trim_changed(self, context))  # type: ignore
+    trim_base_height: FloatProperty(
+        name="Base Height", default=inch(5.25), min=inch(2), max=inch(12), subtype='DISTANCE',
+        precision=4, update=lambda self, context: _trim_changed(self, context))  # type: ignore
+    trim_shoe: BoolProperty(name="Shoe", default=False,
+                            update=lambda self, context: _trim_changed(self, context))  # type: ignore
+    trim_chair_height: FloatProperty(
+        name="Chair Rail", description="In rooms (not baths, laundry or garages); 0 for none",
+        default=0.0, min=0.0, max=inch(60), subtype='DISTANCE', precision=4,
+        update=lambda self, context: _trim_changed(self, context))  # type: ignore
+    trim_crown: BoolProperty(
+        name="Crown", description="In rooms with flat ceilings (not baths, laundry or garages)",
+        default=True, update=lambda self, context: _trim_changed(self, context))  # type: ignore
+    trim_color: FloatVectorProperty(
+        name="Trim Color", subtype='COLOR', size=3, min=0.0, max=1.0, default=(0.95, 0.95, 0.93),
+        update=lambda self, context: _trim_changed(self, context))  # type: ignore
 
     # Wall coverings by room (see hb_wall_finish): the defaults by kind
     walls_by_room: BoolProperty(

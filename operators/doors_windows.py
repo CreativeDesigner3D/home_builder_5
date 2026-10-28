@@ -788,6 +788,8 @@ def place_wall_object(context, wall_obj, kind, x, width=None, height=None, z=Non
     cut_wall(wall_obj, cutting_obj)
     if spec.BUILD_GEO:
         door_window_geo.apply_scene_style_and_build(placed.obj, context)
+    from .. import hb_trim
+    hb_trim.refresh_for_wall(wall_obj)
     return placed.obj
 
 
@@ -1166,6 +1168,9 @@ class _PlaceWallObjectBase(bpy.types.Operator, WallObjectPlacementMixin):
                 if self.BUILD_GEO:
                     door_window_geo.apply_scene_style_and_build(
                         self.placed_obj.obj, context)
+                # The rooms' trim breaks round it
+                from .. import hb_trim
+                hb_trim.refresh_for_wall(self.selected_wall)
                 self.placed_count += 1
                 if self.continuous:
                     self.start_next_object(context)
