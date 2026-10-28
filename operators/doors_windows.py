@@ -768,6 +768,14 @@ def place_wall_object(context, wall_obj, kind, x, width=None, height=None, z=Non
     placed.obj.location = (x, 0.0, z)
     placed.obj.rotation_euler = (0.0, 0.0, 0.0)
     placed.set_input('Dim Y', wall.get_input('Thickness'))
+    if spec.BP_FLAG == 'IS_FIREPLACE_BP':
+        from .. import hb_fireplaces
+        if width is None:
+            placed.set_input('Dim X', context.scene.hb_house.fireplace_width)
+        if height is None:
+            placed.set_input('Dim Z', context.scene.hb_house.fireplace_height)
+        hb_fireplaces.place(context, placed.obj)
+        return placed.obj
     cutting_obj = placed.obj
     if spec.BUILD_GEO:
         cutting_obj = door_window_geo.update_reveal_cutter(placed.obj)
@@ -1259,12 +1267,43 @@ class home_builder_doors_windows_OT_place_window(_PlaceWallObjectBase):
     RESET_Z_WHEN_FREE = False
 
 
+class home_builder_doors_windows_OT_place_fireplace(_PlaceWallObjectBase):
+    bl_idname = "home_builder_doors_windows.place_fireplace"
+    bl_label = "Place Fireplace"
+    bl_description = ("Place a fireplace on a wall: its chimney stands outside, or rises "
+                      "through the floors above. Arrow keys for offset, W for width")
+
+    OBJECT_NAME = "Fireplace"
+    OBJECT_LABEL = "fireplace"
+    BP_FLAG = "IS_FIREPLACE_BP"
+    MENU_ID = "HOME_BUILDER_MT_fireplace_commands"
+    # The cage is made at a window's size, then set to the tool's
+    WIDTH_PROP_NAME = "window_width"
+    HEIGHT_PROP_NAME = "window_height"
+    TEXT_KIND = None
+    BUILD_GEO = False
+
+    def create_placed_object(self, context):
+        super().create_placed_object(context)
+        house = context.scene.hb_house
+        self.placed_obj.set_input('Dim X', house.fireplace_width)
+        self.placed_obj.set_input('Dim Z', house.fireplace_height)
+
+    def cut_wall(self, wall_obj, cutting_obj):
+        # The fireplace decides: an Outside chimney's mouth goes through
+        # the wall, an Inside one stands in front of it
+        from .. import hb_fireplaces
+        hb_fireplaces.place(bpy.context, cutting_obj)
+        return None
+
+
 # What place_wall_object can place, by the placement tool for each
 PLACE_KINDS = {
     'DOOR': home_builder_doors_windows_OT_place_door,
     'DOUBLE_DOOR': home_builder_doors_windows_OT_place_double_door,
     'OPENING': home_builder_doors_windows_OT_place_open_door,
     'WINDOW': home_builder_doors_windows_OT_place_window,
+    'FIREPLACE': home_builder_doors_windows_OT_place_fireplace,
 }
 
 
@@ -2169,6 +2208,7 @@ classes = (
     home_builder_doors_windows_OT_place_double_door,
     home_builder_doors_windows_OT_place_open_door,
     home_builder_doors_windows_OT_place_window,
+    home_builder_doors_windows_OT_place_fireplace,
     home_builder_doors_windows_OT_duplicate_window,
     home_builder_doors_windows_OT_duplicate_door,
     home_builder_doors_windows_OT_door_prompts,

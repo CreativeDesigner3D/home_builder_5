@@ -13,6 +13,7 @@ from . import hb_backdrop
 from . import hb_foundation
 from . import hb_assemblies
 from . import hb_skylights
+from . import hb_fireplaces
 from . import hb_props_obstacles
 from . import ops
 from .ui import view3d_sidebar
@@ -460,6 +461,7 @@ def register():
     hb_foundation.register()
     hb_assemblies.register()
     hb_skylights.register()
+    hb_fireplaces.register()
     hb_snap_engine.register()
     hb_props_obstacles.register()
     ops_obstacles.register()
@@ -525,6 +527,7 @@ def unregister():
     hb_props.unregister()
     hb_walk.unregister()
     hb_roof_edit.unregister()
+    hb_fireplaces.unregister()
     hb_skylights.unregister()
     hb_assemblies.unregister()
     hb_foundation.unregister()

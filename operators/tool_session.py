@@ -349,6 +349,14 @@ POST_FIELDS = (
     ('distance', 'member_width', "Width", {'when': _mat('STEEL')}),
 )
 
+FIREPLACE_FIELDS = (
+    ('distance', 'fireplace_width', "Opening Width"),
+    ('distance', 'fireplace_height', "Opening Height"),
+    ('choices', 'fireplace_chimney', "Chimney", {'cols': 3}),
+    ('choices', 'fireplace_style', "Chimney Style", {'cols': 2}),
+    ('choices', 'fireplace_mantel', "Mantel", {'cols': 3}),
+)
+
 SKYLIGHT_FIELDS = (
     ('distance', 'skylight_width', "Width"),
     ('distance', 'skylight_length', "Length"),
@@ -359,6 +367,7 @@ SKYLIGHT_FIELDS = (
 # Tools whose fields are on scene.hb_house rather than scene.home_builder
 HOUSE_PAGES = {
     "home_builder.place_skylight": ("Skylight", SKYLIGHT_FIELDS),
+    "home_builder_doors_windows.place_fireplace": ("Fireplace", FIREPLACE_FIELDS),
     "home_builder.place_beam": ("Beam", BEAM_FIELDS),
     "home_builder.place_post": ("Post", POST_FIELDS),
 }
@@ -381,6 +390,7 @@ HINTS = {
     "home_builder.place_beam": "Snaps to wall corners and faces, posts and beam ends",
     "home_builder.place_post": "Runs up to the beam over it, or to the ceiling",
     "home_builder.place_skylight": "Click on the roof: it lies on the slope there",
+    "home_builder_doors_windows.place_fireplace": "Click a wall · arrow keys for offset, W for width",
 }
 
 

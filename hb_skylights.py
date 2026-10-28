@@ -277,6 +277,16 @@ def rebuild(scene, level, frame=None):
                 ceil_bm.faces.new([vs[k] for k in f])
         sk = roof.skylights[i]
         sk.shaft_obj = _put(scene, level, sk.shaft_obj, sk.name + " Shaft", shaft, SHAFT_KEY)
+    # Chimneys passing through: the roof opened plumb round their stacks
+    from . import hb_fireplaces
+    reach = max(roof.eave_overhang, roof.gable_overhang) + 0.5
+    z0, z1 = frame['plate'] - 1.0, frame['ridge_z'] + hb_roofs.CUTTER_HEIGHT
+    for x0, y0, x1, y1 in hb_fireplaces.roof_cut_rects(scene):
+        us, vs = zip(*(hb_roofs._uv(frame, p) for p in ((x0, y0), (x1, y1))))
+        if (max(us) < frame['u0'] - reach or min(us) > frame['u1'] + reach
+                or max(vs) < frame['v0'] - reach or min(vs) > frame['v1'] + reach):
+            continue
+        _box(cut_bm, x0, x1, y0, y1, z0, z1, Matrix.Identity(4))
     for bm, attr, name in ((cut_bm, 'openings_obj', f"Roof Openings - {level.name}"),
                            (ceil_bm, 'skylight_cut_obj', f"Skylight Ceiling Cuts - {level.name}")):
         mesh = None

@@ -1545,6 +1545,25 @@ class HB_WallSiding(PropertyGroup):
         default=(0.92, 0.92, 0.90), update=_wall_siding_changed)  # type: ignore
 
 
+# ---- Fireplaces (see hb_fireplaces) ------------------------------------------
+# Items are only ever appended: a saved choice is its place in the list.
+
+FIREPLACE_CHIMNEY_ITEMS = [
+    ('OUTSIDE', "Outside", "A masonry chimney standing outside the wall"),
+    ('INSIDE', "Inside", "A breast standing in the room, the stack rising through the floors above"),
+    ('NONE', "None", "A breast in the room with no chimney (a vented insert)"),
+]
+FIREPLACE_STYLE_ITEMS = [
+    ('MASONRY', "Masonry", "Brick or stone, with a concrete crown"),
+    ('CHASE', "Framed Chase", "A framed chase in the house's siding, with a metal cap"),
+]
+FIREPLACE_MANTEL_ITEMS = [
+    ('NONE', "None", "No mantel"),
+    ('SHELF', "Shelf", "A shelf over the surround"),
+    ('FULL', "Full", "Pilasters, a frieze and a shelf"),
+]
+
+
 # ---- Windows outdoors: shutters and exterior trim --------------------------
 # Items are only ever appended: a saved choice is its place in the list.
 
@@ -1967,6 +1986,20 @@ class HB_House_Props(PropertyGroup):
         items=[('4X4', "4x4", ""), ('4X6', "4x6", ""), ('6X6', "6x6", ""),
                ('8X8', "8x8", "")],
         default='6X6')  # type: ignore
+
+    # Fireplaces: what the next one placed is
+    fireplace_width: FloatProperty(
+        name="Opening Width", default=inch(36), min=inch(18), max=inch(96),
+        subtype='DISTANCE', precision=4)  # type: ignore
+    fireplace_height: FloatProperty(
+        name="Opening Height", default=inch(30), min=inch(16), max=inch(60),
+        subtype='DISTANCE', precision=4)  # type: ignore
+    fireplace_chimney: EnumProperty(name="Chimney", items=FIREPLACE_CHIMNEY_ITEMS,
+                                    default='OUTSIDE')  # type: ignore
+    fireplace_style: EnumProperty(name="Chimney Style", items=FIREPLACE_STYLE_ITEMS,
+                                  default='MASONRY')  # type: ignore
+    fireplace_mantel: EnumProperty(name="Mantel", items=FIREPLACE_MANTEL_ITEMS,
+                                   default='SHELF')  # type: ignore
 
     # Skylights: what the next one placed is
     skylight_width: FloatProperty(

@@ -365,6 +365,40 @@ def _selected_windows(context):
     return out
 
 
+def _selected_fireplace(context):
+    from .. import hb_fireplaces
+    for obj in [context.active_object] + list(context.selected_objects):
+        cage = hb_fireplaces.fireplace_of(obj)
+        if cage is not None:
+            return cage
+    return None
+
+
+def _fireplace_summary(fp):
+    return f"{_label(fp, 'chimney')} chimney · {_label(fp, 'mantel')} mantel"
+
+
+FIREPLACE_FIELDS = (
+    ('group', 'outside_fireplace', "Selected Fireplace", {'summary': _fireplace_summary, 'fields': (
+        ('distance', 'opening_width', "Opening Width"),
+        ('distance', 'opening_height', "Opening Height"),
+        ('distance', 'hearth_height', "Hearth Height"),
+        ('enum', 'chimney', "Chimney"),
+        ('enum', 'style', "Chimney Style", {'when': lambda fp: fp.chimney != 'NONE'}),
+        ('enum', 'finish', "Masonry"),
+        ('native', 'color', "Masonry Color"),
+        ('enum', 'mantel', "Mantel"),
+        ('distance', 'firebox_depth', "Firebox Depth"),
+        ('distance', 'hearth_depth', "Hearth Depth"),
+        ('distance', 'hearth_extension', "Hearth Extension"),
+        ('distance', 'surround_width', "Surround Width"),
+        ('distance', 'stack_width', "Stack Width", {'when': lambda fp: fp.chimney != 'NONE'}),
+        ('distance', 'stack_depth', "Stack Depth", {'when': lambda fp: fp.chimney != 'NONE'}),
+        ('distance', 'extra_height', "Extra Height", {'when': lambda fp: fp.chimney != 'NONE'}),
+    )}),
+)
+
+
 def _shutters_on(we):
     return we.shutter_style != 'NONE'
 
@@ -873,6 +907,9 @@ def _blocks(context):
                                                      owner.hb_window_ext))
         else:
             blocks.append(('note', "Select windows for their shutters and trim."))
+        fireplace = _selected_fireplace(context)
+        if fireplace is not None:
+            blocks.extend(options_panel.field_blocks(context, FIREPLACE_FIELDS, fireplace.hb_fireplace))
         blocks.append(('gap', None))
         blocks.extend(options_panel.field_blocks(context, BASE_FIELDS, scene.hb_house))
     elif _page == 'ROOF':
