@@ -98,7 +98,11 @@ class Flight:
 def layout(v):
     """(flights, landings): the stair's flights and its landing rects
     (x0, y0, x1, y1, z) in its own frame - from hb_stairs.values."""
-    from . import hb_stairs
+    from . import hb_stairs, hb_stair_shapes as shapes
+    if shapes.is_arc(v):
+        return [], []
+    if shapes.is_shaped(v):
+        return shapes.winder_plan(v)[0], []
     W, T = v['width'], v['tread']
     if v['type'] == 'STRAIGHT':
         n = hb_stairs.riser_count(v['rise'], v['max_riser'])
@@ -209,8 +213,70 @@ class _B:
 
 # ---- The walked-on mesh ----------------------------------------------------------------
 
+def shaped_treads(v, c):
+    """[(polygon, front edge, top)] of every tread of a stair with winders,
+    or a curved or spiral one, in its frame."""
+    from . import hb_stair_shapes as shapes
+    if shapes.is_arc(v):
+        return shapes.arc_treads(shapes.arc_plan(v))
+    flights, turn = shapes.winder_plan(v)
+    out = []
+    for fi, f in enumerate(flights):
+        x0, x1 = (STRINGER_T, f.W - STRINGER_T) if c['stringer'] == 'CLOSED' else (0.0, f.W)
+        for i in range(f.n):
+            pts = [(x0, i * f.T), (x1, i * f.T), (x1, (i + 1) * f.T), (x0, (i + 1) * f.T)]
+            poly = [(f.m @ Vector((x, y, 0.0))).to_2d() for x, y in pts]
+            out.append((poly, (poly[0], poly[1]), f.base + (i + 1) * f.r))
+        if fi == 0:
+            out.extend(turn.treads)
+    return out
+
+
+def _shaped_mesh(v, c):
+    """Treads from their outlines, each with its nosing over the front
+    edge, and the risers under the front edges."""
+    tt = v['tread_t']
+    B = _B()
+    I = Matrix.Identity(4)
+    prev = 0.0
+    for poly, front, z in shaped_treads(v, c):
+        cen = sum(poly, Vector((0.0, 0.0))) / len(poly)
+        pts = list(poly)
+        n_in = None
+        if front is not None:
+            a, b = front
+            d = b - a
+            if d.length > 1e-6:
+                n_in = Vector((-d.y, d.x)).normalized()
+                if n_in.dot(cen - a) < 0:
+                    n_in = -n_in
+                # the front edge's points out over the step below
+                pts = [p - n_in * c['nosing'] if abs((p - a).cross(d.normalized())) < 1e-5 else p for p in pts]
+        bot = [B._v(I, (p.x, p.y, z - tt)) for p in pts]
+        top = [B._v(I, (p.x, p.y, z)) for p in pts]
+        B._f(list(reversed(bot)), 0)
+        B._f(top, 0)
+        k = len(pts)
+        for i in range(k):
+            j = (i + 1) % k
+            B._f([bot[i], bot[j], top[j], top[i]], 0)
+        if c['risers'] == 'CLOSED' and n_in is not None and z - tt > prev + 1e-4:
+            a, b = front
+            q = [a, b, b + n_in * RISER_T, a + n_in * RISER_T]
+            lo = [B._v(I, (p.x, p.y, z - (z - prev))) for p in q]
+            hi = [B._v(I, (p.x, p.y, z - tt)) for p in q]
+            for i in range(4):
+                j = (i + 1) % 4
+                B._f([lo[i], lo[j], hi[j], hi[i]], 1)
+        prev = z
+    return B.mesh('Stairs')
+
+
 def stair_mesh(v, c):
     """Treads (slot 0), risers (1) and landings (0) as a Mesh."""
+    from . import hb_stair_shapes as shapes
+    if shapes.is_shaped(v):
+        return _shaped_mesh(v, c)
     flights, landings = layout(v)
     tt = v['tread_t']
     B = _B()
@@ -462,9 +528,160 @@ def parts_mesh(obj):
                     n = -n
                 _railing_along(B, Matrix.Identity(4), a + n * inch(2), b + n * inch(2),
                                lambda t, z=z: z, lambda t, z=z: z + c['rail_height'], c, mats)
-    if c['under'] in ('WALLED', 'CLOSET'):
+    from . import hb_stair_shapes as shapes
+    if shapes.is_arc(v):
+        _arc_parts(B, v, c, shapes.arc_plan(v), mats)
+    elif shapes.is_shaped(v):
+        _turn_parts(B, obj, v, c, flights, shapes.winder_plan(v)[1], mats)
+    if c['under'] in ('WALLED', 'CLOSET') and not shapes.is_arc(v):
         _under(B, obj, v, c, flights, landings, side_walls, landing_edges)
     return B.mesh('Stair Parts')
+
+
+def _turn_edges(obj, v, flights, turn):
+    """The open edges of a turn of winders: [(a, b, along a wall)]."""
+    from . import hb_stairs
+    M = obj.matrix_basis if obj.parent is None else obj.matrix_world
+    faces = hb_stairs.wall_faces(bpy.context.scene, [obj.get(hb_house.LEVEL_KEY, '')])
+    x0, y0, x1, y1 = turn.rect
+    corners = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+    out = []
+    for i in range(4):
+        for a, b in _open_parts(corners[i], corners[(i + 1) % 4], flights):
+            wa, wb = (M @ Vector((a[0], a[1], 0))).to_2d(), (M @ Vector((b[0], b[1], 0))).to_2d()
+            out.append((Vector(a[:2]), Vector(b[:2]), _against_wall(wa, wb, faces)))
+    return out
+
+
+def _seg_cross(a, b, p, q):
+    """Where segment a-b crosses p-q, as a fraction along a-b, or None."""
+    r, s = b - a, q - p
+    den = r.cross(s)
+    if abs(den) < 1e-9:
+        return None
+    t = (p - a).cross(s) / den
+    u = (p - a).cross(r) / den
+    if 1e-6 < t < 1 - 1e-6 and -1e-6 <= u <= 1 + 1e-6:
+        return t
+    return None
+
+
+def _in_poly(p, poly):
+    inside = False
+    k = len(poly)
+    for i in range(k):
+        a, b = poly[i], poly[(i + 1) % k]
+        if (a.y > p.y) != (b.y > p.y):
+            x = a.x + (p.y - a.y) * (b.x - a.x) / (b.y - a.y)
+            if x > p.x:
+                inside = not inside
+    return inside
+
+
+def _over_treads(a, b, treads):
+    """The edge a-b split where riser lines cross it: [(t0, t1, top of the
+    tread under that piece)], and the height a rail follows at each
+    break (between the two treads' tops)."""
+    ts = sorted({0.0, 1.0} | {t for _p, fr, _z in treads if fr is not None
+                              for t in [_seg_cross(a, b, fr[0], fr[1])] if t is not None})
+    pieces = []
+    for t0, t1 in zip(ts, ts[1:]):
+        mid = a + (b - a) * ((t0 + t1) / 2.0)
+        z = next((zt for poly, _f, zt in treads if _in_poly(mid, poly)), None)
+        if z is None:
+            z = min(treads, key=lambda tr: (sum(tr[0], Vector((0, 0))) / len(tr[0]) - mid).length)[2]
+        pieces.append((t0, t1, z))
+    return pieces
+
+
+def _piece_heights(pieces):
+    """The walking line's height at each piece's ends: halfway between the
+    treads where they meet, each tread's own at the edge's ends."""
+    out = []
+    for i, (t0, t1, z) in enumerate(pieces):
+        za = z if i == 0 else (pieces[i - 1][2] + z) / 2.0
+        zb = z if i == len(pieces) - 1 else (pieces[i + 1][2] + z) / 2.0
+        out.append((za, zb))
+    return out
+
+
+def _turn_parts(B, obj, v, c, flights, turn, mats):
+    """A turn of winders: a newel at each inside corner, and along its open
+    edges a stringer, a railing and (under) a wall."""
+    I = Matrix.Identity(4)
+    h = c['rail_height']
+    cen = Vector(((turn.rect[0] + turn.rect[2]) / 2.0, (turn.rect[1] + turn.rect[3]) / 2.0))
+    if c['railing'] != 'NONE':
+        for p in turn.newels:
+            B.post(I, p.x, p.y, 0.0, turn.z1 + h + NEWEL_ABOVE, NEWEL, 1)
+    for a, b, against in _turn_edges(obj, v, flights, turn):
+        d = (b - a).normalized()
+        n = Vector((-d.y, d.x))
+        if n.dot(cen - (a + b) / 2.0) < 0:
+            n = -n
+        pieces = _over_treads(a + n * inch(2), b + n * inch(2), turn.treads)
+        heights = _piece_heights(pieces)
+        last = len(pieces) - 1
+        for i, ((t0, t1, z), (za, zb)) in enumerate(zip(pieces, heights)):
+            pa, pb = a + (b - a) * t0, a + (b - a) * t1
+            if c['stringer'] == 'CLOSED':
+                _slab(B, I, pa + n * (STRINGER_T / 2), pb + n * (STRINGER_T / 2),
+                      max(0.0, za - STRINGER_DEPTH), max(0.0, zb - STRINGER_DEPTH),
+                      za + STRINGER_ABOVE, zb + STRINGER_ABOVE, STRINGER_T, 0)
+            if c['under'] in ('WALLED', 'CLOSET') and not against:
+                _slab(B, I, pa + n * (UNDER_T / 2), pb + n * (UNDER_T / 2), 0.0, 0.0,
+                      max(0.0, za - STRINGER_DEPTH), max(0.0, zb - STRINGER_DEPTH), UNDER_T, 4)
+            if against or c['railing'] == 'NONE':
+                continue
+            ra, rb = pa + n * inch(2), pb + n * inch(2)
+            walk_z = (lambda t, z=z: z) if c['stringer'] != 'CLOSED' else \
+                (lambda t, za=za, zb=zb: za + (zb - za) * t + STRINGER_ABOVE)
+            _railing_along(B, I, ra, rb, walk_z, lambda t, za=za, zb=zb: za + (zb - za) * t + h,
+                           c, mats, posts=(i == 0, i == last))
+
+
+def _arc_parts(B, v, c, A, mats):
+    """A curved or spiral stair: railings round its outside (and a curved
+    one's inside), its stringers or a spiral's pole."""
+    import math
+    I = Matrix.Identity(4)
+    h = c['rail_height']
+    spiral = v['type'] == 'SPIRAL'
+    end = (A.n - 1) * A.alpha
+    if spiral:
+        c0 = A.point(0.0, 0.0)
+        B.post(I, c0.x, c0.y, 0.0, v['rise'] + h, 2 * A.r_in, 0, round_=True)
+    steps = max(1, math.ceil(A.alpha / math.radians(10)))
+    phis = [A.alpha * 0.5] + [A.alpha * (i + j / steps) for i in range(1, A.n - 1) for j in range(steps)] + [end]
+    phis = sorted(set(round(p, 9) for p in phis if p <= end + 1e-9))
+    sides_ = [A.r_out - inch(2)] if spiral else [A.r_in + inch(2), A.r_out - inch(2)]
+    tread_top = lambda ph: (min(int(ph / A.alpha + 1e-9), A.n - 1) + 1) * A.r
+    if c['railing'] != 'NONE':
+        for radius in sides_:
+            last = len(phis) - 2
+            for i, (p0, p1) in enumerate(zip(phis, phis[1:])):
+                a, b = A.point(radius, p0), A.point(radius, p1)
+                pm = (p0 + p1) / 2.0
+                walk = (lambda t, z=tread_top(pm): z)
+                rail = (lambda t, p0=p0, p1=p1: A.nosing_z(p0 + (p1 - p0) * t) + h)
+                _railing_along(B, I, a, b, walk, rail, c, mats, posts=(i == 0, i == last))
+    if spiral:
+        return
+    # A curved stair's stringers: boards round both edges, or one under the middle
+    allp = [A.alpha * i / steps for i in range(int(end / A.alpha * steps) + 1)] + [end]
+    allp = sorted(set(round(p, 9) for p in allp))
+    for p0, p1 in zip(allp, allp[1:]):
+        if c['stringer'] == 'CLOSED':
+            for radius in (A.r_in + STRINGER_T / 2, A.r_out - STRINGER_T / 2):
+                a, b = A.point(radius, p0), A.point(radius, p1)
+                _slab(B, I, a, b, max(0.0, A.nosing_z(p0) - STRINGER_DEPTH), max(0.0, A.nosing_z(p1) - STRINGER_DEPTH),
+                      A.nosing_z(p0) + STRINGER_ABOVE, A.nosing_z(p1) + STRINGER_ABOVE, STRINGER_T, 0)
+        else:
+            a, b = A.point(A.r_walk, p0), A.point(A.r_walk, p1)
+            top0 = tread_top(p0 + 1e-6) - v['tread_t']
+            _slab(B, I, a, b, max(0.0, A.nosing_z(p0) - v['tread_t'] - CUT_DEPTH - A.r),
+                  max(0.0, A.nosing_z(p1) - v['tread_t'] - CUT_DEPTH - A.r), top0, top0,
+                  inch(3) if c['stringer'] == 'CENTER' else STRINGER_T, 0)
 
 
 def _clean(pts):

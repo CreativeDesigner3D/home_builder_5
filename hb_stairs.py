@@ -27,6 +27,8 @@ TYPE_ITEMS = [
     ('STRAIGHT', "Straight", "One straight flight"),
     ('L_SHAPE', "L-Shaped", "Two flights at a right angle, a landing at the turn"),
     ('U_SHAPE', "U-Shaped", "Two flights side by side, a landing across both"),
+    ('CURVED', "Curved", "Treads round a curve, as deep as the tread depth along the middle"),
+    ('SPIRAL', "Spiral", "Pie-shaped treads round a centre pole"),
 ]
 TURN_ITEMS = [('LEFT', "Left", "The second flight turns left"),
               ('RIGHT', "Right", "The second flight turns right")]
@@ -96,11 +98,24 @@ def values(obj):
         'landing_height': float(obj.get('STAIR_LANDING_HEIGHT', rise / 2.0)),
         'gap': float(obj.get('STAIR_GAP', 0.0)),
         'headroom': float(obj.get('STAIR_HEADROOM', HEADROOM)),
+        'winders': bool(obj.get('STAIR_WINDERS', False)),
+        'radius': float(obj.get('STAIR_RADIUS', inch(48))),
+        'diameter': float(obj.get('STAIR_DIAMETER', inch(60))),
+        'spiral_angle': float(obj.get('STAIR_SPIRAL_ANGLE', 30.0)),
     }
 
 
 def counts(v):
-    """(risers, riser height, run of the first flight, of the second)."""
+    """(risers, riser height, run of the first flight, of the second) - for
+    a stair with winders, or a curved or spiral one, its whole walk and 0."""
+    from . import hb_stair_shapes as shapes
+    if shapes.is_arc(v):
+        A = shapes.arc_plan(v)
+        return A.n, A.r, shapes.walk_length(v), 0.0
+    if shapes.is_shaped(v):
+        flights, turn = shapes.winder_plan(v)
+        n = sum(f.n for f in flights) + len(turn.treads)
+        return n, flights[0].r, shapes.walk_length(v), 0.0
     if v['type'] == 'STRAIGHT':
         n = riser_count(v['rise'], v['max_riser'])
         return n, v['rise'] / n, n * v['tread'], 0.0
@@ -112,22 +127,8 @@ def ends(v):
     """The stair's two edges in its own frame, each (middle, the way up
     there): its start, at the foot of the first flight, and its end, at
     the head of the last."""
-    w = v['width']
-    _n, _r, run1, run2 = counts(v)
-    start = (Vector((w / 2.0, 0.0)), Vector((0.0, 1.0)))
-    if v['type'] == 'L_SHAPE':
-        if v['turn'] == 'LEFT':
-            end = (Vector((-run2, run1 + w / 2.0)), Vector((-1.0, 0.0)))
-        else:
-            end = (Vector((w + run2, run1 + w / 2.0)), Vector((1.0, 0.0)))
-    elif v['type'] == 'U_SHAPE':
-        if v['turn'] == 'LEFT':
-            end = (Vector((-v['gap'] - w / 2.0, run1 - run2)), Vector((0.0, -1.0)))
-        else:
-            end = (Vector((1.5 * w + v['gap'], run1 - run2)), Vector((0.0, -1.0)))
-    else:
-        end = (Vector((w / 2.0, run1)), Vector((0.0, 1.0)))
-    return start, end
+    from . import hb_stair_shapes as shapes
+    return shapes.ends(v)
 
 
 def placement(v, anchor, point, up):
@@ -143,17 +144,38 @@ def placement(v, anchor, point, up):
 
 def warnings(obj):
     """What the stair does that a house's stair shouldn't, as short notes."""
+    from . import hb_stair_shapes as shapes
     v = values(obj)
     n, riser, _r1, _r2 = counts(v)
     out = []
-    if riser > CODE_RISER + 1e-4:
-        out.append("Risers over 7 3/4\"")
-    if v['tread'] < CODE_TREAD - 1e-4:
-        out.append("Treads under 10\"")
-    if v['width'] < CODE_WIDTH - 1e-4:
-        out.append("Narrower than 36\"")
-    if v['headroom'] < CODE_HEADROOM - 1e-4:
-        out.append("Headroom under 6'8\"")
+    if v['type'] == 'SPIRAL':
+        # A spiral's own rules (IRC R311.7.10.1)
+        A = shapes.arc_plan(v)
+        if riser > inch(9.5) + 1e-4:
+            out.append("Risers over 9 1/2\"")
+        if A.W < inch(26) - 1e-4:
+            out.append("Narrower than 26\"")
+        if (A.r_in + inch(12)) * A.alpha < inch(6.75) - 1e-4:
+            out.append("Treads under 6 3/4\" at the walk line")
+        if v['headroom'] < inch(78) - 1e-4:
+            out.append("Headroom under 6'6\"")
+    else:
+        if riser > CODE_RISER + 1e-4:
+            out.append("Risers over 7 3/4\"")
+        if v['type'] == 'CURVED':
+            A = shapes.arc_plan(v)
+            if (A.r_in + inch(12)) * A.alpha < inch(11) - 1e-4:
+                out.append("Treads under 11\" at the walk line")
+            if A.r_in * A.alpha < inch(6) - 1e-4:
+                out.append("Treads under 6\" at the narrow end")
+        elif v['tread'] < CODE_TREAD - 1e-4:
+            out.append("Treads under 10\"")
+        if shapes.is_shaped(v) and not shapes.is_arc(v):
+            out.append("Winders narrow to a point at the newel")
+        if v['width'] < CODE_WIDTH - 1e-4:
+            out.append("Narrower than 36\"")
+        if v['headroom'] < CODE_HEADROOM - 1e-4:
+            out.append("Headroom under 6'8\"")
     rail = float(obj.get('STAIR_RAIL_HEIGHT', inch(36)))
     if obj.get('STAIR_RAILING', 'AUTO') != 'NONE' and not (inch(34) - 1e-4 <= rail <= inch(38) + 1e-4):
         out.append("Rail not 34\" to 38\" high")
@@ -356,6 +378,10 @@ _landing_h = _prop('STAIR_LANDING_HEIGHT', inch(54))
 _landing_d = _prop('STAIR_LANDING_DEPTH', WIDTH)
 _gap = _prop('STAIR_GAP', 0.0)
 _headroom = _prop('STAIR_HEADROOM', HEADROOM)
+_winders = _prop('STAIR_WINDERS', False, bool)
+_radius = _prop('STAIR_RADIUS', inch(48))
+_diameter = _prop('STAIR_DIAMETER', inch(60))
+_spiral_angle = _prop('STAIR_SPIRAL_ANGLE', 30.0)
 _guard = _prop('STAIR_GUARD', True, bool)
 _guard_h = _prop('STAIR_GUARD_HEIGHT', inch(36))
 
@@ -389,6 +415,17 @@ class HB_Stair(bpy.types.PropertyGroup):
     """A stair's settings, read from and written to its object."""
     stair_type: bpy.props.EnumProperty(name="Type", items=TYPE_ITEMS, get=_type[0], set=_type[1])  # type: ignore
     turn: bpy.props.EnumProperty(name="Turn", items=TURN_ITEMS, get=_turn[0], set=_turn[1])  # type: ignore
+    winders: bpy.props.BoolProperty(name="Winders", description="Winder treads round the turn instead of a landing",
+                                    get=_winders[0], set=_winders[1])  # type: ignore
+    radius: bpy.props.FloatProperty(name="Inside Radius", description="A curved stair's inside edge's radius",
+                                    min=inch(12), max=inch(240), subtype='DISTANCE', precision=4,
+                                    get=_radius[0], set=_radius[1])  # type: ignore
+    diameter: bpy.props.FloatProperty(name="Diameter", description="A spiral stair's whole width",
+                                      min=inch(48), max=inch(108), subtype='DISTANCE', precision=4,
+                                      get=_diameter[0], set=_diameter[1])  # type: ignore
+    spiral_angle: bpy.props.FloatProperty(name="Tread Angle", description="How far round each tread of a spiral turns, in degrees",
+                                          min=15.0, max=45.0, precision=1,
+                                          get=_spiral_angle[0], set=_spiral_angle[1])  # type: ignore
     width: bpy.props.FloatProperty(name="Width", min=inch(24), max=inch(96), subtype='DISTANCE',
                                    precision=4, get=_width[0], set=_width[1])  # type: ignore
     max_riser: bpy.props.FloatProperty(

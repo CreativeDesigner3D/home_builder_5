@@ -394,11 +394,14 @@ STAIR_FIELDS = (
     ('choices', 'stair_from', "Draw From", {'cols': 2}),
     ('choices', 'stair_type', "Type", {'cols': 3}),
     ('choices', 'stair_turn', "Turn", {'cols': 2, 'when': lambda h: h.stair_type != 'STRAIGHT'}),
-    ('distance', 'stair_width', "Width"),
+    ('bool', 'stair_winders', "Winders", {'when': lambda h: h.stair_type in ('L_SHAPE', 'U_SHAPE')}),
+    ('distance', 'stair_radius', "Inside Radius", {'when': lambda h: h.stair_type == 'CURVED'}),
+    ('distance', 'stair_diameter', "Diameter", {'when': lambda h: h.stair_type == 'SPIRAL'}),
+    ('distance', 'stair_width', "Width", {'when': lambda h: h.stair_type != 'SPIRAL'}),
     ('distance', 'stair_max_riser', "Max Riser"),
-    ('distance', 'stair_tread', "Tread Depth"),
+    ('distance', 'stair_tread', "Tread Depth", {'when': lambda h: h.stair_type != 'SPIRAL'}),
     ('choices', 'stair_risers', "Risers", {'cols': 2}),
-    ('choices', 'stair_stringer', "Stringers", {'cols': 3}),
+    ('choices', 'stair_stringer', "Stringers", {'cols': 3, 'when': lambda h: h.stair_type != 'SPIRAL'}),
     ('choices', 'stair_baluster', "Railing", {'cols': 2}),
 )
 

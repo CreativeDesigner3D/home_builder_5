@@ -2173,8 +2173,16 @@ class HB_House_Props(PropertyGroup):
     stair_type: EnumProperty(name="Type", items=[
         ('STRAIGHT', "Straight", "One straight flight"),
         ('L_SHAPE', "L-Shaped", "Two flights at a right angle, a landing at the turn"),
-        ('U_SHAPE', "U-Shaped", "Two flights side by side, a landing across both")],
+        ('U_SHAPE', "U-Shaped", "Two flights side by side, a landing across both"),
+        ('CURVED', "Curved", "Treads round a curve, as deep as the tread depth along the middle"),
+        ('SPIRAL', "Spiral", "Pie-shaped treads round a centre pole")],
         default='STRAIGHT')  # type: ignore
+    stair_winders: BoolProperty(name="Winders", default=False,
+                                description="Winder treads round the turn instead of a landing")  # type: ignore
+    stair_radius: FloatProperty(name="Inside Radius", default=inch(48), min=inch(12), max=inch(240),
+                                subtype='DISTANCE', precision=4)  # type: ignore
+    stair_diameter: FloatProperty(name="Diameter", default=inch(60), min=inch(48), max=inch(108),
+                                  subtype='DISTANCE', precision=4)  # type: ignore
     stair_turn: EnumProperty(name="Turn", items=[
         ('LEFT', "Left", "The second flight turns left"),
         ('RIGHT', "Right", "The second flight turns right")], default='LEFT')  # type: ignore
