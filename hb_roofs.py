@@ -38,7 +38,7 @@ import bmesh
 import bpy
 from mathutils import Vector
 
-from . import hb_house, hb_utils
+from . import hb_house, hb_utils, hb_wall_graph
 from .units import inch
 
 ROOF_KEY = 'IS_ROOF'
@@ -1405,7 +1405,7 @@ def apply_trims(scene):
             check = frame.get('custom') or lower
             for obj in scene.objects:
                 if not (obj.get('IS_WALL_BP') and obj.get(hb_house.LEVEL_KEY) == upper.uid
-                        and obj.get('WALL_TYPE') != DORMER_WALL_TYPE):
+                        and obj.get('WALL_TYPE') not in hb_wall_graph.MODULE_WALL_TYPES):
                     continue
                 wall = hb_types.GeoNodeWall(obj)
                 if not wall.has_modifier():

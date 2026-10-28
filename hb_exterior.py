@@ -479,6 +479,12 @@ def _outdoor_faces(obj, mesh, rooms, both_sides):
                                                  obj.get(hb_house.LEVEL_KEY, ''))
     m = obj.matrix_world
     rot = m.to_3x3()
+    # A bay's side has no room behind it to tell its faces apart: only its
+    # reference face is outdoors
+    ref_out = None
+    if obj.get('WALL_TYPE') == 'Bay':
+        ref_out = rot @ Vector((0.0, -1.0, 0.0))
+        ref_out = Vector((ref_out.x, ref_out.y, 0.0)).normalized()
     mesh.calc_loop_triangles()
     tris = {}
     for tri in mesh.loop_triangles:
@@ -497,7 +503,10 @@ def _outdoor_faces(obj, mesh, rooms, both_sides):
         if (max(ss) - min(ss) < 0.25 or max(zs) - min(zs) < 0.05
                 or _area(poly) < MIN_FACE_AREA):
             continue                # a wall's end, or a sliver (a cut can leave them across an opening)
-        if not both_sides:
+        if ref_out is not None:
+            if n.dot(ref_out) < 0.9:
+                continue
+        elif not both_sides:
             # Which way a face looks can't be read from its normal (a wall
             # drawn the other way round has its faces turned): a face just
             # off a room is an inside face; the outdoor side of the others
@@ -787,8 +796,8 @@ def _outside_input(obj, wall, rooms):
     """Which of a wall's big faces is outdoors. A wall's thickness falls
     to one side of its reference line - outward or inward depending on
     how it was drawn - so look which side has the house's rooms. A
-    dormer front's thickness is always inward."""
-    if obj.get('WALL_TYPE') == 'Dormer':
+    dormer front's or a bay's side's thickness is always inward."""
+    if obj.get('WALL_TYPE') in hb_wall_graph.MODULE_WALL_TYPES:
         return REF_SIDE
     from mathutils import Vector
     m = obj.matrix_world
@@ -807,7 +816,7 @@ def outdoor_side(wall_obj, rooms=None):
     from . import hb_types
     if wall_obj is None or not wall_obj.get('IS_WALL_BP'):
         return None
-    if wall_obj.get('WALL_TYPE', 'Exterior') not in ('Exterior', 'Dormer'):
+    if wall_obj.get('WALL_TYPE', 'Exterior') not in ('Exterior',) + hb_wall_graph.MODULE_WALL_TYPES:
         return None
     scene = hb_house.house_scene_of(bpy.context.scene)
     if scene is None:
@@ -894,7 +903,7 @@ def level_finish(scene, level):
 def wall_finish(scene, obj):
     """(style, colour) of an outside wall: its own, its level's or the house's."""
     own = getattr(obj, 'hb_siding', None)
-    if own is not None and own.style != 'INHERIT' and obj.get('WALL_TYPE') != 'Dormer':
+    if own is not None and own.style != 'INHERIT' and obj.get('WALL_TYPE') not in hb_wall_graph.MODULE_WALL_TYPES:
         return own.style, tuple(own.color)
     return level_finish(scene, _level_of(scene, obj))
 
@@ -934,7 +943,7 @@ def apply_exterior_finish(scene):
     for obj in scene.objects:
         if not obj.get('IS_WALL_BP'):
             continue
-        if obj.get('WALL_TYPE', 'Exterior') not in ('Exterior', 'Dormer'):
+        if obj.get('WALL_TYPE', 'Exterior') not in ('Exterior',) + hb_wall_graph.MODULE_WALL_TYPES:
             continue
         wall = hb_types.GeoNodeWall(obj)
         if not (wall.has_modifier() and wall.has_input(THICK_SIDE)):

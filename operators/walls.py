@@ -74,8 +74,8 @@ def level_wall_segs(scene, level=None):
             continue
         if level is not None and hb_house.level_of(obj) != level:
             continue
-        if obj.get('WALL_TYPE') == 'Dormer':
-            continue                # a roof's dormer front: up on the roof
+        if obj.get('WALL_TYPE') in hb_wall_graph.MODULE_WALL_TYPES:
+            continue                # a dormer front or a bay's side: placed by its module
         seg = wall_seg(obj)
         if seg is None:
             continue
@@ -1224,7 +1224,7 @@ def walls_meeting_at(wall_obj, point, ignore=()):
     for obj in wall_obj.users_scene[0].objects if wall_obj.users_scene else ():
         if obj is wall_obj or obj in ignore or 'IS_WALL_BP' not in obj:
             continue
-        if obj.get('WALL_TYPE') == 'Dormer' or not hb_house.same_level(obj, wall_obj):
+        if obj.get('WALL_TYPE') in hb_wall_graph.MODULE_WALL_TYPES or not hb_house.same_level(obj, wall_obj):
             continue
         try:
             a, b = get_wall_endpoints(obj)
@@ -2337,7 +2337,7 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         for obj in context.view_layer.objects:
             if 'IS_WALL_BP' not in obj or obj is current:
                 continue
-            if obj.get('WALL_TYPE') == 'Dormer':
+            if obj.get('WALL_TYPE') in hb_wall_graph.MODULE_WALL_TYPES:
                 continue
             if not hb_house.on_active_level(obj, context):
                 continue

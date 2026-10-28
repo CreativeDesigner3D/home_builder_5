@@ -54,7 +54,7 @@ SUBFLOOR = inch(0.75)       # floor sheathing over the joists
 SHEATHING = inch(0.5)       # roof sheathing over the rafters
 RAFTER_DEPTH = inch(7.25)   # 2x8
 GROUND_JOIST = inch(9.25)   # 2x10 over a crawlspace
-FRAMED_WALLS = ('Exterior', 'Interior', 'Half', 'Dormer')
+FRAMED_WALLS = ('Exterior', 'Interior', 'Half', 'Dormer', 'Bay')
 
 
 # =============================================================================

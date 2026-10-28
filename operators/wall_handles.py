@@ -30,7 +30,7 @@ import gpu
 from gpu_extras.batch import batch_for_shader
 from mathutils import Vector
 
-from .. import hb_house, hb_types, units
+from .. import hb_house, hb_types, hb_wall_graph, units
 from . import walls as hb_walls
 
 SNAP_PX = 10.0               # how near a corner comes before it lines up
@@ -55,7 +55,7 @@ HINT = "Drag to move   Ctrl: no snapping   Shift: fine   Esc / right-click: canc
 
 def is_house_wall(obj):
     return (obj is not None and obj.get('IS_WALL_BP')
-            and obj.get('WALL_TYPE') != 'Dormer'
+            and obj.get('WALL_TYPE') not in hb_wall_graph.MODULE_WALL_TYPES
             and hb_types.GeoNodeWall(obj).has_modifier())
 
 
@@ -157,7 +157,7 @@ def key_corners(obj, skip):
     for other in bpy.context.scene.objects:
         if other is obj or other in skip or not other.get('IS_WALL_BP'):
             continue
-        if other.get('WALL_TYPE') == 'Dormer' or not hb_house.same_level(other, obj):
+        if other.get('WALL_TYPE') in hb_wall_graph.MODULE_WALL_TYPES or not hb_house.same_level(other, obj):
             continue
         keys.extend(Vector(p) for _end, _face, p in hb_walls.wall_plan_corners(other))
     return keys

@@ -776,6 +776,12 @@ def place_wall_object(context, wall_obj, kind, x, width=None, height=None, z=Non
             placed.set_input('Dim Z', context.scene.hb_house.fireplace_height)
         hb_fireplaces.place(context, placed.obj)
         return placed.obj
+    if spec.BP_FLAG == 'IS_BAY_BP':
+        from .. import hb_bays
+        if width is None:
+            placed.set_input('Dim X', context.scene.hb_house.bay_width)
+        hb_bays.place(context, placed.obj)
+        return placed.obj
     cutting_obj = placed.obj
     if spec.BUILD_GEO:
         cutting_obj = door_window_geo.update_reveal_cutter(placed.obj)
@@ -1297,6 +1303,34 @@ class home_builder_doors_windows_OT_place_fireplace(_PlaceWallObjectBase):
         return None
 
 
+class home_builder_doors_windows_OT_place_bay(_PlaceWallObjectBase):
+    bl_idname = "home_builder_doors_windows.place_bay"
+    bl_label = "Place Bay Window"
+    bl_description = ("Place a bay, bow or box window on an outside wall. Arrow keys "
+                      "for offset, W for width")
+
+    OBJECT_NAME = "Bay Window"
+    OBJECT_LABEL = "bay window"
+    BP_FLAG = "IS_BAY_BP"
+    MENU_ID = "HOME_BUILDER_MT_bay_window_commands"
+    # The cage is made at a window's size, then set to the tool's
+    WIDTH_PROP_NAME = "window_width"
+    HEIGHT_PROP_NAME = "window_height"
+    TEXT_KIND = None
+    BUILD_GEO = False
+
+    def create_placed_object(self, context):
+        super().create_placed_object(context)
+        house = context.scene.hb_house
+        self.placed_obj.set_input('Dim X', house.bay_width)
+        self.placed_obj.set_input('Dim Z', house.bay_head_height)
+
+    def cut_wall(self, wall_obj, cutting_obj):
+        from .. import hb_bays
+        hb_bays.place(bpy.context, cutting_obj)
+        return None
+
+
 # What place_wall_object can place, by the placement tool for each
 PLACE_KINDS = {
     'DOOR': home_builder_doors_windows_OT_place_door,
@@ -1304,6 +1338,7 @@ PLACE_KINDS = {
     'OPENING': home_builder_doors_windows_OT_place_open_door,
     'WINDOW': home_builder_doors_windows_OT_place_window,
     'FIREPLACE': home_builder_doors_windows_OT_place_fireplace,
+    'BAY': home_builder_doors_windows_OT_place_bay,
 }
 
 
@@ -2209,6 +2244,7 @@ classes = (
     home_builder_doors_windows_OT_place_open_door,
     home_builder_doors_windows_OT_place_window,
     home_builder_doors_windows_OT_place_fireplace,
+    home_builder_doors_windows_OT_place_bay,
     home_builder_doors_windows_OT_duplicate_window,
     home_builder_doors_windows_OT_duplicate_door,
     home_builder_doors_windows_OT_door_prompts,

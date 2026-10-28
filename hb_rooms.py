@@ -860,6 +860,9 @@ def rebuild_after_walls(scene, level_uid=None):
                 if below is not None:
                     hb_house.set_exterior_wall_heights(scene, below)
                 hb_house.set_exterior_wall_heights(scene, level)
+        # Bays follow the walls they stand out from
+        from . import hb_bays
+        hb_bays.rebuild_all(scene)
         # Roofs follow the walls they sit on and trim the walls under them
         from . import hb_roofs
         hb_roofs.rebuild_roofs(scene)

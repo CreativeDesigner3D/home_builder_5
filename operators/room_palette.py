@@ -236,6 +236,15 @@ def _g_fireplace(shader, box, color):
     draw_polyline(shader, [(sx, top), (sx, y + h), (sx + bw * 0.24, y + h), (sx + bw * 0.24, top)], color)
 
 
+def _g_bay(shader, box, color):
+    """A wall line with a bay standing out of it, three sides."""
+    x, y, w, h = box
+    base = y + h * 0.25
+    draw_lines(shader, [(x, base), (x + w * 0.18, base), (x + w * 0.82, base), (x + w, base)], color)
+    draw_polyline(shader, [(x + w * 0.18, base), (x + w * 0.34, y + h * 0.78),
+                           (x + w * 0.66, y + h * 0.78), (x + w * 0.82, base)], color)
+
+
 def _g_measure(shader, box, color):
     """A dimension line: what the tool leaves on screen.
 
@@ -308,6 +317,7 @@ BUILTIN_TOOLS = (
     # the openings do, so they share the group. Which one comes in, and
     # its size, is the form behind the button.
     ("home_builder_doors_windows.place_fireplace", "Fireplace", _g_fireplace, 1, None, None),
+    ("home_builder_doors_windows.place_bay", "Bay Window", _g_bay, 1, None, None),
     ("home_builder_obstacles.place_obstacle", "Obstacle", _g_obstacle, 1,
      'draw_obstacle_options', "Obstacle Settings"),
     # Named for the thing, not the act: every button on the strip adds

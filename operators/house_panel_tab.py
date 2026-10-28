@@ -365,6 +365,42 @@ def _selected_windows(context):
     return out
 
 
+def _selected_bay(context):
+    from .. import hb_bays
+    for obj in [context.active_object] + list(context.selected_objects):
+        cage = hb_bays.bay_of(obj)
+        if cage is not None:
+            return cage
+    return None
+
+
+def _bay_summary(bay):
+    from .. import hb_bays
+    warn = hb_bays.warning(bay.id_data)
+    return warn or f"{_label(bay, 'kind')} · {_label(bay, 'roof')} roof"
+
+
+def _bay_kind(*kinds):
+    return lambda bay: bay.kind in kinds
+
+
+BAY_FIELDS = (
+    ('group', 'outside_bay', "Selected Bay Window", {'summary': _bay_summary, 'fields': (
+        ('enum', 'kind', "Kind"),
+        ('distance', 'width', "Width"),
+        ('distance', 'projection', "Projection"),
+        ('number', 'side_angle', "Side Angle", {'when': _bay_kind('BAY')}),
+        ('number', 'segments', "Segments", {'when': _bay_kind('BOW')}),
+        ('enum', 'base', "Base"),
+        ('distance', 'seat_height', "Seat Height", {'when': lambda b: b.base == 'SEAT'}),
+        ('distance', 'sill_height', "Sill Height", {'when': lambda b: b.base == 'FLOOR'}),
+        ('distance', 'head_height', "Head Height"),
+        ('enum', 'roof', "Roof"),
+        ('number', 'roof_pitch', "Roof Pitch (in 12)", {'when': lambda b: b.roof != 'NONE'}),
+    )}),
+)
+
+
 def _selected_fireplace(context):
     from .. import hb_fireplaces
     for obj in [context.active_object] + list(context.selected_objects):
@@ -907,6 +943,9 @@ def _blocks(context):
                                                      owner.hb_window_ext))
         else:
             blocks.append(('note', "Select windows for their shutters and trim."))
+        bay = _selected_bay(context)
+        if bay is not None:
+            blocks.extend(options_panel.field_blocks(context, BAY_FIELDS, bay.hb_bay))
         fireplace = _selected_fireplace(context)
         if fireplace is not None:
             blocks.extend(options_panel.field_blocks(context, FIREPLACE_FIELDS, fireplace.hb_fireplace))

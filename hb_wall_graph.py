@@ -448,6 +448,10 @@ RoomArea = namedtuple('RoomArea', 'level polygon area floor wall_types faces',
 Outline = namedtuple('Outline', 'level polygon area')
 
 ROOM_MIN_AREA = 0.05            # m2; smaller faces are slivers between walls
+# Walls a module owns and places itself - a roof's dormer fronts, a bay
+# window's sides: real walls (windows, siding, framing), but left out of
+# the junction graph and the rooms
+MODULE_WALL_TYPES = ('Dormer', 'Bay')
 NOT_ROOM_WALLS = ('Half', 'Fake')
 # Walls that only close rooms: nothing is built, so they take no part in
 # the corners of real walls, and a room runs right up to their line.

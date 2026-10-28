@@ -349,6 +349,23 @@ POST_FIELDS = (
     ('distance', 'member_width', "Width", {'when': _mat('STEEL')}),
 )
 
+def _bay_is(*kinds):
+    return lambda house: house.bay_kind in kinds
+
+
+BAY_FIELDS = (
+    ('choices', 'bay_kind', "Kind", {'cols': 3}),
+    ('distance', 'bay_width', "Width"),
+    ('distance', 'bay_projection', "Projection"),
+    ('number', 'bay_side_angle', "Side Angle", {'when': _bay_is('BAY')}),
+    ('number', 'bay_segments', "Segments", {'when': _bay_is('BOW')}),
+    ('choices', 'bay_base', "Base", {'cols': 2}),
+    ('distance', 'bay_seat_height', "Seat Height", {'when': lambda house: house.bay_base == 'SEAT'}),
+    ('distance', 'bay_head_height', "Head Height"),
+    ('choices', 'bay_roof', "Roof", {'cols': 3}),
+    ('number', 'bay_roof_pitch', "Roof Pitch (in 12)", {'when': lambda house: house.bay_roof != 'NONE'}),
+)
+
 FIREPLACE_FIELDS = (
     ('distance', 'fireplace_width', "Opening Width"),
     ('distance', 'fireplace_height', "Opening Height"),
@@ -368,6 +385,7 @@ SKYLIGHT_FIELDS = (
 HOUSE_PAGES = {
     "home_builder.place_skylight": ("Skylight", SKYLIGHT_FIELDS),
     "home_builder_doors_windows.place_fireplace": ("Fireplace", FIREPLACE_FIELDS),
+    "home_builder_doors_windows.place_bay": ("Bay Window", BAY_FIELDS),
     "home_builder.place_beam": ("Beam", BEAM_FIELDS),
     "home_builder.place_post": ("Post", POST_FIELDS),
 }
@@ -391,6 +409,7 @@ HINTS = {
     "home_builder.place_post": "Runs up to the beam over it, or to the ceiling",
     "home_builder.place_skylight": "Click on the roof: it lies on the slope there",
     "home_builder_doors_windows.place_fireplace": "Click a wall · arrow keys for offset, W for width",
+    "home_builder_doors_windows.place_bay": "Click an outside wall · arrow keys for offset, W for width",
 }
 
 

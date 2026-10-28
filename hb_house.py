@@ -541,7 +541,7 @@ def set_exterior_wall_heights(scene, level):
     if upper is not None:
         for obj in scene.objects:
             if (obj.get('IS_WALL_BP') and obj.get(LEVEL_KEY) == upper.uid
-                    and obj.get('WALL_TYPE') not in ('Divider', 'Porch', 'Dormer')):
+                    and obj.get('WALL_TYPE') not in ('Divider', 'Porch', 'Dormer', 'Bay')):
                 band = _wall_band(obj)
                 if band is not None:
                     upper_bands.append(band)
@@ -1986,6 +1986,37 @@ class HB_House_Props(PropertyGroup):
         items=[('4X4', "4x4", ""), ('4X6', "4x6", ""), ('6X6', "6x6", ""),
                ('8X8', "8x8", "")],
         default='6X6')  # type: ignore
+
+    # Bay windows: what the next one placed is
+    bay_kind: EnumProperty(
+        name="Kind",
+        items=[('BAY', "Bay", "Angled sides and a front parallel to the wall"),
+               ('BOW', "Bow", "A curve of narrow sides"),
+               ('BOX', "Box", "Square sides")],
+        default='BAY')  # type: ignore
+    bay_width: FloatProperty(name="Width", default=inch(96), min=0.6, max=8.0,
+                             subtype='DISTANCE', precision=4)  # type: ignore
+    bay_projection: FloatProperty(name="Projection", default=inch(24), min=inch(8), max=inch(72),
+                                  subtype='DISTANCE', precision=4)  # type: ignore
+    bay_side_angle: FloatProperty(name="Side Angle", default=45.0, min=20.0, max=80.0)  # type: ignore
+    bay_segments: IntProperty(name="Segments", default=5, min=3, max=9)  # type: ignore
+    bay_base: EnumProperty(
+        name="Base",
+        items=[('FLOOR', "Floor", "The bay comes down to the floor"),
+               ('SEAT', "Seat", "The bay stands out above the floor, a seat inside it")],
+        default='FLOOR')  # type: ignore
+    bay_seat_height: FloatProperty(name="Seat Height", default=inch(18), min=inch(10), max=inch(42),
+                                   subtype='DISTANCE', precision=4)  # type: ignore
+    bay_head_height: FloatProperty(name="Head Height", default=inch(80), min=inch(48), max=inch(120),
+                                   subtype='DISTANCE', precision=4)  # type: ignore
+    bay_roof: EnumProperty(
+        name="Roof",
+        items=[('HIP', "Hip", "Slopes on every side away from the wall"),
+               ('SHED', "Shed", "One slope down from the wall"),
+               ('NONE', "None", "No roof of its own")],
+        default='HIP')  # type: ignore
+    bay_roof_pitch: FloatProperty(name="Roof Pitch", default=6.0, min=1.0, max=18.0,
+                                  precision=2)  # type: ignore
 
     # Fireplaces: what the next one placed is
     fireplace_width: FloatProperty(
