@@ -382,8 +382,12 @@ def _cut_host(cage, F):
     x0, x1 = F.inner[0][0], F.inner[-1][0]
     pad = 0.01
     bm = bmesh.new()
+    # On the floor, from under the host's foot: cut level with it, the
+    # boolean leaves its bottom face, fighting the bay's floor. (A seat's
+    # board sits on the wall left under it.)
+    low = -pad if F.base <= 0.0 else 0.0
     _prism(bm, [Vector((x0, -pad)), Vector((x1, -pad)), Vector((x1, F.T + pad)), Vector((x0, F.T + pad))],
-           0.0, F.top - F.base, 0)
+           low, F.top - F.base, 0)
     mesh = bpy.data.meshes.new("Bay Opening")
     bm.to_mesh(mesh)
     bm.free()
