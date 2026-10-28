@@ -245,6 +245,15 @@ def _g_bay(shader, box, color):
                            (x + w * 0.66, y + h * 0.78), (x + w * 0.82, base)], color)
 
 
+def _g_furnish(shader, box, color):
+    """A tub in plan: its rim, and the well inside it."""
+    x, y, w, h = box
+    top, bot = y + h * 0.78, y + h * 0.22
+    draw_polyline(shader, [(x, bot), (x + w, bot), (x + w, top), (x, top)], color, closed=True)
+    draw_polyline(shader, [(x + w * 0.14, bot + h * 0.1), (x + w * 0.86, bot + h * 0.1),
+                           (x + w * 0.86, top - h * 0.1), (x + w * 0.14, top - h * 0.1)], color, closed=True)
+
+
 def _g_measure(shader, box, color):
     """A dimension line: what the tool leaves on screen.
 
@@ -318,6 +327,7 @@ BUILTIN_TOOLS = (
     # its size, is the form behind the button.
     ("home_builder_doors_windows.place_fireplace", "Fireplace", _g_fireplace, 1, None, None),
     ("home_builder_doors_windows.place_bay", "Bay Window", _g_bay, 1, None, None),
+    ("home_builder.furnish", "Furnish", _g_furnish, 1, None, None),
     ("home_builder_obstacles.place_obstacle", "Obstacle", _g_obstacle, 1,
      'draw_obstacle_options', "Obstacle Settings"),
     # Named for the thing, not the act: every button on the strip adds

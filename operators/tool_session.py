@@ -349,6 +349,13 @@ POST_FIELDS = (
     ('distance', 'member_width', "Width", {'when': _mat('STEEL')}),
 )
 
+# On scene.hb_house: the Furnish catalog, by category; picking one
+# restarts the tool with it
+FURNISH_FIELDS = (
+    ('choices', 'furnish_item', "", {'cols': 2}),
+)
+
+
 def _bay_is(*kinds):
     return lambda house: house.bay_kind in kinds
 
@@ -386,6 +393,7 @@ HOUSE_PAGES = {
     "home_builder.place_skylight": ("Skylight", SKYLIGHT_FIELDS),
     "home_builder_doors_windows.place_fireplace": ("Fireplace", FIREPLACE_FIELDS),
     "home_builder_doors_windows.place_bay": ("Bay Window", BAY_FIELDS),
+    "home_builder.furnish": ("Furnish", FURNISH_FIELDS),
     "home_builder.place_beam": ("Beam", BEAM_FIELDS),
     "home_builder.place_post": ("Post", POST_FIELDS),
 }
@@ -410,6 +418,7 @@ HINTS = {
     "home_builder.place_skylight": "Click on the roof: it lies on the slope there",
     "home_builder_doors_windows.place_fireplace": "Click a wall · arrow keys for offset, W for width",
     "home_builder_doors_windows.place_bay": "Click an outside wall · arrow keys for offset, W for width",
+    "home_builder.furnish": "Pick one above, then click the face of a wall · W for width",
 }
 
 

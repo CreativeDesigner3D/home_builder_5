@@ -43,6 +43,7 @@ from bpy_extras import view3d_utils
 from . import hb_project
 from . import hb_plan_views
 from .units import inch
+from .product_libraries.interiors import catalog as furnish_catalog
 
 LEVEL_KEY = 'HB_LEVEL'
 HOUSE_SCENE_KEY = 'IS_HOUSE_SCENE'
@@ -1895,6 +1896,11 @@ def _update_level_display(self, context):
     apply_level_display(scene)
 
 
+def _furnish_changed(self, context):
+    from .operators import ops_furnish
+    ops_furnish._furnish_changed(self, context)
+
+
 def _exterior_changed(house):
     from . import hb_exterior
     hb_exterior.apply_exterior_finish(house.id_data)
@@ -2105,6 +2111,11 @@ class HB_House_Props(PropertyGroup):
     ceiling_color: FloatVectorProperty(
         name="Ceilings", subtype='COLOR', size=3, min=0.0, max=1.0, default=(0.96, 0.96, 0.95),
         update=lambda self, context: _walls_changed(self, context))  # type: ignore
+
+    # The Furnish tool: what it places
+    furnish_item: EnumProperty(
+        name="Furnish", items=furnish_catalog.ENUM_ITEMS, default='TOILET',
+        update=lambda self, context: _furnish_changed(self, context))  # type: ignore
 
     # Bay windows: what the next one placed is
     bay_kind: EnumProperty(
