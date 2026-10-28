@@ -687,6 +687,40 @@ FLOOR_DEFAULT_FIELDS = (
 )
 
 
+def _walls_on(h):
+    return h.walls_by_room
+
+
+WALL_DEFAULT_FIELDS = (
+    ('group', 'wall_defaults', "Wall Finishes",
+     {'summary': lambda h: "By room" if h.walls_by_room else "Off", 'fields': (
+         ('bool', 'walls_by_room', "Paint Walls by Room"),
+         ('native', 'walls_room_color', "Rooms", {'when': _walls_on}),
+         ('native', 'walls_wet_color', "Baths & Laundry", {'when': _walls_on}),
+         ('enum', 'walls_wet_band', "Bath Band", {'when': _walls_on}),
+         ('distance', 'walls_band_height', "Band Height",
+          {'when': lambda h: h.walls_by_room and h.walls_wet_band != 'NONE'}),
+         ('native', 'walls_band_color', "Band Color",
+          {'when': lambda h: h.walls_by_room and h.walls_wet_band != 'NONE'}),
+         ('native', 'walls_garage_color', "Garages", {'when': _walls_on}),
+         ('native', 'ceiling_color', "Ceilings", {'when': _walls_on}),
+     )}),
+)
+
+
+def _walls_summary(room):
+    if room.walls_auto:
+        return "House default"
+    out = _label(room, 'walls_finish')
+    if room.walls_band != 'NONE':
+        out += f" · {_label(room, 'walls_band')} band {_length(room, room.walls_band_height)}"
+    return out
+
+
+def _own_walls(room):
+    return not room.walls_auto
+
+
 def _ceiling_summary(room):
     height = room.ceiling_height
     if height <= 0:
@@ -730,6 +764,19 @@ ROOM_SPEC = {
             ('number', 'floor_roughness', "Roughness", {'when': _styled}),
             ('native', 'floor_material', "Material",
              {'when': lambda room: room.has_floor and room.floor_finish == 'CUSTOM'}),
+        )}),
+        ('group', 'room_walls', "Walls", {'when': lambda room: room.id_data.hb_house.walls_by_room,
+                                          'summary': _walls_summary, 'fields': (
+            ('bool', 'walls_auto', "Use House Default"),
+            ('enum', 'walls_finish', "Walls", {'when': _own_walls}),
+            ('native', 'walls_color', "Color", {'when': _own_walls}),
+            ('enum', 'walls_band', "Lower Band", {'when': _own_walls}),
+            ('distance', 'walls_band_height', "Band Height",
+             {'when': lambda room: _own_walls(room) and room.walls_band != 'NONE'}),
+            ('native', 'walls_band_color', "Band Color",
+             {'when': lambda room: _own_walls(room) and room.walls_band != 'NONE'}),
+            ('native', 'ceiling_color', "Ceiling Color",
+             {'when': lambda room: _own_walls(room) and room.ceiling_material is None}),
         )}),
         ('group', 'room_ceiling', "Ceiling", {'summary': _ceiling_summary, 'fields': (
             ('distance', 'ceiling_height', "Ceiling Height"),
@@ -977,6 +1024,7 @@ def _blocks(context):
                                         "home_builder.add_standard_assemblies", None, None),)))
     else:
         blocks = options_panel.field_blocks(context, FLOOR_DEFAULT_FIELDS, scene.hb_house)
+        blocks.extend(options_panel.field_blocks(context, WALL_DEFAULT_FIELDS, scene.hb_house))
         blocks.append(('gap', None))
         if level is not None:
             blocks.extend(options_panel.pool_blocks(context, ROOM_SPEC))

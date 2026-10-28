@@ -988,6 +988,10 @@ def apply_exterior_finish(scene):
             obj.data.materials.append(siding)
         roof_done.append((obj, finish, None, None))
     build_siding_geometry(scene, walls_done, roof_done, rooms)
+    # Inside, the rooms' paint and tile - after the siding, so a wall
+    # with rooms both sides (a garage against the house) keeps its paint
+    from . import hb_wall_finish
+    hb_wall_finish.apply_wall_coverings(scene)
 
     old = _base_object(scene)
     ground = hb_house.ground_level(house)

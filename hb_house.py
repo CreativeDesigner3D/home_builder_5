@@ -1036,6 +1036,25 @@ def _room_porch_changed(self, context):
         _room_shape_changed(self, context)
 
 
+# ---- Wall coverings by room (see hb_wall_finish) ------------------------------
+# Items are only ever appended: a saved choice is its place in the list.
+
+WALL_FINISH_ITEMS = [
+    ('PAINT', "Paint", "A painted wall"),
+    ('TILE', "Tile", "Subway tile, floor to ceiling"),
+]
+WALL_BAND_ITEMS = [
+    ('NONE', "None", "No band"),
+    ('TILE', "Tile", "Subway tile up to the band's height"),
+    ('PAINT', "Paint", "A second paint colour up to the band's height"),
+]
+
+
+def _walls_changed(self, context):
+    from . import hb_wall_finish
+    hb_wall_finish.changed(self, context)
+
+
 class HB_Room(PropertyGroup):
     """A room on a level. Which area of walls it is comes from where its
     marker sits (see hb_rooms); everything the user chooses for the room
@@ -1133,6 +1152,28 @@ class HB_Room(PropertyGroup):
         name="Outdoor",
         description="A balcony or deck: no ceiling, deck boards for a floor",
         default=False, update=_room_outdoor_changed)  # type: ignore
+
+    # Its walls and ceiling (see hb_wall_finish)
+    walls_auto: BoolProperty(
+        name="Use House Default",
+        description="Walls and ceiling as the house's Wall Finishes say for this kind of room",
+        default=True, update=_walls_changed)  # type: ignore
+    walls_finish: EnumProperty(name="Walls", items=WALL_FINISH_ITEMS, default='PAINT',
+                               update=_walls_changed)  # type: ignore
+    walls_color: FloatVectorProperty(
+        name="Wall Color", subtype='COLOR', size=3, min=0.0, max=1.0,
+        default=(0.93, 0.92, 0.88), update=_walls_changed)  # type: ignore
+    walls_band: EnumProperty(name="Lower Band", items=WALL_BAND_ITEMS, default='NONE',
+                             update=_walls_changed)  # type: ignore
+    walls_band_height: FloatProperty(
+        name="Band Height", default=inch(48), min=0.0, max=inch(120),
+        subtype='DISTANCE', precision=4, update=_walls_changed)  # type: ignore
+    walls_band_color: FloatVectorProperty(
+        name="Band Color", subtype='COLOR', size=3, min=0.0, max=1.0,
+        default=(0.96, 0.96, 0.95), update=_walls_changed)  # type: ignore
+    ceiling_color: FloatVectorProperty(
+        name="Ceiling Color", subtype='COLOR', size=3, min=0.0, max=1.0,
+        default=(0.96, 0.96, 0.95), update=_walls_changed)  # type: ignore
 
     floor_auto: BoolProperty(
         name="Use House Default",
@@ -1986,6 +2027,34 @@ class HB_House_Props(PropertyGroup):
         items=[('4X4', "4x4", ""), ('4X6', "4x6", ""), ('6X6', "6x6", ""),
                ('8X8', "8x8", "")],
         default='6X6')  # type: ignore
+
+    # Wall coverings by room (see hb_wall_finish): the defaults by kind
+    walls_by_room: BoolProperty(
+        name="Wall Finishes",
+        description=("Paint and tile the walls and ceilings room by room. Off, the walls "
+                     "keep the scene's one wall material"),
+        default=False, update=lambda self, context: _walls_changed(self, context))  # type: ignore
+    walls_room_color: FloatVectorProperty(
+        name="Rooms", subtype='COLOR', size=3, min=0.0, max=1.0, default=(0.93, 0.92, 0.88),
+        update=lambda self, context: _walls_changed(self, context))  # type: ignore
+    walls_wet_color: FloatVectorProperty(
+        name="Baths & Laundry", subtype='COLOR', size=3, min=0.0, max=1.0, default=(0.90, 0.93, 0.94),
+        update=lambda self, context: _walls_changed(self, context))  # type: ignore
+    walls_wet_band: EnumProperty(
+        name="Bath Band", items=WALL_BAND_ITEMS, default='TILE',
+        update=lambda self, context: _walls_changed(self, context))  # type: ignore
+    walls_band_height: FloatProperty(
+        name="Band Height", default=inch(48), min=0.0, max=inch(120), subtype='DISTANCE',
+        precision=4, update=lambda self, context: _walls_changed(self, context))  # type: ignore
+    walls_band_color: FloatVectorProperty(
+        name="Band Color", subtype='COLOR', size=3, min=0.0, max=1.0, default=(0.96, 0.96, 0.95),
+        update=lambda self, context: _walls_changed(self, context))  # type: ignore
+    walls_garage_color: FloatVectorProperty(
+        name="Garages", subtype='COLOR', size=3, min=0.0, max=1.0, default=(0.84, 0.84, 0.82),
+        update=lambda self, context: _walls_changed(self, context))  # type: ignore
+    ceiling_color: FloatVectorProperty(
+        name="Ceilings", subtype='COLOR', size=3, min=0.0, max=1.0, default=(0.96, 0.96, 0.95),
+        update=lambda self, context: _walls_changed(self, context))  # type: ignore
 
     # Bay windows: what the next one placed is
     bay_kind: EnumProperty(
