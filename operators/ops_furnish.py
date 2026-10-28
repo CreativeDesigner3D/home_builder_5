@@ -276,8 +276,14 @@ class HOME_BUILDER_OT_furnish(doors_windows._PlaceWallObjectBase):
         if event.type == 'INBETWEEN_MOUSEMOVE':
             return {'RUNNING_MODAL'}
         level = hb_house.get_level(self.level_uid) if self.level_uid else None
-        if event.type == 'R' and event.value == 'PRESS' and self.mode == 'FLOOR':
-            self.turn = (self.turn + math.pi / 2.0) % (2.0 * math.pi)
+        if event.type == 'R' and self.mode == 'FLOOR':
+            # Ours, not Blender's rotate
+            if event.value == 'PRESS':
+                self.turn = (self.turn + math.pi / 2.0) % (2.0 * math.pi)
+                p = self._floor_point(context, event)
+                if p is not None and self.free_obj is not None:
+                    stand_at(self.free_obj, level, p.x, p.y, self.turn, hang=False)
+            return {'RUNNING_MODAL'}
         p = self._floor_point(context, event)
         if p is not None and self.free_obj is not None:
             stand_at(self.free_obj, level, p.x, p.y, self.turn, hang=self.mode == 'CEILING')

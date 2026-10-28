@@ -638,6 +638,25 @@ class WallObjectPlacementMixin(hb_placement.PlacementMixin):
             return True
         return False
 
+    def _hide_annotations(self, hide):
+        """Hide what hangs off the placed object (its swing, its label,
+        its type's symbol), or show again what was hidden."""
+        hidden = getattr(self, '_hidden_annotations', None)
+        if hidden is None:
+            hidden = self._hidden_annotations = []
+        placed = self.get_placed_object()
+        if hide and placed is not None:
+            for child in placed.children_recursive:
+                if child.visible_get():
+                    child.hide_set(True)
+                    hidden.append(child.name)
+        elif not hide and hidden:
+            for name in hidden:
+                obj = bpy.data.objects.get(name)
+                if obj is not None:
+                    obj.hide_set(False)
+            hidden.clear()
+
     def handle_two_point_d_key(self, event) -> bool:
         """D key toggles two-point width mode. Returns True if handled."""
         if event.type == 'D' and event.value == 'PRESS':
@@ -1133,6 +1152,9 @@ class _PlaceWallObjectBase(bpy.types.Operator, WallObjectPlacementMixin):
         # Two-point phase 1: hide the object so the user picks a clean start,
         # but still show the gap-relative offset dimensions.
         in_phase1 = self.two_point_in_phase1()
+        # Picking the first point: the door's swing and symbol go with it,
+        # or they would stand where it was last drawn
+        self._hide_annotations(in_phase1)
         if in_phase1:
             self.placed_obj.obj.hide_set(True)
             self.update_two_point_phase1_dimensions(context)

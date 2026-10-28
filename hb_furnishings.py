@@ -3,6 +3,7 @@ The pieces themselves are in product_libraries/interiors (types_furniture,
 furniture_geo); the Furnish tool places them."""
 
 import bpy
+from bpy.app.handlers import persistent
 
 from . import hb_types
 from .units import inch
@@ -152,6 +153,43 @@ class HOME_BUILDER_MT_furnishing_commands(bpy.types.Menu):
         self.layout.operator("home_builder.delete_furnishing", icon='X')
 
 
+# ---- A click on a part picks the whole piece -------------------------------------
+# A piece of furniture or a light fixture is its cage and the parts under
+# it. Clicking one of its parts makes the cage the selection instead, so
+# it moves, turns and deletes whole.
+
+_PART_KEYS = ('IS_FURNISHING_PART', 'IS_FIXTURE_PART', 'IS_FIXTURE_LIGHT')
+_WHOLE_KEYS = ('IS_FURNISHING', 'IS_LIGHT_FIXTURE')
+_owner = object()
+
+
+def _active_changed():
+    view_layer = bpy.context.view_layer
+    obj = view_layer.objects.active if view_layer is not None else None
+    if obj is None or not any(obj.get(k) for k in _PART_KEYS):
+        return
+    whole = obj.parent
+    while whole is not None and not any(whole.get(k) for k in _WHOLE_KEYS):
+        whole = whole.parent
+    if whole is None:
+        return
+    obj.select_set(False)
+    whole.select_set(True)
+    view_layer.objects.active = whole
+
+
+def _subscribe():
+    bpy.msgbus.clear_by_owner(_owner)
+    bpy.msgbus.subscribe_rna(key=(bpy.types.LayerObjects, "active"), owner=_owner,
+                             args=(), notify=_active_changed)
+
+
+@persistent
+def _load_post(_dummy):
+    # A file load clears every subscription
+    _subscribe()
+
+
 classes = (
     HB_Furnishing,
     HOME_BUILDER_OT_delete_furnishing,
@@ -164,9 +202,15 @@ def register():
     for cls in classes:
         bpy.utils.register_class(cls)
     bpy.types.Object.hb_furniture = bpy.props.PointerProperty(type=HB_Furnishing)
+    _subscribe()
+    if _load_post not in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.append(_load_post)
 
 
 def unregister():
+    if _load_post in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(_load_post)
+    bpy.msgbus.clear_by_owner(_owner)
     if hasattr(bpy.types.Object, 'hb_furniture'):
         del bpy.types.Object.hb_furniture
     for cls in reversed(classes):

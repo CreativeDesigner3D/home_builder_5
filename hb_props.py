@@ -317,6 +317,21 @@ def update_base_board(self, context):
             types_closets.recalculate_closet_starter(obj)
 
 
+# The door and window tools read their size, type and style when they
+# start: changed on the TOOL page while one is placing, it starts again
+# with them
+_PLACING_TOOLS = ("home_builder_doors_windows.place_door",
+                  "home_builder_doors_windows.place_double_door",
+                  "home_builder_doors_windows.place_open_door",
+                  "home_builder_doors_windows.place_window")
+
+
+def _placing_changed(context):
+    from .operators import tool_session
+    if tool_session.active_tool() in _PLACING_TOOLS:
+        tool_session.restart(context)
+
+
 def update_wall_material(self, context):
     """Update all wall material inputs when wall material changes."""
     mat = self.wall_material
@@ -600,12 +615,18 @@ class Home_Builder_Scene_Props(PropertyGroup):
                     "starts a new one somewhere else, twice leaves the tool",
         default=False)  # type: ignore
 
-    door_single_width: FloatProperty(name="Door Single Width", default=inch(36),subtype='DISTANCE',precision=5)
-    door_double_width: FloatProperty(name="Door Double Width", default=inch(72),subtype='DISTANCE',precision=5)
-    door_height: FloatProperty(name="Door Height", default=inch(84),subtype='DISTANCE',precision=5)
-    window_width: FloatProperty(name="Window Width", default=inch(34),subtype='DISTANCE',precision=5)
-    window_height: FloatProperty(name="Window Height", default=inch(34),subtype='DISTANCE',precision=5)
-    window_height_from_floor: FloatProperty(name="Window Height From Floor", default=inch(36),subtype='DISTANCE',precision=5)
+    door_single_width: FloatProperty(name="Door Single Width", default=inch(36),subtype='DISTANCE',precision=5,
+                                     update=lambda self, context: _placing_changed(context))  # type: ignore
+    door_double_width: FloatProperty(name="Door Double Width", default=inch(72),subtype='DISTANCE',precision=5,
+                                     update=lambda self, context: _placing_changed(context))  # type: ignore
+    door_height: FloatProperty(name="Door Height", default=inch(84),subtype='DISTANCE',precision=5,
+                               update=lambda self, context: _placing_changed(context))  # type: ignore
+    window_width: FloatProperty(name="Window Width", default=inch(34),subtype='DISTANCE',precision=5,
+                                update=lambda self, context: _placing_changed(context))  # type: ignore
+    window_height: FloatProperty(name="Window Height", default=inch(34),subtype='DISTANCE',precision=5,
+                                 update=lambda self, context: _placing_changed(context))  # type: ignore
+    window_height_from_floor: FloatProperty(name="Window Height From Floor", default=inch(36),subtype='DISTANCE',precision=5,
+                                            update=lambda self, context: _placing_changed(context))  # type: ignore
 
     continuous_door_window_drawing: BoolProperty(
         name="Continuous Drawing",
@@ -616,7 +637,8 @@ class Home_Builder_Scene_Props(PropertyGroup):
     entry_door_style: EnumProperty(
         name="Entry Door Style",
         description="3D style applied to newly placed entry doors",
-        items=_entry_door_style_items)  # type: ignore
+        items=_entry_door_style_items,
+        update=lambda self, context: _placing_changed(context))  # type: ignore
     entry_door_type: EnumProperty(
         name="Entry Door Type",
         description="How newly placed entry doors open (with a preset "
@@ -624,11 +646,12 @@ class Home_Builder_Scene_Props(PropertyGroup):
         items=[('SWING', "Swing", ""), ('BIFOLD', "Bi-Fold", ""),
                ('SLIDING', "Sliding", ""), ('POCKET', "Pocket", ""),
                ('BARN', "Barn", ""), ('OVERHEAD', "Overhead", "")],
-        default='SWING')  # type: ignore
+        default='SWING', update=lambda self, context: _placing_changed(context))  # type: ignore
     window_style: EnumProperty(
         name="Window Style",
         description="3D style applied to newly placed windows",
-        items=_window_style_items)  # type: ignore
+        items=_window_style_items,
+        update=lambda self, context: _placing_changed(context))  # type: ignore
 
     wall_material: PointerProperty(name="Wall Material", type=bpy.types.Material, update=update_wall_material)# type: ignore
 

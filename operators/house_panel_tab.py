@@ -1014,11 +1014,28 @@ def _tabs_shown(context):
             and bool(scene.get(hb_house.HOUSE_SCENE_KEY)))
 
 
+def _tab_widths(w):
+    """Each tab's width, and whether it shows its label: all labels when
+    they fit side by side; otherwise the open page's label and the other
+    pages' icons, so no word is cut short."""
+    s = scale()
+    g, pad = 12 * s, 14 * s
+    full = [g + 5 * s + text_width(0, FONT * s, label) + pad for _k, label, _i in PAGES]
+    if sum(full) <= w:
+        extra = (w - sum(full)) / len(PAGES)
+        return [(f + extra, True) for f in full]
+    icon = g + pad
+    rest = w - icon * (len(PAGES) - 1)
+    return [(rest, True) if key == _page else (icon, False) for key, _l, _i in PAGES]
+
+
 def _tab_cells(rect):
     x0, y0, w, h = rect
-    n = len(PAGES)
-    bw = w / n
-    return [(key, label, icon, (x0 + i * bw, y0, bw, h)) for i, (key, label, icon) in enumerate(PAGES)]
+    out, x = [], x0
+    for (key, label, icon), (bw, labelled) in zip(PAGES, _tab_widths(w)):
+        out.append((key, label if labelled else "", icon, (x, y0, bw, h)))
+        x += bw
+    return out
 
 
 def _paint_tabs(entry, mx, my):
@@ -1036,13 +1053,14 @@ def _paint_tabs(entry, mx, my):
         paint_button(shader, inner, hovered=hot, active=active)
         color = Theme.TEXT_PRIMARY if (active or hot) else Theme.TEXT_NORMAL
         g = 12 * s
-        shown = fit_text(font, FONT * s, label, w - g - 14 * s)
+        shown = fit_text(font, FONT * s, label, w - g - 14 * s) if label else ""
         tw = text_width(font, FONT * s, shown)
-        total = g + 5 * s + tw
+        total = g + (5 * s + tw if shown else 0.0)
         left = x + (w - total) / 2.0
         shader.bind()
         icon(shader, left + g / 2.0, y + h / 2.0, g, color)
-        draw_text(font, left + g + 5 * s, y + h * 0.32, FONT * s, color, shown)
+        if shown:
+            draw_text(font, left + g + 5 * s, y + h * 0.32, FONT * s, color, shown)
 
 
 # ---- The pages ----------------------------------------------------------------

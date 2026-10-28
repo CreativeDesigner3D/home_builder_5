@@ -318,12 +318,28 @@ def ceiling_z_at(level, x, y):
     return best if best is not None else level.elevation + level.ceiling_height
 
 
+def _quiet_helpers(scene, level):
+    """The level's room markers and its walls' length empties drawn as
+    nothing (Blender's smallest size) - files made before drew them as
+    small crosses."""
+    for room in level.rooms:
+        if room.marker is not None and room.marker.empty_display_size > 0.001:
+            room.marker.empty_display_size = 0.0
+    for obj in scene.objects:
+        if obj.get('IS_WALL_BP') and obj.get(hb_house.LEVEL_KEY) == level.uid:
+            for child in obj.children:
+                if child.get('obj_x') and child.empty_display_size > 0.001:
+                    child.empty_display_size = 0.0
+
+
 def _new_marker(scene, level, room, point):
     marker = _generated(scene, level, room, f"Room - {room.name}", None,
                         (MARKER_KEY,))
     del marker[GENERATED_KEY]       # the marker is the room, not made from it
     marker.empty_display_type = 'PLAIN_AXES'
-    marker.empty_display_size = 0.15
+    # Drawn as nothing: the room's label says where it is (Select Marker
+    # still selects it)
+    marker.empty_display_size = 0.0
     marker.hide_render = True
     marker.location = (point[0], point[1], level.elevation)
     return marker
@@ -783,6 +799,7 @@ def rebuild_level(scene, level):
         claimed[k] = len(level.rooms) - 1
         new_rooms.append(claimed[k])
 
+    _quiet_helpers(scene, level)
     for k, i in claimed.items():
         room = level.rooms[i]
         area = areas[k]
