@@ -526,7 +526,9 @@ def porch_mesh(name, polygon, segs, room, ceiling, level=None):
             box([(x - half, y - half), (x + half, y - half), (x + half, y + half), (x - half, y + half)],
                 gz, under - depth, 0)
     # Railings along the open edges, between the posts, not across the steps
+    # nor where a stair comes up onto the porch
     rail_h = room.porch_rail_height
+    stair_treads = _stair_treads(level, floor_z) if level is not None else []
     if room.porch_railing != 'NONE':
         c = {'baluster': room.porch_railing, 'rail_height': rail_h}
         for a, b, n in beams:
@@ -542,6 +544,8 @@ def porch_mesh(name, polygon, segs, room, ceiling, level=None):
                     if (math.dist(ga, a) < 1e-4 and math.dist(gb, b) < 1e-4)]
             here += [(L - g1, L - g0) for ga, gb, g0, g1 in gaps
                      if (math.dist(ga, b) < 1e-4 and math.dist(gb, a) < 1e-4)]
+            # Where a stair comes up onto the porch through this edge
+            here += _stair_crossings(stair_treads, line_a, u, L)
             for t0, t1 in zip(ts, ts[1:]):
                 pieces = [(t0, t1)]
                 for g0, g1 in here:
@@ -572,6 +576,73 @@ def porch_mesh(name, polygon, segs, room, ceiling, level=None):
     bm.to_mesh(mesh)
     bm.free()
     return mesh, len(posts), n_steps, riser
+
+
+STAIR_NEAR = 0.35               # m; a tread this near the porch floor's height arrives on it
+STAIR_SAMPLE = 0.02
+
+
+def _stair_treads(level, floor_z):
+    """The plan outlines of the stairs' treads that come up level with a
+    porch's floor (`floor_z`, relative to `level`) - the tops of stairs
+    arriving on it: [[(x, y)]] in the world."""
+    scene = level.id_data
+    z = level.elevation + floor_z
+    out = []
+    for obj in scene.objects:
+        if not obj.get('IS_STAIR') or obj.get('HB_STAIR_PREVIEW') or obj.type != 'MESH':
+            continue
+        m = obj.matrix_world
+        me = obj.data
+        for p in me.polygons:
+            if p.normal.z < 0.9:
+                continue
+            pts = [m @ me.vertices[i].co for i in p.vertices]
+            if abs(max(q.z for q in pts) - z) < STAIR_NEAR:
+                out.append([(q.x, q.y) for q in pts])
+    return out
+
+
+def _stair_crossings(treads, start, u, L):
+    """Where a railing line (from `start` along unit `u`, L long) passes
+    over any of `treads`: [(t0, t1)] along it, a little wider."""
+    if not treads:
+        return []
+    steps = max(2, int(L / STAIR_SAMPLE))
+    over = []
+    for i in range(steps + 1):
+        t = L * i / steps
+        p = (start[0] + u[0] * t, start[1] + u[1] * t)
+        over.append(any(hb_wall_graph.point_in_polygon(p, poly) for poly in treads))
+    out = []
+    i = 0
+    while i <= steps:
+        if over[i]:
+            j = i
+            while j + 1 <= steps and over[j + 1]:
+                j += 1
+            t0, t1 = L * i / steps, L * j / steps
+            out.append((max(0.0, t0 - 0.03), min(L, t1 + 0.03)))
+            i = j + 1
+        else:
+            i += 1
+    return out
+
+
+def refresh(scene, level):
+    """Build a level's porches again (a stair came or went under them)."""
+    from . import hb_rooms
+    from .operators import walls
+    if level is None:
+        return
+    segs = None
+    for room in level.rooms:
+        if room.is_porch and not room.orphaned and room.porch_obj is not None:
+            if segs is None:
+                segs = walls.level_wall_segs(scene, level.uid)[1]
+            poly = hb_rooms.room_polygon(scene, level, room)
+            if poly:
+                build_porch(scene, level, room, poly, segs, hb_rooms.room_floor_material(room))
 
 
 def _glass_material():

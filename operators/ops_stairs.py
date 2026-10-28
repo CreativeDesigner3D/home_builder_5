@@ -504,6 +504,7 @@ class home_builder_stairs_OT_place_stairs(bpy.types.Operator):
         if level is not None:
             from .. import hb_rooms
             hb_rooms.apply_stairwells(context.scene)
+            hb_stairs.porches_follow(obj)
         self.preview_obj = None
         return True
 
@@ -813,7 +814,9 @@ class home_builder_stairs_OT_delete_stairs(bpy.types.Operator):
                 cutters.remove(cutter)      # and the openings it cut
             for child in list(obj.children_recursive):
                 bpy.data.objects.remove(child, do_unlink=True)     # its guard
+            level = hb_stairs.level_of(obj)
             bpy.data.objects.remove(obj, do_unlink=True)
+            hb_stairs.porches_follow(None, level)          # railings close again
             self.report({'INFO'}, "Staircase deleted")
         return {'FINISHED'}
 

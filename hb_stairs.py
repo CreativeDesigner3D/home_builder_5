@@ -213,6 +213,21 @@ def rebuild(obj):
     if obj.get(hb_house.LEVEL_KEY):
         from . import hb_rooms
         hb_rooms.apply_stairwells(bpy.context.scene)
+    porches_follow(obj)
+
+
+def porches_follow(obj, level=None):
+    """The porches the stair arrives at (on the level above it) open their
+    railings for it, or close them again."""
+    from . import hb_porches
+    level = level or level_of(obj)
+    if level is None:
+        return
+    scene = hb_house.house_scene_of(bpy.context.scene)
+    upper = hb_house.level_above(level.id_data.hb_house, level)
+    if scene is not None:
+        hb_porches.refresh(scene, upper)
+        hb_porches.refresh(scene, level)
 
 
 def follow_levels(scene):
@@ -524,6 +539,7 @@ def _settled():
             if obj.get(hb_house.LEVEL_KEY):
                 from . import hb_rooms
                 hb_rooms.apply_stairwells(bpy.context.scene)
+            porches_follow(obj)
         except Exception as e:
             print(f"stair rebuild: {e}")
     return 0.4 if _moved else None
