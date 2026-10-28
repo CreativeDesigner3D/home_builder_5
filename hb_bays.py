@@ -364,13 +364,46 @@ def _build_roof(scene, cage, F, level):
 
 
 def _cut_host(cage, F):
+    """The opening through the host: between the side walls' inside
+    faces where they meet it (not the bay's full width, which would leave
+    a notch past each side), sill to header."""
     from .operators import doors_windows
     c = hb_types.GeoNodeCage(cage)
     cage.location.z = F.base
     c.set_input('Dim Z', F.top - F.base)
-    if cage.parent is not None:
-        doors_windows.cut_wall(cage.parent, cage)
     cage.hide_render = True
+    host = cage.parent
+    if host is None:
+        return
+    # Bays made before cut with the cage itself
+    old = host.modifiers.get(f"Boolean_{cage.name}")
+    if old is not None:
+        host.modifiers.remove(old)
+    x0, x1 = F.inner[0][0], F.inner[-1][0]
+    pad = 0.01
+    bm = bmesh.new()
+    _prism(bm, [Vector((x0, -pad)), Vector((x1, -pad)), Vector((x1, F.T + pad)), Vector((x0, F.T + pad))],
+           0.0, F.top - F.base, 0)
+    mesh = bpy.data.meshes.new("Bay Opening")
+    bm.to_mesh(mesh)
+    bm.free()
+    cutter = _parts(cage, 'OPENING')
+    if cutter is None:
+        cutter = hb_utils.new_object("Bay Opening", mesh)
+        for coll in cage.users_collection:
+            coll.objects.link(cutter)
+        cutter.parent = cage
+        cutter[PART_KEY] = 'OPENING'
+        cutter[BAY_UID] = cage.hb_bay.uid
+        cutter.display_type = 'WIRE'
+        cutter.hide_viewport = True
+        cutter.hide_render = True
+    else:
+        old_mesh = cutter.data
+        cutter.data = mesh
+        if old_mesh is not None and old_mesh.users == 0:
+            bpy.data.meshes.remove(old_mesh)
+    doors_windows.cut_wall(host, cutter)
 
 
 def rebuild(cage, context=None):
