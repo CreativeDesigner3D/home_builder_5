@@ -201,6 +201,7 @@ def _found(*kinds):
 FOUNDATION_FIELDS = (
     ('group', 'house_foundation', "Foundation", {'summary': _foundation_summary, 'fields': (
         ('choices', 'foundation_type', "Type", {'cols': 2}),
+        ('distance', 'ground_below_floor', "Ground Below Floor"),
         ('distance', 'foundation_wall_thickness', "Wall Thickness", {'when': _found('CRAWL', 'BASEMENT')}),
         ('distance', 'crawl_height', "Stem Wall Height", {'when': _found('CRAWL')}),
         ('distance', 'basement_height', "Wall Height", {'when': _found('BASEMENT')}),
@@ -914,6 +915,19 @@ def _ceiling_summary(room):
     return f"{_label(room, 'ceiling_style')} · {_length(room, height)}"
 
 
+def _upper_porch(room):
+    """Whether the porch is on a level above the ground level."""
+    house = room.id_data.hb_house
+    ground = hb_house.ground_level(house)
+    level = next((l for l in house.levels if room in list(l.rooms)), None)
+    return level is not None and ground is not None and level.elevation > ground.elevation + 1e-3
+
+
+def _porch_notes(context, room):
+    from .. import hb_porches
+    return hb_porches.notes(room)
+
+
 def _porch_summary(room):
     return f"Roof: {_label(room, 'porch_roof')} · {_length(room, room.post_width)} posts"
 
@@ -997,10 +1011,18 @@ ROOM_SPEC = {
             ('enum', 'porch_roof', "Porch Roof"),
             ('number', 'porch_roof_pitch', "Porch Roof Pitch (in 12)",
              {'when': lambda room: room.porch_roof != 'NONE'}),
+            ('enum', 'porch_structure', "Structure"),
             ('distance', 'post_width', "Post Width"),
             ('distance', 'post_spacing', "Post Spacing (most)"),
-            ('distance', 'beam_depth', "Beam Depth"),
+            ('distance', 'beam_depth', "Beam Depth", {'when': lambda room: room.porch_structure == 'POSTS'}),
             ('distance', 'floor_drop', "Step Down"),
+            ('enum', 'porch_railing', "Railing"),
+            ('distance', 'porch_rail_height', "Rail Height", {'when': lambda room: room.porch_railing != 'NONE'}),
+            ('number', 'porch_steps', "Steps On Edge (0 none)"),
+            ('distance', 'porch_steps_width', "Steps Width", {'when': lambda room: room.porch_steps > 0}),
+            ('distance', 'porch_steps_offset', "Steps Offset", {'when': lambda room: room.porch_steps > 0}),
+            ('bool', 'porch_supports', "Posts to Ground", {'when': _upper_porch}),
+            ('notes', lambda context, room: _porch_notes(context, room), "", {'owner': True}),
             ('native', 'post_material', "Post Material"),
         )}),
     ),

@@ -1071,6 +1071,15 @@ def _room_shape_changed(self, context):
     hb_rooms.rebuild_room(self)
 
 
+def _ground_changed(self, context):
+    """Porches step down to the ground, and stand on it."""
+    scene = self.id_data
+    from . import hb_rooms
+    for level in self.levels:
+        if any(r.is_porch for r in level.rooms):
+            hb_rooms.rebuild_level(scene, level)
+
+
 def _room_porch_changed(self, context):
     if self.is_porch:
         _room_shape_changed(self, context)
@@ -1317,6 +1326,37 @@ class HB_Room(PropertyGroup):
         default=3.0, min=0.5, max=12.0, precision=2,
         update=_room_porch_changed)  # type: ignore
     porch_roof_obj: PointerProperty(type=bpy.types.Object)  # type: ignore
+    # What else a porch has (hb_porches)
+    porch_structure: EnumProperty(
+        name="Structure",
+        items=[('POSTS', "Posts & Beam", "Posts along the open edges carrying a beam under the ceiling"),
+               ('NONE', "None", "No posts or beam: an open porch or stoop")],
+        default='POSTS', update=_room_porch_changed)  # type: ignore
+    porch_railing: EnumProperty(
+        name="Railing",
+        items=[('NONE', "None", "No railing"),
+               ('SQUARE', "Square", "Square balusters"),
+               ('ROUND', "Round", "Turned (round) balusters"),
+               ('GLASS', "Glass", "Glass panels"),
+               ('SOLID', "Half Wall", "A half wall capped with a rail")],
+        default='NONE', update=_room_porch_changed)  # type: ignore
+    porch_rail_height: FloatProperty(
+        name="Rail Height", default=inch(36), min=inch(24), max=inch(48), subtype='DISTANCE', precision=4,
+        update=_room_porch_changed)  # type: ignore
+    porch_steps: IntProperty(
+        name="Steps On Edge",
+        description="Steps down to the ground from this open edge: 1 is the longest, 2 the next. 0 for none",
+        default=0, min=0, max=8, update=_room_porch_changed)  # type: ignore
+    porch_steps_width: FloatProperty(
+        name="Steps Width", default=inch(48), min=inch(30), max=inch(240), subtype='DISTANCE', precision=4,
+        update=_room_porch_changed)  # type: ignore
+    porch_steps_offset: FloatProperty(
+        name="Steps Offset", description="How far along the edge from its middle the steps are",
+        default=0.0, subtype='DISTANCE', precision=4, update=_room_porch_changed)  # type: ignore
+    porch_supports: BoolProperty(
+        name="Posts to Ground",
+        description="A porch on an upper level: a beam under its floor, on posts down to the ground",
+        default=False, update=_room_porch_changed)  # type: ignore
 
     # Worked out by hb_rooms on each rebuild
     area: FloatProperty(name="Area", default=0.0)  # type: ignore
@@ -2072,6 +2112,11 @@ class HB_House_Props(PropertyGroup):
         name="Downspouts", default=True, update=_eaves_changed)  # type: ignore
 
     # The foundation (see hb_foundation)
+    ground_below_floor: FloatProperty(
+        name="Ground Below Floor",
+        description="How far the ground is below the ground level's floor: porch steps and posts go down to it",
+        default=inch(18), min=0.0, subtype='DISTANCE', precision=4,
+        update=lambda self, context: _ground_changed(self, context))  # type: ignore
     foundation_type: EnumProperty(
         name="Foundation",
         items=[('NONE', "None", "No foundation drawn"),
