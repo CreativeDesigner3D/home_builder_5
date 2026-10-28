@@ -873,6 +873,8 @@ def hide_reveal_cutters():
     for obj in bpy.data.objects:
         if obj.get(REVEAL_CUTTER_FLAG):
             _hide_reveal_cutter(obj)
+            # Saved turned inside out (mirrored by its matrix)
+            _unmirror(obj)
 
 
 def _reveal_side_consumed(opts, side, thickness):
@@ -1043,6 +1045,13 @@ def update_reveal_cutter(cage_obj):
     _hide_reveal_cutter(cutter)
 
     _build_reveal_cutter_mesh(cutter.data, W, H, T, opts)
+    # Built facing the y = thickness face: a window turned outdoors has
+    # its cutter turned with it, in the mesh (see _unmirror)
+    if cage_obj.get(OUTDOORS_FLIPPED_KEY):
+        cutter.matrix_basis = Matrix.Translation((0.0, T, 0.0)) @ Matrix.Diagonal((1.0, -1.0, 1.0, 1.0))
+        _unmirror(cutter)
+    else:
+        cutter.matrix_basis = Matrix.Identity(4)
 
     # Retrofit doors/windows placed before the reveal-cutter system
     # existed: their wall's boolean modifier still targets the cage
@@ -2522,6 +2531,21 @@ def _flip_children(cage_obj):
             # The basis, not matrix_local: a part just built has not been
             # evaluated yet, and its matrix_local is still stale
             child.matrix_basis = mirror @ child.matrix_basis
+            if child.get(REVEAL_CUTTER_FLAG):
+                _unmirror(child)
+
+
+def _unmirror(obj):
+    """A mirrored cutter is inside out, and the boolean then leaves the
+    face it should open: put its mirror in its mesh, faces turned back
+    out, and stand it square to the window again."""
+    m = obj.matrix_basis.copy()
+    if m.to_3x3().determinant() >= 0.0 or obj.type != 'MESH':
+        return
+    obj.data.transform(m)
+    obj.data.flip_normals()
+    obj.data.update()
+    obj.matrix_basis = Matrix.Identity(4)
 
 
 def outdoors_is_ref_face(cage_obj):
