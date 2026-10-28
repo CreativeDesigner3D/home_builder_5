@@ -2370,6 +2370,13 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
     # Free-text note lines printed in a NOTES section at the end of this
     # style's Style Section block (e.g. 'TOUCH LATCH = TL').
     ss_notes: CollectionProperty(type=Face_Frame_Style_Note)  # type: ignore
+    # Title printed over those note lines; blank prints NOTES.
+    ss_notes_header: StringProperty(
+        name="Notes Header",
+        description="Title of the notes section on the Style Section page "
+                    "(e.g. HARDWARE). Leave blank for NOTES",
+        default="",
+    )  # type: ignore
     # Typed DOORS / DRAWERS style lines for the Style Section page. On,
     # they print instead of the styles the section works out from the
     # model, so a user can say exactly what the page needs.
@@ -4457,6 +4464,7 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         row.alignment = 'CENTER'
         row.label(text="NOTES")
         col = box.column(align=True)
+        col.prop(self, "ss_notes_header", text="Header")
         for i, note in enumerate(self.ss_notes):
             r = col.row(align=True)
             r.prop(note, "text", text="")
