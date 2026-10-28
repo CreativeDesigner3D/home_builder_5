@@ -26,6 +26,7 @@ from .ui import menus
 from .operators import walls
 from .operators import wall_handles
 from .operators import tool_session
+from .operators import selected_tab
 from .operators import doors_windows
 from .operators import layouts
 from .operators import rooms
@@ -495,6 +496,7 @@ def register():
     appliance_panel_tab.register()   # after the navigator: it adds a tab
     house_panel_tab.register()       # after the navigator: it adds a tab
     tool_session.register()          # same
+    selected_tab.register()          # same
     thumb_picker.register()
     style_editor.register()
     room_dim_overlay.register()
@@ -555,6 +557,7 @@ def unregister():
     hb_snap_engine.unregister()
     hb_props_obstacles.unregister()
     ops_obstacles.unregister()
+    selected_tab.unregister()
     tool_session.unregister()
     wall_handles.unregister()
     walls.unregister()
