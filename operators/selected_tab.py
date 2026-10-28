@@ -1,18 +1,16 @@
-"""The SELECTED tab: the settings of the bay window, fireplace, light or
-piece of furniture picked, outside a house.
+"""The SELECTED tab: the settings of the bay window, fireplace, light,
+stair or piece of furniture picked, in any project.
 
-In a house these are on the HOUSE tab's pages (a bay or fireplace on
-Outside, a light or furniture on Rooms). Anywhere else there is no HOUSE
-tab, so this one stands in: it is there while one of them is selected,
-the panel switches to it when one is picked, and goes back to the tab it
-was on when it is let go.
+It is there while one of them is selected; the panel switches to it when
+one is picked, and goes back to the tab it was on when it is let go. (In
+a house the same settings are also on the HOUSE tab's pages: a bay or
+fireplace on Outside, the rest on Rooms.)
 """
 import sys
 
 import bpy
 from bpy.app.handlers import persistent
 
-from .. import hb_house
 
 TAB_KEY = 'SELECTED'
 TAB_LABEL = "SELECTED"
@@ -42,7 +40,7 @@ def _item(context):
 
 def available(scene):
     from . import tool_session
-    if scene is None or scene.get(hb_house.HOUSE_SCENE_KEY) or tool_session.active_tool():
+    if scene is None or tool_session.active_tool():
         return False
     return _item(bpy.context) is not None
 
