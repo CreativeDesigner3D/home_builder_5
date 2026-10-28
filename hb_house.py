@@ -393,6 +393,17 @@ def _adopt_timer():
 
 
 @persistent
+def _remember_ceilings(_dummy=None):
+    """Levels saved before a level remembered its ceiling height: the
+    height they have now is the one a change is measured from."""
+    for scene in bpy.data.scenes:
+        if scene.get(HOUSE_SCENE_KEY):
+            for level in scene.hb_house.levels:
+                if level.get('applied_ceiling_height') is None:
+                    level['applied_ceiling_height'] = level.ceiling_height
+
+
+@persistent
 def _on_depsgraph_update(scene, depsgraph=None):
     global _adopt_scheduled
     if _adopt_scheduled:
@@ -734,6 +745,9 @@ def _update_floor_to_floor(self, context):
     it by the same amount, so the stack stays closed."""
     dz = self.floor_to_floor - self.applied_floor_to_floor
     self['applied_floor_to_floor'] = self.floor_to_floor
+    # Set by itself, the floor's thickness takes up the difference
+    self['floor_thickness'] = max(0.0, self.floor_to_floor - self.ceiling_height)
+    self['applied_ceiling_height'] = self.ceiling_height
     if abs(dz) < 1e-9:
         return
     house = self.id_data.hb_house
@@ -751,7 +765,23 @@ def _stairs_follow(scene):
         hb_rooms.apply_stairwells(scene)
 
 
+def _update_floor_thickness(self, context):
+    ftf = self.ceiling_height + self.floor_thickness
+    if abs(ftf - self.floor_to_floor) > 1e-9:
+        self.floor_to_floor = ftf
+
+
 def _update_ceiling_height(self, context):
+    # The floor above stands as far over the ceiling as it did: it moves
+    # with it, and the levels above with it
+    old = self.get('applied_ceiling_height')
+    gap = (self.floor_to_floor - old) if old is not None else self.floor_thickness
+    self['applied_ceiling_height'] = self.ceiling_height
+    ftf = self.ceiling_height + max(gap, 0.0)
+    if abs(ftf - self.floor_to_floor) > 1e-9:
+        self.floor_to_floor = ftf
+    else:
+        self['floor_thickness'] = max(0.0, self.floor_to_floor - self.ceiling_height)
     level = active_level(context)
     if level is not None and level.uid == self.uid:
         props = self.id_data.home_builder
@@ -1867,7 +1897,8 @@ class HB_Level(PropertyGroup):
     floor_thickness: FloatProperty(
         name="Floor Thickness",
         description="Floor structure between this level's ceiling and the next level's floor",
-        default=inch(12), min=0.0, subtype='DISTANCE', precision=4)  # type: ignore
+        default=inch(12), min=0.0, subtype='DISTANCE', precision=4,
+        update=lambda self, context: _update_floor_thickness(self, context))  # type: ignore
 
     ceiling_height: FloatProperty(
         name="Ceiling Height",
@@ -2482,6 +2513,7 @@ def add_level(scene, name=None):
         level['applied_floor_to_floor'] = level.floor_to_floor
     level['elevation'] = elevation
     level['applied_elevation'] = elevation
+    level['applied_ceiling_height'] = level.ceiling_height
     ensure_level_collections(scene, level)
     return level
 
@@ -2560,6 +2592,7 @@ def import_room_as_level(house_scene, source_scene):
     level['applied_floor_to_floor'] = level.floor_to_floor
     level['elevation'] = elevation
     level['applied_elevation'] = elevation
+    level['applied_ceiling_height'] = level.ceiling_height
     ensure_level_collections(house_scene, level)
     level = None
 
@@ -2903,12 +2936,16 @@ def register():
         _draw_level_ghost, (), 'WINDOW', 'POST_VIEW')
     if _on_depsgraph_update not in bpy.app.handlers.depsgraph_update_post:
         bpy.app.handlers.depsgraph_update_post.append(_on_depsgraph_update)
+    if _remember_ceilings not in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.append(_remember_ceilings)
 
 
 def unregister():
     global _ghost_handle
     if _on_depsgraph_update in bpy.app.handlers.depsgraph_update_post:
         bpy.app.handlers.depsgraph_update_post.remove(_on_depsgraph_update)
+    if _remember_ceilings in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(_remember_ceilings)
     if bpy.app.timers.is_registered(_adopt_timer):
         bpy.app.timers.unregister(_adopt_timer)
     if _ghost_handle is not None:
