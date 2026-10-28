@@ -712,6 +712,35 @@ LIGHT_FIELDS = (
     )}),
 )
 
+def _selected_furnishing(context):
+    from .. import hb_furnishings
+    for obj in [context.active_object] + list(context.selected_objects):
+        cage = hb_furnishings.furnishing_of(obj)
+        if cage is not None:
+            return cage
+    return None
+
+
+def _furniture_kind(*kinds):
+    return lambda f: f.id_data.get('FURNISHING_KIND') in kinds
+
+
+FURNITURE_FIELDS = (
+    ('group', 'selected_furniture', "Selected Furniture",
+     {'summary': lambda f: f"{_length(f, f.width)} x {_length(f, f.depth)}", 'fields': (
+         ('enum', 'bed_size', "Size", {'when': _furniture_kind('BED')}),
+         ('distance', 'width', "Width"),
+         ('distance', 'depth', "Depth"),
+         ('distance', 'height', "Height"),
+         ('enum', 'shape', "Shape", {'when': _furniture_kind('DINING_TABLE')}),
+         ('number', 'chairs', "Chairs", {'when': _furniture_kind('DINING_TABLE')}),
+         ('enum', 'side', "Return", {'when': _furniture_kind('SECTIONAL')}),
+         ('actions', (("Turn", "home_builder.turn_furnishing"),
+                      ("Delete", "home_builder.delete_furnishing")), ""),
+     )}),
+)
+
+
 LIGHTING_DEFAULT_FIELDS = (
     ('group', 'lighting_defaults', "Lighting",
      {'summary': lambda h: (f"In renders · {h.fixture_dimmer:.2g}x" if h.fixture_lights else "Off in renders"),
@@ -1122,6 +1151,9 @@ def _blocks(context):
         light = _selected_light(context)
         if light is not None:
             blocks.extend(options_panel.field_blocks(context, LIGHT_FIELDS, light.hb_light))
+        piece = _selected_furnishing(context)
+        if piece is not None:
+            blocks.extend(options_panel.field_blocks(context, FURNITURE_FIELDS, piece.hb_furniture))
         blocks.append(('gap', None))
         if level is not None:
             blocks.extend(options_panel.pool_blocks(context, ROOM_SPEC))

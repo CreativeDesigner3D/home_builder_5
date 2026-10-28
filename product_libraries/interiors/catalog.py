@@ -2,7 +2,8 @@
 
 Plain data, so the tool, its TOOL page and the tests read one table.
 Each item: (key, label, category, placement, type) - the type an
-appliance type for Bath, a fixture kind for Lighting. Placement 'WALL'
+appliance type for Bath, a fixture kind for Lighting, a furnishing kind
+for the furniture categories. Placement 'WALL'
 stands it against a wall, its back to it, like a cabinet; 'WALL_MOUNT'
 up a wall at its mounting height; 'CEILING' hung from the ceiling;
 'FLOOR' free on the floor. Keys are only ever appended within a
@@ -23,9 +24,24 @@ ITEMS = (
     ('CEILING_FAN', "Ceiling Fan", 'Lighting', 'CEILING', 'FAN'),
     ('SCONCE', "Wall Sconce", 'Lighting', 'WALL_MOUNT', 'SCONCE'),
     ('VANITY_LIGHT', "Vanity Light", 'Lighting', 'WALL_MOUNT', 'VANITY'),
+    ('BED', "Bed", 'Bedroom', 'WALL', 'BED'),
+    ('NIGHTSTAND', "Nightstand", 'Bedroom', 'WALL', 'NIGHTSTAND'),
+    ('DRESSER', "Dresser", 'Bedroom', 'WALL', 'DRESSER'),
+    ('SOFA', "Sofa", 'Living', 'WALL', 'SOFA'),
+    ('LOVESEAT', "Loveseat", 'Living', 'WALL', 'LOVESEAT'),
+    ('SECTIONAL', "Sectional", 'Living', 'WALL', 'SECTIONAL'),
+    ('ARMCHAIR', "Armchair", 'Living', 'FLOOR', 'ARMCHAIR'),
+    ('COFFEE_TABLE', "Coffee Table", 'Living', 'FLOOR', 'COFFEE_TABLE'),
+    ('END_TABLE', "End Table", 'Living', 'FLOOR', 'END_TABLE'),
+    ('TV_CONSOLE', "TV Console", 'Living', 'WALL', 'TV_CONSOLE'),
+    ('RUG', "Rug", 'Living', 'FLOOR', 'RUG'),
+    ('DINING_TABLE', "Dining Table", 'Dining', 'FLOOR', 'DINING_TABLE'),
+    ('DESK', "Desk", 'Office', 'WALL', 'DESK'),
+    ('BOOKCASE', "Bookcase", 'Office', 'WALL', 'BOOKCASE'),
 )
 
-CATEGORIES = ('Bath', 'Lighting')
+CATEGORIES = ('Bath', 'Lighting', 'Bedroom', 'Living', 'Dining', 'Office')
+FURNITURE_CATEGORIES = ('Bedroom', 'Living', 'Dining', 'Office')
 
 
 def _enum_items():
@@ -56,6 +72,9 @@ def item_class(key):
     if row[2] == 'Lighting':
         from . import types_lighting
         return types_lighting.class_for(row[4])
+    if row[2] in FURNITURE_CATEGORIES:
+        from . import types_furniture
+        return types_furniture.class_for(row[4])
     for cls in vars(types_appliances).values():
         if isinstance(cls, type) and getattr(cls, 'APPLIANCE_TYPE', None) == row[4]:
             return cls

@@ -80,6 +80,14 @@ def finish(context, cage_obj):
     if _is_furnishing(cage_obj):
         from ..product_libraries.interiors import furniture_geo
         furniture_geo.build(cage_obj)
+        scene = hb_house.house_scene_of(context.scene)
+        level = hb_house.active_level(context) if scene is not None else None
+        if level is not None and cage_obj.parent is None:
+            # On the floor: in its level's Products (against a wall, it
+            # goes with the wall's level as cabinets do)
+            hb_house.ensure_level_collections(scene, level)
+            _to_collection(cage_obj, hb_house.level_subcollection(level, 'Products'))
+            cage_obj[hb_house.LEVEL_KEY] = level.uid
         return
     opts = appliance_geo.defaults_for(cage_obj)
     opts['model_style'] = 'MODELED'
