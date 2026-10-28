@@ -230,9 +230,12 @@ class HOME_BUILDER_OT_furnish(doors_windows._PlaceWallObjectBase):
         context.window.cursor_set('DEFAULT')
         return {'FINISHED'}
 
+    @tool_session.session_modal
     def _wall_modal(self, context, event):
         """The window's wall placement - with, for furniture, the floor
-        away from the walls (R turns it there), and its model shown."""
+        away from the walls (R turns it there), and its model shown. In
+        the session's wrapper, so a click on the HUD (picking another
+        item) and a stop are seen before a click here drops a piece."""
         obj = self.placed_obj.obj if self.placed_obj else None
         free_ok = obj is not None and _is_furnishing(obj) and self.mode == 'WALL'
         if event.type == 'R' and free_ok:
@@ -249,7 +252,8 @@ class HOME_BUILDER_OT_furnish(doors_windows._PlaceWallObjectBase):
         parts = [c.name for c in obj.children if c.visible_get()] if obj is not None else []
         for name in parts:
             bpy.data.objects[name].hide_set(True)
-        result = doors_windows._PlaceWallObjectBase.modal(self, context, event)
+        # The base's own modal, without its session wrapper: this one's is it
+        result = doors_windows._PlaceWallObjectBase.modal.__wrapped__(self, context, event)
         for name in parts:
             part = bpy.data.objects.get(name)
             if part is not None:
