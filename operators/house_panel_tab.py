@@ -712,6 +712,56 @@ LIGHT_FIELDS = (
     )}),
 )
 
+def _selected_stair(context):
+    from .. import hb_stairs
+    for obj in [context.active_object] + list(context.selected_objects):
+        stair = hb_stairs.stair_of(obj)
+        if stair is not None:
+            return stair
+    return None
+
+
+def _stair_summary(st):
+    from .. import hb_stairs
+    warn = hb_stairs.warnings(st.id_data)
+    if warn:
+        return warn[0]
+    return hb_stairs.describe(st.id_data, bpy.context.scene.unit_settings)
+
+
+def _stair_notes(context, st):
+    from .. import hb_stairs
+    obj = st.id_data
+    lines = [hb_stairs.describe(obj, context.scene.unit_settings)]
+    lines += ["Check: " + w for w in hb_stairs.warnings(obj)]
+    return lines
+
+
+def _stair_turns(st):
+    return st.stair_type != 'STRAIGHT'
+
+
+STAIR_FIELDS = (
+    ('group', 'selected_stair', "Selected Stair", {'summary': _stair_summary, 'fields': (
+        ('notes', _stair_notes, "", {'owner': True}),
+        ('enum', 'stair_type', "Type"),
+        ('enum', 'turn', "Turn", {'when': _stair_turns}),
+        ('distance', 'width', "Width"),
+        ('distance', 'max_riser', "Max Riser"),
+        ('distance', 'tread_depth', "Tread Depth"),
+        ('bool', 'auto_rise', "Rise from Levels", {'when': lambda st: bool(st.id_data.get(hb_house.LEVEL_KEY))}),
+        ('distance', 'total_rise', "Total Rise"),
+        ('distance', 'landing_height', "Landing Height", {'when': _stair_turns}),
+        ('distance', 'landing_depth', "Landing Depth", {'when': lambda st: st.stair_type == 'U_SHAPE'}),
+        ('distance', 'gap', "Gap Between Flights", {'when': lambda st: st.stair_type == 'U_SHAPE'}),
+        ('distance', 'headroom', "Headroom"),
+        ('bool', 'guard', "Guard Rail"),
+        ('distance', 'guard_height', "Guard Height", {'when': lambda st: st.guard}),
+        ('actions', (("Delete", "home_builder_stairs.delete_stairs"),), ""),
+    )}),
+)
+
+
 def _selected_furnishing(context):
     from .. import hb_furnishings
     for obj in [context.active_object] + list(context.selected_objects):
@@ -1176,6 +1226,9 @@ def _blocks(context):
         piece = _selected_furnishing(context)
         if piece is not None:
             blocks.extend(options_panel.field_blocks(context, FURNITURE_FIELDS, piece.hb_furniture))
+        stair = _selected_stair(context)
+        if stair is not None:
+            blocks.extend(options_panel.field_blocks(context, STAIR_FIELDS, stair.hb_stair))
         blocks.append(('gap', None))
         if level is not None:
             blocks.extend(options_panel.pool_blocks(context, ROOM_SPEC))

@@ -390,6 +390,15 @@ FIREPLACE_FIELDS = (
     ('choices', 'fireplace_mantel', "Mantel", {'cols': 3}),
 )
 
+STAIR_FIELDS = (
+    ('choices', 'stair_from', "Draw From", {'cols': 2}),
+    ('choices', 'stair_type', "Type", {'cols': 3}),
+    ('choices', 'stair_turn', "Turn", {'cols': 2, 'when': lambda h: h.stair_type != 'STRAIGHT'}),
+    ('distance', 'stair_width', "Width"),
+    ('distance', 'stair_max_riser', "Max Riser"),
+    ('distance', 'stair_tread', "Tread Depth"),
+)
+
 SKYLIGHT_FIELDS = (
     ('distance', 'skylight_width', "Width"),
     ('distance', 'skylight_length', "Length"),
@@ -403,6 +412,7 @@ HOUSE_PAGES = {
     "home_builder_doors_windows.place_fireplace": ("Fireplace", FIREPLACE_FIELDS),
     "home_builder_doors_windows.place_bay": ("Bay Window", BAY_FIELDS),
     "home_builder.furnish": ("Furnish", FURNISH_FIELDS),
+    "home_builder_stairs.place_stairs": ("Stairs", STAIR_FIELDS),
     "home_builder.place_beam": ("Beam", BEAM_FIELDS),
     "home_builder.place_post": ("Post", POST_FIELDS),
 }
@@ -415,13 +425,13 @@ PAGES = {
     "home_builder_doors_windows.place_open_door": ("Open Doorway", OPENING_FIELDS),
     "home_builder_doors_windows.place_window": ("Window", WINDOW_FIELDS),
     "home_builder_obstacles.place_obstacle": ("Obstacle", ()),
-    "home_builder_stairs.place_stairs": ("Stairs", ()),
 }
 
 HINTS = {
     "home_builder_walls.draw_walls": "C closes the room · T tracks a point",
     "home_builder_obstacles.place_obstacle": "Pick one above, then click a wall, floor or ceiling",
-    "home_builder_stairs.place_stairs": "R turns · T changes type · D flips",
+    "home_builder_stairs.place_stairs": "Click and drag the way it climbs (From Top: the way down) · "
+                                        "sides snap to walls · R turns · T type · D turn side",
     "home_builder.place_beam": "Snaps to wall corners and faces, posts and beam ends",
     "home_builder.place_post": "Runs up to the beam over it, or to the ceiling",
     "home_builder.place_skylight": "Click on the roof: it lies on the slope there",

@@ -726,6 +726,7 @@ def _update_level_elevation(self, context):
     below = level_below(self.id_data.hb_house, self)
     if below is not None:
         set_exterior_wall_heights(self.id_data, below)
+    _stairs_follow(self.id_data)
 
 
 def _update_floor_to_floor(self, context):
@@ -740,6 +741,14 @@ def _update_floor_to_floor(self, context):
         if level.elevation > self.elevation + 1e-6:
             level.elevation = level.elevation + dz
     set_exterior_wall_heights(self.id_data, self)
+    _stairs_follow(self.id_data)
+
+
+def _stairs_follow(scene):
+    """The stairs climb to the levels above as they now stand."""
+    from . import hb_stairs, hb_rooms
+    if hb_stairs.follow_levels(scene):
+        hb_rooms.apply_stairwells(scene)
 
 
 def _update_ceiling_height(self, context):
@@ -2159,6 +2168,27 @@ class HB_House_Props(PropertyGroup):
         description="Draw Blender's light objects in the viewport (its Extras overlay, "
                     "which also draws cameras and empties)",
         get=_get_light_objects, set=_set_light_objects)  # type: ignore
+
+    # The stair tool: the next stair drawn (hb_stairs)
+    stair_type: EnumProperty(name="Type", items=[
+        ('STRAIGHT', "Straight", "One straight flight"),
+        ('L_SHAPE', "L-Shaped", "Two flights at a right angle, a landing at the turn"),
+        ('U_SHAPE', "U-Shaped", "Two flights side by side, a landing across both")],
+        default='STRAIGHT')  # type: ignore
+    stair_turn: EnumProperty(name="Turn", items=[
+        ('LEFT', "Left", "The second flight turns left"),
+        ('RIGHT', "Right", "The second flight turns right")], default='LEFT')  # type: ignore
+    stair_from: EnumProperty(name="Draw From", items=[
+        ('BOTTOM', "Bottom", "Click where the stair starts, on this level, and drag the way it climbs"),
+        ('TOP', "Top", "Click where the stair arrives, on this level, and drag the way it goes down")],
+        default='BOTTOM')  # type: ignore
+    stair_width: FloatProperty(name="Width", default=inch(36), min=inch(24), max=inch(96),
+                               subtype='DISTANCE', precision=4)  # type: ignore
+    stair_max_riser: FloatProperty(
+        name="Max Riser", description="The tallest a riser may be: a stair takes as few as climb its rise",
+        default=inch(7.75), min=inch(4), max=inch(9), subtype='DISTANCE', precision=4)  # type: ignore
+    stair_tread: FloatProperty(name="Tread Depth", default=inch(10.5), min=inch(8), max=inch(16),
+                               subtype='DISTANCE', precision=4)  # type: ignore
 
     # The Furnish tool: what it places
     furnish_item: EnumProperty(

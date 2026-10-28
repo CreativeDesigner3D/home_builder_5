@@ -29,7 +29,8 @@ def _item(context):
     """(kind, cage) of what is selected, or None."""
     from . import house_panel_tab as hpt
     for kind, find in (('BAY', hpt._selected_bay), ('FIREPLACE', hpt._selected_fireplace),
-                       ('LIGHT', hpt._selected_light), ('FURNITURE', hpt._selected_furnishing)):
+                       ('LIGHT', hpt._selected_light), ('FURNITURE', hpt._selected_furnishing),
+                       ('STAIR', hpt._selected_stair)):
         try:
             cage = find(context)
         except Exception:
@@ -50,13 +51,14 @@ def _blocks(context):
     from . import house_panel_tab as hpt, options_panel
     found = _item(context)
     if found is None:
-        return [('note', "Select a bay window, fireplace, light or piece of furniture.")]
+        return [('note', "Select a bay window, fireplace, light, stair or piece of furniture.")]
     kind, cage = found
     fields, owner = {
         'BAY': (hpt.BAY_FIELDS, cage.hb_bay),
         'FIREPLACE': (hpt.FIREPLACE_FIELDS, cage.hb_fireplace),
         'LIGHT': (hpt.LIGHT_FIELDS, cage.hb_light),
         'FURNITURE': (hpt.FURNITURE_FIELDS, cage.hb_furniture),
+        'STAIR': (hpt.STAIR_FIELDS, cage.hb_stair),
     }[kind]
     # The page's one group starts open (the first time; closed after
     # that, it stays closed)

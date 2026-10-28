@@ -3,7 +3,7 @@ import math
 import bmesh
 from mathutils import Vector, Matrix
 from .. import hb_snap, hb_utils, units
-from .. import hb_house
+from .. import hb_house, hb_stairs
 from . import tool_session
 
 
@@ -168,18 +168,13 @@ def create_stair_mesh(stair_width, total_rise, riser_height, tread_depth, tread_
 
 
 def split_flights(total_rise, riser_height, landing_height):
-    """(steps in flight 1, steps in flight 2, riser) for a stair with a
-    landing: every riser the same, the whole rise divided as a straight
-    stair would divide it, the landing on the riser nearest the height
-    asked for."""
-    steps = max(2, round(total_rise / riser_height))
-    riser = total_rise / steps
-    first = min(max(round(landing_height / riser), 1), steps - 1)
-    return first, steps - first, riser
+    """(steps in flight 1, steps in flight 2, riser): see hb_stairs.
+    `riser_height` is the most a riser may be."""
+    return hb_stairs.split_flights(total_rise, riser_height, landing_height)
 
 
 def _create_straight_stair_mesh(stair_width, total_rise, riser_height, tread_depth, tread_thickness):
-    num_steps = max(1, round(total_rise / riser_height))
+    num_steps = hb_stairs.riser_count(total_rise, riser_height)
     actual_riser = total_rise / num_steps
 
     bm = bmesh.new()
@@ -222,14 +217,10 @@ def _create_l_stair_mesh(stair_width, total_rise, riser_height, tread_depth, tre
     landing_z_bot = flight1_rise - tread_thickness
     landing_z_top = flight1_rise
 
-    if turn_direction == 'LEFT':
-        # Landing extends to the left (-X) to make room for flight 2
-        lx0 = -landing_depth
-        lx1 = stair_width
-    else:
-        # Landing extends to the right (+X)
-        lx0 = 0
-        lx1 = stair_width + landing_depth
+    # The landing is the square at the turn: flight 2 leaves from its
+    # side (it reached past it, under flight 2's first treads)
+    lx0 = 0
+    lx1 = stair_width
 
     ly0 = flight1_run
     ly1 = flight1_run + stair_width
@@ -354,8 +345,11 @@ def rebuild_stair_mesh(obj):
     old_mesh = obj.data
     new_mesh = create_stair_mesh(width, total_rise, riser_height, tread_depth, tread_thickness,
                                  stair_type, turn_direction, landing_depth, landing_height, gap)
+    for mat in old_mesh.materials:
+        new_mesh.materials.append(mat)
     obj.data = new_mesh
-    bpy.data.meshes.remove(old_mesh)
+    if old_mesh.users == 0:
+        bpy.data.meshes.remove(old_mesh)
 
 
 # ---------------------------------------------------------------------------
@@ -363,30 +357,14 @@ def rebuild_stair_mesh(obj):
 # ---------------------------------------------------------------------------
 
 class home_builder_stairs_OT_place_stairs(bpy.types.Operator):
-    """Place a staircase on the floor"""
+    """Draw a staircase: click where it starts and drag the way it climbs
+    (or, From Top, where it arrives and the way it goes down). Its risers
+    are counted from the rise between the levels and the Max Riser; its
+    sides go against walls they come near."""
     bl_idname = "home_builder_stairs.place_stairs"
     bl_label = "Place Stairs"
-    bl_description = "Click on the floor to place a staircase"
+    bl_description = "Click where the stair starts and drag the way it climbs"
     bl_options = {'REGISTER', 'UNDO'}
-
-    stair_type: bpy.props.EnumProperty(
-        name="Type",
-        items=[
-            ('STRAIGHT', "Straight", "Straight staircase"),
-            ('L_SHAPE',  "L-Shaped", "90\u00b0 turn with landing"),
-            ('U_SHAPE',  "U-Shaped", "180\u00b0 turn with landing"),
-        ],
-        default='STRAIGHT',
-    )  # type: ignore
-
-    turn_direction: bpy.props.EnumProperty(
-        name="Turn",
-        items=[
-            ('LEFT',  "Left",  "Second flight turns left"),
-            ('RIGHT', "Right", "Second flight turns right"),
-        ],
-        default='LEFT',
-    )  # type: ignore
 
     # Modal state
     preview_obj = None
@@ -398,83 +376,136 @@ class home_builder_stairs_OT_place_stairs(bpy.types.Operator):
     hit_grid = False
     view_point = None
 
+    def _settings(self, context):
+        h = context.scene.hb_house
+        return (h.stair_type, h.stair_turn, round(h.stair_width, 5), round(h.stair_max_riser, 5),
+                round(h.stair_tread, 5), h.stair_from)
+
+    def _levels(self, context):
+        """(the level the stair stands on, the one it climbs to, the level
+        clicked on, the edge drawn: 'START' or 'END')."""
+        here = hb_house.active_level(context)
+        if here is None:
+            return None, None, None, 'START'
+        house = here.id_data.hb_house
+        if context.scene.hb_house.stair_from == 'TOP':
+            below = hb_house.level_below(house, here)
+            if below is not None:
+                return below, here, here, 'END'
+        return here, hb_house.level_above(house, here), here, 'START'
+
     def create_preview(self, context):
-        width           = units.inch(36)
-        total_rise      = units.inch(96)
-        # On a house level the stairs climb to the level above
-        level = hb_house.active_level(context)
-        if level is not None:
-            from .. import hb_rooms
-            total_rise = hb_rooms.stair_rise(level)
-        riser_height    = units.inch(7.5)
-        tread_depth     = units.inch(10.5)
-        tread_thickness = units.inch(1)
-
-        mesh = create_stair_mesh(width, total_rise, riser_height, tread_depth, tread_thickness,
-                                 self.stair_type, self.turn_direction)
-
+        h = context.scene.hb_house
+        base, _upper, _here, self.anchor = self._levels(context)
+        rise = hb_stairs.rise_for(base, context.scene)
+        width = h.stair_width
+        mesh = create_stair_mesh(width, rise, h.stair_max_riser, h.stair_tread, hb_stairs.TREAD_T,
+                                 h.stair_type, h.stair_turn)
         self.preview_obj = bpy.data.objects.new('Stairs', mesh)
-        self.preview_obj.location.z = 0
         context.scene.collection.objects.link(self.preview_obj)
+        obj = self.preview_obj
+        obj['IS_STAIR'] = True
+        obj['MENU_ID'] = 'HOME_BUILDER_MT_stair_commands'
+        obj['STAIR_WIDTH'] = width
+        obj['STAIR_TOTAL_RISE'] = rise
+        obj['STAIR_RISER_HEIGHT'] = h.stair_max_riser
+        obj['STAIR_TREAD_DEPTH'] = h.stair_tread
+        obj['STAIR_TREAD_THICKNESS'] = hb_stairs.TREAD_T
+        obj['STAIR_TYPE'] = h.stair_type
+        obj['STAIR_TURN_DIRECTION'] = h.stair_turn
+        obj['STAIR_LANDING_DEPTH'] = width
+        obj['STAIR_LANDING_HEIGHT'] = rise / 2
+        obj['STAIR_GAP'] = 0.0
+        obj['STAIR_AUTO_RISE'] = base is not None
+        if base is not None:
+            obj[hb_house.LEVEL_KEY] = base.uid
+        obj.location.z = base.elevation if base is not None else 0.0
+        mat = bpy.data.materials.get("Stair Material")
+        if mat is None:
+            mat = bpy.data.materials.new(name="Stair Material")
+            mat.use_nodes = True
+            bsdf = mat.node_tree.nodes.get('Principled BSDF')
+            if bsdf:
+                bsdf.inputs['Base Color'].default_value = (0.6, 0.45, 0.3, 1.0)
+        obj.data.materials.append(mat)
+        self._signature = self._settings(context)
+        faces_on = [l.uid for l in (base, _upper) if l is not None]
+        self.faces = hb_stairs.wall_faces(context.scene, faces_on) if faces_on else \
+            hb_stairs.wall_faces(context.scene, [''])
 
-        self.preview_obj['IS_STAIR']             = True
-        self.preview_obj['MENU_ID']              = 'HOME_BUILDER_MT_stair_commands'
-        self.preview_obj['STAIR_WIDTH']           = width
-        self.preview_obj['STAIR_TOTAL_RISE']      = total_rise
-        self.preview_obj['STAIR_RISER_HEIGHT']    = riser_height
-        self.preview_obj['STAIR_TREAD_DEPTH']     = tread_depth
-        self.preview_obj['STAIR_TREAD_THICKNESS'] = tread_thickness
-        self.preview_obj['STAIR_TYPE']            = self.stair_type
-        self.preview_obj['STAIR_TURN_DIRECTION']  = self.turn_direction
-        self.preview_obj['STAIR_LANDING_DEPTH']   = width
-        self.preview_obj['STAIR_LANDING_HEIGHT']  = total_rise / 2
-        self.preview_obj['STAIR_GAP']             = 0
-        if level is not None:
-            self.preview_obj[hb_house.LEVEL_KEY] = level.uid
+    def _place(self, point, up):
+        """Stand the preview with its drawn edge's middle at `point`,
+        climbing along `up` there (going down along -up, From Top)."""
+        v = hb_stairs.values(self.preview_obj)
+        p, u, self.on_wall = hb_stairs.snap(point, up, v['width'], self.faces)
+        loc, turn = hb_stairs.placement(v, self.anchor, p, u)
+        self.preview_obj.location.x, self.preview_obj.location.y = loc.x, loc.y
+        self.preview_obj.rotation_euler = (0.0, 0.0, turn)
+        self.point, self.up = p, u
 
-        mat = bpy.data.materials.new(name="Stair Material")
-        mat.use_nodes = True
-        bsdf = mat.node_tree.nodes.get('Principled BSDF')
-        if bsdf:
-            bsdf.inputs['Base Color'].default_value = (0.6, 0.45, 0.3, 1.0)
-        self.preview_obj.data.materials.append(mat)
+    def _mouse_point(self, context):
+        if not self.hit_location:
+            return None
+        loc = Vector(self.hit_location)
+        loc.x = hb_snap.snap_value_to_grid(loc.x)
+        loc.y = hb_snap.snap_value_to_grid(loc.y)
+        return loc
 
     def update_preview(self, context):
         if not self.preview_obj:
             return
-        if self.hit_location:
-            loc = Vector(self.hit_location)
-            loc.x = hb_snap.snap_value_to_grid(loc.x)
-            loc.y = hb_snap.snap_value_to_grid(loc.y)
-            level = hb_house.active_level(context)
-            loc.z = level.elevation if level is not None else 0
-            self.preview_obj.location = loc
-            self.preview_obj.hide_set(False)
+        if self._settings(context) != self._signature:
+            self.rebuild_preview(context)
+        p = self._mouse_point(context)
+        if self.start is None:
+            if p is None:
+                self.preview_obj.hide_set(True)
+                return
+            # Before the first click the stair follows the mouse, its
+            # way up the last one drawn (R turns it)
+            up = self.dir if self.anchor == 'START' else -self.dir
+            self._place(p, up)
         else:
-            self.preview_obj.hide_set(True)
+            if p is not None:
+                d = Vector((p.x - self.start.x, p.y - self.start.y))
+                if d.length > 0.05:
+                    self.dir = d.normalized()
+            up = self.dir if self.anchor == 'START' else -self.dir
+            self._place(self.start, up)
+        self.preview_obj.hide_set(False)
 
     def update_header(self, context):
-        types = {'STRAIGHT': "Straight", 'L_SHAPE': "L-Shaped", 'U_SHAPE': "U-Shaped"}
-        label = types.get(self.stair_type, "Straight")
-        rise = (self.preview_obj['STAIR_TOTAL_RISE'] if self.preview_obj
-                else units.inch(96))
-        num_steps = max(1, round(rise / units.inch(7.5)))
-        text = (f"{label} Stairs: {num_steps} steps | "
-                "Click to place | R rotate | "
-                "T toggle type | D toggle direction | ESC cancel")
+        if not self.preview_obj:
+            return
+        v = hb_stairs.values(self.preview_obj)
+        n, riser, run1, run2 = hb_stairs.counts(v)
+        us = context.scene.unit_settings
+        step = ("Click where it starts" if self.anchor == 'START' else "Click where it arrives") \
+            if self.start is None else ("Drag the way it climbs, click to place" if self.anchor == 'START'
+                                        else "Drag the way it goes down, click to place")
+        wall = " | against a wall" if getattr(self, 'on_wall', False) else ""
+        text = (f"Stairs: {n} risers of {units.unit_to_string(us, riser)}, "
+                f"{units.unit_to_string(us, run1 + run2)} run{wall} | {step} | "
+                "R turn | T type | D turn side | ESC cancel")
         context.area.header_text_set(text)
 
     def confirm_placement(self, context):
         if not self.preview_obj:
             return False
-        num_steps = max(1, round(
-            self.preview_obj['STAIR_TOTAL_RISE'] / self.preview_obj['STAIR_RISER_HEIGHT']
-        ))
-        self.report({'INFO'}, f"Placed staircase: {num_steps} steps")
+        obj = self.preview_obj
+        n = hb_stairs.counts(hb_stairs.values(obj))[0]
+        self.report({'INFO'}, f"Placed staircase: {n} risers")
         bpy.ops.object.select_all(action='DESELECT')
-        self.preview_obj.select_set(True)
-        context.view_layer.objects.active = self.preview_obj
-        if self.preview_obj.get(hb_house.LEVEL_KEY):
+        obj.select_set(True)
+        context.view_layer.objects.active = obj
+        level = hb_stairs.level_of(obj)
+        if level is not None:
+            hb_house.ensure_level_collections(context.scene, level)
+            coll = hb_house.level_subcollection(level, 'Products')
+            if coll is not None and coll not in obj.users_collection:
+                for c in list(obj.users_collection):
+                    c.objects.unlink(obj)
+                coll.objects.link(obj)
             from .. import hb_rooms
             hb_rooms.apply_stairwells(context.scene)
         self.preview_obj = None
@@ -487,17 +518,11 @@ class home_builder_stairs_OT_place_stairs(bpy.types.Operator):
         context.area.header_text_set(None)
 
     def rebuild_preview(self, context):
-        """Destroy and recreate the preview after a type/direction change."""
-        loc = self.preview_obj.location.copy() if self.preview_obj else None
-        rot = self.preview_obj.rotation_euler.copy() if self.preview_obj else None
+        """Make the preview again after its settings changed."""
         if self.preview_obj:
             bpy.data.objects.remove(self.preview_obj, do_unlink=True)
             self.preview_obj = None
         self.create_preview(context)
-        if loc:
-            self.preview_obj.location = loc
-        if rot:
-            self.preview_obj.rotation_euler = rot
 
     def stop_tool(self, context):
         """Asked to stop (another tool picked, Done, another tab): what
@@ -522,37 +547,51 @@ class home_builder_stairs_OT_place_stairs(bpy.types.Operator):
         hb_house.constrain_hit_to_level(self, context)
         self.update_preview(context)
         self.update_header(context)
+        h = context.scene.hb_house
 
-        # R - rotate 90 deg
-        if event.type == 'R' and event.value == 'PRESS':
-            if self.preview_obj:
-                self.preview_obj.rotation_euler.z += math.radians(90)
+        # R - a quarter turn (before the first click)
+        if event.type == 'R':
+            if event.value == 'PRESS' and self.start is None:
+                self.dir = Vector((-self.dir.y, self.dir.x))
             return {'RUNNING_MODAL'}
 
-        # T - cycle stair type
-        if event.type == 'T' and event.value == 'PRESS':
-            cycle = ['STRAIGHT', 'L_SHAPE', 'U_SHAPE']
-            idx = cycle.index(self.stair_type) if self.stair_type in cycle else 0
-            self.stair_type = cycle[(idx + 1) % len(cycle)]
-            self.rebuild_preview(context)
+        # T - the next type
+        if event.type == 'T':
+            if event.value == 'PRESS':
+                cycle = [i[0] for i in hb_stairs.TYPE_ITEMS]
+                h.stair_type = cycle[(cycle.index(h.stair_type) + 1) % len(cycle)]
             return {'RUNNING_MODAL'}
 
-        # D - toggle turn direction
-        if event.type == 'D' and event.value == 'PRESS':
-            if self.turn_direction == 'LEFT':
-                self.turn_direction = 'RIGHT'
-            else:
-                self.turn_direction = 'LEFT'
-            if self.stair_type in ('L_SHAPE', 'U_SHAPE'):
-                self.rebuild_preview(context)
+        # D - the turn to the other side
+        if event.type == 'D':
+            if event.value == 'PRESS':
+                h.stair_turn = 'RIGHT' if h.stair_turn == 'LEFT' else 'LEFT'
             return {'RUNNING_MODAL'}
 
-        if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
-            if self.confirm_placement(context):
-                self.cleanup(context)
-                return {'FINISHED'}
+        if event.type == 'LEFTMOUSE':
+            p = self._mouse_point(context)
+            if event.value == 'PRESS':
+                if self.start is None:
+                    if p is not None:
+                        self.start = self.point.to_3d()
+                        self.press = Vector((p.x, p.y))
+                    return {'RUNNING_MODAL'}
+                if self.confirm_placement(context):
+                    self.cleanup(context)
+                    return {'FINISHED'}
+            elif event.value == 'RELEASE' and self.start is not None and p is not None:
+                # A drag: placed where the button comes up
+                if (Vector((p.x, p.y)) - self.press).length > 0.25:
+                    if self.confirm_placement(context):
+                        self.cleanup(context)
+                        return {'FINISHED'}
+            return {'RUNNING_MODAL'}
 
-        if event.type in {'RIGHTMOUSE', 'ESC'}:
+        if event.type in {'RIGHTMOUSE', 'ESC'} and event.value == 'PRESS':
+            if self.start is not None:
+                # Back to picking where it starts
+                self.start = None
+                return {'RUNNING_MODAL'}
             self.cleanup(context)
             return {'CANCELLED'}
 
@@ -564,8 +603,12 @@ class home_builder_stairs_OT_place_stairs(bpy.types.Operator):
             return {'CANCELLED'}
         self.region = context.region
         self.preview_obj = None
+        self.start = None
+        self.press = None
+        self.dir = Vector((0.0, 1.0))
+        self.point, self.up = Vector((0.0, 0.0)), Vector((0.0, 1.0))
+        self.on_wall = False
         self.create_preview(context)
-        context.area.header_text_set("Click to place | R rotate | T type | D direction | ESC cancel")
         tool_session.begin(self, context)
         context.window_manager.modal_handler_add(self)
         return {'RUNNING_MODAL'}
@@ -608,7 +651,7 @@ class home_builder_stairs_OT_stair_prompts(bpy.types.Operator):
     )  # type: ignore
 
     riser_height: bpy.props.FloatProperty(
-        name="Riser Height", subtype='DISTANCE', unit='LENGTH',
+        name="Max Riser", subtype='DISTANCE', unit='LENGTH',
         default=0.1905, min=0.1016, max=0.3048, precision=5,
     )  # type: ignore
 
@@ -732,7 +775,7 @@ class home_builder_stairs_OT_stair_prompts(bpy.types.Operator):
             row.label(text="Total Steps:")
             row.label(text=str(steps1 + steps2))
         else:
-            num_steps = max(1, round(self.total_rise / self.riser_height))
+            num_steps = hb_stairs.riser_count(self.total_rise, self.riser_height)
             total_run = num_steps * self.tread_depth
             box.label(text=f"Steps: {num_steps}", icon='MOD_ARRAY')
             row = box.row()
@@ -772,6 +815,8 @@ class home_builder_stairs_OT_delete_stairs(bpy.types.Operator):
             cutter = hb_rooms.stairwell_cutter(obj)
             if cutter is not None:
                 cutters.remove(cutter)      # and the openings it cut
+            for child in list(obj.children_recursive):
+                bpy.data.objects.remove(child, do_unlink=True)     # its guard
             bpy.data.objects.remove(obj, do_unlink=True)
             self.report({'INFO'}, "Staircase deleted")
         return {'FINISHED'}
