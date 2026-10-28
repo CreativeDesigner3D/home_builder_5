@@ -2,7 +2,9 @@
 
 Switched on (the Cutaway button on the tool strip), each wall whose
 outside faces the view is hidden with what hangs on it, the way Hide
-Wall hides it, and comes back when the view swings round. A ceiling
+Wall hides it, and comes back when the view swings round. So is a wall
+standing between the view and a good part of a room's floor - the
+inside corner of an L, seen from its inside. A ceiling
 seen from above hides too, and in a house a level's siding goes while
 any of its walls is cut. Only what this hid is ever shown again:
 anything already hidden stays as it was.
@@ -35,8 +37,8 @@ def is_on(scene):
 # ---- The walls ---------------------------------------------------------------------
 
 def _wall_frame(obj):
-    """A wall's middle and its local +Y (its thickness side), in the
-    world."""
+    """A wall's middle, its local +Y (its thickness side), its two ends
+    in plan, its top and its foot, in the world."""
     from . import hb_types
     w = hb_types.GeoNodeWall(obj)
     try:
@@ -48,49 +50,89 @@ def _wall_frame(obj):
     m = obj.matrix_world
     mid = m @ Vector((length / 2.0, t / 2.0, h / 2.0))
     y = (m.to_3x3() @ Vector((0.0, 1.0, 0.0))).normalized()
-    return mid, y
+    a = m @ Vector((0.0, t / 2.0, 0.0))
+    b = m @ Vector((length, t / 2.0, 0.0))
+    return mid, y, (a.x, a.y), (b.x, b.y), (m @ Vector((0.0, 0.0, h))).z, a.z
+
+
+# Where a room is looked at: this high over its floor
+EYE_LINE = 1.0
+GRID = 7                # points across a room's floor each way
+BLOCKING = 0.1          # the share of them a wall must hide to go
+
+
+def _floor_points(poly, z):
+    """Points spread over a room's floor, EYE_LINE over it."""
+    from . import hb_wall_graph
+    xs = [p[0] for p in poly]
+    ys = [p[1] for p in poly]
+    out = []
+    for i in range(GRID):
+        for j in range(GRID):
+            x = min(xs) + (max(xs) - min(xs)) * (i + 0.5) / GRID
+            y = min(ys) + (max(ys) - min(ys)) * (j + 0.5) / GRID
+            if hb_wall_graph.point_in_polygon((x, y), poly):
+                out.append(Vector((x, y, z)))
+    if not out:
+        p = hb_wall_graph.interior_point(poly)
+        if p is not None:
+            out.append(Vector((p[0], p[1], z)))
+    return out
 
 
 def _wall_info(scene):
-    """[(wall, middle, outward normal, level uid)] for the walls that can
-    be cut. In a house, its outside walls (inside walls stay); elsewhere
-    every wall, its outside the side away from the middle of them all."""
+    """([(wall, middle, outward normal, level uid, plan end, plan end,
+    top)], {level uid: [points on its rooms' floors]}) for the walls
+    that can be cut. In a house, its outside walls (inside walls stay)
+    and points over each room; elsewhere every wall, its outside the side
+    away from the middle of them all, and that middle."""
     walls = [o for o in scene.objects if o.get('IS_WALL_BP') and o.type in ('MESH', 'EMPTY')]
     frames = {}
     for obj in walls:
         f = _wall_frame(obj)
         if f is not None:
             frames[obj] = f
-    out = []
+    out, middles = [], {}
+    if not frames:
+        return out, middles
+    floors = {}
+    for obj, f in frames.items():
+        uid = obj.get(hb_house.LEVEL_KEY, '')
+        floors[uid] = min(floors.get(uid, f[5]), f[5])
     if scene.get(hb_house.HOUSE_SCENE_KEY):
         from . import hb_exterior, hb_types, hb_wall_graph
         rooms = hb_exterior._indoor_polygons(scene)
         kinds = ('Exterior',) + hb_wall_graph.MODULE_WALL_TYPES
-        for obj, (mid, y) in frames.items():
+        for obj, (mid, y, a, b, top, _foot) in frames.items():
             if obj.get('WALL_TYPE', 'Exterior') not in kinds:
                 continue
             uid = obj.get(hb_house.LEVEL_KEY, '')
             side = hb_exterior._outside_input(obj, hb_types.GeoNodeWall(obj), rooms.get(uid, []))
-            out.append((obj, mid, -y if side == hb_exterior.REF_SIDE else y, uid))
-        return out
-    if not frames:
-        return out
-    centre = sum((mid for mid, _y in frames.values()), Vector()) / len(frames)
-    for obj, (mid, y) in frames.items():
+            out.append((obj, mid, -y if side == hb_exterior.REF_SIDE else y, uid, a, b, top))
+        for uid, polys in rooms.items():
+            if uid in floors:
+                z = floors[uid] + EYE_LINE
+                for poly in polys:
+                    middles.setdefault(uid, []).extend(_floor_points(poly, z))
+        return out, middles
+    centre = sum((f[0] for f in frames.values()), Vector()) / len(frames)
+    for obj, (mid, y, a, b, top, _foot) in frames.items():
         away = Vector((mid.x - centre.x, mid.y - centre.y, 0.0))
         s = away.dot(y)
         if abs(s) < 1e-4:
             continue        # a lone wall: no inside to look into
-        out.append((obj, mid, y if s > 0 else -y, obj.get(hb_house.LEVEL_KEY, '')))
-    return out
+        out.append((obj, mid, y if s > 0 else -y, obj.get(hb_house.LEVEL_KEY, ''), a, b, top))
+    for uid, z in floors.items():
+        middles[uid] = [Vector((centre.x, centre.y, z + EYE_LINE))]
+    return out, middles
 
 
 def _walls_of(scene):
     cached = _walls.get(scene.name)
     if cached is None or cached[0] != _gen:
-        cached = (_gen, _wall_info(scene))
+        cached = (_gen,) + _wall_info(scene)
         _walls[scene.name] = cached
-    return cached[1]
+    return cached[1], cached[2]
 
 
 # ---- What the view hides -----------------------------------------------------------
@@ -105,6 +147,37 @@ def _facing(view, point, normal):
     return normal.dot(d.normalized())
 
 
+def _cross(p, q, a, b):
+    """Where plan segment p-q crosses a-b, as a fraction along p-q, or
+    None."""
+    rx, ry = q[0] - p[0], q[1] - p[1]
+    sx, sy = b[0] - a[0], b[1] - a[1]
+    den = rx * sy - ry * sx
+    if abs(den) < 1e-9:
+        return None
+    ax, ay = a[0] - p[0], a[1] - p[1]
+    t = (ax * sy - ay * sx) / den
+    u = (ax * ry - ay * rx) / den
+    if 0.0 < t < 1.0 and 0.0 <= u <= 1.0:
+        return t
+    return None
+
+
+def _blocks(view, points, a, b, top):
+    """Whether a wall stands between the view and a good part of a
+    room's floor, tall enough to hide it."""
+    if not points:
+        return False
+    eye, toward = view
+    hidden = 0
+    for m in points:
+        e = eye if eye is not None else m + toward * 1000.0
+        t = _cross(e, m, a, b)
+        if t is not None and e.z + (m.z - e.z) * t < top:
+            hidden += 1
+    return hidden >= max(1, BLOCKING * len(points))
+
+
 def _from_above(view, z):
     eye, toward = view
     if eye is not None:
@@ -113,18 +186,20 @@ def _from_above(view, z):
 
 
 def wanted(scene, view):
-    """The objects the view hides: the cut walls and what hangs on them,
+    """The objects the view hides: the cut walls (facing the view, or
+    standing between it and a good part of a room) and what hangs on them,
     ceilings seen from above, and a house level's siding while any of its
     walls is cut."""
     hide = set()
     cut_levels = set()
-    for obj, mid, outward, uid in _walls_of(scene):
+    walls, middles = _walls_of(scene)
+    for obj, mid, outward, uid, a, b, top in walls:
         try:
             if obj.name not in scene.objects:
                 continue
         except ReferenceError:
             continue
-        if _facing(view, mid, outward) > FACING:
+        if _facing(view, mid, outward) > FACING or _blocks(view, middles.get(uid, ()), a, b, top):
             hide.add(obj)
             hide.update(obj.children_recursive)
             cut_levels.add(uid)
