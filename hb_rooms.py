@@ -1118,6 +1118,13 @@ def _guard_edges(stair, level, edges):
     scene = hb_house.house_scene_of(stair.users_scene[0]) if stair.users_scene else None
     segs = walls.level_wall_segs(scene, upper.uid)[1] if (scene and upper) else []
     m = stair.matrix_world
+    floors = []
+    if scene is not None and upper is not None:
+        for room in upper.rooms:
+            if not room.orphaned and room.floor_obj is not None:
+                poly = room_polygon(scene, upper, room)
+                if poly:
+                    floors.append(poly)
     kept = []
     for a, b, n in edges:
         if arrive is not None and n == arrive[0]:
@@ -1135,8 +1142,15 @@ def _guard_edges(stair, level, edges):
             if -0.05 <= along <= seg.length + 0.05 and -0.05 <= off <= seg.thickness + 0.05:
                 against_wall = True
                 break
-        if not against_wall:
-            kept.append((a, b, n))
+        if against_wall:
+            continue
+        # Only where there is floor to step off: a stair outside the
+        # house (up to a balcony or porch) has open air round most of it
+        out = (m.to_3x3() @ Vector((n[0], n[1], 0.0))).to_2d().normalized()
+        probe = mid + out * 0.15
+        if floors and not any(hb_wall_graph.point_in_polygon((probe.x, probe.y), p) for p in floors):
+            continue
+        kept.append((a, b, n))
     return kept
 
 
