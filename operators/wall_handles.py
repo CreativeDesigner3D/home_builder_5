@@ -63,7 +63,11 @@ def wall_frame(obj):
     """(start, axis, length, thickness, height) of a wall in plan: start
     is its reference end, axis the unit direction to the other end."""
     wall = hb_types.GeoNodeWall(obj)
-    m = obj.matrix_world
+    # From the parent chain, not matrix_world: that lags a move just made
+    # (a drag puts the wall back, then moves it, in one step)
+    m = obj.matrix_basis
+    if obj.parent is not None:
+        m = obj.parent.matrix_world @ obj.matrix_parent_inverse @ m
     rot = m.to_euler().z
     axis = Vector((math.cos(rot), math.sin(rot)))
     return (m.translation.to_2d(), axis, wall.get_input('Length'),
