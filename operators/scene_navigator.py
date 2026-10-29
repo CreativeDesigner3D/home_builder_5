@@ -35,6 +35,7 @@ from ..hb_gpu_draw import (
 # instead of copying this file.
 from ..hb_gpu_ui import (
     Theme,
+    semibold_font,
     paint_button as _paint_button,
     draw_centered_text as _draw_centered_text,
     ScrollList,
@@ -711,7 +712,8 @@ def _build_layout(region, area, current_scene_name,
     # ---- Panel header ----------------------------------------------------
     cursor_y = panel_top - pad_y
     ph_rect = (content_x, cursor_y - panel_hdr_h, content_w, panel_hdr_h)
-    entries.append(('panel_header', current_scene_name, ph_rect))
+    bar = _level_bar(current_scene_name, ph_rect)
+    entries.append(bar if bar is not None else ('panel_header', current_scene_name, ph_rect))
     cursor_y -= panel_hdr_h + section_gap
 
 
@@ -1042,6 +1044,86 @@ def commit_drag():
 
 # ---- Draw helpers -----------------------------------------------------------
 
+# ---- The level bar ----------------------------------------------------------
+# In a house the panel's top row is its levels, one chip each - click one
+# to draw on it - and All, lit while every level shows: click it to show
+# only the level you are on, again to show them all. It is on every tab,
+# TOOL included, so the level can change while a tool runs.
+
+LEVEL_CAPTION = "LEVEL"
+ALL_LABEL = "All"
+
+
+def _level_bar(scene_name, rect):
+    """('level_bar', chips, rect) for a house scene, else None. Each chip
+    is (what, index, label, rect, lit): what is 'level' or 'all'."""
+    from .. import hb_house
+    scene = bpy.data.scenes.get(scene_name)
+    if scene is None or not scene.get(hb_house.HOUSE_SCENE_KEY):
+        return None
+    house = scene.hb_house
+    if not len(house.levels):
+        return None
+    s = _s()
+    rx, ry, rw, rh = rect
+    font = HEADER_FONT_SIZE * s
+    cap_w = _text_w(0, font, LEVEL_CAPTION) + 8 * s
+    all_w = _text_w(0, font, ALL_LABEL) + 18 * s
+    gap = 2 * s
+    h = rh - 4 * s
+    y = ry + 2 * s
+    n = len(house.levels)
+    each = max((rw - cap_w - all_w - gap * n) / n, 10 * s)
+    chips, x = [], rx + cap_w
+    for i, level in enumerate(house.levels):
+        chips.append(('level', i, level.name, (x, y, each, h), i == house.active_level_index))
+        x += each + gap
+    chips.append(('all', None, ALL_LABEL, (rx + rw - all_w, y, all_w, h),
+                  house.level_display == 'ALL'))
+    return ('level_bar', chips, rect)
+
+
+def _draw_level_bar(shader, font_id, entry, mx, my):
+    _kind, chips, rect = entry
+    rx, ry, rw, rh = rect
+    s = _s()
+    font = HEADER_FONT_SIZE * s
+    _draw_text(semibold_font(), rx, _vcenter_baseline(rect, font_id, font), font,
+               HEADER_TEXT, LEVEL_CAPTION)
+    for what, _i, label, chip, lit in chips:
+        hot = _point_in_rect(mx, my, chip)
+        _paint_button(shader, chip, hovered=hot, active=lit)
+        shown = _fit_text(font_id, font, label, chip[2] - 6 * s)
+        _draw_centered_text(font_id, chip, font,
+                            TEXT_PRIMARY if (lit or hot) else TEXT_NORMAL, shown)
+    _draw_rect(shader, rx, ry - 2 * s, rw, max(1.0, s), SEPARATOR_COLOR)
+
+
+def _level_bar_click(context, mx, my, entries):
+    """A click on a level chip or All: True if it took it."""
+    bar = next((e for e in entries if e[0] == 'level_bar'), None)
+    if bar is None:
+        return False
+    scene = context.scene
+    house = getattr(scene, 'hb_house', None)
+    if house is None:
+        return False
+    for what, i, _label, chip, _lit in bar[1]:
+        if not _point_in_rect(mx, my, chip):
+            continue
+        if what == 'level':
+            if house.active_level_index != i:
+                house.active_level_index = i
+        else:
+            house.level_display = 'ACTIVE' if house.level_display == 'ALL' else 'ALL'
+        for window in context.window_manager.windows:
+            for area in window.screen.areas:
+                if area.type == 'VIEW_3D':
+                    area.tag_redraw()
+        return True
+    return False
+
+
 def _draw_panel_header(shader, font_id, rect, current_name):
     rx, ry, rw, rh = rect
     s = _s()
@@ -1254,6 +1336,8 @@ def paint_navigator(panel_rect, entries, mx, my):
             break            # the provider owns everything below the strip
         if kind == 'panel_header':
             _draw_panel_header(shader, font_id, entry[2], entry[1])
+        elif kind == 'level_bar':
+            _draw_level_bar(shader, font_id, entry, mx, my)
         elif kind == 'list':
             _, _clip, track, thumb = entry
             if track is not None:
@@ -1321,6 +1405,8 @@ def handle_navigator_click(context, mx, my, entries):
     passes it through so the viewport stays interactive). Hits never close
     the panel; the tab button that opened it is what closes it.
     """
+    if _level_bar_click(context, mx, my, entries):
+        return True
     hit = hit_test(mx, my, entries)
     if hit is None:
         # Not a shell element. On a hosted tab the body owns the rest of
@@ -1553,6 +1639,9 @@ class home_builder_OT_scene_navigator(bpy.types.Operator):
         if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
             mx = event.mouse_x - self.region.x
             my = event.mouse_y - self.region.y
+            if _level_bar_click(context, mx, my, self.entries):
+                self._rebuild_layout(context)
+                return {'RUNNING_MODAL'}
             hit = hit_test(mx, my, self.entries)
             if hit is None:
                 # nothing hit -- dismiss
