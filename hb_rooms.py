@@ -842,7 +842,136 @@ def rebuild_level(scene, level):
     hb_roofs.apply_trims(scene)
     hb_skylights.apply_ceiling_cuts(scene)
     hb_fireplaces.apply_chase_cuts(scene)
+    # The ledge where this level is set back from the walls below, and the
+    # one over this level where the level above is set back from it
+    build_ledge(scene, level)
+    build_ledge(scene, level_above(scene.hb_house, level))
     return len(claimed)
+
+
+# =============================================================================
+# LEDGES
+# =============================================================================
+# An upper level set back from the walls below it - a gambrel's knee
+# walls between its dormers, a second floor smaller than the first -
+# leaves the top of those walls open: they rise to the upper floor where
+# its walls stand on them, and between there is nothing, down to the
+# ceiling below. A ledge closes it: the lower level's outline less the
+# upper level's, a slab at the upper floor as thick as the floor, the
+# lower walls' finish. Made with a Boolean against the upper outline, so
+# it follows any shape.
+
+LEDGE_KEY = 'IS_LEVEL_LEDGE'
+LEDGE_CUTTER_KEY = 'IS_LEDGE_CUTTER'
+
+
+def _ledge(scene, level):
+    return next((o for o in scene.objects if o.get(LEDGE_KEY) and o.get(hb_house.LEVEL_KEY) == level.uid), None)
+
+
+def _remove_ledge(scene, level):
+    obj = _ledge(scene, level)
+    if obj is not None:
+        for child in list(obj.children):
+            _remove(child)
+        _remove(obj)
+
+
+def build_ledge(scene, level):
+    """Make, remake or take away `level`'s ledge over the walls below it."""
+    if level is None:
+        return
+    house = scene.hb_house
+    below = hb_house.level_below(house, level)
+    if below is None or level.kind == 'FOUNDATION':
+        _remove_ledge(scene, level)
+        return
+    lower = hb_house.level_outlines(scene, below)
+    upper = hb_house.level_outlines(scene, level)
+    rise = hb_house.rise_to_level_above(below)
+    carried = [o for o in scene.objects
+               if o.get('IS_WALL_BP') and o.get(hb_house.LEVEL_KEY) == below.uid
+               and o.get('WALL_TYPE', 'Exterior') == 'Exterior'
+               and _wall_height(o) >= rise - 0.01]
+    covered = all(any(hb_wall_graph.point_in_polygon(p, q) or hb_wall_graph._dist_to_edges(p, q) < 0.01
+                      for q in upper) for poly in lower for p in poly)
+    # A level below with a roof of its own is roofed over its edges (the
+    # upper level is a room in its roof): only a house roofed from the
+    # upper level, its lower walls rising to it, needs the ledge
+    if not lower or not upper or not carried or covered or below.roof.enabled:
+        _remove_ledge(scene, level)         # nothing set back: no ledge
+        return
+    t = floor_slab_thickness(level)
+    mesh = bpy.data.meshes.new(f"Ledge - {level.name}")
+    bm = bmesh.new()
+    for poly in lower:
+        verts = [bm.verts.new((x, y, 0.0)) for x, y in poly]
+        face = bm.faces.new(verts)
+        res = bmesh.ops.extrude_face_region(bm, geom=[face])
+        moved = [g for g in res['geom'] if isinstance(g, bmesh.types.BMVert)]
+        bmesh.ops.translate(bm, verts=moved, vec=Vector((0, 0, -t)))
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+    bm.to_mesh(mesh)
+    bm.free()
+    # The cutter: the upper level's outline, through the slab
+    cm = bpy.data.meshes.new(f"Ledge Cutter - {level.name}")
+    bm = bmesh.new()
+    for poly in upper:
+        verts = [bm.verts.new((x, y, 0.05)) for x, y in poly]
+        face = bm.faces.new(verts)
+        res = bmesh.ops.extrude_face_region(bm, geom=[face])
+        moved = [g for g in res['geom'] if isinstance(g, bmesh.types.BMVert)]
+        bmesh.ops.translate(bm, verts=moved, vec=Vector((0, 0, -t - 0.1)))
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+    bm.to_mesh(cm)
+    bm.free()
+    mat = None
+    for w in carried:
+        if w.data is not None and len(w.data.materials) and w.data.materials[0] is not None:
+            mat = w.data.materials[0]
+            break
+    if mat is not None:
+        mesh.materials.append(mat)
+    obj = _ledge(scene, level)
+    if obj is None:
+        hb_house.ensure_level_collections(scene, level)
+        col = hb_house.level_subcollection(level, 'Rooms')
+        obj = hb_utils.new_object(f"Ledge - {level.name}", mesh)
+        col.objects.link(obj)
+        obj[LEDGE_KEY] = True
+        obj[hb_house.LEVEL_KEY] = level.uid
+        cutter = hb_utils.new_object(f"Ledge Cutter - {level.name}", cm)
+        col.objects.link(cutter)
+        cutter.parent = obj
+        cutter[LEDGE_CUTTER_KEY] = True
+        cutter['IS_CUTTING_OBJ'] = True
+        cutter.display_type = 'WIRE'
+        cutter.hide_render = True
+        cutter.hide_viewport = True
+        mod = obj.modifiers.new("Upper Outline", 'BOOLEAN')
+        mod.operation = 'DIFFERENCE'
+        mod.solver = 'EXACT'
+        mod.object = cutter
+    else:
+        old = obj.data
+        obj.data = mesh
+        if old is not None and old.users == 0:
+            bpy.data.meshes.remove(old)
+        cutter = next((c for c in obj.children if c.get(LEDGE_CUTTER_KEY)), None)
+        if cutter is not None:
+            oldc = cutter.data
+            cutter.data = cm
+            if oldc is not None and oldc.users == 0:
+                bpy.data.meshes.remove(oldc)
+    obj.location = (0.0, 0.0, level.elevation)
+
+
+def _wall_height(obj):
+    from . import hb_types
+    try:
+        return hb_types.GeoNodeWall(obj).get_input('Height')
+    except Exception:
+        return 0.0
 
 
 def rebuild_room(room):
