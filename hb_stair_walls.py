@@ -5,8 +5,11 @@ stair, shaped to the space walked through: from under its treads up to
 the treads plus the stair's Headroom, the flight's slope followed. A
 wall on the stair's level, or the level above, that one of them passes
 through gets a Boolean against it, so the wall stays under the stair (it
-holds it up) and over the headroom (a header), and is open between. A
-wall the stair only runs along beside is not touched.
+holds it up) and over the headroom (a header), and is open between. Only
+a wall the stair crosses - right through its thickness - is cut; one it
+runs along beside, even one drawn a little into its edge, is not. The
+opening is a little wider than the stair, so its sides do not lie on the
+stair's own.
 
 The cutters and their Booleans are made again whenever the stair is
 built - placed, changed, moved, edited - so a wall the stair leaves
@@ -23,9 +26,11 @@ from .units import inch
 
 CUTTER_KEY = 'IS_STAIR_WALL_CUTTER'
 UNDER = inch(1)             # how far under the line of the treads the cut starts
-SIDE_IN = 0.002             # a cutter is this much inside the stair's sides,
-                            # so a wall it runs along is not cut
-OVERLAP = 0.005             # a wall must reach this far into a cutter to be cut
+SIDE_IN = 0.002             # what a wall is tested against: the walking space
+                            # this much inside the stair's sides
+SIDE_OUT = inch(0.25)       # the opening: this much wider each side than the stair
+CROSSES = 0.9               # a wall is crossed when the walking space takes in
+                            # this much of its thickness
 MOD_PREFIX = "Stair Cut - "
 
 
@@ -37,9 +42,10 @@ def cutters_of(obj):
     return [c for c in obj.children if c.get(CUTTER_KEY)]
 
 
-def _pieces(obj):
-    """[(name, bmesh)]: the walking space over each flight and landing, in
-    the stair's own frame."""
+def _pieces(obj, side=SIDE_IN):
+    """[(name, bmesh, span)]: the walking space over each flight and landing, in
+    the stair's own frame, `side` inside the stair's sides (less than 0:
+    outside them)."""
     from . import hb_stairs, hb_stair_build, hb_stair_shapes as shapes
     v = hb_stairs.values(obj)
     if shapes.is_arc(v) or shapes.is_shaped(v):
@@ -48,7 +54,7 @@ def _pieces(obj):
     flights, landings = hb_stair_build.layout(v)
     out = []
     for i, f in enumerate(flights):
-        x0, x1 = SIDE_IN, f.W - SIDE_IN
+        x0, x1 = side, f.W - side
         y0, y1 = -0.01, f.run + 0.01
         # Under the line through the tread backs, up to the nosings plus
         # the headroom
@@ -63,25 +69,50 @@ def _pieces(obj):
         for k in range(4):
             j = (k + 1) % 4
             bm.faces.new([left[k], left[j], right[j], right[k]])
-        out.append((f"Flight {i + 1}", bm))
+        out.append((f"Flight {i + 1}", bm, _flight_span(f, head)))
     for i, (lx0, ly0, lx1, ly1, z) in enumerate(landings):
         bm = bmesh.new()
         m = bmesh.ops.create_cube(bm, size=1.0)['verts']
-        sx, sy, sz = lx1 - lx0 - 2 * SIDE_IN, ly1 - ly0 - 2 * SIDE_IN, head + UNDER
+        sx, sy, sz = lx1 - lx0 - 2 * side, ly1 - ly0 - 2 * side, head + UNDER
         for vert in m:
             vert.co = Vector(((lx0 + lx1) / 2 + vert.co.x * sx, (ly0 + ly1) / 2 + vert.co.y * sy,
                               z - UNDER + (vert.co.z + 0.5) * sz))
-        out.append((f"Landing {i + 1}", bm))
-    for _name, bm in out:
+        out.append((f"Landing {i + 1}", bm, lambda pts, z=z: (z - UNDER, z + head)))
+    for _name, bm, _span in out:
         bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
     return out
 
 
-def _footprint(obj, piece):
-    """The cutter's plan outline in the world, as a convex polygon, and its
-    z range."""
+def _flight_span(f, head):
+    """For a flight, the walking space's height (stair frame) over the
+    stretch of its run that some plan points (stair frame) lie across."""
+    inv = f.m.inverted()
+
+    def span(pts):
+        ys = [(inv @ Vector((p.x, p.y, 0.0))).y for p in pts]
+        y0, y1 = max(min(ys), 0.0), min(max(ys), f.run)
+        if y1 < y0:
+            y0 = y1 = min(max(min(ys), 0.0), f.run)
+        z0 = (f.m @ Vector((0.0, y0, f.k * y0 - UNDER))).z
+        z1 = (f.m @ Vector((0.0, y1, f.k * y1 + f.r + head))).z
+        return z0, z1
+    return span
+
+
+def _height_at(obj, span, wpoly):
+    """The walking space's z range (world) where a wall stands."""
     M = obj.matrix_basis if obj.parent is None else obj.matrix_world
-    pts = [M @ v.co for v in piece.data.vertices]
+    Mi = M.inverted()
+    pts = [(Mi @ Vector((p.x, p.y, M.translation.z))).to_2d() for p in wpoly]
+    z0, z1 = span(pts)
+    return z0 + M.translation.z, z1 + M.translation.z
+
+
+def _footprint(obj, bm):
+    """A piece's plan outline in the world, as a convex polygon, and its z
+    range."""
+    M = obj.matrix_basis if obj.parent is None else obj.matrix_world
+    pts = [M @ v.co for v in bm.verts]
     return _hull([p.to_2d() for p in pts]), min(p.z for p in pts), max(p.z for p in pts)
 
 
@@ -123,7 +154,7 @@ def _overlap(a, b):
 
 
 def _wall_box(wall):
-    """A wall's plan outline and z range."""
+    """A wall's plan outline, z range and thickness."""
     from . import hb_types
     w = hb_types.GeoNodeWall(wall)
     try:
@@ -133,7 +164,7 @@ def _wall_box(wall):
     M = wall.matrix_world
     poly = [(M @ Vector((x, y, 0.0))).to_2d() for x, y in ((0, 0), (L, 0), (L, t), (0, t))]
     z = M.translation.z
-    return poly, z, z + h
+    return poly, z, z + h, t
 
 
 def _walls_near(obj):
@@ -163,9 +194,12 @@ def cut(obj):
     if not cuts_walls(obj):
         clear(obj)
         return []
-    pieces = _pieces(obj)
+    tests = {name: (bm, span) for name, bm, span in _pieces(obj)}
+    pieces = _pieces(obj, -SIDE_OUT)
     kept, cut_walls = [], []
-    for name, bm in pieces:
+    for name, bm, _span in pieces:
+        test = tests.get(name)
+        poly, z0, z1 = _footprint(obj, test[0]) if test is not None else ([], 0.0, 0.0)
         full = f"{obj.name} {name} Cut"
         cutter = next((c for c in old.values() if c.get('HB_PIECE') == name), None)
         mesh = bpy.data.meshes.new(full)
@@ -191,14 +225,18 @@ def cut(obj):
             if prev is not None and prev.users == 0:
                 bpy.data.meshes.remove(prev)
         kept.append(cutter)
-        poly, z0, z1 = _footprint(obj, cutter)
         crossed = set()
-        for wall in _walls_near(obj):
+        for wall in _walls_near(obj) if poly else []:
             box = _wall_box(wall)
             if box is None:
                 continue
-            wpoly, wz0, wz1 = box
-            if wz1 <= z0 or wz0 >= z1 or _overlap(poly, wpoly) < OVERLAP:
+            wpoly, wz0, wz1, t = box
+            # Through its thickness, not along its face
+            if wz1 <= z0 or wz0 >= z1 or _overlap(poly, wpoly) < t * CROSSES:
+                continue
+            # Over the stretch of the stair the wall stands across
+            hz0, hz1 = _height_at(obj, test[1], wpoly)
+            if wz1 <= hz0 or wz0 >= hz1:
                 continue
             crossed.add(wall.name)
             if not any(m.type == 'BOOLEAN' and m.object == cutter for m in wall.modifiers):
@@ -214,4 +252,6 @@ def cut(obj):
     for c in old.values():
         if c not in kept:
             cutters.remove(c)
+    for bm, _span in tests.values():
+        bm.free()
     return cut_walls

@@ -30,6 +30,7 @@ RISER_T = inch(0.75)
 STRINGER_T = inch(1.5)
 STRINGER_ABOVE = inch(3)        # a closed stringer's top over the nosings
 STRINGER_DEPTH = inch(10)       # its bottom under them
+PROUD = 0.001                   # a closed stringer's face past the treads' ends
 CUT_DEPTH = inch(9)             # a cut stringer's depth under the treads
 SKIRT_T = inch(0.75)
 NEWEL = inch(3.5)
@@ -487,8 +488,10 @@ def parts_mesh(obj):
                 B.profile(f.m, x0, x1, _clean([(y0, under(y0)), (y1, under(y1)), (y1, top), (y0, top)]), 0)
 
         if c['stringer'] == 'CLOSED':
-            board(0.0, STRINGER_T)
-            board(f.W - STRINGER_T, f.W)
+            # A hair proud of the treads' ends, so the two do not lie in
+            # one plane and flicker
+            board(-PROUD, STRINGER_T)
+            board(f.W - STRINGER_T, f.W + PROUD)
         else:
             if c['stringer'] == 'OPEN':
                 xs = [inch(1), f.W - inch(1) - STRINGER_T]
@@ -813,6 +816,54 @@ def materials(obj):
 
 # ---- Building -------------------------------------------------------------------------
 
+CLEAR = 0.003           # a stair stands this far off a wall it is against
+NEAR_FACE = 0.006       # a point this near a wall's face is moved off it
+
+
+def _clear_of_walls(obj, mesh):
+    """Move the stair's points that lie on (or just into) a wall's face to
+    stand CLEAR of it, so the stair's side and the wall are not drawn in
+    the same place and flicker. A stair snapped to a wall puts its side
+    exactly on the face."""
+    from . import hb_stairs
+    if obj.get('HB_STAIR_PREVIEW') or not len(mesh.vertices):
+        return
+    scene = obj.users_scene[0] if obj.users_scene else bpy.context.scene
+    faces = hb_stairs.wall_faces(scene, {obj.get(hb_house.LEVEL_KEY, '')})
+    if not faces:
+        return
+    M = obj.matrix_basis if obj.parent is None else obj.matrix_world
+    Mi = M.inverted()
+    pts = [M @ v.co for v in mesh.vertices]
+    mid = sum((p.to_2d() for p in pts), Vector((0.0, 0.0))) / len(pts)
+    lines = []
+    for a, b in faces:
+        d = b - a
+        L = d.length
+        if L < 1e-6:
+            continue
+        u = d / L
+        n = Vector((-u.y, u.x))
+        if n.dot(mid - a) < 0:
+            n = -n                  # the stair's side of the face
+        lines.append((a, u, n, L))
+    moved = False
+    for v, p in zip(mesh.vertices, pts):
+        q = p.to_2d()
+        for a, u, n, L in lines:
+            t = (q - a).dot(u)
+            if t < -NEAR_FACE or t > L + NEAR_FACE:
+                continue
+            d = (q - a).dot(n)
+            if -NEAR_FACE < d < CLEAR:
+                q = q + n * (CLEAR - d)
+                moved = True
+        if (q - p.to_2d()).length > 0:
+            v.co = Mi @ Vector((q.x, q.y, p.z))
+    if moved:
+        mesh.update()
+
+
 def parts_of(obj):
     return next((c for c in obj.children if c.get(PARTS_KEY)), None)
 
@@ -825,12 +876,14 @@ def build(obj):
     tread, riser, stringer, rail, baluster, glass, wall, door = materials(obj)
     old = obj.data
     mesh = stair_mesh(v, c)
+    _clear_of_walls(obj, mesh)
     mesh.materials.append(tread)
     mesh.materials.append(riser)
     obj.data = mesh
     if old is not None and old.users == 0:
         bpy.data.meshes.remove(old)
     pm = parts_mesh(obj)
+    _clear_of_walls(obj, pm)
     for m in (stringer, rail, baluster, glass, wall, door):
         pm.materials.append(m)
     parts = parts_of(obj)
