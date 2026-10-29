@@ -2,9 +2,8 @@
 stair, obstacle or piece of furniture picked, in any project.
 
 It is there while one of them is selected; the panel switches to it when
-one is picked, and goes back to the tab it was on when it is let go. (In
-a house the same settings are also on the HOUSE tab's pages: a bay or
-fireplace on Outside, the rest on Rooms.)
+one is picked, and goes back to the tab it was on when it is let go.
+This is the one place they are shown.
 """
 import sys
 

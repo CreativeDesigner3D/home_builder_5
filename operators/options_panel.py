@@ -125,6 +125,12 @@ TILE_NAME_H = 14     # the name under a tile's picture
 TILE_BAR_H = 20      # a style tile's strip of checkbox and icons
 TILE_ICON = 18       # one icon button on that strip
 CARD_H = 50          # the summary card over a pool's selected item
+TITLE_H = 28         # a page's title row
+HINT_H = 18          # a line of help: shorter than a row, and dim
+
+# Commands that undo or remove: drawn as text until hovered, so they sit
+# back from the ones that make things
+QUIET_OPS = set()
 DOT = 8              # a list row's colour dot
 
 
@@ -593,6 +599,16 @@ def _field_blocks(context, fields, owner):
             except Exception:
                 lines = ()
             blocks.extend(('note', line) for line in lines)
+        elif field[0] == 'hints':
+            # Help, not settings: the same as notes, drawn small and dim.
+            try:
+                if _field_parts(field)[3].get('owner'):
+                    lines = field[1](context, owner) or ()
+                else:
+                    lines = field[1](context) or ()
+            except Exception:
+                lines = ()
+            blocks.extend(('hint', line) for line in lines)
         elif field[0] == 'value':
             # A labelled value to read, worked out by a callable given
             # the owner -- a count, a source, what the thing is.
@@ -861,6 +877,10 @@ def _block_h(block, s):
         return _block_h(block[1], s)
     if kind in ('head', 'section'):
         return SECTION_H * s
+    if kind == 'title':
+        return (TITLE_H + ROW_GAP) * s
+    if kind == 'hint':
+        return (HINT_H + ROW_GAP) * s
     if kind == 'tiles':
         return (block[1][1].get('height', TILE_H) + ROW_GAP) * s
     if kind == 'picture_tiles':
@@ -1016,6 +1036,12 @@ def build_page(rect, context, blocks_fn, lst):
         elif kind == 'note':
             entries.append(('note_row', payload,
                             (x, block_top - row_h, row_w, row_h)))
+        elif kind == 'hint':
+            hh = HINT_H * s
+            entries.append(('hint_row', payload, (x, block_top - hh, row_w, hh)))
+        elif kind == 'title':
+            th = TITLE_H * s
+            entries.append(('title_row', payload, (x, block_top - th, row_w, th)))
         elif kind == 'head':
             label, with_add, pool = payload
             head_rect = (x, block_top - sect_h, row_w, sect_h)
@@ -1392,6 +1418,30 @@ def paint(entries, mx, my):
                           Theme.TEXT_NORMAL, shown_label)
                 draw_text(font_id, rx + lw + 6 * s, ry + rh * 0.28, FONT * s,
                           Theme.TEXT_PRIMARY, shown)
+            elif kind == 'title_row':
+                # The page's name, and what it is about (the level) dim
+                # on the right, over a rule.
+                _, (text, aside), rect = entry
+                rx, ry, rw, rh = rect
+                big = (FONT + 3) * s
+                aside_w = text_width(font_id, FONT * s, aside) if aside else 0.0
+                shown = fit_text(font_id, big, text, rw - aside_w - 16 * s)
+                draw_text(font_id, rx + 2 * s, ry + rh * 0.36, big,
+                          Theme.TEXT_PRIMARY, shown)
+                if aside:
+                    shown_aside = fit_text(font_id, FONT * s, aside, rw * 0.5)
+                    draw_text(font_id, rx + rw - text_width(font_id, FONT * s, shown_aside) - 2 * s,
+                              ry + rh * 0.38, FONT * s, Theme.TEXT_HEADER, shown_aside)
+                draw_rects(shader, [(rx, ry + 3 * s, rw, 1 * s)], Theme.SEPARATOR)
+            elif kind == 'hint_row':
+                _, text, rect = entry
+                rx, ry, rw, rh = rect
+                small = FONT * s
+                shown = fit_text(font_id, small, text, rw - 12 * s)
+                if point_in_rect(mx, my, rect):
+                    note_tip_if_cut(rect, shown, text)
+                draw_text(font_id, rx + 8 * s, ry + rh * 0.3, small,
+                          Theme.TEXT_HEADER, shown)
             elif kind == 'note_row':
                 _, text, rect = entry
                 rx, ry, rw, rh = rect
@@ -1615,6 +1665,10 @@ def paint(entries, mx, my):
             elif kind == 'action_btn':
                 _, label, _op, _prop, _val, rect, enabled = entry
                 hovered = enabled and point_in_rect(mx, my, rect)
+                if _op in QUIET_OPS and not hovered:
+                    draw_centered_text(font_id, rect, FONT * s,
+                                       Theme.TEXT_DIM if not enabled else Theme.TEXT_HEADER, label)
+                    continue
                 paint_button(shader, rect, hovered=hovered)
                 draw_centered_text(font_id, rect, FONT * s,
                                    Theme.TEXT_DIM if not enabled

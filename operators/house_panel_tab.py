@@ -2,8 +2,12 @@
 
 Drawn with the Options tab's widgets (options_panel.build_page): before
 a house project is started the tab offers to start one. In the house
-scene a row of icon tabs across the top picks one page at a time, so
-the panel stays short:
+scene a row of tabs across the top - each an icon over its name - picks
+one page at a time, so the panel stays short. Every page reads the same
+way down: its title and the level it is about, what you work with on it,
+the settings of what is picked, and last, under Whole House, what holds
+for the whole house. What is selected in the view (a bay, a fireplace,
+a light, a stair, furniture) is on the SELECTED tab, not here:
 
 * Levels -- the level list as a pool (pick a level to draw on it, a
   second click renames it, NEW adds one on top, the delete chip removes
@@ -37,9 +41,9 @@ TAB_LABEL = "HOUSE"
 TAB_ORDER = 5           # between ROOMS (0) and LIBRARY (10)
 PREFERRED_WIDTH = 280   # unscaled
 
-TABS_H = 26             # the page tabs' height, unscaled
-TABS_GAP = 6            # and the space under them
-FONT = 11
+TABS_H = 40             # the page tabs' height, unscaled: icon over name
+TABS_GAP = 8            # and the space under them
+FONT = 9                # the tabs' names
 
 _list = None            # this tab's ScrollList, made on first build
 _page = 'LEVELS'        # the page on show
@@ -85,7 +89,7 @@ def _view_summary(house):
 LEVEL_SPEC = {
     'kind': 'pool',
     'title': "Levels",
-    'list_label': "Levels",
+    'list_label': "All Levels",
     'scope': 'scene',
     'props': 'hb_house',
     'collection': 'levels',
@@ -179,10 +183,9 @@ BACKDROP_FIELDS = (
         ('distance', 'backdrop_x', "X", {'when': _has_backdrop}),
         ('distance', 'backdrop_y', "Y", {'when': _has_backdrop}),
         ('number', 'backdrop_rotation', "Rotation", {'when': _has_backdrop}),
-        ('actions', (("Remove", "home_builder.remove_backdrop"),), ""),
-        ('notes', lambda context: ("Or drop a PDF on the view. Set Scale:",
-                                   "click both ends of a printed dimension",
-                                   "and type its length."), ""),
+        ('actions', (("Remove", "home_builder.remove_backdrop"),), "", {'when': _has_backdrop}),
+        ('hints', lambda context: ("Or drop a PDF on the view.",
+                                   "Set Scale: click a printed dimension's ends."), ""),
     )}),
 )
 
@@ -218,9 +221,8 @@ FOUNDATION_FIELDS = (
         ('distance', 'footing_width', "Footing Width", {'when': _found('SLAB', 'CRAWL', 'BASEMENT')}),
         ('distance', 'footing_depth', "Footing Depth", {'when': _found('SLAB', 'CRAWL', 'BASEMENT')}),
         ('distance', 'slab_thickness', "Slab Thickness", {'when': _found('SLAB', 'BASEMENT')}),
-        ('notes', lambda context: ("Built round the ground level's walls, and",
-                                   "rebuilt as they change. A basement is a",
-                                   "level: draw its walls and stairs on it."), ""),
+        ('hints', lambda context: ("Follows the ground level's walls.",
+                                   "A basement is a level: draw on it."), ""),
         ('actions', (("Rebuild Foundation", "home_builder.rebuild_foundation"),), "",
          {'when': _found('SLAB', 'CRAWL', 'BASEMENT')}),
     )}),
@@ -288,7 +290,7 @@ STRUCTURE_FIELDS = FOUNDATION_FIELDS + (
     ('group', 'house_members', "Beams and Posts", {'summary': _members_summary, 'fields': (
         ('actions', (("Place Beam", "home_builder.place_beam"),
                      ("Place Post", "home_builder.place_post")), ""),
-        ('notes', lambda context: ("Right-click one to change its size.",), ""),
+        ('hints', lambda context: ("Right-click one to change its size.",), ""),
     )}),
     ('group', 'house_framing', "Framing", {'summary': _framing_summary, 'fields': (
         ('bool', 'show_framing', "Show Framing"),
@@ -318,7 +320,6 @@ def _overriding(owner):
 
 
 EXTERIOR_FIELDS = (
-    ('label', None, "Siding"),
     ('enum', 'siding_style', "Siding"),
     ('native', 'siding_color', "Siding Color", {'when': lambda h: h.siding_style != 'NONE'}),
     ('bool', 'siding_geometry', "Real Geometry"),
@@ -507,9 +508,11 @@ def _dormer_summary(roof):
 
 
 ROOF_FIELDS = (
+    ('bool', 'enabled', "Roof on This Level"),
     ('actions', (("Fit Roof to Outline", "home_builder.fit_roof_to_outline"),
                  ("Edit Roof", "home_builder.edit_roof")), ""),
-    ('bool', 'enabled', "Roof on This Level"),
+    ('hints', lambda context: ("Turn on to roof this level's walls.",), "",
+     {'when': lambda roof: not roof.enabled}),
     ('enum', 'style', "Style", {'when': _on}),
     ('enum', 'base', "Sits On", {'when': _on}),
     ('distance', 'eave_height', "Eave Height", {'when': _on}),
@@ -950,7 +953,7 @@ def _porch_summary(room):
 ROOM_SPEC = {
     'kind': 'pool',
     'title': "Rooms",
-    'list_label': "Rooms",
+    'list_label': "All Rooms",
     'props': hb_house.active_level,
     'collection': 'rooms',
     'index': 'active_room_index',
@@ -1140,28 +1143,13 @@ def _tabs_shown(context):
             and bool(scene.get(hb_house.HOUSE_SCENE_KEY)))
 
 
-def _tab_widths(w):
-    """Each tab's width, and whether it shows its label: all labels when
-    they fit side by side; otherwise the open page's label and the other
-    pages' icons, so no word is cut short."""
-    s = scale()
-    g, pad = 12 * s, 14 * s
-    full = [g + 5 * s + text_width(0, FONT * s, label) + pad for _k, label, _i in PAGES]
-    if sum(full) <= w:
-        extra = (w - sum(full)) / len(PAGES)
-        return [(f + extra, True) for f in full]
-    icon = g + pad
-    rest = w - icon * (len(PAGES) - 1)
-    return [(rest, True) if key == _page else (icon, False) for key, _l, _i in PAGES]
-
-
 def _tab_cells(rect):
+    """The pages side by side, each as wide as the next: every one shows
+    its icon and, under it, its name."""
     x0, y0, w, h = rect
-    out, x = [], x0
-    for (key, label, icon), (bw, labelled) in zip(PAGES, _tab_widths(w)):
-        out.append((key, label if labelled else "", icon, (x, y0, bw, h)))
-        x += bw
-    return out
+    bw = w / len(PAGES)
+    return [(key, label, icon, (x0 + i * bw, y0, bw, h))
+            for i, (key, label, icon) in enumerate(PAGES)]
 
 
 def _paint_tabs(entry, mx, my):
@@ -1178,15 +1166,12 @@ def _paint_tabs(entry, mx, my):
         hot = point_in_rect(mx, my, cell)
         paint_button(shader, inner, hovered=hot, active=active)
         color = Theme.TEXT_PRIMARY if (active or hot) else Theme.TEXT_NORMAL
-        g = 12 * s
-        shown = fit_text(font, FONT * s, label, w - g - 14 * s) if label else ""
-        tw = text_width(font, FONT * s, shown)
-        total = g + (5 * s + tw if shown else 0.0)
-        left = x + (w - total) / 2.0
+        g = 14 * s
         shader.bind()
-        icon(shader, left + g / 2.0, y + h / 2.0, g, color)
-        if shown:
-            draw_text(font, left + g + 5 * s, y + h * 0.32, FONT * s, color, shown)
+        icon(shader, x + w / 2.0, y + h * 0.64, g, color)
+        shown = fit_text(font, FONT * s, label, w - 4 * s)
+        tw = text_width(font, FONT * s, shown)
+        draw_text(font, x + (w - tw) / 2.0, y + h * 0.14, FONT * s, color, shown)
 
 
 # ---- The pages ----------------------------------------------------------------
@@ -1226,18 +1211,24 @@ def _blocks(context):
              {'scene_name': house_scene.name}, None),)))
         return blocks
 
+    # Every page the same way down: its title (and the level it is
+    # about), what you work with on it, the settings of what is picked,
+    # and last the settings for the whole house. What is selected in the
+    # view - a bay, a fireplace, a light, a stair, furniture - is on the
+    # SELECTED tab, not here.
     level = hb_house.active_level(context)
-    where = f" · {level.name}" if level is not None else ""
+    level_name = level.name if level is not None else ""
+    house = scene.hb_house
+    title = dict((key, label) for key, label, _icon in PAGES)[_page]
+    blocks = [('title', (title, level_name))]
     if _page == 'LEVELS':
-        blocks = options_panel.field_blocks(context, PLAN_VIEW_FIELDS, scene.hb_house)
+        blocks.extend(options_panel.field_blocks(context, PLAN_VIEW_FIELDS, house))
         blocks.extend(options_panel.pool_blocks(context, LEVEL_SPEC))
         if level is not None:
+            blocks.append(('gap', None))
             blocks.extend(options_panel.field_blocks(context, BACKDROP_FIELDS, level))
-        blocks.append(('gap', None))
-        blocks.extend(options_panel.field_blocks(context, VIEW_FIELDS, scene.hb_house))
+        blocks.extend(_whole_house(context, VIEW_FIELDS, house))
     elif _page == 'OUTSIDE':
-        blocks = [('head', ("Outside", False, None))]
-        blocks.extend(options_panel.field_blocks(context, EXTERIOR_FIELDS, scene.hb_house))
         if level is not None:
             blocks.extend(options_panel.field_blocks(context, _level_siding_fields(level), level))
         walls = _selected_walls(context)
@@ -1245,66 +1236,54 @@ def _blocks(context):
             owner = context.active_object if context.active_object in walls else walls[0]
             blocks.extend(options_panel.field_blocks(context, _wall_siding_fields(len(walls)),
                                                      owner.hb_siding))
-        else:
-            blocks.append(('note', "Select outside walls to give them their own siding."))
         windows = _selected_windows(context)
         if windows:
             active = hb_house.window_cage(context.active_object)
             owner = active if active in windows else windows[0]
             blocks.extend(options_panel.field_blocks(context, _window_fields(len(windows)),
                                                      owner.hb_window_ext))
-        else:
-            blocks.append(('note', "Select windows for their shutters and trim."))
-        bay = _selected_bay(context)
-        if bay is not None:
-            blocks.extend(options_panel.field_blocks(context, BAY_FIELDS, bay.hb_bay))
-        fireplace = _selected_fireplace(context)
-        if fireplace is not None:
-            blocks.extend(options_panel.field_blocks(context, FIREPLACE_FIELDS, fireplace.hb_fireplace))
-        blocks.append(('gap', None))
-        blocks.extend(options_panel.field_blocks(context, BASE_FIELDS, scene.hb_house))
+        if not walls and not windows:
+            blocks.append(('hint', "Select walls or windows for their own siding and trim."))
+        blocks.extend(_whole_house(context, EXTERIOR_FIELDS + (('gap', None, ""),) + BASE_FIELDS, house))
     elif _page == 'ROOF':
-        blocks = [('head', ("Roof" + where, False, None))]
         if level is not None:
             blocks.extend(options_panel.field_blocks(context, ROOF_FIELDS, level.roof))
             if level.roof.enabled:
                 blocks.append(('gap', None))
                 blocks.extend(options_panel.pool_blocks(context, PIECE_SPEC))
-                blocks.append(('note', "Draw pieces in Edit Roof (G, D, A),"))
-                blocks.append(('note', "or select walls and use an Add button."))
+                blocks.append(('hint', "Draw pieces in Edit Roof, or select walls and Add."))
                 blocks.append(('gap', None))
                 blocks.extend(options_panel.pool_blocks(context, SKYLIGHT_SPEC))
-        blocks.append(('gap', None))
-        blocks.extend(options_panel.field_blocks(context, EAVE_FIELDS, scene.hb_house))
+        blocks.extend(_whole_house(context, EAVE_FIELDS, house))
     elif _page == 'STRUCTURE':
-        blocks = [('head', ("Structure", False, None))]
-        blocks.extend(options_panel.field_blocks(context, STRUCTURE_FIELDS, scene.hb_house))
+        blocks.extend(options_panel.field_blocks(context, STRUCTURE_FIELDS, house))
         blocks.append(('gap', None))
-        if len(scene.hb_house.assemblies):
+        if len(house.assemblies):
             blocks.extend(options_panel.pool_blocks(context, ASSEMBLY_SPEC))
             blocks.extend(options_panel.pool_blocks(context, LAYER_SPEC))
         else:
-            blocks.append(('note', "Wall assemblies: what walls are made of."))
+            blocks.append(('head', ("Wall Assemblies", False, None)))
+            blocks.append(('hint', "What walls are made of, layer by layer."))
             blocks.append(('actions', (("Add Standard Assemblies",
                                         "home_builder.add_standard_assemblies", None, None),)))
     else:
-        blocks = options_panel.field_blocks(context, FLOOR_DEFAULT_FIELDS, scene.hb_house)
-        blocks.extend(options_panel.field_blocks(context, WALL_DEFAULT_FIELDS, scene.hb_house))
-        blocks.extend(options_panel.field_blocks(context, TRIM_DEFAULT_FIELDS, scene.hb_house))
-        blocks.extend(options_panel.field_blocks(context, LIGHTING_DEFAULT_FIELDS, scene.hb_house))
-        light = _selected_light(context)
-        if light is not None:
-            blocks.extend(options_panel.field_blocks(context, LIGHT_FIELDS, light.hb_light))
-        piece = _selected_furnishing(context)
-        if piece is not None:
-            blocks.extend(options_panel.field_blocks(context, FURNITURE_FIELDS, piece.hb_furniture))
-        stair = _selected_stair(context)
-        if stair is not None:
-            blocks.extend(options_panel.field_blocks(context, STAIR_FIELDS, stair.hb_stair))
-        blocks.append(('gap', None))
         if level is not None:
             blocks.extend(options_panel.pool_blocks(context, ROOM_SPEC))
+            if not len(level.rooms):
+                blocks.append(('hint', "No rooms yet: draw walls that close a space."))
+        blocks.extend(_whole_house(context, FLOOR_DEFAULT_FIELDS + WALL_DEFAULT_FIELDS
+                                   + TRIM_DEFAULT_FIELDS + LIGHTING_DEFAULT_FIELDS, house))
     return blocks
+
+
+def _whole_house(context, fields, house):
+    """The settings for the whole house, last on a page under their own
+    caption."""
+    from . import options_panel
+    inner = options_panel.field_blocks(context, fields, house)
+    if not inner:
+        return []
+    return [('gap', None), ('head', ("Whole House", False, None))] + inner
 
 
 def _scroll_list():
@@ -1366,8 +1345,13 @@ def scroll(mx, my, entries, rows):
     return options_panel.scroll_page(mx, my, rest, rows, _scroll_list())
 
 
+# Commands that take something away: quiet until hovered
+QUIET = ("home_builder.remove_backdrop", "home_builder.remove_room_lights")
+
+
 def register():
-    from . import scene_navigator
+    from . import scene_navigator, options_panel
+    options_panel.QUIET_OPS.update(QUIET)
     scene_navigator.register_tab(TAB_KEY, sys.modules[__name__],
                                  label=TAB_LABEL, order=TAB_ORDER,
                                  available=available)
