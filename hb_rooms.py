@@ -1143,6 +1143,32 @@ OPENING_TO_WALL = inch(2.5)     # an opening's side this near a wall's face: to 
 OPENING_INTO_WALL = 0.01        # and this far past it, so no sliver of floor is left
 
 
+def _faces_round(stair, level):
+    """The faces of the walls on a stair's level and the one above, in the
+    stair's own frame: [(start, end, wall)]."""
+    from . import hb_types
+    scene = stair.users_scene[0] if stair.users_scene else bpy.context.scene
+    uids = {level.uid}
+    upper = level_above(scene.hb_house, level)
+    if upper is not None:
+        uids.add(upper.uid)
+    inv = stair.matrix_world.inverted()
+    out = []
+    for wall in scene.objects:
+        if not wall.get('IS_WALL_BP') or wall.get(hb_house.LEVEL_KEY, '') not in uids:
+            continue
+        w = hb_types.GeoNodeWall(wall)
+        try:
+            length, t = w.get_input('Length'), w.get_input('Thickness')
+        except Exception:
+            continue
+        m = wall.matrix_world
+        for y in (0.0, t):
+            a, b = m @ Vector((0.0, y, 0.0)), m @ Vector((length, y, 0.0))
+            out.append(((inv @ a).to_2d(), (inv @ b).to_2d(), wall))
+    return out
+
+
 def _widen_opening(stair, level, rects):
     """The opening out to the stair's sides - its treads are housed between
     its stringers, which the floor would otherwise be left over - and on to
@@ -1160,19 +1186,7 @@ def _widen_opening(stair, level, rects):
             feet.append((min(p.x for p in pts), min(p.y for p in pts),
                          max(p.x for p in pts), max(p.y for p in pts)))
         feet += [tuple(l[:4]) for l in landings]
-    # Wall faces in the stair's own frame: the level's and the one above's
-    scene = stair.users_scene[0] if stair.users_scene else bpy.context.scene
-    house = scene.hb_house
-    uids = {level.uid}
-    upper = level_above(house, level)
-    if upper is not None:
-        uids.add(upper.uid)
-    inv = stair.matrix_world.inverted()
-    faces = []
-    for a, b in hb_stairs.wall_faces(scene, uids):
-        pa = (inv @ Vector((a.x, a.y, 0.0))).to_2d()
-        pb = (inv @ Vector((b.x, b.y, 0.0))).to_2d()
-        faces.append((pa, pb))
+    faces = [(pa, pb) for pa, pb, _w in _faces_round(stair, level)]
 
     def along(lo, hi, a, b):
         return min(a, b) < hi - 1e-4 and max(a, b) > lo + 1e-4
@@ -1300,7 +1314,118 @@ def update_stairwell_cutter(stair):
         cutter.data.materials[0] = paint
     cutter.data.update()
     update_stair_guard(stair, level, edges)
+    update_stairwell_lining(stair, level, edges)
     return cutter
+
+
+# ---- The stairwell's lining ---------------------------------------------------------
+# The opening's edges are the floor's cut: a band the floor's colour
+# between the walls under it and the walls on the floor above. Lined with
+# a strip of wall there, flush with the wall faces, the walls run on up
+# through the floor round the stairwell as one surface.
+
+LINING_KEY = 'IS_STAIRWELL_LINING'
+LINING_T = 0.01             # how deep the lining is, back from its face
+LINING_FACE = 0.015         # a wall face this near an edge is the lining's face
+
+
+def stairwell_lining(stair):
+    return next((c for c in stair.children if c.get(LINING_KEY)), None)
+
+
+def update_stairwell_lining(stair, level, edges):
+    """Line each edge of the stair's opening, through the floor above, with
+    wall: from the underside of that floor up to its top."""
+    under = _upper_floor_underside(stair, level)
+    lining = stairwell_lining(stair)
+    if under is None or not edges:
+        if lining is not None:
+            mesh = lining.data
+            bpy.data.objects.remove(lining, do_unlink=True)
+            if mesh is not None and mesh.users == 0:
+                bpy.data.meshes.remove(mesh)
+        return None
+    top = float(stair.get('STAIR_TOTAL_RISE', stair_rise(level)))
+    faces = _faces_round(stair, level)
+    bm = bmesh.new()
+    colour = None
+    material = None
+    for a, b, n in edges:
+        a, b, n = Vector(a), Vector(b), Vector(n)
+        d = b - a
+        if d.length < 1e-4:
+            continue
+        u = d.normalized()
+        # The face it stands on: a wall's along the edge, just inside the
+        # opening (the opening runs a little past it), or the edge itself
+        face_off = -0.001
+        covered = False
+        for pa, pb, wall in faces:
+            fd = pb - pa
+            if fd.length < 1e-6 or abs(fd.normalized().cross(u)) > 1e-3:
+                continue
+            off = (pa - a).dot(n)           # where that face is, along the normal
+            if -LINING_FACE <= off <= 0.002 and _spans(pa, pb, a, b, u):
+                face_off = off
+                if colour is None:
+                    colour = tuple(wall.color)
+                    material = wall.active_material
+                # A wall that already rises through the floor here covers it
+                z0, z1 = _wall_z(wall, stair)
+                if z0 <= under + 1e-3 and z1 >= top - 1e-3:
+                    covered = True
+        if covered:
+            continue
+        p0 = a + n * face_off
+        p1 = b + n * face_off
+        q0 = a + n * (face_off + LINING_T + (-face_off if face_off < 0 else 0.0))
+        q1 = b + n * (face_off + LINING_T + (-face_off if face_off < 0 else 0.0))
+        vs = [bm.verts.new((p.x, p.y, z)) for z in (under, top) for p in (p0, p1, q1, q0)]
+        for f in ((0, 1, 2, 3), (4, 7, 6, 5), (0, 4, 5, 1), (1, 5, 6, 2), (2, 6, 7, 3), (3, 7, 4, 0)):
+            bm.faces.new([vs[i] for i in f])
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+    if lining is None:
+        lining = hb_utils.new_object("Stairwell Lining", bpy.data.meshes.new("Stairwell Lining"))
+        for col in stair.users_collection:
+            col.objects.link(lining)
+        lining.parent = stair
+        lining.matrix_parent_inverse.identity()
+        lining[LINING_KEY] = True
+        lining.hide_select = True
+        if stair.get(hb_house.LEVEL_KEY):
+            lining[hb_house.LEVEL_KEY] = stair[hb_house.LEVEL_KEY]
+    bm.to_mesh(lining.data)
+    bm.free()
+    lining.data.update()
+    # The walls' own look: their colour in the viewport, their material
+    if colour is None:
+        wall = next((o for o in (stair.users_scene[0] if stair.users_scene else bpy.context.scene).objects
+                     if o.get('IS_WALL_BP')), None)
+        if wall is not None:
+            colour, material = tuple(wall.color), wall.active_material
+    if colour is not None:
+        lining.color = colour
+    lining.data.materials.clear()
+    if material is not None:
+        lining.data.materials.append(material)
+    return lining
+
+
+def _wall_z(wall, stair):
+    """A wall's bottom and top in a stair's frame."""
+    from . import hb_types
+    try:
+        h = hb_types.GeoNodeWall(wall).get_input('Height')
+    except Exception:
+        h = 0.0
+    z = wall.matrix_world.translation.z - stair.matrix_world.translation.z
+    return z, z + h
+
+
+def _spans(pa, pb, a, b, u):
+    """Whether a wall face runs along an edge's length."""
+    ta, tb = sorted(((pa - a).dot(u), (pb - a).dot(u)))
+    return ta < (b - a).length - 1e-3 and tb > 1e-3
 
 
 def _guard_material():
