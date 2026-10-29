@@ -1342,11 +1342,11 @@ def _draw_track_indicators(op, region, context):
             # axis 'y' = horizontal line of constant world Y (varies in X)
             extent = 1000.0  # meters - far enough to cover any view
             if axis == 'x':
-                wp1 = Vector((tp.x, tp.y - extent, 0))
-                wp2 = Vector((tp.x, tp.y + extent, 0))
+                wp1 = Vector((tp.x, tp.y - extent, tp.z))
+                wp2 = Vector((tp.x, tp.y + extent, tp.z))
             else:
-                wp1 = Vector((tp.x - extent, tp.y, 0))
-                wp2 = Vector((tp.x + extent, tp.y, 0))
+                wp1 = Vector((tp.x - extent, tp.y, tp.z))
+                wp2 = Vector((tp.x + extent, tp.y, tp.z))
             sp1 = view3d_utils.location_3d_to_region_2d(region, rv3d, wp1)
             sp2 = view3d_utils.location_3d_to_region_2d(region, rv3d, wp2)
             if sp1 is None or sp2 is None:
@@ -2322,16 +2322,21 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
         return None
     
     def auto_track_points(self, context):
-        """Every corner of the walls on the active level, as tracking
-        points: lines run from them as the cursor comes into line, with
-        nothing to pick up first. The wall being drawn is left out (its
-        corners move with the cursor). Cached until a wall is placed or
-        a new one started."""
+        """Every corner of the walls on the active level - and on the level
+        below it, so an upper floor is drawn onto the outline of the one it
+        stands on - as tracking points, at the active level's height: lines
+        run from them as the cursor comes into line, and where two cross
+        the cursor is on the corner. The wall being drawn is left out (its
+        corners move with the cursor). Cached until a wall is placed or a
+        new one started."""
         current = self.current_wall.obj if self.current_wall else None
+        level = hb_house.active_level(context)
+        below = hb_house.level_below(level.id_data.hb_house, level) if level is not None else None
         key = (self.walls_committed, self.confirmed_wall_count,
-               current.name if current else None)
+               current.name if current else None, level.uid if level else None)
         if getattr(self, '_auto_track_key', None) == key:
             return self._auto_track
+        z = level.elevation if level is not None else 0.0
         seen = set()
         points = []
         for obj in context.view_layer.objects:
@@ -2339,7 +2344,8 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
                 continue
             if obj.get('WALL_TYPE') in hb_wall_graph.MODULE_WALL_TYPES:
                 continue
-            if not hb_house.on_active_level(obj, context):
+            if not (hb_house.on_active_level(obj, context)
+                    or (below is not None and obj.get(hb_house.LEVEL_KEY) == below.uid)):
                 continue
             try:
                 start, end = get_wall_endpoints(obj)
@@ -2350,7 +2356,7 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
                 k = (round(pt.x, 4), round(pt.y, 4))
                 if k not in seen:
                     seen.add(k)
-                    points.append(Vector((pt.x, pt.y, 0.0)))
+                    points.append(Vector((pt.x, pt.y, z)))
         self._auto_track_key = key
         self._auto_track = points
         return points
@@ -2390,15 +2396,16 @@ class home_builder_walls_OT_draw_walls(bpy.types.Operator, hb_placement.Placemen
             # Corners on one line tie on pixels; the nearest one is the
             # line's origin (it is the one marked).
             near = (Vector((tp.x, tp.y, 0.0)) - here).length
-            # Vertical line through tp.x: closest point at (tp.x, world_pos.y, 0)
-            cp = Vector((tp.x, world_pos.y, 0))
+            # Vertical line through tp.x: closest point at (tp.x, world_pos.y),
+            # at the point's own height (an upper level's)
+            cp = Vector((tp.x, world_pos.y, tp.z))
             scr = view3d_utils.location_3d_to_region_2d(region, rv3d, cp)
             if scr is not None:
                 d = (round((mouse2d - scr).length, 1), near)
                 if d[0] < threshold and (best_x is None or d < best_x[0]):
                     best_x = (d, tp)
             # Horizontal line through tp.y
-            cp = Vector((world_pos.x, tp.y, 0))
+            cp = Vector((world_pos.x, tp.y, tp.z))
             scr = view3d_utils.location_3d_to_region_2d(region, rv3d, cp)
             if scr is not None:
                 d = (round((mouse2d - scr).length, 1), near)
