@@ -51,6 +51,8 @@ CUTTER_HEIGHT = 50.0        # and up
 GABLE_MARGIN = 0.05         # gable walls run this far past the roof underside
 SET_BACK_MIN = 0.05         # an eave-side wall this far inside the outline is set back
 DORMER_MARGIN = 0.5         # dormer volumes reach this far past the front wall
+DORMER_ABOVE = 0.3          # a cross gable with its eaves this far over the main
+                            # roof at its front stands on it, as a dormer
 GABLE_INFILL = 0.15         # thickness of a cross gable's filled-in gable end
 DORMER_WALL = 0.12          # thickness of a shed dormer's front and cheeks
 SHED_SET_BACK = 0.9         # a new shed dormer's front, in from the wall line
@@ -1139,10 +1141,15 @@ def _dormer_prisms(frame, roof, dormers):
         # roof in front of and below the dormer stays, so the front wall
         # stands on it rather than in a hole down to the eave
         # A roof piece's gable comes down to the main roof's eaves, so the
-        # main roof opens all the way out under it
+        # main roof opens all the way out under it - unless its eaves stand
+        # above the main roof where its front is: then it is a dormer, and
+        # the roof runs on below it, up to its front wall
         # (a gable dormer stands on the slope, like one from a bump-out)
-        start = (d['u_front'] + s * CUTTER_REACH if 'pitch' in d and not d.get('on_slope')
-                 else d['u_front'])
+        start = d['u_front']
+        if 'pitch' in d and not d.get('on_slope'):
+            top = roof_top_z_at(frame, roof, d['u_front'], vc)
+            if plate <= top + DORMER_ABOVE:
+                start = d['u_front'] + s * CUTTER_REACH
         tops.append(([(v0, low), (v1, low), (v1, plate + tv), (vc, ridge + tv), (v0, plate + tv)],
                      start, back, to_world))
         # The trim stays off the whole dormer, its front wall included
