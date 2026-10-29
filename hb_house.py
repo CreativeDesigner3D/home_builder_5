@@ -1401,6 +1401,15 @@ def _roof_changed(self, context):
     hb_roofs.rebuild_roof_of(self)
 
 
+def _roof_enabled_changed(roof, context):
+    """A roof turned on is shown: with Show Roofs off it would be built and
+    nowhere to be seen."""
+    house = roof.id_data.hb_house
+    if roof.enabled and not house.show_roofs:
+        house.show_roofs = True
+    _roof_changed(roof, context)
+
+
 def _truss_changed(self, context):
     """Trusses or rafters: the framing changes, and a vaulted ceiling under
     scissor trusses follows their bottom chords."""
@@ -1513,7 +1522,7 @@ class HB_Roof(PropertyGroup):
     level's floor so the level is inside it. See hb_roofs."""
 
     enabled: BoolProperty(name="Roof", default=False,
-                          update=_roof_changed)  # type: ignore
+                          update=lambda self, context: _roof_enabled_changed(self, context))  # type: ignore
 
     style: EnumProperty(
         name="Style",

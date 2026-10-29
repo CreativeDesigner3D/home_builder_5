@@ -1251,7 +1251,13 @@ def _blocks(context):
         blocks.extend(_whole_house(context, EXTERIOR_FIELDS + (('gap', None, ""),) + BASE_FIELDS, house))
     elif _page == 'ROOF':
         if level is not None:
-            blocks.extend(options_panel.field_blocks(context, ROOF_FIELDS, level.roof))
+            # Show Roofs beside the switch, so a roof turned on here can be
+            # seen (or hidden) without going back to the Levels page
+            blocks.extend(options_panel.field_blocks(context, ROOF_FIELDS[:1], level.roof))
+            if level.roof.enabled:
+                blocks.extend(options_panel.field_blocks(
+                    context, (('bool', 'show_roofs', "Show Roofs"),), house))
+            blocks.extend(options_panel.field_blocks(context, ROOF_FIELDS[1:], level.roof))
             if level.roof.enabled:
                 blocks.append(('gap', None))
                 blocks.extend(options_panel.pool_blocks(context, PIECE_SPEC))
