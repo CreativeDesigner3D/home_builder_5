@@ -564,7 +564,9 @@ def _cabinet_style_fields():
     # hardware that goes with each (_DOOR_STYLE_FIELDS /
     # _DRAWER_STYLE_FIELDS); the panel reads them as a line each.
     notes = (
-        # Printed at the end of the style's Style Section block.
+        # Printed at the end of the style's Style Section block, under
+        # the header (blank prints NOTES).
+        ('text', 'ss_notes_header', "Header", {}),
         ('items', 'ss_notes', None,
          {'kind': 'text', 'prop': 'text',
           'remove': ('hb_face_frame.remove_style_note',

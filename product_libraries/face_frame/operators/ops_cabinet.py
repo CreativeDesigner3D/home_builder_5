@@ -4700,6 +4700,8 @@ class hb_face_frame_OT_add_pullout_accessory(bpy.types.Operator):
                 op_props = opening_obj.face_frame_opening
                 if op_props.front_type != 'PULLOUT':
                     apply_opening_preset(opening_obj, 'PULLOUT')
+                if code:
+                    _set_opening_interior(op_props, 'OPEN')
                 op_props.pullout_accessory_code = code
                 bay = _find_bay(opening_obj)
                 if bay is not None and self.opening_width > 0.0 \
@@ -4956,6 +4958,9 @@ def _apply_accessory_choice(operator, context, target, code, item,
             operator.report({'WARNING'},
                             "Select an opening or interior region first")
             return {'CANCELLED'}
+        # A modeled unit takes up the opening, so the shelves go.
+        if _geometry_kind(item) == 'MODEL':
+            _set_opening_interior(props, 'OPEN')
         new_item = props.interior_items.add()
         new_item.kind = 'ACCESSORY'
         new_item.accessory_label = name
@@ -4982,9 +4987,11 @@ def _apply_accessory_choice(operator, context, target, code, item,
             op_props = target.face_frame_opening
             if op_props.front_type != 'PULLOUT':
                 apply_opening_preset(target, 'PULLOUT')
+            # The unit rides the front out, so no shelves behind it.
+            _set_opening_interior(op_props, 'OPEN')
             op_props.pullout_accessory_code = code
             bay = _find_bay(target)
-            if bay is not None and opening_width > 0.0                     and getattr(bay, 'face_frame_bay', None) is not None:
+            if bay is not None and opening_width > 0.0                   and getattr(bay, 'face_frame_bay', None) is not None:
                 bay.face_frame_bay.width = opening_width
             types_face_frame.recalculate_face_frame_cabinet(target)
         operator.report({'INFO'}, "Set pullout model: %s" % name)
@@ -5144,6 +5151,26 @@ class hb_face_frame_OT_remove_opening_accessory(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class hb_face_frame_OT_remove_opening_pullout(bpy.types.Operator):
+    """Clear the pull-out model from the opening."""
+    bl_idname = "hb_face_frame.remove_opening_pullout"
+    bl_label = "Remove Pull-out"
+    bl_description = ("Remove the pull-out model from this opening. "
+                      "The front stays a pullout")
+    bl_options = {'UNDO', 'INTERNAL'}
+
+    target_name: bpy.props.StringProperty(default="", options={'HIDDEN'})  # type: ignore
+
+    def execute(self, context):
+        target = bpy.data.objects.get(self.target_name)
+        ffo = getattr(target, 'face_frame_opening', None) if target else None
+        if ffo is None or not ffo.pullout_accessory_code:
+            return {'CANCELLED'}
+        ffo.pullout_accessory_code = ""
+        types_face_frame.recalculate_face_frame_cabinet(target)
+        return {'FINISHED'}
+
+
 class hb_face_frame_OT_accessory_menu(bpy.types.Operator):
     """Lay out the accessories in an opening: browse the catalog (one
     list of everything that fits, narrowed by a search box and a
@@ -5267,9 +5294,13 @@ class hb_face_frame_OT_accessory_menu(bpy.types.Operator):
         if pullout:
             entry = accessory_registry.find(pullout) or {}
             modeled = _geometry_kind(entry) == 'MODEL' if entry else False
-            layout.label(text="Pull-out: %s (%s)" % (
+            row = layout.row()
+            row.label(text="Pull-out: %s (%s)" % (
                 entry.get('name', pullout), pullout),
                 icon='MESH_GRID' if modeled else 'DOT')
+            rem = row.operator("hb_face_frame.remove_opening_pullout",
+                               text="", icon='REMOVE')
+            rem.target_name = tgt.name
         props = _interior_items_target(tgt)
         if props is None:
             layout.label(text="This opening is divided: pick a section to "
@@ -7715,8 +7746,14 @@ class hb_face_frame_OT_refresh_top_drawer_openings(bpy.types.Operator):
         val = context.scene.hb_face_frame.top_drawer_opening_height
         count = 0
         done = set()
-        for obj in context.scene.objects:
-            if obj.get('SIZE_ROLE') != 'TOP_DRAWER':
+        # Snapshot names first: each size write recalcs the cabinet, which
+        # deletes and rebuilds parts, so a live scene.objects walk would step
+        # onto freed objects and crash Blender.
+        names = [o.name for o in context.scene.objects
+                 if o.get('SIZE_ROLE') == 'TOP_DRAWER']
+        for name in names:
+            obj = bpy.data.objects.get(name)
+            if obj is None or obj.get('SIZE_ROLE') != 'TOP_DRAWER':
                 continue
             node = self._row_node(obj)
             # Side-by-side siblings can resolve to the same row; write once.
@@ -7942,6 +7979,7 @@ classes = (
     HB_UL_face_frame_opening_accessories,
     hb_face_frame_OT_add_accessory_to_opening,
     hb_face_frame_OT_remove_opening_accessory,
+    hb_face_frame_OT_remove_opening_pullout,
     hb_face_frame_OT_add_appliance_to_bay,
     hb_face_frame_OT_set_under_cabinet_appliance,
     hb_face_frame_OT_remove_appliance_from_bay,
