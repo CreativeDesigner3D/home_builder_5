@@ -126,6 +126,8 @@ VIEW_FIELDS = (
         ('bool', 'show_roofs', "Roofs"),
         ('bool', 'show_ceilings', "Ceilings"),
         ('bool', 'show_room_labels', "Room Labels"),
+        ('bool', 'show_window_cages', "Window Cages"),
+        ('bool', 'show_annotations', "Annotations"),
         ('bool', 'show_framing', "Framing"),
     )}),
     ('pick', lambda context: _import_entries(context), "Import Room as Level"),

@@ -2042,6 +2042,42 @@ def _labels_shown_changed(house):
     _tag_view3d_redraw()
 
 
+def _cages_get(house):
+    return bool(house.id_data.home_builder.show_entry_door_and_window_cages)
+
+
+def _cages_set(house, value):
+    # The scene's own setting, the one the sidebar shows: its update
+    # draws the door and window cages solid or as wire.
+    house.id_data.home_builder.show_entry_door_and_window_cages = value
+
+
+def apply_annotation_visibility(scene):
+    """Dimensions, labels and the rest of the drawing marks in the house
+    view, shown or hidden with Annotations - with whatever hangs off them
+    (a dimension's leader carries no tag of its own). Hidden per view
+    layer, so the drawings built from the house keep them."""
+    hide = not scene.hb_house.show_annotations
+
+    def walk(obj):
+        for layer in scene.view_layers:
+            try:
+                obj.hide_set(hide, view_layer=layer)
+            except RuntimeError:
+                pass        # not in that view layer
+        for child in obj.children:
+            walk(child)
+
+    for obj in scene.objects:
+        if obj.get('IS_2D_ANNOTATION') and not (obj.parent and obj.parent.get('IS_2D_ANNOTATION')):
+            walk(obj)
+
+
+def _annotations_shown_changed(house):
+    apply_annotation_visibility(house.id_data)
+    _tag_view3d_redraw()
+
+
 def _framing_shown_changed(house):
     from . import hb_framing
     scene = house.id_data
@@ -2534,6 +2570,19 @@ class HB_House_Props(PropertyGroup):
         description="Show each room's name and area on its floor. Walk Through hides them while it runs",
         default=True,
         update=lambda self, context: _labels_shown_changed(self))  # type: ignore
+
+    show_window_cages: BoolProperty(
+        name="Show Window Cages",
+        description="Draw the door and window cages solid. Off, they are wire, so the "
+                    "doors and windows inside them show",
+        get=_cages_get, set=_cages_set)  # type: ignore
+
+    show_annotations: BoolProperty(
+        name="Show Annotations",
+        description="Show dimensions, labels and other drawing marks in the house view. "
+                    "The drawings keep them either way",
+        default=True,
+        update=lambda self, context: _annotations_shown_changed(self))  # type: ignore
 
     show_ceilings: BoolProperty(
         name="Show Ceilings",
