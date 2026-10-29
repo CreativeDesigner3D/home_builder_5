@@ -43,6 +43,7 @@ _prev = None            # (panel was open, tab) before the session began
 _relaunch = None        # (bl_idname, window, area, region) to start again
 _restart = False        # the stop asked for is to start the tool again
 _list = None            # the TOOL page's ScrollList
+_last = None            # name of the last thing the session's tool placed
 
 MOUSE_EVENTS = {'MOUSEMOVE', 'LEFTMOUSE', 'RIGHTMOUSE', 'WHEELUPMOUSE',
                 'WHEELDOWNMOUSE', 'TRACKPADPAN'}
@@ -83,10 +84,12 @@ def begin(op, context):
     if not joins(context.scene, type(op).bl_idname):
         return
     from . import viewport_hud, scene_navigator as nav
+    global _last
     op._exit_requested = False
     viewport_hud.register_active_modal(op)
     if _tool is None:
         _prev = (nav.panel_open(), nav.active_tab())
+        _last = None
     _tool = type(op).bl_idname
     _owner = op
     nav.set_active_tab(TAB_KEY)
@@ -95,8 +98,38 @@ def begin(op, context):
     _tag_redraw()
 
 
+def placed(obj):
+    """A tool has put something down. When the tool ends, the last thing
+    placed is selected and the SELECTED tab shows its settings - what it
+    should be is often clearer once it is there."""
+    global _last
+    if obj is not None:
+        _last = obj.name
+
+
+def _select_last():
+    """Select what the session placed last, if the SELECTED tab can show
+    it, and let the tab come up for it."""
+    global _last
+    name, _last = _last, None
+    obj = bpy.data.objects.get(name) if name else None
+    context = bpy.context
+    if obj is None or context.view_layer is None or obj.name not in context.view_layer.objects:
+        return
+    from types import SimpleNamespace
+    from . import selected_tab
+    if selected_tab._item(SimpleNamespace(active_object=obj, selected_objects=[obj])) is None:
+        return
+    for o in context.selected_objects:
+        o.select_set(False)
+    obj.select_set(True)
+    context.view_layer.objects.active = obj
+    bpy.app.timers.register(selected_tab._deferred, first_interval=0.0)
+
+
 def _end():
-    """The session is over: put the panel back the way it was."""
+    """The session is over: put the panel back the way it was - or, if
+    the tool placed something the SELECTED tab shows, show it there."""
     global _tool, _owner, _prev
     from . import scene_navigator as nav
     # Read the tab while the TOOL tab still exists: with no tool it is
@@ -111,6 +144,10 @@ def _end():
             nav.set_active_tab(tab)
         if not was_open:
             nav.close_panel()
+    try:
+        _select_last()
+    except Exception as e:
+        print(f"Home Builder: {e}")
     _tag_redraw()
 
 

@@ -403,6 +403,7 @@ class HOME_BUILDER_OT_furnish(doors_windows._PlaceWallObjectBase):
             obj, self.free_obj = self.free_obj, None
             finish(context, obj)
             self.placed_count += 1
+            tool_session.placed(obj)
             if tool_session.stays_on(context):
                 self._new_free(context)
                 return {'RUNNING_MODAL'}

@@ -496,6 +496,7 @@ class home_builder_stairs_OT_place_stairs(bpy.types.Operator):
         obj.select_set(True)
         context.view_layer.objects.active = obj
         del obj['HB_STAIR_PREVIEW']
+        tool_session.placed(obj)
         level = hb_stairs.level_of(obj)
         if level is not None:
             hb_house.ensure_level_collections(context.scene, level)

@@ -1194,6 +1194,7 @@ class _PlaceWallObjectBase(bpy.types.Operator, WallObjectPlacementMixin):
                 from .. import hb_trim
                 hb_trim.refresh_for_wall(self.selected_wall)
                 self.placed_count += 1
+                tool_session.placed(self.placed_obj.obj)
                 if self.continuous:
                     self.start_next_object(context)
                     self.update_header(context)

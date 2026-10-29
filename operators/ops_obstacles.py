@@ -603,6 +603,7 @@ class home_builder_obstacles_OT_place_obstacle(bpy.types.Operator, hb_placement.
                 
                 hb_placement.clear_header_text(context)
                 self.report({'INFO'}, f"Placed {self.obstacle_obj.name}")
+                tool_session.placed(self.obstacle_obj)
                 return {'FINISHED'}
         
         # Cancel
