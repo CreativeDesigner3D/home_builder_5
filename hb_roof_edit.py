@@ -9,7 +9,11 @@ hb_roofs) are drawn as outlines on the plan, with grips to drag:
   custom footprint.
 * Drag inside a piece to move it whole.
 * The pitch grip on a ridge raises or lowers it: the pitch, in whole
-  steps of 12 (Shift for quarter steps).
+  steps of 12 (Shift for quarter steps). On a barn (gambrel) roof it is
+  the upper slopes' pitch, and two more grips shape the lower slopes
+  (a mansard's too): the break grip raises or lowers the break between
+  them, and the lower-pitch grip, halfway down the lower slope, drags in
+  and out across the house - the steeper the further out.
 * Eave grips set where a piece's slopes meet its walls - or a shed
   dormer's front wall height - and how far the main roof's eaves sit
   above its walls.
@@ -47,7 +51,8 @@ ACTIVE_COLOR = (1.0, 0.85, 0.35, 1.0)
 RIDGE_COLOR = (0.55, 0.85, 1.0, 0.85)
 DRAW_COLOR = (0.45, 1.0, 0.55, 1.0)
 GRIP_COLORS = {'edge': (1.0, 1.0, 1.0, 1.0), 'pitch': (0.45, 0.8, 1.0, 1.0),
-               'eave': (0.45, 1.0, 0.55, 1.0)}
+               'eave': (0.45, 1.0, 0.55, 1.0), 'break': (0.45, 1.0, 0.55, 1.0),
+               'lower': (0.45, 0.8, 1.0, 1.0)}
 HOVER_COLOR = (1.0, 0.95, 0.2, 1.0)
 LABEL_BG = (0.08, 0.08, 0.08, 0.85)
 
@@ -212,6 +217,14 @@ def outlines(scene, level):
             ridges.extend((w(a, v, za), w(b, v, zb)) for (a, za), (b, zb) in zip(under, under[1:]))
         if roof.style == 'GABLE':
             grips.append(('pitch', None, w(uc, vc, frame['ridge_z'])))
+    if roof.style in ('GAMBREL', 'MANSARD'):
+        # The lower slopes: where they break, and how steep they are -
+        # on the front's middle, as the profile is drawn there
+        (ua, za), (ub, zb) = frame['under'][0], frame['under'][1]
+        grips.append(('break', None, w(ub, vc, zb)))
+        grips.append(('lower', None, w((ua + ub) / 2.0, vc, (za + zb) / 2.0)))
+        if roof.style == 'GAMBREL':
+            grips.append(('pitch', None, w(uc, vc, frame['ridge_z'])))
     # At a front corner: the middle of the front is the edge grip's
     grips.append(('eave', None, w(u0, v0, plate)))
     main = {'rect': rect, 'z': plate, 'lines': lines, 'ridges': ridges, 'grips': grips,
@@ -347,7 +360,8 @@ class EditSession:
 
     def _snapshot(self, target):
         owner = self._owner(target)
-        keys = (('use_extents', 'ext_x0', 'ext_x1', 'ext_y0', 'ext_y1', 'pitch', 'eave_height')
+        keys = (('use_extents', 'ext_x0', 'ext_x1', 'ext_y0', 'ext_y1', 'pitch', 'eave_height',
+                 'lower_pitch', 'break_height')
                 if target < 0 else SIDES + ('pitch', 'eave_height'))
         return {k: getattr(owner, k) for k in keys}
 
@@ -498,6 +512,10 @@ class EditSession:
             self._drag_pitch(view, mx, my, shift)
         elif kind == 'eave':
             self._drag_eave(view, mx, my, ctrl, shift)
+        elif kind == 'break':
+            self._drag_break(view, mx, my, shift)
+        elif kind == 'lower':
+            self._drag_lower(view, mx, my, shift)
 
     def _tol(self, view, point):
         return view.px_size(point, SNAP_PX * _ui_scale())
@@ -592,7 +610,11 @@ class EditSession:
             return
         level = self.level()
         frame = hb_roofs.roof_frame(self.scene, level)
-        if dr['target'] < 0:
+        if dr['target'] < 0 and level.roof.style == 'GAMBREL':
+            # The upper slopes: from the break up to the ridge
+            (ub, zb) = frame['under'][1]
+            plate, half = zb, abs(frame['uc'] - ub)
+        elif dr['target'] < 0:
             plate, half = frame['plate'], frame['half']
         else:
             piece = level.roof.pieces[dr['target']]
@@ -605,7 +627,47 @@ class EditSession:
         pitch = round((z - plate) / half * 12.0 / step) * step
         pitch = min(max(pitch, 1.0), 24.0)
         self._owner(dr['target'])['pitch'] = pitch
-        self.message = f"{units.format_number(pitch)} in 12"
+        upper = "Upper " if dr['target'] < 0 and level.roof.style == 'GAMBREL' else ""
+        self.message = f"{upper}{units.format_number(pitch)} in 12"
+        self.label_at = Vector(dr['point'])
+
+    def _drag_break(self, view, mx, my, shift):
+        """A barn or mansard roof's break, up or down: its height over the
+        walls."""
+        dr = self.drag
+        z = view.on_vertical(mx, my, dr['point'])
+        if z is None:
+            return
+        level = self.level()
+        roof = level.roof
+        frame = hb_roofs.roof_frame(self.scene, level)
+        value = round_length(self.scene, z - frame['base'], shift)
+        value = max(value, roof.eave_height + MIN_SIZE)
+        roof['break_height'] = value
+        self.message = f"Break {format_length(self.scene, value)} above the walls"
+        p = Vector(dr['point'])
+        self.label_at = Vector((p.x, p.y, z))
+
+    def _drag_lower(self, view, mx, my, shift):
+        """A barn or mansard roof's lower slopes, steeper or shallower: the
+        grip is halfway down the slope, so where it is across the house
+        is half how far in the break sits."""
+        dr = self.drag
+        p = view.on_plane(mx, my, dr['point'][2])
+        if p is None:
+            return
+        level = self.level()
+        frame = hb_roofs.roof_frame(self.scene, level)
+        (ua, za), (ub, zb) = frame['under'][0], frame['under'][1]
+        u, _v = hb_roofs._uv(frame, (p.x, p.y))
+        inset = max(2.0 * (u - ua), 0.02)
+        z_break = frame['base'] + level.roof.break_height
+        rise = max(z_break - frame['plate'], 0.01)
+        step = 0.25 if shift else 1.0
+        pitch = round(rise / inset * 12.0 / step) * step
+        pitch = min(max(pitch, 4.0), 96.0)
+        level.roof['lower_pitch'] = pitch
+        self.message = f"Lower {units.format_number(pitch)} in 12"
         self.label_at = Vector(dr['point'])
 
     def _drag_eave(self, view, mx, my, ctrl, shift):
@@ -669,7 +731,8 @@ class EditSession:
             return None
         hb_roofs.rebuild_roof(self.scene, level)
         return {'edge': "Move Roof Edge", 'move': "Move Roof Piece",
-                'pitch': "Change Roof Pitch", 'eave': "Change Eave Height"}[dr['kind']]
+                'pitch': "Change Roof Pitch", 'eave': "Change Eave Height",
+                'break': "Change Roof Break", 'lower': "Change Lower Pitch"}[dr['kind']]
 
     def front_line_rect(self, a, b):
         """Two clicks along one wall: a piece that wide, its front on that
