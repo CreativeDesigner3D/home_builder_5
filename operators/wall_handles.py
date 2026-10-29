@@ -48,6 +48,15 @@ HANDLES = ('START', 'END', 'MIDDLE')
 
 HINT = "Drag to move   Ctrl: no snapping   Shift: fine   Esc / right-click: cancel"
 
+ARROW_PX = 46.0              # the drawn arrow while dragging: shaft length
+HEAD_PX = 13.0               # and head size
+
+# The drag running, if any. Its arrows are hidden while it runs and the
+# dragged one is drawn by the drag instead: Blender's arrow gizmo slides
+# itself along with the mouse while its operator runs, so moved to the
+# wall's end as well it went twice as far as the cursor.
+_dragging = None
+
 
 # =============================================================================
 # READING A WALL
@@ -357,6 +366,31 @@ def _label(x, y, text):
     blf.draw(0, text)
 
 
+def _draw_arrow(region, rv3d, drag):
+    """The dragged arrow, where the wall's end (or middle) is now."""
+    try:
+        p, d = handle_places(drag.obj)[drag.handle]
+        z = drag.obj.matrix_world.translation.z + wall_frame(drag.obj)[4]
+    except Exception:
+        return
+    a = _to_px(region, rv3d, p, z)
+    b = _to_px(region, rv3d, p + d, z)
+    if a is None or b is None or (b - a).length < 1e-6:
+        return
+    s = _scale()
+    u = (b - a).normalized()
+    n = Vector((-u.y, u.x))
+    tip = a + u * (ARROW_PX * s)
+    base = tip - u * (HEAD_PX * s)
+    shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+    shader.uniform_float("color", (*ARROW_HOVER, 1.0))
+    gpu.state.line_width_set(3.0 * s)
+    batch_for_shader(shader, 'LINES', {"pos": [a, base]}).draw(shader)
+    gpu.state.line_width_set(1.0)
+    w = HEAD_PX * 0.5 * s
+    batch_for_shader(shader, 'TRIS', {"pos": [tip, base + n * w, base - n * w]}).draw(shader)
+
+
 def draw_drag(op, context):
     drag = op.drag
     if drag is None or context.region != op.region:
@@ -385,6 +419,7 @@ def draw_drag(op, context):
         p = _to_px(region, rv3d, mid, z)
         if p is not None:
             _label(p.x, p.y, length_text(scene, length))
+    _draw_arrow(region, rv3d, drag)
     if drag.handle == 'MIDDLE' and abs(drag.t) > 1e-6 and op.mouse is not None:
         _label(op.mouse[0] + 40 * _scale(), op.mouse[1] + 24 * _scale(),
                ("+" if drag.t > 0 else "−") + length_text(scene, abs(drag.t)))
@@ -443,6 +478,8 @@ class HOME_BUILDER_OT_wall_handle_drag(bpy.types.Operator):
         if point is None:
             return {'CANCELLED'}
         self.drag = Drag(obj, self.handle, point)
+        global _dragging
+        _dragging = self
         self.region = context.region
         self.mouse = (event.mouse_region_x, event.mouse_region_y)
         self._handle = bpy.types.SpaceView3D.draw_handler_add(
@@ -453,6 +490,9 @@ class HOME_BUILDER_OT_wall_handle_drag(bpy.types.Operator):
         return {'RUNNING_MODAL'}
 
     def _finish(self, context):
+        global _dragging
+        if _dragging is self:
+            _dragging = None
         if self._handle is not None:
             bpy.types.SpaceView3D.draw_handler_remove(self._handle, 'WINDOW')
             self._handle = None
@@ -524,7 +564,9 @@ class HOME_BUILDER_GGT_wall_handles(bpy.types.GizmoGroup):
 
     def draw_prepare(self, context):
         obj = context.active_object
-        if not is_house_wall(obj):
+        for gz in self.arrows.values():
+            gz.hide = _dragging is not None
+        if not is_house_wall(obj) or _dragging is not None:
             return
         try:
             places = handle_places(obj)
