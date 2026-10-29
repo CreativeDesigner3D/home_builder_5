@@ -51,7 +51,23 @@ STRINGER_ITEMS = [('CLOSED', "Closed", "Boards each side, the treads housed betw
                   ('OPEN', "Open", "Cut stringers under the treads, their ends showing"),
                   ('CENTER', "Center", "One stringer down the middle")]
 RAILING_ITEMS = [('AUTO', "Open Sides", "A railing on each side not along a wall"),
+                 ('LEFT', "Left Side", "A railing on the left side going up only - a handrail, "
+                                       "if it is along a wall"),
+                 ('RIGHT', "Right Side", "A railing on the right side going up only - a handrail, "
+                                         "if it is along a wall"),
                  ('NONE', "None", "No railings")]
+
+
+def rail_on(c, side):
+    """Whether a stair's side ('LEFT' or 'RIGHT', as you walk up) gets its
+    railing, or its handrail along a wall."""
+    return c['railing'] == 'AUTO' or c['railing'] == side
+
+
+def outside(v):
+    """The side the outside of a stair's turn is on: its landing's and
+    winders' open edges."""
+    return 'RIGHT' if v['turn'] == 'LEFT' else 'LEFT'
 BALUSTER_ITEMS = [('SQUARE', "Square", "Square balusters"),
                   ('ROUND', "Round", "Turned (round) balusters"),
                   ('GLASS', "Glass", "Glass panels"),
@@ -493,6 +509,8 @@ def parts_mesh(obj):
         h = c['rail_height']
         y0 = f.T * 0.5 - c['nosing'] / 2
         for s, against in enumerate(walls):
+            if not rail_on(c, ('LEFT', 'RIGHT')[s]):
+                continue
             if against:
                 if c['wall_rail']:
                     xw = WALL_RAIL_OFF if s == 0 else f.W - WALL_RAIL_OFF
@@ -514,8 +532,8 @@ def parts_mesh(obj):
             def rail(t, f=f, y0=y0, ye=ye):
                 return f.nosing_z(y0 + (ye - y0) * t) + h
             _railing_along(B, f.m, (x, y0), (x, ye), walk, rail, c, mats, posts=(True, False))
-    # Landings: railings along their open edges
-    if c['railing'] != 'NONE':
+    # Landings: railings along their open edges, the outside of the turn
+    if rail_on(c, outside(v)):
         for li, (lx0, ly0, lx1, ly1, z) in enumerate(landings):
             centre = Vector(((lx0 + lx1) / 2.0, (ly0 + ly1) / 2.0))
             for a, b, against in landing_edges[li]:
@@ -631,7 +649,7 @@ def _turn_parts(B, obj, v, c, flights, turn, mats):
             if c['under'] in ('WALLED', 'CLOSET') and not against:
                 _slab(B, I, pa + n * (UNDER_T / 2), pb + n * (UNDER_T / 2), 0.0, 0.0,
                       max(0.0, za - STRINGER_DEPTH), max(0.0, zb - STRINGER_DEPTH), UNDER_T, 4)
-            if against or c['railing'] == 'NONE':
+            if against or not rail_on(c, outside(v)):
                 continue
             ra, rb = pa + n * inch(2), pb + n * inch(2)
             walk_z = (lambda t, z=z: z) if c['stringer'] != 'CLOSED' else \
@@ -654,7 +672,11 @@ def _arc_parts(B, v, c, A, mats):
     steps = max(1, math.ceil(A.alpha / math.radians(10)))
     phis = [A.alpha * 0.5] + [A.alpha * (i + j / steps) for i in range(1, A.n - 1) for j in range(steps)] + [end]
     phis = sorted(set(round(p, 9) for p in phis if p <= end + 1e-9))
-    sides_ = [A.r_out - inch(2)] if spiral else [A.r_in + inch(2), A.r_out - inch(2)]
+    # The inside of the turn is the side it turns to; a spiral has only its outside
+    inner_side = 'RIGHT' if A.right else 'LEFT'
+    outer_side = 'LEFT' if A.right else 'RIGHT'
+    sides_ = [r for r, side in ([] if spiral else [(A.r_in + inch(2), inner_side)])
+              + [(A.r_out - inch(2), outer_side)] if rail_on(c, side)]
     tread_top = lambda ph: (min(int(ph / A.alpha + 1e-9), A.n - 1) + 1) * A.r
     if c['railing'] != 'NONE':
         for radius in sides_:

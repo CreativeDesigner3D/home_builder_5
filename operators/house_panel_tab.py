@@ -791,7 +791,7 @@ STAIR_FIELDS = (
     ('group', 'stair_railing', "Railing", {'summary': lambda st: ("None" if st.railing == 'NONE'
                                                                else f"{_label(st, 'baluster')} · {_label(st, 'railing')}"),
                                           'fields': (
-        ('enum', 'railing', "Railings"),
+        ('choices', 'railing', "Railings", {'cols': 2}),
         ('enum', 'baluster', "Style", {'when': lambda st: st.railing != 'NONE'}),
         ('distance', 'rail_height', "Rail Height", {'when': lambda st: st.railing != 'NONE'}),
         ('bool', 'wall_rail', "Handrail on Walls", {'when': lambda st: st.railing != 'NONE'}),

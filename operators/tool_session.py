@@ -403,7 +403,8 @@ STAIR_FIELDS = (
     ('distance', 'stair_tread', "Tread Depth", {'when': lambda h: h.stair_type != 'SPIRAL'}),
     ('choices', 'stair_risers', "Risers", {'cols': 2}),
     ('choices', 'stair_stringer', "Stringers", {'cols': 3, 'when': lambda h: h.stair_type != 'SPIRAL'}),
-    ('choices', 'stair_baluster', "Railing", {'cols': 2}),
+    ('choices', 'stair_railing', "Railings", {'cols': 2}),
+    ('choices', 'stair_baluster', "Railing Style", {'cols': 2, 'when': lambda h: h.stair_railing != 'NONE'}),
 )
 
 SKYLIGHT_FIELDS = (

@@ -406,7 +406,12 @@ _risers = _enum('STAIR_RISERS', [('CLOSED', "Closed", "A riser under every tread
 _STRINGERS = [('CLOSED', "Closed", "Boards each side, the treads housed between them"),
               ('OPEN', "Open", "Cut stringers under the treads, their ends showing"),
               ('CENTER', "Center", "One stringer down the middle")]
-_RAILINGS = [('AUTO', "Open Sides", "A railing on each side not along a wall"), ('NONE', "None", "No railings")]
+_RAILINGS = [('AUTO', "Open Sides", "A railing on each side not along a wall"),
+             ('LEFT', "Left Side", "A railing on the left side going up only - a handrail, if it is "
+                                   "along a wall"),
+             ('RIGHT', "Right Side", "A railing on the right side going up only - a handrail, if it "
+                                     "is along a wall"),
+             ('NONE', "None", "No railings")]
 _BALUSTERS = [('SQUARE', "Square", "Square balusters"), ('ROUND', "Round", "Turned (round) balusters"),
               ('GLASS', "Glass", "Glass panels"), ('SOLID', "Half Wall", "A half wall capped with a rail")]
 _UNDERS = [('OPEN', "Open", "Nothing under the stair"),

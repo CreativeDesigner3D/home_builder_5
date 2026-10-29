@@ -2385,6 +2385,11 @@ class HB_House_Props(PropertyGroup):
         ('CLOSED', "Closed", "Boards each side, the treads housed between them"),
         ('OPEN', "Open", "Cut stringers under the treads, their ends showing"),
         ('CENTER', "Center", "One stringer down the middle")], default='CLOSED')  # type: ignore
+    stair_railing: EnumProperty(name="Railings", items=[
+        ('AUTO', "Open Sides", "A railing on each side not along a wall"),
+        ('LEFT', "Left Side", "A railing on the left side going up only"),
+        ('RIGHT', "Right Side", "A railing on the right side going up only"),
+        ('NONE', "None", "No railings")], default='AUTO')  # type: ignore
     stair_baluster: EnumProperty(name="Railing", items=[
         ('SQUARE', "Square", "Square balusters"),
         ('ROUND', "Round", "Turned (round) balusters"),

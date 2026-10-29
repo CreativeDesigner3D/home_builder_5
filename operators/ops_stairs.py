@@ -368,7 +368,7 @@ class home_builder_stairs_OT_place_stairs(bpy.types.Operator):
         h = context.scene.hb_house
         return (h.stair_type, h.stair_turn, round(h.stair_width, 5), round(h.stair_max_riser, 5),
                 round(h.stair_tread, 5), h.stair_from, h.stair_risers, h.stair_stringer, h.stair_baluster,
-                h.stair_winders, round(h.stair_radius, 5), round(h.stair_diameter, 5))
+                h.stair_railing, h.stair_winders, round(h.stair_radius, 5), round(h.stair_diameter, 5))
 
     def _levels(self, context):
         """(the level the stair stands on, the one it climbs to, the level
@@ -412,6 +412,7 @@ class home_builder_stairs_OT_place_stairs(bpy.types.Operator):
         obj['STAIR_RISERS'] = h.stair_risers
         obj['STAIR_STRINGER'] = h.stair_stringer
         obj['STAIR_BALUSTER'] = h.stair_baluster
+        obj['STAIR_RAILING'] = h.stair_railing
         obj['HB_STAIR_PREVIEW'] = True
         if base is not None:
             obj[hb_house.LEVEL_KEY] = base.uid
