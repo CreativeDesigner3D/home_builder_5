@@ -1064,6 +1064,21 @@ def floor_slab_thickness(level):
     return max(gap - SLAB_CLEARANCE, FLOOR_THICKNESS)
 
 
+def stair_home_room(scene, level, stair):
+    """The room a stair starts in - its foot's - or None."""
+    from .hb_wall_graph import point_in_polygon
+    from . import hb_stairs
+    v = hb_stairs.values(stair)
+    (s, _up), _end = hb_stairs.ends(v)
+    m = stair.matrix_world
+    p = (m @ Vector((s.x, s.y + min(v['tread'] / 2.0, 0.1), 0.0))).to_2d()
+    for room in level.rooms:
+        poly = room_polygon(scene, level, room)
+        if poly and point_in_polygon((p.x, p.y), [tuple(q[:2]) for q in poly]):
+            return room
+    return None
+
+
 def stairwell_cutter(stair):
     for child in stair.children:
         if child.get(STAIRWELL_KEY):
@@ -1120,7 +1135,76 @@ def stair_opening_rects(stair, level):
             continue                # headroom to spare under the floor
         rects.append((min(c.x for c in co), min(c.y for c in co),
                       max(c.x for c in co), max(c.y for c in co)))
-    return rects
+    return _widen_opening(stair, level, rects)
+
+
+OPENING_TO_SIDE = inch(2.5)     # a tread's end this near the stair's side: out to it
+OPENING_TO_WALL = inch(2.5)     # an opening's side this near a wall's face: to it
+OPENING_INTO_WALL = 0.01        # and this far past it, so no sliver of floor is left
+
+
+def _widen_opening(stair, level, rects):
+    """The opening out to the stair's sides - its treads are housed between
+    its stringers, which the floor would otherwise be left over - and on to
+    a wall face just beyond, so no strip of floor stands proud of the wall."""
+    from . import hb_stairs, hb_stair_build, hb_stair_shapes as shapes
+    if not rects:
+        return rects
+    v = hb_stairs.values(stair)
+    feet = []
+    if not shapes.is_arc(v):
+        flights, landings = hb_stair_build.layout(v)
+        for f in flights:
+            pts = [(f.m @ Vector((x, y, 0.0))).to_2d() for x, y in
+                   ((0.0, 0.0), (f.W, 0.0), (f.W, f.run), (0.0, f.run))]
+            feet.append((min(p.x for p in pts), min(p.y for p in pts),
+                         max(p.x for p in pts), max(p.y for p in pts)))
+        feet += [tuple(l[:4]) for l in landings]
+    # Wall faces in the stair's own frame: the level's and the one above's
+    scene = stair.users_scene[0] if stair.users_scene else bpy.context.scene
+    house = scene.hb_house
+    uids = {level.uid}
+    upper = level_above(house, level)
+    if upper is not None:
+        uids.add(upper.uid)
+    inv = stair.matrix_world.inverted()
+    faces = []
+    for a, b in hb_stairs.wall_faces(scene, uids):
+        pa = (inv @ Vector((a.x, a.y, 0.0))).to_2d()
+        pb = (inv @ Vector((b.x, b.y, 0.0))).to_2d()
+        faces.append((pa, pb))
+
+    def along(lo, hi, a, b):
+        return min(a, b) < hi - 1e-4 and max(a, b) > lo + 1e-4
+
+    out = []
+    for x0, y0, x1, y1 in rects:
+        for fx0, fy0, fx1, fy1 in feet:
+            if not (along(y0, y1, fy0, fy1) and along(x0, x1, fx0, fx1)):
+                continue
+            if 0.0 < x0 - fx0 <= OPENING_TO_SIDE:
+                x0 = fx0
+            if 0.0 < fx1 - x1 <= OPENING_TO_SIDE:
+                x1 = fx1
+            if 0.0 < y0 - fy0 <= OPENING_TO_SIDE:
+                y0 = fy0
+            if 0.0 < fy1 - y1 <= OPENING_TO_SIDE:
+                y1 = fy1
+        for pa, pb in faces:
+            if abs(pa.x - pb.x) < 1e-4 and along(y0, y1, pa.y, pb.y):
+                fx = pa.x
+                if -0.005 <= fx - x1 <= OPENING_TO_WALL:
+                    x1 = max(x1, fx + OPENING_INTO_WALL)
+                elif -0.005 <= x0 - fx <= OPENING_TO_WALL:
+                    x0 = min(x0, fx - OPENING_INTO_WALL)
+            elif abs(pa.y - pb.y) < 1e-4 and along(x0, x1, pa.x, pb.x):
+                fy = pa.y
+                if -0.005 <= fy - y1 <= OPENING_TO_WALL:
+                    y1 = max(y1, fy + OPENING_INTO_WALL)
+                elif -0.005 <= y0 - fy <= OPENING_TO_WALL:
+                    y0 = min(y0, fy - OPENING_INTO_WALL)
+        out.append((x0, y0, x1, y1))
+    return out
 
 
 def stair_opening(stair, level):
@@ -1206,6 +1290,14 @@ def update_stairwell_cutter(stair):
     bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=1e-5)
     bm.to_mesh(cutter.data)
     bm.free()
+    # Its sides are what the cut leaves in the floor: painted like a wall,
+    # not the floor's finish
+    from . import hb_stair_build
+    paint = hb_stair_build.materials(stair)[6]
+    if not len(cutter.data.materials):
+        cutter.data.materials.append(paint)
+    elif cutter.data.materials[0] != paint:
+        cutter.data.materials[0] = paint
     cutter.data.update()
     update_stair_guard(stair, level, edges)
     return cutter
@@ -1372,6 +1464,9 @@ def _set_boolean(host, cutter):
         mod.solver = 'EXACT'
         # Ceilings are single sheets: tell the exact solver to expect holes
         mod.use_hole_tolerant = True
+    # The cut's faces take the cutter's paint
+    if mod.material_mode != 'TRANSFER':
+        mod.material_mode = 'TRANSFER'
     mod.object = cutter
 
 
@@ -1401,7 +1496,11 @@ def apply_stairwells(scene):
             cutter = update_stairwell_cutter(stair)
             if cutter is None:
                 continue
-            hosts = [r.ceiling_obj for r in level.rooms if r.ceiling_obj]
+            # Its own room's ceiling: one it passes over is kept, the
+            # flight boxed in under it where it hangs below (hb_stair_build)
+            home = stair_home_room(scene, level, stair)
+            hosts = [r.ceiling_obj for r in level.rooms
+                     if r.ceiling_obj and (home is None or r == home)]
             if upper is not None:
                 hosts += [r.floor_obj for r in upper.rooms if r.floor_obj]
             for host in hosts:

@@ -556,7 +556,69 @@ def parts_mesh(obj):
         _turn_parts(B, obj, v, c, flights, shapes.winder_plan(v)[1], mats)
     if c['under'] in ('WALLED', 'CLOSET') and not shapes.is_arc(v):
         _under(B, obj, v, c, flights, landings, side_walls, landing_edges)
+    if not shapes.is_arc(v):
+        try:
+            _box_in(B, obj, flights, side_walls)
+        except Exception as e:
+            print(f"Stair box-in: {e}")
     return B.mesh('Stair Parts')
+
+
+def _box_in(B, obj, flights, side_walls):
+    """A flight that leaves the stair's own room and hangs below the
+    ceiling of the room it passes over - the top of a stair turning out
+    over a garage - is boxed in there, as a builder would: a soffit under
+    it and a wall on each side not along a wall, up to that ceiling."""
+    from . import hb_rooms
+    from .hb_wall_graph import point_in_polygon
+    level = hb_house.get_level(obj.get(hb_house.LEVEL_KEY, '')) if obj.get(hb_house.LEVEL_KEY) else None
+    if level is None or not flights:
+        return
+    scene = obj.users_scene[0] if obj.users_scene else bpy.context.scene
+    rooms = []
+    for room in level.rooms:
+        poly = hb_rooms.room_polygon(scene, level, room)
+        if poly:
+            rooms.append((room, [tuple(p[:2]) for p in poly]))
+    if not rooms:
+        return
+    M = obj.matrix_basis if obj.parent is None else obj.matrix_world
+
+    def room_at(f, y):
+        p = (M @ (f.m @ Vector((f.W / 2.0, y, 0.0)))).to_2d()
+        return next((room for room, poly in rooms if point_in_polygon((p.x, p.y), poly)), None)
+
+    home = hb_rooms.stair_home_room(scene, level, obj)
+    if home is None:
+        return
+    for fi, f in enumerate(flights):
+        base = (f.m @ Vector((0.0, 0.0, 0.0))).z
+        under = lambda y, f=f: f.nosing_z(y) - STRINGER_DEPTH
+        # Runs of treads over another room, and that room's ceiling
+        runs = []
+        for i in range(f.n):
+            room = room_at(f, (i + 0.5) * f.T)
+            if room is None or room == home:
+                continue
+            zc = hb_rooms.room_height(room, level) - base
+            if runs and runs[-1][1] == i * f.T and abs(runs[-1][2] - zc) < 1e-6:
+                runs[-1][1] = (i + 1) * f.T
+            else:
+                runs.append([i * f.T, (i + 1) * f.T, zc])
+        for ya, yb, zc in runs:
+            # Only as far as the flight hangs below that ceiling
+            yc = (zc + STRINGER_DEPTH - f.r) / f.k
+            yb = min(yb, yc)
+            if yb - ya < 1e-3:
+                continue
+            soffit = [(ya, under(ya) - UNDER_T), (yb, under(yb) - UNDER_T), (yb, under(yb)), (ya, under(ya))]
+            B.profile(f.m, -UNDER_T, f.W + UNDER_T, _clean(soffit), 4)
+            for s, against in enumerate(side_walls[fi] if fi < len(side_walls) else (False, False)):
+                if against:
+                    continue
+                x0, x1 = (-UNDER_T, 0.0) if s == 0 else (f.W, f.W + UNDER_T)
+                side = [(ya, under(ya) - UNDER_T), (yb, under(yb) - UNDER_T), (yb, zc), (ya, zc)]
+                B.profile(f.m, x0, x1, _clean(side), 4)
 
 
 def _turn_edges(obj, v, flights, turn):
