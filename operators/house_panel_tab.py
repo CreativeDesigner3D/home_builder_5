@@ -158,6 +158,11 @@ EAVE_FIELDS = (
 # ---- Backdrop -----------------------------------------------------------------
 # A plan to trace on the active level (hb_backdrop)
 
+def _has_backdrop(level):
+    from .. import hb_backdrop
+    return bool(hb_backdrop.backdrops_of(level.id_data, level))
+
+
 def _backdrop_summary(level):
     from .. import hb_backdrop
     return hb_backdrop.backdrop_summary(level)
@@ -170,6 +175,10 @@ BACKDROP_FIELDS = (
         ('bool', 'backdrop_shown', "Show"),
         ('bool', 'backdrop_locked', "Lock"),
         ('number', 'backdrop_opacity', "Opacity"),
+        ('actions', (("Move to Match", "home_builder.move_backdrop"),), ""),
+        ('distance', 'backdrop_x', "X", {'when': _has_backdrop}),
+        ('distance', 'backdrop_y', "Y", {'when': _has_backdrop}),
+        ('number', 'backdrop_rotation', "Rotation", {'when': _has_backdrop}),
         ('actions', (("Remove", "home_builder.remove_backdrop"),), ""),
         ('notes', lambda context: ("Or drop a PDF on the view. Set Scale:",
                                    "click both ends of a printed dimension",

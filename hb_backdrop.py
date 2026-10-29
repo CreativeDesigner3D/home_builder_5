@@ -32,7 +32,7 @@ import bpy
 import bpy.utils.previews
 from bpy.props import (BoolProperty, EnumProperty, FloatProperty,
                        FloatVectorProperty, IntProperty, StringProperty)
-from mathutils import Vector
+from mathutils import Matrix, Vector
 
 from . import hb_house
 
@@ -722,6 +722,182 @@ class HOME_BUILDER_OT_apply_backdrop_scale(bpy.types.Operator):
         return {'FINISHED'}
 
 
+# ---- Moving it into place -------------------------------------------------------
+# A backdrop can't be clicked (rays pass through it), so it is moved by
+# its level's Backdrop settings - X, Y and Rotation - or Move to Match:
+# click a point on the plan, then where that point belongs, snapping to
+# the corners of the walls on any level (the floor below, traced already).
+
+SNAP_PX = 14
+
+
+def move_by(scene, level, dx, dy):
+    for obj in backdrops_of(scene, level):
+        obj.location.x += dx
+        obj.location.y += dy
+
+
+def turn_to(scene, level, degrees):
+    """Turn a level's backdrops to `degrees`, about the first one's middle."""
+    import math
+    objs = backdrops_of(scene, level)
+    if not objs:
+        return
+    c = objs[0].location.xy.copy()
+    d = math.radians(degrees) - objs[0].rotation_euler.z
+    rot = Matrix.Rotation(d, 2)
+    for obj in objs:
+        p = c + rot @ (obj.location.xy - c)
+        obj.location.x, obj.location.y = p.x, p.y
+        obj.rotation_euler.z += d
+
+
+def wall_corners(scene):
+    """The corners of every wall in the house, in the world."""
+    pts = []
+    for obj in scene.objects:
+        if not obj.get('IS_WALL_BP'):
+            continue
+        try:
+            from . import hb_types
+            w = hb_types.GeoNodeWall(obj)
+            length, t = w.get_input('Length'), w.get_input('Thickness')
+        except Exception:
+            continue
+        m = obj.matrix_world
+        pts += [m @ Vector(p) for p in ((0, 0, 0), (length, 0, 0), (0, t, 0), (length, t, 0))]
+    return pts
+
+
+class HOME_BUILDER_OT_move_backdrop(bpy.types.Operator):
+    """Click a point on the backdrop, then where that point belongs - a wall corner on the floor below snaps - and the backdrop moves there"""
+    bl_idname = "home_builder.move_backdrop"
+    bl_label = "Move to Match"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        level = _house_level(context)
+        return level is not None and bool(backdrops_of(context.scene, level))
+
+    def invoke(self, context, event):
+        area = context.area
+        if area is None or area.type != 'VIEW_3D':
+            return {'CANCELLED'}
+        if context.region is None or context.region.type != 'WINDOW':
+            region = next((r for r in area.regions if r.type == 'WINDOW'), None)
+            if region is None:
+                return {'CANCELLED'}
+            with context.temp_override(area=area, region=region):
+                return bpy.ops.home_builder.move_backdrop('INVOKE_DEFAULT')
+        level = _house_level(context)
+        objs = backdrops_of(context.scene, level)
+        self._level_uid = level.uid
+        self._z = objs[0].location.z
+        self._region = context.region
+        self._rv3d = context.region_data
+        self._from = None
+        self._snap = None
+        self._corners = wall_corners(context.scene)
+        self._mouse = (event.mouse_region_x, event.mouse_region_y)
+        self._handle = bpy.types.SpaceView3D.draw_handler_add(
+            self._draw, (context,), 'WINDOW', 'POST_PIXEL')
+        context.window.cursor_set('CROSSHAIR')
+        context.window_manager.modal_handler_add(self)
+        self._header(context)
+        return {'RUNNING_MODAL'}
+
+    def _target(self):
+        """Where the mouse points: a wall corner near it, else the plane."""
+        from bpy_extras.view3d_utils import location_3d_to_region_2d
+        best, best_d = None, SNAP_PX
+        for p in self._corners:
+            q = location_3d_to_region_2d(self._region, self._rv3d, p)
+            if q is None:
+                continue
+            d = ((q.x - self._mouse[0]) ** 2 + (q.y - self._mouse[1]) ** 2) ** 0.5
+            if d < best_d:
+                best, best_d = p, d
+        self._snap = best
+        if best is not None:
+            return Vector((best.x, best.y, self._z))
+        return _plane_pick(self._region, self._rv3d, self._mouse, self._z)
+
+    def _header(self, context):
+        if self._from is None:
+            text = "Move to Match: click a point on the plan (a corner of the house drawn on it)"
+        else:
+            text = "Move to Match: click where that point belongs - wall corners snap"
+        context.area.header_text_set(text + "    (Esc / right-click to cancel)")
+
+    def _end(self, context):
+        if self._handle is not None:
+            bpy.types.SpaceView3D.draw_handler_remove(self._handle, 'WINDOW')
+            self._handle = None
+        context.area.header_text_set(None)
+        context.window.cursor_set('DEFAULT')
+        context.area.tag_redraw()
+
+    def modal(self, context, event):
+        if event.type == 'MOUSEMOVE':
+            self._mouse = (event.mouse_region_x, event.mouse_region_y)
+            if self._from is not None:
+                self._target()
+            context.area.tag_redraw()
+            return {'RUNNING_MODAL'}
+        if event.type in {'MIDDLEMOUSE', 'WHEELUPMOUSE', 'WHEELDOWNMOUSE',
+                          'TRACKPADPAN', 'TRACKPADZOOM'} or event.type.startswith('NUMPAD'):
+            return {'PASS_THROUGH'}
+        if event.type in {'RIGHTMOUSE', 'ESC'} and event.value == 'PRESS':
+            self._end(context)
+            return {'CANCELLED'}
+        if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
+            if self._from is None:
+                hit = _plane_pick(self._region, self._rv3d, self._mouse, self._z)
+                if hit is not None:
+                    self._from = hit
+                    self._header(context)
+                return {'RUNNING_MODAL'}
+            to = self._target()
+            if to is None:
+                return {'RUNNING_MODAL'}
+            level = hb_house.get_level(self._level_uid)
+            move_by(context.scene, level, to.x - self._from.x, to.y - self._from.y)
+            self._end(context)
+            return {'FINISHED'}
+        return {'RUNNING_MODAL'}
+
+    def _draw(self, context):
+        if context.region != self._region:
+            return
+        import gpu
+        from gpu_extras.batch import batch_for_shader
+        from bpy_extras.view3d_utils import location_3d_to_region_2d
+        shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+        gpu.state.blend_set('ALPHA')
+        shader.bind()
+        pts = []
+        if self._from is not None:
+            a = location_3d_to_region_2d(self._region, self._rv3d, self._from)
+            if a is not None:
+                pts.append(tuple(a))
+                gpu.state.line_width_set(2.0)
+                shader.uniform_float("color", (1.0, 0.6, 0.1, 0.9))
+                batch_for_shader(shader, 'LINES', {"pos": [tuple(a), tuple(self._mouse)]}).draw(shader)
+                gpu.state.line_width_set(1.0)
+        if self._snap is not None:
+            q = location_3d_to_region_2d(self._region, self._rv3d, self._snap)
+            if q is not None:
+                shader.uniform_float("color", (0.2, 0.9, 0.4, 1.0))
+                gpu.state.point_size_set(12.0)
+                batch_for_shader(shader, 'POINTS', {"pos": [tuple(q)]}).draw(shader)
+        if pts:
+            shader.uniform_float("color", (1.0, 0.6, 0.1, 0.9))
+            gpu.state.point_size_set(8.0)
+            batch_for_shader(shader, 'POINTS', {"pos": pts}).draw(shader)
+        gpu.state.blend_set('NONE')
+
+
 class HOME_BUILDER_OT_remove_backdrop(bpy.types.Operator):
     """Remove the active level's backdrops"""
     bl_idname = "home_builder.remove_backdrop"
@@ -753,6 +929,7 @@ classes = (
     HOME_BUILDER_FH_pdf_backdrop,
     HOME_BUILDER_OT_scale_backdrop,
     HOME_BUILDER_OT_apply_backdrop_scale,
+    HOME_BUILDER_OT_move_backdrop,
     HOME_BUILDER_OT_remove_backdrop,
 )
 

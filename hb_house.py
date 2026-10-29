@@ -1888,6 +1888,27 @@ class HB_WindowExterior(PropertyGroup):
         get=_ext_casing_width[0], set=_ext_casing_width[1])  # type: ignore
 
 
+def _backdrop_get(level, i):
+    import math
+    from . import hb_backdrop
+    scene = level.id_data
+    objs = hb_backdrop.backdrops_of(scene, level)
+    if not objs:
+        return 0.0
+    o = objs[0]
+    return math.degrees(o.rotation_euler.z) if i == 2 else o.location[i]
+
+
+def _backdrop_set(level, i, value):
+    from . import hb_backdrop
+    scene = level.id_data
+    if i == 2:
+        hb_backdrop.turn_to(scene, level, value)
+        return
+    d = value - _backdrop_get(level, i)
+    hb_backdrop.move_by(scene, level, d if i == 0 else 0.0, d if i == 1 else 0.0)
+
+
 def _backdrop_settings_changed(self, context):
     from . import hb_backdrop
     hb_backdrop._level_settings_changed(self, context)
@@ -1934,6 +1955,18 @@ class HB_Level(PropertyGroup):
         name="Backdrop Opacity", default=0.6, min=0.05, max=1.0,
         description="How strongly the backdrop shows",
         update=_backdrop_settings_changed)  # type: ignore
+    backdrop_x: FloatProperty(
+        name="Backdrop X", subtype='DISTANCE', precision=4,
+        description="Where the backdrop's middle is, left and right",
+        get=lambda self: _backdrop_get(self, 0), set=lambda self, v: _backdrop_set(self, 0, v))  # type: ignore
+    backdrop_y: FloatProperty(
+        name="Backdrop Y", subtype='DISTANCE', precision=4,
+        description="Where the backdrop's middle is, front and back",
+        get=lambda self: _backdrop_get(self, 1), set=lambda self, v: _backdrop_set(self, 1, v))  # type: ignore
+    backdrop_rotation: FloatProperty(
+        name="Backdrop Rotation", precision=2,
+        description="How far the backdrop is turned, in degrees",
+        get=lambda self: _backdrop_get(self, 2), set=lambda self, v: _backdrop_set(self, 2, v))  # type: ignore
 
     # This level's outside walls' siding, over the house's
     siding_style: EnumProperty(
