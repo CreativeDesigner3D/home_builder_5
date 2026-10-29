@@ -63,11 +63,7 @@ def wall_frame(obj):
     """(start, axis, length, thickness, height) of a wall in plan: start
     is its reference end, axis the unit direction to the other end."""
     wall = hb_types.GeoNodeWall(obj)
-    # From the parent chain, not matrix_world: that lags a move just made
-    # (a drag puts the wall back, then moves it, in one step)
-    m = obj.matrix_basis
-    if obj.parent is not None:
-        m = obj.parent.matrix_world @ obj.matrix_parent_inverse @ m
+    m = obj.matrix_world
     rot = m.to_euler().z
     axis = Vector((math.cos(rot), math.sin(rot)))
     return (m.translation.to_2d(), axis, wall.get_input('Length'),
@@ -207,7 +203,11 @@ def set_length(obj, handle, target):
     tees = hb_walls.capture_tees(scene, hb_house.level_of(obj))
     hb_types.GeoNodeWall(obj).set_input('Length', target)
     if handle == 'START':
-        new_start = start + axis * (length - target)
+        # From its own location, not matrix_world: that still holds the
+        # last drag step until the depsgraph runs, and a drag puts the wall
+        # back and moves it again in one step. (A free start has no
+        # constraint, so its location is where it is.)
+        new_start = obj.location.to_2d() + axis * (length - target)
         obj.location.x, obj.location.y = new_start
     obj.update_tag()
     hb_walls.restore_tees(tees, scene)
