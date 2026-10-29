@@ -816,6 +816,8 @@ class home_builder_stairs_OT_delete_stairs(bpy.types.Operator):
             cutter = hb_rooms.stairwell_cutter(obj)
             if cutter is not None:
                 cutters.remove(cutter)      # and the openings it cut
+            from .. import hb_stair_walls
+            hb_stair_walls.clear(obj)       # the walls it passed through close up
             for child in list(obj.children_recursive):
                 bpy.data.objects.remove(child, do_unlink=True)     # its guard
             level = hb_stairs.level_of(obj)

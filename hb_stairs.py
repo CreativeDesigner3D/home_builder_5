@@ -423,6 +423,7 @@ _baluster = _enum('STAIR_BALUSTER', _BALUSTERS, 'SQUARE')
 _under = _enum('STAIR_UNDER', _UNDERS, 'OPEN')
 _nosing = _prop('STAIR_NOSING', inch(1))
 _skirt = _prop('STAIR_SKIRT', True, bool)
+_cut_walls = _prop('STAIR_CUT_WALLS', True, bool)
 _rail_h = _prop('STAIR_RAIL_HEIGHT', inch(36))
 _wall_rail = _prop('STAIR_WALL_RAIL', True, bool)
 
@@ -481,6 +482,11 @@ class HB_Stair(bpy.types.PropertyGroup):
                                     get=_nosing[0], set=_nosing[1])  # type: ignore
     skirt: bpy.props.BoolProperty(name="Skirt Boards", description="A board along each side that runs by a wall",
                                   get=_skirt[0], set=_skirt[1])  # type: ignore
+    cut_walls: bpy.props.BoolProperty(
+        name="Cut Walls",
+        description="Open the walls the stair passes through, from its treads up to its Headroom; "
+                    "the wall stays under the stair and over the opening",
+        get=_cut_walls[0], set=_cut_walls[1])  # type: ignore
     under: bpy.props.EnumProperty(name="Under the Stair", items=_UNDERS, get=_under[0], set=_under[1])  # type: ignore
     railing: bpy.props.EnumProperty(name="Railings", items=_RAILINGS, get=_railing[0], set=_railing[1])  # type: ignore
     baluster: bpy.props.EnumProperty(name="Style", items=_BALUSTERS, get=_baluster[0], set=_baluster[1])  # type: ignore

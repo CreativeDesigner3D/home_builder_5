@@ -775,6 +775,7 @@ STAIR_FIELDS = (
         ('distance', 'landing_depth', "Landing Depth", {'when': lambda st: st.stair_type == 'U_SHAPE'}),
         ('distance', 'gap', "Gap Between Flights", {'when': lambda st: st.stair_type == 'U_SHAPE'}),
         ('distance', 'headroom', "Headroom"),
+        ('bool', 'cut_walls', "Cut Walls"),
         ('bool', 'guard', "Guard Rail"),
         ('distance', 'guard_height', "Guard Height", {'when': lambda st: st.guard}),
         ('actions', (("Edit Stairs", "home_builder_stairs.edit_stairs"),

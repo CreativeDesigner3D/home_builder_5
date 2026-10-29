@@ -848,4 +848,11 @@ def build(obj):
         parts.data = pm
         if oldp is not None and oldp.users == 0:
             bpy.data.meshes.remove(oldp)
+    if not obj.get('HB_STAIR_PREVIEW'):
+        # The walls it passes through, open where people walk
+        from . import hb_stair_walls
+        try:
+            hb_stair_walls.cut(obj)
+        except Exception as e:
+            print(f"Stair wall cuts: {e}")
     return parts
