@@ -7,6 +7,7 @@ from . import hb_rooms
 from . import hb_roofs
 from . import hb_walk
 from . import hb_roof_edit
+from . import hb_stair_edit
 from . import hb_room_pick
 from . import hb_framing
 from . import hb_backdrop
@@ -462,6 +463,7 @@ def register():
     hb_roofs.register()
     hb_walk.register()
     hb_roof_edit.register()
+    hb_stair_edit.register()
     hb_room_pick.register()
     hb_framing.register()
     hb_backdrop.register()
@@ -540,6 +542,7 @@ def unregister():
 
     hb_props.unregister()
     hb_walk.unregister()
+    hb_stair_edit.unregister()
     hb_roof_edit.unregister()
     hb_cutaway.unregister()
     hb_stairs.unregister()

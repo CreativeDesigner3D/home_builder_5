@@ -777,7 +777,8 @@ STAIR_FIELDS = (
         ('distance', 'headroom', "Headroom"),
         ('bool', 'guard', "Guard Rail"),
         ('distance', 'guard_height', "Guard Height", {'when': lambda st: st.guard}),
-        ('actions', (("Delete", "home_builder_stairs.delete_stairs"),), ""),
+        ('actions', (("Edit Stairs", "home_builder_stairs.edit_stairs"),
+                     ("Delete", "home_builder_stairs.delete_stairs")), ""),
     )}),
     ('group', 'stair_build', "Construction", {'summary': lambda st: f"{_label(st, 'risers')} risers · {_label(st, 'stringer')} stringers",
                                              'fields': (
