@@ -232,9 +232,12 @@ def roof_frame(scene, level):
             ends = [(v0, plate), (vm, plate + (vm - v0) * p), (v1, plate)]
             cut = min(max(base + roof.gable_height, plate + 0.05), ridge_z - 0.05)
     parapet = roof.parapet_height if roof.style == 'FLAT' and roof.base == 'WALLS' else 0.0
+    # A flared eave: past the walls the overhang kicks out shallower
+    p_kick = (roof.flare_pitch / 12.0
+              if roof.eave_flare and roof.style not in ONE_SLOPE_STYLES and p_ends is None else None)
     return {
         'along_x': along_x, 'u0': u0, 'u1': u1, 'v0': v0, 'v1': v1,
-        'uc': uc, 'half': half, 'p': p, 'p_out': p_out,
+        'uc': uc, 'half': half, 'p': p, 'p_out': p_out, 'p_kick': p_kick,
         'angle': math.atan(p), 'plate': plate, 'base': base,
         'ridge_z': ridge_z,                 # underside at the ridge
         'under': under,
@@ -251,7 +254,8 @@ def _extended(frame, reach):
     """The underside carried on past both wall faces by `reach`, down the
     eave slope."""
     under = frame['under']
-    p_a, p_b = frame.get('p_ends') or (frame['p_out'], frame['p_out'])
+    p_eave = frame.get('p_kick') or frame['p_out']
+    p_a, p_b = frame.get('p_ends') or (p_eave, p_eave)
     return ([(under[0][0] - reach, under[0][1] - reach * p_a)] + list(under)
             + [(under[-1][0] + reach, under[-1][1] - reach * p_b)])
 

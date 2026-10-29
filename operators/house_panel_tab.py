@@ -498,6 +498,8 @@ def _overhang_summary(roof):
     if roof.style == 'FLAT' and roof.parapet_height > 0:
         return "Inside the parapets"
     out = f"{_length(roof, roof.eave_overhang)} eaves"
+    if roof.eave_flare and roof.style not in ('SHED', 'FLAT'):
+        out += f" flared {roof.flare_pitch:g}/12"
     if roof.style not in _SLOPED_ENDS:
         out += f" · {_length(roof, roof.gable_overhang)} gables"
     return out
@@ -551,6 +553,10 @@ ROOF_FIELDS = (
     )}),
     ('group', 'roof_build', "Overhangs & Finish", {'when': _on, 'summary': _overhang_summary, 'fields': (
         ('distance', 'eave_overhang', "Eave Overhang"),
+        ('bool', 'eave_flare', "Flared Eaves",
+         {'when': lambda roof: roof.style not in ('SHED', 'FLAT')}),
+        ('number', 'flare_pitch', "Flare Pitch (in 12)",
+         {'when': lambda roof: roof.eave_flare and roof.style not in ('SHED', 'FLAT')}),
         ('distance', 'gable_overhang', "Gable Overhang",
          {'when': lambda roof: roof.style not in _SLOPED_ENDS}),
         ('distance', 'thickness', "Thickness"),

@@ -1643,6 +1643,15 @@ class HB_Roof(PropertyGroup):
         name="Eave Overhang", description="How far the roof runs past the side walls",
         default=inch(12), min=0.0, subtype='DISTANCE', precision=4,
         update=_roof_changed)  # type: ignore
+    eave_flare: BoolProperty(
+        name="Flared Eaves",
+        description="The overhang kicks out past the walls at a shallower pitch than the slope "
+                    "above it - the bell-cast eave of a gambrel or Dutch colonial",
+        default=False, update=_roof_changed)  # type: ignore
+    flare_pitch: FloatProperty(
+        name="Flare Pitch",
+        description="The overhang's pitch, rise in 12, past the walls",
+        default=6.0, min=0.5, max=24.0, precision=2, update=_roof_changed)  # type: ignore
 
     gable_overhang: FloatProperty(
         name="Gable Overhang", description="How far the roof runs past the gable walls",
