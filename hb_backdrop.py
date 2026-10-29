@@ -46,7 +46,12 @@ PAGE_KEY = 'HB_BACKDROP_PAGE'
 PT_SIZE_KEY = 'HB_BACKDROP_PT_SIZE'
 FACTOR_KEY = 'HB_BACKDROP_FACTOR'
 
-BELOW_FLOOR = 0.002             # a backdrop sits just under its level's floor
+ABOVE_FLOOR = 0.003             # a backdrop lies just on its level's floor
+# It is drawn in front of the model, at its Opacity, so the plan stays in
+# view over the floors and walls built on it. (Drawn behind, or in depth
+# with the model, a floor hides it: Blender draws a see-through image
+# before the solid model, whatever its height.)
+DEPTH = 'FRONT'
 PT_TO_M = 0.0254 / 72.0
 THUMB_PX = 256                  # longer side of a page thumbnail
 THUMB_LIMIT = 200               # pages past this get a label but no thumbnail
@@ -249,14 +254,14 @@ def place_backdrop(scene, level, image, display_size, center, opacity=0.6):
     # Centred on its origin; Set Scale moves it to keep its first point
     empty.empty_image_offset = (-0.5, -0.5)
     empty.empty_display_size = display_size
-    empty.empty_image_depth = 'BACK'
+    empty.empty_image_depth = DEPTH
     empty.empty_image_side = 'FRONT'
     empty.use_empty_image_alpha = True
     empty.show_empty_image_perspective = False
     empty.show_empty_image_orthographic = True
     empty.show_empty_image_only_axis_aligned = False
     empty.color = (1.0, 1.0, 1.0, opacity)
-    empty.location = (center[0], center[1], level.elevation - BELOW_FLOOR)
+    empty.location = (center[0], center[1], level.elevation + ABOVE_FLOOR)
     empty.hide_render = True
     empty[BACKDROP_KEY] = True
     empty[hb_house.LEVEL_KEY] = level.uid
@@ -301,11 +306,35 @@ def _scaled_sibling(path):
 
 def apply_level_settings(scene, level):
     """A level's backdrops take its Backdrop settings: shown, opacity, and
-    locked against picking."""
+    locked against picking - and lie on its floor."""
     for obj in backdrops_of(scene, level):
         obj.hide_viewport = not level.backdrop_shown
         obj.hide_select = level.backdrop_locked
         obj.color[3] = level.backdrop_opacity
+        lay_on_floor(obj, level)
+
+
+def lay_on_floor(obj, level):
+    """Just above the level's floor, drawn in front of the model. (Older
+    backdrops lay under the floor, drawn behind everything, and a floor
+    hid them.)"""
+    z = level.elevation + ABOVE_FLOOR
+    if abs(obj.location.z - z) > 1e-6:
+        obj.location.z = z
+    if obj.empty_image_depth != DEPTH:
+        obj.empty_image_depth = DEPTH
+
+
+@bpy.app.handlers.persistent
+def _load_post(_dummy):
+    """Bring a file's backdrops up onto their floors."""
+    for scene in bpy.data.scenes:
+        house = getattr(scene, 'hb_house', None)
+        if house is None:
+            continue
+        for level in house.levels:
+            for obj in backdrops_of(scene, level):
+                lay_on_floor(obj, level)
 
 
 def _level_settings_changed(self, context):
@@ -939,10 +968,14 @@ def register():
     _PREVIEWS = bpy.utils.previews.new()
     for cls in classes:
         bpy.utils.register_class(cls)
+    if _load_post not in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.append(_load_post)
 
 
 def unregister():
     global _PREVIEWS
+    if _load_post in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(_load_post)
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
     if _PREVIEWS is not None:
