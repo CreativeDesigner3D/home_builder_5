@@ -462,7 +462,7 @@ class home_builder_obstacles_OT_place_obstacle(bpy.types.Operator, hb_placement.
         # Where the TOOL page shows, it is the library: start with the
         # first one and pick from the page instead of a dialog.
         if context.scene.hb_obstacles.obstacle_type.startswith('HEADER_'):
-            if tool_session.joins(context.scene, self.bl_idname):
+            if tool_session.joins(context.scene, type(self).bl_idname):
                 from .. import hb_props_obstacles
                 context.scene.hb_obstacles.obstacle_type = hb_props_obstacles.first_obstacle_type()
             else:
