@@ -66,6 +66,7 @@ from ..hb_gpu_draw import (
     point_in_rect,
 )
 from ..hb_gpu_ui import (
+    semibold_font,
     Theme,
     begin_clip,
     end_clip,
@@ -1318,7 +1319,7 @@ def _clip(entries):
 
 def _paint_head(shader, font_id, s, mx, my, label, rect, add_rect):
     rx, ry, rw, rh = rect
-    draw_text(font_id, rx, ry + rh * 0.32, FONT * s,
+    draw_text(semibold_font(), rx, ry + rh * 0.32, FONT * s,
               Theme.TEXT_HEADER, label.upper())
     # The rule stops short of the button rather than running under
     # it -- a line crossing a control reads as a mistake.
@@ -1375,11 +1376,12 @@ def paint(entries, mx, my):
                               Theme.GLYPH_HOVER if hot else Theme.GLYPH)
                 summary = entry[6] if len(entry) > 6 else ""
                 label_w = rw - 20 * s
+                bold = semibold_font()
                 if summary:
-                    label_w = min(text_width(font_id, FONT * s, label),
+                    label_w = min(text_width(bold, FONT * s, label),
                                   (rw - 20 * s) * 0.45)
-                shown = fit_text(font_id, FONT * s, label, label_w)
-                draw_text(font_id, rx + 16 * s, ry + rh * 0.28, FONT * s,
+                shown = fit_text(bold, FONT * s, label, label_w)
+                draw_text(bold, rx + 16 * s, ry + rh * 0.28, FONT * s,
                           Theme.TEXT_PRIMARY if (expanded or hot)
                           else Theme.TEXT_NORMAL, shown)
                 if summary:
@@ -1399,7 +1401,7 @@ def paint(entries, mx, my):
                 # reads as a group name and not as a value.
                 _, label, rect = entry
                 rx, ry, rw, rh = rect
-                draw_text(font_id, rx + 8 * s, ry + rh * 0.28, FONT * s,
+                draw_text(semibold_font(), rx + 8 * s, ry + rh * 0.28, FONT * s,
                           Theme.TEXT_HEADER, label.upper())
             elif kind == 'value_row':
                 # Read, not edited: the label where a field's is, the
@@ -1424,9 +1426,10 @@ def paint(entries, mx, my):
                 _, (text, aside), rect = entry
                 rx, ry, rw, rh = rect
                 big = (FONT + 3) * s
+                bold = semibold_font()
                 aside_w = text_width(font_id, FONT * s, aside) if aside else 0.0
-                shown = fit_text(font_id, big, text, rw - aside_w - 16 * s)
-                draw_text(font_id, rx + 2 * s, ry + rh * 0.36, big,
+                shown = fit_text(bold, big, text, rw - aside_w - 16 * s)
+                draw_text(bold, rx + 2 * s, ry + rh * 0.36, big,
                           Theme.TEXT_PRIMARY, shown)
                 if aside:
                     shown_aside = fit_text(font_id, FONT * s, aside, rw * 0.5)

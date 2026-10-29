@@ -87,6 +87,25 @@ class Theme:
 
 # ---- Text -------------------------------------------------------------------
 
+_SEMIBOLD = None
+
+
+def semibold_font():
+    """Inter SemiBold (assets/fonts, SIL Open Font License) for titles,
+    group names and headings - the weight Blender's own Inter, font 0,
+    cannot be asked for. Font 0 if it will not load."""
+    global _SEMIBOLD
+    if _SEMIBOLD is None:
+        import os
+        path = os.path.join(os.path.dirname(__file__), 'assets', 'fonts', 'Inter-SemiBold.woff2')
+        try:
+            fid = blf.load(path) if os.path.exists(path) else -1
+        except Exception:
+            fid = -1
+        _SEMIBOLD = fid if fid >= 0 else 0
+    return _SEMIBOLD
+
+
 def text_width(font_id, size, text):
     """Width in px of `text` at an already-scaled `size`."""
     blf.size(font_id, size)

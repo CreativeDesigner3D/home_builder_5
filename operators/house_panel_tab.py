@@ -34,7 +34,7 @@ from .. import hb_rooms
 from .. import units
 from ..hb_gpu_draw import draw_rect, draw_text, point_in_rect
 from ..hb_gpu_ui import (Theme, scale, paint_button, draw_polyline, text_width,
-                         fit_text, enum_label)
+                         fit_text, enum_label, semibold_font)
 
 TAB_KEY = 'HOUSE'
 TAB_LABEL = "HOUSE"
@@ -1160,7 +1160,7 @@ def _paint_tabs(entry, mx, my):
     shader = gpu.shader.from_builtin('UNIFORM_COLOR')
     gpu.state.blend_set('ALPHA')
     shader.bind()
-    font = 0
+    font = semibold_font()
     for key, label, icon, cell in _tab_cells(rect):
         x, y, w, h = cell
         inner = (x + 1 * s, y, w - 2 * s, h)
