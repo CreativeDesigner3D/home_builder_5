@@ -32,7 +32,14 @@ def obstacle_z_size(height, depth, obstacle_type, surface):
 
 def build_obstacle_mesh(mesh, width, height, depth, obstacle_type,
                         surface='WALL'):
-    """Fill mesh with the obstacle's shape, centered on the origin."""
+    """Fill mesh with the obstacle's model, centered on the origin."""
+    from .. import hb_obstacle_models
+    hb_obstacle_models.build(mesh, width, height, depth, obstacle_type, surface)
+
+
+def _plain_obstacle_mesh(mesh, width, height, depth, obstacle_type,
+                         surface='WALL'):
+    """The plain shapes obstacles were before they had models."""
     bm = bmesh.new()
 
     # Circular obstacles
@@ -343,16 +350,7 @@ class home_builder_obstacles_OT_place_obstacle(bpy.types.Operator, hb_placement.
         color = get_obstacle_color(hb_obs.obstacle_type)
         self.obstacle_obj.color = color
         
-        # Create material
-        mat = bpy.data.materials.new(f"{obs_data[1]}_Mat")
-        mat.use_nodes = True
-        bsdf = mat.node_tree.nodes.get("Principled BSDF")
-        if bsdf:
-            bsdf.inputs["Base Color"].default_value = color
-            bsdf.inputs["Alpha"].default_value = 0.8
-        mat.blend_method = 'BLEND'
-        self.obstacle_obj.data.materials.append(mat)
-        
+
         # Link to scene
         context.scene.collection.objects.link(self.obstacle_obj)
         # Drawn the way the room's obstacles are (Obstacles as Wireframe).
@@ -461,10 +459,10 @@ class home_builder_obstacles_OT_place_obstacle(bpy.types.Operator, hb_placement.
     def invoke(self, context, event):
         # With no obstacle picked yet (the list opens on a heading), ask
         # which one first; the picker starts the placement once it has.
-        # In a house the TOOL page is the library: start with the first
-        # one and pick from the page instead of a dialog.
+        # Where the TOOL page shows, it is the library: start with the
+        # first one and pick from the page instead of a dialog.
         if context.scene.hb_obstacles.obstacle_type.startswith('HEADER_'):
-            if tool_session.is_house(context.scene):
+            if tool_session.joins(context.scene, self.bl_idname):
                 from .. import hb_props_obstacles
                 context.scene.hb_obstacles.obstacle_type = hb_props_obstacles.first_obstacle_type()
             else:
@@ -768,6 +766,92 @@ def _update_edit_anchor_z(self, context):
         self.from_floor = max(self.from_floor - ext, 0.0)
 
 
+def obstacle_state(obj):
+    """An obstacle's size and, on a wall, where it is - as the edit dialog
+    and the SELECTED tab show them, and apply_obstacle takes them."""
+    from types import SimpleNamespace
+    w, h, d = _obstacle_size(obj)
+    st = SimpleNamespace(
+        width=w, height=h, depth=d,
+        obstacle_type=obj.get('OBSTACLE_TYPE', 'CUSTOM_RECT'),
+        blocks_placement=bool(obj.get(OBSTACLE_BLOCKS_TAG)),
+        anchor_x=obj.get('OBSTACLE_ANCHOR_X', 'LEFT'),
+        anchor_z=obj.get('OBSTACLE_ANCHOR_Z', 'BOTTOM'),
+        wall_length=0.0, from_side=0.0, from_floor=0.0)
+    wall = _obstacle_wall(obj)
+    if wall is not None:
+        # From the parent chain, not matrix_world: that lags a change just
+        # made until the depsgraph runs
+        local = (obj.matrix_parent_inverse @ obj.matrix_basis).translation
+        st.wall_length = _wall_length(wall)
+        left = local.x - w / 2
+        st.from_side = st.wall_length - left - w if st.anchor_x == 'RIGHT' else left
+        ext = obstacle_z_size(h, d, st.obstacle_type, 'WALL')
+        bottom = local.z - ext / 2
+        st.from_floor = bottom + ext if st.anchor_z == 'TOP' else bottom
+    return st
+
+
+def apply_obstacle(obj, s):
+    """Build the obstacle at s's size and, on a wall, place it where s
+    says (see obstacle_state)."""
+    obs_type = obj.get('OBSTACLE_TYPE', 'CUSTOM_RECT')
+    surface = obj.get('OBSTACLE_SURFACE', 'WALL')
+    wall = _obstacle_wall(obj)
+    on_wall = wall is not None
+    # Older floor obstacles were built standing up like wall plates
+    # and carry no size props; they keep that shape so an edit does
+    # not swap their height and depth around.
+    build_surface = ('WALL' if on_wall
+                     or 'OBSTACLE_WIDTH' not in obj else surface)
+    old_w, old_h, old_d = _obstacle_size(obj)
+    old_z = obstacle_z_size(old_h, old_d, obs_type, build_surface)
+    mesh = obj.data
+    if mesh.users > 1:
+        mesh = mesh.copy()
+        obj.data = mesh
+    build_obstacle_mesh(mesh, s.width, s.height, s.depth,
+                        obs_type, build_surface)
+    obj['OBSTACLE_WIDTH'] = s.width
+    obj['OBSTACLE_HEIGHT'] = s.height
+    obj['OBSTACLE_DEPTH'] = s.depth
+    obj['MENU_ID'] = 'HOME_BUILDER_MT_obstacle_commands'
+    if s.blocks_placement:
+        obj[OBSTACLE_BLOCKS_TAG] = True
+    else:
+        obj.pop(OBSTACLE_BLOCKS_TAG, None)
+
+    if on_wall:
+        local = (obj.matrix_parent_inverse @ obj.matrix_basis).translation
+        try:
+            thickness = hb_types.GeoNodeWall(wall).get_input('Thickness')
+        except Exception:
+            thickness = 0.0
+        if local.y > thickness / 2:
+            local.y = thickness + s.depth / 2
+        else:
+            local.y = -s.depth / 2
+        if s.anchor_x == 'RIGHT':
+            left = s.wall_length - s.from_side - s.width
+        else:
+            left = s.from_side
+        local.x = left + s.width / 2
+        ext = obstacle_z_size(s.height, s.depth, obs_type, 'WALL')
+        bottom = (s.from_floor - ext if s.anchor_z == 'TOP'
+                  else s.from_floor)
+        local.z = bottom + ext / 2
+        obj['OBSTACLE_ANCHOR_X'] = s.anchor_x
+        obj['OBSTACLE_ANCHOR_Z'] = s.anchor_z
+        # In the wall's frame through the parent inverse (matrix_world
+        # lags a change just made)
+        obj.location = obj.matrix_parent_inverse.inverted() @ local
+    elif surface != 'CEILING':
+        # Keep a floor obstacle sitting on the floor as it grows.
+        new_z = obstacle_z_size(s.height, s.depth, obs_type,
+                                build_surface)
+        obj.location.z += (new_z - old_z) / 2
+
+
 class home_builder_obstacles_OT_edit_obstacle(bpy.types.Operator):
     bl_idname = "home_builder_obstacles.edit_obstacle"
     bl_label = "Obstacle Properties"
@@ -910,61 +994,7 @@ class home_builder_obstacles_OT_edit_obstacle(bpy.types.Operator):
         obj = self._target(context)
         if obj is None or not obj.get('IS_OBSTACLE'):
             return
-        obs_type = obj.get('OBSTACLE_TYPE', 'CUSTOM_RECT')
-        surface = obj.get('OBSTACLE_SURFACE', 'WALL')
-        wall = _obstacle_wall(obj)
-        on_wall = wall is not None
-        # Older floor obstacles were built standing up like wall plates
-        # and carry no size props; they keep that shape so an edit does
-        # not swap their height and depth around.
-        build_surface = ('WALL' if on_wall
-                         or 'OBSTACLE_WIDTH' not in obj else surface)
-        old_w, old_h, old_d = _obstacle_size(obj)
-        old_z = obstacle_z_size(old_h, old_d, obs_type, build_surface)
-        mesh = obj.data
-        if mesh.users > 1:
-            mesh = mesh.copy()
-            obj.data = mesh
-        build_obstacle_mesh(mesh, self.width, self.height, self.depth,
-                            obs_type, build_surface)
-        obj['OBSTACLE_WIDTH'] = self.width
-        obj['OBSTACLE_HEIGHT'] = self.height
-        obj['OBSTACLE_DEPTH'] = self.depth
-        obj['MENU_ID'] = 'HOME_BUILDER_MT_obstacle_commands'
-        if self.blocks_placement:
-            obj[OBSTACLE_BLOCKS_TAG] = True
-        else:
-            obj.pop(OBSTACLE_BLOCKS_TAG, None)
-
-        if on_wall:
-            wall_mw = wall.matrix_world
-            local = wall_mw.inverted() @ obj.matrix_world.translation
-            try:
-                thickness = hb_types.GeoNodeWall(wall).get_input('Thickness')
-            except Exception:
-                thickness = 0.0
-            if local.y > thickness / 2:
-                local.y = thickness + self.depth / 2
-            else:
-                local.y = -self.depth / 2
-            if self.anchor_x == 'RIGHT':
-                left = self.wall_length - self.from_side - self.width
-            else:
-                left = self.from_side
-            local.x = left + self.width / 2
-            ext = obstacle_z_size(self.height, self.depth, obs_type, 'WALL')
-            bottom = (self.from_floor - ext if self.anchor_z == 'TOP'
-                      else self.from_floor)
-            local.z = bottom + ext / 2
-            obj['OBSTACLE_ANCHOR_X'] = self.anchor_x
-            obj['OBSTACLE_ANCHOR_Z'] = self.anchor_z
-            # Parented with the wall's inverse, so location is world.
-            obj.location = wall_mw @ local
-        elif surface != 'CEILING':
-            # Keep a floor obstacle sitting on the floor as it grows.
-            new_z = obstacle_z_size(self.height, self.depth, obs_type,
-                                    build_surface)
-            obj.location.z += (new_z - old_z) / 2
+        apply_obstacle(obj, self)
 
     def draw(self, context):
         layout = self.layout

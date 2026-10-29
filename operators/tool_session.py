@@ -59,9 +59,10 @@ def is_house(scene):
 def joins(scene, idname):
     """Whether a tool runs as a session in this scene: every tool in a
     house; anywhere, the tools whose settings are only on the TOOL page
-    (Fireplace, Bay Window, Furnish...) - with no page they would run
-    blind."""
-    return scene is not None and (is_house(scene) or idname in HOUSE_PAGES)
+    (Fireplace, Bay Window, Furnish, Obstacle...) - with no page they
+    would run blind."""
+    return scene is not None and (is_house(scene) or idname in HOUSE_PAGES
+                                  or idname in ANYWHERE)
 
 
 def stays_on(context):
@@ -422,6 +423,10 @@ HOUSE_PAGES = {
     "home_builder.place_beam": ("Beam", BEAM_FIELDS),
     "home_builder.place_post": ("Post", POST_FIELDS),
 }
+
+# Tools on scene.home_builder's pages that also run as sessions outside
+# a house
+ANYWHERE = {"home_builder_obstacles.place_obstacle"}
 
 # bl_idname: (title, fields on scene.home_builder)
 PAGES = {

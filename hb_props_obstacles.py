@@ -329,11 +329,94 @@ class Obstacles_Scene_Props(PropertyGroup):
 
 
 # =============================================================================
+# A PLACED OBSTACLE (the SELECTED tab)
+# =============================================================================
+# Its size and, on a wall, where it is - read from the obstacle each time
+# and set by rebuilding it, as the Obstacle Properties dialog does.
+
+def _ops():
+    from .operators import ops_obstacles
+    return ops_obstacles
+
+
+def _state_get(name):
+    def get(self):
+        return float(getattr(_ops().obstacle_state(self.id_data), name))
+    return get
+
+
+def _state_set(name):
+    def set(self, value):
+        st = _ops().obstacle_state(self.id_data)
+        setattr(st, name, value)
+        _ops().apply_obstacle(self.id_data, st)
+    return set
+
+
+def _anchor_get(key, ids):
+    def get(self):
+        value = self.id_data.get(key, ids[0])
+        return ids.index(value) if value in ids else 0
+    return get
+
+
+def _anchor_set(key, ids):
+    def set(self, index):
+        # Only which edge is measured from: the obstacle stays put
+        self.id_data[key] = ids[index]
+    return set
+
+
+def _blocks_get(self):
+    return bool(self.id_data.get(_ops().OBSTACLE_BLOCKS_TAG))
+
+
+def _blocks_set(self, value):
+    st = _ops().obstacle_state(self.id_data)
+    st.blocks_placement = value
+    _ops().apply_obstacle(self.id_data, st)
+
+
+class HB_Obstacle(PropertyGroup):
+    width: FloatProperty(name="Width", unit='LENGTH', precision=4, min=units.inch(0.25),
+                         get=_state_get('width'), set=_state_set('width'))  # type: ignore
+    height: FloatProperty(name="Height", unit='LENGTH', precision=4, min=units.inch(0.25),
+                          get=_state_get('height'), set=_state_set('height'))  # type: ignore
+    depth: FloatProperty(name="Depth", unit='LENGTH', precision=4, min=units.inch(0.1),
+                         get=_state_get('depth'), set=_state_set('depth'))  # type: ignore
+    from_side: FloatProperty(
+        name="From Side", unit='LENGTH', precision=4,
+        description="From the wall's end on the anchor side to the obstacle's edge on that side",
+        get=_state_get('from_side'), set=_state_set('from_side'))  # type: ignore
+    from_floor: FloatProperty(
+        name="From Floor", unit='LENGTH', precision=4, min=0.0,
+        description="Height of the obstacle's anchor edge (bottom or top) off the floor",
+        get=_state_get('from_floor'), set=_state_set('from_floor'))  # type: ignore
+    anchor_x: EnumProperty(
+        name="Measure From",
+        items=[('LEFT', "Left", "Measure from the wall's left end to the obstacle's left edge"),
+               ('RIGHT', "Right", "Measure from the wall's right end to the obstacle's right edge")],
+        get=_anchor_get('OBSTACLE_ANCHOR_X', ['LEFT', 'RIGHT']),
+        set=_anchor_set('OBSTACLE_ANCHOR_X', ['LEFT', 'RIGHT']))  # type: ignore
+    anchor_z: EnumProperty(
+        name="Height To",
+        items=[('BOTTOM', "Bottom", "From Floor is the obstacle's bottom edge"),
+               ('TOP', "Top", "From Floor is the obstacle's top edge")],
+        get=_anchor_get('OBSTACLE_ANCHOR_Z', ['BOTTOM', 'TOP']),
+        set=_anchor_set('OBSTACLE_ANCHOR_Z', ['BOTTOM', 'TOP']))  # type: ignore
+    blocks_placement: BoolProperty(
+        name="Block Placement",
+        description="Products placed along the wall stop at this obstacle instead of being placed over it",
+        get=_blocks_get, set=_blocks_set)  # type: ignore
+
+
+# =============================================================================
 # REGISTRATION
 # =============================================================================
 
 classes = (
     Obstacles_Scene_Props,
+    HB_Obstacle,
 )
 
 
@@ -341,9 +424,12 @@ def register():
     for cls in classes:
         bpy.utils.register_class(cls)
     Obstacles_Scene_Props.register()
+    bpy.types.Object.hb_obstacle = PointerProperty(type=HB_Obstacle)
 
 
 def unregister():
+    if hasattr(bpy.types.Object, 'hb_obstacle'):
+        del bpy.types.Object.hb_obstacle
     Obstacles_Scene_Props.unregister()
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)

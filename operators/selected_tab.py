@@ -1,5 +1,5 @@
 """The SELECTED tab: the settings of the bay window, fireplace, light,
-stair or piece of furniture picked, in any project.
+stair, obstacle or piece of furniture picked, in any project.
 
 It is there while one of them is selected; the panel switches to it when
 one is picked, and goes back to the tab it was on when it is let go. (In
@@ -23,12 +23,45 @@ _prev = None            # (panel was open, tab) before the tab took over
 _owner = object()
 
 
+def _on_wall(obstacle):
+    parent = obstacle.id_data.parent
+    return parent is not None and bool(parent.get('IS_WALL_BP'))
+
+
+def _obstacle_summary(o):
+    from .. import units
+    us = bpy.context.scene.unit_settings
+    return f"{units.unit_to_string(us, o.width)} x {units.unit_to_string(us, o.height)}"
+
+
+OBSTACLE_FIELDS = (
+    ('group', 'selected_obstacle', "Selected Obstacle", {'summary': _obstacle_summary, 'fields': (
+        ('distance', 'width', "Width"),
+        ('distance', 'height', "Height"),
+        ('distance', 'depth', "Depth"),
+        ('choices', 'anchor_x', "Measure From", {'cols': 2, 'when': _on_wall}),
+        ('distance', 'from_side', "From Side", {'when': _on_wall}),
+        ('choices', 'anchor_z', "Height To", {'cols': 2, 'when': _on_wall}),
+        ('distance', 'from_floor', "From Floor", {'when': _on_wall}),
+        ('bool', 'blocks_placement', "Block Placement", {'when': _on_wall}),
+        ('actions', (("Delete", "home_builder_obstacles.delete_obstacle"),), ""),
+    )}),
+)
+
+
+def _selected_obstacle(context):
+    for obj in [context.active_object] + list(context.selected_objects):
+        if obj is not None and obj.get('IS_OBSTACLE'):
+            return obj
+    return None
+
+
 def _item(context):
     """(kind, cage) of what is selected, or None."""
     from . import house_panel_tab as hpt
     for kind, find in (('BAY', hpt._selected_bay), ('FIREPLACE', hpt._selected_fireplace),
                        ('LIGHT', hpt._selected_light), ('FURNITURE', hpt._selected_furnishing),
-                       ('STAIR', hpt._selected_stair)):
+                       ('STAIR', hpt._selected_stair), ('OBSTACLE', _selected_obstacle)):
         try:
             cage = find(context)
         except Exception:
@@ -49,7 +82,7 @@ def _blocks(context):
     from . import house_panel_tab as hpt, options_panel
     found = _item(context)
     if found is None:
-        return [('note', "Select a bay window, fireplace, light, stair or piece of furniture.")]
+        return [('note', "Select a bay window, fireplace, light, stair, obstacle or piece of furniture.")]
     kind, cage = found
     fields, owner = {
         'BAY': (hpt.BAY_FIELDS, cage.hb_bay),
@@ -57,6 +90,7 @@ def _blocks(context):
         'LIGHT': (hpt.LIGHT_FIELDS, cage.hb_light),
         'FURNITURE': (hpt.FURNITURE_FIELDS, cage.hb_furniture),
         'STAIR': (hpt.STAIR_FIELDS, cage.hb_stair),
+        'OBSTACLE': (OBSTACLE_FIELDS, cage.hb_obstacle),
     }[kind]
     # The page's one group starts open (the first time; closed after
     # that, it stays closed)
