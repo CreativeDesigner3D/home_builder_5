@@ -207,6 +207,15 @@ def _find_ff_part(cab_obj, role, side):
     return None
 
 
+def _pie_front_role(cab_props):
+    """Role of the stacked fronts on a pie cut: drawer fronts on the
+    drawer corner (so they take the drawer-front style and pulls), door
+    leaves on every other pie cut."""
+    if cab_props.corner_type == 'PIE_CUT_DRAWER':
+        return ff.PART_ROLE_DRAWER_FRONT
+    return ff.PART_ROLE_DOOR
+
+
 def _find_corner_part(cab_obj, role, side, section_index):
     """Find a reconciled section part by role + side tag + section index."""
     for c in cab_obj.children:
@@ -1645,7 +1654,10 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         so the recalc can address each one.
         """
         sections = cab_props.corner_sections
-        sig = 'pie:' + '|'.join(s.content for s in sections)
+        front_role = _pie_front_role(cab_props)
+        # The front role is in the signature so a drawer corner built
+        # with door-role fronts rebuilds them as drawer fronts.
+        sig = ('pie:%s:' % front_role) + '|'.join(s.content for s in sections)
         if self.obj.get('hb_pie_section_sig') == sig:
             return
         # Layout changed - wipe section parts (all pie cut doors plus the
@@ -1655,7 +1667,8 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
             role = child.get('hb_part_role')
             side = child.get('hb_face_frame_side')
             is_section_part = (
-                (role == ff.PART_ROLE_DOOR and side in ('LEFT', 'RIGHT'))
+                (role in (ff.PART_ROLE_DOOR, ff.PART_ROLE_DRAWER_FRONT)
+                 and side in ('LEFT', 'RIGHT'))
                 or (role == PART_ROLE_CORNER_MID_RAIL
                     and side in ('LEFT', 'RIGHT'))
                 or role == PART_ROLE_CORNER_SHELF)
@@ -1664,13 +1677,15 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                     bpy.data.objects.remove(pull, do_unlink=True)
                 bpy.data.objects.remove(child, do_unlink=True)
         n = len(sections)
+        noun = ('Drawer Front' if front_role == ff.PART_ROLE_DRAWER_FRONT
+                else 'Door')
         # One door per arm per section. Orientation matches the arm's
         # stile so the slab lies in that face frame plane.
         for i in range(n):
             left_door = CabinetPart()
-            left_door.create('Left Door %d' % (i + 1))
+            left_door.create('Left %s %d' % (noun, i + 1))
             left_door.obj.parent = self.obj
-            left_door.obj['hb_part_role'] = ff.PART_ROLE_DOOR
+            left_door.obj['hb_part_role'] = front_role
             left_door.obj['hb_face_frame_side'] = 'LEFT'
             left_door.obj['hb_corner_section_index'] = i
             left_door.obj['CABINET_PART'] = True
@@ -1679,9 +1694,9 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
             left_door.set_input('Mirror Y', True)
 
             right_door = CabinetPart()
-            right_door.create('Right Door %d' % (i + 1))
+            right_door.create('Right %s %d' % (noun, i + 1))
             right_door.obj.parent = self.obj
-            right_door.obj['hb_part_role'] = ff.PART_ROLE_DOOR
+            right_door.obj['hb_part_role'] = front_role
             right_door.obj['hb_face_frame_side'] = 'RIGHT'
             right_door.obj['hb_corner_section_index'] = i
             right_door.obj['CABINET_PART'] = True
@@ -2429,7 +2444,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                 z_door = sec_z0 - sec_bot_ov
 
             left_door = _find_corner_part(
-                self.obj, ff.PART_ROLE_DOOR, 'LEFT', i)
+                self.obj, _pie_front_role(cab_props), 'LEFT', i)
             if left_door is not None:
                 left_door.location = (ld + door_standoff, left_door_y,
                                       z_door)
@@ -2440,7 +2455,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
                         ('Thickness', dt),
                     ))
             right_door = _find_corner_part(
-                self.obj, ff.PART_ROLE_DOOR, 'RIGHT', i)
+                self.obj, _pie_front_role(cab_props), 'RIGHT', i)
             if right_door is not None:
                 right_door.location = (right_door_x, -rd - door_standoff,
                                        z_door)
@@ -3633,9 +3648,9 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         positions the two 45-degree interior channel walls the drawer slides
         between. The stacked section count is the drawer count.
 
-        ITERATE: sections render as door slabs for now; drawer-front styling is
-        the next slice. Channel-wall width / run are first-cut defaults from the
-        front-opening geometry.
+        The section fronts are built as drawer fronts (_pie_front_role), so
+        they take the cabinet style's drawer-front style. Channel-wall width /
+        run are first-cut defaults from the front-opening geometry.
         """
         cab_props = self.obj.face_frame_cabinet
 
@@ -3660,7 +3675,7 @@ class CornerFaceFrameCabinet(ff.FaceFrameCabinet):
         # leaf of each pair, edge-offset, the other cleared) - a drawer stack
         # instead wants a centered pull on each front, so override them here.
         for front in self.obj.children:
-            if front.get('hb_part_role') != ff.PART_ROLE_DOOR:
+            if front.get('hb_part_role') != ff.PART_ROLE_DRAWER_FRONT:
                 continue
             side = front.get('hb_face_frame_side')
             if side not in ('LEFT', 'RIGHT'):

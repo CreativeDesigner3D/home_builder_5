@@ -7982,6 +7982,22 @@ def populate_pie_drawer_sections(cab_props):
             secs[0].height = ff_scene.top_drawer_opening_height
 
 
+def corner_top_drawer_sections(cab_props):
+    """Indices of the corner sections that follow the scene's Top Drawer
+    Opening Height: the top of a 3+ pie-cut drawer stack, and the
+    'TOP_DRAWER' entries of the corner presets
+    (_CORNER_SECTION_DEFAULT_HEIGHTS). Mirrors what the populate
+    functions pin, so Refresh Top Drawer Openings can re-push it."""
+    if cab_props.corner_type == 'PIE_CUT_DRAWER':
+        return [0] if len(cab_props.corner_sections) >= 3 else []
+    obj = cab_props.id_data
+    ctype = obj.get('CABINET_TYPE', 'BASE') if obj is not None else 'BASE'
+    defaults = _CORNER_SECTION_DEFAULT_HEIGHTS.get(
+        (ctype, cab_props.exterior_config), ())
+    return [i for i, h in enumerate(defaults)
+            if h == 'TOP_DRAWER' and i < len(cab_props.corner_sections)]
+
+
 def _update_pie_drawer_qty(self, context):
     """pie_drawer_qty changed: repopulate the stacked drawer sections, then
     recalc. Only repopulates on a pie-cut drawer corner."""
