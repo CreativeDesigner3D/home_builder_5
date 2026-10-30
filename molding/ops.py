@@ -159,6 +159,14 @@ def _crown_datum(first, facts, opts):
     return height
 
 
+def _datum_member(chain, facts):
+    """The member a run's crown height is read from: the first one
+    with a crown mount. A valance has no top rail, so a run that
+    starts on one takes its height from the cabinets beside it."""
+    return next((m for m in chain
+                 if (facts.get(id(m)) or {}).get('crown_mount')), chain[0])
+
+
 def _crown_stack_top(first, facts, opts):
     """Local Z of the TOP of the room's crown stack on this run: the
     crown datum plus the tallest resolved entry (its vertical offset
@@ -316,10 +324,12 @@ def _spawn_sweep(scene, molding_type, chain, segments, profile_ref,
                 groups.append(group)
             group[1].append((run_pts, run_cyclic))
 
-    # The height is resolved in chain[0]'s frame; every piece keeps
-    # that same world height under its own parent.
-    z_local = _sweep_z(molding_type, first, dy, facts, opts)
-    z_world = (first.matrix_world
+    # The height is resolved in the datum member's frame; every piece
+    # keeps that same world height under its own parent.
+    datum = (_datum_member(chain, facts)
+             if molding_type in ('CROWN', 'CAP') else first)
+    z_local = _sweep_z(molding_type, datum, dy, facts, opts)
+    z_world = (datum.matrix_world
                @ mathutils.Vector((0.0, 0.0, z_local))).z
 
     made = None
@@ -419,8 +429,8 @@ def _apply_type(scene, molding_type, align, stack, opts):
             if result is None:
                 continue
             _pts, norm_chain = result
-            run_stack = _ceiling_stack(norm_chain[0], facts,
-                                       resolved_stack, opts)
+            run_stack = _ceiling_stack(_datum_member(norm_chain, facts),
+                                       facts, resolved_stack, opts)
         for profile_ref, fallback_key, dx, dy, height, size in run_stack:
             if molding_type == 'BASE':
                 segments = engine.kick_sweep_segments(
