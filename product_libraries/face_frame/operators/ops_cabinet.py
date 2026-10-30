@@ -1132,6 +1132,21 @@ class hb_face_frame_OT_wood_top_prompts(bpy.types.Operator):
             col.prop(wt, 'depth')
         col.separator()
         col.prop(wt, 'plan_display')
+        if wt.top_type == 'VENEER':
+            # Hinged lid: order options for a veneer top that opens.
+            col.separator()
+            col.prop(wt, 'hinged_lid')
+            if wt.hinged_lid:
+                col.prop(wt, 'lid_stay_qty')
+                col.prop(wt, 'hinge_finish')
+                if anchored:
+                    lid_w = (anchor.face_frame_cabinet.width
+                             + wt.overhang_left + wt.overhang_right)
+                else:
+                    lid_w = wt.width
+                if not shaped and meter_to_inch(lid_w) >= 48.0 - 1e-3:
+                    col.label(text="48\" and wider may need a support "
+                                   "partition", icon='INFO')
 
 
 class hb_face_frame_OT_wood_top_reset_shape(bpy.types.Operator):

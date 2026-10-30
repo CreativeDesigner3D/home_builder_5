@@ -14513,6 +14513,30 @@ class Face_Frame_Wood_Top_Props(PropertyGroup):
         ],
         default='AUTO',
     )  # type: ignore
+    # Hinged lid (veneer tops, typically on a window seat): the top opens
+    # on a continuous piano hinge behind a fixed hardwood frame against
+    # the wall. Order options only; the board itself is built the same.
+    hinged_lid: BoolProperty(
+        name="Hinged Lid",
+        description="Build the top as a lid on a continuous piano hinge",
+        default=False,
+    )  # type: ignore
+    lid_stay_qty: IntProperty(
+        name="Lid Stays",
+        description="Number of lid stays holding the lid open",
+        default=0, min=0, max=2,
+    )  # type: ignore
+    hinge_finish: EnumProperty(
+        name="Hinge Finish",
+        description="Finish of the continuous piano hinge",
+        items=[
+            ('ANTIQUE_BRASS', "Antique Brass", ""),
+            ('BRIGHT_BRASS', "Bright Brass", ""),
+            ('BLACK_POWDER_COAT', "Black Powder Coat", ""),
+            ('BRIGHT_NICKEL', "Bright Nickel", ""),
+        ],
+        default='ANTIQUE_BRASS',
+    )  # type: ignore
 
 
 class Face_Frame_Column_Beam_Props(PropertyGroup):
