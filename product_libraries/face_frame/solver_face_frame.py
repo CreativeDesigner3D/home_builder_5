@@ -751,6 +751,46 @@ def back_notch_depth(layout, side):
     return thickness / 2.0
 
 
+def side_behind_back(layout, side):
+    """How far an end side stops short of the cabinet back so the
+    carcass back runs ACROSS its back edge instead of between the sides.
+
+    Shop construction: the 1/4 back is nailed through into the edges of
+    the 1/2 sides, with the nails hidden behind the cabinet. A back set
+    between the sides has nothing to nail into and splits. So every
+    built side that is not FINISHED (those take the back in a rabbet,
+    back_notch_depth) comes forward one back thickness, and the back
+    widens to the side's outer face (carcass_back_segments).
+
+    0 where that end keeps the butted back: no side built (FALSE_FF /
+    WORKING_FF, a covered or carried island end), no carcass back on the
+    end bay, a side extended back past the cabinet back, and angled /
+    back-extended cabinets, whose back and sides are reshaped separately.
+    """
+    if side == 'LEFT':
+        fin, covered = layout.l_fin_end, layout.l_covered_thickness
+        bay_index = 0
+    else:
+        fin, covered = layout.r_fin_end, layout.r_covered_thickness
+        bay_index = layout.bay_count - 1
+    if fin in ('FINISHED', 'FALSE_FF', 'WORKING_FF') or covered is not None:
+        return 0.0
+    if layout.bays[bay_index].get('remove_carcass'):
+        return 0.0
+    if bay_back_condition(layout, bay_index) == 'WORKING_FF':
+        return 0.0
+    if layout.is_angled:
+        return 0.0
+    cab = layout._cab_props
+    key = 'left' if side == 'LEFT' else 'right'
+    if (getattr(cab, f'extend_back_{key}', 0.0)
+            or getattr(cab, f'{key}_side_finished_extend_back', 0.0) > 0.0):
+        return 0.0
+    if side in island_pair.carried_sides(layout._cabinet_obj):
+        return 0.0
+    return back_thickness(layout)
+
+
 def carcass_inner_left_x(layout):
     """X of the left side panel's inner face - the left bound of the
     cabinet's interior cavity. Outer face sits at left_scribe_offset;
@@ -2858,7 +2898,7 @@ def left_side_position(layout):
         y = 0.0
     else:
         y = -layout.dim_y + layout.bays[0]['depth']
-    return (left_scribe_offset(layout), y,
+    return (left_scribe_offset(layout), y - side_behind_back(layout, 'LEFT'),
             side_bottom_z(layout, 0, 'LEFT'))
 
 
@@ -2866,7 +2906,8 @@ def left_side_dims(layout):
     bottom_z = side_bottom_z(layout, 0, 'LEFT')
     top_z = left_side_top_z(layout)
     return (top_z - bottom_z,
-            effective_left_depth(layout) - layout.fft,
+            effective_left_depth(layout) - layout.fft
+            - side_behind_back(layout, 'LEFT'),
             left_side_thickness(layout))
 
 
@@ -2880,7 +2921,8 @@ def right_side_position(layout):
         last = layout.bay_count - 1
         y = -layout.dim_y + layout.bays[last]['depth']
     last = layout.bay_count - 1
-    return (layout.dim_x - right_scribe_offset(layout), y,
+    return (layout.dim_x - right_scribe_offset(layout),
+            y - side_behind_back(layout, 'RIGHT'),
             side_bottom_z(layout, last, 'RIGHT'))
 
 
@@ -2889,7 +2931,8 @@ def right_side_dims(layout):
     bottom_z = side_bottom_z(layout, last, 'RIGHT')
     top_z = right_side_top_z(layout)
     return (top_z - bottom_z,
-            effective_right_depth(layout) - layout.fft,
+            effective_right_depth(layout) - layout.fft
+            - side_behind_back(layout, 'RIGHT'),
             right_side_thickness(layout))
 
 
@@ -3555,10 +3598,16 @@ def carcass_back_segments(layout):
         # the outermost segments run PAST the side's inner face into the
         # notch instead of stopping at it. Only the segment that reaches
         # a cabinet end widens, and only on that end.
+        # A side pulled forward (side_behind_back) has the back run
+        # across its edge to the side's outer face.
         if start == 0:
             left_x -= back_notch_depth(layout, 'LEFT')
+            if side_behind_back(layout, 'LEFT') > 0.0:
+                left_x -= left_side_thickness(layout)
         if end == layout.bay_count - 1:
             right_x += back_notch_depth(layout, 'RIGHT')
+            if side_behind_back(layout, 'RIGHT') > 0.0:
+                right_x += right_side_thickness(layout)
         if first_bay.get('remove_bottom'):
             # No bottom panel here. On a floor-standing carcass (NOTCH /
             # FLUSH base) the back wraps the missing bottom and toe-kick

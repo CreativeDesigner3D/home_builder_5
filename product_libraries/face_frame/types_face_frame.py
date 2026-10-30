@@ -13378,7 +13378,9 @@ class FaceFrameCabinet(GeoNodeCage):
                 extend = max(0.0, (cab.left_side_finished_extend_back if left
                                    else cab.right_side_finished_extend_back))
             back_edge = (-layout.dim_y + layout.bays[bay_index]['depth']
-                         + extend)
+                         + extend
+                         - solver.side_behind_back(
+                             layout, 'LEFT' if left else 'RIGHT'))
             depth = solver.rear_kick_notch_depth(layout, bay_index, back_edge)
         self._drive_rear_kick_notch(side_obj, layout, bay_index, depth,
                                     side_thickness)
