@@ -1135,7 +1135,64 @@ def stair_opening_rects(stair, level):
             continue                # headroom to spare under the floor
         rects.append((min(c.x for c in co), min(c.y for c in co),
                       max(c.x for c in co), max(c.y for c in co)))
+    # Only under a floor: a stair outside the house climbs through open
+    # air, bar where it comes up through a porch or balcony
+    floors = _upper_floors(stair, level)
+    rects = [r for r in rects if any(_rect_overlaps(r, p) for p in floors)]
     return _widen_opening(stair, level, rects)
+
+
+def _upper_floors(stair, level):
+    """The room floors of the level above, as polygons in the stair's own
+    space."""
+    upper = level_above(level.id_data.hb_house, level)
+    scene = hb_house.house_scene_of(stair.users_scene[0]) if stair.users_scene else None
+    if scene is None or upper is None:
+        return []
+    inv = stair.matrix_world.inverted()
+    out = []
+    for room in upper.rooms:
+        if room.orphaned or room.floor_obj is None:
+            continue
+        poly = room_polygon(scene, upper, room)
+        if poly:
+            out.append([tuple((inv @ Vector((x, y, 0.0))).to_2d()) for x, y in poly])
+    return out
+
+
+def _rect_overlaps(rect, poly, eps=1e-4):
+    """Whether a rectangle and a polygon share some area: the polygon
+    clipped to the rectangle (Sutherland-Hodgman) leaves any."""
+    x0, y0, x1, y1 = rect
+    pts = list(poly)
+    for inside, cut in ((lambda p: p[0] >= x0, lambda a, b: _cut_x(a, b, x0)),
+                        (lambda p: p[0] <= x1, lambda a, b: _cut_x(a, b, x1)),
+                        (lambda p: p[1] >= y0, lambda a, b: _cut_y(a, b, y0)),
+                        (lambda p: p[1] <= y1, lambda a, b: _cut_y(a, b, y1))):
+        out = []
+        for i, b in enumerate(pts):
+            a = pts[i - 1]
+            if inside(b):
+                if not inside(a):
+                    out.append(cut(a, b))
+                out.append(b)
+            elif inside(a):
+                out.append(cut(a, b))
+        pts = out
+        if len(pts) < 3:
+            return False
+    area = sum(pts[i - 1][0] * p[1] - p[0] * pts[i - 1][1] for i, p in enumerate(pts)) / 2.0
+    return abs(area) > eps
+
+
+def _cut_x(a, b, x):
+    t = (x - a[0]) / (b[0] - a[0])
+    return (x, a[1] + (b[1] - a[1]) * t)
+
+
+def _cut_y(a, b, y):
+    t = (y - a[1]) / (b[1] - a[1])
+    return (a[0] + (b[0] - a[0]) * t, y)
 
 
 OPENING_TO_SIDE = inch(2.5)     # a tread's end this near the stair's side: out to it
@@ -1347,6 +1404,21 @@ def update_stairwell_lining(stair, level, edges):
         return None
     top = float(stair.get('STAIR_TOTAL_RISE', stair_rise(level)))
     faces = _faces_round(stair, level)
+    # Only where floor was cut, or along a wall: an edge out in the open,
+    # past a porch's edge say, has nothing to line
+    floors = _upper_floors(stair, level)
+    kept = []
+    for e in edges:
+        a, b, n = Vector(e[0]), Vector(e[1]), Vector(e[2])
+        if (b - a).length > 1e-4 and any(
+                abs((pb - pa).normalized().cross((b - a).normalized())) <= 1e-3
+                and -LINING_FACE <= (pa - a).dot(n) <= 0.002
+                and _spans(pa, pb, a, b, (b - a).normalized())
+                for pa, pb, _w in faces if (pb - pa).length >= 1e-6):
+            kept.append(e)
+        else:
+            kept += [(p, q, e[2]) for p, q in _on_floor(e, floors)]
+    edges = kept
     bm = bmesh.new()
     colour = None
     material = None
@@ -1409,6 +1481,49 @@ def update_stairwell_lining(stair, level, edges):
     if material is not None:
         lining.data.materials.append(material)
     return lining
+
+
+LINING_PROBE = 0.05         # how far past an edge the floor it cut is looked for
+LINING_STEP = 0.02
+
+
+def _on_floor(edge, floors):
+    """The runs of an opening's edge [(start, end)] with floor just beyond
+    it."""
+    a, b, n = Vector(edge[0]), Vector(edge[1]), Vector(edge[2])
+    length = (b - a).length
+    if length < 1e-6:
+        return []
+
+    def floor_at(t):
+        p = a + (b - a) * (t / length) + n * LINING_PROBE
+        return any(hb_wall_graph.point_in_polygon((p.x, p.y), f) for f in floors)
+
+    def edge_of(t_in, t_out):
+        # Where floor gives way, between a point on it and one off it
+        for _ in range(12):
+            mid = (t_in + t_out) / 2.0
+            if floor_at(mid):
+                t_in = mid
+            else:
+                t_out = mid
+        return t_in
+
+    count = max(1, int(math.ceil(length / LINING_STEP)))
+    ts = [length * k / count for k in range(count + 1)]
+    on = [floor_at(t) for t in ts]
+    runs, start = [], None
+    for k, t in enumerate(ts):
+        if on[k] and start is None:
+            start = 0.0 if k == 0 else edge_of(t, ts[k - 1])
+        elif not on[k] and start is not None:
+            runs.append((start, edge_of(ts[k - 1], t)))
+            start = None
+    if start is not None:
+        runs.append((start, length))
+    u = (b - a) / length
+    return [(tuple((a + u * t0).to_2d()), tuple((a + u * t1).to_2d()))
+            for t0, t1 in runs if t1 - t0 > 1e-3]
 
 
 def _wall_z(wall, stair):
