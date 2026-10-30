@@ -7,7 +7,7 @@ switches scenes. Hosted in the viewport HUD the panel stays up while you
 work -- picking a scene, running a room action or clicking away all
 leave it open, and the tab button that opened it closes it again.
 Room rows carry rename and delete buttons,
-and a New Room button sits at the bottom -- each of those closes the
+and a New Room button heads the Rooms section -- each of those closes the
 navigator and opens the corresponding operator dialog. Click outside /
 Esc / RMB dismisses.
 
@@ -600,7 +600,6 @@ def _build_layout(region, area, current_scene_name,
         ('row', scene, parent, color, is_current, rect,
                 delete_rect_or_None)
         ('section_action', label, text, rect)
-        ('new_room', rect)
     Room and layout-view rows carry a delete sub-rect; detail rows
     carry None.
     """
@@ -673,10 +672,9 @@ def _build_layout(region, area, current_scene_name,
     panel_top = anchor_top if anchor_top >= 0.0 else y_max - margin
 
     action_rows = (len(_room_actions) + 2) // 3     # three per row
-    actions_h = action_rows * (new_room_h + 3 * s)
-    fixed_h = (pad_y * 2 + panel_hdr_h + section_gap
-               + actions_h
-               + new_room_gap + new_room_h)
+    actions_h = (new_room_gap + action_rows * (new_room_h + 3 * s)
+                 if action_rows else 0.0)
+    fixed_h = pad_y * 2 + panel_hdr_h + section_gap + actions_h
     tab = resolve_active_tab()
     is_rooms = tab == TAB_ROOMS
     avail_h = panel_top - (y_min + PANEL_BOTTOM_MARGIN * s)
@@ -791,7 +789,7 @@ def _build_layout(region, area, current_scene_name,
                 delete_rect,
             ))
 
-    # ---- Room actions + New Room ------------------------------------------
+    # ---- Room actions ----------------------------------------------------
     cursor_y = list_bottom - new_room_gap
     if _room_actions:
         gap_x = 3 * s
@@ -804,8 +802,6 @@ def _build_layout(region, area, current_scene_name,
                     (content_x + j * (bw + gap_x), cursor_y - new_room_h,
                      bw, new_room_h)))
             cursor_y -= new_room_h + gap_x
-    new_room_rect = (content_x, cursor_y - new_room_h, content_w, new_room_h)
-    entries.append(('new_room', new_room_rect))
 
     return panel_rect, entries
 
@@ -838,7 +834,6 @@ def hit_test(mx, my, entries):
         ('clear_section', label)  the header's clear-all button
         ('section_action', label)  a section's action button
         ('delete', scene) / ('row', scene)
-        ('new_room', None)
     List entries scrolled partly out of the clip rect only hit on their
     visible part. Shared by the modal and the HUD click path so the
     two can't disagree.
@@ -871,9 +866,6 @@ def hit_test(mx, my, entries):
         elif kind == 'room_action':
             if _point_in_rect(mx, my, entry[5]):
                 return ('room_action', entry)
-        elif kind == 'new_room':
-            if _point_in_rect(mx, my, entry[1]):
-                return ('new_room', None)
     return None
 
 
@@ -1348,8 +1340,6 @@ def paint_navigator(panel_rect, entries, mx, my):
                           hovered=_point_in_rect(mx, my, entry[5]))
             _draw_centered_text(font_id, entry[5], HEADER_FONT_SIZE * s,
                                 TEXT_NORMAL, entry[2])
-        elif kind == 'new_room':
-            _draw_new_room_button(shader, font_id, entry[1], mx, my)
 
     gpu.state.blend_set('NONE')
 
@@ -1443,8 +1433,6 @@ def handle_navigator_click(context, mx, my, entries):
             except Exception as ex:
                 print('Home Builder: room action %s failed: %s'
                       % (operator, ex))
-        elif kind == 'new_room':
-            bpy.ops.home_builder.create_room('INVOKE_DEFAULT')
     except Exception:
         pass
     return True
@@ -1571,12 +1559,6 @@ class home_builder_OT_scene_navigator(bpy.types.Operator):
         except Exception as e:
             self.report({'WARNING'}, f"Could not switch to {scene_name}: {e}")
 
-    def _create_room(self, context):
-        try:
-            bpy.ops.home_builder.create_room('INVOKE_DEFAULT')
-        except Exception as e:
-            self.report({'WARNING'}, f"Could not create room: {e}")
-
     def _rename_room(self, context, scene):
         # temp_override(scene=...) so rename_room's poll and invoke see the
         # target room; execute targets it explicitly via scene_name.
@@ -1675,10 +1657,6 @@ class home_builder_OT_scene_navigator(bpy.types.Operator):
                 if scene.name != context.scene.name:
                     self._switch_to(context, scene.name)
                 return {'FINISHED'}
-            if kind == 'new_room':
-                self._cleanup(context)
-                self._create_room(context)
-                return {'FINISHED'}
             return {'RUNNING_MODAL'}
 
         if event.type in {'ESC', 'RIGHTMOUSE'} and event.value == 'PRESS':
@@ -1748,6 +1726,9 @@ classes = (
 def register():
     for cls in classes:
         bpy.utils.register_class(cls)
+    # New Room heads the Rooms list, where you look for it; at the
+    # bottom it sat under Layout Views' own create button.
+    register_section_action('ROOMS', "New Room", 'home_builder.create_room')
     # Linking another room's geometry into this one, and the options for
     # how: which of its walls / lights / products come across, what
     # colour it draws in, whether it shows at all. A form -- there is a
@@ -1762,5 +1743,6 @@ def register():
 
 def unregister():
     unregister_room_action('linked_rooms')
+    unregister_section_action('ROOMS')
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
