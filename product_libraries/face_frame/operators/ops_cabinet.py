@@ -5332,6 +5332,23 @@ class hb_face_frame_OT_accessory_menu(bpy.types.Operator):
         rem = side.operator("hb_face_frame.remove_opening_accessory",
                             text="", icon='REMOVE')
         rem.target_name = tgt.name
+        self._draw_item_settings(layout, ffo, props)
+
+    @staticmethod
+    def _draw_item_settings(layout, ffo, props):
+        """Settings for the highlighted accessory: the door a single
+        door-mounted rack goes on, when there is a pair of doors."""
+        idx = props.interior_items_index
+        if not (0 <= idx < len(props.interior_items)):
+            return
+        item = props.interior_items[idx]
+        if item.kind != 'ACCESSORY':
+            return
+        entry = accessory_registry.find(item.accessory_code) or {}
+        if (entry.get('model') == 'door_rack'
+                and getattr(ffo, 'hinge_side', '') == 'DOUBLE'
+                and item.accessory_qty < 2):
+            layout.prop(item, 'accessory_door')
 
     def _draw_choice(self, context, layout, tgt, code, item):
         is_pullout = item.get('host') == _ACCESSORY_PULLOUT_HOST

@@ -1165,6 +1165,10 @@ def attach_front_models(opening_obj, op_props, rect, leaves):
         if model in DOOR_RACK_MODELS:
             targets = [pl for pl in leaves if pl[1].get('role') == 'DOOR']
             if model == 'door_rack':
+                # Leaves come left to right; racks fill from the door
+                # picked for them.
+                if getattr(item, 'accessory_door', 'LEFT') == 'RIGHT':
+                    targets.reverse()
                 targets = targets[:max(getattr(item, 'accessory_qty', 1), 1)]
             rparams = dict(params)
             if model == 'swinger_pantry':

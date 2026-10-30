@@ -11027,6 +11027,16 @@ class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
     accessory_render: StringProperty(
         name="Accessory Render", default="",
     )  # type: ignore
+    # ACCESSORY: which leaf of a pair of doors a door-mounted rack goes
+    # on when there are fewer racks than doors.
+    accessory_door: EnumProperty(
+        name="Mount On",
+        description="Which door the rack is mounted on. With a rack for "
+                    "every door this is ignored",
+        items=[('LEFT', "Left Door", "Mount on the left door"),
+               ('RIGHT', "Right Door", "Mount on the right door")],
+        default='LEFT', update=_update_cabinet_dim,
+    )  # type: ignore
     divider_lengthwise: BoolProperty(
         name="Run Front to Back",
         description="Turn the divider(s) to run front-to-back, splitting "
