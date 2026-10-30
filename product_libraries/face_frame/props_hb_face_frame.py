@@ -6470,6 +6470,19 @@ def _update_unlock_back_thickness(self, context):
         _update_cabinet_dim(self, context)
 
 
+def _update_divider_spacing(self, context):
+    """Typed divider spacing sets how many dividers there are, so the
+    quantity follows it - anything counting dividers off the quantity
+    stays right without reading the spacing."""
+    from . import types_face_frame
+    spaces = types_face_frame.parse_divider_spacing(self.divider_spacing)
+    n = min(len(spaces) - 1, 10) if spaces else 0
+    if n >= 1 and n != self.accessory_qty:
+        self.accessory_qty = n  # its own update recalculates
+    else:
+        _update_cabinet_dim(self, context)
+
+
 def _update_unlock_finished_back_thickness(self, context):
     """Lock toggle for the applied finished / textured back thickness.
     Unlocking seeds the field with the stock the back is built from now,
@@ -11043,6 +11056,27 @@ class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
                     "there is nothing to sit against",
         default=0.0, min=0.0, unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
+    )  # type: ignore
+    divider_spacing: StringProperty(
+        name="Space Sizes",
+        description="Clear size of each space between dividers, front to "
+                    "back (left to right when running front to back), in "
+                    "inches. * shares what is left equally and N@X is N "
+                    "spaces of X, e.g. '* 3@4 *' or '5 * * *'. Sets the "
+                    "quantity. Blank spaces the dividers evenly",
+        default="", update=_update_divider_spacing,
+    )  # type: ignore
+    divider_span_from: IntProperty(
+        name="From Space",
+        description="First space of the dividers running the other way "
+                    "that this divider crosses. 0 starts at the drawer side",
+        default=0, min=0, max=11, update=_update_cabinet_dim,
+    )  # type: ignore
+    divider_span_to: IntProperty(
+        name="To Space",
+        description="Last space of the dividers running the other way "
+                    "that this divider crosses. 0 runs to the drawer side",
+        default=0, min=0, max=11, update=_update_cabinet_dim,
     )  # type: ignore
 
     # ACCESSORY: placement and size of a rendered drawer insert (tray,

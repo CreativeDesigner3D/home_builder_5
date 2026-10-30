@@ -835,6 +835,54 @@ def render_hint_kind(hint):
     return kind if kind in DRAWER_INSERT_BUILDERS else ''
 
 
+def _parse_inches(text):
+    """'4', '3.5', '3/4' or '3-1/2' as inches, or None."""
+    whole, _sep, frac = text.rpartition('-')
+    if '/' not in frac:
+        whole, frac = '', text
+    try:
+        value = float(whole) if whole else 0.0
+        if '/' in frac:
+            num, den = frac.split('/', 1)
+            value += float(num) / float(den)
+        else:
+            value += float(frac)
+    except (ValueError, ZeroDivisionError):
+        return None
+    return value if value >= 0.0 else None
+
+
+def parse_divider_spacing(text):
+    """A removable divider spacing as a list of spaces, front to back
+    (left to right for dividers running front to back): a clear size in
+    inches, or None for a space that shares what is left equally.
+
+    Tokens split on spaces or commas: ``*`` is a shared space, a number
+    a fixed one, ``N@X`` N spaces of X and ``N@*`` N shared ones -
+    ``"* 3@4 *"`` is three 4" spaces with the outer two taking the rest.
+    Returns [] for a blank or unreadable spacing (spaced evenly then).
+    """
+    spaces = []
+    for token in (text or '').replace(',', ' ').split():
+        count, sep, size = token.partition('@')
+        if not sep:
+            count, size = '1', token
+        try:
+            n = int(count)
+        except ValueError:
+            return []
+        if n < 1:
+            return []
+        if size == '*':
+            value = None
+        else:
+            value = _parse_inches(size)
+            if value is None:
+                return []
+        spaces.extend([value] * n)
+    return spaces
+
+
 class DrawerInsertMesh:
     """Collects the prisms that make up one drawer insert so the whole
     insert ships as a single mesh object.
@@ -14850,7 +14898,7 @@ class FaceFrameCabinet(GeoNodeCage):
             x0=side, x1=dx - side, y0=front, y1=dy - side, z0=floor,
             # Inserts stand on the box bottom and stop under the rim.
             h=max(dz - floor - self.DRAWER_INSERT_RIM_GAP, inch(1.0)),
-            slots=0)
+            slots=0, divider_runs=[])
         if (inner.x1 - inner.x0 < inch(1.0)
                 or inner.y1 - inner.y0 < inch(1.0)):
             return
@@ -14881,6 +14929,7 @@ class FaceFrameCabinet(GeoNodeCage):
                     break
                 builder(box_obj, rect, item, params)
                 cursor = rect.x1
+        self._emit_drawer_dividers(box_obj, inner)
 
     @staticmethod
     def _drawer_insert_fill_width(inner, items):
@@ -14956,25 +15005,36 @@ class FaceFrameCabinet(GeoNodeCage):
         rarely fills the drawer, and the divider closes off what is
         left. Anything else - the first thing in the drawer, a typed
         position, a divider running side to side - spaces evenly as
-        before. Returns the packing cursor to carry on from, or None
-        when it took no space.
+        before. A typed spacing (divider_spacing) places them by the
+        size of the spaces between them instead. Returns the packing
+        cursor to carry on from, or None when it took no space.
+
+        Inside a drawer the panels are only recorded here; a divider
+        can stop at the ones running the other way (From / To Space),
+        so _emit_drawer_dividers builds them once every run is known.
         """
         th = inch(params.get('TH', 0.0))
         if th < 1e-6:
             th = self.DRAWER_DIVIDER_TH
         if (rect.x1 - rect.x0 < th * 2) or (rect.y1 - rect.y0 < th * 2):
             return None
-        z0, z1 = rect.z0, rect.z0 + rect.h
         qty = max(getattr(item, 'accessory_qty', 1), 1)
         lengthwise = getattr(item, 'divider_lengthwise', False)
         off = getattr(item, 'divider_offset', 0.0)
         span0, span1 = ((rect.x0, rect.x1) if lengthwise
                         else (rect.y0, rect.y1))
         span = span1 - span0
-        against = (lengthwise and off <= 0.0001 and cursor is not None
+        spaces = parse_divider_spacing(getattr(item, 'divider_spacing', ''))
+        if len(spaces) < 2:
+            spaces = []
+        against = (not spaces and lengthwise and off <= 0.0001
+                   and cursor is not None
                    and cursor > rect.x0 + 1e-6
                    and cursor < rect.x1 - th)
-        if against:
+        if spaces:
+            centers = self._divider_centers_from_spacing(
+                spaces, span0, span1, th)
+        elif against:
             centers = [cursor + th / 2.0]
             # Extras split what is left beyond it, so a quantity still
             # means something once the first one is spoken for.
@@ -14988,20 +15048,79 @@ class FaceFrameCabinet(GeoNodeCage):
         else:
             step = span / (qty + 1)
             centers = [span0 + step * (i + 1) for i in range(qty)]
-        for c in centers:
-            mb = DrawerInsertMesh()
-            if lengthwise:
-                mb.box(c - th / 2.0, c + th / 2.0, rect.y0, rect.y1,
-                       z0, z1)
-            else:
-                mb.box(rect.x0, rect.x1, c - th / 2.0, c + th / 2.0,
-                       z0, z1)
-            self._emit_drawer_insert(box_obj, 'Drawer Divider', mb,
-                                     role=PART_ROLE_DRAWER_DIVIDER)
+        run = SimpleNamespace(
+            item=item, lengthwise=lengthwise, centers=centers, th=th,
+            rect=rect)
+        runs = getattr(rect, 'divider_runs', None)
+        if runs is not None:
+            runs.append(run)
+        else:
+            self._emit_divider_run(box_obj, run, [])
         if not against:
             return None
         # Whatever comes next starts clear of the last one placed.
         return max(centers) + th / 2.0
+
+    @staticmethod
+    def _divider_centers_from_spacing(spaces, span0, span1, th):
+        """Divider centers for a typed spacing: fixed spaces keep their
+        size, the shared (None) ones split what is left. With no shared
+        space the last one takes the slack, so a spacing typed from the
+        front still lands its fixed spaces where they were typed."""
+        if None not in spaces:
+            spaces = spaces[:-1] + [None]
+        n_div = len(spaces) - 1
+        fixed = sum(inch(s) for s in spaces if s is not None)
+        shared = spaces.count(None)
+        free = max(span1 - span0 - n_div * th - fixed, 0.0) / shared
+        centers = []
+        pos = span0
+        for s in spaces[:-1]:
+            pos += inch(s) if s is not None else free
+            centers.append(min(pos + th / 2.0, span1 - th / 2.0))
+            pos += th
+        return centers
+
+    def _emit_drawer_dividers(self, box_obj, inner):
+        """Build the divider panels recorded while packing the drawer.
+        Each run is handed the centers of the dividers running the other
+        way, which are what its From / To Space count."""
+        runs = getattr(inner, 'divider_runs', None) or []
+        for run in runs:
+            crossing = sorted({c for other in runs
+                               if other.lengthwise != run.lengthwise
+                               for c in other.centers})
+            self._emit_divider_run(box_obj, run, crossing)
+
+    def _emit_divider_run(self, box_obj, run, crossing):
+        """One object per divider in the run. Along its length a divider
+        runs side to side of the box, or between the faces of the
+        crossing dividers bounding the spaces it was limited to."""
+        rect, th, item = run.rect, run.th, run.item
+        z0, z1 = rect.z0, rect.z0 + rect.h
+        # The run's own length lies across the crossing dividers.
+        a0, a1 = ((rect.y0, rect.y1) if run.lengthwise
+                  else (rect.x0, rect.x1))
+        bounds = [a0] + list(crossing) + [a1]
+        n_spaces = len(bounds) - 1
+        first = getattr(item, 'divider_span_from', 0)
+        last = getattr(item, 'divider_span_to', 0)
+        first = min(max(first, 1), n_spaces)
+        last = min(max(last if last > 0 else n_spaces, first), n_spaces)
+        if first > 1:
+            a0 = bounds[first - 1] + th / 2.0
+        if last < n_spaces:
+            a1 = bounds[last] - th / 2.0
+        if a1 - a0 < th:
+            return
+        for c in run.centers:
+            mb = DrawerInsertMesh()
+            if run.lengthwise:
+                mb.box(c - th / 2.0, c + th / 2.0, a0, a1, z0, z1)
+            else:
+                mb.box(a0, a1, c - th / 2.0, c + th / 2.0, z0, z1)
+            self._emit_drawer_insert(box_obj, 'Drawer Divider', mb,
+                                     role=PART_ROLE_DRAWER_DIVIDER)
 
     def _tray_walls(self, mb, rect, th):
         """Bottom panel with four walls standing on it - the shell every
