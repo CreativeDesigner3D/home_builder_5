@@ -354,10 +354,7 @@ class hb_frameless_OT_drawer_interior(bpy.types.Operator):
         from ...face_frame import ui_face_frame
         box = layout.box()
         box.label(text=item.accessory_label or item.accessory_code)
-        row = box.row()
-        # Typed divider spacing sets the count.
-        row.enabled = not item.divider_spacing.strip()
-        row.prop(item, 'accessory_qty', text="Quantity")
+        box.prop(item, 'accessory_qty', text="Quantity")
         ui_face_frame.draw_drawer_insert_settings(box, item)
 
 

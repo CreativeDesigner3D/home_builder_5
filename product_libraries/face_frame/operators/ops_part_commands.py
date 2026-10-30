@@ -2951,15 +2951,29 @@ def _front_opening_cage(obj):
     return None
 
 
+def _is_drawer_interior_part(obj):
+    """A removable divider or insert inside a face-frame drawer box.
+    Already plain mesh, so making one editable only takes the flag; the
+    drawer rebuild carries it over (types_face_frame
+    keep_manual_drawer_parts)."""
+    return (obj is not None
+            and obj.get('hb_part_role') in
+            types_face_frame.DRAWER_INTERIOR_EDITABLE_ROLES
+            and _front_opening_cage(obj) is not None)
+
+
 def _can_make_editable(obj):
     """True if obj is a STRUCTURAL cutpart that can be made editable: a MESH
     cutpart with its modifier present, not already manual, and not a front
     (fronts go through the front path). Face-frame parts qualify by part role;
-    wood-hood cutparts and Misc Parts qualify by their tags (no role)."""
+    wood-hood cutparts and Misc Parts qualify by their tags (no role).
+    Drawer dividers and inserts qualify too: they are plain mesh already."""
     if obj is None or obj.type != 'MESH':
         return False
     if obj.get('IS_MANUAL_PART'):
         return False
+    if _is_drawer_interior_part(obj):
+        return True
     if has_door_style_modifier(obj):
         return False
     if not (obj.get('IS_WOOD_HOOD_PART')
@@ -3045,6 +3059,11 @@ class hb_face_frame_OT_make_part_editable(bpy.types.Operator):
         if obj.get('IS_WOOD_HOOD_PART'):
             from ...common import wood_hoods
             wood_hoods.snapshot_hood_part(obj)
+        elif _is_drawer_interior_part(obj):
+            # Plain mesh with nothing to bake or stash: Revert drops it
+            # and the drawer rebuild makes it fresh.
+            obj['IS_MANUAL_PART'] = True
+            return
         else:
             _stash_part_inputs(obj)
         # Bake the part as it shows -- every modifier, the frame bead and
@@ -3133,6 +3152,11 @@ class hb_face_frame_OT_revert_part_to_parametric(bpy.types.Operator):
         Structural: rebuild in place - re-add the cutpart GN and restore the
         stashed mirror flags (recalc rewrites L/W/T/position but not mirrors).
         """
+        if _is_drawer_interior_part(obj):
+            # The recalc that follows builds this slot fresh once the
+            # hand-edited part is gone.
+            bpy.data.objects.remove(obj, do_unlink=True)
+            return
         cage = _front_opening_cage(obj)
         if obj.get('hb_part_role') in _FRONT_EDITABLE_ROLES and cage is not None:
             if 'IS_MANUAL_FRONT' in cage.keys():
@@ -3203,8 +3227,9 @@ class hb_face_frame_OT_revert_part_to_parametric(bpy.types.Operator):
         # Revert each in place, then recalc each affected cabinet ONCE.
         roots = {}
         for obj in targets:
-            self._revert_one(obj, ng)
+            # Root first: a drawer divider's revert removes the object.
             root = types_face_frame.find_cabinet_root(obj)
+            self._revert_one(obj, ng)
             if root is not None:
                 roots[root.name] = root
         for root in roots.values():

@@ -1727,18 +1727,29 @@ def draw_drawer_insert_settings(layout, item, show_hint=True):
         return
     if kind == 'DIVIDER':
         layout.prop(item, 'divider_lengthwise')
-        spaced = bool(item.divider_spacing.strip())
-        row = layout.row()
-        row.enabled = item.accessory_qty == 1 and not spaced
-        row.prop(item, 'divider_offset', text="Position (0 = Auto)")
-        layout.prop(item, 'divider_spacing', text="Space Sizes")
-        if spaced and not types_face_frame.parse_divider_spacing(
-                item.divider_spacing):
-            layout.label(text="Use sizes, * and N@X, e.g. * 3@4 *",
-                         icon='ERROR')
+        # One row per space between the dividers, sized like openings:
+        # unlock a space to type its size, the locked ones share what
+        # is left.
+        n_spaces = min(item.accessory_qty + 1,
+                       len(item.divider_space_unlock))
+        side = "Left" if item.divider_lengthwise else "Front"
+        col = layout.column(align=True)
+        for i in range(n_spaces):
+            label = f"Space {i + 1}"
+            if i == 0:
+                label += f" ({side})"
+            unlocked = item.divider_space_unlock[i]
+            size_row = col.row(align=True)
+            field = size_row.row(align=True)
+            field.enabled = unlocked
+            field.prop(item, 'divider_space_sizes', index=i, text=label)
+            size_row.prop(item, 'divider_space_unlock', index=i, text="",
+                          icon='UNLOCKED' if unlocked else 'LOCKED')
+        # Stop at the dividers running the other way, crossing only
+        # some of their spaces (0 = run to the drawer side).
         row = layout.row(align=True)
-        row.prop(item, 'divider_span_from', text="From Space")
-        row.prop(item, 'divider_span_to', text="To")
+        row.prop(item, 'divider_span_from', text="Cross From Space")
+        row.prop(item, 'divider_span_to', text="to")
         return
     if kind in ('CUTLERY', 'TRAY', 'KNIFE_BLOCK'):
         layout.prop(item, 'insert_slots', text="Compartments (0 = Auto)")
@@ -1904,10 +1915,7 @@ def _draw_interior_items_section(layout, target_props, target_name=""):
             sub.prop(item, 'vanity_length', text="Shelf Length")
         elif item.kind == 'ACCESSORY':
             sub.prop(item, 'accessory_label', text="Label")
-            qty_row = sub.row(align=True)
-            # Typed divider spacing sets the count.
-            qty_row.enabled = not item.divider_spacing.strip()
-            qty_row.prop(item, 'accessory_qty', text="Qty")
+            sub.prop(item, 'accessory_qty', text="Qty")
             # Show the not-modeled note here: this list is where someone
             # goes looking after adding an accessory and seeing nothing
             # appear inside the cabinet, so it is the one place the

@@ -15,6 +15,7 @@ from bpy.types import (
 )
 from bpy.props import (
     BoolProperty,
+    BoolVectorProperty,
     FloatProperty,
     FloatVectorProperty,
     IntProperty,
@@ -6470,18 +6471,6 @@ def _update_unlock_back_thickness(self, context):
         _update_cabinet_dim(self, context)
 
 
-def _update_divider_spacing(self, context):
-    """Typed divider spacing sets how many dividers there are, so the
-    quantity follows it - anything counting dividers off the quantity
-    stays right without reading the spacing."""
-    from . import types_face_frame
-    spaces = types_face_frame.parse_divider_spacing(self.divider_spacing)
-    n = min(len(spaces) - 1, 10) if spaces else 0
-    if n >= 1 and n != self.accessory_qty:
-        self.accessory_qty = n  # its own update recalculates
-    else:
-        _update_cabinet_dim(self, context)
-
 
 def _update_unlock_finished_back_thickness(self, context):
     """Lock toggle for the applied finished / textured back thickness.
@@ -11057,14 +11046,22 @@ class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
         default=0.0, min=0.0, unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
     )  # type: ignore
-    divider_spacing: StringProperty(
-        name="Space Sizes",
-        description="Clear size of each space between dividers, front to "
-                    "back (left to right when running front to back), in "
-                    "inches. * shares what is left equally and N@X is N "
-                    "spaces of X, e.g. '* 3@4 *' or '5 * * *'. Sets the "
-                    "quantity. Blank spaces the dividers evenly",
-        default="", update=_update_divider_spacing,
+    # One entry per space between the dividers, front to back (left to
+    # right when running front to back). An unlocked space keeps the
+    # size typed in it; the locked ones share what is left equally. The
+    # build writes the sizes it lands back here, so a locked space shows
+    # what it came out to.
+    divider_space_sizes: FloatVectorProperty(
+        name="Space Sizes", size=11, default=(0.0,) * 11, min=0.0,
+        subtype='NONE', unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    divider_space_unlock: BoolVectorProperty(
+        name="Set Space Size",
+        description="Unlock to type this space's size; locked spaces "
+                    "share what is left equally",
+        size=11, default=(False,) * 11,
+        update=_update_cabinet_dim,
     )  # type: ignore
     divider_span_from: IntProperty(
         name="From Space",

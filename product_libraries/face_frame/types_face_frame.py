@@ -780,6 +780,14 @@ PART_ROLE_DRAWER_DIVIDER = 'DRAWER_DIVIDER'
 # dividers; kept as its own role so reports can tell a loose partition
 # from a dropped-in insert.
 PART_ROLE_DRAWER_INSERT = 'DRAWER_INSERT'
+# Drawer parts Make Editable can hand over to the user. The box and
+# everything in it are rebuilt with the front, so a hand-edited one is
+# lifted out before the wipe and put back in place of its rebuilt twin
+# (keep_manual_drawer_parts / restore_manual_drawer_parts), matched by
+# role and DRAWER_INSERT_BUILD_INDEX within its box.
+DRAWER_INTERIOR_EDITABLE_ROLES = frozenset({PART_ROLE_DRAWER_DIVIDER,
+                                            PART_ROLE_DRAWER_INSERT})
+DRAWER_INSERT_BUILD_INDEX = 'hb_drawer_build_index'
 # Hidden boolean cutter carving the U-notch of a sink duo drawer box.
 # A wire child of the box, so it lives and dies with the box's own
 # wipe-and-rebuild lifecycle.
@@ -835,53 +843,58 @@ def render_hint_kind(hint):
     return kind if kind in DRAWER_INSERT_BUILDERS else ''
 
 
-def _parse_inches(text):
-    """'4', '3.5', '3/4' or '3-1/2' as inches, or None."""
-    whole, _sep, frac = text.rpartition('-')
-    if '/' not in frac:
-        whole, frac = '', text
-    try:
-        value = float(whole) if whole else 0.0
-        if '/' in frac:
-            num, den = frac.split('/', 1)
-            value += float(num) / float(den)
-        else:
-            value += float(frac)
-    except (ValueError, ZeroDivisionError):
-        return None
-    return value if value >= 0.0 else None
+
+def keep_manual_drawer_parts(opening_obj):
+    """Lift the hand-edited drawer dividers / inserts out of an opening's
+    front pivots before the fronts are wiped. Each is unparented with its
+    place in the box remembered. Returns [(obj, leaf_index, parent
+    inverse, local matrix)] for restore_manual_drawer_parts."""
+    kept = []
+    for pivot in opening_obj.children:
+        if pivot.get('hb_part_role') != PART_ROLE_FRONT_PIVOT:
+            continue
+        leaf_index = next((c.get('HB_LEAF_INDEX', 0) for c in pivot.children
+                           if c.get('HB_LEAF_INDEX') is not None), 0)
+        for obj in list(pivot.children_recursive):
+            if (obj.get('IS_MANUAL_PART')
+                    and obj.get('hb_part_role')
+                    in DRAWER_INTERIOR_EDITABLE_ROLES):
+                kept.append((obj, leaf_index,
+                             obj.matrix_parent_inverse.copy(),
+                             obj.matrix_basis.copy()))
+                obj.parent = None
+    return kept
 
 
-def parse_divider_spacing(text):
-    """A removable divider spacing as a list of spaces, front to back
-    (left to right for dividers running front to back): a clear size in
-    inches, or None for a space that shares what is left equally.
-
-    Tokens split on spaces or commas: ``*`` is a shared space, a number
-    a fixed one, ``N@X`` N spaces of X and ``N@*`` N shared ones -
-    ``"* 3@4 *"`` is three 4" spaces with the outer two taking the rest.
-    Returns [] for a blank or unreadable spacing (spaced evenly then).
-    """
-    spaces = []
-    for token in (text or '').replace(',', ' ').split():
-        count, sep, size = token.partition('@')
-        if not sep:
-            count, size = '1', token
-        try:
-            n = int(count)
-        except ValueError:
-            return []
-        if n < 1:
-            return []
-        if size == '*':
-            value = None
-        else:
-            value = _parse_inches(size)
-            if value is None:
-                return []
-        spaces.extend([value] * n)
-    return spaces
-
+def restore_manual_drawer_parts(kept, built_leaves):
+    """Put the parts keep_manual_drawer_parts lifted out back in the
+    rebuilt drawer box of the same leaf (or the first box built), in
+    place of the part rebuilt for the same slot, at the same spot in the
+    box. With no drawer box left - the drawer became a door, say - they
+    go with it."""
+    if not kept:
+        return
+    boxes = {}
+    for leaf_index, (pivot, _leaf) in enumerate(built_leaves):
+        box = next((c for c in pivot.children
+                    if c.get('hb_part_role') == PART_ROLE_DRAWER_BOX), None)
+        if box is not None:
+            boxes[leaf_index] = box
+    for obj, leaf_index, parent_inv, local in kept:
+        box = boxes.get(leaf_index) or next(iter(boxes.values()), None)
+        if box is None:
+            bpy.data.objects.remove(obj, do_unlink=True)
+            continue
+        role = obj.get('hb_part_role')
+        slot = obj.get(DRAWER_INSERT_BUILD_INDEX)
+        for twin in list(box.children):
+            if (twin.get('hb_part_role') == role
+                    and not twin.get('IS_MANUAL_PART')
+                    and twin.get(DRAWER_INSERT_BUILD_INDEX) == slot):
+                bpy.data.objects.remove(twin, do_unlink=True)
+        obj.parent = box
+        obj.matrix_parent_inverse = parent_inv
+        obj.matrix_basis = local
 
 class DrawerInsertMesh:
     """Collects the prisms that make up one drawer insert so the whole
@@ -14043,6 +14056,9 @@ class FaceFrameCabinet(GeoNodeCage):
         front_type = op_props.front_type
         cab_props = self.obj.face_frame_cabinet
 
+        # Hand-edited drawer dividers / inserts ride out the wipe.
+        kept_drawer_parts = keep_manual_drawer_parts(opening_obj)
+
         # Wipe existing pivots, parts, and any legacy direct-child fronts.
         # Use children_recursive so pull instances parented under the door
         # part (grandchildren of the pivot) also get cleaned.
@@ -14058,6 +14074,7 @@ class FaceFrameCabinet(GeoNodeCage):
                 bpy.data.objects.remove(child, do_unlink=True)
 
         if front_type == 'NONE':
+            restore_manual_drawer_parts(kept_drawer_parts, [])
             return
 
         built_leaves = []
@@ -14158,6 +14175,7 @@ class FaceFrameCabinet(GeoNodeCage):
         # them.
         misc_accessory_models.attach_front_models(
             opening_obj, op_props, rect, built_leaves)
+        restore_manual_drawer_parts(kept_drawer_parts, built_leaves)
 
         # Sink apron: a 1/2" panel across the top of a DOOR opening
         # (apron / farmhouse sink), set 1/8" behind the face frame. The
@@ -14833,8 +14851,13 @@ class FaceFrameCabinet(GeoNodeCage):
         for coll in box_obj.users_collection:
             coll.objects.link(obj)
             break
+        role = role or PART_ROLE_DRAWER_INSERT
+        # Nth of its role in this box, built in a fixed order, so a
+        # hand-edited part can find the one it stands in for.
+        obj[DRAWER_INSERT_BUILD_INDEX] = sum(
+            1 for c in box_obj.children if c.get('hb_part_role') == role)
         obj.parent = box_obj
-        obj['hb_part_role'] = role or PART_ROLE_DRAWER_INSERT
+        obj['hb_part_role'] = role
         obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_drawer_box_commands'
         obj['IS_FINISHED'] = True
         return obj
@@ -15005,9 +15028,10 @@ class FaceFrameCabinet(GeoNodeCage):
         rarely fills the drawer, and the divider closes off what is
         left. Anything else - the first thing in the drawer, a typed
         position, a divider running side to side - spaces evenly as
-        before. A typed spacing (divider_spacing) places them by the
-        size of the spaces between them instead. Returns the packing
-        cursor to carry on from, or None when it took no space.
+        before. Unlocking a space and typing its size places them by
+        the spaces between them instead (divider_space_unlock), the
+        locked spaces sharing what is left. Returns the packing cursor
+        to carry on from, or None when it took no space.
 
         Inside a drawer the panels are only recorded here; a divider
         can stop at the ones running the other way (From / To Space),
@@ -15024,9 +15048,7 @@ class FaceFrameCabinet(GeoNodeCage):
         span0, span1 = ((rect.x0, rect.x1) if lengthwise
                         else (rect.y0, rect.y1))
         span = span1 - span0
-        spaces = parse_divider_spacing(getattr(item, 'divider_spacing', ''))
-        if len(spaces) < 2:
-            spaces = []
+        spaces = self._divider_set_spaces(item, qty)
         against = (not spaces and lengthwise and off <= 0.0001
                    and cursor is not None
                    and cursor > rect.x0 + 1e-6
@@ -15048,6 +15070,7 @@ class FaceFrameCabinet(GeoNodeCage):
         else:
             step = span / (qty + 1)
             centers = [span0 + step * (i + 1) for i in range(qty)]
+        self._write_divider_space_sizes(item, centers, span0, span1, th)
         run = SimpleNamespace(
             item=item, lengthwise=lengthwise, centers=centers, th=th,
             rect=rect)
@@ -15062,21 +15085,58 @@ class FaceFrameCabinet(GeoNodeCage):
         return max(centers) + th / 2.0
 
     @staticmethod
+    def _divider_set_spaces(item, qty):
+        """The item's spaces as a list - the typed size of an unlocked
+        space, None for a locked one - or [] when none is unlocked (the
+        dividers then place themselves as before)."""
+        sizes = getattr(item, 'divider_space_sizes', None)
+        unlock = getattr(item, 'divider_space_unlock', None)
+        if sizes is None or unlock is None or qty + 1 > len(unlock):
+            return []
+        spaces = [sizes[i] if unlock[i] else None for i in range(qty + 1)]
+        if all(s is None for s in spaces):
+            return []
+        return spaces
+
+    @staticmethod
+    def _write_divider_space_sizes(item, centers, span0, span1, th):
+        """Store the sizes the locked spaces came out to, so each shows
+        what it is (an unlocked one keeps what was typed). Written
+        straight to the ID property: going through the property would
+        fire its update and recalc again."""
+        try:
+            current = list(item.divider_space_sizes)
+            unlock = list(item.divider_space_unlock)
+        except AttributeError:
+            return
+        edges = ([span0] + [e for c in sorted(centers)
+                            for e in (c - th / 2.0, c + th / 2.0)]
+                 + [span1])
+        landed = [max(edges[i + 1] - edges[i], 0.0)
+                  for i in range(0, len(edges), 2)]
+        for i, size in enumerate(landed[:len(current)]):
+            if not unlock[i]:
+                current[i] = size
+        if any(abs(a - b) > 1e-7
+               for a, b in zip(current, item.divider_space_sizes)):
+            item['divider_space_sizes'] = current
+
+    @staticmethod
     def _divider_centers_from_spacing(spaces, span0, span1, th):
-        """Divider centers for a typed spacing: fixed spaces keep their
+        """Divider centers for a set of spaces: a set space keeps its
         size, the shared (None) ones split what is left. With no shared
-        space the last one takes the slack, so a spacing typed from the
-        front still lands its fixed spaces where they were typed."""
+        space the last one takes the slack, so sizes set from the front
+        still land where they were set."""
         if None not in spaces:
             spaces = spaces[:-1] + [None]
         n_div = len(spaces) - 1
-        fixed = sum(inch(s) for s in spaces if s is not None)
+        fixed = sum(s for s in spaces if s is not None)
         shared = spaces.count(None)
         free = max(span1 - span0 - n_div * th - fixed, 0.0) / shared
         centers = []
         pos = span0
         for s in spaces[:-1]:
-            pos += inch(s) if s is not None else free
+            pos += s if s is not None else free
             centers.append(min(pos + th / 2.0, span1 - th / 2.0))
             pos += th
         return centers
