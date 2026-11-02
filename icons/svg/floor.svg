@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="#fff" stroke-width="1" stroke-linecap="butt" stroke-linejoin="miter">
+  <!-- A slab in section, low, structure hatched below -->
+  <rect x="0" y="8" width="16" height="2" fill="#fff" fill-opacity=".35" stroke="none"/>
+  <path d="M0 7.5h16M0 10.5h16"/>
+  <path d="M4 11l-2.5 3.5M7.5 11L5 14.5M11 11l-2.5 3.5M14.5 11L12 14.5" stroke-opacity=".7"/>
+</svg>

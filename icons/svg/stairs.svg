@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="#fff" stroke-width="1" stroke-linecap="butt" stroke-linejoin="miter">
+  <!-- A flight in section: three risers and their treads -->
+  <path d="M2 15V11h4V7h4V3h5v12z" fill="#fff" fill-opacity=".35" stroke="none"/>
+  <path d="M1.5 15v-4.5h4v-4h4v-4h5.5"/>
+</svg>

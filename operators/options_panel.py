@@ -58,6 +58,7 @@ import bpy
 
 from .. import units
 from .. import hb_placement
+from ..hb_icons import draw_icon
 from ..hb_gpu_draw import (
     draw_rect,
     draw_rect_outline,
@@ -1641,7 +1642,9 @@ def paint(entries, mx, my):
                              active=on and glyph == 'text')
                 color = Theme.GLYPH_HOVER if (c_hot or on) else Theme.GLYPH
                 if glyph == 'lock':
-                    _glyph_lock(shader, rect, not on, color)
+                    if not draw_icon('unlock' if on else 'lock', rect,
+                                     color):
+                        _glyph_lock(shader, rect, not on, color)
                 else:
                     glyph_rename(shader, rect, color)
             elif kind == 'clear_chip':

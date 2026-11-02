@@ -23,6 +23,7 @@ import math
 import bpy
 import gpu
 
+from ..hb_icons import icon_glyph, draw_icon
 from ..hb_gpu_draw import (
     get_visible_window_bounds,
     draw_rect,
@@ -323,24 +324,48 @@ def _g_stairs(shader, box, color):
 #              badly, and several tools share one form, so the name
 #              has to describe the form and not the button.
 
+# The marks above as baked SVG icons (icons/svg), each falling back to its
+# line drawing if the icon's PNGs are missing. Sized to the button rather
+# than fitted to the inset box the palette hands a glyph, so they come out
+# at the grid size they are drawn for.
+def _icon(name, fallback):
+    return icon_glyph(name, fallback, size=16)
+
+
+_I_WALL = _icon('wall', _g_wall)
+_I_DOOR = _icon('door', _g_door)
+_I_DOUBLE_DOOR = _icon('double_door', _g_double_door)
+_I_OPEN_DOOR = _icon('opening', _g_open_door)
+_I_WINDOW = _icon('window', _g_window)
+_I_FIREPLACE = _icon('fireplace', _g_fireplace)
+_I_BAY = _icon('bay', _g_bay)
+_I_FURNISH = _icon('furnish', _g_furnish)
+_I_OBSTACLE = _icon('obstacle', _g_obstacle)
+_I_FLOOR = _icon('floor', _g_floor)
+_I_CEILING = _icon('ceiling', _g_ceiling)
+_I_STAIRS = _icon('stairs', _g_stairs)
+_I_LIGHTS = _icon('lights', _g_lights)
+_I_MEASURE = _icon('measure', _g_measure)
+_I_CUTAWAY = _icon('cutaway', _g_cutaway)
+
 BUILTIN_TOOLS = (
-    ("home_builder_walls.draw_walls", "Draw Walls", _g_wall, 0,
+    ("home_builder_walls.draw_walls", "Draw Walls", _I_WALL, 0,
      'draw_wall_settings', "Wall Settings"),
-    ("home_builder_doors_windows.place_door", "Single Door", _g_door, 1,
+    ("home_builder_doors_windows.place_door", "Single Door", _I_DOOR, 1,
      'draw_door_window_defaults', "Door & Window Settings"),
     ("home_builder_doors_windows.place_double_door", "Double Door",
-     _g_double_door, 1, 'draw_door_window_defaults', "Door & Window Settings"),
+     _I_DOUBLE_DOOR, 1, 'draw_door_window_defaults', "Door & Window Settings"),
     ("home_builder_doors_windows.place_open_door", "Open Doorway",
-     _g_open_door, 1, 'draw_door_window_defaults', "Door & Window Settings"),
-    ("home_builder_doors_windows.place_window", "Window", _g_window, 1,
+     _I_OPEN_DOOR, 1, 'draw_door_window_defaults', "Door & Window Settings"),
+    ("home_builder_doors_windows.place_window", "Window", _I_WINDOW, 1,
      'draw_door_window_defaults', "Door & Window Settings"),
     # Outlets, switches, vents and the rest: they sit on the walls like
     # the openings do, so they share the group. Which one comes in, and
     # its size, is the form behind the button.
-    ("home_builder_doors_windows.place_fireplace", "Fireplace", _g_fireplace, 1, None, None),
-    ("home_builder_doors_windows.place_bay", "Bay Window", _g_bay, 1, None, None),
-    ("home_builder.furnish", "Furnish", _g_furnish, 1, None, None),
-    ("home_builder_obstacles.place_obstacle", "Obstacle", _g_obstacle, 1,
+    ("home_builder_doors_windows.place_fireplace", "Fireplace", _I_FIREPLACE, 1, None, None),
+    ("home_builder_doors_windows.place_bay", "Bay Window", _I_BAY, 1, None, None),
+    ("home_builder.furnish", "Furnish", _I_FURNISH, 1, None, None),
+    ("home_builder_obstacles.place_obstacle", "Obstacle", _I_OBSTACLE, 1,
      'draw_obstacle_options', "Obstacle Settings"),
     # Named for the thing, not the act: every button on the strip adds
     # something, so "Add" on three of them is a word the eye has to read
@@ -352,22 +377,22 @@ BUILTIN_TOOLS = (
     # Floor: it builds the same slab and also gives it a material, and
     # can restyle it afterwards. Two buttons doing almost the same thing
     # is worse than one that does more.
-    ("home_builder.floor", "Floor", _g_floor, 2, None, None),
-    ("home_builder_walls.add_ceiling", "Ceiling", _g_ceiling, 2, None, None),
-    ("home_builder_stairs.place_stairs", "Stairs", _g_stairs, 2, None, None),
+    ("home_builder.floor", "Floor", _I_FLOOR, 2, None, None),
+    ("home_builder_walls.add_ceiling", "Ceiling", _I_CEILING, 2, None, None),
+    ("home_builder_stairs.place_stairs", "Stairs", _I_STAIRS, 2, None, None),
     # Room Lights carries an options form because adding lights a second
     # time lays a new set on top of the first, and there was otherwise no
     # way to hide or clear them without going back to the sidebar.
-    ("home_builder_walls.add_room_lights", "Room Lights", _g_lights, 2,
+    ("home_builder_walls.add_room_lights", "Room Lights", _I_LIGHTS, 2,
      'room_lights_options', "Room Light Settings"),
     # Group 4, not 3: a downstream add-on has claimed 3 for its own run,
     # and measuring belongs at the end of the strip anyway -- it is the
     # one tool here that adds nothing to the room.
-    ("home_builder.measure", "Measure", _g_measure, 4,
+    ("home_builder.measure", "Measure", _I_MEASURE, 4,
      'measure_options', "Measure Settings"),
     # A switch, not a tool: it changes what the view shows, so it is lit
     # while on and leaves a running tool running (see TOGGLES)
-    ("home_builder.toggle_cutaway", "Cutaway", _g_cutaway, 5, None, None),
+    ("home_builder.toggle_cutaway", "Cutaway", _I_CUTAWAY, 5, None, None),
 )
 
 # Strip buttons that switch something on and off: lit while on, and
@@ -523,6 +548,17 @@ def _g_expand(shader, box, color):
         else:
             draw_polyline(shader, [(ox + span, cy + span), (ox, cy),
                                    (ox + span, cy - span)], color)
+
+
+def _paint_expand(shader, box, color):
+    name = 'expand' if not expanded() else 'collapse'
+    if not draw_icon(name, box, color, size=16):
+        _g_expand(shader, box, color)
+
+
+def _paint_settings(shader, box, color):
+    if not draw_icon('settings', box, color, size=12):
+        _g_settings(shader, box, color)
 
 
 # ---- Gating ----------------------------------------------------------------
@@ -807,7 +843,7 @@ def _draw():
             hovered = _hover_toggle
             paint_button(shader, rect, hovered=hovered,
                          border=Theme.BTN_BORDER)
-            _g_expand(shader,
+            _paint_expand(shader,
                       (x + inset, y + inset, btn - inset * 2, h - inset * 2),
                       Theme.GLYPH_HOVER if hovered else Theme.GLYPH)
             if payload:
@@ -856,7 +892,7 @@ def _draw():
                 Theme.GLYPH if hovered else Theme.TEXT_DIM)
             mx_, my_, mw_, mh_ = _settings_rect(rect)
             if is_expanded:
-                _g_settings(shader, (mx_, my_, mw_, mh_), mark)
+                _paint_settings(shader, (mx_, my_, mw_, mh_), mark)
             else:
                 # Compact: a filled corner of the button, because there
                 # is no room beside the glyph for anything more.

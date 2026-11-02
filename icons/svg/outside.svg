@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="#fff" stroke-width="1" stroke-linecap="butt" stroke-linejoin="miter">
+  <!-- A house: walls under a gable, a door -->
+  <path d="M2.5 14.5V7L8 1.8 13.5 7v7.5z"/>
+  <path d="M6.5 14.5v-4h3v4"/>
+</svg>

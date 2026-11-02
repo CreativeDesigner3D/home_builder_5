@@ -33,6 +33,7 @@ from .. import hb_house
 from .. import hb_rooms
 from .. import units
 from ..hb_gpu_draw import draw_rect, draw_text, point_in_rect
+from ..hb_icons import draw_icon
 from ..hb_gpu_ui import (Theme, scale, paint_button, draw_polyline, text_width,
                          fit_text, enum_label, semibold_font)
 
@@ -1127,12 +1128,22 @@ def _icon_structure(shader, cx, cy, g, color):
         draw_polyline(shader, [(cx + h * k, cy - h), (cx + h * k, cy + h)], color)
 
 
+def _page_icon(name, fallback):
+    """The baked SVG icon `name` in the page-tab icon signature, or the
+    line drawing if its PNGs are missing."""
+    def icon(shader, cx, cy, g, color):
+        if not draw_icon(name, (cx - g / 2.0, cy - g / 2.0, g, g), color,
+                         size=16):
+            fallback(shader, cx, cy, g, color)
+    return icon
+
+
 PAGES = (
-    ('LEVELS', "Levels", _icon_levels),
-    ('OUTSIDE', "Outside", _icon_outside),
-    ('ROOF', "Roof", _icon_roof),
-    ('ROOMS', "Rooms", _icon_rooms),
-    ('STRUCTURE', "Structure", _icon_structure),
+    ('LEVELS', "Levels", _page_icon('levels', _icon_levels)),
+    ('OUTSIDE', "Outside", _page_icon('outside', _icon_outside)),
+    ('ROOF', "Roof", _page_icon('roof', _icon_roof)),
+    ('ROOMS', "Rooms", _page_icon('rooms', _icon_rooms)),
+    ('STRUCTURE', "Structure", _page_icon('structure', _icon_structure)),
 )
 
 

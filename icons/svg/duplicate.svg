@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="#fff" stroke-width="1" stroke-linecap="butt" stroke-linejoin="miter">
+  <!-- Two sheets, one over the other -->
+  <path d="M3.5 10.5h-2v-9h9v2"/>
+  <rect x="5.5" y="5.5" width="9" height="9"/>
+</svg>

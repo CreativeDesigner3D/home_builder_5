@@ -19,10 +19,9 @@ import os
 import struct
 import zlib
 
+import bpy
 import gpu
 from gpu_extras.batch import batch_for_shader
-
-from .hb_gpu_ui import scale
 
 
 ICON_DIR = os.path.join(os.path.dirname(__file__), "icons", "png")
@@ -136,26 +135,45 @@ def _texture(name, size):
     return _textures[key]
 
 
+def scale():
+    """Blender's UI scale. hb_gpu_ui has the same, but it imports this
+    module, so this one cannot import it back."""
+    try:
+        return bpy.context.preferences.system.ui_scale
+    except AttributeError:
+        return 1.0
+
+
 def has_icon(name):
     return bool(_baked_sizes(name))
 
 
-def draw_icon(name, rect, color, size=ICON_SIZE):
+# Clearance kept between a fitted icon and the edge of its rect, per side.
+FIT_PAD = 3
+
+
+def draw_icon(name, rect, color, size=None):
     """Draw icon `name` centred in `rect`, tinted `color`.
 
-    `size` is the unscaled height; the baked size nearest it at the
-    current UI scale is drawn at its native pixels. Returns False when
-    the icon is not available, so a caller can fall back.
+    `size` is the unscaled height. Left out, the icon fits the rect:
+    ICON_SIZE in a full button, smaller in a chip too tight for it. The
+    baked size nearest that at the current UI scale is drawn at its
+    native pixels. Returns False when the icon is not available, so a
+    caller can fall back.
     """
     sizes = _baked_sizes(name)
     if not sizes:
         return False
-    want = size * scale()
-    px = min(sizes, key=lambda s: (abs(s - want), -s))
+    s = scale()
+    rx, ry, rw, rh = rect
+    if size is None:
+        want = min(ICON_SIZE * s, min(rw, rh) - FIT_PAD * 2 * s)
+    else:
+        want = size * s
+    px = min(sizes, key=lambda b: (abs(b - want), -b))
     tex = _texture(name, px)
     if tex is None:
         return False
-    rx, ry, rw, rh = rect
     x0 = round(rx + (rw - px) / 2.0)
     y0 = round(ry + (rh - px) / 2.0)
     x1, y1 = x0 + px, y0 + px
@@ -170,11 +188,11 @@ def draw_icon(name, rect, color, size=ICON_SIZE):
     return True
 
 
-def icon_glyph(name, fallback=None):
+def icon_glyph(name, fallback=None, size=None):
     """A glyph callable that draws icon `name`, or `fallback` (another
-    glyph) when the icon's PNGs are missing."""
+    glyph) when the icon's PNGs are missing. `size` as for draw_icon."""
     def glyph(shader, rect, color):
-        if not draw_icon(name, rect, color) and fallback is not None:
+        if not draw_icon(name, rect, color, size) and fallback is not None:
             fallback(shader, rect, color)
     glyph.__name__ = "icon_" + name
     return glyph

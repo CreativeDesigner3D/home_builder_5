@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="#fff" stroke-width="1" stroke-linecap="butt" stroke-linejoin="miter">
+  <!-- A wall line with a three-sided bay standing out of it -->
+  <path d="M3 12.5L5.5 4.5h5l2.5 8z" fill="#fff" fill-opacity=".35" stroke="none"/>
+  <path d="M0 12.5h3L5.5 4.5h5l2.5 8h3"/>
+</svg>

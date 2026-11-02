@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="#fff" stroke-width="1" stroke-linecap="butt" stroke-linejoin="miter">
+  <!-- A surround with an arched firebox, the stack above -->
+  <path d="M1.5 6.5h13v8h-13z"/>
+  <path d="M5.5 14.5V11a2.5 2.5 0 0 1 5 0v3.5z" fill="#fff" fill-opacity=".35" stroke="none"/>
+  <path d="M5 14.5V11a3 3 0 0 1 6 0v3.5"/>
+  <path d="M9.5 6.5v-5h3v5"/>
+</svg>

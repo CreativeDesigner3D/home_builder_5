@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="#fff" stroke-width="1" stroke-linecap="butt" stroke-linejoin="miter">
+  <!-- A run with its corners marked: the points you click -->
+  <path d="M1.5 2.5h6v11h6"/>
+  <rect x="0" y="1" width="3" height="3" fill="#fff" stroke="none"/>
+  <rect x="6" y="1" width="3" height="3" fill="#fff" stroke="none"/>
+  <rect x="6" y="12" width="3" height="3" fill="#fff" stroke="none"/>
+  <rect x="12" y="12" width="3" height="3" fill="#fff" stroke="none"/>
+</svg>

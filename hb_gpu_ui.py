@@ -22,6 +22,7 @@ import bpy
 import blf
 import gpu
 
+from .hb_icons import icon_glyph
 from .hb_gpu_draw import (
     draw_rect,
     draw_rect_outline,
@@ -236,7 +237,7 @@ def draw_arrow_head(shader, tip, direction, size, color):
 # Small vector affordances. Sizes arrive pre-scaled; each is drawn from
 # the rect or centre it is given so callers keep control of placement.
 
-def glyph_rename(shader, rect, color):
+def _lines_rename(shader, rect, color):
     """A text-field box with a cursor bar -- the rename affordance."""
     rx, ry, rw, rh = rect
     s = scale()
@@ -248,7 +249,7 @@ def glyph_rename(shader, rect, color):
     draw_rect(shader, cx, by + 2 * s, 1.5 * s, bh - 4 * s, color)
 
 
-def glyph_delete(shader, rect, color):
+def _lines_delete(shader, rect, color):
     """An X -- the delete affordance."""
     rx, ry, rw, rh = rect
     pad = 5 * scale()
@@ -257,7 +258,7 @@ def glyph_delete(shader, rect, color):
     draw_lines(shader, [(x0, y0), (x1, y1), (x0, y1), (x1, y0)], color)
 
 
-def glyph_pencil(shader, rect, color):
+def _lines_pencil(shader, rect, color):
     """A pencil on the diagonal -- the edit affordance."""
     rx, ry, rw, rh = rect
     pad = 4 * scale()
@@ -273,7 +274,7 @@ def glyph_pencil(shader, rect, color):
     ], color)
 
 
-def glyph_brush(shader, rect, color):
+def _lines_brush(shader, rect, color):
     """A paint brush: handle, ferrule and bristles -- the paint
     affordance."""
     rx, ry, rw, rh = rect
@@ -292,7 +293,7 @@ def glyph_brush(shader, rect, color):
     ], color)
 
 
-def glyph_duplicate(shader, rect, color):
+def _lines_duplicate(shader, rect, color):
     """Two overlapping sheets -- the duplicate affordance."""
     rx, ry, rw, rh = rect
     s = scale()
@@ -302,6 +303,15 @@ def glyph_duplicate(shader, rect, color):
     off = (rw - 2 * pad) * 0.3
     draw_rect_outline(shader, rx + pad, ry + pad, w, h, color)
     draw_rect_outline(shader, rx + pad + off, ry + pad + off, w, h, color)
+
+
+# The affordances above are drawn from the baked SVG icons (icons/svg);
+# the line versions stand in if an icon's PNGs are missing.
+glyph_rename = icon_glyph('rename', _lines_rename)
+glyph_delete = icon_glyph('delete', _lines_delete)
+glyph_pencil = icon_glyph('pencil', _lines_pencil)
+glyph_brush = icon_glyph('brush', _lines_brush)
+glyph_duplicate = icon_glyph('duplicate', _lines_duplicate)
 
 
 def glyph_plus(shader, cx, cy, size, color):

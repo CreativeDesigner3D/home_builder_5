@@ -62,6 +62,7 @@ from ..hb_gpu_draw import (
     point_in_rect,
 )
 from ..hb_gpu_ui import draw_polyline
+from ..hb_icons import draw_icon
 from ..hb_gpu_ui import (
     Theme,
     ScrollList,
@@ -865,10 +866,10 @@ def _paint_grid(layout, mx, my):
             on_mark = product['key'] == hover_badge
             rect = _badge_rect(img_rect, s)
             paint_button(shader, rect, hovered=on_mark)
-            _glyph_path(shader, rect, s,
-                        Theme.GLYPH_HOVER if on_mark else (
-                            Theme.GLYPH if product['key'] == hover
-                            else Theme.TEXT_DIM))
+            color = (Theme.GLYPH_HOVER if on_mark else (
+                Theme.GLYPH if product['key'] == hover else Theme.TEXT_DIM))
+            if not draw_icon('path', rect, color):
+                _glyph_path(shader, rect, s, color)
         for product, tile_rect, _img in tiles:
             lx, ly, lw, _lh = tile_rect
             label = _label_for(product, font_id, FONT_LABEL * s, lw - 2 * s)

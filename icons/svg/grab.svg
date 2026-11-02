@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="#fff" stroke-width="1" stroke-linecap="butt" stroke-linejoin="miter">
+  <!-- A four-way arrow: this drags things -->
+  <path d="M7.5 3.5v8M3.5 7.5h8"/>
+  <path d="M7.5 .5l3 3.5h-6zM7.5 14.5l3-3.5h-6zM.5 7.5L4 4.5v6zM14.5 7.5L11 4.5v6z" fill="#fff" stroke="none"/>
+</svg>

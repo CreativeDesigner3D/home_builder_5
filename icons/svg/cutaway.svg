@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="#fff" stroke-width="1" stroke-linecap="butt" stroke-linejoin="miter">
+  <!-- A room in plan with its near wall dashed away -->
+  <path d="M1.5 12V2.5h13V12"/>
+  <path d="M3 13.5h2M7 13.5h2M11 13.5h2"/>
+</svg>

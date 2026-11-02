@@ -19,9 +19,10 @@ import { Resvg } from '@resvg/resvg-js';
 
 // Icon heights in pixels. Sources are drawn on a 16-unit grid with 1px
 // strokes on half-pixel lines, so 16 (100% UI scale) and its multiples are
-// pixel-exact; the rest are where the common resolution scales land.
+// pixel-exact; 12 and 14 serve small chips, the rest are where the
+// common resolution scales land.
 // hb_icons.py picks the nearest one.
-const SIZES = [16, 20, 24, 28, 32, 40, 48, 64];
+const SIZES = [12, 14, 16, 20, 24, 28, 32, 40, 48, 64];
 
 const here = dirname(fileURLToPath(import.meta.url));
 const srcDir = join(here, 'svg');

@@ -40,7 +40,7 @@ from ..hb_gpu_draw import (
 from ..hb_gpu_ui import (Theme, scale as _s, draw_arrow_head,
                          arc_points, draw_polyline, fit_text,
                          paint_outside)
-from ..hb_icons import icon_glyph
+from ..hb_icons import icon_glyph, draw_icon
 # Sibling module -- safe to import at load (scene_navigator imports viewport_hud
 # only lazily, inside its pin-toggle handler, so there's no import cycle).
 from .. import hb_utils
@@ -443,8 +443,11 @@ class _BackToRoomButton:
         cy = ry + rh / 2.0
         ax = rx + 9 * s
         arm = 7 * s
-        draw_lines(shader, [(ax, cy), (ax + arm * 1.6, cy)], color)
-        draw_arrow_head(shader, (ax, cy), (-1.0, 0.0), arm * 0.75, color)
+        if not draw_icon('back', (ax - 3 * s, ry, 16 * s, rh), color,
+                         size=14):
+            draw_lines(shader, [(ax, cy), (ax + arm * 1.6, cy)], color)
+            draw_arrow_head(shader, (ax, cy), (-1.0, 0.0), arm * 0.75,
+                            color)
         size = FONT_SIZE * s
         blf.size(font_id, size)
         text = fit_text(font_id, size, self._label(context),
@@ -780,6 +783,8 @@ class _GrabPill:
         draw_rect_outline(shader, rx, ry, rw, rh, BTN_BORDER)
         # Four-way arrow: the mark for 'this drags things'.
         col = TEXT_ACTIVE if active else TEXT_NORMAL
+        if draw_icon('grab', rect, col):
+            return
         cx, cy = rx + rw / 2.0, ry + rh / 2.0
         arm = min(rw, rh) * 0.30
         head = arm * 0.55
