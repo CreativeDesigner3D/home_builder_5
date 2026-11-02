@@ -20708,11 +20708,16 @@ def apply_active_door_style_to_part(door_obj):
     a drawer front (assign_style_to_front adds / strips the CPM_5PIECEDOOR
     'Door Style' modifier and stamps DOOR_STYLE_NAME). Also records the
     source cabinet style as STYLE_NAME so a later style-update pass can
-    find it. No-op if nothing resolves."""
+    find it. No-op if nothing resolves.
+
+    The part role follows the front kind, so tools that pick fronts by
+    role (drawer front style assign / paint) treat a drawer face as one."""
     from . import props_hb_face_frame as props
     if door_obj.get('DOOR_PART_FRONT_KIND', 'DOOR') == 'DRAWER':
+        door_obj['hb_part_role'] = PART_ROLE_DRAWER_FRONT
         ds = active_front_style_for_role(PART_ROLE_DRAWER_FRONT)
     else:
+        door_obj['hb_part_role'] = PART_ROLE_DOOR
         ds = _active_door_style()
     if ds is None:
         return
