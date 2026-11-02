@@ -1,0 +1,12 @@
+{
+  "name": "home-builder-icons",
+  "private": true,
+  "description": "Bakes icons/svg into icons/png for the GPU-drawn HUD",
+  "type": "module",
+  "scripts": {
+    "bake": "node bake_icons.mjs"
+  },
+  "devDependencies": {
+    "@resvg/resvg-js": "2.6.2"
+  }
+}

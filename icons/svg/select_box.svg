@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="#fff" stroke-width="1" stroke-linecap="butt" stroke-linejoin="miter">
+  <!-- Dashed marquee on half-pixel lines, open at the corner the pointer covers -->
+  <path d="M1.5 4V1.5H4M5 1.5h2M8 1.5h2M11 1.5h.5V4M1.5 5v2M1.5 8v2M1.5 11v.5H4M5 11.5h1.5M11.5 5v2"/>
+  <path d="M8 8l7 2.6-3 1.4-1.4 3z" fill="#fff" stroke="none"/>
+</svg>

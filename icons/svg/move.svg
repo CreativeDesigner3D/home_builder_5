@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="#fff" stroke-width="1" stroke-linecap="butt" stroke-linejoin="miter">
+  <!-- An axis pair off one corner: the move gizmo's own shape -->
+  <path d="M3.5 12V4.5M4 12.5h7.5"/>
+  <path d="M3.5 1L6.5 5H.5z" fill="#fff" stroke="none"/>
+  <path d="M15 12.5L11 9.5v6z" fill="#fff" stroke="none"/>
+  <rect x="2" y="11" width="3" height="3" fill="#fff" stroke="none"/>
+</svg>

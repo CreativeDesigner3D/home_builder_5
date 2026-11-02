@@ -40,6 +40,7 @@ from ..hb_gpu_draw import (
 from ..hb_gpu_ui import (Theme, scale as _s, draw_arrow_head,
                          arc_points, draw_polyline, fit_text,
                          paint_outside)
+from ..hb_icons import icon_glyph
 # Sibling module -- safe to import at load (scene_navigator imports viewport_hud
 # only lazily, inside its pin-toggle handler, so there's no import cycle).
 from .. import hb_utils
@@ -301,6 +302,16 @@ def _glyph_view_all(shader, rect, color):
         pts += [(cx, cy), (cx + arm * sx, cy),
                 (cx, cy), (cx, cy + arm * sy)]
     draw_lines(shader, pts, color)
+
+
+# The baked SVG icons (icons/svg) for the marks above. Each falls back to
+# its line-drawn glyph if the icon's PNGs are missing.
+_ICON_OPEN_DOOR = icon_glyph('open_door', _glyph_open_door)
+_ICON_DRAWING_LINES = icon_glyph('drawing_lines', _glyph_drawing_lines)
+_ICON_SELECT_BOX = icon_glyph('select_box', _glyph_select_box)
+_ICON_MOVE = icon_glyph('move', _glyph_move)
+_ICON_ROTATE = icon_glyph('rotate', _glyph_rotate)
+_ICON_VIEW_ALL = icon_glyph('view_all', _glyph_view_all)
 
 
 def _draw_centered_text(font_id, rect, size, color, text):
@@ -977,7 +988,7 @@ _OPEN_DOOR_BUTTON = _ModalToggleButton(
     'hb_face_frame.open_mode', 'Parts',
     enable_label="Enable Open Door Mode",
     disable_label="Disable Open Door Mode",
-    glyph=_glyph_open_door,
+    glyph=_ICON_OPEN_DOOR,
 )
 
 
@@ -998,7 +1009,7 @@ _FRAMELESS_OPEN_DOOR_BUTTON = _FramelessModalToggleButton(
     'hb_frameless.open_mode', 'Parts',
     enable_label="Enable Open Door Mode",
     disable_label="Disable Open Door Mode",
-    glyph=_glyph_open_door,
+    glyph=_ICON_OPEN_DOOR,
 )
 
 
@@ -1038,7 +1049,7 @@ _CLOSET_OPEN_DOOR_BUTTON = _ClosetOpenDoorButton(
     'hb_closets.open_door_mode', 'Parts',
     enable_label="Enable Open Door Mode",
     disable_label="Disable Open Door Mode",
-    glyph=_glyph_open_door,
+    glyph=_ICON_OPEN_DOOR,
 )
 
 
@@ -1166,16 +1177,16 @@ class _IconCommandButton:
 
 _VIEW_TOOL_BUTTONS = [
     _ViewportToolButton('builtin.select_box', "Box Select",
-                        _glyph_select_box),
-    _ViewportToolButton('builtin.move', "Move", _glyph_move, hotkey="G"),
-    _ViewportToolButton('builtin.rotate', "Rotate", _glyph_rotate,
+                        _ICON_SELECT_BOX),
+    _ViewportToolButton('builtin.move', "Move", _ICON_MOVE, hotkey="G"),
+    _ViewportToolButton('builtin.rotate', "Rotate", _ICON_ROTATE,
                         hotkey="R"),
 ]
 # What the Home key does, on a button. Framing the model back up is the
 # navigation move that is hardest to do by hand, and the keyboard is a
 # long way from a mouse that is already on the model.
 _VIEW_ALL_BUTTON = _IconCommandButton(
-    'view3d.view_all', "View All", _glyph_view_all, hotkey="HOME")
+    'view3d.view_all', "View All", _ICON_VIEW_ALL, hotkey="HOME")
 
 
 def _view_strip():
@@ -1440,7 +1451,7 @@ def register_mode_glyph_toggle(key, prop_name, show_label, hide_label,
     """
     unregister_mode_glyph_toggle(key)
     widget = _GlyphToggleButton(
-        prop_name, glyph or _glyph_drawing_lines, show_label, hide_label,
+        prop_name, glyph or _ICON_DRAWING_LINES, show_label, hide_label,
         ui_visible=ui_visible, owner=owner)
     _extra_mode_widgets.append((order, key, widget))
     _extra_mode_widgets.sort(key=lambda b: (b[0], b[1]))
