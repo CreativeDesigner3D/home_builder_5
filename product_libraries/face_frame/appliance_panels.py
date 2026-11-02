@@ -939,6 +939,13 @@ def reveal(props, edge):
     return value if value >= 0.0 else props.end_reveal
 
 
+def rail_offset(props, edge):
+    """How far an integral rail at a run end sits in from that end: the
+    edge's own size when it has one, else 0 (the rail is the end)."""
+    value = getattr(props, 'reveal_' + edge, -1.0)
+    return value if value >= 0.0 else 0.0
+
+
 def column_gap(props):
     """The gap between columns: its own size, or the section gap."""
     value = getattr(props, 'column_gap', -1.0)
@@ -965,9 +972,13 @@ def _stack(z_lo, z_hi, secs, props, bottom_free=True, top_free=True):
     r_top = bool(rw and props.rail_top and top_free)
     r_bot = bool(rw and props.rail_bottom and bottom_free)
     r_mid = bool(rw and props.rail_between)
-    bottom_margin = ((rw + RAIL_REVEAL) if r_bot
+    # A railed end puts the rail on the end, unless that edge was given its
+    # own size: then the rail sits that far in from it.
+    bot_off = rail_offset(props, 'bottom') if r_bot else 0.0
+    top_off = rail_offset(props, 'top') if r_top else 0.0
+    bottom_margin = ((bot_off + rw + RAIL_REVEAL) if r_bot
                      else reveal(props, 'bottom')) if bottom_free else 0.0
-    top_margin = ((rw + RAIL_REVEAL) if r_top
+    top_margin = ((top_off + rw + RAIL_REVEAL) if r_top
                   else reveal(props, 'top')) if top_free else 0.0
     gap = (rw + 2.0 * RAIL_REVEAL) if r_mid else props.section_gap
     run_lo, run_hi = z_lo + bottom_margin, z_hi - top_margin
@@ -982,7 +993,7 @@ def _stack(z_lo, z_hi, secs, props, bottom_free=True, top_free=True):
             segments[-1][1].append(s)
     spans, rails = {}, []
     if r_bot:
-        rails.append((z_lo, z_lo + rw))
+        rails.append((z_lo + bot_off, z_lo + bot_off + rw))
     for si, (start, group) in enumerate(segments):
         end = (segments[si + 1][0] - gap) if si + 1 < len(segments) else run_hi
         heights = _share(max(0.0, end - start), [g['h_hold'] for g in group],
@@ -997,7 +1008,7 @@ def _stack(z_lo, z_hi, secs, props, bottom_free=True, top_free=True):
             if k + 1 < len(group):
                 z += gap
     if r_top:
-        rails.append((z_hi - rw, z_hi))
+        rails.append((z_hi - top_off - rw, z_hi - top_off))
     return spans, rails
 
 
