@@ -347,7 +347,7 @@ OPTION_FORMS = (
 def _front_style_fields(kind):
     """The fields of one door or drawer front style. The catalog pick
     (series, shape, panel) decides the construction; the widths follow
-    it until their padlock is opened. Hardware callouts and the profile overrides stay
+    it until their padlock is opened. Hardware callouts and the door profile overrides stay
     in the sidebar."""
     five_piece = lambda p: p.door_type == '5_PIECE'
 
@@ -376,6 +376,9 @@ def _front_style_fields(kind):
     if kind == 'DRAWER':
         fields.append(('bool', 'match_door_rail_width',
                        "Match Door Rail Width", {'when': five_piece}))
+        # Drawer fronts of one style can take a different edge than the
+        # other drawer fronts in the room.
+        fields.append(('enum', 'edge_profile_override', "Edge Profile"))
     return tuple(fields)
 
 
