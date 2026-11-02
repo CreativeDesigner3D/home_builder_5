@@ -3570,7 +3570,7 @@ class FaceFrameCabinet(GeoNodeCage):
                 part.set_input('Length', seg['length'])
                 part.set_input('Width', seg['panel_dim_y'])
                 part.set_input('Thickness', seg['thickness'])
-                self._apply_top_sink_cutout(child, seg)
+                self._apply_top_sink_cutout(child, seg, layout)
 
             elif role == PART_ROLE_BACK:
                 # WORKING_FF back: the applied face frame is a real
@@ -13111,18 +13111,40 @@ class FaceFrameCabinet(GeoNodeCage):
                 continue
             self._create_carcass_top_part(seg['start_bay'])
 
-    def _apply_top_sink_cutout(self, top_obj, seg):
-        """Cut (or clear) the centered sink opening in a carcass top.
+    SINK_CUTOUT_MOD_NAME = 'Sink Cutout'
 
-        The hole is centered on the panel in both directions, in the
-        part's own Length / Width space. Sized off the cabinet, clamped
-        so it always leaves material around it; a cabinet narrower or
-        shallower than the opening gets no cut rather than a panel in
-        two pieces.
+    def _sink_bay_centers(self, layout, seg):
+        """X centers, in the top part's own Length space, of the sink
+        bays under this top segment. The bay keeps its sink centred, so
+        the bay's cavity center is the sink centerline."""
+        centers = []
+        for bay_obj in self.obj.children:
+            if not bay_obj.get(TAG_BAY_CAGE) or bay_obj.hide_viewport:
+                continue
+            if bay_obj.get('APPLIANCE_BAY') != 'SINK':
+                continue
+            idx = bay_obj.get('hb_bay_index', -1)
+            if not (seg['start_bay'] <= idx <= seg['end_bay']):
+                continue
+            if idx >= layout.bay_count:
+                continue
+            left_x, right_x = solver._cage_x_bounds(layout, idx)
+            centers.append((left_x + right_x) / 2.0 - seg['x'])
+        return sorted(centers)
+
+    def _apply_top_sink_cutout(self, top_obj, seg, layout):
+        """Cut (or clear) the sink openings in a carcass top.
+
+        One opening per sink bay under the top, centered on that bay's
+        sink and on the panel's depth, in the part's own Length / Width
+        space. A floating vanity cuts nothing until a sink is added to
+        a bay. The plain Sink Cutout option with no sink bay keeps a
+        single opening centered on the panel. Sized off the cabinet,
+        clamped so it always leaves material around it; a cabinet
+        narrower or shallower than the opening gets no cut rather than
+        a panel in two pieces.
         """
         cab = self.obj.face_frame_cabinet
-        name = 'Sink Cutout'
-        existing = top_obj.modifiers.get(name)
         margin = inch(1.0)
         length = seg['length']
         width = seg['panel_dim_y']
@@ -13130,25 +13152,37 @@ class FaceFrameCabinet(GeoNodeCage):
                  length - 2.0 * margin)
         cd = min(getattr(cab, 'top_sink_cutout_depth', 0.0),
                  width - 2.0 * margin)
-        wants = ((getattr(cab, 'top_sink_cutout', False)
-                  or solver.is_floating_vanity(cab))
-                 and cw > 0.0 and cd > 0.0)
-        if not wants:
-            if existing is not None:
-                top_obj.modifiers.remove(existing)
-            return
-        cpm = CabinetPartModifier(top_obj)
-        if existing is None:
-            cpm.add_node('CPM_CUTOUT', name)
-        else:
-            cpm.mod = existing
-        cpm.mod.show_viewport = True
-        cpm.mod.show_render = True
-        cpm.set_input('X', (length - cw) / 2.0)
-        cpm.set_input('End X', (length + cw) / 2.0)
-        cpm.set_input('Y', (width - cd) / 2.0)
-        cpm.set_input('End Y', (width + cd) / 2.0)
-        cpm.set_input('Route Depth', seg['thickness'])
+        centers = []
+        if ((getattr(cab, 'top_sink_cutout', False)
+                or solver.is_floating_vanity(cab))
+                and cw > 0.0 and cd > 0.0):
+            centers = self._sink_bay_centers(layout, seg)
+            if not centers and getattr(cab, 'top_sink_cutout', False):
+                centers = [length / 2.0]
+        lo, hi = margin + cw / 2.0, length - margin - cw / 2.0
+        centers = [min(max(c, lo), hi) for c in centers]
+
+        names = [self.SINK_CUTOUT_MOD_NAME if i == 0
+                 else f'{self.SINK_CUTOUT_MOD_NAME} {i + 1}'
+                 for i in range(len(centers))]
+        for mod in list(top_obj.modifiers):
+            if (mod.name.startswith(self.SINK_CUTOUT_MOD_NAME)
+                    and mod.name not in names):
+                top_obj.modifiers.remove(mod)
+        for name, cx in zip(names, centers):
+            existing = top_obj.modifiers.get(name)
+            cpm = CabinetPartModifier(top_obj)
+            if existing is None:
+                cpm.add_node('CPM_CUTOUT', name)
+            else:
+                cpm.mod = existing
+            cpm.mod.show_viewport = True
+            cpm.mod.show_render = True
+            cpm.set_input('X', cx - cw / 2.0)
+            cpm.set_input('End X', cx + cw / 2.0)
+            cpm.set_input('Y', (width - cd) / 2.0)
+            cpm.set_input('End Y', (width + cd) / 2.0)
+            cpm.set_input('Route Depth', seg['thickness'])
 
     def _create_carcass_top_part(self, start_bay_index):
         """Create one solid carcass top part keyed to its segment.
