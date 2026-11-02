@@ -3465,8 +3465,14 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         # WORKING_FF) provides the visible face and the side stays
         # interior. Read once outside the loop.
         ff_cab = cabinet_obj.face_frame_cabinet
-        left_side_finished = (ff_cab.left_finished_end_condition == 'FINISHED')
-        right_side_finished = (ff_cab.right_finished_end_condition == 'FINISHED')
+        # A finished end shared across a back-to-back island is a board
+        # applied over the side (LEFT/RIGHT_APPLIED_END), so the side
+        # under it stays interior.
+        from . import island_pair
+        left_side_finished = (ff_cab.left_finished_end_condition == 'FINISHED'
+                              and not island_pair.applied_end(cabinet_obj, 'LEFT'))
+        right_side_finished = (ff_cab.right_finished_end_condition == 'FINISHED'
+                               and not island_pair.applied_end(cabinet_obj, 'RIGHT'))
         # Inside faces are finished on request only (a hutch's dropped
         # end); the outer condition never implies it.
         left_side_inside = getattr(ff_cab, 'left_side_finish_inside', False)
@@ -3636,6 +3642,13 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                     )
                 else:
                     self._set_part_surfaces(child, interior_mat, interior_mat_rotated)
+                continue
+            # Board over a shared island end: built in the side's frame,
+            # finished outside like a FINISHED side.
+            if role in ('LEFT_APPLIED_END', 'RIGHT_APPLIED_END'):
+                self._set_part_surfaces_split(
+                    child, top_mat=interior_mat, bottom_mat=finish_mat,
+                    edge_mat=interior_mat_rotated)
                 continue
             if role == 'WING':
                 # Attached wing: a free-standing angled return, finished on its

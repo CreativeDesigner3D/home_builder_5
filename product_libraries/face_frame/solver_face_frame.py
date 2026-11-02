@@ -163,6 +163,10 @@ class FaceFrameLayout:
             cabinet_obj, 'LEFT')
         self.r_covered_thickness = island_pair.covered_end_side_thickness(
             cabinet_obj, 'RIGHT')
+        # Any covered end, with or without a side of its own: the run
+        # behind lays its notched covering across it.
+        self.l_end_covered = island_pair.end_is_covered(cabinet_obj, 'LEFT')
+        self.r_end_covered = island_pair.end_is_covered(cabinet_obj, 'RIGHT')
         # Refrigerator cabinet: per-side raise of the carcass side + end
         # stile up to the top of the fridge opening, plus the per-cabinet
         # opening height that datum is built from.
@@ -318,6 +322,22 @@ class FaceFrameLayout:
             and (self.unlock_left_depth or self.unlock_right_depth)
         )
         self.angled_multi = self.is_angled and self.bay_count > 1
+
+        # Combined FINISHED island end: the 3/4 board is applied over
+        # this cabinet's own side (the APPLIED_END part), so the carcass
+        # at that end builds exactly as under a paneled end - held back
+        # for the board, a 1/2 side, the back across its back edge.
+        # Angled cabinets keep the board as their side.
+        self.l_applied_end = (not self.is_angled
+                              and island_pair.applied_end(cabinet_obj,
+                                                          'LEFT'))
+        self.r_applied_end = (not self.is_angled
+                              and island_pair.applied_end(cabinet_obj,
+                                                          'RIGHT'))
+        if self.l_applied_end:
+            self.l_fin_end = 'PANELED'
+        if self.r_applied_end:
+            self.r_fin_end = 'PANELED'
 
         # Angled cabinets always use a solid top regardless of cabinet
         # type. The boolean cutter that produces the trapezoidal top /
@@ -763,9 +783,10 @@ def side_behind_back(layout, side):
     widens to the side's outer face (carcass_back_segments).
 
     0 where that end keeps the butted back: no side built (FALSE_FF /
-    WORKING_FF, a covered or carried island end), no carcass back on the
-    end bay, a side extended back past the cabinet back, and angled /
-    back-extended cabinets, whose back and sides are reshaped separately.
+    WORKING_FF, an island end covered by a face frame), no carcass back
+    on the end bay, a side extended back past the cabinet back, and
+    angled / back-extended cabinets, whose back and sides are reshaped
+    separately.
     """
     if side == 'LEFT':
         fin, covered = layout.l_fin_end, layout.l_covered_thickness
@@ -783,10 +804,13 @@ def side_behind_back(layout, side):
         return 0.0
     cab = layout._cab_props
     key = 'left' if side == 'LEFT' else 'right'
-    if (getattr(cab, f'extend_back_{key}', 0.0)
-            or getattr(cab, f'{key}_side_finished_extend_back', 0.0) > 0.0):
+    if getattr(cab, f'extend_back_{key}', 0.0):
         return 0.0
-    if side in island_pair.carried_sides(layout._cabinet_obj):
+    # A combined island end's extend runs its covering (the applied
+    # board, panel or skin) back to the far run, never this side, so
+    # the side keeps the back across its edge like any other.
+    if (side not in island_pair.carried_sides(layout._cabinet_obj)
+            and getattr(cab, f'{key}_side_finished_extend_back', 0.0) > 0.0):
         return 0.0
     return back_thickness(layout)
 
@@ -1528,10 +1552,10 @@ def _finish_kick_reaches_edge(layout, side):
     with the side's outer face.
     """
     if side == 'LEFT':
-        fin, covered = layout.l_fin_end, layout.l_covered_thickness
+        fin, covered = layout.l_fin_end, layout.l_end_covered
     else:
-        fin, covered = layout.r_fin_end, layout.r_covered_thickness
-    if covered is not None:
+        fin, covered = layout.r_fin_end, layout.r_end_covered
+    if covered:
         return True, False
     if fin == 'FLUSH_X':
         return False, False
@@ -1555,9 +1579,7 @@ def _finish_kick_corner(layout, side):
     keeps its own treatment, and angled fronts are left out."""
     if layout.is_angled:
         return None
-    covered = (layout.l_covered_thickness if side == 'LEFT'
-               else layout.r_covered_thickness)
-    if covered is not None:
+    if layout.l_end_covered if side == 'LEFT' else layout.r_end_covered:
         return None
     cab_obj = getattr(layout, '_cabinet_obj', None)
     if cab_obj is None:

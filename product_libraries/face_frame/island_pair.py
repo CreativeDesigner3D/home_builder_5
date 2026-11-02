@@ -134,6 +134,25 @@ def covered_sides(root):
     return _sides_with_role(root, COVERED)
 
 
+def applied_end(root, side):
+    """True when this end carries a combined FINISHED end.
+
+    A finished end shared by two runs is built like a paneled one: each
+    run keeps its own 1/2 side with the back across its back edge, and
+    the carrier lays a flat 3/4 board over the end that runs back to
+    the far run's face frame. The board is a part of its own (the
+    APPLIED_END role); the carrier's carcass builds as it would under a
+    paneled end. Leg products build their ends their own way.
+    """
+    if root is None or root.get('IS_LEG_PRODUCT'):
+        return False
+    if side not in carried_sides(root):
+        return False
+    cab = getattr(root, 'face_frame_cabinet', None)
+    return (cab is not None and getattr(
+        cab, f'{side.lower()}_finished_end_condition') == 'FINISHED')
+
+
 def has_combined_end(root):
     """True when either end of this cabinet is part of an arrangement."""
     return any(_raw_link(root, side) is not None for side in _SIDES)
@@ -153,12 +172,12 @@ def end_is_covered(root, side):
 # Taken straight off solver.left_scribe_offset / left_side_thickness,
 # because the covered run has to reproduce the build-up the carrier
 # has at that end: it is the carrier's covering that runs across it.
-# Only FINISHED, where the 3/4 board IS the side, and the applied face
-# frames, which have no side board at all, leave this run without one.
-# A panel or a textured skin is applied OVER a side, so this run keeps
-# its own, set back by the same amount the carrier's is.
+# Only the applied face frames, which have no side board at all, leave
+# this run without one. A finished board, a panel or a textured skin is
+# applied OVER a side (see applied_end), so this run keeps its own, set
+# back by the same amount the carrier's is.
 _COVER_BUILDUP = {
-    'FINISHED':   (0.0, units.inch(0.75)),
+    'FINISHED':   (units.inch(0.75), None),
     'FALSE_FF':   (units.inch(0.75), 0.0),
     'WORKING_FF': (units.inch(0.75), 0.0),
     'PANELED':    (units.inch(0.75), None),

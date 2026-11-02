@@ -180,6 +180,11 @@ PART_ROLE_RIGHT_SIDE = 'RIGHT_SIDE'
 # they mean; every pass that has to see both lists them together.
 PART_ROLE_LEFT_SIDE_SEAM = 'LEFT_SIDE_SEAM'
 PART_ROLE_RIGHT_SIDE_SEAM = 'RIGHT_SIDE_SEAM'
+# Combined FINISHED island end: the flat 3/4 board laid over the carrying
+# cabinet's own side, running back to the far run (island_pair.applied_end).
+PART_ROLE_LEFT_APPLIED_END = 'LEFT_APPLIED_END'
+PART_ROLE_RIGHT_APPLIED_END = 'RIGHT_APPLIED_END'
+APPLIED_END_THICKNESS = inch(0.75)
 SIDE_SEAM_ROLE_FOR = {
     PART_ROLE_LEFT_SIDE: PART_ROLE_LEFT_SIDE_SEAM,
     PART_ROLE_RIGHT_SIDE: PART_ROLE_RIGHT_SIDE_SEAM,
@@ -3470,12 +3475,11 @@ class FaceFrameCabinet(GeoNodeCage):
                 # FALSE_FF / WORKING_FF: the applied face frame IS the
                 # side - no carcass side panel behind it.
                 # An end combined with the run behind is the same
-                # story, when the far run lays a BOARD across it: that
-                # board is this end's side, and both would otherwise
-                # sit in the same plane. An applied panel goes over a
-                # side rather than replacing one, so a paneled
-                # combined end keeps its board (island_pair returns
-                # None there) and is just held back for the panel.
+                # story when the far run lays an applied face frame
+                # across it. A finished board, a panel or a skin goes
+                # over a side rather than replacing one, so those
+                # combined ends keep their side (island_pair returns
+                # None there) and are just held back for the covering.
                 visible = (not layout.bays[0].get('remove_carcass')
                            and layout.l_fin_end not in ('FALSE_FF',
                                                         'WORKING_FF')
@@ -4029,6 +4033,7 @@ class FaceFrameCabinet(GeoNodeCage):
             # their own overhang above; the FINISHED side has no applied
             # part, so the carcass side itself is grown here.
             self._extend_finished_side_panels(layout)
+            self._reconcile_applied_island_ends(layout)
             # Close the exposed corner of an extended finished side with a
             # return panel + rear stile when a return width is set (needs a
             # FINISHED back to return into). Runs after the extend so it can
@@ -10434,10 +10439,12 @@ class FaceFrameCabinet(GeoNodeCage):
         if layout.is_angled:
             return
         cab = self.obj.face_frame_cabinet
+        # The layout's condition: under a combined finished end the side
+        # reads PANELED and the extend belongs to the applied board.
         specs = (
-            (PART_ROLE_LEFT_SIDE, cab.left_finished_end_condition,
+            (PART_ROLE_LEFT_SIDE, layout.l_fin_end,
              cab.left_side_finished_extend_back, solver.left_side_dims),
-            (PART_ROLE_RIGHT_SIDE, cab.right_finished_end_condition,
+            (PART_ROLE_RIGHT_SIDE, layout.r_fin_end,
              cab.right_side_finished_extend_back, solver.right_side_dims),
         )
         for role, condition, extend, dims_fn in specs:
@@ -10450,6 +10457,65 @@ class FaceFrameCabinet(GeoNodeCage):
             base_width = dims_fn(layout)[1]  # (length, width=depth, thickness)
             child.location.y += extend
             GeoNodeCutpart(child).set_input('Width', base_width + extend)
+
+    def _reconcile_applied_island_ends(self, layout):
+        """Spawn / resize / remove the flat 3/4 board a combined FINISHED
+        island end lays over this cabinet's own side.
+
+        Built where a FINISHED side would stand - its outer face on the
+        face frame's outer face, front edge behind the frame, floor to
+        the box top - and run back by the end's extend to the far run's
+        face frame, notched for both runs' toe kicks. The side under it
+        builds as under a paneled end (solver.FaceFrameLayout).
+        """
+        cab = self.obj.face_frame_cabinet
+        last = layout.bay_count - 1
+        specs = (
+            ('LEFT', PART_ROLE_LEFT_APPLIED_END,
+             getattr(layout, 'l_applied_end', False), 0,
+             cab.left_side_finished_extend_back, 0.0, True),
+            ('RIGHT', PART_ROLE_RIGHT_APPLIED_END,
+             getattr(layout, 'r_applied_end', False), last,
+             cab.right_side_finished_extend_back, layout.dim_x, False),
+        )
+        for side, role, wanted, bay_index, extend, x, mirror_z in specs:
+            board = next((c for c in self.obj.children
+                          if c.get('hb_part_role') == role), None)
+            if not wanted or layout.bays[bay_index].get('remove_carcass'):
+                if board is not None:
+                    bpy.data.objects.remove(board, do_unlink=True)
+                continue
+            if board is None:
+                part = CabinetPart()
+                part.create(f'{side.title()} Applied End')
+                part.obj.parent = self.obj
+                part.obj['hb_part_role'] = role
+                part.obj['CABINET_PART'] = True
+                part.obj['IS_FINISHED'] = True
+                part.obj['MENU_ID'] = (
+                    'HOME_BUILDER_MT_face_frame_part_commands')
+                # Same frame as the carcass side it covers.
+                part.obj.rotation_euler.y = math.radians(-90)
+                part.set_input('Mirror Y', True)
+                part.set_input('Mirror Z', mirror_z)
+                board = part.obj
+            else:
+                part = GeoNodeCutpart(board)
+            if board.get('IS_MANUAL_PART'):
+                continue
+            extend = max(0.0, extend)
+            if side == 'LEFT':
+                depth = solver.effective_left_depth(layout)
+            else:
+                depth = solver.effective_right_depth(layout)
+            bottom_z = solver.side_bottom_z(layout, bay_index, side)
+            top_z = solver.bay_top_z(layout, bay_index)
+            board.location = (x, -layout.dim_y + depth + extend, bottom_z)
+            part.set_input('Length', top_z - bottom_z)
+            part.set_input('Width', depth - layout.fft + extend)
+            part.set_input('Thickness', APPLIED_END_THICKNESS)
+            self._update_side_corner_notch(board, layout, bay_index)
+            self._update_side_far_notch(board, layout)
 
     def _finished_side_return_width(self, cab, layout, side):
         """Effective return-closeout width on `side` ('LEFT' / 'RIGHT'), or
@@ -13293,11 +13359,19 @@ class FaceFrameCabinet(GeoNodeCage):
         floor, an inset kick). Added lazily and left inactive rather
         than absent, so separating an end re-squares the panel.
         """
+        role = side_obj.get('hb_part_role')
+        left = role in (PART_ROLE_LEFT_SIDE, PART_ROLE_LEFT_SIDE_SEAM,
+                        PART_ROLE_LEFT_APPLIED_END)
         kick, setback_raw, far_fft = island_pair.far_end_notch(
-            self.obj, 'LEFT'
-            if side_obj.get('hb_part_role') in (PART_ROLE_LEFT_SIDE,
-                                                PART_ROLE_LEFT_SIDE_SEAM)
-            else 'RIGHT')
+            self.obj, 'LEFT' if left else 'RIGHT')
+        # Only the board that runs back to the far run crosses its kick:
+        # a FINISHED side, or the board applied over one. A side held
+        # back for a covering stops at this cabinet's back.
+        applied = role in (PART_ROLE_LEFT_APPLIED_END,
+                           PART_ROLE_RIGHT_APPLIED_END)
+        if not applied and (layout.l_fin_end if left
+                            else layout.r_fin_end) != 'FINISHED':
+            kick = 0.0
         # Same shallowing as solver.kick_notch_depth, against the FAR
         # run's frame: the setback is measured off that run's face frame
         # outer face, and a board running past it starts one frame
@@ -13315,10 +13389,11 @@ class FaceFrameCabinet(GeoNodeCage):
             mod = cpm.mod
         if mod.node_group is None:
             return
-        role = side_obj.get('hb_part_role')
-        thickness = (solver.left_side_thickness(layout)
-                     if role in (PART_ROLE_LEFT_SIDE, PART_ROLE_LEFT_SIDE_SEAM)
-                     else solver.right_side_thickness(layout))
+        if applied:
+            thickness = APPLIED_END_THICKNESS
+        else:
+            thickness = (solver.left_side_thickness(layout) if left
+                         else solver.right_side_thickness(layout))
         active = kick > 0.0 and setback > 0.0 and thickness > 0.0
         ng = mod.node_group
         for input_name, value in (
@@ -13353,7 +13428,7 @@ class FaceFrameCabinet(GeoNodeCage):
         if mod.node_group is None:
             return
         role = side_obj.get('hb_part_role')
-        if role == PART_ROLE_LEFT_SIDE:
+        if role in (PART_ROLE_LEFT_SIDE, PART_ROLE_LEFT_APPLIED_END):
             stile_to_floor = solver.left_stile_to_floor(layout)
             has_inset = layout.kick_inset_left > 0
             side_thickness = solver.left_side_thickness(layout)
@@ -13361,6 +13436,8 @@ class FaceFrameCabinet(GeoNodeCage):
             stile_to_floor = solver.right_stile_to_floor(layout)
             has_inset = layout.kick_inset_right > 0
             side_thickness = solver.right_side_thickness(layout)
+        if role in (PART_ROLE_LEFT_APPLIED_END, PART_ROLE_RIGHT_APPLIED_END):
+            side_thickness = APPLIED_END_THICKNESS
         # End bay flagged floating_bay forces the side to anchor at the
         # bay bottom (see solver.side_bottom_z), so the notch becomes
         # redundant just like the has_inset case.
@@ -13481,17 +13558,21 @@ class FaceFrameCabinet(GeoNodeCage):
                 and not has_inset and not bay_floating
                 and 0 <= bay_index < len(layout.bays)):
             cab = self.obj.face_frame_cabinet
-            left = side_obj.get('hb_part_role') == PART_ROLE_LEFT_SIDE
-            cond = (cab.left_finished_end_condition if left
-                    else cab.right_finished_end_condition)
+            role = side_obj.get('hb_part_role')
+            left = role in (PART_ROLE_LEFT_SIDE, PART_ROLE_LEFT_APPLIED_END)
+            applied = role in (PART_ROLE_LEFT_APPLIED_END,
+                               PART_ROLE_RIGHT_APPLIED_END)
+            # The layout's condition: a side under a combined finished
+            # end reads PANELED there and is not the board extended back.
+            cond = layout.l_fin_end if left else layout.r_fin_end
             extend = 0.0
-            if cond == 'FINISHED' and not layout.is_angled:
+            if (applied or cond == 'FINISHED') and not layout.is_angled:
                 extend = max(0.0, (cab.left_side_finished_extend_back if left
                                    else cab.right_side_finished_extend_back))
             back_edge = (-layout.dim_y + layout.bays[bay_index]['depth']
                          + extend
-                         - solver.side_behind_back(
-                             layout, 'LEFT' if left else 'RIGHT'))
+                         - (0.0 if applied else solver.side_behind_back(
+                             layout, 'LEFT' if left else 'RIGHT')))
             depth = solver.rear_kick_notch_depth(layout, bay_index, back_edge)
         self._drive_rear_kick_notch(side_obj, layout, bay_index, depth,
                                     side_thickness)
