@@ -100,6 +100,21 @@ _RECALC_SUSPEND_DEPTH = 0
 _PENDING_RECALC_NAMES = set()
 
 
+def _style_box_construction(obj):
+    """Registry entry for the box construction set on the cabinet style
+    of the cabinet that owns ``obj``, or {}."""
+    cur = obj
+    while cur is not None and not cur.get('IS_FACE_FRAME_CABINET_CAGE'):
+        cur = cur.parent
+    if cur is None or not cur.get('STYLE_NAME'):
+        return {}
+    from .props_hb_face_frame import get_style_props, box_construction_entry
+    for cs in get_style_props().cabinet_styles:
+        if cs.name == cur.get('STYLE_NAME'):
+            return box_construction_entry(cs.ss_drawer_box_construction)
+    return {}
+
+
 @contextmanager
 def suspend_recalc():
     """Suspend cabinet recalcs across a block of property writes.
@@ -15482,15 +15497,19 @@ class FaceFrameCabinet(GeoNodeCage):
             obj['DRAWER_BOX_CONSTRUCTION'] = code
             label = getattr(op_props, 'drawer_box_construction_label', '')
             obj['DRAWER_BOX_CONSTRUCTION_NAME'] = label or code
-            # A construction built from other stock than the default
-            # names its part thickness (inches); inserts and the cut
-            # list read it back off the box.
             entry = accessory_registry.lookup(
                 'drawer_box_construction', code) or {}
-            part_th = entry.get('part_thickness')
-            if part_th:
-                GeoNodeObject(obj).set_input('Material Thickness',
-                                             inch(float(part_th)))
+        else:
+            # No pick: the box is built to its cabinet style's
+            # construction (left unstamped, it is the style default).
+            entry = _style_box_construction(obj)
+        # A construction built from other stock than the default names
+        # its part thickness (inches); inserts and the cut list read it
+        # back off the box.
+        part_th = entry.get('part_thickness')
+        if part_th:
+            GeoNodeObject(obj).set_input('Material Thickness',
+                                         inch(float(part_th)))
         # Slide pick rides the same stamp path: per-opening override for
         # the odd heavy duty drawer, blank = project default.
         slide_code = getattr(op_props, 'drawer_slides', '')

@@ -1915,11 +1915,38 @@ _SS_BOX_CONSTRUCTION_ITEMS = []
 
 
 def get_ss_box_construction_items(self, context):
+    """French / English keep the positional numbers saved files hold;
+    every other construction the host provides takes a fixed number
+    (100 + its registry position) so a pick survives an overlay change."""
+    from ... import accessory_registry
     _SS_BOX_CONSTRUCTION_ITEMS.clear()
+    legacy = ['English']
     if self.door_overlay_type != 'FULL_INSET':
-        _SS_BOX_CONSTRUCTION_ITEMS.append(('French', 'French', ''))
-    _SS_BOX_CONSTRUCTION_ITEMS.append(('English', 'English', ''))
+        legacy.insert(0, 'French')
+    for n, name in enumerate(legacy):
+        _SS_BOX_CONSTRUCTION_ITEMS.append((name, name, '', n))
+    items = accessory_registry.get_items(DRAWER_BOX_CONSTRUCTION_HOST)
+    for i, it in enumerate(items):
+        name = it.get('name') or it.get('code')
+        if not name or name in ('French', 'English'):
+            continue
+        if self.door_overlay_type in (it.get('excluded_overlays') or ()):
+            continue
+        _SS_BOX_CONSTRUCTION_ITEMS.append((name, name, '', 100 + i))
     return _SS_BOX_CONSTRUCTION_ITEMS
+
+
+DRAWER_BOX_CONSTRUCTION_HOST = 'drawer_box_construction'
+
+
+def box_construction_entry(name):
+    """Registry entry for a construction by its printed name (the style
+    field stores names), or {}."""
+    from ... import accessory_registry
+    for it in accessory_registry.get_items(DRAWER_BOX_CONSTRUCTION_HOST):
+        if name and name in (it.get('name'), it.get('code')):
+            return it
+    return {}
 
 
 class Face_Frame_Cabinet_Style(PropertyGroup):
@@ -2365,8 +2392,10 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
     )  # type: ignore
     ss_drawer_box_construction: EnumProperty(
         name="Box Construction",
-        description="Drawer box construction for the style section page",
+        description="Drawer box construction for this style's drawers and "
+                    "rollouts (a right-click pick on a drawer overrides it)",
         items=get_ss_box_construction_items,
+        update=_propagate_cabinet_style,
     )  # type: ignore
     # Free-text note lines printed in a NOTES section at the end of this
     # style's Style Section block (e.g. 'TOUCH LATCH = TL').
