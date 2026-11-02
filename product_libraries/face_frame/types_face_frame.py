@@ -26,8 +26,9 @@ from mathutils import Vector, Matrix, Euler
 
 from ... import hb_utils
 from ...hb_types import (CabinetPartModifier, GeoNodeCage, GeoNodeCutpart,
-                        GeoNodeDrawerBox, GeoNodeRectangle)
+                        GeoNodeDrawerBox, GeoNodeObject, GeoNodeRectangle)
 from ...units import inch
+from ... import accessory_registry
 from ...hb_details import apply_label_style
 from ..common import types_appliances
 from ..common import corbels
@@ -15481,6 +15482,15 @@ class FaceFrameCabinet(GeoNodeCage):
             obj['DRAWER_BOX_CONSTRUCTION'] = code
             label = getattr(op_props, 'drawer_box_construction_label', '')
             obj['DRAWER_BOX_CONSTRUCTION_NAME'] = label or code
+            # A construction built from other stock than the default
+            # names its part thickness (inches); inserts and the cut
+            # list read it back off the box.
+            entry = accessory_registry.lookup(
+                'drawer_box_construction', code) or {}
+            part_th = entry.get('part_thickness')
+            if part_th:
+                GeoNodeObject(obj).set_input('Material Thickness',
+                                             inch(float(part_th)))
         # Slide pick rides the same stamp path: per-opening override for
         # the odd heavy duty drawer, blank = project default.
         slide_code = getattr(op_props, 'drawer_slides', '')
