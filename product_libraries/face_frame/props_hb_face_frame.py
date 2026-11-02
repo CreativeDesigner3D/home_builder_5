@@ -4856,8 +4856,17 @@ GLASS_TYPE_ITEMS = [
     ('REEDED', "Reeded", "Reeded (fluted) glass"),
     ('SEEDED', "Seeded", "Seeded glass"),
     ('FROSTED', "Frosted", "Frosted / satin-etched glass"),
+    ('CUSTOM', "Other", "Glass not in the list - type what it is"),
 ]
 GLASS_TYPE_NAMES = dict((i[0], i[1]) for i in GLASS_TYPE_ITEMS)
+
+
+def glass_type_label(spec):
+    """What a glass spec reads as: the typed text for Other, else the
+    list name."""
+    if spec.get('type') == 'CUSTOM' and spec.get('custom'):
+        return str(spec['custom'])
+    return GLASS_TYPE_NAMES.get(spec.get('type'), spec.get('type', ''))
 
 
 def front_glass_door_key(front_obj, store=None):
@@ -4865,7 +4874,8 @@ def front_glass_door_key(front_obj, store=None):
 
 
 def front_glass_door(front_obj, store=None):
-    """THIS leaf's glass spec {'type', 'included'}, or None."""
+    """THIS leaf's glass spec {'type', 'included', 'custom'}, or None.
+    'custom' is the text typed for an Other glass, '' otherwise."""
     if store is None:
         store = _front_frame_store(front_obj)
     spec = store.get(front_glass_door_key(front_obj, store))
@@ -4876,7 +4886,8 @@ def front_glass_door(front_obj, store=None):
     except AttributeError:
         spec = dict(spec)
     return {'type': str(spec.get('type', 'CLEAR_18')),
-            'included': bool(spec.get('included', False))}
+            'included': bool(spec.get('included', False)),
+            'custom': str(spec.get('custom', '') or '')}
 
 
 def set_front_glass_door(front_obj, spec, store=None):
@@ -4888,8 +4899,11 @@ def set_front_glass_door(front_obj, spec, store=None):
         if key in store:
             del store[key]
         return
-    store[key] = {'type': str(spec.get('type', 'CLEAR_18')),
-                  'included': bool(spec.get('included', False))}
+    kind = str(spec.get('type', 'CLEAR_18'))
+    store[key] = {'type': kind,
+                  'included': bool(spec.get('included', False)),
+                  'custom': (str(spec.get('custom', '') or '').strip()
+                             if kind == 'CUSTOM' else '')}
 
 
 def store_has_glass_door(store):

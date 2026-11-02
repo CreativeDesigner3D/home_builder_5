@@ -2451,6 +2451,11 @@ class hb_face_frame_OT_make_glass_door(bpy.types.Operator):
         name="Glass",
         items=lambda self, context: _glass_type_items(),
     )  # type: ignore
+    custom: StringProperty(
+        name="Describe",
+        description="What the glass is, as it should read on the legend "
+                    "(e.g. a mesh insert, a textured glass)",
+        default="")  # type: ignore
     included: BoolProperty(
         name="Glass Included",
         description="The glass ships with the cabinets (otherwise the "
@@ -2474,6 +2479,7 @@ class hb_face_frame_OT_make_glass_door(bpy.types.Operator):
         if spec:
             self.glass_type = spec['type']
             self.included = spec['included']
+            self.custom = spec.get('custom', '')
             # Editing one glass leaf of a pair: only that leaf by
             # default, so a single glass door stays single.
             others = [f for f in _opening_door_fronts(_frame_store(door))
@@ -2484,6 +2490,8 @@ class hb_face_frame_OT_make_glass_door(bpy.types.Operator):
     def draw(self, context):
         col = self.layout.column(align=True)
         col.prop(self, 'glass_type')
+        if self.glass_type == 'CUSTOM':
+            col.prop(self, 'custom')
         col.prop(self, 'included')
         stores = {_frame_store(d).name for d in _glass_door_candidates(context)}
         pair = any(len(_opening_door_fronts(_frame_store(d))) > 1
@@ -2495,10 +2503,14 @@ class hb_face_frame_OT_make_glass_door(bpy.types.Operator):
 
     def execute(self, context):
         from .. import props_hb_face_frame as _props
+        if self.glass_type == 'CUSTOM' and not self.custom.strip():
+            self.report({'WARNING'}, "Type what the glass is")
+            return {'CANCELLED'}
         targets = _glass_targets(context, self.both)
         if not targets:
             return {'CANCELLED'}
-        spec = {'type': self.glass_type, 'included': self.included}
+        spec = {'type': self.glass_type, 'included': self.included,
+                'custom': self.custom}
         n = 0
         with types_face_frame.suspend_recalc():
             for store, fronts in targets:
@@ -2509,7 +2521,7 @@ class hb_face_frame_OT_make_glass_door(bpy.types.Operator):
         _rebuild_glass_doors([s for s, _f in targets])
         self.report({'INFO'}, "%d glass door%s: %s%s" % (
             n, "" if n == 1 else "s",
-            _props.GLASS_TYPE_NAMES.get(self.glass_type, self.glass_type),
+            _props.glass_type_label(spec),
             ", glass included" if self.included else ", prepped for glass"))
         return {'FINISHED'}
 
