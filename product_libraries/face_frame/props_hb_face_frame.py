@@ -1351,6 +1351,8 @@ def update_face_frame_selection_mode(self, context):
     Calls the hb_face_frame.toggle_mode operator which iterates all scene
     objects and highlights/dims them based on which mode is active.
     """
+    from . import drill
+    drill.note_mode_change(self.face_frame_selection_mode)
     bpy.ops.hb_face_frame.toggle_mode(search_obj_name="")
 
 
