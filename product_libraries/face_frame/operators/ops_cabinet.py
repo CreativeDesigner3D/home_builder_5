@@ -2518,7 +2518,7 @@ class hb_face_frame_OT_finish_opening_prompts(bpy.types.Operator):
         'finish_opening_material', 'finish_opening_texture',
         'finish_opening_texture_scope', 'finish_opening_beadboard_pattern',
         'finish_opening_flush', 'finish_opening_flush_depth',
-        'finish_opening',
+        'finish_opening_flush_top', 'finish_opening',
     )
 
     @classmethod

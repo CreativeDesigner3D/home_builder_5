@@ -404,6 +404,7 @@ class FaceFrameLayout:
             'finish_bay':         bp.finish_bay,
             'finish_bay_flush':   bp.finish_bay_flush,
             'finish_bay_flush_depth': bp.finish_bay_flush_depth,
+            'finish_bay_flush_top': getattr(bp, 'finish_bay_flush_top', True),
             'finish_bay_texture': getattr(bp, 'finish_bay_texture', 'NONE'),
             'finish_bay_texture_scope': getattr(
                 bp, 'finish_bay_texture_scope', 'BACK_SIDES'),
@@ -531,6 +532,7 @@ class FaceFrameLayout:
             'finish_bay':         False,
             'finish_bay_flush':   False,
             'finish_bay_flush_depth': 0.0,
+            'finish_bay_flush_top': True,
             'finish_bay_texture': 'NONE',
             'finish_bay_texture_scope': 'BACK_SIDES',
             'finish_bay_beadboard_pattern': 'STANDARD',

@@ -10517,6 +10517,15 @@ class Face_Frame_Bay_Props(PropertyGroup):
                     "0 runs the full cavity depth",
         update=_update_cabinet_dim,
     )  # type: ignore
+    # Off = flush sides only: the band leaves the top of the opening
+    # alone, for an open bay (a bench seat, say) whose ceiling is never
+    # seen.
+    finish_bay_flush_top: BoolProperty(
+        name="Flush Top", default=True,
+        description="Run the flush finish across the top of the opening "
+                    "too. Off finishes the sides only",
+        update=_update_cabinet_dim,
+    )  # type: ignore
     # Which of the cabinet style's two materials the finished bay shows
     # on its liner panels and shelves. FINISH = the exterior finish
     # (historic behavior); INTERIOR = the style's interior material, for
@@ -11868,6 +11877,13 @@ class Face_Frame_Opening_Props(PropertyGroup):
         name="Flush Depth", default=0.0, unit='LENGTH', precision=4,
         description="How far the flush finish runs back into the opening; "
                     "0 runs the full cavity depth",
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    # See finish_bay_flush_top.
+    finish_opening_flush_top: BoolProperty(
+        name="Flush Top", default=True,
+        description="Run the flush finish across the top of the opening "
+                    "too. Off finishes the sides only",
         update=_update_cabinet_dim,
     )  # type: ignore
     # Which of the cabinet style's two materials the finished opening

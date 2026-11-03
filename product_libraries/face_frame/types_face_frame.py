@@ -11294,7 +11294,8 @@ class FaceFrameCabinet(GeoNodeCage):
                         want_back=(texture not in ('NONE', '')
                                    and not open_back),
                         flush_back=(texture not in ('NONE', '')
-                                    and not open_back))
+                                    and not open_back),
+                        flush_top=bay.get('finish_bay_flush_top', True))
                     scope = bay.get('finish_bay_texture_scope', 'BACK_SIDES')
                     spacing = _interior_beadboard_spacing(
                         bay.get('finish_bay_beadboard_pattern', 'STANDARD'),
@@ -11351,7 +11352,8 @@ class FaceFrameCabinet(GeoNodeCage):
                         op.finish_opening_flush_depth, op_to_floor, t,
                         want_back=(((not bay.get('finish_carcass')) or textured)
                                    and not open_back),
-                        want_top=False, flush_back=textured and not open_back)
+                        want_top=False, flush_back=textured and not open_back,
+                        flush_top=op.finish_opening_flush_top)
                     spacing = _interior_beadboard_spacing(
                         op.finish_opening_beadboard_pattern,
                         getattr(self.obj.face_frame_cabinet,
@@ -11459,7 +11461,7 @@ class FaceFrameCabinet(GeoNodeCage):
 
     def _finish_region_specs(self, layout, region, flush, raw_depth, to_floor,
                              t, want_back=False, want_top=True,
-                             flush_back=False):
+                             flush_back=False, flush_top=True):
         """Build the (face, spec) list for one finished region.
 
         `want_top` covers the ceiling of a FULL finish. A finished
@@ -11467,6 +11469,9 @@ class FaceFrameCabinet(GeoNodeCage):
         so an applied 1/4 ceiling is a part the shop does not build.
         Only a FLUSH finish tops the region, and there the top is part
         of the band that wraps the FF opening.
+
+        `flush_top` = False leaves the TOP out of a FLUSH band: flush
+        sides only, for an open bay whose ceiling is never seen.
 
         `flush_back` gives a FLUSH finish a BACK panel behind the FF
         opening. A plain flush band stays open behind (an appliance
@@ -11511,11 +11516,13 @@ class FaceFrameCabinet(GeoNodeCage):
                                mirror_y=True, mirror_z=True,
                                loc=(op_right_x, band_back_y, op_bottom_z),
                                length=op_height, width=depth)),
-                ('TOP',   dict(rot=(0.0, 0.0, 0.0),
-                               mirror_y=True, mirror_z=False,
-                               loc=(op_left_x, band_back_y, op_top_z),
-                               length=op_width, width=depth)),
             ]
+            if flush_top:
+                specs.append(
+                    ('TOP',   dict(rot=(0.0, 0.0, 0.0),
+                                   mirror_y=True, mirror_z=False,
+                                   loc=(op_left_x, band_back_y, op_top_z),
+                                   length=op_width, width=depth)))
             if not to_floor:
                 specs.append(
                     ('BOTTOM', dict(rot=(0.0, 0.0, 0.0),

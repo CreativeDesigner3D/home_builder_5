@@ -1295,6 +1295,7 @@ def draw_bay_finish_options(layout, bay_obj):
         col.prop(bp, 'finish_bay_flush', text="Finish Flush")
         if bp.finish_bay_flush:
             col.prop(bp, 'finish_bay_flush_depth', text="Flush Depth")
+            col.prop(bp, 'finish_bay_flush_top', text="Flush Top")
 
 
 def draw_bay_properties(layout, bay_obj):
@@ -1458,6 +1459,7 @@ def draw_opening_finish_options(layout, opening_obj):
         col.prop(op, 'finish_opening_flush', text="Finish Flush")
         if op.finish_opening_flush:
             col.prop(op, 'finish_opening_flush_depth', text="Flush Depth")
+            col.prop(op, 'finish_opening_flush_top', text="Flush Top")
 
 
 def draw_opening_properties(layout, opening_obj):
