@@ -11638,6 +11638,12 @@ class FaceFrameCabinet(GeoNodeCage):
         """
         key = (bay_index, opening_index, face)
         strip = existing.get(key)
+        if (strip is not None
+                and strip.modifiers.get(strip.home_builder.mod_name) is None):
+            # Its cutpart was applied by hand, so it can no longer be
+            # sized. Build a fresh liner in its place.
+            bpy.data.objects.remove(strip, do_unlink=True)
+            strip = None
         if strip is None:
             if opening_index < 0:
                 name = f'Bay Finish {bay_index + 1} {face.title()}'
