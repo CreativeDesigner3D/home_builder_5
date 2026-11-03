@@ -73,6 +73,26 @@ _hover = None
 _hover_caret = False     # cursor is on the options corner, not the tool
 _hover_settings = None   # options form under the cursor, if any
 _hover_toggle = False    # cursor is on the compact/expanded toggle
+_hover_selection = None  # (names, active) while the cursor is on a tool
+
+
+def selection_before_press():
+    """The selection as it stood while the cursor rested on a tool button
+    - (selected object names, active name) - or None off the strip.
+
+    The active tool's click-select sees the press before the strip does
+    and clears the selection (or picks whatever sits behind the button),
+    so a tool that works on the selection reads it from here."""
+    return _hover_selection
+
+
+def _grab_selection(context):
+    try:
+        active = context.view_layer.objects.active
+        return ([o.name for o in context.selected_objects],
+                active.name if active is not None else None)
+    except Exception:
+        return None
 
 
 # ---- Glyphs ----------------------------------------------------------------
@@ -998,11 +1018,12 @@ class home_builder_OT_room_palette_hover(bpy.types.Operator):
 
     def invoke(self, context, event):
         global _mouse_region, _hover, _hover_caret, _hover_settings
-        global _hover_toggle
+        global _hover_toggle, _hover_selection
         _mouse_region = context.region
         mx, my = event.mouse_region_x, event.mouse_region_y
         layout = compute_layout(context.area)
         hit = _hit(mx, my, layout)
+        _hover_selection = _grab_selection(context) if hit is not None else None
         settings = _hit_settings(mx, my, layout)
         toggle = _hit_toggle(mx, my, layout)
         # The settings mark always sits inside a tool row, so a
