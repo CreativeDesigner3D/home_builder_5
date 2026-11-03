@@ -182,10 +182,14 @@ _active_tab = TAB_ROOMS
 # without knowing what it is. With nothing registered the panel is
 # exactly the three tabs it was.
 _extra_tabs = []         # (order, key, label, available_fn)
+# Each tab's icon, (name, icon_dir): icon_dir None for this add-on's own
+# icons, else the folder of baked PNGs the contributing add-on ships.
+_tab_icons = {TAB_ROOMS: ('rooms', None), TAB_LIBRARY: ('library', None),
+              TAB_OPTIONS: ('settings', None)}
 
 
 def register_tab(key, module, label=None, order=100, available=None,
-                 prefer=None):
+                 prefer=None, icon=None, icon_dir=None):
     """Add a tab and the provider that draws it.
 
     `label` is what the tab button says (the key, if omitted) -- a key
@@ -195,6 +199,9 @@ def register_tab(key, module, label=None, order=100, available=None,
     `prefer` is an optional callable(scene) saying the tab is THE thing
     to look at on that scene: arriving there switches the panel to it,
     opening the panel if it was closed (see resolve_active_tab).
+    `icon` names the tab's icon, from `icon_dir` (a folder of baked PNGs)
+    when the icon is the contributing add-on's own. With an icon the tab
+    shows only it until opened; without one it keeps its label.
     Sorted by (order, key); built-ins take an implicit order from their
     position, spaced so a contribution can land between two of them.
     Re-registering a key replaces it, so a reloaded add-on cannot stack
@@ -206,11 +213,15 @@ def register_tab(key, module, label=None, order=100, available=None,
     _providers[key] = module
     if prefer is not None:
         _preferred[key] = prefer
+    if icon is not None:
+        _tab_icons[key] = (icon, icon_dir)
 
 
 def unregister_tab(key):
     global _active_tab
     _preferred.pop(key, None)
+    if key not in TABS:
+        _tab_icons.pop(key, None)
     for i, tab in enumerate(list(_extra_tabs)):
         if tab[1] == key:
             del _extra_tabs[i]
@@ -233,6 +244,11 @@ def tab_label(tab):
         if key == tab:
             return label
     return tab
+
+
+def tab_icon(tab):
+    """(name, icon_dir) for the tab's icon, or None."""
+    return _tab_icons.get(tab)
 
 
 def tab_available(tab, scene=None):

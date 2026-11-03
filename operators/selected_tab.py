@@ -272,7 +272,8 @@ def register():
     from . import scene_navigator, selection_inspector
     selection_inspector.register()
     scene_navigator.register_tab(TAB_KEY, sys.modules[__name__], label=TAB_LABEL,
-                                 order=TAB_ORDER, available=available)
+                                 order=TAB_ORDER, available=available,
+                                 icon='select_box')
     _subscribe()
     if _load_post not in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.append(_load_post)

@@ -569,7 +569,7 @@ def register():
     bpy.utils.register_class(HOME_BUILDER_OT_end_tool)
     scene_navigator.register_tab(TAB_KEY, sys.modules[__name__],
                                  label=TAB_LABEL, order=TAB_ORDER,
-                                 available=available)
+                                 available=available, icon='pencil')
 
 
 def unregister():

@@ -40,7 +40,7 @@ from ..hb_gpu_draw import (
 from ..hb_gpu_ui import (Theme, scale as _s, draw_arrow_head,
                          arc_points, draw_polyline, fit_text,
                          paint_outside_rects)
-from ..hb_icons import icon_glyph, draw_icon
+from ..hb_icons import icon_glyph, draw_icon, has_icon
 # Sibling module -- safe to import at load (scene_navigator imports viewport_hud
 # only lazily, inside its pin-toggle handler, so there's no import cycle).
 from .. import hb_utils
@@ -75,7 +75,7 @@ BTN_GAP         = 4
 ROW_GAP         = 6
 NAV_TEXT_LEFT   = 29     # glyph + gap; where the nav-button label begins
 NAV_PAD_RIGHT   = 10
-MODE_BTN_WIDTH  = 78
+MODE_BTN_WIDTH  = 94
 GROUP_GAP       = 24
 FONT_SIZE       = 11
 
@@ -468,6 +468,19 @@ class _BackToRoomButton:
 _BACK_BUTTON = _BackToRoomButton()
 
 
+ICON_LEAD = 18      # an icon before a label: its width and the gap after it
+
+
+def _draw_lead_icon(shader, icon, rect, color):
+    """Draw `icon` ((name, icon_dir)) at the left of `rect`, ahead of a
+    label that starts ICON_LEAD past the rect's left padding."""
+    s = _s()
+    rx, ry, _rw, rh = rect
+    draw_icon(icon[0], (rx + 4 * s, ry, ICON_LEAD * s, rh), color,
+              size=14, icon_dir=icon[1])
+    shader.bind()
+
+
 class _PanelTabButton:
     """One of the panel tabs at the top-left -- the built-in ROOMS /
     LIBRARY / OPTIONS, or one an add-on contributed.
@@ -486,6 +499,13 @@ class _PanelTabButton:
     def __init__(self, tab):
         self.tab = tab
 
+    def _icon(self):
+        """(name, icon_dir) when the tab has an icon that is baked."""
+        icon = scene_navigator.tab_icon(self.tab)
+        if icon and has_icon(icon[0], icon_dir=icon[1]):
+            return icon
+        return None
+
     @property
     def label(self):
         """What the button says. A tab key has to be stable and unique;
@@ -495,9 +515,22 @@ class _PanelTabButton:
 
     @property
     def width(self):
+        # An icon alone until the tab is open, then its name beside it:
+        # the strip holds every tab, and still says where you are.
         s = _s()
+        icon = self._icon()
+        if icon and not self._showing():
+            return int(BTN_HEIGHT * s)
         blf.size(0, FONT_SIZE * s)
-        return int(blf.dimensions(0, self.label)[0] + 22 * s)
+        text_w = blf.dimensions(0, self.label)[0]
+        if icon:
+            return int(text_w + ICON_LEAD * s + 16 * s)
+        return int(text_w + 22 * s)
+
+    def hover_label(self):
+        if self._icon() and not self._showing():
+            return self.label.title()
+        return None
 
     def visible(self, context):
         # A tab that means nothing here is not shown at all -- better
@@ -518,12 +551,21 @@ class _PanelTabButton:
               else (BTN_HOVER_BG if hovered else BTN_BG))
         draw_rect(shader, rx, ry, rw, rh, bg)
         draw_rect_outline(shader, rx, ry, rw, rh, BTN_BORDER)
+        color = TEXT_ACTIVE if active else TEXT_NORMAL
+        icon = self._icon()
+        if icon and not active:
+            draw_icon(icon[0], rect, color, icon_dir=icon[1])
+            shader.bind()
+            return
         font_sz = FONT_SIZE * s
         blf.size(font_id, font_sz)
         label = self.label
         tw, th = blf.dimensions(font_id, label)
-        draw_text(font_id, rx + (rw - tw) / 2.0, ry + (rh - th) / 2.0,
-                  font_sz, TEXT_ACTIVE if active else TEXT_NORMAL, label)
+        tx = rx + (rw - tw) / 2.0
+        if icon:
+            _draw_lead_icon(shader, icon, rect, color)
+            tx = rx + 8 * s + ICON_LEAD * s
+        draw_text(font_id, tx, ry + (rh - th) / 2.0, font_sz, color, label)
 
     def on_click(self, context, area, region):
         if self._showing():
@@ -548,10 +590,11 @@ class _ModeButton:
     def width(self):
         return int(MODE_BTN_WIDTH * _s())
 
-    def __init__(self, wiring, mode_value, label):
+    def __init__(self, wiring, mode_value, label, icon=None):
         self.wiring = wiring
         self.mode_value = mode_value
         self.label = label
+        self.icon = icon
 
     def _props(self, context):
         return getattr(context.scene, self.wiring.scene_attr)
@@ -582,7 +625,19 @@ class _ModeButton:
         draw_rect_outline(shader, rx, ry, rw, rh, BTN_BORDER)
 
         color = TEXT_ACTIVE if is_active else TEXT_NORMAL
-        _draw_centered_text(font_id, rect, FONT_SIZE * _s(), color, self.label)
+        if not (self.icon and has_icon(self.icon)):
+            _draw_centered_text(font_id, rect, FONT_SIZE * _s(), color, self.label)
+            return
+        # Icon then name, centred as a pair. The same icons head the
+        # inspector's sections, so a mode and what it picks look alike.
+        s = _s()
+        size = FONT_SIZE * s
+        blf.size(font_id, size)
+        tw, th = blf.dimensions(font_id, self.label)
+        x0 = rx + (rw - (ICON_LEAD * s + tw)) / 2.0
+        _draw_lead_icon(shader, (self.icon, None), (x0 - 4 * s, ry, rw, rh), color)
+        draw_text(font_id, x0 + ICON_LEAD * s, ry + (rh - th) / 2.0, size,
+                  color, self.label)
 
     def on_click(self, context, area, region):
         props = self._props(context)
@@ -712,21 +767,21 @@ def _tab_buttons():
 # renders only the active product's set; the tabs are mutually exclusive so
 # the two never appear together.
 _MODE_BUTTONS = [
-    _ModeButton(_FF_SELECTION, 'Cabinets', "Cabinets"),
-    _ModeButton(_FF_SELECTION, 'Bays', "Bays"),
-    _ModeButton(_FF_SELECTION, 'Openings', "Openings"),
-    _ModeButton(_FF_SELECTION, 'Face Frame', "Face Frame"),
-    _ModeButton(_FF_SELECTION, 'Interiors', "Interiors"),
-    _ModeButton(_FF_SELECTION, 'Parts', "Parts"),
-    _ModeButton(_FL_SELECTION, 'Cabinets', "Cabinets"),
-    _ModeButton(_FL_SELECTION, 'Bays', "Bays"),
-    _ModeButton(_FL_SELECTION, 'Openings', "Openings"),
-    _ModeButton(_FL_SELECTION, 'Interiors', "Interiors"),
-    _ModeButton(_FL_SELECTION, 'Parts', "Parts"),
-    _ModeButton(_CL_SELECTION, 'Starters', "Starters"),
-    _ModeButton(_CL_SELECTION, 'Bays', "Bays"),
-    _ModeButton(_CL_SELECTION, 'Openings', "Openings"),
-    _ModeButton(_CL_SELECTION, 'Parts', "Parts"),
+    _ModeButton(_FF_SELECTION, 'Cabinets', "Cabinets", 'cab_cabinet'),
+    _ModeButton(_FF_SELECTION, 'Bays', "Bays", 'cab_bay'),
+    _ModeButton(_FF_SELECTION, 'Openings', "Openings", 'cab_opening'),
+    _ModeButton(_FF_SELECTION, 'Face Frame', "Face Frame", 'cab_face_frame'),
+    _ModeButton(_FF_SELECTION, 'Interiors', "Interiors", 'cab_interior'),
+    _ModeButton(_FF_SELECTION, 'Parts', "Parts", 'cab_parts'),
+    _ModeButton(_FL_SELECTION, 'Cabinets', "Cabinets", 'cab_cabinet'),
+    _ModeButton(_FL_SELECTION, 'Bays', "Bays", 'cab_bay'),
+    _ModeButton(_FL_SELECTION, 'Openings', "Openings", 'cab_opening'),
+    _ModeButton(_FL_SELECTION, 'Interiors', "Interiors", 'cab_interior'),
+    _ModeButton(_FL_SELECTION, 'Parts', "Parts", 'cab_parts'),
+    _ModeButton(_CL_SELECTION, 'Starters', "Starters", 'closet_starter'),
+    _ModeButton(_CL_SELECTION, 'Bays', "Bays", 'cab_bay'),
+    _ModeButton(_CL_SELECTION, 'Openings', "Openings", 'cab_opening'),
+    _ModeButton(_CL_SELECTION, 'Parts', "Parts", 'cab_parts'),
 ]
 
 class _GrabPill:

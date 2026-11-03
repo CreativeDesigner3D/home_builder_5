@@ -1415,7 +1415,7 @@ def register():
     from . import scene_navigator
     scene_navigator.register_tab(TAB_KEY, sys.modules[__name__],
                                  label=TAB_LABEL, order=TAB_ORDER,
-                                 available=available)
+                                 available=available, icon='panels')
 
 
 def unregister():

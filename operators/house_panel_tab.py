@@ -1381,7 +1381,7 @@ def register():
     options_panel.QUIET_OPS.update(QUIET)
     scene_navigator.register_tab(TAB_KEY, sys.modules[__name__],
                                  label=TAB_LABEL, order=TAB_ORDER,
-                                 available=available)
+                                 available=available, icon='structure')
 
 
 def unregister():
