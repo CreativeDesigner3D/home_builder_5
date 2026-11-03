@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="#fff" stroke-width="1" stroke-linecap="butt" stroke-linejoin="miter">
+  <!-- Change Bay: a bay with a drop-down of presets -->
+  <rect x="1.5" y="1.5" width="9" height="13"/>
+  <path d="M1.5 5.5h9M1.5 9.5h9"/>
+  <path d="M11.5 7l2 2 2-2"/>
+</svg>

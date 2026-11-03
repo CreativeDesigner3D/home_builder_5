@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="#fff" stroke-width="1" stroke-linecap="butt" stroke-linejoin="miter">
+  <!-- Accessories: a pull-out wire basket -->
+  <path d="M1.5 4.5h13"/>
+  <path d="M2.5 4.5v9h11v-9"/>
+  <path d="M5.5 4.5v9M8.5 4.5v9M11.5 4.5v9M2.5 9.5h11"/>
+</svg>

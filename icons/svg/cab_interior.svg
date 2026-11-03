@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="#fff" stroke-width="1" stroke-linecap="butt" stroke-linejoin="miter">
+  <!-- Interior: the inside of a cabinet, with shelves -->
+  <rect x="3" y="2" width="10" height="12" fill="#fff" fill-opacity=".15" stroke="none"/>
+  <rect x="2.5" y="1.5" width="11" height="13"/>
+  <path d="M2.5 5.5h11M2.5 9.5h11"/>
+</svg>

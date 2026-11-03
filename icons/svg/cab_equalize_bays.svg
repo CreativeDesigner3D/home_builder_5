@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="#fff" stroke-width="1" stroke-linecap="butt" stroke-linejoin="miter">
+  <!-- Equalize Bays: three bays of equal width -->
+  <rect x="1.5" y="1.5" width="12" height="10"/>
+  <path d="M5.5 1.5v10M9.5 1.5v10"/>
+  <path d="M2 14.5h3M6 14.5h3M10 14.5h3"/>
+</svg>

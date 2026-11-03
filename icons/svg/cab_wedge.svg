@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="#fff" stroke-width="1" stroke-linecap="butt" stroke-linejoin="miter">
+  <!-- Wedge Calculator: a cabinet tipping up on a wedge -->
+  <path d="M4.5 1.5l9 1v9l-9-1z"/>
+  <path d="M2 14h12.5l-12.5-2z" fill="#fff" fill-opacity=".35" stroke="none"/>
+  <path d="M1.5 14.5h13l-13-2.5z"/>
+</svg>

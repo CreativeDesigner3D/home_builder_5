@@ -48,7 +48,9 @@ chip is opened), ``native`` (a colour or datablock, edited through Blender's
 own field in a popover), ``file`` (a path, chosen in Blender's file
 browser and cleared by the chip on its row), ``items`` (a row per item of a
 collection, each with a remove chip), ``pick`` (a button opening a menu
-of commands worked out as it opens), ``notes`` (lines of text a callable
+of commands worked out as it opens), ``icons`` (a row of square command
+buttons, each an icon that names itself on hover: ``(icon, label,
+operator[, kwargs[, when]])``, ``when`` taking the owner), ``notes`` (lines of text a callable
 works out from the context) and ``gap`` (space). A field may carry a dict after its label: ``when``
 hides it unless the callable, given the owner, says so; ``thumb`` maps
 a choice to its picture.
@@ -58,7 +60,7 @@ import bpy
 
 from .. import units
 from .. import hb_placement
-from ..hb_icons import draw_icon
+from ..hb_icons import draw_icon, has_icon
 from ..hb_gpu_draw import (
     draw_rect,
     draw_rect_outline,
@@ -624,6 +626,14 @@ def _field_blocks(context, fields, owner):
             # A row of commands placed among the fields, so a section
             # can group its commands under the label they belong to.
             blocks.append(('actions', tuple(_norm_action(a) for a in field[1])))
+        elif field[0] == 'icons':
+            # A row of icon buttons: a section's commands in one line.
+            row = tuple(
+                (a[1], a[2], a[3] if len(a) > 3 else None, a[0])
+                for a in field[1]
+                if len(a) < 5 or a[4] is None or a[4](owner))
+            if row:
+                blocks.append(('icon_actions', row))
         elif field[0] == 'pick':
             blocks.append(('pick', (field[2], field[1])))
         elif field[0] == 'items':
@@ -682,7 +692,8 @@ def _group_blocks(context, field, owner):
     def toggle(m=method):
         toggle_section(bpy.context, m)
 
-    blocks = [('section', (label, method, expanded, toggle, summary))]
+    blocks = [('section', (label, method, expanded, toggle, summary,
+                           options.get('icon')))]
     if expanded:
         inner = _field_blocks(context, options.get('fields', ()), owner)
         blocks.extend(('indent', b) for b in inner)
@@ -989,7 +1000,8 @@ def build_page(rect, context, blocks_fn, lst):
 
     Rows inside `rect`. Entries:
 
-        ('section_row', label, method_name, rect, expanded, toggle)
+        ('section_row', label, method_name, rect, expanded, toggle,
+                      summary, icon)   icon None on most
                       toggle None for a library section, else a callable
         ('value_row', label, text, rect)
         ('styles_head', label, rect, add_rect, pool)   add_rect None on most
@@ -997,6 +1009,7 @@ def build_page(rect, context, blocks_fn, lst):
                       up_rect, down_rect, pool)
         ('field_row', kind, prop, label, owner, value, rect, value_rect)
         ('action_btn', label, op_id, prop, value, rect, enabled)
+        ('icon_btn', label, op_id, kwargs, rect, enabled, icon)
         ('form_row', label, method_name, rect)
         ('styles_clip', clip_rect, track, thumb)
     """
@@ -1037,9 +1050,10 @@ def build_page(rect, context, blocks_fn, lst):
             label, method, expanded = payload[:3]
             toggle = payload[3] if len(payload) > 3 else None
             summary = payload[4] if len(payload) > 4 else ""
+            icon = payload[5] if len(payload) > 5 else None
             entries.append(('section_row', label, method,
                             (x, block_top - sect_h, row_w, sect_h), expanded,
-                            toggle, summary))
+                            toggle, summary, icon))
         elif kind == 'value':
             label, text = payload
             entries.append(('value_row', label, text,
@@ -1114,6 +1128,15 @@ def build_page(rect, context, blocks_fn, lst):
                     continue
                 entries.append(('action_btn', label, op_id, prop, value,
                                 rect, _can_run(op_id, polled)))
+        elif kind == 'icon_actions':
+            # Square buttons from the left, a row's height each.
+            step = row_h + gap
+            for j, (label, op_id, kwargs, icon) in enumerate(payload):
+                rect = (x + j * step, block_top - row_h, row_h, row_h)
+                if rect[0] + row_h > x + row_w + 0.5:
+                    break           # more than a row holds: the caller's to split
+                entries.append(('icon_btn', label, op_id, kwargs, rect,
+                                _can_run(op_id, polled), icon))
         elif kind == 'field':
             field, owner = payload
             entries.extend(_field_entries(context, field, owner, x,
@@ -1388,18 +1411,26 @@ def paint(entries, mx, my):
                               not expanded,
                               Theme.GLYPH_HOVER if hot else Theme.GLYPH)
                 summary = entry[6] if len(entry) > 6 else ""
-                label_w = rw - 20 * s
+                icon = entry[7] if len(entry) > 7 else None
+                lx = rx + 16 * s
+                if icon and has_icon(icon):
+                    # The group's own icon between chevron and name.
+                    draw_icon(icon, (lx - 2 * s, ry, rh, rh), Theme.GLYPH_HOVER
+                              if (expanded or hot) else Theme.GLYPH, size=14)
+                    shader.bind()
+                    lx += rh
+                label_w = rx + rw - 4 * s - lx
                 bold = semibold_font()
                 if summary:
                     label_w = min(text_width(bold, FONT * s, label),
                                   (rw - 20 * s) * 0.45)
                 shown = fit_text(bold, FONT * s, label, label_w)
-                draw_text(bold, rx + 16 * s, ry + rh * 0.28, FONT * s,
+                draw_text(bold, lx, ry + rh * 0.28, FONT * s,
                           Theme.TEXT_PRIMARY if (expanded or hot)
                           else Theme.TEXT_NORMAL, shown)
                 if summary:
                     # What is set in the group, read without opening it.
-                    sx = rx + 16 * s + label_w + 10 * s
+                    sx = lx + label_w + 10 * s
                     shown_sum = fit_text(font_id, FONT * s, summary,
                                          rx + rw - 6 * s - sx)
                     draw_text(font_id, sx, ry + rh * 0.28, FONT * s,
@@ -1680,6 +1711,22 @@ def paint(entries, mx, my):
                 draw_centered_text(font_id, rect, FONT * s,
                                    Theme.TEXT_PRIMARY if hovered
                                    else Theme.TEXT_NORMAL, label)
+            elif kind == 'icon_btn':
+                _, label, _op, _kw, rect, enabled, icon = entry
+                hovered = point_in_rect(mx, my, rect)
+                paint_button(shader, rect, hovered=enabled and hovered)
+                color = (Theme.TEXT_DIM if not enabled
+                         else Theme.GLYPH_HOVER if hovered else Theme.GLYPH)
+                if has_icon(icon):
+                    draw_icon(icon, rect, color)
+                    shader.bind()
+                else:
+                    # Not baked yet: the start of its name, so the
+                    # button still says what it is.
+                    draw_centered_text(font_id, rect, FONT * s * 0.85, color,
+                                       label[:2])
+                if hovered:
+                    note_tip(rect, label)
             elif kind == 'action_btn':
                 _, label, _op, _prop, _val, rect, enabled = entry
                 hovered = enabled and point_in_rect(mx, my, rect)
@@ -2230,6 +2277,11 @@ def hit(context, mx, my, entries):
             return True
         if kind == 'pick_btn' and point_in_rect(mx, my, entry[3]):
             open_pick_menu(context, entry[2], entry[1])
+            return True
+        if kind == 'icon_btn' and point_in_rect(mx, my, entry[4]):
+            if entry[5]:
+                _run_on_release(entry[2], dict(entry[3] or {}))
+            _tag()
             return True
         if kind == 'action_btn' and point_in_rect(mx, my, entry[5]):
             if not entry[6]:

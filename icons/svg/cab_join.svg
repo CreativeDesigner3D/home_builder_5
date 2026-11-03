@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="#fff" stroke-width="1" stroke-linecap="butt" stroke-linejoin="miter">
+  <!-- Join Cabinets: two cabinets pushed into one -->
+  <rect x="1.5" y="5.5" width="13" height="9"/>
+  <path d="M8 6h1v2H8zM8 10h1v2H8z" transform="translate(-.5 0)" fill="#fff" stroke="none"/>
+  <path d="M1.5 2.5h4M4 1l1.5 1.5L4 4M14.5 2.5h-4M12 1l-1.5 1.5L12 4"/>
+</svg>
