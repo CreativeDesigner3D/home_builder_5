@@ -21801,6 +21801,8 @@ APPLIANCE_NAME_DISPATCH = {
     "Dishwasher": types_appliances.Dishwasher,
     "Range": types_appliances.Range,
     "Range Hood": types_appliances.Hood,
+    # The same range hood, placed with its wood hood already built.
+    "Wood Hood": types_appliances.Hood,
     "Standalone Refrigerator": types_appliances.Refrigerator,
     "Under Counter Appliance": types_appliances.UnderCounterAppliance,
     "Washer": types_appliances.WashingMachine,

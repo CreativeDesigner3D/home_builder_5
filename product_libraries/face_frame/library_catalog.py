@@ -75,6 +75,7 @@ SECTIONS = (
             ("Standalone", (("Dishwasher", "Dishwasher"),
                             ("Range", "Range"),
                             ("Metal Hood", "Range Hood"),
+                            ("Wood Hood", "Wood Hood"),
                             ("Refrigerator", "Standalone Refrigerator"))),
             # Generic under-counter appliance (beverage centre, wine
             # fridge, ice maker) - relabel after placing via Set Label.
