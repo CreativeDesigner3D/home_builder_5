@@ -8308,6 +8308,14 @@ def update_cabinet_frame_lock(self, context):
         style._apply_face_frame_sizes_to_cabinet(cabinet_obj)
 
 
+def _get_height_above_floor(self):
+    return self.id_data.location.z
+
+
+def _set_height_above_floor(self, value):
+    self.id_data.location.z = value
+
+
 class Face_Frame_Cabinet_Props(PropertyGroup):
     """Cabinet-level face frame state. Attached to the cabinet's root object
     as bpy.types.Object.face_frame_cabinet.
@@ -8351,6 +8359,14 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         description="Cabinet depth (Y dimension)",
         default=units.inch(24.0), unit='LENGTH', precision=4,
         update=_update_cabinet_depth,
+    )  # type: ignore
+    # How high the cabinet sits, which is where its root is: shown as a
+    # field so a form can edit it like the sizes above. Stores nothing.
+    height_above_floor: FloatProperty(
+        name="Height Above Floor",
+        description="Distance from the floor to the bottom of the cabinet",
+        unit='LENGTH', precision=4,
+        get=_get_height_above_floor, set=_set_height_above_floor,
     )  # type: ignore
 
     # Width lock - consulted by the Grab Cabinet Group operator when
