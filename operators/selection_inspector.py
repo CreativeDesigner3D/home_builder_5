@@ -52,6 +52,7 @@ from ..hb_gpu_ui import (
     glyph_chevron,
     fit_text,
     semibold_font,
+    text_width,
 )
 
 
@@ -218,6 +219,42 @@ def _title(context):
     return "Selected"
 
 
+CRUMB_SEP = "  \u203a  "
+
+
+def _crumb_rects(context, header, right):
+    """[(text, rect, action)] for the title's breadcrumb, laid left to
+    right in the header; separators are drawn between them. Steps that
+    do not fit drop off the front behind an ellipsis, so the pick
+    itself always shows. None when the page has no crumbs."""
+    from . import selected_tab
+    crumbs = selected_tab.crumbs(context)
+    if not crumbs:
+        return None
+    s = _s()
+    font_id = semibold_font()
+    size = TITLE_FONT * s
+    hx, hy, _hw, hh = header
+    x0 = hx + PAD * s
+    room = right - x0 - PAD * s
+    sep_w = text_width(font_id, size, CRUMB_SEP)
+    widths = [text_width(font_id, size, t.upper()) for t, _a in crumbs]
+    first = 0
+    lead = 0.0
+    while first < len(crumbs) - 1 and (
+            sum(widths[first:]) + sep_w * (len(crumbs) - first - 1) + lead > room):
+        first += 1
+        lead = text_width(font_id, size, "\u2026") + sep_w
+    out = []
+    x = x0 + lead
+    for i in range(first, len(crumbs)):
+        text, action = crumbs[i]
+        w = min(widths[i], max(0.0, x0 + room - x))
+        out.append((text, (x, hy, w, hh), action))
+        x += w + sep_w
+    return out, first > 0
+
+
 def layout(context, area, region):
     """The box and what is in it, or None when it is not showing:
     {'rect', 'header', 'title', 'buttons': [(action, rect)], 'body',
@@ -270,7 +307,8 @@ def layout(context, area, region):
             print('Home Builder: the inspector failed to build: %s' % ex)
     return {'rect': rect, 'header': header, 'title': _title(context),
             'buttons': buttons, 'body': body, 'entries': entries,
-            'title_right': bx}
+            'title_right': bx,
+            'crumbs': _crumb_rects(context, header, bx)}
 
 
 def rect(context, area):
@@ -344,11 +382,34 @@ def draw(context, area, region, mx, my):
                      Theme.GLYPH_HOVER if hovered else Theme.GLYPH)
     font_id = semibold_font()
     size = TITLE_FONT * s
-    tx = hx + PAD * s
-    room = lay['title_right'] - tx - PAD * s
-    title = fit_text(font_id, size, lay['title'].upper(), room)
-    draw_text(font_id, tx, vcenter_baseline(lay['header'], font_id, size),
-              size, Theme.TEXT_PRIMARY, title)
+    baseline = vcenter_baseline(lay['header'], font_id, size)
+    if lay['crumbs']:
+        # Where the pick sits: each step above it a click that selects
+        # it, the pick itself bright at the end.
+        crumbs, cut = lay['crumbs']
+        sep_w = text_width(font_id, size, CRUMB_SEP)
+        if cut:
+            x0 = crumbs[0][1][0] - sep_w - text_width(font_id, size, "\u2026")
+            draw_text(font_id, x0, baseline, size, Theme.TEXT_DIM, "\u2026")
+            draw_text(font_id, crumbs[0][1][0] - sep_w, baseline, size,
+                      Theme.TEXT_DIM, CRUMB_SEP)
+        for i, (text, crect, action) in enumerate(crumbs):
+            cx, cy, cw, ch = crect
+            hot = action is not None and point_in_rect(mx, my, crect)
+            color = (Theme.TEXT_PRIMARY if action is None or hot
+                     else Theme.TEXT_DIM)
+            draw_text(font_id, cx, baseline, size, color,
+                      fit_text(font_id, size, text.upper(), cw))
+            if hot:
+                draw_rect(shader, cx, baseline - 3 * s, cw, 1 * s, color)
+            if i < len(crumbs) - 1:
+                draw_text(font_id, cx + cw, baseline, size, Theme.TEXT_DIM,
+                          CRUMB_SEP)
+    else:
+        tx = hx + PAD * s
+        room = lay['title_right'] - tx - PAD * s
+        title = fit_text(font_id, size, lay['title'].upper(), room)
+        draw_text(font_id, tx, baseline, size, Theme.TEXT_PRIMARY, title)
     gpu.state.blend_set('NONE')
     if lay['entries']:
         options_panel.paint(lay['entries'], mx, my)
@@ -381,6 +442,16 @@ def hit(context, area, region, mx, my):
                 set_mode(MODE_PANEL)
             elif action == 'dock':
                 set_mode(MODE_RIGHT)
+            return True
+    for _text, crect, action in (lay['crumbs'] or ((),))[0]:
+        if action is not None and point_in_rect(mx, my, crect):
+            op_id, kwargs = action
+            ns, name = op_id.split('.')
+            try:
+                getattr(getattr(bpy.ops, ns), name)(**kwargs)
+            except Exception as ex:
+                print('Home Builder: %s failed: %s' % (op_id, ex))
+            _tag()
             return True
     if point_in_rect(mx, my, lay['header']):
         return 'drag'

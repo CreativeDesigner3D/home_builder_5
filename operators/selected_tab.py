@@ -32,16 +32,19 @@ _list = None
 _shown = set()          # the groups opened here once this session
 _prev = None            # (panel was open, tab) before the tab took over
 _owner = object()
-_sources = []           # (key, find(context) -> item or None, blocks(context, item))
+_sources = []           # (key, find(context) -> item or None, blocks(context, item), crumbs)
 
 
-def register_source(key, find, blocks):
+def register_source(key, find, blocks, crumbs=None):
     """Show a library's products on this tab. `find(context)` returns
     whatever `blocks(context, item)` needs to lay the page out, or None
-    when the selection is not one of them. Re-registering a key
-    replaces it."""
+    when the selection is not one of them. `crumbs(context, item)`, if
+    given, names where the pick sits -- [(text, (operator, kwargs) or
+    None)], outermost first, the last being the pick itself -- for the
+    inspector's title, where each step up is a click. Re-registering a
+    key replaces it."""
     unregister_source(key)
-    _sources.append((key, find, blocks))
+    _sources.append((key, find, blocks, crumbs))
 
 
 def unregister_source(key):
@@ -51,14 +54,31 @@ def unregister_source(key):
 def _source_item(context):
     """(blocks function, item) from the first source claiming the
     selection, or None."""
-    for _key, find, blocks in list(_sources):
+    found = _claim(context)
+    return (found[0][2], found[1]) if found is not None else None
+
+
+def _claim(context):
+    """(source, item) for the first source claiming the selection."""
+    for src in list(_sources):
         try:
-            item = find(context)
+            item = src[1](context)
         except Exception:
             item = None
         if item is not None:
-            return blocks, item
+            return src, item
     return None
+
+
+def crumbs(context):
+    """Where the pick sits, from its source, or None."""
+    found = _claim(context)
+    if found is None or found[0][3] is None:
+        return None
+    try:
+        return found[0][3](context, found[1]) or None
+    except Exception:
+        return None
 
 
 def _on_wall(obstacle):

@@ -193,7 +193,37 @@ class hb_face_frame_OT_drill_click(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class hb_face_frame_OT_select_level(bpy.types.Operator):
+    """Pick this cabinet or bay, moving the selection mode to its level"""
+    bl_idname = "hb_face_frame.select_level"
+    bl_label = "Select"
+    bl_options = {'UNDO'}
+
+    name: bpy.props.StringProperty()  # type: ignore
+    level: bpy.props.StringProperty()  # type: ignore
+
+    def execute(self, context):
+        global _base
+        obj = context.view_layer.objects.get(self.name)
+        if obj is None or self.level not in LEVELS or _ff(context) is None:
+            return {'CANCELLED'}
+        # Still below the mode bar's level: the drill holds. At or above
+        # it, the drill has come all the way back out.
+        base = _base
+        if base is None or LEVELS.index(self.level) <= LEVELS.index(base):
+            base = None
+        if _ff(context).face_frame_selection_mode != self.level:
+            _set_mode(context, self.level)
+        else:
+            bpy.ops.object.select_all(action='DESELECT')
+        _base = base
+        obj.select_set(True)
+        context.view_layer.objects.active = obj
+        return {'FINISHED'}
+
+
 classes = (
+    hb_face_frame_OT_select_level,
     hb_face_frame_OT_drill_in,
     hb_face_frame_OT_drill_out,
     hb_face_frame_OT_drill_click,

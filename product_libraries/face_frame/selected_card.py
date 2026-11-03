@@ -448,14 +448,15 @@ def blocks(context, item):
         trail.append(f"Opening {opening_obj.face_frame_opening.opening_index + 1}")
 
     # Several picked: the page says how many, and that an edit is to all.
+    # One picked: the head is where it sits, said once.
     if kind == 'cabinet' and n_cab > 1:
-        head, note = f"{n_cab} Cabinets", f"Changes apply to all {n_cab}"
+        out = [('head', (f"{n_cab} Cabinets", False, None)),
+               ('label', f"Changes apply to all {n_cab}")]
     elif kind in ('bay', 'opening') and n_part > 1:
-        head = f"{n_part} {kind.title()}s"
-        note = f"Changes apply to all {n_part}"
+        out = [('head', (f"{n_part} {kind.title()}s", False, None)),
+               ('label', f"Changes apply to all {n_part}")]
     else:
-        head, note = root.name, " > ".join(trail)
-    out = [('head', (head, False, None)), ('label', note)]
+        out = [('head', (" \u203a ".join([root.name] + trail[1:]), False, None))]
 
     _fold_for(context, kind)
 
@@ -489,11 +490,33 @@ def blocks(context, item):
     return out
 
 
+def crumbs(context, item):
+    """Cabinet, bay, opening: each step above the pick selects that
+    level. None while several are picked -- the head says how many."""
+    kind, root, bay_obj, opening_obj = item
+    _gather(context)
+    if _count('face_frame_cabinet') > 1 or (
+            kind in ('bay', 'opening') and _count(
+                'face_frame_bay' if kind == 'bay' else 'face_frame_opening') > 1):
+        return None
+    op = 'hb_face_frame.select_level'
+    out = [(root.name, (op, {'name': root.name, 'level': 'Cabinets'}))]
+    if bay_obj is not None:
+        out.append((f"Bay {bay_obj.face_frame_bay.bay_index + 1}",
+                    (op, {'name': bay_obj.name, 'level': 'Bays'})))
+    if opening_obj is not None:
+        out.append((f"Opening {opening_obj.face_frame_opening.opening_index + 1}",
+                    (op, {'name': opening_obj.name, 'level': 'Openings'})))
+    # The last is the pick itself: named, not a click.
+    out[-1] = (out[-1][0], None)
+    return out
+
+
 # ---- Lifecycle --------------------------------------------------------------
 
 def register():
     from ...operators import selected_tab
-    selected_tab.register_source(SOURCE_KEY, find, blocks)
+    selected_tab.register_source(SOURCE_KEY, find, blocks, crumbs)
     from ...operators import options_panel
     options_panel.register_peers(_peers)
 
