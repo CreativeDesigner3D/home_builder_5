@@ -275,18 +275,6 @@ def _g_furnish(shader, box, color):
                            (x + w * 0.86, top - h * 0.1), (x + w * 0.14, top - h * 0.1)], color, closed=True)
 
 
-def _g_cutaway(shader, box, color):
-    """A room in plan with its near wall dashed away: the walls
-    between you and the room drop out."""
-    x, y, w, h = box
-    lo, hi = y + h * 0.18, y + h * 0.82
-    draw_lines(shader, [(x, lo), (x, hi), (x, hi), (x + w, hi),
-                        (x + w, hi), (x + w, lo)], color)
-    step = w / 5.0
-    for i in (0, 2, 4):
-        draw_lines(shader, [(x + i * step, lo), (x + (i + 1) * step, lo)], color)
-
-
 def _g_measure(shader, box, color):
     """A dimension line: what the tool leaves on screen.
 
@@ -366,7 +354,6 @@ _I_CEILING = _icon('ceiling', _g_ceiling)
 _I_STAIRS = _icon('stairs', _g_stairs)
 _I_LIGHTS = _icon('lights', _g_lights)
 _I_MEASURE = _icon('measure', _g_measure)
-_I_CUTAWAY = _icon('cutaway', _g_cutaway)
 
 BUILTIN_TOOLS = (
     ("home_builder_walls.draw_walls", "Draw Walls", _I_WALL, 0,
@@ -410,9 +397,8 @@ BUILTIN_TOOLS = (
     # one tool here that adds nothing to the room.
     ("home_builder.measure", "Measure", _I_MEASURE, 4,
      'measure_options', "Measure Settings"),
-    # A switch, not a tool: it changes what the view shows, so it is lit
-    # while on and leaves a running tool running (see TOGGLES)
-    ("home_builder.toggle_cutaway", "Cutaway", _I_CUTAWAY, 5, None, None),
+    # Cutaway was here, a switch among tools that add to the room; it is
+    # a way of looking and lives in the HUD's View group now.
 )
 
 # Strip buttons that switch something on and off: lit while on, and
@@ -430,7 +416,6 @@ _group_labels = {
     1: "Doors & Windows",
     2: "Room",
     4: "Measure",
-    5: "View",
 }
 
 

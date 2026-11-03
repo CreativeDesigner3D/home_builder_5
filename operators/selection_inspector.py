@@ -332,7 +332,11 @@ def draw(context, area, region, mx, my):
     shader.bind()
     paint_frame(shader, lay['rect'])
     hx, hy, hw, hh = lay['header']
-    draw_rect(shader, hx, hy, hw, hh, Theme.NEUTRAL_BG)
+    from ..hb_gpu_draw import draw_round_rect
+    from ..hb_gpu_ui import FRAME_RADIUS
+    draw_round_rect(shader, hx + 1, hy, hw - 2, hh - 1, (FRAME_RADIUS - 1) * s,
+                    Theme.NEUTRAL_BG,
+                    corners=(True, True, not lay['body'], not lay['body']))
     for action, brect in lay['buttons']:
         hovered = point_in_rect(mx, my, brect)
         paint_button(shader, brect, hovered=hovered)

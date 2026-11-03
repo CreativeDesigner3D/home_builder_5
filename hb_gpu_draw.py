@@ -91,6 +91,81 @@ def draw_rect_outline(shader, x, y, w, h, color):
     batch_for_shader(shader, 'LINES', {"pos": verts}).draw(shader)
 
 
+# ---- Rounded boxes -----------------------------------------------------------
+# Panels, button groups and fields draw with rounded corners: a square box
+# with a 1px outline reads as a separate object, and a screen of them
+# reads as a grid. `corners` picks which are rounded -- (top-left,
+# top-right, bottom-right, bottom-left) -- for a header that sits flush
+# against the top of a rounded panel.
+
+_ALL_CORNERS = (True, True, True, True)
+
+
+def _round_outline(x, y, w, h, r, corners=_ALL_CORNERS, seg=None):
+    """The box's outline as points, counter-clockwise from the right
+    end of the bottom edge. `r` is clamped to half the shorter side."""
+    import math
+    r = max(0.0, min(r, w / 2.0, h / 2.0))
+    if seg is None:
+        seg = max(2, min(8, int(r / 1.5) + 2))
+    tl, tr, br, bl = corners
+    pts = []
+
+    def corner(cx, cy, start, on):
+        if not on or r <= 0.0:
+            pts.append((cx + math.cos(start + math.pi / 4) * r * math.sqrt(2),
+                        cy + math.sin(start + math.pi / 4) * r * math.sqrt(2)))
+            return
+        for i in range(seg + 1):
+            a = start + (math.pi / 2) * i / seg
+            pts.append((cx + math.cos(a) * r, cy + math.sin(a) * r))
+
+    corner(x + w - r, y + r, -math.pi / 2, br)
+    corner(x + w - r, y + h - r, 0.0, tr)
+    corner(x + r, y + h - r, math.pi / 2, tl)
+    corner(x + r, y + r, math.pi, bl)
+    return pts
+
+
+def draw_round_rect(shader, x, y, w, h, r, color, corners=_ALL_CORNERS):
+    """Filled box with rounded corners."""
+    if w <= 0 or h <= 0:
+        return
+    pts = _round_outline(x, y, w, h, r, corners)
+    c = (x + w / 2.0, y + h / 2.0)
+    verts = []
+    for i in range(len(pts)):
+        verts.extend((c, pts[i], pts[(i + 1) % len(pts)]))
+    shader.uniform_float("color", color)
+    batch_for_shader(shader, 'TRIS', {"pos": verts}).draw(shader)
+
+
+def draw_round_rect_outline(shader, x, y, w, h, r, color,
+                            corners=_ALL_CORNERS):
+    """The 1px border of a rounded box."""
+    if w <= 0 or h <= 0:
+        return
+    pts = _round_outline(x + 0.5, y + 0.5, w - 1.0, h - 1.0, r, corners)
+    verts = []
+    for i in range(len(pts)):
+        verts.extend((pts[i], pts[(i + 1) % len(pts)]))
+    shader.uniform_float("color", color)
+    batch_for_shader(shader, 'LINES', {"pos": verts}).draw(shader)
+
+
+def draw_soft_shadow(shader, x, y, w, h, r, spread=6.0, alpha=0.22):
+    """A soft dark edge round a floating box, dropped a little below
+    it, so a panel lifts off the busy model behind it. Drawn first;
+    the box covers the middle."""
+    steps = 4
+    for i in range(steps, 0, -1):
+        grow = spread * i / steps
+        a = alpha * (1.0 - (i - 1) / steps) / steps * 1.6
+        draw_round_rect(shader, x - grow, y - grow - spread * 0.35,
+                        w + grow * 2, h + grow * 2, r + grow,
+                        (0.0, 0.0, 0.0, a))
+
+
 def navigation_gizmo_reserve(area):
     """(width, height) of the top-right block Blender's navigation
     gizmo occupies, in WINDOW-local pixels. (0, 0) when it is hidden.

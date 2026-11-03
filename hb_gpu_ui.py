@@ -26,6 +26,9 @@ from .hb_icons import icon_glyph
 from .hb_gpu_draw import (
     draw_rect,
     draw_rect_outline,
+    draw_round_rect,
+    draw_round_rect_outline,
+    draw_soft_shadow,
     draw_lines,
     draw_glyphs,
     draw_text,
@@ -175,8 +178,9 @@ def paint_tip(shader, font_id, size):
     if y + h > region_h - 2 * s:
         y = rect[1] - h - 3 * s
     gpu.state.blend_set('ALPHA')
-    draw_rect(shader, x, y, w, h, Theme.PANEL_BG[:3] + (0.98,))
-    draw_rect_outline(shader, x, y, w, h, Theme.BTN_BORDER)
+    r = BUTTON_RADIUS * s
+    draw_round_rect(shader, x, y, w, h, r, Theme.PANEL_BG[:3] + (0.98,))
+    draw_round_rect_outline(shader, x, y, w, h, r, Theme.BTN_BORDER)
     draw_text(font_id, x + pad, vcenter_baseline((x, y, w, h), font_id, size),
               size, Theme.TEXT_PRIMARY, text)
 
@@ -379,12 +383,23 @@ def end_clip(prev):
     gpu.state.scissor_test_set(False)
 
 
-def paint_frame(shader, rect, bg=Theme.PANEL_BG, border=Theme.PANEL_BORDER):
-    """Filled panel background plus its 1px border."""
+# Corner radii, unscaled: a panel floating on the viewport, and a button
+# or field inside one.
+FRAME_RADIUS = 6
+BUTTON_RADIUS = 3
+
+
+def paint_frame(shader, rect, bg=Theme.PANEL_BG, border=Theme.PANEL_BORDER,
+                shadow=True):
+    """A panel: rounded, lifted off the viewport by a soft shadow, with
+    its 1px border."""
     x, y, w, h = rect
-    draw_rect(shader, x, y, w, h, bg)
+    r = FRAME_RADIUS * scale()
+    if shadow:
+        draw_soft_shadow(shader, x, y, w, h, r, spread=6 * scale())
+    draw_round_rect(shader, x, y, w, h, r, bg)
     if border is not None:
-        draw_rect_outline(shader, x, y, w, h, border)
+        draw_round_rect_outline(shader, x, y, w, h, r, border)
 
 
 def paint_button(shader, rect, hovered=False, active=False,
@@ -403,9 +418,10 @@ def paint_button(shader, rect, hovered=False, active=False,
     """
     x, y, w, h = rect
     fill = active_bg if active else (hover_bg if hovered else bg)
-    draw_rect(shader, x, y, w, h, fill)
+    r = BUTTON_RADIUS * scale()
+    draw_round_rect(shader, x, y, w, h, r, fill)
     if border is not None:
-        draw_rect_outline(shader, x, y, w, h, border)
+        draw_round_rect_outline(shader, x, y, w, h, r, border)
     return fill
 
 
@@ -966,7 +982,8 @@ def paint_field(shader, font_id, rect, size, label, value, hovered,
         paint_button(shader, value_rect, hovered=hovered, active=active)
     else:
         # No fill: a well with only its outline reads as not pressable.
-        draw_rect_outline(shader, *value_rect, Theme.PANEL_BORDER)
+        draw_round_rect_outline(shader, *value_rect, BUTTON_RADIUS * s,
+                                Theme.PANEL_BORDER)
     vx, vy, vw, vh = value_rect
     caret_w = 7 * s if caret else 0.0
     shown = fit_text(font_id, size, value,

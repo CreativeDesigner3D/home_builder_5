@@ -41,6 +41,7 @@ from ..hb_gpu_ui import (Theme, scale as _s, draw_arrow_head,
                          arc_points, draw_polyline, fit_text,
                          paint_outside_rects)
 from ..hb_icons import icon_glyph, draw_icon, has_icon
+from ..hb_gpu_draw import draw_round_rect, draw_round_rect_outline, draw_soft_shadow
 # Sibling module -- safe to import at load (scene_navigator imports viewport_hud
 # only lazily, inside its pin-toggle handler, so there's no import cycle).
 from .. import hb_utils
@@ -71,12 +72,17 @@ _room_views_file = None    # the file _room_views was filled from
 HUD_MARGIN_Y    = 12
 HUD_MARGIN_X    = 8      # nav button inset from the left (toolbar) edge
 BTN_HEIGHT      = 24
-BTN_GAP         = 4
+BTN_GAP         = 2       # between buttons in one group
 ROW_GAP         = 6
 NAV_TEXT_LEFT   = 29     # glyph + gap; where the nav-button label begins
 NAV_PAD_RIGHT   = 10
-MODE_BTN_WIDTH  = 94
-GROUP_GAP       = 24
+MODE_BTN_WIDTH  = 78      # a mode whose icon is not baked: its name
+GROUP_GAP       = 16
+GROUP_PAD       = 2       # a group's bar round its buttons
+GROUP_RADIUS    = 6
+PILL_RADIUS     = 4       # the lit or hovered button inside a bar
+CAPTION_H       = 13      # a group's heading above its bar
+CAPTION_FONT    = 8
 FONT_SIZE       = 11
 
 BTN_BG          = Theme.BTN_BG
@@ -406,6 +412,58 @@ def _room_to_return_to(context):
     return rooms[0] if rooms else None
 
 
+def _paint_btn(shader, rx, ry, rw, rh, bg):
+    """A button inside a group's bar. The bar is the resting fill, so a
+    button at rest draws nothing; hovered or lit it is a rounded pill
+    inset in the bar."""
+    if bg is BTN_BG or bg == BTN_BG:
+        return
+    s = _s()
+    draw_round_rect(shader, rx + 1 * s, ry + 1 * s, rw - 2 * s, rh - 2 * s,
+                    PILL_RADIUS * s, bg)
+
+
+def _group_parts(group):
+    """(caption, widgets) from a group: a list, or (caption, list)."""
+    if isinstance(group, tuple):
+        return group[0], list(group[1])
+    return None, list(group)
+
+
+# The bars behind the groups placed by the last compute_layout:
+# [(x, y, w, h, caption)], drawn under the buttons.
+_group_frames = []
+
+
+def _note_group(placed_rects, caption):
+    if not placed_rects:
+        return
+    s = _s()
+    pad = GROUP_PAD * s
+    x0 = min(r[0] for r in placed_rects)
+    x1 = max(r[0] + r[2] for r in placed_rects)
+    y0 = min(r[1] for r in placed_rects)
+    y1 = max(r[1] + r[3] for r in placed_rects)
+    _group_frames.append((x0 - pad, y0 - pad, x1 - x0 + pad * 2,
+                          y1 - y0 + pad * 2, caption))
+
+
+def _draw_group_frames(shader, font_id):
+    s = _s()
+    r = GROUP_RADIUS * s
+    for x, y, w, h, _caption in _group_frames:
+        draw_soft_shadow(shader, x, y, w, h, r, spread=4 * s, alpha=0.18)
+    for x, y, w, h, _caption in _group_frames:
+        draw_round_rect(shader, x, y, w, h, r, BTN_BG)
+        draw_round_rect_outline(shader, x, y, w, h, r, BTN_BORDER)
+    size = CAPTION_FONT * s
+    blf.size(font_id, size)
+    for x, y, w, h, caption in _group_frames:
+        if caption:
+            draw_text(font_id, x + 4 * s, y + h + 4 * s, size,
+                      Theme.TEXT_HEADER, caption.upper())
+
+
 class _BackToRoomButton:
     """Leave a detail card or a layout sheet for the room you came from.
 
@@ -436,8 +494,7 @@ class _BackToRoomButton:
         rx, ry, rw, rh = rect
         s = _s()
         hovered = point_in_rect(mouse[0], mouse[1], rect)
-        draw_rect(shader, rx, ry, rw, rh, BTN_HOVER_BG if hovered else BTN_BG)
-        draw_rect_outline(shader, rx, ry, rw, rh, BTN_BORDER)
+        _paint_btn(shader, rx, ry, rw, rh, BTN_HOVER_BG if hovered else BTN_BG)
         color = TEXT_ACTIVE if hovered else TEXT_NORMAL
         # Arrow first, then the room name: the mark says what the button
         # does, the name says where it lands.
@@ -549,8 +606,7 @@ class _PanelTabButton:
         active = self._showing()
         bg = (BTN_ACTIVE_BG if active
               else (BTN_HOVER_BG if hovered else BTN_BG))
-        draw_rect(shader, rx, ry, rw, rh, bg)
-        draw_rect_outline(shader, rx, ry, rw, rh, BTN_BORDER)
+        _paint_btn(shader, rx, ry, rw, rh, bg)
         color = TEXT_ACTIVE if active else TEXT_NORMAL
         icon = self._icon()
         if icon and not active:
@@ -586,9 +642,31 @@ class _ModeButton:
     enable bool), so one class serves both the face frame and frameless
     pickers."""
 
+    def _shows_icon(self):
+        return bool(self.icon and has_icon(self.icon))
+
+    def _active_now(self):
+        try:
+            return self._is_active(self._props(bpy.context))
+        except Exception:
+            return False
+
     @property
     def width(self):
-        return int(MODE_BTN_WIDTH * _s())
+        # An icon alone, named on hover, until it is the mode: then its
+        # name beside it, the way the panel tabs say which is open.
+        s = _s()
+        if not self._shows_icon():
+            return int(MODE_BTN_WIDTH * s)
+        if not self._active_now():
+            return int(BTN_HEIGHT * s)
+        blf.size(0, FONT_SIZE * s)
+        return int(blf.dimensions(0, self.label)[0] + ICON_LEAD * s + 16 * s)
+
+    def hover_label(self):
+        if self._shows_icon() and not self._active_now():
+            return self.label
+        return None
 
     def __init__(self, wiring, mode_value, label, icon=None):
         self.wiring = wiring
@@ -621,12 +699,15 @@ class _ModeButton:
             bg = BTN_HOVER_BG
         else:
             bg = BTN_BG
-        draw_rect(shader, rx, ry, rw, rh, bg)
-        draw_rect_outline(shader, rx, ry, rw, rh, BTN_BORDER)
+        _paint_btn(shader, rx, ry, rw, rh, bg)
 
         color = TEXT_ACTIVE if is_active else TEXT_NORMAL
-        if not (self.icon and has_icon(self.icon)):
+        if not self._shows_icon():
             _draw_centered_text(font_id, rect, FONT_SIZE * _s(), color, self.label)
+            return
+        if not is_active:
+            draw_icon(self.icon, rect, color)
+            shader.bind()
             return
         # Icon then name, centred as a pair. The same icons head the
         # inspector's sections, so a mode and what it picks look alike.
@@ -729,8 +810,7 @@ class _ModalToggleButton:
             bg = BTN_HOVER_BG
         else:
             bg = BTN_BG
-        draw_rect(shader, rx, ry, rw, rh, bg)
-        draw_rect_outline(shader, rx, ry, rw, rh, BTN_BORDER)
+        _paint_btn(shader, rx, ry, rw, rh, bg)
         color = TEXT_ACTIVE if active else TEXT_NORMAL
         if self.glyph is not None:
             self.glyph(shader, rect, color)
@@ -835,8 +915,7 @@ class _GrabPill:
         hovered = point_in_rect(mouse[0], mouse[1], rect)
         bg = (BTN_ACTIVE_BG if active
               else (BTN_HOVER_BG if hovered else BTN_BG))
-        draw_rect(shader, rx, ry, rw, rh, bg)
-        draw_rect_outline(shader, rx, ry, rw, rh, BTN_BORDER)
+        _paint_btn(shader, rx, ry, rw, rh, bg)
         # Four-way arrow: the mark for 'this drags things'.
         col = TEXT_ACTIVE if active else TEXT_NORMAL
         if draw_icon('grab', rect, col):
@@ -905,8 +984,7 @@ class _SizesButton:
         on = self._scope(context) != 'OFF'
         hovered = point_in_rect(mouse[0], mouse[1], rect)
         bg = (BTN_ACTIVE_BG if on else (BTN_HOVER_BG if hovered else BTN_BG))
-        draw_rect(shader, rx, ry, rw, rh, bg)
-        draw_rect_outline(shader, rx, ry, rw, rh, BTN_BORDER)
+        _paint_btn(shader, rx, ry, rw, rh, bg)
         _draw_centered_text(font_id, rect, FONT_SIZE * _s(),
                             TEXT_ACTIVE if on else TEXT_NORMAL,
                             self._label(context))
@@ -1029,8 +1107,7 @@ class _ClosetDimsButton:
         on = self._scope(context) != 'OFF'
         hovered = point_in_rect(mouse[0], mouse[1], rect)
         bg = (BTN_ACTIVE_BG if on else (BTN_HOVER_BG if hovered else BTN_BG))
-        draw_rect(shader, rx, ry, rw, rh, bg)
-        draw_rect_outline(shader, rx, ry, rw, rh, BTN_BORDER)
+        _paint_btn(shader, rx, ry, rw, rh, bg)
         _draw_centered_text(font_id, rect, FONT_SIZE * _s(),
                             TEXT_ACTIVE if on else TEXT_NORMAL,
                             self._label(context))
@@ -1185,8 +1262,7 @@ class _ViewportToolButton:
         hovered = point_in_rect(mouse[0], mouse[1], rect)
         bg = (BTN_ACTIVE_BG if active
               else (BTN_HOVER_BG if hovered else BTN_BG))
-        draw_rect(shader, rx, ry, rw, rh, bg)
-        draw_rect_outline(shader, rx, ry, rw, rh, BTN_BORDER)
+        _paint_btn(shader, rx, ry, rw, rh, bg)
         self.glyph(shader, rect, TEXT_ACTIVE if active else TEXT_NORMAL)
 
     def on_click(self, context, area, region):
@@ -1223,8 +1299,7 @@ class _IconCommandButton:
     def draw(self, shader, font_id, rect, context, mouse):
         rx, ry, rw, rh = rect
         hovered = point_in_rect(mouse[0], mouse[1], rect)
-        draw_rect(shader, rx, ry, rw, rh, BTN_HOVER_BG if hovered else BTN_BG)
-        draw_rect_outline(shader, rx, ry, rw, rh, BTN_BORDER)
+        _paint_btn(shader, rx, ry, rw, rh, BTN_HOVER_BG if hovered else BTN_BG)
         self.glyph(shader, rect, TEXT_ACTIVE if hovered else TEXT_NORMAL)
 
     def on_click(self, context, area, region):
@@ -1243,6 +1318,10 @@ _VIEW_TOOL_BUTTONS = [
     _ViewportToolButton('builtin.rotate', "Rotate", _ICON_ROTATE,
                         hotkey="R"),
 ]
+# Cutaway was the last button of the room strip, among the things that
+# add to the room; it changes what the view shows, so it is a View toggle
+# (_CUTAWAY_BUTTON, below _GlyphToggleButton).
+_ICON_CUTAWAY = icon_glyph('cutaway', lambda shader, rect, color: None)
 # What the Home key does, on a button. Framing the model back up is the
 # navigation move that is hardest to do by hand, and the keyboard is a
 # long way from a mouse that is already on the model.
@@ -1251,10 +1330,20 @@ _VIEW_ALL_BUTTON = _IconCommandButton(
 
 
 def _view_strip():
-    """The right-anchored groups: what a drag does, then where you are
-    looking. Two groups rather than one -- the tools are a state you
-    leave set, View All is a button you press and it is over."""
-    return [_VIEW_TOOL_BUTTONS, [_VIEW_ALL_BUTTON]]
+    """The right-anchored groups: what a drag does, then what you see.
+
+    Tools are what a press-and-drag does to the model, and Grab is one of
+    them. View is every way of LOOKING -- doors open, walls cut away,
+    which sizes are labelled, framing it all -- and nothing in it changes
+    the design. An add-on's mode toggles are ways of looking too."""
+    return [
+        ("Tools", _VIEW_TOOL_BUTTONS + [_GRAB_PILL, _CLOSET_GRAB_PILL]),
+        ("View", [_OPEN_DOOR_BUTTON, _FRAMELESS_OPEN_DOOR_BUTTON,
+                  _CLOSET_OPEN_DOOR_BUTTON, _CUTAWAY_BUTTON]
+         + _mode_extra_widgets()
+         + [_SIZES_BUTTON, _FRAMELESS_SIZES_BUTTON, _CLOSET_DIMS_BUTTON,
+            _VIEW_ALL_BUTTON]),
+    ]
 
 
 class _SceneToggleButton:
@@ -1305,8 +1394,7 @@ class _SceneToggleButton:
             bg = BTN_HOVER_BG
         else:
             bg = BTN_BG
-        draw_rect(shader, rx, ry, rw, rh, bg)
-        draw_rect_outline(shader, rx, ry, rw, rh, BTN_BORDER)
+        _paint_btn(shader, rx, ry, rw, rh, bg)
         color = TEXT_ACTIVE if is_active else TEXT_NORMAL
         _draw_centered_text(font_id, rect, FONT_SIZE * _s(), color,
                             self.label)
@@ -1376,8 +1464,7 @@ class _GlyphToggleButton:
             bg = BTN_HOVER_BG
         else:
             bg = BTN_BG
-        draw_rect(shader, rx, ry, rw, rh, bg)
-        draw_rect_outline(shader, rx, ry, rw, rh, BTN_BORDER)
+        _paint_btn(shader, rx, ry, rw, rh, bg)
         color = TEXT_ACTIVE if is_active else TEXT_NORMAL
         self.glyph(shader, rect, color)
 
@@ -1385,6 +1472,10 @@ class _GlyphToggleButton:
         host = self._host(context)
         setattr(host, self.prop_name,
                 not getattr(host, self.prop_name, False))
+
+
+_CUTAWAY_BUTTON = _GlyphToggleButton(
+    'hb_cutaway', _ICON_CUTAWAY, "Cutaway", "Cutaway", owner='SCENE')
 
 
 class _SheetCommandButton:
@@ -1422,8 +1513,7 @@ class _SheetCommandButton:
     def draw(self, shader, font_id, rect, context, mouse):
         rx, ry, rw, rh = rect
         hovered = point_in_rect(mouse[0], mouse[1], rect)
-        draw_rect(shader, rx, ry, rw, rh, BTN_HOVER_BG if hovered else BTN_BG)
-        draw_rect_outline(shader, rx, ry, rw, rh, BTN_BORDER)
+        _paint_btn(shader, rx, ry, rw, rh, BTN_HOVER_BG if hovered else BTN_BG)
         _draw_centered_text(font_id, rect, FONT_SIZE * _s(),
                             TEXT_ACTIVE if hovered else TEXT_NORMAL,
                             self.label)
@@ -1554,23 +1644,15 @@ def _rows():
     The scene-navigator button is NOT in these rows -- compute_layout places
     it separately, left-anchored just past the toolbar.
 
-    The first row holds the selection-mode picker and, in a group of its
-    own, the controls that modify what the current mode does: Move, Open
-    Doors and the Sizes scope. Open Doors had a row to itself, which put
-    a lone button under the picker; it belongs beside the other two
-    because it is the same kind of thing -- a way of working on what the
-    mode has selected. Each self-gates on selection mode and
-    modal-active state via visible(), so the group is usually one or two
-    buttons wide.
+    The first row holds the selection-mode picker alone: what a click
+    picks. Grab, Open Doors and the Sizes scope used to ride beside it;
+    they are a tool and two ways of looking, and sit with the tools and
+    the view controls on the right now (see _view_strip).
 
     The second row holds the sheet controls, which show only on a layout
     view (where the first row is empty, so it draws at the top)."""
     return [
-        [_MODE_BUTTONS,
-         [_GRAB_PILL, _CLOSET_GRAB_PILL, _OPEN_DOOR_BUTTON,
-          _FRAMELESS_OPEN_DOOR_BUTTON, _CLOSET_OPEN_DOOR_BUTTON,
-          _SIZES_BUTTON, _FRAMELESS_SIZES_BUTTON, _CLOSET_DIMS_BUTTON]
-         + _mode_extra_widgets()],
+        [("Select", _MODE_BUTTONS)],
         [_layout_view_buttons()],
     ]
 
@@ -1669,7 +1751,10 @@ def compute_layout(context, area):
     btn_gap = BTN_GAP * s
     row_gap = ROW_GAP * s
     placed = []
-    top_y = y_max - margin_y - btn_h
+    _group_frames.clear()
+    # Room above the top row for the groups' headings.
+    caption_h = CAPTION_H * s
+    top_y = y_max - margin_y - btn_h - caption_h
 
     # The panel tabs are left-anchored just past the toolbar, not part of
     # the centered rows -- a fixed spot makes them easy to find and the
@@ -1693,53 +1778,75 @@ def compute_layout(context, area):
     text_h = _overlay_text_height(context, area)
     if text_h > 0.0:
         # text_h ends at the last baseline; the margin clears descenders.
-        tab_top = min(top_y, y_max - text_h - margin_y - btn_h)
-    tab_x = x_min + margin_x
+        tab_top = min(top_y, y_max - text_h - margin_y - btn_h - caption_h)
+    tab_x = x_min + margin_x + GROUP_PAD * s
+    tab_rects, back_rects = [], []
     for tab_btn in tab_buttons:
-        placed.append((tab_btn, (tab_x, tab_top, tab_btn.width, btn_h)))
+        if tab_btn is _BACK_BUTTON:
+            tab_x += group_gap - btn_gap
+        rect = (tab_x, tab_top, tab_btn.width, btn_h)
+        placed.append((tab_btn, rect))
+        (back_rects if tab_btn is _BACK_BUTTON else tab_rects).append(rect)
         tab_x += tab_btn.width + btn_gap
+    _note_group(tab_rects, "Panels")
+    _note_group(back_rects, None)
 
     # Blender's own viewport controls, right-anchored on that same top
     # row. Inset past the navigation gizmo: the gizmo is drawn INTO the
     # window region rather than being a region of its own, so nothing
     # reports its extent and a strip in that corner would land on it.
-    strip_groups = [[w for w in g if w.visible(context)]
-                    for g in _view_strip()]
-    strip_groups = [g for g in strip_groups if g]
+    strip_groups = []
+    for g in _view_strip():
+        caption, widgets = _group_parts(g)
+        widgets = [w for w in widgets if w.visible(context)]
+        if widgets:
+            strip_groups.append((caption, widgets))
     if strip_groups:
         strip_w = group_gap * (len(strip_groups) - 1)
-        for g in strip_groups:
+        for _c, g in strip_groups:
             strip_w += sum(w.width for w in g) + btn_gap * (len(g) - 1)
-        strip_x = (x_max - margin_x
+        strip_x = (x_max - margin_x - GROUP_PAD * s
                    - navigation_gizmo_reserve(area)[0] - strip_w)
-        for gi, group in enumerate(strip_groups):
+        for gi, (caption, group) in enumerate(strip_groups):
             if gi > 0:
                 strip_x += group_gap
+            rects = []
             for wi, w in enumerate(group):
                 if wi > 0:
                     strip_x += btn_gap
-                placed.append((w, (strip_x, top_y, w.width, btn_h)))
+                rect = (strip_x, top_y, w.width, btn_h)
+                placed.append((w, rect))
+                rects.append(rect)
                 strip_x += w.width
+            _note_group(rects, caption)
 
     cursor_y = top_y
     for row in rows:
-        groups = [[w for w in g if w.visible(context)] for g in row]
-        groups = [g for g in groups if g]
+        groups = []
+        for g in row:
+            caption, widgets = _group_parts(g)
+            widgets = [w for w in widgets if w.visible(context)]
+            if widgets:
+                groups.append((caption, widgets))
         if not groups:
             continue
         row_w = group_gap * (len(groups) - 1)
-        for g in groups:
+        for _c, g in groups:
             row_w += sum(w.width for w in g) + btn_gap * (len(g) - 1)
         cursor_x = x_min + (visible_w - row_w) / 2.0
-        for gi, group in enumerate(groups):
+        for gi, (caption, group) in enumerate(groups):
             if gi > 0:
                 cursor_x += group_gap
+            rects = []
             for wi, w in enumerate(group):
                 if wi > 0:
                     cursor_x += btn_gap
-                placed.append((w, (cursor_x, cursor_y, w.width, btn_h)))
+                rect = (cursor_x, cursor_y, w.width, btn_h)
+                placed.append((w, rect))
+                rects.append(rect)
                 cursor_x += w.width
-        cursor_y -= btn_h + row_gap
+            _note_group(rects, caption)
+        cursor_y -= btn_h + row_gap + caption_h
     return placed
 
 
@@ -1947,8 +2054,8 @@ def _draw_hover_chip(shader, font_id, rect, area, text):
     x_min, x_max, _y_min, _y_max = get_visible_window_bounds(area)
     cx = max(x_min + 4 * s, min(cx, x_max - cw - 4 * s))
     cy = ry - ch - 5 * s
-    draw_rect(shader, cx, cy, cw, ch, Theme.PANEL_BG)
-    draw_rect_outline(shader, cx, cy, cw, ch, BTN_BORDER)
+    draw_round_rect(shader, cx, cy, cw, ch, 4 * s, Theme.PANEL_BG)
+    draw_round_rect_outline(shader, cx, cy, cw, ch, 4 * s, BTN_BORDER)
     draw_text(font_id, cx + pad_x, cy + pad_y, size, TEXT_ACTIVE, text)
 
 
@@ -1979,6 +2086,7 @@ def _draw_hud():
     shader = gpu.shader.from_builtin('UNIFORM_COLOR')
     shader.bind()
     font_id = 0
+    _draw_group_frames(shader, font_id)
     for widget, rect in placed:
         widget.draw(shader, font_id, rect, context, mouse)
     # After the row, so the chip sits over its neighbours rather than
