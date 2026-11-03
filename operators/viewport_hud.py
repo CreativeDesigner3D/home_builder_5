@@ -39,12 +39,13 @@ from ..hb_gpu_draw import (
 # navigator draws with, so the two surfaces cannot drift apart.
 from ..hb_gpu_ui import (Theme, scale as _s, draw_arrow_head,
                          arc_points, draw_polyline, fit_text,
-                         paint_outside)
+                         paint_outside_rects)
 from ..hb_icons import icon_glyph, draw_icon
 # Sibling module -- safe to import at load (scene_navigator imports viewport_hud
 # only lazily, inside its pin-toggle handler, so there's no import cycle).
 from .. import hb_utils
 from . import scene_navigator
+from . import selection_inspector
 from . import layout_lock
 
 # operators/ sits one level below the addon root; the AddonPreferences
@@ -1765,6 +1766,9 @@ def click_hits_widget(context, area, region_x, region_y):
                 context, area, region, ax, atop)
             if layout and point_in_rect(region_x, region_y, layout[0]):
                 return True
+    box = selection_inspector.rect(context, area)
+    if box is not None and point_in_rect(region_x, region_y, box):
+        return True
     return False
 
 
@@ -1834,11 +1838,13 @@ def paint_clear_of_panel(context, area, paint):
     printed straight across its rows and neither could be read. The
     panel is opaque UI: whatever is under it stays under it.
     """
-    try:
-        rect = pinned_panel_rect(context, area)
-    except Exception:
-        rect = None
-    paint_outside(rect, paint)
+    rects = []
+    for fn in (pinned_panel_rect, selection_inspector.rect):
+        try:
+            rects.append(fn(context, area))
+        except Exception:
+            pass
+    paint_outside_rects(rects, paint)
 
 
 # ---- Draw handler -----------------------------------------------------------
@@ -1947,6 +1953,13 @@ def _draw_hud():
             scene_navigator.paint_navigator(
                 layout[0], layout[1], mouse[0], mouse[1])
 
+    # The selection inspector, when it is popped out of the panel. Last,
+    # so a floating box dragged over the panel sits on top of it.
+    try:
+        selection_inspector.draw(context, area, region, mouse[0], mouse[1])
+    except Exception as ex:
+        print('Home Builder: inspector draw failed: %s' % ex)
+
 
 # ---- Click + hover routing (addon keymap) -----------------------------------
 # Replaces the old persistent modal listener. Blender's autosave timer skips
@@ -1986,6 +1999,15 @@ class home_builder_OT_hud_click(bpy.types.Operator):
         area = context.area
         region = context.region
         mx, my = event.mouse_region_x, event.mouse_region_y
+
+        # The inspector is drawn on top, so it is asked first.
+        got = selection_inspector.hit(context, area, region, mx, my)
+        if got == 'drag':
+            bpy.ops.home_builder.inspector_drag('INVOKE_DEFAULT')
+            return {'FINISHED'}
+        if got:
+            area.tag_redraw()
+            return {'FINISHED'}
 
         # The panel gets first crack at the press; a hit inside its rect
         # is consumed, a miss falls through to the widgets below.
@@ -2089,10 +2111,19 @@ class home_builder_OT_hud_scroll(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return _hud_event_poll(context) and scene_navigator.panel_open()
+        return _hud_event_poll(context) and (
+            scene_navigator.panel_open()
+            or selection_inspector.showing(context))
 
     def invoke(self, context, event):
         area = context.area
+        if selection_inspector.scroll(context, area, context.region,
+                                      event.mouse_region_x,
+                                      event.mouse_region_y, self.rows):
+            area.tag_redraw()
+            return {'FINISHED'}
+        if not scene_navigator.panel_open():
+            return {'PASS_THROUGH'}
         ax, atop = _nav_anchor(context, area)
         layout = scene_navigator.build_hosted_layout(
             context, area, context.region, ax, atop)
@@ -2129,7 +2160,8 @@ class home_builder_OT_hud_hover(bpy.types.Operator):
             if point_in_rect(_mouse[0], _mouse[1], rect):
                 hover_key = i
                 break
-        if hover_key != _last_hover_key or scene_navigator.panel_open():
+        if (hover_key != _last_hover_key or scene_navigator.panel_open()
+                or selection_inspector.showing(context)):
             _last_hover_key = hover_key
             context.area.tag_redraw()
         return {'PASS_THROUGH'}

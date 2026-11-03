@@ -508,6 +508,46 @@ def paint_outside(rect, paint):
         gpu.state.scissor_test_set(False)
 
 
+def paint_outside_rects(rects, paint):
+    """paint_outside for several pieces of chrome at once: `paint()`
+    runs once per strip of the region left over when every rect in
+    `rects` is cut out. None entries are skipped."""
+    rects = [r for r in rects if r is not None]
+    if len(rects) <= 1:
+        paint_outside(rects[0] if rects else None, paint)
+        return
+    prev = gpu.state.scissor_get()
+    ox, oy, rw, rh = prev
+    pieces = [(0, 0, rw, rh)]
+    for x, y, w, h in rects:
+        x0 = max(0, min(rw, int(math.floor(x))))
+        y0 = max(0, min(rh, int(math.floor(y))))
+        x1 = max(0, min(rw, int(math.floor(x + w)) + 1))
+        y1 = max(0, min(rh, int(math.floor(y + h)) + 1))
+        cut = []
+        for px, py, pw, ph in pieces:
+            ix0, iy0 = max(px, x0), max(py, y0)
+            ix1, iy1 = min(px + pw, x1), min(py + ph, y1)
+            if ix0 >= ix1 or iy0 >= iy1:
+                cut.append((px, py, pw, ph))      # untouched by this hole
+                continue
+            cut.extend((
+                (px, py, ix0 - px, ph),
+                (ix1, py, px + pw - ix1, ph),
+                (ix0, py, ix1 - ix0, iy0 - py),
+                (ix0, iy1, ix1 - ix0, py + ph - iy1),
+            ))
+        pieces = [p for p in cut if p[2] > 0 and p[3] > 0]
+    gpu.state.scissor_test_set(True)
+    try:
+        for sx, sy, sw, sh in pieces:
+            gpu.state.scissor_set(ox + sx, oy + sy, sw, sh)
+            paint()
+    finally:
+        gpu.state.scissor_set(*prev)
+        gpu.state.scissor_test_set(False)
+
+
 def paint_inline_edit(shader, font_id, rect, size, edit, pad=0.0):
     """The text of an InlineEdit inside `rect`: its selection, the text,
     and the caret. A text longer than the field scrolls sideways to keep

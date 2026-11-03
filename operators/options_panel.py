@@ -900,6 +900,10 @@ _last_list_h = 0.0      # the list's height at the last build, for Tab
 
 
 _page = None            # (blocks function, ScrollList) last built
+# The page typing started on, and its list height: with two pages on
+# screen at once (the panel and the selection inspector) the last one
+# drawn is not necessarily the one being typed into.
+_typing_page = None     # ((blocks function, ScrollList), list height)
 
 
 def _current_page():
@@ -908,12 +912,16 @@ def _current_page():
     return _page or (_blocks, _list)
 
 
+def _typed_page():
+    return _typing_page[0] if _typing_page else _current_page()
+
+
 def _typed_fields(context):
     """Every field that is typed into, top to bottom, on screen or
     not: (key, kind, owner, prop, offset from the top, height)."""
     s = scale()
     out, y = [], 0.0
-    for block in _current_page()[0](context):
+    for block in _typed_page()[0](context):
         h = _block_h(block, s)
         inner = block
         while inner[0] == 'indent':
@@ -929,14 +937,16 @@ def _typed_fields(context):
     return out
 
 
-def _begin_typing(kind, owner, prop):
+def _begin_typing(kind, owner, prop, page=None):
     """A distance is typed fresh; text is edited from what is there,
-    all of it selected so that typing replaces it."""
-    global _edit_kind
+    all of it selected so that typing replaces it. `page` is the page
+    being typed on, when it is not the one built last."""
+    global _edit_kind, _typing_page
     key = _owner_key(owner, prop)
     if key is None:
         return False
     _edit_kind = kind
+    _typing_page = page or (_current_page(), _last_list_h)
     if kind == 'text':
         _value_edit.begin(key, str(getattr(owner, prop, "") or ""),
                           select=True)
@@ -956,10 +966,12 @@ def _begin_neighbour(context, key, step):
     if not 0 <= i < len(fields):
         return False
     _key, kind, owner, prop, offset, height = fields[i]
-    if not _begin_typing(kind, owner, prop):
+    page = _typing_page or (_current_page(), _last_list_h)
+    if not _begin_typing(kind, owner, prop, page):
         return False
-    if _last_list_h > 0:
-        _current_page()[1].scroll_into_view(offset, height, _last_list_h)
+    list_h = page[1]
+    if list_h > 0:
+        page[0][1].scroll_into_view(offset, height, list_h)
     return True
 
 
