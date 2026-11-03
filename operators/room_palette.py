@@ -37,7 +37,8 @@ from ..hb_gpu_ui import (
     text_width,
     draw_centered_text,
     paint_frame,
-    paint_button,
+    paint_group_bar,
+    paint_pill,
     draw_polyline,
     arc_points,
     circle_points,
@@ -50,7 +51,7 @@ MARGIN_X = 8            # inset from the visible region's left edge
 TOP_OFFSET = 54         # fallback drop from the top when the HUD has no strip
 STRIP_GAP = 12          # drop below the HUD tab strip's anchor point
 BTN = 26
-BTN_GAP = 3
+BTN_GAP = 2             # between tools in one group's bar
 GROUP_GAP = 10
 LABEL_GAP = 8
 LABEL_PAD_X = 6
@@ -842,12 +843,26 @@ def _draw():
     btn = BTN * s
     hover_rect = None
 
+    # A rounded bar behind each group, and one behind the toggle: the
+    # strip reads as its groups, the way the HUD's rows do.
+    bars, group = [], object()
+    for kind, payload, rect in layout:
+        if kind == 'toggle':
+            bars.append([rect])
+            group = object()
+        elif kind == 'tool':
+            if TOOLS_NOW[payload][3] != group:
+                group = TOOLS_NOW[payload][3]
+                bars.append([])
+            bars[-1].append(rect)
+    for rects in bars:
+        paint_group_bar(shader, rects)
+
     for kind, payload, rect in layout:
         x, y, w, h = rect
         if kind == 'toggle':
             hovered = _hover_toggle
-            paint_button(shader, rect, hovered=hovered,
-                         border=Theme.BTN_BORDER)
+            paint_pill(shader, rect, hovered=hovered)
             _paint_expand(shader,
                       (x + inset, y + inset, btn - inset * 2, h - inset * 2),
                       Theme.GLYPH_HOVER if hovered else Theme.GLYPH)
@@ -872,10 +887,9 @@ def _draw():
         running = TOOLS_NOW[index][0] == running_tool
         if TOOLS_NOW[index][0] in TOGGLES:
             running = TOGGLES[TOOLS_NOW[index][0]](context.scene)
-        # Brighter edge: this strip floats on the viewport, not
-        # inside a panel, so it should announce itself.
-        paint_button(shader, rect, hovered=hovered, active=running,
-                     border=Theme.BTN_BORDER)
+        # The group's bar is the resting fill; the tool shows a pill
+        # only when hovered or running.
+        paint_pill(shader, rect, hovered=hovered, active=running)
         # The glyph keeps its square regardless of how wide the button
         # grew, so both modes show the same marks in the same place.
         TOOLS_NOW[index][2](

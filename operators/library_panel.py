@@ -58,6 +58,7 @@ from ..hb_gpu_draw import (
     get_visible_window_bounds,
     draw_rect,
     draw_rects,
+    draw_round_rect,
     draw_text,
     point_in_rect,
 )
@@ -73,6 +74,10 @@ from ..hb_gpu_ui import (
     fit_text,
     draw_centered_text,
     paint_button,
+    paint_group_bar,
+    paint_pill,
+    FRAME_RADIUS,
+    BUTTON_RADIUS,
     glyph_chevron,
 )
 
@@ -764,10 +769,14 @@ def _paint_grid(layout, mx, my):
     # A library switch is one click, and the picker says which one you
     # are looking at even when you are not switching.
     current = active_tab(context)
+    # One bar for the switch: it is one choice of three, not three
+    # buttons, and the one in use is the lit pill inside it.
+    paint_group_bar(shader, [r for _i, _l, r in lib_rects], pad=1.0,
+                    shadow=False, border=Theme.PANEL_BORDER)
     for ident, label, rect in lib_rects:
         on = ident == current
-        paint_button(shader, rect, hovered=hover_ui == 'LIB:%s' % ident,
-                     active=on)
+        paint_pill(shader, rect, hovered=hover_ui == 'LIB:%s' % ident,
+                   active=on)
         draw_centered_text(font_id, rect, FONT_LABEL * s,
                            Theme.TEXT_PRIMARY if on else Theme.TEXT_DIM,
                            fit_text(font_id, FONT_LABEL * s, label,
@@ -821,7 +830,8 @@ def _paint_grid(layout, mx, my):
         for key, label, rect, tog_rect, toggle in headers:
             hx, hy, hw, hh = rect
             if key == hover_section:
-                draw_rects(shader, [rect], Theme.ROW_HOVER_BG)
+                draw_round_rect(shader, hx, hy + 1 * s, hw, hh - 1 * s,
+                                BUTTON_RADIUS * s, Theme.ROW_HOVER_BG)
             collapsed = key in _collapsed
             glyph_chevron(shader, hx + 6 * s, hy + hh / 2.0, 7 * s,
                           collapsed, Theme.GLYPH)
@@ -845,9 +855,8 @@ def _paint_grid(layout, mx, my):
         # chip becomes what it should have been, the hover state.
         # Still one batch rather than one draw per tile (see draw_rects),
         # which matters at 48 products and would matter more at 500.
-        lit = [r for p, r, _i in tiles if p['key'] == hover]
-        if lit:
-            draw_rects(shader, lit, Theme.BTN_HOVER_BG)
+        for r in (r for p, r, _i in tiles if p['key'] == hover):
+            draw_round_rect(shader, *r, FRAME_RADIUS * s, Theme.BTN_HOVER_BG)
         for product, _tile_rect, img_rect in tiles:
             ck = _cache_key(product)
             tex = _textures.get(ck)

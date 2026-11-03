@@ -402,6 +402,42 @@ def paint_frame(shader, rect, bg=Theme.PANEL_BG, border=Theme.PANEL_BORDER,
         draw_round_rect_outline(shader, x, y, w, h, r, border)
 
 
+def paint_group_bar(shader, rects, pad=2.0, shadow=True, bg=Theme.BTN_BG,
+                    border=Theme.BTN_BORDER):
+    """One rounded bar behind a group of buttons that belong together,
+    so the group reads as one control rather than a row of boxes. The
+    buttons inside paint only a pill when hovered or on (paint_pill).
+    `pad` is unscaled. Returns the bar's rect."""
+    if not rects:
+        return None
+    s = scale()
+    p = pad * s
+    x0 = min(r[0] for r in rects) - p
+    y0 = min(r[1] for r in rects) - p
+    x1 = max(r[0] + r[2] for r in rects) + p
+    y1 = max(r[1] + r[3] for r in rects) + p
+    w, h = x1 - x0, y1 - y0
+    r = FRAME_RADIUS * s
+    if shadow:
+        draw_soft_shadow(shader, x0, y0, w, h, r, spread=4 * s, alpha=0.18)
+    draw_round_rect(shader, x0, y0, w, h, r, bg)
+    if border is not None:
+        draw_round_rect_outline(shader, x0, y0, w, h, r, border)
+    return (x0, y0, w, h)
+
+
+def paint_pill(shader, rect, hovered=False, active=False):
+    """A button inside a group bar: nothing at rest, a rounded pill
+    inset in the bar when hovered, the accent pill when on."""
+    if not (hovered or active):
+        return
+    s = scale()
+    x, y, w, h = rect
+    draw_round_rect(shader, x + 1 * s, y + 1 * s, w - 2 * s, h - 2 * s,
+                    4 * s, Theme.BTN_ACTIVE_BG if active
+                    else Theme.BTN_HOVER_BG)
+
+
 def paint_button(shader, rect, hovered=False, active=False,
                  bg=Theme.BTN_BG, hover_bg=Theme.BTN_HOVER_BG,
                  active_bg=Theme.BTN_ACTIVE_BG, border=Theme.PANEL_BORDER):
