@@ -316,6 +316,16 @@ def _blocks(context, bp):
     out.append(('rails', None))
     if props.has_rails():
         out.append(('field', (('run', 0, 'rail_width'), "Rail Width", 'SIZE')))
+        # Each rail follows Rail Width until it is given its own size.
+        if props.rail_top:
+            out.append(('field', (('run', 0, 'rail_top_width'),
+                                  "Top Rail", 'SIZE')))
+        if props.rail_bottom:
+            out.append(('field', (('run', 0, 'rail_bottom_width'),
+                                  "Bottom Rail", 'SIZE')))
+        if props.rail_between and _has_rail_above(props, index):
+            out.append(('field', (('sec', index, 'rail_above_width'),
+                                  "Rail Above Face", 'SIZE')))
 
     # Starting over comes last: a preset or a manufacturer's guide
     # REPLACES the layout above, so it is not what the tab opens on.
@@ -329,6 +339,15 @@ def _blocks(context, bp):
         if props.weight_max_lb:
             out.append(('note', "Max panel weight %g lb" % props.weight_max_lb))
     return out
+
+
+def _has_rail_above(props, index):
+    """Whether a between rail sits over this face: it stacks in a column
+    with another face above it."""
+    if props.sections[index].column < 0:
+        return False
+    peers = ap.peer_indices(props, index)
+    return index in peers and peers.index(index) + 1 < len(peers)
 
 
 def _has_type_c(props):
@@ -550,7 +569,7 @@ def _field_entries(bp, payload, x0, top, w, s):
         chip_rect = (x0 + w - CHIP_W * s, rect[1] + 2 * s,
                      CHIP_W * s, row_h - 4 * s)
     if mode == 'SIZE' and gap_auto:
-        value = _fmt(_gap_value(_props(bp), prop))
+        value = _fmt(_gap_value(_props(bp), prop, owner))
     elif mode == 'SIZE':
         held = bool(getattr(owner, held_prop, False)) if held_prop else True
         value = _fmt(getattr(owner, prop, 0.0)) if held else _solved_text(bp, key)
@@ -730,18 +749,23 @@ def _resolve(bp, key):
         return None, None
 
 
-# The gaps that can either carry their own size or follow the run's
-# single one. -1 in the model means "following", which is never a size
-# to show: the row shows what the gap measures, and its chip gives the
-# size back.
+# The gaps (and rails) that can either carry their own size or follow
+# the run's single one. -1 in the model means "following", which is
+# never a size to show: the row shows what the gap measures, and its
+# chip gives the size back.
 AUTO_GAP_PROPS = {'reveal_top', 'reveal_bottom', 'reveal_left',
-                  'reveal_right', 'column_gap'}
+                  'reveal_right', 'column_gap',
+                  'rail_top_width', 'rail_bottom_width', 'rail_above_width'}
 
 
-def _gap_value(props, prop):
+def _gap_value(props, prop, owner=None):
     """What one of those gaps measures now."""
     if prop == 'column_gap':
         return ap.column_gap(props)
+    if prop == 'rail_above_width':
+        return ap.rail_above(props, owner)
+    if prop in ('rail_top_width', 'rail_bottom_width'):
+        return ap.rail_size(props, prop.split('_')[1])
     return ap.reveal(props, prop.split('_', 1)[1])
 
 

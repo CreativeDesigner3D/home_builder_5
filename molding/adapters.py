@@ -43,6 +43,19 @@ def _frameless_roots(scene, types):
     return out
 
 
+def _valance_roots(scene, crown_roots):
+    """Valances that carry the crown across the gap they span: those
+    whose top meets a crown cabinet's top. A valance hung flush with
+    the bottom of the uppers takes no crown. Valances are typed BASE
+    (their cabinet_type only seeds defaults), so the type filter alone
+    drops them."""
+    return [obj for obj in scene.objects
+            if obj.get('IS_FACE_FRAME_CABINET_CAGE')
+            and obj.get('IS_VALANCE_PRODUCT')
+            and any(engine.members_touch(obj, root, align='top')
+                    for root in crown_roots)]
+
+
 def collect_targets(scene, molding_type):
     """Eligible molding-carrying roots in the room, across both
     libraries. molding_type in {'CROWN', 'BASE', 'LIGHT_RAIL'}."""
@@ -50,7 +63,10 @@ def collect_targets(scene, molding_type):
              'CAP': _CROWN_TYPES,
              'BASE': _BASE_TYPES,
              'LIGHT_RAIL': _RAIL_TYPES}[molding_type]
-    return _face_frame_roots(scene, types) + _frameless_roots(scene, types)
+    out = _face_frame_roots(scene, types) + _frameless_roots(scene, types)
+    if molding_type in ('CROWN', 'CAP'):
+        out += [v for v in _valance_roots(scene, out) if v not in out]
+    return out
 
 
 def _housed_in_cabinet(obj):
@@ -478,6 +494,11 @@ def build_facts(scene, members):
                              'finish_type', '')
                 fin_l = fin_l or ft in ('FINISH_LEFT', 'FINISH_BOTH')
                 fin_r = fin_r or ft in ('FINISH_RIGHT', 'FINISH_BOTH')
+            if obj.get('IS_VALANCE_PRODUCT'):
+                # A valance's ends are its return panels.
+                vp = getattr(obj, 'valance_product', None)
+                fin_l = fin_l or bool(getattr(vp, 'finish_left', False))
+                fin_r = fin_r or bool(getattr(vp, 'finish_right', False))
             # Crown mounting datum: the DOOR TOP (face-frame opening top
             # plus the door's top overlay). The room's crown reveal is
             # measured up from here, matching the crown detail drawing.

@@ -15,6 +15,7 @@ from bpy.types import (
 )
 from bpy.props import (
     BoolProperty,
+    BoolVectorProperty,
     FloatProperty,
     FloatVectorProperty,
     IntProperty,
@@ -1914,11 +1915,38 @@ _SS_BOX_CONSTRUCTION_ITEMS = []
 
 
 def get_ss_box_construction_items(self, context):
+    """French / English keep the positional numbers saved files hold;
+    every other construction the host provides takes a fixed number
+    (100 + its registry position) so a pick survives an overlay change."""
+    from ... import accessory_registry
     _SS_BOX_CONSTRUCTION_ITEMS.clear()
+    legacy = ['English']
     if self.door_overlay_type != 'FULL_INSET':
-        _SS_BOX_CONSTRUCTION_ITEMS.append(('French', 'French', ''))
-    _SS_BOX_CONSTRUCTION_ITEMS.append(('English', 'English', ''))
+        legacy.insert(0, 'French')
+    for n, name in enumerate(legacy):
+        _SS_BOX_CONSTRUCTION_ITEMS.append((name, name, '', n))
+    items = accessory_registry.get_items(DRAWER_BOX_CONSTRUCTION_HOST)
+    for i, it in enumerate(items):
+        name = it.get('name') or it.get('code')
+        if not name or name in ('French', 'English'):
+            continue
+        if self.door_overlay_type in (it.get('excluded_overlays') or ()):
+            continue
+        _SS_BOX_CONSTRUCTION_ITEMS.append((name, name, '', 100 + i))
     return _SS_BOX_CONSTRUCTION_ITEMS
+
+
+DRAWER_BOX_CONSTRUCTION_HOST = 'drawer_box_construction'
+
+
+def box_construction_entry(name):
+    """Registry entry for a construction by its printed name (the style
+    field stores names), or {}."""
+    from ... import accessory_registry
+    for it in accessory_registry.get_items(DRAWER_BOX_CONSTRUCTION_HOST):
+        if name and name in (it.get('name'), it.get('code')):
+            return it
+    return {}
 
 
 class Face_Frame_Cabinet_Style(PropertyGroup):
@@ -2364,8 +2392,10 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
     )  # type: ignore
     ss_drawer_box_construction: EnumProperty(
         name="Box Construction",
-        description="Drawer box construction for the style section page",
+        description="Drawer box construction for this style's drawers and "
+                    "rollouts (a right-click pick on a drawer overrides it)",
         items=get_ss_box_construction_items,
+        update=_propagate_cabinet_style,
     )  # type: ignore
     # Free-text note lines printed in a NOTES section at the end of this
     # style's Style Section block (e.g. 'TOUCH LATCH = TL').
@@ -3435,8 +3465,14 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
         # WORKING_FF) provides the visible face and the side stays
         # interior. Read once outside the loop.
         ff_cab = cabinet_obj.face_frame_cabinet
-        left_side_finished = (ff_cab.left_finished_end_condition == 'FINISHED')
-        right_side_finished = (ff_cab.right_finished_end_condition == 'FINISHED')
+        # A finished end shared across a back-to-back island is a board
+        # applied over the side (LEFT/RIGHT_APPLIED_END), so the side
+        # under it stays interior.
+        from . import island_pair
+        left_side_finished = (ff_cab.left_finished_end_condition == 'FINISHED'
+                              and not island_pair.applied_end(cabinet_obj, 'LEFT'))
+        right_side_finished = (ff_cab.right_finished_end_condition == 'FINISHED'
+                               and not island_pair.applied_end(cabinet_obj, 'RIGHT'))
         # Inside faces are finished on request only (a hutch's dropped
         # end); the outer condition never implies it.
         left_side_inside = getattr(ff_cab, 'left_side_finish_inside', False)
@@ -3606,6 +3642,13 @@ class Face_Frame_Cabinet_Style(PropertyGroup):
                     )
                 else:
                     self._set_part_surfaces(child, interior_mat, interior_mat_rotated)
+                continue
+            # Board over a shared island end: built in the side's frame,
+            # finished outside like a FINISHED side.
+            if role in ('LEFT_APPLIED_END', 'RIGHT_APPLIED_END'):
+                self._set_part_surfaces_split(
+                    child, top_mat=interior_mat, bottom_mat=finish_mat,
+                    edge_mat=interior_mat_rotated)
                 continue
             if role == 'WING':
                 # Attached wing: a free-standing angled return, finished on its
@@ -4813,8 +4856,17 @@ GLASS_TYPE_ITEMS = [
     ('REEDED', "Reeded", "Reeded (fluted) glass"),
     ('SEEDED', "Seeded", "Seeded glass"),
     ('FROSTED', "Frosted", "Frosted / satin-etched glass"),
+    ('CUSTOM', "Other", "Glass not in the list - type what it is"),
 ]
 GLASS_TYPE_NAMES = dict((i[0], i[1]) for i in GLASS_TYPE_ITEMS)
+
+
+def glass_type_label(spec):
+    """What a glass spec reads as: the typed text for Other, else the
+    list name."""
+    if spec.get('type') == 'CUSTOM' and spec.get('custom'):
+        return str(spec['custom'])
+    return GLASS_TYPE_NAMES.get(spec.get('type'), spec.get('type', ''))
 
 
 def front_glass_door_key(front_obj, store=None):
@@ -4822,7 +4874,8 @@ def front_glass_door_key(front_obj, store=None):
 
 
 def front_glass_door(front_obj, store=None):
-    """THIS leaf's glass spec {'type', 'included'}, or None."""
+    """THIS leaf's glass spec {'type', 'included', 'custom'}, or None.
+    'custom' is the text typed for an Other glass, '' otherwise."""
     if store is None:
         store = _front_frame_store(front_obj)
     spec = store.get(front_glass_door_key(front_obj, store))
@@ -4833,7 +4886,8 @@ def front_glass_door(front_obj, store=None):
     except AttributeError:
         spec = dict(spec)
     return {'type': str(spec.get('type', 'CLEAR_18')),
-            'included': bool(spec.get('included', False))}
+            'included': bool(spec.get('included', False)),
+            'custom': str(spec.get('custom', '') or '')}
 
 
 def set_front_glass_door(front_obj, spec, store=None):
@@ -4845,8 +4899,11 @@ def set_front_glass_door(front_obj, spec, store=None):
         if key in store:
             del store[key]
         return
-    store[key] = {'type': str(spec.get('type', 'CLEAR_18')),
-                  'included': bool(spec.get('included', False))}
+    kind = str(spec.get('type', 'CLEAR_18'))
+    store[key] = {'type': kind,
+                  'included': bool(spec.get('included', False)),
+                  'custom': (str(spec.get('custom', '') or '').strip()
+                             if kind == 'CUSTOM' else '')}
 
 
 def store_has_glass_door(store):
@@ -6470,6 +6527,7 @@ def _update_unlock_back_thickness(self, context):
         _update_cabinet_dim(self, context)
 
 
+
 def _update_unlock_finished_back_thickness(self, context):
     """Lock toggle for the applied finished / textured back thickness.
     Unlocking seeds the field with the stock the back is built from now,
@@ -7980,6 +8038,22 @@ def populate_pie_drawer_sections(cab_props):
             # height-sync would clobber an unlocked section's height).
             secs[0].unlock_height = True
             secs[0].height = ff_scene.top_drawer_opening_height
+
+
+def corner_top_drawer_sections(cab_props):
+    """Indices of the corner sections that follow the scene's Top Drawer
+    Opening Height: the top of a 3+ pie-cut drawer stack, and the
+    'TOP_DRAWER' entries of the corner presets
+    (_CORNER_SECTION_DEFAULT_HEIGHTS). Mirrors what the populate
+    functions pin, so Refresh Top Drawer Openings can re-push it."""
+    if cab_props.corner_type == 'PIE_CUT_DRAWER':
+        return [0] if len(cab_props.corner_sections) >= 3 else []
+    obj = cab_props.id_data
+    ctype = obj.get('CABINET_TYPE', 'BASE') if obj is not None else 'BASE'
+    defaults = _CORNER_SECTION_DEFAULT_HEIGHTS.get(
+        (ctype, cab_props.exterior_config), ())
+    return [i for i, h in enumerate(defaults)
+            if h == 'TOP_DRAWER' and i < len(cab_props.corner_sections)]
 
 
 def _update_pie_drawer_qty(self, context):
@@ -11009,6 +11083,16 @@ class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
     accessory_render: StringProperty(
         name="Accessory Render", default="",
     )  # type: ignore
+    # ACCESSORY: which leaf of a pair of doors a door-mounted rack goes
+    # on when there are fewer racks than doors.
+    accessory_door: EnumProperty(
+        name="Mount On",
+        description="Which door the rack is mounted on. With a rack for "
+                    "every door this is ignored",
+        items=[('LEFT', "Left Door", "Mount on the left door"),
+               ('RIGHT', "Right Door", "Mount on the right door")],
+        default='LEFT', update=_update_cabinet_dim,
+    )  # type: ignore
     divider_lengthwise: BoolProperty(
         name="Run Front to Back",
         description="Turn the divider(s) to run front-to-back, splitting "
@@ -11027,6 +11111,35 @@ class Face_Frame_Interior_Item(bpy.types.PropertyGroup):
                     "there is nothing to sit against",
         default=0.0, min=0.0, unit='LENGTH', precision=4,
         update=_update_cabinet_dim,
+    )  # type: ignore
+    # One entry per space between the dividers, front to back (left to
+    # right when running front to back). An unlocked space keeps the
+    # size typed in it; the locked ones share what is left equally. The
+    # build writes the sizes it lands back here, so a locked space shows
+    # what it came out to.
+    divider_space_sizes: FloatVectorProperty(
+        name="Space Sizes", size=11, default=(0.0,) * 11, min=0.0,
+        subtype='NONE', unit='LENGTH', precision=4,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    divider_space_unlock: BoolVectorProperty(
+        name="Set Space Size",
+        description="Unlock to type this space's size; locked spaces "
+                    "share what is left equally",
+        size=11, default=(False,) * 11,
+        update=_update_cabinet_dim,
+    )  # type: ignore
+    divider_span_from: IntProperty(
+        name="From Space",
+        description="First space of the dividers running the other way "
+                    "that this divider crosses. 0 starts at the drawer side",
+        default=0, min=0, max=11, update=_update_cabinet_dim,
+    )  # type: ignore
+    divider_span_to: IntProperty(
+        name="To Space",
+        description="Last space of the dividers running the other way "
+                    "that this divider crosses. 0 runs to the drawer side",
+        default=0, min=0, max=11, update=_update_cabinet_dim,
     )  # type: ignore
 
     # ACCESSORY: placement and size of a rendered drawer insert (tray,
@@ -14496,6 +14609,30 @@ class Face_Frame_Wood_Top_Props(PropertyGroup):
              "Draw the top in place and as its own view"),
         ],
         default='AUTO',
+    )  # type: ignore
+    # Hinged lid (veneer tops, typically on a window seat): the top opens
+    # on a continuous piano hinge behind a fixed hardwood frame against
+    # the wall. Order options only; the board itself is built the same.
+    hinged_lid: BoolProperty(
+        name="Hinged Lid",
+        description="Build the top as a lid on a continuous piano hinge",
+        default=False,
+    )  # type: ignore
+    lid_stay_qty: IntProperty(
+        name="Lid Stays",
+        description="Number of lid stays holding the lid open",
+        default=0, min=0, max=2,
+    )  # type: ignore
+    hinge_finish: EnumProperty(
+        name="Hinge Finish",
+        description="Finish of the continuous piano hinge",
+        items=[
+            ('ANTIQUE_BRASS', "Antique Brass", ""),
+            ('BRIGHT_BRASS', "Bright Brass", ""),
+            ('BLACK_POWDER_COAT', "Black Powder Coat", ""),
+            ('BRIGHT_NICKEL', "Bright Nickel", ""),
+        ],
+        default='ANTIQUE_BRASS',
     )  # type: ignore
 
 

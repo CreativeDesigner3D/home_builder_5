@@ -93,11 +93,16 @@ LINEART_CAMERA_JITTER_DEG = 0.05
 # a QI range, used as the open end of the dashed pass.
 FREESTYLE_QI_MAX = 100
 
+# Freestyle hidden-line (dashed) thickness, px at the 150dpi base. Half
+# the 1.5px solid weight so interior parts behind fronts read lighter
+# than the cabinet outline.
+FREESTYLE_DASHED_THICKNESS = 0.75
+
 # Paper-space line sizes in inches, converted to world units per drawing
 # scale by update_line_art_sizes. Chosen to match the Freestyle look
-# (solid 1.5px / dashed 1.0px at the 150dpi base).
+# (solid 1.5px / dashed 0.75px at the 150dpi base).
 LINEART_SOLID_WIDTH_PAPER = 0.010
-LINEART_DASHED_WIDTH_PAPER = 0.0067
+LINEART_DASHED_WIDTH_PAPER = 0.005
 # The dashed layer is resampled to this fixed point spacing because the
 # DASH modifier counts points, not distance -- Line Art emits straight
 # edges as 2-point strokes, which can never dash on their own.
@@ -950,7 +955,7 @@ def setup_iso_freestyle(scene):
     dashed_lineset.visibility = 'HIDDEN'
     if dashed_lineset.linestyle:
         dashed_lineset.linestyle.color = (0, 0, 0)
-        dashed_lineset.linestyle.thickness = 1.0
+        dashed_lineset.linestyle.thickness = FREESTYLE_DASHED_THICKNESS
         dashed_lineset.linestyle.use_dashed_line = True
         dashed_lineset.linestyle.dash1 = 10
         dashed_lineset.linestyle.gap1 = 5
@@ -1500,7 +1505,7 @@ class LayoutView:
         # Configure dashed line style
         if dashed_lineset.linestyle:
             dashed_lineset.linestyle.color = (0, 0, 0)  # Black
-            dashed_lineset.linestyle.thickness = 1.0
+            dashed_lineset.linestyle.thickness = FREESTYLE_DASHED_THICKNESS
             dashed_lineset.linestyle.use_dashed_line = True
             # Set dash pattern
             dashed_lineset.linestyle.dash1 = 10

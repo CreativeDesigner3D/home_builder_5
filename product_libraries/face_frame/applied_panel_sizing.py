@@ -1314,8 +1314,10 @@ def _detect_panel_mid_rails(cab_obj, side, panel_bay_obj):
 
 def _detect_cabinet_level_mid_rail(cab_obj, source_bay_obj, panel_bay_obj):
     """The bay's top-level H-split between two DOOR fronts gives a
-    cabinet-level mid rail. Returns None if the bay isn't shaped that
-    way.
+    cabinet-level mid rail; so does doors over an appliance opening
+    (a refrigerator cabinet), where the rail lines up with the doors'
+    bottom rail over the opening's top rail. Returns None if the bay
+    isn't shaped that way.
     """
     top = _bay_top_child(source_bay_obj)
     if top is None or not top.get(types_face_frame.TAG_SPLIT_NODE):
@@ -1327,9 +1329,11 @@ def _detect_cabinet_level_mid_rail(cab_obj, source_bay_obj, panel_bay_obj):
             if c.get(types_face_frame.TAG_OPENING_CAGE)]
     if len(kids) != 2:
         return None
-    if not all(c.face_frame_opening.front_type == 'DOOR' for c in kids):
-        return None
     kids.sort(key=lambda c: c.get('hb_split_child_index', 0))
+    fronts = [c.face_frame_opening.front_type for c in kids]
+    over_appliance = fronts == ['DOOR', 'APPLIANCE']
+    if not (over_appliance or fronts == ['DOOR', 'DOOR']):
+        return None
 
     # Source mid rail bottom Z, cabinet-local. Parent-chain sum reads
     # the values just written by the cabinet's recalc dispatch (which
@@ -1344,6 +1348,17 @@ def _detect_cabinet_level_mid_rail(cab_obj, source_bay_obj, panel_bay_obj):
 
     cab = cab_obj.face_frame_cabinet
     door_rail = _door_rail_width(cab_obj)
+
+    if over_appliance:
+        # No door below: the opening's top rail shows full height, and
+        # the band runs from its bottom edge to the top of the doors'
+        # bottom rail.
+        return {
+            'z_bottom': max(0.0, source_mid_rail_z - panel_bay_obj.location.z),
+            'splitter_width': max(
+                0.0, split.splitter_width + door_rail
+                - cab.default_bottom_overlay),
+        }
 
     # Panel rail aligns with the visible band the door layout produces:
     # cabinet mid rail bottom + top_overlay (where bottom door's top

@@ -26,8 +26,9 @@ from mathutils import Vector, Matrix, Euler
 
 from ... import hb_utils
 from ...hb_types import (CabinetPartModifier, GeoNodeCage, GeoNodeCutpart,
-                        GeoNodeDrawerBox, GeoNodeRectangle)
+                        GeoNodeDrawerBox, GeoNodeObject, GeoNodeRectangle)
 from ...units import inch
+from ... import accessory_registry
 from ...hb_details import apply_label_style
 from ..common import types_appliances
 from ..common import corbels
@@ -99,6 +100,21 @@ _RECALC_SUSPEND_DEPTH = 0
 _PENDING_RECALC_NAMES = set()
 
 
+def _style_box_construction(obj):
+    """Registry entry for the box construction set on the cabinet style
+    of the cabinet that owns ``obj``, or {}."""
+    cur = obj
+    while cur is not None and not cur.get('IS_FACE_FRAME_CABINET_CAGE'):
+        cur = cur.parent
+    if cur is None or not cur.get('STYLE_NAME'):
+        return {}
+    from .props_hb_face_frame import get_style_props, box_construction_entry
+    for cs in get_style_props().cabinet_styles:
+        if cs.name == cur.get('STYLE_NAME'):
+            return box_construction_entry(cs.ss_drawer_box_construction)
+    return {}
+
+
 @contextmanager
 def suspend_recalc():
     """Suspend cabinet recalcs across a block of property writes.
@@ -164,6 +180,11 @@ PART_ROLE_RIGHT_SIDE = 'RIGHT_SIDE'
 # they mean; every pass that has to see both lists them together.
 PART_ROLE_LEFT_SIDE_SEAM = 'LEFT_SIDE_SEAM'
 PART_ROLE_RIGHT_SIDE_SEAM = 'RIGHT_SIDE_SEAM'
+# Combined FINISHED island end: the flat 3/4 board laid over the carrying
+# cabinet's own side, running back to the far run (island_pair.applied_end).
+PART_ROLE_LEFT_APPLIED_END = 'LEFT_APPLIED_END'
+PART_ROLE_RIGHT_APPLIED_END = 'RIGHT_APPLIED_END'
+APPLIED_END_THICKNESS = inch(0.75)
 SIDE_SEAM_ROLE_FOR = {
     PART_ROLE_LEFT_SIDE: PART_ROLE_LEFT_SIDE_SEAM,
     PART_ROLE_RIGHT_SIDE: PART_ROLE_RIGHT_SIDE_SEAM,
@@ -780,6 +801,14 @@ PART_ROLE_DRAWER_DIVIDER = 'DRAWER_DIVIDER'
 # dividers; kept as its own role so reports can tell a loose partition
 # from a dropped-in insert.
 PART_ROLE_DRAWER_INSERT = 'DRAWER_INSERT'
+# Drawer parts Make Editable can hand over to the user. The box and
+# everything in it are rebuilt with the front, so a hand-edited one is
+# lifted out before the wipe and put back in place of its rebuilt twin
+# (keep_manual_drawer_parts / restore_manual_drawer_parts), matched by
+# role and DRAWER_INSERT_BUILD_INDEX within its box.
+DRAWER_INTERIOR_EDITABLE_ROLES = frozenset({PART_ROLE_DRAWER_DIVIDER,
+                                            PART_ROLE_DRAWER_INSERT})
+DRAWER_INSERT_BUILD_INDEX = 'hb_drawer_build_index'
 # Hidden boolean cutter carving the U-notch of a sink duo drawer box.
 # A wire child of the box, so it lives and dies with the box's own
 # wipe-and-rebuild lifecycle.
@@ -834,6 +863,59 @@ def render_hint_kind(hint):
     kind = parse_render_hint(hint)[0]
     return kind if kind in DRAWER_INSERT_BUILDERS else ''
 
+
+
+def keep_manual_drawer_parts(opening_obj):
+    """Lift the hand-edited drawer dividers / inserts out of an opening's
+    front pivots before the fronts are wiped. Each is unparented with its
+    place in the box remembered. Returns [(obj, leaf_index, parent
+    inverse, local matrix)] for restore_manual_drawer_parts."""
+    kept = []
+    for pivot in opening_obj.children:
+        if pivot.get('hb_part_role') != PART_ROLE_FRONT_PIVOT:
+            continue
+        leaf_index = next((c.get('HB_LEAF_INDEX', 0) for c in pivot.children
+                           if c.get('HB_LEAF_INDEX') is not None), 0)
+        for obj in list(pivot.children_recursive):
+            if (obj.get('IS_MANUAL_PART')
+                    and obj.get('hb_part_role')
+                    in DRAWER_INTERIOR_EDITABLE_ROLES):
+                kept.append((obj, leaf_index,
+                             obj.matrix_parent_inverse.copy(),
+                             obj.matrix_basis.copy()))
+                obj.parent = None
+    return kept
+
+
+def restore_manual_drawer_parts(kept, built_leaves):
+    """Put the parts keep_manual_drawer_parts lifted out back in the
+    rebuilt drawer box of the same leaf (or the first box built), in
+    place of the part rebuilt for the same slot, at the same spot in the
+    box. With no drawer box left - the drawer became a door, say - they
+    go with it."""
+    if not kept:
+        return
+    boxes = {}
+    for leaf_index, (pivot, _leaf) in enumerate(built_leaves):
+        box = next((c for c in pivot.children
+                    if c.get('hb_part_role') == PART_ROLE_DRAWER_BOX), None)
+        if box is not None:
+            boxes[leaf_index] = box
+    for obj, leaf_index, parent_inv, local in kept:
+        box = boxes.get(leaf_index) or next(iter(boxes.values()), None)
+        if box is None:
+            bpy.data.objects.remove(obj, do_unlink=True)
+            continue
+        role = obj.get('hb_part_role')
+        slot = obj.get(DRAWER_INSERT_BUILD_INDEX)
+        for twin in list(box.children):
+            if (twin.get('hb_part_role') == role
+                    and not twin.get('IS_MANUAL_PART')
+                    and twin.get(DRAWER_INSERT_BUILD_INDEX) == slot):
+                bpy.data.objects.remove(twin, do_unlink=True)
+        obj.parent = box
+        obj.matrix_parent_inverse = parent_inv
+        obj.matrix_basis = local
 
 class DrawerInsertMesh:
     """Collects the prisms that make up one drawer insert so the whole
@@ -3393,12 +3475,11 @@ class FaceFrameCabinet(GeoNodeCage):
                 # FALSE_FF / WORKING_FF: the applied face frame IS the
                 # side - no carcass side panel behind it.
                 # An end combined with the run behind is the same
-                # story, when the far run lays a BOARD across it: that
-                # board is this end's side, and both would otherwise
-                # sit in the same plane. An applied panel goes over a
-                # side rather than replacing one, so a paneled
-                # combined end keeps its board (island_pair returns
-                # None there) and is just held back for the panel.
+                # story when the far run lays an applied face frame
+                # across it. A finished board, a panel or a skin goes
+                # over a side rather than replacing one, so those
+                # combined ends keep their side (island_pair returns
+                # None there) and are just held back for the covering.
                 visible = (not layout.bays[0].get('remove_carcass')
                            and layout.l_fin_end not in ('FALSE_FF',
                                                         'WORKING_FF')
@@ -3493,7 +3574,7 @@ class FaceFrameCabinet(GeoNodeCage):
                 part.set_input('Length', seg['length'])
                 part.set_input('Width', seg['panel_dim_y'])
                 part.set_input('Thickness', seg['thickness'])
-                self._apply_top_sink_cutout(child, seg)
+                self._apply_top_sink_cutout(child, seg, layout)
 
             elif role == PART_ROLE_BACK:
                 # WORKING_FF back: the applied face frame is a real
@@ -3952,6 +4033,7 @@ class FaceFrameCabinet(GeoNodeCage):
             # their own overhang above; the FINISHED side has no applied
             # part, so the carcass side itself is grown here.
             self._extend_finished_side_panels(layout)
+            self._reconcile_applied_island_ends(layout)
             # Close the exposed corner of an extended finished side with a
             # return panel + rear stile when a return width is set (needs a
             # FINISHED back to return into). Runs after the extend so it can
@@ -10357,10 +10439,12 @@ class FaceFrameCabinet(GeoNodeCage):
         if layout.is_angled:
             return
         cab = self.obj.face_frame_cabinet
+        # The layout's condition: under a combined finished end the side
+        # reads PANELED and the extend belongs to the applied board.
         specs = (
-            (PART_ROLE_LEFT_SIDE, cab.left_finished_end_condition,
+            (PART_ROLE_LEFT_SIDE, layout.l_fin_end,
              cab.left_side_finished_extend_back, solver.left_side_dims),
-            (PART_ROLE_RIGHT_SIDE, cab.right_finished_end_condition,
+            (PART_ROLE_RIGHT_SIDE, layout.r_fin_end,
              cab.right_side_finished_extend_back, solver.right_side_dims),
         )
         for role, condition, extend, dims_fn in specs:
@@ -10373,6 +10457,65 @@ class FaceFrameCabinet(GeoNodeCage):
             base_width = dims_fn(layout)[1]  # (length, width=depth, thickness)
             child.location.y += extend
             GeoNodeCutpart(child).set_input('Width', base_width + extend)
+
+    def _reconcile_applied_island_ends(self, layout):
+        """Spawn / resize / remove the flat 3/4 board a combined FINISHED
+        island end lays over this cabinet's own side.
+
+        Built where a FINISHED side would stand - its outer face on the
+        face frame's outer face, front edge behind the frame, floor to
+        the box top - and run back by the end's extend to the far run's
+        face frame, notched for both runs' toe kicks. The side under it
+        builds as under a paneled end (solver.FaceFrameLayout).
+        """
+        cab = self.obj.face_frame_cabinet
+        last = layout.bay_count - 1
+        specs = (
+            ('LEFT', PART_ROLE_LEFT_APPLIED_END,
+             getattr(layout, 'l_applied_end', False), 0,
+             cab.left_side_finished_extend_back, 0.0, True),
+            ('RIGHT', PART_ROLE_RIGHT_APPLIED_END,
+             getattr(layout, 'r_applied_end', False), last,
+             cab.right_side_finished_extend_back, layout.dim_x, False),
+        )
+        for side, role, wanted, bay_index, extend, x, mirror_z in specs:
+            board = next((c for c in self.obj.children
+                          if c.get('hb_part_role') == role), None)
+            if not wanted or layout.bays[bay_index].get('remove_carcass'):
+                if board is not None:
+                    bpy.data.objects.remove(board, do_unlink=True)
+                continue
+            if board is None:
+                part = CabinetPart()
+                part.create(f'{side.title()} Applied End')
+                part.obj.parent = self.obj
+                part.obj['hb_part_role'] = role
+                part.obj['CABINET_PART'] = True
+                part.obj['IS_FINISHED'] = True
+                part.obj['MENU_ID'] = (
+                    'HOME_BUILDER_MT_face_frame_part_commands')
+                # Same frame as the carcass side it covers.
+                part.obj.rotation_euler.y = math.radians(-90)
+                part.set_input('Mirror Y', True)
+                part.set_input('Mirror Z', mirror_z)
+                board = part.obj
+            else:
+                part = GeoNodeCutpart(board)
+            if board.get('IS_MANUAL_PART'):
+                continue
+            extend = max(0.0, extend)
+            if side == 'LEFT':
+                depth = solver.effective_left_depth(layout)
+            else:
+                depth = solver.effective_right_depth(layout)
+            bottom_z = solver.side_bottom_z(layout, bay_index, side)
+            top_z = solver.bay_top_z(layout, bay_index)
+            board.location = (x, -layout.dim_y + depth + extend, bottom_z)
+            part.set_input('Length', top_z - bottom_z)
+            part.set_input('Width', depth - layout.fft + extend)
+            part.set_input('Thickness', APPLIED_END_THICKNESS)
+            self._update_side_corner_notch(board, layout, bay_index)
+            self._update_side_far_notch(board, layout)
 
     def _finished_side_return_width(self, cab, layout, side):
         """Effective return-closeout width on `side` ('LEFT' / 'RIGHT'), or
@@ -13034,18 +13177,40 @@ class FaceFrameCabinet(GeoNodeCage):
                 continue
             self._create_carcass_top_part(seg['start_bay'])
 
-    def _apply_top_sink_cutout(self, top_obj, seg):
-        """Cut (or clear) the centered sink opening in a carcass top.
+    SINK_CUTOUT_MOD_NAME = 'Sink Cutout'
 
-        The hole is centered on the panel in both directions, in the
-        part's own Length / Width space. Sized off the cabinet, clamped
-        so it always leaves material around it; a cabinet narrower or
-        shallower than the opening gets no cut rather than a panel in
-        two pieces.
+    def _sink_bay_centers(self, layout, seg):
+        """X centers, in the top part's own Length space, of the sink
+        bays under this top segment. The bay keeps its sink centred, so
+        the bay's cavity center is the sink centerline."""
+        centers = []
+        for bay_obj in self.obj.children:
+            if not bay_obj.get(TAG_BAY_CAGE) or bay_obj.hide_viewport:
+                continue
+            if bay_obj.get('APPLIANCE_BAY') != 'SINK':
+                continue
+            idx = bay_obj.get('hb_bay_index', -1)
+            if not (seg['start_bay'] <= idx <= seg['end_bay']):
+                continue
+            if idx >= layout.bay_count:
+                continue
+            left_x, right_x = solver._cage_x_bounds(layout, idx)
+            centers.append((left_x + right_x) / 2.0 - seg['x'])
+        return sorted(centers)
+
+    def _apply_top_sink_cutout(self, top_obj, seg, layout):
+        """Cut (or clear) the sink openings in a carcass top.
+
+        One opening per sink bay under the top, centered on that bay's
+        sink and on the panel's depth, in the part's own Length / Width
+        space. A floating vanity cuts nothing until a sink is added to
+        a bay. The plain Sink Cutout option with no sink bay keeps a
+        single opening centered on the panel. Sized off the cabinet,
+        clamped so it always leaves material around it; a cabinet
+        narrower or shallower than the opening gets no cut rather than
+        a panel in two pieces.
         """
         cab = self.obj.face_frame_cabinet
-        name = 'Sink Cutout'
-        existing = top_obj.modifiers.get(name)
         margin = inch(1.0)
         length = seg['length']
         width = seg['panel_dim_y']
@@ -13053,25 +13218,37 @@ class FaceFrameCabinet(GeoNodeCage):
                  length - 2.0 * margin)
         cd = min(getattr(cab, 'top_sink_cutout_depth', 0.0),
                  width - 2.0 * margin)
-        wants = ((getattr(cab, 'top_sink_cutout', False)
-                  or solver.is_floating_vanity(cab))
-                 and cw > 0.0 and cd > 0.0)
-        if not wants:
-            if existing is not None:
-                top_obj.modifiers.remove(existing)
-            return
-        cpm = CabinetPartModifier(top_obj)
-        if existing is None:
-            cpm.add_node('CPM_CUTOUT', name)
-        else:
-            cpm.mod = existing
-        cpm.mod.show_viewport = True
-        cpm.mod.show_render = True
-        cpm.set_input('X', (length - cw) / 2.0)
-        cpm.set_input('End X', (length + cw) / 2.0)
-        cpm.set_input('Y', (width - cd) / 2.0)
-        cpm.set_input('End Y', (width + cd) / 2.0)
-        cpm.set_input('Route Depth', seg['thickness'])
+        centers = []
+        if ((getattr(cab, 'top_sink_cutout', False)
+                or solver.is_floating_vanity(cab))
+                and cw > 0.0 and cd > 0.0):
+            centers = self._sink_bay_centers(layout, seg)
+            if not centers and getattr(cab, 'top_sink_cutout', False):
+                centers = [length / 2.0]
+        lo, hi = margin + cw / 2.0, length - margin - cw / 2.0
+        centers = [min(max(c, lo), hi) for c in centers]
+
+        names = [self.SINK_CUTOUT_MOD_NAME if i == 0
+                 else f'{self.SINK_CUTOUT_MOD_NAME} {i + 1}'
+                 for i in range(len(centers))]
+        for mod in list(top_obj.modifiers):
+            if (mod.name.startswith(self.SINK_CUTOUT_MOD_NAME)
+                    and mod.name not in names):
+                top_obj.modifiers.remove(mod)
+        for name, cx in zip(names, centers):
+            existing = top_obj.modifiers.get(name)
+            cpm = CabinetPartModifier(top_obj)
+            if existing is None:
+                cpm.add_node('CPM_CUTOUT', name)
+            else:
+                cpm.mod = existing
+            cpm.mod.show_viewport = True
+            cpm.mod.show_render = True
+            cpm.set_input('X', cx - cw / 2.0)
+            cpm.set_input('End X', cx + cw / 2.0)
+            cpm.set_input('Y', (width - cd) / 2.0)
+            cpm.set_input('End Y', (width + cd) / 2.0)
+            cpm.set_input('Route Depth', seg['thickness'])
 
     def _create_carcass_top_part(self, start_bay_index):
         """Create one solid carcass top part keyed to its segment.
@@ -13182,11 +13359,19 @@ class FaceFrameCabinet(GeoNodeCage):
         floor, an inset kick). Added lazily and left inactive rather
         than absent, so separating an end re-squares the panel.
         """
+        role = side_obj.get('hb_part_role')
+        left = role in (PART_ROLE_LEFT_SIDE, PART_ROLE_LEFT_SIDE_SEAM,
+                        PART_ROLE_LEFT_APPLIED_END)
         kick, setback_raw, far_fft = island_pair.far_end_notch(
-            self.obj, 'LEFT'
-            if side_obj.get('hb_part_role') in (PART_ROLE_LEFT_SIDE,
-                                                PART_ROLE_LEFT_SIDE_SEAM)
-            else 'RIGHT')
+            self.obj, 'LEFT' if left else 'RIGHT')
+        # Only the board that runs back to the far run crosses its kick:
+        # a FINISHED side, or the board applied over one. A side held
+        # back for a covering stops at this cabinet's back.
+        applied = role in (PART_ROLE_LEFT_APPLIED_END,
+                           PART_ROLE_RIGHT_APPLIED_END)
+        if not applied and (layout.l_fin_end if left
+                            else layout.r_fin_end) != 'FINISHED':
+            kick = 0.0
         # Same shallowing as solver.kick_notch_depth, against the FAR
         # run's frame: the setback is measured off that run's face frame
         # outer face, and a board running past it starts one frame
@@ -13204,10 +13389,11 @@ class FaceFrameCabinet(GeoNodeCage):
             mod = cpm.mod
         if mod.node_group is None:
             return
-        role = side_obj.get('hb_part_role')
-        thickness = (solver.left_side_thickness(layout)
-                     if role in (PART_ROLE_LEFT_SIDE, PART_ROLE_LEFT_SIDE_SEAM)
-                     else solver.right_side_thickness(layout))
+        if applied:
+            thickness = APPLIED_END_THICKNESS
+        else:
+            thickness = (solver.left_side_thickness(layout) if left
+                         else solver.right_side_thickness(layout))
         active = kick > 0.0 and setback > 0.0 and thickness > 0.0
         ng = mod.node_group
         for input_name, value in (
@@ -13242,7 +13428,7 @@ class FaceFrameCabinet(GeoNodeCage):
         if mod.node_group is None:
             return
         role = side_obj.get('hb_part_role')
-        if role == PART_ROLE_LEFT_SIDE:
+        if role in (PART_ROLE_LEFT_SIDE, PART_ROLE_LEFT_APPLIED_END):
             stile_to_floor = solver.left_stile_to_floor(layout)
             has_inset = layout.kick_inset_left > 0
             side_thickness = solver.left_side_thickness(layout)
@@ -13250,6 +13436,8 @@ class FaceFrameCabinet(GeoNodeCage):
             stile_to_floor = solver.right_stile_to_floor(layout)
             has_inset = layout.kick_inset_right > 0
             side_thickness = solver.right_side_thickness(layout)
+        if role in (PART_ROLE_LEFT_APPLIED_END, PART_ROLE_RIGHT_APPLIED_END):
+            side_thickness = APPLIED_END_THICKNESS
         # End bay flagged floating_bay forces the side to anchor at the
         # bay bottom (see solver.side_bottom_z), so the notch becomes
         # redundant just like the has_inset case.
@@ -13370,15 +13558,21 @@ class FaceFrameCabinet(GeoNodeCage):
                 and not has_inset and not bay_floating
                 and 0 <= bay_index < len(layout.bays)):
             cab = self.obj.face_frame_cabinet
-            left = side_obj.get('hb_part_role') == PART_ROLE_LEFT_SIDE
-            cond = (cab.left_finished_end_condition if left
-                    else cab.right_finished_end_condition)
+            role = side_obj.get('hb_part_role')
+            left = role in (PART_ROLE_LEFT_SIDE, PART_ROLE_LEFT_APPLIED_END)
+            applied = role in (PART_ROLE_LEFT_APPLIED_END,
+                               PART_ROLE_RIGHT_APPLIED_END)
+            # The layout's condition: a side under a combined finished
+            # end reads PANELED there and is not the board extended back.
+            cond = layout.l_fin_end if left else layout.r_fin_end
             extend = 0.0
-            if cond == 'FINISHED' and not layout.is_angled:
+            if (applied or cond == 'FINISHED') and not layout.is_angled:
                 extend = max(0.0, (cab.left_side_finished_extend_back if left
                                    else cab.right_side_finished_extend_back))
             back_edge = (-layout.dim_y + layout.bays[bay_index]['depth']
-                         + extend)
+                         + extend
+                         - (0.0 if applied else solver.side_behind_back(
+                             layout, 'LEFT' if left else 'RIGHT')))
             depth = solver.rear_kick_notch_depth(layout, bay_index, back_edge)
         self._drive_rear_kick_notch(side_obj, layout, bay_index, depth,
                                     side_thickness)
@@ -13993,6 +14187,9 @@ class FaceFrameCabinet(GeoNodeCage):
         front_type = op_props.front_type
         cab_props = self.obj.face_frame_cabinet
 
+        # Hand-edited drawer dividers / inserts ride out the wipe.
+        kept_drawer_parts = keep_manual_drawer_parts(opening_obj)
+
         # Wipe existing pivots, parts, and any legacy direct-child fronts.
         # Use children_recursive so pull instances parented under the door
         # part (grandchildren of the pivot) also get cleaned.
@@ -14008,6 +14205,7 @@ class FaceFrameCabinet(GeoNodeCage):
                 bpy.data.objects.remove(child, do_unlink=True)
 
         if front_type == 'NONE':
+            restore_manual_drawer_parts(kept_drawer_parts, [])
             return
 
         built_leaves = []
@@ -14108,6 +14306,7 @@ class FaceFrameCabinet(GeoNodeCage):
         # them.
         misc_accessory_models.attach_front_models(
             opening_obj, op_props, rect, built_leaves)
+        restore_manual_drawer_parts(kept_drawer_parts, built_leaves)
 
         # Sink apron: a 1/2" panel across the top of a DOOR opening
         # (apron / farmhouse sink), set 1/8" behind the face frame. The
@@ -14783,8 +14982,13 @@ class FaceFrameCabinet(GeoNodeCage):
         for coll in box_obj.users_collection:
             coll.objects.link(obj)
             break
+        role = role or PART_ROLE_DRAWER_INSERT
+        # Nth of its role in this box, built in a fixed order, so a
+        # hand-edited part can find the one it stands in for.
+        obj[DRAWER_INSERT_BUILD_INDEX] = sum(
+            1 for c in box_obj.children if c.get('hb_part_role') == role)
         obj.parent = box_obj
-        obj['hb_part_role'] = role or PART_ROLE_DRAWER_INSERT
+        obj['hb_part_role'] = role
         obj['MENU_ID'] = 'HOME_BUILDER_MT_face_frame_drawer_box_commands'
         obj['IS_FINISHED'] = True
         return obj
@@ -14848,7 +15052,7 @@ class FaceFrameCabinet(GeoNodeCage):
             x0=side, x1=dx - side, y0=front, y1=dy - side, z0=floor,
             # Inserts stand on the box bottom and stop under the rim.
             h=max(dz - floor - self.DRAWER_INSERT_RIM_GAP, inch(1.0)),
-            slots=0)
+            slots=0, divider_runs=[])
         if (inner.x1 - inner.x0 < inch(1.0)
                 or inner.y1 - inner.y0 < inch(1.0)):
             return
@@ -14879,6 +15083,7 @@ class FaceFrameCabinet(GeoNodeCage):
                     break
                 builder(box_obj, rect, item, params)
                 cursor = rect.x1
+        self._emit_drawer_dividers(box_obj, inner)
 
     @staticmethod
     def _drawer_insert_fill_width(inner, items):
@@ -14954,25 +15159,35 @@ class FaceFrameCabinet(GeoNodeCage):
         rarely fills the drawer, and the divider closes off what is
         left. Anything else - the first thing in the drawer, a typed
         position, a divider running side to side - spaces evenly as
-        before. Returns the packing cursor to carry on from, or None
-        when it took no space.
+        before. Unlocking a space and typing its size places them by
+        the spaces between them instead (divider_space_unlock), the
+        locked spaces sharing what is left. Returns the packing cursor
+        to carry on from, or None when it took no space.
+
+        Inside a drawer the panels are only recorded here; a divider
+        can stop at the ones running the other way (From / To Space),
+        so _emit_drawer_dividers builds them once every run is known.
         """
         th = inch(params.get('TH', 0.0))
         if th < 1e-6:
             th = self.DRAWER_DIVIDER_TH
         if (rect.x1 - rect.x0 < th * 2) or (rect.y1 - rect.y0 < th * 2):
             return None
-        z0, z1 = rect.z0, rect.z0 + rect.h
         qty = max(getattr(item, 'accessory_qty', 1), 1)
         lengthwise = getattr(item, 'divider_lengthwise', False)
         off = getattr(item, 'divider_offset', 0.0)
         span0, span1 = ((rect.x0, rect.x1) if lengthwise
                         else (rect.y0, rect.y1))
         span = span1 - span0
-        against = (lengthwise and off <= 0.0001 and cursor is not None
+        spaces = self._divider_set_spaces(item, qty)
+        against = (not spaces and lengthwise and off <= 0.0001
+                   and cursor is not None
                    and cursor > rect.x0 + 1e-6
                    and cursor < rect.x1 - th)
-        if against:
+        if spaces:
+            centers = self._divider_centers_from_spacing(
+                spaces, span0, span1, th)
+        elif against:
             centers = [cursor + th / 2.0]
             # Extras split what is left beyond it, so a quantity still
             # means something once the first one is spoken for.
@@ -14986,20 +15201,117 @@ class FaceFrameCabinet(GeoNodeCage):
         else:
             step = span / (qty + 1)
             centers = [span0 + step * (i + 1) for i in range(qty)]
-        for c in centers:
-            mb = DrawerInsertMesh()
-            if lengthwise:
-                mb.box(c - th / 2.0, c + th / 2.0, rect.y0, rect.y1,
-                       z0, z1)
-            else:
-                mb.box(rect.x0, rect.x1, c - th / 2.0, c + th / 2.0,
-                       z0, z1)
-            self._emit_drawer_insert(box_obj, 'Drawer Divider', mb,
-                                     role=PART_ROLE_DRAWER_DIVIDER)
+        self._write_divider_space_sizes(item, centers, span0, span1, th)
+        run = SimpleNamespace(
+            item=item, lengthwise=lengthwise, centers=centers, th=th,
+            rect=rect)
+        runs = getattr(rect, 'divider_runs', None)
+        if runs is not None:
+            runs.append(run)
+        else:
+            self._emit_divider_run(box_obj, run, [])
         if not against:
             return None
         # Whatever comes next starts clear of the last one placed.
         return max(centers) + th / 2.0
+
+    @staticmethod
+    def _divider_set_spaces(item, qty):
+        """The item's spaces as a list - the typed size of an unlocked
+        space, None for a locked one - or [] when none is unlocked (the
+        dividers then place themselves as before)."""
+        sizes = getattr(item, 'divider_space_sizes', None)
+        unlock = getattr(item, 'divider_space_unlock', None)
+        if sizes is None or unlock is None or qty + 1 > len(unlock):
+            return []
+        spaces = [sizes[i] if unlock[i] else None for i in range(qty + 1)]
+        if all(s is None for s in spaces):
+            return []
+        return spaces
+
+    @staticmethod
+    def _write_divider_space_sizes(item, centers, span0, span1, th):
+        """Store the sizes the locked spaces came out to, so each shows
+        what it is (an unlocked one keeps what was typed). Written
+        straight to the ID property: going through the property would
+        fire its update and recalc again."""
+        try:
+            current = list(item.divider_space_sizes)
+            unlock = list(item.divider_space_unlock)
+        except AttributeError:
+            return
+        edges = ([span0] + [e for c in sorted(centers)
+                            for e in (c - th / 2.0, c + th / 2.0)]
+                 + [span1])
+        landed = [max(edges[i + 1] - edges[i], 0.0)
+                  for i in range(0, len(edges), 2)]
+        for i, size in enumerate(landed[:len(current)]):
+            if not unlock[i]:
+                current[i] = size
+        if any(abs(a - b) > 1e-7
+               for a, b in zip(current, item.divider_space_sizes)):
+            item['divider_space_sizes'] = current
+
+    @staticmethod
+    def _divider_centers_from_spacing(spaces, span0, span1, th):
+        """Divider centers for a set of spaces: a set space keeps its
+        size, the shared (None) ones split what is left. With no shared
+        space the last one takes the slack, so sizes set from the front
+        still land where they were set."""
+        if None not in spaces:
+            spaces = spaces[:-1] + [None]
+        n_div = len(spaces) - 1
+        fixed = sum(s for s in spaces if s is not None)
+        shared = spaces.count(None)
+        free = max(span1 - span0 - n_div * th - fixed, 0.0) / shared
+        centers = []
+        pos = span0
+        for s in spaces[:-1]:
+            pos += s if s is not None else free
+            centers.append(min(pos + th / 2.0, span1 - th / 2.0))
+            pos += th
+        return centers
+
+    def _emit_drawer_dividers(self, box_obj, inner):
+        """Build the divider panels recorded while packing the drawer.
+        Each run is handed the centers of the dividers running the other
+        way, which are what its From / To Space count."""
+        runs = getattr(inner, 'divider_runs', None) or []
+        for run in runs:
+            crossing = sorted({c for other in runs
+                               if other.lengthwise != run.lengthwise
+                               for c in other.centers})
+            self._emit_divider_run(box_obj, run, crossing)
+
+    def _emit_divider_run(self, box_obj, run, crossing):
+        """One object per divider in the run. Along its length a divider
+        runs side to side of the box, or between the faces of the
+        crossing dividers bounding the spaces it was limited to."""
+        rect, th, item = run.rect, run.th, run.item
+        z0, z1 = rect.z0, rect.z0 + rect.h
+        # The run's own length lies across the crossing dividers.
+        a0, a1 = ((rect.y0, rect.y1) if run.lengthwise
+                  else (rect.x0, rect.x1))
+        bounds = [a0] + list(crossing) + [a1]
+        n_spaces = len(bounds) - 1
+        first = getattr(item, 'divider_span_from', 0)
+        last = getattr(item, 'divider_span_to', 0)
+        first = min(max(first, 1), n_spaces)
+        last = min(max(last if last > 0 else n_spaces, first), n_spaces)
+        if first > 1:
+            a0 = bounds[first - 1] + th / 2.0
+        if last < n_spaces:
+            a1 = bounds[last] - th / 2.0
+        if a1 - a0 < th:
+            return
+        for c in run.centers:
+            mb = DrawerInsertMesh()
+            if run.lengthwise:
+                mb.box(c - th / 2.0, c + th / 2.0, a0, a1, z0, z1)
+            else:
+                mb.box(a0, a1, c - th / 2.0, c + th / 2.0, z0, z1)
+            self._emit_drawer_insert(box_obj, 'Drawer Divider', mb,
+                                     role=PART_ROLE_DRAWER_DIVIDER)
 
     def _tray_walls(self, mb, rect, th):
         """Bottom panel with four walls standing on it - the shell every
@@ -15300,6 +15612,19 @@ class FaceFrameCabinet(GeoNodeCage):
             obj['DRAWER_BOX_CONSTRUCTION'] = code
             label = getattr(op_props, 'drawer_box_construction_label', '')
             obj['DRAWER_BOX_CONSTRUCTION_NAME'] = label or code
+            entry = accessory_registry.lookup(
+                'drawer_box_construction', code) or {}
+        else:
+            # No pick: the box is built to its cabinet style's
+            # construction (left unstamped, it is the style default).
+            entry = _style_box_construction(obj)
+        # A construction built from other stock than the default names
+        # its part thickness (inches); inserts and the cut list read it
+        # back off the box.
+        part_th = entry.get('part_thickness')
+        if part_th:
+            GeoNodeObject(obj).set_input('Material Thickness',
+                                         inch(float(part_th)))
         # Slide pick rides the same stamp path: per-opening override for
         # the odd heavy duty drawer, blank = project default.
         slide_code = getattr(op_props, 'drawer_slides', '')
@@ -20464,11 +20789,16 @@ def apply_active_door_style_to_part(door_obj):
     a drawer front (assign_style_to_front adds / strips the CPM_5PIECEDOOR
     'Door Style' modifier and stamps DOOR_STYLE_NAME). Also records the
     source cabinet style as STYLE_NAME so a later style-update pass can
-    find it. No-op if nothing resolves."""
+    find it. No-op if nothing resolves.
+
+    The part role follows the front kind, so tools that pick fronts by
+    role (drawer front style assign / paint) treat a drawer face as one."""
     from . import props_hb_face_frame as props
     if door_obj.get('DOOR_PART_FRONT_KIND', 'DOOR') == 'DRAWER':
+        door_obj['hb_part_role'] = PART_ROLE_DRAWER_FRONT
         ds = active_front_style_for_role(PART_ROLE_DRAWER_FRONT)
     else:
+        door_obj['hb_part_role'] = PART_ROLE_DOOR
         ds = _active_door_style()
     if ds is None:
         return

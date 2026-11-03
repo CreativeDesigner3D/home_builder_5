@@ -2324,6 +2324,23 @@ def new_scroll_list():
     return ScrollList(bar_width=4, bar_pad=4, min_rows=3)
 
 
+def begin_typing(owner, prop, kind='text'):
+    """Start typing into a hosted page's field, as a click on it does --
+    for a command that has just made the thing the field describes (a
+    new item whose name is wanted next). The field shows the caret once
+    its page draws it. Returns False when typing could not start."""
+    if kind not in TYPED_KINDS or not _begin_typing(kind, owner, prop):
+        return False
+    try:
+        bpy.ops.home_builder.options_edit_value('INVOKE_DEFAULT')
+    except Exception as ex:
+        _value_edit.cancel()
+        print('Home Builder: could not start typing: %s' % ex)
+        return False
+    _tag()
+    return True
+
+
 def _tag():
     for window in bpy.context.window_manager.windows:
         for area in window.screen.areas:

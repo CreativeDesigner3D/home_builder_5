@@ -17,6 +17,7 @@ Data (``Object.appliance_panels`` on the appliance root):
         end_reveal / section_gap     margins to the run ends / between sections
         backer_reveal                auto backer = face + 2 x this, each way
         rail_width, rail_top / rail_bottom / rail_between   integral rails
+        rail_top_width / rail_bottom_width   a run-end rail's own width
         install_type, manufacturer, model, spec_url, weight_max_lb   record
         columns[]                    width, width_hold
         sections[]                   bottom-to-top; see Appliance_Panel_Section
@@ -26,6 +27,7 @@ Data (``Object.appliance_panels`` on the appliance root):
         height (+hold), z_bottom (+hold)      vertical place in the run
         face_thickness
         backer (DEFAULT / NONE / B / C), backer_width (+hold), backer_height (+hold)
+        rail_above_width             the between rail above it, its own width
         spec_note
 
 Solve (``solve``): column widths share the appliance width between end
@@ -266,6 +268,10 @@ class Appliance_Panel_Section(PropertyGroup):
                                 items=SECTION_PULL_LOCATION_ITEMS,
                                 default='AUTO',
                                 update=_on_change)  # type: ignore
+    # The between rail over this face. -1 follows the run's Rail Width,
+    # so stacked rails can differ without every one needing a size.
+    rail_above_width: FloatProperty(name="Rail Above", unit='LENGTH', default=-1.0,
+                                    min=-1.0, update=_on_change)  # type: ignore
     spec_note: StringProperty(name="Note", default="")  # type: ignore
 
 
@@ -322,6 +328,11 @@ class Appliance_Panel_Props(PropertyGroup):
     rail_top: BoolProperty(name="Top", default=False, update=_on_change)  # type: ignore
     rail_bottom: BoolProperty(name="Bottom", default=False, update=_on_change)  # type: ignore
     rail_between: BoolProperty(name="Between", default=False, update=_on_change)  # type: ignore
+    # The top / bottom rail's own width; -1 follows Rail Width.
+    rail_top_width: FloatProperty(name="Top Rail", unit='LENGTH', default=-1.0,
+                                  min=-1.0, update=_on_change)  # type: ignore
+    rail_bottom_width: FloatProperty(name="Bottom Rail", unit='LENGTH', default=-1.0,
+                                     min=-1.0, update=_on_change)  # type: ignore
     weight_max_lb: FloatProperty(name="Max Panel Weight (lb)", default=0.0, min=0.0)  # type: ignore
     manufacturer: StringProperty(name="Manufacturer", default="")  # type: ignore
     model: StringProperty(name="Model", default="")  # type: ignore
@@ -939,6 +950,26 @@ def reveal(props, edge):
     return value if value >= 0.0 else props.end_reveal
 
 
+def rail_offset(props, edge):
+    """How far an integral rail at a run end sits in from that end: the
+    edge's own size when it has one, else 0 (the rail is the end)."""
+    value = getattr(props, 'reveal_' + edge, -1.0)
+    return value if value >= 0.0 else 0.0
+
+
+def rail_size(props, edge):
+    """The width of the rail at one end of the run: its own, or Rail
+    Width until it is given one."""
+    value = getattr(props, 'rail_%s_width' % edge, -1.0)
+    return value if value > 0.0 else props.rail_width
+
+
+def rail_above(props, section):
+    """The width of the between rail over ``section``."""
+    value = getattr(section, 'rail_above_width', -1.0)
+    return value if value > 0.0 else props.rail_width
+
+
 def column_gap(props):
     """The gap between columns: its own size, or the section gap."""
     value = getattr(props, 'column_gap', -1.0)
@@ -946,8 +977,10 @@ def column_gap(props):
 
 
 def _share(total, holds, sizes, gap):
+    """``gap`` is one size for every gap, or a list of the n - 1 gaps."""
     n = len(holds)
-    usable = total - gap * max(0, n - 1)
+    gaps = list(gap) if isinstance(gap, (list, tuple)) else [gap] * max(0, n - 1)
+    usable = total - sum(gaps)
     held = sum(sizes[i] for i in range(n) if holds[i])
     autos = [i for i in range(n) if not holds[i]]
     share = (usable - held) / len(autos) if autos else 0.0
@@ -960,16 +993,28 @@ def _stack(z_lo, z_hi, secs, props, bottom_free=True, top_free=True):
     starts a new segment; autos share each segment. A FREE end is the
     appliance's own end: it takes the end reveal (or an integral rail plus
     the inset reveal); a bounded end (a banner sits there, a gap away)
-    takes no margin and no rail. Returns ({idx: (z0, z1)}, [rail (z0, z1)])."""
+    takes no margin and no rail. A section's ``rail`` is the width of the
+    between rail over it. Returns ({idx: (z0, z1)}, [rail (z0, z1)])."""
     rw = props.rail_width if props.has_rails() else 0.0
     r_top = bool(rw and props.rail_top and top_free)
     r_bot = bool(rw and props.rail_bottom and bottom_free)
     r_mid = bool(rw and props.rail_between)
-    bottom_margin = ((rw + RAIL_REVEAL) if r_bot
+    w_bot = rail_size(props, 'bottom') if r_bot else 0.0
+    w_top = rail_size(props, 'top') if r_top else 0.0
+    # A railed end puts the rail on the end, unless that edge was given its
+    # own size: then the rail sits that far in from it.
+    bot_off = rail_offset(props, 'bottom') if r_bot else 0.0
+    top_off = rail_offset(props, 'top') if r_top else 0.0
+    bottom_margin = ((bot_off + w_bot + RAIL_REVEAL) if r_bot
                      else reveal(props, 'bottom')) if bottom_free else 0.0
-    top_margin = ((rw + RAIL_REVEAL) if r_top
+    top_margin = ((top_off + w_top + RAIL_REVEAL) if r_top
                   else reveal(props, 'top')) if top_free else 0.0
-    gap = (rw + 2.0 * RAIL_REVEAL) if r_mid else props.section_gap
+
+    def gap_after(sec):
+        if r_mid:
+            return sec.get('rail', rw) + 2.0 * RAIL_REVEAL
+        return props.section_gap
+
     run_lo, run_hi = z_lo + bottom_margin, z_hi - top_margin
 
     # Segments split at held bottoms.
@@ -982,22 +1027,25 @@ def _stack(z_lo, z_hi, secs, props, bottom_free=True, top_free=True):
             segments[-1][1].append(s)
     spans, rails = {}, []
     if r_bot:
-        rails.append((z_lo, z_lo + rw))
+        rails.append((z_lo + bot_off, z_lo + bot_off + w_bot))
     for si, (start, group) in enumerate(segments):
-        end = (segments[si + 1][0] - gap) if si + 1 < len(segments) else run_hi
+        end = ((segments[si + 1][0] - gap_after(group[-1]))
+               if si + 1 < len(segments) else run_hi)
         heights = _share(max(0.0, end - start), [g['h_hold'] for g in group],
-                         [g['h'] for g in group], gap)
+                         [g['h'] for g in group],
+                         [gap_after(g) for g in group[:-1]])
         z = start
         for k, g in enumerate(group):
             spans[g['idx']] = (z, z + heights[k])
             z += heights[k]
             last = (si + 1 == len(segments)) and (k + 1 == len(group))
             if not last and r_mid:
-                rails.append((z + RAIL_REVEAL, z + RAIL_REVEAL + rw))
+                w = g.get('rail', rw)
+                rails.append((z + RAIL_REVEAL, z + RAIL_REVEAL + w))
             if k + 1 < len(group):
-                z += gap
+                z += gap_after(g)
     if r_top:
-        rails.append((z_hi - rw, z_hi))
+        rails.append((z_hi - top_off - w_top, z_hi - top_off))
     return spans, rails
 
 
@@ -1051,7 +1099,8 @@ def solve(props, dim_x, dim_z):
     rails = []
     for ci in range(ncol):
         col_secs = [dict(h=secs[i].height, h_hold=secs[i].height_hold,
-                         z=secs[i].z_bottom, z_hold=secs[i].z_hold, idx=i)
+                         z=secs[i].z_bottom, z_hold=secs[i].z_hold, idx=i,
+                         rail=rail_above(props, secs[i]))
                     for i in col_idx if secs[i].column == ci]
         if not col_secs:
             continue
@@ -1761,13 +1810,16 @@ def _stamp(appliance_obj, props, key, faces, backers, rails):
                       'z_bottom': s.z_bottom, 'z_hold': s.z_hold,
                       'backer': s.backer,
                       'backer_width': s.backer_width, 'backer_width_hold': s.backer_width_hold,
-                      'backer_height': s.backer_height, 'backer_height_hold': s.backer_height_hold}
+                      'backer_height': s.backer_height, 'backer_height_hold': s.backer_height_hold,
+                      'rail_above_width': s.rail_above_width}
                      for s in props.sections],
         'columns': [{'width': c.width, 'width_hold': c.width_hold} for c in props.columns],
         'toe_kick': props.toe_kick, 'end_reveal': props.end_reveal,
         'section_gap': props.section_gap, 'backer_reveal': props.backer_reveal,
         'rail_width': props.rail_width, 'rail_top': props.rail_top,
         'rail_bottom': props.rail_bottom, 'rail_between': props.rail_between,
+        'rail_top_width': props.rail_top_width,
+        'rail_bottom_width': props.rail_bottom_width,
         'faces': {str(i): list(r) for i, r in faces.items()},
         'backers': {str(i): list(r) for i, r in backers.items()}})
     if props.has_rails() and rails:

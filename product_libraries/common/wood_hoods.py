@@ -114,13 +114,19 @@ def _panel(hood_obj, name):
     return p
 
 
-def _mantle_parts(hood_obj, band, depth):
+def _mantle_parts(hood_obj, band, depth, full_left=False, full_right=False):
     """Mantle assembly at the hood bottom -- real parts rather than one
     solid slab: a full-width front board at the mantle's front plane, side
-    fillers running back to the hood sides' front edges, and (when the
-    depth projects past the applied front) a top board capping the ledge.
-    ``depth`` is the mantle's total front-to-back depth off the sides.
-    All driven so the assembly tracks the cage."""
+    pieces, and (when the depth projects past the applied front) a top
+    board capping the ledge. ``depth`` is the mantle's total front-to-back
+    depth off the sides. All driven so the assembly tracks the cage.
+
+    ``full_left`` / ``full_right``: the hood side above stops at the
+    mantle top, so that mantle side runs the full depth from the wall to
+    the front board (split horizontally at the mantle, grain carrying
+    around it, and the mantle free to take its own finish). Otherwise the
+    side runs full height and the mantle side only fills the projection
+    in front of it."""
     w = _HoodWrap(hood_obj)
     dim_x = w.var_input('Dim X', 'dim_x')
     dim_y = w.var_input('Dim Y', 'dim_y')
@@ -136,20 +142,26 @@ def _mantle_parts(hood_obj, band, depth):
     mf.set_input("Thickness", mt)
     mf.set_input("Mirror Z", False)
 
-    # Side fillers from the hood sides' front edges to the front board.
-    if depth - mt > 0.0:
-        for name, at_right in (("Hood Mantle Side L", False),
-                               ("Hood Mantle Side R", True)):
-            ms = _panel(hood_obj, name)
-            ms.obj.rotation_euler.y = math.radians(-90)
-            if at_right:
-                ms.driver_location('x', 'dim_x', [dim_x])
+    # Side pieces back to the wall (full) or back to the hood sides'
+    # front edges (projection filler), ending at the front board.
+    for name, at_right, full in (("Hood Mantle Side L", False, full_left),
+                                 ("Hood Mantle Side R", True, full_right)):
+        if not full and depth - mt <= 0.0:
+            continue
+        ms = _panel(hood_obj, name)
+        ms.obj.rotation_euler.y = math.radians(-90)
+        if at_right:
+            ms.driver_location('x', 'dim_x', [dim_x])
+        if full:
+            ms.driver_input("Width", 'dim_y + %f' % (depth - 2.0 * mt),
+                            [dim_y])
+        else:
             ms.driver_location('y', '-dim_y + %f' % mt, [dim_y])
-            ms.set_input("Length", band)
             ms.set_input("Width", depth - mt)
-            ms.set_input("Thickness", mt)
-            ms.set_input("Mirror Y", True)
-            ms.set_input("Mirror Z", not at_right)
+        ms.set_input("Length", band)
+        ms.set_input("Thickness", mt)
+        ms.set_input("Mirror Y", True)
+        ms.set_input("Mirror Z", not at_right)
 
     # Top board filling the projection past the applied front, flush with
     # the mantle top.
@@ -188,7 +200,10 @@ def _build_hood_box(hood_obj, bottom_band=0.0, top_crown=0.0, band_proj=0.0,
     mt = HOOD_MATERIAL
     two_mt = 2.0 * mt
 
-    # Left + right sides (full height, stopping behind the applied front).
+    # Left + right sides (stopping behind the applied front). Over a
+    # bottom band they start at the band top; the band's own side pieces
+    # run full depth below them.
+    band = max(bottom_band, 0.0)
     for name, at_right, wanted in (("Hood Left Side", False, include_left_side),
                                    ("Hood Right Side", True, include_right_side)):
         if not wanted:
@@ -197,7 +212,8 @@ def _build_hood_box(hood_obj, bottom_band=0.0, top_crown=0.0, band_proj=0.0,
         s.obj.rotation_euler.y = math.radians(-90)
         if at_right:
             s.driver_location('x', 'dim_x', [dim_x])
-        s.driver_input("Length", 'dim_z', [dim_z])
+        s.obj.location.z = band
+        s.driver_input("Length", 'dim_z - %f' % band, [dim_z])
         s.driver_input("Width", 'dim_y - %f' % mt, [dim_y])
         s.set_input("Thickness", mt)
         s.set_input("Mirror Y", True)
@@ -243,7 +259,9 @@ def _build_hood_box(hood_obj, bottom_band=0.0, top_crown=0.0, band_proj=0.0,
     # Bottom mantle / shelf base: a built assembly (front + side fillers +
     # projection cap) whose total depth off the sides is mt + band_proj.
     if bottom_band > 0.0:
-        _mantle_parts(hood_obj, bottom_band, mt + band_proj)
+        _mantle_parts(hood_obj, bottom_band, mt + band_proj,
+                      full_left=include_left_side,
+                      full_right=include_right_side)
 
     # Top crown band, full width, back against the sides like the mantle.
     if top_crown > 0.0:

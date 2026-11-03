@@ -1132,6 +1132,21 @@ class hb_face_frame_OT_wood_top_prompts(bpy.types.Operator):
             col.prop(wt, 'depth')
         col.separator()
         col.prop(wt, 'plan_display')
+        if wt.top_type == 'VENEER':
+            # Hinged lid: order options for a veneer top that opens.
+            col.separator()
+            col.prop(wt, 'hinged_lid')
+            if wt.hinged_lid:
+                col.prop(wt, 'lid_stay_qty')
+                col.prop(wt, 'hinge_finish')
+                if anchored:
+                    lid_w = (anchor.face_frame_cabinet.width
+                             + wt.overhang_left + wt.overhang_right)
+                else:
+                    lid_w = wt.width
+                if not shaped and meter_to_inch(lid_w) >= 48.0 - 1e-3:
+                    col.label(text="48\" and wider may need a support "
+                                   "partition", icon='INFO')
 
 
 class hb_face_frame_OT_wood_top_reset_shape(bpy.types.Operator):
@@ -5317,6 +5332,23 @@ class hb_face_frame_OT_accessory_menu(bpy.types.Operator):
         rem = side.operator("hb_face_frame.remove_opening_accessory",
                             text="", icon='REMOVE')
         rem.target_name = tgt.name
+        self._draw_item_settings(layout, ffo, props)
+
+    @staticmethod
+    def _draw_item_settings(layout, ffo, props):
+        """Settings for the highlighted accessory: the door a single
+        door-mounted rack goes on, when there is a pair of doors."""
+        idx = props.interior_items_index
+        if not (0 <= idx < len(props.interior_items)):
+            return
+        item = props.interior_items[idx]
+        if item.kind != 'ACCESSORY':
+            return
+        entry = accessory_registry.find(item.accessory_code) or {}
+        if (entry.get('model') == 'door_rack'
+                and getattr(ffo, 'hinge_side', '') == 'DOUBLE'
+                and item.accessory_qty < 2):
+            layout.prop(item, 'accessory_door')
 
     def _draw_choice(self, context, layout, tgt, code, item):
         is_pullout = item.get('host') == _ACCESSORY_PULLOUT_HOST
@@ -7768,6 +7800,25 @@ class hb_face_frame_OT_refresh_top_drawer_openings(bpy.types.Operator):
             props.unlock_size = True
             props.size = val
             count += 1
+        # Corner cabinets have no opening tree: their top drawer is a
+        # corner section (pie-cut drawer stack, false-front / sink
+        # configs), pinned when the section list is populated.
+        corner_names = [o.name for o in context.scene.objects
+                        if o.get('IS_FACE_FRAME_CABINET_CAGE')
+                        and getattr(getattr(o, 'face_frame_cabinet', None),
+                                    'corner_type', 'NONE') != 'NONE']
+        for name in corner_names:
+            obj = bpy.data.objects.get(name)
+            if obj is None:
+                continue
+            cab = obj.face_frame_cabinet
+            for i in props_hb_face_frame.corner_top_drawer_sections(cab):
+                sec = cab.corner_sections[i]
+                # Unlock BEFORE the height write (see
+                # populate_corner_sections).
+                sec.unlock_height = True
+                sec.height = val
+                count += 1
         self.report({'INFO'}, f"Refreshed {count} top drawer opening(s)")
         return {'FINISHED'}
 
