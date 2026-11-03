@@ -47,6 +47,13 @@ FIN_END_ITEMS = [
     ('FLUSH_X', "Finished Flush X Inches", "Finished strip running the front X inches of the side"),
 ]
 
+# The back takes one more choice than the sides: no back at all, for an
+# open bench or a cabinet set against a finished wall. Appended last so
+# the stored values of the existing items don't shift.
+BACK_FIN_END_ITEMS = FIN_END_ITEMS + [
+    ('NO_BACK', "No Back", "Leave the back off entirely"),
+]
+
 # Construction of a finished-side RETURN member (the return panel or its
 # rear stile). FINISHED = a flat 3/4 part; PANELED = an applied panel with
 # rails / stiles + inset panel (same PanelFaceFrameCabinet machinery as a
@@ -8389,7 +8396,7 @@ class Face_Frame_Cabinet_Props(PropertyGroup):
         update=_on_right_finish_end_user_set,
     )  # type: ignore
     back_finished_end_condition: EnumProperty(
-        name="Back Finished End", items=FIN_END_ITEMS, default='UNFINISHED',
+        name="Back Finished End", items=BACK_FIN_END_ITEMS, default='UNFINISHED',
         update=_on_back_finish_end_user_set,
     )  # type: ignore
 
@@ -10579,7 +10586,8 @@ class Face_Frame_Bay_Props(PropertyGroup):
     # cabinet-level setting by default; a bay that carries its own is
     # built at its own depth, which is what makes a run of bays at
     # different depths read right from behind. WORKING_FF also drops the
-    # carcass back, since a working front needs the bay open behind it.
+    # carcass back, since a working front needs the bay open behind it;
+    # NO_BACK drops it with nothing in its place.
     # The textured backs (beadboard / shiplap / v-groove / flush X) stay
     # cabinet-level for now - they are built by a different reconciler.
     back_condition: EnumProperty(
@@ -10600,6 +10608,9 @@ class Face_Frame_Bay_Props(PropertyGroup):
             ('WORKING_FF', "Working Face Frame",
              "Applied frame with working fronts on this bay's back, for "
              "access from behind. The carcass back is left off"),
+            ('NO_BACK', "No Back",
+             "Leave this bay open at the back, with no carcass back and "
+             "nothing applied"),
         ],
         default='DEFAULT',
         update=_update_cabinet_dim,

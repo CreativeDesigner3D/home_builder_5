@@ -2391,7 +2391,8 @@ def draw_finished_ends(layout, cab_props):
 
     # Carcass back (the unfinished liner behind the interior). Locked it
     # is the standard back for the construction; unlock to set another.
-    if cab_props.back_finished_end_condition != 'WORKING_FF':
+    if cab_props.back_finished_end_condition not in ('WORKING_FF',
+                                                     'NO_BACK'):
         unlocked = cab_props.unlock_back_thickness
         brow = col.row(align=True)
         field = brow.row(align=True)

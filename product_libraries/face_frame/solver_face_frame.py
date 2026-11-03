@@ -754,10 +754,15 @@ def back_notch_depth(layout, side):
     and the back panel widens to reach into the notch on each end. Only
     FINISHED sides get it: thinner unfinished sides butt the back as
     before, FALSE_FF / WORKING_FF have no carcass side at all, and a
-    WORKING_FF back means there is no carcass back to land.
+    WORKING_FF back means there is no carcass back to land. Nor does an
+    end bay left with no back.
     """
     if layout.b_fin_end == 'WORKING_FF':
         return 0.0
+    if getattr(layout, 'bays', None):
+        end_bay = 0 if side == 'LEFT' else layout.bay_count - 1
+        if bay_back_condition(layout, end_bay) == 'NO_BACK':
+            return 0.0
     if side == 'LEFT':
         if layout.l_fin_end != 'FINISHED':
             return 0.0
@@ -798,7 +803,7 @@ def side_behind_back(layout, side):
         return 0.0
     if layout.bays[bay_index].get('remove_carcass'):
         return 0.0
-    if bay_back_condition(layout, bay_index) == 'WORKING_FF':
+    if bay_back_condition(layout, bay_index) in NO_CARCASS_BACK:
         return 0.0
     if layout.is_angled:
         return 0.0
@@ -1282,7 +1287,8 @@ def has_rear_finish_kick(layout, bay_index):
     at the front."""
     return (has_rear_kick_inset(layout)
             and layout.include_finish_kick
-            and bay_back_condition(layout, bay_index) != 'UNFINISHED')
+            and bay_back_condition(layout, bay_index)
+            not in ('UNFINISHED', 'NO_BACK'))
 
 
 def kick_rear_beam_clearance(layout):
@@ -3587,6 +3593,11 @@ def _carcass_back_passthrough(layout, gap_index):
     return True
 
 
+# Back types that leave the carcass back off: a working face frame opens
+# the bay from behind, and NO_BACK leaves it open with nothing applied.
+NO_CARCASS_BACK = ('WORKING_FF', 'NO_BACK')
+
+
 def bay_back_condition(layout, bay_index):
     """The back type in force for one bay: its own if it carries one,
     otherwise the cabinet's."""
@@ -3612,8 +3623,9 @@ def carcass_back_segments(layout):
         if first_bay.get('remove_carcass'):
             continue
         # A working face frame on this bay's back is a real front you
-        # open, so the bay cannot be closed off behind it.
-        if bay_back_condition(layout, start) == 'WORKING_FF':
+        # open, so the bay cannot be closed off behind it. A bay set to
+        # no back is simply left open.
+        if bay_back_condition(layout, start) in NO_CARCASS_BACK:
             continue
         left_x, right_x = _segment_x_bounds(layout, start, end)
         # A FINISHED end is notched for the back (back_notch_depth), so

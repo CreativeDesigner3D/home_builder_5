@@ -3581,7 +3581,8 @@ class FaceFrameCabinet(GeoNodeCage):
                 # access side - the 1/4 carcass back comes out (the
                 # frame's working fronts open into the cavity). A
                 # FALSE_FF back is decorative only and keeps the back.
-                visible = layout.b_fin_end != 'WORKING_FF'
+                # NO_BACK leaves it off with nothing in its place.
+                visible = layout.b_fin_end not in solver.NO_CARCASS_BACK
                 child.hide_viewport = not visible
                 child.hide_render = not visible
                 if not visible:
@@ -11271,6 +11272,9 @@ class FaceFrameCabinet(GeoNodeCage):
                               + solver.effective_bottom_rail_width(layout, bi))
                 bay_top = bay_bottom + bay_dim_z
                 bay_to_floor = bool(bay.get('remove_bottom'))
+                # A bay set to no back stays open behind its finish too.
+                open_back = (solver.bay_back_condition(layout, bi)
+                             == 'NO_BACK')
 
                 if bay.get('finish_bay'):
                     region = dict(
@@ -11287,8 +11291,10 @@ class FaceFrameCabinet(GeoNodeCage):
                         # A textured bay takes a BACK liner to carry the
                         # texture: the carcass back behind it is finish
                         # stock, and flat.
-                        want_back=texture not in ('NONE', ''),
-                        flush_back=texture not in ('NONE', ''))
+                        want_back=(texture not in ('NONE', '')
+                                   and not open_back),
+                        flush_back=(texture not in ('NONE', '')
+                                    and not open_back))
                     scope = bay.get('finish_bay_texture_scope', 'BACK_SIDES')
                     spacing = _interior_beadboard_spacing(
                         bay.get('finish_bay_beadboard_pattern', 'STANDARD'),
@@ -11343,8 +11349,9 @@ class FaceFrameCabinet(GeoNodeCage):
                     specs = self._finish_region_specs(
                         layout, region, bool(op.finish_opening_flush),
                         op.finish_opening_flush_depth, op_to_floor, t,
-                        want_back=(not bay.get('finish_carcass')) or textured,
-                        want_top=False, flush_back=textured)
+                        want_back=(((not bay.get('finish_carcass')) or textured)
+                                   and not open_back),
+                        want_top=False, flush_back=textured and not open_back)
                     spacing = _interior_beadboard_spacing(
                         op.finish_opening_beadboard_pattern,
                         getattr(self.obj.face_frame_cabinet,
