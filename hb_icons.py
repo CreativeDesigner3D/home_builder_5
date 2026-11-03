@@ -13,6 +13,10 @@ antialiased, with no second filtering pass to soften it.
 
 `icon_glyph(name)` returns a callable with the glyph signature
 (shader, rect, color), so an icon drops in wherever a glyph is taken.
+
+Another add-on that draws into these surfaces can keep its own baked
+icons and pass their folder as `icon_dir`; it gets the same loader and
+the same look without shipping a copy of this module.
 """
 
 import os
@@ -30,8 +34,8 @@ ICON_DIR = os.path.join(os.path.dirname(__file__), "icons", "png")
 # 16-unit grid, so this is the size their pixel lines land true at.
 ICON_SIZE = 16
 
-_sizes = {}       # name -> sorted baked sizes on disk
-_textures = {}    # (name, size) -> GPUTexture, or None if it failed
+_sizes = {}       # (folder, name) -> sorted baked sizes on disk
+_textures = {}    # (folder, name, size) -> GPUTexture, or None if it failed
 
 
 def _read_png_alpha(path):
@@ -93,13 +97,13 @@ def _read_png_alpha(path):
     return width, height, rows
 
 
-def _baked_sizes(name):
-    sizes = _sizes.get(name)
+def _baked_sizes(name, icon_dir):
+    sizes = _sizes.get((icon_dir, name))
     if sizes is None:
         prefix = name + "_"
         sizes = []
         try:
-            for f in os.listdir(ICON_DIR):
+            for f in os.listdir(icon_dir):
                 if f.startswith(prefix) and f.endswith(".png"):
                     tail = f[len(prefix):-4]
                     if tail.isdigit():
@@ -107,17 +111,17 @@ def _baked_sizes(name):
         except OSError:
             pass
         sizes.sort()
-        _sizes[name] = sizes
+        _sizes[(icon_dir, name)] = sizes
     return sizes
 
 
-def _texture(name, size):
-    key = (name, size)
+def _texture(name, size, icon_dir):
+    key = (icon_dir, name, size)
     if key not in _textures:
         tex = None
         try:
             w, h, rows = _read_png_alpha(
-                os.path.join(ICON_DIR, "%s_%d.png" % (name, size)))
+                os.path.join(icon_dir, "%s_%d.png" % (name, size)))
             # White ink with the PNG's coverage as alpha; the shader's
             # colour does the tinting. Rows go bottom-up for the GPU.
             pixels = []
@@ -144,24 +148,26 @@ def scale():
         return 1.0
 
 
-def has_icon(name):
-    return bool(_baked_sizes(name))
+def has_icon(name, icon_dir=None):
+    return bool(_baked_sizes(name, icon_dir or ICON_DIR))
 
 
 # Clearance kept between a fitted icon and the edge of its rect, per side.
 FIT_PAD = 3
 
 
-def draw_icon(name, rect, color, size=None):
+def draw_icon(name, rect, color, size=None, icon_dir=None):
     """Draw icon `name` centred in `rect`, tinted `color`.
 
     `size` is the unscaled height. Left out, the icon fits the rect:
     ICON_SIZE in a full button, smaller in a chip too tight for it. The
     baked size nearest that at the current UI scale is drawn at its
-    native pixels. Returns False when the icon is not available, so a
+    native pixels. `icon_dir` is a folder of baked PNGs other than this
+    add-on's own. Returns False when the icon is not available, so a
     caller can fall back.
     """
-    sizes = _baked_sizes(name)
+    icon_dir = icon_dir or ICON_DIR
+    sizes = _baked_sizes(name, icon_dir)
     if not sizes:
         return False
     s = scale()
@@ -171,7 +177,7 @@ def draw_icon(name, rect, color, size=None):
     else:
         want = size * s
     px = min(sizes, key=lambda b: (abs(b - want), -b))
-    tex = _texture(name, px)
+    tex = _texture(name, px, icon_dir)
     if tex is None:
         return False
     x0 = round(rx + (rw - px) / 2.0)
@@ -188,11 +194,13 @@ def draw_icon(name, rect, color, size=None):
     return True
 
 
-def icon_glyph(name, fallback=None, size=None):
+def icon_glyph(name, fallback=None, size=None, icon_dir=None):
     """A glyph callable that draws icon `name`, or `fallback` (another
-    glyph) when the icon's PNGs are missing. `size` as for draw_icon."""
+    glyph) when the icon's PNGs are missing. `size` and `icon_dir` as
+    for draw_icon."""
     def glyph(shader, rect, color):
-        if not draw_icon(name, rect, color, size) and fallback is not None:
+        if (not draw_icon(name, rect, color, size, icon_dir)
+                and fallback is not None):
             fallback(shader, rect, color)
     glyph.__name__ = "icon_" + name
     return glyph
