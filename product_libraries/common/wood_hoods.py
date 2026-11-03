@@ -88,7 +88,11 @@ def _remove_part_object(child):
     this, each rebuild leaked every part's mesh/curve into the orphan
     pool for the rest of the session."""
     data = child.data
+    # A moulding sweep owns its profile curve (the bevel object).
+    bevel = getattr(data, 'bevel_object', None)
     bpy.data.objects.remove(child, do_unlink=True)
+    if bevel is not None:
+        _remove_part_object(bevel)
     if data is not None and data.users == 0:
         if isinstance(data, bpy.types.Mesh):
             bpy.data.meshes.remove(data)
@@ -453,7 +457,14 @@ _CUSTOM_DEFAULTS = {
     'include_mantle': False,        # projecting band at the bottom
     'mantle_height': inch(6.0),
     'mantle_depth': inch(2.75),     # front-to-back depth of the mantle part
-    'include_mantle_molding': False,  # strips wrapping the mantle top + bottom
+    'include_mantle_molding': True,  # moulding wrapping the mantle top + bottom
+    # Moulding profile on each edge of the mantle ('NONE' = no moulding
+    # on that edge). The bottom one is hung upside down, flat face
+    # flush with the mantle bottom. Without a molding pack providing
+    # the profile, the edge falls back to a plain strip
+    # (mantle_molding_width x mantle_molding_thickness).
+    'mantle_molding_top': 'Other/Mini Mantle',
+    'mantle_molding_bottom': 'Crown Molding/Standard Crown',
     'mantle_molding_width': inch(1.5),
     'mantle_molding_thickness': inch(0.75),
     'include_bottom_molding': False,  # strip wrapping the hood bottom front + sides
@@ -751,6 +762,27 @@ def _update_fan_unit(self, context):
             break
 
 
+_molding_profile_items_cache = []
+
+
+def _mantle_molding_profile_items(self, context):
+    """Moulding choices for one edge of the mantle: None, the mantle
+    mouldings, then every crown profile the installed molding packs
+    provide. Only None without a pack (the edge is then a plain
+    strip)."""
+    from ...molding import packages
+    global _molding_profile_items_cache
+    items = [('NONE', "None", "No moulding on this edge")]
+    other = {i[0] for i in packages.profile_enum_items('Other')}
+    for name in ('Mini Mantle', 'Mantle', 'Kelli'):
+        if name in other:
+            items.append(("Other/" + name, name, ""))
+    for ident, label, desc in packages.profile_enum_items('Crown Molding')[1:]:
+        items.append(("Crown Molding/" + ident, label, desc))
+    _molding_profile_items_cache = items
+    return _molding_profile_items_cache
+
+
 def _get_custom_opts(hood_obj):
     """The hood's CUSTOM-style options: stored values merged over defaults."""
     opts = dict(_CUSTOM_DEFAULTS)
@@ -912,17 +944,109 @@ def _molding_wrap(hood_obj, prefix, tag, W, y_face, z0, z1, m_th,
     prism(prefix + " R" + tag, ('br_i', 'fr_i', 'fr_o', 'br_o'))
 
 
-def _mantle_molding(hood_obj, W, y_face, band, m_w, m_th):
-    """Mantle molding: strips of material wrapping the top and bottom of
-    the mantle -- across the mantle front (``y_face``) and back along both
-    hood sides to the wall, mitred at the front corners (45 degrees in
-    plan), standing ``m_th`` proud of the faces. ``m_w`` is the strip
-    height. Static meshes sized at build time."""
-    m_w = min(max(m_w, inch(0.25)), band)
-    m_th = max(m_th, inch(0.125))
-    for tag, z0, z1 in (("B", 0.0, m_w), ("T", band - m_w, band)):
+def _mantle_molding(hood_obj, opts, W, y_face, band):
+    """Mantle moulding wrapping the top and bottom of the mantle --
+    across the mantle front (``y_face``) and back along both hood sides
+    to the wall, mitred at the front corners.
+
+    Each edge takes its own profile (mantle_molding_top / _bottom). The
+    top one sits right side up, flush with the mantle top; the bottom
+    one is hung upside down, its flat face flush with the mantle
+    bottom. An edge whose profile no molding pack provides gets a plain
+    strip instead (mantle_molding_width high, standing
+    mantle_molding_thickness proud). Static, sized at build time."""
+    m_w = min(max(opts['mantle_molding_width'], inch(0.25)), band)
+    m_th = max(opts['mantle_molding_thickness'], inch(0.125))
+    for tag, key, flip in (("T", 'mantle_molding_top', False),
+                           ("B", 'mantle_molding_bottom', True)):
+        ref = opts.get(key) or 'NONE'
+        if ref == 'NONE':
+            continue
+        if _mantle_molding_sweep(hood_obj, "Hood Mantle Molding " + tag,
+                                 ref, W, y_face, band, flip):
+            continue
+        z0, z1 = (0.0, m_w) if flip else (band - m_w, band)
         _molding_wrap(hood_obj, "Hood Mantle Molding", tag,
                       W, y_face, z0, z1, m_th)
+
+
+def _flip_profile(prof):
+    """Turn a profile curve upside down in place, keeping its height
+    range, so a sweep hangs it the other way up. The point order is
+    reversed too, so the swept faces still point outward."""
+    ys = []
+    for spline in prof.data.splines:
+        pts = (spline.bezier_points if spline.type == 'BEZIER'
+               else spline.points)
+        ys += [p.co.y for p in pts]
+    if not ys:
+        return
+    pivot = max(ys) + min(ys)
+    for spline in prof.data.splines:
+        if spline.type == 'BEZIER':
+            pts = spline.bezier_points
+            recs = [((p.co.x, pivot - p.co.y, p.co.z),
+                     (p.handle_right.x, pivot - p.handle_right.y,
+                      p.handle_right.z),
+                     (p.handle_left.x, pivot - p.handle_left.y,
+                      p.handle_left.z),
+                     p.handle_right_type, p.handle_left_type)
+                    for p in pts]
+            for p, (co, hl, hr, tl, tr) in zip(pts, reversed(recs)):
+                p.handle_left_type = 'FREE'
+                p.handle_right_type = 'FREE'
+                p.co = co
+                p.handle_left = hl
+                p.handle_right = hr
+                p.handle_left_type = tl
+                p.handle_right_type = tr
+        else:
+            pts = spline.points
+            recs = [(p.co.x, pivot - p.co.y, p.co.z, p.co.w) for p in pts]
+            for p, co in zip(pts, reversed(recs)):
+                p.co = co
+
+
+def _mantle_molding_sweep(hood_obj, name, ref, W, y_face, band, flip):
+    """Sweep one moulding profile around the mantle: from the wall along
+    the left side, across the front and back along the right side,
+    mitred at the corners by the curve bevel. The top run sits flush
+    with the mantle top; a flipped (bottom) run flush with its bottom.
+    Returns False when no molding pack provides the profile."""
+    from ...molding import packages
+    height = packages.profile_top_height(ref, None)
+    if height <= 1e-5:
+        return False
+    coll = (hood_obj.users_collection[0] if hood_obj.users_collection
+            else bpy.context.scene.collection)
+    prof = packages.make_profile_object(ref, None, name + " Profile", coll)
+    if prof is None:
+        return False
+    if flip:
+        _flip_profile(prof)
+    curve = bpy.data.curves.new(name, 'CURVE')
+    curve.dimensions = '2D'
+    curve.fill_mode = 'NONE'
+    curve.bevel_mode = 'OBJECT'
+    curve.bevel_object = prof
+    curve.use_fill_caps = True
+    pts = [(0.0, 0.0), (0.0, y_face), (W, y_face), (W, 0.0)]
+    spline = curve.splines.new('BEZIER')
+    spline.use_smooth = False
+    spline.bezier_points.add(count=len(pts) - 1)
+    for bp, (x, y) in zip(spline.bezier_points, pts):
+        bp.co = (x, y, 0.0)
+        bp.handle_left_type = 'VECTOR'
+        bp.handle_right_type = 'VECTOR'
+    obj = hb_utils.new_object(name, curve)
+    for c in hood_obj.users_collection:
+        c.objects.link(obj)
+    obj.parent = hood_obj
+    obj[HOOD_PART_TAG] = True
+    obj['IS_FINISHED'] = True
+    prof.parent = obj
+    obj.location = (0.0, 0.0, 0.0 if flip else band - height)
+    return True
 
 
 def _bottom_molding(hood_obj, opts, W, y_face):
@@ -1822,9 +1946,7 @@ def _build_custom_angled(hood_obj, opts):
             _mesh_box(hood_obj, "Hood Mantle Top", mt, W - mt,
                       y_mf + mt, -D, band - mt, band)
     if band > 0.0 and opts['include_mantle_molding']:
-        _mantle_molding(hood_obj, W, -D - mantle_dep, band,
-                        opts['mantle_molding_width'],
-                        opts['mantle_molding_thickness'])
+        _mantle_molding(hood_obj, opts, W, -D - mantle_dep, band)
     if opts['include_bottom_molding']:
         # The base of an angled hood is full W x D, so the wrap uses the
         # same corner geometry as the straight hood (the mantle front
@@ -1880,9 +2002,7 @@ def _build_custom(hood_obj):
         # The mantle front face: sides' front edge minus the mantle depth
         # (flush with the applied front when the depth is 3/4" or less).
         y_face = -D + HOOD_MATERIAL - max(opts['mantle_depth'], HOOD_MATERIAL)
-        _mantle_molding(hood_obj, W, y_face, band,
-                        opts['mantle_molding_width'],
-                        opts['mantle_molding_thickness'])
+        _mantle_molding(hood_obj, opts, W, y_face, band)
     if opts['include_bottom_molding']:
         w2 = _HoodWrap(hood_obj)
         W = w2.get_input('Dim X')
@@ -1973,7 +2093,8 @@ def apply_finish_to_hood(hood_obj, finish_mat, finish_mat_rotated=None):
         return
     edge_mat = finish_mat_rotated or finish_mat
     for child in hood_obj.children_recursive:
-        if not child.get(HOOD_PART_TAG) or child.type != 'MESH':
+        if not child.get(HOOD_PART_TAG) or child.type not in ('MESH',
+                                                               'CURVE'):
             continue
         if child.get('HB_HOOD_STATIC_DOOR'):
             # Python-built static door: the finish goes into the mesh's
@@ -2354,6 +2475,15 @@ class HOME_BUILDER_OT_wood_hood_prompts(bpy.types.Operator):
         name="Molding Thickness", unit='LENGTH', precision=5,
         default=_CUSTOM_DEFAULTS['mantle_molding_thickness'],
         description="How far the molding stands proud of the mantle faces")  # type: ignore
+    mantle_molding_top: EnumProperty(
+        name="Top Profile", items=_mantle_molding_profile_items,
+        description="Moulding along the top of the mantle, right side "
+                    "up and flush with the mantle top")  # type: ignore
+    mantle_molding_bottom: EnumProperty(
+        name="Bottom Profile", items=_mantle_molding_profile_items,
+        description="Moulding along the bottom of the mantle, hung "
+                    "upside down with its flat face flush with the "
+                    "mantle bottom")  # type: ignore
     include_bottom_molding: BoolProperty(
         name="Bottom Molding",
         description="Strip of material wrapping the bottom of the hood -- "
@@ -2513,6 +2643,13 @@ class HOME_BUILDER_OT_wood_hood_prompts(bpy.types.Operator):
         self.include_mantle_molding = bool(opts['include_mantle_molding'])
         self.mantle_molding_width = opts['mantle_molding_width']
         self.mantle_molding_thickness = opts['mantle_molding_thickness']
+        # A stored profile no installed pack lists any more reads as
+        # None here; it is only written back if the dialog changes.
+        for key in ('mantle_molding_top', 'mantle_molding_bottom'):
+            try:
+                setattr(self, key, str(opts.get(key) or 'NONE'))
+            except TypeError:
+                setattr(self, key, 'NONE')
         self.include_bottom_molding = bool(opts['include_bottom_molding'])
         self.bottom_molding_width = opts['bottom_molding_width']
         self.bottom_molding_thickness = opts['bottom_molding_thickness']
@@ -2580,6 +2717,8 @@ class HOME_BUILDER_OT_wood_hood_prompts(bpy.types.Operator):
                 'include_mantle_molding': self.include_mantle_molding,
                 'mantle_molding_width': self.mantle_molding_width,
                 'mantle_molding_thickness': self.mantle_molding_thickness,
+                'mantle_molding_top': self.mantle_molding_top,
+                'mantle_molding_bottom': self.mantle_molding_bottom,
                 'include_bottom_molding': self.include_bottom_molding,
                 'bottom_molding_width': self.bottom_molding_width,
                 'bottom_molding_thickness': self.bottom_molding_thickness,
@@ -2716,10 +2855,18 @@ class HOME_BUILDER_OT_wood_hood_prompts(bpy.types.Operator):
         row = col.row(align=True)
         row.active = self.include_mantle
         row.prop(self, 'include_mantle_molding')
-        sub = row.row(align=True)
-        sub.active = self.include_mantle and self.include_mantle_molding
-        sub.prop(self, 'mantle_molding_width', text="W")
-        sub.prop(self, 'mantle_molding_thickness', text="T")
+        on = self.include_mantle and self.include_mantle_molding
+        if len(_mantle_molding_profile_items(self, None)) > 1:
+            sub = col.column(align=True)
+            sub.active = on
+            sub.prop(self, 'mantle_molding_top', text="Top")
+            sub.prop(self, 'mantle_molding_bottom', text="Bottom")
+        else:
+            # No molding pack: the edges build as plain strips.
+            sub = row.row(align=True)
+            sub.active = on
+            sub.prop(self, 'mantle_molding_width', text="W")
+            sub.prop(self, 'mantle_molding_thickness', text="T")
 
         col.separator()
         row = col.row(align=True)
