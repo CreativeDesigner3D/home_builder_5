@@ -377,7 +377,11 @@ def write(owner, prop, value):
 
 def _resolve(id_data, path):
     """The owner an (ID, path) key names. A prop on the ID itself has
-    an empty path, which path_resolve does not take."""
+    an empty path, which path_resolve does not take; one seen through
+    a schema (prop_proxy) is built again from its key."""
+    if path.startswith('#proxy:'):
+        from . import prop_proxy
+        return prop_proxy.resolve(id_data, path)
     return id_data.path_resolve(path) if path else id_data
 
 

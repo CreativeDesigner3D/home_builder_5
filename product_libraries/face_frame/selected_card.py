@@ -29,8 +29,11 @@ OPENING_GROUP = 'ff_opening'
 
 _last_kind = None       # the part the page last opened on
 
-# Products with their own forms (and no cabinet carcass) keep them.
-_OWN_FORMS = ('IS_LEG_PRODUCT', 'IS_FLOATING_SHELF', 'IS_END_SHELVES')
+# Products with their own forms (and no cabinet carcass) keep them:
+# their pages are selected_products'.
+_OWN_FORMS = ('IS_LEG_PRODUCT', 'IS_FLOATING_SHELF', 'IS_END_SHELVES',
+              'IS_MANTLE_PRODUCT', 'IS_VALANCE_PRODUCT',
+              'IS_COLUMN_BEAM_PRODUCT')
 
 
 # ---- Finding what is picked -------------------------------------------------

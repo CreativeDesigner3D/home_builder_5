@@ -13,6 +13,7 @@ from . import cage_shape
 from . import miter_joints
 from . import door_vents
 from . import selected_card
+from . import selected_products
 from . import drill
 
 NAMESPACE = "hb_face_frame"
@@ -33,6 +34,7 @@ def register():
     miter_joints.register()
     door_vents.register()
     selected_card.register()
+    selected_products.register()
     drill.register()
 
 
@@ -40,6 +42,7 @@ def unregister():
     from . import finish_swatches
     finish_swatches.unregister()
     drill.unregister()
+    selected_products.unregister()
     selected_card.unregister()
     door_vents.unregister()
     miter_joints.unregister()

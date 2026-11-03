@@ -35,16 +35,20 @@ _owner = object()
 _sources = []           # (key, find(context) -> item or None, blocks(context, item), crumbs)
 
 
-def register_source(key, find, blocks, crumbs=None):
+def register_source(key, find, blocks, crumbs=None, first=False):
     """Show a library's products on this tab. `find(context)` returns
     whatever `blocks(context, item)` needs to lay the page out, or None
     when the selection is not one of them. `crumbs(context, item)`, if
     given, names where the pick sits -- [(text, (operator, kwargs) or
     None)], outermost first, the last being the pick itself -- for the
-    inspector's title, where each step up is a click. Re-registering a
-    key replaces it."""
+    inspector's title, where each step up is a click. `first` puts it
+    ahead of the sources already registered. Re-registering a key
+    replaces it."""
     unregister_source(key)
-    _sources.append((key, find, blocks, crumbs))
+    if first:
+        _sources.insert(0, (key, find, blocks, crumbs))
+    else:
+        _sources.append((key, find, blocks, crumbs))
 
 
 def unregister_source(key):
@@ -134,7 +138,18 @@ def has_selection(context):
     from . import tool_session
     if tool_session.active_tool():
         return False
-    return _source_item(context) is not None or _item(context) is not None
+    return (_source_item(context) is not None or _item(context) is not None
+            or _generic(context) is not None)
+
+
+def _generic(context):
+    """A pick nothing else has a page for, shown by its right-click
+    menu's commands (generic_page), or None."""
+    from . import generic_page
+    try:
+        return generic_page.find(context)
+    except Exception:
+        return None
 
 
 def available(scene):
@@ -156,7 +171,13 @@ def _blocks(context):
         return blocks
     found = _item(context)
     if found is None:
-        return [('note', "Select a bay window, fireplace, light, stair, obstacle or piece of furniture.")]
+        from . import generic_page
+        obj = _generic(context)
+        if obj is None:
+            return [('note', "Select a product to see its settings here.")]
+        blocks = list(generic_page.blocks(context, obj))
+        blocks[1:1] = _pop_out_blocks()
+        return blocks
     kind, cage = found
     blocks = _pop_out_blocks()
     fields, owner = {

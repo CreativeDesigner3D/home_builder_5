@@ -113,6 +113,12 @@ def suspend(on):
     _suspended = bool(on)
 
 
+def _mode_names():
+    """Whether every selection mode says its name, or only the one in use."""
+    p = _get_prefs()
+    return bool(getattr(p, "show_mode_names", True)) if p else True
+
+
 def _hud_enabled():
     if _suspended:
         return False
@@ -651,20 +657,25 @@ class _ModeButton:
         except Exception:
             return False
 
+    def _named(self):
+        """Whether the button says its name: every mode does while the
+        names preference is on (people switching modes all day read
+        them), else only the mode in use, the way the panel tabs say
+        which is open."""
+        return _mode_names() or self._active_now()
+
     @property
     def width(self):
-        # An icon alone, named on hover, until it is the mode: then its
-        # name beside it, the way the panel tabs say which is open.
         s = _s()
         if not self._shows_icon():
             return int(MODE_BTN_WIDTH * s)
-        if not self._active_now():
+        if not self._named():
             return int(BTN_HEIGHT * s)
         blf.size(0, FONT_SIZE * s)
         return int(blf.dimensions(0, self.label)[0] + ICON_LEAD * s + 16 * s)
 
     def hover_label(self):
-        if self._shows_icon() and not self._active_now():
+        if self._shows_icon() and not self._named():
             return self.label
         return None
 
@@ -705,7 +716,7 @@ class _ModeButton:
         if not self._shows_icon():
             _draw_centered_text(font_id, rect, FONT_SIZE * _s(), color, self.label)
             return
-        if not is_active:
+        if not (is_active or _mode_names()):
             draw_icon(self.icon, rect, color)
             shader.bind()
             return
@@ -2033,6 +2044,49 @@ def _nav_anchor(context, area):
     return -1.0, -1.0
 
 
+# The chip under the cursor, waiting for _draw_tip: (region, area, rect,
+# text). The HUD names a button as it draws its rows, but the room
+# palette's strip and the open panel draw after it and would cover a
+# chip that hangs down over them, so the chip is drawn by a handler
+# added after theirs.
+_pending_tip = None
+_tip_handle = None
+
+
+def _draw_tip():
+    global _pending_tip
+    tip, _pending_tip = _pending_tip, None
+    if tip is None or _hud_shutdown:
+        return
+    region, area, rect, text = tip
+    if bpy.context.region != region:
+        return
+    gpu.state.blend_set('ALPHA')
+    shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+    shader.bind()
+    _draw_hover_chip(shader, 0, rect, area, text)
+    gpu.state.blend_set('NONE')
+
+
+def register_tip():
+    """Add the chip's handler. Called once the HUD's neighbours have
+    added theirs, so the chip draws over them."""
+    global _tip_handle
+    unregister_tip()
+    _tip_handle = bpy.types.SpaceView3D.draw_handler_add(
+        _draw_tip, (), 'WINDOW', 'POST_PIXEL')
+
+
+def unregister_tip():
+    global _tip_handle
+    if _tip_handle is not None:
+        try:
+            bpy.types.SpaceView3D.draw_handler_remove(_tip_handle, 'WINDOW')
+        except Exception:
+            pass
+        _tip_handle = None
+
+
 def _draw_hover_chip(shader, font_id, rect, area, text):
     """Name the icon button under the cursor.
 
@@ -2089,15 +2143,20 @@ def _draw_hud():
     _draw_group_frames(shader, font_id)
     for widget, rect in placed:
         widget.draw(shader, font_id, rect, context, mouse)
-    # After the row, so the chip sits over its neighbours rather than
-    # under whichever button is drawn next.
+    # Named by _draw_tip, after everything else in the viewport has
+    # drawn, so the chip sits over the tool strip and the panel rather
+    # than under them. Drawn here only when that handler is missing.
+    global _pending_tip
     for widget, rect in placed:
         fn = getattr(widget, 'hover_label', None)
         if fn is None or not point_in_rect(mouse[0], mouse[1], rect):
             continue
         text = fn()
         if text:
-            _draw_hover_chip(shader, font_id, rect, area, text)
+            if _tip_handle is not None:
+                _pending_tip = (region, area, rect, text)
+            else:
+                _draw_hover_chip(shader, font_id, rect, area, text)
         break
     gpu.state.blend_set('NONE')
 
@@ -2393,6 +2452,7 @@ def register():
 def unregister():
     global _draw_handle, _hud_shutdown
     _hud_shutdown = True
+    unregister_tip()
     _unregister_keymaps()
     if _draw_handle is not None:
         try:

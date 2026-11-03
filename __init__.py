@@ -29,6 +29,7 @@ from .operators import walls
 from .operators import wall_handles
 from .operators import tool_session
 from .operators import selected_tab
+from .operators import selected_pages
 from .operators import doors_windows
 from .operators import layouts
 from .operators import rooms
@@ -238,6 +239,15 @@ class Home_Builder_AddonPreferences(bpy.types.AddonPreferences):
         update=_update_use_viewport_hud,
     ) # type: ignore
 
+    show_mode_names: bpy.props.BoolProperty(
+        name="Selection Mode Names",
+        description="Name every selection mode beside its icon. Off, the "
+                    "modes are icons, named on hover, and only the mode in "
+                    "use says its name",
+        default=True,
+        update=_update_use_viewport_hud,
+    ) # type: ignore
+
     palette_expanded: bpy.props.BoolProperty(
         name="Expanded Tool Bar",
         description="Name every tool, head each group with a caption, and "
@@ -411,6 +421,9 @@ class Home_Builder_AddonPreferences(bpy.types.AddonPreferences):
         box.label(text="Viewport Interface", icon='WINDOW')
         col = box.column(align=True)
         col.prop(self, "use_viewport_hud")
+        sub = col.column(align=True)
+        sub.enabled = self.use_viewport_hud
+        sub.prop(self, "show_mode_names")
         col.prop(self, "use_room_palette")
         sub = col.column(align=True)
         sub.enabled = self.use_room_palette
@@ -501,6 +514,7 @@ def register():
     house_panel_tab.register()       # after the navigator: it adds a tab
     tool_session.register()          # same
     selected_tab.register()          # same
+    selected_pages.register()
     thumb_picker.register()
     style_editor.register()
     room_dim_overlay.register()
@@ -525,6 +539,9 @@ def register():
     cabinet_groups.register()
     molding.register()
     # catalog.register()
+    # Last of the viewport drawing: the HUD's hover chip goes over the
+    # tool strip and panels drawn after the HUD itself.
+    viewport_hud.register_tip()
 
     hb_assets.ensure_asset_libraries()
 
@@ -563,6 +580,7 @@ def unregister():
     hb_snap_engine.unregister()
     hb_props_obstacles.unregister()
     ops_obstacles.unregister()
+    selected_pages.unregister()
     selected_tab.unregister()
     tool_session.unregister()
     wall_handles.unregister()
