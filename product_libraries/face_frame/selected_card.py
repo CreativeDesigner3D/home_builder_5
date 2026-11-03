@@ -55,6 +55,59 @@ def find(context):
     return ('cabinet', root, None, None)
 
 
+# ---- Several picked at once -------------------------------------------------
+# Picking five cabinets and typing a depth sets all five. The page shows
+# the active one; the others of the same kind in the selection are its
+# peers, which the field engine reads for "Mixed" and writes along with
+# it. Gathered once per page build -- the engine asks for every field.
+
+_PEER_PATHS = ('face_frame_cabinet', 'face_frame_bay', 'face_frame_opening')
+_picked = {}            # property path -> [objects], from the last build
+
+
+def _gather(context):
+    roots, bays, openings = [], [], []
+    for obj in context.selected_objects:
+        if obj.get(types_face_frame.TAG_BAY_CAGE):
+            bays.append(obj)
+        elif obj.get(types_face_frame.TAG_OPENING_CAGE):
+            openings.append(obj)
+        root = types_face_frame.find_cabinet_root(obj)
+        if (root is not None and root not in roots
+                and not any(root.get(tag) for tag in _OWN_FORMS)):
+            roots.append(root)
+    _picked.clear()
+    _picked.update({'face_frame_cabinet': roots, 'face_frame_bay': bays,
+                    'face_frame_opening': openings})
+
+
+def _peers(owner):
+    """The other picked parts of the owner's kind -- none unless the
+    owner is itself one of the picked."""
+    try:
+        path = owner.path_from_id()
+        obj = owner.id_data
+    except Exception:
+        return ()
+    if path not in _PEER_PATHS:
+        return ()
+    objs = _picked.get(path, ())
+    out = []
+    try:
+        if obj not in objs:
+            return ()
+        for other in objs:
+            if other != obj:
+                out.append(getattr(other, path))
+    except ReferenceError:
+        return ()           # one was deleted since the page was built
+    return out
+
+
+def _count(path):
+    return len(_picked.get(path, ()))
+
+
 def _owning_bay(obj):
     """The bay cage above an opening. An opening made by a split sits
     under its split node, not directly under the bay."""
@@ -174,10 +227,16 @@ def _split_child(op):
 
 
 def _cabinets_selected(_owner):
-    roots = {types_face_frame.find_cabinet_root(o)
-             for o in bpy.context.selected_objects}
-    roots.discard(None)
-    return len(roots) >= 2
+    return _count('face_frame_cabinet') >= 2
+
+
+def _one_cabinet(owner):
+    return not _cabinets_selected(owner)
+
+
+def _one_plain(cab):
+    """One cabinet, not a corner: what Duplicate copies."""
+    return _no_corner(cab) and _one_cabinet(cab)
 
 
 def _blind(cab):
@@ -257,9 +316,9 @@ def _cabinet_fields(root):
         )}),
         ('icons', (
             ('duplicate', "Duplicate", 'hb_face_frame.place_cabinet',
-             {'source_cabinet_name': name}, _no_corner),
+             {'source_cabinet_name': name}, _one_plain),
             ('cab_mirror', "Duplicate Mirror", 'hb_face_frame.place_cabinet',
-             {'source_cabinet_name': name, 'mirror': True}, _no_corner),
+             {'source_cabinet_name': name, 'mirror': True}, _one_plain),
             ('cab_equalize_bays', "Equalize Bays", 'hb_face_frame.equalize_bays'),
             ('cab_join', "Join Cabinets", 'hb_face_frame.join_cabinets',
              None, _cabinets_selected),
@@ -377,6 +436,10 @@ def blocks(context, item):
     from ...operators import options_panel
     kind, root, bay_obj, opening_obj = item
     cab = root.face_frame_cabinet
+    _gather(context)
+    n_cab = _count('face_frame_cabinet')
+    n_part = _count({'bay': 'face_frame_bay',
+                     'opening': 'face_frame_opening'}.get(kind, ''))
 
     trail = ["Cabinet"]
     if bay_obj is not None:
@@ -384,26 +447,43 @@ def blocks(context, item):
     if opening_obj is not None:
         trail.append(f"Opening {opening_obj.face_frame_opening.opening_index + 1}")
 
-    out = [('head', (root.name, False, None)),
-           ('label', " > ".join(trail))]
+    # Several picked: the page says how many, and that an edit is to all.
+    if kind == 'cabinet' and n_cab > 1:
+        head, note = f"{n_cab} Cabinets", f"Changes apply to all {n_cab}"
+    elif kind in ('bay', 'opening') and n_part > 1:
+        head = f"{n_part} {kind.title()}s"
+        note = f"Changes apply to all {n_part}"
+    else:
+        head, note = root.name, " > ".join(trail)
+    out = [('head', (head, False, None)), ('label', note)]
 
     _fold_for(context, kind)
 
+    if n_cab > 1:
+        types = {r.face_frame_cabinet.cabinet_type
+                 for r in _picked['face_frame_cabinet']}
+        cab_label = (f"{n_cab} Cabinets  ({cab.cabinet_type.title()})"
+                     if len(types) == 1 else f"{n_cab} Cabinets  (Mixed)")
+    else:
+        cab_label = f"Cabinet  ({cab.cabinet_type.title()})"
     out.extend(options_panel.field_blocks(context, (
-        ('group', CABINET_GROUP, f"Cabinet  ({cab.cabinet_type.title()})",
+        ('group', CABINET_GROUP, cab_label,
          {'icon': 'cab_cabinet', 'summary': _cabinet_summary, 'fields': _cabinet_fields(root)}),
     ), cab))
     if bay_obj is not None:
         bp = bay_obj.face_frame_bay
+        label = f"{n_part} Bays" if kind == 'bay' and n_part > 1 else trail[1]
         out.extend(options_panel.field_blocks(context, (
-            ('group', BAY_GROUP, trail[1],
+            ('group', BAY_GROUP, label,
              {'icon': 'cab_bay', 'summary': _bay_summary,
               'fields': _bay_fields(bay_obj, kind == 'bay')}),
         ), bp))
     if opening_obj is not None:
         op = opening_obj.face_frame_opening
+        label = (f"{n_part} Openings" if kind == 'opening' and n_part > 1
+                 else trail[-1])
         out.extend(options_panel.field_blocks(context, (
-            ('group', OPENING_GROUP, trail[-1],
+            ('group', OPENING_GROUP, label,
              {'icon': 'cab_opening', 'summary': _opening_summary, 'fields': _opening_fields()}),
         ), op))
     return out
@@ -414,11 +494,14 @@ def blocks(context, item):
 def register():
     from ...operators import selected_tab
     selected_tab.register_source(SOURCE_KEY, find, blocks)
+    from ...operators import options_panel
+    options_panel.register_peers(_peers)
 
 
 def unregister():
     try:
-        from ...operators import selected_tab
+        from ...operators import options_panel, selected_tab
+        options_panel.unregister_peers(_peers)
         selected_tab.unregister_source(SOURCE_KEY)
     except Exception:
         pass

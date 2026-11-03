@@ -312,6 +312,69 @@ def _field_shown(field, owner):
         return True
 
 
+# ---- Several at once ---------------------------------------------------------
+# A page shows one owner, but the selection may hold more of the same
+# kind: five cabinets picked to set one depth. A peers function names
+# them -- fn(owner) -> the other owners an edit to `owner` also goes to --
+# and the fields then read "Mixed" where they differ and write to all.
+
+_peer_fns = []
+
+
+def register_peers(fn):
+    if fn not in _peer_fns:
+        _peer_fns.append(fn)
+
+
+def unregister_peers(fn):
+    if fn in _peer_fns:
+        _peer_fns.remove(fn)
+
+
+def peers(owner):
+    """The other owners an edit to `owner` also goes to."""
+    out = []
+    for fn in _peer_fns:
+        try:
+            out.extend(fn(owner) or ())
+        except Exception:
+            pass
+    return out
+
+
+def _same(a, b):
+    if isinstance(a, float) or isinstance(b, float):
+        try:
+            return abs(float(a) - float(b)) < 1e-6
+        except (TypeError, ValueError):
+            return False
+    return a == b
+
+
+def is_mixed(owner, prop):
+    """True when the owner's peers do not all share its value."""
+    others = peers(owner)
+    if not others:
+        return False
+    try:
+        value = getattr(owner, prop)
+        return any(not _same(getattr(p, prop), value) for p in others)
+    except Exception:
+        return False
+
+
+def write(owner, prop, value):
+    """Set `prop` on the owner and on each of its peers."""
+    setattr(owner, prop, value)
+    for peer in peers(owner):
+        try:
+            if getattr(peer, prop) != value:
+                setattr(peer, prop, value)
+        except Exception as ex:
+            print('Home Builder: %s failed on %s: %s'
+                  % (prop, getattr(peer.id_data, 'name', '?'), ex))
+
+
 def _resolve(id_data, path):
     """The owner an (ID, path) key names. A prop on the ID itself has
     an empty path, which path_resolve does not take."""
@@ -1145,6 +1208,8 @@ def build_page(rect, context, blocks_fn, lst):
             field, owner = payload
             prop = _field_parts(field)[1]
             current = getattr(owner, prop, None)
+            if is_mixed(owner, prop):
+                current = set() if isinstance(current, set) else None
             y = block_top
             for row in _choice_rows(field, owner):
                 if row[0] == 'caption':
@@ -1301,6 +1366,12 @@ def _field_entries(context, field, owner, x, top, row_w, row_h, s):
         value = _native_value(owner, prop)
     else:
         value = enum_label(owner, prop)
+    if fkind != 'native' and is_mixed(owner, prop):
+        options['mixed'] = True
+        if fkind == 'bool':
+            value = False
+        elif not _value_edit.editing(_owner_key(owner, prop)):
+            value = "Mixed"
     out = [('field_row', fkind, prop, label, owner, value, rect, value_rect,
             options)]
     chip = CHIP * s
@@ -1603,7 +1674,9 @@ def paint(entries, mx, my):
                 hot = point_in_rect(mx, my, value_rect) and not readonly
                 frac = options.get('frac', 0.42)
                 if fkind == 'bool':
-                    paint_check(shader, font_id, rect, FONT * s, label,
+                    paint_check(shader, font_id, rect, FONT * s,
+                                label + ("  (Mixed)" if options.get('mixed')
+                                         else ""),
                                 bool(value), point_in_rect(mx, my, rect))
                 elif fkind in TYPED_KINDS:
                     editing = _value_edit.editing(_owner_key(owner, prop))
@@ -2212,7 +2285,9 @@ def hit(context, mx, my, entries):
                 continue
             if fkind == 'bool' and point_in_rect(mx, my, rect):
                 try:
-                    setattr(owner, prop, not getattr(owner, prop))
+                    # Mixed reads as off, so the click turns them all on.
+                    write(owner, prop, True if options.get('mixed')
+                          else not getattr(owner, prop))
                 except Exception as ex:
                     print('Home Builder: %s failed: %s' % (prop, ex))
                 _tag()
@@ -2259,7 +2334,7 @@ def hit(context, mx, my, entries):
                 return True
         if kind == 'toggle_chip' and point_in_rect(mx, my, entry[3]):
             try:
-                setattr(entry[1], entry[2], not getattr(entry[1], entry[2]))
+                write(entry[1], entry[2], not getattr(entry[1], entry[2]))
             except Exception as ex:
                 print('Home Builder: %s failed: %s' % (entry[2], ex))
             _tag()
@@ -2306,9 +2381,9 @@ def hit(context, mx, my, entries):
             owner, prop, ident = entry[1], entry[2], entry[3]
             current = getattr(owner, prop, None)
             if isinstance(current, set):
-                setattr(owner, prop, current ^ {ident})      # a set: one on or off
-            elif current != ident:
-                setattr(owner, prop, ident)
+                write(owner, prop, current ^ {ident})      # a set: one on or off
+            elif current != ident or is_mixed(owner, prop):
+                write(owner, prop, ident)
             _tag()
             return True
         if kind == 'back_row' and point_in_rect(mx, my, entry[2]):
@@ -2634,7 +2709,7 @@ class home_builder_OT_options_set_enum(bpy.types.Operator):
         if owner is None:
             return {'CANCELLED'}
         try:
-            setattr(owner, prop, self.value)
+            write(owner, prop, self.value)
         except Exception as ex:
             self.report({'WARNING'}, str(ex))
             return {'CANCELLED'}
@@ -2703,7 +2778,7 @@ def commit_value(context):
         if value is None:
             return False
     try:
-        setattr(owner, prop, value)
+        write(owner, prop, value)
     except Exception as ex:
         print('Home Builder: %s failed: %s' % (prop, ex))
         return False
@@ -2785,6 +2860,8 @@ class home_builder_OT_options_drag_value(bpy.types.Operator):
         if self.key is None:
             return {'CANCELLED'}
         self.start = getattr(owner, self.prop)
+        # What each peer held, so a cancelled drag puts each one back.
+        self.peer_start = [(p, getattr(p, self.prop)) for p in peers(owner)]
         self.imperial = context.scene.unit_settings.system == 'IMPERIAL'
         self.steps = drag_steps(self.kind, owner, self.prop, self.imperial)
         self.press_x = event.mouse_x
@@ -2805,7 +2882,17 @@ class home_builder_OT_options_drag_value(bpy.types.Operator):
         owner = self._owner()
         value = _clamp(owner, self.prop, value)
         if getattr(owner, self.prop) != value:
-            setattr(owner, self.prop, value)
+            write(owner, self.prop, value)
+        _tag()
+
+    def _restore(self):
+        owner = self._owner()
+        setattr(owner, self.prop, self.start)
+        for peer, value in self.peer_start:
+            try:
+                setattr(peer, self.prop, value)
+            except Exception:
+                pass
         _tag()
 
     def _end_drag(self):
@@ -2852,7 +2939,7 @@ class home_builder_OT_options_drag_value(bpy.types.Operator):
 
         if event.type in {'ESC', 'RIGHTMOUSE'} and event.value == 'PRESS':
             if self.dragging:
-                self._set(self.start)
+                self._restore()
             self._end_drag()
             return {'CANCELLED'}
 
