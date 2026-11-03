@@ -4,6 +4,12 @@ stair, obstacle or piece of furniture picked, in any project.
 It is there while one of them is selected; the panel switches to it when
 one is picked, and goes back to the tab it was on when it is let go.
 This is the one place they are shown.
+
+A product library can show its own products here too: it registers a
+source with ``register_source`` -- a finder that says whether the
+selection is one of its products, and a function that lays out that
+product's page as Options-tab blocks. Sources are asked before the
+house items, in the order they register.
 """
 import sys
 
@@ -20,6 +26,33 @@ _list = None
 _shown = set()          # the groups opened here once this session
 _prev = None            # (panel was open, tab) before the tab took over
 _owner = object()
+_sources = []           # (key, find(context) -> item or None, blocks(context, item))
+
+
+def register_source(key, find, blocks):
+    """Show a library's products on this tab. `find(context)` returns
+    whatever `blocks(context, item)` needs to lay the page out, or None
+    when the selection is not one of them. Re-registering a key
+    replaces it."""
+    unregister_source(key)
+    _sources.append((key, find, blocks))
+
+
+def unregister_source(key):
+    _sources[:] = [src for src in _sources if src[0] != key]
+
+
+def _source_item(context):
+    """(blocks function, item) from the first source claiming the
+    selection, or None."""
+    for _key, find, blocks in list(_sources):
+        try:
+            item = find(context)
+        except Exception:
+            item = None
+        if item is not None:
+            return blocks, item
+    return None
 
 
 def _on_wall(obstacle):
@@ -74,11 +107,16 @@ def available(scene):
     from . import tool_session
     if scene is None or tool_session.active_tool():
         return False
-    return _item(bpy.context) is not None
+    return (_source_item(bpy.context) is not None
+            or _item(bpy.context) is not None)
 
 
 def _blocks(context):
     from . import house_panel_tab as hpt, options_panel
+    sourced = _source_item(context)
+    if sourced is not None:
+        blocks_fn, item = sourced
+        return blocks_fn(context, item)
     found = _item(context)
     if found is None:
         return [('note', "Select a bay window, fireplace, light, stair, obstacle or piece of furniture.")]

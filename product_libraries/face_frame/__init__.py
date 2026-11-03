@@ -12,6 +12,7 @@ from . import glass_door_overlay
 from . import cage_shape
 from . import miter_joints
 from . import door_vents
+from . import selected_card
 
 NAMESPACE = "hb_face_frame"
 MENU_NAME = "Face Frame"
@@ -30,11 +31,13 @@ def register():
     cage_shape.register()
     miter_joints.register()
     door_vents.register()
+    selected_card.register()
 
 
 def unregister():
     from . import finish_swatches
     finish_swatches.unregister()
+    selected_card.unregister()
     door_vents.unregister()
     miter_joints.unregister()
     cage_shape.unregister()
