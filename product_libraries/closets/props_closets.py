@@ -1354,7 +1354,8 @@ class Closet_Starter_Props(PropertyGroup):
     l_corner_radius: FloatProperty(
         name="Corner Radius",
         description="Radius of the rounded inside front corner",
-        default=const.L_CORNER_RADIUS, min=0.0, unit='LENGTH',
+        default=const.L_CORNER_RADIUS, min=const.L_CORNER_RADIUS_MIN,
+        unit='LENGTH',
         precision=4,
         update=_update_starter_prop)  # type: ignore
     # Which shelves take the rounded corner. All three on is the way

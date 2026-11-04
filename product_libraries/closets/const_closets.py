@@ -468,6 +468,11 @@ L_NOTCH_TOOL_RADIUS = inch(0.25)
 # the viewport with geometry.
 L_CORNER_RADIUS = inch(6.0)
 L_CORNER_RADIUS_SEGMENTS = 15
+# Edge banding will not wrap a tighter curve than this, and the arc
+# has to leave a straight run of front edge before each wing's end.
+# A corner too small to fit both is cut square.
+L_CORNER_RADIUS_MIN = inch(3.0)
+L_CORNER_MIN_FLAT = inch(1.0)
 # Distance from the opening TOP to a hang rod's center: where a rod
 # from a configuration hangs, and the height modal placement snaps to
 # under a shelf.
