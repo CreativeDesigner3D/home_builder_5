@@ -7187,6 +7187,34 @@ class LShelfClosetStarter(GeoNodeCage):
         shelf.add_part_modifier('CPM_CORNERNOTCH', 'Back Notch')
         return shelf.obj
 
+    def _paint_bare_l_shelves(self, shelves):
+        """An L shelf added once the unit is finished (shelf qty raised,
+        interior set to Lock or Double, a divider placed) is made bare,
+        long after the unit was painted - and a part with no material
+        never reaches the cut list. Give any bare one the closet
+        material once the unit itself has been painted (one left bare
+        in an older file takes it on its next recalc). A unit not yet
+        painted is left to apply_to_starter."""
+        bare = [s for s in shelves
+                if GeoNodeCutpart(s).get_input('Top Surface') is None]
+        if not bare:
+            return
+        painted = False
+        for c in self.obj.children_recursive:
+            if c in bare or c.type != 'MESH' or c.get('hb_preview'):
+                continue
+            try:
+                if GeoNodeCutpart(c).get_input('Top Surface') is not None:
+                    painted = True
+                    break
+            except Exception:
+                continue
+        if not painted:
+            return
+        from . import materials_closets
+        for s in bare:
+            materials_closets.apply_to_part(s)
+
     def _l_shelf_parts(self):
         """The unit's L shelves other than the fixed ones set at a
         height of their own: bottom first, top last."""
@@ -7743,6 +7771,7 @@ class LShelfClosetStarter(GeoNodeCage):
             else:
                 plan, rod_tops, spans = self._plan_l_shelves(
                     z_bottom, z_top, st)
+            self._paint_bare_l_shelves([p[0] for p in plan])
             # A fixed L shelf being placed stands where the cursor has
             # it, inside the opening it is over.
             for preview in [c for c in self.obj.children
