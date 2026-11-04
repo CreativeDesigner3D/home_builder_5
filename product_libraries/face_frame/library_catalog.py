@@ -34,7 +34,8 @@ convention of the library, not a coincidence -- see
 
 Deliberately NOT here: the User library (read off disk at draw time) and
 the Angled section (hidden until those products have builders). Both
-keep their own draw methods.
+keep their own draw methods. The viewport panel reaches the User
+library through ``user_groups`` instead.
 """
 
 import os
@@ -1462,6 +1463,18 @@ OPTION_SUBPAGES = {
     'DRAWER_FRONT_STYLES': _front_manager('DRAWER',
                                           'draw_drawer_front_styles_ui'),
 }
+
+
+# Saved cabinet groups. The browser draws its User section from these and
+# fires this namespace's create / save / load operators -- the ones the
+# sidebar's User box fires.
+USER_GROUPS = 'hb_face_frame'
+
+
+def user_groups():
+    """Every saved cabinet group: [{name, filepath, thumbnail}]."""
+    from .operators import ops_library
+    return ops_library.get_user_library_items()
 
 
 def place(context, product):
