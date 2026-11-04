@@ -885,6 +885,17 @@ def apply_to_starter(root, carcass_name=None, front_name=None):
     Returns True when anything could be applied - callers fall back to
     the cabinet-style finish on False.
     """
+    return _finish(root.children_recursive, carcass_name, front_name)
+
+
+def finish_parts(objs):
+    """Give parts just built the room's finish, each the way
+    apply_to_starter finishes its role - so a part has its material
+    from the moment it is added, whatever added it."""
+    return _finish(objs)
+
+
+def _finish(objs, carcass_name=None, front_name=None):
     from ... import hb_types
     from . import types_closets
     props = bpy.context.scene.hb_closets
@@ -915,7 +926,7 @@ def apply_to_starter(root, carcass_name=None, front_name=None):
     ctop = resolve_countertop_material(carcass)
     ctop_edge = rotated_variant(ctop)
     fence_cache = {}
-    for child in root.children_recursive:
+    for child in objs:
         if child.get('IS_CLOSET_MOLDING') and child.type == 'CURVE':
             # Molding is cut in the closet colour and follows it when the
             # colour changes (reference update_closet_material_in_room).
