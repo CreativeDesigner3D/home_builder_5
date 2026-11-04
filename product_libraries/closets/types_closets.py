@@ -28,11 +28,46 @@ from ...hb_types import (GeoNodeCage, GeoNodeCutpart, GeoNodeObject,
 from mathutils import Matrix, Vector
 
 from ...units import inch, millimeter
-from ..frameless.types_frameless import CabinetPart
+from ..frameless.types_frameless import CabinetPart as _FramelessPart
 from . import solver_closets as solver
 from . import const_closets as const
 
 from types import SimpleNamespace
+
+
+# Parts built since the last recalc finished. A part's role - and so
+# its finish (closet, front, countertop, bought hardware) - is set just
+# after it is created, so each one gets its material as the recalc that
+# built it finishes (finish_new_parts), not left for a later repaint.
+_NEW_PARTS = []
+
+
+class CabinetPart(_FramelessPart):
+    """A closet cut part: the frameless part, remembered when built so it
+    takes the room's finish as soon as it is in place."""
+
+    def create(self, name):
+        super().create(name)
+        _NEW_PARTS.append(self.obj)
+
+
+def finish_new_parts():
+    """Give every part built since the last call the room's finish."""
+    objs = []
+    while _NEW_PARTS:
+        obj = _NEW_PARTS.pop()
+        try:
+            if obj.name in bpy.data.objects:
+                objs.append(obj)
+        except ReferenceError:
+            continue        # removed again before it was finished
+    if not objs:
+        return
+    try:
+        from . import materials_closets
+        materials_closets.finish_parts(objs)
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -7187,34 +7222,6 @@ class LShelfClosetStarter(GeoNodeCage):
         shelf.add_part_modifier('CPM_CORNERNOTCH', 'Back Notch')
         return shelf.obj
 
-    def _paint_bare_l_shelves(self, shelves):
-        """An L shelf added once the unit is finished (shelf qty raised,
-        interior set to Lock or Double, a divider placed) is made bare,
-        long after the unit was painted - and a part with no material
-        never reaches the cut list. Give any bare one the closet
-        material once the unit itself has been painted (one left bare
-        in an older file takes it on its next recalc). A unit not yet
-        painted is left to apply_to_starter."""
-        bare = [s for s in shelves
-                if GeoNodeCutpart(s).get_input('Top Surface') is None]
-        if not bare:
-            return
-        painted = False
-        for c in self.obj.children_recursive:
-            if c in bare or c.type != 'MESH' or c.get('hb_preview'):
-                continue
-            try:
-                if GeoNodeCutpart(c).get_input('Top Surface') is not None:
-                    painted = True
-                    break
-            except Exception:
-                continue
-        if not painted:
-            return
-        from . import materials_closets
-        for s in bare:
-            materials_closets.apply_to_part(s)
-
     def _l_shelf_parts(self):
         """The unit's L shelves other than the fixed ones set at a
         height of their own: bottom first, top last."""
@@ -7771,7 +7778,6 @@ class LShelfClosetStarter(GeoNodeCage):
             else:
                 plan, rod_tops, spans = self._plan_l_shelves(
                     z_bottom, z_top, st)
-            self._paint_bare_l_shelves([p[0] for p in plan])
             # A fixed L shelf being placed stands where the cursor has
             # it, inside the opening it is over.
             for preview in [c for c in self.obj.children
@@ -9186,60 +9192,11 @@ def recalculate_closet_starter(obj):
     clear_hamper_shelves(root)
     _wrap_starter(root).recalculate()
     hide_removed_parts(root)
-    paint_new_parts(root)
+    finish_new_parts()
     mark_parts(root)
     stamp_part_menus(root)
     stamp_panel_limits(root)
     stamp_bay_width_limits(root)
-
-
-def _is_cut_part(obj):
-    if obj.type != 'MESH':
-        return False
-    hb = getattr(obj, 'home_builder', None)
-    mod = obj.modifiers.get(hb.mod_name) if hb and hb.mod_name else None
-    return (mod is not None and mod.type == 'NODES'
-            and mod.node_group is not None
-            and 'GeoNodeCutpart' in mod.node_group.name)
-
-
-# Parts apply_to_starter leaves as they are - never "missing" a finish.
-_UNPAINTED_ROLES = (PART_ROLE_ACCESSORY_BLOCK, PART_ROLE_ACCESSORY_MODEL)
-
-
-def paint_new_parts(root):
-    """Give a finished unit's new parts its finish.
-
-    A recalc builds parts a prompt asked for (a bridge or accent shelf, a
-    double partition, a bottom cleat, a backsplash, more L shelves) with
-    no material, and only the add operators repaint afterwards - a part
-    added from the starter or bay prompts stayed bare and dropped off
-    the cut list. Once the unit has been painted, any bare part sends
-    the whole unit through apply_to_starter, the same finish the add
-    operators apply. A unit not painted yet is left alone."""
-    bare = painted = False
-    for c in root.children_recursive:
-        if (c.get('hb_preview') or c.get('hb_drawer_box_type')
-                or c.get('hb_part_role') in _UNPAINTED_ROLES
-                or not _is_cut_part(c)):
-            continue
-        try:
-            has = GeoNodeCutpart(c).get_input('Top Surface') is not None
-        except Exception:
-            continue
-        if has:
-            painted = True
-        else:
-            bare = True
-        if bare and painted:
-            break
-    if not (bare and painted):
-        return
-    try:
-        from . import materials_closets
-        materials_closets.apply_to_starter(root)
-    except Exception:
-        pass
 
 
 # Largest partition the stock allows. Depth: a wall-hung panel has only
