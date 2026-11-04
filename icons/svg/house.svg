@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="#fff" stroke-width="1" stroke-linecap="butt" stroke-linejoin="miter">
+  <!-- A house: its roof and chimney, its walls, its door -->
+  <path d="M0.8 8.2L8 1.5l7.2 6.7"/>
+  <path d="M11.5 4.75V2h1.5v4.15"/>
+  <path d="M3.5 6v8.5h9V6"/>
+  <path d="M6.5 14.5v-4h3v4"/>
+</svg>

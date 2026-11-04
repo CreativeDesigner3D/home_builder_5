@@ -268,12 +268,12 @@ def _g_bay(shader, box, color):
 
 
 def _g_furnish(shader, box, color):
-    """A tub in plan: its rim, and the well inside it."""
+    """A chair from the side: back and rear leg, seat, front leg."""
     x, y, w, h = box
-    top, bot = y + h * 0.78, y + h * 0.22
-    draw_polyline(shader, [(x, bot), (x + w, bot), (x + w, top), (x, top)], color, closed=True)
-    draw_polyline(shader, [(x + w * 0.14, bot + h * 0.1), (x + w * 0.86, bot + h * 0.1),
-                           (x + w * 0.86, top - h * 0.1), (x + w * 0.14, top - h * 0.1)], color, closed=True)
+    back, front, seat = x + w * 0.22, x + w * 0.78, y + h * 0.42
+    draw_lines(shader, [(back, y), (back, y + h),
+                        (back, seat), (front, seat),
+                        (front, seat), (front, y)], color)
 
 
 def _g_measure(shader, box, color):

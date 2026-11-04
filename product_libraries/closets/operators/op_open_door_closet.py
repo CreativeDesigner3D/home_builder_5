@@ -49,9 +49,10 @@ def _raycast_front(context, event):
     coord = (event.mouse_region_x, event.mouse_region_y)
     origin = view3d_utils.region_2d_to_origin_3d(region, rv3d, coord)
     direction = view3d_utils.region_2d_to_vector_3d(region, rv3d, coord)
-    dg = context.evaluated_depsgraph_get()
-    hit, _loc, _n, _i, obj, _m = context.scene.ray_cast(dg, origin, direction)
-    if not hit or obj is None:
+    # Past the cages, so it works in every selection mode.
+    from ....hb_utils import ray_cast_past_cages
+    obj = ray_cast_past_cages(context, origin, direction)
+    if obj is None:
         return None
     door_role = types_closets.PART_ROLE_DOOR
     front_role = types_closets.PART_ROLE_DRAWER_FRONT

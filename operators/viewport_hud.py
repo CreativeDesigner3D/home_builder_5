@@ -804,8 +804,10 @@ class _ModalToggleButton:
         if not _face_frame_ui_visible(context):
             return False
         ff = context.scene.hb_face_frame
-        in_my_mode = (ff.face_frame_selection_mode_enabled
-                      and ff.face_frame_selection_mode == self.mode_value)
+        # No mode: the toggle shows in every one (Open Doors).
+        in_my_mode = self.mode_value is None or (
+            ff.face_frame_selection_mode_enabled
+            and ff.face_frame_selection_mode == self.mode_value)
         # Stay visible while our modal runs even if the user has nudged
         # the selection mode; otherwise the exit button would vanish
         # and the user would be forced to Esc out.
@@ -1134,7 +1136,7 @@ _GRAB_PILL = _GrabPill()
 _CLOSET_GRAB_PILL = _ClosetGrabPill()
 _CLOSET_DIMS_BUTTON = _ClosetDimsButton()
 _OPEN_DOOR_BUTTON = _ModalToggleButton(
-    'hb_face_frame.open_mode', 'Parts',
+    'hb_face_frame.open_mode', None,
     enable_label="Enable Open Door Mode",
     disable_label="Disable Open Door Mode",
     glyph=_ICON_OPEN_DOOR,
@@ -1149,13 +1151,13 @@ class _FramelessModalToggleButton(_ModalToggleButton):
         if not _frameless_ui_visible(context):
             return False
         props = getattr(context.scene, 'hb_frameless', None)
-        in_my_mode = (getattr(props, 'frameless_selection_mode', '')
-                      == self.mode_value)
+        in_my_mode = self.mode_value is None or (
+            getattr(props, 'frameless_selection_mode', '') == self.mode_value)
         return in_my_mode or self._is_my_modal_active()
 
 
 _FRAMELESS_OPEN_DOOR_BUTTON = _FramelessModalToggleButton(
-    'hb_frameless.open_mode', 'Parts',
+    'hb_frameless.open_mode', None,
     enable_label="Enable Open Door Mode",
     disable_label="Disable Open Door Mode",
     glyph=_ICON_OPEN_DOOR,
@@ -1178,7 +1180,8 @@ class _ClosetOpenDoorButton(_ModalToggleButton):
     def visible(self, context):
         if not _closet_ui_visible(context):
             return False
-        return (_closet_mode(context) == self.mode_value
+        return (self.mode_value is None
+                or _closet_mode(context) == self.mode_value
                 or self._is_my_modal_active())
 
     def on_click(self, context, area, region):
@@ -1195,7 +1198,7 @@ class _ClosetOpenDoorButton(_ModalToggleButton):
 
 
 _CLOSET_OPEN_DOOR_BUTTON = _ClosetOpenDoorButton(
-    'hb_closets.open_door_mode', 'Parts',
+    'hb_closets.open_door_mode', None,
     enable_label="Enable Open Door Mode",
     disable_label="Disable Open Door Mode",
     glyph=_ICON_OPEN_DOOR,
@@ -1357,6 +1360,40 @@ def _view_strip():
     ]
 
 
+def _icon_button_width(icon, label, width_px):
+    """A sheet button's width: its own fixed width with no icon; with
+    one, the icon and its name -- or the icon alone while the mode
+    names preference is off, the name then on hover."""
+    s = _s()
+    if icon is None:
+        return int(width_px * s)
+    if not _mode_names():
+        return int(BTN_HEIGHT * s)
+    blf.size(0, FONT_SIZE * s)
+    return int(blf.dimensions(0, label)[0] + ICON_LEAD * s + 16 * s)
+
+
+def _draw_icon_label(shader, font_id, rect, icon, label, color):
+    """A sheet button's face, to match its width above. `icon` is
+    (name, icon_dir) or None."""
+    if icon is None:
+        _draw_centered_text(font_id, rect, FONT_SIZE * _s(), color, label)
+        return
+    if not _mode_names():
+        draw_icon(icon[0], rect, color, icon_dir=icon[1])
+        shader.bind()
+        return
+    s = _s()
+    size = FONT_SIZE * s
+    blf.size(font_id, size)
+    tw, th = blf.dimensions(font_id, label)
+    rx, ry, rw, rh = rect
+    x0 = rx + (rw - (ICON_LEAD * s + tw)) / 2.0
+    _draw_lead_icon(shader, icon, (x0 - 4 * s, ry, rw, rh), color)
+    draw_text(font_id, x0 + ICON_LEAD * s, ry + (rh - th) / 2.0, size,
+              color, label)
+
+
 class _SceneToggleButton:
     """HUD button bound to a boolean property.
 
@@ -1373,12 +1410,13 @@ class _SceneToggleButton:
     """
 
     def __init__(self, prop_name, label, ui_visible, width_px=112,
-                 owner='SCENE'):
+                 owner='SCENE', icon=None):
         self.prop_name = prop_name
         self.label = label
         self.ui_visible = ui_visible
         self.width_px = width_px
         self.owner = owner
+        self.icon = icon            # (name, icon_dir) or None
 
     def _host(self, context):
         if self.owner == 'WINDOW_MANAGER':
@@ -1387,7 +1425,12 @@ class _SceneToggleButton:
 
     @property
     def width(self):
-        return int(self.width_px * _s())
+        return _icon_button_width(self.icon, self.label, self.width_px)
+
+    def hover_label(self):
+        if self.icon is not None and not _mode_names():
+            return self.label
+        return None
 
     def _is_active(self, context):
         return bool(getattr(self._host(context), self.prop_name, False))
@@ -1407,8 +1450,7 @@ class _SceneToggleButton:
             bg = BTN_BG
         _paint_btn(shader, rx, ry, rw, rh, bg)
         color = TEXT_ACTIVE if is_active else TEXT_NORMAL
-        _draw_centered_text(font_id, rect, FONT_SIZE * _s(), color,
-                            self.label)
+        _draw_icon_label(shader, font_id, rect, self.icon, self.label, color)
 
     def on_click(self, context, area, region):
         host = self._host(context)
@@ -1500,16 +1542,22 @@ class _SheetCommandButton:
     """
 
     def __init__(self, op_idname, label, ui_visible, available=None,
-                 width_px=112):
+                 width_px=112, icon=None):
         self.op_idname = op_idname
         self.label = label
         self.ui_visible = ui_visible
         self.available = available
         self.width_px = width_px
+        self.icon = icon            # (name, icon_dir) or None
 
     @property
     def width(self):
-        return int(self.width_px * _s())
+        return _icon_button_width(self.icon, self.label, self.width_px)
+
+    def hover_label(self):
+        if self.icon is not None and not _mode_names():
+            return self.label
+        return None
 
     def visible(self, context):
         if not self.ui_visible(context):
@@ -1525,9 +1573,8 @@ class _SheetCommandButton:
         rx, ry, rw, rh = rect
         hovered = point_in_rect(mouse[0], mouse[1], rect)
         _paint_btn(shader, rx, ry, rw, rh, BTN_HOVER_BG if hovered else BTN_BG)
-        _draw_centered_text(font_id, rect, FONT_SIZE * _s(),
-                            TEXT_ACTIVE if hovered else TEXT_NORMAL,
-                            self.label)
+        _draw_icon_label(shader, font_id, rect, self.icon, self.label,
+                         TEXT_ACTIVE if hovered else TEXT_NORMAL)
 
     def on_click(self, context, area, region):
         ns, name = self.op_idname.split('.')
@@ -1545,7 +1592,8 @@ def _layout_view_visible(context):
 
 # Sheet controls, shown only on a layout view.
 _LOCK_MODEL_BUTTON = _SceneToggleButton(
-    layout_lock.LOCK_PROP, "Lock 3D Model", _layout_view_visible)
+    layout_lock.LOCK_PROP, "Lock 3D Model", _layout_view_visible,
+    icon=('lock', None))
 _BUILTIN_SHEET_BUTTONS = [(0, "lock_model", _LOCK_MODEL_BUTTON)]
 
 # Contributed sheet toggles. Whoever owns a sheet-level option can add
@@ -1555,21 +1603,26 @@ _extra_sheet_buttons = []      # (order, key, widget)
 
 
 def register_sheet_toggle(key, prop_name, label, owner="SCENE",
-                          width_px=112, order=100):
+                          width_px=112, order=100, icon=None,
+                          icon_dir=None):
     """Add a boolean toggle to the layout-view HUD row.
 
     `owner` is SCENE or WINDOW_MANAGER -- whichever the property
-    actually hangs off. Re-registering a key replaces it, so a
+    actually hangs off. `icon` (from `icon_dir`, else Home Builder's
+    own icons) heads the label, as on the selection modes; without one
+    the label is the button. Re-registering a key replaces it, so a
     reloaded add-on cannot stack duplicates.
     """
     _drop_sheet_button(key)
     widget = _SceneToggleButton(prop_name, label, _layout_view_visible,
-                                width_px=width_px, owner=owner)
+                                width_px=width_px, owner=owner,
+                                icon=(icon, icon_dir) if icon else None)
     _add_sheet_button(order, key, widget)
 
 
 def register_sheet_command(key, label, op_idname, available=None,
-                           width_px=112, order=100):
+                           width_px=112, order=100, icon=None,
+                           icon_dir=None):
     """Add an operator button to the layout-view HUD row.
 
     The row's other entries are toggles -- state you leave on. A
@@ -1579,11 +1632,13 @@ def register_sheet_command(key, label, op_idname, available=None,
     the row never carries one that opens an empty list.
 
     Shares the toggle registry, so the two kinds order among each
-    other and one key means one button whichever it is.
+    other and one key means one button whichever it is. `icon` and
+    `icon_dir` as for register_sheet_toggle.
     """
     _drop_sheet_button(key)
     widget = _SheetCommandButton(op_idname, label, _layout_view_visible,
-                                 available=available, width_px=width_px)
+                                 available=available, width_px=width_px,
+                                 icon=(icon, icon_dir) if icon else None)
     _add_sheet_button(order, key, widget)
 
 

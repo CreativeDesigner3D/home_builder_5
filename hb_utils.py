@@ -193,6 +193,28 @@ def get_wall_bp(obj):
     return None
 
 
+def _is_cage(obj):
+    return any(k.startswith('IS_') and k.endswith('_CAGE') for k in obj.keys())
+
+
+def ray_cast_past_cages(context, origin, direction, limit=32):
+    """scene.ray_cast that looks through cages: the boxes the Cabinets,
+    Bays and Openings selection modes show stand in front of the parts,
+    and a click meant for a door would land on them. Returns the first
+    part hit, or None."""
+    depsgraph = context.evaluated_depsgraph_get()
+    direction = direction.normalized()
+    for _ in range(limit):
+        hit, loc, _norm, _idx, obj, _mat = context.scene.ray_cast(
+            depsgraph, origin, direction)
+        if not hit or obj is None:
+            return None
+        if not _is_cage(obj):
+            return obj
+        origin = loc + direction * 0.0001
+    return None
+
+
 def delete_obj_and_children(obj):
     """Delete an object and all of its children recursively."""
 
